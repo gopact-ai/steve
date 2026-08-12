@@ -15,14 +15,23 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/permission"
 )
+
+var ErrResumeUnsupported = errors.New("agent does not support session resume")
+var ErrSessionBusy = errors.New("session already has a running turn")
 
 type Config struct {
 	Command    string
 	Args       []string
-	Workdir    string
+	ProcessDir string
 	Env        []string
-	Permission string // auto | always_allow | deny
+	Permission *permission.Broker
+}
+
+type SessionConfig struct {
+	Workdir    string
+	MCPServers []acp.MCPServer
 }
 
 // Host owns the agent subprocess and its ACP connection. It restarts the
@@ -30,26 +39,38 @@ type Config struct {
 type Host struct {
 	cfg Config
 
-	mu         sync.Mutex
-	cmd        *exec.Cmd
-	conn       *acp.Conn
-	caller     *acp.AgentCaller
-	stdin      io.WriteCloser
-	alive      bool
-	exited     chan struct{}
-	collectors map[acp.SessionID]*collector
+	mu           sync.Mutex
+	cmd          *exec.Cmd
+	conn         *acp.Conn
+	caller       *acp.AgentCaller
+	stdin        io.WriteCloser
+	alive        bool
+	exited       chan struct{}
+	collectors   map[acp.SessionID]*collector
+	capabilities *acp.AgentCapabilities
+	sessions     map[acp.SessionID]bool
+	opening      map[acp.SessionID]uint64
+	active       map[acp.SessionID]uint64
+	generation   uint64
 }
 
 func New(cfg Config) *Host {
-	return &Host{cfg: cfg, collectors: map[acp.SessionID]*collector{}}
+	if cfg.Permission == nil {
+		cfg.Permission, _ = permission.New("deny")
+	}
+	return &Host{
+		cfg: cfg, collectors: map[acp.SessionID]*collector{}, sessions: map[acp.SessionID]bool{},
+		opening: map[acp.SessionID]uint64{}, active: map[acp.SessionID]uint64{},
+	}
 }
 
 // collector accumulates streamed session updates for one in-flight prompt.
 type collector struct {
-	mu       sync.Mutex
-	text     strings.Builder
-	activity []string
-	progress func(string)
+	mu         sync.Mutex
+	text       strings.Builder
+	activity   []string
+	progress   func(string)
+	generation uint64
 }
 
 func (c *collector) handle(u acp.SessionUpdate) {
@@ -80,52 +101,29 @@ func (c *collector) result() (string, []string) {
 }
 
 // clientHandler implements the ACP client side for the agent subprocess.
-type clientHandler struct{ h *Host }
+type clientHandler struct {
+	h          *Host
+	generation uint64
+}
 
 func (ch *clientHandler) Update(_ context.Context, n *acp.SessionNotification) error {
 	ch.h.mu.Lock()
 	col := ch.h.collectors[n.SessionID]
 	ch.h.mu.Unlock()
-	if col != nil {
+	if col != nil && col.generation == ch.generation {
 		col.handle(n.Update)
 	}
 	return nil
 }
 
 func (ch *clientHandler) RequestPermission(_ context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
-	outcome := decidePermission(ch.h.cfg.Permission, req.Options)
+	outcome := ch.h.cfg.Permission.Decide(req.Options)
 	title := ""
 	if req.ToolCall.Title != nil {
 		title = *req.ToolCall.Title
 	}
 	log.Printf("acphost: permission request %q -> %s", title, outcome.Outcome)
 	return &acp.RequestPermissionResponse{Outcome: outcome}, nil
-}
-
-func decidePermission(policy string, options []acp.PermissionOption) acp.RequestPermissionOutcome {
-	pick := func(kinds ...acp.PermissionOptionKind) *acp.PermissionOption {
-		for _, k := range kinds {
-			for i := range options {
-				if options[i].Kind == k {
-					return &options[i]
-				}
-			}
-		}
-		return nil
-	}
-	var opt *acp.PermissionOption
-	switch policy {
-	case "deny":
-		opt = pick(acp.PermissionOptionKindRejectOnce, acp.PermissionOptionKindRejectAlways)
-	case "always_allow":
-		opt = pick(acp.PermissionOptionKindAllowAlways, acp.PermissionOptionKindAllowOnce)
-	default: // auto
-		opt = pick(acp.PermissionOptionKindAllowOnce, acp.PermissionOptionKindAllowAlways)
-	}
-	if opt == nil {
-		return acp.CanceledRequestPermissionOutcome()
-	}
-	return acp.SelectedRequestPermissionOutcome(opt.OptionID)
 }
 
 // ensureStarted launches the subprocess and performs ACP initialize if needed.
@@ -135,11 +133,15 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	if h.alive {
 		return nil
 	}
-	if err := os.MkdirAll(h.cfg.Workdir, 0o755); err != nil {
+	processDir := h.cfg.ProcessDir
+	if processDir == "" {
+		processDir = "."
+	}
+	if err := os.MkdirAll(processDir, 0o755); err != nil {
 		return fmt.Errorf("create agent workdir: %w", err)
 	}
 	cmd := exec.Command(h.cfg.Command, h.cfg.Args...)
-	cmd.Dir = h.cfg.Workdir
+	cmd.Dir = processDir
 	cmd.Env = append(os.Environ(), h.cfg.Env...)
 	cmd.Stderr = os.Stderr
 	stdin, err := cmd.StdinPipe()
@@ -153,9 +155,10 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("start agent %q: %w", h.cfg.Command, err)
 	}
+	generation := h.generation + 1
 	conn, err := acp.NewClient(stdout, stdin, func(caller *acp.AgentCaller) acp.ClientHandler {
 		h.caller = caller
-		return &clientHandler{h: h}
+		return &clientHandler{h: h, generation: generation}
 	})
 	if err != nil {
 		_ = cmd.Process.Kill()
@@ -167,6 +170,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	h.stdin = stdin
 	h.alive = true
 	h.exited = exited
+	h.generation = generation
 
 	// Sole waiter for this process; broadcasts exit before taking the lock
 	// so shutdownLocked can wait on `exited` while holding h.mu.
@@ -179,6 +183,10 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		if h.cmd == cmd {
 			h.alive = false
 			h.collectors = map[acp.SessionID]*collector{}
+			h.sessions = map[acp.SessionID]bool{}
+			h.opening = map[acp.SessionID]uint64{}
+			h.active = map[acp.SessionID]uint64{}
+			h.capabilities = nil
 		}
 		h.mu.Unlock()
 		if connErr != nil && !errors.Is(connErr, io.EOF) {
@@ -203,48 +211,129 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	if resp.AgentInfo != nil {
 		name = fmt.Sprintf("%s %s", resp.AgentInfo.Name, resp.AgentInfo.Version)
 	}
+	h.capabilities = resp.AgentCapabilities
 	log.Printf("acphost: connected to agent %s (protocol v%d)", name, resp.ProtocolVersion)
 	return nil
 }
 
-// NewChatSession creates a fresh ACP session rooted at the configured workdir.
-func (h *Host) NewChatSession(ctx context.Context) (acp.SessionID, error) {
+func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg SessionConfig) (acp.SessionID, uint64, error) {
 	if err := h.ensureStarted(ctx); err != nil {
-		return "", err
+		return "", 0, err
 	}
-	resp, err := h.caller.NewSession(ctx, &acp.NewSessionRequest{
-		Cwd:        h.cfg.Workdir,
-		MCPServers: []acp.MCPServer{},
+	h.mu.Lock()
+	generation := h.generation
+	if h.sessions[sessionID] {
+		h.mu.Unlock()
+		return sessionID, generation, nil
+	}
+	caller, capabilities := h.caller, h.capabilities
+	if sessionID != "" {
+		if h.opening[sessionID] != 0 {
+			h.mu.Unlock()
+			return "", 0, fmt.Errorf("session %q is already being opened", sessionID)
+		}
+		h.opening[sessionID] = generation
+		defer func() {
+			h.mu.Lock()
+			if h.opening[sessionID] == generation {
+				delete(h.opening, sessionID)
+			}
+			h.mu.Unlock()
+		}()
+	}
+	h.mu.Unlock()
+	if err := validateMCPServers(capabilities, cfg.MCPServers); err != nil {
+		return "", 0, err
+	}
+	if sessionID != "" {
+		request := acp.LoadSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers}
+		switch {
+		case capabilities != nil && capabilities.LoadSession:
+			if _, err := caller.LoadSession(ctx, &request); err != nil {
+				return "", 0, fmt.Errorf("session/load: %w", err)
+			}
+		case capabilities != nil && capabilities.SessionCapabilities != nil && capabilities.SessionCapabilities.Resume != nil:
+			if _, err := caller.ResumeSession(ctx, &acp.ResumeSessionRequest{
+				SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers,
+			}); err != nil {
+				return "", 0, fmt.Errorf("session/resume: %w", err)
+			}
+		default:
+			return "", 0, ErrResumeUnsupported
+		}
+		h.mu.Lock()
+		if !h.alive || h.generation != generation {
+			h.mu.Unlock()
+			return "", 0, fmt.Errorf("agent process changed while opening session")
+		}
+		h.sessions[sessionID] = true
+		h.mu.Unlock()
+		return sessionID, generation, nil
+	}
+	resp, err := caller.NewSession(ctx, &acp.NewSessionRequest{
+		Cwd:        cfg.Workdir,
+		MCPServers: cfg.MCPServers,
 	})
 	if err != nil {
-		return "", fmt.Errorf("session/new: %w", err)
+		return "", 0, fmt.Errorf("session/new: %w", err)
 	}
-	return resp.SessionID, nil
+	h.mu.Lock()
+	if !h.alive || h.generation != generation {
+		h.mu.Unlock()
+		return "", 0, fmt.Errorf("agent process changed while opening session")
+	}
+	h.sessions[resp.SessionID] = true
+	h.mu.Unlock()
+	return resp.SessionID, generation, nil
 }
 
 // Prompt sends one user turn and blocks until the agent finishes it,
 // returning the aggregated assistant text and tool-activity lines.
-func (h *Host) Prompt(ctx context.Context, sid acp.SessionID, text string, progress func(string)) (string, []string, error) {
+func (h *Host) Prompt(ctx context.Context, sid acp.SessionID, generation uint64, text string, progress func(string)) (string, []string, error) {
 	if err := h.ensureStarted(ctx); err != nil {
 		return "", nil, err
 	}
-	col := &collector{progress: progress}
 	h.mu.Lock()
+	if h.generation != generation {
+		h.mu.Unlock()
+		return "", nil, fmt.Errorf("agent process changed before prompt")
+	}
+	if h.active[sid] != 0 {
+		h.mu.Unlock()
+		return "", nil, ErrSessionBusy
+	}
+	caller := h.caller
+	col := &collector{progress: progress, generation: generation}
 	h.collectors[sid] = col
+	h.active[sid] = generation
 	h.mu.Unlock()
 	defer func() {
 		h.mu.Lock()
-		delete(h.collectors, sid)
+		if h.collectors[sid] == col {
+			delete(h.collectors, sid)
+		}
+		if h.active[sid] == generation {
+			delete(h.active, sid)
+		}
 		h.mu.Unlock()
 	}()
 
-	resp, err := h.caller.Prompt(ctx, &acp.PromptRequest{
+	resp, err := caller.Prompt(ctx, &acp.PromptRequest{
 		SessionID: sid,
 		Prompt:    []acp.ContentBlock{acp.TextContentBlock(text)},
 	})
 	out, activity := col.result()
+	h.mu.Lock()
+	sameGeneration := h.generation == generation
+	h.mu.Unlock()
+	if !sameGeneration {
+		return out, activity, fmt.Errorf("agent process changed during prompt")
+	}
 	if err != nil {
 		return out, activity, fmt.Errorf("session/prompt: %w", err)
+	}
+	if resp.StopReason == acp.StopReasonCanceled {
+		return out, activity, context.Canceled
 	}
 	if resp.StopReason != acp.StopReasonEndTurn {
 		activity = append(activity, fmt.Sprintf("(stopReason: %s)", resp.StopReason))
@@ -253,14 +342,64 @@ func (h *Host) Prompt(ctx context.Context, sid acp.SessionID, text string, progr
 }
 
 // Cancel asks the agent to stop the in-flight turn of one session.
-func (h *Host) Cancel(ctx context.Context, sid acp.SessionID) error {
+func (h *Host) Cancel(ctx context.Context, sid acp.SessionID, generation uint64) error {
 	h.mu.Lock()
-	caller, alive := h.caller, h.alive
+	caller, alive := h.caller, h.alive && h.generation == generation
 	h.mu.Unlock()
 	if !alive || caller == nil {
 		return nil
 	}
 	return caller.Cancel(ctx, &acp.CancelNotification{SessionID: sid})
+}
+
+func (h *Host) Abort(generation uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.generation == generation {
+		h.shutdownLocked()
+	}
+}
+
+func (h *Host) CloseSession(ctx context.Context, sid acp.SessionID) error {
+	h.mu.Lock()
+	if h.active[sid] != 0 {
+		h.mu.Unlock()
+		return ErrSessionBusy
+	}
+	if !h.sessions[sid] {
+		h.mu.Unlock()
+		return nil
+	}
+	caller, capabilities, alive := h.caller, h.capabilities, h.alive
+	if !alive || caller == nil || capabilities == nil || capabilities.SessionCapabilities == nil || capabilities.SessionCapabilities.Close == nil {
+		delete(h.sessions, sid)
+		h.mu.Unlock()
+		return nil
+	}
+	h.mu.Unlock()
+	if _, err := caller.CloseSession(ctx, &acp.CloseSessionRequest{SessionID: sid}); err != nil {
+		return fmt.Errorf("session/close: %w", err)
+	}
+	h.mu.Lock()
+	delete(h.sessions, sid)
+	h.mu.Unlock()
+	return nil
+}
+
+func validateMCPServers(capabilities *acp.AgentCapabilities, servers []acp.MCPServer) error {
+	for _, server := range servers {
+		switch server.Type {
+		case acp.MCPServerTypeHTTP:
+			if capabilities == nil || capabilities.MCPCapabilities == nil || !capabilities.MCPCapabilities.HTTP {
+				return fmt.Errorf("agent does not support HTTP MCP server %q", server.Name)
+			}
+		case acp.MCPServerTypeSSE:
+			if capabilities == nil || capabilities.MCPCapabilities == nil || !capabilities.MCPCapabilities.SSE {
+				return fmt.Errorf("agent does not support SSE MCP server %q", server.Name)
+			}
+		}
+	}
+	return nil
 }
 
 // Stop terminates the agent subprocess.
@@ -291,7 +430,11 @@ func (h *Host) shutdownLocked() {
 			if h.cmd != nil && h.cmd.Process != nil {
 				_ = h.cmd.Process.Kill()
 			}
-			<-h.exited
+			select {
+			case <-h.exited:
+			case <-time.After(5 * time.Second):
+				log.Printf("acphost: process did not exit after kill")
+			}
 		}
 	}
 }

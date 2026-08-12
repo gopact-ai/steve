@@ -1,6 +1,3 @@
-// acptest sends one prompt to the configured ACP agent backend from the
-// terminal, bypassing Feishu. Useful to verify agent config before wiring
-// up the channel: go run ./cmd/acptest -config config.json "hello"
 package main
 
 import (
@@ -11,51 +8,55 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/config"
 )
 
 func main() {
 	configPath := flag.String("config", "config.json", "path to config file")
+	agentID := flag.String("agent", "", "agent id or alias")
 	timeout := flag.Duration("timeout", 10*time.Minute, "prompt timeout")
 	flag.Parse()
-
-	prompt := strings.Join(flag.Args(), " ")
-	if prompt == "" {
-		log.Fatal("usage: acptest [-config config.json] <prompt>")
+	if strings.TrimSpace(strings.Join(flag.Args(), " ")) == "" {
+		log.Fatal("usage: acptest [-config config.json] [-agent id] <prompt>")
 	}
-
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		log.Fatalf("acptest: %v", err)
+		log.Fatal(err)
 	}
-
-	host := acphost.New(acphost.Config{
-		Command:    cfg.Agent.Command,
-		Args:       cfg.Agent.Args,
-		Workdir:    cfg.Agent.Workdir,
-		Env:        cfg.Agent.Env,
-		Permission: cfg.Agent.Permission,
-	})
-	defer host.Stop()
-
+	catalog, err := cfg.AgentCatalog()
+	if err != nil {
+		log.Fatal(err)
+	}
+	selected := catalog.Default()
+	if *agentID != "" {
+		var ok bool
+		selected, ok = catalog.Resolve(*agentID)
+		if !ok {
+			log.Fatalf("unknown agent %q", *agentID)
+		}
+	}
+	capabilities, err := cfg.CapabilityAssembler().Assemble(selected)
+	if err != nil {
+		log.Fatal(err)
+	}
+	manager, err := cfg.HarnessManager()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer manager.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-
-	sid, err := host.NewChatSession(ctx)
+	session, err := manager.OpenSession(ctx, selected.Harness, "", selected.Workspace, capabilities.MCPServers)
 	if err != nil {
-		log.Fatalf("acptest: new session: %v", err)
+		log.Fatal(err)
 	}
-	log.Printf("acptest: session %s created, sending prompt...", sid)
-
-	out, activity, err := host.Prompt(ctx, sid, prompt, func(line string) {
-		log.Printf("acptest: %s", line)
-	})
+	prompt := strings.TrimSpace(strings.Join(flag.Args(), " "))
+	if capabilities.Instructions != "" {
+		prompt = capabilities.Instructions + "\n\n" + prompt
+	}
+	out, _, err := session.Prompt(ctx, prompt)
 	if err != nil {
-		log.Fatalf("acptest: prompt: %v", err)
-	}
-	for _, line := range activity {
-		log.Printf("acptest: activity: %s", line)
+		log.Fatal(err)
 	}
 	fmt.Println(out)
 }

@@ -1,137 +1,111 @@
-// Package gateway routes Feishu chats onto ACP sessions with per-chat
-// serialization, so one chat maps to one agent conversation.
+// Package gateway adapts Lark messages to the transport-neutral turn coordinator.
 package gateway
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"strings"
 	"sync"
 	"time"
 
-	"github.com/gopact-ai/acp"
-
-	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/turn"
 )
-
-type Config struct {
-	PromptTimeout time.Duration
-}
 
 type replier interface {
 	Reply(context.Context, string, string) error
 }
 
+type processor interface {
+	Handle(context.Context, string, string) (turn.Result, error)
+}
+
 type Gateway struct {
-	cfg  Config
-	host *acphost.Host
-	ch   replier
+	processor processor
+	ch        replier
 
 	mu    sync.Mutex
-	chats map[string]*chatWorker
+	chats map[string]chan feishu.InboundMessage
+	seen  map[string]struct{}
+	order []string
 }
 
-type chatWorker struct {
-	queue     chan feishu.InboundMessage
-	sessionID acp.SessionID
+func New(processor processor) *Gateway {
+	return &Gateway{processor: processor, chats: map[string]chan feishu.InboundMessage{}, seen: map[string]struct{}{}}
 }
 
-func New(cfg Config, host *acphost.Host) *Gateway {
-	return &Gateway{cfg: cfg, host: host, chats: map[string]*chatWorker{}}
-}
-
-// BindChannel gives the gateway its reply surface.
 func (g *Gateway) BindChannel(ch replier) { g.ch = ch }
 
-// HandleMessage enqueues one inbound message onto its chat's worker.
 func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
 	g.mu.Lock()
-	w, ok := g.chats[msg.ChatID]
-	if !ok {
+	if _, duplicate := g.seen[msg.MessageID]; msg.MessageID != "" && duplicate {
+		g.mu.Unlock()
+		return
+	}
+	if strings.TrimSpace(msg.Text) == "/cancel" {
+		g.rememberLocked(msg.MessageID)
+		g.mu.Unlock()
+		go g.process(msg)
+		return
+	}
+	conversationID := msg.ConversationID
+	if conversationID == "" {
+		conversationID = msg.ChatID
+	}
+	queue := g.chats[conversationID]
+	if queue == nil {
 		// ponytail: workers live for the process lifetime; add idle eviction if chat count becomes material.
-		w = &chatWorker{queue: make(chan feishu.InboundMessage, 16)}
-		g.chats[msg.ChatID] = w
-		go g.runWorker(msg.ChatID, w)
+		queue = make(chan feishu.InboundMessage, 16)
+		g.chats[conversationID] = queue
+		go g.run(queue)
 	}
-	g.mu.Unlock()
-
 	select {
-	case w.queue <- msg:
+	case queue <- msg:
+		g.rememberLocked(msg.MessageID)
+		g.mu.Unlock()
 	default:
-		g.reply(msg.MessageID, "⚠️ 当前会话排队消息过多，请稍后再发。")
+		g.mu.Unlock()
+		g.reply(msg.MessageID, "当前会话排队消息过多，请稍后再发。")
 	}
 }
 
-func (g *Gateway) runWorker(chatID string, w *chatWorker) {
-	for msg := range w.queue {
-		g.process(chatID, w, msg)
+func (g *Gateway) rememberLocked(messageID string) {
+	if messageID == "" {
+		return
+	}
+	g.seen[messageID] = struct{}{}
+	g.order = append(g.order, messageID)
+	if len(g.order) > 4096 {
+		delete(g.seen, g.order[0])
+		g.order = g.order[1:]
 	}
 }
 
-func (g *Gateway) process(chatID string, w *chatWorker, msg feishu.InboundMessage) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("gateway: panic in chat %s: %v", chatID, r)
-			g.reply(msg.MessageID, fmt.Sprintf("💥 内部错误: %v", r))
-		}
-	}()
-
-	switch strings.TrimSpace(msg.Text) {
-	case "/new", "/clear":
-		w.sessionID = ""
-		g.reply(msg.MessageID, "🆕 已重置会话，下一条消息将开启新对话。")
-		return
-	case "/status":
-		state := "无活跃会话"
-		if w.sessionID != "" {
-			state = fmt.Sprintf("会话 %s", w.sessionID)
-		}
-		g.reply(msg.MessageID, fmt.Sprintf("ℹ️ %s", state))
-		return
+func (g *Gateway) run(queue <-chan feishu.InboundMessage) {
+	for msg := range queue {
+		g.process(msg)
 	}
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), g.cfg.PromptTimeout)
-	defer cancel()
-
-	out, activity, err := g.promptWithRetry(ctx, w, msg.Text)
+func (g *Gateway) process(msg feishu.InboundMessage) {
+	conversationID := msg.ConversationID
+	if conversationID == "" {
+		conversationID = msg.ChatID
+	}
+	result, err := g.processor.Handle(context.Background(), conversationID, msg.Text)
 	if err != nil {
-		log.Printf("gateway: prompt failed for chat %s: %v", chatID, err)
-		g.reply(msg.MessageID, fmt.Sprintf("❌ Agent 调用失败: %v", err))
+		log.Printf("gateway: turn failed: chat=%s error=%v", msg.ChatID, err)
+		g.reply(msg.MessageID, "Agent 调用失败，请检查 Steve 日志。")
 		return
 	}
+	out := result.Text
 	if out == "" {
 		out = "(agent 本轮没有文本输出)"
 	}
-	if len(activity) > 0 {
-		out = out + "\n\n---\n" + strings.Join(activity, "\n")
+	if len(result.Activity) > 0 {
+		out += "\n\n---\n" + strings.Join(result.Activity, "\n")
 	}
 	g.reply(msg.MessageID, out)
-}
-
-// promptWithRetry recreates the session once if the previous one died with
-// the agent process.
-func (g *Gateway) promptWithRetry(ctx context.Context, w *chatWorker, text string) (string, []string, error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		if w.sessionID == "" {
-			sid, err := g.host.NewChatSession(ctx)
-			if err != nil {
-				return "", nil, err
-			}
-			w.sessionID = sid
-		}
-		out, activity, err := g.host.Prompt(ctx, w.sessionID, text, nil)
-		if err == nil {
-			return out, activity, nil
-		}
-		if ctx.Err() != nil || attempt == 1 {
-			return out, activity, err
-		}
-		log.Printf("gateway: session %s failed (%v), recreating", w.sessionID, err)
-		w.sessionID = ""
-	}
-	return "", nil, fmt.Errorf("unreachable")
 }
 
 func (g *Gateway) reply(messageID, text string) {

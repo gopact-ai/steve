@@ -1,16 +1,41 @@
 {
-  "agent": {
-    "command": "npx",
-    "args": ["-y", "@agentclientprotocol/codex-acp"],
-    "workdir": "~/steve-workspace",
-    "env": [],
-    "permission": "auto"
+  "agents": {
+    "codex": {
+      "aliases": ["codex"],
+      "harness": "codex",
+      "workspace": "~/steve-workspace",
+      "skills": [],
+      "mcp_servers": [],
+      "default": true
+    },
+    "claude": {
+      "aliases": ["claude"],
+      "harness": "claude-code",
+      "workspace": "~/steve-workspace",
+      "skills": [],
+      "mcp_servers": []
+    }
   },
+  "harnesses": {
+    "codex": {
+      "command": "npx",
+      "args": ["-y", "@agentclientprotocol/codex-acp"],
+      "permission": "deny"
+    },
+    "claude-code": {
+      "command": "npx",
+      "args": ["-y", "@zed-industries/claude-code-acp"],
+      "permission": "deny"
+    }
+  },
+  "mcp_servers": {},
   "feishu": {
     "app_id": "cli_xxxxxxxxxxxxx",
-    "app_secret": "xxxxxxxxxxxxxxxx"
+    "app_secret": "xxxxxxxxxxxxxxxx",
+    "allowed_senders": ["ou_xxxxxxxxxxxxx"]
   },
   "gateway": {
-    "prompt_timeout": "10m"
+    "prompt_timeout": "10m",
+    "state_path": "~/.steve/state.json"
   }
 }
