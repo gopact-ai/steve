@@ -1,0 +1,30 @@
+# acpgw configuration
+#
+# agent: any ACP-compliant agent backend works here. Examples:
+#   codex:       command: npx, args: ["@agentclientprotocol/codex-acp"]
+#   claude code: command: npx, args: ["@zed-industries/claude-code-acp"]
+#   gemini:      command: gemini, args: ["--experimental-acp"]
+
+agent:
+  command: npx
+  args: ["-y", "@agentclientprotocol/codex-acp"]
+  # Directory the agent works in (session cwd). Created sessions read/write here.
+  workdir: ~/acpgw-workspace
+  # Extra environment variables, e.g. ["OPENAI_API_KEY=sk-..."].
+  # codex-acp reuses the local `codex login` credentials when omitted.
+  env: []
+  # Permission policy for agent tool calls: auto (allow once per request),
+  # always_allow, or deny.
+  permission: auto
+
+feishu:
+  # Create an app at https://open.feishu.cn, enable the bot capability,
+  # switch event subscription to "长连接" (WebSocket long connection) mode and
+  # subscribe to im.message.receive_v1.
+  # Required scopes: im:message (send/reply), im:message:readonly (receive).
+  app_id: cli_xxxxxxxxxxxxx
+  app_secret: xxxxxxxxxxxxxxxx
+
+gateway:
+  # Max duration of one prompt turn.
+  prompt_timeout: 10m
