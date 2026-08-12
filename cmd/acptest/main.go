@@ -1,6 +1,6 @@
 // acptest sends one prompt to the configured ACP agent backend from the
 // terminal, bypassing Feishu. Useful to verify agent config before wiring
-// up the channel: go run ./cmd/acptest -config config.yaml "hello"
+// up the channel: go run ./cmd/acptest -config config.json "hello"
 package main
 
 import (
@@ -16,13 +16,13 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "path to config file")
+	configPath := flag.String("config", "config.json", "path to config file")
 	timeout := flag.Duration("timeout", 10*time.Minute, "prompt timeout")
 	flag.Parse()
 
 	prompt := strings.Join(flag.Args(), " ")
 	if prompt == "" {
-		log.Fatal("usage: acptest [-config config.yaml] <prompt>")
+		log.Fatal("usage: acptest [-config config.json] <prompt>")
 	}
 
 	cfg, err := config.Load(*configPath)

@@ -5,7 +5,6 @@ go 1.27
 require (
 	github.com/gopact-ai/acp v0.1.0
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.10
-	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

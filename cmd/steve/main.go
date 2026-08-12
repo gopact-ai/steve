@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"syscall"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
@@ -23,7 +24,7 @@ func main() {
 }
 
 func run() error {
-	configPath := flag.String("config", "config.yaml", "path to config file")
+	configPath := flag.String("config", "config.json", "path to config file")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
@@ -45,7 +46,7 @@ func run() error {
 	})
 	defer host.Stop()
 
-	gw := gateway.New(gateway.Config{PromptTimeout: cfg.Gateway.PromptTimeout}, host)
+	gw := gateway.New(gateway.Config{PromptTimeout: time.Duration(cfg.Gateway.PromptTimeout)}, host)
 	channel := feishu.New(cfg.Feishu.AppID, cfg.Feishu.AppSecret, gw.HandleMessage)
 	gw.BindChannel(channel)
 

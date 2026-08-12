@@ -1,0 +1,16 @@
+{
+  "agent": {
+    "command": "npx",
+    "args": ["-y", "@agentclientprotocol/codex-acp"],
+    "workdir": "~/steve-workspace",
+    "env": [],
+    "permission": "auto"
+  },
+  "feishu": {
+    "app_id": "cli_xxxxxxxxxxxxx",
+    "app_secret": "xxxxxxxxxxxxxxxx"
+  },
+  "gateway": {
+    "prompt_timeout": "10m"
+  }
+}
