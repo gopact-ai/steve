@@ -20,10 +20,14 @@ type Config struct {
 	PromptTimeout time.Duration
 }
 
+type replier interface {
+	Reply(context.Context, string, string) error
+}
+
 type Gateway struct {
 	cfg  Config
 	host *acphost.Host
-	ch   *feishu.Channel
+	ch   replier
 
 	mu    sync.Mutex
 	chats map[string]*chatWorker
@@ -39,13 +43,14 @@ func New(cfg Config, host *acphost.Host) *Gateway {
 }
 
 // BindChannel gives the gateway its reply surface.
-func (g *Gateway) BindChannel(ch *feishu.Channel) { g.ch = ch }
+func (g *Gateway) BindChannel(ch replier) { g.ch = ch }
 
 // HandleMessage enqueues one inbound message onto its chat's worker.
 func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
 	g.mu.Lock()
 	w, ok := g.chats[msg.ChatID]
 	if !ok {
+		// ponytail: workers live for the process lifetime; add idle eviction if chat count becomes material.
 		w = &chatWorker{queue: make(chan feishu.InboundMessage, 16)}
 		g.chats[msg.ChatID] = w
 		go g.runWorker(msg.ChatID, w)

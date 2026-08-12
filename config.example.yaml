@@ -1,4 +1,4 @@
-# acpgw configuration
+# Steve configuration
 #
 # agent: any ACP-compliant agent backend works here. Examples:
 #   codex:       command: npx, args: ["@agentclientprotocol/codex-acp"]
@@ -9,7 +9,7 @@ agent:
   command: npx
   args: ["-y", "@agentclientprotocol/codex-acp"]
   # Directory the agent works in (session cwd). Created sessions read/write here.
-  workdir: ~/acpgw-workspace
+  workdir: ~/steve-workspace
   # Extra environment variables, e.g. ["OPENAI_API_KEY=sk-..."].
   # codex-acp reuses the local `codex login` credentials when omitted.
   env: []
@@ -21,7 +21,8 @@ feishu:
   # Create an app at https://open.feishu.cn, enable the bot capability,
   # switch event subscription to "长连接" (WebSocket long connection) mode and
   # subscribe to im.message.receive_v1.
-  # Required scopes: im:message (send/reply), im:message:readonly (receive).
+  # Required scopes for the p2p MVP: im:message.p2p_msg:readonly (receive)
+  # and im:message:send_as_bot (reply).
   app_id: cli_xxxxxxxxxxxxx
   app_secret: xxxxxxxxxxxxxxxx
 

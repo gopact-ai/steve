@@ -135,6 +135,9 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	if h.alive {
 		return nil
 	}
+	if err := os.MkdirAll(h.cfg.Workdir, 0o755); err != nil {
+		return fmt.Errorf("create agent workdir: %w", err)
+	}
 	cmd := exec.Command(h.cfg.Command, h.cfg.Args...)
 	cmd.Dir = h.cfg.Workdir
 	cmd.Env = append(os.Environ(), h.cfg.Env...)
@@ -189,7 +192,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	defer cancel()
 	resp, err := h.caller.Initialize(initCtx, &acp.InitializeRequest{
 		ProtocolVersion:    acp.ProtocolVersionV1,
-		ClientInfo:         &acp.Implementation{Name: "acpgw", Version: "0.1.0"},
+		ClientInfo:         &acp.Implementation{Name: "steve", Version: "0.1.0"},
 		ClientCapabilities: &acp.ClientCapabilities{},
 	})
 	if err != nil {

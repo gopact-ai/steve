@@ -65,6 +65,9 @@ func normalize(event *larkim.P2MessageReceiveV1) (InboundMessage, bool) {
 	if event.Event == nil || event.Event.Message == nil {
 		return InboundMessage{}, false
 	}
+	if event.Event.Sender != nil && deref(event.Event.Sender.SenderType) == "bot" {
+		return InboundMessage{}, false
+	}
 	m := event.Event.Message
 	if deref(m.MessageType) != "text" {
 		log.Printf("feishu: ignoring message type %q", deref(m.MessageType))

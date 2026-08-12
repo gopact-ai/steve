@@ -24,6 +24,13 @@ type FeishuConfig struct {
 	AppSecret string `yaml:"app_secret"`
 }
 
+func (c FeishuConfig) Validate() error {
+	if c.AppID == "" || c.AppSecret == "" {
+		return fmt.Errorf("feishu.app_id and feishu.app_secret are required")
+	}
+	return nil
+}
+
 type GatewayConfig struct {
 	PromptTimeout time.Duration `yaml:"prompt_timeout"`
 }
