@@ -35,13 +35,21 @@ type Coordinator struct {
 
 	mu      sync.Mutex
 	active  map[string]harness.Runner
-	cancels map[string]context.CancelFunc
+	cancels map[string]*turnEntry
+}
+
+// turnEntry tracks one in-flight prompt turn. The blocked prompt goroutine
+// owns session cleanup; done is closed by clearActive once it has finished,
+// so /cancel can confirm the turn ended before deciding to force-kill.
+type turnEntry struct {
+	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 func New(catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, runtime runtime, timeout time.Duration) *Coordinator {
 	return &Coordinator{
 		catalog: catalog, store: store, assembler: assembler, runtime: runtime, timeout: timeout,
-		active: map[string]harness.Runner{}, cancels: map[string]context.CancelFunc{},
+		active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
 	}
 }
 
@@ -94,7 +102,7 @@ func (c *Coordinator) prompt(parent context.Context, conversationID string, sele
 		cancel()
 		return Result{}, fmt.Errorf("agent session already has a running turn")
 	}
-	defer c.clearActive(conversationID, selected.ID, cancel)
+	defer c.clearActive(conversationID, selected.ID)
 	capabilities, err := c.assembler.Assemble(selected)
 	if err != nil {
 		return Result{}, err
@@ -196,22 +204,31 @@ func (c *Coordinator) status(conversationID string, selected agent.Agent) Result
 func (c *Coordinator) cancel(ctx context.Context, conversationID string, selected agent.Agent) (Result, error) {
 	key := sessionKey(conversationID, selected.ID)
 	c.mu.Lock()
-	runner, cancel := c.active[key], c.cancels[key]
+	runner, entry := c.active[key], c.cancels[key]
 	c.mu.Unlock()
-	if cancel == nil {
+	if entry == nil {
 		return Result{AgentID: selected.ID, Text: "当前没有运行中的任务"}, nil
 	}
 	if runner != nil {
 		cancelCtx, stop := context.WithTimeout(ctx, 15*time.Second)
 		err := runner.Cancel(cancelCtx)
 		stop()
-		cancel()
-		runner.Abort()
 		if err != nil {
+			entry.cancel()
 			return Result{}, err
 		}
-	} else {
-		cancel()
+	}
+	entry.cancel()
+	// The blocked prompt goroutine owns session cleanup. Wait for it to
+	// finish; only force-terminate the harness process if it does not stop
+	// in time, so a turn that completed cleanly is never killed after its
+	// state was saved.
+	select {
+	case <-entry.done:
+	case <-time.After(10 * time.Second):
+		if runner != nil {
+			runner.Abort()
+		}
 	}
 	return Result{AgentID: selected.ID, Text: "已请求取消 " + selected.ID + " 当前任务"}, nil
 }
@@ -223,7 +240,7 @@ func (c *Coordinator) beginTurn(conversationID, agentID string, cancel context.C
 	if c.cancels[key] != nil {
 		return false
 	}
-	c.cancels[key] = cancel
+	c.cancels[key] = &turnEntry{cancel: cancel, done: make(chan struct{})}
 	return true
 }
 
@@ -233,13 +250,16 @@ func (c *Coordinator) setRunner(conversationID, agentID string, runner harness.R
 	c.active[sessionKey(conversationID, agentID)] = runner
 }
 
-func (c *Coordinator) clearActive(conversationID, agentID string, cancel context.CancelFunc) {
+func (c *Coordinator) clearActive(conversationID, agentID string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	key := sessionKey(conversationID, agentID)
 	delete(c.active, key)
+	if entry := c.cancels[key]; entry != nil {
+		entry.cancel()
+		close(entry.done)
+	}
 	delete(c.cancels, key)
-	cancel()
 }
 
 func sessionKey(conversationID, agentID string) string { return conversationID + "\x00" + agentID }

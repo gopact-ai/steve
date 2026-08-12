@@ -35,7 +35,7 @@ type Channel struct {
 	ws  *larkws.Client
 }
 
-var mentionToken = regexp.MustCompile(`@_user_\d+\s*`)
+var mentionToken = regexp.MustCompile(`@_(user_\d+|all)\s*`)
 
 func New(ctx context.Context, appID, appSecret string, allowedSenders []string, handler Handler) (*Channel, error) {
 	api := lark.NewClient(appID, appSecret)

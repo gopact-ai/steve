@@ -194,6 +194,20 @@ func TestCoordinatorCancelsRunningTurn(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("turn did not finish after cancel")
 	}
+	if _, ok := store.Conversation("chat").Sessions["codex"]; ok {
+		t.Fatal("prompt goroutine did not clean up the canceled session")
+	}
+}
+
+func TestCoordinatorCancelWithoutRunningTurn(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}}}
+	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	result, err := coordinator.Handle(t.Context(), "chat", "/cancel")
+	if err != nil || !strings.Contains(result.Text, "没有运行中的任务") {
+		t.Fatalf("cancel = %#v, %v", result, err)
+	}
 }
 
 func TestCoordinatorRejectsConcurrentTurnForSession(t *testing.T) {

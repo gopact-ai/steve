@@ -25,6 +25,15 @@ func TestNormalizeIgnoresUnmentionedGroupMessage(t *testing.T) {
 	}
 }
 
+func TestNormalizeStripsAllMention(t *testing.T) {
+	event := messageEvent("user", "text", `{"text":"@_all hello"}`)
+	event.Event.Message.Mentions = []*larkim.MentionEvent{{MentionedType: ptr("bot"), Id: &larkim.UserId{OpenId: ptr("ou_bot")}}}
+	msg, ok := normalize(event, "ou_bot")
+	if !ok || msg.Text != "hello" {
+		t.Fatalf("unexpected message: %#v, %v", msg, ok)
+	}
+}
+
 func TestNormalizeIgnoresMentionOfAnotherBot(t *testing.T) {
 	event := messageEvent("user", "text", `{"text":"@_user_1 hello"}`)
 	event.Event.Message.Mentions = []*larkim.MentionEvent{{MentionedType: ptr("bot"), Id: &larkim.UserId{OpenId: ptr("ou_other")}}}

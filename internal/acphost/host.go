@@ -141,6 +141,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		return fmt.Errorf("create agent workdir: %w", err)
 	}
 	cmd := exec.Command(h.cfg.Command, h.cfg.Args...)
+	setProcessGroup(cmd)
 	cmd.Dir = processDir
 	cmd.Env = append(os.Environ(), h.cfg.Env...)
 	cmd.Stderr = os.Stderr
@@ -161,7 +162,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		return &clientHandler{h: h, generation: generation}
 	})
 	if err != nil {
-		_ = cmd.Process.Kill()
+		killProcessGroup(cmd)
 		return fmt.Errorf("acp client: %w", err)
 	}
 	exited := make(chan struct{})
@@ -427,9 +428,7 @@ func (h *Host) shutdownLocked() {
 		select {
 		case <-h.exited:
 		case <-time.After(5 * time.Second):
-			if h.cmd != nil && h.cmd.Process != nil {
-				_ = h.cmd.Process.Kill()
-			}
+			killProcessGroup(h.cmd)
 			select {
 			case <-h.exited:
 			case <-time.After(5 * time.Second):

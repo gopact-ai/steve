@@ -3,6 +3,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"log"
 	"strings"
 	"sync"
@@ -95,6 +96,10 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 	result, err := g.processor.Handle(context.Background(), conversationID, msg.Text)
 	if err != nil {
 		log.Printf("gateway: turn failed: chat=%s error=%v", msg.ChatID, err)
+		if errors.Is(err, context.Canceled) {
+			g.reply(msg.MessageID, "任务已取消")
+			return
+		}
 		g.reply(msg.MessageID, "Agent 调用失败，请检查 Steve 日志。")
 		return
 	}

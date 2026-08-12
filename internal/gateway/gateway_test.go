@@ -23,6 +23,12 @@ func (fakeProcessor) Handle(_ context.Context, _, text string) (turn.Result, err
 	return turn.Result{Text: "reply: " + text}, nil
 }
 
+type cancelingProcessor struct{}
+
+func (cancelingProcessor) Handle(context.Context, string, string) (turn.Result, error) {
+	return turn.Result{}, context.Canceled
+}
+
 type countingProcessor struct{ calls atomic.Int32 }
 
 func (p *countingProcessor) Handle(_ context.Context, _, text string) (turn.Result, error) {
@@ -39,6 +45,22 @@ func TestGatewayReplies(t *testing.T) {
 	select {
 	case got := <-r.text:
 		if got != "reply: hello" {
+			t.Fatalf("unexpected reply: %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for reply")
+	}
+}
+
+func TestGatewayRepliesCanceledTurn(t *testing.T) {
+	g := New(cancelingProcessor{})
+	r := &reply{text: make(chan string, 1)}
+	g.BindChannel(r)
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_message", Text: "long task"})
+
+	select {
+	case got := <-r.text:
+		if got != "任务已取消" {
 			t.Fatalf("unexpected reply: %q", got)
 		}
 	case <-time.After(time.Second):
