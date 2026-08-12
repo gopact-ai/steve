@@ -13,7 +13,7 @@ import (
 func buildMockAgent(t *testing.T) string {
 	t.Helper()
 	bin := filepath.Join(t.TempDir(), "mockagent")
-	cmd := exec.Command("go", "build", "-o", bin, "acpgw/cmd/mockagent")
+	cmd := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
 	cmd.Dir = "../.."
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build mockagent: %v\n%s", err, out)

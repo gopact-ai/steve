@@ -1,4 +1,4 @@
-module acpgw
+module github.com/gopact-ai/steve
 
 go 1.27
 

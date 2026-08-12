@@ -12,8 +12,8 @@ import (
 
 	"github.com/gopact-ai/acp"
 
-	"acpgw/internal/acphost"
-	"acpgw/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/channel/feishu"
 )
 
 type Config struct {

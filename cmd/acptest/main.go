@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"acpgw/internal/acphost"
-	"acpgw/internal/config"
+	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/config"
 )
 
 func main() {
