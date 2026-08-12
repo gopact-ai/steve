@@ -2,6 +2,7 @@ package turn
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -140,6 +141,17 @@ func (c *Coordinator) prompt(parent context.Context, conversationID string, sele
 		err = ctx.Err()
 	}
 	if err != nil {
+		if errors.Is(err, harness.ErrTurnCanceled) {
+			// The agent stopped the turn itself (e.g. a permission request
+			// was rejected); the session stays consistent, so keep it and
+			// clear the taint instead of tearing the process down.
+			session.Tainted = false
+			session.InstructionsApplied = true
+			if stateErr := c.store.SaveSession(session); stateErr != nil {
+				log.Printf("turn: save canceled session state: %v", stateErr)
+			}
+			return Result{}, err
+		}
 		cancelCtx, stop := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
 		cancelErr := runner.Cancel(cancelCtx)
 		stop()
@@ -218,16 +230,20 @@ func (c *Coordinator) cancel(ctx context.Context, conversationID string, selecte
 			return Result{}, err
 		}
 	}
-	entry.cancel()
-	// The blocked prompt goroutine owns session cleanup. Wait for it to
-	// finish; only force-terminate the harness process if it does not stop
-	// in time, so a turn that completed cleanly is never killed after its
-	// state was saved.
+	// Give the agent a chance to stop gracefully; the blocked prompt
+	// goroutine owns session cleanup. Only abandon the pending call and
+	// force-terminate the harness process if the turn does not end in time.
 	select {
 	case <-entry.done:
 	case <-time.After(10 * time.Second):
+		entry.cancel()
 		if runner != nil {
 			runner.Abort()
+		}
+		select {
+		case <-entry.done:
+		case <-time.After(10 * time.Second):
+			log.Printf("turn: prompt goroutine did not finish after abort")
 		}
 	}
 	return Result{AgentID: selected.ID, Text: "已请求取消 " + selected.ID + " 当前任务"}, nil

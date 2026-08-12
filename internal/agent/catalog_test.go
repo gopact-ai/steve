@@ -93,3 +93,38 @@ func TestSelectorAcceptsWhitespaceSeparators(t *testing.T) {
 		}
 	}
 }
+
+func TestSelectorParsesTagWithoutSpace(t *testing.T) {
+	catalog, err := NewCatalog(map[string]Config{
+		"claude": {Harness: "claude"},
+		"codex":  {Harness: "codex", Default: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tests := []struct {
+		input   string
+		agentID string
+		prompt  string
+	}{
+		{input: "@codex帮我看看", agentID: "codex", prompt: "帮我看看"},
+		{input: "@claude：帮我", agentID: "claude", prompt: "：帮我"},
+		{input: "/use codexhello", agentID: "codex", prompt: "hello"},
+	}
+	for _, tt := range tests {
+		selection, ok := catalog.Select(tt.input)
+		if !ok || selection.Agent.ID != tt.agentID || selection.Prompt != tt.prompt || selection.SwitchOnly {
+			t.Fatalf("Select(%q) = %#v, %v", tt.input, selection, ok)
+		}
+	}
+}
+
+func TestSelectorRejectsUnknownTag(t *testing.T) {
+	catalog, err := NewCatalog(map[string]Config{"codex": {Harness: "codex", Default: true}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := catalog.Select("@gemini fix it"); ok {
+		t.Fatal("unknown tag was accepted")
+	}
+}

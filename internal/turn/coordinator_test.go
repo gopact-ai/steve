@@ -3,6 +3,7 @@ package turn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -36,14 +37,15 @@ func (m *fakeManager) OpenSession(_ context.Context, harnessID, upstreamID, _ st
 func (m *fakeManager) CloseSession(context.Context, string, string) error { return nil }
 
 type fakeRunner struct {
-	id      string
-	prompts []string
-	started chan struct{}
-	done    chan struct{}
-	err     error
-	cancels atomic.Int32
-	aborts  atomic.Int32
-	stop    sync.Once
+	id       string
+	prompts  []string
+	started  chan struct{}
+	done     chan struct{}
+	err      error
+	canceled atomic.Bool
+	cancels  atomic.Int32
+	aborts   atomic.Int32
+	stop     sync.Once
 }
 
 func (r *fakeRunner) ID() string { return r.id }
@@ -53,10 +55,14 @@ func (r *fakeRunner) Prompt(_ context.Context, prompt string) (string, []string,
 		close(r.started)
 		<-r.done
 	}
+	if r.canceled.Load() {
+		return "", nil, context.Canceled
+	}
 	return "reply: " + prompt, nil, r.err
 }
 func (r *fakeRunner) Cancel(context.Context) error {
 	r.cancels.Add(1)
+	r.canceled.Store(true)
 	if r.done != nil {
 		r.stop.Do(func() { close(r.done) })
 	}
@@ -207,6 +213,33 @@ func TestCoordinatorCancelWithoutRunningTurn(t *testing.T) {
 	result, err := coordinator.Handle(t.Context(), "chat", "/cancel")
 	if err != nil || !strings.Contains(result.Text, "没有运行中的任务") {
 		t.Fatalf("cancel = %#v, %v", result, err)
+	}
+}
+
+func TestCoordinatorKeepsSessionWhenAgentCancelsTurn(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	runner := &fakeRunner{err: fmt.Errorf("%w: %w", harness.ErrTurnCanceled, context.Canceled)}
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
+	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	if _, err := coordinator.Handle(t.Context(), "chat", "hello"); err == nil {
+		t.Fatal("expected canceled turn error")
+	}
+	if runner.aborts.Load() != 0 {
+		t.Fatal("graceful agent cancel must not abort the process")
+	}
+	if runner.cancels.Load() != 0 {
+		t.Fatal("graceful agent cancel must not re-send cancel")
+	}
+	session, ok := store.Conversation("chat").Sessions["codex"]
+	if !ok {
+		t.Fatal("gracefully canceled session was deleted")
+	}
+	if session.Tainted {
+		t.Fatal("canceled session left tainted")
+	}
+	if !session.InstructionsApplied {
+		t.Fatal("canceled session did not record instruction state")
 	}
 }
 

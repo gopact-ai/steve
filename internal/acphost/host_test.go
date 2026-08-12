@@ -2,6 +2,7 @@ package acphost
 
 import (
 	"context"
+	"errors"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -80,6 +81,27 @@ func TestPromptRoundTrip(t *testing.T) {
 		t.Fatalf("Prompt: %v", err)
 	}
 	if out != "echo: hello world" {
+		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestPromptCanceledStopReason(t *testing.T) {
+	h := newTestHost(t, "deny")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	sid, generation, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, _, err := h.Prompt(ctx, sid, generation, "cancelme now", nil)
+	if err == nil {
+		t.Fatal("expected canceled turn error")
+	}
+	if !errors.Is(err, ErrTurnCanceled) || !errors.Is(err, context.Canceled) {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if out != "echo: cancelme now" {
 		t.Fatalf("unexpected output: %q", out)
 	}
 }

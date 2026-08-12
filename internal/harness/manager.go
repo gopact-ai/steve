@@ -101,6 +101,10 @@ func (m *Manager) host(id string) (*acphost.Host, error) {
 	return host, nil
 }
 
+// ErrTurnCanceled is re-exported from acphost so coordinators can recognize
+// a turn the agent ended itself without importing the host package.
+var ErrTurnCanceled = acphost.ErrTurnCanceled
+
 type Runner interface {
 	ID() string
 	Prompt(context.Context, string) (string, []string, error)

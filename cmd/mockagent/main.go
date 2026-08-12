@@ -73,6 +73,9 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: chunk}); err != nil {
 		return nil, err
 	}
+	if strings.Contains(input, "cancelme") {
+		return &acp.PromptResponse{StopReason: acp.StopReasonCanceled}, nil
+	}
 	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
 }
 

@@ -123,8 +123,14 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	assembler := cfg.CapabilityAssembler()
+	for _, selected := range catalog.List() {
+		if _, err := assembler.Assemble(selected); err != nil {
+			return fmt.Errorf("agent %q capabilities: %w", selected.ID, err)
+		}
+	}
 	coordinator := turn.New(
-		catalog, store, cfg.CapabilityAssembler(), manager, time.Duration(cfg.Gateway.PromptTimeout),
+		catalog, store, assembler, manager, time.Duration(cfg.Gateway.PromptTimeout),
 	)
 	gw := gateway.New(coordinator)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

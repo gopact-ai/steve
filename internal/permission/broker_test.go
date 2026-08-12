@@ -33,3 +33,31 @@ func TestBrokerDecide(t *testing.T) {
 		})
 	}
 }
+
+func TestBrokerDenyPrefersRejectAlways(t *testing.T) {
+	broker, err := New("deny")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := broker.Decide([]acp.PermissionOption{
+		{OptionID: "reject-once", Kind: acp.PermissionOptionKindRejectOnce},
+		{OptionID: "reject-always", Kind: acp.PermissionOptionKindRejectAlways},
+	})
+	if outcome.OptionID != "reject-always" {
+		t.Fatalf("expected reject-always, got %q", outcome.OptionID)
+	}
+}
+
+func TestBrokerDenyWithoutRejectOptionCancels(t *testing.T) {
+	broker, err := New("deny")
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome := broker.Decide([]acp.PermissionOption{
+		{OptionID: "allow", Kind: acp.PermissionOptionKindAllowOnce},
+		{OptionID: "always", Kind: acp.PermissionOptionKindAllowAlways},
+	})
+	if outcome.Outcome != acp.RequestPermissionOutcomeTypeCanceled {
+		t.Fatalf("expected canceled outcome, got %q", outcome.Outcome)
+	}
+}

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -110,7 +111,19 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 	if len(result.Activity) > 0 {
 		out += "\n\n---\n" + strings.Join(result.Activity, "\n")
 	}
-	g.reply(msg.MessageID, out)
+	g.reply(msg.MessageID, truncateRunes(out, maxReplyRunes))
+}
+
+// maxReplyRunes keeps replies under the Feishu text message size limit so a
+// long agent dump is truncated instead of silently lost.
+const maxReplyRunes = 30000
+
+func truncateRunes(text string, max int) string {
+	if utf8.RuneCountInString(text) <= max {
+		return text
+	}
+	runes := []rune(text)
+	return string(runes[:max]) + "\n\n…(内容过长，已截断)"
 }
 
 func (g *Gateway) reply(messageID, text string) {

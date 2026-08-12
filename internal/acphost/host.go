@@ -21,6 +21,11 @@ import (
 var ErrResumeUnsupported = errors.New("agent does not support session resume")
 var ErrSessionBusy = errors.New("session already has a running turn")
 
+// ErrTurnCanceled marks a turn the agent ended itself with
+// StopReasonCanceled (e.g. a permission request was rejected). The session
+// stays consistent, so callers keep it instead of tearing the process down.
+var ErrTurnCanceled = errors.New("agent canceled the turn")
+
 type Config struct {
 	Command    string
 	Args       []string
@@ -143,7 +148,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	cmd := exec.Command(h.cfg.Command, h.cfg.Args...)
 	setProcessGroup(cmd)
 	cmd.Dir = processDir
-	cmd.Env = append(os.Environ(), h.cfg.Env...)
+	cmd.Env = mergeEnv(os.Environ(), h.cfg.Env)
 	cmd.Stderr = os.Stderr
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -334,7 +339,7 @@ func (h *Host) Prompt(ctx context.Context, sid acp.SessionID, generation uint64,
 		return out, activity, fmt.Errorf("session/prompt: %w", err)
 	}
 	if resp.StopReason == acp.StopReasonCanceled {
-		return out, activity, context.Canceled
+		return out, activity, fmt.Errorf("%w: %w", ErrTurnCanceled, context.Canceled)
 	}
 	if resp.StopReason != acp.StopReasonEndTurn {
 		activity = append(activity, fmt.Sprintf("(stopReason: %s)", resp.StopReason))

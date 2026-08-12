@@ -31,7 +31,9 @@ func (b *Broker) Decide(options []acp.PermissionOption) acp.RequestPermissionOut
 	var option *acp.PermissionOption
 	switch b.policy {
 	case "deny":
-		option = pick(acp.PermissionOptionKindRejectOnce, acp.PermissionOptionKindRejectAlways)
+		// Prefer reject_always so the agent cannot retry the same tool in a
+		// request_permission loop.
+		option = pick(acp.PermissionOptionKindRejectAlways, acp.PermissionOptionKindRejectOnce)
 	case "always_allow":
 		option = pick(acp.PermissionOptionKindAllowAlways, acp.PermissionOptionKindAllowOnce)
 	default:

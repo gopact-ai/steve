@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -84,5 +85,19 @@ func TestGatewayDeduplicatesMessageID(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if calls := processor.calls.Load(); calls != 1 {
 		t.Fatalf("processor calls = %d, want 1", calls)
+	}
+}
+
+func TestTruncateRunes(t *testing.T) {
+	if got := truncateRunes("short", maxReplyRunes); got != "short" {
+		t.Fatalf("short text changed: %q", got)
+	}
+	long := strings.Repeat("长", maxReplyRunes+1)
+	got := truncateRunes(long, maxReplyRunes)
+	if !strings.HasPrefix(got, strings.Repeat("长", maxReplyRunes)) {
+		t.Fatal("truncated text lost its prefix")
+	}
+	if !strings.Contains(got, "已截断") {
+		t.Fatal("truncated text is missing the truncation notice")
 	}
 }

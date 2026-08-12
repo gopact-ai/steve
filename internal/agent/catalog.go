@@ -24,9 +24,10 @@ type Agent struct {
 }
 
 type Catalog struct {
-	agents       map[string]Agent
-	aliases      map[string]string
-	defaultAgent Agent
+	agents         map[string]Agent
+	aliases        map[string]string
+	longestAliases []string
+	defaultAgent   Agent
 }
 
 func NewCatalog(configs map[string]Config) (*Catalog, error) {
@@ -64,6 +65,13 @@ func NewCatalog(configs map[string]Config) (*Catalog, error) {
 	if c.defaultAgent.ID == "" {
 		return nil, fmt.Errorf("one default agent is required")
 	}
+	c.longestAliases = make([]string, 0, len(c.aliases))
+	for alias := range c.aliases {
+		c.longestAliases = append(c.longestAliases, alias)
+	}
+	sort.Slice(c.longestAliases, func(i, j int) bool {
+		return len(c.longestAliases[i]) > len(c.longestAliases[j])
+	})
 	return c, nil
 }
 
@@ -97,22 +105,41 @@ func (c *Catalog) Select(input string) (Selection, bool) {
 	if input == "" {
 		return Selection{}, false
 	}
-	var name string
-	var prompt string
+	var rest string
 	switch {
 	case strings.HasPrefix(input, "@"):
-		name, prompt = cutField(strings.TrimPrefix(input, "@"))
+		rest = strings.TrimPrefix(input, "@")
 	case strings.HasPrefix(input, "/use") && hasLeadingSpace(strings.TrimPrefix(input, "/use")):
-		remainder := strings.TrimSpace(strings.TrimPrefix(input, "/use"))
-		name, prompt = cutField(remainder)
+		rest = strings.TrimSpace(strings.TrimPrefix(input, "/use"))
 	default:
 		return Selection{}, false
 	}
+	name, prompt := cutField(rest)
 	agent, ok := c.Resolve(name)
 	if !ok {
-		return Selection{}, false
+		// Chinese input often omits the space after the tag ("@codex帮我看看")
+		// or uses fullwidth punctuation; fall back to longest-alias-prefix
+		// matching so the message still reaches the intended agent.
+		agent, prompt, ok = c.resolvePrefix(rest)
+		if !ok {
+			return Selection{}, false
+		}
 	}
 	return Selection{Agent: agent, Prompt: prompt, SwitchOnly: prompt == ""}, true
+}
+
+// resolvePrefix matches the longest configured alias that is a prefix of
+// rest and returns the remainder as the prompt.
+func (c *Catalog) resolvePrefix(rest string) (Agent, string, bool) {
+	rest = strings.TrimSpace(rest)
+	normalized := normalize(rest)
+	for _, alias := range c.longestAliases {
+		if strings.HasPrefix(normalized, alias) {
+			agent := c.agents[c.aliases[alias]]
+			return agent, strings.TrimSpace(rest[len(alias):]), true
+		}
+	}
+	return Agent{}, "", false
 }
 
 func normalize(value string) string { return strings.ToLower(strings.TrimSpace(value)) }

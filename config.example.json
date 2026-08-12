@@ -3,7 +3,7 @@
     "codex": {
       "aliases": ["codex"],
       "harness": "codex",
-      "workspace": "~/steve-workspace",
+      "workspace": "~/steve-workspace/codex",
       "skills": [],
       "mcp_servers": [],
       "default": true
@@ -11,7 +11,7 @@
     "claude": {
       "aliases": ["claude"],
       "harness": "claude-code",
-      "workspace": "~/steve-workspace",
+      "workspace": "~/steve-workspace/claude",
       "skills": [],
       "mcp_servers": []
     }

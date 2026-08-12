@@ -99,10 +99,10 @@ func Starter(appID, appSecret, allowedSender string) *Config {
 	return &Config{
 		Agents: map[string]Agent{
 			"codex": {
-				Aliases: []string{"codex"}, Harness: "codex", Workspace: "~/steve-workspace", Default: true,
+				Aliases: []string{"codex"}, Harness: "codex", Workspace: "~/steve-workspace/codex", Default: true,
 			},
 			"claude": {
-				Aliases: []string{"claude"}, Harness: "claude-code", Workspace: "~/steve-workspace",
+				Aliases: []string{"claude"}, Harness: "claude-code", Workspace: "~/steve-workspace/claude",
 			},
 		},
 		Harnesses: map[string]Harness{
