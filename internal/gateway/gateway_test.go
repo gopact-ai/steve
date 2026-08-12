@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -85,6 +86,61 @@ func TestGatewayDeduplicatesMessageID(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	if calls := processor.calls.Load(); calls != 1 {
 		t.Fatalf("processor calls = %d, want 1", calls)
+	}
+}
+
+type blockingProcessor struct {
+	mu      sync.Mutex
+	seen    []string
+	release chan struct{}
+}
+
+func (p *blockingProcessor) Handle(_ context.Context, _, text string) (turn.Result, error) {
+	first := false
+	p.mu.Lock()
+	p.seen = append(p.seen, text)
+	first = len(p.seen) == 1
+	p.mu.Unlock()
+	if first {
+		<-p.release
+	}
+	return turn.Result{Text: "reply: " + text}, nil
+}
+
+func (p *blockingProcessor) texts() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.seen...)
+}
+
+func TestGatewayCancelDrainsQueuedMessages(t *testing.T) {
+	processor := &blockingProcessor{release: make(chan struct{})}
+	g := New(processor)
+	r := &reply{text: make(chan string, 4)}
+	g.BindChannel(r)
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_1", Text: "long task"})
+	deadline := time.Now().Add(time.Second)
+	for len(processor.texts()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(processor.texts()) == 0 {
+		t.Fatal("worker did not pick up the first message")
+	}
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_2", Text: "queued"})
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_3", Text: "/cancel"})
+	close(processor.release)
+
+	deadline = time.Now().Add(time.Second)
+	for len(processor.texts()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	for _, seen := range processor.texts() {
+		if seen == "queued" {
+			t.Fatal("queued message ran after cancel")
+		}
+	}
+	if got := processor.texts(); len(got) < 2 || got[0] != "long task" || got[1] != "/cancel" {
+		t.Fatalf("unexpected processing order: %v", got)
 	}
 }
 

@@ -21,9 +21,13 @@ import (
 type fakeManager struct {
 	runners map[string]*fakeRunner
 	opened  []string
+	fail    error
 }
 
 func (m *fakeManager) OpenSession(_ context.Context, harnessID, upstreamID, _ string, _ []acp.MCPServer) (harness.Runner, error) {
+	if m.fail != nil {
+		return nil, m.fail
+	}
 	id := upstreamID
 	if id == "" {
 		id = harnessID + "-session"
@@ -49,11 +53,15 @@ type fakeRunner struct {
 }
 
 func (r *fakeRunner) ID() string { return r.id }
-func (r *fakeRunner) Prompt(_ context.Context, prompt string) (string, []string, error) {
+func (r *fakeRunner) Prompt(ctx context.Context, prompt string) (string, []string, error) {
 	r.prompts = append(r.prompts, prompt)
 	if r.started != nil {
 		close(r.started)
-		<-r.done
+		select {
+		case <-r.done:
+		case <-ctx.Done():
+			return "", nil, ctx.Err()
+		}
 	}
 	if r.canceled.Load() {
 		return "", nil, context.Canceled
@@ -70,7 +78,7 @@ func (r *fakeRunner) Cancel(context.Context) error {
 }
 func (r *fakeRunner) Abort() { r.aborts.Add(1) }
 
-func TestCoordinatorCancelsFailedTurnAndDiscardsSession(t *testing.T) {
+func TestCoordinatorDropsSessionOnTurnErrorWithoutKillingProcess(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
 		"codex": {Harness: "codex", Workspace: t.TempDir(), SystemPrompt: "rules", Default: true},
 	})
@@ -81,14 +89,72 @@ func TestCoordinatorCancelsFailedTurnAndDiscardsSession(t *testing.T) {
 	if _, err := coordinator.Handle(t.Context(), "chat", "hello"); err == nil {
 		t.Fatal("expected prompt error")
 	}
-	if runner.cancels.Load() < 1 {
-		t.Fatal("cancel was not called")
-	}
-	if runner.aborts.Load() < 1 {
-		t.Fatal("abort was not called")
+	// The turn ended with an error while the context was intact: the process
+	// is healthy and must not be canceled or killed.
+	if runner.cancels.Load() != 0 || runner.aborts.Load() != 0 {
+		t.Fatalf("healthy process was torn down: cancels=%d aborts=%d", runner.cancels.Load(), runner.aborts.Load())
 	}
 	if _, ok := store.Conversation("chat").Sessions["codex"]; ok {
 		t.Fatal("failed turn session was retained")
+	}
+}
+
+func TestCoordinatorAbortsStuckTurnOnTimeout(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
+	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, 50*time.Millisecond)
+	if _, err := coordinator.Handle(t.Context(), "chat", "stuck"); err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+	if runner.aborts.Load() == 0 {
+		t.Fatal("stuck turn did not abort the process")
+	}
+	if _, ok := store.Conversation("chat").Sessions["codex"]; ok {
+		t.Fatal("timed-out session was retained")
+	}
+}
+
+func TestCoordinatorDropsStaleSessionWhenOpenFails(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	assembler := capability.NewAssembler(nil)
+	capabilities, err := assembler.Assemble(catalog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.SaveSession(state.Session{
+		ConversationID: "chat", AgentID: "codex", HarnessID: "codex",
+		UpstreamID: "stale-session", Workspace: catalog.Default().Workspace,
+		CapabilityHash: capabilities.Fingerprint,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	failing := &fakeManager{fail: errors.New("session/load: not found")}
+	coordinator := New(catalog, store, assembler, failing, time.Minute)
+	if _, err := coordinator.Handle(t.Context(), "chat", "hello"); err == nil {
+		t.Fatal("expected open error")
+	}
+	if _, ok := store.Conversation("chat").Sessions["codex"]; ok {
+		t.Fatal("unreopenable session record was retained")
+	}
+}
+
+func TestCoordinatorPendingCancelStopsNextTurn(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	runner := &fakeRunner{}
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
+	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	if result, err := coordinator.Handle(t.Context(), "chat", "/cancel"); err != nil || !strings.Contains(result.Text, "没有运行中的任务") {
+		t.Fatalf("cancel = %#v, %v", result, err)
+	}
+	if _, err := coordinator.Handle(t.Context(), "chat", "hello"); err == nil || !errors.Is(err, context.Canceled) {
+		t.Fatalf("expected pending cancel to stop the next turn, got %v", err)
+	}
+	if len(runner.prompts) != 0 {
+		t.Fatalf("canceled turn still prompted the agent: %v", runner.prompts)
 	}
 }
 

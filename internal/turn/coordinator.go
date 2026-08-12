@@ -34,9 +34,10 @@ type Coordinator struct {
 	runtime   runtime
 	timeout   time.Duration
 
-	mu      sync.Mutex
-	active  map[string]harness.Runner
-	cancels map[string]*turnEntry
+	mu            sync.Mutex
+	active        map[string]harness.Runner
+	cancels       map[string]*turnEntry
+	cancelPending map[string]time.Time
 }
 
 // turnEntry tracks one in-flight prompt turn. The blocked prompt goroutine
@@ -51,6 +52,7 @@ func New(catalog *agent.Catalog, store *state.Store, assembler *capability.Assem
 	return &Coordinator{
 		catalog: catalog, store: store, assembler: assembler, runtime: runtime, timeout: timeout,
 		active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
+		cancelPending: map[string]time.Time{},
 	}
 }
 
@@ -104,6 +106,9 @@ func (c *Coordinator) prompt(parent context.Context, conversationID string, sele
 		return Result{}, fmt.Errorf("agent session already has a running turn")
 	}
 	defer c.clearActive(conversationID, selected.ID)
+	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
+		return Result{}, context.Canceled
+	}
 	capabilities, err := c.assembler.Assemble(selected)
 	if err != nil {
 		return Result{}, err
@@ -121,6 +126,14 @@ func (c *Coordinator) prompt(parent context.Context, conversationID string, sele
 	}
 	runner, err := c.open(ctx, saved, selected, capabilities.MCPServers)
 	if err != nil {
+		if saved.UpstreamID != "" {
+			// The saved upstream session could not be reopened; drop the
+			// stale record so the next turn starts a fresh session instead
+			// of failing identically on every retry.
+			if stateErr := c.store.DeleteSession(conversationID, selected.ID); stateErr != nil {
+				log.Printf("turn: delete unreopenable session state: %v", stateErr)
+			}
+		}
 		return Result{}, err
 	}
 	session := state.Session{
@@ -152,6 +165,18 @@ func (c *Coordinator) prompt(parent context.Context, conversationID string, sele
 			}
 			return Result{}, err
 		}
+		if ctx.Err() == nil {
+			// The turn ended with an error while the context is intact, so
+			// the agent stopped by itself and the process is healthy. Drop
+			// the session and let the next turn start fresh without killing
+			// the shared harness process.
+			if stateErr := c.store.DeleteSession(conversationID, selected.ID); stateErr != nil {
+				log.Printf("turn: delete failed session state: %v", stateErr)
+			}
+			return Result{}, err
+		}
+		// The context expired or was canceled while the turn was possibly
+		// still running; the process may be stuck, so terminate it.
 		cancelCtx, stop := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
 		cancelErr := runner.Cancel(cancelCtx)
 		stop()
@@ -199,6 +224,14 @@ func (c *Coordinator) reset(ctx context.Context, conversationID string, selected
 	if err := c.runtime.CloseSession(ctx, session.HarnessID, session.UpstreamID); err != nil {
 		return Result{}, err
 	}
+	c.mu.Lock()
+	busy = c.cancels[sessionKey(conversationID, selected.ID)] != nil
+	c.mu.Unlock()
+	if busy {
+		// A turn started while the session was being closed; its error path
+		// owns the state cleanup, so leave the record alone.
+		return Result{}, fmt.Errorf("agent session already has a running turn")
+	}
 	if err := c.store.DeleteSession(conversationID, selected.ID); err != nil {
 		return Result{}, err
 	}
@@ -219,6 +252,12 @@ func (c *Coordinator) cancel(ctx context.Context, conversationID string, selecte
 	runner, entry := c.active[key], c.cancels[key]
 	c.mu.Unlock()
 	if entry == nil {
+		// A turn may be starting right now (the worker already dequeued the
+		// message); arm a short-lived flag so a turn that begins within the
+		// window is canceled instead of running after the user asked to stop.
+		c.mu.Lock()
+		c.cancelPending[key] = time.Now().Add(pendingCancelWindow)
+		c.mu.Unlock()
 		return Result{AgentID: selected.ID, Text: "当前没有运行中的任务"}, nil
 	}
 	if runner != nil {
@@ -258,6 +297,21 @@ func (c *Coordinator) beginTurn(conversationID, agentID string, cancel context.C
 	}
 	c.cancels[key] = &turnEntry{cancel: cancel, done: make(chan struct{})}
 	return true
+}
+
+// pendingCancelWindow is how long an armed cancel stays effective when no
+// turn was running yet — long enough to cover the dequeue-to-beginTurn gap.
+const pendingCancelWindow = 5 * time.Second
+
+func (c *Coordinator) consumePendingCancel(key string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	deadline, ok := c.cancelPending[key]
+	if !ok {
+		return false
+	}
+	delete(c.cancelPending, key)
+	return time.Now().Before(deadline)
 }
 
 func (c *Coordinator) setRunner(conversationID, agentID string, runner harness.Runner) {

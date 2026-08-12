@@ -177,6 +177,14 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	h.alive = true
 	h.exited = exited
 	h.generation = generation
+	// Reset per-process state here as well as in the monitor goroutine: the
+	// monitor skips its reset when a new process has already been started,
+	// and stale P1-era session maps must never serve P2.
+	h.collectors = map[acp.SessionID]*collector{}
+	h.sessions = map[acp.SessionID]bool{}
+	h.opening = map[acp.SessionID]uint64{}
+	h.active = map[acp.SessionID]uint64{}
+	h.capabilities = nil
 
 	// Sole waiter for this process; broadcasts exit before taking the lock
 	// so shutdownLocked can wait on `exited` while holding h.mu.
@@ -416,29 +424,35 @@ func (h *Host) Stop() {
 }
 
 // shutdownLocked closes the connection and waits for the monitor goroutine to
-// reap the process; requires h.mu to be held. cmd.Wait is never called here —
-// the monitor goroutine is the sole waiter.
+// reap the process; requires h.mu to be held. It releases h.mu while waiting
+// so in-flight session notifications can drain instead of blocking on the
+// lock (conn.Done waits for the notification loop, whose handler takes h.mu).
+// cmd.Wait is never called here — the monitor goroutine is the sole waiter.
 func (h *Host) shutdownLocked() {
 	if !h.alive {
 		return
 	}
 	h.alive = false
-	if h.conn != nil {
-		_ = h.conn.Close()
+	conn, stdin, exited, cmd := h.conn, h.stdin, h.exited, h.cmd
+	if conn != nil {
+		_ = conn.Close()
 	}
-	if h.stdin != nil {
-		_ = h.stdin.Close()
+	if stdin != nil {
+		_ = stdin.Close()
 	}
-	if h.exited != nil {
+	if exited == nil {
+		return
+	}
+	h.mu.Unlock()
+	select {
+	case <-exited:
+	case <-time.After(5 * time.Second):
+		killProcessGroup(cmd)
 		select {
-		case <-h.exited:
+		case <-exited:
 		case <-time.After(5 * time.Second):
-			killProcessGroup(h.cmd)
-			select {
-			case <-h.exited:
-			case <-time.After(5 * time.Second):
-				log.Printf("acphost: process did not exit after kill")
-			}
+			log.Printf("acphost: process did not exit after kill")
 		}
 	}
+	h.mu.Lock()
 }

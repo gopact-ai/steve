@@ -39,20 +39,24 @@ func New(processor processor) *Gateway {
 func (g *Gateway) BindChannel(ch replier) { g.ch = ch }
 
 func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
+	conversationID := msg.ConversationID
+	if conversationID == "" {
+		conversationID = msg.ChatID
+	}
 	g.mu.Lock()
 	if _, duplicate := g.seen[msg.MessageID]; msg.MessageID != "" && duplicate {
 		g.mu.Unlock()
 		return
 	}
 	if strings.TrimSpace(msg.Text) == "/cancel" {
+		// /cancel means "stop everything in this chat": drop queued prompts
+		// so they cannot run after the cancel, then cancel the in-flight
+		// turn out-of-band.
+		g.drainLocked(conversationID)
 		g.rememberLocked(msg.MessageID)
 		g.mu.Unlock()
 		go g.process(msg)
 		return
-	}
-	conversationID := msg.ConversationID
-	if conversationID == "" {
-		conversationID = msg.ChatID
 	}
 	queue := g.chats[conversationID]
 	if queue == nil {
@@ -68,6 +72,24 @@ func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
 	default:
 		g.mu.Unlock()
 		g.reply(msg.MessageID, "当前会话排队消息过多，请稍后再发。")
+	}
+}
+
+// drainLocked drops every queued message of a conversation. Queued prompts
+// are stale once the user cancels; their IDs are remembered so a Feishu
+// redelivery does not rerun them. Requires g.mu to be held.
+func (g *Gateway) drainLocked(conversationID string) {
+	queue := g.chats[conversationID]
+	if queue == nil {
+		return
+	}
+	for {
+		select {
+		case msg := <-queue:
+			g.rememberLocked(msg.MessageID)
+		default:
+			return
+		}
 	}
 }
 

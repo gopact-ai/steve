@@ -23,6 +23,7 @@ type Manager struct {
 	configs map[string]Config
 	mu      sync.Mutex
 	hosts   map[string]*acphost.Host
+	stopped bool
 }
 
 func NewManager(configs map[string]Config) (*Manager, error) {
@@ -70,6 +71,7 @@ func (m *Manager) CloseSession(ctx context.Context, harnessID, upstreamID string
 
 func (m *Manager) Stop() {
 	m.mu.Lock()
+	m.stopped = true
 	hosts := make([]*acphost.Host, 0, len(m.hosts))
 	for _, host := range m.hosts {
 		hosts = append(hosts, host)
@@ -83,6 +85,9 @@ func (m *Manager) Stop() {
 func (m *Manager) host(id string) (*acphost.Host, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.stopped {
+		return nil, fmt.Errorf("harness manager is stopped")
+	}
 	if host := m.hosts[id]; host != nil {
 		return host, nil
 	}
