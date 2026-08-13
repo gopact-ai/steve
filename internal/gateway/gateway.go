@@ -18,9 +18,16 @@ type replier interface {
 	Reply(context.Context, string, string) error
 }
 
-type processor interface {
-	Handle(context.Context, string, string) (turn.Result, error)
+type reactor interface {
+	AddReaction(context.Context, string, string) (string, error)
+	RemoveReaction(context.Context, string, string) error
 }
+
+type processor interface {
+	Handle(context.Context, turn.Request) (turn.Result, error)
+}
+
+const thinkingEmoji = "THINKING"
 
 type Gateway struct {
 	processor processor
@@ -116,11 +123,23 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 	if conversationID == "" {
 		conversationID = msg.ChatID
 	}
-	result, err := g.processor.Handle(context.Background(), conversationID, msg.Text)
+	reactionID := g.ack(msg.MessageID)
+	defer g.unack(msg.MessageID, reactionID)
+	result, err := g.processor.Handle(context.Background(), turn.Request{
+		ConversationID: conversationID,
+		Input:          msg.Text,
+		SenderOpenID:   msg.SenderOpenID,
+		ChatType:       msg.ChatType,
+	})
 	if err != nil {
 		log.Printf("gateway: turn failed: chat=%s error=%v", msg.ChatID, err)
 		if errors.Is(err, context.Canceled) {
 			g.reply(msg.MessageID, "任务已取消")
+			return
+		}
+		var userErr turn.UserError
+		if errors.As(err, &userErr) {
+			g.reply(msg.MessageID, userErr.Text)
 			return
 		}
 		g.reply(msg.MessageID, "Agent 调用失败，请检查 Steve 日志。")
@@ -157,5 +176,35 @@ func (g *Gateway) reply(messageID, text string) {
 	defer cancel()
 	if err := g.ch.Reply(ctx, messageID, text); err != nil {
 		log.Printf("gateway: reply failed: %v", err)
+	}
+}
+
+func (g *Gateway) ack(messageID string) string {
+	r, ok := g.ch.(reactor)
+	if !ok || messageID == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	id, err := r.AddReaction(ctx, messageID, thinkingEmoji)
+	if err != nil {
+		log.Printf("gateway: ack reaction failed: %v", err)
+		return ""
+	}
+	return id
+}
+
+func (g *Gateway) unack(messageID, reactionID string) {
+	if reactionID == "" {
+		return
+	}
+	r, ok := g.ch.(reactor)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.RemoveReaction(ctx, messageID, reactionID); err != nil {
+		log.Printf("gateway: clear reaction failed: %v", err)
 	}
 }

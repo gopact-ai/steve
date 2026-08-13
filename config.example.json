@@ -32,7 +32,12 @@
   "feishu": {
     "app_id": "cli_xxxxxxxxxxxxx",
     "app_secret": "xxxxxxxxxxxxxxxx",
-    "allowed_senders": ["ou_xxxxxxxxxxxxx"]
+    "domain": "feishu",
+    "owner_open_id": "ou_xxxxxxxxxxxxx",
+    "dm_policy": "pairing",
+    "allowed_senders": [],
+    "group_policy": "allowlist",
+    "allow_unmentioned": false
   },
   "gateway": {
     "prompt_timeout": "10m",

@@ -65,8 +65,81 @@ func TestValidateFeishuCredentials(t *testing.T) {
 	if err := (Feishu{}).Validate(); err == nil {
 		t.Fatal("expected missing Feishu credentials error")
 	}
-	if err := (Feishu{AppID: "app", AppSecret: "secret"}).Validate(); err == nil {
+	if err := (Feishu{AppID: "app", AppSecret: "secret"}).Validate(); err != nil {
+		t.Fatalf("pairing default should allow empty senders: %v", err)
+	}
+	if err := (Feishu{AppID: "app", AppSecret: "secret", DMPolicy: DMPolicyAllowlist}).Validate(); err == nil {
 		t.Fatal("expected missing sender allowlist error")
+	}
+	if err := (Feishu{AppID: "app", AppSecret: "secret", Domain: "slack"}).Validate(); err == nil {
+		t.Fatal("expected invalid domain error")
+	}
+}
+
+func TestLoadDerivesHomePathAndTrimsOwner(t *testing.T) {
+	path := writeConfig(t, `{
+		"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-test", "default": true}},
+		"harnesses": {"codex": {"command": "mockagent"}},
+		"feishu": {"app_id": "app", "app_secret": "secret", "owner_open_id": "  ou_owner  "},
+		"gateway": {"state_path": "/tmp/steve-state.json"}
+	}`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Feishu.OwnerOpenID != "ou_owner" {
+		t.Fatalf("owner = %q", cfg.Feishu.OwnerOpenID)
+	}
+	wantHome := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "home")
+	if cfg.Gateway.HomePath != wantHome {
+		t.Fatalf("home = %q, want %q", cfg.Gateway.HomePath, wantHome)
+	}
+}
+
+func TestStarterSaveOmitsHomePath(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := Save(path, StarterFeishu(Feishu{AppID: "app", AppSecret: "secret", OwnerOpenID: "ou_me"})); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "home_path") {
+		t.Fatalf("starter persisted home_path: %s", raw)
+	}
+	if !strings.Contains(string(raw), "ou_me") {
+		t.Fatalf("owner missing: %s", raw)
+	}
+}
+
+func TestLoadAppliesFeishuDefaults(t *testing.T) {
+	path := writeConfig(t, `{
+		"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-test", "default": true}},
+		"harnesses": {"codex": {"command": "mockagent"}},
+		"feishu": {"app_id": "app", "app_secret": "secret"}
+	}`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Feishu.Domain != DomainFeishu || cfg.Feishu.DMPolicy != DMPolicyPairing || cfg.Feishu.GroupPolicy != GroupPolicyAllowlist {
+		t.Fatalf("unexpected defaults: %#v", cfg.Feishu)
+	}
+}
+
+func TestLoadKeepsAllowlistWhenSendersExist(t *testing.T) {
+	path := writeConfig(t, `{
+		"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-test", "default": true}},
+		"harnesses": {"codex": {"command": "mockagent"}},
+		"feishu": {"app_id": "app", "app_secret": "secret", "allowed_senders": ["ou_user"]}
+	}`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Feishu.DMPolicy != DMPolicyAllowlist {
+		t.Fatalf("existing sender list should stay allowlist, got %q", cfg.Feishu.DMPolicy)
 	}
 }
 

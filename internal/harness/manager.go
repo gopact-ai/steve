@@ -56,6 +56,13 @@ func (m *Manager) OpenSession(ctx context.Context, harnessID, upstreamID, workdi
 	if err != nil {
 		return nil, err
 	}
+	m.mu.Lock()
+	stopped := m.stopped
+	m.mu.Unlock()
+	if stopped {
+		host.Close()
+		return nil, fmt.Errorf("harness manager is stopped")
+	}
 	return &Session{harnessID: harnessID, id: id, generation: generation, host: host}, nil
 }
 
@@ -78,7 +85,7 @@ func (m *Manager) Stop() {
 	}
 	m.mu.Unlock()
 	for _, host := range hosts {
-		host.Stop()
+		host.Close()
 	}
 }
 

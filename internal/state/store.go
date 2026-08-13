@@ -2,12 +2,16 @@ package state
 
 import (
 	"bytes"
+	"crypto/rand"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
+	"time"
 )
 
 type Session struct {
@@ -26,8 +30,20 @@ type Conversation struct {
 	Sessions    map[string]Session `json:"sessions"`
 }
 
+type PendingPair struct {
+	OpenID    string `json:"open_id"`
+	Code      string `json:"code"`
+	CreatedAt string `json:"created_at"`
+}
+
+type pairingData struct {
+	Pending  map[string]PendingPair `json:"pending,omitempty"`
+	Approved []string               `json:"approved,omitempty"`
+}
+
 type data struct {
 	Conversations map[string]Conversation `json:"conversations"`
+	Pairing       pairingData             `json:"pairing,omitempty"`
 }
 
 type Store struct {
@@ -120,6 +136,130 @@ func (s *Store) SaveSession(session Session) error {
 	return s.replaceLocked(next)
 }
 
+func (s *Store) Allows(openID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshPairingLocked()
+	for _, approved := range s.data.Pairing.Approved {
+		if approved == openID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Store) RequestPairing(openID string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshPairingLocked()
+	if openID == "" {
+		return "", fmt.Errorf("pairing sender is required")
+	}
+	for _, approved := range s.data.Pairing.Approved {
+		if approved == openID {
+			return "", fmt.Errorf("sender already approved")
+		}
+	}
+	if pending, ok := s.data.Pairing.Pending[openID]; ok && pending.Code != "" {
+		return pending.Code, nil
+	}
+	code, err := newPairingCode()
+	if err != nil {
+		return "", err
+	}
+	next := cloneData(s.data)
+	if next.Pairing.Pending == nil {
+		next.Pairing.Pending = map[string]PendingPair{}
+	}
+	next.Pairing.Pending[openID] = PendingPair{
+		OpenID: openID, Code: code, CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	if err := s.replaceLocked(next); err != nil {
+		return "", err
+	}
+	return code, nil
+}
+
+func (s *Store) ApprovePairing(code string) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshPairingLocked()
+	code = strings.ToUpper(strings.TrimSpace(code))
+	if code == "" {
+		return "", fmt.Errorf("pairing code is required")
+	}
+	var matched string
+	for openID, pending := range s.data.Pairing.Pending {
+		if subtle.ConstantTimeCompare([]byte(pending.Code), []byte(code)) == 1 {
+			matched = openID
+			break
+		}
+	}
+	if matched == "" {
+		return "", fmt.Errorf("unknown pairing code")
+	}
+	next := cloneData(s.data)
+	delete(next.Pairing.Pending, matched)
+	for _, approved := range next.Pairing.Approved {
+		if approved == matched {
+			return matched, s.replaceLocked(next)
+		}
+	}
+	next.Pairing.Approved = append(next.Pairing.Approved, matched)
+	if err := s.replaceLocked(next); err != nil {
+		return "", err
+	}
+	return matched, nil
+}
+
+func (s *Store) PairingList() (pending []PendingPair, approved []string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.refreshPairingLocked()
+	for _, item := range s.data.Pairing.Pending {
+		pending = append(pending, item)
+	}
+	approved = append([]string(nil), s.data.Pairing.Approved...)
+	return pending, approved
+}
+
+func (s *Store) ApprovedSenders() []string {
+	_, approved := s.PairingList()
+	return approved
+}
+
+func (s *Store) refreshPairingLocked() {
+	raw, err := os.ReadFile(s.path)
+	if err != nil {
+		return
+	}
+	var disk data
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&disk); err != nil {
+		return
+	}
+	s.data.Pairing = pairingData{
+		Pending:  make(map[string]PendingPair, len(disk.Pairing.Pending)),
+		Approved: append([]string(nil), disk.Pairing.Approved...),
+	}
+	for id, pending := range disk.Pairing.Pending {
+		s.data.Pairing.Pending[id] = pending
+	}
+}
+
+func newPairingCode() (string, error) {
+	const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ"
+	raw := make([]byte, 8)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("generate pairing code: %w", err)
+	}
+	for i, b := range raw {
+		raw[i] = alphabet[int(b)%len(alphabet)]
+	}
+	return string(raw), nil
+}
+
 func (s *Store) DeleteSession(conversationID, agentID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -167,9 +307,18 @@ func (s *Store) replaceLocked(next data) error {
 }
 
 func cloneData(source data) data {
-	clone := data{Conversations: make(map[string]Conversation, len(source.Conversations))}
+	clone := data{
+		Conversations: make(map[string]Conversation, len(source.Conversations)),
+		Pairing: pairingData{
+			Pending:  make(map[string]PendingPair, len(source.Pairing.Pending)),
+			Approved: append([]string(nil), source.Pairing.Approved...),
+		},
+	}
 	for id, conversation := range source.Conversations {
 		clone.Conversations[id] = cloneConversation(conversation)
+	}
+	for id, pending := range source.Pairing.Pending {
+		clone.Pairing.Pending[id] = pending
 	}
 	return clone
 }

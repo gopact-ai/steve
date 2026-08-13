@@ -86,7 +86,7 @@ func TestCoordinatorDropsSessionOnTurnErrorWithoutKillingProcess(t *testing.T) {
 	runner := &fakeRunner{err: errors.New("prompt failed")}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	if _, err := coordinator.Handle(t.Context(), "chat", "hello"); err == nil {
+	if _, err := handle(coordinator, t.Context(), "hello"); err == nil {
 		t.Fatal("expected prompt error")
 	}
 	// The turn ended with an error while the context was intact: the process
@@ -105,7 +105,7 @@ func TestCoordinatorAbortsStuckTurnOnTimeout(t *testing.T) {
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, 50*time.Millisecond)
-	if _, err := coordinator.Handle(t.Context(), "chat", "stuck"); err == nil || !errors.Is(err, context.DeadlineExceeded) {
+	if _, err := handle(coordinator, t.Context(), "stuck"); err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded, got %v", err)
 	}
 	if runner.aborts.Load() == 0 {
@@ -133,7 +133,7 @@ func TestCoordinatorDropsStaleSessionWhenOpenFails(t *testing.T) {
 	}
 	failing := &fakeManager{fail: errors.New("session/load: not found")}
 	coordinator := New(catalog, store, assembler, failing, time.Minute)
-	if _, err := coordinator.Handle(t.Context(), "chat", "hello"); err == nil {
+	if _, err := handle(coordinator, t.Context(), "hello"); err == nil {
 		t.Fatal("expected open error")
 	}
 	if _, ok := store.Conversation("chat").Sessions["codex"]; ok {
@@ -141,16 +141,62 @@ func TestCoordinatorDropsStaleSessionWhenOpenFails(t *testing.T) {
 	}
 }
 
+func TestCoordinatorCancelDuringOpenCancelsContextImmediately(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	manager := &blockingOpenManager{started: make(chan struct{})}
+	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	turnDone := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "hello")
+		turnDone <- err
+	}()
+	select {
+	case <-manager.started:
+	case <-time.After(time.Second):
+		t.Fatal("open did not start")
+	}
+	started := time.Now()
+	result, err := handle(coordinator, t.Context(), "/cancel")
+	if err != nil || !strings.Contains(result.Text, "已请求取消") {
+		t.Fatalf("cancel = %#v, %v", result, err)
+	}
+	if time.Since(started) > time.Second {
+		t.Fatalf("cancel waited %s for a turn that had no runner yet", time.Since(started))
+	}
+	select {
+	case err := <-turnDone:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("expected canceled open, got %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("turn did not finish after cancel")
+	}
+}
+
+type blockingOpenManager struct {
+	started chan struct{}
+	once    sync.Once
+}
+
+func (m *blockingOpenManager) OpenSession(ctx context.Context, _, _, _ string, _ []acp.MCPServer) (harness.Runner, error) {
+	m.once.Do(func() { close(m.started) })
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func (m *blockingOpenManager) CloseSession(context.Context, string, string) error { return nil }
+
 func TestCoordinatorPendingCancelStopsNextTurn(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	if result, err := coordinator.Handle(t.Context(), "chat", "/cancel"); err != nil || !strings.Contains(result.Text, "没有运行中的任务") {
+	if result, err := handle(coordinator, t.Context(), "/cancel"); err != nil || !strings.Contains(result.Text, "没有运行中的任务") {
 		t.Fatalf("cancel = %#v, %v", result, err)
 	}
-	if _, err := coordinator.Handle(t.Context(), "chat", "hello"); err == nil || !errors.Is(err, context.Canceled) {
+	if _, err := handle(coordinator, t.Context(), "hello"); err == nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected pending cancel to stop the next turn, got %v", err)
 	}
 	if len(runner.prompts) != 0 {
@@ -171,7 +217,7 @@ func TestCoordinatorRejectsTaintedSession(t *testing.T) {
 	}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}}}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	if _, err := coordinator.Handle(t.Context(), "chat", "hello"); err == nil || !strings.Contains(err.Error(), "uncertain") {
+	if _, err := handle(coordinator, t.Context(), "hello"); err == nil || !strings.Contains(err.Error(), "/new") {
 		t.Fatalf("expected tainted session error, got %v", err)
 	}
 }
@@ -191,24 +237,24 @@ func TestCoordinatorSwitchesAgentsAndRestoresSessions(t *testing.T) {
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}, "claude": {}}}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 
-	first, err := coordinator.Handle(t.Context(), "chat", "hello")
+	first, err := handle(coordinator, t.Context(), "hello")
 	if err != nil || first.AgentID != "codex" {
 		t.Fatalf("default turn = %#v, %v", first, err)
 	}
-	second, err := coordinator.Handle(t.Context(), "chat", "@claude fix it")
+	second, err := handle(coordinator, t.Context(), "@claude fix it")
 	if err != nil || second.AgentID != "claude" {
 		t.Fatalf("tag turn = %#v, %v", second, err)
 	}
 	if got := manager.runners["claude"].prompts[0]; !strings.Contains(got, "Act as Claude.") || !strings.Contains(got, "fix it") {
 		t.Fatalf("unexpected Claude prompt: %q", got)
 	}
-	if _, err := coordinator.Handle(t.Context(), "chat", "@codex again"); err != nil {
+	if _, err := handle(coordinator, t.Context(), "@codex again"); err != nil {
 		t.Fatal(err)
 	}
 	if got := manager.opened[len(manager.opened)-1]; got != "codex:codex-session" {
 		t.Fatalf("Codex session was not restored: %q", got)
 	}
-	if _, err := coordinator.Handle(t.Context(), "chat", "second"); err != nil {
+	if _, err := handle(coordinator, t.Context(), "second"); err != nil {
 		t.Fatal(err)
 	}
 	if got := manager.runners["codex"].prompts[2]; strings.Contains(got, "Act as") {
@@ -221,7 +267,7 @@ func TestCoordinatorRejectsCapabilityDrift(t *testing.T) {
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}}}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	if _, err := coordinator.Handle(t.Context(), "chat", "hello"); err != nil {
+	if _, err := handle(coordinator, t.Context(), "hello"); err != nil {
 		t.Fatal(err)
 	}
 	conversation := store.Conversation("chat")
@@ -233,7 +279,7 @@ func TestCoordinatorRejectsCapabilityDrift(t *testing.T) {
 	if err := store.SaveSession(session); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := coordinator.Handle(t.Context(), "chat", "again"); err == nil {
+	if _, err := handle(coordinator, t.Context(), "again"); err == nil {
 		t.Fatal("expected capability drift error")
 	}
 }
@@ -246,7 +292,7 @@ func TestCoordinatorCancelsRunningTurn(t *testing.T) {
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	turnDone := make(chan error, 1)
 	go func() {
-		_, err := coordinator.Handle(t.Context(), "chat", "long task")
+		_, err := handle(coordinator, t.Context(), "long task")
 		turnDone <- err
 	}()
 	select {
@@ -254,7 +300,7 @@ func TestCoordinatorCancelsRunningTurn(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("turn did not start")
 	}
-	result, err := coordinator.Handle(t.Context(), "chat", "/cancel")
+	result, err := handle(coordinator, t.Context(), "/cancel")
 	if err != nil || !strings.Contains(result.Text, "已请求取消") {
 		t.Fatalf("cancel = %#v, %v", result, err)
 	}
@@ -276,7 +322,7 @@ func TestCoordinatorCancelWithoutRunningTurn(t *testing.T) {
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}}}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	result, err := coordinator.Handle(t.Context(), "chat", "/cancel")
+	result, err := handle(coordinator, t.Context(), "/cancel")
 	if err != nil || !strings.Contains(result.Text, "没有运行中的任务") {
 		t.Fatalf("cancel = %#v, %v", result, err)
 	}
@@ -288,7 +334,7 @@ func TestCoordinatorKeepsSessionWhenAgentCancelsTurn(t *testing.T) {
 	runner := &fakeRunner{err: fmt.Errorf("%w: %w", harness.ErrTurnCanceled, context.Canceled)}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	if _, err := coordinator.Handle(t.Context(), "chat", "hello"); err == nil {
+	if _, err := handle(coordinator, t.Context(), "hello"); err == nil {
 		t.Fatal("expected canceled turn error")
 	}
 	if runner.aborts.Load() != 0 {
@@ -317,7 +363,7 @@ func TestCoordinatorRejectsConcurrentTurnForSession(t *testing.T) {
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	turnDone := make(chan error, 1)
 	go func() {
-		_, err := coordinator.Handle(t.Context(), "chat", "first")
+		_, err := handle(coordinator, t.Context(), "first")
 		turnDone <- err
 	}()
 	select {
@@ -325,7 +371,7 @@ func TestCoordinatorRejectsConcurrentTurnForSession(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("first turn did not start")
 	}
-	if _, err := coordinator.Handle(t.Context(), "chat", "second"); err == nil {
+	if _, err := handle(coordinator, t.Context(), "second"); err == nil {
 		t.Fatal("expected concurrent turn error")
 	}
 	close(runner.done)
@@ -342,17 +388,21 @@ func TestCoordinatorSwitchOnlyAndNew(t *testing.T) {
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}, "claude": {}}}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 
-	result, err := coordinator.Handle(t.Context(), "chat", "/use claude")
+	result, err := handle(coordinator, t.Context(), "/use claude")
 	if err != nil || result.Text != "已切换到 claude" {
 		t.Fatalf("switch = %#v, %v", result, err)
 	}
-	if _, err := coordinator.Handle(t.Context(), "chat", "hello"); err != nil {
+	if _, err := handle(coordinator, t.Context(), "hello"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := coordinator.Handle(t.Context(), "chat", "/new"); err != nil {
+	if _, err := handle(coordinator, t.Context(), "/new"); err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := store.Conversation("chat").Sessions["claude"]; ok {
 		t.Fatal("/new did not delete active agent session")
 	}
+}
+
+func handle(c *Coordinator, ctx context.Context, input string) (Result, error) {
+	return c.Handle(ctx, Request{ConversationID: "chat", Input: input})
 }

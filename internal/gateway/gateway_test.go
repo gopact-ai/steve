@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,6 +13,45 @@ import (
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
+type recordingChannel struct {
+	events chan string
+	addErr error
+}
+
+func (c *recordingChannel) AddReaction(_ context.Context, messageID, emoji string) (string, error) {
+	if c.addErr != nil {
+		c.events <- "add-err"
+		return "", c.addErr
+	}
+	c.events <- "add:" + messageID + ":" + emoji
+	return "rx_1", nil
+}
+
+func (c *recordingChannel) RemoveReaction(_ context.Context, messageID, reactionID string) error {
+	c.events <- "remove:" + messageID + ":" + reactionID
+	return nil
+}
+
+func (c *recordingChannel) Reply(_ context.Context, messageID, text string) error {
+	c.events <- "reply:" + messageID + ":" + text
+	return nil
+}
+
+func collectEvents(t *testing.T, events <-chan string, n int) []string {
+	t.Helper()
+	got := make([]string, 0, n)
+	deadline := time.After(time.Second)
+	for len(got) < n {
+		select {
+		case ev := <-events:
+			got = append(got, ev)
+		case <-deadline:
+			t.Fatalf("timed out waiting for %d events, got %v", n, got)
+		}
+	}
+	return got
+}
+
 type reply struct{ text chan string }
 
 func (r *reply) Reply(_ context.Context, _, text string) error {
@@ -21,21 +61,27 @@ func (r *reply) Reply(_ context.Context, _, text string) error {
 
 type fakeProcessor struct{}
 
-func (fakeProcessor) Handle(_ context.Context, _, text string) (turn.Result, error) {
-	return turn.Result{Text: "reply: " + text}, nil
+func (fakeProcessor) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
+	return turn.Result{Text: "reply: " + req.Input}, nil
 }
 
 type cancelingProcessor struct{}
 
-func (cancelingProcessor) Handle(context.Context, string, string) (turn.Result, error) {
+func (cancelingProcessor) Handle(context.Context, turn.Request) (turn.Result, error) {
 	return turn.Result{}, context.Canceled
 }
 
 type countingProcessor struct{ calls atomic.Int32 }
 
-func (p *countingProcessor) Handle(_ context.Context, _, text string) (turn.Result, error) {
+func (p *countingProcessor) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	p.calls.Add(1)
-	return turn.Result{Text: "reply: " + text}, nil
+	return turn.Result{Text: "reply: " + req.Input}, nil
+}
+
+type userErrorProcessor struct{}
+
+func (userErrorProcessor) Handle(context.Context, turn.Request) (turn.Result, error) {
+	return turn.Result{}, turn.UserError{Text: "能力或身份文件已变化，请先发送 /new（身份与记忆会保留）。"}
 }
 
 func TestGatewayReplies(t *testing.T) {
@@ -47,6 +93,22 @@ func TestGatewayReplies(t *testing.T) {
 	select {
 	case got := <-r.text:
 		if got != "reply: hello" {
+			t.Fatalf("unexpected reply: %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("timed out waiting for reply")
+	}
+}
+
+func TestGatewayRepliesUserError(t *testing.T) {
+	g := New(userErrorProcessor{})
+	r := &reply{text: make(chan string, 1)}
+	g.BindChannel(r)
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_message", Text: "hello"})
+
+	select {
+	case got := <-r.text:
+		if got != "能力或身份文件已变化，请先发送 /new（身份与记忆会保留）。" {
 			t.Fatalf("unexpected reply: %q", got)
 		}
 	case <-time.After(time.Second):
@@ -95,16 +157,16 @@ type blockingProcessor struct {
 	release chan struct{}
 }
 
-func (p *blockingProcessor) Handle(_ context.Context, _, text string) (turn.Result, error) {
+func (p *blockingProcessor) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
 	first := false
 	p.mu.Lock()
-	p.seen = append(p.seen, text)
+	p.seen = append(p.seen, req.Input)
 	first = len(p.seen) == 1
 	p.mu.Unlock()
 	if first {
 		<-p.release
 	}
-	return turn.Result{Text: "reply: " + text}, nil
+	return turn.Result{Text: "reply: " + req.Input}, nil
 }
 
 func (p *blockingProcessor) texts() []string {
@@ -155,5 +217,73 @@ func TestTruncateRunes(t *testing.T) {
 	}
 	if !strings.Contains(got, "已截断") {
 		t.Fatal("truncated text is missing the truncation notice")
+	}
+}
+
+func TestGatewayAcksThenClearsReaction(t *testing.T) {
+	processor := &blockingProcessor{release: make(chan struct{})}
+	g := New(processor)
+	events := make(chan string, 8)
+	g.BindChannel(&recordingChannel{events: events})
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_message", Text: "hello"})
+
+	deadline := time.Now().Add(time.Second)
+	for len(processor.texts()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(processor.texts()) == 0 {
+		t.Fatal("processor did not start")
+	}
+	select {
+	case ev := <-events:
+		if ev != "add:om_message:THINKING" {
+			t.Fatalf("ack = %q", ev)
+		}
+	default:
+		t.Fatal("missing ack reaction before the turn finished")
+	}
+	select {
+	case ev := <-events:
+		t.Fatalf("unexpected event while thinking: %s", ev)
+	default:
+	}
+
+	close(processor.release)
+	got := collectEvents(t, events, 2)
+	if got[0] != "reply:om_message:reply: hello" {
+		t.Fatalf("reply = %q", got[0])
+	}
+	if got[1] != "remove:om_message:rx_1" {
+		t.Fatalf("clear = %q", got[1])
+	}
+}
+
+func TestGatewayReplyWithoutReactionWhenAckFails(t *testing.T) {
+	g := New(fakeProcessor{})
+	events := make(chan string, 8)
+	g.BindChannel(&recordingChannel{events: events, addErr: errors.New("denied")})
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_message", Text: "hello"})
+
+	got := collectEvents(t, events, 2)
+	if got[0] != "add-err" || got[1] != "reply:om_message:reply: hello" {
+		t.Fatalf("events = %v", got)
+	}
+	select {
+	case ev := <-events:
+		t.Fatalf("unexpected extra event: %s", ev)
+	case <-time.After(20 * time.Millisecond):
+	}
+}
+
+func TestGatewayClearsReactionAfterFailedTurn(t *testing.T) {
+	g := New(cancelingProcessor{})
+	events := make(chan string, 8)
+	g.BindChannel(&recordingChannel{events: events})
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_message", Text: "long task"})
+
+	got := collectEvents(t, events, 3)
+	want := []string{"add:om_message:THINKING", "reply:om_message:任务已取消", "remove:om_message:rx_1"}
+	if strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("events = %v, want %v", got, want)
 	}
 }

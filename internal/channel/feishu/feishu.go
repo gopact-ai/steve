@@ -30,93 +30,102 @@ type InboundMessage struct {
 // Handler consumes inbound messages; it must not block the event loop.
 type Handler func(msg InboundMessage)
 
+type Pairing interface {
+	RequestPairing(openID string) (code string, err error)
+}
+
+type Options struct {
+	AppID            string
+	AppSecret        string
+	Domain           string
+	Access           Access
+	Pairing          Pairing
+	ExtraAllows      func(string) bool
+	AllowUnmentioned bool
+}
+
+type longConn interface {
+	Start(context.Context) error
+	Close()
+}
+
 type Channel struct {
-	api *lark.Client
-	ws  *larkws.Client
+	api         *lark.Client
+	ws          longConn
+	access      Access
+	pairing     Pairing
+	extraAllows func(string) bool
 }
 
 var mentionToken = regexp.MustCompile("@_(user_\\d+|all)[\\s\u200b]*")
 
-func New(ctx context.Context, appID, appSecret string, allowedSenders []string, handler Handler) (*Channel, error) {
-	api := lark.NewClient(appID, appSecret)
-	botOpenID, err := botOpenID(ctx, api)
+func New(ctx context.Context, opts Options, handler Handler) (*Channel, error) {
+	api := newAPI(opts.AppID, opts.AppSecret, opts.Domain)
+	identity, err := botIdentity(ctx, api)
 	if err != nil {
 		return nil, err
 	}
-	allowed := make(map[string]struct{}, len(allowedSenders))
-	for _, sender := range allowedSenders {
-		allowed[sender] = struct{}{}
-	}
+	channel := &Channel{api: api, access: opts.Access, pairing: opts.Pairing, extraAllows: opts.ExtraAllows}
 	eventHandler := dispatcher.NewEventDispatcher("", "").
-		OnP2MessageReceiveV1(func(_ context.Context, event *larkim.P2MessageReceiveV1) error {
-			msg, ok := normalize(event, botOpenID)
+		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
+			msg, ok := normalize(event, identity.OpenID, opts.AllowUnmentioned)
 			if !ok {
 				return nil
 			}
-			if _, ok := allowed[msg.SenderOpenID]; !ok {
-				return nil
+			switch decide(msg, channel.access, channel.extraAllows) {
+			case actionAllow:
+				handler(msg)
+			case actionPairing:
+				channel.offerPairing(ctx, msg)
 			}
-			handler(msg)
 			return nil
 		})
 
-	return &Channel{
-		api: api,
-		ws: larkws.NewClient(appID, appSecret,
-			larkws.WithEventHandler(eventHandler),
-			larkws.WithLogLevel(larkcore.LogLevelInfo),
-		),
-	}, nil
+	channel.ws = larkws.NewClient(opts.AppID, opts.AppSecret,
+		larkws.WithEventHandler(eventHandler),
+		larkws.WithDomain(BaseURL(opts.Domain)),
+		larkws.WithLogLevel(larkcore.LogLevelInfo),
+	)
+	return channel, nil
+}
+
+func (c *Channel) offerPairing(ctx context.Context, msg InboundMessage) {
+	if c.pairing == nil {
+		return
+	}
+	code, err := c.pairing.RequestPairing(msg.SenderOpenID)
+	if err != nil {
+		log.Printf("feishu: pairing request failed: %v", err)
+		return
+	}
+	text := "配对码：" + code + "。在运行 Steve 的机器上执行：steve pairing approve " + code
+	if err := c.Reply(ctx, msg.MessageID, text); err != nil {
+		log.Printf("feishu: pairing reply failed: %v", err)
+	}
 }
 
 // Start blocks and maintains the long connection until ctx is done.
+// The official WS client ends in select{} and ignores cancellation, so we
+// run it in the background and Close it when ctx is canceled.
 func (c *Channel) Start(ctx context.Context) error {
-	return c.ws.Start(ctx)
-}
-
-func Check(ctx context.Context, appID, appSecret string) error {
-	api := lark.NewClient(appID, appSecret)
-	resp, err := api.GetTenantAccessTokenBySelfBuiltApp(ctx, &larkcore.SelfBuiltTenantAccessTokenReq{
-		AppID: appID, AppSecret: appSecret,
-	})
-	if err != nil {
-		return fmt.Errorf("authenticate Feishu app: %w", err)
-	}
-	if !resp.Success() {
-		return fmt.Errorf("authenticate Feishu app: code=%d msg=%s", resp.Code, resp.Msg)
-	}
-	_, err = botOpenID(ctx, api)
-	return err
-}
-
-func botOpenID(ctx context.Context, api *lark.Client) (string, error) {
-	resp, err := api.Get(ctx, "/open-apis/bot/v3/info", nil, larkcore.AccessTokenTypeTenant)
-	if err != nil {
-		return "", fmt.Errorf("get Feishu bot identity: %w", err)
-	}
-	if resp == nil || resp.StatusCode != 200 {
-		status := 0
-		if resp != nil {
-			status = resp.StatusCode
+	done := make(chan error, 1)
+	go func() {
+		done <- c.ws.Start(ctx)
+	}()
+	select {
+	case err := <-done:
+		if ctx.Err() != nil {
+			c.ws.Close()
+			return ctx.Err()
 		}
-		return "", fmt.Errorf("get Feishu bot identity: HTTP %d", status)
+		return err
+	case <-ctx.Done():
+		c.ws.Close()
+		return ctx.Err()
 	}
-	var result struct {
-		Code int `json:"code"`
-		Bot  struct {
-			OpenID string `json:"open_id"`
-		} `json:"bot"`
-	}
-	if err := json.Unmarshal(resp.RawBody, &result); err != nil {
-		return "", fmt.Errorf("parse Feishu bot identity: %w", err)
-	}
-	if result.Code != 0 || result.Bot.OpenID == "" {
-		return "", fmt.Errorf("get Feishu bot identity: code=%d", result.Code)
-	}
-	return result.Bot.OpenID, nil
 }
 
-func normalize(event *larkim.P2MessageReceiveV1, botOpenID string) (InboundMessage, bool) {
+func normalize(event *larkim.P2MessageReceiveV1, botOpenID string, allowUnmentioned bool) (InboundMessage, bool) {
 	if event.Event == nil || event.Event.Message == nil {
 		return InboundMessage{}, false
 	}
@@ -124,7 +133,7 @@ func normalize(event *larkim.P2MessageReceiveV1, botOpenID string) (InboundMessa
 		return InboundMessage{}, false
 	}
 	m := event.Event.Message
-	if deref(m.ChatType) == "group" && !mentionsBot(m.Mentions, botOpenID) {
+	if deref(m.ChatType) == "group" && !allowUnmentioned && !mentionsBot(m.Mentions, botOpenID) {
 		return InboundMessage{}, false
 	}
 	if deref(m.MessageType) != "text" {
@@ -170,6 +179,49 @@ func conversationID(message *larkim.EventMessage) string {
 		return threadID
 	}
 	return deref(message.ChatId)
+}
+
+// AddReaction puts an emoji reaction on the message and returns its reaction id.
+func (c *Channel) AddReaction(ctx context.Context, messageID, emoji string) (string, error) {
+	if messageID == "" || emoji == "" {
+		return "", fmt.Errorf("feishu reaction: message id and emoji are required")
+	}
+	req := larkim.NewCreateMessageReactionReqBuilder().
+		MessageId(messageID).
+		Body(larkim.NewCreateMessageReactionReqBodyBuilder().
+			ReactionType(larkim.NewEmojiBuilder().EmojiType(emoji).Build()).
+			Build()).
+		Build()
+	resp, err := c.api.Im.V1.MessageReaction.Create(ctx, req)
+	if err != nil {
+		return "", fmt.Errorf("feishu reaction: %w", err)
+	}
+	if !resp.Success() {
+		return "", fmt.Errorf("feishu reaction: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	if resp.Data == nil || resp.Data.ReactionId == nil || *resp.Data.ReactionId == "" {
+		return "", fmt.Errorf("feishu reaction: empty reaction id")
+	}
+	return *resp.Data.ReactionId, nil
+}
+
+// RemoveReaction deletes a reaction previously added by AddReaction.
+func (c *Channel) RemoveReaction(ctx context.Context, messageID, reactionID string) error {
+	if messageID == "" || reactionID == "" {
+		return fmt.Errorf("feishu reaction delete: message id and reaction id are required")
+	}
+	req := larkim.NewDeleteMessageReactionReqBuilder().
+		MessageId(messageID).
+		ReactionId(reactionID).
+		Build()
+	resp, err := c.api.Im.V1.MessageReaction.Delete(ctx, req)
+	if err != nil {
+		return fmt.Errorf("feishu reaction delete: %w", err)
+	}
+	if !resp.Success() {
+		return fmt.Errorf("feishu reaction delete: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	return nil
 }
 
 // Reply sends a plain-text reply to the given message.

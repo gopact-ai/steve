@@ -5,10 +5,12 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/home"
 )
 
 func main() {
@@ -35,7 +37,15 @@ func main() {
 			log.Fatalf("unknown agent %q", *agentID)
 		}
 	}
-	capabilities, err := cfg.CapabilityAssembler().Assemble(selected)
+	assembler := cfg.CapabilityAssembler()
+	mode := home.ModeGuest
+	if _, err := os.Stat(cfg.Gateway.HomePath); err == nil {
+		assembler.SetHome(home.Dir{Path: cfg.Gateway.HomePath})
+		if cfg.Feishu.OwnerOpenID != "" {
+			mode = home.ModeOwner
+		}
+	}
+	capabilities, err := assembler.AssembleMode(selected, mode)
 	if err != nil {
 		log.Fatal(err)
 	}

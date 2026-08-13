@@ -142,6 +142,19 @@ func TestPermissionDeny(t *testing.T) {
 	}
 }
 
+func TestCloseRejectsRestart(t *testing.T) {
+	h := newTestHost(t, "auto")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if _, _, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	h.Close()
+	if _, _, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()}); !errors.Is(err, ErrClosed) {
+		t.Fatalf("open after close = %v, want ErrClosed", err)
+	}
+}
+
 func TestRestartAfterProcessExit(t *testing.T) {
 	h := newTestHost(t, "auto")
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)

@@ -53,6 +53,58 @@ func TestStoreRejectsHarnessChange(t *testing.T) {
 	}
 }
 
+func TestStorePairingRequestAndApprove(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := store.RequestPairing("ou_user")
+	if err != nil || len(code) != 8 {
+		t.Fatalf("request = %q, %v", code, err)
+	}
+	again, err := store.RequestPairing("ou_user")
+	if err != nil || again != code {
+		t.Fatalf("reuse = %q, %v", again, err)
+	}
+	openID, err := store.ApprovePairing(code)
+	if err != nil || openID != "ou_user" {
+		t.Fatalf("approve = %q, %v", openID, err)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reopened.Allows("ou_user") {
+		t.Fatal("approved sender was not persisted")
+	}
+	if _, err := reopened.ApprovePairing("NOPECODE"); err == nil {
+		t.Fatal("expected unknown pairing code")
+	}
+}
+
+func TestStorePairingApproveIsVisibleToOtherHandle(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	gateway, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, err := gateway.RequestPairing("ou_user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cli, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cli.ApprovePairing(code); err != nil {
+		t.Fatal(err)
+	}
+	if !gateway.Allows("ou_user") {
+		t.Fatal("running process did not observe pairing approval")
+	}
+}
+
 func TestStoreRejectsWorkspaceChange(t *testing.T) {
 	store, err := Open(filepath.Join(t.TempDir(), "state.json"))
 	if err != nil {

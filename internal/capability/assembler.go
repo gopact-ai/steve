@@ -14,6 +14,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/home"
 )
 
 type MCPServer struct {
@@ -31,14 +32,37 @@ type Capabilities struct {
 	Fingerprint  string
 }
 
-type Assembler struct{ servers map[string]MCPServer }
+type Assembler struct {
+	servers map[string]MCPServer
+	home    home.Loader
+}
 
 func NewAssembler(servers map[string]MCPServer) *Assembler {
 	return &Assembler{servers: servers}
 }
 
+func (a *Assembler) SetHome(loader home.Loader) *Assembler {
+	a.home = loader
+	return a
+}
+
 func (a *Assembler) Assemble(selected agent.Agent) (Capabilities, error) {
+	return a.AssembleMode(selected, home.ModeNone)
+}
+
+func (a *Assembler) AssembleMode(selected agent.Agent, mode home.Mode) (Capabilities, error) {
+	var snap home.Snapshot
+	if a.home != nil && mode != home.ModeNone {
+		var err error
+		snap, err = a.home.Load(mode)
+		if err != nil {
+			return Capabilities{}, err
+		}
+	}
 	parts := []string{}
+	if snap.Identity != "" {
+		parts = append(parts, snap.Identity)
+	}
 	if selected.SystemPrompt != "" {
 		parts = append(parts, selected.SystemPrompt)
 	}
@@ -48,6 +72,15 @@ func (a *Assembler) Assemble(selected agent.Agent) (Capabilities, error) {
 			return Capabilities{}, fmt.Errorf("read skill %q: %w", root, err)
 		}
 		parts = append(parts, string(data))
+	}
+	identity := strings.Join(parts, "\n\n")
+	instructions := identity
+	if snap.Memory != "" {
+		if instructions != "" {
+			instructions += "\n\n" + snap.Memory
+		} else {
+			instructions = snap.Memory
+		}
 	}
 	servers := make([]acp.MCPServer, 0, len(selected.MCPServers))
 	for _, name := range selected.MCPServers {
@@ -61,12 +94,15 @@ func (a *Assembler) Assemble(selected agent.Agent) (Capabilities, error) {
 		}
 		servers = append(servers, server)
 	}
-	instructions := strings.Join(parts, "\n\n")
-	fingerprint, err := fingerprint(instructions, servers)
+	hashMode := home.ModeNone
+	if a.home != nil {
+		hashMode = mode
+	}
+	fp, err := fingerprint(identity, servers, hashMode)
 	if err != nil {
 		return Capabilities{}, err
 	}
-	return Capabilities{Instructions: instructions, MCPServers: servers, Fingerprint: fingerprint}, nil
+	return Capabilities{Instructions: instructions, MCPServers: servers, Fingerprint: fp}, nil
 }
 
 func makeMCPServer(name string, cfg MCPServer) (acp.MCPServer, error) {
@@ -103,11 +139,12 @@ func makeMCPServer(name string, cfg MCPServer) (acp.MCPServer, error) {
 	}
 }
 
-func fingerprint(instructions string, servers []acp.MCPServer) (string, error) {
+func fingerprint(instructions string, servers []acp.MCPServer, mode home.Mode) (string, error) {
 	data, err := json.Marshal(struct {
 		Instructions string          `json:"instructions"`
 		MCPServers   []acp.MCPServer `json:"mcp_servers"`
-	}{instructions, servers})
+		HomeMode     string          `json:"home_mode,omitempty"`
+	}{instructions, servers, string(mode)})
 	if err != nil {
 		return "", fmt.Errorf("fingerprint capabilities: %w", err)
 	}

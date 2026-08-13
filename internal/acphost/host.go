@@ -20,6 +20,7 @@ import (
 
 var ErrResumeUnsupported = errors.New("agent does not support session resume")
 var ErrSessionBusy = errors.New("session already has a running turn")
+var ErrClosed = errors.New("host is closed")
 
 // ErrTurnCanceled marks a turn the agent ended itself with
 // StopReasonCanceled (e.g. a permission request was rejected). The session
@@ -49,6 +50,7 @@ type Host struct {
 	conn         *acp.Conn
 	caller       *acp.AgentCaller
 	stdin        io.WriteCloser
+	isClosed     bool
 	alive        bool
 	exited       chan struct{}
 	collectors   map[acp.SessionID]*collector
@@ -135,6 +137,9 @@ func (ch *clientHandler) RequestPermission(_ context.Context, req *acp.RequestPe
 func (h *Host) ensureStarted(ctx context.Context) error {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	if h.isClosed {
+		return ErrClosed
+	}
 	if h.alive {
 		return nil
 	}
@@ -416,10 +421,21 @@ func validateMCPServers(capabilities *acp.AgentCapabilities, servers []acp.MCPSe
 	return nil
 }
 
-// Stop terminates the agent subprocess.
+// Stop terminates the agent subprocess. The next OpenSession or Prompt
+// starts a new process (crash recovery / lazy restart).
 func (h *Host) Stop() {
 	h.mu.Lock()
 	defer h.mu.Unlock()
+	h.shutdownLocked()
+}
+
+// Close permanently stops the host so shutdown cannot spawn a replacement
+// process. Manager.Stop uses this; Abort still uses Stop so a live manager
+// can restart after a stuck turn.
+func (h *Host) Close() {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.isClosed = true
 	h.shutdownLocked()
 }
 

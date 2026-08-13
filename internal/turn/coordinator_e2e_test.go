@@ -40,11 +40,11 @@ func TestCoordinatorDynamicHarnessResumeE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
-	result, err := coordinator.Handle(context.Background(), "chat", "hello")
+	result, err := handle(coordinator, context.Background(), "hello")
 	if err != nil || result.Text != "echo: hello" {
 		t.Fatalf("codex turn = %#v, %v", result, err)
 	}
-	result, err = coordinator.Handle(context.Background(), "chat", "@claude perm check")
+	result, err = handle(coordinator, context.Background(), "@claude perm check")
 	if err != nil || result.Text != "[permission: selected/reject] echo: perm check" {
 		t.Fatalf("claude turn = %#v, %v", result, err)
 	}
@@ -56,7 +56,7 @@ func TestCoordinatorDynamicHarnessResumeE2E(t *testing.T) {
 	}
 	t.Cleanup(manager.Stop)
 	coordinator = New(catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
-	result, err = coordinator.Handle(context.Background(), "chat", "after restart")
+	result, err = handle(coordinator, context.Background(), "after restart")
 	if err != nil || result.Text != "echo: after restart" {
 		t.Fatalf("resumed turn = %#v, %v", result, err)
 	}

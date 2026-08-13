@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/home"
 )
 
 func TestAssemblerBuildsInstructionsAndMCP(t *testing.T) {
@@ -31,6 +32,69 @@ func TestAssemblerBuildsInstructionsAndMCP(t *testing.T) {
 	}
 	if len(capabilities.MCPServers) != 1 || capabilities.MCPServers[0].Name != "files" {
 		t.Fatalf("unexpected MCP servers: %#v", capabilities.MCPServers)
+	}
+}
+
+func TestAssembleWithoutLoaderMatchesFingerprint(t *testing.T) {
+	agentCfg := agent.Agent{ID: "codex", Config: agent.Config{SystemPrompt: "base"}}
+	first, err := NewAssembler(nil).Assemble(agentCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := NewAssembler(nil).AssembleMode(agentCfg, home.ModeNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Fingerprint != second.Fingerprint || first.Instructions != "base" {
+		t.Fatalf("nil-loader fingerprint drifted: %#v %#v", first, second)
+	}
+}
+
+func TestAssembleModeHashesIdentityNotMemory(t *testing.T) {
+	dir := t.TempDir()
+	if err := home.Bootstrap(dir, "ou"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, home.FileMemory), []byte("alpha"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assembler := NewAssembler(nil).SetHome(home.Dir{Path: dir})
+	first, err := assembler.AssembleMode(agent.Agent{ID: "codex"}, home.ModeOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(first.Instructions, "alpha") || !strings.Contains(first.Instructions, "Steve home") {
+		t.Fatalf("owner instructions: %s", first.Instructions)
+	}
+	if err := os.WriteFile(filepath.Join(dir, home.FileMemory), []byte("beta"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	second, err := assembler.AssembleMode(agent.Agent{ID: "codex"}, home.ModeOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Fingerprint != second.Fingerprint {
+		t.Fatal("MEMORY edit changed fingerprint")
+	}
+	if !strings.Contains(second.Instructions, "beta") {
+		t.Fatal("MEMORY edit not injected")
+	}
+	if err := os.WriteFile(filepath.Join(dir, home.FileSoul), []byte("new soul"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	third, err := assembler.AssembleMode(agent.Agent{ID: "codex"}, home.ModeOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Fingerprint == first.Fingerprint {
+		t.Fatal("SOUL edit did not change fingerprint")
+	}
+	guest, err := assembler.AssembleMode(agent.Agent{ID: "codex"}, home.ModeGuest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(guest.Instructions, "beta") || strings.Contains(guest.Instructions, dir) {
+		t.Fatalf("guest leaked memory or path: %s", guest.Instructions)
 	}
 }
 

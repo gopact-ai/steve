@@ -13,8 +13,21 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/state"
 )
+
+type Request struct {
+	ConversationID string
+	Input          string
+	SenderOpenID   string
+	ChatType       string
+}
+
+// UserError is safe to show on Feishu. Gateway replies Text verbatim.
+type UserError struct{ Text string }
+
+func (e UserError) Error() string { return e.Text }
 
 type runtime interface {
 	OpenSession(context.Context, string, string, string, []acp.MCPServer) (harness.Runner, error)
@@ -28,11 +41,13 @@ type Result struct {
 }
 
 type Coordinator struct {
-	catalog   *agent.Catalog
-	store     *state.Store
-	assembler *capability.Assembler
-	runtime   runtime
-	timeout   time.Duration
+	catalog     *agent.Catalog
+	store       *state.Store
+	assembler   *capability.Assembler
+	runtime     runtime
+	timeout     time.Duration
+	ownerOpenID string
+	home        home.Loader
 
 	mu            sync.Mutex
 	active        map[string]harness.Runner
@@ -56,8 +71,20 @@ func New(catalog *agent.Catalog, store *state.Store, assembler *capability.Assem
 	}
 }
 
-func (c *Coordinator) Handle(ctx context.Context, conversationID, input string) (Result, error) {
-	selected, prompt, switchOnly, err := c.selectAgent(conversationID, input)
+func (c *Coordinator) SetIdentity(ownerOpenID string, loader home.Loader) {
+	c.ownerOpenID = ownerOpenID
+	c.home = loader
+}
+
+func injectionMode(chatType, sender, owner string) home.Mode {
+	if owner != "" && sender == owner && chatType == "p2p" {
+		return home.ModeOwner
+	}
+	return home.ModeGuest
+}
+
+func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
+	selected, prompt, switchOnly, err := c.selectAgent(req.ConversationID, req.Input)
 	if err != nil {
 		return Result{}, err
 	}
@@ -66,13 +93,13 @@ func (c *Coordinator) Handle(ctx context.Context, conversationID, input string) 
 	}
 	switch strings.TrimSpace(prompt) {
 	case "/new", "/clear":
-		return c.reset(ctx, conversationID, selected)
+		return c.reset(ctx, req.ConversationID, selected)
 	case "/status":
-		return c.status(conversationID, selected), nil
+		return c.status(req, selected), nil
 	case "/cancel":
-		return c.cancel(ctx, conversationID, selected)
+		return c.cancel(ctx, req.ConversationID, selected)
 	}
-	return c.prompt(ctx, conversationID, selected, prompt)
+	return c.prompt(ctx, req, selected, prompt)
 }
 
 func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, string, bool, error) {
@@ -99,7 +126,8 @@ func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, st
 	return selected, strings.TrimSpace(input), false, nil
 }
 
-func (c *Coordinator) prompt(parent context.Context, conversationID string, selected agent.Agent, prompt string) (Result, error) {
+func (c *Coordinator) prompt(parent context.Context, req Request, selected agent.Agent, prompt string) (Result, error) {
+	conversationID := req.ConversationID
 	ctx, cancel := context.WithTimeout(parent, c.timeout)
 	if !c.beginTurn(conversationID, selected.ID, cancel) {
 		cancel()
@@ -109,20 +137,20 @@ func (c *Coordinator) prompt(parent context.Context, conversationID string, sele
 	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
 		return Result{}, context.Canceled
 	}
-	capabilities, err := c.assembler.Assemble(selected)
+	capabilities, err := c.assemble(selected, req)
 	if err != nil {
 		return Result{}, err
 	}
 	conversation := c.store.Conversation(conversationID)
 	saved := conversation.Sessions[selected.ID]
 	if saved.Tainted {
-		return Result{}, fmt.Errorf("agent session has an uncertain previous turn; use /new before continuing")
+		return Result{}, UserError{Text: "上一轮状态不确定，请先发送 /new（身份与记忆会保留）。"}
 	}
 	if saved.HarnessID != "" && saved.CapabilityHash != capabilities.Fingerprint {
-		return Result{}, fmt.Errorf("agent capabilities changed; use /new before continuing")
+		return Result{}, UserError{Text: "能力或身份文件已变化，请先发送 /new（身份与记忆会保留）。"}
 	}
 	if saved.HarnessID != "" && saved.Workspace != selected.Workspace {
-		return Result{}, fmt.Errorf("agent workspace changed; use /new before continuing")
+		return Result{}, UserError{Text: "工作区已变化，请先发送 /new（身份与记忆会保留）。"}
 	}
 	runner, err := c.open(ctx, saved, selected, capabilities.MCPServers)
 	if err != nil {
@@ -145,9 +173,22 @@ func (c *Coordinator) prompt(parent context.Context, conversationID string, sele
 		c.discard(parent, selected, runner)
 		return Result{}, err
 	}
-	if !session.InstructionsApplied && capabilities.Instructions != "" {
-		prompt = capabilities.Instructions + "\n\n" + prompt
+	user := prompt
+	if req.SenderOpenID != "" || req.ChatType != "" {
+		speaker := req.SenderOpenID
+		if speaker == "" {
+			speaker = "-"
+		}
+		ownerFlag := "false"
+		if req.SenderOpenID != "" && req.SenderOpenID == c.ownerOpenID {
+			ownerFlag = "true"
+		}
+		user = fmt.Sprintf("[steve: speaker=%s owner=%s chat=%s]\n%s", speaker, ownerFlag, req.ChatType, prompt)
 	}
+	if !session.InstructionsApplied && capabilities.Instructions != "" {
+		user = capabilities.Instructions + "\n\n" + user
+	}
+	prompt = user
 	c.setRunner(conversationID, selected.ID, runner)
 	out, activity, err := runner.Prompt(ctx, prompt)
 	if err == nil && ctx.Err() != nil {
@@ -165,18 +206,16 @@ func (c *Coordinator) prompt(parent context.Context, conversationID string, sele
 			}
 			return Result{}, err
 		}
-		if ctx.Err() == nil {
-			// The turn ended with an error while the context is intact, so
-			// the agent stopped by itself and the process is healthy. Drop
-			// the session and let the next turn start fresh without killing
-			// the shared harness process.
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// Agent error or cooperative cancel: drop the session and keep
+			// the shared process. Only a deadline means the process may be
+			// stuck and needs to be killed.
 			if stateErr := c.store.DeleteSession(conversationID, selected.ID); stateErr != nil {
 				log.Printf("turn: delete failed session state: %v", stateErr)
 			}
 			return Result{}, err
 		}
-		// The context expired or was canceled while the turn was possibly
-		// still running; the process may be stuck, so terminate it.
+		// The turn timed out while possibly still running.
 		cancelCtx, stop := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
 		cancelErr := runner.Cancel(cancelCtx)
 		stop()
@@ -235,15 +274,50 @@ func (c *Coordinator) reset(ctx context.Context, conversationID string, selected
 	if err := c.store.DeleteSession(conversationID, selected.ID); err != nil {
 		return Result{}, err
 	}
-	return Result{AgentID: selected.ID, Text: "已重置 " + selected.ID + " 会话"}, nil
+	return Result{AgentID: selected.ID, Text: "已重置 " + selected.ID + " 会话。身份与记忆保留在 Steve home。"}, nil
 }
 
-func (c *Coordinator) status(conversationID string, selected agent.Agent) Result {
-	session := c.store.Conversation(conversationID).Sessions[selected.ID]
-	if session.UpstreamID == "" {
-		return Result{AgentID: selected.ID, Text: fmt.Sprintf("active=%s harness=%s session=none", selected.ID, selected.Harness)}
+func (c *Coordinator) assemble(selected agent.Agent, req Request) (capability.Capabilities, error) {
+	if c.home == nil {
+		return c.assembler.Assemble(selected)
 	}
-	return Result{AgentID: selected.ID, Text: fmt.Sprintf("active=%s harness=%s session=%s", selected.ID, session.HarnessID, session.UpstreamID)}
+	return c.assembler.AssembleMode(selected, injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID))
+}
+
+func (c *Coordinator) status(req Request, selected agent.Agent) Result {
+	session := c.store.Conversation(req.ConversationID).Sessions[selected.ID]
+	line := fmt.Sprintf("active=%s harness=%s session=%s", selected.ID, selected.Harness, session.UpstreamID)
+	if session.UpstreamID == "" {
+		line = fmt.Sprintf("active=%s harness=%s session=none", selected.ID, selected.Harness)
+	}
+	if c.home == nil {
+		return Result{AgentID: selected.ID, Text: line}
+	}
+	if injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) != home.ModeOwner {
+		return Result{AgentID: selected.ID, Text: line + "\nhome=guest"}
+	}
+	snap, err := c.home.Load(home.ModeOwner)
+	if err != nil {
+		return Result{AgentID: selected.ID, Text: line + "\nhome=error"}
+	}
+	homeLine := fmt.Sprintf("home=%s mode=owner soul=%s user=%s memory=%s",
+		snap.Path, fileOK(snap.Soul), fileOK(snap.User), memorySize(snap.Memory))
+	return Result{AgentID: selected.ID, Text: line + "\n" + homeLine}
+}
+
+func fileOK(body string) string {
+	if strings.TrimSpace(body) == "" {
+		return "missing"
+	}
+	return "ok"
+}
+
+func memorySize(body string) string {
+	n := len([]byte(body))
+	if n >= 1024 {
+		return fmt.Sprintf("%dkiB", (n+1023)/1024)
+	}
+	return fmt.Sprintf("%dB", n)
 }
 
 func (c *Coordinator) cancel(ctx context.Context, conversationID string, selected agent.Agent) (Result, error) {
@@ -268,6 +342,11 @@ func (c *Coordinator) cancel(ctx context.Context, conversationID string, selecte
 			entry.cancel()
 			return Result{}, err
 		}
+	} else {
+		// The turn has begun but has not reached the agent yet
+		// (assemble/open/save). Cancel the turn context immediately so
+		// it cannot proceed into Prompt after /cancel.
+		entry.cancel()
 	}
 	// Give the agent a chance to stop gracefully; the blocked prompt
 	// goroutine owns session cleanup. Only abandon the pending call and

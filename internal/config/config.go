@@ -15,22 +15,71 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 )
 
+const (
+	DomainFeishu = "feishu"
+	DomainLark   = "lark"
+
+	DMPolicyPairing   = "pairing"
+	DMPolicyAllowlist = "allowlist"
+
+	GroupPolicyAllowlist = "allowlist"
+	GroupPolicyOpen      = "open"
+	GroupPolicyDisabled  = "disabled"
+)
+
 type Feishu struct {
-	AppID          string   `json:"app_id"`
-	AppSecret      string   `json:"app_secret"`
-	AllowedSenders []string `json:"allowed_senders"`
+	AppID            string   `json:"app_id"`
+	AppSecret        string   `json:"app_secret"`
+	Domain           string   `json:"domain,omitempty"`
+	DMPolicy         string   `json:"dm_policy,omitempty"`
+	AllowedSenders   []string `json:"allowed_senders,omitempty"`
+	GroupPolicy      string   `json:"group_policy,omitempty"`
+	AllowUnmentioned bool     `json:"allow_unmentioned,omitempty"`
+	OwnerOpenID      string   `json:"owner_open_id,omitempty"`
+}
+
+func (c *Feishu) applyDefaults() {
+	if c.Domain == "" {
+		c.Domain = DomainFeishu
+	}
+	if c.DMPolicy == "" {
+		if len(c.AllowedSenders) > 0 {
+			c.DMPolicy = DMPolicyAllowlist
+		} else {
+			c.DMPolicy = DMPolicyPairing
+		}
+	}
+	if c.GroupPolicy == "" {
+		c.GroupPolicy = GroupPolicyAllowlist
+	}
 }
 
 func (c Feishu) Validate() error {
+	c.applyDefaults()
 	if c.AppID == "" || c.AppSecret == "" {
 		return fmt.Errorf("feishu.app_id and feishu.app_secret are required")
 	}
-	if len(c.AllowedSenders) == 0 {
-		return fmt.Errorf("feishu.allowed_senders is required")
+	switch c.Domain {
+	case DomainFeishu, DomainLark:
+	default:
+		return fmt.Errorf("feishu.domain must be %q or %q", DomainFeishu, DomainLark)
+	}
+	switch c.DMPolicy {
+	case DMPolicyPairing, DMPolicyAllowlist:
+	default:
+		return fmt.Errorf("feishu.dm_policy must be %q or %q", DMPolicyPairing, DMPolicyAllowlist)
+	}
+	switch c.GroupPolicy {
+	case GroupPolicyAllowlist, GroupPolicyOpen, GroupPolicyDisabled:
+	default:
+		return fmt.Errorf("feishu.group_policy must be %q, %q, or %q", GroupPolicyAllowlist, GroupPolicyOpen, GroupPolicyDisabled)
+	}
+	if c.DMPolicy == DMPolicyAllowlist && len(c.AllowedSenders) == 0 {
+		return fmt.Errorf("feishu.allowed_senders is required when dm_policy is allowlist")
 	}
 	for _, sender := range c.AllowedSenders {
 		if strings.TrimSpace(sender) == "" {
-			return fmt.Errorf("feishu.allowed_senders cannot contain an empty ID")
+			return fmt.Errorf("feishu.allowed_senders cannot contain an empty id")
 		}
 	}
 	return nil
@@ -39,6 +88,7 @@ func (c Feishu) Validate() error {
 type Gateway struct {
 	PromptTimeout Duration `json:"prompt_timeout"`
 	StatePath     string   `json:"state_path"`
+	HomePath      string   `json:"home_path,omitempty"`
 }
 
 type Config struct {
@@ -96,6 +146,14 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 }
 
 func Starter(appID, appSecret, allowedSender string) *Config {
+	return StarterFeishu(Feishu{
+		AppID: appID, AppSecret: appSecret, DMPolicy: DMPolicyAllowlist,
+		AllowedSenders: []string{allowedSender},
+	})
+}
+
+func StarterFeishu(feishu Feishu) *Config {
+	feishu.applyDefaults()
 	return &Config{
 		Agents: map[string]Agent{
 			"codex": {
@@ -114,9 +172,7 @@ func Starter(appID, appSecret, allowedSender string) *Config {
 			},
 		},
 		MCPServers: map[string]MCPServer{},
-		Feishu: Feishu{
-			AppID: appID, AppSecret: appSecret, AllowedSenders: []string{allowedSender},
-		},
+		Feishu:     feishu,
 		Gateway: Gateway{
 			PromptTimeout: Duration(10 * time.Minute), StatePath: "~/.steve/state.json",
 		},
@@ -167,6 +223,8 @@ func Load(path string) (*Config, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, fmt.Errorf("parse config: expected one JSON object")
 	}
+	cfg.Feishu.applyDefaults()
+	cfg.Feishu.OwnerOpenID = strings.TrimSpace(cfg.Feishu.OwnerOpenID)
 	if cfg.Gateway.PromptTimeout <= 0 {
 		cfg.Gateway.PromptTimeout = Duration(10 * time.Minute)
 	}
@@ -174,6 +232,10 @@ func Load(path string) (*Config, error) {
 		cfg.Gateway.StatePath = "~/.steve/state.json"
 	}
 	cfg.Gateway.StatePath = absolute(cfg.Gateway.StatePath)
+	if cfg.Gateway.HomePath == "" {
+		cfg.Gateway.HomePath = filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "home")
+	}
+	cfg.Gateway.HomePath = absolute(cfg.Gateway.HomePath)
 	for id, item := range cfg.Agents {
 		if item.Workspace == "" {
 			return nil, fmt.Errorf("agent %q workspace is required", id)
