@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -203,5 +204,43 @@ func TestResumeAfterProcessRestart(t *testing.T) {
 	}
 	if resumed != sid {
 		t.Fatalf("resumed session = %q, want %q", resumed, sid)
+	}
+}
+
+func TestCollectorCapsOutput(t *testing.T) {
+	col := &collector{}
+	big := strings.Repeat("a", maxCollectBytes+1024)
+	col.handle(acp.SessionUpdate{
+		SessionUpdate: acp.SessionUpdateTypeAgentMessageChunk,
+		Content:       acp.TextContentBlock(big),
+	})
+	out, _ := col.result()
+	if len(out) > maxCollectBytes {
+		t.Fatalf("collector output %d bytes exceeds cap %d", len(out), maxCollectBytes)
+	}
+	if !strings.Contains(out, "truncated") {
+		t.Fatalf("collector output missing truncation marker")
+	}
+	// Subsequent chunks must be dropped after overflow.
+	col.handle(acp.SessionUpdate{
+		SessionUpdate: acp.SessionUpdateTypeAgentMessageChunk,
+		Content:       acp.TextContentBlock("more"),
+	})
+	out, _ = col.result()
+	if strings.Contains(out, "more") {
+		t.Fatalf("collector kept chunks after overflow")
+	}
+}
+
+func TestCollectorDoesNotSplitRune(t *testing.T) {
+	col := &collector{}
+	// Force a cut in the middle of a 3-byte rune sequence.
+	col.handle(acp.SessionUpdate{
+		SessionUpdate: acp.SessionUpdateTypeAgentMessageChunk,
+		Content:       acp.TextContentBlock(strings.Repeat("a", maxCollectBytes-1) + "好"),
+	})
+	out, _ := col.result()
+	if !utf8.ValidString(out) {
+		t.Fatalf("collector output is invalid UTF-8")
 	}
 }

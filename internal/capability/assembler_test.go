@@ -98,6 +98,44 @@ func TestAssembleModeHashesIdentityNotMemory(t *testing.T) {
 	}
 }
 
+func TestAssembleHashesSkillMap(t *testing.T) {
+	src := &fakeSkills{hash: "aaa"}
+	assembler := NewAssembler(nil).SetSkills(src)
+	first, err := assembler.Assemble(agent.Agent{ID: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	src.hash = "bbb"
+	second, err := assembler.Assemble(agent.Agent{ID: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Fingerprint == second.Fingerprint {
+		t.Fatal("enabling a skill did not change fingerprint")
+	}
+}
+
+type fakeSkills struct{ hash string }
+
+func (s *fakeSkills) Fingerprint() string { return s.hash }
+
+func TestAssemblerNilSkillsMatchesLegacyFingerprint(t *testing.T) {
+	with := NewAssembler(nil).SetSkills(&fakeSkills{})
+	without := NewAssembler(nil)
+	agentCfg := agent.Agent{ID: "codex", Config: agent.Config{SystemPrompt: "base"}}
+	first, err := without.Assemble(agentCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := with.Assemble(agentCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Fingerprint != second.Fingerprint {
+		t.Fatal("empty skills hash should omit from fingerprint")
+	}
+}
+
 func TestAssemblerRejectsUnknownMCPServer(t *testing.T) {
 	_, err := NewAssembler(nil).Assemble(agent.Agent{ID: "claude", Config: agent.Config{MCPServers: []string{"missing"}}})
 	if err == nil {

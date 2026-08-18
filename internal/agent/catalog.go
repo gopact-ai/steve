@@ -6,6 +6,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/gopact-ai/steve/internal/protocol"
 )
 
 type Config struct {
@@ -109,8 +111,8 @@ func (c *Catalog) Select(input string) (Selection, bool) {
 	switch {
 	case strings.HasPrefix(input, "@"):
 		rest = strings.TrimPrefix(input, "@")
-	case strings.HasPrefix(input, "/use") && hasLeadingSpace(strings.TrimPrefix(input, "/use")):
-		rest = strings.TrimSpace(strings.TrimPrefix(input, "/use"))
+	case strings.HasPrefix(input, string(protocol.CommandUse)) && hasLeadingSpace(strings.TrimPrefix(input, string(protocol.CommandUse))):
+		rest = strings.TrimSpace(strings.TrimPrefix(input, string(protocol.CommandUse)))
 	default:
 		return Selection{}, false
 	}

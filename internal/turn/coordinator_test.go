@@ -15,16 +15,18 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/state"
 )
 
 type fakeManager struct {
-	runners map[string]*fakeRunner
-	opened  []string
-	fail    error
+	runners  map[string]*fakeRunner
+	opened   []string
+	workdirs []string
+	fail     error
 }
 
-func (m *fakeManager) OpenSession(_ context.Context, harnessID, upstreamID, _ string, _ []acp.MCPServer) (harness.Runner, error) {
+func (m *fakeManager) OpenSession(_ context.Context, harnessID, upstreamID, workdir string, _ []acp.MCPServer) (harness.Runner, error) {
 	if m.fail != nil {
 		return nil, m.fail
 	}
@@ -35,6 +37,7 @@ func (m *fakeManager) OpenSession(_ context.Context, harnessID, upstreamID, _ st
 	runner := m.runners[harnessID]
 	runner.id = id
 	m.opened = append(m.opened, harnessID+":"+upstreamID)
+	m.workdirs = append(m.workdirs, workdir)
 	return runner, nil
 }
 
@@ -43,6 +46,8 @@ func (m *fakeManager) CloseSession(context.Context, string, string) error { retu
 type fakeRunner struct {
 	id       string
 	prompts  []string
+	reply    string
+	activity []string
 	started  chan struct{}
 	done     chan struct{}
 	err      error
@@ -65,6 +70,9 @@ func (r *fakeRunner) Prompt(ctx context.Context, prompt string) (string, []strin
 	}
 	if r.canceled.Load() {
 		return "", nil, context.Canceled
+	}
+	if r.reply != "" {
+		return r.reply, append([]string{}, r.activity...), r.err
 	}
 	return "reply: " + prompt, nil, r.err
 }
@@ -158,7 +166,7 @@ func TestCoordinatorCancelDuringOpenCancelsContextImmediately(t *testing.T) {
 	}
 	started := time.Now()
 	result, err := handle(coordinator, t.Context(), "/cancel")
-	if err != nil || !strings.Contains(result.Text, "已请求取消") {
+	if err != nil || !strings.Contains(result.Text, i18n.New(i18n.LocaleZH).T(i18n.CancelRequested, "codex")) {
 		t.Fatalf("cancel = %#v, %v", result, err)
 	}
 	if time.Since(started) > time.Second {
@@ -193,7 +201,7 @@ func TestCoordinatorPendingCancelStopsNextTurn(t *testing.T) {
 	runner := &fakeRunner{}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	if result, err := handle(coordinator, t.Context(), "/cancel"); err != nil || !strings.Contains(result.Text, "没有运行中的任务") {
+	if result, err := handle(coordinator, t.Context(), "/cancel"); err != nil || result.Text != i18n.New(i18n.LocaleZH).T(i18n.NoRunningTurn) {
 		t.Fatalf("cancel = %#v, %v", result, err)
 	}
 	if _, err := handle(coordinator, t.Context(), "hello"); err == nil || !errors.Is(err, context.Canceled) {
@@ -301,7 +309,7 @@ func TestCoordinatorCancelsRunningTurn(t *testing.T) {
 		t.Fatal("turn did not start")
 	}
 	result, err := handle(coordinator, t.Context(), "/cancel")
-	if err != nil || !strings.Contains(result.Text, "已请求取消") {
+	if err != nil || !strings.Contains(result.Text, i18n.New(i18n.LocaleZH).T(i18n.CancelRequested, "codex")) {
 		t.Fatalf("cancel = %#v, %v", result, err)
 	}
 	select {
@@ -323,7 +331,7 @@ func TestCoordinatorCancelWithoutRunningTurn(t *testing.T) {
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}}}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	result, err := handle(coordinator, t.Context(), "/cancel")
-	if err != nil || !strings.Contains(result.Text, "没有运行中的任务") {
+	if err != nil || result.Text != i18n.New(i18n.LocaleZH).T(i18n.NoRunningTurn) {
 		t.Fatalf("cancel = %#v, %v", result, err)
 	}
 }
@@ -389,7 +397,7 @@ func TestCoordinatorSwitchOnlyAndNew(t *testing.T) {
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 
 	result, err := handle(coordinator, t.Context(), "/use claude")
-	if err != nil || result.Text != "已切换到 claude" {
+	if err != nil || result.Text != i18n.New(i18n.LocaleZH).T(i18n.Switched, "claude") {
 		t.Fatalf("switch = %#v, %v", result, err)
 	}
 	if _, err := handle(coordinator, t.Context(), "hello"); err != nil {
@@ -400,6 +408,20 @@ func TestCoordinatorSwitchOnlyAndNew(t *testing.T) {
 	}
 	if _, ok := store.Conversation("chat").Sessions["claude"]; ok {
 		t.Fatal("/new did not delete active agent session")
+	}
+}
+
+func TestCoordinatorEnglishLocale(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{
+		"codex": {Harness: "codex", Default: true}, "claude": {Harness: "claude"},
+	})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}, "claude": {}}}
+	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator.SetCatalog(i18n.New(i18n.LocaleEN))
+	result, err := handle(coordinator, t.Context(), "/use claude")
+	if err != nil || result.Text != i18n.New(i18n.LocaleEN).T(i18n.Switched, "claude") {
+		t.Fatalf("en switch = %#v, %v", result, err)
 	}
 }
 

@@ -53,11 +53,35 @@ func TestLoadRejectsMissingWorkspace(t *testing.T) {
 	}
 }
 
-func TestStarterDefaultsToDeny(t *testing.T) {
+func TestStarterDefaultsToRead(t *testing.T) {
 	for id, harness := range Starter("app", "secret", "ou_user").Harnesses {
-		if harness.Permission != "deny" {
-			t.Fatalf("harness %q permission = %q, want deny", id, harness.Permission)
+		if harness.Permission != PermissionRead {
+			t.Fatalf("harness %q permission = %q, want read", id, harness.Permission)
 		}
+	}
+}
+
+func TestStarterIncludesGrokAndKimi(t *testing.T) {
+	cfg := Starter("app", "secret", "ou_user")
+	for _, id := range []string{"grok", "kimi"} {
+		if _, ok := cfg.Agents[id]; !ok {
+			t.Fatalf("missing agent %q", id)
+		}
+		if _, ok := cfg.Harnesses[id]; !ok {
+			t.Fatalf("missing harness %q", id)
+		}
+	}
+	if cfg.Agents["grok"].Harness != "grok" || cfg.Harnesses["grok"].Command != "grok" {
+		t.Fatalf("grok = %#v %#v", cfg.Agents["grok"], cfg.Harnesses["grok"])
+	}
+	if cfg.Agents["kimi"].Harness != "kimi" || cfg.Harnesses["kimi"].Command != "kimi" {
+		t.Fatalf("kimi = %#v %#v", cfg.Agents["kimi"], cfg.Harnesses["kimi"])
+	}
+	if got := cfg.Harnesses["grok"].Args; len(got) != 3 || got[0] != "agent" || got[2] != "stdio" {
+		t.Fatalf("grok args = %#v", got)
+	}
+	if got := cfg.Harnesses["kimi"].Args; len(got) != 1 || got[0] != "acp" {
+		t.Fatalf("kimi args = %#v", got)
 	}
 }
 
@@ -66,10 +90,13 @@ func TestValidateFeishuCredentials(t *testing.T) {
 		t.Fatal("expected missing Feishu credentials error")
 	}
 	if err := (Feishu{AppID: "app", AppSecret: "secret"}).Validate(); err != nil {
-		t.Fatalf("pairing default should allow empty senders: %v", err)
+		t.Fatalf("empty allowlist should be open: %v", err)
 	}
-	if err := (Feishu{AppID: "app", AppSecret: "secret", DMPolicy: DMPolicyAllowlist}).Validate(); err == nil {
-		t.Fatal("expected missing sender allowlist error")
+	if err := (Feishu{AppID: "app", AppSecret: "secret", AllowedSenders: []string{" "}}).Validate(); err == nil {
+		t.Fatal("expected empty sender id error")
+	}
+	if err := (Feishu{AppID: "app", AppSecret: "secret", BlockedSenders: []string{""}}).Validate(); err == nil {
+		t.Fatal("expected empty blocked id error")
 	}
 	if err := (Feishu{AppID: "app", AppSecret: "secret", Domain: "slack"}).Validate(); err == nil {
 		t.Fatal("expected invalid domain error")
@@ -123,23 +150,29 @@ func TestLoadAppliesFeishuDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Feishu.Domain != DomainFeishu || cfg.Feishu.DMPolicy != DMPolicyPairing || cfg.Feishu.GroupPolicy != GroupPolicyAllowlist {
+	if cfg.Feishu.Domain != DomainFeishu || cfg.Feishu.GroupPolicy != GroupPolicyOpen || cfg.Feishu.DMPolicy != "" {
 		t.Fatalf("unexpected defaults: %#v", cfg.Feishu)
 	}
 }
 
-func TestLoadKeepsAllowlistWhenSendersExist(t *testing.T) {
+func TestLoadKeepsSenderLists(t *testing.T) {
 	path := writeConfig(t, `{
 		"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-test", "default": true}},
 		"harnesses": {"codex": {"command": "mockagent"}},
-		"feishu": {"app_id": "app", "app_secret": "secret", "allowed_senders": ["ou_user"]}
+		"feishu": {"app_id": "app", "app_secret": "secret", "allowed_senders": ["ou_user"], "blocked_senders": ["ou_spam"]}
 	}`)
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.Feishu.DMPolicy != DMPolicyAllowlist {
-		t.Fatalf("existing sender list should stay allowlist, got %q", cfg.Feishu.DMPolicy)
+	if cfg.Feishu.GroupPolicy != GroupPolicyOpen {
+		t.Fatalf("group policy = %q", cfg.Feishu.GroupPolicy)
+	}
+	if len(cfg.Feishu.AllowedSenders) != 1 || cfg.Feishu.AllowedSenders[0] != "ou_user" {
+		t.Fatalf("allowed = %#v", cfg.Feishu.AllowedSenders)
+	}
+	if len(cfg.Feishu.BlockedSenders) != 1 || cfg.Feishu.BlockedSenders[0] != "ou_spam" {
+		t.Fatalf("blocked = %#v", cfg.Feishu.BlockedSenders)
 	}
 }
 
@@ -158,8 +191,15 @@ func TestSaveCreatesPrivateConfig(t *testing.T) {
 	if _, err := Load(path); err != nil {
 		t.Fatalf("saved config cannot be loaded: %v", err)
 	}
-	if err := Save(path, Starter("other", "secret", "ou_user")); err == nil {
-		t.Fatal("Save overwrote an existing config")
+	if err := Save(path, Starter("other", "secret", "ou_user")); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Feishu.AppID != "other" {
+		t.Fatalf("overwrite did not persist: %#v", loaded.Feishu)
 	}
 }
 

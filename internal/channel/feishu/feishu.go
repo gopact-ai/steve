@@ -15,32 +15,35 @@ import (
 	"github.com/larksuite/oapi-sdk-go/v3/event/dispatcher"
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
+
+	"github.com/gopact-ai/steve/internal/protocol"
+)
+
+const (
+	senderTypeBot   = "bot"
+	messageTypeText = "text"
+	mentionTypeBot  = "bot"
 )
 
 // InboundMessage is a normalized text message from Feishu.
 type InboundMessage struct {
 	ConversationID string
 	ChatID         string
-	ChatType       string // p2p | group
+	ChatType       protocol.ChatType
 	MessageID      string
 	SenderOpenID   string
 	Text           string
+	Mentioned      bool
 }
 
 // Handler consumes inbound messages; it must not block the event loop.
 type Handler func(msg InboundMessage)
-
-type Pairing interface {
-	RequestPairing(openID string) (code string, err error)
-}
 
 type Options struct {
 	AppID            string
 	AppSecret        string
 	Domain           string
 	Access           Access
-	Pairing          Pairing
-	ExtraAllows      func(string) bool
 	AllowUnmentioned bool
 }
 
@@ -50,11 +53,9 @@ type longConn interface {
 }
 
 type Channel struct {
-	api         *lark.Client
-	ws          longConn
-	access      Access
-	pairing     Pairing
-	extraAllows func(string) bool
+	api    *lark.Client
+	ws     longConn
+	access Access
 }
 
 var mentionToken = regexp.MustCompile("@_(user_\\d+|all)[\\s\u200b]*")
@@ -65,18 +66,15 @@ func New(ctx context.Context, opts Options, handler Handler) (*Channel, error) {
 	if err != nil {
 		return nil, err
 	}
-	channel := &Channel{api: api, access: opts.Access, pairing: opts.Pairing, extraAllows: opts.ExtraAllows}
+	channel := &Channel{api: api, access: opts.Access}
 	eventHandler := dispatcher.NewEventDispatcher("", "").
 		OnP2MessageReceiveV1(func(ctx context.Context, event *larkim.P2MessageReceiveV1) error {
 			msg, ok := normalize(event, identity.OpenID, opts.AllowUnmentioned)
 			if !ok {
 				return nil
 			}
-			switch decide(msg, channel.access, channel.extraAllows) {
-			case actionAllow:
+			if decide(msg, channel.access) == actionAllow {
 				handler(msg)
-			case actionPairing:
-				channel.offerPairing(ctx, msg)
 			}
 			return nil
 		})
@@ -87,21 +85,6 @@ func New(ctx context.Context, opts Options, handler Handler) (*Channel, error) {
 		larkws.WithLogLevel(larkcore.LogLevelInfo),
 	)
 	return channel, nil
-}
-
-func (c *Channel) offerPairing(ctx context.Context, msg InboundMessage) {
-	if c.pairing == nil {
-		return
-	}
-	code, err := c.pairing.RequestPairing(msg.SenderOpenID)
-	if err != nil {
-		log.Printf("feishu: pairing request failed: %v", err)
-		return
-	}
-	text := "配对码：" + code + "。在运行 Steve 的机器上执行：steve pairing approve " + code
-	if err := c.Reply(ctx, msg.MessageID, text); err != nil {
-		log.Printf("feishu: pairing reply failed: %v", err)
-	}
 }
 
 // Start blocks and maintains the long connection until ctx is done.
@@ -129,14 +112,16 @@ func normalize(event *larkim.P2MessageReceiveV1, botOpenID string, allowUnmentio
 	if event.Event == nil || event.Event.Message == nil {
 		return InboundMessage{}, false
 	}
-	if event.Event.Sender != nil && deref(event.Event.Sender.SenderType) == "bot" {
+	if event.Event.Sender != nil && deref(event.Event.Sender.SenderType) == senderTypeBot {
 		return InboundMessage{}, false
 	}
 	m := event.Event.Message
-	if deref(m.ChatType) == "group" && !allowUnmentioned && !mentionsBot(m.Mentions, botOpenID) {
+	chatType := protocol.ParseChatType(deref(m.ChatType))
+	mentioned := mentionsBot(m.Mentions, botOpenID)
+	if chatType == protocol.ChatGroup && !allowUnmentioned && !mentioned {
 		return InboundMessage{}, false
 	}
-	if deref(m.MessageType) != "text" {
+	if deref(m.MessageType) != messageTypeText {
 		log.Printf("feishu: ignoring message type %q", deref(m.MessageType))
 		return InboundMessage{}, false
 	}
@@ -158,16 +143,17 @@ func normalize(event *larkim.P2MessageReceiveV1, botOpenID string, allowUnmentio
 	return InboundMessage{
 		ConversationID: conversationID(m),
 		ChatID:         deref(m.ChatId),
-		ChatType:       deref(m.ChatType),
+		ChatType:       chatType,
 		MessageID:      deref(m.MessageId),
 		SenderOpenID:   sender,
 		Text:           text,
+		Mentioned:      mentioned || chatType != protocol.ChatGroup,
 	}, true
 }
 
 func mentionsBot(mentions []*larkim.MentionEvent, botOpenID string) bool {
 	for _, mention := range mentions {
-		if mention != nil && deref(mention.MentionedType) == "bot" && mention.Id != nil && deref(mention.Id.OpenId) == botOpenID {
+		if mention != nil && deref(mention.MentionedType) == mentionTypeBot && mention.Id != nil && deref(mention.Id.OpenId) == botOpenID {
 			return true
 		}
 	}
@@ -222,6 +208,46 @@ func (c *Channel) RemoveReaction(ctx context.Context, messageID, reactionID stri
 		return fmt.Errorf("feishu reaction delete: code=%d msg=%s", resp.Code, resp.Msg)
 	}
 	return nil
+}
+
+type Sent struct {
+	ChatID    string
+	MessageID string
+}
+
+// Send creates a new message to receiveID (an open_id). The returned ChatID
+// is the p2p conversation future inbound events will use.
+func (c *Channel) Send(ctx context.Context, receiveID, text string) (Sent, error) {
+	if receiveID == "" {
+		return Sent{}, fmt.Errorf("feishu send: receive id is required")
+	}
+	content, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return Sent{}, err
+	}
+	req := larkim.NewCreateMessageReqBuilder().
+		ReceiveIdType("open_id").
+		Body(larkim.NewCreateMessageReqBodyBuilder().
+			ReceiveId(receiveID).
+			MsgType(messageTypeText).
+			Content(string(content)).
+			Build()).
+		Build()
+	resp, err := c.api.Im.V1.Message.Create(ctx, req)
+	if err != nil {
+		return Sent{}, fmt.Errorf("feishu send: %w", err)
+	}
+	if !resp.Success() {
+		return Sent{}, fmt.Errorf("feishu send: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	if resp.Data == nil {
+		return Sent{}, fmt.Errorf("feishu send: empty response")
+	}
+	sent := Sent{ChatID: deref(resp.Data.ChatId), MessageID: deref(resp.Data.MessageId)}
+	if sent.ChatID == "" {
+		return Sent{}, fmt.Errorf("feishu send: empty chat id")
+	}
+	return sent, nil
 }
 
 // Reply sends a plain-text reply to the given message.

@@ -3,12 +3,14 @@ package setup
 import (
 	"strings"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 func TestMatchChoice(t *testing.T) {
 	options := []option{
-		{methodCreate, "打开飞书链接 / 扫码创建"},
-		{methodManual, "手动粘贴 App ID 和 Secret"},
+		{methodCreate, "create app"},
+		{methodManual, "paste credentials"},
 	}
 	tests := []struct {
 		name  string
@@ -37,7 +39,7 @@ func TestMatchChoice(t *testing.T) {
 func TestDrawSelectMenuLineCount(t *testing.T) {
 	var out strings.Builder
 	options := []option{{"a", "one"}, {"b", "two"}, {"c", "three"}}
-	if got := drawSelectMenu(&out, options, 1); got != 4 {
+	if got := drawSelectMenu(&out, options, 1, i18n.New(i18n.LocaleZH)); got != 4 {
 		t.Fatalf("drawSelectMenu lines = %d, want 4", got)
 	}
 	if strings.Count(out.String(), "\n") != 4 {

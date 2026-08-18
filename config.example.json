@@ -14,18 +14,42 @@
       "workspace": "~/steve-workspace/claude",
       "skills": [],
       "mcp_servers": []
+    },
+    "grok": {
+      "aliases": ["grok", "grok-build"],
+      "harness": "grok",
+      "workspace": "~/steve-workspace/grok",
+      "skills": [],
+      "mcp_servers": []
+    },
+    "kimi": {
+      "aliases": ["kimi", "kimi-code"],
+      "harness": "kimi",
+      "workspace": "~/steve-workspace/kimi",
+      "skills": [],
+      "mcp_servers": []
     }
   },
   "harnesses": {
     "codex": {
       "command": "npx",
       "args": ["-y", "@agentclientprotocol/codex-acp"],
-      "permission": "deny"
+      "permission": "read"
     },
     "claude-code": {
       "command": "npx",
       "args": ["-y", "@zed-industries/claude-code-acp"],
-      "permission": "deny"
+      "permission": "read"
+    },
+    "grok": {
+      "command": "grok",
+      "args": ["agent", "--no-leader", "stdio"],
+      "permission": "read"
+    },
+    "kimi": {
+      "command": "kimi",
+      "args": ["acp"],
+      "permission": "read"
     }
   },
   "mcp_servers": {},
@@ -34,9 +58,9 @@
     "app_secret": "xxxxxxxxxxxxxxxx",
     "domain": "feishu",
     "owner_open_id": "ou_xxxxxxxxxxxxx",
-    "dm_policy": "pairing",
     "allowed_senders": [],
-    "group_policy": "allowlist",
+    "blocked_senders": [],
+    "group_policy": "open",
     "allow_unmentioned": false
   },
   "gateway": {

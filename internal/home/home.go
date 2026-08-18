@@ -38,9 +38,14 @@ type Loader interface {
 	Load(mode Mode) (Snapshot, error)
 }
 
-type Dir struct{ Path string }
+type Dir struct {
+	Path   string
+	Locale Locale
+}
 
-func (d Dir) Load(mode Mode) (Snapshot, error) { return Load(d.Path, mode) }
+func (d Dir) Load(mode Mode) (Snapshot, error) {
+	return LoadWithLocale(d.Path, mode, d.Locale)
+}
 
 type Snapshot struct {
 	Path     string
@@ -62,17 +67,22 @@ func DefaultPath() string {
 }
 
 func Bootstrap(path string, ownerOpenID string) error {
+	return BootstrapLocale(path, ownerOpenID, LocaleZH)
+}
+
+func BootstrapLocale(path, ownerOpenID string, locale Locale) error {
 	if err := os.MkdirAll(path, 0o700); err != nil {
 		return fmt.Errorf("create steve home: %w", err)
 	}
-	user := strings.ReplaceAll(templateUser, templateOwnerID, ownerLabel(ownerOpenID))
+	pack := templatesFor(locale)
+	user := strings.ReplaceAll(pack.user, templateOwnerID, ownerLabel(ownerOpenID, locale))
 	files := []struct {
 		name string
 		body string
 	}{
-		{FileSoul, templateSoul},
+		{FileSoul, pack.soul},
 		{FileUser, user},
-		{FileMemory, templateMemory},
+		{FileMemory, pack.memory},
 	}
 	for _, file := range files {
 		if err := writeMissing(filepath.Join(path, file.name), file.body); err != nil {
@@ -82,11 +92,90 @@ func Bootstrap(path string, ownerOpenID string) error {
 	return nil
 }
 
-func ownerLabel(ownerOpenID string) string {
+func ownerLabel(ownerOpenID string, locale Locale) string {
 	if strings.TrimSpace(ownerOpenID) == "" {
-		return unsetOwnerOpenID
+		return unsetOwnerLabel(locale)
 	}
 	return ownerOpenID
+}
+
+func IsTemplate(body string) bool {
+	return strings.Contains(body, TemplateMarker)
+}
+
+// NeedsInit reports whether SOUL.md or USER.md is missing or still a template.
+func NeedsInit(path string) bool {
+	for _, name := range []string{FileSoul, FileUser} {
+		body, err := os.ReadFile(filepath.Join(path, name))
+		if err != nil || IsTemplate(string(body)) {
+			return true
+		}
+	}
+	return false
+}
+
+func WriteIdentity(path, soul, user string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return fmt.Errorf("create steve home: %w", err)
+	}
+	soul = stripTemplateMarker(soul)
+	user = stripTemplateMarker(user)
+	if strings.TrimSpace(soul) == "" || strings.TrimSpace(user) == "" {
+		return fmt.Errorf("steve home identity is empty")
+	}
+	if err := writeReplace(filepath.Join(path, FileSoul), soul); err != nil {
+		return err
+	}
+	return writeReplace(filepath.Join(path, FileUser), user)
+}
+
+func stripTemplateMarker(body string) string {
+	body = strings.ReplaceAll(body, TemplateMarker+"\n", "")
+	body = strings.ReplaceAll(body, TemplateMarker, "")
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return ""
+	}
+	return body + "\n"
+}
+
+func writeReplace(path, body string) error {
+	dir := filepath.Dir(path)
+	temp, err := os.CreateTemp(dir, "."+filepath.Base(path)+"-*")
+	if err != nil {
+		return fmt.Errorf("create %s: %w", filepath.Base(path), err)
+	}
+	name := temp.Name()
+	if err := temp.Chmod(0o600); err != nil {
+		temp.Close()
+		os.Remove(name)
+		return fmt.Errorf("chmod %s: %w", filepath.Base(path), err)
+	}
+	if _, err := temp.WriteString(body); err != nil {
+		temp.Close()
+		os.Remove(name)
+		return fmt.Errorf("write %s: %w", filepath.Base(path), err)
+	}
+	if err := temp.Close(); err != nil {
+		os.Remove(name)
+		return fmt.Errorf("close %s: %w", filepath.Base(path), err)
+	}
+	if err := os.Rename(name, path); err != nil {
+		os.Remove(name)
+		return fmt.Errorf("replace %s: %w", filepath.Base(path), err)
+	}
+	return syncDir(dir)
+}
+
+// syncDir flushes a directory entry after a rename so the replacement
+// survives a crash (rename alone is not guaranteed durable on all filesystems).
+func syncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }
 
 func writeMissing(path, body string) error {
@@ -108,6 +197,10 @@ func writeMissing(path, body string) error {
 }
 
 func Load(path string, mode Mode) (Snapshot, error) {
+	return LoadWithLocale(path, mode, LocaleZH)
+}
+
+func LoadWithLocale(path string, mode Mode, locale Locale) (Snapshot, error) {
 	if mode == ModeNone {
 		return Snapshot{Mode: ModeNone}, nil
 	}
@@ -119,11 +212,15 @@ func Load(path string, mode Mode) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	user, err := readHomeFile(resolvedHome, FileUser)
+	// USER.md and MEMORY.md are optional for guests: guest snapshots drop
+	// their content anyway, so a missing file must not take down every
+	// guest turn. Owners keep the strict contract so a deleted identity
+	// file surfaces as ErrMissing.
+	user, err := readOptionalHomeFile(resolvedHome, FileUser, mode != ModeGuest)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	memory, err := readHomeFile(resolvedHome, FileMemory)
+	memory, err := readOptionalHomeFile(resolvedHome, FileMemory, mode != ModeGuest)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -132,7 +229,7 @@ func Load(path string, mode Mode) (Snapshot, error) {
 		snap.User = ""
 		snap.Memory = ""
 	}
-	snap.Identity, snap.Prompt, snap.Warnings = compose(resolvedHome, mode, soul, snap.User, snap.Memory)
+	snap.Identity, snap.Prompt, snap.Warnings = compose(resolvedHome, mode, locale, soul, snap.User, snap.Memory)
 	return snap, nil
 }
 
@@ -201,6 +298,17 @@ func readHomeFile(resolvedHome, name string) (string, error) {
 	return string(data), nil
 }
 
+// readOptionalHomeFile reads a home file, tolerating a missing file when
+// strict is false (returning ""). All other errors (e.g. a symlink that
+// escapes the home directory) are still returned.
+func readOptionalHomeFile(resolvedHome, name string, strict bool) (string, error) {
+	body, err := readHomeFile(resolvedHome, name)
+	if err != nil && !strict && errors.Is(err, ErrMissing) {
+		return "", nil
+	}
+	return body, err
+}
+
 func withinHome(resolvedHome, resolvedFile string) error {
 	rel, err := filepath.Rel(resolvedHome, resolvedFile)
 	if err != nil {
@@ -215,16 +323,16 @@ func withinHome(resolvedHome, resolvedFile string) error {
 	return nil
 }
 
-func compose(path string, mode Mode, soul, user, memory string) (identity, prompt string, warnings []string) {
+func compose(path string, mode Mode, locale Locale, soul, user, memory string) (identity, prompt string, warnings []string) {
 	soul = truncateTo(soul, BudgetSoul)
 	user = truncateTo(user, BudgetUser)
 	memory = truncateTo(memory, BudgetMemory)
 
 	var parts []string
 	if mode == ModeOwner {
-		parts = append(parts, ownerWrapper(path))
+		parts = append(parts, ownerWrapper(path, locale))
 	} else {
-		parts = append(parts, guestWrapper())
+		parts = append(parts, guestWrapper(locale))
 	}
 	if soul != "" {
 		parts = append(parts, soul)

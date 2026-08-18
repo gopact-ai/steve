@@ -44,6 +44,7 @@ type pairingData struct {
 type data struct {
 	Conversations map[string]Conversation `json:"conversations"`
 	Pairing       pairingData             `json:"pairing,omitempty"`
+	Onboarded     bool                    `json:"onboarded,omitempty"`
 }
 
 type Store struct {
@@ -260,6 +261,45 @@ func newPairingCode() (string, error) {
 	return string(raw), nil
 }
 
+func (s *Store) Onboarded() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data.Onboarded
+}
+
+func (s *Store) MarkOnboarded() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := cloneData(s.data)
+	next.Onboarded = true
+	return s.replaceLocked(next)
+}
+
+// Relocate moves a conversation record to a new id. An existing destination
+// is replaced so a newly bound home session wins.
+func (s *Store) Relocate(from, to string) error {
+	if from == "" || to == "" {
+		return fmt.Errorf("state: relocate requires from and to")
+	}
+	if from == to {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := cloneData(s.data)
+	source, ok := next.Conversations[from]
+	if !ok {
+		return nil
+	}
+	for id, session := range source.Sessions {
+		session.ConversationID = to
+		source.Sessions[id] = session
+	}
+	next.Conversations[to] = source
+	delete(next.Conversations, from)
+	return s.replaceLocked(next)
+}
+
 func (s *Store) DeleteSession(conversationID, agentID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -302,8 +342,22 @@ func (s *Store) replaceLocked(next data) error {
 	if err := os.Rename(tempName, s.path); err != nil {
 		return fmt.Errorf("replace state: %w", err)
 	}
+	if err := syncDir(filepath.Dir(s.path)); err != nil {
+		return fmt.Errorf("sync state directory: %w", err)
+	}
 	s.data = next
 	return nil
+}
+
+// syncDir flushes a directory entry after a rename so the replacement
+// survives a crash (rename alone is not guaranteed durable on all filesystems).
+func syncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }
 
 func cloneData(source data) data {
@@ -313,6 +367,7 @@ func cloneData(source data) data {
 			Pending:  make(map[string]PendingPair, len(source.Pairing.Pending)),
 			Approved: append([]string(nil), source.Pairing.Approved...),
 		},
+		Onboarded: source.Onboarded,
 	}
 	for id, conversation := range source.Conversations {
 		clone.Conversations[id] = cloneConversation(conversation)

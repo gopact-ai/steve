@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/i18n"
 	larkreg "github.com/larksuite/oapi-sdk-go/v3/scene/registration"
 	qrcode "github.com/skip2/go-qrcode"
 )
@@ -27,6 +28,7 @@ type RegisterOptions struct {
 	Domain   string
 	OpenURL  func(string) error
 	OnQRCode func(url string, expireIn int)
+	Catalog  i18n.Catalog
 }
 
 func RegisterApp(ctx context.Context, opts RegisterOptions) (CreatedApp, error) {
@@ -65,7 +67,7 @@ func RegisterApp(ctx context.Context, opts RegisterOptions) (CreatedApp, error) 
 			if opts.OnQRCode != nil {
 				opts.OnQRCode(info.URL, info.ExpireIn)
 			}
-			printRegistrationLink(opts.Out, info.URL, info.ExpireIn)
+			printRegistrationLink(opts.Out, info.URL, info.ExpireIn, opts.Catalog)
 			if err := opts.OpenURL(info.URL); err != nil {
 				fmt.Fprintf(opts.Out, "steve: could not open browser: %v\n", err)
 			}
@@ -91,16 +93,16 @@ func RegisterApp(ctx context.Context, opts RegisterOptions) (CreatedApp, error) 
 	return created, nil
 }
 
-func printRegistrationLink(out io.Writer, rawURL string, expireIn int) {
+func printRegistrationLink(out io.Writer, rawURL string, expireIn int, text i18n.Catalog) {
 	mins := expireIn / 60
 	if mins < 1 {
 		mins = 1
 	}
-	fmt.Fprintf(out, "\n请用飞书打开下面的链接完成应用创建（也可扫码）：\n\n  %s\n\n", rawURL)
+	fmt.Fprintf(out, "\n%s\n\n  %s\n\n", text.T(i18n.SetupOpenLink), rawURL)
 	if qr, err := qrcode.New(rawURL, qrcode.Medium); err == nil {
 		fmt.Fprint(out, qr.ToSmallString(false))
 	}
-	fmt.Fprintf(out, "链接有效期约 %d 分钟。\n\n", mins)
+	fmt.Fprintf(out, "%s\n\n", text.T(i18n.SetupLinkTTL, mins))
 }
 
 func openBrowser(rawURL string) error {

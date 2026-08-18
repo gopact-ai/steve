@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -78,7 +79,16 @@ type collector struct {
 	activity   []string
 	progress   func(string)
 	generation uint64
+	overflow   bool
 }
+
+// maxCollectBytes caps the aggregated assistant text so a runaway agent
+// cannot balloon memory before the prompt timeout fires.
+const maxCollectBytes = 1 << 20 // 1 MiB
+
+// truncationMarker length is reserved inside maxCollectBytes so the final
+// buffer never exceeds the cap.
+const truncationMarker = "\n…(output truncated)"
 
 func (c *collector) handle(u acp.SessionUpdate) {
 	c.mu.Lock()
@@ -86,7 +96,7 @@ func (c *collector) handle(u acp.SessionUpdate) {
 	switch u.SessionUpdate {
 	case acp.SessionUpdateTypeAgentMessageChunk:
 		if cb, ok := u.Content.(acp.ContentBlock); ok && cb.Type == acp.ContentBlockTypeText {
-			c.text.WriteString(cb.Text)
+			c.writeText(cb.Text)
 		}
 	case acp.SessionUpdateTypeToolCall:
 		title := ""
@@ -99,6 +109,37 @@ func (c *collector) handle(u acp.SessionUpdate) {
 			c.progress(line)
 		}
 	}
+}
+
+// writeText appends a chunk, trimming at maxCollectBytes on a rune boundary
+// and marking the result as truncated.
+func (c *collector) writeText(chunk string) {
+	if c.overflow || chunk == "" {
+		return
+	}
+	used := c.text.Len()
+	if used >= maxCollectBytes {
+		c.overflow = true
+		return
+	}
+	// Reserve room for the truncation marker so the final buffer stays
+	// within maxCollectBytes.
+	room := maxCollectBytes - used - len(truncationMarker)
+	if room <= 0 {
+		c.overflow = true
+		return
+	}
+	if len(chunk) > room {
+		body := chunk[:room]
+		for len(body) > 0 && !utf8.ValidString(body) {
+			body = body[:len(body)-1]
+		}
+		c.text.WriteString(body)
+		c.text.WriteString(truncationMarker)
+		c.overflow = true
+		return
+	}
+	c.text.WriteString(chunk)
 }
 
 func (c *collector) result() (string, []string) {
@@ -124,7 +165,11 @@ func (ch *clientHandler) Update(_ context.Context, n *acp.SessionNotification) e
 }
 
 func (ch *clientHandler) RequestPermission(_ context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
-	outcome := ch.h.cfg.Permission.Decide(req.Options)
+	var kind acp.ToolKind
+	if req.ToolCall.Kind != nil {
+		kind = *req.ToolCall.Kind
+	}
+	outcome := ch.h.cfg.Permission.Decide(kind, req.Options)
 	title := ""
 	if req.ToolCall.Title != nil {
 		title = *req.ToolCall.Title

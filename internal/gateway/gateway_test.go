@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
@@ -81,7 +83,7 @@ func (p *countingProcessor) Handle(_ context.Context, req turn.Request) (turn.Re
 type userErrorProcessor struct{}
 
 func (userErrorProcessor) Handle(context.Context, turn.Request) (turn.Result, error) {
-	return turn.Result{}, turn.UserError{Text: "能力或身份文件已变化，请先发送 /new（身份与记忆会保留）。"}
+	return turn.Result{}, turn.UserError{Text: i18n.New(i18n.LocaleZH).T(i18n.CapabilityDrift, protocol.CommandNew)}
 }
 
 func TestGatewayReplies(t *testing.T) {
@@ -108,7 +110,7 @@ func TestGatewayRepliesUserError(t *testing.T) {
 
 	select {
 	case got := <-r.text:
-		if got != "能力或身份文件已变化，请先发送 /new（身份与记忆会保留）。" {
+		if got != i18n.New(i18n.LocaleZH).T(i18n.CapabilityDrift, protocol.CommandNew) {
 			t.Fatalf("unexpected reply: %q", got)
 		}
 	case <-time.After(time.Second):
@@ -124,7 +126,7 @@ func TestGatewayRepliesCanceledTurn(t *testing.T) {
 
 	select {
 	case got := <-r.text:
-		if got != "任务已取消" {
+		if got != i18n.New(i18n.LocaleZH).T(i18n.TurnCanceled) {
 			t.Fatalf("unexpected reply: %q", got)
 		}
 	case <-time.After(time.Second):
@@ -207,15 +209,16 @@ func TestGatewayCancelDrainsQueuedMessages(t *testing.T) {
 }
 
 func TestTruncateRunes(t *testing.T) {
-	if got := truncateRunes("short", maxReplyRunes); got != "short" {
+	g := New(fakeProcessor{})
+	if got := g.truncateRunes("short", maxReplyRunes); got != "short" {
 		t.Fatalf("short text changed: %q", got)
 	}
 	long := strings.Repeat("长", maxReplyRunes+1)
-	got := truncateRunes(long, maxReplyRunes)
+	got := g.truncateRunes(long, maxReplyRunes)
 	if !strings.HasPrefix(got, strings.Repeat("长", maxReplyRunes)) {
 		t.Fatal("truncated text lost its prefix")
 	}
-	if !strings.Contains(got, "已截断") {
+	if !strings.Contains(got, i18n.New(i18n.LocaleZH).T(i18n.Truncated)) {
 		t.Fatal("truncated text is missing the truncation notice")
 	}
 }
@@ -275,6 +278,26 @@ func TestGatewayReplyWithoutReactionWhenAckFails(t *testing.T) {
 	}
 }
 
+type emptyProcessor struct{}
+
+func (emptyProcessor) Handle(context.Context, turn.Request) (turn.Result, error) {
+	return turn.Result{}, nil
+}
+
+func TestGatewaySilentListenSkipsEmptyUnmentionedGroup(t *testing.T) {
+	g := New(emptyProcessor{})
+	events := make(chan string, 8)
+	g.BindChannel(&recordingChannel{events: events})
+	g.HandleMessage(feishu.InboundMessage{
+		ChatID: "oc_chat", ChatType: protocol.ChatGroup, MessageID: "om_message", Text: "side chat",
+	})
+	select {
+	case ev := <-events:
+		t.Fatalf("unmentioned empty listen replied: %s", ev)
+	case <-time.After(50 * time.Millisecond):
+	}
+}
+
 func TestGatewayClearsReactionAfterFailedTurn(t *testing.T) {
 	g := New(cancelingProcessor{})
 	events := make(chan string, 8)
@@ -282,7 +305,11 @@ func TestGatewayClearsReactionAfterFailedTurn(t *testing.T) {
 	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_message", Text: "long task"})
 
 	got := collectEvents(t, events, 3)
-	want := []string{"add:om_message:THINKING", "reply:om_message:任务已取消", "remove:om_message:rx_1"}
+	want := []string{
+		"add:om_message:THINKING",
+		"reply:om_message:" + i18n.New(i18n.LocaleZH).T(i18n.TurnCanceled),
+		"remove:om_message:rx_1",
+	}
 	if strings.Join(got, ",") != strings.Join(want, ",") {
 		t.Fatalf("events = %v, want %v", got, want)
 	}

@@ -32,9 +32,14 @@ type Capabilities struct {
 	Fingerprint  string
 }
 
+type skillFingerprinter interface {
+	Fingerprint() string
+}
+
 type Assembler struct {
 	servers map[string]MCPServer
 	home    home.Loader
+	skills  skillFingerprinter
 }
 
 func NewAssembler(servers map[string]MCPServer) *Assembler {
@@ -43,6 +48,11 @@ func NewAssembler(servers map[string]MCPServer) *Assembler {
 
 func (a *Assembler) SetHome(loader home.Loader) *Assembler {
 	a.home = loader
+	return a
+}
+
+func (a *Assembler) SetSkills(src skillFingerprinter) *Assembler {
+	a.skills = src
 	return a
 }
 
@@ -98,7 +108,11 @@ func (a *Assembler) AssembleMode(selected agent.Agent, mode home.Mode) (Capabili
 	if a.home != nil {
 		hashMode = mode
 	}
-	fp, err := fingerprint(identity, servers, hashMode)
+	skillsHash := ""
+	if a.skills != nil {
+		skillsHash = a.skills.Fingerprint()
+	}
+	fp, err := fingerprint(identity, servers, hashMode, skillsHash)
 	if err != nil {
 		return Capabilities{}, err
 	}
@@ -139,12 +153,13 @@ func makeMCPServer(name string, cfg MCPServer) (acp.MCPServer, error) {
 	}
 }
 
-func fingerprint(instructions string, servers []acp.MCPServer, mode home.Mode) (string, error) {
+func fingerprint(instructions string, servers []acp.MCPServer, mode home.Mode, skillsHash string) (string, error) {
 	data, err := json.Marshal(struct {
 		Instructions string          `json:"instructions"`
 		MCPServers   []acp.MCPServer `json:"mcp_servers"`
 		HomeMode     string          `json:"home_mode,omitempty"`
-	}{instructions, servers, string(mode)})
+		Skills       string          `json:"skills,omitempty"`
+	}{instructions, servers, string(mode), skillsHash})
 	if err != nil {
 		return "", fmt.Errorf("fingerprint capabilities: %w", err)
 	}

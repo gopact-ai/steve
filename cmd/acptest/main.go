@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/runtime"
+	"github.com/gopact-ai/steve/internal/skills"
 )
 
 func main() {
@@ -37,7 +40,23 @@ func main() {
 			log.Fatalf("unknown agent %q", *agentID)
 		}
 	}
-	assembler := cfg.CapabilityAssembler()
+	stateDir := filepath.Dir(cfg.Gateway.StatePath)
+	if err := runtime.Prepare(stateDir); err != nil {
+		log.Fatal(err)
+	}
+	skillMap, err := skills.Setup(stateDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	live := &skills.Live{Map: skillMap, Dests: runtime.SkillDests(stateDir)}
+	if err := live.Apply(); err != nil {
+		log.Fatal(err)
+	}
+	for id, item := range cfg.Harnesses {
+		item.Env = runtime.ApplyEnv(item.Env, id, stateDir)
+		cfg.Harnesses[id] = item
+	}
+	assembler := cfg.CapabilityAssembler().SetSkills(skillMap)
 	mode := home.ModeGuest
 	if _, err := os.Stat(cfg.Gateway.HomePath); err == nil {
 		assembler.SetHome(home.Dir{Path: cfg.Gateway.HomePath})

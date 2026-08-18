@@ -119,3 +119,77 @@ func TestStoreRejectsWorkspaceChange(t *testing.T) {
 		t.Fatal("expected immutable workspace error")
 	}
 }
+
+func TestStoreOnboardedPersists(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if store.Onboarded() {
+		t.Fatal("fresh store should not be onboarded")
+	}
+	if err := store.MarkOnboarded(); err != nil {
+		t.Fatal(err)
+	}
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reopened.Onboarded() {
+		t.Fatal("onboarded flag was not persisted")
+	}
+}
+
+func TestStoreRelocateMovesConversation(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetActiveAgent("from", "codex"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSession(Session{
+		ConversationID: "from", AgentID: "codex", HarnessID: "codex",
+		UpstreamID: "up", Workspace: "/home",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Relocate("from", "to"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.Conversation("from").Sessions["codex"]; ok {
+		t.Fatal("source conversation still present")
+	}
+	got := store.Conversation("to")
+	if got.ActiveAgent != "codex" || got.Sessions["codex"].ConversationID != "to" || got.Sessions["codex"].UpstreamID != "up" {
+		t.Fatalf("relocated = %#v", got)
+	}
+}
+
+func TestStoreRelocateOverwritesDestination(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSession(Session{
+		ConversationID: "from", AgentID: "codex", HarnessID: "codex", UpstreamID: "home", Workspace: "/home",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSession(Session{
+		ConversationID: "to", AgentID: "codex", HarnessID: "codex", UpstreamID: "old", Workspace: "/work",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Relocate("from", "to"); err != nil {
+		t.Fatal(err)
+	}
+	got := store.Conversation("to").Sessions["codex"]
+	if got.UpstreamID != "home" || got.Workspace != "/home" || got.ConversationID != "to" {
+		t.Fatalf("destination = %#v", got)
+	}
+	if _, ok := store.Conversation("from").Sessions["codex"]; ok {
+		t.Fatal("source conversation still present")
+	}
+}

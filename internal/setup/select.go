@@ -9,14 +9,15 @@ import (
 	"strings"
 	"unicode"
 
+	"github.com/gopact-ai/steve/internal/i18n"
 	"golang.org/x/term"
 )
 
 func promptSelect(opts Options, in *bufio.Reader, out io.Writer, question string, options []option, initial string) (string, error) {
 	if canUseRawKeys(opts) {
-		return promptSelectKeys(out, question, options, initial)
+		return promptSelectKeys(opts, out, question, options, initial)
 	}
-	return promptSelectLine(in, out, question, options, initial)
+	return promptSelectLine(opts, in, out, question, options, initial)
 }
 
 func canUseRawKeys(opts Options) bool {
@@ -26,7 +27,7 @@ func canUseRawKeys(opts Options) bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
 }
 
-func promptSelectLine(in *bufio.Reader, out io.Writer, question string, options []option, initial string) (string, error) {
+func promptSelectLine(opts Options, in *bufio.Reader, out io.Writer, question string, options []option, initial string) (string, error) {
 	fmt.Fprintf(out, "%s:\n", question)
 	defaultIndex := 1
 	for i, item := range options {
@@ -37,7 +38,7 @@ func promptSelectLine(in *bufio.Reader, out io.Writer, question string, options 
 		}
 		fmt.Fprintf(out, "  %s %d) %s\n", mark, i+1, item.label)
 	}
-	fmt.Fprintf(out, "输入数字后回车 [%d]: ", defaultIndex)
+	fmt.Fprintf(out, opts.Catalog.T(i18n.SetupEnterNumber), defaultIndex)
 	line, err := in.ReadString('\n')
 	if err != nil && err != io.EOF {
 		return "", err
@@ -49,7 +50,7 @@ func promptSelectLine(in *bufio.Reader, out io.Writer, question string, options 
 	return value, nil
 }
 
-func promptSelectKeys(out io.Writer, question string, options []option, initial string) (string, error) {
+func promptSelectKeys(opts Options, out io.Writer, question string, options []option, initial string) (string, error) {
 	fd := int(os.Stdin.Fd())
 	state, err := term.MakeRaw(fd)
 	if err != nil {
@@ -66,10 +67,10 @@ func promptSelectKeys(out io.Writer, question string, options []option, initial 
 		}
 	}
 	fmt.Fprintf(out, "\r\n%s\r\n", question)
-	drawn := drawSelectMenu(out, options, idx)
+	drawn := drawSelectMenu(out, options, idx, opts.Catalog)
 
 	finish := func(choice option) (string, error) {
-		fmt.Fprintf(out, "\r\033[%dA\033[J已选择：%s\r\n", drawn, choice.label)
+		fmt.Fprintf(out, "\r\033[%dA\033[J%s\r\n", drawn, opts.Catalog.T(i18n.SetupSelected, choice.label))
 		return choice.value, nil
 	}
 
@@ -109,11 +110,11 @@ func promptSelectKeys(out io.Writer, question string, options []option, initial 
 		// Cursor is on the blank line after the hint. Move back over the
 		// menu we just drew, then wipe leftovers from earlier frames.
 		fmt.Fprintf(out, "\r\033[%dA\033[J", drawn)
-		drawn = drawSelectMenu(out, options, idx)
+		drawn = drawSelectMenu(out, options, idx, opts.Catalog)
 	}
 }
 
-func drawSelectMenu(out io.Writer, options []option, idx int) int {
+func drawSelectMenu(out io.Writer, options []option, idx int, text i18n.Catalog) int {
 	for i, item := range options {
 		cursor := "  "
 		if i == idx {
@@ -121,7 +122,7 @@ func drawSelectMenu(out io.Writer, options []option, idx int) int {
 		}
 		fmt.Fprintf(out, "\r\033[2K%s%d) %s\r\n", cursor, i+1, item.label)
 	}
-	fmt.Fprintf(out, "\r\033[2K上下键选择，按数字或回车确认\r\n")
+	fmt.Fprintf(out, "\r\033[2K%s\r\n", text.T(i18n.SetupArrowHint))
 	return len(options) + 1
 }
 

@@ -44,6 +44,79 @@ func TestBootstrapCreatesFiles(t *testing.T) {
 	}
 }
 
+func TestBootstrapLocaleEnglish(t *testing.T) {
+	dir := t.TempDir()
+	if err := BootstrapLocale(dir, "ou_owner", LocaleEN); err != nil {
+		t.Fatal(err)
+	}
+	soul, err := os.ReadFile(filepath.Join(dir, FileSoul))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(soul), "You are Steve") {
+		t.Fatalf("english soul missing: %s", soul)
+	}
+	user, err := os.ReadFile(filepath.Join(dir, FileUser))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(user), "Name:") || !strings.Contains(string(user), "ou_owner") {
+		t.Fatalf("english user missing: %s", user)
+	}
+	snap, err := LoadWithLocale(dir, ModeOwner, LocaleEN)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(snap.Prompt, "These files are your identity") {
+		t.Fatalf("english wrapper missing: %s", snap.Prompt)
+	}
+}
+
+func TestWriteIdentityStripsTemplateMarker(t *testing.T) {
+	dir := t.TempDir()
+	if err := Bootstrap(dir, "ou_owner"); err != nil {
+		t.Fatal(err)
+	}
+	if err := WriteIdentity(dir, TemplateMarker+"\n# Soul\nYou are Steve, the owner's assistant.\n", "# User\nLee\n"); err != nil {
+		t.Fatal(err)
+	}
+	soul, err := os.ReadFile(filepath.Join(dir, FileSoul))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if IsTemplate(string(soul)) || !strings.Contains(string(soul), "Steve") {
+		t.Fatalf("soul = %s", soul)
+	}
+	if NeedsInit(dir) {
+		t.Fatal("identity still marked as template")
+	}
+}
+
+func TestNeedsInit(t *testing.T) {
+	dir := t.TempDir()
+	if !NeedsInit(dir) {
+		t.Fatal("missing home should need init")
+	}
+	if err := Bootstrap(dir, "ou_owner"); err != nil {
+		t.Fatal(err)
+	}
+	if !NeedsInit(dir) {
+		t.Fatal("template home should need init")
+	}
+	if err := os.WriteFile(filepath.Join(dir, FileSoul), []byte("# Soul\nSteve\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if !NeedsInit(dir) {
+		t.Fatal("template USER.md should still need init")
+	}
+	if err := os.WriteFile(filepath.Join(dir, FileUser), []byte("# User\nLee\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if NeedsInit(dir) {
+		t.Fatal("customized home should not need init")
+	}
+}
+
 func TestBootstrapDoesNotOverwrite(t *testing.T) {
 	dir := t.TempDir()
 	if err := Bootstrap(dir, "ou_one"); err != nil {
@@ -115,6 +188,34 @@ func TestLoadMissingFile(t *testing.T) {
 	_, err := Load(dir, ModeOwner)
 	if !errors.Is(err, ErrMissing) {
 		t.Fatalf("got %v, want ErrMissing", err)
+	}
+}
+
+func TestLoadGuestToleratesMissingUserAndMemory(t *testing.T) {
+	dir := t.TempDir()
+	if err := Bootstrap(dir, "ou_owner"); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{FileUser, FileMemory} {
+		if err := os.Remove(filepath.Join(dir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	snap, err := Load(dir, ModeGuest)
+	if err != nil {
+		t.Fatalf("guest load with missing USER/MEMORY failed: %v", err)
+	}
+	if snap.User != "" || snap.Memory != "" {
+		t.Fatalf("guest snapshot must not carry user/memory content")
+	}
+	if snap.Soul == "" {
+		t.Fatalf("guest snapshot must still carry SOUL.md")
+	}
+	// Owner mode must stay strict: deleting USER.md still errors.
+	if err := os.Remove(filepath.Join(dir, FileSoul)); err == nil {
+		if _, err := Load(dir, ModeOwner); !errors.Is(err, ErrMissing) {
+			t.Fatalf("owner load with missing SOUL.md: got %v, want ErrMissing", err)
+		}
 	}
 }
 

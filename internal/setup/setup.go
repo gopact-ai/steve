@@ -3,15 +3,15 @@ package setup
 import (
 	"bufio"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/config"
-	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"golang.org/x/term"
 )
 
@@ -20,8 +20,8 @@ type Flags struct {
 	AppID            string
 	SecretEnv        string
 	Domain           string
-	DMPolicy         string
 	AllowedSender    string
+	BlockedSender    string
 	GroupPolicy      string
 	AllowUnmentioned bool
 	CreateApp        bool
@@ -36,6 +36,7 @@ type Options struct {
 	Register    func(context.Context, feishu.RegisterOptions) (feishu.CreatedApp, error)
 	Probe       func(context.Context, string, string, string) (feishu.Identity, error)
 	Owner       func(context.Context, string, string, string) (string, error)
+	Catalog     i18n.Catalog
 }
 
 func Run(ctx context.Context, flags Flags, opts Options) (*config.Config, error) {
@@ -57,8 +58,18 @@ func Run(ctx context.Context, flags Flags, opts Options) (*config.Config, error)
 	if opts.Register == nil {
 		opts.Register = feishu.RegisterApp
 	}
+	cached, complete := loadCached(flags.ConfigPath)
+	if opts.Catalog.IsZero() {
+		locale := i18n.FromLang(opts.Env("LANG"))
+		if flags.Domain != "" {
+			locale = i18n.FromDomain(flags.Domain)
+		} else if complete {
+			locale = i18n.FromDomain(cached.Domain)
+		}
+		opts.Catalog = i18n.New(locale)
+	}
 	reader := bufio.NewReader(opts.In)
-	feishuCfg, identity, err := collect(ctx, flags, opts, reader)
+	feishuCfg, identity, err := collect(ctx, flags, opts, reader, cached, complete)
 	if err != nil {
 		return nil, err
 	}
@@ -66,50 +77,109 @@ func Run(ctx context.Context, flags Flags, opts Options) (*config.Config, error)
 	if err := cfg.Feishu.Validate(); err != nil {
 		return nil, err
 	}
+	cfg, err = mergeExisting(flags.ConfigPath, cfg)
+	if err != nil {
+		return nil, err
+	}
 	if err := config.Save(flags.ConfigPath, cfg); err != nil {
 		return nil, err
 	}
-	fmt.Fprintf(opts.Out, "steve: created %s\n", flags.ConfigPath)
+	text := i18n.New(i18n.FromDomain(cfg.Feishu.Domain))
+	opts.Catalog = text
+	fmt.Fprintln(opts.Out, text.T(i18n.SetupCreatedConfig, flags.ConfigPath))
 	if identity.Name != "" || identity.OpenID != "" {
-		fmt.Fprintf(opts.Out, "steve: feishu bot %s %s\n", strings.TrimSpace(identity.Name), identity.OpenID)
+		fmt.Fprintln(opts.Out, text.T(i18n.SetupBotIdentity, strings.TrimSpace(identity.Name), identity.OpenID))
 	}
-	if feishuCfg.DMPolicy == config.DMPolicyPairing {
-		fmt.Fprintln(opts.Out, "steve: dm policy is pairing; approve senders with: steve pairing approve <CODE>")
+	fmt.Fprintln(opts.Out, text.T(i18n.SetupEditHome))
+	return cfg, nil
+}
+
+func loadCached(path string) (config.Feishu, bool) {
+	existing, err := config.Load(path)
+	if err != nil {
+		return config.Feishu{}, false
 	}
-	homePath := home.DefaultPath()
-	if err := home.Bootstrap(homePath, cfg.Feishu.OwnerOpenID); err != nil {
+	complete := existing.Feishu.AppID != "" && existing.Feishu.AppSecret != ""
+	return existing.Feishu, complete
+}
+
+func mergeExisting(path string, fresh *config.Config) (*config.Config, error) {
+	existing, err := config.Load(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return fresh, nil
+		}
 		return nil, err
 	}
-	if opts.Interactive {
-		if err := maybeFillUser(reader, opts, homePath); err != nil {
-			return nil, err
+	existing.Feishu = fresh.Feishu
+	if err := existing.Feishu.Validate(); err != nil {
+		return nil, err
+	}
+	mergeMissingAgents(existing, fresh)
+	return existing, nil
+}
+
+func mergeMissingAgents(existing, fresh *config.Config) {
+	if existing.Agents == nil {
+		existing.Agents = map[string]config.Agent{}
+	}
+	if existing.Harnesses == nil {
+		existing.Harnesses = map[string]config.Harness{}
+	}
+	for id, item := range fresh.Agents {
+		if _, ok := existing.Agents[id]; !ok {
+			existing.Agents[id] = item
 		}
 	}
-	fmt.Fprintf(opts.Out, "steve: home %s\n", homePath)
-	fmt.Fprintln(opts.Out, "steve: 编辑 SOUL.md（你是谁）和 USER.md（主人是谁），然后 steve run")
-	fmt.Fprintln(opts.Out, "steve: /new 会新开会话，但保留身份和记忆")
-	return cfg, nil
+	for id, item := range fresh.Harnesses {
+		if _, ok := existing.Harnesses[id]; !ok {
+			existing.Harnesses[id] = item
+		}
+	}
 }
 
 const (
 	methodCreate = "create"
 	methodManual = "manual"
+
+	reuseKeep   = "keep"
+	reuseCreds  = "creds"
+	reuseAccess = "access"
 )
 
-func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reader) (config.Feishu, feishu.Identity, error) {
-	appID := strings.TrimSpace(firstNonEmpty(flags.AppID, opts.Env("FEISHU_APP_ID")))
-	secret := strings.TrimSpace(opts.Env(secretEnv(flags)))
-	domain := strings.TrimSpace(flags.Domain)
-	if flags.CreateApp && (appID != "" || secret != "") {
+func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reader, cached config.Feishu, complete bool) (config.Feishu, feishu.Identity, error) {
+	appID := strings.TrimSpace(firstNonEmpty(flags.AppID, opts.Env("FEISHU_APP_ID"), cached.AppID))
+	secret := strings.TrimSpace(firstNonEmpty(opts.Env(secretEnv(flags)), cached.AppSecret))
+	domain := strings.TrimSpace(firstNonEmpty(flags.Domain, cached.Domain))
+	if flags.CreateApp && (flags.AppID != "" || opts.Env(secretEnv(flags)) != "") {
 		return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: -create-app cannot be used with -app-id or %s", secretEnv(flags))
+	}
+
+	if complete && opts.Interactive && !flags.CreateApp && flags.AppID == "" {
+		action, err := promptSelect(opts, reader, opts.Out, opts.Catalog.T(i18n.SetupReuseAction), []option{
+			{reuseKeep, opts.Catalog.T(i18n.SetupReuseKeep)},
+			{reuseCreds, opts.Catalog.T(i18n.SetupReuseCreds)},
+			{reuseAccess, opts.Catalog.T(i18n.SetupReuseAccess)},
+		}, reuseKeep)
+		if err != nil {
+			return config.Feishu{}, feishu.Identity{}, err
+		}
+		switch action {
+		case reuseKeep:
+			return finishCached(ctx, opts, cached)
+		case reuseCreds:
+			return collectCredentials(ctx, flags, opts, reader, cached)
+		case reuseAccess:
+			return collectAccess(ctx, flags, opts, reader, cached)
+		}
 	}
 
 	createApp := flags.CreateApp
 	if appID == "" && secret == "" && !flags.CreateApp {
 		if opts.Interactive {
-			method, err := promptSelect(opts, reader, opts.Out, "飞书应用来源", []option{
-				{methodCreate, "打开飞书链接 / 扫码创建"},
-				{methodManual, "手动粘贴 App ID 和 Secret"},
+			method, err := promptSelect(opts, reader, opts.Out, opts.Catalog.T(i18n.SetupAppSource), []option{
+				{methodCreate, opts.Catalog.T(i18n.SetupAppSourceCreate)},
+				{methodManual, opts.Catalog.T(i18n.SetupAppSourceManual)},
 			}, methodCreate)
 			if err != nil {
 				return config.Feishu{}, feishu.Identity{}, err
@@ -122,12 +192,12 @@ func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reade
 
 	var scannedOpenID string
 	if createApp {
-		created, err := opts.Register(ctx, feishu.RegisterOptions{Out: opts.Out, Domain: domain})
+		created, err := opts.Register(ctx, feishu.RegisterOptions{Out: opts.Out, Domain: domain, Catalog: opts.Catalog})
 		if err != nil {
 			if !opts.Interactive {
 				return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: %w", err)
 			}
-			fmt.Fprintf(opts.Out, "steve: create-app failed: %v\n", err)
+			fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupCreateAppFailed, err))
 			appID, secret, domain, err = promptManualCredentials(reader, opts, flags, appID, secret, domain)
 			if err != nil {
 				return config.Feishu{}, feishu.Identity{}, err
@@ -139,7 +209,7 @@ func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reade
 				domain = created.Domain
 			}
 			scannedOpenID = created.OpenID
-			fmt.Fprintf(opts.Out, "steve: created feishu app %s\n", created.AppID)
+			fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupCreatedApp, created.AppID))
 		}
 	}
 
@@ -168,10 +238,7 @@ func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reade
 	}
 	if domain == "" && opts.Interactive && scannedOpenID == "" {
 		var err error
-		domain, err = promptSelect(opts, reader, opts.Out, "API 域名", []option{
-			{config.DomainFeishu, "飞书 open.feishu.cn"},
-			{config.DomainLark, "Lark open.larksuite.com"},
-		}, config.DomainFeishu)
+		domain, err = promptSelect(opts, reader, opts.Out, opts.Catalog.T(i18n.SetupDomain), domainOptions(opts.Catalog), config.DomainFeishu)
 		if err != nil {
 			return config.Feishu{}, feishu.Identity{}, err
 		}
@@ -179,77 +246,144 @@ func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reade
 	if domain == "" {
 		domain = config.DomainFeishu
 	}
+	opts.Catalog = i18n.New(i18n.FromDomain(domain))
 
 	identity, err := opts.Probe(ctx, appID, secret, domain)
 	if err != nil {
 		return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: probe feishu: %w", err)
 	}
 
-	owner := scannedOpenID
+	owner := firstNonEmpty(scannedOpenID, cached.OwnerOpenID)
 	if owner == "" {
 		resolved, ownerErr := opts.Owner(ctx, appID, secret, domain)
 		if ownerErr != nil {
-			fmt.Fprintf(opts.Out, "steve: could not resolve app owner: %v\n", ownerErr)
+			fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupOwnerResolveFail, ownerErr))
 		} else {
 			owner = resolved
 		}
 	}
 
-	dmPolicy := strings.TrimSpace(flags.DMPolicy)
-	if flags.AllowedSender != "" && dmPolicy == "" {
-		dmPolicy = config.DMPolicyAllowlist
-	}
-	if dmPolicy == "" && opts.Interactive {
-		dmPolicy, err = promptSelect(opts, reader, opts.Out, "私聊策略", []option{
-			{config.DMPolicyPairing, "配对码（陌生人私聊先批准）"},
-			{config.DMPolicyAllowlist, "仅白名单"},
-		}, config.DMPolicyPairing)
-		if err != nil {
-			return config.Feishu{}, feishu.Identity{}, err
-		}
-	}
-	if dmPolicy == "" {
-		dmPolicy = config.DMPolicyPairing
+	groupPolicy, senders, blocked, err := collectGroupAccess(flags, opts, reader, cached, false)
+	if err != nil {
+		return config.Feishu{}, feishu.Identity{}, err
 	}
 
-	senders := splitSenders(flags.AllowedSender)
-	if owner != "" && !contains(senders, owner) && (dmPolicy == config.DMPolicyPairing || len(senders) == 0) {
-		senders = append([]string{owner}, senders...)
+	allowUnmentioned := flags.AllowUnmentioned
+	if complete && !flags.AllowUnmentioned {
+		allowUnmentioned = cached.AllowUnmentioned
 	}
-	if dmPolicy == config.DMPolicyAllowlist && len(senders) == 0 && opts.Interactive {
-		initial := owner
-		line, err := promptText(reader, opts.Out, "Allowed sender open_id", initial)
-		if err != nil {
-			return config.Feishu{}, feishu.Identity{}, err
-		}
-		senders = splitSenders(line)
-	}
-
-	groupPolicy := strings.TrimSpace(flags.GroupPolicy)
-	if groupPolicy == "" && opts.Interactive {
-		groupPolicy, err = promptSelect(opts, reader, opts.Out, "群聊策略", []option{
-			{config.GroupPolicyAllowlist, "仅白名单用户，且需要 @机器人"},
-			{config.GroupPolicyOpen, "群内任何人，且需要 @机器人"},
-			{config.GroupPolicyDisabled, "忽略群消息"},
-		}, config.GroupPolicyAllowlist)
-		if err != nil {
-			return config.Feishu{}, feishu.Identity{}, err
-		}
-	}
-	if groupPolicy == "" {
-		groupPolicy = config.GroupPolicyAllowlist
-	}
-
 	return config.Feishu{
 		AppID:            appID,
 		AppSecret:        secret,
 		Domain:           domain,
-		DMPolicy:         dmPolicy,
 		AllowedSenders:   senders,
+		BlockedSenders:   blocked,
 		GroupPolicy:      groupPolicy,
-		AllowUnmentioned: flags.AllowUnmentioned,
+		AllowUnmentioned: allowUnmentioned,
 		OwnerOpenID:      owner,
 	}, identity, nil
+}
+
+func finishCached(ctx context.Context, opts Options, cached config.Feishu) (config.Feishu, feishu.Identity, error) {
+	fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupUsingCached))
+	opts.Catalog = i18n.New(i18n.FromDomain(cached.Domain))
+	identity, err := opts.Probe(ctx, cached.AppID, cached.AppSecret, cached.Domain)
+	if err != nil {
+		return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: probe feishu: %w", err)
+	}
+	if cached.OwnerOpenID == "" {
+		resolved, ownerErr := opts.Owner(ctx, cached.AppID, cached.AppSecret, cached.Domain)
+		if ownerErr != nil {
+			fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupOwnerResolveFail, ownerErr))
+		} else {
+			cached.OwnerOpenID = resolved
+		}
+	}
+	return cached, identity, nil
+}
+
+func collectCredentials(ctx context.Context, flags Flags, opts Options, reader *bufio.Reader, cached config.Feishu) (config.Feishu, feishu.Identity, error) {
+	appID, secret, domain, err := promptManualCredentials(reader, opts, flags, cached.AppID, cached.AppSecret, cached.Domain)
+	if err != nil {
+		return config.Feishu{}, feishu.Identity{}, err
+	}
+	if domain == "" {
+		domain = cached.Domain
+	}
+	if domain == "" {
+		domain = config.DomainFeishu
+	}
+	opts.Catalog = i18n.New(i18n.FromDomain(domain))
+	identity, err := opts.Probe(ctx, appID, secret, domain)
+	if err != nil {
+		return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: probe feishu: %w", err)
+	}
+	cached.AppID = appID
+	cached.AppSecret = secret
+	cached.Domain = domain
+	return cached, identity, nil
+}
+
+func collectAccess(ctx context.Context, flags Flags, opts Options, reader *bufio.Reader, cached config.Feishu) (config.Feishu, feishu.Identity, error) {
+	opts.Catalog = i18n.New(i18n.FromDomain(cached.Domain))
+	identity, err := opts.Probe(ctx, cached.AppID, cached.AppSecret, cached.Domain)
+	if err != nil {
+		return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: probe feishu: %w", err)
+	}
+	groupPolicy, senders, blocked, err := collectGroupAccess(Flags{}, opts, reader, cached, true)
+	if err != nil {
+		return config.Feishu{}, feishu.Identity{}, err
+	}
+	cached.GroupPolicy = groupPolicy
+	cached.AllowedSenders = senders
+	cached.BlockedSenders = blocked
+	cached.DMPolicy = ""
+	return cached, identity, nil
+}
+
+func collectGroupAccess(flags Flags, opts Options, reader *bufio.Reader, cached config.Feishu, forcePrompt bool) (string, []string, []string, error) {
+	groupPolicy := strings.TrimSpace(firstNonEmpty(flags.GroupPolicy, cached.GroupPolicy))
+	if opts.Interactive && flags.GroupPolicy == "" && (forcePrompt || groupPolicy == "") {
+		def := groupPolicy
+		if def == "" {
+			def = config.GroupPolicyOpen
+		}
+		var err error
+		groupPolicy, err = promptSelect(opts, reader, opts.Out, opts.Catalog.T(i18n.SetupGroupPolicy), []option{
+			{config.GroupPolicyOpen, opts.Catalog.T(i18n.SetupGroupOpen)},
+			{config.GroupPolicyAllowlist, opts.Catalog.T(i18n.SetupGroupAllowlist)},
+			{config.GroupPolicyDisabled, opts.Catalog.T(i18n.SetupGroupDisabled)},
+		}, def)
+		if err != nil {
+			return "", nil, nil, err
+		}
+	}
+	if groupPolicy == "" {
+		groupPolicy = config.GroupPolicyOpen
+	}
+
+	senders := splitSenders(flags.AllowedSender)
+	if flags.AllowedSender == "" {
+		if groupPolicy == config.GroupPolicyOpen {
+			senders = nil
+		} else {
+			senders = append([]string{}, cached.AllowedSenders...)
+		}
+	}
+	if groupPolicy == config.GroupPolicyAllowlist && len(senders) == 0 && opts.Interactive {
+		initial := strings.Join(cached.AllowedSenders, ",")
+		line, err := promptText(reader, opts.Out, opts.Catalog.T(i18n.SetupAllowedSender), initial)
+		if err != nil {
+			return "", nil, nil, err
+		}
+		senders = splitSenders(line)
+	}
+
+	blocked := splitSenders(flags.BlockedSender)
+	if flags.BlockedSender == "" {
+		blocked = append([]string{}, cached.BlockedSenders...)
+	}
+	return groupPolicy, senders, blocked, nil
 }
 
 type option struct {
@@ -259,23 +393,31 @@ type option struct {
 
 func promptManualCredentials(reader *bufio.Reader, opts Options, flags Flags, appID, secret, domain string) (string, string, string, error) {
 	var err error
-	if appID == "" {
-		appID, err = promptText(reader, opts.Out, "Feishu App ID", "")
+	if opts.Interactive {
+		appID, err = promptText(reader, opts.Out, opts.Catalog.T(i18n.SetupAppID), appID)
 		if err != nil {
 			return "", "", "", err
 		}
+	} else if appID == "" {
+		return "", "", "", fmt.Errorf("setup: -app-id is required")
 	}
 	if secret == "" {
 		secret, err = promptSecret(opts)
 		if err != nil {
 			return "", "", "", err
 		}
+	} else if opts.Interactive {
+		secret, err = promptSecretKeep(opts, secret)
+		if err != nil {
+			return "", "", "", err
+		}
 	}
-	if domain == "" && opts.Interactive {
-		domain, err = promptSelect(opts, reader, opts.Out, "API 域名", []option{
-			{config.DomainFeishu, "飞书 open.feishu.cn"},
-			{config.DomainLark, "Lark open.larksuite.com"},
-		}, config.DomainFeishu)
+	if opts.Interactive {
+		initial := domain
+		if initial == "" {
+			initial = config.DomainFeishu
+		}
+		domain, err = promptSelect(opts, reader, opts.Out, opts.Catalog.T(i18n.SetupDomain), domainOptions(opts.Catalog), initial)
 		if err != nil {
 			return "", "", "", err
 		}
@@ -283,8 +425,28 @@ func promptManualCredentials(reader *bufio.Reader, opts Options, flags Flags, ap
 	return appID, secret, domain, nil
 }
 
+func promptSecretKeep(opts Options, current string) (string, error) {
+	fmt.Fprint(opts.Out, opts.Catalog.T(i18n.SetupAppSecretKeep))
+	var secret string
+	var err error
+	if opts.ReadSecret != nil {
+		secret, err = opts.ReadSecret()
+	} else {
+		secret, err = readSecret()
+	}
+	fmt.Fprintln(opts.Out)
+	if err != nil {
+		return "", fmt.Errorf("setup: read app secret: %w", err)
+	}
+	secret = strings.TrimSpace(secret)
+	if secret == "" {
+		return current, nil
+	}
+	return secret, nil
+}
+
 func promptSecret(opts Options) (string, error) {
-	fmt.Fprintf(opts.Out, "App Secret (input hidden): ")
+	fmt.Fprint(opts.Out, opts.Catalog.T(i18n.SetupAppSecret))
 	var secret string
 	var err error
 	if opts.ReadSecret != nil {
@@ -297,64 +459,6 @@ func promptSecret(opts Options) (string, error) {
 		return "", fmt.Errorf("setup: read app secret: %w", err)
 	}
 	return strings.TrimSpace(secret), nil
-}
-
-func maybeFillUser(reader *bufio.Reader, opts Options, homePath string) error {
-	userPath := filepath.Join(homePath, home.FileUser)
-	raw, err := os.ReadFile(userPath)
-	if err != nil {
-		return err
-	}
-	if !strings.Contains(string(raw), home.TemplateMarker) {
-		return nil
-	}
-	name, err := promptOptional(reader, opts.Out, "怎么称呼你？", "")
-	if err != nil {
-		return err
-	}
-	tz, err := promptOptional(reader, opts.Out, "时区", "Asia/Shanghai")
-	if err != nil {
-		return err
-	}
-	if name == "" && tz == "" {
-		return nil
-	}
-	text := string(raw)
-	if name != "" {
-		text = replaceLabeled(text, "称呼", name)
-	}
-	if tz != "" {
-		text = replaceLabeled(text, "时区", tz)
-	}
-	text = strings.Replace(text, home.TemplateMarker+"\n", "", 1)
-	return os.WriteFile(userPath, []byte(text), 0o600)
-}
-
-func promptOptional(in *bufio.Reader, out io.Writer, question, hint string) (string, error) {
-	if hint != "" {
-		fmt.Fprintf(out, "%s [%s]: ", question, hint)
-	} else {
-		fmt.Fprintf(out, "%s: ", question)
-	}
-	line, err := in.ReadString('\n')
-	if err != nil && err != io.EOF {
-		return "", err
-	}
-	return strings.TrimSpace(line), nil
-}
-
-func replaceLabeled(text, label, value string) string {
-	needle := "- " + label + "："
-	idx := strings.Index(text, needle)
-	if idx < 0 {
-		return text
-	}
-	rest := text[idx+len(needle):]
-	end := strings.Index(rest, "\n")
-	if end < 0 {
-		return text[:idx] + needle + value
-	}
-	return text[:idx] + needle + value + rest[end:]
 }
 
 func promptText(in *bufio.Reader, out io.Writer, question, initial string) (string, error) {
@@ -424,11 +528,9 @@ func splitSenders(value string) []string {
 	return out
 }
 
-func contains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
+func domainOptions(text i18n.Catalog) []option {
+	return []option{
+		{config.DomainFeishu, text.T(i18n.SetupDomainFeishu)},
+		{config.DomainLark, text.T(i18n.SetupDomainLark)},
 	}
-	return false
 }

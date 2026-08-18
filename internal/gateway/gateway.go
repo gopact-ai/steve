@@ -11,6 +11,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
@@ -32,6 +34,7 @@ const thinkingEmoji = "THINKING"
 type Gateway struct {
 	processor processor
 	ch        replier
+	text      i18n.Catalog
 
 	mu    sync.Mutex
 	chats map[string]chan feishu.InboundMessage
@@ -40,10 +43,17 @@ type Gateway struct {
 }
 
 func New(processor processor) *Gateway {
-	return &Gateway{processor: processor, chats: map[string]chan feishu.InboundMessage{}, seen: map[string]struct{}{}}
+	return &Gateway{
+		processor: processor,
+		text:      i18n.New(i18n.LocaleZH),
+		chats:     map[string]chan feishu.InboundMessage{},
+		seen:      map[string]struct{}{},
+	}
 }
 
 func (g *Gateway) BindChannel(ch replier) { g.ch = ch }
+
+func (g *Gateway) SetCatalog(cat i18n.Catalog) { g.text = cat }
 
 func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
 	conversationID := msg.ConversationID
@@ -55,7 +65,7 @@ func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
 		g.mu.Unlock()
 		return
 	}
-	if strings.TrimSpace(msg.Text) == "/cancel" {
+	if cmd, _ := protocol.ParseCommand(msg.Text); cmd == protocol.CommandCancel {
 		// /cancel means "stop everything in this chat": drop queued prompts
 		// so they cannot run after the cancel, then cancel the in-flight
 		// turn out-of-band.
@@ -78,7 +88,7 @@ func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
 		g.mu.Unlock()
 	default:
 		g.mu.Unlock()
-		g.reply(msg.MessageID, "当前会话排队消息过多，请稍后再发。")
+		g.reply(msg.MessageID, g.text.T(i18n.QueueFull))
 	}
 }
 
@@ -118,23 +128,34 @@ func (g *Gateway) run(queue <-chan feishu.InboundMessage) {
 	}
 }
 
+func silentListen(msg feishu.InboundMessage) bool {
+	return msg.ChatType == protocol.ChatGroup && !msg.Mentioned
+}
+
 func (g *Gateway) process(msg feishu.InboundMessage) {
 	conversationID := msg.ConversationID
 	if conversationID == "" {
 		conversationID = msg.ChatID
 	}
-	reactionID := g.ack(msg.MessageID)
-	defer g.unack(msg.MessageID, reactionID)
+	listen := silentListen(msg)
+	if !listen {
+		reactionID := g.ack(msg.MessageID)
+		defer g.unack(msg.MessageID, reactionID)
+	}
 	result, err := g.processor.Handle(context.Background(), turn.Request{
 		ConversationID: conversationID,
 		Input:          msg.Text,
 		SenderOpenID:   msg.SenderOpenID,
-		ChatType:       msg.ChatType,
+		ChatType:       protocol.ParseChatType(string(msg.ChatType)),
+		Mentioned:      msg.Mentioned,
 	})
 	if err != nil {
 		log.Printf("gateway: turn failed: chat=%s error=%v", msg.ChatID, err)
+		if listen {
+			return
+		}
 		if errors.Is(err, context.Canceled) {
-			g.reply(msg.MessageID, "任务已取消")
+			g.reply(msg.MessageID, g.text.T(i18n.TurnCanceled))
 			return
 		}
 		var userErr turn.UserError
@@ -142,29 +163,32 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 			g.reply(msg.MessageID, userErr.Text)
 			return
 		}
-		g.reply(msg.MessageID, "Agent 调用失败，请检查 Steve 日志。")
+		g.reply(msg.MessageID, g.text.T(i18n.AgentFailed))
 		return
 	}
 	out := result.Text
 	if out == "" {
-		out = "(agent 本轮没有文本输出)"
+		if listen {
+			return
+		}
+		out = g.text.T(i18n.EmptyReply)
 	}
 	if len(result.Activity) > 0 {
 		out += "\n\n---\n" + strings.Join(result.Activity, "\n")
 	}
-	g.reply(msg.MessageID, truncateRunes(out, maxReplyRunes))
+	g.reply(msg.MessageID, g.truncateRunes(out, maxReplyRunes))
 }
 
 // maxReplyRunes keeps replies under the Feishu text message size limit so a
 // long agent dump is truncated instead of silently lost.
 const maxReplyRunes = 30000
 
-func truncateRunes(text string, max int) string {
+func (g *Gateway) truncateRunes(text string, max int) string {
 	if utf8.RuneCountInString(text) <= max {
 		return text
 	}
 	runes := []rune(text)
-	return string(runes[:max]) + "\n\n…(内容过长，已截断)"
+	return string(runes[:max]) + "\n\n" + g.text.T(i18n.Truncated)
 }
 
 func (g *Gateway) reply(messageID, text string) {

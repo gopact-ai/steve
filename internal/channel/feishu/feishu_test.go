@@ -39,6 +39,13 @@ type failConn struct{}
 func (failConn) Start(context.Context) error { return errors.New("boom") }
 func (failConn) Close()                      {}
 
+func TestSendRequiresReceiveID(t *testing.T) {
+	c := &Channel{}
+	if _, err := c.Send(t.Context(), "", "hi"); err == nil {
+		t.Fatal("expected receive id error")
+	}
+}
+
 func TestNormalizeTextMessage(t *testing.T) {
 	event := messageEvent("user", "text", `{"text":"@_user_1 hello"}`)
 	event.Event.Message.Mentions = []*larkim.MentionEvent{{MentionedType: ptr("bot"), Id: &larkim.UserId{OpenId: ptr("ou_bot")}}}
@@ -49,6 +56,9 @@ func TestNormalizeTextMessage(t *testing.T) {
 	}
 	if msg.ChatID != "oc_chat" || msg.MessageID != "om_message" || msg.Text != "hello" {
 		t.Fatalf("unexpected message: %#v", msg)
+	}
+	if !msg.Mentioned {
+		t.Fatal("bot mention was not recorded")
 	}
 }
 
@@ -62,6 +72,9 @@ func TestNormalizeAllowsUnmentionedGroupWhenConfigured(t *testing.T) {
 	msg, ok := normalize(messageEvent("user", "text", `{"text":"hello"}`), "ou_bot", true)
 	if !ok || msg.Text != "hello" {
 		t.Fatalf("expected unmentioned group message, got %#v %v", msg, ok)
+	}
+	if msg.Mentioned {
+		t.Fatal("unmentioned group message marked mentioned")
 	}
 }
 

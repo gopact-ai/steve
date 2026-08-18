@@ -11,6 +11,18 @@ import (
 	"github.com/gopact-ai/steve/internal/permission"
 )
 
+const (
+	Codex      = "codex"
+	ClaudeCode = "claude-code"
+	Grok       = "grok"
+	Kimi       = "kimi"
+
+	EnvCodexHome       = "CODEX_HOME"
+	EnvClaudeConfigDir = "CLAUDE_CONFIG_DIR"
+	EnvGrokHome        = "GROK_HOME"
+	EnvKimiCodeHome    = "KIMI_CODE_HOME"
+)
+
 type Config struct {
 	Command    string
 	Args       []string
@@ -87,6 +99,26 @@ func (m *Manager) Stop() {
 	for _, host := range hosts {
 		host.Close()
 	}
+}
+
+// Restart closes every live harness process so the next session starts with
+// a freshly scanned skill directory. In-flight turns must be idle first.
+func (m *Manager) Restart() error {
+	m.mu.Lock()
+	if m.stopped {
+		m.mu.Unlock()
+		return fmt.Errorf("harness manager is stopped")
+	}
+	hosts := make([]*acphost.Host, 0, len(m.hosts))
+	for _, host := range m.hosts {
+		hosts = append(hosts, host)
+	}
+	m.hosts = map[string]*acphost.Host{}
+	m.mu.Unlock()
+	for _, host := range hosts {
+		host.Close()
+	}
+	return nil
 }
 
 func (m *Manager) host(id string) (*acphost.Host, error) {

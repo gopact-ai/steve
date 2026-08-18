@@ -19,12 +19,19 @@ const (
 	DomainFeishu = "feishu"
 	DomainLark   = "lark"
 
+	// Legacy dm_policy values still accepted in JSON and ignored.
 	DMPolicyPairing   = "pairing"
 	DMPolicyAllowlist = "allowlist"
 
 	GroupPolicyAllowlist = "allowlist"
 	GroupPolicyOpen      = "open"
 	GroupPolicyDisabled  = "disabled"
+
+	PermissionRead        = "read"
+	PermissionWrite       = "write"
+	PermissionDeny        = "deny"
+	PermissionAuto        = "auto"
+	PermissionAlwaysAllow = "always_allow"
 )
 
 type Feishu struct {
@@ -33,6 +40,7 @@ type Feishu struct {
 	Domain           string   `json:"domain,omitempty"`
 	DMPolicy         string   `json:"dm_policy,omitempty"`
 	AllowedSenders   []string `json:"allowed_senders,omitempty"`
+	BlockedSenders   []string `json:"blocked_senders,omitempty"`
 	GroupPolicy      string   `json:"group_policy,omitempty"`
 	AllowUnmentioned bool     `json:"allow_unmentioned,omitempty"`
 	OwnerOpenID      string   `json:"owner_open_id,omitempty"`
@@ -42,15 +50,8 @@ func (c *Feishu) applyDefaults() {
 	if c.Domain == "" {
 		c.Domain = DomainFeishu
 	}
-	if c.DMPolicy == "" {
-		if len(c.AllowedSenders) > 0 {
-			c.DMPolicy = DMPolicyAllowlist
-		} else {
-			c.DMPolicy = DMPolicyPairing
-		}
-	}
 	if c.GroupPolicy == "" {
-		c.GroupPolicy = GroupPolicyAllowlist
+		c.GroupPolicy = GroupPolicyOpen
 	}
 }
 
@@ -64,9 +65,7 @@ func (c Feishu) Validate() error {
 	default:
 		return fmt.Errorf("feishu.domain must be %q or %q", DomainFeishu, DomainLark)
 	}
-	switch c.DMPolicy {
-	case DMPolicyPairing, DMPolicyAllowlist:
-	default:
+	if c.DMPolicy != "" && c.DMPolicy != DMPolicyPairing && c.DMPolicy != DMPolicyAllowlist {
 		return fmt.Errorf("feishu.dm_policy must be %q or %q", DMPolicyPairing, DMPolicyAllowlist)
 	}
 	switch c.GroupPolicy {
@@ -74,12 +73,16 @@ func (c Feishu) Validate() error {
 	default:
 		return fmt.Errorf("feishu.group_policy must be %q, %q, or %q", GroupPolicyAllowlist, GroupPolicyOpen, GroupPolicyDisabled)
 	}
-	if c.DMPolicy == DMPolicyAllowlist && len(c.AllowedSenders) == 0 {
-		return fmt.Errorf("feishu.allowed_senders is required when dm_policy is allowlist")
+	if err := validateIDs("feishu.allowed_senders", c.AllowedSenders); err != nil {
+		return err
 	}
-	for _, sender := range c.AllowedSenders {
-		if strings.TrimSpace(sender) == "" {
-			return fmt.Errorf("feishu.allowed_senders cannot contain an empty id")
+	return validateIDs("feishu.blocked_senders", c.BlockedSenders)
+}
+
+func validateIDs(field string, ids []string) error {
+	for _, id := range ids {
+		if strings.TrimSpace(id) == "" {
+			return fmt.Errorf("%s cannot contain an empty id", field)
 		}
 	}
 	return nil
@@ -146,29 +149,42 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 }
 
 func Starter(appID, appSecret, allowedSender string) *Config {
-	return StarterFeishu(Feishu{
-		AppID: appID, AppSecret: appSecret, DMPolicy: DMPolicyAllowlist,
-		AllowedSenders: []string{allowedSender},
-	})
+	feishu := Feishu{AppID: appID, AppSecret: appSecret}
+	if allowedSender != "" {
+		feishu.AllowedSenders = []string{allowedSender}
+	}
+	return StarterFeishu(feishu)
 }
 
 func StarterFeishu(feishu Feishu) *Config {
 	feishu.applyDefaults()
 	return &Config{
 		Agents: map[string]Agent{
-			"codex": {
-				Aliases: []string{"codex"}, Harness: "codex", Workspace: "~/steve-workspace/codex", Default: true,
+			harness.Codex: {
+				Aliases: []string{harness.Codex}, Harness: harness.Codex, Workspace: "~/steve-workspace/codex", Default: true,
 			},
 			"claude": {
-				Aliases: []string{"claude"}, Harness: "claude-code", Workspace: "~/steve-workspace/claude",
+				Aliases: []string{"claude"}, Harness: harness.ClaudeCode, Workspace: "~/steve-workspace/claude",
+			},
+			harness.Grok: {
+				Aliases: []string{harness.Grok, "grok-build"}, Harness: harness.Grok, Workspace: "~/steve-workspace/grok",
+			},
+			harness.Kimi: {
+				Aliases: []string{harness.Kimi, "kimi-code"}, Harness: harness.Kimi, Workspace: "~/steve-workspace/kimi",
 			},
 		},
 		Harnesses: map[string]Harness{
-			"codex": {
-				Command: "npx", Args: []string{"-y", "@agentclientprotocol/codex-acp"}, Permission: "deny",
+			harness.Codex: {
+				Command: "npx", Args: []string{"-y", "@agentclientprotocol/codex-acp"}, Permission: PermissionRead,
 			},
-			"claude-code": {
-				Command: "npx", Args: []string{"-y", "@zed-industries/claude-code-acp"}, Permission: "deny",
+			harness.ClaudeCode: {
+				Command: "npx", Args: []string{"-y", "@zed-industries/claude-code-acp"}, Permission: PermissionRead,
+			},
+			harness.Grok: {
+				Command: "grok", Args: []string{"agent", "--no-leader", "stdio"}, Permission: PermissionRead,
+			},
+			harness.Kimi: {
+				Command: "kimi", Args: []string{"acp"}, Permission: PermissionRead,
 			},
 		},
 		MCPServers: map[string]MCPServer{},
@@ -188,24 +204,45 @@ func Save(path string, cfg *Config) error {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create config directory: %w", err)
 	}
-	file, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+	temp, err := os.CreateTemp(dir, ".config-*.json")
 	if err != nil {
 		return fmt.Errorf("create config: %w", err)
 	}
-	complete := false
-	defer func() {
-		if !complete {
-			_ = os.Remove(path)
-		}
-	}()
-	if _, err := file.Write(append(data, '\n')); err != nil {
+	name := temp.Name()
+	if err := writeConfigFile(temp, append(data, '\n')); err != nil {
+		os.Remove(name)
+		return err
+	}
+	if err := os.Rename(name, path); err != nil {
+		os.Remove(name)
+		return fmt.Errorf("replace config: %w", err)
+	}
+	return syncDir(dir)
+}
+
+// syncDir flushes a directory entry after a rename so the replacement
+// survives a crash (rename alone is not guaranteed durable on all filesystems).
+func syncDir(dir string) error {
+	f, err := os.Open(dir)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
+}
+
+func writeConfigFile(file *os.File, data []byte) error {
+	if err := file.Chmod(0o600); err != nil {
+		file.Close()
+		return fmt.Errorf("chmod config: %w", err)
+	}
+	if _, err := file.Write(data); err != nil {
 		file.Close()
 		return fmt.Errorf("write config: %w", err)
 	}
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close config: %w", err)
 	}
-	complete = true
 	return nil
 }
 
@@ -248,7 +285,7 @@ func Load(path string) (*Config, error) {
 	}
 	for id, item := range cfg.Harnesses {
 		if item.Permission == "" {
-			item.Permission = "deny"
+			item.Permission = PermissionRead
 		}
 		item.ProcessDir = absolute(item.ProcessDir)
 		cfg.Harnesses[id] = item

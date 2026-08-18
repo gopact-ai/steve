@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/i18n"
 )
 
 func TestRegisterAppDeviceFlow(t *testing.T) {
@@ -28,8 +29,9 @@ func TestRegisterAppDeviceFlow(t *testing.T) {
 	var opened string
 	var out strings.Builder
 	created, err := RegisterApp(t.Context(), RegisterOptions{
-		Out:    &out,
-		Domain: server.URL,
+		Out:     &out,
+		Domain:  server.URL,
+		Catalog: i18n.New(i18n.LocaleEN),
 		OpenURL: func(raw string) error {
 			opened = raw
 			return nil
@@ -44,8 +46,12 @@ func TestRegisterAppDeviceFlow(t *testing.T) {
 	if created.Domain != config.DomainFeishu || created.OpenID != "ou_scan" {
 		t.Fatalf("identity = %#v", created)
 	}
-	if !strings.Contains(out.String(), "https://qr.example.com/scan") {
-		t.Fatalf("missing registration link: %s", out.String())
+	printed := out.String()
+	if !strings.Contains(printed, "https://qr.example.com/scan") {
+		t.Fatalf("missing registration link: %s", printed)
+	}
+	if !strings.Contains(printed, i18n.New(i18n.LocaleEN).T(i18n.SetupOpenLink)) {
+		t.Fatalf("registration prompt not localized: %s", printed)
 	}
 	if !strings.Contains(opened, "https://qr.example.com/scan") {
 		t.Fatalf("browser was not opened: %q", opened)

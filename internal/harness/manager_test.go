@@ -72,6 +72,38 @@ func TestManagerStopRejectsNewSessionAndHostRestart(t *testing.T) {
 	}
 }
 
+func TestManagerRestartClosesHostsAndAllowsNewSession(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "mockagent")
+	cmd := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
+	cmd.Dir = "../.."
+	if output, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build mockagent: %v\n%s", err, output)
+	}
+	manager, err := NewManager(map[string]Config{"one": {Command: bin, Permission: "deny"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Stop)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	runner, err := manager.OpenSession(ctx, "one", "", t.TempDir(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := manager.Restart(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := runner.Prompt(ctx, "after restart"); !errors.Is(err, acphost.ErrClosed) {
+		t.Fatalf("old runner after restart = %v, want ErrClosed", err)
+	}
+	if _, err := manager.OpenSession(ctx, "one", "", t.TempDir(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(manager.hosts) != 1 {
+		t.Fatalf("hosts after restart = %d", len(manager.hosts))
+	}
+}
+
 func TestManagerCreatesWorkspace(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "mockagent")
 	cmd := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
