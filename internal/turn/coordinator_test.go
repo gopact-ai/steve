@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/state"
@@ -24,11 +25,16 @@ type fakeManager struct {
 	opened   []string
 	workdirs []string
 	fail     error
+	failOnce bool
 }
 
 func (m *fakeManager) OpenSession(_ context.Context, harnessID, upstreamID, workdir string, _ []acp.MCPServer) (harness.Runner, error) {
 	if m.fail != nil {
-		return nil, m.fail
+		err := m.fail
+		if m.failOnce {
+			m.fail = nil
+		}
+		return nil, err
 	}
 	id := upstreamID
 	if id == "" {
@@ -58,7 +64,7 @@ type fakeRunner struct {
 }
 
 func (r *fakeRunner) ID() string { return r.id }
-func (r *fakeRunner) Prompt(ctx context.Context, prompt string) (string, []string, error) {
+func (r *fakeRunner) Prompt(ctx context.Context, prompt string, _ func(card.Progress)) (string, []string, error) {
 	r.prompts = append(r.prompts, prompt)
 	if r.started != nil {
 		close(r.started)
@@ -146,6 +152,52 @@ func TestCoordinatorDropsStaleSessionWhenOpenFails(t *testing.T) {
 	}
 	if _, ok := store.Conversation("chat").Sessions["codex"]; ok {
 		t.Fatal("unreopenable session record was retained")
+	}
+}
+
+func TestCoordinatorRetriesNewSessionAfterLoadFails(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	assembler := capability.NewAssembler(nil)
+	capabilities, err := assembler.Assemble(catalog.Default())
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err := store.SaveSession(state.Session{
+		ConversationID: "chat", AgentID: "codex", HarnessID: "codex",
+		UpstreamID: "stale-session", Workspace: catalog.Default().Workspace,
+		CapabilityHash: capabilities.Fingerprint,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	manager := &fakeManager{
+		fail:     errors.New("session/load: authentication required"),
+		failOnce: true,
+		runners:  map[string]*fakeRunner{"codex": {reply: "recovered"}},
+	}
+	coordinator := New(catalog, store, assembler, manager, time.Minute)
+	result, err := handle(coordinator, t.Context(), "hello")
+	if err != nil || result.Text != "recovered" {
+		t.Fatalf("retry = %#v, %v", result, err)
+	}
+	if len(manager.opened) != 1 || manager.opened[0] != "codex:" {
+		t.Fatalf("opens = %v", manager.opened)
+	}
+}
+
+func TestCoordinatorStatusHasFields(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	coordinator := New(catalog, store, capability.NewAssembler(nil), &fakeManager{}, time.Minute)
+	result, err := handle(coordinator, t.Context(), "/status")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Title != "状态" || len(result.Fields) < 3 || !result.Fields[0].IsMetric || result.Fields[2].Wide != true {
+		t.Fatalf("fields = %#v title=%q", result.Fields, result.Title)
+	}
+	if !strings.Contains(result.Text, "Agent") {
+		t.Fatalf("text fallback missing: %q", result.Text)
 	}
 }
 

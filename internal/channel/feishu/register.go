@@ -55,7 +55,7 @@ func RegisterApp(ctx context.Context, opts RegisterOptions) (CreatedApp, error) 
 		},
 		Addons: &larkreg.AppAddons{
 			Scopes: larkreg.AppAddonsScopes{
-				Tenant: []string{"im:message", "im:message:send_as_bot", "im:message.group_at_msg", "im:message.reactions:write_only"},
+				Tenant: []string{"im:message", "im:message:send_as_bot", "im:message.group_at_msg", "im:message.reactions:write_only", "im:resource"},
 			},
 			Events: larkreg.AppAddonsEvents{
 				Items: larkreg.AppAddonsEventItems{

@@ -75,3 +75,68 @@ func TestBrokerRejectsUnknownPolicy(t *testing.T) {
 		t.Fatal("expected unknown policy error")
 	}
 }
+
+func TestBrokerNeedsAsk(t *testing.T) {
+	read, err := New(PolicyRead)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !read.NeedsAsk(acp.ToolKindEdit) || !read.NeedsAsk(acp.ToolKindExecute) {
+		t.Fatal("read policy should ask for writes")
+	}
+	if read.NeedsAsk(acp.ToolKindRead) || read.NeedsAsk(acp.ToolKindSearch) {
+		t.Fatal("read policy should not ask for reads")
+	}
+	write, err := New(PolicyWrite)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if write.NeedsAsk(acp.ToolKindEdit) {
+		t.Fatal("write policy should auto-allow edits")
+	}
+}
+
+func TestChoosePrefersOnceOptions(t *testing.T) {
+	options := []acp.PermissionOption{
+		{OptionID: "always", Kind: acp.PermissionOptionKindAllowAlways},
+		{OptionID: "allow", Kind: acp.PermissionOptionKindAllowOnce},
+		{OptionID: "reject-always", Kind: acp.PermissionOptionKindRejectAlways},
+		{OptionID: "reject", Kind: acp.PermissionOptionKindRejectOnce},
+	}
+	if got := Choose(true, options); got.OptionID != "allow" {
+		t.Fatalf("allow = %q", got.OptionID)
+	}
+	if got := Choose(false, options); got.OptionID != "reject" {
+		t.Fatalf("deny = %q", got.OptionID)
+	}
+}
+
+func TestBrokerSessionMode(t *testing.T) {
+	codex := []string{"read-only", "agent", "agent-full-access"}
+	claude := []string{"default", "acceptEdits", "bypassPermissions", "plan"}
+	tests := []struct {
+		name      string
+		policy    string
+		available []string
+		expected  string
+	}{
+		{name: "read picks read-only", policy: PolicyRead, available: codex, expected: "read-only"},
+		{name: "deny picks read-only", policy: PolicyDeny, available: codex, expected: "read-only"},
+		{name: "always allow picks full access", policy: PolicyAlwaysAllow, available: codex, expected: "agent-full-access"},
+		{name: "write keeps default", policy: PolicyWrite, available: codex, expected: ""},
+		{name: "read falls back to plan", policy: PolicyRead, available: claude, expected: "plan"},
+		{name: "always allow picks bypass", policy: PolicyAlwaysAllow, available: claude, expected: "bypassPermissions"},
+		{name: "no modes", policy: PolicyRead, expected: ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			broker, err := New(tt.policy)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := broker.SessionMode(tt.available); got != tt.expected {
+				t.Fatalf("mode = %q, want %q", got, tt.expected)
+			}
+		})
+	}
+}

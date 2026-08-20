@@ -92,6 +92,11 @@ type Gateway struct {
 	PromptTimeout Duration `json:"prompt_timeout"`
 	StatePath     string   `json:"state_path"`
 	HomePath      string   `json:"home_path,omitempty"`
+	// DebugAddr enables a loopback-only endpoint for injecting messages and
+	// card callbacks; empty keeps it off. DebugChatID is the chat those
+	// injected messages default to.
+	DebugAddr   string `json:"debug_addr,omitempty"`
+	DebugChatID string `json:"debug_chat_id,omitempty"`
 }
 
 type Config struct {

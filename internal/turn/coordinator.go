@@ -13,10 +13,12 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/onboard"
+	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/sessions"
 	"github.com/gopact-ai/steve/internal/skills"
@@ -29,6 +31,16 @@ type Request struct {
 	SenderOpenID   string
 	ChatType       protocol.ChatType
 	Mentioned      bool
+	Images         []harness.Media
+	OnProgress     func(card.Progress)
+	OnPhase        func(card.Phase)
+	OnAsk          permission.AskFunc
+}
+
+func (r Request) phase(p card.Phase) {
+	if r.OnPhase != nil {
+		r.OnPhase(p)
+	}
 }
 
 // UserError is safe to show on Feishu. Gateway replies Text verbatim.
@@ -43,8 +55,10 @@ type runtime interface {
 
 type Result struct {
 	AgentID  string
+	Title    string
 	Text     string
 	Activity []string
+	Fields   []card.Field
 }
 
 type Coordinator struct {
@@ -204,18 +218,23 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if saved.HarnessID != "" && saved.Workspace != "" && saved.Workspace != workspace {
 		return Result{}, UserError{Text: c.text.T(i18n.WorkspaceDrift, protocol.CommandNew)}
 	}
+	req.phase(card.PhaseWaking)
 	runner, err := c.open(ctx, saved, selected, workspace, capabilities.MCPServers)
-	if err != nil {
-		if saved.UpstreamID != "" {
-			// The saved upstream session could not be reopened; drop the
-			// stale record so the next turn starts a fresh session instead
-			// of failing identically on every retry.
-			if stateErr := c.store.DeleteSession(conversationID, selected.ID); stateErr != nil {
-				log.Printf("turn: delete unreopenable session state: %v", stateErr)
-			}
+	if err != nil && saved.UpstreamID != "" {
+		// The saved upstream session could not be reopened; drop it and
+		// start a fresh session in this same turn instead of failing once
+		// and waiting for the user to send again.
+		if stateErr := c.store.DeleteSession(conversationID, selected.ID); stateErr != nil {
+			log.Printf("turn: delete unreopenable session state: %v", stateErr)
 		}
+		saved.UpstreamID = ""
+		saved.InstructionsApplied = false
+		runner, err = c.open(ctx, saved, selected, workspace, capabilities.MCPServers)
+	}
+	if err != nil {
 		return Result{}, err
 	}
+	req.phase(card.PhaseRunning)
 	session := state.Session{
 		ConversationID: conversationID, AgentID: selected.ID, HarnessID: selected.Harness,
 		UpstreamID: runner.ID(), Workspace: workspace, CapabilityHash: capabilities.Fingerprint,
@@ -249,7 +268,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}
 	prompt = user
 	c.setRunner(conversationID, selected.ID, runner)
-	out, activity, err := runner.Prompt(ctx, prompt)
+	out, activity, err := promptTurn(ctx, runner, prompt, req)
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}
@@ -374,26 +393,61 @@ func (c *Coordinator) assemble(selected agent.Agent, req Request) (capability.Ca
 
 func (c *Coordinator) status(req Request, selected agent.Agent) Result {
 	session := c.store.Conversation(req.ConversationID).Sessions[selected.ID]
-	line := fmt.Sprintf("active=%s harness=%s session=%s", selected.ID, selected.Harness, session.UpstreamID)
-	if session.UpstreamID == "" {
-		line = fmt.Sprintf("active=%s harness=%s session=none", selected.ID, selected.Harness)
+	sid := session.UpstreamID
+	if sid == "" {
+		sid = "none"
+	}
+	title := c.text.T(i18n.CardStatus)
+	fields := []card.Field{
+		{Label: "Agent", Value: selected.ID, IsMetric: true},
 	}
 	if c.home == nil {
-		return Result{AgentID: selected.ID, Text: line}
+		fields = append(fields,
+			card.Field{Label: "Harness", Value: selected.Harness, IsMetric: true},
+			card.Field{Label: "Session", Value: sid, Wide: true},
+		)
+		return statusResult(selected.ID, title, fields)
 	}
 	if injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) != home.ModeOwner {
-		return Result{AgentID: selected.ID, Text: line + "\nhome=guest"}
+		fields = append(fields,
+			card.Field{Label: "Mode", Value: "guest", IsMetric: true},
+			card.Field{Label: "Harness", Value: selected.Harness, Wide: true},
+			card.Field{Label: "Session", Value: sid, Wide: true},
+			card.Field{Label: "Home", Value: "guest", Wide: true},
+		)
+		return statusResult(selected.ID, title, fields)
 	}
 	snap, err := c.home.Load(home.ModeOwner)
 	if err != nil {
-		return Result{AgentID: selected.ID, Text: line + "\nhome=error"}
+		fields = append(fields,
+			card.Field{Label: "Mode", Value: "error", IsMetric: true},
+			card.Field{Label: "Home", Value: "error", Wide: true},
+		)
+		return statusResult(selected.ID, title, fields)
 	}
-	homeLine := fmt.Sprintf("home=%s mode=owner soul=%s user=%s memory=%s",
-		snap.Path, fileOK(snap.Soul), fileOK(snap.User), memorySize(snap.Memory))
-	if skillLine := c.skillStatusLine(); skillLine != "" {
-		homeLine += "\n" + skillLine
+	fields = append(fields,
+		card.Field{Label: "Mode", Value: "owner", IsMetric: true},
+		card.Field{Label: "Harness", Value: selected.Harness, Wide: true},
+		card.Field{Label: "Session", Value: sid, Wide: true},
+		card.Field{Label: "Home", Value: snap.Path, Wide: true},
+		card.Field{
+			Label: "Identity",
+			Value: "Soul " + fileOK(snap.Soul) + " · User " + fileOK(snap.User) + " · Memory " + memorySize(snap.Memory),
+			Wide:  true,
+		},
+	)
+	if skills := c.skillStatusLine(); skills != "" {
+		fields = append(fields, card.Field{Label: "Skills", Value: strings.TrimPrefix(skills, "skills="), Wide: true})
 	}
-	return Result{AgentID: selected.ID, Text: line + "\n" + homeLine}
+	return statusResult(selected.ID, title, fields)
+}
+
+func statusResult(agentID, title string, fields []card.Field) Result {
+	rows := make([]string, 0, len(fields))
+	for _, field := range fields {
+		rows = append(rows, "**"+field.Label+"**  "+field.Value)
+	}
+	return Result{AgentID: agentID, Title: title, Text: strings.Join(rows, "\n"), Fields: fields}
 }
 
 func fileOK(body string) string {
@@ -504,6 +558,13 @@ func (c *Coordinator) clearActive(conversationID, agentID string) {
 		close(entry.done)
 	}
 	delete(c.cancels, key)
+}
+
+func promptTurn(ctx context.Context, runner harness.Runner, prompt string, req Request) (string, []string, error) {
+	if turn, ok := runner.(harness.TurnRunner); ok {
+		return turn.PromptTurn(ctx, prompt, req.Images, req.OnAsk, req.OnProgress)
+	}
+	return runner.Prompt(ctx, prompt, req.OnProgress)
 }
 
 func sessionKey(conversationID, agentID string) string { return conversationID + "\x00" + agentID }

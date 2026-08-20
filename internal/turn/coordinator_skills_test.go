@@ -108,7 +108,7 @@ func TestSkillsEnableAbsolutePath(t *testing.T) {
 		t.Fatal(err)
 	}
 	status, err := ownerHandle(t, coordinator, "/status")
-	if err != nil || !strings.Contains(status.Text, "skills=lark-im") {
+	if err != nil || !strings.Contains(status.Text, "lark-im") {
 		t.Fatalf("status = %#v, %v", status, err)
 	}
 	if live.restarts != 1 {

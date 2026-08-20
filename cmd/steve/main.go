@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/debugapi"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
@@ -203,11 +204,24 @@ func serve(args []string) error {
 		Domain:           cfg.Feishu.Domain,
 		Access:           feishu.AccessFrom(cfg.Feishu),
 		AllowUnmentioned: cfg.Feishu.AllowUnmentioned,
+		OnCardAction:     gw.HandleCardAction,
 	}, gw.HandleMessage)
 	if err != nil {
 		return err
 	}
 	gw.BindChannel(channel)
+
+	if addr := cfg.Gateway.DebugAddr; addr != "" {
+		go func() {
+			if err := debugapi.Serve(ctx, addr, gw, debugapi.Defaults{
+				ChatID:       cfg.Gateway.DebugChatID,
+				SenderOpenID: cfg.Feishu.OwnerOpenID,
+				Sender:       channel,
+			}); err != nil {
+				log.Printf("steve: %v", err)
+			}
+		}()
+	}
 
 	go func() {
 		onboardCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.Gateway.PromptTimeout))

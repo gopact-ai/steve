@@ -67,7 +67,7 @@ func TestManagerStopRejectsNewSessionAndHostRestart(t *testing.T) {
 	if _, err := manager.OpenSession(ctx, "one", "", t.TempDir(), nil); err == nil {
 		t.Fatal("open after stop succeeded")
 	}
-	if _, _, err := runner.Prompt(ctx, "after stop"); !errors.Is(err, acphost.ErrClosed) {
+	if _, _, err := runner.Prompt(ctx, "after stop", nil); !errors.Is(err, acphost.ErrClosed) {
 		t.Fatalf("prompt after manager stop = %v, want ErrClosed", err)
 	}
 }
@@ -93,7 +93,7 @@ func TestManagerRestartClosesHostsAndAllowsNewSession(t *testing.T) {
 	if err := manager.Restart(); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := runner.Prompt(ctx, "after restart"); !errors.Is(err, acphost.ErrClosed) {
+	if _, _, err := runner.Prompt(ctx, "after restart", nil); !errors.Is(err, acphost.ErrClosed) {
 		t.Fatalf("old runner after restart = %v, want ErrClosed", err)
 	}
 	if _, err := manager.OpenSession(ctx, "one", "", t.TempDir(), nil); err != nil {

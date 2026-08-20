@@ -4,6 +4,8 @@ package acphost
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -16,8 +18,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/permission"
 )
+
+type Image struct {
+	MIME string
+	Data []byte
+}
 
 var ErrResumeUnsupported = errors.New("agent does not support session resume")
 var ErrSessionBusy = errors.New("session already has a running turn")
@@ -76,10 +84,17 @@ func New(cfg Config) *Host {
 type collector struct {
 	mu         sync.Mutex
 	text       strings.Builder
+	thought    strings.Builder
 	activity   []string
-	progress   func(string)
+	tools      []card.Tool
+	toolIndex  map[string]int
+	usage      card.Usage
+	progress   func(card.Progress)
 	generation uint64
 	overflow   bool
+	thoughtCap bool
+	ask        permission.AskFunc
+	ctx        context.Context
 }
 
 // maxCollectBytes caps the aggregated assistant text so a runaway agent
@@ -92,23 +107,227 @@ const truncationMarker = "\n…(output truncated)"
 
 func (c *collector) handle(u acp.SessionUpdate) {
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	switch u.SessionUpdate {
 	case acp.SessionUpdateTypeAgentMessageChunk:
 		if cb, ok := u.Content.(acp.ContentBlock); ok && cb.Type == acp.ContentBlockTypeText {
 			c.writeText(cb.Text)
 		}
-	case acp.SessionUpdateTypeToolCall:
-		title := ""
-		if u.Title != nil {
-			title = *u.Title
+	case acp.SessionUpdateTypeAgentThoughtChunk:
+		if cb, ok := u.Content.(acp.ContentBlock); ok && cb.Type == acp.ContentBlockTypeText {
+			c.writeThought(cb.Text)
 		}
-		line := fmt.Sprintf("⚙ %s", title)
-		c.activity = append(c.activity, line)
-		if c.progress != nil {
-			c.progress(line)
+	case acp.SessionUpdateTypeToolCall, acp.SessionUpdateTypeToolCallUpdate:
+		c.upsertTool(u)
+	case acp.SessionUpdateTypeUsageUpdate:
+		c.usage.ContextTokens = u.Used
+		c.usage.ContextWindow = u.Size
+	default:
+		c.mu.Unlock()
+		noteUnhandled(u.SessionUpdate)
+		return
+	}
+	p, fn := c.snapshot()
+	c.mu.Unlock()
+	if fn != nil {
+		fn(p)
+	}
+}
+
+// unhandledUpdates keeps the "we ignore this event" log to once per type per
+// process, so an unmapped agent capability is visible without flooding logs.
+var unhandledUpdates sync.Map
+
+func noteUnhandled(kind acp.SessionUpdateType) {
+	if _, seen := unhandledUpdates.LoadOrStore(kind, struct{}{}); !seen {
+		log.Printf("acphost: ignoring session update %q", kind)
+	}
+}
+
+func (c *collector) upsertTool(u acp.SessionUpdate) {
+	id := string(u.ToolCallID)
+	title := ""
+	if u.Title != nil {
+		title = *u.Title
+	}
+	if id == "" {
+		id = title
+	}
+	if id == "" {
+		return
+	}
+	if c.toolIndex == nil {
+		c.toolIndex = map[string]int{}
+	}
+	kind := ""
+	if u.Kind != nil {
+		kind = string(*u.Kind)
+	}
+	status := toolStatus(u.Status, u.SessionUpdate == acp.SessionUpdateTypeToolCall)
+	if i, ok := c.toolIndex[id]; ok {
+		if title != "" {
+			c.tools[i].Name = title
+		}
+		if kind != "" {
+			c.tools[i].Kind = kind
+		}
+		if status != "" {
+			c.tools[i].Status = status
+		}
+		applyToolIO(&c.tools[i], u)
+	} else {
+		if status == "" {
+			status = card.ToolRunning
+		}
+		name := title
+		if name == "" {
+			name = id
+		}
+		tool := card.Tool{ID: id, Kind: kind, Name: name, Status: status}
+		applyToolIO(&tool, u)
+		c.toolIndex[id] = len(c.tools)
+		c.tools = append(c.tools, tool)
+		if title != "" {
+			c.activity = append(c.activity, fmt.Sprintf("⚙ %s", title))
 		}
 	}
+}
+
+func applyToolIO(tool *card.Tool, u acp.SessionUpdate) {
+	now := time.Now()
+	if tool.StartedAt.IsZero() {
+		tool.StartedAt = now
+	}
+	tool.UpdatedAt = now
+	if s := formatAny(u.RawInput); s != "" {
+		tool.Input = s
+	}
+	if s := formatAny(u.RawOutput); s != "" {
+		tool.Output = s
+	}
+	// Agents that skip rawInput/rawOutput still describe the call through
+	// content: a diff is what they are about to write, everything else is
+	// what came back.
+	diff, text := splitToolContent(u.Content)
+	if tool.Input == "" && diff != "" {
+		tool.Input = diff
+	}
+	if tool.Output == "" && text != "" {
+		tool.Output = text
+	}
+	if tool.Detail == "" && u.Locations != nil {
+		for _, loc := range *u.Locations {
+			if loc.Path != "" {
+				tool.Detail = loc.Path
+				return
+			}
+		}
+	}
+}
+
+func formatAny(v any) string {
+	if v == nil {
+		return ""
+	}
+	switch t := v.(type) {
+	case string:
+		return strings.TrimSpace(t)
+	case []byte:
+		return strings.TrimSpace(string(t))
+	default:
+		raw, err := json.Marshal(t)
+		if err != nil || string(raw) == "null" {
+			return ""
+		}
+		return string(raw)
+	}
+}
+
+// splitToolContent reads the tool-call content variants ACP defines: file
+// diffs, plain content blocks and terminal handles.
+func splitToolContent(v any) (diff, text string) {
+	items, ok := v.([]acp.ToolCallContent)
+	if !ok {
+		if ptr, isPtr := v.(*[]acp.ToolCallContent); isPtr && ptr != nil {
+			items = *ptr
+		} else {
+			return "", contentText(v)
+		}
+	}
+	var diffs, texts []string
+	for _, item := range items {
+		switch item.Type {
+		case acp.ToolCallContentTypeDiff:
+			entry := item.NewText
+			if item.Path != "" {
+				entry = item.Path + "\n" + entry
+			}
+			diffs = append(diffs, strings.TrimSpace(entry))
+		case acp.ToolCallContentTypeContent:
+			if s := contentText(item.Content); s != "" {
+				texts = append(texts, s)
+			}
+		}
+	}
+	return strings.Join(diffs, "\n"), strings.Join(texts, "\n")
+}
+
+func contentText(v any) string {
+	switch t := v.(type) {
+	case acp.ContentBlock:
+		if t.Type == acp.ContentBlockTypeText {
+			return strings.TrimSpace(t.Text)
+		}
+	case []acp.ContentBlock:
+		var b strings.Builder
+		for _, block := range t {
+			if block.Type == acp.ContentBlockTypeText && block.Text != "" {
+				if b.Len() > 0 {
+					b.WriteByte('\n')
+				}
+				b.WriteString(block.Text)
+			}
+		}
+		return strings.TrimSpace(b.String())
+	}
+	return ""
+}
+
+func toolStatus(status *acp.ToolCallStatus, create bool) card.ToolStatus {
+	if status == nil {
+		if create {
+			return card.ToolRunning
+		}
+		return ""
+	}
+	switch *status {
+	case acp.ToolCallStatusCompleted:
+		return card.ToolCompleted
+	case acp.ToolCallStatusFailed:
+		return card.ToolFailed
+	default:
+		return card.ToolRunning
+	}
+}
+
+func (c *collector) snapshot() (card.Progress, func(card.Progress)) {
+	return card.Progress{
+		Answer:    c.text.String(),
+		Reasoning: c.thought.String(),
+		Tools:     copyTools(c.tools),
+		Usage:     c.usage,
+	}, c.progress
+}
+
+func copyTools(in []card.Tool) []card.Tool {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]card.Tool, len(in))
+	for i, tool := range in {
+		tool.Children = copyTools(tool.Children)
+		out[i] = tool
+	}
+	return out
 }
 
 // writeText appends a chunk, trimming at maxCollectBytes on a rune boundary
@@ -142,6 +361,27 @@ func (c *collector) writeText(chunk string) {
 	c.text.WriteString(chunk)
 }
 
+const maxThoughtBytes = 8 << 10
+
+func (c *collector) writeThought(chunk string) {
+	if c.thoughtCap || chunk == "" {
+		return
+	}
+	room := maxThoughtBytes - c.thought.Len()
+	if room <= 0 {
+		c.thoughtCap = true
+		return
+	}
+	if len(chunk) > room {
+		chunk = chunk[:room]
+		for len(chunk) > 0 && !utf8.ValidString(chunk) {
+			chunk = chunk[:len(chunk)-1]
+		}
+		c.thoughtCap = true
+	}
+	c.thought.WriteString(chunk)
+}
+
 func (c *collector) result() (string, []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -164,18 +404,58 @@ func (ch *clientHandler) Update(_ context.Context, n *acp.SessionNotification) e
 	return nil
 }
 
-func (ch *clientHandler) RequestPermission(_ context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
+func (ch *clientHandler) RequestPermission(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
 	var kind acp.ToolKind
 	if req.ToolCall.Kind != nil {
 		kind = *req.ToolCall.Kind
 	}
-	outcome := ch.h.cfg.Permission.Decide(kind, req.Options)
 	title := ""
 	if req.ToolCall.Title != nil {
 		title = *req.ToolCall.Title
 	}
+	ch.h.mu.Lock()
+	col := ch.h.collectors[req.SessionID]
+	var ask permission.AskFunc
+	if col != nil && col.generation == ch.generation {
+		ask = col.ask
+		if col.ctx != nil {
+			ctx = col.ctx
+		}
+	}
+	broker := ch.h.cfg.Permission
+	ch.h.mu.Unlock()
+
+	if broker.NeedsAsk(kind) && ask != nil {
+		outcome, err := ask(ctx, permission.Ask{
+			ToolName: title,
+			Kind:     kind,
+			Reason:   permissionReason(req.ToolCall),
+			Options:  req.Options,
+		})
+		if err != nil {
+			log.Printf("acphost: permission ask %q: %v", title, err)
+			outcome = permission.Choose(false, req.Options)
+		}
+		log.Printf("acphost: permission request %q -> %s (asked)", title, outcome.Outcome)
+		return &acp.RequestPermissionResponse{Outcome: outcome}, nil
+	}
+
+	outcome := broker.Decide(kind, req.Options)
 	log.Printf("acphost: permission request %q -> %s", title, outcome.Outcome)
 	return &acp.RequestPermissionResponse{Outcome: outcome}, nil
+}
+
+func permissionReason(call acp.ToolCallUpdate) string {
+	if call.Locations == nil {
+		return ""
+	}
+	parts := make([]string, 0, len(*call.Locations))
+	for _, loc := range *call.Locations {
+		if loc.Path != "" {
+			parts = append(parts, loc.Path)
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ensureStarted launches the subprocess and performs ACP initialize if needed.
@@ -313,15 +593,19 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 		request := acp.LoadSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers}
 		switch {
 		case capabilities != nil && capabilities.LoadSession:
-			if _, err := caller.LoadSession(ctx, &request); err != nil {
+			resp, err := caller.LoadSession(ctx, &request)
+			if err != nil {
 				return "", 0, fmt.Errorf("session/load: %w", err)
 			}
+			h.applyMode(ctx, caller, sessionID, resp.Modes)
 		case capabilities != nil && capabilities.SessionCapabilities != nil && capabilities.SessionCapabilities.Resume != nil:
-			if _, err := caller.ResumeSession(ctx, &acp.ResumeSessionRequest{
+			resp, err := caller.ResumeSession(ctx, &acp.ResumeSessionRequest{
 				SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers,
-			}); err != nil {
+			})
+			if err != nil {
 				return "", 0, fmt.Errorf("session/resume: %w", err)
 			}
+			h.applyMode(ctx, caller, sessionID, resp.Modes)
 		default:
 			return "", 0, ErrResumeUnsupported
 		}
@@ -341,6 +625,7 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 	if err != nil {
 		return "", 0, fmt.Errorf("session/new: %w", err)
 	}
+	h.applyMode(ctx, caller, resp.SessionID, resp.Modes)
 	h.mu.Lock()
 	if !h.alive || h.generation != generation {
 		h.mu.Unlock()
@@ -351,9 +636,46 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 	return resp.SessionID, generation, nil
 }
 
+// applyMode moves the session into the mode its permission policy implies.
+// Agents default to approving their own writes, so without this the policy
+// is never consulted.
+func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.SessionID, modes *acp.SessionModeState) {
+	if modes == nil || caller == nil {
+		return
+	}
+	ids := make([]string, 0, len(modes.AvailableModes))
+	for _, mode := range modes.AvailableModes {
+		ids = append(ids, string(mode.ID))
+	}
+	log.Printf("acphost: session modes current=%s available=%s", modes.CurrentModeID, strings.Join(ids, ","))
+	wanted := h.cfg.Permission.SessionMode(ids)
+	if wanted == "" || wanted == string(modes.CurrentModeID) {
+		return
+	}
+	if _, err := caller.SetSessionMode(ctx, &acp.SetSessionModeRequest{
+		SessionID: sid, ModeID: acp.SessionModeID(wanted),
+	}); err != nil {
+		log.Printf("acphost: set session mode %q: %v", wanted, err)
+		return
+	}
+	log.Printf("acphost: session mode set to %q", wanted)
+}
+
 // Prompt sends one user turn and blocks until the agent finishes it,
 // returning the aggregated assistant text and tool-activity lines.
-func (h *Host) Prompt(ctx context.Context, sid acp.SessionID, generation uint64, text string, progress func(string)) (string, []string, error) {
+func (h *Host) Prompt(ctx context.Context, sid acp.SessionID, generation uint64, text string, progress func(card.Progress)) (string, []string, error) {
+	return h.PromptTurn(ctx, sid, generation, text, nil, nil, progress)
+}
+
+func (h *Host) PromptTurn(
+	ctx context.Context,
+	sid acp.SessionID,
+	generation uint64,
+	text string,
+	images []Image,
+	ask permission.AskFunc,
+	progress func(card.Progress),
+) (string, []string, error) {
 	if err := h.ensureStarted(ctx); err != nil {
 		return "", nil, err
 	}
@@ -367,7 +689,8 @@ func (h *Host) Prompt(ctx context.Context, sid acp.SessionID, generation uint64,
 		return "", nil, ErrSessionBusy
 	}
 	caller := h.caller
-	col := &collector{progress: progress, generation: generation}
+	caps := h.capabilities
+	col := &collector{progress: progress, generation: generation, ask: ask, ctx: ctx}
 	h.collectors[sid] = col
 	h.active[sid] = generation
 	h.mu.Unlock()
@@ -384,7 +707,7 @@ func (h *Host) Prompt(ctx context.Context, sid acp.SessionID, generation uint64,
 
 	resp, err := caller.Prompt(ctx, &acp.PromptRequest{
 		SessionID: sid,
-		Prompt:    []acp.ContentBlock{acp.TextContentBlock(text)},
+		Prompt:    promptBlocks(text, images, caps),
 	})
 	out, activity := col.result()
 	h.mu.Lock()
@@ -448,6 +771,31 @@ func (h *Host) CloseSession(ctx context.Context, sid acp.SessionID) error {
 	delete(h.sessions, sid)
 	h.mu.Unlock()
 	return nil
+}
+
+func promptBlocks(text string, images []Image, caps *acp.AgentCapabilities) []acp.ContentBlock {
+	if text == "" && len(images) > 0 {
+		text = "[image]"
+	}
+	blocks := []acp.ContentBlock{acp.TextContentBlock(text)}
+	if len(images) == 0 {
+		return blocks
+	}
+	if caps == nil || caps.PromptCapabilities == nil || !caps.PromptCapabilities.Image {
+		blocks[0] = acp.TextContentBlock(text + "\n\n[steve: images omitted; agent has no image prompt capability]")
+		return blocks
+	}
+	for _, img := range images {
+		if len(img.Data) == 0 {
+			continue
+		}
+		mime := img.MIME
+		if mime == "" {
+			mime = "image/png"
+		}
+		blocks = append(blocks, acp.ImageContentBlock(base64.StdEncoding.EncodeToString(img.Data), mime))
+	}
+	return blocks
 }
 
 func validateMCPServers(capabilities *acp.AgentCapabilities, servers []acp.MCPServer) error {

@@ -108,21 +108,30 @@ func TestApplyEnvDoesNotOverrideExisting(t *testing.T) {
 	}
 }
 
-func TestPrepareGrokLinksAuthAndDisablesCompat(t *testing.T) {
+func TestPrepareGrokCopiesAuthAndDisablesCompat(t *testing.T) {
 	src := t.TempDir()
 	if err := os.WriteFile(filepath.Join(src, "auth.json"), []byte(`{"token":"x"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	dest := filepath.Join(t.TempDir(), "grok")
+	if err := os.MkdirAll(dest, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/tmp/missing-auth", filepath.Join(dest, "auth.json")); err != nil {
+		t.Fatal(err)
+	}
 	if err := PrepareGrok(dest, src); err != nil {
 		t.Fatal(err)
 	}
-	target, err := os.Readlink(filepath.Join(dest, "auth.json"))
+	rawAuth, err := os.ReadFile(filepath.Join(dest, "auth.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if target != filepath.Join(src, "auth.json") {
-		t.Fatalf("auth link = %q", target)
+	if string(rawAuth) != `{"token":"x"}` {
+		t.Fatalf("auth copy = %s", rawAuth)
+	}
+	if _, err := os.Readlink(filepath.Join(dest, "auth.json")); err == nil {
+		t.Fatal("grok auth should be a regular file, not a symlink")
 	}
 	raw, err := os.ReadFile(filepath.Join(dest, "config.toml"))
 	if err != nil {

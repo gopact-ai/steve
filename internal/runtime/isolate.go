@@ -117,7 +117,7 @@ func PrepareGrok(dest, userGrok string) error {
 	}
 	var raw []byte
 	if userGrok != "" {
-		if err := linkAuth(dest, userGrok, "auth.json"); err != nil {
+		if err := copyAuth(dest, userGrok, "auth.json"); err != nil {
 			return err
 		}
 		src := filepath.Join(userGrok, "config.toml")
@@ -155,6 +155,23 @@ func linkAuth(dest, userHome, name string) error {
 	_ = os.Remove(link)
 	if err := os.Symlink(src, link); err != nil {
 		return fmt.Errorf("link %s: %w", name, err)
+	}
+	return nil
+}
+
+func copyAuth(dest, userHome, name string) error {
+	src := filepath.Join(userHome, name)
+	data, err := os.ReadFile(src)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read %s: %w", name, err)
+	}
+	path := filepath.Join(dest, name)
+	_ = os.Remove(path)
+	if err := os.WriteFile(path, data, 0o600); err != nil {
+		return fmt.Errorf("write %s: %w", name, err)
 	}
 	return nil
 }

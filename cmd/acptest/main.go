@@ -83,7 +83,7 @@ func main() {
 	if capabilities.Instructions != "" {
 		prompt = capabilities.Instructions + "\n\n" + prompt
 	}
-	out, _, err := session.Prompt(ctx, prompt)
+	out, _, err := session.Prompt(ctx, prompt, nil)
 	if err != nil {
 		log.Fatal(err)
 	}

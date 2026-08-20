@@ -8,6 +8,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/permission"
 )
 
@@ -149,11 +150,21 @@ func (m *Manager) host(id string) (*acphost.Host, error) {
 // a turn the agent ended itself without importing the host package.
 var ErrTurnCanceled = acphost.ErrTurnCanceled
 
+type Media struct {
+	MIME string
+	Data []byte
+}
+
 type Runner interface {
 	ID() string
-	Prompt(context.Context, string) (string, []string, error)
+	Prompt(context.Context, string, func(card.Progress)) (string, []string, error)
 	Cancel(context.Context) error
 	Abort()
+}
+
+type TurnRunner interface {
+	Runner
+	PromptTurn(context.Context, string, []Media, permission.AskFunc, func(card.Progress)) (string, []string, error)
 }
 
 type Session struct {
@@ -165,8 +176,25 @@ type Session struct {
 
 func (s *Session) ID() string { return string(s.id) }
 
-func (s *Session) Prompt(ctx context.Context, text string) (string, []string, error) {
-	return s.host.Prompt(ctx, s.id, s.generation, text, nil)
+func (s *Session) Prompt(ctx context.Context, text string, progress func(card.Progress)) (string, []string, error) {
+	return s.PromptTurn(ctx, text, nil, nil, progress)
+}
+
+func (s *Session) PromptTurn(
+	ctx context.Context,
+	text string,
+	media []Media,
+	ask permission.AskFunc,
+	progress func(card.Progress),
+) (string, []string, error) {
+	images := make([]acphost.Image, 0, len(media))
+	for _, item := range media {
+		if len(item.Data) == 0 {
+			continue
+		}
+		images = append(images, acphost.Image{MIME: item.MIME, Data: item.Data})
+	}
+	return s.host.PromptTurn(ctx, s.id, s.generation, text, images, ask, progress)
 }
 
 func (s *Session) Cancel(ctx context.Context) error { return s.host.Cancel(ctx, s.id, s.generation) }

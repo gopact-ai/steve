@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/permission"
 )
 
@@ -143,6 +144,35 @@ func TestPermissionDeny(t *testing.T) {
 	}
 }
 
+func TestPermissionAskCallsHook(t *testing.T) {
+	h := newTestHost(t, "read")
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	sid, generation, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	asked := make(chan permission.Ask, 1)
+	out, _, err := h.PromptTurn(ctx, sid, generation, "perm check", nil, func(_ context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
+		asked <- ask
+		return permission.Choose(true, ask.Options), nil
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ask := <-asked:
+		if ask.ToolName != "dangerous operation" {
+			t.Fatalf("ask = %#v", ask)
+		}
+	default:
+		t.Fatal("ask hook was not called")
+	}
+	if !strings.Contains(out, "[permission: selected/allow]") {
+		t.Fatalf("expected asked allow, got: %q", out)
+	}
+}
+
 func TestCloseRejectsRestart(t *testing.T) {
 	h := newTestHost(t, "auto")
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -242,5 +272,117 @@ func TestCollectorDoesNotSplitRune(t *testing.T) {
 	out, _ := col.result()
 	if !utf8.ValidString(out) {
 		t.Fatalf("collector output is invalid UTF-8")
+	}
+}
+
+func TestCollectorTracksToolLifecycle(t *testing.T) {
+	var got []card.Progress
+	col := &collector{progress: func(p card.Progress) { got = append(got, p) }}
+	id := acp.ToolCallID("tool-1")
+	title := "read file"
+	col.handle(acp.SessionUpdate{
+		SessionUpdate: acp.SessionUpdateTypeToolCall,
+		ToolCallID:    id,
+		Title:         &title,
+		RawInput:      map[string]string{"path": "README.md"},
+	})
+	done := acp.ToolCallStatusCompleted
+	col.handle(acp.SessionUpdate{
+		SessionUpdate: acp.SessionUpdateTypeToolCallUpdate,
+		ToolCallID:    id,
+		Status:        &done,
+		RawOutput:     "# hi",
+	})
+	col.handle(acp.SessionUpdate{
+		SessionUpdate: acp.SessionUpdateTypeUsageUpdate,
+		Used:          1600,
+		Size:          128000,
+	})
+	if len(got) != 3 {
+		t.Fatalf("progress events = %d, want 3", len(got))
+	}
+	if len(got[0].Tools) != 1 || got[0].Tools[0].Status != card.ToolRunning || !strings.Contains(got[0].Tools[0].Input, "README.md") {
+		t.Fatalf("start = %#v", got[0].Tools)
+	}
+	if got[1].Tools[0].Status != card.ToolCompleted || got[1].Tools[0].Output != "# hi" {
+		t.Fatalf("done = %#v", got[1].Tools)
+	}
+	if got[2].Usage.ContextTokens != 1600 || got[2].Usage.ContextWindow != 128000 {
+		t.Fatalf("usage = %#v", got[2].Usage)
+	}
+	_, activity := col.result()
+	if len(activity) != 1 || !strings.Contains(activity[0], "read file") {
+		t.Fatalf("activity = %v", activity)
+	}
+}
+
+func TestCollectorTracksThoughtChunks(t *testing.T) {
+	var got []card.Progress
+	col := &collector{progress: func(p card.Progress) { got = append(got, p) }}
+	col.handle(acp.SessionUpdate{
+		SessionUpdate: acp.SessionUpdateTypeAgentThoughtChunk,
+		Content:       acp.TextContentBlock("先看仓库"),
+	})
+	col.handle(acp.SessionUpdate{
+		SessionUpdate: acp.SessionUpdateTypeAgentThoughtChunk,
+		Content:       acp.TextContentBlock("再改卡片"),
+	})
+	if len(got) != 2 || got[1].Reasoning != "先看仓库再改卡片" {
+		t.Fatalf("thought = %#v", got)
+	}
+}
+
+func TestPromptBlocksOmitsImagesWithoutCapability(t *testing.T) {
+	blocks := promptBlocks("hi", []Image{{MIME: "image/png", Data: []byte("x")}}, nil)
+	if len(blocks) != 1 || !strings.Contains(blocks[0].Text, "images omitted") {
+		t.Fatalf("blocks = %#v", blocks)
+	}
+}
+
+func TestPromptBlocksIncludesImages(t *testing.T) {
+	caps := &acp.AgentCapabilities{PromptCapabilities: &acp.PromptCapabilities{Image: true}}
+	blocks := promptBlocks("hi", []Image{{MIME: "image/png", Data: []byte("x")}}, caps)
+	if len(blocks) != 2 || blocks[1].Type != acp.ContentBlockTypeImage {
+		t.Fatalf("blocks = %#v", blocks)
+	}
+}
+
+func TestSplitToolContentReadsDiffAndText(t *testing.T) {
+	old := "a"
+	diff, text := splitToolContent([]acp.ToolCallContent{
+		{Type: acp.ToolCallContentTypeDiff, Path: "/tmp/x.go", NewText: "b", OldText: &old},
+		{Type: acp.ToolCallContentTypeContent, Content: acp.TextContentBlock("done")},
+	})
+	if diff != "/tmp/x.go\nb" {
+		t.Fatalf("diff = %q", diff)
+	}
+	if text != "done" {
+		t.Fatalf("text = %q", text)
+	}
+}
+
+func TestToolCallContentFillsMissingIO(t *testing.T) {
+	col := &collector{}
+	id := acp.ToolCallID("tool-diff")
+	title := "Write file"
+	kind := acp.ToolKindEdit
+	col.handle(acp.SessionUpdate{
+		SessionUpdate: acp.SessionUpdateTypeToolCall,
+		ToolCallID:    id,
+		Title:         &title,
+		Kind:          &kind,
+		Content: []acp.ToolCallContent{
+			{Type: acp.ToolCallContentTypeDiff, Path: "/tmp/x.go", NewText: "hello"},
+		},
+	})
+	if len(col.tools) != 1 {
+		t.Fatalf("tools = %#v", col.tools)
+	}
+	tool := col.tools[0]
+	if tool.Kind != "edit" || tool.Name != "Write file" {
+		t.Fatalf("tool = %#v", tool)
+	}
+	if !strings.Contains(tool.Input, "hello") || !strings.Contains(tool.Input, "/tmp/x.go") {
+		t.Fatalf("diff should become the input: %#v", tool)
 	}
 }

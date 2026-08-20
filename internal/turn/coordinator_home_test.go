@@ -244,7 +244,7 @@ func TestGuestOmitsMemoryAndPath(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(status.Text, "home=guest") || strings.Contains(status.Text, dir) {
+	if !strings.Contains(status.Text, "guest") || strings.Contains(status.Text, dir) {
 		t.Fatalf("group status = %q", status.Text)
 	}
 }
