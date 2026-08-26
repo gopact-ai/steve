@@ -140,6 +140,11 @@ func (u *turnUI) progress(p card.Progress) {
 	u.state.Reasoning = p.Reasoning
 	u.state.Tools = append([]card.Tool(nil), p.Tools...)
 	u.state.Usage = p.Usage
+	// Settings only ever become more complete during a turn, so a snapshot
+	// taken before the agent reported its model must not blank them out.
+	if !p.Settings.Empty() {
+		u.state.Settings = p.Settings
+	}
 	u.state.UpdatedAt = time.Now()
 	u.dirty = true
 	u.scheduleLocked()

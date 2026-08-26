@@ -194,7 +194,27 @@ func (s *Session) PromptTurn(
 		}
 		images = append(images, acphost.Image{MIME: item.MIME, Data: item.Data})
 	}
-	return s.host.PromptTurn(ctx, s.id, s.generation, text, images, ask, progress)
+	return s.host.PromptTurn(ctx, s.id, s.generation, text, images, ask, s.stamp(progress))
+}
+
+// stamp names the harness on every snapshot. The host reports the model and
+// mode because only the agent knows them; which harness is speaking is
+// Steve's own fact, so it is added here rather than plumbed down.
+func (s *Session) stamp(progress func(view.Progress)) func(view.Progress) {
+	if progress == nil {
+		return nil
+	}
+	return func(p view.Progress) {
+		p.Settings.Harness = s.harnessID
+		progress(p)
+	}
+}
+
+// Settings reports how the agent has this session configured.
+func (s *Session) Settings() view.Settings {
+	out := s.host.Settings(s.id)
+	out.Harness = s.harnessID
+	return out
 }
 
 func (s *Session) Cancel(ctx context.Context) error { return s.host.Cancel(ctx, s.id, s.generation) }

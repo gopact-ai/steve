@@ -62,11 +62,24 @@ type Field struct {
 	IsMetric bool
 }
 
+// Settings is how the agent says it is configured for this session: which
+// model is answering, and which permission mode it is operating under. Both
+// are the agent's to change mid-session, so they ride along with every
+// progress snapshot instead of being read once when the session opens.
+type Settings struct {
+	Harness string
+	Model   string
+	Mode    string
+}
+
+func (s Settings) Empty() bool { return s.Harness == "" && s.Model == "" && s.Mode == "" }
+
 type Progress struct {
 	Answer    string
 	Reasoning string
 	Tools     []Tool
 	Usage     Usage
+	Settings  Settings
 }
 
 type Approval struct {
@@ -85,6 +98,7 @@ type Turn struct {
 	Tools     []Tool
 	Usage     Usage
 	Approval  *Approval
+	Settings  Settings
 	Phase     Phase
 	TurnID    string
 	StartedAt time.Time

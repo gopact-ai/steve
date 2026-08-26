@@ -422,3 +422,59 @@ func TestRenderFitsByteCap(t *testing.T) {
 		t.Fatal("card JSON is invalid UTF-8")
 	}
 }
+
+func TestFooterLeadsWithHarnessAndModel(t *testing.T) {
+	turn := Turn{
+		Status:    StatusCompleted,
+		Answer:    "done",
+		Settings:  Settings{Harness: "codex", Model: "GPT 5.6 Sol", Mode: "Agent"},
+		Usage:     Usage{ContextTokens: 11000, ContextWindow: 272000},
+		StartedAt: time.Unix(0, 0),
+		UpdatedAt: time.Unix(12, 0),
+	}
+	got := footerText(turn, testCopy())
+	want := "codex · GPT 5.6 Sol · Agent · 完成 · 12.0s · Ctx 11K/272K (4%)"
+	if got != want {
+		t.Fatalf("footer = %q, want %q", got, want)
+	}
+	// The chat-list preview truncates the footer, so the settings have to
+	// lead it to survive.
+	if !strings.HasPrefix(summary(turn, testCopy()), "codex · GPT 5.6 Sol") {
+		t.Fatalf("summary drops the settings: %q", summary(turn, testCopy()))
+	}
+}
+
+func TestFooterOmitsUnreportedSettings(t *testing.T) {
+	turn := Turn{
+		Status:    StatusRunning,
+		Settings:  Settings{Harness: "codex"},
+		StartedAt: time.Unix(0, 0),
+		UpdatedAt: time.Unix(1, 0),
+	}
+	if got, want := footerText(turn, testCopy()), "codex · 进行中 · 1.0s"; got != want {
+		t.Fatalf("footer = %q, want %q", got, want)
+	}
+	bare := Turn{Status: StatusRunning, StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0)}
+	if got, want := footerText(bare, testCopy()), "进行中 · 1.0s"; got != want {
+		t.Fatalf("footer = %q, want %q", got, want)
+	}
+}
+
+// A model name is agent-supplied text on a line that already uses "·" as a
+// separator, so it must not be able to run away with the footer.
+func TestFooterCapsSettingValues(t *testing.T) {
+	long := strings.Repeat("m", 100)
+	turn := Turn{
+		Status:    StatusRunning,
+		Settings:  Settings{Model: long},
+		StartedAt: time.Unix(0, 0),
+		UpdatedAt: time.Unix(1, 0),
+	}
+	got := footerText(turn, testCopy())
+	if strings.Contains(got, long) {
+		t.Fatalf("footer kept the full model name: %q", got)
+	}
+	if !strings.Contains(got, "…") {
+		t.Fatalf("footer did not mark the model as trimmed: %q", got)
+	}
+}

@@ -24,6 +24,7 @@ type (
 	Progress   = view.Progress
 	Turn       = view.Turn
 	Approval   = view.Approval
+	Settings   = view.Settings
 )
 
 const (
@@ -54,6 +55,7 @@ const (
 	maxFieldLabel      = 40
 	maxFieldValue      = 240
 	maxApprovalReason  = 240
+	maxSettingRunes    = 32
 	headerIconToken    = "myai_colorful"
 	cardActionApproval = "tool_approval"
 	cardActionCancel   = "turn_cancel"
@@ -827,9 +829,22 @@ func approvalButton(id, label, kind, requestID, decision string) map[string]any 
 	}
 }
 
+// settingsText names who answered: the harness, the model it ran, and the
+// permission mode it ran under. It leads the footer so the chat-list summary
+// keeps it even after truncation.
+func settingsText(t Turn) []string {
+	parts := make([]string, 0, 3)
+	for _, value := range []string{t.Settings.Harness, t.Settings.Model, t.Settings.Mode} {
+		if value = strings.TrimSpace(value); value != "" {
+			parts = append(parts, shrinkRunes(value, maxSettingRunes))
+		}
+	}
+	return parts
+}
+
 func footerText(t Turn, copy Copy) string {
 	label, _, _ := headerTone(t, copy)
-	parts := []string{label, elapsed(t)}
+	parts := append(settingsText(t), label, elapsed(t))
 	if t.Usage.ContextWindow > 0 {
 		ctx := compactTokens(t.Usage.ContextTokens) + "/" + compactTokens(t.Usage.ContextWindow)
 		if t.Usage.ContextTokens > 0 {

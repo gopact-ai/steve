@@ -3,7 +3,8 @@
 //
 // Behavior: echoes each text prompt back as an agent message chunk. If the
 // prompt contains the word "perm", it first requests permission from the
-// client and reports the outcome.
+// client and reports the outcome. If it contains "switchmodel", it reports a
+// mid-turn model change the way a real agent does.
 package main
 
 import (
@@ -32,9 +33,39 @@ func (a *agent) Initialize(_ context.Context, _ *acp.InitializeRequest) (*acp.In
 	}, nil
 }
 
+// modelOption mirrors the shape codex-acp and claude-agent-acp both use for
+// their model selector: an opaque current value, plus the names to show for
+// it.
+func modelOption(current string) acp.SessionConfigOption {
+	category := acp.SessionConfigOptionCategoryModel
+	return acp.SessionConfigOption{
+		Type: acp.SessionConfigOptionTypeSelect, ID: "model", Name: "Model", Category: &category,
+		CurrentValue: acp.SessionConfigValueID(current),
+		Options: acp.SessionConfigSelectOptions{Ungrouped: &acp.UngroupedSessionConfigSelectOptions{
+			{Value: "mock-fast", Name: "Mock Fast"},
+			{Value: "mock-deep", Name: "Mock Deep"},
+		}},
+	}
+}
+
+func modeOption(current string) acp.SessionConfigOption {
+	category := acp.SessionConfigOptionCategoryMode
+	return acp.SessionConfigOption{
+		Type: acp.SessionConfigOptionTypeSelect, ID: "mode", Name: "Mode", Category: &category,
+		CurrentValue: acp.SessionConfigValueID(current),
+		Options: acp.SessionConfigSelectOptions{Ungrouped: &acp.UngroupedSessionConfigSelectOptions{
+			{Value: "read-only", Name: "Read-only"},
+			{Value: "agent", Name: "Agent"},
+		}},
+	}
+}
+
 func (a *agent) NewSession(_ context.Context, _ *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
 	id := acp.SessionID(fmt.Sprintf("mock-session-%d", a.counter.Add(1)))
-	return &acp.NewSessionResponse{SessionID: id}, nil
+	return &acp.NewSessionResponse{
+		SessionID:     id,
+		ConfigOptions: &[]acp.SessionConfigOption{modeOption("agent"), modelOption("mock-fast")},
+	}, nil
 }
 
 func (a *agent) LoadSession(_ context.Context, _ *acp.LoadSessionRequest) (*acp.LoadSessionResponse, error) {
@@ -65,6 +96,13 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		note := acp.AgentMessageChunkSessionUpdate(
 			acp.TextContentBlock(fmt.Sprintf("[permission: %s/%s] ", resp.Outcome.Outcome, resp.Outcome.OptionID)))
 		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
+			return nil, err
+		}
+	}
+
+	if strings.Contains(input, "switchmodel") {
+		swap := acp.ConfigOptionUpdateSessionUpdate([]acp.SessionConfigOption{modelOption("mock-deep")})
+		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: swap}); err != nil {
 			return nil, err
 		}
 	}

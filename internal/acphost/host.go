@@ -64,7 +64,7 @@ type Host struct {
 	exited       chan struct{}
 	collectors   map[acp.SessionID]*collector
 	capabilities *acp.AgentCapabilities
-	sessions     map[acp.SessionID]bool
+	sessions     map[acp.SessionID]*sessionState
 	opening      map[acp.SessionID]uint64
 	active       map[acp.SessionID]uint64
 	generation   uint64
@@ -75,7 +75,7 @@ func New(cfg Config) *Host {
 		cfg.Permission, _ = permission.New("deny")
 	}
 	return &Host{
-		cfg: cfg, collectors: map[acp.SessionID]*collector{}, sessions: map[acp.SessionID]bool{},
+		cfg: cfg, collectors: map[acp.SessionID]*collector{}, sessions: map[acp.SessionID]*sessionState{},
 		opening: map[acp.SessionID]uint64{}, active: map[acp.SessionID]uint64{},
 	}
 }
@@ -90,6 +90,7 @@ type collector struct {
 	toolIndex  map[string]int
 	usage      view.Usage
 	progress   func(view.Progress)
+	settings   func() view.Settings
 	generation uint64
 	overflow   bool
 	thoughtCap bool
@@ -121,6 +122,17 @@ func (c *collector) handle(u acp.SessionUpdate) {
 	case acp.SessionUpdateTypeUsageUpdate:
 		c.usage.ContextTokens = u.Used
 		c.usage.ContextWindow = u.Size
+	case acp.SessionUpdateTypeConfigOptionUpdate,
+		acp.SessionUpdateTypeCurrentModeUpdate,
+		acp.SessionUpdateTypeAvailableCommandsUpdate:
+		// applySettings already recorded these on the session; falling
+		// through to the snapshot is what puts a mid-turn model or mode
+		// switch on the card.
+	case acp.SessionUpdateTypeSessionInfoUpdate:
+		// Carries nothing but vendor _meta today (codex reports thread
+		// status). Swallow it rather than logging it as unhandled.
+		c.mu.Unlock()
+		return
 	default:
 		c.mu.Unlock()
 		noteUnhandled(u.SessionUpdate)
@@ -310,12 +322,16 @@ func toolStatus(status *acp.ToolCallStatus, create bool) view.ToolStatus {
 }
 
 func (c *collector) snapshot() (view.Progress, func(view.Progress)) {
-	return view.Progress{
+	p := view.Progress{
 		Answer:    c.text.String(),
 		Reasoning: c.thought.String(),
 		Tools:     copyTools(c.tools),
 		Usage:     c.usage,
-	}, c.progress
+	}
+	if c.settings != nil {
+		p.Settings = c.settings()
+	}
+	return p, c.progress
 }
 
 func copyTools(in []view.Tool) []view.Tool {
@@ -395,6 +411,7 @@ type clientHandler struct {
 }
 
 func (ch *clientHandler) Update(_ context.Context, n *acp.SessionNotification) error {
+	ch.h.applySettings(n.SessionID, n.Update)
 	ch.h.mu.Lock()
 	col := ch.h.collectors[n.SessionID]
 	ch.h.mu.Unlock()
@@ -511,7 +528,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	// monitor skips its reset when a new process has already been started,
 	// and stale P1-era session maps must never serve P2.
 	h.collectors = map[acp.SessionID]*collector{}
-	h.sessions = map[acp.SessionID]bool{}
+	h.sessions = map[acp.SessionID]*sessionState{}
 	h.opening = map[acp.SessionID]uint64{}
 	h.active = map[acp.SessionID]uint64{}
 	h.capabilities = nil
@@ -527,7 +544,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		if h.cmd == cmd {
 			h.alive = false
 			h.collectors = map[acp.SessionID]*collector{}
-			h.sessions = map[acp.SessionID]bool{}
+			h.sessions = map[acp.SessionID]*sessionState{}
 			h.opening = map[acp.SessionID]uint64{}
 			h.active = map[acp.SessionID]uint64{}
 			h.capabilities = nil
@@ -566,7 +583,7 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 	}
 	h.mu.Lock()
 	generation := h.generation
-	if h.sessions[sessionID] {
+	if h.sessions[sessionID] != nil {
 		h.mu.Unlock()
 		return sessionID, generation, nil
 	}
@@ -591,13 +608,15 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 	}
 	if sessionID != "" {
 		request := acp.LoadSessionRequest{SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers}
+		var state *sessionState
 		switch {
 		case capabilities != nil && capabilities.LoadSession:
 			resp, err := caller.LoadSession(ctx, &request)
 			if err != nil {
 				return "", 0, fmt.Errorf("session/load: %w", err)
 			}
-			h.applyMode(ctx, caller, sessionID, resp.Modes)
+			state = newSessionState(resp.Modes, resp.ConfigOptions)
+			state.setMode(h.applyMode(ctx, caller, sessionID, resp.Modes))
 		case capabilities != nil && capabilities.SessionCapabilities != nil && capabilities.SessionCapabilities.Resume != nil:
 			resp, err := caller.ResumeSession(ctx, &acp.ResumeSessionRequest{
 				SessionID: sessionID, Cwd: cfg.Workdir, MCPServers: cfg.MCPServers,
@@ -605,7 +624,8 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 			if err != nil {
 				return "", 0, fmt.Errorf("session/resume: %w", err)
 			}
-			h.applyMode(ctx, caller, sessionID, resp.Modes)
+			state = newSessionState(resp.Modes, resp.ConfigOptions)
+			state.setMode(h.applyMode(ctx, caller, sessionID, resp.Modes))
 		default:
 			return "", 0, ErrResumeUnsupported
 		}
@@ -614,7 +634,7 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 			h.mu.Unlock()
 			return "", 0, fmt.Errorf("agent process changed while opening session")
 		}
-		h.sessions[sessionID] = true
+		h.sessions[sessionID] = state
 		h.mu.Unlock()
 		return sessionID, generation, nil
 	}
@@ -625,23 +645,25 @@ func (h *Host) OpenSession(ctx context.Context, sessionID acp.SessionID, cfg Ses
 	if err != nil {
 		return "", 0, fmt.Errorf("session/new: %w", err)
 	}
-	h.applyMode(ctx, caller, resp.SessionID, resp.Modes)
+	state := newSessionState(resp.Modes, resp.ConfigOptions)
+	state.setMode(h.applyMode(ctx, caller, resp.SessionID, resp.Modes))
 	h.mu.Lock()
 	if !h.alive || h.generation != generation {
 		h.mu.Unlock()
 		return "", 0, fmt.Errorf("agent process changed while opening session")
 	}
-	h.sessions[resp.SessionID] = true
+	h.sessions[resp.SessionID] = state
 	h.mu.Unlock()
 	return resp.SessionID, generation, nil
 }
 
 // applyMode moves the session into the mode its permission policy implies.
 // Agents default to approving their own writes, so without this the policy
-// is never consulted.
-func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.SessionID, modes *acp.SessionModeState) {
+// is never consulted. It returns the mode actually in force afterwards, so
+// the caller can record what the session is really running under.
+func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.SessionID, modes *acp.SessionModeState) acp.SessionModeID {
 	if modes == nil || caller == nil {
-		return
+		return ""
 	}
 	ids := make([]string, 0, len(modes.AvailableModes))
 	for _, mode := range modes.AvailableModes {
@@ -650,15 +672,16 @@ func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.S
 	log.Printf("acphost: session modes current=%s available=%s", modes.CurrentModeID, strings.Join(ids, ","))
 	wanted := h.cfg.Permission.SessionMode(ids)
 	if wanted == "" || wanted == string(modes.CurrentModeID) {
-		return
+		return modes.CurrentModeID
 	}
 	if _, err := caller.SetSessionMode(ctx, &acp.SetSessionModeRequest{
 		SessionID: sid, ModeID: acp.SessionModeID(wanted),
 	}); err != nil {
 		log.Printf("acphost: set session mode %q: %v", wanted, err)
-		return
+		return modes.CurrentModeID
 	}
 	log.Printf("acphost: session mode set to %q", wanted)
+	return acp.SessionModeID(wanted)
 }
 
 // Prompt sends one user turn and blocks until the agent finishes it,
@@ -690,7 +713,13 @@ func (h *Host) PromptTurn(
 	}
 	caller := h.caller
 	caps := h.capabilities
-	col := &collector{progress: progress, generation: generation, ask: ask, ctx: ctx}
+	col := &collector{
+		progress:   progress,
+		settings:   h.sessionSettings(sid),
+		generation: generation,
+		ask:        ask,
+		ctx:        ctx,
+	}
 	h.collectors[sid] = col
 	h.active[sid] = generation
 	h.mu.Unlock()
@@ -753,7 +782,7 @@ func (h *Host) CloseSession(ctx context.Context, sid acp.SessionID) error {
 		h.mu.Unlock()
 		return ErrSessionBusy
 	}
-	if !h.sessions[sid] {
+	if h.sessions[sid] == nil {
 		h.mu.Unlock()
 		return nil
 	}
@@ -864,4 +893,46 @@ func (h *Host) shutdownLocked() {
 		}
 	}
 	h.mu.Lock()
+}
+
+// applySettings files a session-scoped notification against the session it
+// belongs to. These outlive the turn that happens to be running — an agent
+// may switch model between turns — so they are recorded on the session
+// rather than on the collector.
+func (h *Host) applySettings(sid acp.SessionID, u acp.SessionUpdate) {
+	h.mu.Lock()
+	state := h.sessions[sid]
+	h.mu.Unlock()
+	if state == nil {
+		return
+	}
+	switch u.SessionUpdate {
+	case acp.SessionUpdateTypeConfigOptionUpdate:
+		state.setOptions(u.ConfigOptions)
+	case acp.SessionUpdateTypeCurrentModeUpdate:
+		state.setMode(u.CurrentModeID)
+	case acp.SessionUpdateTypeAvailableCommandsUpdate:
+		state.setCommands(u.AvailableCommands)
+	}
+}
+
+// sessionSettings returns a reader for the session's current settings. It is
+// resolved lazily so a snapshot taken late in a turn sees a model the agent
+// switched to mid-turn.
+func (h *Host) sessionSettings(sid acp.SessionID) func() view.Settings {
+	return func() view.Settings {
+		h.mu.Lock()
+		state := h.sessions[sid]
+		h.mu.Unlock()
+		return state.settings()
+	}
+}
+
+// Settings reports what the agent last said about how this session is
+// configured. It is empty for a session this host does not know.
+func (h *Host) Settings(sid acp.SessionID) view.Settings {
+	h.mu.Lock()
+	state := h.sessions[sid]
+	h.mu.Unlock()
+	return state.settings()
 }
