@@ -210,7 +210,7 @@ func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, st
 func (c *Coordinator) prompt(parent context.Context, req Request, selected agent.Agent, prompt string) (result Result, err error) {
 	conversationID := req.ConversationID
 	ctx, cancel := context.WithTimeout(parent, c.timeout)
-	if !c.beginTurn(conversationID, selected.ID, cancel) {
+	if !c.takeTurn(ctx, conversationID, selected.ID, cancel) {
 		cancel()
 		if c.skillsUpdating() {
 			return Result{}, UserError{Text: c.text.T(i18n.SkillsUpdating)}
@@ -548,6 +548,55 @@ func (c *Coordinator) cancel(ctx context.Context, conversationID string, selecte
 		}
 	}
 	return Result{AgentID: selected.ID, Text: c.text.T(i18n.CancelRequested, selected.ID)}, nil
+}
+
+// interruptGrace bounds how long a new prompt waits for the turn it is
+// replacing to let go. The old turn is already cancelled by then; this only
+// covers an agent that is slow to notice.
+const interruptGrace = 20 * time.Second
+
+// takeTurn claims the turn slot for a new prompt, interrupting whatever is
+// running instead of refusing it.
+//
+// A new message from the user is a change of intent, not a queued request.
+// Refusing it makes the user say the same thing twice; queueing it runs work
+// they have already moved on from. Interrupting is what makes steering a
+// running turn possible at all — it is the same gesture as "no, do it this
+// way", and it needs no separate mechanism.
+func (c *Coordinator) takeTurn(ctx context.Context, conversationID, agentID string, cancel context.CancelFunc) bool {
+	key := sessionKey(conversationID, agentID)
+	for {
+		c.mu.Lock()
+		// A skills update rewrites what the agent is about to be told, so it
+		// still blocks: interrupting would not help, the input is not ready.
+		if c.skillsLock > 0 {
+			c.mu.Unlock()
+			return false
+		}
+		entry := c.cancels[key]
+		if entry == nil {
+			c.cancels[key] = &turnEntry{cancel: cancel, done: make(chan struct{})}
+			c.mu.Unlock()
+			return true
+		}
+		c.mu.Unlock()
+		// Wait without the lock: the running turn releases the slot through
+		// clearActive, which needs the same lock to do it.
+		entry.cancel()
+		timer := time.NewTimer(interruptGrace)
+		select {
+		case <-entry.done:
+			timer.Stop()
+		case <-ctx.Done():
+			timer.Stop()
+			return false
+		case <-timer.C:
+			return false
+		}
+		// clearActive closes done and deletes the entry under one lock, so
+		// the next pass sees an empty slot unless another message beat us to
+		// it — in which case interrupt that one too.
+	}
 }
 
 func (c *Coordinator) beginTurn(conversationID, agentID string, cancel context.CancelFunc) bool {

@@ -116,7 +116,13 @@ func New(ctx context.Context, opts Options, handler Handler) (*Channel, error) {
 			channel.attachImages(dlCtx, &msg)
 			channel.attachQuoted(dlCtx, &msg)
 			cancel()
-			handler(msg)
+			// Hand off rather than run the turn here. This callback is the
+			// connection's event loop: blocking it for the length of a turn
+			// means the next message cannot arrive until the current one
+			// finishes — which is exactly the message that was meant to
+			// interrupt it. Returning immediately also acks the event before
+			// Feishu's redelivery window instead of after the agent is done.
+			go handler(msg)
 			return nil
 		}).
 		OnP2CardActionTrigger(func(_ context.Context, event *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {

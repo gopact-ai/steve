@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -182,34 +183,54 @@ func (p *blockingProcessor) texts() []string {
 	return append([]string(nil), p.seen...)
 }
 
-func TestGatewayCancelDrainsQueuedMessages(t *testing.T) {
+// Messages no longer wait behind the turn they might be meant to interrupt.
+// The gateway hands every one straight to the coordinator, which is where
+// taking the turn away from a running prompt is decided.
+func TestGatewayStartsMessagesWithoutQueueing(t *testing.T) {
 	processor := &blockingProcessor{release: make(chan struct{})}
 	g := New(processor)
 	r := &reply{text: make(chan string, 4)}
 	g.BindChannel(r)
 	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_1", Text: "long task"})
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_2", Text: "actually this"})
+
+	// Both reach the coordinator while the first is still blocked; before,
+	// the second sat in a queue until the first finished.
+	deadline := time.Now().Add(2 * time.Second)
+	for len(processor.texts()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	close(processor.release)
+	got := processor.texts()
+	if len(got) < 2 {
+		t.Fatalf("second message waited for the first: %v", got)
+	}
+	seen := map[string]bool{}
+	for _, text := range got {
+		seen[text] = true
+	}
+	if !seen["long task"] || !seen["actually this"] {
+		t.Fatalf("both messages should have started: %v", got)
+	}
+}
+
+// A redelivered message must still not run twice; dropping the queue did not
+// drop the deduplication that sat beside it.
+func TestGatewayStillDropsDuplicateMessages(t *testing.T) {
+	processor := &blockingProcessor{release: make(chan struct{})}
+	close(processor.release)
+	g := New(processor)
+	g.BindChannel(&reply{text: make(chan string, 4)})
+	for i := 0; i < 3; i++ {
+		g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_dup", Text: "once"})
+	}
 	deadline := time.Now().Add(time.Second)
 	for len(processor.texts()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	if len(processor.texts()) == 0 {
-		t.Fatal("worker did not pick up the first message")
-	}
-	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_2", Text: "queued"})
-	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_3", Text: "/cancel"})
-	close(processor.release)
-
-	deadline = time.Now().Add(time.Second)
-	for len(processor.texts()) < 2 && time.Now().Before(deadline) {
-		time.Sleep(5 * time.Millisecond)
-	}
-	for _, seen := range processor.texts() {
-		if seen == "queued" {
-			t.Fatal("queued message ran after cancel")
-		}
-	}
-	if got := processor.texts(); len(got) < 2 || got[0] != "long task" || got[1] != "/cancel" {
-		t.Fatalf("unexpected processing order: %v", got)
+	time.Sleep(50 * time.Millisecond)
+	if got := processor.texts(); len(got) != 1 {
+		t.Fatalf("duplicate delivered %d times: %v", len(got), got)
 	}
 }
 
@@ -609,5 +630,79 @@ func TestGatewayHandleQuestionAction(t *testing.T) {
 	}
 	if got := <-done; got != "Blue" {
 		t.Fatalf("choice = %q, want the value the button carried", got)
+	}
+}
+
+// The card reports progress, it does not stream. Growing assistant text is
+// not news; a tool or a plan step changing is.
+func TestCardRepaintsOnMilestonesNotOnText(t *testing.T) {
+	base := card.Turn{
+		Plan:  []card.Step{{Text: "one", Status: card.StepInProgress}},
+		Tools: []card.Tool{{ID: "t1", Status: card.ToolRunning}},
+	}
+	quiet := []struct {
+		name string
+		next card.Progress
+	}{
+		{"more answer text", card.Progress{
+			Answer: "a much longer answer than before",
+			Plan:   base.Plan, Tools: base.Tools,
+		}},
+		{"more reasoning", card.Progress{
+			Reasoning: "still thinking about it",
+			Plan:      base.Plan, Tools: base.Tools,
+		}},
+		{"token counts moved", card.Progress{
+			Usage: card.Usage{ContextTokens: 9000},
+			Plan:  base.Plan, Tools: base.Tools,
+		}},
+	}
+	for _, tc := range quiet {
+		t.Run(tc.name, func(t *testing.T) {
+			if isMilestone(base, tc.next) {
+				t.Fatal("repainted the card for something the user would not act on")
+			}
+		})
+	}
+
+	news := []struct {
+		name string
+		next card.Progress
+	}{
+		{"plan step advanced", card.Progress{
+			Plan:  []card.Step{{Text: "one", Status: card.StepCompleted}},
+			Tools: base.Tools,
+		}},
+		{"plan step added", card.Progress{
+			Plan:  append(append([]card.Step(nil), base.Plan...), card.Step{Text: "two"}),
+			Tools: base.Tools,
+		}},
+		{"tool finished", card.Progress{
+			Plan: base.Plan, Tools: []card.Tool{{ID: "t1", Status: card.ToolCompleted}},
+		}},
+		{"tool started", card.Progress{
+			Plan:  base.Plan,
+			Tools: append(append([]card.Tool(nil), base.Tools...), card.Tool{ID: "t2", Status: card.ToolRunning}),
+		}},
+		{"model became known", card.Progress{
+			Plan: base.Plan, Tools: base.Tools,
+			Settings: card.Settings{Harness: "codex", Model: "GPT 5.6 Sol"},
+		}},
+	}
+	for _, tc := range news {
+		t.Run(tc.name, func(t *testing.T) {
+			if !isMilestone(base, tc.next) {
+				t.Fatal("did not repaint for a change the user is waiting on")
+			}
+		})
+	}
+}
+
+// Settings arrive once and then repeat on every snapshot; only the first is
+// news, or the card would repaint forever.
+func TestKnownSettingsAreNotRepeatedNews(t *testing.T) {
+	settled := card.Turn{Settings: card.Settings{Harness: "codex", Model: "GPT 5.6 Sol"}}
+	if isMilestone(settled, card.Progress{Settings: settled.Settings}) {
+		t.Fatal("already-known settings counted as news")
 	}
 }

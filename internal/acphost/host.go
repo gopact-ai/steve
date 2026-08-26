@@ -38,6 +38,14 @@ var ErrDeleteUnsupported = errors.New("agent does not support session deletion")
 // stays consistent, so callers keep it instead of tearing the process down.
 var ErrTurnCanceled = errors.New("agent canceled the turn")
 
+// cancelNotifyTimeout bounds the session/cancel notification itself;
+// cancelSettleTimeout bounds how long the agent gets to end the turn after
+// being told to, before the call is abandoned and the session written off.
+const (
+	cancelNotifyTimeout = 5 * time.Second
+	cancelSettleTimeout = 15 * time.Second
+)
+
 type Config struct {
 	Command    string
 	Args       []string
@@ -755,7 +763,41 @@ func (h *Host) PromptTurn(
 		h.mu.Unlock()
 	}()
 
-	resp, err := caller.Prompt(ctx, &acp.PromptRequest{
+	// A cancelled turn has to be cancelled *through* the agent rather than
+	// by dropping the RPC. ACP ends a cancelled prompt by answering it with
+	// StopReasonCanceled, and only an answered prompt leaves the session
+	// consistent enough to keep using — which is the whole point when the
+	// cancel came from the user sending a new instruction. Abandoning the
+	// call instead leaves the agent working on a turn nobody is listening to
+	// and the session too dirty to reuse.
+	settled := make(chan struct{})
+	defer close(settled)
+	promptCtx, abandon := context.WithCancel(context.WithoutCancel(ctx))
+	defer abandon()
+	go func() {
+		select {
+		case <-settled:
+			return
+		case <-ctx.Done():
+		}
+		notifyCtx, stop := context.WithTimeout(context.WithoutCancel(ctx), cancelNotifyTimeout)
+		err := caller.Cancel(notifyCtx, &acp.CancelNotification{SessionID: sid})
+		stop()
+		if err != nil {
+			log.Printf("acphost: cancel notify: %v", err)
+		}
+		select {
+		case <-settled:
+		case <-time.After(cancelSettleTimeout):
+			// The agent did not end the turn. Give up on a clean stop; the
+			// plain context error that surfaces tells the caller the session
+			// can no longer be trusted.
+			log.Printf("acphost: agent did not settle a cancelled turn in %s", cancelSettleTimeout)
+			abandon()
+		}
+	}()
+
+	resp, err := caller.Prompt(promptCtx, &acp.PromptRequest{
 		SessionID: sid,
 		Prompt:    promptBlocks(text, images, caps),
 	})

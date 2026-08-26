@@ -7,7 +7,9 @@
 // mid-turn model change the way a real agent does. If it contains "plan", it
 // reports a three-step plan and then advances it. If it contains "askme", it
 // elicits a single-choice answer from the user the way claude-agent-acp's
-// AskUserQuestion does, and echoes what came back.
+// AskUserQuestion does, and echoes what came back. If it contains "slow", it
+// waits until the client cancels the session and then ends the turn with
+// StopReasonCanceled, the way a well-behaved agent answers session/cancel.
 package main
 
 import (
@@ -18,15 +20,17 @@ import (
 	"log"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 
 	"github.com/gopact-ai/acp"
 )
 
 type agent struct {
-	client  *acp.ClientCaller
-	counter atomic.Int64
-	deleted atomic.Value
+	client    *acp.ClientCaller
+	counter   atomic.Int64
+	deleted   atomic.Value
+	canceling sync.Map
 }
 
 func (a *agent) Initialize(_ context.Context, _ *acp.InitializeRequest) (*acp.InitializeResponse, error) {
@@ -107,6 +111,20 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 			acp.TextContentBlock(fmt.Sprintf("[permission: %s/%s] ", resp.Outcome.Outcome, resp.Outcome.OptionID)))
 		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
 			return nil, err
+		}
+	}
+
+	if strings.Contains(input, "slow") {
+		stop := make(chan struct{})
+		a.canceling.Store(string(req.SessionID), stop)
+		select {
+		case <-stop:
+			// Answering the prompt is what tells the client the session is
+			// still consistent; a real agent that just went quiet here would
+			// leave it unusable.
+			return &acp.PromptResponse{StopReason: acp.StopReasonCanceled}, nil
+		case <-ctx.Done():
+			return nil, ctx.Err()
 		}
 	}
 
@@ -204,7 +222,13 @@ func (a *agent) ListSessions(_ context.Context, _ *acp.ListSessionsRequest) (*ac
 	}}, nil
 }
 
-func (a *agent) Cancel(_ context.Context, _ *acp.CancelNotification) error { return nil }
+func (a *agent) Cancel(_ context.Context, n *acp.CancelNotification) error {
+	if ch, ok := a.canceling.Load(string(n.SessionID)); ok {
+		close(ch.(chan struct{}))
+		a.canceling.Delete(string(n.SessionID))
+	}
+	return nil
+}
 
 func ptr[T any](v T) *T { return &v }
 

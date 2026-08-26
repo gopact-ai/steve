@@ -52,11 +52,11 @@ func TestOwnerFirstTurnInjectsMemoryThenStops(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.prompts) == 0 || !strings.Contains(runner.prompts[0], "remember-this") || !strings.Contains(runner.prompts[0], "Steve home") {
-		t.Fatalf("first prompt missing home: %v", runner.prompts)
+	if len(runner.seen()) == 0 || !strings.Contains(runner.seen()[0], "remember-this") || !strings.Contains(runner.seen()[0], "Steve home") {
+		t.Fatalf("first prompt missing home: %v", runner.seen())
 	}
-	if !strings.Contains(runner.prompts[0], "[steve: speaker=ou_me owner=true chat=p2p]") {
-		t.Fatalf("missing speaker line: %s", runner.prompts[0])
+	if !strings.Contains(runner.seen()[0], "[steve: speaker=ou_me owner=true chat=p2p]") {
+		t.Fatalf("missing speaker line: %s", runner.seen()[0])
 	}
 	if first.Text == "" {
 		t.Fatal("empty reply")
@@ -67,7 +67,7 @@ func TestOwnerFirstTurnInjectsMemoryThenStops(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.prompts) < 2 || strings.Contains(runner.prompts[1], "remember-this") {
+	if len(runner.seen()) < 2 || strings.Contains(runner.seen()[1], "remember-this") {
 		t.Fatal("second turn re-prepended home")
 	}
 	if store.Conversation("dm").Sessions["codex"].UpstreamID != upstream {
@@ -109,8 +109,8 @@ func TestNewReloadsMemory(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.prompts) < 2 || !strings.Contains(runner.prompts[len(runner.prompts)-1], "after") {
-		t.Fatalf("did not reload MEMORY: %v", runner.prompts)
+	if len(runner.seen()) < 2 || !strings.Contains(runner.seen()[len(runner.seen())-1], "after") {
+		t.Fatalf("did not reload MEMORY: %v", runner.seen())
 	}
 	if store.Conversation("dm").Sessions["codex"].InstructionsApplied != true {
 		t.Fatal("expected instructions applied after reload")
@@ -183,8 +183,8 @@ func TestOwnerFollowUpWritesPortrait(t *testing.T) {
 	if result.Text != "已记下，李总。" || len(result.Activity) != 0 {
 		t.Fatalf("result = %#v", result)
 	}
-	if len(runner.prompts) == 0 || !strings.Contains(runner.prompts[0], "===SOUL.md===") {
-		t.Fatalf("missing draft instruction: %v", runner.prompts)
+	if len(runner.seen()) == 0 || !strings.Contains(runner.seen()[0], "===SOUL.md===") {
+		t.Fatalf("missing draft instruction: %v", runner.seen())
 	}
 	user, err := os.ReadFile(filepath.Join(dir, home.FileUser))
 	if err != nil {
@@ -216,7 +216,7 @@ func TestOwnerFollowUpSkipsScanWhenDenied(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(runner.prompts[0], "secret project zebra") {
+	if strings.Contains(runner.seen()[0], "secret project zebra") {
 		t.Fatal("scan ran after deny")
 	}
 }
@@ -235,8 +235,8 @@ func TestGuestOmitsMemoryAndPath(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.prompts) == 0 || strings.Contains(runner.prompts[0], "private") || strings.Contains(runner.prompts[0], dir) {
-		t.Fatalf("group leaked home: %v", runner.prompts)
+	if len(runner.seen()) == 0 || strings.Contains(runner.seen()[0], "private") || strings.Contains(runner.seen()[0], dir) {
+		t.Fatalf("group leaked home: %v", runner.seen())
 	}
 	status, err := coordinator.Handle(t.Context(), Request{
 		ConversationID: "grp", Input: "/status", SenderOpenID: "ou_me", ChatType: protocol.ChatGroup, Mentioned: true,
@@ -269,8 +269,8 @@ func TestGroupSendersShareFingerprint(t *testing.T) {
 	if store.Conversation("grp").Sessions["codex"].CapabilityHash != hash {
 		t.Fatal("speaker line changed capability hash")
 	}
-	if len(runner.prompts) < 2 || !strings.Contains(runner.prompts[1], "speaker=ou_b") {
-		t.Fatalf("second speaker missing: %v", runner.prompts)
+	if len(runner.seen()) < 2 || !strings.Contains(runner.seen()[1], "speaker=ou_b") {
+		t.Fatalf("second speaker missing: %v", runner.seen())
 	}
 }
 
@@ -285,8 +285,8 @@ func TestUnmentionedGroupAsksAgentToStaySilent(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if len(runner.prompts) == 0 || !strings.Contains(runner.prompts[0], home.ListenUnmentioned(home.LocaleZH)) {
-		t.Fatalf("missing listen instruction: %v", runner.prompts)
+	if len(runner.seen()) == 0 || !strings.Contains(runner.seen()[0], home.ListenUnmentioned(home.LocaleZH)) {
+		t.Fatalf("missing listen instruction: %v", runner.seen())
 	}
 }
 

@@ -66,7 +66,6 @@ type Gateway struct {
 	text      i18n.Catalog
 
 	mu       sync.Mutex
-	chats    map[string]chan feishu.InboundMessage
 	seen     map[string]struct{}
 	order    []string
 	asks     map[string]*pendingAsk
@@ -79,7 +78,6 @@ func New(processor processor) *Gateway {
 	return &Gateway{
 		processor: processor,
 		text:      i18n.New(i18n.LocaleZH),
-		chats:     map[string]chan feishu.InboundMessage{},
 		seen:      map[string]struct{}{},
 		asks:      map[string]*pendingAsk{},
 		turns:     map[string]*liveTurn{},
@@ -90,59 +88,23 @@ func (g *Gateway) BindChannel(ch replier) { g.ch = ch }
 
 func (g *Gateway) SetCatalog(cat i18n.Catalog) { g.text = cat }
 
+// HandleMessage starts every message immediately instead of queueing it
+// behind whatever the chat is already doing.
+//
+// A per-conversation queue was the wrong shape once a new message means
+// "stop that, do this": a message that waits for the turn it is meant to
+// interrupt can never interrupt it. Serialising is now the coordinator's
+// job, and it does it by taking the turn away from the running prompt
+// rather than by making the user wait.
 func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
-	conversationID := msg.ConversationID
-	if conversationID == "" {
-		conversationID = msg.ChatID
-	}
 	g.mu.Lock()
 	if _, duplicate := g.seen[msg.MessageID]; msg.MessageID != "" && duplicate {
 		g.mu.Unlock()
 		return
 	}
-	if cmd, _ := protocol.ParseCommand(msg.Text); cmd == protocol.CommandCancel {
-		// /cancel means "stop everything in this chat": drop queued prompts
-		// so they cannot run after the cancel, then cancel the in-flight
-		// turn out-of-band.
-		g.drainLocked(conversationID)
-		g.rememberLocked(msg.MessageID)
-		g.mu.Unlock()
-		go g.process(msg)
-		return
-	}
-	queue := g.chats[conversationID]
-	if queue == nil {
-		// ponytail: workers live for the process lifetime; add idle eviction if chat count becomes material.
-		queue = make(chan feishu.InboundMessage, 16)
-		g.chats[conversationID] = queue
-		go g.run(queue)
-	}
-	select {
-	case queue <- msg:
-		g.rememberLocked(msg.MessageID)
-		g.mu.Unlock()
-	default:
-		g.mu.Unlock()
-		g.reply(msg.MessageID, g.text.T(i18n.QueueFull))
-	}
-}
-
-// drainLocked drops every queued message of a conversation. Queued prompts
-// are stale once the user cancels; their IDs are remembered so a Feishu
-// redelivery does not rerun them. Requires g.mu to be held.
-func (g *Gateway) drainLocked(conversationID string) {
-	queue := g.chats[conversationID]
-	if queue == nil {
-		return
-	}
-	for {
-		select {
-		case msg := <-queue:
-			g.rememberLocked(msg.MessageID)
-		default:
-			return
-		}
-	}
+	g.rememberLocked(msg.MessageID)
+	g.mu.Unlock()
+	go g.process(msg)
 }
 
 func (g *Gateway) rememberLocked(messageID string) {
@@ -154,12 +116,6 @@ func (g *Gateway) rememberLocked(messageID string) {
 	if len(g.order) > 4096 {
 		delete(g.seen, g.order[0])
 		g.order = g.order[1:]
-	}
-}
-
-func (g *Gateway) run(queue <-chan feishu.InboundMessage) {
-	for msg := range queue {
-		g.process(msg)
 	}
 }
 

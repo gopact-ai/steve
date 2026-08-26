@@ -19,7 +19,10 @@ type cardPoster interface {
 	PatchCard(context.Context, string, []byte) error
 }
 
-var cardMinInterval = time.Second
+// cardMinInterval is the floor between patches. The card is not a live view
+// of the agent's output — it reports progress at the points where something
+// actually changed — so this only smooths bursts of real events.
+var cardMinInterval = 3 * time.Second
 
 type turnUI struct {
 	g      *Gateway
@@ -35,7 +38,6 @@ type turnUI struct {
 	dirty     bool
 	lastPatch time.Time
 	timer     *time.Timer
-	clock     *time.Timer
 	wg        sync.WaitGroup
 	reaction  string
 	turnID    string
@@ -94,7 +96,6 @@ func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
 			ui.cardID = id
 			g.setTurnCard(ui.turnID, id)
 			ui.lastPatch = time.Now()
-			ui.clock = time.AfterFunc(cardMinInterval, ui.tick)
 			return ui
 		}
 		if err != nil {
@@ -151,12 +152,18 @@ func (u *turnUI) setQuestion(q *card.Question) {
 	u.flush()
 }
 
+// progress records every snapshot but only repaints on the ones that carry
+// news. Streaming each token turned the card into a live terminal and cost a
+// patch per chunk; what a person wants from a card they are not staring at is
+// "what has it got done", which changes when a step or a tool changes — not
+// when the answer grows by a word.
 func (u *turnUI) progress(p card.Progress) {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if u.closed || u.listen || u.fallback || u.cardID == "" {
 		return
 	}
+	news := isMilestone(u.state, p)
 	u.state.Answer = p.Answer
 	u.state.Reasoning = p.Reasoning
 	u.state.Tools = append([]card.Tool(nil), p.Tools...)
@@ -168,22 +175,36 @@ func (u *turnUI) progress(p card.Progress) {
 		u.state.Settings = p.Settings
 	}
 	u.state.UpdatedAt = time.Now()
+	if !news {
+		// Kept, not drawn: it rides along with the next real change, and
+		// with the final render either way.
+		return
+	}
 	u.dirty = true
 	u.scheduleLocked()
 }
 
-func (u *turnUI) tick() {
-	u.mu.Lock()
-	u.clock = nil
-	if u.closed || u.fallback || u.cardID == "" {
-		u.mu.Unlock()
-		return
+// isMilestone answers "is there anything new to tell the user". A plan step
+// moving, a tool starting or finishing, or the model becoming known are all
+// things a person would want a notification for. More assistant text is not.
+func isMilestone(state card.Turn, next card.Progress) bool {
+	if len(state.Plan) != len(next.Plan) {
+		return true
 	}
-	u.state.UpdatedAt = time.Now()
-	u.dirty = true
-	u.scheduleLocked()
-	u.clock = time.AfterFunc(cardMinInterval, u.tick)
-	u.mu.Unlock()
+	for i := range next.Plan {
+		if state.Plan[i] != next.Plan[i] {
+			return true
+		}
+	}
+	if len(state.Tools) != len(next.Tools) {
+		return true
+	}
+	for i := range next.Tools {
+		if state.Tools[i].Status != next.Tools[i].Status || state.Tools[i].ID != next.Tools[i].ID {
+			return true
+		}
+	}
+	return state.Settings.Empty() && !next.Settings.Empty()
 }
 
 func (u *turnUI) scheduleLocked() {
@@ -237,10 +258,6 @@ func (u *turnUI) finish(result turn.Result, err error) {
 			u.timer.Stop()
 			u.timer = nil
 		}
-		if u.clock != nil {
-			u.clock.Stop()
-			u.clock = nil
-		}
 		u.mu.Unlock()
 		return
 	}
@@ -250,10 +267,6 @@ func (u *turnUI) finish(result turn.Result, err error) {
 	if u.timer != nil {
 		u.timer.Stop()
 		u.timer = nil
-	}
-	if u.clock != nil {
-		u.clock.Stop()
-		u.clock = nil
 	}
 	u.state.Approval = nil
 	u.state.Question = nil

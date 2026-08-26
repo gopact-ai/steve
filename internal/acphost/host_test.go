@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -384,5 +385,47 @@ func TestToolCallContentFillsMissingIO(t *testing.T) {
 	}
 	if !strings.Contains(tool.Input, "hello") || !strings.Contains(tool.Input, "/tmp/x.go") {
 		t.Fatalf("diff should become the input: %#v", tool)
+	}
+}
+
+// Cancelling a turn must go through the agent. ACP ends a cancelled prompt
+// by answering it with StopReasonCanceled, and only an answered prompt
+// leaves the session consistent enough to keep using — which is exactly what
+// a user interrupting with a new instruction needs.
+func TestCancelledPromptIsSettledByTheAgent(t *testing.T) {
+	h := newTestHost(t, "deny")
+	sid, generation, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	started := make(chan struct{})
+	var once sync.Once
+	result := make(chan error, 1)
+	go func() {
+		_, _, err := h.PromptTurn(ctx, sid, generation, "slow work", nil, nil, nil,
+			func(view.Progress) { once.Do(func() { close(started) }) })
+		result <- err
+	}()
+	// The agent emits nothing before it parks, so cancel on a short delay
+	// rather than waiting for a progress snapshot that never comes.
+	select {
+	case <-started:
+	case <-time.After(500 * time.Millisecond):
+	}
+	cancel()
+
+	select {
+	case err := <-result:
+		if !errors.Is(err, ErrTurnCanceled) {
+			t.Fatalf("cancel returned %v, want ErrTurnCanceled — the agent settled it", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("cancelled prompt never returned")
+	}
+	// A settled cancel leaves the session usable, which is what makes
+	// interrupting non-destructive.
+	if _, _, err := h.Prompt(t.Context(), sid, generation, "next", nil); err != nil {
+		t.Fatalf("session unusable after a settled cancel: %v", err)
 	}
 }

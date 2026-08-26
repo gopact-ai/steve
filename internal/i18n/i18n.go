@@ -42,7 +42,6 @@ func FromLang(lang string) Locale {
 type Key string
 
 const (
-	QueueFull              Key = "queue_full"
 	TurnCanceled           Key = "turn_canceled"
 	AgentFailed            Key = "agent_failed"
 	EmptyReply             Key = "empty_reply"

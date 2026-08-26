@@ -1,7 +1,6 @@
 package i18n
 
 var zh = map[Key]string{
-	QueueFull:              "当前会话排队消息过多，请稍后再发。",
 	TurnCanceled:           "任务已取消",
 	AgentFailed:            "Agent 调用失败，请检查 Steve 日志。",
 	EmptyReply:             "(agent 本轮没有文本输出)",
@@ -115,7 +114,6 @@ var zh = map[Key]string{
 }
 
 var en = map[Key]string{
-	QueueFull:              "This conversation’s queue is full. Try again in a moment.",
 	TurnCanceled:           "Task canceled",
 	AgentFailed:            "Agent call failed. Check the Steve logs.",
 	EmptyReply:             "(the agent returned no text)",

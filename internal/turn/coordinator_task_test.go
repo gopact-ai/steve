@@ -1,6 +1,7 @@
 package turn
 
 import (
+	"context"
 	"errors"
 	"path/filepath"
 	"strconv"
@@ -105,26 +106,70 @@ func TestBudgetStopsTheTaskAndNamesTheLimit(t *testing.T) {
 	t.Fatal("the turn budget never stopped the task")
 }
 
-func TestRejectedConcurrentTurnDoesNotSpendBudget(t *testing.T) {
+// A second message replaces the first instead of queueing behind it or being
+// refused. That is what makes steering possible: "no, do it this way" is just
+// the next message.
+func TestNewMessageInterruptsTheRunningTurn(t *testing.T) {
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
 	coordinator, tasks := taskCoordinator(t, runner)
 
-	go func() { _, _ = handle(coordinator, t.Context(), "long running") }()
+	first := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "long running")
+		first <- err
+	}()
 	<-runner.started
 
-	if _, err := handle(coordinator, t.Context(), "second while busy"); err == nil {
-		t.Fatal("expected the concurrent turn to be rejected")
-	}
-	close(runner.done)
+	second := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "actually do this instead")
+		second <- err
+	}()
 
+	// The first turn must come back cancelled without anyone closing
+	// runner.done: the interrupt itself is what ends it.
+	select {
+	case err := <-first:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("interrupted turn ended with %v, want context.Canceled", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("interrupted turn never returned")
+	}
+
+	close(runner.done)
+	select {
+	case err := <-second:
+		// The interrupting turn must run, not be told the agent is busy.
+		if err != nil {
+			t.Fatalf("interrupting turn failed: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("interrupting turn never returned")
+	}
+	if got := runner.seen(); len(got) != 2 || got[1] == got[0] {
+		t.Fatalf("agent saw %v, want both prompts", got)
+	}
+
+	// Both turns reached the agent, so both are charged. An interrupted turn
+	// did real work; pretending otherwise would let a user spin the budget
+	// for free by interrupting forever.
 	deadline := time.Now().Add(2 * time.Second)
 	for {
 		all := tasks.List("chat")
-		if len(all) == 1 && all[0].Budget.Turns == 1 && !all[0].Attempts[0].Open() {
-			return
+		if len(all) == 1 && all[0].Budget.Turns == 2 {
+			open := 0
+			for _, attempt := range all[0].Attempts {
+				if attempt.Open() {
+					open++
+				}
+			}
+			if open == 0 {
+				return
+			}
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("rejected turn charged the budget: %+v", all)
+			t.Fatalf("budget after interrupt: %+v", all)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}

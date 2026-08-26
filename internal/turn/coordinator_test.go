@@ -66,13 +66,27 @@ type fakeRunner struct {
 	cancels  atomic.Int32
 	aborts   atomic.Int32
 	stop     sync.Once
+	// start fires once per runner; a turn can now be interrupted by the
+	// next one, so Prompt is reached more than once with the same runner.
+	start sync.Once
+	// mu guards prompts, which two turns can append to at the same moment
+	// while one is being interrupted by the other.
+	mu sync.Mutex
+}
+
+func (r *fakeRunner) seen() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return append([]string(nil), r.prompts...)
 }
 
 func (r *fakeRunner) ID() string { return r.id }
 func (r *fakeRunner) Prompt(ctx context.Context, prompt string, _ func(view.Progress)) (string, []string, error) {
+	r.mu.Lock()
 	r.prompts = append(r.prompts, prompt)
+	r.mu.Unlock()
 	if r.started != nil {
-		close(r.started)
+		r.start.Do(func() { close(r.started) })
 		select {
 		case <-r.done:
 		case <-ctx.Done():
@@ -264,8 +278,8 @@ func TestCoordinatorPendingCancelStopsNextTurn(t *testing.T) {
 	if _, err := handle(coordinator, t.Context(), "hello"); err == nil || !errors.Is(err, context.Canceled) {
 		t.Fatalf("expected pending cancel to stop the next turn, got %v", err)
 	}
-	if len(runner.prompts) != 0 {
-		t.Fatalf("canceled turn still prompted the agent: %v", runner.prompts)
+	if len(runner.seen()) != 0 {
+		t.Fatalf("canceled turn still prompted the agent: %v", runner.seen())
 	}
 }
 
@@ -420,28 +434,41 @@ func TestCoordinatorKeepsSessionWhenAgentCancelsTurn(t *testing.T) {
 	}
 }
 
-func TestCoordinatorRejectsConcurrentTurnForSession(t *testing.T) {
+// An agent that ends a cancelled turn itself leaves the session consistent,
+// so an interrupt must not throw it away — otherwise steering would cost the
+// agent its entire context every time the user redirects it.
+func TestGracefullyCancelledTurnKeepsItsSession(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
-	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
+	runner := &fakeRunner{id: "sess-1", err: harness.ErrTurnCanceled}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	turnDone := make(chan error, 1)
-	go func() {
-		_, err := handle(coordinator, t.Context(), "first")
-		turnDone <- err
-	}()
-	select {
-	case <-runner.started:
-	case <-time.After(waitDeadline):
-		t.Fatal("first turn did not start")
+	if _, err := handle(coordinator, t.Context(), "first"); !errors.Is(err, harness.ErrTurnCanceled) {
+		t.Fatalf("err = %v, want ErrTurnCanceled", err)
 	}
-	if _, err := handle(coordinator, t.Context(), "second"); err == nil {
-		t.Fatal("expected concurrent turn error")
+	saved := store.Conversation("chat").Sessions["codex"]
+	if saved.UpstreamID == "" {
+		t.Fatalf("session dropped after a settled cancel: %+v", saved)
 	}
-	close(runner.done)
-	if err := <-turnDone; err != nil {
-		t.Fatal(err)
+	if saved.Tainted {
+		t.Fatal("session left tainted after a settled cancel")
+	}
+}
+
+// A turn the agent never settled leaves the session mid-flight, so it is
+// dropped instead. The two paths are what make graceful cancellation worth
+// doing at all.
+func TestAbandonedTurnDropsItsSession(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	runner := &fakeRunner{id: "sess-1", err: context.Canceled}
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
+	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	if _, err := handle(coordinator, t.Context(), "first"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("err = %v, want context.Canceled", err)
+	}
+	if saved := store.Conversation("chat").Sessions["codex"]; saved.UpstreamID != "" {
+		t.Fatalf("abandoned turn kept its session: %+v", saved)
 	}
 }
 
