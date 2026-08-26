@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,6 +29,16 @@ type Session struct {
 type Conversation struct {
 	ActiveAgent string             `json:"active_agent"`
 	Sessions    map[string]Session `json:"sessions"`
+	// Archived holds sessions cleared out of Sessions, newest last. Clearing
+	// a conversation ends the agent's context but must not put the history
+	// out of reach: the agent session is closed, not deleted, so an archived
+	// record is enough to load it again.
+	Archived []Archived `json:"archived,omitempty"`
+}
+
+type Archived struct {
+	Session
+	ArchivedAt string `json:"archived_at"`
 }
 
 type PendingPair struct {
@@ -300,6 +311,91 @@ func (s *Store) Relocate(from, to string) error {
 	return s.replaceLocked(next)
 }
 
+var ErrNoArchive = errors.New("no such archived session")
+
+// maxArchived bounds the per-conversation history so state.json cannot grow
+// without limit. Oldest records are dropped first.
+const maxArchived = 20
+
+// ArchiveSession moves a session out of the active slot and into the
+// conversation's history. It is what /clear uses: the agent forgets its
+// context, but the record of how to reach it survives.
+func (s *Store) ArchiveSession(conversationID, agentID, at string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := cloneData(s.data)
+	conversation := next.Conversations[conversationID]
+	session, ok := conversation.Sessions[agentID]
+	delete(conversation.Sessions, agentID)
+	// A session the agent never gave an id to has nothing to go back to, so
+	// archiving it would only add a row nobody can act on.
+	if ok && session.UpstreamID != "" {
+		conversation.Archived = append(conversation.Archived, Archived{Session: session, ArchivedAt: at})
+		if len(conversation.Archived) > maxArchived {
+			conversation.Archived = conversation.Archived[len(conversation.Archived)-maxArchived:]
+		}
+	}
+	next.Conversations[conversationID] = conversation
+	return s.replaceLocked(next)
+}
+
+// RestoreSession puts an archived session back in the active slot, newest
+// first at index 1. The record is moved rather than copied, so the same
+// session is never live and archived at once.
+func (s *Store) RestoreSession(conversationID, agentID string, index int) (Session, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := cloneData(s.data)
+	conversation := next.Conversations[conversationID]
+	matches := make([]int, 0, len(conversation.Archived))
+	for i, archived := range conversation.Archived {
+		if archived.AgentID == agentID {
+			matches = append(matches, i)
+		}
+	}
+	// Newest first, so index 1 is the session just cleared.
+	for i, j := 0, len(matches)-1; i < j; i, j = i+1, j-1 {
+		matches[i], matches[j] = matches[j], matches[i]
+	}
+	if index < 1 || index > len(matches) {
+		return Session{}, ErrNoArchive
+	}
+	at := matches[index-1]
+	restored := conversation.Archived[at].Session
+	// Whatever is live now takes the restored one's place in the history,
+	// so switching back and forth never loses either.
+	if current, ok := conversation.Sessions[agentID]; ok && current.UpstreamID != "" {
+		conversation.Archived[at] = Archived{Session: current, ArchivedAt: conversation.Archived[at].ArchivedAt}
+	} else {
+		conversation.Archived = append(conversation.Archived[:at], conversation.Archived[at+1:]...)
+	}
+	if conversation.Sessions == nil {
+		conversation.Sessions = map[string]Session{}
+	}
+	// It has been away; the next turn must re-check drift before trusting it.
+	restored.Tainted = false
+	conversation.Sessions[agentID] = restored
+	next.Conversations[conversationID] = conversation
+	if err := s.replaceLocked(next); err != nil {
+		return Session{}, err
+	}
+	return restored, nil
+}
+
+// ArchivedSessions lists one agent's history, newest first.
+func (s *Store) ArchivedSessions(conversationID, agentID string) []Archived {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	all := s.data.Conversations[conversationID].Archived
+	out := make([]Archived, 0, len(all))
+	for i := len(all) - 1; i >= 0; i-- {
+		if all[i].AgentID == agentID {
+			out = append(out, all[i])
+		}
+	}
+	return out
+}
+
 func (s *Store) DeleteSession(conversationID, agentID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -380,6 +476,7 @@ func cloneData(source data) data {
 
 func cloneConversation(conversation Conversation) Conversation {
 	clone := conversation
+	clone.Archived = append([]Archived(nil), conversation.Archived...)
 	clone.Sessions = make(map[string]Session, len(conversation.Sessions))
 	for id, session := range conversation.Sessions {
 		clone.Sessions[id] = session

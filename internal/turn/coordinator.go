@@ -177,6 +177,8 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 		return c.tasksCmd(req), nil
 	case protocol.CommandModel:
 		return c.modelCmd(ctx, req, selected, rest)
+	case protocol.CommandHistory:
+		return c.historyCmd(req, selected, rest)
 	}
 	return c.prompt(ctx, req, selected, prompt)
 }
@@ -404,7 +406,11 @@ func (c *Coordinator) reset(ctx context.Context, conversationID string, selected
 		// owns the state cleanup, so leave the record alone.
 		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
-	if err := c.store.DeleteSession(conversationID, selected.ID); err != nil {
+	// Archive rather than delete. The agent session was closed, not deleted,
+	// so the record is all that stands between the user and their own
+	// history; dropping it would make a cleared conversation unreachable
+	// forever.
+	if err := c.store.ArchiveSession(conversationID, selected.ID, time.Now().UTC().Format(time.RFC3339)); err != nil {
 		return Result{}, err
 	}
 	c.closeTask(conversationID, selected.ID)

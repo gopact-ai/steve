@@ -32,6 +32,7 @@ const (
 	CommandUse     Command = "/use"
 	CommandTasks   Command = "/tasks"
 	CommandModel   Command = "/model"
+	CommandHistory Command = "/history"
 )
 
 func ParseCommand(input string) (Command, string) {
@@ -40,7 +41,7 @@ func ParseCommand(input string) (Command, string) {
 		return CommandUnknown, ""
 	}
 	switch Command(input) {
-	case CommandNew, CommandClear, CommandStatus, CommandCancel, CommandSkills, CommandTasks, CommandModel:
+	case CommandNew, CommandClear, CommandStatus, CommandCancel, CommandSkills, CommandTasks, CommandModel, CommandHistory:
 		return Command(input), ""
 	}
 	if rest, ok := prefixed(input, string(CommandSkills)); ok {
@@ -51,6 +52,9 @@ func ParseCommand(input string) (Command, string) {
 	}
 	if rest, ok := prefixed(input, string(CommandModel)); ok {
 		return CommandModel, rest
+	}
+	if rest, ok := prefixed(input, string(CommandHistory)); ok {
+		return CommandHistory, rest
 	}
 	return CommandUnknown, input
 }
