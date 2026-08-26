@@ -156,7 +156,7 @@ func TestPermissionAskCallsHook(t *testing.T) {
 	out, _, err := h.PromptTurn(ctx, sid, generation, "perm check", nil, func(_ context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 		asked <- ask
 		return permission.Choose(true, ask.Options), nil
-	}, nil)
+	}, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

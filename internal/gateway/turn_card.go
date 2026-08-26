@@ -72,6 +72,8 @@ func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
 			ApprovalTool:   g.text.T(i18n.CardApprovalTool),
 			ApprovalReason: g.text.T(i18n.CardApprovalReason),
 			ApprovalRule:   g.text.T(i18n.CardApprovalRule),
+			QuestionTitle:  g.text.T(i18n.CardQuestionTitle),
+			QuestionHint:   g.text.T(i18n.CardQuestionHint),
 			AllowOnce:      g.text.T(i18n.CardAllowOnce),
 			Deny:           g.text.T(i18n.CardDeny),
 		},
@@ -122,6 +124,23 @@ func (u *turnUI) setApproval(a *card.Approval) {
 		return
 	}
 	u.state.Approval = a
+	u.state.UpdatedAt = time.Now()
+	u.dirty = true
+	if u.timer != nil {
+		u.timer.Stop()
+		u.timer = nil
+	}
+	u.mu.Unlock()
+	u.flush()
+}
+
+func (u *turnUI) setQuestion(q *card.Question) {
+	u.mu.Lock()
+	if u.closed || u.listen || u.fallback || u.cardID == "" {
+		u.mu.Unlock()
+		return
+	}
+	u.state.Question = q
 	u.state.UpdatedAt = time.Now()
 	u.dirty = true
 	if u.timer != nil {
@@ -237,6 +256,7 @@ func (u *turnUI) finish(result turn.Result, err error) {
 		u.clock = nil
 	}
 	u.state.Approval = nil
+	u.state.Question = nil
 	u.state.Status = status
 	u.state.Title = result.Title
 	u.state.Fields = append([]card.Field(nil), result.Fields...)

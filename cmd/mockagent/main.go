@@ -5,7 +5,9 @@
 // prompt contains the word "perm", it first requests permission from the
 // client and reports the outcome. If it contains "switchmodel", it reports a
 // mid-turn model change the way a real agent does. If it contains "plan", it
-// reports a three-step plan and then advances it.
+// reports a three-step plan and then advances it. If it contains "askme", it
+// elicits a single-choice answer from the user the way claude-agent-acp's
+// AskUserQuestion does, and echoes what came back.
 package main
 
 import (
@@ -96,6 +98,41 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		}
 		note := acp.AgentMessageChunkSessionUpdate(
 			acp.TextContentBlock(fmt.Sprintf("[permission: %s/%s] ", resp.Outcome.Outcome, resp.Outcome.OptionID)))
+		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
+			return nil, err
+		}
+	}
+
+	if strings.Contains(input, "askme") {
+		title := "Colour"
+		red, blue := "You prefer red.", "You prefer blue."
+		schema := acp.ElicitationSchema{
+			Type: acp.ElicitationSchemaTypeObject,
+			Properties: map[string]acp.ElicitationPropertySchema{
+				"question_0": {
+					Type: acp.ElicitationPropertySchemaTypeString, Title: &title,
+					OneOf: &[]acp.EnumOption{
+						{Const: "Red", Title: "Red", Description: &red},
+						{Const: "Blue", Title: "Blue", Description: &blue},
+					},
+				},
+				// The free-text companion claude-agent-acp sends beside its
+				// choices; a client that cannot render it may skip it.
+				"question_0_custom": {Type: acp.ElicitationPropertySchemaTypeString},
+			},
+		}
+		req := acp.SessionFormCreateElicitationRequest("Which colour do you prefer?", schema, req.SessionID)
+		resp, err := a.client.CreateElicitation(ctx, &req)
+		if err != nil {
+			return nil, err
+		}
+		picked := string(resp.Action)
+		if resp.Content != nil {
+			if raw, ok := (*resp.Content)["question_0"]; ok {
+				picked += ":" + strings.Trim(string(raw), `"`)
+			}
+		}
+		note := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("[answer: " + picked + "] "))
 		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
 			return nil, err
 		}

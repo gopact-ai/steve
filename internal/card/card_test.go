@@ -673,3 +673,80 @@ func TestReasoningRendersAsPlainText(t *testing.T) {
 		t.Fatal("no reasoning element rendered")
 	}
 }
+
+func TestQuestionRendersOneButtonPerChoice(t *testing.T) {
+	copy := testCopy()
+	copy.QuestionTitle = "需要你确认"
+	raw := Render(Turn{
+		Status: StatusRunning,
+		Question: &Question{
+			RequestID: "r1",
+			Message:   "Which colour do you prefer?",
+			Title:     "Colour",
+			Choices: []Choice{
+				{Value: "Red", Label: "Red", Detail: "You prefer red."},
+				{Value: "Blue", Label: "Blue"},
+			},
+		},
+		StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
+	}, copy)
+	body := string(raw)
+	for _, want := range []string{"需要你确认", "Which colour", "elicit_answer", `"decision":"Red"`, `"decision":"Blue"`} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("missing %q: %s", want, body)
+		}
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	buttons := 0
+	var walk func(any)
+	walk = func(node any) {
+		switch v := node.(type) {
+		case map[string]any:
+			if v["tag"] == "button" {
+				buttons++
+			}
+			for _, child := range v {
+				walk(child)
+			}
+		case []any:
+			for _, child := range v {
+				walk(child)
+			}
+		}
+	}
+	walk(payload)
+	if buttons != 2 {
+		t.Fatalf("buttons = %d, want one per choice", buttons)
+	}
+}
+
+// Feishu lays the answers out in one row, so a question with more choices
+// than fit is dropped whole rather than shown with answers missing.
+func TestQuestionWithTooManyChoicesIsDropped(t *testing.T) {
+	choices := make([]Choice, 0, maxChoices+1)
+	for i := 0; i <= maxChoices; i++ {
+		choices = append(choices, Choice{Value: fmt.Sprint(i), Label: fmt.Sprint(i)})
+	}
+	body := string(Render(Turn{
+		Status:    StatusRunning,
+		Question:  &Question{RequestID: "r1", Message: "pick", Choices: choices},
+		StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
+	}, testCopy()))
+	if strings.Contains(body, "elicit_answer") {
+		t.Fatalf("oversized question should render nothing: %s", body)
+	}
+}
+
+func TestQuestionWithoutRequestIDIsDropped(t *testing.T) {
+	body := string(Render(Turn{
+		Status:    StatusRunning,
+		Question:  &Question{Message: "pick", Choices: []Choice{{Value: "a", Label: "a"}}},
+		StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
+	}, testCopy()))
+	if strings.Contains(body, "elicit_answer") {
+		t.Fatalf("unanswerable question should render nothing: %s", body)
+	}
+}

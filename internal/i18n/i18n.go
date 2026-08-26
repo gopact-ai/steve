@@ -114,6 +114,8 @@ const (
 	CardExecution          Key = "card_execution"
 	CardPlan               Key = "card_plan"
 	CardEarlierSteps       Key = "card_earlier_steps"
+	CardQuestionTitle      Key = "card_question_title"
+	CardQuestionHint       Key = "card_question_hint"
 	CardInput              Key = "card_input"
 	CardOutput             Key = "card_output"
 	CardContext            Key = "card_context"

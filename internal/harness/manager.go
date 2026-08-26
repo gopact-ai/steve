@@ -164,7 +164,7 @@ type Runner interface {
 
 type TurnRunner interface {
 	Runner
-	PromptTurn(context.Context, string, []Media, permission.AskFunc, func(view.Progress)) (string, []string, error)
+	PromptTurn(context.Context, string, []Media, permission.AskFunc, acphost.AskUserFunc, func(view.Progress)) (string, []string, error)
 }
 
 type Session struct {
@@ -177,7 +177,7 @@ type Session struct {
 func (s *Session) ID() string { return string(s.id) }
 
 func (s *Session) Prompt(ctx context.Context, text string, progress func(view.Progress)) (string, []string, error) {
-	return s.PromptTurn(ctx, text, nil, nil, progress)
+	return s.PromptTurn(ctx, text, nil, nil, nil, progress)
 }
 
 func (s *Session) PromptTurn(
@@ -185,6 +185,7 @@ func (s *Session) PromptTurn(
 	text string,
 	media []Media,
 	ask permission.AskFunc,
+	askUser acphost.AskUserFunc,
 	progress func(view.Progress),
 ) (string, []string, error) {
 	images := make([]acphost.Image, 0, len(media))
@@ -194,7 +195,7 @@ func (s *Session) PromptTurn(
 		}
 		images = append(images, acphost.Image{MIME: item.MIME, Data: item.Data})
 	}
-	return s.host.PromptTurn(ctx, s.id, s.generation, text, images, ask, s.stamp(progress))
+	return s.host.PromptTurn(ctx, s.id, s.generation, text, images, ask, askUser, s.stamp(progress))
 }
 
 // stamp names the harness on every snapshot. The host reports the model and

@@ -578,3 +578,36 @@ func TestGatewayHandleCardAction(t *testing.T) {
 		t.Fatalf("decision = %q", got)
 	}
 }
+
+func TestGatewayHandleQuestionAction(t *testing.T) {
+	g := New(fakeProcessor{})
+	done := make(chan string, 1)
+	g.asks["q_1"] = &pendingAsk{openID: "ou_sender", cardID: "om_card", done: done}
+
+	// Someone else in the chat must not answer for the person who asked.
+	if toast := g.HandleCardAction(feishu.CardAction{
+		OpenID: "ou_other", Action: "elicit_answer", RequestID: "q_1", Decision: "Blue", MessageID: "om_card",
+	}); toast.Type != "error" {
+		t.Fatalf("wrong user toast = %#v", toast)
+	}
+	// A button tapped on a card whose turn has moved on.
+	if toast := g.HandleCardAction(feishu.CardAction{
+		OpenID: "ou_sender", Action: "elicit_answer", RequestID: "gone", Decision: "Blue", MessageID: "om_card",
+	}); toast.Type != "info" {
+		t.Fatalf("expired toast = %#v", toast)
+	}
+	// A malformed callback carries no choice at all.
+	if toast := g.HandleCardAction(feishu.CardAction{
+		OpenID: "ou_sender", Action: "elicit_answer", RequestID: "q_1", MessageID: "om_card",
+	}); toast.Type != "error" {
+		t.Fatalf("empty choice toast = %#v", toast)
+	}
+	if toast := g.HandleCardAction(feishu.CardAction{
+		OpenID: "ou_sender", Action: "elicit_answer", RequestID: "q_1", Decision: "Blue", MessageID: "om_card",
+	}); toast.Type != "success" {
+		t.Fatalf("answer toast = %#v", toast)
+	}
+	if got := <-done; got != "Blue" {
+		t.Fatalf("choice = %q, want the value the button carried", got)
+	}
+}

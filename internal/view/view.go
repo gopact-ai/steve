@@ -116,6 +116,7 @@ type Turn struct {
 	Tools     []Tool
 	Usage     Usage
 	Plan      []Step
+	Question  *Question
 	// PlanHidden counts steps trimmed off the front of Plan so the card can
 	// admit to the trim instead of quietly shortening the agent's plan.
 	PlanHidden int
@@ -126,3 +127,28 @@ type Turn struct {
 	StartedAt  time.Time
 	UpdatedAt  time.Time
 }
+
+// Question is the agent asking the user to choose. Agents ask through ACP's
+// elicitation, which permits arbitrary JSON-Schema forms; this is the subset
+// Steve can actually put in front of a person as a card, and anything outside
+// it is declined rather than half-rendered.
+type Question struct {
+	RequestID string
+	Message   string
+	Title     string
+	Choices   []Choice
+}
+
+type Choice struct {
+	Value  string
+	Label  string
+	Detail string
+}
+
+// Answer carries the chosen Choice.Value. An empty Value means the user
+// declined or never answered.
+type Answer struct {
+	Value string
+}
+
+func (a Answer) Chosen() bool { return a.Value != "" }

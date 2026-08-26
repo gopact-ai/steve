@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -34,6 +35,7 @@ type Request struct {
 	Mentioned      bool
 	Images         []harness.Media
 	OnProgress     func(view.Progress)
+	OnAskUser      acphost.AskUserFunc
 	OnPhase        func(view.Phase)
 	OnAsk          permission.AskFunc
 }
@@ -586,7 +588,7 @@ func (c *Coordinator) clearActive(conversationID, agentID string) {
 
 func promptTurn(ctx context.Context, runner harness.Runner, prompt string, req Request) (string, []string, error) {
 	if turn, ok := runner.(harness.TurnRunner); ok {
-		return turn.PromptTurn(ctx, prompt, req.Images, req.OnAsk, req.OnProgress)
+		return turn.PromptTurn(ctx, prompt, req.Images, req.OnAsk, req.OnAskUser, req.OnProgress)
 	}
 	return runner.Prompt(ctx, prompt, req.OnProgress)
 }

@@ -25,6 +25,8 @@ type (
 	Turn       = view.Turn
 	Approval   = view.Approval
 	Settings   = view.Settings
+	Question   = view.Question
+	Choice     = view.Choice
 	Step       = view.Step
 	StepStatus = view.StepStatus
 )
@@ -64,8 +66,12 @@ const (
 	maxSettingRunes    = 32
 	maxVisibleSteps    = 20
 	maxStepRunes       = 240
+	maxChoices         = 4
+	maxChoiceLabel     = 40
+	maxQuestionRunes   = 400
 	headerIconToken    = "myai_colorful"
 	cardActionApproval = "tool_approval"
+	cardActionQuestion = "elicit_answer"
 	cardActionCancel   = "turn_cancel"
 	cardActionRetry    = "turn_retry"
 )
@@ -92,6 +98,8 @@ type Copy struct {
 	ApprovalTool   string
 	ApprovalReason string
 	ApprovalRule   string
+	QuestionTitle  string
+	QuestionHint   string
 	AllowOnce      string
 	Deny           string
 	Waking         string
@@ -134,6 +142,7 @@ func bound(t Turn) Turn {
 		t.Approval.ToolName = truncateRunes(t.Approval.ToolName, maxToolName)
 		t.Approval.Reason = truncateRunes(t.Approval.Reason, maxApprovalReason)
 	}
+	t.Question = boundQuestion(t.Question)
 	return t
 }
 
@@ -147,6 +156,7 @@ func build(t Turn, copy Copy) map[string]any {
 		elements = append(elements, panel)
 	}
 	elements = append(elements, approvalBlocks(t, copy)...)
+	elements = append(elements, questionBlocks(t, copy)...)
 	if t.Answer != "" {
 		elements = append(elements, markdown("answer", formatMarkdown(t.Answer), "normal"))
 	}
@@ -1093,4 +1103,114 @@ func mustJSON(v any) []byte {
 		return []byte(`{"schema":"2.0","body":{"elements":[]}}`)
 	}
 	return raw
+}
+
+// boundQuestion trims an agent's question to what a card can hold. Feishu
+// lays buttons out in one row, so a question with more choices than fit is
+// dropped entirely rather than shown with some of its answers missing —
+// silently hiding an option would put a choice the user never saw beyond
+// their reach.
+func boundQuestion(q *Question) *Question {
+	if q == nil || q.RequestID == "" {
+		return nil
+	}
+	if len(q.Choices) == 0 || len(q.Choices) > maxChoices {
+		return nil
+	}
+	out := *q
+	out.Message = truncateRunes(out.Message, maxQuestionRunes)
+	out.Title = truncateRunes(out.Title, maxFieldLabel)
+	out.Choices = make([]Choice, 0, len(q.Choices))
+	for _, choice := range q.Choices {
+		choice.Label = truncateRunes(choice.Label, maxChoiceLabel)
+		choice.Detail = truncateRunes(choice.Detail, maxApprovalReason)
+		out.Choices = append(out.Choices, choice)
+	}
+	return &out
+}
+
+// questionBlocks draws the agent's question with one button per answer. It
+// reuses the approval container's look because it is the same interaction:
+// the turn is parked until someone taps.
+func questionBlocks(t Turn, copy Copy) []map[string]any {
+	if t.Question == nil {
+		return nil
+	}
+	title := copy.QuestionTitle
+	if title == "" {
+		title = "The agent has a question"
+	}
+	lines := []string{"**" + escape(title) + "**"}
+	if t.Question.Message != "" {
+		lines = append(lines, escape(t.Question.Message))
+	}
+	if t.Question.Title != "" {
+		lines = append(lines, "**"+escape(t.Question.Title)+"**")
+	}
+	for _, choice := range t.Question.Choices {
+		if choice.Detail == "" {
+			continue
+		}
+		lines = append(lines, escape(choice.Label)+": "+escape(choice.Detail))
+	}
+	body := []map[string]any{markdown("", strings.Join(lines, "\n"), "normal")}
+	if hint := copy.QuestionHint; hint != "" {
+		body = append(body, greyText("", hint, "notation", 0))
+	}
+	columns := make([]map[string]any, 0, len(t.Question.Choices))
+	for i, choice := range t.Question.Choices {
+		style := "default"
+		if i == 0 {
+			style = "primary"
+		}
+		columns = append(columns, choiceButton(
+			fmt.Sprintf("choice%d", i), choice.Label, style, t.Question.RequestID, choice.Value))
+	}
+	return []map[string]any{
+		{
+			"tag":              "interactive_container",
+			"element_id":       "question",
+			"width":            "fill",
+			"has_border":       true,
+			"border_color":     "blue-100",
+			"corner_radius":    "8px",
+			"background_style": "blue-50",
+			"padding":          "12px 12px 12px 12px",
+			"elements":         body,
+		},
+		{
+			"tag":                "column_set",
+			"element_id":         "question_buttons",
+			"flex_mode":          "none",
+			"horizontal_spacing": "8px",
+			"columns":            columns,
+		},
+	}
+}
+
+// choiceButton carries the chosen value in the same "decision" slot the
+// approval buttons use, so the channel's action parser needs no new field.
+func choiceButton(id, label, style, requestID, value string) map[string]any {
+	return map[string]any{
+		"tag":            "column",
+		"width":          "weighted",
+		"weight":         1,
+		"vertical_align": "center",
+		"elements": []map[string]any{{
+			"tag":   "button",
+			"name":  id,
+			"text":  map[string]any{"tag": "plain_text", "content": label},
+			"type":  style,
+			"width": "fill",
+			"size":  "medium",
+			"behaviors": []map[string]any{{
+				"type": "callback",
+				"value": map[string]any{
+					"action":     cardActionQuestion,
+					"request_id": requestID,
+					"decision":   value,
+				},
+			}},
+		}},
+	}
 }

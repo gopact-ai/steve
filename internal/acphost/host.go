@@ -96,6 +96,7 @@ type collector struct {
 	overflow   bool
 	thoughtCap bool
 	ask        permission.AskFunc
+	askUser    AskUserFunc
 	ctx        context.Context
 }
 
@@ -571,9 +572,14 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	initCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
 	defer cancel()
 	resp, err := h.caller.Initialize(initCtx, &acp.InitializeRequest{
-		ProtocolVersion:    acp.ProtocolVersionV1,
-		ClientInfo:         &acp.Implementation{Name: "steve", Version: "0.1.0"},
-		ClientCapabilities: &acp.ClientCapabilities{},
+		ProtocolVersion: acp.ProtocolVersionV1,
+		ClientInfo:      &acp.Implementation{Name: "steve", Version: "0.1.0"},
+		// Advertise only what clientHandler really implements. An agent
+		// that is not told the client can ask the user anything will never
+		// try, so leaving this empty silently disabled every agent question.
+		ClientCapabilities: &acp.ClientCapabilities{
+			Elicitation: &acp.ElicitationCapabilities{Form: &acp.ElicitationFormCapabilities{}},
+		},
 	})
 	if err != nil {
 		h.shutdownLocked()
@@ -698,7 +704,7 @@ func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.S
 // Prompt sends one user turn and blocks until the agent finishes it,
 // returning the aggregated assistant text and tool-activity lines.
 func (h *Host) Prompt(ctx context.Context, sid acp.SessionID, generation uint64, text string, progress func(view.Progress)) (string, []string, error) {
-	return h.PromptTurn(ctx, sid, generation, text, nil, nil, progress)
+	return h.PromptTurn(ctx, sid, generation, text, nil, nil, nil, progress)
 }
 
 func (h *Host) PromptTurn(
@@ -708,6 +714,7 @@ func (h *Host) PromptTurn(
 	text string,
 	images []Image,
 	ask permission.AskFunc,
+	askUser AskUserFunc,
 	progress func(view.Progress),
 ) (string, []string, error) {
 	if err := h.ensureStarted(ctx); err != nil {
@@ -729,6 +736,7 @@ func (h *Host) PromptTurn(
 		settings:   h.sessionSettings(sid),
 		generation: generation,
 		ask:        ask,
+		askUser:    askUser,
 		ctx:        ctx,
 	}
 	h.collectors[sid] = col

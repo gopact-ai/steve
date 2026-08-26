@@ -18,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 type pendingAsk struct {
@@ -182,6 +183,9 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 		Images:         inboundImages(msg),
 		OnProgress:     ui.progress,
 		OnPhase:        ui.setPhase,
+		OnAskUser: func(ctx context.Context, q view.Question) (view.Answer, error) {
+			return g.askQuestion(ctx, ui, q)
+		},
 		OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 			return g.askPermission(ctx, ui, ask)
 		},
@@ -300,6 +304,8 @@ func (g *Gateway) HandleCardAction(action feishu.CardAction) feishu.CardToast {
 	switch action.Action {
 	case "tool_approval":
 		return g.handleApprovalAction(action)
+	case "elicit_answer":
+		return g.handleQuestionAction(action)
 	case "turn_cancel":
 		return g.handleStopAction(action)
 	case "turn_retry":
@@ -507,4 +513,70 @@ func (g *Gateway) unack(messageID, reactionID string) {
 	if err := r.RemoveReaction(ctx, messageID, reactionID); err != nil {
 		log.Printf("gateway: clear reaction failed: %v", err)
 	}
+}
+
+// askQuestion parks the turn on a card the user taps to answer. It mirrors
+// askPermission because it is the same interaction: the agent is blocked
+// until a human decides, and a silent timeout has to resolve to something
+// rather than hanging the prompt.
+func (g *Gateway) askQuestion(ctx context.Context, ui *turnUI, q view.Question) (view.Answer, error) {
+	ui.mu.Lock()
+	cardID := ui.cardID
+	closed := ui.closed || ui.listen || ui.fallback
+	openID := ui.msg.SenderOpenID
+	ui.mu.Unlock()
+	if closed || cardID == "" {
+		return view.Answer{}, nil
+	}
+	id := newRequestID()
+	pending := &pendingAsk{openID: openID, cardID: cardID, done: make(chan string, 1)}
+	g.mu.Lock()
+	g.asks[id] = pending
+	g.mu.Unlock()
+	defer func() {
+		g.mu.Lock()
+		delete(g.asks, id)
+		g.mu.Unlock()
+		ui.setQuestion(nil)
+	}()
+	q.RequestID = id
+	ui.setQuestion(&q)
+	log.Printf("gateway: question %s pending: %d choices", id, len(q.Choices))
+	timer := time.NewTimer(approvalTimeout)
+	defer timer.Stop()
+	select {
+	case choice := <-pending.done:
+		return view.Answer{Value: choice}, nil
+	case <-timer.C:
+		// Unanswered is a real answer here: the agent gets "cancelled" and
+		// decides for itself, rather than the prompt stalling to its own
+		// timeout with nothing on screen.
+		log.Printf("gateway: question %s timed out", id)
+		return view.Answer{}, nil
+	case <-ctx.Done():
+		return view.Answer{}, ctx.Err()
+	}
+}
+
+func (g *Gateway) handleQuestionAction(action feishu.CardAction) feishu.CardToast {
+	if action.Decision == "" {
+		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalMalformed)}
+	}
+	g.mu.Lock()
+	pending := g.asks[action.RequestID]
+	g.mu.Unlock()
+	if pending == nil {
+		return feishu.CardToast{Type: "info", Content: g.text.T(i18n.ApprovalExpired)}
+	}
+	if pending.openID != "" && action.OpenID != pending.openID {
+		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
+	}
+	if pending.cardID != "" && action.MessageID != "" && action.MessageID != pending.cardID {
+		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
+	}
+	select {
+	case pending.done <- action.Decision:
+	default:
+	}
+	return feishu.CardToast{Type: "success", Content: g.text.T(i18n.ApprovalAllowed)}
 }
