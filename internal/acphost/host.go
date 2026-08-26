@@ -18,8 +18,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/gopact-ai/acp"
-	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 type Image struct {
@@ -86,10 +86,10 @@ type collector struct {
 	text       strings.Builder
 	thought    strings.Builder
 	activity   []string
-	tools      []card.Tool
+	tools      []view.Tool
 	toolIndex  map[string]int
-	usage      card.Usage
-	progress   func(card.Progress)
+	usage      view.Usage
+	progress   func(view.Progress)
 	generation uint64
 	overflow   bool
 	thoughtCap bool
@@ -176,13 +176,13 @@ func (c *collector) upsertTool(u acp.SessionUpdate) {
 		applyToolIO(&c.tools[i], u)
 	} else {
 		if status == "" {
-			status = card.ToolRunning
+			status = view.ToolRunning
 		}
 		name := title
 		if name == "" {
 			name = id
 		}
-		tool := card.Tool{ID: id, Kind: kind, Name: name, Status: status}
+		tool := view.Tool{ID: id, Kind: kind, Name: name, Status: status}
 		applyToolIO(&tool, u)
 		c.toolIndex[id] = len(c.tools)
 		c.tools = append(c.tools, tool)
@@ -192,7 +192,7 @@ func (c *collector) upsertTool(u acp.SessionUpdate) {
 	}
 }
 
-func applyToolIO(tool *card.Tool, u acp.SessionUpdate) {
+func applyToolIO(tool *view.Tool, u acp.SessionUpdate) {
 	now := time.Now()
 	if tool.StartedAt.IsZero() {
 		tool.StartedAt = now
@@ -292,25 +292,25 @@ func contentText(v any) string {
 	return ""
 }
 
-func toolStatus(status *acp.ToolCallStatus, create bool) card.ToolStatus {
+func toolStatus(status *acp.ToolCallStatus, create bool) view.ToolStatus {
 	if status == nil {
 		if create {
-			return card.ToolRunning
+			return view.ToolRunning
 		}
 		return ""
 	}
 	switch *status {
 	case acp.ToolCallStatusCompleted:
-		return card.ToolCompleted
+		return view.ToolCompleted
 	case acp.ToolCallStatusFailed:
-		return card.ToolFailed
+		return view.ToolFailed
 	default:
-		return card.ToolRunning
+		return view.ToolRunning
 	}
 }
 
-func (c *collector) snapshot() (card.Progress, func(card.Progress)) {
-	return card.Progress{
+func (c *collector) snapshot() (view.Progress, func(view.Progress)) {
+	return view.Progress{
 		Answer:    c.text.String(),
 		Reasoning: c.thought.String(),
 		Tools:     copyTools(c.tools),
@@ -318,11 +318,11 @@ func (c *collector) snapshot() (card.Progress, func(card.Progress)) {
 	}, c.progress
 }
 
-func copyTools(in []card.Tool) []card.Tool {
+func copyTools(in []view.Tool) []view.Tool {
 	if len(in) == 0 {
 		return nil
 	}
-	out := make([]card.Tool, len(in))
+	out := make([]view.Tool, len(in))
 	for i, tool := range in {
 		tool.Children = copyTools(tool.Children)
 		out[i] = tool
@@ -663,7 +663,7 @@ func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.S
 
 // Prompt sends one user turn and blocks until the agent finishes it,
 // returning the aggregated assistant text and tool-activity lines.
-func (h *Host) Prompt(ctx context.Context, sid acp.SessionID, generation uint64, text string, progress func(card.Progress)) (string, []string, error) {
+func (h *Host) Prompt(ctx context.Context, sid acp.SessionID, generation uint64, text string, progress func(view.Progress)) (string, []string, error) {
 	return h.PromptTurn(ctx, sid, generation, text, nil, nil, progress)
 }
 
@@ -674,7 +674,7 @@ func (h *Host) PromptTurn(
 	text string,
 	images []Image,
 	ask permission.AskFunc,
-	progress func(card.Progress),
+	progress func(view.Progress),
 ) (string, []string, error) {
 	if err := h.ensureStarted(ctx); err != nil {
 		return "", nil, err

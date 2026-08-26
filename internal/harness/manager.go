@@ -8,8 +8,8 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/acphost"
-	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 const (
@@ -157,14 +157,14 @@ type Media struct {
 
 type Runner interface {
 	ID() string
-	Prompt(context.Context, string, func(card.Progress)) (string, []string, error)
+	Prompt(context.Context, string, func(view.Progress)) (string, []string, error)
 	Cancel(context.Context) error
 	Abort()
 }
 
 type TurnRunner interface {
 	Runner
-	PromptTurn(context.Context, string, []Media, permission.AskFunc, func(card.Progress)) (string, []string, error)
+	PromptTurn(context.Context, string, []Media, permission.AskFunc, func(view.Progress)) (string, []string, error)
 }
 
 type Session struct {
@@ -176,7 +176,7 @@ type Session struct {
 
 func (s *Session) ID() string { return string(s.id) }
 
-func (s *Session) Prompt(ctx context.Context, text string, progress func(card.Progress)) (string, []string, error) {
+func (s *Session) Prompt(ctx context.Context, text string, progress func(view.Progress)) (string, []string, error) {
 	return s.PromptTurn(ctx, text, nil, nil, progress)
 }
 
@@ -185,7 +185,7 @@ func (s *Session) PromptTurn(
 	text string,
 	media []Media,
 	ask permission.AskFunc,
-	progress func(card.Progress),
+	progress func(view.Progress),
 ) (string, []string, error) {
 	images := make([]acphost.Image, 0, len(media))
 	for _, item := range media {

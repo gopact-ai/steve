@@ -14,10 +14,10 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/state"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 // waitDeadline bounds how long a test waits for a goroutine to reach a known
@@ -69,7 +69,7 @@ type fakeRunner struct {
 }
 
 func (r *fakeRunner) ID() string { return r.id }
-func (r *fakeRunner) Prompt(ctx context.Context, prompt string, _ func(card.Progress)) (string, []string, error) {
+func (r *fakeRunner) Prompt(ctx context.Context, prompt string, _ func(view.Progress)) (string, []string, error) {
 	r.prompts = append(r.prompts, prompt)
 	if r.started != nil {
 		close(r.started)

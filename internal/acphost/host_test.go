@@ -11,8 +11,8 @@ import (
 	"unicode/utf8"
 
 	"github.com/gopact-ai/acp"
-	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 // buildMockAgent compiles cmd/mockagent into a temp dir and returns its path.
@@ -276,8 +276,8 @@ func TestCollectorDoesNotSplitRune(t *testing.T) {
 }
 
 func TestCollectorTracksToolLifecycle(t *testing.T) {
-	var got []card.Progress
-	col := &collector{progress: func(p card.Progress) { got = append(got, p) }}
+	var got []view.Progress
+	col := &collector{progress: func(p view.Progress) { got = append(got, p) }}
 	id := acp.ToolCallID("tool-1")
 	title := "read file"
 	col.handle(acp.SessionUpdate{
@@ -301,10 +301,10 @@ func TestCollectorTracksToolLifecycle(t *testing.T) {
 	if len(got) != 3 {
 		t.Fatalf("progress events = %d, want 3", len(got))
 	}
-	if len(got[0].Tools) != 1 || got[0].Tools[0].Status != card.ToolRunning || !strings.Contains(got[0].Tools[0].Input, "README.md") {
+	if len(got[0].Tools) != 1 || got[0].Tools[0].Status != view.ToolRunning || !strings.Contains(got[0].Tools[0].Input, "README.md") {
 		t.Fatalf("start = %#v", got[0].Tools)
 	}
-	if got[1].Tools[0].Status != card.ToolCompleted || got[1].Tools[0].Output != "# hi" {
+	if got[1].Tools[0].Status != view.ToolCompleted || got[1].Tools[0].Output != "# hi" {
 		t.Fatalf("done = %#v", got[1].Tools)
 	}
 	if got[2].Usage.ContextTokens != 1600 || got[2].Usage.ContextWindow != 128000 {
@@ -317,8 +317,8 @@ func TestCollectorTracksToolLifecycle(t *testing.T) {
 }
 
 func TestCollectorTracksThoughtChunks(t *testing.T) {
-	var got []card.Progress
-	col := &collector{progress: func(p card.Progress) { got = append(got, p) }}
+	var got []view.Progress
+	col := &collector{progress: func(p view.Progress) { got = append(got, p) }}
 	col.handle(acp.SessionUpdate{
 		SessionUpdate: acp.SessionUpdateTypeAgentThoughtChunk,
 		Content:       acp.TextContentBlock("先看仓库"),

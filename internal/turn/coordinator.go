@@ -13,7 +13,6 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
-	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -24,6 +23,7 @@ import (
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 type Request struct {
@@ -33,12 +33,12 @@ type Request struct {
 	ChatType       protocol.ChatType
 	Mentioned      bool
 	Images         []harness.Media
-	OnProgress     func(card.Progress)
-	OnPhase        func(card.Phase)
+	OnProgress     func(view.Progress)
+	OnPhase        func(view.Phase)
 	OnAsk          permission.AskFunc
 }
 
-func (r Request) phase(p card.Phase) {
+func (r Request) phase(p view.Phase) {
 	if r.OnPhase != nil {
 		r.OnPhase(p)
 	}
@@ -59,7 +59,7 @@ type Result struct {
 	Title    string
 	Text     string
 	Activity []string
-	Fields   []card.Field
+	Fields   []view.Field
 }
 
 type Coordinator struct {
@@ -238,7 +238,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if saved.HarnessID != "" && saved.Workspace != "" && saved.Workspace != workspace {
 		return Result{}, UserError{Text: c.text.T(i18n.WorkspaceDrift, protocol.CommandNew)}
 	}
-	req.phase(card.PhaseWaking)
+	req.phase(view.PhaseWaking)
 	runner, err := c.open(ctx, saved, selected, workspace, capabilities.MCPServers)
 	if err != nil && saved.UpstreamID != "" {
 		// The saved upstream session could not be reopened; drop it and
@@ -254,7 +254,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if err != nil {
 		return Result{}, err
 	}
-	req.phase(card.PhaseRunning)
+	req.phase(view.PhaseRunning)
 	session := state.Session{
 		ConversationID: conversationID, AgentID: selected.ID, HarnessID: selected.Harness,
 		UpstreamID: runner.ID(), Workspace: workspace, CapabilityHash: capabilities.Fingerprint,
@@ -419,51 +419,51 @@ func (c *Coordinator) status(req Request, selected agent.Agent) Result {
 		sid = "none"
 	}
 	title := c.text.T(i18n.CardStatus)
-	fields := []card.Field{
+	fields := []view.Field{
 		{Label: "Agent", Value: selected.ID, IsMetric: true},
 	}
 	if c.home == nil {
 		fields = append(fields,
-			card.Field{Label: "Harness", Value: selected.Harness, IsMetric: true},
-			card.Field{Label: "Session", Value: sid, Wide: true},
+			view.Field{Label: "Harness", Value: selected.Harness, IsMetric: true},
+			view.Field{Label: "Session", Value: sid, Wide: true},
 		)
 		return statusResult(selected.ID, title, fields)
 	}
 	if injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) != home.ModeOwner {
 		fields = append(fields,
-			card.Field{Label: "Mode", Value: "guest", IsMetric: true},
-			card.Field{Label: "Harness", Value: selected.Harness, Wide: true},
-			card.Field{Label: "Session", Value: sid, Wide: true},
-			card.Field{Label: "Home", Value: "guest", Wide: true},
+			view.Field{Label: "Mode", Value: "guest", IsMetric: true},
+			view.Field{Label: "Harness", Value: selected.Harness, Wide: true},
+			view.Field{Label: "Session", Value: sid, Wide: true},
+			view.Field{Label: "Home", Value: "guest", Wide: true},
 		)
 		return statusResult(selected.ID, title, fields)
 	}
 	snap, err := c.home.Load(home.ModeOwner)
 	if err != nil {
 		fields = append(fields,
-			card.Field{Label: "Mode", Value: "error", IsMetric: true},
-			card.Field{Label: "Home", Value: "error", Wide: true},
+			view.Field{Label: "Mode", Value: "error", IsMetric: true},
+			view.Field{Label: "Home", Value: "error", Wide: true},
 		)
 		return statusResult(selected.ID, title, fields)
 	}
 	fields = append(fields,
-		card.Field{Label: "Mode", Value: "owner", IsMetric: true},
-		card.Field{Label: "Harness", Value: selected.Harness, Wide: true},
-		card.Field{Label: "Session", Value: sid, Wide: true},
-		card.Field{Label: "Home", Value: snap.Path, Wide: true},
-		card.Field{
+		view.Field{Label: "Mode", Value: "owner", IsMetric: true},
+		view.Field{Label: "Harness", Value: selected.Harness, Wide: true},
+		view.Field{Label: "Session", Value: sid, Wide: true},
+		view.Field{Label: "Home", Value: snap.Path, Wide: true},
+		view.Field{
 			Label: "Identity",
 			Value: "Soul " + fileOK(snap.Soul) + " · User " + fileOK(snap.User) + " · Memory " + memorySize(snap.Memory),
 			Wide:  true,
 		},
 	)
 	if skills := c.skillStatusLine(); skills != "" {
-		fields = append(fields, card.Field{Label: "Skills", Value: strings.TrimPrefix(skills, "skills="), Wide: true})
+		fields = append(fields, view.Field{Label: "Skills", Value: strings.TrimPrefix(skills, "skills="), Wide: true})
 	}
 	return statusResult(selected.ID, title, fields)
 }
 
-func statusResult(agentID, title string, fields []card.Field) Result {
+func statusResult(agentID, title string, fields []view.Field) Result {
 	rows := make([]string, 0, len(fields))
 	for _, field := range fields {
 		rows = append(rows, "**"+field.Label+"**  "+field.Value)

@@ -8,17 +8,37 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/gopact-ai/steve/internal/view"
+)
+
+// The turn's shape lives in internal/view so that renderers depend on the
+// semantics and not the other way round. These aliases keep card.X working for
+// callers that are already inside the Feishu path.
+type (
+	Status     = view.Status
+	ToolStatus = view.ToolStatus
+	Phase      = view.Phase
+	Tool       = view.Tool
+	Usage      = view.Usage
+	Field      = view.Field
+	Progress   = view.Progress
+	Turn       = view.Turn
+	Approval   = view.Approval
 )
 
 const (
-	StatusRunning   Status = "running"
-	StatusCompleted Status = "completed"
-	StatusFailed    Status = "failed"
-	StatusCancelled Status = "cancelled"
+	StatusRunning   = view.StatusRunning
+	StatusCompleted = view.StatusCompleted
+	StatusFailed    = view.StatusFailed
+	StatusCancelled = view.StatusCancelled
 
-	ToolRunning   ToolStatus = "running"
-	ToolCompleted ToolStatus = "completed"
-	ToolFailed    ToolStatus = "failed"
+	ToolRunning   = view.ToolRunning
+	ToolCompleted = view.ToolCompleted
+	ToolFailed    = view.ToolFailed
+
+	PhaseWaking  = view.PhaseWaking
+	PhaseRunning = view.PhaseRunning
 )
 
 const (
@@ -40,56 +60,6 @@ const (
 	cardActionCancel   = "turn_cancel"
 	cardActionRetry    = "turn_retry"
 )
-
-type Status string
-type ToolStatus string
-
-// Phase distinguishes "the agent process is still starting" from "the agent
-// is working", so a cold npx start does not look like silent thinking.
-type Phase string
-
-const (
-	PhaseWaking  Phase = "waking"
-	PhaseRunning Phase = "running"
-)
-
-type Tool struct {
-	ID string
-	// Kind is the short tool name shown on the collapsed row; Name carries
-	// the agent's full call description and moves inside the panel.
-	Kind      string
-	Name      string
-	Detail    string
-	Input     string
-	Output    string
-	Status    ToolStatus
-	Children  []Tool
-	StartedAt time.Time
-	UpdatedAt time.Time
-}
-
-type Usage struct {
-	InputTokens      uint64
-	OutputTokens     uint64
-	CacheReadTokens  uint64
-	CacheWriteTokens uint64
-	ContextTokens    uint64
-	ContextWindow    uint64
-}
-
-type Field struct {
-	Label    string
-	Value    string
-	Wide     bool
-	IsMetric bool
-}
-
-type Progress struct {
-	Answer    string
-	Reasoning string
-	Tools     []Tool
-	Usage     Usage
-}
 
 type Copy struct {
 	Title          string
@@ -116,28 +86,6 @@ type Copy struct {
 	Waking         string
 	Stop           string
 	Retry          string
-}
-
-type Turn struct {
-	Title     string
-	Status    Status
-	Answer    string
-	Reasoning string
-	Error     string
-	Fields    []Field
-	Tools     []Tool
-	Usage     Usage
-	Approval  *Approval
-	Phase     Phase
-	TurnID    string
-	StartedAt time.Time
-	UpdatedAt time.Time
-}
-
-type Approval struct {
-	RequestID string
-	ToolName  string
-	Reason    string
 }
 
 func Render(t Turn, copy Copy) []byte {
