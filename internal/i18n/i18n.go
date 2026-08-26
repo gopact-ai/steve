@@ -56,6 +56,8 @@ const (
 	Reset                  Key = "reset"
 	NoRunningTurn          Key = "no_running_turn"
 	TurnBusy               Key = "turn_busy"
+	BudgetTurns            Key = "budget_turns"
+	BudgetElapsed          Key = "budget_elapsed"
 	CancelRequested        Key = "cancel_requested"
 	SkillsOwnerOnly        Key = "skills_owner_only"
 	SkillsUnconfigured     Key = "skills_unconfigured"

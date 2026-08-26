@@ -1,0 +1,173 @@
+package turn
+
+import (
+	"errors"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/state"
+	"github.com/gopact-ai/steve/internal/task"
+)
+
+func taskCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *task.Store) {
+	t.Helper()
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{
+		"codex": {Harness: "codex", Workspace: t.TempDir(), Default: true},
+	})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	if err != nil {
+		t.Fatalf("open tasks: %v", err)
+	}
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
+	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator.SetTasks(tasks, "laptop")
+	return coordinator, tasks
+}
+
+func TestTurnOpensOneTaskAndKeepsUsingIt(t *testing.T) {
+	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
+
+	if _, err := handle(coordinator, t.Context(), "wire the node link"); err != nil {
+		t.Fatalf("first turn: %v", err)
+	}
+	if _, err := handle(coordinator, t.Context(), "now add reconnect"); err != nil {
+		t.Fatalf("second turn: %v", err)
+	}
+
+	all := tasks.List("chat")
+	if len(all) != 1 {
+		t.Fatalf("tasks = %d; want one task spanning both turns", len(all))
+	}
+	tracked := all[0]
+	if tracked.Goal != "wire the node link" {
+		t.Fatalf("goal = %q; want the opening prompt", tracked.Goal)
+	}
+	if tracked.Budget.Turns != 2 || len(tracked.Attempts) != 2 {
+		t.Fatalf("turns=%d attempts=%d; want 2 and 2", tracked.Budget.Turns, len(tracked.Attempts))
+	}
+	if tracked.Member != "codex" || tracked.Node != "laptop" {
+		t.Fatalf("member=%q node=%q", tracked.Member, tracked.Node)
+	}
+	for i, attempt := range tracked.Attempts {
+		if attempt.Open() || attempt.Outcome != task.OutcomeOK {
+			t.Fatalf("attempt %d not closed cleanly: %+v", i, attempt)
+		}
+	}
+}
+
+func TestFailedTurnStillRecordsTheAttempt(t *testing.T) {
+	coordinator, tasks := taskCoordinator(t, &fakeRunner{err: errors.New("prompt failed")})
+
+	if _, err := handle(coordinator, t.Context(), "do the thing"); err == nil {
+		t.Fatal("expected the turn to fail")
+	}
+	all := tasks.List("chat")
+	if len(all) != 1 || len(all[0].Attempts) != 1 {
+		t.Fatalf("tasks = %+v; want one task with one attempt", all)
+	}
+	if got := all[0].Attempts[0].Outcome; got != task.OutcomeError {
+		t.Fatalf("outcome = %q; want error", got)
+	}
+}
+
+func TestBudgetStopsTheTaskAndNamesTheLimit(t *testing.T) {
+	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
+
+	// Drive turns until the default cap trips. The brake lives in the task
+	// store, so every caller gets it without having to remember to check.
+	for i := 0; i <= task.DefaultMaxTurns; i++ {
+		_, err := handle(coordinator, t.Context(), "again")
+		if err == nil {
+			continue
+		}
+		var userErr UserError
+		if !errors.As(err, &userErr) {
+			t.Fatalf("budget stop must be a UserError, got %T: %v", err, err)
+		}
+		tracked := tasks.List("chat")[0]
+		if !strings.Contains(userErr.Text, tracked.ID) {
+			t.Fatalf("message should name the task: %q", userErr.Text)
+		}
+		if !strings.Contains(userErr.Text, "轮") {
+			t.Fatalf("message should name the turn limit: %q", userErr.Text)
+		}
+		if tracked.Budget.Turns != task.DefaultMaxTurns {
+			t.Fatalf("turns = %d; want the cap %d", tracked.Budget.Turns, task.DefaultMaxTurns)
+		}
+		return
+	}
+	t.Fatal("the turn budget never stopped the task")
+}
+
+func TestRejectedConcurrentTurnDoesNotSpendBudget(t *testing.T) {
+	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
+	coordinator, tasks := taskCoordinator(t, runner)
+
+	go func() { _, _ = handle(coordinator, t.Context(), "long running") }()
+	<-runner.started
+
+	if _, err := handle(coordinator, t.Context(), "second while busy"); err == nil {
+		t.Fatal("expected the concurrent turn to be rejected")
+	}
+	close(runner.done)
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		all := tasks.List("chat")
+		if len(all) == 1 && all[0].Budget.Turns == 1 && !all[0].Attempts[0].Open() {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("rejected turn charged the budget: %+v", all)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestResetClosesTheTaskSoTheNextMessageStartsAFreshOne(t *testing.T) {
+	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
+
+	if _, err := handle(coordinator, t.Context(), "first goal"); err != nil {
+		t.Fatalf("first turn: %v", err)
+	}
+	if _, err := handle(coordinator, t.Context(), "/new"); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if _, err := handle(coordinator, t.Context(), "second goal"); err != nil {
+		t.Fatalf("turn after reset: %v", err)
+	}
+
+	all := tasks.List("chat")
+	if len(all) != 2 {
+		t.Fatalf("tasks = %d; want a new task after /new", len(all))
+	}
+	var closed, open int
+	for _, tracked := range all {
+		if tracked.State.Terminal() {
+			closed++
+		} else {
+			open++
+		}
+	}
+	if closed != 1 || open != 1 {
+		t.Fatalf("closed=%d open=%d; want exactly one of each", closed, open)
+	}
+}
+
+func TestTaskTrackingIsOptional(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{
+		"codex": {Harness: "codex", Workspace: t.TempDir(), Default: true},
+	})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
+	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+
+	if _, err := handle(coordinator, t.Context(), "no task store configured"); err != nil {
+		t.Fatalf("turn without task tracking: %v", err)
+	}
+}

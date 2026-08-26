@@ -28,6 +28,7 @@ import (
 	setupcmd "github.com/gopact-ai/steve/internal/setup"
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/state"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 	"golang.org/x/term"
 )
@@ -184,6 +185,11 @@ func serve(args []string) error {
 	catalogText := i18n.New(i18n.FromDomain(cfg.Feishu.Domain))
 	coordinator.SetIdentity(cfg.Feishu.OwnerOpenID, home.Dir{Path: cfg.Gateway.HomePath})
 	coordinator.SetSkills(live)
+	tasks, err := task.Open(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "tasks.json"))
+	if err != nil {
+		return fmt.Errorf("open tasks: %w", err)
+	}
+	coordinator.SetTasks(tasks, nodeName())
 	coordinator.SetCatalog(catalogText)
 	if names := live.Map.EnabledNames(); len(names) > 0 {
 		log.Printf("steve: isolated runtimes; skills=%s", strings.Join(names, ","))
@@ -356,4 +362,17 @@ func checkHome(cfg *config.Config) error {
 
 func isTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// nodeName labels which machine ran a turn. It is cosmetic today and load
+// bearing once tasks can be placed on more than one node.
+func nodeName() string {
+	if name := strings.TrimSpace(os.Getenv("STEVE_NODE")); name != "" {
+		return name
+	}
+	host, err := os.Hostname()
+	if err != nil || host == "" {
+		return "local"
+	}
+	return host
 }

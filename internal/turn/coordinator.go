@@ -23,6 +23,7 @@ import (
 	"github.com/gopact-ai/steve/internal/sessions"
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/state"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 type Request struct {
@@ -72,6 +73,8 @@ type Coordinator struct {
 	homePath    string
 	scanHome    string
 	skills      *skills.Live
+	tasks       *task.Store
+	node        string
 	text        i18n.Catalog
 
 	mu            sync.Mutex
@@ -118,6 +121,14 @@ func (c *Coordinator) sessionWorkspace(req Request, selected agent.Agent, saved 
 
 func (c *Coordinator) SetSkills(live *skills.Live) {
 	c.skills = live
+}
+
+// SetTasks enables task tracking. It is optional: with no store the
+// coordinator behaves exactly as before, which keeps the turn path testable
+// without a filesystem.
+func (c *Coordinator) SetTasks(store *task.Store, node string) {
+	c.tasks = store
+	c.node = node
 }
 
 func (c *Coordinator) SetCatalog(cat i18n.Catalog) {
@@ -188,7 +199,7 @@ func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, st
 	return selected, strings.TrimSpace(input), false, nil
 }
 
-func (c *Coordinator) prompt(parent context.Context, req Request, selected agent.Agent, prompt string) (Result, error) {
+func (c *Coordinator) prompt(parent context.Context, req Request, selected agent.Agent, prompt string) (result Result, err error) {
 	conversationID := req.ConversationID
 	ctx, cancel := context.WithTimeout(parent, c.timeout)
 	if !c.beginTurn(conversationID, selected.ID, cancel) {
@@ -201,6 +212,15 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	defer c.clearActive(conversationID, selected.ID)
 	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
 		return Result{}, context.Canceled
+	}
+	// The task opens only after the turn lock is held, so a rejected or
+	// cancelled turn never spends a turn from the budget.
+	tracked, taskErr := c.beginTask(req, selected, prompt)
+	if taskErr != nil {
+		return Result{}, taskErr
+	}
+	if tracked != "" {
+		defer func() { c.finishTask(tracked, err) }()
 	}
 	capabilities, err := c.assemble(selected, req)
 	if err != nil {
@@ -381,6 +401,7 @@ func (c *Coordinator) reset(ctx context.Context, conversationID string, selected
 	if err := c.store.DeleteSession(conversationID, selected.ID); err != nil {
 		return Result{}, err
 	}
+	c.closeTask(conversationID, selected.ID)
 	return Result{AgentID: selected.ID, Text: c.text.T(i18n.Reset, selected.ID)}, nil
 }
 
