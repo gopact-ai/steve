@@ -3,6 +3,8 @@ package gateway
 import (
 	"context"
 	"errors"
+	"fmt"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -704,5 +706,135 @@ func TestKnownSettingsAreNotRepeatedNews(t *testing.T) {
 	settled := card.Turn{Settings: card.Settings{Harness: "codex", Model: "GPT 5.6 Sol"}}
 	if isMilestone(settled, card.Progress{Settings: settled.Settings}) {
 		t.Fatal("already-known settings counted as news")
+	}
+}
+
+// holdingProcessor parks every call, not just the first, so a test can hold
+// the pool full while it checks what still gets through.
+type holdingProcessor struct {
+	mu      sync.Mutex
+	seen    []string
+	release chan struct{}
+}
+
+func (p *holdingProcessor) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
+	p.mu.Lock()
+	p.seen = append(p.seen, req.Input)
+	p.mu.Unlock()
+	<-p.release
+	return turn.Result{Text: "reply: " + req.Input}, nil
+}
+
+func (p *holdingProcessor) texts() []string {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return append([]string(nil), p.seen...)
+}
+
+func TestPoolSizeTracksCPUs(t *testing.T) {
+	if got, want := PoolSize(), max(2, runtime.NumCPU()*3/2); got != want {
+		t.Fatalf("pool = %d, want %d", got, want)
+	}
+	if PoolSize() < 2 {
+		t.Fatal("a single-core box must still serve more than one thing")
+	}
+}
+
+// The pool bounds how many conversations run at once, so a message for a
+// conversation nobody is serving waits when every slot is taken.
+func TestPoolBoundsConcurrentConversations(t *testing.T) {
+	processor := &holdingProcessor{release: make(chan struct{})}
+	g := New(processor)
+	g.BindChannel(&reply{text: make(chan string, 64)})
+	g.slots = make(chan struct{}, 2)
+
+	for i := 0; i < 4; i++ {
+		g.HandleMessage(feishu.InboundMessage{
+			ChatID:    fmt.Sprintf("oc_%d", i),
+			MessageID: fmt.Sprintf("om_%d", i),
+			Text:      fmt.Sprintf("task %d", i),
+		})
+	}
+	deadline := time.Now().Add(time.Second)
+	for len(processor.texts()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	time.Sleep(80 * time.Millisecond)
+	if got := processor.texts(); len(got) != 2 {
+		t.Fatalf("pool of 2 admitted %d conversations: %v", len(got), got)
+	}
+	close(processor.release)
+	deadline = time.Now().Add(2 * time.Second)
+	for len(processor.texts()) < 4 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := processor.texts(); len(got) != 4 {
+		t.Fatalf("waiting conversations never ran: %v", got)
+	}
+}
+
+// The trap this design exists to avoid: an interrupting message must not
+// queue for a slot that the turn it is interrupting is holding. With every
+// slot taken, a second message for an already-served conversation still has
+// to get through — otherwise the pool silently reinstates the per-chat queue
+// that made interruption impossible.
+func TestSaturatedPoolStillAdmitsAnInterrupt(t *testing.T) {
+	processor := &holdingProcessor{release: make(chan struct{})}
+	g := New(processor)
+	g.BindChannel(&reply{text: make(chan string, 64)})
+	g.slots = make(chan struct{}, 1)
+
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_a", MessageID: "om_1", Text: "long task"})
+	deadline := time.Now().Add(time.Second)
+	for len(processor.texts()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(processor.texts()) == 0 {
+		t.Fatal("first message never started")
+	}
+	// Pool is now full and held by the very turn we want to redirect.
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_a", MessageID: "om_2", Text: "actually this"})
+
+	deadline = time.Now().Add(2 * time.Second)
+	for len(processor.texts()) < 2 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	got := processor.texts()
+	if len(got) < 2 {
+		t.Fatalf("interrupt blocked on a slot held by its own target: %v", got)
+	}
+	close(processor.release)
+}
+
+// The slot has to come back, or the pool leaks a conversation at a time.
+func TestPoolReleasesSlotsAfterEveryMessage(t *testing.T) {
+	processor := &blockingProcessor{release: make(chan struct{})}
+	close(processor.release)
+	g := New(processor)
+	g.BindChannel(&reply{text: make(chan string, 64)})
+	g.slots = make(chan struct{}, 1)
+
+	for i := 0; i < 5; i++ {
+		g.HandleMessage(feishu.InboundMessage{
+			ChatID:    fmt.Sprintf("oc_%d", i),
+			MessageID: fmt.Sprintf("om_%d", i),
+			Text:      "quick",
+		})
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(processor.texts()) < 5 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := processor.texts(); len(got) != 5 {
+		t.Fatalf("slot leaked: only %d of 5 ran: %v", len(got), got)
+	}
+	g.mu.Lock()
+	inflight := len(g.serving)
+	g.mu.Unlock()
+	if inflight != 0 {
+		t.Fatalf("serving map leaked %d conversations", inflight)
+	}
+	if len(g.slots) != 0 {
+		t.Fatalf("pool still holds %d slots", len(g.slots))
 	}
 }

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log"
+	"runtime"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -65,6 +66,12 @@ type Gateway struct {
 	ch        replier
 	text      i18n.Catalog
 
+	// slots bounds how many conversations are served at once. A turn spends
+	// almost all of its time waiting on an agent subprocess rather than on
+	// this process's CPU, so a little over one per core keeps the box
+	// responsive without throttling ordinary use.
+	slots chan struct{}
+
 	mu       sync.Mutex
 	seen     map[string]struct{}
 	order    []string
@@ -72,7 +79,13 @@ type Gateway struct {
 	turns    map[string]*liveTurn
 	ring     []string
 	lastCard []byte
+	// serving counts the messages in flight per conversation, so a second
+	// one can tell that its conversation already holds a slot.
+	serving map[string]int
 }
+
+// PoolSize is the ceiling on concurrently served conversations.
+func PoolSize() int { return max(2, runtime.NumCPU()*3/2) }
 
 func New(processor processor) *Gateway {
 	return &Gateway{
@@ -81,6 +94,8 @@ func New(processor processor) *Gateway {
 		seen:      map[string]struct{}{},
 		asks:      map[string]*pendingAsk{},
 		turns:     map[string]*liveTurn{},
+		serving:   map[string]int{},
+		slots:     make(chan struct{}, PoolSize()),
 	}
 }
 
@@ -104,7 +119,45 @@ func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
 	}
 	g.rememberLocked(msg.MessageID)
 	g.mu.Unlock()
-	go g.process(msg)
+	go g.serve(msg, conversationID(msg))
+}
+
+// serve runs one message against the pool.
+//
+// The slot is per conversation, not per message, and that is the whole
+// subtlety: a second message for a conversation already being served is an
+// interrupt, and making it wait for a slot that the very turn it interrupts
+// is holding would deadlock the two against each other — the same mistake
+// the per-conversation queue made. So only the first message of a
+// conversation takes a slot, and whoever finishes last gives it back.
+func (g *Gateway) serve(msg feishu.InboundMessage, conversation string) {
+	g.mu.Lock()
+	first := g.serving[conversation] == 0
+	g.serving[conversation]++
+	g.mu.Unlock()
+	if first {
+		g.slots <- struct{}{}
+	}
+	defer func() {
+		g.mu.Lock()
+		g.serving[conversation]--
+		last := g.serving[conversation] == 0
+		if last {
+			delete(g.serving, conversation)
+		}
+		g.mu.Unlock()
+		if last {
+			<-g.slots
+		}
+	}()
+	g.process(msg)
+}
+
+func conversationID(msg feishu.InboundMessage) string {
+	if msg.ConversationID != "" {
+		return msg.ConversationID
+	}
+	return msg.ChatID
 }
 
 func (g *Gateway) rememberLocked(messageID string) {

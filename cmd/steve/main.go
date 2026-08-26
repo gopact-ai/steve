@@ -196,6 +196,9 @@ func serve(args []string) error {
 	} else {
 		log.Printf("steve: isolated runtimes; skills=none")
 	}
+	{
+		log.Printf("steve: serving at most %d conversations at once", gateway.PoolSize())
+	}
 	gw := gateway.New(coordinator)
 	gw.SetCatalog(catalogText)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
