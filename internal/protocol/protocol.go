@@ -33,6 +33,7 @@ const (
 	CommandTasks   Command = "/tasks"
 	CommandModel   Command = "/model"
 	CommandHistory Command = "/history"
+	CommandTopic   Command = "/t"
 )
 
 func ParseCommand(input string) (Command, string) {
@@ -55,6 +56,12 @@ func ParseCommand(input string) (Command, string) {
 	}
 	if rest, ok := prefixed(input, string(CommandHistory)); ok {
 		return CommandHistory, rest
+	}
+	if rest, ok := prefixed(input, string(CommandTopic)); ok {
+		return CommandTopic, rest
+	}
+	if rest, ok := prefixed(input, "/topic"); ok {
+		return CommandTopic, rest
 	}
 	return CommandUnknown, input
 }

@@ -481,6 +481,36 @@ func (c *Channel) Reply(ctx context.Context, messageID, text string) error {
 	return nil
 }
 
+// ReplyThread replies to a message and starts a new topic thread on it,
+// returning the anchor message's id and the thread's id. The anchor is what
+// the turn's card will reply to, so everything that follows lands inside the
+// topic instead of the flat chat.
+func (c *Channel) ReplyThread(ctx context.Context, messageID, text string) (string, string, error) {
+	content, err := json.Marshal(map[string]string{"text": text})
+	if err != nil {
+		return "", "", err
+	}
+	req := larkim.NewReplyMessageReqBuilder().
+		MessageId(messageID).
+		Body(larkim.NewReplyMessageReqBodyBuilder().
+			MsgType("text").
+			Content(string(content)).
+			ReplyInThread(true).
+			Build()).
+		Build()
+	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
+	if err != nil {
+		return "", "", fmt.Errorf("feishu thread reply: %w", err)
+	}
+	if !resp.Success() {
+		return "", "", fmt.Errorf("feishu thread reply: code=%d msg=%s", resp.Code, resp.Msg)
+	}
+	if resp.Data == nil {
+		return "", "", fmt.Errorf("feishu thread reply: empty response")
+	}
+	return deref(resp.Data.MessageId), deref(resp.Data.ThreadId), nil
+}
+
 func (c *Channel) attachImages(ctx context.Context, msg *InboundMessage) {
 	if c == nil || c.api == nil || msg == nil || len(msg.ImageKeys) == 0 {
 		return

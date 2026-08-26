@@ -872,3 +872,99 @@ func TestRecoverButtonSynthesizesHistoryRestore(t *testing.T) {
 		t.Fatalf("empty conversation should be refused: %#v", toast)
 	}
 }
+
+type threadingReply struct {
+	reply
+	mu      sync.Mutex
+	anchors []string
+	fail    bool
+}
+
+func (r *threadingReply) ReplyThread(_ context.Context, messageID, text string) (string, string, error) {
+	if r.fail {
+		return "", "", errors.New("no threads here")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.anchors = append(r.anchors, messageID+"::"+text)
+	return "om_anchor", "omt_new", nil
+}
+
+type reqRecorder struct {
+	mu   sync.Mutex
+	reqs []turn.Request
+}
+
+func (p *reqRecorder) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.reqs = append(p.reqs, req)
+	return turn.Result{Text: "ok"}, nil
+}
+
+// "/t 任务" seeds a topic thread and runs the task inside it: the anchor
+// carries the task text, and the turn's conversation is the new thread, so
+// its session is isolated from the flat chat's.
+func TestTopicCommandSeedsThreadAndRoutesTask(t *testing.T) {
+	processor := &reqRecorder{}
+	g := New(processor)
+	ch := &threadingReply{reply: reply{text: make(chan string, 4)}}
+	g.BindChannel(ch)
+
+	g.HandleMessage(feishu.InboundMessage{
+		ChatID: "oc_group", MessageID: "om_ask", SenderOpenID: "ou_me",
+		ChatType: "group", Mentioned: true, Text: "/t 重构登录模块",
+	})
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		processor.mu.Lock()
+		n := len(processor.reqs)
+		processor.mu.Unlock()
+		if n > 0 {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	processor.mu.Lock()
+	defer processor.mu.Unlock()
+	if len(processor.reqs) != 1 {
+		t.Fatalf("task did not run: %+v", processor.reqs)
+	}
+	if processor.reqs[0].ConversationID != "omt_new" {
+		t.Fatalf("conversation = %q, want the new thread", processor.reqs[0].ConversationID)
+	}
+	if !strings.Contains(processor.reqs[0].Input, "重构登录模块") || strings.Contains(processor.reqs[0].Input, "/t") {
+		t.Fatalf("input = %q, want the bare task", processor.reqs[0].Input)
+	}
+	ch.mu.Lock()
+	anchors := append([]string(nil), ch.anchors...)
+	ch.mu.Unlock()
+	if len(anchors) != 1 || anchors[0] != "om_ask::重构登录模块" {
+		t.Fatalf("anchor = %v", anchors)
+	}
+}
+
+// A bare /t, or one sent from inside a thread, explains itself instead of
+// running anything.
+func TestTopicCommandGuards(t *testing.T) {
+	processor := &reqRecorder{}
+	g := New(processor)
+	ch := &threadingReply{reply: reply{text: make(chan string, 4)}}
+	g.BindChannel(ch)
+
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_group", MessageID: "om_1", Text: "/t"})
+	g.HandleMessage(feishu.InboundMessage{
+		ChatID: "oc_group", ConversationID: "omt_existing", MessageID: "om_2", Text: "/t 再开一个",
+	})
+	got := []string{<-ch.text, <-ch.text}
+	for _, reply := range got {
+		if !strings.Contains(reply, "任务内容") && !strings.Contains(reply, "话题") {
+			t.Fatalf("guard reply = %q", reply)
+		}
+	}
+	processor.mu.Lock()
+	defer processor.mu.Unlock()
+	if len(processor.reqs) != 0 {
+		t.Fatalf("guarded /t still ran: %+v", processor.reqs)
+	}
+}

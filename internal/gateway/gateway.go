@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"log"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -176,12 +177,59 @@ func silentListen(msg feishu.InboundMessage) bool {
 	return msg.ChatType == protocol.ChatGroup && !msg.Mentioned
 }
 
+// topicSeeder is the channel capability /t rides on: reply into a fresh
+// thread and report where it landed.
+type topicSeeder interface {
+	ReplyThread(context.Context, string, string) (string, string, error)
+}
+
+// seedTopic turns "/t <task>" into a new topic thread running that task —
+// the entry point for parallel work in one chat. The anchor reply carries
+// the task text so the topic's preview says what it is about; the task then
+// runs as if it had been sent inside the new thread, so its card, answer and
+// session all live there, isolated from the flat chat's own session.
+func (g *Gateway) seedTopic(msg feishu.InboundMessage, task string) {
+	seeder, ok := g.ch.(topicSeeder)
+	if !ok {
+		g.reply(msg.MessageID, g.text.T(i18n.TopicFailed))
+		return
+	}
+	if strings.TrimSpace(task) == "" {
+		g.reply(msg.MessageID, g.text.T(i18n.TopicNeedsTask, protocol.CommandTopic, protocol.CommandTopic))
+		return
+	}
+	if msg.ConversationID != "" && msg.ConversationID != msg.ChatID {
+		// Already inside a thread; a topic within a topic is not a thing
+		// Feishu has, and the session here is already isolated.
+		g.reply(msg.MessageID, g.text.T(i18n.TopicAlready))
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	anchor, thread, err := seeder.ReplyThread(ctx, msg.MessageID, task)
+	cancel()
+	if err != nil || anchor == "" || thread == "" {
+		log.Printf("gateway: seed topic failed: %v", err)
+		g.reply(msg.MessageID, g.text.T(i18n.TopicFailed))
+		return
+	}
+	seeded := msg
+	seeded.MessageID = anchor
+	seeded.ConversationID = thread
+	seeded.Text = task
+	seeded.Quote = ""
+	g.process(seeded)
+}
+
 func (g *Gateway) process(msg feishu.InboundMessage) {
 	conversationID := msg.ConversationID
 	if conversationID == "" {
 		conversationID = msg.ChatID
 	}
 	listen := silentListen(msg)
+	if cmd, rest := protocol.ParseCommand(strings.TrimSpace(msg.Text)); cmd == protocol.CommandTopic && !listen {
+		g.seedTopic(msg, rest)
+		return
+	}
 	ui := g.newTurnUI(msg, listen)
 	result, err := g.processor.Handle(context.Background(), turn.Request{
 		ConversationID: conversationID,
