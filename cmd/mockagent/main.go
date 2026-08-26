@@ -4,7 +4,8 @@
 // Behavior: echoes each text prompt back as an agent message chunk. If the
 // prompt contains the word "perm", it first requests permission from the
 // client and reports the outcome. If it contains "switchmodel", it reports a
-// mid-turn model change the way a real agent does.
+// mid-turn model change the way a real agent does. If it contains "plan", it
+// reports a three-step plan and then advances it.
 package main
 
 import (
@@ -96,6 +97,19 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		note := acp.AgentMessageChunkSessionUpdate(
 			acp.TextContentBlock(fmt.Sprintf("[permission: %s/%s] ", resp.Outcome.Outcome, resp.Outcome.OptionID)))
 		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
+			return nil, err
+		}
+	}
+
+	if strings.Contains(input, "plan") {
+		steps := []acp.PlanEntry{
+			{Content: "look around", Priority: acp.PlanEntryPriorityHigh, Status: acp.PlanEntryStatusCompleted},
+			{Content: "do the thing", Priority: acp.PlanEntryPriorityMedium, Status: acp.PlanEntryStatusInProgress},
+			{Content: "check it", Priority: acp.PlanEntryPriorityLow, Status: acp.PlanEntryStatusPending},
+		}
+		if err := a.client.Update(ctx, &acp.SessionNotification{
+			SessionID: req.SessionID, Update: acp.PlanSessionUpdate(steps),
+		}); err != nil {
 			return nil, err
 		}
 	}

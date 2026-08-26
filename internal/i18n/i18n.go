@@ -112,6 +112,8 @@ const (
 	CardCancelled          Key = "card_cancelled"
 	CardEarlierTools       Key = "card_earlier_tools"
 	CardExecution          Key = "card_execution"
+	CardPlan               Key = "card_plan"
+	CardEarlierSteps       Key = "card_earlier_steps"
 	CardInput              Key = "card_input"
 	CardOutput             Key = "card_output"
 	CardContext            Key = "card_context"

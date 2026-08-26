@@ -25,6 +25,8 @@ type (
 	Turn       = view.Turn
 	Approval   = view.Approval
 	Settings   = view.Settings
+	Step       = view.Step
+	StepStatus = view.StepStatus
 )
 
 const (
@@ -39,6 +41,10 @@ const (
 
 	PhaseWaking  = view.PhaseWaking
 	PhaseRunning = view.PhaseRunning
+
+	StepPending    = view.StepPending
+	StepInProgress = view.StepInProgress
+	StepCompleted  = view.StepCompleted
 )
 
 const (
@@ -56,6 +62,8 @@ const (
 	maxFieldValue      = 240
 	maxApprovalReason  = 240
 	maxSettingRunes    = 32
+	maxVisibleSteps    = 20
+	maxStepRunes       = 240
 	headerIconToken    = "myai_colorful"
 	cardActionApproval = "tool_approval"
 	cardActionCancel   = "turn_cancel"
@@ -70,6 +78,8 @@ type Copy struct {
 	Cancelled      string
 	EarlierTools   string
 	Execution      string
+	Plan           string
+	EarlierSteps   string
 	Input          string
 	Output         string
 	Context        string
@@ -112,6 +122,7 @@ func bound(t Turn) Turn {
 	t.Reasoning = visibleReasoning(t.Reasoning)
 	t.Error = truncateRunes(t.Error, maxErrorRunes)
 	t.Tools = boundTools(t.Tools)
+	t.Plan, t.PlanHidden = boundSteps(t.Plan)
 	for i := range t.Fields {
 		t.Fields[i].Label = truncateRunes(t.Fields[i].Label, maxFieldLabel)
 		t.Fields[i].Value = truncateRunes(t.Fields[i].Value, maxFieldValue)
@@ -129,6 +140,9 @@ func bound(t Turn) Turn {
 func build(t Turn, copy Copy) map[string]any {
 	elements := make([]map[string]any, 0, 4)
 	elements = append(elements, fieldBlocks(t)...)
+	if plan := planBlock(t, copy); plan != nil {
+		elements = append(elements, plan)
+	}
 	if panel := executionPanel(t, copy); panel != nil {
 		elements = append(elements, panel)
 	}
@@ -377,6 +391,22 @@ func highlight(id, background, border, content string) map[string]any {
 	}
 }
 
+// boundSteps keeps the tail of a long plan: the steps an agent is working on
+// now sit at the end, and those are the ones worth the card's space.
+func boundSteps(steps []Step) ([]Step, int) {
+	hidden := 0
+	if len(steps) > maxVisibleSteps {
+		hidden = len(steps) - maxVisibleSteps
+		steps = steps[hidden:]
+	}
+	out := make([]Step, 0, len(steps))
+	for _, step := range steps {
+		step.Text = truncateRunes(step.Text, maxStepRunes)
+		out = append(out, step)
+	}
+	return out, hidden
+}
+
 func boundTools(tools []Tool) []Tool {
 	for i := range tools {
 		tools[i].Kind = truncateRunes(tools[i].Kind, maxToolName)
@@ -389,6 +419,65 @@ func boundTools(tools []Tool) []Tool {
 	return tools
 }
 
+// planBlock draws the plan the agent said it is working to. It sits above the
+// execution panel because it is what the tool calls below are working
+// through.
+func planBlock(t Turn, copy Copy) map[string]any {
+	if len(t.Plan) == 0 {
+		return nil
+	}
+	title := copy.Plan
+	if title == "" {
+		title = "Plan"
+	}
+	lines := make([]string, 0, len(t.Plan))
+	for _, step := range t.Plan {
+		text := strings.TrimSpace(step.Text)
+		if text == "" {
+			continue
+		}
+		lines = append(lines, stepMark(step.Status)+" "+escapeText(text))
+	}
+	if len(lines) == 0 {
+		return nil
+	}
+	done := t.PlanHidden // trimmed steps are the oldest, hence finished ones
+	for _, step := range t.Plan {
+		if step.Status == StepCompleted {
+			done++
+		}
+	}
+	head := fmt.Sprintf("%s %d/%d", title, done, len(t.Plan)+t.PlanHidden)
+	// The trim notice is its own element rather than a "<font>" line joined
+	// into the steps: a font tag that shares a markdown block with newlines
+	// is exactly what leaks a stray "</font>" onto the card.
+	elements := make([]map[string]any, 0, 2)
+	if t.PlanHidden > 0 {
+		earlier := copy.EarlierSteps
+		if earlier == "" {
+			earlier = "earlier steps"
+		}
+		elements = append(elements, greyText("", fmt.Sprintf("%d %s", t.PlanHidden, earlier), "notation", 0))
+	}
+	elements = append(elements, markdown("plan_steps", strings.Join(lines, "\n"), "normal"))
+	return collapsible("plan", head, planExpanded(t), elements)
+}
+
+// planExpanded keeps the plan open while it is being worked through and
+// folds it away once the turn is over, where the answer is what matters.
+func planExpanded(t Turn) bool { return t.Status == StatusRunning }
+
+func stepMark(status StepStatus) string {
+	switch status {
+	case StepCompleted:
+		return "✓"
+	case StepInProgress:
+		return "◉"
+	default:
+		return "○"
+	}
+}
+
 func executionPanel(t Turn, copy Copy) map[string]any {
 	tools, hidden := visibleTools(t.Tools)
 	if len(tools) == 0 && t.Reasoning == "" && t.Status != StatusRunning {
@@ -396,7 +485,7 @@ func executionPanel(t Turn, copy Copy) map[string]any {
 	}
 	elements := make([]map[string]any, 0, len(tools)+3)
 	if t.Reasoning != "" {
-		elements = append(elements, markdown("think", "<font color='grey'>"+escape(t.Reasoning)+"</font>", "notation"))
+		elements = append(elements, greyText("think", t.Reasoning, "notation", maxReasoningLines))
 	} else if len(tools) == 0 {
 		elements = append(elements, markdown("", "<font color='grey'>"+escape(placeholder(t, copy))+"</font>", "notation"))
 	}
@@ -459,7 +548,7 @@ func toolPanel(id string, tool Tool, copy Copy, now time.Time) map[string]any {
 	}
 	elements := make([]map[string]any, 0, 4+len(tool.Children))
 	if meta := toolMeta(tool); meta != "" {
-		elements = append(elements, markdown("", "<font color='grey'>"+escapeText(meta)+"</font>", "notation"))
+		elements = append(elements, greyText("", meta, "notation", 0))
 	}
 	if tool.Input != "" {
 		label := copy.Input
@@ -725,7 +814,6 @@ func approvalBlocks(t Turn, copy Copy) []map[string]any {
 	if rule == "" {
 		rule = "仅允许当前操作一次"
 	}
-	lines = append(lines, "<font color='grey'>"+escape(rule)+"</font>")
 	allow := copy.AllowOnce
 	if allow == "" {
 		allow = "允许一次"
@@ -744,7 +832,13 @@ func approvalBlocks(t Turn, copy Copy) []map[string]any {
 			"corner_radius":    "8px",
 			"background_style": "orange-50",
 			"padding":          "12px 12px 12px 12px",
-			"elements":         []map[string]any{markdown("", strings.Join(lines, "\n"), "normal")},
+			"elements": []map[string]any{
+				markdown("", strings.Join(lines, "\n"), "normal"),
+				// Its own element, not a "<font>" line joined onto the ones
+				// above: a font tag sharing a markdown block with newlines
+				// leaks a stray "</font>" onto the card.
+				greyText("", rule, "notation", 0),
+			},
 		},
 		{
 			"tag":                "column_set",
@@ -916,6 +1010,31 @@ func elapsed(t Turn) string {
 		d = 0
 	}
 	return fmt.Sprintf("%.1fs", d.Seconds())
+}
+
+// greyText renders secondary text without markup. A "<font>" tag cannot span
+// a newline in Feishu markdown: the parser closes it at the end of the first
+// line, and the trailing "</font>" then has no opening tag and shows up as
+// literal text. Agent reasoning and shell commands are routinely multi-line,
+// so anything that might contain one sets its colour as a property here
+// instead of wrapping itself in markup. maxLines clamps natively; 0 leaves it
+// unclamped.
+func greyText(id, content, size string, maxLines int) map[string]any {
+	text := map[string]any{
+		"tag":        "plain_text",
+		"content":    content,
+		"text_size":  size,
+		"text_color": "grey",
+		"text_align": "left",
+	}
+	if maxLines > 0 {
+		text["lines"] = maxLines
+	}
+	el := map[string]any{"tag": "div", "text": text}
+	if id != "" {
+		el["element_id"] = id
+	}
+	return el
 }
 
 func markdown(id, content, size string) map[string]any {

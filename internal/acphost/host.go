@@ -89,6 +89,7 @@ type collector struct {
 	tools      []view.Tool
 	toolIndex  map[string]int
 	usage      view.Usage
+	plan       []view.Step
 	progress   func(view.Progress)
 	settings   func() view.Settings
 	generation uint64
@@ -122,6 +123,15 @@ func (c *collector) handle(u acp.SessionUpdate) {
 	case acp.SessionUpdateTypeUsageUpdate:
 		c.usage.ContextTokens = u.Used
 		c.usage.ContextWindow = u.Size
+	case acp.SessionUpdateTypePlan:
+		c.plan = planSteps(u.Entries)
+	case acp.SessionUpdateTypeUserMessageChunk:
+		// Only ever sent while replaying a loaded session, to help a client
+		// rebuild a transcript it does not have. Feishu already holds ours,
+		// and folding it into the answer would double the user's own words
+		// back at them, so this is deliberately dropped.
+		c.mu.Unlock()
+		return
 	case acp.SessionUpdateTypeConfigOptionUpdate,
 		acp.SessionUpdateTypeCurrentModeUpdate,
 		acp.SessionUpdateTypeAvailableCommandsUpdate:
@@ -327,6 +337,7 @@ func (c *collector) snapshot() (view.Progress, func(view.Progress)) {
 		Reasoning: c.thought.String(),
 		Tools:     copyTools(c.tools),
 		Usage:     c.usage,
+		Plan:      append([]view.Step(nil), c.plan...),
 	}
 	if c.settings != nil {
 		p.Settings = c.settings()

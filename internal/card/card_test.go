@@ -2,6 +2,7 @@ package card
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -476,5 +477,199 @@ func TestFooterCapsSettingValues(t *testing.T) {
 	}
 	if !strings.Contains(got, "…") {
 		t.Fatalf("footer did not mark the model as trimmed: %q", got)
+	}
+}
+
+func TestPlanRendersAboveExecution(t *testing.T) {
+	copy := testCopy()
+	copy.Plan = "计划"
+	raw := Render(Turn{
+		Status: StatusRunning,
+		Plan: []Step{
+			{Text: "look around", Status: StepCompleted},
+			{Text: "do the thing", Status: StepInProgress},
+			{Text: "check it", Status: StepPending},
+		},
+		Tools:     []Tool{{ID: "1", Kind: "read", Status: ToolRunning}},
+		StartedAt: time.Unix(0, 0),
+		UpdatedAt: time.Unix(1, 0),
+	}, copy)
+	body := string(raw)
+	if !strings.Contains(body, "计划 1/3") {
+		t.Fatalf("plan header missing or miscounted: %s", body)
+	}
+	for _, want := range []string{"✓ look around", "◉ do the thing", "○ check it"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("step %q missing: %s", want, body)
+		}
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	elements := payload["body"].(map[string]any)["elements"].([]any)
+	if elements[0].(map[string]any)["element_id"] != "plan" {
+		t.Fatalf("plan should lead the body, got %v", elements[0])
+	}
+}
+
+// A plan longer than the card can hold keeps its tail and says how much it
+// dropped, rather than silently shortening the agent's plan.
+func TestLongPlanReportsWhatItTrimmed(t *testing.T) {
+	copy := testCopy()
+	copy.Plan = "计划"
+	copy.EarlierSteps = "个更早的步骤"
+	steps := make([]Step, 0, maxVisibleSteps+3)
+	for i := 0; i < maxVisibleSteps+3; i++ {
+		steps = append(steps, Step{Text: fmt.Sprintf("step %d", i), Status: StepCompleted})
+	}
+	body := string(Render(Turn{
+		Status: StatusRunning, Plan: steps,
+		StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
+	}, copy))
+	if !strings.Contains(body, "3 个更早的步骤") {
+		t.Fatalf("trim not reported: %s", body)
+	}
+	if !strings.Contains(body, fmt.Sprintf("计划 %d/%d", len(steps), len(steps))) {
+		t.Fatalf("header should count the whole plan: %s", body)
+	}
+	if strings.Contains(body, "step 0") {
+		t.Fatalf("oldest step should have been trimmed: %s", body)
+	}
+	if !strings.Contains(body, fmt.Sprintf("step %d", len(steps)-1)) {
+		t.Fatalf("newest step should survive: %s", body)
+	}
+}
+
+func TestPlanEscapesAgentText(t *testing.T) {
+	body := string(Render(Turn{
+		Status:    StatusRunning,
+		Plan:      []Step{{Text: "grep foo > out.txt & run *all*", Status: StepPending}},
+		StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
+	}, testCopy()))
+	if strings.Contains(body, "foo > out") {
+		t.Fatalf("plan text not escaped: %s", body)
+	}
+	if !strings.Contains(body, "gt;") {
+		t.Fatalf("expected an escaped angle bracket: %s", body)
+	}
+}
+
+func TestNoPlanBlockWhenPlanEmpty(t *testing.T) {
+	body := string(Render(Turn{
+		Status: StatusRunning, StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
+	}, testCopy()))
+	if strings.Contains(body, `"element_id":"plan"`) {
+		t.Fatalf("empty plan should render nothing: %s", body)
+	}
+}
+
+// A "<font>" tag cannot span a newline in Feishu markdown — the parser closes
+// it at the end of the first line and the trailing "</font>" then renders as
+// literal text on the card. This walks every markdown element the renderer
+// produces and fails if any of them opens a font tag in a block that also
+// contains a newline.
+func TestNoFontTagSpansANewline(t *testing.T) {
+	copy := testCopy()
+	copy.Plan = "计划"
+	copy.EarlierSteps = "个更早的步骤"
+	copy.ApprovalRule = "仅此一次"
+	steps := make([]Step, 0, maxVisibleSteps+2)
+	for i := 0; i < maxVisibleSteps+2; i++ {
+		steps = append(steps, Step{Text: fmt.Sprintf("step %d", i), Status: StepPending})
+	}
+	turn := Turn{
+		Title:     "Steve",
+		Status:    StatusRunning,
+		Answer:    "line one\nline two",
+		Reasoning: "**Thinking hard**\nabout several\nseparate lines",
+		Plan:      steps,
+		Fields:    []Field{{Label: "agent", Value: "codex"}, {Label: "ctx", Value: "1K", IsMetric: true}},
+		Tools: []Tool{{
+			ID: "1", Kind: "execute", Name: "cd /tmp\nls -la\necho done",
+			Input: "in", Output: "out", Status: ToolRunning,
+		}},
+		Settings:  Settings{Harness: "codex", Model: "GPT 5.6 Sol", Mode: "Agent"},
+		Approval:  &Approval{RequestID: "r1", ToolName: "rm", Reason: "danger"},
+		StartedAt: time.Unix(0, 0),
+		UpdatedAt: time.Unix(3, 0),
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(Render(turn, copy), &payload); err != nil {
+		t.Fatal(err)
+	}
+	var walk func(any, string)
+	walk = func(node any, path string) {
+		switch v := node.(type) {
+		case map[string]any:
+			if v["tag"] == "markdown" {
+				content, _ := v["content"].(string)
+				if strings.Contains(content, "<font") && strings.Contains(content, "\n") {
+					t.Errorf("%s: font tag shares a markdown block with a newline:\n%q", path, content)
+				}
+			}
+			for key, child := range v {
+				walk(child, path+"."+key)
+			}
+		case []any:
+			for i, child := range v {
+				walk(child, fmt.Sprintf("%s[%d]", path, i))
+			}
+		}
+	}
+	walk(payload, "card")
+}
+
+// Reasoning is agent-written and routinely multi-line, so it must not be
+// rendered as markup at all.
+func TestReasoningRendersAsPlainText(t *testing.T) {
+	raw := Render(Turn{
+		Status:    StatusRunning,
+		Reasoning: "**Locating dir**\nchecking > output",
+		StartedAt: time.Unix(0, 0),
+		UpdatedAt: time.Unix(1, 0),
+	}, testCopy())
+	body := string(raw)
+	if strings.Contains(body, "</font>") && strings.Contains(body, "Locating") {
+		t.Fatalf("reasoning still wrapped in font markup: %s", body)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	var walk func(any)
+	walk = func(node any) {
+		switch v := node.(type) {
+		case map[string]any:
+			if v["element_id"] == "think" {
+				text, ok := v["text"].(map[string]any)
+				if !ok {
+					t.Fatalf("reasoning element is not a text div: %v", v)
+				}
+				if text["tag"] != "plain_text" {
+					t.Errorf("reasoning tag = %v, want plain_text", text["tag"])
+				}
+				if text["text_color"] != "grey" {
+					t.Errorf("reasoning colour = %v, want grey", text["text_color"])
+				}
+				// Unparsed means the agent's own characters survive intact.
+				if text["content"] != "**Locating dir**\nchecking > output" {
+					t.Errorf("reasoning content mangled: %q", text["content"])
+				}
+				found = true
+			}
+			for _, child := range v {
+				walk(child)
+			}
+		case []any:
+			for _, child := range v {
+				walk(child)
+			}
+		}
+	}
+	walk(payload)
+	if !found {
+		t.Fatal("no reasoning element rendered")
 	}
 }

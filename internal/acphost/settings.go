@@ -172,3 +172,28 @@ func selectName(opt acp.SessionConfigOption, value string) string {
 	}
 	return ""
 }
+
+// planSteps converts an agent's plan into the channel-neutral shape. ACP
+// sends the whole plan on every revision, so the result replaces whatever
+// came before rather than merging into it.
+func planSteps(entries []acp.PlanEntry) []view.Step {
+	if len(entries) == 0 {
+		return nil
+	}
+	steps := make([]view.Step, 0, len(entries))
+	for _, entry := range entries {
+		steps = append(steps, view.Step{Text: entry.Content, Status: stepStatus(entry.Status)})
+	}
+	return steps
+}
+
+func stepStatus(status acp.PlanEntryStatus) view.StepStatus {
+	switch status {
+	case acp.PlanEntryStatusInProgress:
+		return view.StepInProgress
+	case acp.PlanEntryStatusCompleted:
+		return view.StepCompleted
+	default:
+		return view.StepPending
+	}
+}

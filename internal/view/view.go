@@ -46,6 +46,23 @@ type Tool struct {
 	UpdatedAt time.Time
 }
 
+// StepStatus tracks one plan entry through the agent's own lifecycle.
+type StepStatus string
+
+const (
+	StepPending    StepStatus = "pending"
+	StepInProgress StepStatus = "in_progress"
+	StepCompleted  StepStatus = "completed"
+)
+
+// Step is one entry of the plan the agent says it is working to. Agents send
+// the whole plan on every revision, so a list of these replaces rather than
+// merges.
+type Step struct {
+	Text   string
+	Status StepStatus
+}
+
 type Usage struct {
 	InputTokens      uint64
 	OutputTokens     uint64
@@ -80,6 +97,7 @@ type Progress struct {
 	Tools     []Tool
 	Usage     Usage
 	Settings  Settings
+	Plan      []Step
 }
 
 type Approval struct {
@@ -97,10 +115,14 @@ type Turn struct {
 	Fields    []Field
 	Tools     []Tool
 	Usage     Usage
-	Approval  *Approval
-	Settings  Settings
-	Phase     Phase
-	TurnID    string
-	StartedAt time.Time
-	UpdatedAt time.Time
+	Plan      []Step
+	// PlanHidden counts steps trimmed off the front of Plan so the card can
+	// admit to the trim instead of quietly shortening the agent's plan.
+	PlanHidden int
+	Approval   *Approval
+	Settings   Settings
+	Phase      Phase
+	TurnID     string
+	StartedAt  time.Time
+	UpdatedAt  time.Time
 }

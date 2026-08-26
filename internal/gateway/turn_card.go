@@ -55,6 +55,8 @@ func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
 			Cancelled:      g.text.T(i18n.CardCancelled),
 			EarlierTools:   g.text.T(i18n.CardEarlierTools),
 			Execution:      g.text.T(i18n.CardExecution),
+			Plan:           g.text.T(i18n.CardPlan),
+			EarlierSteps:   g.text.T(i18n.CardEarlierSteps),
 			Input:          g.text.T(i18n.CardInput),
 			Output:         g.text.T(i18n.CardOutput),
 			Context:        g.text.T(i18n.CardContext),
@@ -140,6 +142,7 @@ func (u *turnUI) progress(p card.Progress) {
 	u.state.Reasoning = p.Reasoning
 	u.state.Tools = append([]card.Tool(nil), p.Tools...)
 	u.state.Usage = p.Usage
+	u.state.Plan = append([]card.Step(nil), p.Plan...)
 	// Settings only ever become more complete during a turn, so a snapshot
 	// taken before the agent reported its model must not blank them out.
 	if !p.Settings.Empty() {

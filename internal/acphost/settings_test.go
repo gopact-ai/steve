@@ -247,3 +247,43 @@ func TestConfigOptionUpdateReachesProgressMidTurn(t *testing.T) {
 		t.Fatalf("session model = %q, want %q", got, "Mock Deep")
 	}
 }
+
+func TestPlanReachesProgress(t *testing.T) {
+	h := newTestHost(t, "deny")
+	sid, generation, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var last []view.Step
+	if _, _, err := h.Prompt(t.Context(), sid, generation, "make a plan", func(p view.Progress) {
+		if len(p.Plan) > 0 {
+			last = p.Plan
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+	want := []view.Step{
+		{Text: "look around", Status: view.StepCompleted},
+		{Text: "do the thing", Status: view.StepInProgress},
+		{Text: "check it", Status: view.StepPending},
+	}
+	if len(last) != len(want) {
+		t.Fatalf("plan = %+v, want %d steps", last, len(want))
+	}
+	for i := range want {
+		if last[i] != want[i] {
+			t.Errorf("step %d = %+v, want %+v", i, last[i], want[i])
+		}
+	}
+}
+
+// A replayed user message must not be folded into the agent's answer.
+func TestUserMessageChunkIsDropped(t *testing.T) {
+	col := &collector{}
+	col.handle(acp.UserMessageChunkSessionUpdate(acp.TextContentBlock("my own words")))
+	col.handle(acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("the reply")))
+	text, _ := col.result()
+	if text != "the reply" {
+		t.Fatalf("collected %q, want only the agent's own text", text)
+	}
+}
