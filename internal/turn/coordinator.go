@@ -171,6 +171,8 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 		return c.cancel(ctx, req.ConversationID, selected)
 	case protocol.CommandSkills:
 		return c.skillsCmd(req, selected, rest)
+	case protocol.CommandTasks:
+		return c.tasksCmd(req), nil
 	}
 	return c.prompt(ctx, req, selected, prompt)
 }
@@ -422,6 +424,7 @@ func (c *Coordinator) status(req Request, selected agent.Agent) Result {
 	fields := []view.Field{
 		{Label: "Agent", Value: selected.ID, IsMetric: true},
 	}
+	fields = append(fields, c.taskFields(req.ConversationID, selected.ID)...)
 	if c.home == nil {
 		fields = append(fields,
 			view.Field{Label: "Harness", Value: selected.Harness, IsMetric: true},

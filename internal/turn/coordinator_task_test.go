@@ -3,6 +3,7 @@ package turn
 import (
 	"errors"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -169,5 +170,75 @@ func TestTaskTrackingIsOptional(t *testing.T) {
 
 	if _, err := handle(coordinator, t.Context(), "no task store configured"); err != nil {
 		t.Fatalf("turn without task tracking: %v", err)
+	}
+}
+
+func TestTasksCommandListsWhatTheConversationDid(t *testing.T) {
+	coordinator, _ := taskCoordinator(t, &fakeRunner{reply: "ok"})
+
+	empty, err := handle(coordinator, t.Context(), "/tasks")
+	if err != nil {
+		t.Fatalf("empty listing: %v", err)
+	}
+	if !strings.Contains(empty.Text, "还没有任务") {
+		t.Fatalf("empty listing = %q", empty.Text)
+	}
+
+	if _, err := handle(coordinator, t.Context(), "wire the node link"); err != nil {
+		t.Fatalf("turn: %v", err)
+	}
+	listed, err := handle(coordinator, t.Context(), "/tasks")
+	if err != nil {
+		t.Fatalf("listing: %v", err)
+	}
+	for _, want := range []string{"#1", "wire the node link", "codex", "1/" + strconv.Itoa(task.DefaultMaxTurns)} {
+		if !strings.Contains(listed.Text, want) {
+			t.Fatalf("listing %q missing %q", listed.Text, want)
+		}
+	}
+	// The listing itself must not charge a turn.
+	if !strings.Contains(listed.Text, "1/"+strconv.Itoa(task.DefaultMaxTurns)) {
+		t.Fatalf("listing spent a turn: %q", listed.Text)
+	}
+}
+
+func TestStatusShowsTheLiveBudget(t *testing.T) {
+	coordinator, _ := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	if _, err := handle(coordinator, t.Context(), "some goal"); err != nil {
+		t.Fatalf("turn: %v", err)
+	}
+	result, err := handle(coordinator, t.Context(), "/status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	labels := map[string]string{}
+	for _, f := range result.Fields {
+		labels[f.Label] = f.Value
+	}
+	if labels["Task"] != "#1" {
+		t.Fatalf("status fields = %+v; want Task #1", result.Fields)
+	}
+	if labels["Turns"] != "1/"+strconv.Itoa(task.DefaultMaxTurns) {
+		t.Fatalf("Turns = %q", labels["Turns"])
+	}
+	if labels["Goal"] != "some goal" {
+		t.Fatalf("Goal = %q", labels["Goal"])
+	}
+}
+
+func TestStatusWithoutTaskTrackingHasNoTaskFields(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{
+		"codex": {Harness: "codex", Workspace: t.TempDir(), Default: true},
+	})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	coordinator := New(catalog, store, capability.NewAssembler(nil), &fakeManager{}, time.Minute)
+	result, err := handle(coordinator, t.Context(), "/status")
+	if err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	for _, f := range result.Fields {
+		if f.Label == "Task" || f.Label == "Turns" {
+			t.Fatalf("task field leaked without a task store: %+v", result.Fields)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package turn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 // goalLimit keeps a task listing readable. The full prompt is not lost: it
@@ -114,4 +116,76 @@ func (c *Coordinator) budgetStop(tracked task.Task) (string, bool) {
 		return c.text.T(i18n.BudgetTurns, tracked.ID, tracked.Budget.MaxTurns, protocol.CommandNew), true
 	}
 	return c.text.T(i18n.BudgetElapsed, tracked.ID, tracked.Budget.MaxElapsed.Round(time.Minute), protocol.CommandNew), true
+}
+
+// taskFields surfaces the live budget on /status. Showing spend beside the
+// limit is what turns the brake from a surprise into something the user can
+// see coming.
+func (c *Coordinator) taskFields(conversationID, agentID string) []view.Field {
+	if c.tasks == nil {
+		return nil
+	}
+	tracked, ok := c.tasks.Active(conversationID, agentID)
+	if !ok {
+		return nil
+	}
+	return []view.Field{
+		{Label: "Task", Value: "#" + tracked.ID, IsMetric: true},
+		{Label: "Turns", Value: fmt.Sprintf("%d/%d", tracked.Budget.Turns, tracked.Budget.MaxTurns), IsMetric: true},
+		{Label: "Elapsed", Value: fmt.Sprintf("%s/%s",
+			tracked.Budget.Elapsed.Round(time.Second), tracked.Budget.MaxElapsed.Round(time.Minute)), IsMetric: true},
+		{Label: "Goal", Value: tracked.Goal, Wide: true},
+	}
+}
+
+// tasksCmd lists what this conversation has been working on. The listing is
+// the whole point of a task outliving its turn, so it is a command rather than
+// something only the debug API can see.
+func (c *Coordinator) tasksCmd(req Request) Result {
+	title := c.text.T(i18n.CardTasks)
+	if c.tasks == nil {
+		return Result{Title: title, Text: c.text.T(i18n.TasksEmpty)}
+	}
+	all := c.tasks.List(req.ConversationID)
+	if len(all) == 0 {
+		return Result{Title: title, Text: c.text.T(i18n.TasksEmpty)}
+	}
+	var b strings.Builder
+	for i, tracked := range all {
+		if i >= tasksListed {
+			fmt.Fprintf(&b, "\n… %d more", len(all)-tasksListed)
+			break
+		}
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		fmt.Fprintf(&b, "**#%s** %s · %s · %d/%d turns · %s",
+			tracked.ID, statusMark(tracked.State), tracked.Member,
+			tracked.Budget.Turns, tracked.Budget.MaxTurns,
+			tracked.Budget.Elapsed.Round(time.Second))
+		if tracked.Goal != "" {
+			fmt.Fprintf(&b, "\n%s", tracked.Goal)
+		}
+	}
+	return Result{Title: title, Text: b.String()}
+}
+
+// tasksListed keeps the card inside its byte budget; the rest are a count.
+const tasksListed = 8
+
+func statusMark(state task.State) string {
+	switch state {
+	case task.StateRunning:
+		return "running"
+	case task.StateBlocked:
+		return "blocked"
+	case task.StateReview:
+		return "review"
+	case task.StateDone:
+		return "done"
+	case task.StateFailed:
+		return "failed"
+	default:
+		return string(state)
+	}
 }

@@ -104,6 +104,8 @@ const (
 	SetupAppSecretKeep     Key = "setup_app_secret_keep"
 	CardTitle              Key = "card_title"
 	CardStatus             Key = "card_status"
+	CardTasks              Key = "card_tasks"
+	TasksEmpty             Key = "tasks_empty"
 	CardRunning            Key = "card_running"
 	CardCompleted          Key = "card_completed"
 	CardFailed             Key = "card_failed"
