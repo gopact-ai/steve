@@ -77,10 +77,14 @@ func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
 			QuestionTitle:  g.text.T(i18n.CardQuestionTitle),
 			QuestionHint:   g.text.T(i18n.CardQuestionHint),
 			Recover:        g.text.T(i18n.CardRecover),
+			SentTo:         g.text.T(i18n.CardSentTo),
 			AllowOnce:      g.text.T(i18n.CardAllowOnce),
 			Deny:           g.text.T(i18n.CardDeny),
 		},
-		state: card.Turn{Status: card.StatusRunning, Phase: card.PhaseWaking, StartedAt: now, UpdatedAt: now},
+		state: card.Turn{
+			Status: card.StatusRunning, Phase: card.PhaseWaking,
+			Recipient: msg.SenderOpenID, StartedAt: now, UpdatedAt: now,
+		},
 	}
 	if listen {
 		return ui
@@ -279,20 +283,15 @@ func (u *turnUI) finish(result turn.Result, err error) {
 	if result.Recover && status == card.StatusCompleted {
 		u.state.RecoverID = conversationID(u.msg)
 	}
-	// A completed agent turn splits in two: the card freezes as the process
-	// archive and the answer goes out as an ordinary message — quotable,
-	// searchable, previewable in notifications, none of which a card body
-	// is. Command results (a title or fields) stay card-shaped: there the
-	// card is the product, not a console.
-	// A recover result also stays card-shaped: its button and its text
-	// belong together.
-	spoken := status == card.StatusCompleted && result.Title == "" &&
-		len(result.Fields) == 0 && !result.Recover && text != ""
+	// The answer renders inside the card as rich text. It went out as a
+	// plain message for one iteration; that made markdown display as bare
+	// symbols and split every turn into two mismatched artifacts. One card,
+	// rich body, is the uniform shape.
 	if status == card.StatusFailed {
 		u.state.Error = text
 		u.state.Answer = ""
 		u.state.Fields = nil
-	} else if len(u.state.Fields) > 0 || spoken {
+	} else if len(u.state.Fields) > 0 {
 		u.state.Answer = ""
 	}
 	cardID := u.cardID
@@ -309,9 +308,6 @@ func (u *turnUI) finish(result turn.Result, err error) {
 	u.g.finishTurn(u.turnID, retryable)
 
 	if !fallback && u.patchFinal() {
-		if spoken {
-			u.g.reply(u.msg.MessageID, text)
-		}
 		u.g.unack(u.msg.MessageID, u.reaction)
 		return
 	}

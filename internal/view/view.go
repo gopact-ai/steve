@@ -124,6 +124,9 @@ type Turn struct {
 	Settings   Settings
 	Phase      Phase
 	TurnID     string
+	// Recipient is the open id of the person this turn answers; the card
+	// footer addresses them by name with a real mention.
+	Recipient string
 	// RecoverID names the conversation whose newest archived session this
 	// card offers to restore; empty renders no restore button.
 	RecoverID string

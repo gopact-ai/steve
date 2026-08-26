@@ -72,17 +72,11 @@ func TestRunningReplyCarriesColoredHeader(t *testing.T) {
 		t.Fatalf("completed plain answer should drop the header: %s", done)
 	}
 	body := string(raw)
-	if !strings.Contains(body, "⏳") || !strings.Contains(body, "read") {
-		t.Fatalf("tools missing: %s", body)
-	}
 	if !strings.Contains(body, "hello") || !strings.Contains(body, "lt;world") {
 		t.Fatalf("answer not escaped: %s", body)
 	}
-	if !strings.Contains(body, "进行中") || !strings.Contains(body, "2.0s") {
-		t.Fatalf("status/elapsed missing: %s", body)
-	}
-	if !strings.Contains(body, "collapsible_panel") || !strings.Contains(body, "执行过程") {
-		t.Fatalf("execution panel missing: %s", body)
+	if !strings.Contains(body, "进行中") {
+		t.Fatalf("status missing: %s", body)
 	}
 	if !strings.Contains(body, `"element_id":"meta"`) {
 		t.Fatal("footer missing")
@@ -149,9 +143,6 @@ func TestRenderStatusUsesMetricCards(t *testing.T) {
 	if header["subtitle"].(map[string]any)["content"] != "grok" {
 		t.Fatalf("subtitle = %#v", header["subtitle"])
 	}
-	if !strings.Contains(string(raw), "1.0s") {
-		t.Fatal("elapsed should sit in the footer")
-	}
 	body := payload["body"].(map[string]any)
 	elements := body["elements"].([]any)
 	if len(elements) != 3 {
@@ -175,50 +166,6 @@ func TestRenderStatusUsesMetricCards(t *testing.T) {
 	}
 	if strings.Contains(rawStr, "**Agent**  grok") {
 		t.Fatal("status should not render as a markdown list")
-	}
-}
-
-func TestRenderToolPanelNestsInputOutput(t *testing.T) {
-	raw := Render(Turn{
-		Status: StatusRunning,
-		Tools: []Tool{{
-			ID: "1", Name: "read", Status: ToolRunning,
-			Input: `{"path":"README.md"}`, Output: "# hi",
-			Children: []Tool{{
-				ID: "2", Name: "parse", Status: ToolCompleted,
-				Input: "chunk", Output: "ok",
-			}},
-			StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
-		}},
-		StartedAt: time.Unix(0, 0),
-		UpdatedAt: time.Unix(2, 0),
-		Usage:     Usage{InputTokens: 1200, OutputTokens: 80, CacheReadTokens: 400, ContextTokens: 1600, ContextWindow: 128000},
-	}, testCopy())
-	body := string(raw)
-	if !strings.Contains(body, "输入") || !strings.Contains(body, "README.md") {
-		t.Fatalf("input missing: %s", body)
-	}
-	if !strings.Contains(body, "输出") || !strings.Contains(body, "# hi") {
-		t.Fatalf("output missing: %s", body)
-	}
-	if !strings.Contains(body, "parse") || !strings.Contains(body, `"element_id":"t0c0"`) {
-		t.Fatalf("nested tool missing: %s", body)
-	}
-	if !strings.Contains(body, "In 1.2K") || !strings.Contains(body, "Hit 400") || !strings.Contains(body, "Out 80") {
-		t.Fatalf("usage footer missing: %s", body)
-	}
-}
-
-func TestRenderExecutionShowsReasoning(t *testing.T) {
-	raw := Render(Turn{
-		Status:    StatusCompleted,
-		Reasoning: "先读文件\n再改卡片",
-		StartedAt: time.Unix(0, 0),
-		UpdatedAt: time.Unix(1, 0),
-	}, testCopy())
-	body := string(raw)
-	if !strings.Contains(body, "collapsible_panel") || !strings.Contains(body, "先读文件") {
-		t.Fatalf("reasoning missing: %s", body)
 	}
 }
 
@@ -353,34 +300,6 @@ func TestRenderApprovalShowsButtons(t *testing.T) {
 	}
 }
 
-func TestToolRowShowsKindAndKeepsTheCallInside(t *testing.T) {
-	raw := Render(Turn{
-		Status: StatusRunning,
-		Tools: []Tool{{
-			ID: "1", Kind: "execute", Name: "go test ./... 2>&1 | tail", Detail: "/tmp/out.go",
-			Input: `{"path":"/tmp/out.go"}`, Status: ToolCompleted,
-			StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
-		}},
-		StartedAt: time.Unix(0, 0),
-		UpdatedAt: time.Unix(1, 0),
-	}, testCopy())
-	body := string(raw)
-	// The row says what kind of call this is. ACP's title is the agent's own
-	// description — for a shell call, the command — so it belongs in the panel.
-	if !strings.Contains(body, `**execute**`) || !strings.Contains(body, "· 1.0s") {
-		t.Fatalf("collapsed row should carry the kind and duration: %s", body)
-	}
-	if strings.Contains(body, `✓ ⌨️ **go test`) {
-		t.Fatalf("the command must not be the row label: %s", body)
-	}
-	if !strings.Contains(body, "go test") || !strings.Contains(body, "/tmp/out.go") {
-		t.Fatalf("the command and path belong inside the panel: %s", body)
-	}
-	if !strings.Contains(body, "输入") {
-		t.Fatalf("arguments should sit with the input: %s", body)
-	}
-}
-
 func TestToolTitlePrefersKind(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -480,7 +399,7 @@ func TestFooterLeadsWithHarnessAndModel(t *testing.T) {
 		UpdatedAt: time.Unix(12, 0),
 	}
 	got := footerText(turn, testCopy())
-	want := "codex · GPT 5.6 Sol · Agent · 完成 · 12.0s · Ctx 11K/272K (4%)"
+	want := "codex · GPT 5.6 Sol · Agent · 完成"
 	if got != want {
 		t.Fatalf("footer = %q, want %q", got, want)
 	}
@@ -498,11 +417,11 @@ func TestFooterOmitsUnreportedSettings(t *testing.T) {
 		StartedAt: time.Unix(0, 0),
 		UpdatedAt: time.Unix(1, 0),
 	}
-	if got, want := footerText(turn, testCopy()), "codex · 进行中 · 1.0s"; got != want {
+	if got, want := footerText(turn, testCopy()), "codex · 进行中"; got != want {
 		t.Fatalf("footer = %q, want %q", got, want)
 	}
 	bare := Turn{Status: StatusRunning, StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0)}
-	if got, want := footerText(bare, testCopy()), "进行中 · 1.0s"; got != want {
+	if got, want := footerText(bare, testCopy()), "进行中"; got != want {
 		t.Fatalf("footer = %q, want %q", got, want)
 	}
 }
@@ -668,57 +587,6 @@ func TestNoFontTagSpansANewline(t *testing.T) {
 
 // Reasoning is agent-written and routinely multi-line, so it must not be
 // rendered as markup at all.
-func TestReasoningRendersAsPlainText(t *testing.T) {
-	raw := Render(Turn{
-		Status:    StatusRunning,
-		Reasoning: "**Locating dir**\nchecking > output",
-		StartedAt: time.Unix(0, 0),
-		UpdatedAt: time.Unix(1, 0),
-	}, testCopy())
-	body := string(raw)
-	if strings.Contains(body, "</font>") && strings.Contains(body, "Locating") {
-		t.Fatalf("reasoning still wrapped in font markup: %s", body)
-	}
-	var payload map[string]any
-	if err := json.Unmarshal(raw, &payload); err != nil {
-		t.Fatal(err)
-	}
-	found := false
-	var walk func(any)
-	walk = func(node any) {
-		switch v := node.(type) {
-		case map[string]any:
-			if v["element_id"] == "think" {
-				text, ok := v["text"].(map[string]any)
-				if !ok {
-					t.Fatalf("reasoning element is not a text div: %v", v)
-				}
-				if text["tag"] != "plain_text" {
-					t.Errorf("reasoning tag = %v, want plain_text", text["tag"])
-				}
-				if text["text_color"] != "grey" {
-					t.Errorf("reasoning colour = %v, want grey", text["text_color"])
-				}
-				// Unparsed means the agent's own characters survive intact.
-				if text["content"] != "**Locating dir**\nchecking > output" {
-					t.Errorf("reasoning content mangled: %q", text["content"])
-				}
-				found = true
-			}
-			for _, child := range v {
-				walk(child)
-			}
-		case []any:
-			for _, child := range v {
-				walk(child)
-			}
-		}
-	}
-	walk(payload)
-	if !found {
-		t.Fatal("no reasoning element rendered")
-	}
-}
 
 func TestQuestionRendersOneButtonPerChoice(t *testing.T) {
 	copy := testCopy()
@@ -813,5 +681,26 @@ func TestRecoverRowOnlyOnCompletedCardsThatAskForIt(t *testing.T) {
 	}, copy))
 	if strings.Contains(without, "history_restore") {
 		t.Fatalf("plain card grew a recover button: %s", without)
+	}
+}
+
+// Execution detail — tools, reasoning, token telemetry — no longer renders.
+// The card is the answer, not a console; what the agent did along the way
+// stays in the transcript, not on the chat surface.
+func TestExecutionDetailIsNotRendered(t *testing.T) {
+	body := string(Render(Turn{
+		Status:    StatusRunning,
+		Reasoning: "先读文件\n再改卡片",
+		Tools: []Tool{{
+			ID: "1", Kind: "execute", Name: "go test ./...", Input: "in", Output: "out",
+			Status: ToolCompleted, StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
+		}},
+		Usage:     Usage{InputTokens: 1200, ContextTokens: 1600, ContextWindow: 128000},
+		StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(2, 0),
+	}, testCopy()))
+	for _, gone := range []string{"执行过程", "go test", "先读文件", "Ctx", "1.2K", "2.0s", `"element_id":"exec"`} {
+		if strings.Contains(body, gone) {
+			t.Fatalf("execution detail %q leaked onto the card: %s", gone, body)
+		}
 	}
 }

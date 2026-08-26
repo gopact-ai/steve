@@ -128,6 +128,7 @@ const (
 	TopicNeedsTask         Key = "topic_needs_task"
 	TopicAlready           Key = "topic_already"
 	TopicFailed            Key = "topic_failed"
+	CardSentTo             Key = "card_sent_to"
 	CardInput              Key = "card_input"
 	CardOutput             Key = "card_output"
 	CardContext            Key = "card_context"

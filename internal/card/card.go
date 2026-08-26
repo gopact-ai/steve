@@ -102,6 +102,7 @@ type Copy struct {
 	QuestionTitle  string
 	QuestionHint   string
 	Recover        string
+	SentTo         string
 	AllowOnce      string
 	Deny           string
 	Waking         string
@@ -153,9 +154,6 @@ func build(t Turn, copy Copy) map[string]any {
 	elements = append(elements, fieldBlocks(t)...)
 	if plan := planBlock(t, copy); plan != nil {
 		elements = append(elements, plan)
-	}
-	if panel := executionPanel(t, copy); panel != nil {
-		elements = append(elements, panel)
 	}
 	elements = append(elements, approvalBlocks(t, copy)...)
 	elements = append(elements, questionBlocks(t, copy)...)
@@ -778,7 +776,7 @@ func footer(t Turn, copy Copy) map[string]any {
 			"width":  "weighted",
 			"weight": 1,
 			"elements": []map[string]any{
-				markdown("", "<font color='grey'>"+escape(footerText(t, copy))+"</font>", "notation"),
+				markdown("", footerLine(t, copy), "notation"),
 			},
 		}},
 	}
@@ -967,50 +965,28 @@ func settingsText(t Turn) []string {
 	return parts
 }
 
+// footerText names who is speaking and where the turn stands — nothing
+// else. Elapsed time and token telemetry moved off the card: they answered
+// "is it stuck", which the colored header now answers, and they made every
+// card read like a dashboard.
 func footerText(t Turn, copy Copy) string {
 	label, _, _ := headerTone(t, copy)
-	parts := append(settingsText(t), label, elapsed(t))
-	if t.Usage.ContextWindow > 0 {
-		ctx := compactTokens(t.Usage.ContextTokens) + "/" + compactTokens(t.Usage.ContextWindow)
-		if t.Usage.ContextTokens > 0 {
-			ctx += " (" + compactPercent(t.Usage.ContextTokens, t.Usage.ContextWindow) + ")"
+	return strings.Join(append(settingsText(t), label), " · ")
+}
+
+// footerLine appends the botmux-style address tag: 发送给 <at>. The mention
+// is real, not decoration — it notifies the asker when the answer lands, and
+// it is the routing primitive agent-to-agent collaboration will ride on.
+func footerLine(t Turn, copy Copy) string {
+	line := "<font color='grey'>" + escape(footerText(t, copy)) + "</font>"
+	if t.Recipient != "" {
+		sent := copy.SentTo
+		if sent == "" {
+			sent = "发送给"
 		}
-		name := copy.Context
-		if name == "" {
-			name = "Ctx"
-		}
-		parts = append(parts, name+" "+ctx)
+		line += " <font color='grey'>· " + escape(sent) + "</font> <at id=" + t.Recipient + "></at>"
 	}
-	if t.Usage.InputTokens+t.Usage.CacheReadTokens+t.Usage.CacheWriteTokens+t.Usage.OutputTokens == 0 {
-		return strings.Join(parts, " · ")
-	}
-	in, out, hit, wr := copy.In, copy.Out, copy.Hit, copy.Write
-	if in == "" {
-		in = "In"
-	}
-	if out == "" {
-		out = "Out"
-	}
-	if hit == "" {
-		hit = "Hit"
-	}
-	if wr == "" {
-		wr = "Wr"
-	}
-	parts = append(parts, in+" "+compactTokens(t.Usage.InputTokens))
-	cacheable := t.Usage.InputTokens + t.Usage.CacheReadTokens + t.Usage.CacheWriteTokens
-	if cacheable > 0 {
-		hitLine := hit + " " + compactTokens(t.Usage.CacheReadTokens)
-		if t.Usage.CacheReadTokens > 0 {
-			hitLine += " (" + compactPercent(t.Usage.CacheReadTokens, cacheable) + ")"
-		}
-		parts = append(parts, hitLine)
-	}
-	if t.Usage.CacheWriteTokens > 0 {
-		parts = append(parts, wr+" "+compactTokens(t.Usage.CacheWriteTokens))
-	}
-	parts = append(parts, out+" "+compactTokens(t.Usage.OutputTokens))
-	return strings.Join(parts, " · ")
+	return line
 }
 
 func compactTokens(n uint64) string {
