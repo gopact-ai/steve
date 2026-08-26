@@ -287,3 +287,57 @@ func TestUserMessageChunkIsDropped(t *testing.T) {
 		t.Fatalf("collected %q, want only the agent's own text", text)
 	}
 }
+
+func TestSetOptionSwitchesModel(t *testing.T) {
+	h := newTestHost(t, "deny")
+	sid, generation, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, choices := h.ModelChoices(sid)
+	if id != "model" {
+		t.Fatalf("model option id = %q", id)
+	}
+	want := []view.Choice{{Value: "mock-fast", Label: "Mock Fast"}, {Value: "mock-deep", Label: "Mock Deep"}}
+	if len(choices) != len(want) {
+		t.Fatalf("choices = %+v", choices)
+	}
+	for i := range want {
+		if choices[i] != want[i] {
+			t.Errorf("choice %d = %+v, want %+v", i, choices[i], want[i])
+		}
+	}
+	if err := h.SetOption(t.Context(), sid, generation, id, "mock-deep"); err != nil {
+		t.Fatal(err)
+	}
+	if got := h.Settings(sid).Model; got != "Mock Deep" {
+		t.Fatalf("model after set = %q, want %q", got, "Mock Deep")
+	}
+}
+
+// The agent stays the authority on what it is running: a refused change must
+// not move Steve's record.
+func TestSetOptionRefusedLeavesModelAlone(t *testing.T) {
+	h := newTestHost(t, "deny")
+	sid, generation, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.SetOption(t.Context(), sid, generation, "model", "no-such-model"); err == nil {
+		t.Fatal("expected the agent to refuse an unknown model")
+	}
+	if got := h.Settings(sid).Model; got != "Mock Fast" {
+		t.Fatalf("model = %q, want it unchanged", got)
+	}
+}
+
+func TestListSessions(t *testing.T) {
+	h := newTestHost(t, "deny")
+	sessions, err := h.ListSessions(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(sessions) != 1 || sessions[0].SessionID != "mock-session-1" {
+		t.Fatalf("sessions = %+v", sessions)
+	}
+}

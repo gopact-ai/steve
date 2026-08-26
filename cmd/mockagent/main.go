@@ -30,9 +30,14 @@ type agent struct {
 
 func (a *agent) Initialize(_ context.Context, _ *acp.InitializeRequest) (*acp.InitializeResponse, error) {
 	return &acp.InitializeResponse{
-		ProtocolVersion:   acp.ProtocolVersionV1,
-		AgentInfo:         &acp.Implementation{Name: "mockagent", Version: "0.1.0"},
-		AgentCapabilities: &acp.AgentCapabilities{LoadSession: true},
+		ProtocolVersion: acp.ProtocolVersionV1,
+		AgentInfo:       &acp.Implementation{Name: "mockagent", Version: "0.1.0"},
+		AgentCapabilities: &acp.AgentCapabilities{
+			LoadSession: true,
+			SessionCapabilities: &acp.SessionCapabilities{
+				List: &acp.SessionListCapabilities{},
+			},
+		},
 	}, nil
 }
 
@@ -166,6 +171,27 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		return &acp.PromptResponse{StopReason: acp.StopReasonCanceled}, nil
 	}
 	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+}
+
+// SetSessionConfigOption accepts any listed model and answers with the
+// revised list, the way an agent that does not notify separately would.
+func (a *agent) SetSessionConfigOption(_ context.Context, req *acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
+	value, _ := req.Value.(acp.SessionConfigValueID)
+	if req.ConfigID != "model" {
+		return nil, fmt.Errorf("unknown config option %q", req.ConfigID)
+	}
+	if value != "mock-fast" && value != "mock-deep" {
+		return nil, fmt.Errorf("unknown model %q", value)
+	}
+	return &acp.SetSessionConfigOptionResponse{
+		ConfigOptions: []acp.SessionConfigOption{modeOption("agent"), modelOption(string(value))},
+	}, nil
+}
+
+func (a *agent) ListSessions(_ context.Context, _ *acp.ListSessionsRequest) (*acp.ListSessionsResponse, error) {
+	return &acp.ListSessionsResponse{Sessions: []acp.SessionInfo{
+		{SessionID: "mock-session-1", Cwd: "/tmp"},
+	}}, nil
 }
 
 func (a *agent) Cancel(_ context.Context, _ *acp.CancelNotification) error { return nil }

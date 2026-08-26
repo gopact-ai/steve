@@ -1,6 +1,8 @@
 package acphost
 
 import (
+	"context"
+	"fmt"
 	"sync"
 
 	"github.com/gopact-ai/acp"
@@ -195,5 +197,105 @@ func stepStatus(status acp.PlanEntryStatus) view.StepStatus {
 		return view.StepCompleted
 	default:
 		return view.StepPending
+	}
+}
+
+// Options lists the selectors the agent exposes for a session, so a caller
+// can show what is changeable and what the current value is.
+func (h *Host) Options(sid acp.SessionID) []acp.SessionConfigOption {
+	h.mu.Lock()
+	state := h.sessions[sid]
+	h.mu.Unlock()
+	if state == nil {
+		return nil
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	return append([]acp.SessionConfigOption(nil), state.options...)
+}
+
+// ModelChoices lists the models this session can switch to, current first
+// only if the agent listed it first. Empty when the agent exposes no model
+// selector.
+func (h *Host) ModelChoices(sid acp.SessionID) (acp.SessionConfigID, []view.Choice) {
+	opt, ok := findOption(h.Options(sid), acp.SessionConfigOptionCategoryModel)
+	if !ok {
+		return "", nil
+	}
+	var out []view.Choice
+	if opt.Options.Ungrouped != nil {
+		for _, choice := range *opt.Options.Ungrouped {
+			out = append(out, view.Choice{Value: string(choice.Value), Label: choice.Name})
+		}
+	}
+	if opt.Options.Groups != nil {
+		for _, group := range *opt.Options.Groups {
+			for _, choice := range group.Options {
+				out = append(out, view.Choice{Value: string(choice.Value), Label: group.Name + " · " + choice.Name})
+			}
+		}
+	}
+	return opt.ID, out
+}
+
+// SetOption changes one of the agent's selectors. The agent confirms with a
+// config_option_update, which is what actually moves Steve's own record, so
+// this does not write the new value locally: an agent that refuses or
+// substitutes a value stays the authority on what it is running.
+func (h *Host) SetOption(ctx context.Context, sid acp.SessionID, generation uint64, id acp.SessionConfigID, value string) error {
+	h.mu.Lock()
+	if h.generation != generation {
+		h.mu.Unlock()
+		return fmt.Errorf("agent process changed before set option")
+	}
+	caller := h.caller
+	known := h.sessions[sid] != nil
+	h.mu.Unlock()
+	if caller == nil || !known {
+		return fmt.Errorf("session %q is not open", sid)
+	}
+	req := acp.ValueIDSetSessionConfigOptionRequest(sid, id, acp.SessionConfigValueID(value))
+	resp, err := caller.SetSessionConfigOption(ctx, &req)
+	if err != nil {
+		return fmt.Errorf("session/set_config_option: %w", err)
+	}
+	// Some agents answer with the full revised list instead of notifying.
+	if resp != nil && len(resp.ConfigOptions) > 0 {
+		h.mu.Lock()
+		state := h.sessions[sid]
+		h.mu.Unlock()
+		state.setOptions(resp.ConfigOptions)
+	}
+	return nil
+}
+
+// ListSessions asks the agent which sessions it still holds. Steve's own
+// record can outlive the agent's, so this is how a stored session id is
+// checked before trying to resume it.
+func (h *Host) ListSessions(ctx context.Context) ([]acp.SessionInfo, error) {
+	if err := h.ensureStarted(ctx); err != nil {
+		return nil, err
+	}
+	h.mu.Lock()
+	caller, capabilities := h.caller, h.capabilities
+	h.mu.Unlock()
+	if caller == nil {
+		return nil, ErrClosed
+	}
+	if capabilities == nil || capabilities.SessionCapabilities == nil || capabilities.SessionCapabilities.List == nil {
+		return nil, ErrListUnsupported
+	}
+	var out []acp.SessionInfo
+	var cursor *string
+	for {
+		resp, err := caller.ListSessions(ctx, &acp.ListSessionsRequest{Cursor: cursor})
+		if err != nil {
+			return nil, fmt.Errorf("session/list: %w", err)
+		}
+		out = append(out, resp.Sessions...)
+		if resp.NextCursor == nil || *resp.NextCursor == "" || len(resp.Sessions) == 0 {
+			return out, nil
+		}
+		cursor = resp.NextCursor
 	}
 }
