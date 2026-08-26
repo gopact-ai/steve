@@ -306,11 +306,11 @@ func TestRenderApprovalShowsButtons(t *testing.T) {
 	}
 }
 
-func TestToolRowNamesCallAndKeepsArgumentsInside(t *testing.T) {
+func TestToolRowShowsKindAndKeepsTheCallInside(t *testing.T) {
 	raw := Render(Turn{
 		Status: StatusRunning,
 		Tools: []Tool{{
-			ID: "1", Kind: "edit", Name: "Write file", Detail: "/tmp/out.go",
+			ID: "1", Kind: "execute", Name: "go test ./... 2>&1 | tail", Detail: "/tmp/out.go",
 			Input: `{"path":"/tmp/out.go"}`, Status: ToolCompleted,
 			StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
 		}},
@@ -318,55 +318,87 @@ func TestToolRowNamesCallAndKeepsArgumentsInside(t *testing.T) {
 		UpdatedAt: time.Unix(1, 0),
 	}, testCopy())
 	body := string(raw)
-	if !strings.Contains(body, `"content":"✓ **Write file** `) || !strings.Contains(body, "· 1.0s") {
-		t.Fatalf("collapsed row should name the call and show its duration: %s", body)
+	// The row says what kind of call this is. ACP's title is the agent's own
+	// description — for a shell call, the command — so it belongs in the panel.
+	if !strings.Contains(body, `**execute**`) || !strings.Contains(body, "· 1.0s") {
+		t.Fatalf("collapsed row should carry the kind and duration: %s", body)
 	}
-	if !strings.Contains(body, "edit · /tmp/out.go") {
-		t.Fatalf("kind and path belong inside the panel: %s", body)
+	if strings.Contains(body, `✓ ⌨️ **go test`) {
+		t.Fatalf("the command must not be the row label: %s", body)
 	}
-	if !strings.Contains(body, "输入") || !strings.Contains(body, `/tmp/out.go\"}`) {
+	if !strings.Contains(body, "go test") || !strings.Contains(body, "/tmp/out.go") {
+		t.Fatalf("the command and path belong inside the panel: %s", body)
+	}
+	if !strings.Contains(body, "输入") {
 		t.Fatalf("arguments should sit with the input: %s", body)
 	}
 }
 
-func TestToolTitleDropsEmbeddedArguments(t *testing.T) {
+func TestToolTitlePrefersKind(t *testing.T) {
 	tests := []struct {
 		name     string
 		tool     Tool
 		expected string
 	}{
 		{
-			name:     "absolute path in title",
+			name:     "kind wins over the agent's call description",
 			tool:     Tool{Name: "Read file /Users/me/work/probe.txt", Detail: "/Users/me/work/probe.txt", Kind: "read"},
-			expected: "Read file",
+			expected: "read",
 		},
 		{
-			name:     "title uses the base name",
-			tool:     Tool{Name: "Edit probe.txt", Detail: "/Users/me/work/probe.txt", Kind: "edit"},
-			expected: "Edit",
+			name:     "a command never becomes the label",
+			tool:     Tool{Name: "rg -n 'func main' .", Kind: "search"},
+			expected: "search",
 		},
 		{
-			name:     "path without a matching detail",
-			tool:     Tool{Name: "Read file /Users/me/work/probe.txt", Kind: "read"},
-			expected: "Read file",
-		},
-		{
-			name:     "plain title survives",
-			tool:     Tool{Name: "List files", Detail: "/Users/me/work", Kind: "read"},
+			name:     "falls back to the title when the agent sends no kind",
+			tool:     Tool{Name: "List files", Detail: "/Users/me/work"},
 			expected: "List files",
 		},
 		{
-			name:     "falls back to kind",
-			tool:     Tool{Name: "/Users/me/work/probe.txt", Detail: "/Users/me/work/probe.txt", Kind: "read"},
-			expected: "read",
+			name:     "falls back to the id when there is nothing else",
+			tool:     Tool{ID: "call_7"},
+			expected: "call_7",
 		},
 	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := toolTitle(tt.tool); got != tt.expected {
-				t.Fatalf("title = %q, want %q", got, tt.expected)
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := toolTitle(test.tool); got != test.expected {
+				t.Fatalf("toolTitle = %q; want %q", got, test.expected)
 			}
 		})
+	}
+}
+
+func TestEscapeClosesFeishuMarkup(t *testing.T) {
+	// A bare ">" desyncs Feishu's parser, which orphans the "</font>" that
+	// wraps the text and renders it as literal characters in the card.
+	got := escape("go test ./... 2>&1 && echo <done>")
+	for _, bare := range []string{"<", ">"} {
+		if strings.Contains(got, bare) {
+			t.Fatalf("escape left a bare %q: %q", bare, got)
+		}
+	}
+	if !strings.Contains(got, "&gt;") || !strings.Contains(got, "&lt;") || !strings.Contains(got, "&amp;") {
+		t.Fatalf("escape = %q", got)
+	}
+}
+
+func TestRenderedCardHasNoOrphanFontTags(t *testing.T) {
+	raw := string(Render(Turn{
+		Status:    StatusRunning,
+		Reasoning: "piping with 2>&1 then <check>",
+		Answer:    "done > /dev/null",
+		Tools: []Tool{{
+			ID: "1", Kind: "execute", Name: "sh -c 'a > b'", Status: ToolRunning,
+			StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
+		}},
+		StartedAt: time.Unix(0, 0),
+		UpdatedAt: time.Unix(1, 0),
+	}, testCopy()))
+	// json.Marshal escapes "<" as \u003c, so count the escaped forms.
+	if open, close := strings.Count(raw, `u003cfont`), strings.Count(raw, `u003c/font`); open != close {
+		t.Fatalf("unbalanced font tags: %d open vs %d close", open, close)
 	}
 }
 

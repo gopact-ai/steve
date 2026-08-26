@@ -4,7 +4,6 @@ package card
 import (
 	"encoding/json"
 	"fmt"
-	"path"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -450,7 +449,7 @@ func visibleTools(tools []Tool) ([]Tool, int) {
 
 func toolPanel(id string, tool Tool, copy Copy, now time.Time) map[string]any {
 	name := toolTitle(tool)
-	title := fmt.Sprintf("%s **%s**", toolMark(tool.Status), escape(name))
+	title := fmt.Sprintf("%s %s **%s**", toolMark(tool.Status), toolEmoji(tool), escapeText(name))
 	if d := toolDuration(tool, now); d != "" {
 		// Feishu panel headers hold a single text element, so the duration
 		// trails the name instead of sitting flush right.
@@ -458,7 +457,7 @@ func toolPanel(id string, tool Tool, copy Copy, now time.Time) map[string]any {
 	}
 	elements := make([]map[string]any, 0, 4+len(tool.Children))
 	if meta := toolMeta(tool); meta != "" {
-		elements = append(elements, markdown("", "<font color='grey'>"+escape(meta)+"</font>", "notation"))
+		elements = append(elements, markdown("", "<font color='grey'>"+escapeText(meta)+"</font>", "notation"))
 	}
 	if tool.Input != "" {
 		label := copy.Input
@@ -480,33 +479,52 @@ func toolPanel(id string, tool Tool, copy Copy, now time.Time) map[string]any {
 	return collapsible(id, title, tool.Status == ToolRunning, elements)
 }
 
-// toolTitle strips the arguments agents fold into their call description, so
-// the collapsed row reads "Read file" instead of repeating the path that
-// already sits inside the panel.
+// toolTitle labels the collapsed row with what kind of call this is. ACP has
+// no separate tool-name field: its title is the agent's own call description,
+// which for a shell call is the command itself. Trying to strip the arguments
+// back out of that string is guesswork, so prefer the kind the agent already
+// classified the call as, and let the command sit inside the panel where its
+// full text is readable anyway.
 func toolTitle(tool Tool) string {
-	name := tool.Name
-	if tool.Detail != "" {
-		name = strings.ReplaceAll(name, tool.Detail, "")
-		name = strings.ReplaceAll(name, path.Base(tool.Detail), "")
+	if tool.Kind != "" {
+		return tool.Kind
 	}
-	fields := strings.Fields(name)
-	kept := fields[:0]
-	for _, field := range fields {
-		if len(field) > 3 && strings.Contains(field, "/") {
-			continue
-		}
-		kept = append(kept, field)
-	}
-	name = strings.Trim(strings.Join(kept, " "), " ：:·-—,，\"'`")
-	return firstNonEmpty(name, tool.Kind, tool.ID)
+	return firstNonEmpty(tool.Name, tool.ID)
 }
 
-// toolMeta is the call's kind and the file it touched, kept inside the panel
-// next to the input and output rather than crowding the collapsed row.
+// toolEmoji gives the collapsed row a glyph so a run of calls stays scannable
+// without reading every label.
+func toolEmoji(tool Tool) string {
+	subject := strings.ToLower(tool.Kind + " " + tool.Name)
+	for _, match := range []struct {
+		emoji string
+		words []string
+	}{
+		{"⌨️", []string{"execute", "bash", "shell", "command", "terminal"}},
+		{"📖", []string{"read", "view"}},
+		{"✏️", []string{"edit", "patch"}},
+		{"📝", []string{"write", "create"}},
+		{"🗂", []string{"delete", "move"}},
+		{"🔎", []string{"search", "grep", "find"}},
+		{"🌐", []string{"fetch", "web", "http"}},
+		{"💭", []string{"think"}},
+	} {
+		for _, word := range match.words {
+			if strings.Contains(subject, word) {
+				return match.emoji
+			}
+		}
+	}
+	return "🛠"
+}
+
+// toolMeta is the agent's own description of the call — for a shell call, the
+// command — plus the file it touched. It sits inside the panel rather than
+// crowding the collapsed row, which carries the kind instead.
 func toolMeta(tool Tool) string {
 	parts := make([]string, 0, 2)
-	if tool.Kind != "" && tool.Kind != tool.Name {
-		parts = append(parts, tool.Kind)
+	if tool.Name != "" && tool.Name != tool.Kind {
+		parts = append(parts, tool.Name)
 	}
 	if tool.Detail != "" && tool.Detail != tool.Name {
 		parts = append(parts, tool.Detail)
@@ -898,9 +916,26 @@ func markdown(id, content, size string) map[string]any {
 	return el
 }
 
+// escape neutralises the markup Feishu parses out of a card's text. The
+// closing ">" matters as much as the opening "<": leave a bare ">" in place
+// and Feishu's parser desyncs on it, so the "</font>" that follows loses its
+// opening tag and renders as literal text. Agent output is full of bare ">"
+// — shell redirects, arrows, quoted lines — so this is not a rare case.
 func escape(s string) string {
 	s = strings.ReplaceAll(s, "&", "&amp;")
 	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	return s
+}
+
+// escapeText additionally neutralises the markdown a card would otherwise
+// apply to agent-supplied strings: a path like foo_bar_baz turns into italics
+// and a glob like **/*.go turns into bold without it.
+func escapeText(s string) string {
+	s = escape(s)
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "*", "\\*")
+	s = strings.ReplaceAll(s, "_", "\\_")
 	return s
 }
 
@@ -908,7 +943,7 @@ func truncateRunes(s string, max int) string {
 	if max <= 0 || utf8.RuneCountInString(s) <= max {
 		return s
 	}
-	return string([]rune(s)[:max])
+	return string([]rune(s)[:max]) + "…"
 }
 
 func shrinkRunes(s string, max int) string {
