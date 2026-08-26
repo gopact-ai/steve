@@ -162,6 +162,16 @@ type Runner interface {
 	Abort()
 }
 
+// Configurable is a Runner whose agent exposes selectors Steve can change.
+// It is optional: an agent that reports no model selector simply does not
+// satisfy it.
+type Configurable interface {
+	Runner
+	Settings() view.Settings
+	ModelChoices() (string, []view.Choice)
+	SetModel(context.Context, string, string) error
+}
+
 type TurnRunner interface {
 	Runner
 	PromptTurn(context.Context, string, []Media, permission.AskFunc, acphost.AskUserFunc, func(view.Progress)) (string, []string, error)
@@ -216,6 +226,17 @@ func (s *Session) Settings() view.Settings {
 	out := s.host.Settings(s.id)
 	out.Harness = s.harnessID
 	return out
+}
+
+// ModelChoices reports the config option id for the model selector and the
+// models it offers. Both are empty when the agent exposes no such selector.
+func (s *Session) ModelChoices() (string, []view.Choice) {
+	id, choices := s.host.ModelChoices(s.id)
+	return string(id), choices
+}
+
+func (s *Session) SetModel(ctx context.Context, optionID, value string) error {
+	return s.host.SetOption(ctx, s.id, s.generation, acp.SessionConfigID(optionID), value)
 }
 
 func (s *Session) Cancel(ctx context.Context) error { return s.host.Cancel(ctx, s.id, s.generation) }

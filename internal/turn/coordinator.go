@@ -175,6 +175,8 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 		return c.skillsCmd(req, selected, rest)
 	case protocol.CommandTasks:
 		return c.tasksCmd(req), nil
+	case protocol.CommandModel:
+		return c.modelCmd(ctx, req, selected, rest)
 	}
 	return c.prompt(ctx, req, selected, prompt)
 }
