@@ -26,14 +26,19 @@ type agent struct {
 
 func (a *agent) Initialize(_ context.Context, _ *acp.InitializeRequest) (*acp.InitializeResponse, error) {
 	return &acp.InitializeResponse{
-		ProtocolVersion: acp.ProtocolVersionV1,
-		AgentInfo:       &acp.Implementation{Name: "mockagent", Version: "0.1.0"},
+		ProtocolVersion:   acp.ProtocolVersionV1,
+		AgentInfo:         &acp.Implementation{Name: "mockagent", Version: "0.1.0"},
+		AgentCapabilities: &acp.AgentCapabilities{LoadSession: true},
 	}, nil
 }
 
 func (a *agent) NewSession(_ context.Context, _ *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
 	id := acp.SessionID(fmt.Sprintf("mock-session-%d", a.counter.Add(1)))
 	return &acp.NewSessionResponse{SessionID: id}, nil
+}
+
+func (a *agent) LoadSession(_ context.Context, _ *acp.LoadSessionRequest) (*acp.LoadSessionResponse, error) {
+	return &acp.LoadSessionResponse{}, nil
 }
 
 func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.PromptResponse, error) {
@@ -67,6 +72,9 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	chunk := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("echo: " + input))
 	if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: chunk}); err != nil {
 		return nil, err
+	}
+	if strings.Contains(input, "cancelme") {
+		return &acp.PromptResponse{StopReason: acp.StopReasonCanceled}, nil
 	}
 	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
 }

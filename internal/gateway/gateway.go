@@ -1,132 +1,207 @@
-// Package gateway routes Feishu chats onto ACP sessions with per-chat
-// serialization, so one chat maps to one agent conversation.
+// Package gateway adapts Lark messages to the transport-neutral turn coordinator.
 package gateway
 
 import (
 	"context"
-	"fmt"
+	"crypto/rand"
+	"encoding/hex"
 	"log"
-	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gopact-ai/acp"
-
-	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/card"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
+	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/turn"
 )
 
-type Config struct {
-	PromptTimeout time.Duration
+type pendingAsk struct {
+	openID string
+	cardID string
+	done   chan string
 }
+
+// liveTurn lets a card button act on the turn that rendered it: stop while it
+// runs, retry the original message after it failed.
+type liveTurn struct {
+	msg     feishu.InboundMessage
+	cardID  string
+	running bool
+}
+
+type recaller interface {
+	DeleteMessage(context.Context, string) error
+}
+
+// maxLiveTurns bounds the retry history; turns are dropped oldest first.
+const maxLiveTurns = 64
+
+// approvalTimeout caps how long a turn waits for a human to tap the card.
+const approvalTimeout = 3 * time.Minute
+
+type replier interface {
+	Reply(context.Context, string, string) error
+}
+
+type reactor interface {
+	AddReaction(context.Context, string, string) (string, error)
+	RemoveReaction(context.Context, string, string) error
+}
+
+type processor interface {
+	Handle(context.Context, turn.Request) (turn.Result, error)
+}
+
+const thinkingEmoji = "THINKING"
 
 type Gateway struct {
-	cfg  Config
-	host *acphost.Host
-	ch   *feishu.Channel
+	processor processor
+	ch        replier
+	text      i18n.Catalog
 
-	mu    sync.Mutex
-	chats map[string]*chatWorker
+	mu       sync.Mutex
+	chats    map[string]chan feishu.InboundMessage
+	seen     map[string]struct{}
+	order    []string
+	asks     map[string]*pendingAsk
+	turns    map[string]*liveTurn
+	ring     []string
+	lastCard []byte
 }
 
-type chatWorker struct {
-	queue     chan feishu.InboundMessage
-	sessionID acp.SessionID
+func New(processor processor) *Gateway {
+	return &Gateway{
+		processor: processor,
+		text:      i18n.New(i18n.LocaleZH),
+		chats:     map[string]chan feishu.InboundMessage{},
+		seen:      map[string]struct{}{},
+		asks:      map[string]*pendingAsk{},
+		turns:     map[string]*liveTurn{},
+	}
 }
 
-func New(cfg Config, host *acphost.Host) *Gateway {
-	return &Gateway{cfg: cfg, host: host, chats: map[string]*chatWorker{}}
-}
+func (g *Gateway) BindChannel(ch replier) { g.ch = ch }
 
-// BindChannel gives the gateway its reply surface.
-func (g *Gateway) BindChannel(ch *feishu.Channel) { g.ch = ch }
+func (g *Gateway) SetCatalog(cat i18n.Catalog) { g.text = cat }
 
-// HandleMessage enqueues one inbound message onto its chat's worker.
 func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
+	conversationID := msg.ConversationID
+	if conversationID == "" {
+		conversationID = msg.ChatID
+	}
 	g.mu.Lock()
-	w, ok := g.chats[msg.ChatID]
-	if !ok {
-		w = &chatWorker{queue: make(chan feishu.InboundMessage, 16)}
-		g.chats[msg.ChatID] = w
-		go g.runWorker(msg.ChatID, w)
+	if _, duplicate := g.seen[msg.MessageID]; msg.MessageID != "" && duplicate {
+		g.mu.Unlock()
+		return
 	}
-	g.mu.Unlock()
-
+	if cmd, _ := protocol.ParseCommand(msg.Text); cmd == protocol.CommandCancel {
+		// /cancel means "stop everything in this chat": drop queued prompts
+		// so they cannot run after the cancel, then cancel the in-flight
+		// turn out-of-band.
+		g.drainLocked(conversationID)
+		g.rememberLocked(msg.MessageID)
+		g.mu.Unlock()
+		go g.process(msg)
+		return
+	}
+	queue := g.chats[conversationID]
+	if queue == nil {
+		// ponytail: workers live for the process lifetime; add idle eviction if chat count becomes material.
+		queue = make(chan feishu.InboundMessage, 16)
+		g.chats[conversationID] = queue
+		go g.run(queue)
+	}
 	select {
-	case w.queue <- msg:
+	case queue <- msg:
+		g.rememberLocked(msg.MessageID)
+		g.mu.Unlock()
 	default:
-		g.reply(msg.MessageID, "⚠️ 当前会话排队消息过多，请稍后再发。")
+		g.mu.Unlock()
+		g.reply(msg.MessageID, g.text.T(i18n.QueueFull))
 	}
 }
 
-func (g *Gateway) runWorker(chatID string, w *chatWorker) {
-	for msg := range w.queue {
-		g.process(chatID, w, msg)
+// drainLocked drops every queued message of a conversation. Queued prompts
+// are stale once the user cancels; their IDs are remembered so a Feishu
+// redelivery does not rerun them. Requires g.mu to be held.
+func (g *Gateway) drainLocked(conversationID string) {
+	queue := g.chats[conversationID]
+	if queue == nil {
+		return
+	}
+	for {
+		select {
+		case msg := <-queue:
+			g.rememberLocked(msg.MessageID)
+		default:
+			return
+		}
 	}
 }
 
-func (g *Gateway) process(chatID string, w *chatWorker, msg feishu.InboundMessage) {
-	defer func() {
-		if r := recover(); r != nil {
-			log.Printf("gateway: panic in chat %s: %v", chatID, r)
-			g.reply(msg.MessageID, fmt.Sprintf("💥 内部错误: %v", r))
-		}
-	}()
-
-	switch strings.TrimSpace(msg.Text) {
-	case "/new", "/clear":
-		w.sessionID = ""
-		g.reply(msg.MessageID, "🆕 已重置会话，下一条消息将开启新对话。")
-		return
-	case "/status":
-		state := "无活跃会话"
-		if w.sessionID != "" {
-			state = fmt.Sprintf("会话 %s", w.sessionID)
-		}
-		g.reply(msg.MessageID, fmt.Sprintf("ℹ️ %s", state))
+func (g *Gateway) rememberLocked(messageID string) {
+	if messageID == "" {
 		return
 	}
+	g.seen[messageID] = struct{}{}
+	g.order = append(g.order, messageID)
+	if len(g.order) > 4096 {
+		delete(g.seen, g.order[0])
+		g.order = g.order[1:]
+	}
+}
 
-	ctx, cancel := context.WithTimeout(context.Background(), g.cfg.PromptTimeout)
-	defer cancel()
+func (g *Gateway) run(queue <-chan feishu.InboundMessage) {
+	for msg := range queue {
+		g.process(msg)
+	}
+}
 
-	out, activity, err := g.promptWithRetry(ctx, w, msg.Text)
+func silentListen(msg feishu.InboundMessage) bool {
+	return msg.ChatType == protocol.ChatGroup && !msg.Mentioned
+}
+
+func (g *Gateway) process(msg feishu.InboundMessage) {
+	conversationID := msg.ConversationID
+	if conversationID == "" {
+		conversationID = msg.ChatID
+	}
+	listen := silentListen(msg)
+	ui := g.newTurnUI(msg, listen)
+	result, err := g.processor.Handle(context.Background(), turn.Request{
+		ConversationID: conversationID,
+		Input:          g.promptText(msg),
+		SenderOpenID:   msg.SenderOpenID,
+		ChatType:       protocol.ParseChatType(string(msg.ChatType)),
+		Mentioned:      msg.Mentioned,
+		Images:         inboundImages(msg),
+		OnProgress:     ui.progress,
+		OnPhase:        ui.setPhase,
+		OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
+			return g.askPermission(ctx, ui, ask)
+		},
+	})
 	if err != nil {
-		log.Printf("gateway: prompt failed for chat %s: %v", chatID, err)
-		g.reply(msg.MessageID, fmt.Sprintf("❌ Agent 调用失败: %v", err))
-		return
+		log.Printf("gateway: turn failed: chat=%s error=%v", msg.ChatID, err)
 	}
-	if out == "" {
-		out = "(agent 本轮没有文本输出)"
-	}
-	if len(activity) > 0 {
-		out = out + "\n\n---\n" + strings.Join(activity, "\n")
-	}
-	g.reply(msg.MessageID, out)
+	ui.finish(result, err)
 }
 
-// promptWithRetry recreates the session once if the previous one died with
-// the agent process.
-func (g *Gateway) promptWithRetry(ctx context.Context, w *chatWorker, text string) (string, []string, error) {
-	for attempt := 0; attempt < 2; attempt++ {
-		if w.sessionID == "" {
-			sid, err := g.host.NewChatSession(ctx)
-			if err != nil {
-				return "", nil, err
-			}
-			w.sessionID = sid
-		}
-		out, activity, err := g.host.Prompt(ctx, w.sessionID, text, nil)
-		if err == nil {
-			return out, activity, nil
-		}
-		if ctx.Err() != nil || attempt == 1 {
-			return out, activity, err
-		}
-		log.Printf("gateway: session %s failed (%v), recreating", w.sessionID, err)
-		w.sessionID = ""
+// maxReplyRunes keeps replies under the Feishu text message size limit so a
+// long agent dump is truncated instead of silently lost.
+const maxReplyRunes = 30000
+
+func (g *Gateway) truncateRunes(text string, max int) string {
+	if utf8.RuneCountInString(text) <= max {
+		return text
 	}
-	return "", nil, fmt.Errorf("unreachable")
+	runes := []rune(text)
+	return string(runes[:max]) + "\n\n" + g.text.T(i18n.Truncated)
 }
 
 func (g *Gateway) reply(messageID, text string) {
@@ -138,5 +213,298 @@ func (g *Gateway) reply(messageID, text string) {
 	defer cancel()
 	if err := g.ch.Reply(ctx, messageID, text); err != nil {
 		log.Printf("gateway: reply failed: %v", err)
+	}
+}
+
+func (g *Gateway) promptText(msg feishu.InboundMessage) string {
+	text := msg.Text
+	if msg.Quote != "" {
+		quoted := g.text.T(i18n.QuotedMessage, msg.Quote)
+		if text == "" {
+			text = quoted
+		} else {
+			text = quoted + "\n" + text
+		}
+	}
+	if len(msg.ImageKeys) > 0 && len(msg.Images) == 0 {
+		note := g.text.T(i18n.ImageDownloadFailed)
+		if text == "" {
+			return note
+		}
+		return text + "\n" + note
+	}
+	if text == "" && len(msg.Images) > 0 {
+		return g.text.T(i18n.ImagePlaceholder)
+	}
+	return text
+}
+
+func inboundImages(msg feishu.InboundMessage) []harness.Media {
+	if len(msg.Images) == 0 {
+		return nil
+	}
+	out := make([]harness.Media, 0, len(msg.Images))
+	for _, img := range msg.Images {
+		if len(img.Data) == 0 {
+			continue
+		}
+		out = append(out, harness.Media{MIME: img.MIME, Data: img.Data})
+	}
+	return out
+}
+
+func (g *Gateway) askPermission(ctx context.Context, ui *turnUI, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
+	ui.mu.Lock()
+	cardID := ui.cardID
+	closed := ui.closed || ui.listen || ui.fallback
+	openID := ui.msg.SenderOpenID
+	ui.mu.Unlock()
+	if closed || cardID == "" {
+		return permission.Choose(false, ask.Options), nil
+	}
+	id := newRequestID()
+	pending := &pendingAsk{openID: openID, cardID: cardID, done: make(chan string, 1)}
+	g.mu.Lock()
+	g.asks[id] = pending
+	g.mu.Unlock()
+	defer func() {
+		g.mu.Lock()
+		delete(g.asks, id)
+		g.mu.Unlock()
+		ui.setApproval(nil)
+	}()
+	name := ask.ToolName
+	if name == "" {
+		name = string(ask.Kind)
+	}
+	ui.setApproval(&card.Approval{RequestID: id, ToolName: name, Reason: ask.Reason})
+	log.Printf("gateway: approval %s pending: tool=%q kind=%s", id, name, ask.Kind)
+	timer := time.NewTimer(approvalTimeout)
+	defer timer.Stop()
+	select {
+	case decision := <-pending.done:
+		return permission.Choose(decision == "allow", ask.Options), nil
+	case <-timer.C:
+		// Deny instead of stalling: the agent ends the turn cleanly rather
+		// than dragging the whole prompt into its own timeout.
+		log.Printf("gateway: approval %s timed out, denying", id)
+		return permission.Choose(false, ask.Options), nil
+	case <-ctx.Done():
+		return permission.Choose(false, ask.Options), ctx.Err()
+	}
+}
+
+func (g *Gateway) HandleCardAction(action feishu.CardAction) feishu.CardToast {
+	log.Printf("gateway: card action=%q request=%s decision=%s user=%s message=%s",
+		action.Action, action.RequestID, action.Decision, action.OpenID, action.MessageID)
+	switch action.Action {
+	case "tool_approval":
+		return g.handleApprovalAction(action)
+	case "turn_cancel":
+		return g.handleStopAction(action)
+	case "turn_retry":
+		return g.handleRetryAction(action)
+	default:
+		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalMalformed)}
+	}
+}
+
+func (g *Gateway) registerTurn(msg feishu.InboundMessage) string {
+	id := newRequestID()
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.turns[id] = &liveTurn{msg: msg, running: true}
+	g.ring = append(g.ring, id)
+	for len(g.ring) > maxLiveTurns {
+		delete(g.turns, g.ring[0])
+		g.ring = g.ring[1:]
+	}
+	return id
+}
+
+// rememberCard keeps the last rendered payload so the debug endpoint can show
+// exactly what was sent to Feishu.
+func (g *Gateway) rememberCard(payload []byte) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.lastCard = payload
+}
+
+// LastCard returns the most recently rendered card payload.
+func (g *Gateway) LastCard() []byte {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.lastCard
+}
+
+// TurnInfo describes a turn a card button can still act on.
+type TurnInfo struct {
+	ID      string `json:"id"`
+	CardID  string `json:"card_id"`
+	Running bool   `json:"running"`
+	Text    string `json:"text"`
+}
+
+// LiveTurns lists turns that are running or awaiting retry.
+func (g *Gateway) LiveTurns() []TurnInfo {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	out := make([]TurnInfo, 0, len(g.ring))
+	for _, id := range g.ring {
+		entry := g.turns[id]
+		if entry == nil {
+			continue
+		}
+		out = append(out, TurnInfo{
+			ID: id, CardID: entry.cardID, Running: entry.running, Text: entry.msg.Text,
+		})
+	}
+	return out
+}
+
+func (g *Gateway) setTurnCard(id, cardID string) {
+	if id == "" || cardID == "" {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if entry := g.turns[id]; entry != nil {
+		entry.cardID = cardID
+		log.Printf("gateway: turn %s card=%s", id, cardID)
+	}
+}
+
+func (g *Gateway) finishTurn(id string, failed bool) {
+	if id == "" {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	entry := g.turns[id]
+	if entry == nil {
+		return
+	}
+	// Only a failed turn stays around, since retry is its only remaining action.
+	if !failed {
+		delete(g.turns, id)
+		return
+	}
+	entry.running = false
+}
+
+func (g *Gateway) handleStopAction(action feishu.CardAction) feishu.CardToast {
+	g.mu.Lock()
+	entry := g.turns[action.RequestID]
+	g.mu.Unlock()
+	if entry == nil || !entry.running {
+		return feishu.CardToast{Type: "info", Content: g.text.T(i18n.TurnActionExpired)}
+	}
+	if entry.msg.SenderOpenID != "" && action.OpenID != entry.msg.SenderOpenID {
+		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
+	}
+	cancel := entry.msg
+	cancel.Text = string(protocol.CommandCancel)
+	cancel.Images, cancel.ImageKeys, cancel.Quote = nil, nil, ""
+	go g.process(cancel)
+	return feishu.CardToast{Type: "success", Content: g.text.T(i18n.TurnStopRequested)}
+}
+
+func (g *Gateway) handleRetryAction(action feishu.CardAction) feishu.CardToast {
+	g.mu.Lock()
+	entry := g.turns[action.RequestID]
+	if entry != nil && !entry.running {
+		delete(g.turns, action.RequestID)
+	}
+	g.mu.Unlock()
+	if entry == nil || entry.running {
+		return feishu.CardToast{Type: "info", Content: g.text.T(i18n.TurnActionExpired)}
+	}
+	if entry.msg.SenderOpenID != "" && action.OpenID != entry.msg.SenderOpenID {
+		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
+	}
+	go func() {
+		// Recall first so the failed card does not linger next to its replacement.
+		g.recall(entry.cardID)
+		g.process(entry.msg)
+	}()
+	return feishu.CardToast{Type: "success", Content: g.text.T(i18n.TurnRetryStarted)}
+}
+
+func (g *Gateway) recall(cardID string) {
+	if cardID == "" {
+		return
+	}
+	r, ok := g.ch.(recaller)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := r.DeleteMessage(ctx, cardID); err != nil {
+		log.Printf("gateway: recall card failed: %v", err)
+	}
+}
+
+func (g *Gateway) handleApprovalAction(action feishu.CardAction) feishu.CardToast {
+	if action.Decision != "allow" && action.Decision != "deny" {
+		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalMalformed)}
+	}
+	g.mu.Lock()
+	pending := g.asks[action.RequestID]
+	g.mu.Unlock()
+	if pending == nil {
+		return feishu.CardToast{Type: "info", Content: g.text.T(i18n.ApprovalExpired)}
+	}
+	if pending.openID != "" && action.OpenID != pending.openID {
+		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
+	}
+	if pending.cardID != "" && action.MessageID != "" && action.MessageID != pending.cardID {
+		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalDenied)}
+	}
+	select {
+	case pending.done <- action.Decision:
+	default:
+	}
+	if action.Decision == "allow" {
+		return feishu.CardToast{Type: "success", Content: g.text.T(i18n.ApprovalAllowed)}
+	}
+	return feishu.CardToast{Type: "info", Content: g.text.T(i18n.ApprovalRejected)}
+}
+
+func newRequestID() string {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return hex.EncodeToString([]byte(time.Now().UTC().Format("150405.000000000")))
+	}
+	return hex.EncodeToString(b[:])
+}
+
+func (g *Gateway) ack(messageID string) string {
+	r, ok := g.ch.(reactor)
+	if !ok || messageID == "" {
+		return ""
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	id, err := r.AddReaction(ctx, messageID, thinkingEmoji)
+	if err != nil {
+		log.Printf("gateway: ack reaction failed: %v", err)
+		return ""
+	}
+	return id
+}
+
+func (g *Gateway) unack(messageID, reactionID string) {
+	if reactionID == "" {
+		return
+	}
+	r, ok := g.ch.(reactor)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if err := r.RemoveReaction(ctx, messageID, reactionID); err != nil {
+		log.Printf("gateway: clear reaction failed: %v", err)
 	}
 }

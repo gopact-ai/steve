@@ -1,6 +1,3 @@
-// acptest sends one prompt to the configured ACP agent backend from the
-// terminal, bypassing Feishu. Useful to verify agent config before wiring
-// up the channel: go run ./cmd/acptest -config config.yaml "hello"
 package main
 
 import (
@@ -8,54 +5,87 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/runtime"
+	"github.com/gopact-ai/steve/internal/skills"
 )
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "path to config file")
+	configPath := flag.String("config", "config.json", "path to config file")
+	agentID := flag.String("agent", "", "agent id or alias")
 	timeout := flag.Duration("timeout", 10*time.Minute, "prompt timeout")
 	flag.Parse()
-
-	prompt := strings.Join(flag.Args(), " ")
-	if prompt == "" {
-		log.Fatal("usage: acptest [-config config.yaml] <prompt>")
+	if strings.TrimSpace(strings.Join(flag.Args(), " ")) == "" {
+		log.Fatal("usage: acptest [-config config.json] [-agent id] <prompt>")
 	}
-
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		log.Fatalf("acptest: %v", err)
+		log.Fatal(err)
 	}
-
-	host := acphost.New(acphost.Config{
-		Command:    cfg.Agent.Command,
-		Args:       cfg.Agent.Args,
-		Workdir:    cfg.Agent.Workdir,
-		Env:        cfg.Agent.Env,
-		Permission: cfg.Agent.Permission,
-	})
-	defer host.Stop()
-
+	catalog, err := cfg.AgentCatalog()
+	if err != nil {
+		log.Fatal(err)
+	}
+	selected := catalog.Default()
+	if *agentID != "" {
+		var ok bool
+		selected, ok = catalog.Resolve(*agentID)
+		if !ok {
+			log.Fatalf("unknown agent %q", *agentID)
+		}
+	}
+	stateDir := filepath.Dir(cfg.Gateway.StatePath)
+	if err := runtime.Prepare(stateDir); err != nil {
+		log.Fatal(err)
+	}
+	skillMap, err := skills.Setup(stateDir)
+	if err != nil {
+		log.Fatal(err)
+	}
+	live := &skills.Live{Map: skillMap, Dests: runtime.SkillDests(stateDir)}
+	if err := live.Apply(); err != nil {
+		log.Fatal(err)
+	}
+	for id, item := range cfg.Harnesses {
+		item.Env = runtime.ApplyEnv(item.Env, id, stateDir)
+		cfg.Harnesses[id] = item
+	}
+	assembler := cfg.CapabilityAssembler().SetSkills(skillMap)
+	mode := home.ModeGuest
+	if _, err := os.Stat(cfg.Gateway.HomePath); err == nil {
+		assembler.SetHome(home.Dir{Path: cfg.Gateway.HomePath})
+		if cfg.Feishu.OwnerOpenID != "" {
+			mode = home.ModeOwner
+		}
+	}
+	capabilities, err := assembler.AssembleMode(selected, mode)
+	if err != nil {
+		log.Fatal(err)
+	}
+	manager, err := cfg.HarnessManager()
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer manager.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-
-	sid, err := host.NewChatSession(ctx)
+	session, err := manager.OpenSession(ctx, selected.Harness, "", selected.Workspace, capabilities.MCPServers)
 	if err != nil {
-		log.Fatalf("acptest: new session: %v", err)
+		log.Fatal(err)
 	}
-	log.Printf("acptest: session %s created, sending prompt...", sid)
-
-	out, activity, err := host.Prompt(ctx, sid, prompt, func(line string) {
-		log.Printf("acptest: %s", line)
-	})
+	prompt := strings.TrimSpace(strings.Join(flag.Args(), " "))
+	if capabilities.Instructions != "" {
+		prompt = capabilities.Instructions + "\n\n" + prompt
+	}
+	out, _, err := session.Prompt(ctx, prompt, nil)
 	if err != nil {
-		log.Fatalf("acptest: prompt: %v", err)
-	}
-	for _, line := range activity {
-		log.Printf("acptest: activity: %s", line)
+		log.Fatal(err)
 	}
 	fmt.Println(out)
 }

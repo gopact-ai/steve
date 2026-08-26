@@ -1,0 +1,70 @@
+{
+  "agents": {
+    "codex": {
+      "aliases": ["codex"],
+      "harness": "codex",
+      "workspace": "~/steve-workspace/codex",
+      "skills": [],
+      "mcp_servers": [],
+      "default": true
+    },
+    "claude": {
+      "aliases": ["claude"],
+      "harness": "claude-code",
+      "workspace": "~/steve-workspace/claude",
+      "skills": [],
+      "mcp_servers": []
+    },
+    "grok": {
+      "aliases": ["grok", "grok-build"],
+      "harness": "grok",
+      "workspace": "~/steve-workspace/grok",
+      "skills": [],
+      "mcp_servers": []
+    },
+    "kimi": {
+      "aliases": ["kimi", "kimi-code"],
+      "harness": "kimi",
+      "workspace": "~/steve-workspace/kimi",
+      "skills": [],
+      "mcp_servers": []
+    }
+  },
+  "harnesses": {
+    "codex": {
+      "command": "npx",
+      "args": ["-y", "@agentclientprotocol/codex-acp"],
+      "permission": "read"
+    },
+    "claude-code": {
+      "command": "npx",
+      "args": ["-y", "@zed-industries/claude-code-acp"],
+      "permission": "read"
+    },
+    "grok": {
+      "command": "grok",
+      "args": ["agent", "--no-leader", "stdio"],
+      "permission": "read"
+    },
+    "kimi": {
+      "command": "kimi",
+      "args": ["acp"],
+      "permission": "read"
+    }
+  },
+  "mcp_servers": {},
+  "feishu": {
+    "app_id": "cli_xxxxxxxxxxxxx",
+    "app_secret": "xxxxxxxxxxxxxxxx",
+    "domain": "feishu",
+    "owner_open_id": "ou_xxxxxxxxxxxxx",
+    "allowed_senders": [],
+    "blocked_senders": [],
+    "group_policy": "open",
+    "allow_unmentioned": false
+  },
+  "gateway": {
+    "prompt_timeout": "10m",
+    "state_path": "~/.steve/state.json"
+  }
+}

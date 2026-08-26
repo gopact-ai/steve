@@ -1,2 +1,3 @@
-config.yaml
-acpgw
+config.json
+config.e2e.json
+/steve
