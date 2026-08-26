@@ -75,7 +75,7 @@ func TestSkillsBlockedDuringTurn(t *testing.T) {
 	}()
 	select {
 	case <-runner.started:
-	case <-time.After(time.Second):
+	case <-time.After(waitDeadline):
 		t.Fatal("turn did not start")
 	}
 	result, err := ownerHandle(t, coordinator, "/skills enable remind")

@@ -12,6 +12,11 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 )
 
+// waitDeadline bounds how long a test waits for a goroutine to reach a known
+// point. A passing test never spends it; a generous bound is what keeps the
+// suite usable under -race, where everything runs several times slower.
+const waitDeadline = 10 * time.Second
+
 type stuckConn struct {
 	closed  chan struct{}
 	closeN  atomic.Bool
@@ -199,7 +204,7 @@ func TestStartReturnsWhenContextCanceled(t *testing.T) {
 
 	select {
 	case <-conn.started:
-	case <-time.After(time.Second):
+	case <-time.After(waitDeadline):
 		t.Fatal("Start did not begin")
 	}
 	cancel()
@@ -209,7 +214,7 @@ func TestStartReturnsWhenContextCanceled(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("Start() = %v, want context.Canceled", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(waitDeadline):
 		t.Fatal("Start did not return after cancel")
 	}
 	if !conn.closeN.Load() {

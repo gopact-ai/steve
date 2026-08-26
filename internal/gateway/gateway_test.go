@@ -15,6 +15,11 @@ import (
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
+// waitDeadline bounds how long a test waits for a goroutine to reach a known
+// point. A passing test never spends it; a generous bound is what keeps the
+// suite usable under -race, where everything runs several times slower.
+const waitDeadline = 10 * time.Second
+
 type recordingChannel struct {
 	events chan string
 	addErr error
@@ -42,7 +47,7 @@ func (c *recordingChannel) Reply(_ context.Context, messageID, text string) erro
 func collectEvents(t *testing.T, events <-chan string, n int) []string {
 	t.Helper()
 	got := make([]string, 0, n)
-	deadline := time.After(time.Second)
+	deadline := time.After(waitDeadline)
 	for len(got) < n {
 		select {
 		case ev := <-events:
@@ -97,7 +102,7 @@ func TestGatewayReplies(t *testing.T) {
 		if got != "reply: hello" {
 			t.Fatalf("unexpected reply: %q", got)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(waitDeadline):
 		t.Fatal("timed out waiting for reply")
 	}
 }
@@ -113,7 +118,7 @@ func TestGatewayRepliesUserError(t *testing.T) {
 		if got != i18n.New(i18n.LocaleZH).T(i18n.CapabilityDrift, protocol.CommandNew) {
 			t.Fatalf("unexpected reply: %q", got)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(waitDeadline):
 		t.Fatal("timed out waiting for reply")
 	}
 }
@@ -129,7 +134,7 @@ func TestGatewayRepliesCanceledTurn(t *testing.T) {
 		if got != i18n.New(i18n.LocaleZH).T(i18n.TurnCanceled) {
 			t.Fatalf("unexpected reply: %q", got)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(waitDeadline):
 		t.Fatal("timed out waiting for reply")
 	}
 }
@@ -144,7 +149,7 @@ func TestGatewayDeduplicatesMessageID(t *testing.T) {
 	g.HandleMessage(msg)
 	select {
 	case <-r.text:
-	case <-time.After(time.Second):
+	case <-time.After(waitDeadline):
 		t.Fatal("timed out waiting for reply")
 	}
 	time.Sleep(20 * time.Millisecond)

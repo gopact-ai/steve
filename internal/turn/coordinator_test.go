@@ -20,6 +20,11 @@ import (
 	"github.com/gopact-ai/steve/internal/state"
 )
 
+// waitDeadline bounds how long a test waits for a goroutine to reach a known
+// point. A passing test never spends it; a generous bound is what keeps the
+// suite usable under -race, where everything runs several times slower.
+const waitDeadline = 10 * time.Second
+
 type fakeManager struct {
 	runners  map[string]*fakeRunner
 	opened   []string
@@ -213,7 +218,7 @@ func TestCoordinatorCancelDuringOpenCancelsContextImmediately(t *testing.T) {
 	}()
 	select {
 	case <-manager.started:
-	case <-time.After(time.Second):
+	case <-time.After(waitDeadline):
 		t.Fatal("open did not start")
 	}
 	started := time.Now()
@@ -229,7 +234,7 @@ func TestCoordinatorCancelDuringOpenCancelsContextImmediately(t *testing.T) {
 		if !errors.Is(err, context.Canceled) {
 			t.Fatalf("expected canceled open, got %v", err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(waitDeadline):
 		t.Fatal("turn did not finish after cancel")
 	}
 }
@@ -357,7 +362,7 @@ func TestCoordinatorCancelsRunningTurn(t *testing.T) {
 	}()
 	select {
 	case <-runner.started:
-	case <-time.After(time.Second):
+	case <-time.After(waitDeadline):
 		t.Fatal("turn did not start")
 	}
 	result, err := handle(coordinator, t.Context(), "/cancel")
@@ -369,7 +374,7 @@ func TestCoordinatorCancelsRunningTurn(t *testing.T) {
 		if err != nil && !errors.Is(err, context.Canceled) {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(waitDeadline):
 		t.Fatal("turn did not finish after cancel")
 	}
 	if _, ok := store.Conversation("chat").Sessions["codex"]; ok {
@@ -428,7 +433,7 @@ func TestCoordinatorRejectsConcurrentTurnForSession(t *testing.T) {
 	}()
 	select {
 	case <-runner.started:
-	case <-time.After(time.Second):
+	case <-time.After(waitDeadline):
 		t.Fatal("first turn did not start")
 	}
 	if _, err := handle(coordinator, t.Context(), "second"); err == nil {
