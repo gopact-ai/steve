@@ -58,8 +58,8 @@ const (
 	maxToolIO          = 800
 	maxVisibleTools    = 6
 	maxSummaryRunes    = 100
-	maxReasoningRunes  = 360
-	maxReasoningLines  = 6
+	maxReasoningRunes  = 1000
+	maxReasoningLines  = 12
 	maxFieldLabel      = 40
 	maxFieldValue      = 240
 	maxApprovalReason  = 240
@@ -690,6 +690,14 @@ func collapsible(id, title string, expanded bool, elements []map[string]any) map
 	return panel
 }
 
+// formatMarkdown prepares agent text for a Feishu markdown element.
+//
+// It used to append "<br>" to lines it judged to be hard-wrapped, on the
+// usual markdown rule that a lone newline is only a space. Feishu does not
+// follow that rule: a bare newline is already a line break, so the "<br>"
+// and the newline each produced one and every such line came out with a
+// blank line under it. Probed directly — "A\nB" renders as two lines,
+// "A<br>\nB" renders as two lines with a gap.
 func formatMarkdown(s string) string {
 	s = strings.TrimRight(s, "\n")
 	if s == "" {
@@ -697,24 +705,7 @@ func formatMarkdown(s string) string {
 	}
 	src := strings.Split(compactHeadings(s), "\n")
 	out := make([]string, 0, len(src))
-	inFence := false
-	for i, line := range src {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") {
-			inFence = !inFence
-			out = append(out, escape(line))
-			continue
-		}
-		next := ""
-		if i+1 < len(src) {
-			next = src[i+1]
-		}
-		broken := !inFence && !isLooseLine(line) && strings.TrimSpace(next) != "" &&
-			!isLooseLine(next) && !strings.HasPrefix(strings.TrimSpace(next), "```")
-		if broken {
-			out = append(out, escape(line)+"<br>")
-			continue
-		}
+	for _, line := range src {
 		out = append(out, escape(line))
 	}
 	return strings.Join(out, "\n")
@@ -738,23 +729,6 @@ func compactHeadings(s string) string {
 		lines[i] = "**" + title + "**"
 	}
 	return strings.Join(lines, "\n")
-}
-
-func isLooseLine(line string) bool {
-	trimmed := strings.TrimSpace(line)
-	if trimmed == "" || trimmed == "---" || trimmed == "***" {
-		return true
-	}
-	if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") || strings.HasPrefix(trimmed, "> ") {
-		return true
-	}
-	if len(trimmed) > 2 && trimmed[0] >= '1' && trimmed[0] <= '9' {
-		dot := strings.IndexByte(trimmed, '.')
-		if dot > 0 && dot+1 < len(trimmed) && trimmed[dot+1] == ' ' {
-			return true
-		}
-	}
-	return false
 }
 
 func toolMark(status ToolStatus) string {

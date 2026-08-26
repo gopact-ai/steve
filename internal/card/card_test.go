@@ -206,14 +206,39 @@ func TestFormatMarkdownKeepsBreaksAndLists(t *testing.T) {
 	if !strings.Contains(got, "**标题**") {
 		t.Fatalf("heading not compacted: %s", got)
 	}
-	if !strings.Contains(got, "第一行<br>\n第二行") {
-		t.Fatalf("paragraphs not broken: %s", got)
+	// A bare newline is already a line break in Feishu, so adding "<br>" on
+	// top of it renders a blank line under every wrapped line. Probed: "A\nB"
+	// is two lines, "A<br>\nB" is two lines with a gap.
+	if strings.Contains(got, "<br>") {
+		t.Fatalf("a <br> beside a newline doubles the break: %s", got)
+	}
+	if !strings.Contains(got, "第一行\n第二行") {
+		t.Fatalf("hard break lost: %s", got)
 	}
 	if !strings.Contains(got, "- a\n- b") {
 		t.Fatalf("list broken: %s", got)
 	}
 	if !strings.Contains(got, "```\ncode\nline\n```") {
 		t.Fatalf("fence rewritten: %s", got)
+	}
+	// A deliberate blank line is the author's, and stays exactly one.
+	if strings.Contains(got, "\n\n\n") {
+		t.Fatalf("blank lines multiplied: %q", got)
+	}
+}
+
+// Every multi-line thing the card renders goes out with single newlines, so
+// nothing arrives double-spaced.
+func TestRenderedCardHasNoDoubledLineBreaks(t *testing.T) {
+	raw := Render(Turn{
+		Status:    StatusCompleted,
+		Answer:    "当前模型：GPT 5.6 Sol\n可选：\n▸ GPT 5.6 Sol\nGPT 5.6 Terra\n用 /model <名称> 切换",
+		Reasoning: "thinking one\nthinking two",
+		Plan:      []Step{{Text: "one", Status: StepCompleted}, {Text: "two", Status: StepPending}},
+		StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
+	}, testCopy())
+	if strings.Contains(string(raw), "<br>") {
+		t.Fatalf("card still emits <br>: %s", raw)
 	}
 }
 
