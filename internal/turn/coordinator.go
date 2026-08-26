@@ -65,6 +65,9 @@ type Result struct {
 	Text     string
 	Activity []string
 	Fields   []view.Field
+	// Recover marks a result whose card should offer to restore the
+	// just-archived session — the /clear confirmation.
+	Recover bool
 }
 
 type Coordinator struct {
@@ -432,7 +435,7 @@ func (c *Coordinator) reset(ctx context.Context, conversationID string, selected
 		return Result{}, err
 	}
 	c.closeTask(conversationID, selected.ID)
-	return Result{AgentID: selected.ID, Text: c.text.T(i18n.Reset, selected.ID)}, nil
+	return Result{AgentID: selected.ID, Text: c.text.T(i18n.Reset, selected.ID), Recover: true}, nil
 }
 
 func (c *Coordinator) assemble(selected agent.Agent, req Request) (capability.Capabilities, error) {

@@ -124,6 +124,7 @@ const (
 	HistoryList            Key = "history_list"
 	HistoryRestored        Key = "history_restored"
 	HistoryUnknown         Key = "history_unknown"
+	CardRecover            Key = "card_recover"
 	CardInput              Key = "card_input"
 	CardOutput             Key = "card_output"
 	CardContext            Key = "card_context"

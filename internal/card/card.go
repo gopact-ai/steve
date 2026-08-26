@@ -72,6 +72,7 @@ const (
 	headerIconToken    = "myai_colorful"
 	cardActionApproval = "tool_approval"
 	cardActionQuestion = "elicit_answer"
+	cardActionRecover  = "history_restore"
 	cardActionCancel   = "turn_cancel"
 	cardActionRetry    = "turn_retry"
 )
@@ -100,6 +101,7 @@ type Copy struct {
 	ApprovalRule   string
 	QuestionTitle  string
 	QuestionHint   string
+	Recover        string
 	AllowOnce      string
 	Deny           string
 	Waking         string
@@ -165,6 +167,9 @@ func build(t Turn, copy Copy) map[string]any {
 	}
 	if control := controlRow(t, copy); control != nil {
 		elements = append(elements, control)
+	}
+	if row := recoverRow(t, copy); row != nil {
+		elements = append(elements, row)
 	}
 	elements = append(elements, footer(t, copy))
 	for i, el := range elements {
@@ -884,6 +889,40 @@ func controlRow(t Turn, copy Copy) map[string]any {
 				"behaviors": []map[string]any{{
 					"type":  "callback",
 					"value": map[string]any{"action": action, "request_id": t.TurnID},
+				}},
+			}},
+		}},
+	}
+}
+
+// recoverRow puts the way back onto the card that took the session away:
+// the /clear confirmation offers one tap to restore what it archived, so
+// nobody has to remember that /history exists.
+func recoverRow(t Turn, copy Copy) map[string]any {
+	if t.RecoverID == "" || t.Status != StatusCompleted {
+		return nil
+	}
+	label := copy.Recover
+	if label == "" {
+		label = "恢复上个会话"
+	}
+	return map[string]any{
+		"tag":        "column_set",
+		"element_id": "recover",
+		"flex_mode":  "none",
+		"columns": []map[string]any{{
+			"tag": "column", "width": "weighted", "weight": 1,
+			"elements": []map[string]any{{
+				"tag":  "button",
+				"name": "recover",
+				"text": map[string]any{"tag": "plain_text", "content": label},
+				"type": "default", "width": "fill", "size": "medium",
+				"behaviors": []map[string]any{{
+					"type": "callback",
+					"value": map[string]any{
+						"action":     cardActionRecover,
+						"request_id": t.RecoverID,
+					},
 				}},
 			}},
 		}},

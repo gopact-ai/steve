@@ -843,3 +843,32 @@ func TestPoolReleasesSlotsAfterEveryMessage(t *testing.T) {
 		t.Fatalf("pool still holds %d slots", len(g.slots))
 	}
 }
+
+// The /clear card's 恢复 button is a typing shortcut: tapping it synthesizes
+// the "/history 1" the user would have written, aimed at the conversation the
+// button carries — a completed turn is gone from the registry, so the card
+// has to bring its own address.
+func TestRecoverButtonSynthesizesHistoryRestore(t *testing.T) {
+	processor := &holdingProcessor{release: make(chan struct{})}
+	close(processor.release)
+	g := New(processor)
+	g.BindChannel(&reply{text: make(chan string, 4)})
+
+	toast := g.HandleCardAction(feishu.CardAction{
+		OpenID: "ou_sender", ChatID: "oc_chat", MessageID: "om_card",
+		Action: "history_restore", RequestID: "omt_thread",
+	})
+	if toast.Type != "success" {
+		t.Fatalf("toast = %#v", toast)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for len(processor.texts()) == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	if got := processor.texts(); len(got) != 1 || got[0] != "/history 1" {
+		t.Fatalf("synthesized = %v, want [/history 1]", got)
+	}
+	if toast := g.HandleCardAction(feishu.CardAction{Action: "history_restore"}); toast.Type != "error" {
+		t.Fatalf("empty conversation should be refused: %#v", toast)
+	}
+}

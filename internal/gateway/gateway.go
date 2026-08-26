@@ -315,6 +315,8 @@ func (g *Gateway) HandleCardAction(action feishu.CardAction) feishu.CardToast {
 		return g.handleApprovalAction(action)
 	case "elicit_answer":
 		return g.handleQuestionAction(action)
+	case "history_restore":
+		return g.handleRecoverAction(action)
 	case "turn_cancel":
 		return g.handleStopAction(action)
 	case "turn_retry":
@@ -421,6 +423,25 @@ func (g *Gateway) handleStopAction(action feishu.CardAction) feishu.CardToast {
 	cancel.Text = string(protocol.CommandCancel)
 	cancel.Images, cancel.ImageKeys, cancel.Quote = nil, nil, ""
 	go g.process(cancel)
+	return feishu.CardToast{Type: "success", Content: g.text.T(i18n.TurnStopRequested)}
+}
+
+// handleRecoverAction turns the tap into the words the user would have
+// typed: a synthesized "/history 1" from this chat. The button carries the
+// conversation id itself because a completed turn has already left the
+// registry, and the shortcut must outlive it.
+func (g *Gateway) handleRecoverAction(action feishu.CardAction) feishu.CardToast {
+	if action.RequestID == "" {
+		return feishu.CardToast{Type: "error", Content: g.text.T(i18n.ApprovalMalformed)}
+	}
+	msg := feishu.InboundMessage{
+		ChatID:         action.ChatID,
+		ConversationID: action.RequestID,
+		MessageID:      action.MessageID,
+		SenderOpenID:   action.OpenID,
+		Text:           string(protocol.CommandHistory) + " 1",
+	}
+	go g.process(msg)
 	return feishu.CardToast{Type: "success", Content: g.text.T(i18n.TurnStopRequested)}
 }
 

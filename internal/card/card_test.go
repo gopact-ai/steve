@@ -796,3 +796,22 @@ func TestQuestionWithoutRequestIDIsDropped(t *testing.T) {
 		t.Fatalf("unanswerable question should render nothing: %s", body)
 	}
 }
+
+func TestRecoverRowOnlyOnCompletedCardsThatAskForIt(t *testing.T) {
+	copy := testCopy()
+	copy.Recover = "恢复上个会话"
+	with := string(Render(Turn{
+		Status: StatusCompleted, Answer: "已重置", RecoverID: "omt_1",
+		StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
+	}, copy))
+	if !strings.Contains(with, "history_restore") || !strings.Contains(with, `"request_id":"omt_1"`) {
+		t.Fatalf("recover button missing: %s", with)
+	}
+	without := string(Render(Turn{
+		Status: StatusCompleted, Answer: "普通回答",
+		StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(1, 0),
+	}, copy))
+	if strings.Contains(without, "history_restore") {
+		t.Fatalf("plain card grew a recover button: %s", without)
+	}
+}

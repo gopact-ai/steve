@@ -124,8 +124,11 @@ type Turn struct {
 	Settings   Settings
 	Phase      Phase
 	TurnID     string
-	StartedAt  time.Time
-	UpdatedAt  time.Time
+	// RecoverID names the conversation whose newest archived session this
+	// card offers to restore; empty renders no restore button.
+	RecoverID string
+	StartedAt time.Time
+	UpdatedAt time.Time
 }
 
 // Question is the agent asking the user to choose. Agents ask through ACP's

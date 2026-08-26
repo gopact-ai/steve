@@ -76,6 +76,7 @@ func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
 			ApprovalRule:   g.text.T(i18n.CardApprovalRule),
 			QuestionTitle:  g.text.T(i18n.CardQuestionTitle),
 			QuestionHint:   g.text.T(i18n.CardQuestionHint),
+			Recover:        g.text.T(i18n.CardRecover),
 			AllowOnce:      g.text.T(i18n.CardAllowOnce),
 			Deny:           g.text.T(i18n.CardDeny),
 		},
@@ -275,12 +276,18 @@ func (u *turnUI) finish(result turn.Result, err error) {
 	u.state.Fields = append([]card.Field(nil), result.Fields...)
 	u.state.Answer = text
 	u.state.UpdatedAt = time.Now()
+	if result.Recover && status == card.StatusCompleted {
+		u.state.RecoverID = conversationID(u.msg)
+	}
 	// A completed agent turn splits in two: the card freezes as the process
 	// archive and the answer goes out as an ordinary message — quotable,
 	// searchable, previewable in notifications, none of which a card body
 	// is. Command results (a title or fields) stay card-shaped: there the
 	// card is the product, not a console.
-	spoken := status == card.StatusCompleted && result.Title == "" && len(result.Fields) == 0 && text != ""
+	// A recover result also stays card-shaped: its button and its text
+	// belong together.
+	spoken := status == card.StatusCompleted && result.Title == "" &&
+		len(result.Fields) == 0 && !result.Recover && text != ""
 	if status == card.StatusFailed {
 		u.state.Error = text
 		u.state.Answer = ""
