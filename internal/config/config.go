@@ -183,7 +183,7 @@ func StarterFeishu(feishu Feishu) *Config {
 				Command: "npx", Args: []string{"-y", "@agentclientprotocol/codex-acp"}, Permission: PermissionRead,
 			},
 			harness.ClaudeCode: {
-				Command: "npx", Args: []string{"-y", "@zed-industries/claude-code-acp"}, Permission: PermissionRead,
+				Command: "npx", Args: []string{"-y", "@agentclientprotocol/claude-agent-acp"}, Permission: PermissionRead,
 			},
 			harness.Grok: {
 				Command: "grok", Args: []string{"agent", "--no-leader", "stdio"}, Permission: PermissionRead,

@@ -38,7 +38,7 @@
     },
     "claude-code": {
       "command": "npx",
-      "args": ["-y", "@zed-industries/claude-code-acp"],
+      "args": ["-y", "@agentclientprotocol/claude-agent-acp"],
       "permission": "read"
     },
     "grok": {
