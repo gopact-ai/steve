@@ -341,3 +341,24 @@ func TestListSessions(t *testing.T) {
 		t.Fatalf("sessions = %+v", sessions)
 	}
 }
+
+func TestDeleteSessionRemovesItFromTheAgent(t *testing.T) {
+	h := newTestHost(t, "deny")
+	if _, _, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := h.ListSessions(t.Context())
+	if err != nil || len(before) != 1 {
+		t.Fatalf("sessions before = %+v, err = %v", before, err)
+	}
+	if err := h.DeleteSession(t.Context(), "mock-session-1"); err != nil {
+		t.Fatal(err)
+	}
+	after, err := h.ListSessions(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(after) != 0 {
+		t.Fatalf("sessions after delete = %+v", after)
+	}
+}

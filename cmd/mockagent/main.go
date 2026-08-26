@@ -26,6 +26,7 @@ import (
 type agent struct {
 	client  *acp.ClientCaller
 	counter atomic.Int64
+	deleted atomic.Value
 }
 
 func (a *agent) Initialize(_ context.Context, _ *acp.InitializeRequest) (*acp.InitializeResponse, error) {
@@ -35,7 +36,8 @@ func (a *agent) Initialize(_ context.Context, _ *acp.InitializeRequest) (*acp.In
 		AgentCapabilities: &acp.AgentCapabilities{
 			LoadSession: true,
 			SessionCapabilities: &acp.SessionCapabilities{
-				List: &acp.SessionListCapabilities{},
+				List:   &acp.SessionListCapabilities{},
+				Delete: &acp.SessionDeleteCapabilities{},
 			},
 		},
 	}, nil
@@ -188,7 +190,15 @@ func (a *agent) SetSessionConfigOption(_ context.Context, req *acp.SetSessionCon
 	}, nil
 }
 
+func (a *agent) DeleteSession(_ context.Context, req *acp.DeleteSessionRequest) (*acp.DeleteSessionResponse, error) {
+	a.deleted.Store(string(req.SessionID))
+	return &acp.DeleteSessionResponse{}, nil
+}
+
 func (a *agent) ListSessions(_ context.Context, _ *acp.ListSessionsRequest) (*acp.ListSessionsResponse, error) {
+	if gone, _ := a.deleted.Load().(string); gone == "mock-session-1" {
+		return &acp.ListSessionsResponse{}, nil
+	}
 	return &acp.ListSessionsResponse{Sessions: []acp.SessionInfo{
 		{SessionID: "mock-session-1", Cwd: "/tmp"},
 	}}, nil

@@ -299,3 +299,30 @@ func (h *Host) ListSessions(ctx context.Context) ([]acp.SessionInfo, error) {
 		cursor = resp.NextCursor
 	}
 }
+
+// DeleteSession asks the agent to forget a session for good, where
+// CloseSession only releases it. Steve closes rather than deletes when a
+// conversation ends, because a closed session can still be resumed; delete
+// is for the case where Steve has dropped its own pointer and the session
+// would otherwise sit in the agent's store forever with nothing able to
+// reach it.
+func (h *Host) DeleteSession(ctx context.Context, sid acp.SessionID) error {
+	h.mu.Lock()
+	if h.active[sid] != 0 {
+		h.mu.Unlock()
+		return ErrSessionBusy
+	}
+	caller, capabilities, alive := h.caller, h.capabilities, h.alive
+	h.mu.Unlock()
+	if !alive || caller == nil || capabilities == nil ||
+		capabilities.SessionCapabilities == nil || capabilities.SessionCapabilities.Delete == nil {
+		return ErrDeleteUnsupported
+	}
+	if _, err := caller.DeleteSession(ctx, &acp.DeleteSessionRequest{SessionID: sid}); err != nil {
+		return fmt.Errorf("session/delete: %w", err)
+	}
+	h.mu.Lock()
+	delete(h.sessions, sid)
+	h.mu.Unlock()
+	return nil
+}

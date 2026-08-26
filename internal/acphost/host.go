@@ -31,6 +31,7 @@ var ErrResumeUnsupported = errors.New("agent does not support session resume")
 var ErrSessionBusy = errors.New("session already has a running turn")
 var ErrClosed = errors.New("host is closed")
 var ErrListUnsupported = errors.New("agent does not support session listing")
+var ErrDeleteUnsupported = errors.New("agent does not support session deletion")
 
 // ErrTurnCanceled marks a turn the agent ended itself with
 // StopReasonCanceled (e.g. a permission request was rejected). The session
