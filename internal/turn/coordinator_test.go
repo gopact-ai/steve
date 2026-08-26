@@ -512,3 +512,53 @@ func TestCoordinatorEnglishLocale(t *testing.T) {
 func handle(c *Coordinator, ctx context.Context, input string) (Result, error) {
 	return c.Handle(ctx, Request{ConversationID: "chat", Input: input})
 }
+
+// "+ 还有件事" waits for the running turn; a bare message replaces it. The
+// prefix is what keeps follow-up and correction from being the same gesture.
+func TestPlusPrefixQueuesInsteadOfInterrupting(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
+	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+
+	first := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "long running")
+		first <- err
+	}()
+	<-runner.started
+
+	second := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "+ 接着做第二件")
+		second <- err
+	}()
+
+	// The queued prompt must not touch the running turn: no cancel, no
+	// second prompt reaching the agent while the first is still going.
+	time.Sleep(100 * time.Millisecond)
+	if got := runner.cancels.Load(); got != 0 {
+		t.Fatalf("queued follow-up cancelled the running turn (%d cancels)", got)
+	}
+	if got := runner.seen(); len(got) != 1 {
+		t.Fatalf("queued follow-up ran early: %v", got)
+	}
+
+	close(runner.done)
+	if err := <-first; err != nil {
+		t.Fatalf("first turn = %v, want a clean finish", err)
+	}
+	select {
+	case err := <-second:
+		if err != nil {
+			t.Fatalf("queued turn = %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("queued turn never ran")
+	}
+	got := runner.seen()
+	if len(got) != 2 || !strings.Contains(got[1], "接着做第二件") || strings.Contains(got[1], "+") {
+		t.Fatalf("agent saw %v, want the second prompt with the prefix stripped", got)
+	}
+}

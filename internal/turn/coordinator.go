@@ -36,8 +36,11 @@ type Request struct {
 	Images         []harness.Media
 	OnProgress     func(view.Progress)
 	OnAskUser      acphost.AskUserFunc
-	OnPhase        func(view.Phase)
-	OnAsk          permission.AskFunc
+	// Queue makes this prompt wait for the running turn instead of
+	// interrupting it: "also do this after" rather than "stop, do this".
+	Queue   bool
+	OnPhase func(view.Phase)
+	OnAsk   permission.AskFunc
 }
 
 func (r Request) phase(p view.Phase) {
@@ -163,7 +166,18 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 	if switchOnly {
 		return Result{AgentID: selected.ID, Text: c.text.T(i18n.Switched, selected.ID)}, nil
 	}
-	cmd, rest := protocol.ParseCommand(strings.TrimSpace(prompt))
+	// A leading "+" is the escape hatch from interrupt-by-default: it marks
+	// a follow-up that should run after the current turn, not instead of it.
+	// Without it, "还有件事" and "别做了" would be the same gesture.
+	prompt = strings.TrimSpace(prompt)
+	for _, plus := range []string{"+", "＋"} {
+		if rest, ok := strings.CutPrefix(prompt, plus); ok && strings.TrimSpace(rest) != "" {
+			req.Queue = true
+			prompt = strings.TrimSpace(rest)
+			break
+		}
+	}
+	cmd, rest := protocol.ParseCommand(prompt)
 	switch cmd {
 	case protocol.CommandNew, protocol.CommandClear:
 		return c.reset(ctx, req.ConversationID, selected)
@@ -209,8 +223,8 @@ func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, st
 
 func (c *Coordinator) prompt(parent context.Context, req Request, selected agent.Agent, prompt string) (result Result, err error) {
 	conversationID := req.ConversationID
-	ctx, cancel := context.WithTimeout(parent, c.timeout)
-	if !c.takeTurn(ctx, conversationID, selected.ID, cancel) {
+	turnCtx, cancel := context.WithCancel(parent)
+	if !c.takeTurn(turnCtx, conversationID, selected.ID, cancel, req.Queue) {
 		cancel()
 		if c.skillsUpdating() {
 			return Result{}, UserError{Text: c.text.T(i18n.SkillsUpdating)}
@@ -218,6 +232,10 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
 	defer c.clearActive(conversationID, selected.ID)
+	// The deadline starts now, not at arrival: a queued prompt must not
+	// burn its own running time standing behind the turn it waited for.
+	ctx, expire := context.WithTimeout(turnCtx, c.timeout)
+	defer expire()
 	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
 		return Result{}, context.Canceled
 	}
@@ -563,7 +581,7 @@ const interruptGrace = 20 * time.Second
 // they have already moved on from. Interrupting is what makes steering a
 // running turn possible at all — it is the same gesture as "no, do it this
 // way", and it needs no separate mechanism.
-func (c *Coordinator) takeTurn(ctx context.Context, conversationID, agentID string, cancel context.CancelFunc) bool {
+func (c *Coordinator) takeTurn(ctx context.Context, conversationID, agentID string, cancel context.CancelFunc, queue bool) bool {
 	key := sessionKey(conversationID, agentID)
 	for {
 		c.mu.Lock()
@@ -582,6 +600,17 @@ func (c *Coordinator) takeTurn(ctx context.Context, conversationID, agentID stri
 		c.mu.Unlock()
 		// Wait without the lock: the running turn releases the slot through
 		// clearActive, which needs the same lock to do it.
+		if queue {
+			// A queued follow-up leaves the running turn alone and simply
+			// waits its turn — however long that takes; the running turn's
+			// own deadline is the bound.
+			select {
+			case <-entry.done:
+			case <-ctx.Done():
+				return false
+			}
+			continue
+		}
 		entry.cancel()
 		timer := time.NewTimer(interruptGrace)
 		select {

@@ -275,11 +275,17 @@ func (u *turnUI) finish(result turn.Result, err error) {
 	u.state.Fields = append([]card.Field(nil), result.Fields...)
 	u.state.Answer = text
 	u.state.UpdatedAt = time.Now()
+	// A completed agent turn splits in two: the card freezes as the process
+	// archive and the answer goes out as an ordinary message — quotable,
+	// searchable, previewable in notifications, none of which a card body
+	// is. Command results (a title or fields) stay card-shaped: there the
+	// card is the product, not a console.
+	spoken := status == card.StatusCompleted && result.Title == "" && len(result.Fields) == 0 && text != ""
 	if status == card.StatusFailed {
 		u.state.Error = text
 		u.state.Answer = ""
 		u.state.Fields = nil
-	} else if len(u.state.Fields) > 0 {
+	} else if len(u.state.Fields) > 0 || spoken {
 		u.state.Answer = ""
 	}
 	cardID := u.cardID
@@ -296,6 +302,9 @@ func (u *turnUI) finish(result turn.Result, err error) {
 	u.g.finishTurn(u.turnID, retryable)
 
 	if !fallback && u.patchFinal() {
+		if spoken {
+			u.g.reply(u.msg.MessageID, text)
+		}
 		u.g.unack(u.msg.MessageID, u.reaction)
 		return
 	}

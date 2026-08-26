@@ -28,7 +28,7 @@ func testCopy() Copy {
 	}
 }
 
-func TestRenderReplyHasNoHeader(t *testing.T) {
+func TestRunningReplyCarriesColoredHeader(t *testing.T) {
 	raw := Render(Turn{
 		Status:    StatusRunning,
 		Answer:    "hello <world>",
@@ -47,8 +47,29 @@ func TestRenderReplyHasNoHeader(t *testing.T) {
 	if cfg["update_multi"] != true {
 		t.Fatal("update_multi missing")
 	}
-	if _, ok := payload["header"]; ok {
-		t.Fatalf("a plain reply should carry no header: %s", raw)
+	// The header is the state made scannable: a running card is blue with a
+	// 进行中 tag, readable from the chat list without opening it.
+	header, ok := payload["header"].(map[string]any)
+	if !ok {
+		t.Fatalf("running reply lost its header: %s", raw)
+	}
+	if header["template"] != "blue" {
+		t.Fatalf("running template = %v", header["template"])
+	}
+	if header["title"].(map[string]any)["content"] != "Steve" {
+		t.Fatalf("untitled running card should borrow the product name: %s", raw)
+	}
+	// A finished plain answer is an archive with no state left to announce.
+	done := Render(Turn{
+		Status: StatusCompleted, Answer: "done",
+		StartedAt: time.Unix(0, 0), UpdatedAt: time.Unix(2, 0),
+	}, testCopy())
+	var donePayload map[string]any
+	if err := json.Unmarshal(done, &donePayload); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := donePayload["header"]; ok {
+		t.Fatalf("completed plain answer should drop the header: %s", done)
 	}
 	body := string(raw)
 	if !strings.Contains(body, "⏳") || !strings.Contains(body, "read") {
@@ -77,8 +98,8 @@ func TestRenderFailedHighlightsErrorAndTitledCardKeepsHeader(t *testing.T) {
 	if err := json.Unmarshal(raw, &payload); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := payload["header"]; ok {
-		t.Fatalf("a failed reply should carry no header: %s", raw)
+	if h, ok := payload["header"].(map[string]any); !ok || h["template"] != "red" {
+		t.Fatalf("failed reply should carry a red header: %s", raw)
 	}
 
 	titled := Render(Turn{

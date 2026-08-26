@@ -200,13 +200,21 @@ func build(t Turn, copy Copy) map[string]any {
 	return out
 }
 
-// header is reserved for turns that carry their own title, such as a status
-// report. A plain answer reads better without a banner; its state lives in
-// the footer line.
+// header carries the card's state as colour: a running turn is blue, one
+// waiting on a human is orange, a failed one red — scannable from the chat
+// list without reading a word. A completed plain answer drops the banner,
+// because a finished archive no longer has a state worth announcing; only
+// titled results (status reports) keep their green header.
 func header(t Turn, copy Copy) map[string]any {
 	title := strings.TrimSpace(t.Title)
 	if title == "" {
-		return nil
+		if t.Status == StatusCompleted {
+			return nil
+		}
+		title = copy.Title
+		if title == "" {
+			title = "Steve"
+		}
 	}
 	label, template, tagColor := headerTone(t, copy)
 	h := map[string]any{

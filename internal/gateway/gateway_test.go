@@ -385,18 +385,23 @@ func TestGatewaySendsOneCard(t *testing.T) {
 	g.BindChannel(&recordingCards{events: events})
 	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_message", Text: "hello"})
 
-	got := collectEvents(t, events, 4)
+	got := collectEvents(t, events, 5)
 	if got[0] != "add:om_message:THINKING" {
 		t.Fatalf("ack = %q", got[0])
 	}
 	if got[1] != "card:om_message:running" {
 		t.Fatalf("start = %q", got[1])
 	}
+	// The card freezes as the process archive, then the answer goes out as
+	// an ordinary message — quotable and previewable, which a card is not.
 	if got[2] != "patch:om_card:completed" {
 		t.Fatalf("finish = %q", got[2])
 	}
-	if got[3] != "remove:om_message:rx_1" {
-		t.Fatalf("unack = %q", got[3])
+	if got[3] != "reply:om_message:reply: hello" {
+		t.Fatalf("answer message = %q", got[3])
+	}
+	if got[4] != "remove:om_message:rx_1" {
+		t.Fatalf("unack = %q", got[4])
 	}
 	select {
 	case ev := <-events:
