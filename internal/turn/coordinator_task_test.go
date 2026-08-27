@@ -106,10 +106,10 @@ func TestBudgetStopsTheTaskAndNamesTheLimit(t *testing.T) {
 	t.Fatal("the turn budget never stopped the task")
 }
 
-// A second message replaces the first instead of queueing behind it or being
-// refused. That is what makes steering possible: "no, do it this way" is just
-// the next message.
-func TestNewMessageInterruptsTheRunningTurn(t *testing.T) {
+// A "!"-prefixed message replaces the running turn instead of queueing
+// behind it. Queueing is the default; the bang is the explicit "no, do it
+// this way instead" — and the interrupted turn is still charged.
+func TestBangMessageInterruptsTheRunningTurn(t *testing.T) {
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
 	coordinator, tasks := taskCoordinator(t, runner)
 
@@ -122,7 +122,7 @@ func TestNewMessageInterruptsTheRunningTurn(t *testing.T) {
 
 	second := make(chan error, 1)
 	go func() {
-		_, err := handle(coordinator, t.Context(), "actually do this instead")
+		_, err := handle(coordinator, t.Context(), "! actually do this instead")
 		second <- err
 	}()
 
@@ -147,8 +147,8 @@ func TestNewMessageInterruptsTheRunningTurn(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("interrupting turn never returned")
 	}
-	if got := runner.seen(); len(got) != 2 || got[1] == got[0] {
-		t.Fatalf("agent saw %v, want both prompts", got)
+	if got := runner.seen(); len(got) != 2 || got[1] == got[0] || strings.Contains(got[1], "!") {
+		t.Fatalf("agent saw %v, want both prompts with the bang stripped", got)
 	}
 
 	// Both turns reached the agent, so both are charged. An interrupted turn

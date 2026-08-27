@@ -188,15 +188,27 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 	if switchOnly {
 		return Result{AgentID: selected.ID, Text: c.text.T(i18n.Switched, selected.ID)}, nil
 	}
-	// A leading "+" is the escape hatch from interrupt-by-default: it marks
-	// a follow-up that should run after the current turn, not instead of it.
-	// Without it, "还有件事" and "别做了" would be the same gesture.
+	// Queueing is the default: a new message normally adds work after the
+	// running turn rather than replacing it. A leading "!" is the explicit
+	// interrupt — "stop that, do this instead" — so a correction is one
+	// deliberate gesture instead of the accidental fate of every message.
+	// "+" still queues for muscle memory from when interrupting was the
+	// default; it is now a no-op alias.
 	prompt = strings.TrimSpace(prompt)
-	for _, plus := range []string{"+", "＋"} {
-		if rest, ok := strings.CutPrefix(prompt, plus); ok && strings.TrimSpace(rest) != "" {
-			req.Queue = true
+	req.Queue = true
+	for _, bang := range []string{"!", "！"} {
+		if rest, ok := strings.CutPrefix(prompt, bang); ok && strings.TrimSpace(rest) != "" {
+			req.Queue = false
 			prompt = strings.TrimSpace(rest)
 			break
+		}
+	}
+	if req.Queue {
+		for _, plus := range []string{"+", "＋"} {
+			if rest, ok := strings.CutPrefix(prompt, plus); ok && strings.TrimSpace(rest) != "" {
+				prompt = strings.TrimSpace(rest)
+				break
+			}
 		}
 	}
 	cmd, rest := protocol.ParseCommand(prompt)
@@ -633,14 +645,11 @@ func (c *Coordinator) cancel(ctx context.Context, conversationID string, selecte
 // covers an agent that is slow to notice.
 const interruptGrace = 20 * time.Second
 
-// takeTurn claims the turn slot for a new prompt, interrupting whatever is
-// running instead of refusing it.
-//
-// A new message from the user is a change of intent, not a queued request.
-// Refusing it makes the user say the same thing twice; queueing it runs work
-// they have already moved on from. Interrupting is what makes steering a
-// running turn possible at all — it is the same gesture as "no, do it this
-// way", and it needs no separate mechanism.
+// takeTurn claims the turn slot for a new prompt. By default it waits its
+// turn: most new messages add work, and silently killing a running turn to
+// make room loses real progress. Interrupting stays one gesture away — a
+// "!" prefix (or the card's stop button) cancels the running turn and puts
+// the new instruction in its place, which is what steering needs.
 func (c *Coordinator) takeTurn(ctx context.Context, conversationID, agentID string, cancel context.CancelFunc, queue bool) bool {
 	key := sessionKey(conversationID, agentID)
 	for {

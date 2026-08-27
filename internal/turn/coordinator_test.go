@@ -522,9 +522,10 @@ func handle(c *Coordinator, ctx context.Context, input string) (Result, error) {
 	return c.Handle(ctx, Request{ConversationID: "chat", Input: input})
 }
 
-// "+ 还有件事" waits for the running turn; a bare message replaces it. The
-// prefix is what keeps follow-up and correction from being the same gesture.
-func TestPlusPrefixQueuesInsteadOfInterrupting(t *testing.T) {
+// A bare message waits for the running turn instead of replacing it:
+// queueing is the default, so follow-up needs no prefix and nothing the
+// agent is doing gets killed by accident.
+func TestNewMessageQueuesBehindRunningTurn(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
@@ -540,7 +541,7 @@ func TestPlusPrefixQueuesInsteadOfInterrupting(t *testing.T) {
 
 	second := make(chan error, 1)
 	go func() {
-		_, err := handle(coordinator, t.Context(), "+ 接着做第二件")
+		_, err := handle(coordinator, t.Context(), "接着做第二件")
 		second <- err
 	}()
 
@@ -567,7 +568,70 @@ func TestPlusPrefixQueuesInsteadOfInterrupting(t *testing.T) {
 		t.Fatal("queued turn never ran")
 	}
 	got := runner.seen()
-	if len(got) != 2 || !strings.Contains(got[1], "接着做第二件") || strings.Contains(got[1], "+") {
-		t.Fatalf("agent saw %v, want the second prompt with the prefix stripped", got)
+	if len(got) != 2 || !strings.Contains(got[1], "接着做第二件") {
+		t.Fatalf("agent saw %v, want the second prompt after the first", got)
+	}
+}
+
+// "+" was the queue gesture when interrupting was the default; it stays a
+// harmless alias so muscle memory keeps working, and the prefix never
+// reaches the agent.
+func TestPlusPrefixStillQueuesAndStrips(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	runner := &fakeRunner{}
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
+	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	if _, err := handle(coordinator, t.Context(), "+ 后续任务"); err != nil {
+		t.Fatal(err)
+	}
+	got := runner.seen()
+	if len(got) != 1 || strings.Contains(got[0], "+") || !strings.Contains(got[0], "后续任务") {
+		t.Fatalf("agent saw %v, want the prompt with the alias stripped", got)
+	}
+}
+
+// Chinese keyboards produce the fullwidth "！"; it interrupts exactly like
+// the halfwidth bang.
+func TestFullwidthBangInterrupts(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
+	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+
+	first := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "long running")
+		first <- err
+	}()
+	<-runner.started
+
+	second := make(chan error, 1)
+	go func() {
+		_, err := handle(coordinator, t.Context(), "！改做这个")
+		second <- err
+	}()
+
+	select {
+	case err := <-first:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("interrupted turn ended with %v, want context.Canceled", err)
+		}
+	case <-time.After(waitDeadline):
+		t.Fatal("interrupted turn never returned")
+	}
+	close(runner.done)
+	select {
+	case err := <-second:
+		if err != nil {
+			t.Fatalf("interrupting turn failed: %v", err)
+		}
+	case <-time.After(waitDeadline):
+		t.Fatal("interrupting turn never returned")
+	}
+	got := runner.seen()
+	if len(got) != 2 || !strings.Contains(got[1], "改做这个") || strings.Contains(got[1], "！") {
+		t.Fatalf("agent saw %v, want the second prompt with the bang stripped", got)
 	}
 }
