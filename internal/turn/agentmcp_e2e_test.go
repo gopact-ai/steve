@@ -20,6 +20,7 @@ import (
 type e2eSender struct {
 	mu      sync.Mutex
 	cards   []string // anchor:id:payload
+	patches []string // id:payload
 	deleted []string
 	next    int
 }
@@ -35,6 +36,13 @@ func (f *e2eSender) ReplyCard(_ context.Context, messageID string, payload []byt
 
 func (f *e2eSender) ReplyText(context.Context, string, string) (string, error) {
 	return "", fmt.Errorf("unexpected text send")
+}
+
+func (f *e2eSender) PatchCard(_ context.Context, messageID string, payload []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.patches = append(f.patches, messageID+":"+string(payload))
+	return nil
 }
 
 func (f *e2eSender) DeleteMessage(_ context.Context, messageID string) error {
@@ -104,7 +112,6 @@ func TestAgentSendPrimitiveE2E(t *testing.T) {
 		t.Fatalf("mcp flow did not complete: %q", result.Text)
 	}
 	sender.mu.Lock()
-	defer sender.mu.Unlock()
 	if len(sender.cards) != 1 || !strings.HasPrefix(sender.cards[0], "om_user_1:") {
 		t.Fatalf("milestone card not delivered to the turn anchor: %v", sender.cards)
 	}
@@ -114,7 +121,26 @@ func TestAgentSendPrimitiveE2E(t *testing.T) {
 	if len(sender.deleted) != 1 || sender.deleted[0] != "om_sent_1" {
 		t.Fatalf("recall did not delete the sent card: %v", sender.deleted)
 	}
+	sender.mu.Unlock()
 	if token := store.Conversation("chat").Sessions["mock"].AgentToken; token == "" {
 		t.Fatal("no token persisted for the session")
+	}
+
+	// Second turn: the evolving progress card — one send, two updates.
+	gate.Anchor("chat", "oc_chat", "om_user_2")
+	result, err = handle(coordinator, context.Background(), "mcpupdate now")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Text, "updated_twice=true") {
+		t.Fatalf("update flow did not complete: %q", result.Text)
+	}
+	sender.mu.Lock()
+	defer sender.mu.Unlock()
+	if len(sender.patches) != 2 || !strings.Contains(sender.patches[1], "progress v3 final") {
+		t.Fatalf("card did not evolve in place: %v", sender.patches)
+	}
+	if !strings.HasPrefix(sender.patches[0], "om_sent_2:") || !strings.HasPrefix(sender.patches[1], "om_sent_2:") {
+		t.Fatalf("updates hit the wrong message: %v", sender.patches)
 	}
 }

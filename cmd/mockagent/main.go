@@ -206,6 +206,16 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		}
 	}
 
+	// "mcpupdate" sends one milestone card and evolves it twice with
+	// feishu_update, the one-evolving-card shape the instructions steer
+	// agents toward. Results are echoed for the wire test.
+	if strings.Contains(input, "mcpupdate") {
+		note := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(a.mcpUpdate(req.SessionID) + " "))
+		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
+			return nil, err
+		}
+	}
+
 	// "mcpfull" exercises the gateway's built-in messaging MCP server the
 	// way a real agent would: handshake, send a milestone, watch a mention
 	// get refused, recall the milestone. The outcome is echoed so a wire
@@ -324,6 +334,36 @@ func (a *agent) mcpFull(sessionID acp.SessionID) string {
 		return fmt.Sprintf("[mcp: recall failed err=%v text=%s]", err, recalled)
 	}
 	return fmt.Sprintf("[mcp: sent=%s mention_rejected=%v recalled_ok=true]", id, mentionRejected)
+}
+
+func (a *agent) mcpUpdate(sessionID acp.SessionID) string {
+	raw, ok := a.mcp.Load(string(sessionID))
+	if !ok {
+		return "[mcp: no server config]"
+	}
+	servers, _ := raw.([]acp.MCPServer)
+	var target *acp.MCPServer
+	for i := range servers {
+		if servers[i].Name == "feishu" && servers[i].Type == acp.MCPServerTypeHTTP {
+			target = &servers[i]
+			break
+		}
+	}
+	if target == nil {
+		return "[mcp: no feishu server]"
+	}
+	sent, isError, err := a.mcpTool(target, "feishu_send", map[string]any{"content": "progress v1"})
+	if err != nil || isError {
+		return fmt.Sprintf("[mcp: send failed err=%v text=%s]", err, sent)
+	}
+	id := strings.TrimPrefix(sent, "sent message_id=")
+	for _, body := range []string{"progress v2", "progress v3 final"} {
+		out, isError, err := a.mcpTool(target, "feishu_update", map[string]any{"message_id": id, "content": body})
+		if err != nil || isError {
+			return fmt.Sprintf("[mcp: update failed err=%v text=%s]", err, out)
+		}
+	}
+	return fmt.Sprintf("[mcp: card=%s updated_twice=true]", id)
 }
 
 func (a *agent) mcpTool(server *acp.MCPServer, name string, args map[string]any) (string, bool, error) {

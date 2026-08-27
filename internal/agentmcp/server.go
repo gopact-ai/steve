@@ -30,18 +30,22 @@ const ServerName = "feishu"
 
 const (
 	maxSendsPerTurn = 8
-	maxBodyBytes    = 1 << 20
-	sendTimeout     = 15 * time.Second
-	latestProtocol  = "2025-06-18"
+	// Updates are edits to existing cards, cheaper than sends, but a
+	// runaway narrator patching in a loop would hit Feishu's rate limits.
+	maxUpdatesPerTurn = 30
+	maxBodyBytes      = 1 << 20
+	sendTimeout       = 15 * time.Second
+	latestProtocol    = "2025-06-18"
 )
 
 // Instructions teaches the agent when to reach for the tools. It is injected
 // once per session alongside the rest of the capability instructions, and it
 // is part of the capability fingerprint, so keep it stable.
-const Instructions = `## Feishu messaging (feishu_send / feishu_recall)
-The "feishu" MCP server posts messages into the current Feishu conversation while you work.
-- feishu_send is for interim milestones only: a phase conclusion, a produced artifact, a decision worth surfacing early. Most turns need zero interim messages; never narrate step by step.
-- Your final answer is delivered automatically by the platform when the turn ends. Do NOT send it with feishu_send, and do not duplicate it there.
+const Instructions = `## Feishu messaging (feishu_send / feishu_update / feishu_recall)
+The "feishu" MCP server posts and maintains interim messages in the current Feishu conversation while you work.
+- feishu_send posts a milestone: a phase conclusion, a produced artifact, a decision worth surfacing early. Most turns need zero interim messages; never narrate step by step.
+- Prefer ONE evolving progress card per task: feishu_update(message_id, content) rewrites a markdown card you sent earlier this turn. Update it as phases complete instead of sending a new card each time.
+- Your final answer is delivered automatically by the platform when the turn ends. Do NOT send it with these tools, and do not duplicate it there.
 - Do not @-mention anyone. Mentions are reserved for the platform's own final answer card.
 - feishu_recall deletes a message you sent earlier in this same turn (pass its message_id) if it turned out wrong or obsolete.`
 
@@ -51,6 +55,7 @@ The "feishu" MCP server posts messages into the current Feishu conversation whil
 type Sender interface {
 	ReplyCard(ctx context.Context, messageID string, payload []byte) (string, error)
 	ReplyText(ctx context.Context, messageID, text string) (string, error)
+	PatchCard(ctx context.Context, messageID string, payload []byte) error
 	DeleteMessage(ctx context.Context, messageID string) error
 }
 
@@ -73,8 +78,11 @@ type anchor struct {
 // conversation. A stale epoch means a new turn started; the slate is wiped.
 type sentState struct {
 	epoch uint64
-	ids   map[string]bool
-	count int
+	// ids maps each message this agent sent this turn to its format;
+	// updates only apply to markdown cards, recall applies to all.
+	ids     map[string]string
+	count   int
+	updates int
 }
 
 type Server struct {
@@ -303,6 +311,25 @@ func toolList() []map[string]any {
 			},
 		},
 		{
+			"name": "feishu_update",
+			"description": "Rewrite a markdown card this agent sent earlier in the current turn via feishu_send. " +
+				"Prefer one evolving progress card over many separate sends.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"message_id": map[string]any{
+						"type":        "string",
+						"description": "The message_id returned by feishu_send.",
+					},
+					"content": map[string]any{
+						"type":        "string",
+						"description": "The full replacement markdown body.",
+					},
+				},
+				"required": []string{"message_id", "content"},
+			},
+		},
+		{
 			"name":        "feishu_recall",
 			"description": "Recall (delete) a message this agent sent earlier in the current turn via feishu_send.",
 			"inputSchema": map[string]any{
@@ -332,6 +359,8 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 	switch call.Name {
 	case "feishu_send":
 		out, err = s.send(ctx, bind, call.Arguments)
+	case "feishu_update":
+		out, err = s.update(ctx, bind, call.Arguments)
 	case "feishu_recall":
 		out, err = s.recall(ctx, bind, call.Arguments)
 	default:
@@ -387,8 +416,9 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 	}
 	if st.epoch != a.epoch {
 		st.epoch = a.epoch
-		st.ids = map[string]bool{}
+		st.ids = map[string]string{}
 		st.count = 0
+		st.updates = 0
 	}
 	if st.count >= maxSendsPerTurn {
 		s.mu.Unlock()
@@ -401,11 +431,15 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 	epoch := a.epoch
 	s.mu.Unlock()
 
+	format := args.Format
+	if format == "" {
+		format = "markdown"
+	}
 	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
 	var id string
 	var err error
-	if args.Format == "text" {
+	if format == "text" {
 		id, err = sender.ReplyText(callCtx, anchorID, content)
 	} else {
 		id, err = sender.ReplyCard(callCtx, anchorID, milestoneCard(content, bind.agentID))
@@ -419,9 +453,54 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 		return "", fmt.Errorf("send failed: %v", err)
 	}
 	if st.epoch == epoch && id != "" {
-		st.ids[id] = true
+		st.ids[id] = format
 	}
 	return "sent message_id=" + id, nil
+}
+
+// update rewrites a markdown card this agent sent earlier in the current
+// turn — one evolving progress card instead of a stream of new ones.
+func (s *Server) update(ctx context.Context, bind binding, rawArgs json.RawMessage) (string, error) {
+	var args struct {
+		MessageID string `json:"message_id"`
+		Content   string `json:"content"`
+	}
+	if err := json.Unmarshal(rawArgs, &args); err != nil || strings.TrimSpace(args.MessageID) == "" {
+		return "", errors.New("message_id and content are required")
+	}
+	content := truncateRunes(stripMentions(args.Content), maxContentRunes)
+	if strings.TrimSpace(content) == "" {
+		return "", errors.New("content is required")
+	}
+	s.mu.Lock()
+	sender := s.sender
+	a := s.anchors[bind.conversationID]
+	st := s.sent[bind]
+	format := ""
+	owned := false
+	if sender != nil && a != nil && st != nil && st.epoch == a.epoch {
+		format, owned = st.ids[args.MessageID]
+	}
+	if !owned {
+		s.mu.Unlock()
+		return "", errors.New("can only update a message this agent sent in the current turn")
+	}
+	if format != "markdown" {
+		s.mu.Unlock()
+		return "", errors.New("only markdown cards can be updated; recall and resend a text message instead")
+	}
+	if st.updates >= maxUpdatesPerTurn {
+		s.mu.Unlock()
+		return "", fmt.Errorf("update limit reached (%d per turn)", maxUpdatesPerTurn)
+	}
+	st.updates++
+	s.mu.Unlock()
+	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
+	defer cancel()
+	if err := sender.PatchCard(callCtx, args.MessageID, milestoneCard(content, bind.agentID)); err != nil {
+		return "", fmt.Errorf("update failed: %v", err)
+	}
+	return "updated " + args.MessageID, nil
 }
 
 func (s *Server) recall(ctx context.Context, bind binding, rawArgs json.RawMessage) (string, error) {
@@ -435,7 +514,10 @@ func (s *Server) recall(ctx context.Context, bind binding, rawArgs json.RawMessa
 	sender := s.sender
 	a := s.anchors[bind.conversationID]
 	st := s.sent[bind]
-	owned := sender != nil && a != nil && st != nil && st.epoch == a.epoch && st.ids[args.MessageID]
+	owned := false
+	if sender != nil && a != nil && st != nil && st.epoch == a.epoch {
+		_, owned = st.ids[args.MessageID]
+	}
 	s.mu.Unlock()
 	if !owned {
 		return "", errors.New("can only recall a message this agent sent in the current turn")

@@ -15,6 +15,7 @@ type fakeSender struct {
 	mu      sync.Mutex
 	cards   []string // "anchorID:payload"
 	texts   []string // "anchorID:text"
+	patches []string // "messageID:payload"
 	deleted []string
 	fail    bool
 	next    int
@@ -43,6 +44,16 @@ func (f *fakeSender) ReplyText(_ context.Context, messageID, text string) (strin
 	}
 	f.texts = append(f.texts, messageID+":"+text)
 	return f.id(), nil
+}
+
+func (f *fakeSender) PatchCard(_ context.Context, messageID string, payload []byte) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.fail {
+		return fmt.Errorf("boom")
+	}
+	f.patches = append(f.patches, messageID+":"+string(payload))
+	return nil
 }
 
 func (f *fakeSender) DeleteMessage(_ context.Context, messageID string) error {
@@ -370,5 +381,49 @@ func TestPreferredPortReusedAcrossRestarts(t *testing.T) {
 	}
 	if third.Port() == port {
 		t.Fatalf("two servers on one port")
+	}
+}
+
+func TestUpdateRewritesOwnMilestoneCard(t *testing.T) {
+	s, sender := startServer(t)
+	register(s, "oc_a", "codex", "tok-a", "om_a")
+	text, _ := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "v1"})
+	id := strings.TrimPrefix(text, "sent message_id=")
+	out, isError := callTool(t, s.URL(), "tok-a", "feishu_update", map[string]any{"message_id": id, "content": "## v2 进度"})
+	if isError || !strings.Contains(out, "updated "+id) {
+		t.Fatalf("update failed: %q", out)
+	}
+	if len(sender.patches) != 1 || !strings.HasPrefix(sender.patches[0], id+":") || !strings.Contains(sender.patches[0], "v2 进度") {
+		t.Fatalf("patch wrong: %v", sender.patches)
+	}
+	// An updated card can still be recalled.
+	if out, isError = callTool(t, s.URL(), "tok-a", "feishu_recall", map[string]any{"message_id": id}); isError {
+		t.Fatalf("recall after update failed: %q", out)
+	}
+}
+
+func TestUpdateRejectsTextAndForeignAndStale(t *testing.T) {
+	s, sender := startServer(t)
+	register(s, "oc_a", "codex", "tok-a", "om_a")
+	register(s, "oc_b", "codex", "tok-b", "om_b")
+	// Text messages cannot become cards.
+	text, _ := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "plain", "format": "text"})
+	textID := strings.TrimPrefix(text, "sent message_id=")
+	if out, isError := callTool(t, s.URL(), "tok-a", "feishu_update", map[string]any{"message_id": textID, "content": "x"}); !isError || !strings.Contains(out, "markdown") {
+		t.Fatalf("text update not refused: %q", out)
+	}
+	// Another conversation's agent cannot update it either.
+	card, _ := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "card"})
+	cardID := strings.TrimPrefix(card, "sent message_id=")
+	if out, isError := callTool(t, s.URL(), "tok-b", "feishu_update", map[string]any{"message_id": cardID, "content": "x"}); !isError || !strings.Contains(out, "current turn") {
+		t.Fatalf("foreign update not refused: %q", out)
+	}
+	// A new turn ends updatability.
+	s.Anchor("oc_a", "oc_a", "om_a2")
+	if out, isError := callTool(t, s.URL(), "tok-a", "feishu_update", map[string]any{"message_id": cardID, "content": "x"}); !isError || !strings.Contains(out, "current turn") {
+		t.Fatalf("stale update not refused: %q", out)
+	}
+	if len(sender.patches) != 0 {
+		t.Fatalf("refused updates still patched: %v", sender.patches)
 	}
 }
