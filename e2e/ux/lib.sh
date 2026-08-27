@@ -1,8 +1,18 @@
 #!/usr/bin/env bash
 # Shared helpers for real-Feishu UX scenarios. Sourced, not executed.
 set -u
-CHAT="${STEVE_UX_CHAT:-oc_70ccf0fa8750c6fcdc343b394cf76ae8}"
-BOT="${STEVE_UX_BOT:-ou_c831d01122062d06c7511278da1063dd}"
+# Personal identifiers stay out of the repo: they live in e2e/ux/.env
+# (gitignored). Copy .env.example and fill in your own chat and bot.
+_here="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -f "$_here/.env" ]; then
+  . "$_here/.env"
+fi
+CHAT="${STEVE_UX_CHAT:-}"
+BOT="${STEVE_UX_BOT:-}"
+if [ -z "$CHAT" ] || [ -z "$BOT" ]; then
+  echo "e2e/ux: STEVE_UX_CHAT and STEVE_UX_BOT are required (copy e2e/ux/.env.example to e2e/ux/.env)" >&2
+  exit 1
+fi
 AT="<at user_id=\"$BOT\"></at>"
 
 send() { # send <text> -> message_id
