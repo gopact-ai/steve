@@ -13,15 +13,19 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log"
+	"net/http"
 	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/gopact-ai/acp"
 )
@@ -31,6 +35,9 @@ type agent struct {
 	counter   atomic.Int64
 	deleted   atomic.Value
 	canceling sync.Map
+	// mcp remembers each session's MCP server config, the way a real agent
+	// holds on to it to connect.
+	mcp sync.Map
 }
 
 func (a *agent) Initialize(_ context.Context, _ *acp.InitializeRequest) (*acp.InitializeResponse, error) {
@@ -38,7 +45,8 @@ func (a *agent) Initialize(_ context.Context, _ *acp.InitializeRequest) (*acp.In
 		ProtocolVersion: acp.ProtocolVersionV1,
 		AgentInfo:       &acp.Implementation{Name: "mockagent", Version: "0.1.0"},
 		AgentCapabilities: &acp.AgentCapabilities{
-			LoadSession: true,
+			LoadSession:     true,
+			MCPCapabilities: &acp.MCPCapabilities{HTTP: true},
 			SessionCapabilities: &acp.SessionCapabilities{
 				List:   &acp.SessionListCapabilities{},
 				Delete: &acp.SessionDeleteCapabilities{},
@@ -74,15 +82,17 @@ func modeOption(current string) acp.SessionConfigOption {
 	}
 }
 
-func (a *agent) NewSession(_ context.Context, _ *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
+func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.NewSessionResponse, error) {
 	id := acp.SessionID(fmt.Sprintf("mock-session-%d", a.counter.Add(1)))
+	a.mcp.Store(string(id), req.MCPServers)
 	return &acp.NewSessionResponse{
 		SessionID:     id,
 		ConfigOptions: &[]acp.SessionConfigOption{modeOption("agent"), modelOption("mock-fast")},
 	}, nil
 }
 
-func (a *agent) LoadSession(_ context.Context, _ *acp.LoadSessionRequest) (*acp.LoadSessionResponse, error) {
+func (a *agent) LoadSession(_ context.Context, req *acp.LoadSessionRequest) (*acp.LoadSessionResponse, error) {
+	a.mcp.Store(string(req.SessionID), req.MCPServers)
 	return &acp.LoadSessionResponse{}, nil
 }
 
@@ -163,6 +173,17 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		}
 	}
 
+	// "mcpfull" exercises the gateway's built-in messaging MCP server the
+	// way a real agent would: handshake, send a milestone, watch a mention
+	// get refused, recall the milestone. The outcome is echoed so a wire
+	// test can assert on it.
+	if strings.Contains(input, "mcpfull") {
+		note := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(a.mcpFull(req.SessionID) + " "))
+		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
+			return nil, err
+		}
+	}
+
 	if strings.Contains(input, "plan") {
 		steps := []acp.PlanEntry{
 			{Content: "look around", Priority: acp.PlanEntryPriorityHigh, Status: acp.PlanEntryStatusCompleted},
@@ -228,6 +249,105 @@ func (a *agent) Cancel(_ context.Context, n *acp.CancelNotification) error {
 		a.canceling.Delete(string(n.SessionID))
 	}
 	return nil
+}
+
+// mcpFull runs the send/deny/recall sequence against the session's "feishu"
+// HTTP MCP server and reports what happened in one bracketed line.
+func (a *agent) mcpFull(sessionID acp.SessionID) string {
+	raw, ok := a.mcp.Load(string(sessionID))
+	if !ok {
+		return "[mcp: no server config]"
+	}
+	servers, _ := raw.([]acp.MCPServer)
+	var target *acp.MCPServer
+	for i := range servers {
+		if servers[i].Name == "feishu" && servers[i].Type == acp.MCPServerTypeHTTP {
+			target = &servers[i]
+			break
+		}
+	}
+	if target == nil {
+		return "[mcp: no feishu server]"
+	}
+	if _, _, err := a.mcpRPC(target, "initialize", map[string]any{
+		"protocolVersion": "2025-06-18",
+		"capabilities":    map[string]any{},
+		"clientInfo":      map[string]any{"name": "mockagent", "version": "0.1.0"},
+	}); err != nil {
+		return "[mcp: initialize failed: " + err.Error() + "]"
+	}
+	sent, isError, err := a.mcpTool(target, "feishu_send", map[string]any{"content": "## milestone\nphase one done"})
+	if err != nil || isError {
+		return fmt.Sprintf("[mcp: send failed err=%v text=%s]", err, sent)
+	}
+	id := strings.TrimPrefix(sent, "sent message_id=")
+	mention, mentionRejected, err := a.mcpTool(target, "feishu_send", map[string]any{"content": "hi", "mention": true})
+	if err != nil {
+		return "[mcp: mention call failed: " + err.Error() + "]"
+	}
+	_ = mention
+	recalled, recallErr, err := a.mcpTool(target, "feishu_recall", map[string]any{"message_id": id})
+	if err != nil || recallErr {
+		return fmt.Sprintf("[mcp: recall failed err=%v text=%s]", err, recalled)
+	}
+	return fmt.Sprintf("[mcp: sent=%s mention_rejected=%v recalled_ok=true]", id, mentionRejected)
+}
+
+func (a *agent) mcpTool(server *acp.MCPServer, name string, args map[string]any) (string, bool, error) {
+	result, _, err := a.mcpRPC(server, "tools/call", map[string]any{"name": name, "arguments": args})
+	if err != nil {
+		return "", false, err
+	}
+	isError, _ := result["isError"].(bool)
+	text := ""
+	if content, ok := result["content"].([]any); ok && len(content) > 0 {
+		if first, ok := content[0].(map[string]any); ok {
+			text, _ = first["text"].(string)
+		}
+	}
+	return text, isError, nil
+}
+
+func (a *agent) mcpRPC(server *acp.MCPServer, method string, params map[string]any) (map[string]any, int, error) {
+	payload, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": 1, "method": method, "params": params})
+	if err != nil {
+		return nil, 0, err
+	}
+	req, err := http.NewRequest(http.MethodPost, server.URL, bytes.NewReader(payload))
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	for _, header := range server.Headers {
+		req.Header.Set(header.Name, header.Value)
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, resp.StatusCode, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var envelope struct {
+		Result map[string]any `json:"result"`
+		Error  *struct {
+			Code    int    `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		return nil, resp.StatusCode, err
+	}
+	if envelope.Error != nil {
+		return nil, resp.StatusCode, fmt.Errorf("rpc %d: %s", envelope.Error.Code, envelope.Error.Message)
+	}
+	return envelope.Result, resp.StatusCode, nil
 }
 
 func ptr[T any](v T) *T { return &v }

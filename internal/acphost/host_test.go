@@ -30,14 +30,30 @@ func buildMockAgent(t *testing.T) string {
 
 func TestOpenSessionRejectsUnsupportedMCPTransport(t *testing.T) {
 	h := newTestHost(t, "deny")
+	// mockagent advertises HTTP but not SSE, so SSE is the transport that
+	// must be refused before the session reaches the agent.
 	_, _, err := h.OpenSession(t.Context(), "", SessionConfig{
+		Workdir: t.TempDir(),
+		MCPServers: []acp.MCPServer{
+			acp.SSEMCPServer("remote", "https://example.com/mcp", nil),
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "SSE MCP") {
+		t.Fatalf("expected unsupported SSE MCP error, got %v", err)
+	}
+	// The advertised transport passes validation; the agent receives the
+	// config and the session opens.
+	if _, _, err := h.OpenSession(t.Context(), "", SessionConfig{
 		Workdir: t.TempDir(),
 		MCPServers: []acp.MCPServer{
 			acp.HTTPMCPServer("remote", "https://example.com/mcp", nil),
 		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "HTTP MCP") {
-		t.Fatalf("expected unsupported HTTP MCP error, got %v", err)
+	}); err != nil {
+		t.Fatalf("advertised HTTP MCP transport was refused: %v", err)
+	}
+	supported, err := h.SupportsHTTPMCP(t.Context())
+	if err != nil || !supported {
+		t.Fatalf("SupportsHTTPMCP = %v, %v", supported, err)
 	}
 }
 
