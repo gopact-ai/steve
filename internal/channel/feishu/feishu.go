@@ -134,6 +134,11 @@ func New(ctx context.Context, opts Options, handler Handler) (*Channel, error) {
 		OnP2MessageReactionDeletedV1(func(context.Context, *larkim.P2MessageReactionDeletedV1) error {
 			return nil
 		}).
+		OnP2MessageReadV1(func(context.Context, *larkim.P2MessageReadV1) error {
+			// Read receipts arrive for every message the bot sends; nothing
+			// to do, and unhandled they log an error each.
+			return nil
+		}).
 		OnP2CardActionTrigger(func(_ context.Context, event *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
 			if opts.OnCardAction == nil {
 				return &callback.CardActionTriggerResponse{}, nil
