@@ -60,7 +60,22 @@ func (a *Assembler) Assemble(selected agent.Agent) (Capabilities, error) {
 	return a.AssembleMode(selected, home.ModeNone)
 }
 
+// Extra is a capability injected for one session on top of the agent's
+// configured set — e.g. the built-in Feishu messaging MCP server with its
+// per-session credentials. Instructions join the identity text and both feed
+// the fingerprint, so a session keeps a stable hash only while its extras
+// stay stable.
+type Extra struct {
+	Name         string
+	Server       MCPServer
+	Instructions string
+}
+
 func (a *Assembler) AssembleMode(selected agent.Agent, mode home.Mode) (Capabilities, error) {
+	return a.AssembleExtra(selected, mode, nil)
+}
+
+func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras []Extra) (Capabilities, error) {
 	var snap home.Snapshot
 	if a.home != nil && mode != home.ModeNone {
 		var err error
@@ -83,6 +98,11 @@ func (a *Assembler) AssembleMode(selected agent.Agent, mode home.Mode) (Capabili
 		}
 		parts = append(parts, string(data))
 	}
+	for _, extra := range extras {
+		if strings.TrimSpace(extra.Instructions) != "" {
+			parts = append(parts, extra.Instructions)
+		}
+	}
 	identity := strings.Join(parts, "\n\n")
 	instructions := identity
 	if snap.Memory != "" {
@@ -99,6 +119,13 @@ func (a *Assembler) AssembleMode(selected agent.Agent, mode home.Mode) (Capabili
 			return Capabilities{}, fmt.Errorf("unknown MCP server %q", name)
 		}
 		server, err := makeMCPServer(name, cfg)
+		if err != nil {
+			return Capabilities{}, err
+		}
+		servers = append(servers, server)
+	}
+	for _, extra := range extras {
+		server, err := makeMCPServer(extra.Name, extra.Server)
 		if err != nil {
 			return Capabilities{}, err
 		}

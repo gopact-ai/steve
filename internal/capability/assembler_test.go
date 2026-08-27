@@ -162,3 +162,52 @@ func TestAssemblerRejectsInvalidMCPServer(t *testing.T) {
 		})
 	}
 }
+
+func TestAssembleExtraInjectsServerAndInstructions(t *testing.T) {
+	assembler := NewAssembler(nil)
+	agentCfg := agent.Agent{ID: "codex", Config: agent.Config{SystemPrompt: "base"}}
+	extra := Extra{
+		Name: "feishu",
+		Server: MCPServer{
+			Type: "http", URL: "http://127.0.0.1:1/mcp",
+			Headers: map[string]string{"Authorization": "Bearer tok-1"},
+		},
+		Instructions: "send milestones sparingly",
+	}
+	plain, err := assembler.Assemble(agentCfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := assembler.AssembleExtra(agentCfg, home.ModeNone, []Extra{extra})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.MCPServers) != 1 || first.MCPServers[0].Name != "feishu" || first.MCPServers[0].URL != extra.Server.URL {
+		t.Fatalf("extra server not injected: %#v", first.MCPServers)
+	}
+	if len(first.MCPServers[0].Headers) != 1 || first.MCPServers[0].Headers[0].Value != "Bearer tok-1" {
+		t.Fatalf("extra headers not injected: %#v", first.MCPServers[0].Headers)
+	}
+	if !strings.Contains(first.Instructions, "send milestones sparingly") || !strings.Contains(first.Instructions, "base") {
+		t.Fatalf("extra instructions not injected: %q", first.Instructions)
+	}
+	if first.Fingerprint == plain.Fingerprint {
+		t.Fatal("extras did not change the fingerprint")
+	}
+	second, err := assembler.AssembleExtra(agentCfg, home.ModeNone, []Extra{extra})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Fingerprint != first.Fingerprint {
+		t.Fatal("same extras produced a drifting fingerprint")
+	}
+	rotated := extra
+	rotated.Server.Headers = map[string]string{"Authorization": "Bearer tok-2"}
+	third, err := assembler.AssembleExtra(agentCfg, home.ModeNone, []Extra{rotated})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Fingerprint == first.Fingerprint {
+		t.Fatal("token rotation did not change the fingerprint")
+	}
+}
