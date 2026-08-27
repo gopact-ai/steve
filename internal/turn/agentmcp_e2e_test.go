@@ -54,9 +54,9 @@ func (f *e2eSender) DeleteMessage(_ context.Context, messageID string) error {
 
 // TestAgentSendPrimitiveE2E drives the whole wire: coordinator → ACP host →
 // mockagent subprocess → HTTP MCP call back into the gateway's messaging
-// server → (fake) Feishu channel. It pins the shape botmux got by trusting
-// the model: here delivery of milestones is a tool, the final answer stays
-// with the platform.
+// server → (fake) Feishu channel. It pins the core guarantee: milestone
+// delivery is a tool the agent may use, while the final answer's delivery
+// stays with the platform.
 func TestAgentSendPrimitiveE2E(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "mockagent")
 	cmd := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")

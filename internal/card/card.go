@@ -986,7 +986,7 @@ func footerText(t Turn, copy Copy) string {
 	return strings.Join(append(settingsText(t), label), " · ")
 }
 
-// footerLine appends the botmux-style address tag: 发送给 <at>. The mention
+// footerLine appends the address tag: 发送给 <at>. The mention
 // is real, not decoration — it notifies the asker when the answer lands, and
 // it is the routing primitive agent-to-agent collaboration will ride on.
 func footerLine(t Turn, copy Copy) string {

@@ -265,8 +265,7 @@ func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reade
 	// The owner binds last: whoever it names gets the owner home, and the
 	// next steve run opens the home chat with them. The flag wins outright;
 	// otherwise auto-resolution only suggests, and the person confirms or
-	// replaces the value themselves — botmux-style, their id is theirs to
-	// fill in.
+	// replaces the value themselves: their id is theirs to fill in.
 	owner := firstNonEmpty(flags.OwnerOpenID, scannedOpenID, cached.OwnerOpenID)
 	if owner == "" && flags.OwnerOpenID == "" {
 		resolved, ownerErr := opts.Owner(ctx, appID, secret, domain)
