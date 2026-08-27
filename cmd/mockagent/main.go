@@ -352,13 +352,17 @@ func (a *agent) mcpUpdate(sessionID acp.SessionID) string {
 	if target == nil {
 		return "[mcp: no feishu server]"
 	}
-	sent, isError, err := a.mcpTool(target, "feishu_send", map[string]any{"content": "progress v1"})
+	sent, isError, err := a.mcpTool(target, "feishu_send", map[string]any{"content": "progress v1", "progress": "1/2"})
 	if err != nil || isError {
 		return fmt.Sprintf("[mcp: send failed err=%v text=%s]", err, sent)
 	}
 	id := strings.TrimPrefix(sent, "sent message_id=")
-	for _, body := range []string{"progress v2", "progress v3 final"} {
-		out, isError, err := a.mcpTool(target, "feishu_update", map[string]any{"message_id": id, "content": body})
+	steps := []map[string]any{
+		{"message_id": id, "content": "progress v2"},
+		{"message_id": id, "content": "progress v3 final", "progress": "2/2"},
+	}
+	for _, step := range steps {
+		out, isError, err := a.mcpTool(target, "feishu_update", step)
 		if err != nil || isError {
 			return fmt.Sprintf("[mcp: update failed err=%v text=%s]", err, out)
 		}

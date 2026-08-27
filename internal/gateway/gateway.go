@@ -65,6 +65,14 @@ type processor interface {
 // should attach, and starts a fresh recall epoch.
 type agentAnchor interface {
 	Anchor(conversationID, chatID, messageID string)
+	// SetStyle hands the messaging server the turn's card tail ("codex ·
+	// GPT 5.6 Sol · Agent") so interim cards read as the same family as
+	// the final card.
+	SetStyle(conversationID, style string)
+	// Interim reports whether agent-sent cards landed in the conversation
+	// this turn — if so the final answer must be posted below them, not
+	// patched into the opening card above them.
+	Interim(conversationID string) bool
 }
 
 const thinkingEmoji = "THINKING"

@@ -427,3 +427,48 @@ func TestUpdateRejectsTextAndForeignAndStale(t *testing.T) {
 		t.Fatalf("refused updates still patched: %v", sender.patches)
 	}
 }
+
+func TestMilestoneTailStyleAndProgress(t *testing.T) {
+	s, sender := startServer(t)
+	register(s, "oc_a", "codex", "tok-a", "om_a")
+	// Before the platform reports its identity line, the agent id is the tail.
+	callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "m1"})
+	if !strings.Contains(sender.cards[0], "codex · 里程碑 1") {
+		t.Fatalf("auto-numbered tail missing: %v", sender.cards[0])
+	}
+	s.SetStyle("oc_a", "codex · GPT X · Agent")
+	text, _ := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "m2", "progress": "2/3"})
+	id := strings.TrimPrefix(text, "sent message_id=")
+	if !strings.Contains(sender.cards[1], "codex · GPT X · Agent · 里程碑 2/3") {
+		t.Fatalf("styled progress tail missing: %v", sender.cards[1])
+	}
+	// An update without progress keeps the card's own badge; with progress
+	// it advances.
+	callTool(t, s.URL(), "tok-a", "feishu_update", map[string]any{"message_id": id, "content": "m2b"})
+	if !strings.Contains(sender.patches[0], "里程碑 2/3") {
+		t.Fatalf("update lost the badge: %v", sender.patches[0])
+	}
+	callTool(t, s.URL(), "tok-a", "feishu_update", map[string]any{"message_id": id, "content": "m2c", "progress": "3/3"})
+	if !strings.Contains(sender.patches[1], "里程碑 3/3") {
+		t.Fatalf("update did not advance the badge: %v", sender.patches[1])
+	}
+}
+
+func TestInterimTracksCurrentEpoch(t *testing.T) {
+	s, _ := startServer(t)
+	register(s, "oc_a", "codex", "tok-a", "om_a")
+	if s.Interim("oc_a") {
+		t.Fatal("interim before any send")
+	}
+	callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "m"})
+	if !s.Interim("oc_a") {
+		t.Fatal("interim not reported after a send")
+	}
+	if s.Interim("oc_other") {
+		t.Fatal("interim leaked across conversations")
+	}
+	s.Anchor("oc_a", "oc_a", "om_a2")
+	if s.Interim("oc_a") {
+		t.Fatal("interim survived the turn boundary")
+	}
+}

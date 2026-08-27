@@ -41,6 +41,7 @@ type turnUI struct {
 	wg        sync.WaitGroup
 	reaction  string
 	turnID    string
+	style     string
 }
 
 func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
@@ -178,6 +179,14 @@ func (u *turnUI) progress(p card.Progress) {
 	// taken before the agent reported its model must not blank them out.
 	if !p.Settings.Empty() {
 		u.state.Settings = p.Settings
+		// Interim cards should wear the same tail as this card will; push
+		// the identity line as soon as (and whenever) it becomes known.
+		if u.g.gate != nil {
+			if line := card.SettingsLine(p.Settings); line != "" && line != u.style {
+				u.style = line
+				u.g.gate.SetStyle(conversationID(u.msg), line)
+			}
+		}
 	}
 	u.state.UpdatedAt = time.Now()
 	if !news {
@@ -305,6 +314,19 @@ func (u *turnUI) finish(result turn.Result, err error) {
 		u.state.TurnID = ""
 		u.mu.Unlock()
 	}
+	// Interim cards sit below the opening card, so patching the answer into
+	// that card would put the conclusion above the milestones that led to
+	// it. Post the final card at the bottom instead and drop the opener:
+	// the chat then reads in the order things actually happened.
+	if !fallback && u.g.gate != nil && u.g.gate.Interim(conversationID(u.msg)) {
+		if newID := u.repostFinal(); newID != "" {
+			u.g.setTurnCard(u.turnID, newID)
+			u.g.finishTurn(u.turnID, retryable)
+			u.g.recall(cardID)
+			u.g.unack(u.msg.MessageID, u.reaction)
+			return
+		}
+	}
 	u.g.finishTurn(u.turnID, retryable)
 
 	if !fallback && u.patchFinal() {
@@ -315,6 +337,31 @@ func (u *turnUI) finish(result turn.Result, err error) {
 		u.g.reply(u.msg.MessageID, text)
 	}
 	u.g.unack(u.msg.MessageID, u.reaction)
+}
+
+// repostFinal sends the finished card as a new message and returns its id,
+// or "" when the channel refused it — the caller then patches in place,
+// which is worse-ordered but never loses the answer.
+func (u *turnUI) repostFinal() string {
+	poster, ok := u.g.ch.(cardPoster)
+	if !ok || u.msg.MessageID == "" {
+		return ""
+	}
+	u.mu.Lock()
+	payload := card.Render(u.state, u.copy)
+	u.mu.Unlock()
+	u.g.rememberCard(payload)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	id, err := poster.ReplyCard(ctx, u.msg.MessageID, payload)
+	if err != nil || id == "" {
+		log.Printf("gateway: final card repost failed: %v", err)
+		return ""
+	}
+	u.mu.Lock()
+	u.cardID = id
+	u.mu.Unlock()
+	return id
 }
 
 func (u *turnUI) patchFinal() bool {

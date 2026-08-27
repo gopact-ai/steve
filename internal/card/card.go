@@ -956,13 +956,25 @@ func approvalButton(id, label, kind, requestID, decision string) map[string]any 
 // permission mode it ran under. It leads the footer so the chat-list summary
 // keeps it even after truncation.
 func settingsText(t Turn) []string {
+	return SettingsParts(t.Settings)
+}
+
+// SettingsParts is the "codex · GPT 5.6 Sol · Agent" identity every card of
+// a turn shares. Exported so interim milestone cards can wear the same tail
+// as the final card instead of a bare agent id.
+func SettingsParts(s Settings) []string {
 	parts := make([]string, 0, 3)
-	for _, value := range []string{t.Settings.Harness, t.Settings.Model, t.Settings.Mode} {
+	for _, value := range []string{s.Harness, s.Model, s.Mode} {
 		if value = strings.TrimSpace(value); value != "" {
 			parts = append(parts, shrinkRunes(value, maxSettingRunes))
 		}
 	}
 	return parts
+}
+
+// SettingsLine joins SettingsParts with the footer separator.
+func SettingsLine(s Settings) string {
+	return strings.Join(SettingsParts(s), " · ")
 }
 
 // footerText names who is speaking and where the turn stands — nothing

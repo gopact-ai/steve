@@ -329,6 +329,7 @@ func TestGatewaySilentListenSkipsEmptyUnmentionedGroup(t *testing.T) {
 type recordingCards struct {
 	events   chan string
 	startErr error
+	sent     int
 }
 
 func (c *recordingCards) AddReaction(_ context.Context, messageID, emoji string) (string, error) {
@@ -351,8 +352,13 @@ func (c *recordingCards) ReplyCard(_ context.Context, messageID string, payload 
 		c.events <- "card-err"
 		return "", c.startErr
 	}
+	c.sent++
+	id := "om_card"
+	if c.sent > 1 {
+		id = "om_card2"
+	}
 	c.events <- "card:" + messageID + ":" + cardStatus(payload)
-	return "om_card", nil
+	return id, nil
 }
 
 func (c *recordingCards) PatchCard(_ context.Context, messageID string, payload []byte) error {
@@ -969,6 +975,38 @@ type recordingGate struct{ calls chan string }
 
 func (g *recordingGate) Anchor(conversationID, chatID, messageID string) {
 	g.calls <- conversationID + "|" + chatID + "|" + messageID
+}
+
+func (g *recordingGate) SetStyle(string, string) {}
+
+func (g *recordingGate) Interim(string) bool { return false }
+
+// interimGate simulates a turn during which the agent posted milestone
+// cards, so the final card must land below them.
+type interimGate struct{}
+
+func (interimGate) Anchor(string, string, string) {}
+func (interimGate) SetStyle(string, string)       {}
+func (interimGate) Interim(string) bool           { return true }
+
+func TestGatewayFinalCardLandsBelowInterim(t *testing.T) {
+	g := New(fakeProcessor{})
+	events := make(chan string, 8)
+	g.BindChannel(&recordingCards{events: events})
+	g.SetAgentGate(interimGate{})
+	g.HandleMessage(feishu.InboundMessage{ChatID: "oc_chat", MessageID: "om_message", Text: "hello"})
+	got := collectEvents(t, events, 5)
+	if got[1] != "card:om_message:running" {
+		t.Fatalf("start = %q", got[1])
+	}
+	// The answer arrives as a fresh reply (bottom of the chat), and the
+	// stale opener above the milestones is recalled.
+	if got[2] != "card:om_message:completed" || got[3] != "delete:om_card" {
+		t.Fatalf("finish = %v", got)
+	}
+	if got[4] != "remove:om_message:rx_1" {
+		t.Fatalf("unack = %q", got[4])
+	}
 }
 
 func TestGatewayAnchorsConversationBeforeTurn(t *testing.T) {

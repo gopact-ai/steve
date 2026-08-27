@@ -22,9 +22,9 @@ func stripMentions(s string) string {
 }
 
 // milestoneCard renders an agent's interim message as a minimal Card 2.0:
-// the markdown body plus a quiet source line, deliberately unlike the
-// platform's own turn card so the two cannot be confused.
-func milestoneCard(markdown, agentID string) []byte {
+// the markdown body plus a tail in the same "who · model · mode" family as
+// the platform's final card, extended with the stage badge.
+func milestoneCard(markdown, tail string) []byte {
 	elements := []map[string]any{
 		{
 			"tag":     "markdown",
@@ -32,11 +32,11 @@ func milestoneCard(markdown, agentID string) []byte {
 			"margin":  "0px 0px 8px 0px",
 		},
 	}
-	if agentID != "" {
+	if tail != "" {
 		elements = append(elements, map[string]any{
 			"tag":       "markdown",
 			"text_size": "notation",
-			"content":   "<font color='grey'>" + agentID + "</font>",
+			"content":   "<font color='grey'>" + tail + "</font>",
 			"margin":    "0px",
 		})
 	}

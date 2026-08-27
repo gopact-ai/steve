@@ -45,6 +45,7 @@ const Instructions = `## Feishu messaging (feishu_send / feishu_update / feishu_
 The "feishu" MCP server posts and maintains interim messages in the current Feishu conversation while you work.
 - feishu_send posts a milestone: a phase conclusion, a produced artifact, a decision worth surfacing early. Most turns need zero interim messages; never narrate step by step.
 - Prefer ONE evolving progress card per task: feishu_update(message_id, content) rewrites a markdown card you sent earlier this turn. Update it as phases complete instead of sending a new card each time.
+- On multi-stage work pass progress like "2/3" (stage/total) to feishu_send and feishu_update so the card badge shows which stage of how many.
 - Your final answer is delivered automatically by the platform when the turn ends. Do NOT send it with these tools, and do not duplicate it there.
 - Do not @-mention anyone. Mentions are reserved for the platform's own final answer card.
 - feishu_recall deletes a message you sent earlier in this same turn (pass its message_id) if it turned out wrong or obsolete.`
@@ -76,11 +77,20 @@ type anchor struct {
 
 // sentState tracks what one agent sent during the current epoch of its
 // conversation. A stale epoch means a new turn started; the slate is wiped.
+// sentMsg is what the server remembers about one message an agent sent
+// this turn: enough to authorize recall/update and to keep the card's
+// stage badge stable across updates.
+type sentMsg struct {
+	format   string
+	seq      int
+	progress string
+}
+
 type sentState struct {
 	epoch uint64
-	// ids maps each message this agent sent this turn to its format;
+	// ids maps each message this agent sent this turn to its record;
 	// updates only apply to markdown cards, recall applies to all.
-	ids     map[string]string
+	ids     map[string]sentMsg
 	count   int
 	updates int
 }
@@ -95,6 +105,7 @@ type Server struct {
 	byBind  map[binding]string
 	anchors map[string]*anchor
 	sent    map[binding]*sentState
+	styles  map[string]string
 }
 
 // New binds the loopback listener immediately so the URL is known before any
@@ -123,6 +134,7 @@ func New(preferredPort int) (*Server, error) {
 		byBind:   map[binding]string{},
 		anchors:  map[string]*anchor{},
 		sent:     map[binding]*sentState{},
+		styles:   map[string]string{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", s.handleMCP)
@@ -183,6 +195,43 @@ func (s *Server) Anchor(conversationID, chatID, messageID string) {
 	a.chatID = chatID
 	a.messageID = messageID
 	a.epoch++
+}
+
+// SetStyle records the identity line the platform's own cards wear
+// ("codex · GPT 5.6 Sol · Agent"); interim cards use it as their tail so
+// every card of a turn reads as one family.
+func (s *Server) SetStyle(conversationID, style string) {
+	if s == nil || conversationID == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if strings.TrimSpace(style) == "" {
+		delete(s.styles, conversationID)
+		return
+	}
+	s.styles[conversationID] = style
+}
+
+// Interim reports whether any agent posted messages into the conversation
+// during the current turn epoch — the signal that the final answer must be
+// posted below them rather than patched into the opening card.
+func (s *Server) Interim(conversationID string) bool {
+	if s == nil {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	a := s.anchors[conversationID]
+	if a == nil {
+		return false
+	}
+	for b, st := range s.sent {
+		if b.conversationID == conversationID && st.epoch == a.epoch && st.count > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 // Extras registers the token→(conversation, agent) binding and returns the
@@ -306,6 +355,10 @@ func toolList() []map[string]any {
 						"type":        "boolean",
 						"description": "Must stay false: mentions are reserved for the platform's final answer card.",
 					},
+					"progress": map[string]any{
+						"type":        "string",
+						"description": "Optional stage badge like \"2/3\" for multi-stage work.",
+					},
 				},
 				"required": []string{"content"},
 			},
@@ -324,6 +377,10 @@ func toolList() []map[string]any {
 					"content": map[string]any{
 						"type":        "string",
 						"description": "The full replacement markdown body.",
+					},
+					"progress": map[string]any{
+						"type":        "string",
+						"description": "Optional new stage badge like \"3/3\".",
 					},
 				},
 				"required": []string{"message_id", "content"},
@@ -383,9 +440,10 @@ func toolError(text string) map[string]any {
 
 func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage) (string, error) {
 	var args struct {
-		Content string `json:"content"`
-		Format  string `json:"format"`
-		Mention bool   `json:"mention"`
+		Content  string `json:"content"`
+		Format   string `json:"format"`
+		Mention  bool   `json:"mention"`
+		Progress string `json:"progress"`
 	}
 	if err := json.Unmarshal(rawArgs, &args); err != nil {
 		return "", errors.New("bad feishu_send arguments")
@@ -393,8 +451,12 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 	if args.Mention {
 		return "", errors.New("mention is not allowed: mentions are reserved for the platform's final answer card")
 	}
-	switch args.Format {
-	case "", "markdown", "text":
+	format := args.Format
+	if format == "" {
+		format = "markdown"
+	}
+	switch format {
+	case "markdown", "text":
 	default:
 		return "", fmt.Errorf("unknown format %q (use markdown or text)", args.Format)
 	}
@@ -416,7 +478,7 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 	}
 	if st.epoch != a.epoch {
 		st.epoch = a.epoch
-		st.ids = map[string]string{}
+		st.ids = map[string]sentMsg{}
 		st.count = 0
 		st.updates = 0
 	}
@@ -427,14 +489,13 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 	// Reserve the slot before releasing the lock so parallel calls cannot
 	// overshoot the cap while a send is in flight.
 	st.count++
+	seq := st.count
+	progress := sanitizeProgress(args.Progress)
+	tail := milestoneTail(s.styles[bind.conversationID], bind.agentID, seq, progress)
 	anchorID := a.messageID
 	epoch := a.epoch
 	s.mu.Unlock()
 
-	format := args.Format
-	if format == "" {
-		format = "markdown"
-	}
 	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
 	var id string
@@ -442,7 +503,7 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 	if format == "text" {
 		id, err = sender.ReplyText(callCtx, anchorID, content)
 	} else {
-		id, err = sender.ReplyCard(callCtx, anchorID, milestoneCard(content, bind.agentID))
+		id, err = sender.ReplyCard(callCtx, anchorID, milestoneCard(content, tail))
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -453,9 +514,33 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 		return "", fmt.Errorf("send failed: %v", err)
 	}
 	if st.epoch == epoch && id != "" {
-		st.ids[id] = format
+		st.ids[id] = sentMsg{format: format, seq: seq, progress: progress}
 	}
 	return "sent message_id=" + id, nil
+}
+
+// sanitizeProgress bounds the free-form stage badge ("2/3") an agent may
+// attach to a card.
+func sanitizeProgress(raw string) string {
+	compact := strings.Join(strings.Fields(stripMentions(raw)), "")
+	return truncateRunes(compact, 16)
+}
+
+// milestoneTail builds the interim card's footer: the same identity line
+// the final card wears, plus which stage this is.
+func milestoneTail(style, agentID string, seq int, progress string) string {
+	base := style
+	if base == "" {
+		base = agentID
+	}
+	label := fmt.Sprintf("里程碑 %d", seq)
+	if progress != "" {
+		label = "里程碑 " + progress
+	}
+	if base == "" {
+		return label
+	}
+	return base + " · " + label
 }
 
 // update rewrites a markdown card this agent sent earlier in the current
@@ -464,6 +549,7 @@ func (s *Server) update(ctx context.Context, bind binding, rawArgs json.RawMessa
 	var args struct {
 		MessageID string `json:"message_id"`
 		Content   string `json:"content"`
+		Progress  string `json:"progress"`
 	}
 	if err := json.Unmarshal(rawArgs, &args); err != nil || strings.TrimSpace(args.MessageID) == "" {
 		return "", errors.New("message_id and content are required")
@@ -476,16 +562,16 @@ func (s *Server) update(ctx context.Context, bind binding, rawArgs json.RawMessa
 	sender := s.sender
 	a := s.anchors[bind.conversationID]
 	st := s.sent[bind]
-	format := ""
+	var record sentMsg
 	owned := false
 	if sender != nil && a != nil && st != nil && st.epoch == a.epoch {
-		format, owned = st.ids[args.MessageID]
+		record, owned = st.ids[args.MessageID]
 	}
 	if !owned {
 		s.mu.Unlock()
 		return "", errors.New("can only update a message this agent sent in the current turn")
 	}
-	if format != "markdown" {
+	if record.format != "markdown" {
 		s.mu.Unlock()
 		return "", errors.New("only markdown cards can be updated; recall and resend a text message instead")
 	}
@@ -494,10 +580,15 @@ func (s *Server) update(ctx context.Context, bind binding, rawArgs json.RawMessa
 		return "", fmt.Errorf("update limit reached (%d per turn)", maxUpdatesPerTurn)
 	}
 	st.updates++
+	if progress := sanitizeProgress(args.Progress); progress != "" {
+		record.progress = progress
+		st.ids[args.MessageID] = record
+	}
+	tail := milestoneTail(s.styles[bind.conversationID], bind.agentID, record.seq, record.progress)
 	s.mu.Unlock()
 	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
-	if err := sender.PatchCard(callCtx, args.MessageID, milestoneCard(content, bind.agentID)); err != nil {
+	if err := sender.PatchCard(callCtx, args.MessageID, milestoneCard(content, tail)); err != nil {
 		return "", fmt.Errorf("update failed: %v", err)
 	}
 	return "updated " + args.MessageID, nil

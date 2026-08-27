@@ -140,6 +140,9 @@ func TestAgentSendPrimitiveE2E(t *testing.T) {
 	if len(sender.patches) != 2 || !strings.Contains(sender.patches[1], "progress v3 final") {
 		t.Fatalf("card did not evolve in place: %v", sender.patches)
 	}
+	if !strings.Contains(sender.patches[0], "里程碑 1/2") || !strings.Contains(sender.patches[1], "里程碑 2/2") {
+		t.Fatalf("stage badges wrong: %v", sender.patches)
+	}
 	if !strings.HasPrefix(sender.patches[0], "om_sent_2:") || !strings.HasPrefix(sender.patches[1], "om_sent_2:") {
 		t.Fatalf("updates hit the wrong message: %v", sender.patches)
 	}
