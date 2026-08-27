@@ -30,8 +30,12 @@ type Request struct {
 	Catalog i18n.Catalog
 }
 
+// PendingPrefix marks the synthetic conversation an onboarding turn runs
+// under before it is relocated into the real home chat.
+const PendingPrefix = "steve:onboard:"
+
 func PendingID(owner string) string {
-	return "steve:onboard:" + owner
+	return PendingPrefix + owner
 }
 
 func Start(ctx context.Context, req Request) error {

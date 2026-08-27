@@ -179,3 +179,17 @@ func TestCrashResumeE2E(t *testing.T) {
 		t.Fatalf("attempt history = %v", outcomes)
 	}
 }
+
+func TestOnboardingTurnOpensNoTask(t *testing.T) {
+	runner := &fakeRunner{reply: "ok"}
+	coordinator, tasks := taskCoordinator(t, runner)
+	if _, err := coordinator.Handle(t.Context(), Request{
+		ConversationID: "steve:onboard:ou_x", Input: "自我介绍", SenderOpenID: "ou_x",
+		ChatType: protocol.ChatP2P,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if all := tasks.List(""); len(all) != 0 {
+		t.Fatalf("onboarding opened a task: %+v", all)
+	}
+}

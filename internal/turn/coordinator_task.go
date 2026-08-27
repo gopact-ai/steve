@@ -10,6 +10,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
@@ -25,6 +26,12 @@ const goalLimit = 120
 // reach the user rather than be swallowed.
 func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string) (string, error) {
 	if c.tasks == nil {
+		return "", nil
+	}
+	// An onboarding turn runs under a synthetic conversation that is
+	// relocated afterwards; a task opened there would be orphaned as
+	// forever-running, because task channels do not follow the relocation.
+	if strings.HasPrefix(req.ConversationID, onboard.PendingPrefix) {
 		return "", nil
 	}
 	tracked, ok := c.tasks.Active(req.ConversationID, selected.ID)
