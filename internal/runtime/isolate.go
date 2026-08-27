@@ -3,6 +3,7 @@
 package runtime
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,7 +42,11 @@ func Prepare(stateDir string) error {
 	if err := PrepareCodex(CodexHome(stateDir), userCodex); err != nil {
 		return err
 	}
-	if err := PrepareClaude(ClaudeHome(stateDir)); err != nil {
+	var userClaude string
+	if userHome != "" {
+		userClaude = filepath.Join(userHome, ".claude")
+	}
+	if err := PrepareClaude(ClaudeHome(stateDir), userClaude); err != nil {
 		return err
 	}
 	if err := PrepareGrok(GrokHome(stateDir), userGrok); err != nil {
@@ -104,11 +109,47 @@ func PrepareCodex(dest, userCodex string) error {
 	return os.MkdirAll(filepath.Join(dest, "skills"), 0o700)
 }
 
-func PrepareClaude(dest string) error {
+func PrepareClaude(dest, userClaude string) error {
 	if err := os.MkdirAll(filepath.Join(dest, "skills"), 0o700); err != nil {
 		return fmt.Errorf("create claude runtime: %w", err)
 	}
+	if userClaude == "" {
+		return nil
+	}
+	// Credentials are linked, not copied: Claude Code refreshes its OAuth
+	// token in place, and a stale copy would expire under the gateway.
+	// Without this link the isolated CLAUDE_CONFIG_DIR had no credentials at
+	// all, which is exactly the "Authentication required" every gateway
+	// claude turn died with.
+	if err := linkAuth(dest, userClaude, ".credentials.json"); err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(filepath.Join(userClaude, "settings.json"))
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read claude settings: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dest, "settings.json"), FilterClaudeSettings(raw), 0o600); err != nil {
+		return fmt.Errorf("write isolated claude settings: %w", err)
+	}
 	return nil
+}
+
+// FilterClaudeSettings keeps only the env block of the operator's
+// settings.json: model access (base URL, custom headers, tokens) must reach
+// the isolated harness, while permissions, hooks, model choice and UI
+// preferences stay the operator's own.
+func FilterClaudeSettings(src []byte) []byte {
+	var parsed struct {
+		Env map[string]json.RawMessage `json:"env"`
+	}
+	if err := json.Unmarshal(src, &parsed); err != nil || len(parsed.Env) == 0 {
+		return []byte("{}\n")
+	}
+	out, err := json.MarshalIndent(map[string]any{"env": parsed.Env}, "", "  ")
+	if err != nil {
+		return []byte("{}\n")
+	}
+	return append(out, '\n')
 }
 
 func PrepareGrok(dest, userGrok string) error {
