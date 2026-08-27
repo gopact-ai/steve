@@ -37,8 +37,11 @@ type Request struct {
 	Mentioned      bool
 	// MessageID and ChatID anchor the turn in the channel, so an
 	// interrupted task can be resumed and delivered after a restart.
-	MessageID  string
-	ChatID     string
+	MessageID string
+	ChatID    string
+	// CardID is the platform's own card opened for this turn, journaled
+	// so a crash can recall it instead of leaving a forever-running card.
+	CardID     string
 	Images     []harness.Media
 	OnProgress func(view.Progress)
 	OnAskUser  acphost.AskUserFunc

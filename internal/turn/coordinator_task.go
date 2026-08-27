@@ -55,7 +55,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 	// this task; refresh it every turn so delivery lands by the newest
 	// exchange (and inside the right topic).
 	if req.MessageID != "" {
-		if err := c.tasks.SetAnchor(tracked.ID, req.ChatID, req.MessageID, string(req.ChatType)); err != nil {
+		if err := c.tasks.SetAnchor(tracked.ID, req.ChatID, req.MessageID, string(req.ChatType), req.CardID); err != nil {
 			log.Printf("turn: anchor task %s: %v", tracked.ID, err)
 		}
 	}

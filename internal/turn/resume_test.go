@@ -21,7 +21,7 @@ func TestBeginTaskPersistsAnchor(t *testing.T) {
 	coordinator, tasks := taskCoordinator(t, runner)
 	if _, err := coordinator.Handle(t.Context(), Request{
 		ConversationID: "chat", Input: "干活", MessageID: "om_1", ChatID: "oc_1",
-		ChatType: protocol.ChatGroup, Mentioned: true,
+		ChatType: protocol.ChatGroup, Mentioned: true, CardID: "om_card_1",
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -31,6 +31,9 @@ func TestBeginTaskPersistsAnchor(t *testing.T) {
 	}
 	if tracked.AnchorMessage != "om_1" || tracked.ChatID != "oc_1" || tracked.ChatType != "group" {
 		t.Fatalf("anchor not persisted: %+v", tracked)
+	}
+	if tracked.OpenCard != "om_card_1" {
+		t.Fatalf("open card not journaled: %+v", tracked)
 	}
 	// The next turn refreshes the anchor to the newest exchange.
 	if _, err := coordinator.Handle(t.Context(), Request{

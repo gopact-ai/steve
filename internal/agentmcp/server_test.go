@@ -472,3 +472,22 @@ func TestInterimTracksCurrentEpoch(t *testing.T) {
 		t.Fatal("interim survived the turn boundary")
 	}
 }
+
+func TestJournalSeesEverySend(t *testing.T) {
+	s, _ := startServer(t)
+	register(s, "oc_a", "codex", "tok-a", "om_a")
+	var mu sync.Mutex
+	var seen []string
+	s.SetJournal(func(conversationID, agentID, messageID string) {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, conversationID+":"+agentID+":"+messageID)
+	})
+	callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "card"})
+	callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "plain", "format": "text"})
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 2 || seen[0] != "oc_a:codex:om_sent_1" || seen[1] != "oc_a:codex:om_sent_2" {
+		t.Fatalf("journal = %v", seen)
+	}
+}

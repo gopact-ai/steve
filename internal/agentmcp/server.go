@@ -101,6 +101,7 @@ type Server struct {
 
 	mu      sync.Mutex
 	sender  Sender
+	journal func(conversationID, agentID, messageID string)
 	tokens  map[string]binding
 	byBind  map[binding]string
 	anchors map[string]*anchor
@@ -195,6 +196,15 @@ func (s *Server) Anchor(conversationID, chatID, messageID string) {
 	a.chatID = chatID
 	a.messageID = messageID
 	a.epoch++
+}
+
+// SetJournal registers a callback for every message an agent sends, so the
+// platform can persist what would otherwise be in-memory only — and clean
+// it up if the turn dies with the process.
+func (s *Server) SetJournal(journal func(conversationID, agentID, messageID string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.journal = journal
 }
 
 // SetStyle records the identity line the platform's own cards wear
@@ -506,15 +516,20 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 		id, err = sender.ReplyCard(callCtx, anchorID, milestoneCard(content, tail))
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if err != nil {
 		if st.epoch == epoch && st.count > 0 {
 			st.count--
 		}
+		s.mu.Unlock()
 		return "", fmt.Errorf("send failed: %v", err)
 	}
 	if st.epoch == epoch && id != "" {
 		st.ids[id] = sentMsg{format: format, seq: seq, progress: progress}
+	}
+	journal := s.journal
+	s.mu.Unlock()
+	if journal != nil && id != "" {
+		journal(bind.conversationID, bind.agentID, id)
 	}
 	return "sent message_id=" + id, nil
 }

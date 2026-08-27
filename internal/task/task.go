@@ -123,13 +123,19 @@ type Task struct {
 	Workspace string `json:"workspace,omitempty"`
 	// Where the task's turns anchor in the chat: enough to reply into the
 	// right conversation (and topic) after a gateway restart.
-	ChatID        string    `json:"chat_id,omitempty"`
-	AnchorMessage string    `json:"anchor_message,omitempty"`
-	ChatType      string    `json:"chat_type,omitempty"`
-	Parent        string    `json:"parent,omitempty"`
-	State         State     `json:"state"`
-	Budget        Budget    `json:"budget,omitzero"`
-	Attempts      []Attempt `json:"attempts,omitempty"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	ChatID        string `json:"chat_id,omitempty"`
+	AnchorMessage string `json:"anchor_message,omitempty"`
+	ChatType      string `json:"chat_type,omitempty"`
+	// OpenCard is the platform's own card for the task's current turn, and
+	// Interim are the messages the agent sent during it. Both are recorded
+	// so a crashed turn's leftovers can be recalled on resume instead of
+	// haunting the chat as forever-running cards.
+	OpenCard  string    `json:"open_card,omitempty"`
+	Interim   []string  `json:"interim,omitempty"`
+	Parent    string    `json:"parent,omitempty"`
+	State     State     `json:"state"`
+	Budget    Budget    `json:"budget,omitzero"`
+	Attempts  []Attempt `json:"attempts,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }

@@ -151,7 +151,7 @@ func (s *Store) SetBudget(maxTurns int, maxElapsed time.Duration) {
 
 // SetAnchor records where the task's latest turn is anchored in the chat,
 // so a restarted gateway can deliver into the right conversation.
-func (s *Store) SetAnchor(id, chatID, messageID, chatType string) error {
+func (s *Store) SetAnchor(id, chatID, messageID, chatType, cardID string) error {
 	if messageID == "" {
 		return nil
 	}
@@ -165,11 +165,47 @@ func (s *Store) SetAnchor(id, chatID, messageID, chatType string) error {
 	stored.ChatID = chatID
 	stored.AnchorMessage = messageID
 	stored.ChatType = chatType
+	// A new turn starts a clean leftover slate.
+	stored.OpenCard = cardID
+	stored.Interim = nil
 	stored.UpdatedAt = s.now()
 	if err := s.replaceLocked(next); err != nil {
 		return err
 	}
 	return nil
+}
+
+// maxInterim bounds the leftover journal; older entries drop first.
+const maxInterim = 16
+
+// AddInterim records one message the member's agent sent during the current
+// turn, so a crash between send and finish leaves nothing untraceable.
+func (s *Store) AddInterim(channel, member, messageID string) error {
+	if messageID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var newest *Task
+	for _, stored := range s.data.Tasks {
+		if stored.Channel != channel || stored.Member != member || stored.State.Terminal() {
+			continue
+		}
+		if newest == nil || stored.UpdatedAt.After(newest.UpdatedAt) {
+			newest = stored
+		}
+	}
+	if newest == nil {
+		return fmt.Errorf("no active task for %s/%s", channel, member)
+	}
+	next := s.clone()
+	stored := next.Tasks[newest.ID]
+	stored.Interim = append(stored.Interim, messageID)
+	if len(stored.Interim) > maxInterim {
+		stored.Interim = stored.Interim[len(stored.Interim)-maxInterim:]
+	}
+	stored.UpdatedAt = s.now()
+	return s.replaceLocked(next)
 }
 
 // Interrupted lists non-terminal tasks whose latest attempt never ended —
@@ -275,6 +311,7 @@ func (s *Store) Advance(id string, to State) (Task, error) {
 func (t *Task) clone() *Task {
 	copied := *t
 	copied.Attempts = append([]Attempt(nil), t.Attempts...)
+	copied.Interim = append([]string(nil), t.Interim...)
 	return &copied
 }
 

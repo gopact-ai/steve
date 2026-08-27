@@ -20,6 +20,11 @@ type Revival struct {
 	MessageID      string
 	Requester      string
 	ChatType       string
+	// Leftovers of the crashed turn — the opener card and agent-sent
+	// messages — recalled before the resume notice so the chat is not
+	// haunted by a forever-running card and stale progress.
+	OpenCard string
+	Interim  []string
 }
 
 type textReplier interface {
@@ -47,6 +52,11 @@ func (g *Gateway) Revive(revivals []Revival, revive func(conversationID, member 
 		if err := revive(r.ConversationID, r.Member); err != nil {
 			log.Printf("gateway: revive session for task #%s: %v", r.TaskID, err)
 			continue
+		}
+		for _, stale := range append([]string{r.OpenCard}, r.Interim...) {
+			if stale != "" {
+				g.recall(stale)
+			}
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		noticeID, err := tr.ReplyText(ctx, r.MessageID, g.text.T(i18n.ResumeNotice, r.TaskID))

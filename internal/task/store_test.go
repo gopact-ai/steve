@@ -272,7 +272,7 @@ func TestInterruptedListsOpenAttemptsAndAnchors(t *testing.T) {
 	if _, err := store.Begin(created.ID, "codex", "node", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetAnchor(created.ID, "oc_1", "om_1", "group"); err != nil {
+	if err := store.SetAnchor(created.ID, "oc_1", "om_1", "group", "om_card_0"); err != nil {
 		t.Fatal(err)
 	}
 	interrupted := store.Interrupted()
@@ -316,5 +316,40 @@ func TestSetBudgetRaisesDefaults(t *testing.T) {
 	again, _ := store.Create(Task{Goal: "g2", Channel: "c", Member: "m"})
 	if again.Budget.MaxTurns != 100 {
 		t.Fatalf("zero overwrote the default: %+v", again.Budget)
+	}
+}
+
+func TestInterimJournalFollowsTheTurn(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, _ := store.Create(Task{Goal: "g", Channel: "chat", Member: "codex"})
+	if _, err := store.Begin(created.ID, "codex", "n", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetAnchor(created.ID, "oc_1", "om_1", "group", "om_card_1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddInterim("chat", "codex", "om_i1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddInterim("chat", "codex", "om_i2"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := store.Get(created.ID)
+	if got.OpenCard != "om_card_1" || len(got.Interim) != 2 || got.Interim[1] != "om_i2" {
+		t.Fatalf("journal = %+v", got)
+	}
+	// The next turn wipes the slate: last turn's leftovers are not stale.
+	if err := store.SetAnchor(created.ID, "oc_1", "om_2", "group", "om_card_2"); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = store.Get(created.ID)
+	if got.OpenCard != "om_card_2" || len(got.Interim) != 0 {
+		t.Fatalf("new turn kept old leftovers: %+v", got)
+	}
+	if err := store.AddInterim("chat", "nobody", "om_x"); err == nil {
+		t.Fatal("journal accepted a memberless conversation")
 	}
 }

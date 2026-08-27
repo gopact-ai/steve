@@ -52,6 +52,11 @@ func (c *recordingChannel) ReplyText(_ context.Context, messageID, text string) 
 	return "om_notice", nil
 }
 
+func (c *recordingChannel) DeleteMessage(_ context.Context, messageID string) error {
+	c.events <- "delete:" + messageID
+	return nil
+}
+
 func collectEvents(t *testing.T, events <-chan string, n int) []string {
 	t.Helper()
 	got := make([]string, 0, n)
@@ -1060,6 +1065,7 @@ func TestGatewayReviveContinuesInterruptedTask(t *testing.T) {
 		TaskID: "7", Goal: "长任务目标", Member: "codex",
 		ConversationID: "omt_thread", ChatID: "oc_1", MessageID: "om_anchor",
 		Requester: "ou_user", ChatType: "group",
+		OpenCard: "om_dead_card", Interim: []string{"om_dead_1"},
 	}}, func(conversationID, member string) error {
 		revived <- conversationID + ":" + member
 		return nil
@@ -1072,18 +1078,26 @@ func TestGatewayReviveContinuesInterruptedTask(t *testing.T) {
 	case <-time.After(waitDeadline):
 		t.Fatal("session never revived")
 	}
-	// The notice replies to the task's anchor so it lands in the topic.
+	// The crashed turn's leftovers are recalled first, then the notice
+	// replies to the task's anchor so it lands in the topic.
 	deadline := time.After(waitDeadline)
+	var pre []string
 	seenNotice := false
 	for !seenNotice {
 		select {
 		case ev := <-ch.events:
 			if strings.HasPrefix(ev, "reply-text:om_anchor:") && strings.Contains(ev, "#7") {
 				seenNotice = true
+				break
 			}
+			pre = append(pre, ev)
 		case <-deadline:
 			t.Fatal("resume notice never posted")
 		}
+	}
+	joined := strings.Join(pre, " ")
+	if !strings.Contains(joined, "delete:om_dead_card") || !strings.Contains(joined, "delete:om_dead_1") {
+		t.Fatalf("stale cards not recalled before the notice: %v", pre)
 	}
 	// The continuation flows through the normal turn path, addressed to the
 	// task's member, anchored on the notice message.
