@@ -65,6 +65,7 @@ func setup(args []string) error {
 	blockedSender := flags.String("blocked-sender", "", "blocked sender open_id")
 	groupPolicy := flags.String("group-policy", "", "open, allowlist, or disabled")
 	allowUnmentioned := flags.Bool("allow-unmentioned", false, "listen to group messages without @ and let Steve decide whether to reply")
+	ownerOpenID := flags.String("owner-open-id", "", "owner open_id (ou_...); the owner's DMs load the owner home and steve run opens the home chat")
 	createApp := flags.Bool("create-app", false, "create a Feishu app via the official device-flow link")
 	nonInteractive := flags.Bool("non-interactive", false, "do not prompt; require flags and env")
 	if err := flags.Parse(args); err != nil {
@@ -83,6 +84,7 @@ func setup(args []string) error {
 		GroupPolicy:      *groupPolicy,
 		AllowUnmentioned: *allowUnmentioned,
 		CreateApp:        *createApp,
+		OwnerOpenID:      *ownerOpenID,
 	}, setupcmd.Options{Interactive: interactive})
 	return err
 }

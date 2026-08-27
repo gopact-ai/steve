@@ -139,6 +139,9 @@ func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
 	}
 	g.rememberLocked(msg.MessageID)
 	g.mu.Unlock()
+	// The sender's open_id in the log is also how a new owner finds their
+	// own id during setup.
+	log.Printf("gateway: message conversation=%s sender=%s", conversationID(msg), msg.SenderOpenID)
 	go g.serve(msg, conversationID(msg))
 }
 

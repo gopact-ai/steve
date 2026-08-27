@@ -25,6 +25,7 @@ type Flags struct {
 	GroupPolicy      string
 	AllowUnmentioned bool
 	CreateApp        bool
+	OwnerOpenID      string
 }
 
 type Options struct {
@@ -89,6 +90,9 @@ func Run(ctx context.Context, flags Flags, opts Options) (*config.Config, error)
 	fmt.Fprintln(opts.Out, text.T(i18n.SetupCreatedConfig, flags.ConfigPath))
 	if identity.Name != "" || identity.OpenID != "" {
 		fmt.Fprintln(opts.Out, text.T(i18n.SetupBotIdentity, strings.TrimSpace(identity.Name), identity.OpenID))
+	}
+	if cfg.Feishu.OwnerOpenID != "" {
+		fmt.Fprintln(opts.Out, text.T(i18n.SetupOwnerBound, cfg.Feishu.OwnerOpenID))
 	}
 	fmt.Fprintln(opts.Out, text.T(i18n.SetupEditHome))
 	return cfg, nil
@@ -166,7 +170,7 @@ func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reade
 		}
 		switch action {
 		case reuseKeep:
-			return finishCached(ctx, opts, cached)
+			return finishCached(ctx, opts, reader, cached)
 		case reuseCreds:
 			return collectCredentials(ctx, flags, opts, reader, cached)
 		case reuseAccess:
@@ -253,8 +257,18 @@ func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reade
 		return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: probe feishu: %w", err)
 	}
 
-	owner := firstNonEmpty(scannedOpenID, cached.OwnerOpenID)
-	if owner == "" {
+	groupPolicy, senders, blocked, err := collectGroupAccess(flags, opts, reader, cached, false)
+	if err != nil {
+		return config.Feishu{}, feishu.Identity{}, err
+	}
+
+	// The owner binds last: whoever it names gets the owner home, and the
+	// next steve run opens the home chat with them. The flag wins outright;
+	// otherwise auto-resolution only suggests, and the person confirms or
+	// replaces the value themselves — botmux-style, their id is theirs to
+	// fill in.
+	owner := firstNonEmpty(flags.OwnerOpenID, scannedOpenID, cached.OwnerOpenID)
+	if owner == "" && flags.OwnerOpenID == "" {
 		resolved, ownerErr := opts.Owner(ctx, appID, secret, domain)
 		if ownerErr != nil {
 			fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupOwnerResolveFail, ownerErr))
@@ -262,10 +276,12 @@ func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reade
 			owner = resolved
 		}
 	}
-
-	groupPolicy, senders, blocked, err := collectGroupAccess(flags, opts, reader, cached, false)
-	if err != nil {
-		return config.Feishu{}, feishu.Identity{}, err
+	if opts.Interactive && flags.OwnerOpenID == "" {
+		fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupOwnerHint))
+		owner, err = promptOptional(reader, opts.Out, opts.Catalog.T(i18n.SetupOwnerPrompt), owner)
+		if err != nil {
+			return config.Feishu{}, feishu.Identity{}, err
+		}
 	}
 
 	allowUnmentioned := flags.AllowUnmentioned
@@ -284,7 +300,7 @@ func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reade
 	}, identity, nil
 }
 
-func finishCached(ctx context.Context, opts Options, cached config.Feishu) (config.Feishu, feishu.Identity, error) {
+func finishCached(ctx context.Context, opts Options, reader *bufio.Reader, cached config.Feishu) (config.Feishu, feishu.Identity, error) {
 	fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupUsingCached))
 	opts.Catalog = i18n.New(i18n.FromDomain(cached.Domain))
 	identity, err := opts.Probe(ctx, cached.AppID, cached.AppSecret, cached.Domain)
@@ -298,6 +314,14 @@ func finishCached(ctx context.Context, opts Options, cached config.Feishu) (conf
 		} else {
 			cached.OwnerOpenID = resolved
 		}
+	}
+	if opts.Interactive {
+		fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupOwnerHint))
+		owner, err := promptOptional(reader, opts.Out, opts.Catalog.T(i18n.SetupOwnerPrompt), cached.OwnerOpenID)
+		if err != nil {
+			return config.Feishu{}, feishu.Identity{}, err
+		}
+		cached.OwnerOpenID = owner
 	}
 	return cached, identity, nil
 }
@@ -459,6 +483,28 @@ func promptSecret(opts Options) (string, error) {
 		return "", fmt.Errorf("setup: read app secret: %w", err)
 	}
 	return strings.TrimSpace(secret), nil
+}
+
+// promptOptional asks for a value that may stay empty: enter keeps the
+// suggestion (or skips when there is none), a lone "-" clears it.
+func promptOptional(in *bufio.Reader, out io.Writer, question, initial string) (string, error) {
+	if initial != "" {
+		fmt.Fprintf(out, "%s [%s]: ", question, initial)
+	} else {
+		fmt.Fprintf(out, "%s: ", question)
+	}
+	line, err := in.ReadString('\n')
+	if err != nil && err != io.EOF {
+		return "", err
+	}
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return initial, nil
+	}
+	if line == "-" {
+		return "", nil
+	}
+	return line, nil
 }
 
 func promptText(in *bufio.Reader, out io.Writer, question, initial string) (string, error) {

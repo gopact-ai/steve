@@ -388,3 +388,98 @@ type discard struct{}
 
 func ioDiscard() *discard                    { return &discard{} }
 func (*discard) Write(p []byte) (int, error) { return len(p), nil }
+
+func TestRunOwnerFlagWinsWithoutResolution(t *testing.T) {
+	cfg, err := Run(t.Context(), Flags{
+		ConfigPath:  filepath.Join(t.TempDir(), "config.json"),
+		AppID:       "cli_app",
+		OwnerOpenID: "ou_flag",
+	}, Options{
+		Out: ioDiscard(),
+		Env: func(string) string { return "secret" },
+		Probe: func(context.Context, string, string, string) (feishu.Identity, error) {
+			return feishu.Identity{OpenID: "ou_bot"}, nil
+		},
+		Owner: func(context.Context, string, string, string) (string, error) {
+			t.Error("owner resolver consulted although the flag was given")
+			return "", nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Feishu.OwnerOpenID != "ou_flag" {
+		t.Fatalf("owner = %q", cfg.Feishu.OwnerOpenID)
+	}
+}
+
+func TestRunInteractiveOwnerOverrideAndClear(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	// Manual flow: source(2=manual), app id, domain(1), group(1), owner.
+	path := filepath.Join(t.TempDir(), "config.json")
+	run := func(ownerLine string) *config.Config {
+		in := strings.NewReader("2\ncli_prompt\n1\n1\n" + ownerLine)
+		cfg, err := Run(t.Context(), Flags{ConfigPath: filepath.Join(t.TempDir(), "config.json")}, Options{
+			In: in, Out: ioDiscard(), Interactive: true,
+			Env:        func(string) string { return "" },
+			ReadSecret: func() (string, error) { return "typed-secret", nil },
+			Probe: func(context.Context, string, string, string) (feishu.Identity, error) {
+				return feishu.Identity{OpenID: "ou_bot"}, nil
+			},
+			Owner: func(context.Context, string, string, string) (string, error) { return "ou_auto", nil },
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return cfg
+	}
+	if got := run("ou_typed\n").Feishu.OwnerOpenID; got != "ou_typed" {
+		t.Fatalf("typed owner = %q", got)
+	}
+	if got := run("\n").Feishu.OwnerOpenID; got != "ou_auto" {
+		t.Fatalf("enter must keep the suggestion, got %q", got)
+	}
+	if got := run("-\n").Feishu.OwnerOpenID; got != "" {
+		t.Fatalf("dash must clear, got %q", got)
+	}
+	_ = path
+}
+
+func TestRunReuseKeepPromptsOwner(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	path := filepath.Join(t.TempDir(), "config.json")
+	seed := func() {
+		if _, err := Run(t.Context(), Flags{ConfigPath: path, AppID: "cli_app"}, Options{
+			Out: ioDiscard(),
+			Env: func(string) string { return "secret" },
+			Probe: func(context.Context, string, string, string) (feishu.Identity, error) {
+				return feishu.Identity{OpenID: "ou_bot"}, nil
+			},
+			Owner: func(context.Context, string, string, string) (string, error) { return "", nil },
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	seed()
+	cfg, err := Run(t.Context(), Flags{ConfigPath: path}, Options{
+		In: strings.NewReader("1\nou_kept\n"), Out: ioDiscard(), Interactive: true,
+		Env: func(string) string { return "" },
+		Probe: func(context.Context, string, string, string) (feishu.Identity, error) {
+			return feishu.Identity{OpenID: "ou_bot"}, nil
+		},
+		Owner: func(context.Context, string, string, string) (string, error) { return "", nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Feishu.OwnerOpenID != "ou_kept" {
+		t.Fatalf("reuse-keep owner = %q", cfg.Feishu.OwnerOpenID)
+	}
+	loaded, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if loaded.Feishu.OwnerOpenID != "ou_kept" {
+		t.Fatalf("saved owner = %q", loaded.Feishu.OwnerOpenID)
+	}
+}
