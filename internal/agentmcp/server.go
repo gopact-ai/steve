@@ -91,8 +91,21 @@ type Server struct {
 
 // New binds the loopback listener immediately so the URL is known before any
 // capability is assembled. Serving starts with Start.
-func New() (*Server, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+//
+// The URL is part of every session's capability fingerprint and lives inside
+// resumed agent sessions, so the port must survive gateway restarts: pass
+// the previously used port to bind it again. 0 (or a port meanwhile taken)
+// falls back to an ephemeral one — existing sessions then drift and ask for
+// /new, which is the honest outcome.
+func New(preferredPort int) (*Server, error) {
+	var listener net.Listener
+	var err error
+	if preferredPort > 0 {
+		listener, err = net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", preferredPort))
+	}
+	if listener == nil {
+		listener, err = net.Listen("tcp", "127.0.0.1:0")
+	}
 	if err != nil {
 		return nil, fmt.Errorf("agentmcp: listen: %w", err)
 	}
@@ -127,6 +140,16 @@ func (s *Server) Start(ctx context.Context) error {
 // URL is the endpoint injected into agent MCP configs.
 func (s *Server) URL() string {
 	return "http://" + s.listener.Addr().String() + "/mcp"
+}
+
+// Port reports the bound port, for the caller to persist and hand back to
+// New on the next start.
+func (s *Server) Port() int {
+	addr, ok := s.listener.Addr().(*net.TCPAddr)
+	if !ok {
+		return 0
+	}
+	return addr.Port
 }
 
 func (s *Server) BindChannel(sender Sender) {

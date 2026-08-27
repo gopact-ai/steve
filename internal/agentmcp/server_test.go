@@ -54,7 +54,7 @@ func (f *fakeSender) DeleteMessage(_ context.Context, messageID string) error {
 
 func startServer(t *testing.T) (*Server, *fakeSender) {
 	t.Helper()
-	s, err := New()
+	s, err := New(0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,5 +339,36 @@ func TestGetRefused(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusMethodNotAllowed {
 		t.Fatalf("GET status %d, want 405", resp.StatusCode)
+	}
+}
+
+func TestPreferredPortReusedAcrossRestarts(t *testing.T) {
+	first, err := New(0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := first.Port()
+	if port <= 0 {
+		t.Fatalf("no port reported: %d", port)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() { defer close(done); _ = first.Start(ctx) }()
+	cancel()
+	<-done
+	second, err := New(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Port() != port {
+		t.Fatalf("restart lost the port: %d -> %d", port, second.Port())
+	}
+	// A port that is meanwhile taken falls back instead of failing.
+	third, err := New(port)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Port() == port {
+		t.Fatalf("two servers on one port")
 	}
 }

@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -204,13 +205,20 @@ func serve(args []string) error {
 	gw.SetCatalog(catalogText)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	gate, err := agentmcp.New()
+	// The messaging server's URL is baked into session fingerprints, so the
+	// port is remembered across restarts: losing it would ask every live
+	// conversation for /new after each deploy.
+	portPath := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "agentmcp.port")
+	gate, err := agentmcp.New(readPort(portPath))
 	if err != nil {
 		// The send primitive is an enhancement; a box that cannot bind a
 		// loopback port still serves ordinary turns.
 		log.Printf("steve: agent messaging disabled: %v", err)
 		gate = nil
 	} else {
+		if err := os.WriteFile(portPath, []byte(fmt.Sprintf("%d\n", gate.Port())), 0o600); err != nil {
+			log.Printf("steve: remember agent messaging port: %v", err)
+		}
 		coordinator.SetAgentGate(gate)
 		gw.SetAgentGate(gate)
 		go func() {
@@ -385,6 +393,19 @@ func checkHome(cfg *config.Config) error {
 
 func isTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
+}
+
+// readPort reads a previously remembered loopback port; 0 means none.
+func readPort(path string) int {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || port <= 0 || port > 65535 {
+		return 0
+	}
+	return port
 }
 
 // nodeName labels which machine ran a turn. It is cosmetic today and load

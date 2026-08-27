@@ -56,7 +56,7 @@ func TestAgentSendPrimitiveE2E(t *testing.T) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build mockagent: %v\n%s", err, output)
 	}
-	gate, err := agentmcp.New()
+	gate, err := agentmcp.New(0)
 	if err != nil {
 		t.Fatal(err)
 	}
