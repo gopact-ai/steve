@@ -125,6 +125,15 @@ func New(ctx context.Context, opts Options, handler Handler) (*Channel, error) {
 			go handler(msg)
 			return nil
 		}).
+		OnP2MessageReactionCreatedV1(func(context.Context, *larkim.P2MessageReactionCreatedV1) error {
+			// The gateway's own thinking-emoji ack comes straight back as an
+			// event; there is nothing to do with it, and leaving it without
+			// a handler logged an error per reaction.
+			return nil
+		}).
+		OnP2MessageReactionDeletedV1(func(context.Context, *larkim.P2MessageReactionDeletedV1) error {
+			return nil
+		}).
 		OnP2CardActionTrigger(func(_ context.Context, event *callback.CardActionTriggerEvent) (*callback.CardActionTriggerResponse, error) {
 			if opts.OnCardAction == nil {
 				return &callback.CardActionTriggerResponse{}, nil
