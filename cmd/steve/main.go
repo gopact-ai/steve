@@ -162,6 +162,13 @@ func serve(args []string) error {
 		return err
 	}
 	defer manager.Stop()
+	// One gateway per state directory, enforced before anything connects:
+	// two processes on one Feishu app split the event stream between them.
+	unlock, err := runtime.AcquireLock(filepath.Dir(cfg.Gateway.StatePath))
+	if err != nil {
+		return err
+	}
+	defer unlock()
 	store, err := state.Open(cfg.Gateway.StatePath)
 	if err != nil {
 		return err
@@ -222,6 +229,11 @@ func serve(args []string) error {
 		}
 		coordinator.SetAgentGate(gate)
 		gw.SetAgentGate(gate)
+		gate.SetJournal(func(conversationID, agentID, messageID string) {
+			if err := tasks.AddInterim(conversationID, agentID, messageID); err != nil {
+				log.Printf("steve: journal interim message: %v", err)
+			}
+		})
 		go func() {
 			if err := gate.Start(ctx); err != nil {
 				log.Printf("steve: %v", err)
@@ -271,6 +283,7 @@ func serve(args []string) error {
 			ConversationID: interrupted.Channel, ChatID: interrupted.ChatID,
 			MessageID: interrupted.AnchorMessage, Requester: interrupted.Requester,
 			ChatType: interrupted.ChatType,
+			OpenCard: interrupted.OpenCard, Interim: interrupted.Interim,
 		})
 	}
 	if len(revivals) > 0 {
