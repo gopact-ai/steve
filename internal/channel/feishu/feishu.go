@@ -460,9 +460,16 @@ func (c *Channel) DeleteMessage(ctx context.Context, messageID string) error {
 
 // Reply sends a plain-text reply to the given message.
 func (c *Channel) Reply(ctx context.Context, messageID, text string) error {
+	_, err := c.ReplyText(ctx, messageID, text)
+	return err
+}
+
+// ReplyText sends a plain-text reply and returns the new message's id, so a
+// caller that may need to recall the message later can hold on to it.
+func (c *Channel) ReplyText(ctx context.Context, messageID, text string) (string, error) {
 	content, err := json.Marshal(map[string]string{"text": text})
 	if err != nil {
-		return err
+		return "", err
 	}
 	req := larkim.NewReplyMessageReqBuilder().
 		MessageId(messageID).
@@ -473,12 +480,15 @@ func (c *Channel) Reply(ctx context.Context, messageID, text string) error {
 		Build()
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
-		return fmt.Errorf("feishu reply: %w", err)
+		return "", fmt.Errorf("feishu reply: %w", err)
 	}
 	if !resp.Success() {
-		return fmt.Errorf("feishu reply: code=%d msg=%s", resp.Code, resp.Msg)
+		return "", fmt.Errorf("feishu reply: code=%d msg=%s", resp.Code, resp.Msg)
 	}
-	return nil
+	if resp.Data == nil {
+		return "", nil
+	}
+	return deref(resp.Data.MessageId), nil
 }
 
 // ReplyThread replies to a message and starts a new topic thread on it,
