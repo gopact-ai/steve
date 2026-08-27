@@ -964,3 +964,45 @@ func TestTopicCommandGuards(t *testing.T) {
 		t.Fatalf("guarded /t still ran: %+v", processor.reqs)
 	}
 }
+
+type recordingGate struct{ calls chan string }
+
+func (g *recordingGate) Anchor(conversationID, chatID, messageID string) {
+	g.calls <- conversationID + "|" + chatID + "|" + messageID
+}
+
+func TestGatewayAnchorsConversationBeforeTurn(t *testing.T) {
+	g := New(fakeProcessor{})
+	r := &reply{text: make(chan string, 1)}
+	g.BindChannel(r)
+	gate := &recordingGate{calls: make(chan string, 4)}
+	g.SetAgentGate(gate)
+	g.HandleMessage(feishu.InboundMessage{
+		ChatID: "oc_1", MessageID: "om_1", Text: "hi", ChatType: protocol.ChatP2P,
+	})
+	select {
+	case got := <-gate.calls:
+		if got != "oc_1|oc_1|om_1" {
+			t.Fatalf("anchor = %q", got)
+		}
+	case <-time.After(waitDeadline):
+		t.Fatal("gate never anchored")
+	}
+	select {
+	case <-r.text:
+	case <-time.After(waitDeadline):
+		t.Fatal("turn never replied")
+	}
+	// A threaded message anchors its thread, not the flat chat.
+	g.HandleMessage(feishu.InboundMessage{
+		ChatID: "oc_1", ConversationID: "omt_thread", MessageID: "om_2", Text: "hi again", ChatType: protocol.ChatGroup, Mentioned: true,
+	})
+	select {
+	case got := <-gate.calls:
+		if got != "omt_thread|oc_1|om_2" {
+			t.Fatalf("thread anchor = %q", got)
+		}
+	case <-time.After(waitDeadline):
+		t.Fatal("gate never anchored thread")
+	}
+}

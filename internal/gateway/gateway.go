@@ -60,12 +60,20 @@ type processor interface {
 	Handle(context.Context, turn.Request) (turn.Result, error)
 }
 
+// agentAnchor is the messaging MCP server's view of the gateway: each
+// inbound message tells it where that conversation's interim agent sends
+// should attach, and starts a fresh recall epoch.
+type agentAnchor interface {
+	Anchor(conversationID, chatID, messageID string)
+}
+
 const thinkingEmoji = "THINKING"
 
 type Gateway struct {
 	processor processor
 	ch        replier
 	text      i18n.Catalog
+	gate      agentAnchor
 
 	// slots bounds how many conversations are served at once. A turn spends
 	// almost all of its time waiting on an agent subprocess rather than on
@@ -101,6 +109,9 @@ func New(processor processor) *Gateway {
 }
 
 func (g *Gateway) BindChannel(ch replier) { g.ch = ch }
+
+// SetAgentGate wires the messaging MCP server; call before Start.
+func (g *Gateway) SetAgentGate(gate agentAnchor) { g.gate = gate }
 
 func (g *Gateway) SetCatalog(cat i18n.Catalog) { g.text = cat }
 
@@ -229,6 +240,9 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 	if cmd, rest := protocol.ParseCommand(strings.TrimSpace(msg.Text)); cmd == protocol.CommandTopic && !listen {
 		g.seedTopic(msg, rest)
 		return
+	}
+	if g.gate != nil && msg.MessageID != "" {
+		g.gate.Anchor(conversationID, msg.ChatID, msg.MessageID)
 	}
 	ui := g.newTurnUI(msg, listen)
 	result, err := g.processor.Handle(context.Background(), turn.Request{

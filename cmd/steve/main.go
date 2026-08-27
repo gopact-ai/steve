@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/config"
@@ -203,6 +204,22 @@ func serve(args []string) error {
 	gw.SetCatalog(catalogText)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	gate, err := agentmcp.New()
+	if err != nil {
+		// The send primitive is an enhancement; a box that cannot bind a
+		// loopback port still serves ordinary turns.
+		log.Printf("steve: agent messaging disabled: %v", err)
+		gate = nil
+	} else {
+		coordinator.SetAgentGate(gate)
+		gw.SetAgentGate(gate)
+		go func() {
+			if err := gate.Start(ctx); err != nil {
+				log.Printf("steve: %v", err)
+			}
+		}()
+		log.Printf("steve: agent messaging MCP server on %s", gate.URL())
+	}
 	go func() {
 		<-ctx.Done()
 		stop()
@@ -219,6 +236,9 @@ func serve(args []string) error {
 		return err
 	}
 	gw.BindChannel(channel)
+	if gate != nil {
+		gate.BindChannel(channel)
+	}
 
 	if addr := cfg.Gateway.DebugAddr; addr != "" {
 		go func() {
