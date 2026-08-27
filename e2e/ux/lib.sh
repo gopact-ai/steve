@@ -14,13 +14,13 @@ print(json.loads(raw[raw.find('{'):])['data']['message_id'])"
 
 list_desc() { lark-cli im +chat-messages-list --chat-id "$CHAT" --order desc 2>/dev/null; }
 
-# poll <max_iters> <python_checker>: checker reads the message list on stdin,
-# env carries M1..; prints WAIT / DONE.../ FAILED...; poll echoes each verdict.
+# poll <max_iters> <checker.py>: the checker reads the message list on stdin,
+# env carries M1..; prints WAIT / DONE... / FAILED...; poll echoes each verdict.
 poll() {
   local iters=$1 checker=$2 verdict=""
   for i in $(seq 1 "$iters"); do
     sleep 10
-    verdict=$(list_desc | python3 -c "$checker")
+    verdict=$(list_desc | python3 "$checker")
     echo "poll $i: $verdict"
     case "$verdict" in DONE*|FAILED*) break;; esac
   done
