@@ -92,6 +92,10 @@ type Gateway struct {
 	PromptTimeout Duration `json:"prompt_timeout"`
 	StatePath     string   `json:"state_path"`
 	HomePath      string   `json:"home_path,omitempty"`
+	// TaskMaxTurns and TaskMaxElapsed raise the per-task budget for long
+	// running work; zero keeps the built-in defaults.
+	TaskMaxTurns   int      `json:"task_max_turns,omitempty"`
+	TaskMaxElapsed Duration `json:"task_max_elapsed,omitempty"`
 	// DebugAddr enables a loopback-only endpoint for injecting messages and
 	// card callbacks; empty keeps it off. DebugChatID is the chat those
 	// injected messages default to.

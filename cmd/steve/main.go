@@ -191,6 +191,7 @@ func serve(args []string) error {
 	if err != nil {
 		return fmt.Errorf("open tasks: %w", err)
 	}
+	tasks.SetBudget(cfg.Gateway.TaskMaxTurns, time.Duration(cfg.Gateway.TaskMaxElapsed))
 	coordinator.SetTasks(tasks, nodeName())
 	coordinator.SetCatalog(catalogText)
 	if names := live.Map.EnabledNames(); len(names) > 0 {
@@ -246,6 +247,34 @@ func serve(args []string) error {
 	gw.BindChannel(channel)
 	if gate != nil {
 		gate.BindChannel(channel)
+	}
+
+	// Pick back up what a dead gateway left mid-turn: close the orphaned
+	// attempt, revive the session, and continue through a real message so
+	// the resumed turn renders a card like any other turn.
+	var revivals []gateway.Revival
+	for _, interrupted := range tasks.Interrupted() {
+		if _, err := tasks.Finish(interrupted.ID, task.OutcomeInterrupted, task.Tokens{}, 0); err != nil {
+			log.Printf("steve: close interrupted attempt #%s: %v", interrupted.ID, err)
+			continue
+		}
+		if interrupted.AnchorMessage == "" {
+			log.Printf("steve: task #%s interrupted with no anchor; not resumable", interrupted.ID)
+			continue
+		}
+		if time.Since(interrupted.UpdatedAt) > 24*time.Hour {
+			log.Printf("steve: task #%s interrupted long ago; leaving it stopped", interrupted.ID)
+			continue
+		}
+		revivals = append(revivals, gateway.Revival{
+			TaskID: interrupted.ID, Goal: interrupted.Goal, Member: interrupted.Member,
+			ConversationID: interrupted.Channel, ChatID: interrupted.ChatID,
+			MessageID: interrupted.AnchorMessage, Requester: interrupted.Requester,
+			ChatType: interrupted.ChatType,
+		})
+	}
+	if len(revivals) > 0 {
+		go gw.Revive(revivals, coordinator.ReviveSession)
 	}
 
 	if addr := cfg.Gateway.DebugAddr; addr != "" {

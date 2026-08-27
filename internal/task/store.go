@@ -20,6 +20,10 @@ type Store struct {
 	mu   sync.Mutex
 	data data
 	now  func() time.Time
+	// Default budgets for new tasks; configurable so long-running work is
+	// a deployment decision, not a code change.
+	maxTurns   int
+	maxElapsed time.Duration
 }
 
 type data struct {
@@ -28,7 +32,10 @@ type data struct {
 }
 
 func Open(path string) (*Store, error) {
-	s := &Store{path: path, data: data{NextID: 1, Tasks: map[string]*Task{}}, now: time.Now}
+	s := &Store{
+		path: path, data: data{NextID: 1, Tasks: map[string]*Task{}}, now: time.Now,
+		maxTurns: DefaultMaxTurns, maxElapsed: DefaultMaxElapsed,
+	}
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
 		return s, nil
@@ -64,10 +71,10 @@ func (s *Store) Create(t Task) (Task, error) {
 	t.CreatedAt = now
 	t.UpdatedAt = now
 	if t.Budget.MaxTurns == 0 {
-		t.Budget.MaxTurns = DefaultMaxTurns
+		t.Budget.MaxTurns = s.maxTurns
 	}
 	if t.Budget.MaxElapsed == 0 {
-		t.Budget.MaxElapsed = DefaultMaxElapsed
+		t.Budget.MaxElapsed = s.maxElapsed
 	}
 	next := s.clone()
 	next.NextID = s.data.NextID + 1
@@ -126,6 +133,60 @@ func (s *Store) List(channel string) []Task {
 		}
 		return out[i].UpdatedAt.After(out[j].UpdatedAt)
 	})
+	return out
+}
+
+// SetBudget raises the default budgets new tasks are created with.
+// Non-positive values keep the current default.
+func (s *Store) SetBudget(maxTurns int, maxElapsed time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if maxTurns > 0 {
+		s.maxTurns = maxTurns
+	}
+	if maxElapsed > 0 {
+		s.maxElapsed = maxElapsed
+	}
+}
+
+// SetAnchor records where the task's latest turn is anchored in the chat,
+// so a restarted gateway can deliver into the right conversation.
+func (s *Store) SetAnchor(id, chatID, messageID, chatType string) error {
+	if messageID == "" {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.clone()
+	stored, ok := next.Tasks[id]
+	if !ok {
+		return fmt.Errorf("task %s not found", id)
+	}
+	stored.ChatID = chatID
+	stored.AnchorMessage = messageID
+	stored.ChatType = chatType
+	stored.UpdatedAt = s.now()
+	if err := s.replaceLocked(next); err != nil {
+		return err
+	}
+	return nil
+}
+
+// Interrupted lists non-terminal tasks whose latest attempt never ended —
+// the gateway died mid-turn. Newest first.
+func (s *Store) Interrupted() []Task {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Task, 0, 2)
+	for _, stored := range s.data.Tasks {
+		if stored.State.Terminal() {
+			continue
+		}
+		if n := len(stored.Attempts); n > 0 && stored.Attempts[n-1].Open() {
+			out = append(out, *stored.clone())
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
 	return out
 }
 

@@ -35,9 +35,13 @@ type Request struct {
 	SenderOpenID   string
 	ChatType       protocol.ChatType
 	Mentioned      bool
-	Images         []harness.Media
-	OnProgress     func(view.Progress)
-	OnAskUser      acphost.AskUserFunc
+	// MessageID and ChatID anchor the turn in the channel, so an
+	// interrupted task can be resumed and delivered after a restart.
+	MessageID  string
+	ChatID     string
+	Images     []harness.Media
+	OnProgress func(view.Progress)
+	OnAskUser  acphost.AskUserFunc
 	// Queue makes this prompt wait for the running turn instead of
 	// interrupting it: "also do this after" rather than "stop, do this".
 	Queue   bool
@@ -148,6 +152,13 @@ func (c *Coordinator) SetSkills(live *skills.Live) {
 // MCP server injected with its own conversation-bound token.
 func (c *Coordinator) SetAgentGate(gate AgentGate) {
 	c.gate = gate
+}
+
+// ReviveSession clears the taint a crash left on the member's session so a
+// resume turn can run against it. The session is exactly as consistent as
+// the agent's own disk state, which the agent reloads on session/load.
+func (c *Coordinator) ReviveSession(conversationID, agentID string) error {
+	return c.store.ClearTaint(conversationID, agentID)
 }
 
 // SetTasks enables task tracking. It is optional: with no store the

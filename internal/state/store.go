@@ -400,6 +400,25 @@ func (s *Store) ArchivedSessions(conversationID, agentID string) []Archived {
 	return out
 }
 
+// ClearTaint marks the session consistent again. Only the resume path may
+// call it: resuming deliberately accepts a mid-flight session, because the
+// agent replays its own on-disk history on load and the interrupted turn
+// simply never got an answer.
+func (s *Store) ClearTaint(conversationID, agentID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := cloneData(s.data)
+	conversation := next.Conversations[conversationID]
+	session, ok := conversation.Sessions[agentID]
+	if !ok || !session.Tainted {
+		return nil
+	}
+	session.Tainted = false
+	conversation.Sessions[agentID] = session
+	next.Conversations[conversationID] = conversation
+	return s.replaceLocked(next)
+}
+
 func (s *Store) DeleteSession(conversationID, agentID string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

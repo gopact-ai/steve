@@ -256,6 +256,8 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 	result, err := g.processor.Handle(context.Background(), turn.Request{
 		ConversationID: conversationID,
 		Input:          g.promptText(msg),
+		MessageID:      msg.MessageID,
+		ChatID:         msg.ChatID,
 		SenderOpenID:   msg.SenderOpenID,
 		ChatType:       protocol.ParseChatType(string(msg.ChatType)),
 		Mentioned:      msg.Mentioned,

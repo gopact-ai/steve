@@ -105,6 +105,8 @@ const (
 	CardStatus             Key = "card_status"
 	CardTasks              Key = "card_tasks"
 	TasksEmpty             Key = "tasks_empty"
+	ResumeNotice           Key = "resume_notice"
+	ResumePrompt           Key = "resume_prompt"
 	CardRunning            Key = "card_running"
 	CardCompleted          Key = "card_completed"
 	CardFailed             Key = "card_failed"

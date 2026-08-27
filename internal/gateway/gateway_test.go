@@ -47,6 +47,11 @@ func (c *recordingChannel) Reply(_ context.Context, messageID, text string) erro
 	return nil
 }
 
+func (c *recordingChannel) ReplyText(_ context.Context, messageID, text string) (string, error) {
+	c.events <- "reply-text:" + messageID + ":" + text
+	return "om_notice", nil
+}
+
 func collectEvents(t *testing.T, events <-chan string, n int) []string {
 	t.Helper()
 	got := make([]string, 0, n)
@@ -1042,5 +1047,55 @@ func TestGatewayAnchorsConversationBeforeTurn(t *testing.T) {
 		}
 	case <-time.After(waitDeadline):
 		t.Fatal("gate never anchored thread")
+	}
+}
+
+func TestGatewayReviveContinuesInterruptedTask(t *testing.T) {
+	p := &captureProcessor{req: make(chan turn.Request, 1)}
+	g := New(p)
+	ch := &recordingChannel{events: make(chan string, 8)}
+	g.BindChannel(ch)
+	revived := make(chan string, 1)
+	g.Revive([]Revival{{
+		TaskID: "7", Goal: "长任务目标", Member: "codex",
+		ConversationID: "omt_thread", ChatID: "oc_1", MessageID: "om_anchor",
+		Requester: "ou_user", ChatType: "group",
+	}}, func(conversationID, member string) error {
+		revived <- conversationID + ":" + member
+		return nil
+	})
+	select {
+	case got := <-revived:
+		if got != "omt_thread:codex" {
+			t.Fatalf("revived = %q", got)
+		}
+	case <-time.After(waitDeadline):
+		t.Fatal("session never revived")
+	}
+	// The notice replies to the task's anchor so it lands in the topic.
+	deadline := time.After(waitDeadline)
+	seenNotice := false
+	for !seenNotice {
+		select {
+		case ev := <-ch.events:
+			if strings.HasPrefix(ev, "reply-text:om_anchor:") && strings.Contains(ev, "#7") {
+				seenNotice = true
+			}
+		case <-deadline:
+			t.Fatal("resume notice never posted")
+		}
+	}
+	// The continuation flows through the normal turn path, addressed to the
+	// task's member, anchored on the notice message.
+	select {
+	case req := <-p.req:
+		if req.ConversationID != "omt_thread" || req.ChatID != "oc_1" || req.MessageID != "om_notice" {
+			t.Fatalf("resume request misrouted: %+v", req)
+		}
+		if req.SenderOpenID != "ou_user" || !strings.Contains(req.Input, "@codex") || !strings.Contains(req.Input, "长任务目标") {
+			t.Fatalf("resume prompt wrong: %+v", req)
+		}
+	case <-time.After(waitDeadline):
+		t.Fatal("resume turn never reached the processor")
 	}
 }

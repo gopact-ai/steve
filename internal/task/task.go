@@ -45,6 +45,9 @@ const (
 	OutcomeError     Outcome = "error"
 	OutcomeCancelled Outcome = "cancelled"
 	OutcomeTimeout   Outcome = "timeout"
+	// OutcomeInterrupted marks an attempt the gateway itself abandoned:
+	// the process died mid-turn and closed the attempt on the next start.
+	OutcomeInterrupted Outcome = "interrupted"
 )
 
 // Tokens is best-effort. Harnesses report usage in different shapes and some
@@ -111,17 +114,22 @@ type Attempt struct {
 func (a Attempt) Open() bool { return a.EndedAt.IsZero() }
 
 type Task struct {
-	ID        string    `json:"id"`
-	Goal      string    `json:"goal"`
-	Requester string    `json:"requester,omitempty"`
-	Channel   string    `json:"channel"`
-	Member    string    `json:"member,omitempty"`
-	Node      string    `json:"node,omitempty"`
-	Workspace string    `json:"workspace,omitempty"`
-	Parent    string    `json:"parent,omitempty"`
-	State     State     `json:"state"`
-	Budget    Budget    `json:"budget,omitzero"`
-	Attempts  []Attempt `json:"attempts,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        string `json:"id"`
+	Goal      string `json:"goal"`
+	Requester string `json:"requester,omitempty"`
+	Channel   string `json:"channel"`
+	Member    string `json:"member,omitempty"`
+	Node      string `json:"node,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
+	// Where the task's turns anchor in the chat: enough to reply into the
+	// right conversation (and topic) after a gateway restart.
+	ChatID        string    `json:"chat_id,omitempty"`
+	AnchorMessage string    `json:"anchor_message,omitempty"`
+	ChatType      string    `json:"chat_type,omitempty"`
+	Parent        string    `json:"parent,omitempty"`
+	State         State     `json:"state"`
+	Budget        Budget    `json:"budget,omitzero"`
+	Attempts      []Attempt `json:"attempts,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }

@@ -51,6 +51,14 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		log.Printf("turn: begin task %s: %v", tracked.ID, err)
 		return "", nil
 	}
+	// The anchor is what a restarted gateway replies to when it resumes
+	// this task; refresh it every turn so delivery lands by the newest
+	// exchange (and inside the right topic).
+	if req.MessageID != "" {
+		if err := c.tasks.SetAnchor(tracked.ID, req.ChatID, req.MessageID, string(req.ChatType)); err != nil {
+			log.Printf("turn: anchor task %s: %v", tracked.ID, err)
+		}
+	}
 	return tracked.ID, nil
 }
 

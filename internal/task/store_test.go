@@ -259,3 +259,62 @@ func TestActivePrefersNewest(t *testing.T) {
 		t.Fatalf("Active = %q; want %q", got.ID, newer.ID)
 	}
 }
+
+func TestInterruptedListsOpenAttemptsAndAnchors(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := store.Create(Task{Goal: "long job", Channel: "chat", Member: "codex"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Begin(created.ID, "codex", "node", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetAnchor(created.ID, "oc_1", "om_1", "group"); err != nil {
+		t.Fatal(err)
+	}
+	interrupted := store.Interrupted()
+	if len(interrupted) != 1 || interrupted[0].ID != created.ID {
+		t.Fatalf("interrupted = %+v", interrupted)
+	}
+	if interrupted[0].AnchorMessage != "om_1" || interrupted[0].ChatID != "oc_1" || interrupted[0].ChatType != "group" {
+		t.Fatalf("anchor not persisted: %+v", interrupted[0])
+	}
+	if _, err := store.Finish(created.ID, OutcomeInterrupted, Tokens{}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.Interrupted(); len(got) != 0 {
+		t.Fatalf("closed attempt still interrupted: %+v", got)
+	}
+	// The record survives a reopen — that is the whole point.
+	reopened, err := Open(store.path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	loaded, ok := reopened.Get(created.ID)
+	if !ok || loaded.AnchorMessage != "om_1" || loaded.Attempts[0].Outcome != OutcomeInterrupted {
+		t.Fatalf("reopen lost state: %+v", loaded)
+	}
+}
+
+func TestSetBudgetRaisesDefaults(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.SetBudget(100, 6*time.Hour)
+	created, err := store.Create(Task{Goal: "g", Channel: "c", Member: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.Budget.MaxTurns != 100 || created.Budget.MaxElapsed != 6*time.Hour {
+		t.Fatalf("budget = %+v", created.Budget)
+	}
+	store.SetBudget(0, 0) // non-positive keeps current
+	again, _ := store.Create(Task{Goal: "g2", Channel: "c", Member: "m"})
+	if again.Budget.MaxTurns != 100 {
+		t.Fatalf("zero overwrote the default: %+v", again.Budget)
+	}
+}
