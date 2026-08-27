@@ -47,6 +47,9 @@ func (b *Broker) Decide(kind acp.ToolKind, options []acp.PermissionOption) acp.R
 	return pickOutcome(options, acp.PermissionOptionKindAllowOnce, acp.PermissionOptionKindAllowAlways)
 }
 
+// Allow reports whether the policy allows this tool kind outright.
+func (b *Broker) Allow(kind acp.ToolKind) bool { return b.allows(kind) }
+
 // NeedsAsk reports whether a human must confirm this tool kind.
 // read: reads pass, writes wait. Other policies decide without asking.
 func (b *Broker) NeedsAsk(kind acp.ToolKind) bool {

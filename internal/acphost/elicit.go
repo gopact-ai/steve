@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/view"
@@ -29,6 +30,9 @@ var errUnsupportedForm = errors.New("elicitation form is not a single choice")
 func (ch *clientHandler) CreateElicitation(ctx context.Context, req *acp.CreateElicitationRequest) (*acp.CreateElicitationResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("elicitation/create: empty request")
+	}
+	if resp, decided := ch.decideMCPToolApproval(req); decided {
+		return resp, nil
 	}
 	ch.h.mu.Lock()
 	col := ch.h.collectors[req.SessionID]
@@ -68,6 +72,73 @@ func (ch *clientHandler) CreateElicitation(ctx context.Context, req *acp.CreateE
 	resp := acp.AcceptCreateElicitationResponse()
 	resp.Content = &map[string]acp.ElicitationContentValue{key: value}
 	return &resp, nil
+}
+
+// isMCPToolApproval spots codex's "may I call this MCP tool" request.
+// codex-acp wraps it as an elicitation whenever the client renders forms,
+// carrying codex's own marker through _meta.
+func isMCPToolApproval(req *acp.CreateElicitationRequest) bool {
+	if req.Meta == nil {
+		return false
+	}
+	if kind, _ := req.Meta["codex_approval_kind"].(string); kind == "mcp_tool_call" {
+		return true
+	}
+	flag, _ := req.Meta["is_mcp_tool_approval"].(bool)
+	return flag
+}
+
+// decideMCPToolApproval routes an MCP tool-call approval through the
+// permission broker, exactly as if the agent had asked via
+// session/request_permission. Elicitation is just the envelope codex-acp
+// picked because Steve renders forms; which envelope arrived must not decide
+// whether a human gets pulled in. Without this, calling the gateway's own
+// injected messaging server parks the turn on a card nobody was asked to
+// expect. Returns decided=false when the policy genuinely wants a human.
+func (ch *clientHandler) decideMCPToolApproval(req *acp.CreateElicitationRequest) (*acp.CreateElicitationResponse, bool) {
+	if !isMCPToolApproval(req) {
+		return nil, false
+	}
+	broker := ch.h.cfg.Permission
+	if broker.NeedsAsk(acp.ToolKindExecute) {
+		return nil, false
+	}
+	if !broker.Allow(acp.ToolKindExecute) {
+		log.Printf("acphost: mcp tool approval declined by policy")
+		resp := acp.DeclineCreateElicitationResponse()
+		return &resp, true
+	}
+	resp := acp.AcceptCreateElicitationResponse()
+	if value, ok := persistChoice(req); ok {
+		content := map[string]acp.ElicitationContentValue{"persist": value}
+		resp.Content = &content
+	}
+	log.Printf("acphost: mcp tool approval accepted by policy")
+	return &resp, true
+}
+
+// persistChoice picks the widest approval scope the form offers (session
+// over once, never always), so an auto-approving policy answers once per
+// session instead of once per call.
+func persistChoice(req *acp.CreateElicitationRequest) (acp.ElicitationContentValue, bool) {
+	property, ok := req.RequestedSchema.Properties["persist"]
+	if !ok {
+		return acp.ElicitationContentValue{}, false
+	}
+	choices := propertyChoices(property)
+	for _, want := range []string{"session", "once"} {
+		for _, choice := range choices {
+			if choice.Value != want {
+				continue
+			}
+			value, err := acp.NewElicitationContentValue(want)
+			if err != nil {
+				return acp.ElicitationContentValue{}, false
+			}
+			return value, true
+		}
+	}
+	return acp.ElicitationContentValue{}, false
 }
 
 // elicitQuestion reduces a requested schema to the one choice Steve can ask,

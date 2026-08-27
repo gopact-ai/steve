@@ -173,6 +173,39 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		}
 	}
 
+	// "mcpapprove" raises the elicitation codex-acp sends when codex wants
+	// approval for an MCP tool call: form mode, a "persist" scope choice,
+	// and the codex marker in _meta. The response is echoed so tests can
+	// see whether policy or a human answered.
+	if strings.Contains(input, "mcpapprove") {
+		schema := acp.ElicitationSchema{
+			Type: acp.ElicitationSchemaTypeObject,
+			Properties: map[string]acp.ElicitationPropertySchema{
+				"persist": {Type: acp.ElicitationPropertySchemaTypeString, OneOf: &[]acp.EnumOption{
+					{Const: "once", Title: "Approve once"},
+					{Const: "session", Title: "Approve for session"},
+					{Const: "always", Title: "Always approve"},
+				}},
+			},
+		}
+		ereq := acp.SessionFormCreateElicitationRequest(`Allow tool feishu_send on server "feishu"?`, schema, req.SessionID)
+		ereq.Meta = acp.Meta{"codex_approval_kind": "mcp_tool_call"}
+		resp, err := a.client.CreateElicitation(ctx, &ereq)
+		if err != nil {
+			return nil, err
+		}
+		picked := string(resp.Action)
+		if resp.Content != nil {
+			if raw, ok := (*resp.Content)["persist"]; ok {
+				picked += ":persist=" + strings.Trim(string(raw), `"`)
+			}
+		}
+		note := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("[approval: " + picked + "] "))
+		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
+			return nil, err
+		}
+	}
+
 	// "mcpfull" exercises the gateway's built-in messaging MCP server the
 	// way a real agent would: handshake, send a milestone, watch a mention
 	// get refused, recall the milestone. The outcome is echoed so a wire
