@@ -2,6 +2,8 @@ package turn
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
@@ -57,6 +59,16 @@ func (e UserError) Error() string { return e.Text }
 type runtime interface {
 	OpenSession(context.Context, string, string, string, []acp.MCPServer) (harness.Runner, error)
 	CloseSession(context.Context, string, string) error
+	// SupportsHTTPMCP reports whether the harness's agent accepts HTTP MCP
+	// servers, so the messaging capability is only injected where it works.
+	SupportsHTTPMCP(context.Context, string) (bool, error)
+}
+
+// AgentGate is the built-in messaging MCP server: given a session's identity
+// and token it returns the capability to inject, binding the token to that
+// conversation so the agent can never write anywhere else.
+type AgentGate interface {
+	Extras(conversationID, agentID, token string) []capability.Extra
 }
 
 type Result struct {
@@ -81,6 +93,7 @@ type Coordinator struct {
 	homePath    string
 	scanHome    string
 	skills      *skills.Live
+	gate        AgentGate
 	tasks       *task.Store
 	node        string
 	text        i18n.Catalog
@@ -129,6 +142,12 @@ func (c *Coordinator) sessionWorkspace(req Request, selected agent.Agent, saved 
 
 func (c *Coordinator) SetSkills(live *skills.Live) {
 	c.skills = live
+}
+
+// SetAgentGate enables the send primitive: each session gets the messaging
+// MCP server injected with its own conversation-bound token.
+func (c *Coordinator) SetAgentGate(gate AgentGate) {
+	c.gate = gate
 }
 
 // SetTasks enables task tracking. It is optional: with no store the
@@ -251,12 +270,17 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if tracked != "" {
 		defer func() { c.finishTask(tracked, err) }()
 	}
-	capabilities, err := c.assemble(selected, req)
+	conversation := c.store.Conversation(conversationID)
+	saved := conversation.Sessions[selected.ID]
+	extras, agentToken, err := c.gateExtras(ctx, conversationID, selected, saved)
 	if err != nil {
 		return Result{}, err
 	}
-	conversation := c.store.Conversation(conversationID)
-	saved := conversation.Sessions[selected.ID]
+	saved.AgentToken = agentToken
+	capabilities, err := c.assemble(selected, req, extras)
+	if err != nil {
+		return Result{}, err
+	}
 	if saved.Tainted {
 		return Result{}, UserError{Text: c.text.T(i18n.Tainted, protocol.CommandNew)}
 	}
@@ -288,6 +312,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		ConversationID: conversationID, AgentID: selected.ID, HarnessID: selected.Harness,
 		UpstreamID: runner.ID(), Workspace: workspace, CapabilityHash: capabilities.Fingerprint,
 		InstructionsApplied: saved.InstructionsApplied, Tainted: true,
+		AgentToken: saved.AgentToken,
 	}
 	if err := c.store.SaveSession(session); err != nil {
 		c.discard(parent, selected, runner)
@@ -438,11 +463,43 @@ func (c *Coordinator) reset(ctx context.Context, conversationID string, selected
 	return Result{AgentID: selected.ID, Text: c.text.T(i18n.Reset, selected.ID), Recover: true}, nil
 }
 
-func (c *Coordinator) assemble(selected agent.Agent, req Request) (capability.Capabilities, error) {
+func (c *Coordinator) assemble(selected agent.Agent, req Request, extras []capability.Extra) (capability.Capabilities, error) {
 	if c.home == nil {
-		return c.assembler.Assemble(selected)
+		return c.assembler.AssembleExtra(selected, home.ModeNone, extras)
 	}
-	return c.assembler.AssembleMode(selected, injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID))
+	return c.assembler.AssembleExtra(selected, injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID), extras)
+}
+
+// gateExtras injects the messaging server for harnesses that can speak HTTP
+// MCP. The token is minted once per session and persisted with it, so the
+// capability fingerprint stays stable across turns and gateway restarts.
+func (c *Coordinator) gateExtras(ctx context.Context, conversationID string, selected agent.Agent, saved state.Session) ([]capability.Extra, string, error) {
+	if c.gate == nil {
+		return nil, saved.AgentToken, nil
+	}
+	supported, err := c.runtime.SupportsHTTPMCP(ctx, selected.Harness)
+	if err != nil {
+		return nil, saved.AgentToken, err
+	}
+	if !supported {
+		return nil, saved.AgentToken, nil
+	}
+	token := saved.AgentToken
+	if token == "" {
+		token, err = newAgentToken()
+		if err != nil {
+			return nil, "", err
+		}
+	}
+	return c.gate.Extras(conversationID, selected.ID, token), token, nil
+}
+
+func newAgentToken() (string, error) {
+	var raw [16]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return "", fmt.Errorf("mint agent token: %w", err)
+	}
+	return hex.EncodeToString(raw[:]), nil
 }
 
 func (c *Coordinator) status(req Request, selected agent.Agent) Result {

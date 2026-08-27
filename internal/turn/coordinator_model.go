@@ -65,7 +65,7 @@ func (c *Coordinator) modelCmd(parent context.Context, req Request, selected age
 // tainted, because a command that only reads or sets a selector is not a
 // turn.
 func (c *Coordinator) openForCommand(ctx context.Context, req Request, selected agent.Agent) (harness.Runner, error) {
-	capabilities, err := c.assemble(selected, req)
+	capabilities, err := c.assemble(selected, req, nil)
 	if err != nil {
 		return nil, err
 	}

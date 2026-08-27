@@ -29,11 +29,13 @@ type fakeManager struct {
 	runners  map[string]*fakeRunner
 	opened   []string
 	workdirs []string
+	servers  [][]acp.MCPServer
 	fail     error
 	failOnce bool
+	mcpHTTP  bool
 }
 
-func (m *fakeManager) OpenSession(_ context.Context, harnessID, upstreamID, workdir string, _ []acp.MCPServer) (harness.Runner, error) {
+func (m *fakeManager) OpenSession(_ context.Context, harnessID, upstreamID, workdir string, servers []acp.MCPServer) (harness.Runner, error) {
 	if m.fail != nil {
 		err := m.fail
 		if m.failOnce {
@@ -49,10 +51,13 @@ func (m *fakeManager) OpenSession(_ context.Context, harnessID, upstreamID, work
 	runner.id = id
 	m.opened = append(m.opened, harnessID+":"+upstreamID)
 	m.workdirs = append(m.workdirs, workdir)
+	m.servers = append(m.servers, servers)
 	return runner, nil
 }
 
 func (m *fakeManager) CloseSession(context.Context, string, string) error { return nil }
+
+func (m *fakeManager) SupportsHTTPMCP(context.Context, string) (bool, error) { return m.mcpHTTP, nil }
 
 type fakeRunner struct {
 	id       string
@@ -265,6 +270,10 @@ func (m *blockingOpenManager) OpenSession(ctx context.Context, _, _, _ string, _
 }
 
 func (m *blockingOpenManager) CloseSession(context.Context, string, string) error { return nil }
+
+func (m *blockingOpenManager) SupportsHTTPMCP(context.Context, string) (bool, error) {
+	return false, nil
+}
 
 func TestCoordinatorPendingCancelStopsNextTurn(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})

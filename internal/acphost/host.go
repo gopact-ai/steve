@@ -890,6 +890,19 @@ func promptBlocks(text string, images []Image, caps *acp.AgentCapabilities) []ac
 	return blocks
 }
 
+// SupportsHTTPMCP reports whether the agent advertises the HTTP MCP
+// transport, starting the process if needed: whether to inject an HTTP
+// server has to be decided before the session's capabilities are assembled.
+func (h *Host) SupportsHTTPMCP(ctx context.Context) (bool, error) {
+	if err := h.ensureStarted(ctx); err != nil {
+		return false, err
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	caps := h.capabilities
+	return caps != nil && caps.MCPCapabilities != nil && caps.MCPCapabilities.HTTP, nil
+}
+
 func validateMCPServers(capabilities *acp.AgentCapabilities, servers []acp.MCPServer) error {
 	for _, server := range servers {
 		switch server.Type {

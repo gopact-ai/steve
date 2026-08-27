@@ -24,6 +24,10 @@ type Session struct {
 	CapabilityHash      string `json:"capability_hash"`
 	InstructionsApplied bool   `json:"instructions_applied,omitempty"`
 	Tainted             bool   `json:"tainted,omitempty"`
+	// AgentToken authenticates this session to the built-in messaging MCP
+	// server. It is bound to this conversation+agent and feeds the session's
+	// capability fingerprint, so it must survive restarts with the session.
+	AgentToken string `json:"agent_token,omitempty"`
 }
 
 type Conversation struct {

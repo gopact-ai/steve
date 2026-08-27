@@ -79,6 +79,16 @@ func (m *Manager) OpenSession(ctx context.Context, harnessID, upstreamID, workdi
 	return &Session{harnessID: harnessID, id: id, generation: generation, host: host}, nil
 }
 
+// SupportsHTTPMCP reports whether the harness's agent can take an HTTP MCP
+// server in its session config.
+func (m *Manager) SupportsHTTPMCP(ctx context.Context, harnessID string) (bool, error) {
+	host, err := m.host(harnessID)
+	if err != nil {
+		return false, err
+	}
+	return host.SupportsHTTPMCP(ctx)
+}
+
 func (m *Manager) CloseSession(ctx context.Context, harnessID, upstreamID string) error {
 	m.mu.Lock()
 	host := m.hosts[harnessID]
