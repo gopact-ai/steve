@@ -252,6 +252,7 @@ func (s *Session) SetModel(ctx context.Context, optionID, value string) error {
 func (s *Session) Cancel(ctx context.Context) error { return s.host.Cancel(ctx, s.id, s.generation) }
 
 func (s *Session) Abort() {
-	// ponytail: the ACP subprocess is the cancellation boundary; use per-session processes if cross-session disruption matters.
+	// The ACP subprocess is the cancellation boundary; use per-session
+	// processes if cross-session disruption matters.
 	s.host.Abort(s.generation)
 }
