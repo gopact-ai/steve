@@ -54,6 +54,9 @@ func ParseCommand(input string) (Command, string) {
 	if rest, ok := prefixed(input, string(CommandModel)); ok {
 		return CommandModel, rest
 	}
+	if rest, ok := prefixed(input, string(CommandTasks)); ok {
+		return CommandTasks, rest
+	}
 	if rest, ok := prefixed(input, string(CommandHistory)); ok {
 		return CommandHistory, rest
 	}

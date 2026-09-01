@@ -14,17 +14,27 @@ const (
 	StateReview  State = "review"
 	StateDone    State = "done"
 	StateFailed  State = "failed"
+	// StatePaused is the user setting work aside: the task keeps its
+	// budget and history but stops claiming the conversation, so the next
+	// message opens a new task instead of charging this one.
+	StatePaused State = "paused"
+	// StateCancelled ends a task the user called off. It is terminal so
+	// nothing revives it, and separate from done so the listing does not
+	// claim work finished that never did.
+	StateCancelled State = "cancelled"
 )
 
 // transitions is deliberately permissive about re-entering running: a task
 // takes many turns, and a blocked or failed task resumes rather than forking.
 var transitions = map[State][]State{
-	StateDraft:   {StateRunning, StateDone, StateFailed},
-	StateRunning: {StateRunning, StateBlocked, StateReview, StateDone, StateFailed},
-	StateBlocked: {StateRunning, StateFailed},
-	StateReview:  {StateRunning, StateDone, StateFailed},
-	StateDone:    {},
-	StateFailed:  {StateRunning},
+	StateDraft:     {StateRunning, StatePaused, StateDone, StateFailed, StateCancelled},
+	StateRunning:   {StateRunning, StateBlocked, StateReview, StatePaused, StateDone, StateFailed, StateCancelled},
+	StateBlocked:   {StateRunning, StatePaused, StateFailed, StateCancelled},
+	StateReview:    {StateRunning, StatePaused, StateDone, StateFailed, StateCancelled},
+	StatePaused:    {StateRunning, StateDone, StateFailed, StateCancelled},
+	StateDone:      {},
+	StateFailed:    {StateRunning, StateCancelled},
+	StateCancelled: {},
 }
 
 func (s State) CanMoveTo(next State) bool {
@@ -36,7 +46,15 @@ func (s State) CanMoveTo(next State) bool {
 	return false
 }
 
-func (s State) Terminal() bool { return s == StateDone }
+// Terminal reports that nothing more will be attempted against the task.
+// Cancelled counts: the user called it off, and reviving it after a restart
+// would be the gateway overruling them.
+func (s State) Terminal() bool { return s == StateDone || s == StateCancelled }
+
+// Holds reports whether the task still claims its (channel, member) slot. A
+// paused task keeps everything except the claim, which is what lets the next
+// message start fresh work while the paused one waits to be resumed.
+func (s State) Holds() bool { return !s.Terminal() && s != StatePaused }
 
 type Outcome string
 
@@ -120,6 +138,10 @@ type Task struct {
 	Channel   string `json:"channel"`
 	Member    string `json:"member,omitempty"`
 	Node      string `json:"node,omitempty"`
+	// Origin records what opened the task when it was not a person typing:
+	// a schedule's id, say. It is how unattended work can be recognised and
+	// rotated without touching a task the user has since taken over.
+	Origin    string `json:"origin,omitempty"`
 	Workspace string `json:"workspace,omitempty"`
 	// Where the task's turns anchor in the chat: enough to reply into the
 	// right conversation (and topic) after a gateway restart.

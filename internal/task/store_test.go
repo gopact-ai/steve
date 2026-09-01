@@ -219,7 +219,7 @@ func TestReturnedTasksAreCopies(t *testing.T) {
 
 func TestActiveIgnoresFinishedAndOtherMembers(t *testing.T) {
 	store, clock := newStore(t)
-	if _, ok := store.Active("chat-a", "builder"); ok {
+	if _, ok := store.Active("chat-a", "builder", ""); ok {
 		t.Fatal("no task yet, Active should miss")
 	}
 
@@ -232,14 +232,14 @@ func TestActiveIgnoresFinishedAndOtherMembers(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	got, ok := store.Active("chat-a", "builder")
+	got, ok := store.Active("chat-a", "builder", "")
 	if !ok || got.ID != first.ID {
 		t.Fatalf("Active = %+v, ok=%v; want task %s", got, ok, first.ID)
 	}
 	if _, err := store.Advance(first.ID, StateDone); err != nil {
 		t.Fatalf("advance: %v", err)
 	}
-	if _, ok := store.Active("chat-a", "builder"); ok {
+	if _, ok := store.Active("chat-a", "builder", ""); ok {
 		t.Fatal("finished task should not be active")
 	}
 }
@@ -254,7 +254,7 @@ func TestActivePrefersNewest(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create: %v", err)
 	}
-	got, ok := store.Active("chat-a", "builder")
+	got, ok := store.Active("chat-a", "builder", "")
 	if !ok || got.ID != newer.ID {
 		t.Fatalf("Active = %q; want %q", got.ID, newer.ID)
 	}
@@ -351,5 +351,53 @@ func TestInterimJournalFollowsTheTurn(t *testing.T) {
 	}
 	if err := store.AddInterim("chat", "nobody", "om_x"); err == nil {
 		t.Fatal("journal accepted a memberless conversation")
+	}
+}
+
+// Unattended work and what a person typed are separate lineages. Without this
+// a nightly schedule would charge its runs to whatever the user happened to be
+// doing in the same chat — and a rotation would then close their task.
+func TestOriginPartitionsTheActiveTask(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	mine, err := store.Create(Task{Channel: "chat", Member: "codex", Goal: "my own thing"})
+	if err != nil {
+		t.Fatalf("create mine: %v", err)
+	}
+	nightly, err := store.Create(Task{Channel: "chat", Member: "codex", Goal: "nightly", Origin: "schedule:1"})
+	if err != nil {
+		t.Fatalf("create nightly: %v", err)
+	}
+
+	if got, ok := store.Active("chat", "codex", ""); !ok || got.ID != mine.ID {
+		t.Fatalf("Active for a person = %+v, %t; want %s", got, ok, mine.ID)
+	}
+	if got, ok := store.Active("chat", "codex", "schedule:1"); !ok || got.ID != nightly.ID {
+		t.Fatalf("Active for the schedule = %+v, %t; want %s", got, ok, nightly.ID)
+	}
+	if _, ok := store.Active("chat", "codex", "schedule:2"); ok {
+		t.Fatal("a schedule with no task of its own borrowed another lineage's")
+	}
+
+	// The interim journal follows the turn that is actually running, not
+	// whichever lineage was touched most recently.
+	if _, err := store.Begin(mine.ID, "codex", "laptop", ""); err != nil {
+		t.Fatalf("begin mine: %v", err)
+	}
+	if err := store.AddInterim("chat", "codex", "om_progress"); err != nil {
+		t.Fatalf("journal: %v", err)
+	}
+	if got, _ := store.Get(mine.ID); len(got.Interim) != 1 {
+		t.Fatalf("running task's journal = %v; want the interim message", got.Interim)
+	}
+	if got, _ := store.Get(nightly.ID); len(got.Interim) != 0 {
+		t.Fatalf("journalled onto the idle lineage: %v", got.Interim)
+	}
+
+	// A session reset ends every lineage: they all ran through it.
+	if held := store.Holding("chat", "codex"); len(held) != 2 {
+		t.Fatalf("holding = %d; want both lineages", len(held))
 	}
 }

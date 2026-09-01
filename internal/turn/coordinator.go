@@ -45,6 +45,10 @@ type Request struct {
 	Images     []harness.Media
 	OnProgress func(view.Progress)
 	OnAskUser  acphost.AskUserFunc
+	// Origin marks a prompt Steve sent on the user's behalf rather than one
+	// they typed — a schedule firing, say. It rides onto the task so
+	// unattended work stays recognisable after the fact.
+	Origin string
 	// Queue makes this prompt wait for the running turn instead of
 	// interrupting it: "also do this after" rather than "stop, do this".
 	Queue   bool
@@ -104,6 +108,7 @@ type Coordinator struct {
 	tasks       *task.Store
 	node        string
 	text        i18n.Catalog
+	resumer     func(TaskResume)
 
 	mu            sync.Mutex
 	active        map[string]harness.Runner
@@ -236,7 +241,7 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 	case protocol.CommandSkills:
 		return c.skillsCmd(req, selected, rest)
 	case protocol.CommandTasks:
-		return c.tasksCmd(req), nil
+		return c.tasksCmd(ctx, req, rest), nil
 	case protocol.CommandModel:
 		return c.modelCmd(ctx, req, selected, rest)
 	case protocol.CommandHistory:

@@ -25,6 +25,10 @@ type Revival struct {
 	// haunted by a forever-running card and stale progress.
 	OpenCard string
 	Interim  []string
+	// Manual marks a resume the user asked for rather than one a crash
+	// forced. Nothing is recalled then: the cancelled card is an honest
+	// record of the turn they stopped, not debris.
+	Manual bool
 }
 
 type textReplier interface {
@@ -39,41 +43,59 @@ type textReplier interface {
 // continuation prompt addressed to the task's member. The agent reloads its
 // own history on session load, so "continue" means exactly that.
 func (g *Gateway) Revive(revivals []Revival, revive func(conversationID, member string) error) {
-	tr, ok := g.ch.(textReplier)
-	if !ok {
+	if _, ok := g.ch.(textReplier); !ok {
 		log.Printf("gateway: channel cannot post resume notices; %d tasks stay stopped", len(revivals))
 		return
 	}
 	for _, r := range revivals {
-		if r.ConversationID == "" || r.MessageID == "" || r.Member == "" {
-			log.Printf("gateway: task #%s not resumable: incomplete anchor", r.TaskID)
-			continue
-		}
-		if err := revive(r.ConversationID, r.Member); err != nil {
-			log.Printf("gateway: revive session for task #%s: %v", r.TaskID, err)
-			continue
-		}
+		g.ResumeTask(r, revive)
+	}
+}
+
+// ResumeTask picks one task back up. The notice is not decoration: it is the
+// new anchor. A replayed message needs an id of its own — reusing the old one
+// would be dropped as a duplicate, and the resumed turn would have nothing to
+// render its card against.
+func (g *Gateway) ResumeTask(r Revival, revive func(conversationID, member string) error) {
+	tr, ok := g.ch.(textReplier)
+	if !ok {
+		log.Printf("gateway: channel cannot post resume notices; task #%s stays stopped", r.TaskID)
+		return
+	}
+	if r.ConversationID == "" || r.MessageID == "" || r.Member == "" {
+		log.Printf("gateway: task #%s not resumable: incomplete anchor", r.TaskID)
+		return
+	}
+	if err := revive(r.ConversationID, r.Member); err != nil {
+		log.Printf("gateway: revive session for task #%s: %v", r.TaskID, err)
+		return
+	}
+	if !r.Manual {
 		for _, stale := range append([]string{r.OpenCard}, r.Interim...) {
 			if stale != "" {
 				g.recall(stale)
 			}
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		noticeID, err := tr.ReplyText(ctx, r.MessageID, g.text.T(i18n.ResumeNotice, r.TaskID))
-		cancel()
-		if err != nil || noticeID == "" {
-			log.Printf("gateway: post resume notice for task #%s: %v", r.TaskID, err)
-			continue
-		}
-		log.Printf("gateway: resuming task #%s conversation=%s member=%s", r.TaskID, r.ConversationID, r.Member)
-		g.HandleMessage(feishu.InboundMessage{
-			ConversationID: r.ConversationID,
-			ChatID:         r.ChatID,
-			MessageID:      noticeID,
-			SenderOpenID:   r.Requester,
-			ChatType:       protocol.ParseChatType(r.ChatType),
-			Mentioned:      true,
-			Text:           "@" + r.Member + " " + g.text.T(i18n.ResumePrompt, r.Goal),
-		})
 	}
+	notice, prompt := i18n.ResumeNotice, i18n.ResumePrompt
+	if r.Manual {
+		notice, prompt = i18n.TaskResumeNotice, i18n.TaskResumeManual
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	noticeID, err := tr.ReplyText(ctx, r.MessageID, g.text.T(notice, r.TaskID))
+	cancel()
+	if err != nil || noticeID == "" {
+		log.Printf("gateway: post resume notice for task #%s: %v", r.TaskID, err)
+		return
+	}
+	log.Printf("gateway: resuming task #%s conversation=%s member=%s manual=%t", r.TaskID, r.ConversationID, r.Member, r.Manual)
+	g.HandleMessage(feishu.InboundMessage{
+		ConversationID: r.ConversationID,
+		ChatID:         r.ChatID,
+		MessageID:      noticeID,
+		SenderOpenID:   r.Requester,
+		ChatType:       protocol.ParseChatType(r.ChatType),
+		Mentioned:      true,
+		Text:           "@" + r.Member + " " + g.text.T(prompt, r.Goal),
+	})
 }

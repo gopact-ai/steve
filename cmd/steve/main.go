@@ -263,6 +263,18 @@ func serve(args []string) error {
 		gate.BindChannel(channel)
 	}
 
+	// /tasks resume re-enters through the same path a crash recovery does:
+	// a notice at the anchor becomes the new anchor, and the continuation
+	// arrives as an ordinary message.
+	coordinator.SetResumer(func(r turn.TaskResume) {
+		go gw.ResumeTask(gateway.Revival{
+			TaskID: r.TaskID, Goal: r.Goal, Member: r.Member,
+			ConversationID: r.ConversationID, ChatID: r.ChatID,
+			MessageID: r.MessageID, Requester: r.Requester,
+			ChatType: r.ChatType, Manual: true,
+		}, coordinator.ReviveSession)
+	})
+
 	// Pick back up what a dead gateway left mid-turn: close the orphaned
 	// attempt, revive the session, and continue through a real message so
 	// the resumed turn renders a card like any other turn.
@@ -272,7 +284,15 @@ func serve(args []string) error {
 			log.Printf("steve: close interrupted attempt #%s: %v", interrupted.ID, err)
 			continue
 		}
+		// A paused task's attempt still had to be closed, but resuming it
+		// would overrule the user who set it down.
+		if interrupted.State == task.StatePaused {
+			log.Printf("steve: task #%s is paused; leaving it set aside", interrupted.ID)
+			continue
+		}
 		if interrupted.AnchorMessage == "" {
+			// Nothing to reply to, so nothing can be said: the task is
+			// only recoverable through the listing.
 			log.Printf("steve: task #%s interrupted with no anchor; not resumable", interrupted.ID)
 			continue
 		}
