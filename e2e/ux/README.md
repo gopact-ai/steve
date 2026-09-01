@@ -17,3 +17,7 @@
 - `milestone-recall.sh` — 里程碑卡（不 @ 人）+ feishu_recall + 最终卡 @ 提问人
 - `evolving-card.sh` — 单卡演进（feishu_update），断言恰一张卡且 updated=true
 - `order-badge-tail.sh` — 最终卡落在里程碑下方、几分之几角标、同族尾标、旧占位卡撤回
+- `task-verbs.sh` — `/tasks pause` 停下当前轮、`resume` 真的续跑、`cancel` 是终局
+- `schedule.sh` — `/at` 建的一次性任务到点自己开跑；`/every` 进列表、能取消
+- `offline-reminder.sh` — 长轮次结束后补一条 @ 提问人的纯文本提醒
+  （需要网关的 `offline_reminder_after` 比这轮耗时短，测试时设 `1m`）

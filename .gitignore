@@ -2,3 +2,4 @@ config.json
 config.e2e.json
 /steve
 .env
+__pycache__/
