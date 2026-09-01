@@ -25,7 +25,7 @@ func TestBeginTaskPersistsAnchor(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tracked, ok := tasks.Active("chat", "codex")
+	tracked, ok := tasks.Active("chat", "codex", "")
 	if !ok {
 		t.Fatal("no active task")
 	}
@@ -42,7 +42,7 @@ func TestBeginTaskPersistsAnchor(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	tracked, _ = tasks.Active("chat", "codex")
+	tracked, _ = tasks.Active("chat", "codex", "")
 	if tracked.AnchorMessage != "om_2" {
 		t.Fatalf("anchor not refreshed: %+v", tracked)
 	}
@@ -124,7 +124,7 @@ func TestCrashResumeE2E(t *testing.T) {
 	if err != nil || !strings.Contains(result.Text, "echo:") {
 		t.Fatalf("first turn = %#v, %v", result, err)
 	}
-	tracked, ok := tasks1.Active("chat", "mock")
+	tracked, ok := tasks1.Active("chat", "mock", "")
 	if !ok {
 		t.Fatal("no task")
 	}

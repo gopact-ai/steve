@@ -50,6 +50,9 @@ type InboundMessage struct {
 	ImageKeys      []string
 	Images         []Image
 	Mentioned      bool
+	// Origin marks a message Steve generated on the user's behalf — a
+	// schedule firing — rather than one that arrived from the channel.
+	Origin string
 }
 
 type Image struct {

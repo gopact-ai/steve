@@ -22,6 +22,7 @@ import (
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/sessions"
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/state"
@@ -45,6 +46,10 @@ type Request struct {
 	Images     []harness.Media
 	OnProgress func(view.Progress)
 	OnAskUser  acphost.AskUserFunc
+	// Origin marks a prompt Steve sent on the user's behalf rather than one
+	// they typed — a schedule firing, say. It rides onto the task so
+	// unattended work stays recognisable after the fact.
+	Origin string
 	// Queue makes this prompt wait for the running turn instead of
 	// interrupting it: "also do this after" rather than "stop, do this".
 	Queue   bool
@@ -102,10 +107,17 @@ type Coordinator struct {
 	skills      *skills.Live
 	gate        AgentGate
 	tasks       *task.Store
+	schedules   *schedule.Store
 	node        string
 	text        i18n.Catalog
+	resumer     func(TaskResume)
+	notifier    func(TaskNotice)
+	// offlineAfter is how long a turn runs before its completion also earns
+	// a plain-text ping; zero keeps Steve quiet.
+	offlineAfter time.Duration
 
 	mu            sync.Mutex
+	lastSeen      map[string]time.Time
 	active        map[string]harness.Runner
 	cancels       map[string]*turnEntry
 	cancelPending map[string]time.Time
@@ -195,6 +207,10 @@ func (c *Coordinator) listenPrefix(req Request) string {
 }
 
 func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
+	// Every arriving message is evidence that someone is present. The
+	// offline reminder reads exactly this: nothing arrived while the turn
+	// ran, so the person who asked is no longer watching.
+	c.noteActivity(req.ConversationID)
 	selected, prompt, switchOnly, err := c.selectAgent(req.ConversationID, req.Input)
 	if err != nil {
 		return Result{}, err
@@ -236,7 +252,11 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 	case protocol.CommandSkills:
 		return c.skillsCmd(req, selected, rest)
 	case protocol.CommandTasks:
-		return c.tasksCmd(req), nil
+		return c.tasksCmd(ctx, req, rest), nil
+	case protocol.CommandEvery, protocol.CommandAt:
+		return c.scheduleCmd(req, selected, cmd, rest), nil
+	case protocol.CommandSchedules:
+		return c.schedulesCmd(req, rest), nil
 	case protocol.CommandModel:
 		return c.modelCmd(ctx, req, selected, rest)
 	case protocol.CommandHistory:
@@ -293,8 +313,14 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if taskErr != nil {
 		return Result{}, taskErr
 	}
+	// Timed from here, not from arrival: a queued prompt's wait is not the
+	// agent's running time, and the reminder is about how long the work took.
+	started := time.Now()
 	if tracked != "" {
-		defer func() { c.finishTask(tracked, err) }()
+		defer func() {
+			c.finishTask(tracked, err)
+			c.offlineReminder(req, tracked, started, err)
+		}()
 	}
 	conversation := c.store.Conversation(conversationID)
 	saved := conversation.Sessions[selected.ID]

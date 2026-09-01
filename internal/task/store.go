@@ -85,15 +85,58 @@ func (s *Store) Create(t Task) (Task, error) {
 	return t, nil
 }
 
-// Active returns the newest unfinished task this member holds on the channel.
-// A task is scoped to (channel, member) because it is attempted through that
-// member's session: resetting the session is what ends the task.
-func (s *Store) Active(channel, member string) (Task, bool) {
+// Active returns the newest unfinished task this member holds on the channel
+// for the given origin. A task is scoped to (channel, member) because it is
+// attempted through that member's session: resetting the session is what ends
+// the task. Origin partitions it further — unattended work and what a person
+// typed are separate lineages, so a schedule's nightly run never charges its
+// turns to the task the user is in the middle of, or the other way round.
+//
+// A paused task is deliberately not active: setting work aside has to leave
+// room for the next thing the user asks for.
+func (s *Store) Active(channel, member, origin string) (Task, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.newestLocked(func(stored *Task) bool {
+		return stored.Channel == channel && stored.Member == member &&
+			stored.Origin == origin && stored.State.Holds()
+	})
+}
+
+// Running returns the task whose attempt is open right now — the one a turn
+// in flight belongs to, whoever or whatever started it.
+func (s *Store) Running(channel, member string) (Task, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.newestLocked(func(stored *Task) bool {
+		if stored.Channel != channel || stored.Member != member || !stored.State.Holds() {
+			return false
+		}
+		n := len(stored.Attempts)
+		return n > 0 && stored.Attempts[n-1].Open()
+	})
+}
+
+// Holding lists every unfinished task this member holds on the channel,
+// across origins. A session reset ends all of them: they were all being
+// attempted through the session that just went away.
+func (s *Store) Holding(channel, member string) []Task {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []Task
+	for _, stored := range s.data.Tasks {
+		if stored.Channel == channel && stored.Member == member && stored.State.Holds() {
+			out = append(out, *stored.clone())
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].UpdatedAt.After(out[j].UpdatedAt) })
+	return out
+}
+
+func (s *Store) newestLocked(match func(*Task) bool) (Task, bool) {
 	var newest *Task
 	for _, stored := range s.data.Tasks {
-		if stored.Channel != channel || stored.Member != member || stored.State.Terminal() {
+		if !match(stored) {
 			continue
 		}
 		if newest == nil || stored.UpdatedAt.After(newest.UpdatedAt) {
@@ -129,7 +172,7 @@ func (s *Store) List(channel string) []Task {
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
-			return out[i].ID > out[j].ID
+			return lessID(out[j].ID, out[i].ID)
 		}
 		return out[i].UpdatedAt.After(out[j].UpdatedAt)
 	})
@@ -179,24 +222,24 @@ func (s *Store) SetAnchor(id, chatID, messageID, chatType, cardID string) error 
 const maxInterim = 16
 
 // AddInterim records one message the member's agent sent during the current
-// turn, so a crash between send and finish leaves nothing untraceable.
+// turn, so a crash between send and finish leaves nothing untraceable. It
+// journals against the task whose attempt is open: the message belongs to the
+// turn that is running, not to whichever lineage was touched last.
 func (s *Store) AddInterim(channel, member, messageID string) error {
 	if messageID == "" {
 		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	var newest *Task
-	for _, stored := range s.data.Tasks {
-		if stored.Channel != channel || stored.Member != member || stored.State.Terminal() {
-			continue
+	newest, ok := s.newestLocked(func(stored *Task) bool {
+		if stored.Channel != channel || stored.Member != member || !stored.State.Holds() {
+			return false
 		}
-		if newest == nil || stored.UpdatedAt.After(newest.UpdatedAt) {
-			newest = stored
-		}
-	}
-	if newest == nil {
-		return fmt.Errorf("no active task for %s/%s", channel, member)
+		n := len(stored.Attempts)
+		return n > 0 && stored.Attempts[n-1].Open()
+	})
+	if !ok {
+		return fmt.Errorf("no running task for %s/%s", channel, member)
 	}
 	next := s.clone()
 	stored := next.Tasks[newest.ID]
@@ -306,6 +349,18 @@ func (s *Store) Advance(id string, to State) (Task, error) {
 		return Task{}, err
 	}
 	return *stored.clone(), nil
+}
+
+// lessID orders ids numerically. They are decimal counters, so comparing
+// them as text puts #10 before #2 — which a listing of more than nine tasks
+// shows the user directly.
+func lessID(a, b string) bool {
+	na, aerr := strconv.Atoi(a)
+	nb, berr := strconv.Atoi(b)
+	if aerr != nil || berr != nil {
+		return a < b
+	}
+	return na < nb
 }
 
 func (t *Task) clone() *Task {

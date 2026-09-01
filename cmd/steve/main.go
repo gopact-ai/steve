@@ -27,6 +27,7 @@ import (
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/runtime"
+	"github.com/gopact-ai/steve/internal/schedule"
 	setupcmd "github.com/gopact-ai/steve/internal/setup"
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/state"
@@ -153,6 +154,46 @@ func doctor(args []string) error {
 	return nil
 }
 
+// scheduleTick is how often standing work is checked. Twenty seconds is fine
+// grain for a surface whose shortest interval is a minute, and cheap: due
+// jobs are a map scan, and a tick with nothing due writes nothing.
+const scheduleTick = 20 * time.Second
+
+// runSchedules fires standing work until the gateway stops. Each run rotates
+// the task the previous run opened, so a schedule that fires for weeks gets a
+// fresh budget every time rather than spending one task's allowance a turn at
+// a time.
+func runSchedules(ctx context.Context, schedules *schedule.Store, gw *gateway.Gateway, coordinator *turn.Coordinator) {
+	ticker := time.NewTicker(scheduleTick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			due, err := schedules.Due(now)
+			if err != nil {
+				log.Printf("steve: claim due schedules: %v", err)
+				continue
+			}
+			for _, job := range due {
+				coordinator.RotateTask(job.ConversationID, job.Member, "schedule:"+job.ID)
+				gw.FireSchedule(gateway.Fire{
+					ScheduleID: job.ID, ConversationID: job.ConversationID,
+					ChatID: job.ChatID, ChatType: job.ChatType,
+					MessageID: job.AnchorMessage, Requester: job.Requester,
+					Member: job.Member, Prompt: job.Prompt,
+				})
+			}
+		}
+	}
+}
+
+// staleTask is how long an interrupted task may sit before the gateway stops
+// trying to continue it. Past a day the chat has moved on, and resuming would
+// answer a question nobody is still asking.
+const staleTask = 24 * time.Hour
+
 func serve(args []string) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	configPath := flags.String("config", "config.json", "path to config file")
@@ -202,6 +243,11 @@ func serve(args []string) error {
 	}
 	tasks.SetBudget(cfg.Gateway.TaskMaxTurns, time.Duration(cfg.Gateway.TaskMaxElapsed))
 	coordinator.SetTasks(tasks, nodeName())
+	schedules, err := schedule.Open(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "schedules.json"))
+	if err != nil {
+		return fmt.Errorf("open schedules: %w", err)
+	}
+	coordinator.SetSchedules(schedules)
 	coordinator.SetCatalog(catalogText)
 	if names := live.Map.EnabledNames(); len(names) > 0 {
 		log.Printf("steve: isolated runtimes; skills=%s", strings.Join(names, ","))
@@ -263,21 +309,58 @@ func serve(args []string) error {
 		gate.BindChannel(channel)
 	}
 
+	// /tasks resume re-enters through the same path a crash recovery does:
+	// a notice at the anchor becomes the new anchor, and the continuation
+	// arrives as an ordinary message.
+	coordinator.SetOfflineReminder(time.Duration(cfg.Gateway.OfflineReminderAfter))
+	coordinator.SetNotifier(func(n turn.TaskNotice) {
+		gw.Notify(gateway.Notice{
+			TaskID: n.TaskID, MessageID: n.MessageID,
+			Requester: n.Requester, Text: n.Text,
+		})
+	})
+	coordinator.SetResumer(func(r turn.TaskResume) {
+		go gw.ResumeTask(gateway.Revival{
+			TaskID: r.TaskID, Goal: r.Goal, Member: r.Member,
+			ConversationID: r.ConversationID, ChatID: r.ChatID,
+			MessageID: r.MessageID, Requester: r.Requester,
+			ChatType: r.ChatType, Manual: true,
+		}, coordinator.ReviveSession)
+	})
+
 	// Pick back up what a dead gateway left mid-turn: close the orphaned
 	// attempt, revive the session, and continue through a real message so
 	// the resumed turn renders a card like any other turn.
 	var revivals []gateway.Revival
+	var dropped []gateway.Notice
 	for _, interrupted := range tasks.Interrupted() {
 		if _, err := tasks.Finish(interrupted.ID, task.OutcomeInterrupted, task.Tokens{}, 0); err != nil {
 			log.Printf("steve: close interrupted attempt #%s: %v", interrupted.ID, err)
 			continue
 		}
+		// A paused task's attempt still had to be closed, but resuming it
+		// would overrule the user who set it down.
+		if interrupted.State == task.StatePaused {
+			log.Printf("steve: task #%s is paused; leaving it set aside", interrupted.ID)
+			continue
+		}
 		if interrupted.AnchorMessage == "" {
+			// Nothing to reply to, so nothing can be said: the task is
+			// only recoverable through the listing.
 			log.Printf("steve: task #%s interrupted with no anchor; not resumable", interrupted.ID)
 			continue
 		}
-		if time.Since(interrupted.UpdatedAt) > 24*time.Hour {
+		// A task that stops has to say so. Silence here is the one failure
+		// the delivery promise cannot survive: the user asked for an hour of
+		// work and would otherwise never learn it ended.
+		if time.Since(interrupted.UpdatedAt) > staleTask {
 			log.Printf("steve: task #%s interrupted long ago; leaving it stopped", interrupted.ID)
+			dropped = append(dropped, gateway.Notice{
+				TaskID: interrupted.ID, MessageID: interrupted.AnchorMessage,
+				Requester: interrupted.Requester,
+				Text: catalogText.T(i18n.TaskDropped, interrupted.ID,
+					time.Since(interrupted.UpdatedAt).Round(time.Hour)),
+			})
 			continue
 		}
 		revivals = append(revivals, gateway.Revival{
@@ -291,6 +374,11 @@ func serve(args []string) error {
 	if len(revivals) > 0 {
 		go gw.Revive(revivals, coordinator.ReviveSession)
 	}
+	for _, notice := range dropped {
+		go gw.Notify(notice)
+	}
+
+	go runSchedules(ctx, schedules, gw, coordinator)
 
 	if addr := cfg.Gateway.DebugAddr; addr != "" {
 		go func() {

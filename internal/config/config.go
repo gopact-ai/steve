@@ -88,6 +88,11 @@ func validateIDs(field string, ids []string) error {
 	return nil
 }
 
+// DefaultOfflineReminder is the threshold a turn has to cross before its
+// answer is also announced in plain text. Fifteen minutes is well past the
+// point where someone keeps watching a chat window.
+const DefaultOfflineReminder = 15 * time.Minute
+
 type Gateway struct {
 	PromptTimeout Duration `json:"prompt_timeout"`
 	StatePath     string   `json:"state_path"`
@@ -96,6 +101,11 @@ type Gateway struct {
 	// running work; zero keeps the built-in defaults.
 	TaskMaxTurns   int      `json:"task_max_turns,omitempty"`
 	TaskMaxElapsed Duration `json:"task_max_elapsed,omitempty"`
+	// OfflineReminderAfter is how long a turn must run before its answer
+	// also earns a plain-text ping at the anchor: past that, the asker has
+	// probably walked away, and a card arriving quietly is a delivery that
+	// did not happen. Negative turns it off; zero takes the default.
+	OfflineReminderAfter Duration `json:"offline_reminder_after,omitempty"`
 	// DebugAddr enables a loopback-only endpoint for injecting messages and
 	// card callbacks; empty keeps it off. DebugChatID is the chat those
 	// injected messages default to.
@@ -273,6 +283,9 @@ func Load(path string) (*Config, error) {
 	cfg.Feishu.OwnerOpenID = strings.TrimSpace(cfg.Feishu.OwnerOpenID)
 	if cfg.Gateway.PromptTimeout <= 0 {
 		cfg.Gateway.PromptTimeout = Duration(10 * time.Minute)
+	}
+	if cfg.Gateway.OfflineReminderAfter == 0 {
+		cfg.Gateway.OfflineReminderAfter = Duration(DefaultOfflineReminder)
 	}
 	if cfg.Gateway.StatePath == "" {
 		cfg.Gateway.StatePath = "~/.steve/state.json"

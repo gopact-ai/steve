@@ -39,10 +39,17 @@ go build -o steve ./cmd/steve
 | `@codex` / `@claude` | 指定或切换 agent |
 | `/t 任务` | 在群里种一个话题会话并行跑 |
 | `/new` `/clear` | 重置会话（归档可恢复，卡片带恢复按钮） |
-| `/status` `/tasks` `/model` `/history` `/skills` | 状态、任务与预算、模型切换、历史恢复、技能管理 |
+| `/status` `/model` `/history` `/skills` | 状态、模型切换、历史恢复、技能管理 |
+| `/tasks` | 列任务；`/tasks 12` 看进度，`/tasks pause\|resume\|cancel [编号]` 管理（中文动词同样认：暂停/继续/取消） |
+| `/every 30m …` `/at 09:00 …` | 定时任务：`30m`、`2小时`、`09:00`、`每天 09:00`、`周一 09:00`；`/schedules` 查看与取消 |
 
 多阶段任务里 agent 会用内置的 `feishu_send` / `feishu_update` / `feishu_recall`
 维护一张演进的进度卡（带 `2/3` 阶段角标、与最终卡同族的尾标）。
+
+长任务不需要你守着：跑够 `offline_reminder_after`（默认 15 分钟）且期间你没再说话，
+答案卡之外还会补一条 @ 你的纯文本提醒；预算用满时的刹车卡会附上「跑到哪了」
+（轮次、耗时、每次尝试的结果）。定时任务每次触发都开一个新任务，不会把一个任务的
+预算按天磨光，也不会并进你自己正在做的那件事。
 
 ## 架构
 

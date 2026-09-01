@@ -65,6 +65,9 @@
   },
   "gateway": {
     "prompt_timeout": "10m",
-    "state_path": "~/.steve/state.json"
+    "state_path": "~/.steve/state.json",
+    "task_max_turns": 24,
+    "task_max_elapsed": "45m",
+    "offline_reminder_after": "15m"
   }
 }
