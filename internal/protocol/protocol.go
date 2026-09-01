@@ -34,6 +34,11 @@ const (
 	CommandModel   Command = "/model"
 	CommandHistory Command = "/history"
 	CommandTopic   Command = "/t"
+	// CommandEvery and CommandAt are the scheduling verbs: standing work
+	// ("every morning") and a single future moment ("at nine").
+	CommandEvery     Command = "/every"
+	CommandAt        Command = "/at"
+	CommandSchedules Command = "/schedules"
 )
 
 func ParseCommand(input string) (Command, string) {
@@ -42,7 +47,7 @@ func ParseCommand(input string) (Command, string) {
 		return CommandUnknown, ""
 	}
 	switch Command(input) {
-	case CommandNew, CommandClear, CommandStatus, CommandCancel, CommandSkills, CommandTasks, CommandModel, CommandHistory:
+	case CommandNew, CommandClear, CommandStatus, CommandCancel, CommandSkills, CommandTasks, CommandModel, CommandHistory, CommandSchedules:
 		return Command(input), ""
 	}
 	if rest, ok := prefixed(input, string(CommandSkills)); ok {
@@ -56,6 +61,15 @@ func ParseCommand(input string) (Command, string) {
 	}
 	if rest, ok := prefixed(input, string(CommandTasks)); ok {
 		return CommandTasks, rest
+	}
+	if rest, ok := prefixed(input, string(CommandSchedules)); ok {
+		return CommandSchedules, rest
+	}
+	if rest, ok := prefixed(input, string(CommandEvery)); ok {
+		return CommandEvery, rest
+	}
+	if rest, ok := prefixed(input, string(CommandAt)); ok {
+		return CommandAt, rest
 	}
 	if rest, ok := prefixed(input, string(CommandHistory)); ok {
 		return CommandHistory, rest

@@ -22,6 +22,7 @@ import (
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/sessions"
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/state"
@@ -106,6 +107,7 @@ type Coordinator struct {
 	skills      *skills.Live
 	gate        AgentGate
 	tasks       *task.Store
+	schedules   *schedule.Store
 	node        string
 	text        i18n.Catalog
 	resumer     func(TaskResume)
@@ -251,6 +253,10 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 		return c.skillsCmd(req, selected, rest)
 	case protocol.CommandTasks:
 		return c.tasksCmd(ctx, req, rest), nil
+	case protocol.CommandEvery, protocol.CommandAt:
+		return c.scheduleCmd(req, selected, cmd, rest), nil
+	case protocol.CommandSchedules:
+		return c.schedulesCmd(req, rest), nil
 	case protocol.CommandModel:
 		return c.modelCmd(ctx, req, selected, rest)
 	case protocol.CommandHistory:

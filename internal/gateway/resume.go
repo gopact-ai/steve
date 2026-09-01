@@ -129,3 +129,57 @@ func (g *Gateway) ResumeTask(r Revival, revive func(conversationID, member strin
 		Text:           "@" + r.Member + " " + g.text.T(prompt, r.Goal),
 	})
 }
+
+// Fire is one scheduled run. It carries the same anchor-and-replay shape as a
+// revival because it is the same problem: Steve has something to say in a
+// conversation nobody is currently typing in, and the only way to say it as a
+// turn is to become a message first.
+type Fire struct {
+	ScheduleID     string
+	ConversationID string
+	ChatID         string
+	ChatType       string
+	MessageID      string
+	Requester      string
+	Member         string
+	Prompt         string
+}
+
+// FireSchedule announces the run at the schedule's anchor and then replays the
+// stored instruction as a message from the person who scheduled it. The notice
+// is the new anchor: a replayed message needs an id of its own, and the
+// announcement is also what makes an unattended run visible rather than
+// something that just appears.
+func (g *Gateway) FireSchedule(f Fire) {
+	tr, ok := g.ch.(textReplier)
+	if !ok {
+		log.Printf("gateway: channel cannot post schedule notices; schedule #%s did not run", f.ScheduleID)
+		return
+	}
+	if f.ConversationID == "" || f.MessageID == "" || f.Prompt == "" {
+		log.Printf("gateway: schedule #%s not runnable: incomplete anchor", f.ScheduleID)
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	noticeID, err := tr.ReplyText(ctx, f.MessageID, g.text.T(i18n.ScheduleNotice, f.ScheduleID))
+	cancel()
+	if err != nil || noticeID == "" {
+		log.Printf("gateway: post schedule notice for #%s: %v", f.ScheduleID, err)
+		return
+	}
+	text := f.Prompt
+	if f.Member != "" {
+		text = "@" + f.Member + " " + text
+	}
+	log.Printf("gateway: firing schedule #%s conversation=%s member=%s", f.ScheduleID, f.ConversationID, f.Member)
+	g.HandleMessage(feishu.InboundMessage{
+		ConversationID: f.ConversationID,
+		ChatID:         f.ChatID,
+		MessageID:      noticeID,
+		SenderOpenID:   f.Requester,
+		ChatType:       protocol.ParseChatType(f.ChatType),
+		Mentioned:      true,
+		Origin:         "schedule:" + f.ScheduleID,
+		Text:           text,
+	})
+}

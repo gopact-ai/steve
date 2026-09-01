@@ -27,6 +27,7 @@ import (
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/runtime"
+	"github.com/gopact-ai/steve/internal/schedule"
 	setupcmd "github.com/gopact-ai/steve/internal/setup"
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/state"
@@ -153,6 +154,41 @@ func doctor(args []string) error {
 	return nil
 }
 
+// scheduleTick is how often standing work is checked. Twenty seconds is fine
+// grain for a surface whose shortest interval is a minute, and cheap: due
+// jobs are a map scan, and a tick with nothing due writes nothing.
+const scheduleTick = 20 * time.Second
+
+// runSchedules fires standing work until the gateway stops. Each run rotates
+// the task the previous run opened, so a schedule that fires for weeks gets a
+// fresh budget every time rather than spending one task's allowance a turn at
+// a time.
+func runSchedules(ctx context.Context, schedules *schedule.Store, gw *gateway.Gateway, coordinator *turn.Coordinator) {
+	ticker := time.NewTicker(scheduleTick)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			due, err := schedules.Due(now)
+			if err != nil {
+				log.Printf("steve: claim due schedules: %v", err)
+				continue
+			}
+			for _, job := range due {
+				coordinator.RotateTask(job.ConversationID, job.Member, "schedule:"+job.ID)
+				gw.FireSchedule(gateway.Fire{
+					ScheduleID: job.ID, ConversationID: job.ConversationID,
+					ChatID: job.ChatID, ChatType: job.ChatType,
+					MessageID: job.AnchorMessage, Requester: job.Requester,
+					Member: job.Member, Prompt: job.Prompt,
+				})
+			}
+		}
+	}
+}
+
 // staleTask is how long an interrupted task may sit before the gateway stops
 // trying to continue it. Past a day the chat has moved on, and resuming would
 // answer a question nobody is still asking.
@@ -207,6 +243,11 @@ func serve(args []string) error {
 	}
 	tasks.SetBudget(cfg.Gateway.TaskMaxTurns, time.Duration(cfg.Gateway.TaskMaxElapsed))
 	coordinator.SetTasks(tasks, nodeName())
+	schedules, err := schedule.Open(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "schedules.json"))
+	if err != nil {
+		return fmt.Errorf("open schedules: %w", err)
+	}
+	coordinator.SetSchedules(schedules)
 	coordinator.SetCatalog(catalogText)
 	if names := live.Map.EnabledNames(); len(names) > 0 {
 		log.Printf("steve: isolated runtimes; skills=%s", strings.Join(names, ","))
@@ -336,6 +377,8 @@ func serve(args []string) error {
 	for _, notice := range dropped {
 		go gw.Notify(notice)
 	}
+
+	go runSchedules(ctx, schedules, gw, coordinator)
 
 	if addr := cfg.Gateway.DebugAddr; addr != "" {
 		go func() {

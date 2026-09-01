@@ -259,6 +259,7 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 	result, err := g.processor.Handle(context.Background(), turn.Request{
 		ConversationID: conversationID,
 		Input:          g.promptText(msg),
+		Origin:         msg.Origin,
 		MessageID:      msg.MessageID,
 		ChatID:         msg.ChatID,
 		CardID:         ui.cardID,
