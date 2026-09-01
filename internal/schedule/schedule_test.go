@@ -2,6 +2,7 @@ package schedule
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -82,6 +83,60 @@ func TestParseRejectsWhatCannotWork(t *testing.T) {
 		if _, _, err := ParseEvery(in, now); err == nil {
 			t.Errorf("ParseEvery(%q) was accepted", in)
 		}
+	}
+	// A half-typed time is the dangerous case: it would fire, every day,
+	// at an hour nobody chose. "9点" is a whole hour and stays valid.
+	for _, in := range []string{"9: 看一眼", "9： 看一眼", "9 看一眼", ": 看一眼"} {
+		if _, _, err := ParseEvery(in, now); err == nil {
+			t.Errorf("ParseEvery(%q) completed a half-written time", in)
+		}
+	}
+	spec, prompt, err := ParseEvery("9点 看一眼", now)
+	if err != nil || spec.Hour != 9 || spec.Minute != 0 || prompt != "看一眼" {
+		t.Errorf("ParseEvery(\"9点 看一眼\") = %+v, %q, %v", spec, prompt, err)
+	}
+}
+
+// Ids are decimal counters. Comparing them as text puts #10 before #2 the
+// moment a conversation gets past its ninth schedule.
+func TestListingAndFiringOrderIdsNumerically(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "schedules.json"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	now := at(t, "2026-08-28 09:00")
+	store.now = func() time.Time { return now }
+	// Same moment for all of them, so ordering rests entirely on the id.
+	for i := 0; i < 12; i++ {
+		conversation := "chat"
+		if i >= MaxPerConversation {
+			conversation = "other"
+		}
+		if _, err := store.Create(Job{
+			ConversationID: conversation, AnchorMessage: "om_a", Prompt: "work",
+			Spec: Spec{Kind: KindDaily, Hour: 9, Minute: 0, Weekday: anyDay},
+		}); err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+	}
+	var listed []string
+	for _, job := range store.List("") {
+		listed = append(listed, job.ID)
+	}
+	want := []string{"1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12"}
+	if !slices.Equal(listed, want) {
+		t.Fatalf("List order = %v; want %v", listed, want)
+	}
+	due, err := store.Due(now.AddDate(0, 0, 1))
+	if err != nil {
+		t.Fatalf("Due: %v", err)
+	}
+	var fired []string
+	for _, job := range due {
+		fired = append(fired, job.ID)
+	}
+	if !slices.Equal(fired, want) {
+		t.Fatalf("Due order = %v; want %v", fired, want)
 	}
 }
 

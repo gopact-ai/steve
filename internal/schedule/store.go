@@ -119,7 +119,7 @@ func (s *Store) List(conversationID string) []Job {
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].NextAt.Equal(out[j].NextAt) {
-			return out[i].ID < out[j].ID
+			return lessID(out[i].ID, out[j].ID)
 		}
 		return out[i].NextAt.Before(out[j].NextAt)
 	})
@@ -201,8 +201,20 @@ func (s *Store) Due(now time.Time) ([]Job, error) {
 	if err := s.replaceLocked(replacement); err != nil {
 		return nil, err
 	}
-	sort.Slice(claimed, func(i, j int) bool { return claimed[i].ID < claimed[j].ID })
+	sort.Slice(claimed, func(i, j int) bool { return lessID(claimed[i].ID, claimed[j].ID) })
 	return claimed, nil
+}
+
+// lessID orders ids the way the person reading them does. They are decimal
+// counters, so comparing them as text puts #10 before #2 the moment a
+// conversation gets past its ninth schedule.
+func lessID(a, b string) bool {
+	na, aerr := strconv.Atoi(a)
+	nb, berr := strconv.Atoi(b)
+	if aerr != nil || berr != nil {
+		return a < b
+	}
+	return na < nb
 }
 
 func (s *Store) clone() data {

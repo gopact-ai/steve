@@ -208,7 +208,7 @@ func parseDuration(word string) (time.Duration, bool) {
 	return time.Duration(n) * unit, true
 }
 
-var clock = regexp.MustCompile(`^(\d{1,2})[:：点](\d{2})?$`)
+var clock = regexp.MustCompile(`^(\d{1,2})([:：点])(\d{2})?$`)
 
 func parseClock(word string) (int, int, bool) {
 	match := clock.FindStringSubmatch(word)
@@ -219,11 +219,15 @@ func parseClock(word string) (int, int, bool) {
 	if err != nil || hour > 23 {
 		return 0, 0, false
 	}
-	minute := 0
-	if match[2] != "" {
-		if minute, err = strconv.Atoi(match[2]); err != nil || minute > 59 {
-			return 0, 0, false
-		}
+	// "9点" is a whole hour; "9:" is a time somebody stopped typing. Only
+	// the first may leave the minutes out — a spec fires when nobody is
+	// watching, so a half-written one has to be refused, not completed.
+	if match[3] == "" {
+		return hour, 0, match[2] == "点"
+	}
+	minute, err := strconv.Atoi(match[3])
+	if err != nil || minute > 59 {
+		return 0, 0, false
 	}
 	return hour, minute, true
 }

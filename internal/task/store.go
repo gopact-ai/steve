@@ -172,7 +172,7 @@ func (s *Store) List(channel string) []Task {
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].UpdatedAt.Equal(out[j].UpdatedAt) {
-			return out[i].ID > out[j].ID
+			return lessID(out[j].ID, out[i].ID)
 		}
 		return out[i].UpdatedAt.After(out[j].UpdatedAt)
 	})
@@ -349,6 +349,18 @@ func (s *Store) Advance(id string, to State) (Task, error) {
 		return Task{}, err
 	}
 	return *stored.clone(), nil
+}
+
+// lessID orders ids numerically. They are decimal counters, so comparing
+// them as text puts #10 before #2 — which a listing of more than nine tasks
+// shows the user directly.
+func lessID(a, b string) bool {
+	na, aerr := strconv.Atoi(a)
+	nb, berr := strconv.Atoi(b)
+	if aerr != nil || berr != nil {
+		return a < b
+	}
+	return na < nb
 }
 
 func (t *Task) clone() *Task {

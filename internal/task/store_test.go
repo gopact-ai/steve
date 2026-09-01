@@ -2,6 +2,7 @@ package task
 
 import (
 	"path/filepath"
+	"slices"
 	"testing"
 	"time"
 )
@@ -399,5 +400,30 @@ func TestOriginPartitionsTheActiveTask(t *testing.T) {
 	// A session reset ends every lineage: they all ran through it.
 	if held := store.Holding("chat", "codex"); len(held) != 2 {
 		t.Fatalf("holding = %d; want both lineages", len(held))
+	}
+}
+
+// The listing shows ids to the user, and they are decimal counters: compared
+// as text, #10 sorts before #2 as soon as a chat gets past its ninth task.
+func TestListingOrdersIdsNumerically(t *testing.T) {
+	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	frozen := time.Now()
+	store.now = func() time.Time { return frozen }
+	for i := 0; i < 12; i++ {
+		if _, err := store.Create(Task{Channel: "chat", Member: "codex", Goal: "work"}); err != nil {
+			t.Fatalf("create %d: %v", i, err)
+		}
+	}
+	var listed []string
+	for _, tracked := range store.List("chat") {
+		listed = append(listed, tracked.ID)
+	}
+	// Newest first, and "newest" among equal timestamps means the higher id.
+	want := []string{"12", "11", "10", "9", "8", "7", "6", "5", "4", "3", "2", "1"}
+	if !slices.Equal(listed, want) {
+		t.Fatalf("List order = %v; want %v", listed, want)
 	}
 }
