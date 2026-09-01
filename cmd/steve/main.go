@@ -153,6 +153,11 @@ func doctor(args []string) error {
 	return nil
 }
 
+// staleTask is how long an interrupted task may sit before the gateway stops
+// trying to continue it. Past a day the chat has moved on, and resuming would
+// answer a question nobody is still asking.
+const staleTask = 24 * time.Hour
+
 func serve(args []string) error {
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	configPath := flags.String("config", "config.json", "path to config file")
@@ -266,6 +271,13 @@ func serve(args []string) error {
 	// /tasks resume re-enters through the same path a crash recovery does:
 	// a notice at the anchor becomes the new anchor, and the continuation
 	// arrives as an ordinary message.
+	coordinator.SetOfflineReminder(time.Duration(cfg.Gateway.OfflineReminderAfter))
+	coordinator.SetNotifier(func(n turn.TaskNotice) {
+		gw.Notify(gateway.Notice{
+			TaskID: n.TaskID, MessageID: n.MessageID,
+			Requester: n.Requester, Text: n.Text,
+		})
+	})
 	coordinator.SetResumer(func(r turn.TaskResume) {
 		go gw.ResumeTask(gateway.Revival{
 			TaskID: r.TaskID, Goal: r.Goal, Member: r.Member,
@@ -279,6 +291,7 @@ func serve(args []string) error {
 	// attempt, revive the session, and continue through a real message so
 	// the resumed turn renders a card like any other turn.
 	var revivals []gateway.Revival
+	var dropped []gateway.Notice
 	for _, interrupted := range tasks.Interrupted() {
 		if _, err := tasks.Finish(interrupted.ID, task.OutcomeInterrupted, task.Tokens{}, 0); err != nil {
 			log.Printf("steve: close interrupted attempt #%s: %v", interrupted.ID, err)
@@ -296,8 +309,17 @@ func serve(args []string) error {
 			log.Printf("steve: task #%s interrupted with no anchor; not resumable", interrupted.ID)
 			continue
 		}
-		if time.Since(interrupted.UpdatedAt) > 24*time.Hour {
+		// A task that stops has to say so. Silence here is the one failure
+		// the delivery promise cannot survive: the user asked for an hour of
+		// work and would otherwise never learn it ended.
+		if time.Since(interrupted.UpdatedAt) > staleTask {
 			log.Printf("steve: task #%s interrupted long ago; leaving it stopped", interrupted.ID)
+			dropped = append(dropped, gateway.Notice{
+				TaskID: interrupted.ID, MessageID: interrupted.AnchorMessage,
+				Requester: interrupted.Requester,
+				Text: catalogText.T(i18n.TaskDropped, interrupted.ID,
+					time.Since(interrupted.UpdatedAt).Round(time.Hour)),
+			})
 			continue
 		}
 		revivals = append(revivals, gateway.Revival{
@@ -310,6 +332,9 @@ func serve(args []string) error {
 	}
 	if len(revivals) > 0 {
 		go gw.Revive(revivals, coordinator.ReviveSession)
+	}
+	for _, notice := range dropped {
+		go gw.Notify(notice)
 	}
 
 	if addr := cfg.Gateway.DebugAddr; addr != "" {

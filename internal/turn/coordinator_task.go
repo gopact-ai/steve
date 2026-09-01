@@ -121,17 +121,19 @@ func goal(prompt string) string {
 	return string([]rune(trimmed)[:goalLimit]) + "…"
 }
 
-// budgetStop names the limit that stopped the task. Saying which one it was is
-// the difference between a brake the user can act on and one that just says no.
+// budgetStop names the limit that stopped the task and shows where the work
+// got to. A brake that only says "no" leaves the user guessing whether an hour
+// of work survived; the digest is the difference between a stop and a loss.
 func (c *Coordinator) budgetStop(tracked task.Task) (string, bool) {
 	limit, spent := tracked.Budget.Exhausted()
 	if !spent {
 		return "", false
 	}
+	stop := c.text.T(i18n.BudgetElapsed, tracked.ID, tracked.Budget.MaxElapsed.Round(time.Minute), protocol.CommandNew)
 	if limit == "turns" {
-		return c.text.T(i18n.BudgetTurns, tracked.ID, tracked.Budget.MaxTurns, protocol.CommandNew), true
+		stop = c.text.T(i18n.BudgetTurns, tracked.ID, tracked.Budget.MaxTurns, protocol.CommandNew)
 	}
-	return c.text.T(i18n.BudgetElapsed, tracked.ID, tracked.Budget.MaxElapsed.Round(time.Minute), protocol.CommandNew), true
+	return stop + "\n\n**" + c.text.T(i18n.TaskWhereItGot) + "**\n" + c.taskDetail(tracked), true
 }
 
 // taskFields surfaces the live budget on /status. Showing spend beside the
@@ -172,6 +174,69 @@ type TaskResume struct {
 // SetResumer wires that re-entry. Without it /tasks resume still un-pauses the
 // task; the user's next message is what continues it.
 func (c *Coordinator) SetResumer(fn func(TaskResume)) { c.resumer = fn }
+
+// TaskNotice is a line Steve pushes into the chat on its own, outside any
+// turn's card. It exists because delivery is a platform promise here: a task
+// that ran for an hour and then ended must say so, whether or not the person
+// who asked is still watching.
+type TaskNotice struct {
+	TaskID    string
+	ChatID    string
+	MessageID string
+	Requester string
+	Text      string
+}
+
+// SetNotifier wires those pushes to the channel. Nil simply means Steve keeps
+// its news to the cards.
+func (c *Coordinator) SetNotifier(fn func(TaskNotice)) { c.notifier = fn }
+
+// SetOfflineReminder sets how long a turn must run before its completion also
+// earns a plain-text ping. A non-positive value turns the ping off.
+func (c *Coordinator) SetOfflineReminder(after time.Duration) { c.offlineAfter = after }
+
+// noteActivity records that this conversation just heard from a person. The
+// question the reminder has to answer is "did they walk away?", and the only
+// evidence Steve has is whether anything arrived while the turn was running.
+func (c *Coordinator) noteActivity(conversationID string) time.Time {
+	now := time.Now()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.lastSeen == nil {
+		c.lastSeen = map[string]time.Time{}
+	}
+	c.lastSeen[conversationID] = now
+	return now
+}
+
+func (c *Coordinator) heardSince(conversationID string, mark time.Time) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.lastSeen[conversationID].After(mark)
+}
+
+// offlineReminder pings the asker when a long turn lands. The final card
+// already carries a real @, but a card that arrives forty minutes later drops
+// into a chat nobody is looking at; the plain-text line is the second, louder
+// knock — and it is only sent when the person truly went quiet.
+func (c *Coordinator) offlineReminder(req Request, id string, started time.Time, turnErr error) {
+	if c.notifier == nil || c.tasks == nil || id == "" || c.offlineAfter <= 0 {
+		return
+	}
+	if turnErr != nil {
+		// A failed turn's card says so and @s the asker; a second line
+		// repeating bad news is noise, not delivery.
+		return
+	}
+	elapsed := time.Since(started)
+	if elapsed < c.offlineAfter || c.heardSince(req.ConversationID, started) {
+		return
+	}
+	c.notifier(TaskNotice{
+		TaskID: id, ChatID: req.ChatID, MessageID: req.MessageID, Requester: req.SenderOpenID,
+		Text: c.text.T(i18n.TaskOfflineDone, id, elapsed.Round(time.Minute)),
+	})
+}
 
 // taskVerb is what the user asked to do to a task.
 type taskVerb int

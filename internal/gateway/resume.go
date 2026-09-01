@@ -3,6 +3,7 @@ package gateway
 import (
 	"context"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel/feishu"
@@ -33,6 +34,35 @@ type Revival struct {
 
 type textReplier interface {
 	ReplyText(ctx context.Context, messageID, text string) (string, error)
+}
+
+// Notice is one line Steve posts on its own initiative, outside any turn's
+// card: a task ended, and saying so is the platform's job rather than the
+// agent's. The mention is what makes it a delivery instead of a log entry.
+type Notice struct {
+	TaskID    string
+	MessageID string
+	Requester string
+	Text      string
+}
+
+// Notify posts the notice as a reply at the task's anchor. A text message is
+// deliberate: it is the second, louder knock after a card that may have
+// landed in a chat nobody was watching.
+func (g *Gateway) Notify(n Notice) {
+	tr, ok := g.ch.(textReplier)
+	if !ok || n.MessageID == "" || strings.TrimSpace(n.Text) == "" {
+		return
+	}
+	text := n.Text
+	if n.Requester != "" {
+		text = "<at user_id=\"" + n.Requester + "\"></at> " + text
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if _, err := tr.ReplyText(ctx, n.MessageID, text); err != nil {
+		log.Printf("gateway: notice for task #%s: %v", n.TaskID, err)
+	}
 }
 
 // Revive continues tasks a dead gateway left mid-turn. Each revival first
