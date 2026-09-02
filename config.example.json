@@ -82,7 +82,7 @@
     "allow_unmentioned": false
   },
   "nodes": {
-    "host-3": { "addr": "10.0.0.3:7701", "token": "replace-me", "dial_timeout": "10s", "level": "restricted", "region": "west" }
+    "host-3": { "addr": "10.0.0.3:7701", "token": "replace-me", "dial_timeout": "10s", "level": "restricted", "region": "west", "peer_addr": "10.0.0.3:7701" }
   },
   "gateway": {
     "default_project": "steve",
@@ -91,6 +91,7 @@
     "regions": { "west": { "url": "http://10.0.0.9:7720", "token": "replace-me" } },
     "issuer_addr": "0.0.0.0:7720",
     "issuer_token": "replace-me",
+    "direct_transfer": true,
     "planner": "claude",
     "capabilities": ["basic"],
     "read_model_addr": "127.0.0.1:7710",

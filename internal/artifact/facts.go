@@ -2,8 +2,12 @@ package artifact
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
+	"path/filepath"
 	"sort"
 	"time"
 
@@ -163,16 +167,28 @@ func (s *Store) ensureOnNode(ctx context.Context, p project.Project, node, bare 
 		return fmt.Errorf("artifact %s is not at %s, the only place sealed project %s lives", short(sha), node, p.ID)
 	}
 	s.setReplica(ctx, sha, node, gen, ReplicaTransferring, "")
-	if err := s.push(ctx, node, bare, hub, sha, nil); err != nil {
-		s.setReplica(ctx, sha, node, gen, ReplicaLost, err.Error())
-		return err
+	via := "hub"
+	if s.Direct {
+		if source, ok := s.directSource(ctx, sha, node); ok {
+			if err := s.fetchDirect(ctx, p, source, node, bare, sha); err == nil {
+				via = "direct from " + source
+			} else {
+				log.Printf("artifact: direct transfer of %s %s → %s failed (%v); relaying through the hub", short(sha), source, node, err)
+			}
+		}
 	}
-	s.setReplica(ctx, sha, node, gen, ReplicaPresent, "")
+	if via == "hub" {
+		if err := s.push(ctx, node, bare, hub, sha, nil); err != nil {
+			s.setReplica(ctx, sha, node, gen, ReplicaLost, err.Error())
+			return err
+		}
+	}
+	s.setReplica(ctx, sha, node, gen, ReplicaPresent, via)
 	if !s.nodeHas(ctx, node, bare, sha) {
 		s.setReplica(ctx, sha, node, gen, ReplicaLost, "pushed but not found afterwards")
 		return fmt.Errorf("artifact %s did not arrive at %s", short(sha), node)
 	}
-	s.setReplica(ctx, sha, node, gen, ReplicaVerified, "")
+	s.setReplica(ctx, sha, node, gen, ReplicaVerified, via)
 	return nil
 }
 
@@ -220,4 +236,69 @@ func (s *Store) Derive(ctx context.Context, source, derived string, label projec
 		return Derivation{}, err
 	}
 	return d, nil
+}
+
+// directNodes is what a registry offers for node-to-node transfer.
+type directNodes interface {
+	Grant(ctx context.Context, node, token, name string, ttl time.Duration) error
+	Fetch(ctx context.Context, node, peerAddr, token, name string) error
+	PeerAddr(node string) (string, error)
+}
+
+// directSource picks a node other than target that holds a verified copy.
+func (s *Store) directSource(ctx context.Context, sha, target string) (string, bool) {
+	replicas, err := s.Replicas(ctx, sha)
+	if err != nil {
+		return "", false
+	}
+	for i := len(replicas) - 1; i >= 0; i-- {
+		r := replicas[i]
+		if r.Node != "" && r.Node != target && r.State == ReplicaVerified && r.Generation == s.generationOf(ctx, r.Node) {
+			return r.Node, true
+		}
+	}
+	return "", false
+}
+
+// fetchDirect moves an artifact from source to target without the hub in
+// the data path: source bundles it, the hub grants target one fetch, target
+// pulls and unbundles. Any failure falls back to the hub relay.
+func (s *Store) fetchDirect(ctx context.Context, p project.Project, source, target, targetBare, sha string) error {
+	direct, ok := s.nodes.(directNodes)
+	if !ok {
+		return fmt.Errorf("direct transfer is not available")
+	}
+	_, _, sourceState, err := s.nodes.Git(ctx, source)
+	if err != nil {
+		return err
+	}
+	_, _, targetState, err := s.nodes.Git(ctx, target)
+	if err != nil {
+		return err
+	}
+	name := "direct-" + short(sha) + "-" + fmt.Sprint(s.now().UnixNano()) + ".bundle"
+	sourceBlob := filepath.Join(sourceState, "blobs", name)
+	if _, err := s.nodes.Exec(ctx, source, "", "mkdir -p "+quote(filepath.Dir(sourceBlob))+" && "+Script{}.Bundle(nodeBare(sourceState, p.ID), sourceBlob, sha, nil)); err != nil {
+		return fmt.Errorf("bundle on %s: %w", source, err)
+	}
+	defer func() { _, _ = s.nodes.Exec(ctx, source, "", "rm -f "+quote(sourceBlob)) }()
+	var raw [16]byte
+	_, _ = rand.Read(raw[:])
+	token := hex.EncodeToString(raw[:])
+	if err := direct.Grant(ctx, source, token, name, 2*time.Minute); err != nil {
+		return fmt.Errorf("grant on %s: %w", source, err)
+	}
+	peer, err := direct.PeerAddr(source)
+	if err != nil {
+		return err
+	}
+	if err := direct.Fetch(ctx, target, peer, token, name); err != nil {
+		return fmt.Errorf("fetch on %s from %s: %w", target, source, err)
+	}
+	targetBlob := filepath.Join(targetState, "blobs", name)
+	defer func() { _, _ = s.nodes.Exec(ctx, target, "", "rm -f "+quote(targetBlob)) }()
+	if _, err := s.nodes.Exec(ctx, target, "", Script{}.Unbundle(targetBare, targetBlob)); err != nil {
+		return fmt.Errorf("unbundle on %s: %w", target, err)
+	}
+	return nil
 }

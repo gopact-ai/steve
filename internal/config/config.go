@@ -136,6 +136,10 @@ type Gateway struct {
 	Regions     map[string]Region `json:"regions,omitempty"`
 	IssuerAddr  string            `json:"issuer_addr,omitempty"`
 	IssuerToken string            `json:"issuer_token,omitempty"`
+	// DirectTransfer lets artifacts move node to node when a node already
+	// holds them, the hub granting one transfer at a time; off means every
+	// byte goes through the hub.
+	DirectTransfer bool `json:"direct_transfer,omitempty"`
 	// DefaultProject is what a conversation is bound to on its first turn
 	// when nobody has said otherwise. With one project it is implied.
 	DefaultProject string `json:"default_project,omitempty"`
@@ -196,6 +200,9 @@ type Node struct {
 	// Region is whose leases the node's resources carry. Empty is this
 	// hub's own region; another region must be listed in gateway.regions.
 	Region string `json:"region,omitempty"`
+	// PeerAddr is where other nodes reach this one for direct transfers;
+	// empty means addr.
+	PeerAddr string `json:"peer_addr,omitempty"`
 }
 
 // Region is another hub that issues leases for its own machines.
@@ -522,7 +529,7 @@ func (c *Config) HarnessManager() (*harness.Manager, error) {
 func (c *Config) NodeConfigs() map[string]node.Config {
 	out := make(map[string]node.Config, len(c.Nodes))
 	for id, item := range c.Nodes {
-		out[id] = node.Config{Addr: item.Addr, Token: item.Token, DialTimeout: time.Duration(item.Dial), Level: item.Level, Region: item.Region}
+		out[id] = node.Config{Addr: item.Addr, Token: item.Token, DialTimeout: time.Duration(item.Dial), Level: item.Level, Region: item.Region, PeerAddr: item.PeerAddr}
 	}
 	return out
 }

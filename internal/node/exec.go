@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
@@ -195,4 +196,44 @@ func (r *Registry) Region(_ context.Context, nodeName string) (string, error) {
 		return "", fmt.Errorf("node %q is not configured", nodeName)
 	}
 	return cfg.Region, nil
+}
+
+// PeerAddr is the address other nodes reach the node at.
+func (r *Registry) PeerAddr(nodeName string) (string, error) {
+	cfg, ok := r.config(nodeName)
+	if !ok {
+		return "", fmt.Errorf("node %q is not configured", nodeName)
+	}
+	if cfg.PeerAddr != "" {
+		return cfg.PeerAddr, nil
+	}
+	return cfg.Addr, nil
+}
+
+// Grant tells a node to admit one peer for one blob.
+func (r *Registry) Grant(ctx context.Context, nodeName, token, name string, ttl time.Duration) error {
+	c, err := r.connect(ctx, nodeName)
+	if err != nil {
+		return err
+	}
+	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamGrant, Command: fmt.Sprintf("%s %s %d", token, name, int(ttl.Seconds()))})
+	if err != nil {
+		return fmt.Errorf("open grant stream on %q: %w", nodeName, err)
+	}
+	defer stream.Close()
+	return awaitExit(ctx, stream, nodeName)
+}
+
+// Fetch tells a node to pull a blob from a peer that granted it.
+func (r *Registry) Fetch(ctx context.Context, nodeName, peerAddr, token, name string) error {
+	c, err := r.connect(ctx, nodeName)
+	if err != nil {
+		return err
+	}
+	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamFetch, Command: peerAddr + " " + token + " " + name})
+	if err != nil {
+		return fmt.Errorf("open fetch stream on %q: %w", nodeName, err)
+	}
+	defer stream.Close()
+	return awaitExit(ctx, stream, nodeName)
 }

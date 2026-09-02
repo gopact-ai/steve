@@ -481,6 +481,7 @@ func serve(args []string) error {
 	// Artifacts: every result is a commit in the project's shadow
 	// repository on the hub, materialised wherever a step runs.
 	artifacts := artifact.New(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "artifacts"), book, projects, nodes)
+	artifacts.Direct = cfg.Gateway.DirectTransfer
 	coordinator.SetArtifacts(artifacts)
 	// Side effects agents ask for are intents: claimed, journaled, and
 	// blocked across attempts until a person resolves an unknown outcome.

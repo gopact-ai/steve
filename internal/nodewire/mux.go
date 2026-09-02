@@ -39,6 +39,13 @@ const (
 	// "get <name>" receives the same. Artifacts travel this way as git
 	// bundles; git on each side does the rest.
 	StreamBlob = "blob"
+	// StreamGrant tells a node to admit one peer, once, for one blob: the
+	// command is "<token> <name> <seconds>". StreamFetch tells a node to
+	// fetch a blob from a peer that granted it: "<addr> <token> <name>".
+	// Together they move an artifact between two nodes without the hub in
+	// the data path; the hub stays the one that decides.
+	StreamGrant = "grant"
+	StreamFetch = "fetch"
 )
 
 // ExitPrefix leads the close reason of a finished exec stream, followed by

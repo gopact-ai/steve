@@ -74,6 +74,9 @@ type Store struct {
 	// LegacyMerge forces the pre-2.38 merge path at nodes; tests use it
 	// to exercise that path on a modern git.
 	LegacyMerge bool
+	// Direct lets a node fetch an artifact from another node that holds
+	// it, the hub granting the transfer, instead of relaying the bytes.
+	Direct bool
 }
 
 func New(dir string, l *ledger.Ledger, projects *project.Store, nodes Nodes) *Store {

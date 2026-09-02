@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"crypto/subtle"
 	"fmt"
 	"io"
 	"log"
@@ -51,6 +52,9 @@ type ServerConfig struct {
 // Server accepts hub connections and runs agents on this machine.
 type Server struct {
 	cfg ServerConfig
+
+	grantsMu sync.Mutex
+	grants   map[string]peerGrant
 
 	mu       sync.Mutex
 	mcpPort  int
@@ -109,9 +113,15 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 		advert.MCPPort = mcp.Addr().(*net.TCPAddr).Port
 		defer mcp.Close()
 	}
-	hello, err := nodewire.Accept(socket, s.cfg.Token, advert)
+	hello, err := nodewire.AcceptWith(socket, s.validToken, advert)
 	if err != nil {
 		log.Printf("steve-node: handshake from %s: %v", socket.RemoteAddr(), err)
+		return
+	}
+	if name, ok := s.grantedName(hello.Token); ok {
+		// A peer, not the hub: it may take the one blob it was granted and
+		// nothing else, and the grant is spent by the connection.
+		s.servePeer(ctx, socket, hello, name)
 		return
 	}
 	log.Printf("steve-node: hub %q connected from %s", hello.Hub, socket.RemoteAddr())
@@ -132,6 +142,10 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 			go s.runCommand(ctx, stream)
 		case nodewire.StreamBlob:
 			go s.transferBlob(ctx, stream)
+		case nodewire.StreamGrant:
+			go s.grant(stream)
+		case nodewire.StreamFetch:
+			go s.fetch(ctx, stream)
 		default:
 			go s.runAgent(ctx, stream)
 		}
@@ -416,4 +430,142 @@ func (s *Server) transferBlob(ctx context.Context, stream *nodewire.Stream) {
 	default:
 		fail("2")
 	}
+}
+
+// peerGrant admits one peer connection for one blob until it expires.
+type peerGrant struct {
+	name    string
+	expires time.Time
+}
+
+func (s *Server) validToken(token string) bool {
+	if subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.Token)) == 1 {
+		return true
+	}
+	_, ok := s.grantedName(token)
+	return ok
+}
+
+func (s *Server) grantedName(token string) (string, bool) {
+	s.grantsMu.Lock()
+	defer s.grantsMu.Unlock()
+	g, ok := s.grants[token]
+	if !ok {
+		return "", false
+	}
+	if time.Now().After(g.expires) {
+		delete(s.grants, token)
+		return "", false
+	}
+	return g.name, true
+}
+
+// grant registers a one-time peer token: "<token> <name> <seconds>".
+func (s *Server) grant(stream *nodewire.Stream) {
+	fields := strings.Fields(stream.Request().Command)
+	if len(fields) != 3 || fields[2] == "" {
+		_ = stream.CloseWithReason(nodewire.ExitPrefix + "2")
+		return
+	}
+	seconds, err := strconv.Atoi(fields[2])
+	if err != nil || seconds <= 0 || fields[1] != filepath.Base(fields[1]) {
+		_ = stream.CloseWithReason(nodewire.ExitPrefix + "2")
+		return
+	}
+	s.grantsMu.Lock()
+	if s.grants == nil {
+		s.grants = map[string]peerGrant{}
+	}
+	s.grants[fields[0]] = peerGrant{name: fields[1], expires: time.Now().Add(time.Duration(seconds) * time.Second)}
+	s.grantsMu.Unlock()
+	log.Printf("steve-node: granted a peer %s for %ds", fields[1], seconds)
+	_ = stream.CloseWithReason(nodewire.ExitPrefix + "0")
+}
+
+// servePeer answers exactly one "get <name>" for the granted name.
+func (s *Server) servePeer(ctx context.Context, socket net.Conn, hello nodewire.Hello, name string) {
+	s.grantsMu.Lock()
+	delete(s.grants, hello.Token)
+	s.grantsMu.Unlock()
+	log.Printf("steve-node: peer %q connected from %s for %s", hello.Hub, socket.RemoteAddr(), name)
+	mux := nodewire.NewMux(socket, false)
+	defer mux.Close()
+	stream, err := mux.Accept(ctx)
+	if err != nil {
+		return
+	}
+	req := stream.Request()
+	if req.Kind != nodewire.StreamBlob || req.Command != "get "+name {
+		_ = stream.CloseWithReason(nodewire.ExitPrefix + "2")
+		return
+	}
+	s.transferBlob(ctx, stream)
+}
+
+// fetch pulls a blob from a peer: "<addr> <token> <name>".
+func (s *Server) fetch(ctx context.Context, stream *nodewire.Stream) {
+	fields := strings.Fields(stream.Request().Command)
+	fail := func(code string, err error) {
+		if err != nil {
+			log.Printf("steve-node: fetch: %v", err)
+		}
+		_ = stream.CloseWithReason(nodewire.ExitPrefix + code)
+	}
+	if len(fields) != 3 || fields[2] != filepath.Base(fields[2]) {
+		fail("2", nil)
+		return
+	}
+	addr, token, name := fields[0], fields[1], fields[2]
+	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
+	defer cancel()
+	dialer := net.Dialer{Timeout: nodewire.HandshakeTimeout}
+	socket, err := dialer.DialContext(ctx, "tcp", addr)
+	if err != nil {
+		fail("1", err)
+		return
+	}
+	defer socket.Close()
+	_ = socket.SetDeadline(time.Now().Add(nodewire.HandshakeTimeout))
+	if _, err := nodewire.Dial(socket, nodewire.Hello{Token: token, Hub: "peer:" + s.cfg.Name}); err != nil {
+		fail("1", err)
+		return
+	}
+	_ = socket.SetDeadline(time.Time{})
+	mux := nodewire.NewMux(socket, true)
+	defer mux.Close()
+	blob, err := mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamBlob, Command: "get " + name})
+	if err != nil {
+		fail("1", err)
+		return
+	}
+	defer blob.Close()
+	size, err := nodewire.ReadSize(blob)
+	if err != nil {
+		fail("1", err)
+		return
+	}
+	if err := os.MkdirAll(s.BlobDir(), 0o700); err != nil {
+		fail("1", err)
+		return
+	}
+	file, err := os.CreateTemp(s.BlobDir(), "."+name+"-*")
+	if err != nil {
+		fail("1", err)
+		return
+	}
+	temp := file.Name()
+	n, err := io.Copy(file, io.LimitReader(blob, size))
+	file.Close()
+	if err != nil || n != size {
+		os.Remove(temp)
+		fail("1", fmt.Errorf("short read from peer: %d of %d", n, size))
+		return
+	}
+	if err := os.Rename(temp, filepath.Join(s.BlobDir(), name)); err != nil {
+		os.Remove(temp)
+		fail("1", err)
+		return
+	}
+	log.Printf("steve-node: fetched %s (%d bytes) from peer %s", name, n, addr)
+	_ = stream.CloseWithReason(nodewire.ExitPrefix + "0")
 }

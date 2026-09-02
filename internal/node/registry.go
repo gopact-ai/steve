@@ -34,6 +34,9 @@ type Config struct {
 	// Region is whose leases the node's resources carry; empty is the
 	// hub's own region.
 	Region string
+	// PeerAddr is where other nodes reach this one directly; empty means
+	// Addr.
+	PeerAddr string
 }
 
 // Status is a node as the registry currently knows it — the roster's raw

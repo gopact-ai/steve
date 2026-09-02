@@ -155,6 +155,10 @@ outcome-unknown 的对外动作列出来给人对账；`steve ledger status` 看
   `url`/`token`，`gateway.issuer_addr` + `issuer_token` 把本 hub 的租约签发给别人。attempt 的槽位与工作树租约由机器所在区域签，
   规范锁由项目 home 所在区域签；本地转换若 fence 到外区域租约，先问签发方再提交（这个窗口是多区域的代价，也是为什么外区域租约
   守着的东西没有该区域回执不绑名）。
+- **直连**：`gateway.direct_transfer` 打开后，某个节点已经持有（副本 verified）的产物往另一个节点物化时不再经过 hub：
+  源节点打 bundle，hub 给源节点签一次性 grant（token + 文件名 + 有效期），目标节点凭 token 直连源节点的监听端口拉走，
+  拉完 grant 作废；任何一步失败都退回 hub 中转。`nodes[].peer_addr` 是其他节点能到它的地址（默认同 `addr`）。
+  hub 仍是决定方：谁能拉什么、拉一次，都是 hub 说的。
 - **恢复**：hub 重启时先扫过期 attempt，再把中断在写入阶段的 landing 按 WAL 逐路径收尾
   （已是新内容的跳过、还是旧内容的重写、被人改过的算冲突留档）；重试一个步骤是**接管**——
   旧 attempt 记为 superseded 并指向新的，它的租约全部作废。飞书出口的每次发送都先记
