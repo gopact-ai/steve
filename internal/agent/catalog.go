@@ -11,9 +11,19 @@ import (
 )
 
 type Config struct {
-	Harness      string
+	Harness string
+	// Node is the machine this agent runs on; empty is the hub itself.
+	// An agent is (node, harness, model): the harness binary and the model
+	// endpoints it can reach are properties of a machine, so the same
+	// harness id on two hosts is two different agents.
+	Node string
+	// Model pins which model the agent starts on. The node's advert is the
+	// authority on what is actually offered there; this is the preference.
+	Model string
+	// Requires are the capabilities a node must advertise to run this
+	// agent — "gpu", "prod-cred", "internal-net".
+	Requires     []string
 	Aliases      []string
-	Workspace    string
 	SystemPrompt string
 	Skills       []string
 	MCPServers   []string

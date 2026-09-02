@@ -1,0 +1,246 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>steve</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<style>
+  :root {
+    --paper:#f2f4f3; --surface:#fbfcfc; --sunk:#e6ebea; --ink:#101719;
+    --slate:#5f7176; --rule:#d2dad9;
+    --up:#0a6a6c; --down:#a24f1c; --busy:#57487e;
+    --mono:"IBM Plex Mono",ui-monospace,"SF Mono",Menlo,monospace;
+  }
+  @media (prefers-color-scheme:dark){
+    :root{--paper:#0d1315;--surface:#151e20;--sunk:#1b2528;--ink:#e2eae8;
+          --slate:#8a9ca0;--rule:#2a3639;--up:#4fc8bf;--down:#e0904c;--busy:#a697da;}
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:0 1.5rem 4rem;background:var(--paper);color:var(--ink);
+       font-family:var(--mono);font-size:13px;line-height:1.6}
+  .wrap{max-width:1100px;margin:0 auto}
+  header{display:flex;align-items:baseline;gap:1rem;flex-wrap:wrap;
+         padding:2rem 0 1rem;border-bottom:2px solid var(--ink)}
+  h1{font-size:1.5rem;margin:0;letter-spacing:-.02em}
+  .meta{color:var(--slate);font-size:.75rem}
+  .live{margin-left:auto;font-size:.72rem;color:var(--slate)}
+  .live b{color:var(--up)}
+  h2{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;
+     color:var(--slate);margin:2.2rem 0 .7rem;font-weight:500}
+  table{width:100%;border-collapse:collapse;font-size:.8rem}
+  th{text-align:left;font-weight:500;color:var(--slate);font-size:.7rem;
+     letter-spacing:.06em;text-transform:uppercase;padding:.35rem .6rem;
+     border-bottom:1px solid var(--rule)}
+  td{padding:.4rem .6rem;border-bottom:1px solid var(--rule);vertical-align:top}
+  tr:hover td{background:var(--sunk)}
+  .pill{display:inline-block;padding:.05rem .45rem;border-radius:2px;
+        font-size:.68rem;border:1px solid currentColor}
+  .up{color:var(--up)} .down{color:var(--down)} .busy{color:var(--busy)}
+  .dim{color:var(--slate)}
+  .bar{display:inline-block;width:70px;height:6px;background:var(--sunk);
+       border-radius:2px;overflow:hidden;vertical-align:middle;margin-right:.4rem}
+  .bar i{display:block;height:100%;background:var(--busy)}
+  .tree{white-space:pre;font-size:.78rem}
+  details{margin:.2rem 0}
+  summary{cursor:pointer;outline-offset:3px}
+  pre{margin:.4rem 0 .4rem 1.2rem;padding:.6rem;background:var(--sunk);
+      border-radius:3px;overflow-x:auto;font-size:.74rem;white-space:pre-wrap}
+  .feed{max-height:16rem;overflow-y:auto;border:1px solid var(--rule);
+        border-radius:3px;background:var(--surface)}
+  .feed div{padding:.2rem .6rem;border-bottom:1px solid var(--rule);font-size:.74rem}
+  .feed div:last-child{border-bottom:0}
+  .empty{color:var(--slate);padding:.6rem}
+</style>
+<div class="wrap">
+  <header>
+    <h1>steve</h1>
+    <span class="meta" id="hub"></span>
+    <span class="live" id="live">connecting…</span>
+  </header>
+
+  <h2>Nodes</h2>
+  <div id="nodes"></div>
+
+  <h2>Agents</h2>
+  <div id="agents"></div>
+
+  <h2>Tasks</h2>
+  <div id="tasks"></div>
+
+  <h2>Attempts</h2>
+  <div id="attempts"></div>
+
+  <h2>Plans</h2>
+  <div id="plans"></div>
+
+  <h2>Landings</h2>
+  <div id="landings"></div>
+
+  <h2>Activity</h2>
+  <div class="feed" id="feed"></div>
+</div>
+
+<script>
+// The dashboard is a renderer over /state and /events with no privileged
+// access to anything else — same data the TUI reads, so the two cannot
+// disagree about what is happening.
+const token = new URLSearchParams(location.search).get("token") || "";
+const auth = token ? { Authorization: "Bearer " + token } : {};
+const q = token ? "?token=" + encodeURIComponent(token) : "";
+
+const esc = s => String(s ?? "").replace(/[&<>"]/g, c =>
+  ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+
+const empty = m => `<div class="empty">${esc(m)}</div>`;
+
+function table(head, rows) {
+  if (!rows.length) return empty("none");
+  return `<table><thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead>`
+    + `<tbody>${rows.join("")}</tbody></table>`;
+}
+
+function renderNodes(nodes) {
+  const rows = (nodes || []).map(n => {
+    const state = n.up
+      ? `<span class="pill up">up</span>`
+      : `<span class="pill down">down</span>`;
+    const harnesses = (n.harnesses || []).map(h =>
+      h.missing ? `<span class="down">${esc(h.id)} ✗</span>` : esc(h.id)
+        + (h.models?.length ? `<span class="dim"> (${esc(h.models.join(", "))})</span>` : "")
+    ).join("<br>") || `<span class="dim">—</span>`;
+    return `<tr><td>${esc(n.name)}</td><td>${state}</td>`
+      + `<td class="dim">${esc(n.addr)}</td>`
+      + `<td class="dim">${esc([n.os, n.arch].filter(Boolean).join("/"))}</td>`
+      + `<td>${esc((n.capabilities || []).join(", ")) || "—"}</td>`
+      + `<td>${harnesses}</td>`
+      + `<td class="down">${esc(n.last_error || "")}</td></tr>`;
+  });
+  document.getElementById("nodes").innerHTML =
+    table(["node", "state", "addr", "arch", "capabilities", "harnesses", "error"], rows);
+}
+
+function renderAgents(agents) {
+  const rows = (agents || []).map(a => {
+    const state = a.eligible
+      ? `<span class="pill up">ready</span>`
+      : `<span class="pill down">blocked</span>`;
+    return `<tr><td>${esc(a.id)}</td><td>${state}</td>`
+      + `<td>${esc(a.node || "hub")}</td><td>${esc(a.harness)}</td>`
+      + `<td class="dim">${esc(a.model || "—")}</td>`
+      + `<td class="dim">${esc((a.requires || []).join(", ")) || "—"}</td>`
+      + `<td class="down">${esc(a.why || "")}</td></tr>`;
+  });
+  document.getElementById("agents").innerHTML =
+    table(["agent", "state", "where", "harness", "model", "requires", "why"], rows);
+}
+
+// Tasks draw as a tree: delegated work is the case that needs explaining,
+// and a flat list hides exactly the relationship that matters.
+function renderTasks(tasks) {
+  const byID = new Map((tasks || []).map(t => [t.id, t]));
+  const roots = (tasks || []).filter(t => !t.parent || !byID.has(t.parent));
+  const rows = [];
+  const walk = (t, depth) => {
+    const pct = t.max_turns ? Math.min(100, Math.round(100 * t.turns / t.max_turns)) : 0;
+    rows.push(`<tr><td class="tree">${"  ".repeat(depth)}${depth ? "└ " : ""}#${esc(t.id)}</td>`
+      + `<td><span class="pill ${t.state === "running" ? "busy" : "dim"}">${esc(t.state)}</span></td>`
+      + `<td>${esc(t.member || "—")}</td><td>${esc(t.node || "hub")}</td>`
+      + `<td><span class="bar"><i style="width:${pct}%"></i></span>`
+      + `<span class="dim">${esc(t.turns)}/${esc(t.max_turns)} · ${esc(t.elapsed)}</span></td>`
+      + `<td>${esc(t.goal)}</td></tr>`);
+    (t.children || []).forEach(id => byID.has(id) && walk(byID.get(id), depth + 1));
+  };
+  roots.forEach(t => walk(t, 0));
+  document.getElementById("tasks").innerHTML =
+    table(["task", "state", "member", "where", "budget", "goal"], rows);
+}
+
+function renderPlans(plans) {
+  const html = (plans || []).map(p => {
+    const steps = (p.steps || []).map(s => {
+      const cls = s.state === "done" ? "up" : s.state === "failed" ? "down" : "busy";
+      const deps = [...(s.needs || []), ...(s.merge || [])];
+      const ctx = s.context ? `<pre>goal: ${esc(s.context.goal)}
+ancestry: ${esc((s.context.ancestry || []).join(" › "))}
+refs: ${esc((s.context.refs || []).join(", ")) || "—"}
+findings: ${esc((s.context.findings || []).join(" | ")) || "—"}
+facts: ${esc((s.context.facts || []).join(", ")) || "—"}
+size: ${esc(s.context.bytes)} bytes</pre>` : "";
+      return `<tr><td class="tree">${esc(s.id)}</td>`
+        + `<td><span class="pill ${cls}">${esc(s.state)}</span></td>`
+        + `<td>${esc(s.agent || "—")}</td><td>${esc(s.node || "—")}</td>`
+        + `<td class="dim">${esc(deps.join(", ")) || "—"}</td>`
+        + `<td class="dim">${esc((s.requires || []).join(", ")) || "—"}</td>`
+        + `<td class="dim">${esc(s.verify || "—")}</td>`
+        + `<td>${esc(s.goal)}${ctx}<span class="down">${esc(s.error || "")}</span></td></tr>`;
+    });
+    return `<details open><summary><b>plan ${esc(p.id)}</b> rev ${esc(p.rev)} `
+      + `<span class="dim">· task #${esc(p.task_id)} · by ${esc(p.by)} · ${esc(p.because)}</span></summary>`
+      + table(["step", "state", "agent", "where", "after", "requires", "verify", "goal"], steps)
+      + `</details>`;
+  }).join("");
+  document.getElementById("plans").innerHTML = html || empty("no plans");
+}
+
+function renderAttempts(attempts) {
+  const rows = (attempts || []).map(a =>
+    `<tr><td>${esc(a.id)}</td><td>${esc(a.kind)}</td><td><span class="pill busy">${esc(a.state)}</span></td>`
+    + `<td>${esc(a.agent || "—")}</td><td>${esc(a.node || "hub")}</td><td>${esc(a.project)}</td>`
+    + `<td class="dim">${esc(a.scope)}</td><td class="dim">${esc((a.leases || []).join(", "))}</td></tr>`);
+  document.getElementById("attempts").innerHTML = rows.length
+    ? table(["attempt", "kind", "state", "agent", "where", "project", "scope", "leases"], rows) : empty("nothing running");
+}
+
+function renderLandings(landings) {
+  const rows = (landings || []).map(l => {
+    const cls = l.state === "committed" ? "up" : "down";
+    return `<tr><td class="dim">${esc(new Date(l.at).toLocaleTimeString())}</td><td>${esc(l.project)}</td>`
+      + `<td><span class="pill ${cls}">${esc(l.state)}</span></td><td class="dim">${esc((l.artifact || "").slice(0, 12))}</td>`
+      + `<td>${esc(l.paths)}</td><td class="down">${esc(l.error || "")}</td></tr>`;
+  });
+  document.getElementById("landings").innerHTML = rows.length
+    ? table(["when", "project", "state", "artifact", "paths", "note"], rows) : empty("nothing landed yet");
+}
+
+async function refresh() {
+  const res = await fetch("/state" + q, { headers: auth });
+  if (!res.ok) { document.getElementById("live").textContent = "unauthorized"; return; }
+  const s = await res.json();
+  document.getElementById("hub").textContent =
+    `hub ${s.hub.node || "—"}${s.hub.capabilities?.length ? " · " + s.hub.capabilities.join(", ") : ""}`
+    + ` · ${new Date(s.at).toLocaleTimeString()}`;
+  renderNodes(s.nodes); renderAgents(s.agents); renderAttempts(s.attempts); renderTasks(s.tasks); renderPlans(s.plans); renderLandings(s.landings);
+}
+
+const feed = document.getElementById("feed");
+function note(ev) {
+  const row = document.createElement("div");
+  const when = ev.at ? new Date(ev.at).toLocaleTimeString() : "";
+  row.innerHTML = `<span class="dim">${esc(when)}</span> ${esc(ev.kind)}`
+    + (ev.step_id ? ` <b>${esc(ev.step_id)}</b>` : "")
+    + (ev.detail ? ` <span class="dim">${esc(ev.detail)}</span>` : "");
+  feed.prepend(row);
+  while (feed.childElementCount > 200) feed.lastElementChild.remove();
+}
+
+// Changes arrive as they happen; the snapshot is re-read on each one because
+// the stream says *that* something moved, not what everything now looks like.
+let pending = null;
+function scheduleRefresh() {
+  if (pending) return;
+  pending = setTimeout(() => { pending = null; refresh(); }, 250);
+}
+
+function connect() {
+  const source = new EventSource("/events" + q);
+  source.onopen = () => document.getElementById("live").innerHTML = "<b>live</b>";
+  source.onmessage = e => { const ev = JSON.parse(e.data); note(ev); scheduleRefresh(); };
+  source.onerror = () => {
+    document.getElementById("live").textContent = "reconnecting…";
+    source.close();
+    setTimeout(connect, 3000);
+  };
+}
+
+refresh();
+connect();
+setInterval(refresh, 10000); // a floor, in case the stream drops silently
+</script>

@@ -173,7 +173,7 @@ func skillsCoordinator(t *testing.T) (*Coordinator, *state.Store, *liveCounter, 
 	}
 	counter.Live = live
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
-		"codex": {Harness: "codex", Workspace: t.TempDir(), Default: true},
+		"codex": {Harness: "codex", Default: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func skillsCoordinator(t *testing.T) (*Coordinator, *state.Store, *liveCounter, 
 	}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": counter.runner}}
 	assembler := capability.NewAssembler(nil).SetHome(home.Dir{Path: homeDir}).SetSkills(m)
-	coordinator := New(catalog, store, assembler, manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, assembler, manager, time.Minute)
 	coordinator.SetIdentity("ou_me", home.Dir{Path: homeDir})
 	coordinator.SetSkills(live)
 	return coordinator, store, counter, dest

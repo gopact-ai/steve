@@ -262,7 +262,8 @@ func TestActivePrefersNewest(t *testing.T) {
 }
 
 func TestInterruptedListsOpenAttemptsAndAnchors(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	path := filepath.Join(t.TempDir(), "tasks.json")
+	store, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +291,7 @@ func TestInterruptedListsOpenAttemptsAndAnchors(t *testing.T) {
 		t.Fatalf("closed attempt still interrupted: %+v", got)
 	}
 	// The record survives a reopen — that is the whole point.
-	reopened, err := Open(store.path)
+	reopened, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}

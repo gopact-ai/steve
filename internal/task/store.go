@@ -3,12 +3,12 @@ package task
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 // Store persists tasks with the same durable-replace discipline as the session
@@ -16,7 +16,7 @@ import (
 // data that would outgrow a single file — transcripts and tree snapshots — is
 // meant to land in a sharded archive on disk, not in here.
 type Store struct {
-	path string
+	doc  ledger.Doc
 	mu   sync.Mutex
 	data data
 	now  func() time.Time
@@ -31,19 +31,32 @@ type data struct {
 	Tasks  map[string]*Task `json:"tasks"`
 }
 
+// Open keeps the store in one JSON file. It is what tests use and what a
+// pre-ledger deployment wrote; the gateway itself opens the ledger.
 func Open(path string) (*Store, error) {
+	return openWith(&ledger.FileDocument{Path: path})
+}
+
+// OpenLedger keeps the store in the ledger. legacy names the JSON file an
+// earlier deployment used; it is imported once and retired.
+func OpenLedger(l *ledger.Ledger, legacy string) (*Store, error) {
+	doc := l.Document("tasks")
+	if _, err := doc.Import(legacy); err != nil {
+		return nil, err
+	}
+	return openWith(doc)
+}
+
+func openWith(doc ledger.Doc) (*Store, error) {
 	s := &Store{
-		path: path, data: data{NextID: 1, Tasks: map[string]*Task{}}, now: time.Now,
+		doc: doc, data: data{NextID: 1, Tasks: map[string]*Task{}}, now: time.Now,
 		maxTurns: DefaultMaxTurns, maxElapsed: DefaultMaxElapsed,
 	}
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return s, nil
-	}
+	raw, ok, err := doc.Load()
 	if err != nil {
 		return nil, fmt.Errorf("read tasks: %w", err)
 	}
-	if len(raw) == 0 {
+	if !ok || len(raw) == 0 {
 		return s, nil
 	}
 	var loaded data
@@ -379,51 +392,13 @@ func (s *Store) clone() data {
 }
 
 func (s *Store) replaceLocked(next data) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return fmt.Errorf("create task directory: %w", err)
-	}
 	raw, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode tasks: %w", err)
 	}
-	temp, err := os.CreateTemp(filepath.Dir(s.path), ".tasks-*")
-	if err != nil {
-		return fmt.Errorf("create task file: %w", err)
-	}
-	tempName := temp.Name()
-	defer os.Remove(tempName)
-	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
-		return fmt.Errorf("secure task file: %w", err)
-	}
-	if _, err := temp.Write(raw); err != nil {
-		temp.Close()
-		return fmt.Errorf("write tasks: %w", err)
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return fmt.Errorf("sync tasks: %w", err)
-	}
-	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close tasks: %w", err)
-	}
-	if err := os.Rename(tempName, s.path); err != nil {
-		return fmt.Errorf("replace tasks: %w", err)
-	}
-	if err := syncDir(filepath.Dir(s.path)); err != nil {
-		return fmt.Errorf("sync task directory: %w", err)
+	if err := s.doc.Save(raw); err != nil {
+		return fmt.Errorf("save tasks: %w", err)
 	}
 	s.data = next
 	return nil
-}
-
-// syncDir flushes a directory entry after a rename so the replacement survives
-// a crash (rename alone is not guaranteed durable on all filesystems).
-func syncDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
 }

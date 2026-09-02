@@ -1,0 +1,291 @@
+// Package readmodel is the system's state as a snapshot, plus a stream of
+// changes to it.
+//
+// It is deliberately not view.Progress. That type is a stream about one turn:
+// what this agent is doing right now. This is a snapshot about the whole
+// system: which machines are up, what work exists, where it is running, what
+// budget is left. A field belongs here when it stays true across turns,
+// sessions and hosts, and belongs in view when it only means something inside
+// one turn. Merging them would give both surfaces the wrong shape.
+//
+// The TUI and the dashboard are both renderers over this. Neither has
+// privileged access to anything else, which is what keeps them consistent.
+package readmodel
+
+import (
+	"context"
+	"sync"
+	"time"
+
+	"github.com/gopact-ai/gopact"
+	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/plan"
+	"github.com/gopact-ai/steve/internal/roster"
+	"github.com/gopact-ai/steve/internal/task"
+)
+
+// Snapshot is everything a renderer needs in one read.
+type Snapshot struct {
+	At    time.Time `json:"at"`
+	Hub   Hub       `json:"hub"`
+	Nodes []Node    `json:"nodes"`
+	// Agents is the roster: who exists, where, and whether they can run.
+	Agents []Agent `json:"agents"`
+	Tasks  []Task  `json:"tasks"`
+	Plans  []Plan  `json:"plans"`
+	// Attempts are the executions in flight right now: what holds which
+	// lease, where.
+	Attempts []Attempt `json:"attempts"`
+	// Landings are the most recent results brought into a canonical
+	// workspace, conflicts included.
+	Landings []Landing `json:"landings"`
+}
+
+type Attempt struct {
+	ID        string    `json:"id"`
+	Kind      string    `json:"kind"`
+	State     string    `json:"state"`
+	TaskID    string    `json:"task_id,omitempty"`
+	Project   string    `json:"project"`
+	Agent     string    `json:"agent,omitempty"`
+	Node      string    `json:"node,omitempty"`
+	Scope     string    `json:"scope"`
+	Workspace string    `json:"workspace,omitempty"`
+	Leases    []string  `json:"leases,omitempty"`
+	StartedAt time.Time `json:"started_at"`
+}
+
+type Landing struct {
+	ID       string    `json:"id"`
+	Project  string    `json:"project"`
+	Artifact string    `json:"artifact"`
+	State    string    `json:"state"`
+	Paths    int       `json:"paths"`
+	Error    string    `json:"error,omitempty"`
+	At       time.Time `json:"at"`
+}
+
+type Hub struct {
+	Node         string    `json:"node"`
+	Started      time.Time `json:"started"`
+	Capabilities []string  `json:"capabilities,omitempty"`
+}
+
+type Node struct {
+	Name         string    `json:"name"`
+	Addr         string    `json:"addr"`
+	Up           bool      `json:"up"`
+	Since        time.Time `json:"since,omitzero"`
+	OS           string    `json:"os,omitempty"`
+	Arch         string    `json:"arch,omitempty"`
+	Capabilities []string  `json:"capabilities,omitempty"`
+	Harnesses    []Harness `json:"harnesses,omitempty"`
+	LastError    string    `json:"last_error,omitempty"`
+}
+
+type Harness struct {
+	ID      string   `json:"id"`
+	Models  []string `json:"models,omitempty"`
+	Missing string   `json:"missing,omitempty"`
+}
+
+type Agent struct {
+	ID       string   `json:"id"`
+	Node     string   `json:"node,omitempty"`
+	Harness  string   `json:"harness"`
+	Model    string   `json:"model,omitempty"`
+	Eligible bool     `json:"eligible"`
+	Why      string   `json:"why,omitempty"`
+	Requires []string `json:"requires,omitempty"`
+}
+
+type Task struct {
+	ID     string `json:"id"`
+	Goal   string `json:"goal"`
+	State  string `json:"state"`
+	Member string `json:"member,omitempty"`
+	NodeID string `json:"node,omitempty"`
+	Parent string `json:"parent,omitempty"`
+	// Children makes the tree explicit so a renderer does not have to build
+	// it — the tree is the whole debugging story for delegated work.
+	Children  []string  `json:"children,omitempty"`
+	Turns     int       `json:"turns"`
+	MaxTurns  int       `json:"max_turns"`
+	Elapsed   string    `json:"elapsed"`
+	MaxElapse string    `json:"max_elapsed"`
+	UpdatedAt time.Time `json:"updated_at"`
+	PlanID    string    `json:"plan_id,omitempty"`
+}
+
+type Plan struct {
+	ID      string `json:"id"`
+	TaskID  string `json:"task_id"`
+	Rev     int    `json:"rev"`
+	Goal    string `json:"goal"`
+	By      string `json:"by"`
+	Because string `json:"because"`
+	Steps   []Step `json:"steps"`
+}
+
+type Step struct {
+	ID       string   `json:"id"`
+	Goal     string   `json:"goal"`
+	State    string   `json:"state"`
+	Agent    string   `json:"agent,omitempty"`
+	Node     string   `json:"node,omitempty"`
+	Needs    []string `json:"needs,omitempty"`
+	Merge    []string `json:"merge,omitempty"`
+	Requires []string `json:"requires,omitempty"`
+	Attempts int      `json:"attempts,omitempty"`
+	Verify   string   `json:"verify,omitempty"`
+	Error    string   `json:"error,omitempty"`
+	// Context is what this step's agent was actually given. It is here
+	// because "what did it see?" is the first question when a delegated
+	// step goes wrong, and a payload nobody can inspect is a payload nobody
+	// can debug.
+	Context *StepContext `json:"context,omitempty"`
+}
+
+type StepContext struct {
+	Goal      string   `json:"goal"`
+	Ancestry  []string `json:"ancestry,omitempty"`
+	Refs      []string `json:"refs,omitempty"`
+	Findings  []string `json:"findings,omitempty"`
+	Facts     []string `json:"facts,omitempty"`
+	TurnsLeft int      `json:"turns_left,omitempty"`
+	Bytes     int      `json:"bytes"`
+}
+
+// Sources are the live stores the model reads. Each is optional: a hub with
+// no plans still reports its nodes.
+type Sources struct {
+	Hub    Hub
+	Roster *roster.Roster
+	Nodes  NodeSource
+	Tasks  *task.Store
+	Plans  PlanSource
+	// Ledger is where attempts and landings are read from.
+	Ledger LedgerSource
+}
+
+// LedgerSource is what the read model needs from the ledger-backed
+// services: the live attempts and a project's landings.
+type LedgerSource interface {
+	LiveAttempts(ctx context.Context) []Attempt
+	RecentLandings(ctx context.Context) []Landing
+}
+
+type NodeSource interface {
+	Statuses() []node.Status
+}
+
+type PlanSource interface {
+	List() []plan.Plan
+}
+
+// Model serves snapshots and a change stream.
+type Model struct {
+	src Sources
+
+	mu   sync.Mutex
+	subs map[int]chan Event
+	next int
+	// recent keeps the last events so a renderer that attaches mid-flight
+	// has something to show immediately instead of a blank screen.
+	recent []Event
+}
+
+// Event is one change worth waking a renderer for.
+type Event struct {
+	At   time.Time `json:"at"`
+	Kind string    `json:"kind"`
+	// Seq is gopact's per-run sequence. Delivery is at-least-once, so a
+	// consumer that cares about exactly-once dedupes on (RunID, Seq).
+	Seq    int64  `json:"seq,omitempty"`
+	RunID  string `json:"run_id,omitempty"`
+	TaskID string `json:"task_id,omitempty"`
+	PlanID string `json:"plan_id,omitempty"`
+	StepID string `json:"step_id,omitempty"`
+	State  string `json:"state,omitempty"`
+	Rev    int    `json:"rev,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
+const recentKept = 200
+
+func New(src Sources) *Model {
+	return &Model{src: src, subs: map[int]chan Event{}}
+}
+
+// Emit makes the model a gopact.EventSink, so workflow node transitions reach
+// the renderers as they happen rather than on the next poll.
+//
+// gopact's own run log remains the durable authority; this is the live
+// projection for screens. A renderer that misses an event re-reads the
+// snapshot, which is why dropping is preferable to blocking the runtime.
+func (m *Model) Emit(_ context.Context, ev gopact.Event) error {
+	m.Publish(Event{
+		At:     ev.Timestamp,
+		Kind:   ev.Type,
+		RunID:  ev.RunID,
+		PlanID: ev.DefinitionID,
+		StepID: ev.NodeID,
+		Seq:    ev.Sequence,
+		Detail: ev.Summary,
+	})
+	return nil
+}
+
+func (m *Model) Publish(ev Event) {
+	if ev.At.IsZero() {
+		ev.At = time.Now()
+	}
+	m.mu.Lock()
+	m.recent = append(m.recent, ev)
+	if len(m.recent) > recentKept {
+		m.recent = m.recent[len(m.recent)-recentKept:]
+	}
+	subs := make([]chan Event, 0, len(m.subs))
+	for _, ch := range m.subs {
+		subs = append(subs, ch)
+	}
+	m.mu.Unlock()
+	for _, ch := range subs {
+		// Never block the publisher: a renderer that cannot keep up misses
+		// events and re-reads the snapshot, which is the right tradeoff.
+		select {
+		case ch <- ev:
+		default:
+		}
+	}
+}
+
+// Subscribe returns a channel of changes and a cancel function.
+func (m *Model) Subscribe(ctx context.Context) (<-chan Event, func()) {
+	ch := make(chan Event, 64)
+	m.mu.Lock()
+	id := m.next
+	m.next++
+	m.subs[id] = ch
+	m.mu.Unlock()
+	stop := func() {
+		m.mu.Lock()
+		if existing, ok := m.subs[id]; ok {
+			delete(m.subs, id)
+			close(existing)
+		}
+		m.mu.Unlock()
+	}
+	go func() {
+		<-ctx.Done()
+		stop()
+	}()
+	return ch, stop
+}
+
+// Recent returns the buffered change history, oldest first.
+func (m *Model) Recent() []Event {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]Event{}, m.recent...)
+}

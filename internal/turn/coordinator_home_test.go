@@ -136,7 +136,10 @@ func TestOwnerP2POpensHomeWorkspace(t *testing.T) {
 	}
 }
 
-func TestExistingOwnerSessionKeepsWorkspace(t *testing.T) {
+// TestExistingOwnerSessionInAnotherDirectoryIsStale: a session is bound to
+// the conversation's project binding. One that was opened somewhere else is
+// not silently continued there; the person is asked for /new.
+func TestExistingOwnerSessionInAnotherDirectoryIsStale(t *testing.T) {
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "ou_me"); err != nil {
 		t.Fatal(err)
@@ -144,7 +147,7 @@ func TestExistingOwnerSessionKeepsWorkspace(t *testing.T) {
 	coordinator, store, manager := homeCoordinatorWithManager(t, dir, "ou_me")
 	coding := t.TempDir()
 	caps, err := capability.NewAssembler(nil).SetHome(home.Dir{Path: dir}).AssembleMode(
-		agent.Agent{Harness: "codex", Workspace: coding}, home.ModeOwner,
+		agent.Agent{Harness: "codex"}, home.ModeOwner,
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -156,13 +159,14 @@ func TestExistingOwnerSessionKeepsWorkspace(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := coordinator.Handle(t.Context(), Request{
+	_, err = coordinator.Handle(t.Context(), Request{
 		ConversationID: "dm", Input: "hello", SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
-	}); err != nil {
-		t.Fatal(err)
+	})
+	if err == nil || !strings.Contains(err.Error(), "/new") {
+		t.Fatalf("expected a stale-workspace refusal pointing at /new, got %v", err)
 	}
-	if len(manager.workdirs) == 0 || manager.workdirs[0] != coding {
-		t.Fatalf("workspace = %v, want existing %s", manager.workdirs, coding)
+	if len(manager.workdirs) != 0 {
+		t.Fatalf("a stale session was opened in %v", manager.workdirs)
 	}
 }
 
@@ -299,7 +303,7 @@ func homeCoordinator(t *testing.T, homeDir, owner string) (*Coordinator, *state.
 func homeCoordinatorWithManager(t *testing.T, homeDir, owner string) (*Coordinator, *state.Store, *fakeManager) {
 	t.Helper()
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
-		"codex": {Harness: "codex", Workspace: t.TempDir(), Default: true},
+		"codex": {Harness: "codex", Default: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -311,8 +315,9 @@ func homeCoordinatorWithManager(t *testing.T, homeDir, owner string) (*Coordinat
 	runner := &fakeRunner{id: "sess"}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	assembler := capability.NewAssembler(nil).SetHome(home.Dir{Path: homeDir})
-	coordinator := New(catalog, store, assembler, manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, assembler, manager, time.Minute)
 	coordinator.SetIdentity(owner, home.Dir{Path: homeDir})
+	useHome(t, coordinator, homeDir)
 	coordinator.scanHome = t.TempDir()
 	return coordinator, store, manager
 }

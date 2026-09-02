@@ -15,13 +15,18 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/plan"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/sessions"
 	"github.com/gopact-ai/steve/internal/skills"
@@ -69,18 +74,24 @@ type UserError struct{ Text string }
 func (e UserError) Error() string { return e.Text }
 
 type runtime interface {
-	OpenSession(context.Context, string, string, string, []acp.MCPServer) (harness.Runner, error)
-	CloseSession(context.Context, string, string) error
+	OpenSession(context.Context, harness.Placement, string, string, []acp.MCPServer) (harness.Runner, error)
+	CloseSession(context.Context, harness.Placement, string) error
 	// SupportsHTTPMCP reports whether the harness's agent accepts HTTP MCP
 	// servers, so the messaging capability is only injected where it works.
-	SupportsHTTPMCP(context.Context, string) (bool, error)
+	SupportsHTTPMCP(context.Context, harness.Placement) (bool, error)
 }
 
 // AgentGate is the built-in messaging MCP server: given a session's identity
 // and token it returns the capability to inject, binding the token to that
 // conversation so the agent can never write anywhere else.
 type AgentGate interface {
-	Extras(conversationID, agentID, token string) []capability.Extra
+	Extras(conversationID, agentID, token, endpoint string) []capability.Extra
+}
+
+// NodeEndpoints resolves the messaging URL an agent on a given node must
+// call. Only remote placements consult it.
+type NodeEndpoints interface {
+	MCPEndpoint(ctx context.Context, node string) (string, error)
 }
 
 type Result struct {
@@ -106,12 +117,23 @@ type Coordinator struct {
 	scanHome    string
 	skills      *skills.Live
 	gate        AgentGate
+	endpoints   NodeEndpoints
 	tasks       *task.Store
 	schedules   *schedule.Store
-	node        string
-	text        i18n.Catalog
-	resumer     func(TaskResume)
-	notifier    func(TaskNotice)
+	supervisor  Supervisor
+	plans       *plan.Store
+	fleet       *roster.Roster
+	projects    *project.Store
+	attempts    *attempt.Service
+	artifacts   *artifact.Store
+	// defaultProject binds a fresh conversation; homeProject binds the
+	// owner's DM, where Steve's own home directory is the project.
+	defaultProject string
+	homeProject    string
+	node           string
+	text           i18n.Catalog
+	resumer        func(TaskResume)
+	notifier       func(TaskNotice)
 	// offlineAfter is how long a turn runs before its completion also earns
 	// a plain-text ping; zero keeps Steve quiet.
 	offlineAfter time.Duration
@@ -149,14 +171,32 @@ func (c *Coordinator) SetIdentity(ownerOpenID string, loader home.Loader) {
 	}
 }
 
-func (c *Coordinator) sessionWorkspace(req Request, selected agent.Agent, saved state.Session) string {
-	if saved.Workspace != "" {
-		return saved.Workspace
-	}
-	if c.homePath != "" && injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) == home.ModeOwner {
-		return c.homePath
-	}
-	return selected.Workspace
+// placement is where this agent's process belongs. It comes from the
+// catalog rather than the saved session so a config change moves the agent
+// on the next /new; a live session keeps its own node because its workspace
+// and conversation are over there.
+func placement(selected agent.Agent) harness.Placement {
+	return harness.Placement{Node: selected.Node, Harness: selected.Harness}
+}
+
+// SetArtifacts wires the artifact store: chat turns get before- and
+// after-snapshots, plans get a base and a landing.
+func (c *Coordinator) SetArtifacts(store *artifact.Store) {
+	c.artifacts = store
+}
+
+// SetAttempts wires the attempt service: every chat turn becomes an
+// attempt, leased and fenced, from here on.
+func (c *Coordinator) SetAttempts(service *attempt.Service) {
+	c.attempts = service
+}
+
+// SetProjects wires the project store. defaultID binds a conversation that
+// has never chosen; homeID, when set, binds the owner's DM instead.
+func (c *Coordinator) SetProjects(store *project.Store, defaultID, homeID string) {
+	c.projects = store
+	c.defaultProject = defaultID
+	c.homeProject = homeID
 }
 
 func (c *Coordinator) SetSkills(live *skills.Live) {
@@ -165,6 +205,9 @@ func (c *Coordinator) SetSkills(live *skills.Live) {
 
 // SetAgentGate enables the send primitive: each session gets the messaging
 // MCP server injected with its own conversation-bound token.
+// SetNodeEndpoints wires the resolver remote placements need for messaging.
+func (c *Coordinator) SetNodeEndpoints(e NodeEndpoints) { c.endpoints = e }
+
 func (c *Coordinator) SetAgentGate(gate AgentGate) {
 	c.gate = gate
 }
@@ -261,6 +304,14 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 		return c.modelCmd(ctx, req, selected, rest)
 	case protocol.CommandHistory:
 		return c.historyCmd(req, selected, rest)
+	case protocol.CommandPlan:
+		return c.planCmd(ctx, req, rest), nil
+	case protocol.CommandPlans:
+		return c.plansCmd(req, rest), nil
+	case protocol.CommandFleet:
+		return c.fleetCmd(ctx, req), nil
+	case protocol.CommandProject:
+		return c.projectCmd(ctx, req, rest)
 	}
 	return c.prompt(ctx, req, selected, prompt)
 }
@@ -307,9 +358,15 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
 		return Result{}, context.Canceled
 	}
+	// The directory is settled before the task opens: a turn that has
+	// nowhere to run has not started and spends nothing.
+	binding, workspace, err := c.resolveWorkspace(ctx, req, selected)
+	if err != nil {
+		return Result{}, err
+	}
 	// The task opens only after the turn lock is held, so a rejected or
 	// cancelled turn never spends a turn from the budget.
-	tracked, taskErr := c.beginTask(req, selected, prompt)
+	tracked, taskErr := c.beginTask(req, selected, prompt, binding, workspace.Path)
 	if taskErr != nil {
 		return Result{}, taskErr
 	}
@@ -339,12 +396,31 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if saved.HarnessID != "" && saved.CapabilityHash != capabilities.Fingerprint {
 		return Result{}, UserError{Text: c.text.T(i18n.CapabilityDrift, protocol.CommandNew)}
 	}
-	workspace := c.sessionWorkspace(req, selected, saved)
-	if saved.HarnessID != "" && saved.Workspace != "" && saved.Workspace != workspace {
+	if saved.HarnessID != "" && sessionDrifted(saved, binding, workspace.Path) {
 		return Result{}, UserError{Text: c.text.T(i18n.WorkspaceDrift, protocol.CommandNew)}
 	}
+	// The turn is an attempt from here: leased on the project's canonical
+	// workspace, renewed while it runs, and closed with whatever happened.
+	// A lost lease cancels the turn, because nothing done after it could
+	// be recorded.
+	att, err := c.openAttempt(ctx, req, selected, tracked, binding, workspace)
+	if err != nil {
+		return Result{}, err
+	}
+	beat, stopBeat := context.WithCancel(ctx)
+	defer stopBeat()
+	lost := c.attempts.Heartbeat(beat, att.ID)
+	go func() {
+		select {
+		case <-lost:
+			log.Printf("turn: attempt %s lost its lease; cancelling the turn", att.ID)
+			cancel()
+		case <-beat.Done():
+		}
+	}()
+	defer func() { c.closeAttempt(parent, att.ID, result, err) }()
 	req.phase(view.PhaseWaking)
-	runner, err := c.open(ctx, saved, selected, workspace, capabilities.MCPServers)
+	runner, err := c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
 	if err != nil && saved.UpstreamID != "" {
 		// The saved upstream session could not be reopened; drop it and
 		// start a fresh session in this same turn instead of failing once
@@ -354,15 +430,20 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		}
 		saved.UpstreamID = ""
 		saved.InstructionsApplied = false
-		runner, err = c.open(ctx, saved, selected, workspace, capabilities.MCPServers)
+		runner, err = c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
 	}
 	if err != nil {
 		return Result{}, err
 	}
+	if att.State == attempt.Leased {
+		c.advanceAttempt(ctx, att.ID, attempt.Prepared)
+	}
 	req.phase(view.PhaseRunning)
 	session := state.Session{
 		ConversationID: conversationID, AgentID: selected.ID, HarnessID: selected.Harness,
-		UpstreamID: runner.ID(), Workspace: workspace, CapabilityHash: capabilities.Fingerprint,
+		NodeID:     selected.Node,
+		UpstreamID: runner.ID(), Workspace: workspace.Path, CapabilityHash: capabilities.Fingerprint,
+		ProjectID: binding.ProjectID, ProjectVersion: binding.Version,
 		InstructionsApplied: saved.InstructionsApplied, Tainted: true,
 		AgentToken: saved.AgentToken,
 	}
@@ -394,6 +475,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}
 	prompt = user
 	c.setRunner(conversationID, selected.ID, runner)
+	c.advanceAttempt(ctx, att.ID, attempt.Running)
 	out, activity, err := promptTurn(ctx, runner, prompt, req)
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err()
@@ -473,7 +555,7 @@ func (c *Coordinator) excerpts(input string) string {
 func (c *Coordinator) discard(parent context.Context, selected agent.Agent, runner harness.Runner) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
 	defer cancel()
-	if err := c.runtime.CloseSession(ctx, selected.Harness, runner.ID()); err != nil {
+	if err := c.runtime.CloseSession(ctx, placement(selected), runner.ID()); err != nil {
 		runner.Abort()
 	}
 }
@@ -482,7 +564,38 @@ func (c *Coordinator) open(ctx context.Context, saved state.Session, selected ag
 	if saved.HarnessID != "" && saved.HarnessID != selected.Harness {
 		return nil, fmt.Errorf("session belongs to harness %q, not %q", saved.HarnessID, selected.Harness)
 	}
-	return c.runtime.OpenSession(ctx, selected.Harness, saved.UpstreamID, workspace, servers)
+	runner, err := c.runtime.OpenSession(ctx, placement(selected), saved.UpstreamID, workspace, servers)
+	if err != nil {
+		return nil, err
+	}
+	// A configured model preference applies to a fresh session only: a
+	// resumed one keeps whatever the user last chose with /model. The agent
+	// is the authority on what it offers, so a preference it cannot honour
+	// is logged and skipped rather than failing the turn.
+	if saved.UpstreamID == "" && selected.Model != "" {
+		c.applyModelPreference(ctx, selected, runner)
+	}
+	return runner, nil
+}
+
+func (c *Coordinator) applyModelPreference(ctx context.Context, selected agent.Agent, runner harness.Runner) {
+	configurable, ok := runner.(harness.Configurable)
+	if !ok {
+		return
+	}
+	optionID, choices := configurable.ModelChoices()
+	if optionID == "" || len(choices) == 0 {
+		log.Printf("turn: agent %q prefers model %q but exposes no model selector", selected.ID, selected.Model)
+		return
+	}
+	picked, err := matchModel(choices, selected.Model)
+	if err != nil {
+		log.Printf("turn: agent %q prefers model %q: %v", selected.ID, selected.Model, err)
+		return
+	}
+	if err := configurable.SetModel(ctx, optionID, picked.Value); err != nil {
+		log.Printf("turn: agent %q set preferred model %q: %v", selected.ID, selected.Model, err)
+	}
 }
 
 func (c *Coordinator) reset(ctx context.Context, conversationID string, selected agent.Agent) (Result, error) {
@@ -493,7 +606,7 @@ func (c *Coordinator) reset(ctx context.Context, conversationID string, selected
 		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
 	session := c.store.Conversation(conversationID).Sessions[selected.ID]
-	if err := c.runtime.CloseSession(ctx, session.HarnessID, session.UpstreamID); err != nil {
+	if err := c.runtime.CloseSession(ctx, harness.Placement{Node: session.NodeID, Harness: session.HarnessID}, session.UpstreamID); err != nil {
 		return Result{}, err
 	}
 	c.mu.Lock()
@@ -529,7 +642,7 @@ func (c *Coordinator) gateExtras(ctx context.Context, conversationID string, sel
 	if c.gate == nil {
 		return nil, saved.AgentToken, nil
 	}
-	supported, err := c.runtime.SupportsHTTPMCP(ctx, selected.Harness)
+	supported, err := c.runtime.SupportsHTTPMCP(ctx, placement(selected))
 	if err != nil {
 		return nil, saved.AgentToken, err
 	}
@@ -543,7 +656,22 @@ func (c *Coordinator) gateExtras(ctx context.Context, conversationID string, sel
 			return nil, "", err
 		}
 	}
-	return c.gate.Extras(conversationID, selected.ID, token), token, nil
+	endpoint := ""
+	if selected.Node != "" {
+		if c.endpoints == nil {
+			log.Printf("turn: agent %q is on node %q with no endpoint resolver; messaging disabled", selected.ID, selected.Node)
+			return nil, saved.AgentToken, nil
+		}
+		endpoint, err = c.endpoints.MCPEndpoint(ctx, selected.Node)
+		if err != nil {
+			// Losing the send primitive costs milestone cards, not the
+			// turn. The fingerprint changes, so the drift is visible
+			// rather than a capability that quietly stopped working.
+			log.Printf("turn: node %q messaging endpoint: %v", selected.Node, err)
+			return nil, saved.AgentToken, nil
+		}
+	}
+	return c.gate.Extras(conversationID, selected.ID, token, endpoint), token, nil
 }
 
 func newAgentToken() (string, error) {

@@ -247,7 +247,27 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		}
 	}
 
-	chunk := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("echo: " + input))
+	// A planning brief gets a plan, so the supervisor loop can be driven
+	// end to end without a real model. The plan is deliberately shaped to
+	// exercise placement across machines and a fan-in: two branches needing
+	// different capabilities, then a merge. Wording is read from the brief so
+	// the same mock can answer a revision (it keeps the finished step ids).
+	reply := "echo: " + input
+	switch {
+	case strings.Contains(input, "输出一份 JSON 计划"):
+		reply = mockPlan(input)
+	case strings.Contains(input, "你是审核者"):
+		// A verifier's verdict: fail anything whose goal asks to be failed,
+		// so a test can drive the verification edge on real hosts.
+		reply = "PASS"
+		if strings.Contains(input, "reject me") {
+			reply = "FAIL\nthe artifact is not where it was claimed to be"
+		}
+	case strings.Contains(input, "surprise"):
+		// A step that learns something which makes the plan wrong.
+		reply = "echo: " + input + "\nFINDING: noted in passing\nREPLAN: the target now requires a recheck before shipping"
+	}
+	chunk := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(reply))
 	if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: chunk}); err != nil {
 		return nil, err
 	}
@@ -441,4 +461,39 @@ func main() {
 	if err := conn.Err(); err != nil && !errors.Is(err, io.EOF) {
 		log.Fatalf("mockagent: %v", err)
 	}
+}
+
+// mockPlan answers a planning brief. It picks two capabilities it sees on
+// offer in the brief and fans out across them, so on a real fleet the steps
+// land on different machines. On a revision — the brief lists what already
+// ran — it keeps those ids and adds one more step, which is enough to show
+// the finished work being reused.
+func mockPlan(brief string) string {
+	// Prefer the capabilities that live on other machines: the point of
+	// the fixture is to show steps spreading across the fleet, and "basic"
+	// is what the hub itself offers.
+	caps := []string{}
+	for _, want := range []string{"gpu", "internal-net", "prod-cred"} {
+		if strings.Contains(brief, want) {
+			caps = append(caps, want)
+		}
+	}
+	if len(caps) == 0 && strings.Contains(brief, "basic") {
+		caps = []string{"basic"}
+	}
+	if len(caps) == 0 {
+		caps = []string{"any"}
+	}
+	first, second := caps[0], caps[len(caps)-1]
+	if strings.Contains(brief, "上一版计划跑到了哪") {
+		return `{"steps":[` +
+			`{"id":"build","goal":"say built","requires":["` + first + `"],"verify":{"kind":"none","why":"mock"}},` +
+			`{"id":"stage","goal":"say staged","requires":["` + second + `"],"needs":["build"],"verify":{"kind":"none","why":"mock"}},` +
+			`{"id":"recheck","goal":"say rechecked after revision","requires":["` + second + `"],"needs":["stage"],"verify":{"kind":"none","why":"mock"}},` +
+			`{"id":"ship","goal":"say shipped","requires":["` + second + `"],"merge":["recheck"],"verify":{"kind":"none","why":"mock"}}]}`
+	}
+	return `{"steps":[` +
+		`{"id":"build","goal":"say built","requires":["` + first + `"],"verify":{"kind":"none","why":"mock"}},` +
+		`{"id":"stage","goal":"say staged","requires":["` + second + `"],"verify":{"kind":"none","why":"mock"}},` +
+		`{"id":"ship","goal":"say shipped","requires":["` + second + `"],"merge":["build","stage"],"verify":{"kind":"none","why":"mock"}}]}`
 }

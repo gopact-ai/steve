@@ -87,6 +87,11 @@ type Settings struct {
 	Harness string
 	Model   string
 	Mode    string
+	// Node is the machine the agent ran on; empty means the hub itself.
+	// Placement belongs on the card's tail rather than in the chat's
+	// addressing, so where an agent lives can change without every message
+	// having to say so.
+	Node string
 }
 
 func (s Settings) Empty() bool { return s.Harness == "" && s.Model == "" && s.Mode == "" }

@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/onboard"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
@@ -24,7 +25,7 @@ const goalLimit = 120
 // turn to it. It returns an empty id when task tracking is disabled, and a
 // UserError when the budget is spent — that error is the brake, so it has to
 // reach the user rather than be swallowed.
-func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string) (string, error) {
+func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string, binding project.Binding, workspace string) (string, error) {
 	if c.tasks == nil {
 		return "", nil
 	}
@@ -43,7 +44,8 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 			Member:    selected.ID,
 			Node:      c.node,
 			Origin:    req.Origin,
-			Workspace: selected.Workspace,
+			ProjectID: binding.ProjectID,
+			Workspace: workspace,
 		})
 		if err != nil {
 			// Losing the task record must not cost the user their turn.

@@ -4,11 +4,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 // Job is one standing instruction: what to run, where to say it, and when.
@@ -39,7 +40,7 @@ const MaxPerConversation = 8
 // Store persists jobs with the same durable-replace discipline as the task
 // store: one writer, a temp file, a rename, a directory sync.
 type Store struct {
-	path string
+	doc  ledger.Doc
 	mu   sync.Mutex
 	data data
 	now  func() time.Time
@@ -50,14 +51,28 @@ type data struct {
 	Jobs   map[string]*Job `json:"jobs"`
 }
 
+// Open keeps the store in one JSON file; the gateway opens the ledger.
 func Open(path string) (*Store, error) {
-	s := &Store{path: path, data: data{NextID: 1, Jobs: map[string]*Job{}}, now: time.Now}
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) || (err == nil && len(raw) == 0) {
-		return s, nil
+	return openWith(&ledger.FileDocument{Path: path})
+}
+
+// OpenLedger keeps the store in the ledger, importing a legacy file once.
+func OpenLedger(l *ledger.Ledger, legacy string) (*Store, error) {
+	doc := l.Document("schedules")
+	if _, err := doc.Import(legacy); err != nil {
+		return nil, err
 	}
+	return openWith(doc)
+}
+
+func openWith(doc ledger.Doc) (*Store, error) {
+	s := &Store{doc: doc, data: data{NextID: 1, Jobs: map[string]*Job{}}, now: time.Now}
+	raw, ok, err := doc.Load()
 	if err != nil {
 		return nil, fmt.Errorf("read schedules: %w", err)
+	}
+	if !ok || len(raw) == 0 {
+		return s, nil
 	}
 	var loaded data
 	if err := json.Unmarshal(raw, &loaded); err != nil {
@@ -227,39 +242,12 @@ func (s *Store) clone() data {
 }
 
 func (s *Store) replaceLocked(next data) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return fmt.Errorf("create schedule directory: %w", err)
-	}
 	raw, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode schedules: %w", err)
 	}
-	temp, err := os.CreateTemp(filepath.Dir(s.path), ".schedules-*")
-	if err != nil {
-		return fmt.Errorf("create schedule file: %w", err)
-	}
-	tempName := temp.Name()
-	defer os.Remove(tempName)
-	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
-		return fmt.Errorf("secure schedule file: %w", err)
-	}
-	if _, err := temp.Write(raw); err != nil {
-		temp.Close()
-		return fmt.Errorf("write schedules: %w", err)
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return fmt.Errorf("sync schedules: %w", err)
-	}
-	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close schedules: %w", err)
-	}
-	if err := os.Rename(tempName, s.path); err != nil {
-		return fmt.Errorf("replace schedules: %w", err)
-	}
-	if err := syncDir(filepath.Dir(s.path)); err != nil {
-		return fmt.Errorf("sync schedule directory: %w", err)
+	if err := s.doc.Save(raw); err != nil {
+		return fmt.Errorf("save schedules: %w", err)
 	}
 	s.data = next
 	return nil

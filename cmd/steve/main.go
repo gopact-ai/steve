@@ -6,6 +6,9 @@ import (
 	"flag"
 	"fmt"
 	"log"
+	"net"
+	"net/http"
+	neturl "net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -14,27 +17,80 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/gopact/workflow"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agentmcp"
+	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/debugapi"
+	"github.com/gopact-ai/steve/internal/delegate"
+	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/gateway"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/onboard"
+	"github.com/gopact-ai/steve/internal/plan"
+	"github.com/gopact-ai/steve/internal/planner"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/runtime"
 	"github.com/gopact-ai/steve/internal/schedule"
 	setupcmd "github.com/gopact-ai/steve/internal/setup"
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/tui"
 	"github.com/gopact-ai/steve/internal/turn"
 	"golang.org/x/term"
 )
+
+// homeProjectID names Steve's home directory as a project.
+const homeProjectID = config.ReservedHomeProject
+
+// sweepAttempts keeps expiring attempts whose drivers stopped renewing.
+func sweepAttempts(ctx context.Context, attempts *attempt.Service) {
+	ticker := time.NewTicker(attempts.TTL)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			expired, err := attempts.Sweep(ctx)
+			if err != nil {
+				log.Printf("steve: sweep attempts: %v", err)
+			}
+			for _, r := range expired {
+				log.Printf("steve: expired attempt %s", attempt.Describe(r))
+			}
+		}
+	}
+}
+
+// probeWorkspace picks a project directory on node for a doctor probe: the
+// default project's if it is homed there, else any project's.
+func probeWorkspace(projects []project.Project, node string) (string, bool) {
+	for _, p := range projects {
+		if p.Home.Node == node && p.ID != homeProjectID {
+			return p.Home.Path, true
+		}
+	}
+	for _, p := range projects {
+		if p.Home.Node == node {
+			return p.Home.Path, true
+		}
+	}
+	return "", false
+}
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -49,6 +105,12 @@ func run(args []string) error {
 			return setup(args[1:])
 		case "doctor":
 			return doctor(args[1:])
+		case "top":
+			return top(os.Args[2:])
+		case "dash":
+			return dash(os.Args[2:])
+		case "ledger":
+			return ledgerCmd(args[1:])
 		case "run":
 			args = args[1:]
 		}
@@ -102,7 +164,12 @@ func doctor(args []string) error {
 		return err
 	}
 	defer manager.Stop()
-	store, err := state.Open(cfg.Gateway.StatePath)
+	book, err := openLedger(cfg)
+	if err != nil {
+		return err
+	}
+	defer book.Close()
+	store, err := state.OpenLedger(book, cfg.Gateway.StatePath)
 	if err != nil {
 		return err
 	}
@@ -124,6 +191,40 @@ func doctor(args []string) error {
 		return err
 	}
 	log.Printf("steve: feishu bot %s %s", identity.Name, identity.OpenID)
+
+	// Nodes are probed before agents: availability is a real dial, not a
+	// line in the config, and an agent placed on an unreachable node should
+	// fail with that fact rather than with a mystery session error.
+	nodes := node.NewRegistry(nodeName(), cfg.NodeConfigs())
+	defer nodes.Close()
+	manager.SetTransports(nodes)
+
+	// Projects are the hub's assignment, recorded in the ledger from config
+	// at every boot. Steve's own home directory is a project too — the one
+	// the owner's DM works in — so nothing special-cases it downstream.
+	projects := project.Open(book)
+	declared := cfg.ProjectList()
+	declared = append(declared, project.Project{ID: homeProjectID, Level: project.LevelRestricted, Home: project.Home{Path: cfg.Gateway.HomePath}})
+	if err := projects.Declare(ctx, declared); err != nil {
+		return fmt.Errorf("declare projects: %w", err)
+	}
+	for _, note := range cfg.Migrated {
+		log.Printf("steve: config migrated: %s", note)
+	}
+	for _, status := range nodes.Probe(ctx) {
+		if !status.Up {
+			return fmt.Errorf("node %q at %s unreachable: %s", status.Name, status.Addr, status.LastError)
+		}
+		log.Printf("steve: node %s up — %s/%s, harnesses=%s, caps=%v",
+			status.Name, status.Advert.OS, status.Advert.Arch,
+			harnessSummary(status.Advert), status.Advert.Capabilities)
+		for _, h := range status.Advert.Harnesses {
+			if h.Missing != "" {
+				log.Printf("steve: node %s cannot run %s: %s", status.Name, h.ID, h.Missing)
+			}
+		}
+	}
+
 	for _, selected := range catalog.List() {
 		if _, err := assembler.AssembleMode(selected, home.ModeGuest); err != nil {
 			return fmt.Errorf("agent %q guest home: %w", selected.ID, err)
@@ -137,11 +238,20 @@ func doctor(args []string) error {
 		if err != nil {
 			return fmt.Errorf("agent %q capabilities: %w", selected.ID, err)
 		}
-		session, err := manager.OpenSession(ctx, selected.Harness, "", selected.Workspace, capabilities.MCPServers)
-		if err != nil {
-			return fmt.Errorf("agent %q session: %w", selected.ID, err)
+		at := harness.Placement{Node: selected.Node, Harness: selected.Harness}
+		// An agent is probed in a project that lives where it runs. An agent
+		// on a node no project is homed on has nowhere to open a session
+		// yet, and that is reported rather than papered over.
+		workspace, ok := probeWorkspace(declared, selected.Node)
+		if !ok {
+			log.Printf("steve: agent %s on %s: no project is homed there; session not probed", selected.ID, at)
+			continue
 		}
-		if err := manager.CloseSession(ctx, selected.Harness, session.ID()); err != nil {
+		session, err := manager.OpenSession(ctx, at, "", workspace, capabilities.MCPServers)
+		if err != nil {
+			return fmt.Errorf("agent %q session on %s: %w", selected.ID, at, err)
+		}
+		if err := manager.CloseSession(ctx, at, session.ID()); err != nil {
 			return fmt.Errorf("agent %q close session: %w", selected.ID, err)
 		}
 	}
@@ -153,6 +263,66 @@ func doctor(args []string) error {
 	log.Printf("steve: doctor passed")
 	return nil
 }
+
+// top renders the read model in this terminal. It is a client of the running
+// gateway's HTTP surface, not a second reader of the stores: one read model,
+// two renderers, so the terminal and the browser cannot disagree.
+func top(args []string) error {
+	flags := flag.NewFlagSet("top", flag.ContinueOnError)
+	url := flags.String("url", defaultReadModelURL, "read model URL of a running gateway")
+	token := flags.String("token", "", "token, when the read model is not on loopback")
+	refresh := flags.Duration("refresh", 5*time.Second, "redraw floor; changes also redraw immediately")
+	once := flags.Bool("once", false, "print one frame and exit")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	model := tui.New(tui.Config{URL: *url, Token: *token, Refresh: *refresh})
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if *once {
+		fmt.Print(model.Once(ctx))
+		return nil
+	}
+	return model.Run(ctx)
+}
+
+// dash prints the dashboard URL of a running gateway. The page is served by
+// the gateway itself, so there is no second process to keep alive.
+func dash(args []string) error {
+	flags := flag.NewFlagSet("dash", flag.ContinueOnError)
+	url := flags.String("url", defaultReadModelURL, "read model URL of a running gateway")
+	token := flags.String("token", "", "token, when the read model is not on loopback")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, *url+"/state", nil)
+	if err != nil {
+		return err
+	}
+	if *token != "" {
+		req.Header.Set("Authorization", "Bearer "+*token)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("no gateway at %s — is `steve run` up? %w", *url, err)
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return fmt.Errorf("read model at %s answered %s", *url, res.Status)
+	}
+	page := *url
+	if *token != "" {
+		page += "/?token=" + neturl.QueryEscape(*token)
+	}
+	fmt.Println(page)
+	return nil
+}
+
+// defaultReadModelURL is where `steve run` puts the read model unless the
+// config says otherwise.
+const defaultReadModelURL = "http://127.0.0.1:7710"
 
 // scheduleTick is how often standing work is checked. Twenty seconds is fine
 // grain for a surface whose shortest interval is a minute, and cheap: due
@@ -212,7 +382,12 @@ func serve(args []string) error {
 		return err
 	}
 	defer unlock()
-	store, err := state.Open(cfg.Gateway.StatePath)
+	book, err := openLedger(cfg)
+	if err != nil {
+		return err
+	}
+	defer book.Close()
+	store, err := state.OpenLedger(book, cfg.Gateway.StatePath)
 	if err != nil {
 		return err
 	}
@@ -231,21 +406,65 @@ func serve(args []string) error {
 			}
 		}
 	}
+	nodes := node.NewRegistry(nodeName(), cfg.NodeConfigs())
+	defer nodes.Close()
+	manager.SetTransports(nodes)
+
+	// Projects are the hub's assignment, recorded in the ledger from config
+	// at every boot. Steve's own home directory is a project too — the one
+	// the owner's DM works in — so nothing special-cases it downstream.
+	projects := project.Open(book)
+	declared := cfg.ProjectList()
+	declared = append(declared, project.Project{ID: homeProjectID, Level: project.LevelRestricted, Home: project.Home{Path: cfg.Gateway.HomePath}})
+	if err := projects.Declare(context.Background(), declared); err != nil {
+		return fmt.Errorf("declare projects: %w", err)
+	}
+	for _, note := range cfg.Migrated {
+		log.Printf("steve: config migrated: %s", note)
+	}
+
+	// The roster is what turns "which agents exist" into "which agents can
+	// run this right now", from live adverts rather than from config.
+	fleet := roster.New(catalog)
+	fleet.SetNodes(nodes)
+	fleet.SetHubCapabilities(cfg.Gateway.Capabilities)
+
 	coordinator := turn.New(
 		catalog, store, assembler, manager, time.Duration(cfg.Gateway.PromptTimeout),
 	)
 	catalogText := i18n.New(i18n.FromDomain(cfg.Feishu.Domain))
 	coordinator.SetIdentity(cfg.Feishu.OwnerOpenID, home.Dir{Path: cfg.Gateway.HomePath})
 	coordinator.SetSkills(live)
-	tasks, err := task.Open(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "tasks.json"))
+	coordinator.SetProjects(projects, cfg.Gateway.DefaultProject, homeProjectID)
+	// Attempts: every execution is leased and fenced. Anything left live by
+	// a previous process is expired now, before a single turn runs.
+	attempts := attempt.New(book)
+	expired, err := attempts.Sweep(context.Background())
+	if err != nil {
+		return fmt.Errorf("sweep attempts: %w", err)
+	}
+	for _, r := range expired {
+		log.Printf("steve: expired stale attempt %s", attempt.Describe(r))
+	}
+	go sweepAttempts(context.Background(), attempts)
+	coordinator.SetAttempts(attempts)
+	// Artifacts: every result is a commit in the project's shadow
+	// repository on the hub, materialised wherever a step runs.
+	artifacts := artifact.New(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "artifacts"), book, projects, nodes)
+	coordinator.SetArtifacts(artifacts)
+	tasks, err := task.OpenLedger(book, filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "tasks.json"))
 	if err != nil {
 		return fmt.Errorf("open tasks: %w", err)
 	}
 	tasks.SetBudget(cfg.Gateway.TaskMaxTurns, time.Duration(cfg.Gateway.TaskMaxElapsed))
 	coordinator.SetTasks(tasks, nodeName())
-	schedules, err := schedule.Open(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "schedules.json"))
+	schedules, err := schedule.OpenLedger(book, filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "schedules.json"))
 	if err != nil {
 		return fmt.Errorf("open schedules: %w", err)
+	}
+	plans, err := plan.OpenLedger(book, filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "plans.json"))
+	if err != nil {
+		return fmt.Errorf("open plans: %w", err)
 	}
 	coordinator.SetSchedules(schedules)
 	coordinator.SetCatalog(catalogText)
@@ -259,8 +478,61 @@ func serve(args []string) error {
 	}
 	gw := gateway.New(coordinator)
 	gw.SetCatalog(catalogText)
+
+	// The supervisor is the plan side: a planner decides what should happen,
+	// and the runtime holds everything that must be true regardless of who
+	// planned it — placement against the live roster, the budget, the
+	// verification rule, the recovery limit.
+	stepRunner := exec.NewAgentRunner(manager, capabilitiesFor(assembler), fleet)
+	supervisor := exec.NewSupervisor(
+		choosePlanner(cfg, catalog, manager, artifacts),
+		exec.Deps{
+			Roster: fleet, Runner: stepRunner, Budget: taskBudget{tasks: tasks},
+			// Verification runs where the work is: a command on the step's
+			// node, or a second agent asked to check the first one's.
+			Verifier:   exec.NewVerifiers(nodes, manager, fleet, artifacts),
+			Workspaces: artifacts,
+			Attempts:   attempts,
+			Artifacts:  artifacts,
+		},
+		workflow.NewMemoryStore(),
+	)
+	supervisor.SetPlans(plans)
+	coordinator.SetSupervisor(supervisor, plans, fleet)
+
+	// One read model, two renderers. `steve top` and the browser are both
+	// clients of this; neither reads the stores directly, so what the
+	// operator sees in one place cannot contradict the other.
+	view := readmodel.New(readmodel.Sources{
+		Hub: readmodel.Hub{
+			Node: nodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities,
+		},
+		Roster: fleet, Nodes: nodes, Tasks: tasks, Plans: plans,
+		Ledger: readmodel.Ledger{Attempts: attempts, Artifacts: artifacts, Projects: projects},
+	})
+	dashboard, err := readmodel.NewServer(view, readmodel.ServerConfig{
+		Addr: cfg.Gateway.ReadModelAddr, Token: cfg.Gateway.ReadModelToken,
+	})
+	if err != nil {
+		return err
+	}
+	defer dashboard.Close()
+	go func() {
+		if err := dashboard.Serve(); err != nil {
+			log.Printf("steve: read model: %v", err)
+		}
+	}()
+	supervisor.Runs().Observe(view)
+	log.Printf("steve: dashboard on %s  (steve top -url %s)", dashboard.URL(), dashboard.URL())
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	// Dial the fleet now and keep redialing what is down. Without this the
+	// registry only connects when something asks it to, so a hub that has
+	// just started would report every node as down and refuse every
+	// placement — describing its own ignorance rather than the fleet.
+	nodes.Start(ctx)
+
 	// The messaging server's URL is baked into session fingerprints, so the
 	// port is remembered across restarts: losing it would ask every live
 	// conversation for /new after each deploy.
@@ -276,6 +548,24 @@ func serve(args []string) error {
 			log.Printf("steve: remember agent messaging port: %v", err)
 		}
 		coordinator.SetAgentGate(gate)
+		coordinator.SetNodeEndpoints(nodes)
+		// Delegation is the one way an agent reaches another: a child task
+		// in the tree, funded from the caller's remainder, with its own
+		// token. It is offered only when the messaging server exists,
+		// because that is where the tool lives.
+		delegation := delegate.New(tasks, fleet, manager, assembler, artifacts, nodeName())
+		delegation.SetLedger(attempts, artifacts)
+		delegation.SetGate(gate)
+		delegation.SetEndpoints(nodes)
+		delegation.MaxWait = time.Duration(cfg.Gateway.PromptTimeout) - 30*time.Second
+		gate.SetDelegator(delegation)
+		// Remote agents call a loopback port on their own machine; the node
+		// forwards it back here over the connection it already holds, so the
+		// messaging server never has to leave 127.0.0.1.
+		nodes.SetMCPDialer(func(ctx context.Context) (net.Conn, error) {
+			var dialer net.Dialer
+			return dialer.DialContext(ctx, "tcp", gate.Addr())
+		})
 		gw.SetAgentGate(gate)
 		gate.SetJournal(func(conversationID, agentID, messageID string) {
 			if err := tasks.AddInterim(conversationID, agentID, messageID); err != nil {
@@ -540,6 +830,23 @@ func readPort(path string) int {
 	return port
 }
 
+// harnessSummary renders a node's runtimes for one log line, marking the
+// ones it cannot actually start.
+func harnessSummary(advert nodewire.Advert) string {
+	if len(advert.Harnesses) == 0 {
+		return "none"
+	}
+	names := make([]string, 0, len(advert.Harnesses))
+	for _, h := range advert.Harnesses {
+		if h.Missing != "" {
+			names = append(names, h.ID+"(missing)")
+			continue
+		}
+		names = append(names, h.ID)
+	}
+	return strings.Join(names, ",")
+}
+
 // nodeName labels which machine ran a turn. It is cosmetic today and load
 // bearing once tasks can be placed on more than one node.
 func nodeName() string {
@@ -551,4 +858,71 @@ func nodeName() string {
 		return "local"
 	}
 	return host
+}
+
+// capabilitiesFor adapts the capability assembler to what a step runner
+// needs. A plan step opens its own session, so it needs the same identity and
+// MCP servers an ordinary turn would get on that agent.
+func capabilitiesFor(assembler *capability.Assembler) exec.Capabilities {
+	return assembledCaps{assembler: assembler}
+}
+
+type assembledCaps struct{ assembler *capability.Assembler }
+
+func (a assembledCaps) Assemble(candidate roster.Candidate) (string, []acp.MCPServer, error) {
+	// Guest mode: a plan step is work, not a conversation with the owner, so
+	// it gets the shared identity rather than the owner's private home.
+	caps, err := a.assembler.AssembleMode(candidate.Agent, home.ModeGuest)
+	if err != nil {
+		return "", nil, err
+	}
+	return caps.Instructions + exec.ReportingContract, caps.MCPServers, nil
+}
+
+// taskBudget is the plan's brake. It charges each step to the task that owns
+// the plan, so a plan cannot spend more than the work it belongs to was
+// allowed — the same budget a chat turn is held to.
+type taskBudget struct{ tasks *task.Store }
+
+func (b taskBudget) Reserve(taskID string) (int, time.Time, error) {
+	tracked, ok := b.tasks.Get(taskID)
+	if !ok {
+		return 0, time.Time{}, fmt.Errorf("task %s not found", taskID)
+	}
+	if limit, spent := tracked.Budget.Exhausted(); spent {
+		return 0, time.Time{}, fmt.Errorf("task %s budget exhausted: %s", taskID, limit)
+	}
+	if _, err := b.tasks.Begin(taskID, tracked.Member, tracked.Node, ""); err != nil {
+		return 0, time.Time{}, err
+	}
+	// Close the attempt straight away: a step's own success or failure is
+	// recorded by the plan, and leaving the attempt open would make the task
+	// look permanently mid-turn.
+	if _, err := b.tasks.Finish(taskID, task.OutcomeOK, task.Tokens{}, 0); err != nil {
+		return 0, time.Time{}, err
+	}
+	left := tracked.Budget.MaxTurns - tracked.Budget.Turns - 1
+	deadline := time.Now().Add(tracked.Budget.MaxElapsed - tracked.Budget.Elapsed)
+	return max(0, left), deadline, nil
+}
+
+// choosePlanner is the one place the planning strategy is picked. A
+// configured planning agent decomposes open goals with a model; without one
+// the rule planner places declared steps and treats an open goal as a single
+// step. Both produce the same validated Plan and the executor cannot tell
+// which one did.
+func choosePlanner(cfg *config.Config, catalog *agent.Catalog, manager *harness.Manager, workspaces project.Workspaces) planner.Planner {
+	if cfg.Gateway.Planner == "" {
+		return planner.Rule{}
+	}
+	selected, ok := catalog.Resolve(cfg.Gateway.Planner)
+	if !ok {
+		log.Printf("steve: planner agent %q not in catalog; using the rule planner", cfg.Gateway.Planner)
+		return planner.Rule{}
+	}
+	log.Printf("steve: /plan decomposes with %s", selected.ID)
+	return planner.LLM{
+		Agent: selected.ID, Sessions: manager, Workspaces: workspaces,
+		At: harness.Placement{Node: selected.Node, Harness: selected.Harness},
+	}
 }

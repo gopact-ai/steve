@@ -32,8 +32,34 @@ type Config struct {
 	Permission string
 }
 
+// Placement is where one session's agent process runs. An empty Node means
+// the hub's own machine; anything else is resolved through the node
+// registry. Harness alone is not enough to key a process: the same harness
+// id on two machines is two different agents, with different binaries,
+// different credentials and different reachable models.
+type Placement struct {
+	Node    string
+	Harness string
+}
+
+func (p Placement) key() string {
+	if p.Node == "" {
+		return p.Harness
+	}
+	return p.Node + "/" + p.Harness
+}
+
+func (p Placement) String() string { return p.key() }
+
+// Transports resolves a placement to the way its process is started. The
+// node registry implements it; a hub with no remote nodes needs none.
+type Transports interface {
+	Transport(node, harness string) acphost.Transport
+}
+
 type Manager struct {
 	configs map[string]Config
+	remote  Transports
 	mu      sync.Mutex
 	hosts   map[string]*acphost.Host
 	stopped bool
@@ -54,14 +80,28 @@ func NewManager(configs map[string]Config) (*Manager, error) {
 	return &Manager{configs: configs, hosts: map[string]*acphost.Host{}}, nil
 }
 
-func (m *Manager) OpenSession(ctx context.Context, harnessID, upstreamID, workdir string, servers []acp.MCPServer) (Runner, error) {
+// SetTransports wires remote placements. Without it every placement must be
+// local, and one naming a node is refused rather than silently run here —
+// running a "GPU" step on the wrong machine is worse than not running it.
+func (m *Manager) SetTransports(remote Transports) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.remote = remote
+}
+
+func (m *Manager) OpenSession(ctx context.Context, at Placement, upstreamID, workdir string, servers []acp.MCPServer) (Runner, error) {
 	if workdir == "" {
 		return nil, fmt.Errorf("agent workspace is required")
 	}
-	if err := os.MkdirAll(workdir, 0o700); err != nil {
-		return nil, fmt.Errorf("create agent workspace: %w", err)
+	// A remote workspace lives on the node's filesystem; only the node can
+	// create it, and guessing a path here would make a directory on the
+	// wrong machine.
+	if at.Node == "" {
+		if err := os.MkdirAll(workdir, 0o700); err != nil {
+			return nil, fmt.Errorf("create agent workspace: %w", err)
+		}
 	}
-	host, err := m.host(harnessID)
+	host, err := m.host(at)
 	if err != nil {
 		return nil, err
 	}
@@ -76,22 +116,22 @@ func (m *Manager) OpenSession(ctx context.Context, harnessID, upstreamID, workdi
 		host.Close()
 		return nil, fmt.Errorf("harness manager is stopped")
 	}
-	return &Session{harnessID: harnessID, id: id, generation: generation, host: host}, nil
+	return &Session{at: at, id: id, generation: generation, host: host}, nil
 }
 
 // SupportsHTTPMCP reports whether the harness's agent can take an HTTP MCP
 // server in its session config.
-func (m *Manager) SupportsHTTPMCP(ctx context.Context, harnessID string) (bool, error) {
-	host, err := m.host(harnessID)
+func (m *Manager) SupportsHTTPMCP(ctx context.Context, at Placement) (bool, error) {
+	host, err := m.host(at)
 	if err != nil {
 		return false, err
 	}
 	return host.SupportsHTTPMCP(ctx)
 }
 
-func (m *Manager) CloseSession(ctx context.Context, harnessID, upstreamID string) error {
+func (m *Manager) CloseSession(ctx context.Context, at Placement, upstreamID string) error {
 	m.mu.Lock()
-	host := m.hosts[harnessID]
+	host := m.hosts[at.key()]
 	m.mu.Unlock()
 	if host == nil || upstreamID == "" {
 		return nil
@@ -132,27 +172,37 @@ func (m *Manager) Restart() error {
 	return nil
 }
 
-func (m *Manager) host(id string) (*acphost.Host, error) {
+func (m *Manager) host(at Placement) (*acphost.Host, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.stopped {
 		return nil, fmt.Errorf("harness manager is stopped")
 	}
-	if host := m.hosts[id]; host != nil {
+	key := at.key()
+	if host := m.hosts[key]; host != nil {
 		return host, nil
 	}
-	cfg, ok := m.configs[id]
+	cfg, ok := m.configs[at.Harness]
 	if !ok {
-		return nil, fmt.Errorf("unknown harness %q", id)
+		return nil, fmt.Errorf("unknown harness %q", at.Harness)
 	}
 	broker, err := permission.New(cfg.Permission)
 	if err != nil {
 		return nil, err
 	}
-	host := acphost.New(acphost.Config{
+	hostCfg := acphost.Config{
 		Command: cfg.Command, Args: cfg.Args, ProcessDir: cfg.ProcessDir, Env: cfg.Env, Permission: broker,
-	})
-	m.hosts[id] = host
+	}
+	if at.Node != "" {
+		if m.remote == nil {
+			return nil, fmt.Errorf("agent is placed on node %q but no nodes are configured", at.Node)
+		}
+		// The command line is the node's own fact; the hub only says which
+		// harness it wants, and the node starts it from its own config.
+		hostCfg = acphost.Config{Transport: m.remote.Transport(at.Node, at.Harness), Permission: broker}
+	}
+	host := acphost.New(hostCfg)
+	m.hosts[key] = host
 	return host, nil
 }
 
@@ -188,7 +238,7 @@ type TurnRunner interface {
 }
 
 type Session struct {
-	harnessID  string
+	at         Placement
 	id         acp.SessionID
 	generation uint64
 	host       *acphost.Host
@@ -218,15 +268,17 @@ func (s *Session) PromptTurn(
 	return s.host.PromptTurn(ctx, s.id, s.generation, text, images, ask, askUser, s.stamp(progress))
 }
 
-// stamp names the harness on every snapshot. The host reports the model and
-// mode because only the agent knows them; which harness is speaking is
-// Steve's own fact, so it is added here rather than plumbed down.
+// stamp names the harness and the machine on every snapshot. The host
+// reports the model and mode because only the agent knows them; which
+// harness is speaking, and where, are Steve's own facts, so they are added
+// here rather than plumbed down.
 func (s *Session) stamp(progress func(view.Progress)) func(view.Progress) {
 	if progress == nil {
 		return nil
 	}
 	return func(p view.Progress) {
-		p.Settings.Harness = s.harnessID
+		p.Settings.Harness = s.at.Harness
+		p.Settings.Node = s.at.Node
 		progress(p)
 	}
 }
@@ -234,7 +286,8 @@ func (s *Session) stamp(progress func(view.Progress)) func(view.Progress) {
 // Settings reports how the agent has this session configured.
 func (s *Session) Settings() view.Settings {
 	out := s.host.Settings(s.id)
-	out.Harness = s.harnessID
+	out.Harness = s.at.Harness
+	out.Node = s.at.Node
 	return out
 }
 

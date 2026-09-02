@@ -141,7 +141,11 @@ type Task struct {
 	// Origin records what opened the task when it was not a person typing:
 	// a schedule's id, say. It is how unattended work can be recognised and
 	// rotated without touching a task the user has since taken over.
-	Origin    string `json:"origin,omitempty"`
+	Origin string `json:"origin,omitempty"`
+	// ProjectID is fixed when the task is created and never changes: a
+	// task belongs to one project even if the conversation moves on.
+	ProjectID string `json:"project_id,omitempty"`
+	// Workspace is the directory the task's attempts were given.
 	Workspace string `json:"workspace,omitempty"`
 	// Where the task's turns anchor in the chat: enough to reply into the
 	// right conversation (and topic) after a gateway restart.

@@ -18,7 +18,7 @@ import (
 func taskCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *task.Store) {
 	t.Helper()
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
-		"codex": {Harness: "codex", Workspace: t.TempDir(), Default: true},
+		"codex": {Harness: "codex", Default: true},
 	})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
@@ -26,7 +26,7 @@ func taskCoordinator(t *testing.T, runner *fakeRunner) (*Coordinator, *task.Stor
 		t.Fatalf("open tasks: %v", err)
 	}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	coordinator.SetTasks(tasks, "laptop")
 	return coordinator, tasks
 }
@@ -207,11 +207,11 @@ func TestResetClosesTheTaskSoTheNextMessageStartsAFreshOne(t *testing.T) {
 
 func TestTaskTrackingIsOptional(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
-		"codex": {Harness: "codex", Workspace: t.TempDir(), Default: true},
+		"codex": {Harness: "codex", Default: true},
 	})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 
 	if _, err := handle(coordinator, t.Context(), "no task store configured"); err != nil {
 		t.Fatalf("turn without task tracking: %v", err)
@@ -273,10 +273,10 @@ func TestStatusShowsTheLiveBudget(t *testing.T) {
 
 func TestStatusWithoutTaskTrackingHasNoTaskFields(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
-		"codex": {Harness: "codex", Workspace: t.TempDir(), Default: true},
+		"codex": {Harness: "codex", Default: true},
 	})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
-	coordinator := New(catalog, store, capability.NewAssembler(nil), &fakeManager{}, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), &fakeManager{}, time.Minute)
 	result, err := handle(coordinator, t.Context(), "/status")
 	if err != nil {
 		t.Fatalf("status: %v", err)

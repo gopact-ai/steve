@@ -1,0 +1,242 @@
+package attempt
+
+import (
+	"context"
+	"errors"
+	"testing"
+	"time"
+
+	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/project"
+)
+
+type clock struct{ t time.Time }
+
+func (c *clock) now() time.Time { return c.t }
+
+func newService(t *testing.T) (*Service, *clock) {
+	t.Helper()
+	c := &clock{t: time.Date(2026, 9, 2, 12, 0, 0, 0, time.UTC)}
+	l, err := ledger.Open(t.TempDir(), ledger.Options{Now: c.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { l.Close() })
+	s := New(l)
+	s.now = c.now
+	s.TTL = time.Minute
+	return s, c
+}
+
+func canonical(projectID string) project.Workspace {
+	return project.Workspace{ID: "canonical:" + projectID, Project: projectID, Path: "/w/" + projectID, Kind: project.KindCanonical}
+}
+
+func worktree(id, projectID string) project.Workspace {
+	return project.Workspace{ID: id, Project: projectID, Path: "/wt/" + id, Kind: project.KindWorktree}
+}
+
+func TestInPlaceTurnsSerializeOnTheCanonicalLock(t *testing.T) {
+	s, c := newService(t)
+	ctx := context.Background()
+	first, err := s.Open(ctx, Spec{TaskID: "1", Kind: KindChat, Project: "p", Agent: "codex", Harness: "codex", Workspace: canonical("p"), Scope: ScopeUnrestricted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first.Leases) != 2 || first.Leases[1].Key != "canonical:p" {
+		t.Fatalf("leases = %+v", first.Leases)
+	}
+	_, err = s.Open(ctx, Spec{TaskID: "2", Kind: KindChat, Project: "p", Agent: "claude", Harness: "claude", Workspace: canonical("p"), Scope: ScopeUnrestricted})
+	var busy Busy
+	if !errors.As(err, &busy) || busy.Resource != "canonical:p" || busy.Holder != first.ID {
+		t.Fatalf("second in-place open = %v", err)
+	}
+	// The refused open left nothing behind.
+	live, _ := s.Live(ctx)
+	if len(live) != 1 {
+		t.Fatalf("live = %d", len(live))
+	}
+	// Another project is untouched.
+	if _, err := s.Open(ctx, Spec{TaskID: "3", Kind: KindChat, Project: "q", Workspace: canonical("q"), Scope: ScopeUnrestricted}); err != nil {
+		t.Fatal(err)
+	}
+	// Finishing releases the lock.
+	if _, err := s.Advance(ctx, first.ID, Prepared, "hub", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Advance(ctx, first.ID, Running, "hub", nil); err != nil {
+		t.Fatal(err)
+	}
+	bound, err := s.Finish(ctx, first.ID, "hub", Result{Summary: "done"})
+	if err != nil || bound.State != Bound || bound.Result.Summary != "done" || bound.EndedAt.IsZero() {
+		t.Fatalf("finish = %+v err=%v", bound, err)
+	}
+	if _, err := s.Open(ctx, Spec{TaskID: "2", Kind: KindChat, Project: "p", Workspace: canonical("p"), Scope: ScopeUnrestricted}); err != nil {
+		t.Fatalf("open after release = %v", err)
+	}
+	// History: leased → prepared → running → bind-ready → bound, fenced.
+	events, _ := s.History(ctx, first.ID)
+	if len(events) != 5 || events[4].To != "bound" || len(events[4].Fencings) != 2 {
+		t.Fatalf("events = %+v", events)
+	}
+	_ = c
+}
+
+func TestScopeIsBoundToWorkspaceKind(t *testing.T) {
+	s, _ := newService(t)
+	ctx := context.Background()
+	if _, err := s.Open(ctx, Spec{Kind: KindStep, Project: "p", Workspace: canonical("p"), Scope: ScopePathSet}); err == nil {
+		t.Fatal("path-set on the canonical workspace was allowed")
+	}
+	if _, err := s.Open(ctx, Spec{Kind: KindChat, Project: "p", Workspace: worktree("wt1", "p"), Scope: ScopeUnrestricted}); err == nil {
+		t.Fatal("unrestricted in a worktree was allowed")
+	}
+	if _, err := s.Open(ctx, Spec{Kind: KindStep, Project: "p", Workspace: worktree("wt1", "p")}); err == nil {
+		t.Fatal("an attempt without a scope was allowed")
+	}
+	// Two isolated steps on one project run side by side; the same
+	// worktree does not.
+	a, err := s.Open(ctx, Spec{Kind: KindStep, Project: "p", Workspace: worktree("wt1", "p"), Scope: ScopePathSet, Touches: []string{"a/"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Open(ctx, Spec{Kind: KindStep, Project: "p", Workspace: worktree("wt2", "p"), Scope: ScopePathSet}); err != nil {
+		t.Fatalf("parallel isolated step = %v", err)
+	}
+	if _, err := s.Open(ctx, Spec{Kind: KindStep, Project: "p", Workspace: worktree("wt1", "p"), Scope: ScopeNone}); err == nil {
+		t.Fatal("two attempts in one worktree were allowed")
+	}
+	_ = a
+}
+
+func TestEndpointSlotsAreLeased(t *testing.T) {
+	s, _ := newService(t)
+	ctx := context.Background()
+	open := func(id string) (Record, error) {
+		return s.Open(ctx, Spec{ID: id, Kind: KindStep, Project: "p", Node: "node-a", Harness: "codex", Slots: 2,
+			Workspace: worktree("wt-"+id, "p"), Scope: ScopePathSet})
+	}
+	if _, err := open("a1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := open("a2"); err != nil {
+		t.Fatal(err)
+	}
+	_, err := open("a3")
+	var full NoSlot
+	if !errors.As(err, &full) || full.Endpoint != "endpoint:node-a/codex" {
+		t.Fatalf("third open = %v", err)
+	}
+	if _, err := s.Fail(ctx, "a1", "hub", "boom"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := open("a3"); err != nil {
+		t.Fatalf("open after a slot freed = %v", err)
+	}
+}
+
+func TestLostLeaseStopsEveryTransition(t *testing.T) {
+	s, c := newService(t)
+	ctx := context.Background()
+	r, _ := s.Open(ctx, Spec{Kind: KindStep, Project: "p", Workspace: worktree("wt1", "p"), Scope: ScopePathSet})
+	if _, err := s.Advance(ctx, r.ID, Prepared, "hub", nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Advance(ctx, r.ID, Running, "hub", nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Renew(ctx, r.ID); err != nil {
+		t.Fatal(err)
+	}
+	// Illegal edge.
+	if _, err := s.Advance(ctx, r.ID, Bound, "hub", nil); !errors.Is(err, ErrBadState) {
+		t.Fatalf("running → bound = %v", err)
+	}
+	// Time passes; the sweeper expires it and cuts its leases.
+	c.t = c.t.Add(2 * time.Minute)
+	expired, err := s.Sweep(ctx)
+	if err != nil || len(expired) != 1 || expired[0].ID != r.ID {
+		t.Fatalf("sweep = %+v err=%v", expired, err)
+	}
+	if err := s.Renew(ctx, r.ID); !errors.Is(err, ErrLost) {
+		t.Fatalf("renew after expiry = %v", err)
+	}
+	// The zombie driver tries to finish: refused, and the record stays expired.
+	if _, err := s.Finish(ctx, r.ID, "zombie", Result{Summary: "late"}); err == nil {
+		t.Fatal("a zombie finished an expired attempt")
+	}
+	got, _ := s.Get(ctx, r.ID)
+	if got.State != Expired || got.Result != nil {
+		t.Fatalf("record = %+v", got)
+	}
+}
+
+func TestSupersedeCutsOnlyTheOldAttemptsLeases(t *testing.T) {
+	s, c := newService(t)
+	ctx := context.Background()
+	old, _ := s.Open(ctx, Spec{ID: "old", Kind: KindStep, Project: "p", Node: "node-a", Harness: "codex", Slots: 1,
+		Workspace: worktree("wt-old", "p"), Scope: ScopePathSet, Base: "steve/1/build"})
+	_, _ = s.Advance(ctx, "old", Prepared, "hub", nil)
+	_, _ = s.Advance(ctx, "old", Running, "hub", nil)
+	// In place attempts are never taken over.
+	chat, _ := s.Open(ctx, Spec{Kind: KindChat, Project: "q", Workspace: canonical("q"), Scope: ScopeUnrestricted})
+	if _, err := s.Supersede(ctx, chat.ID, Spec{Kind: KindChat, Project: "q", Workspace: canonical("q"), Scope: ScopeUnrestricted}, "hub"); err == nil {
+		t.Fatal("an in-place attempt was taken over")
+	}
+	// The old one is live but its hub died; the slot it held has expired
+	// and been legitimately re-leased by someone else before takeover.
+	c.t = c.t.Add(2 * time.Minute)
+	other, err := s.l.Acquire(ctx, "endpoint:node-a/codex:slot:1", "other", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := s.Supersede(ctx, "old", Spec{Kind: KindStep, Project: "p", Node: "node-b", Harness: "codex",
+		Workspace: worktree("wt-new", "p"), Scope: ScopePathSet}, "hub")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fresh.Base != "steve/1/build" {
+		t.Fatalf("base not carried: %+v", fresh)
+	}
+	gone, _ := s.Get(ctx, "old")
+	if gone.State != Superseded || gone.SupersededBy != fresh.ID {
+		t.Fatalf("old = %+v", gone)
+	}
+	// The other holder's slot lease survived; the old attempt's own did not.
+	if _, err := s.l.Renew(ctx, other, time.Minute); err != nil {
+		t.Fatalf("someone else's slot lease was cut: %v", err)
+	}
+	if _, err := s.l.Renew(ctx, old.Leases[0], time.Minute); !errors.Is(err, ledger.ErrStale) {
+		t.Fatal("the old attempt lease survived takeover")
+	}
+	if err := s.Renew(ctx, "old"); !errors.Is(err, ErrLost) {
+		t.Fatal("the old attempt can still renew")
+	}
+}
+
+func TestHeartbeatReportsLoss(t *testing.T) {
+	s, _ := newService(t)
+	s.TTL = 90 * time.Millisecond
+	s.now = time.Now
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r, err := s.Open(ctx, Spec{Kind: KindStep, Project: "p", Workspace: worktree("wt", "p"), Scope: ScopePathSet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lost := s.Heartbeat(ctx, r.ID)
+	select {
+	case <-lost:
+		t.Fatal("lost before anything happened")
+	case <-time.After(200 * time.Millisecond):
+	}
+	// Someone cuts the lease underneath; the next beat reports it.
+	if err := s.l.Invalidate(ctx, "attempt:"+r.ID); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-lost:
+	case <-time.After(2 * time.Second):
+		t.Fatal("heartbeat never noticed the lost lease")
+	}
+}

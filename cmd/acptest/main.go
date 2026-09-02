@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/runtime"
 	"github.com/gopact-ai/steve/internal/skills"
@@ -75,7 +76,16 @@ func main() {
 	defer manager.Stop()
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	session, err := manager.OpenSession(ctx, selected.Harness, "", selected.Workspace, capabilities.MCPServers)
+	workspace := ""
+	for id, p := range cfg.Projects {
+		if p.Home.Node == selected.Node && (workspace == "" || id == cfg.Gateway.DefaultProject) {
+			workspace = p.Home.Path
+		}
+	}
+	if workspace == "" {
+		log.Fatalf("no project is homed where agent %s runs; add one to projects{}", selected.ID)
+	}
+	session, err := manager.OpenSession(ctx, harness.Placement{Node: selected.Node, Harness: selected.Harness}, "", workspace, capabilities.MCPServers)
 	if err != nil {
 		log.Fatal(err)
 	}

@@ -48,7 +48,13 @@ The "feishu" MCP server posts and maintains interim messages in the current Feis
 - On multi-stage work pass progress like "2/3" (stage/total) to feishu_send and feishu_update so the card badge shows which stage of how many.
 - Your final answer is delivered automatically by the platform when the turn ends. Do NOT send it with these tools, and do not duplicate it there.
 - Do not @-mention anyone. Mentions are reserved for the platform's own final answer card.
-- feishu_recall deletes a message you sent earlier in this same turn (pass its message_id) if it turned out wrong or obsolete.`
+- feishu_recall deletes a message you sent earlier in this same turn (pass its message_id) if it turned out wrong or obsolete.
+
+## Delegation (steve_delegate / steve_await, when offered)
+- steve_delegate hands ONE bounded goal to another agent — possibly on another machine. Use it when the work needs a machine, credential or environment you do not have.
+- It returns quickly with a task_id and a state. While state is running, call steve_await(task_id) — it waits up to 50 seconds per call — until state is done or failed. Then report the task_id, agent, node and outcome it gives you; do not invent them.
+- Pass refs (a commit, a branch, a blob digest), never pasted content. The child starts a fresh session with only what you give it.
+- The child spends your task's budget. Delegate what you cannot do yourself, not what you would rather not.`
 
 // Sender is the slice of the Feishu channel the tools need. Replies attach
 // to the turn's inbound message, which is what keeps a milestone inside the
@@ -61,10 +67,56 @@ type Sender interface {
 }
 
 // binding is what a bearer token means: this agent, in this conversation,
-// and nowhere else.
+// and nowhere else. A delegated child carries its task and who delegated it,
+// so its token is its own — it cannot pose as the parent — and its cards say
+// on whose behalf they were sent.
 type binding struct {
 	conversationID string
 	agentID        string
+	taskID         string
+	delegatedBy    string
+}
+
+// DelegateRequest is what an agent asks for with steve_delegate.
+type DelegateRequest struct {
+	Agent    string   `json:"agent,omitempty"`
+	Requires []string `json:"requires,omitempty"`
+	Goal     string   `json:"goal"`
+	Refs     []string `json:"refs,omitempty"`
+	Expect   string   `json:"expect,omitempty"`
+}
+
+// DelegateResult is what comes back: where the work went, whether it is
+// still running, and when it is done the answer, the refs it produced, and
+// how it ended. Never the child's transcript — that stays with the child.
+type DelegateResult struct {
+	TaskID string `json:"task_id"`
+	Agent  string `json:"agent"`
+	Node   string `json:"node,omitempty"`
+	// State is running, done or failed. A delegation can outlive any one
+	// tool call, so the caller reads State and awaits when it is running.
+	State   string   `json:"state"`
+	Elapsed string   `json:"elapsed,omitempty"`
+	Outcome string   `json:"outcome,omitempty"`
+	Answer  string   `json:"answer,omitempty"`
+	Refs    []string `json:"refs,omitempty"`
+}
+
+// AwaitRequest asks for a child's result, waiting up to WaitSeconds.
+type AwaitRequest struct {
+	TaskID      string `json:"task_id"`
+	WaitSeconds int    `json:"wait_seconds,omitempty"`
+}
+
+// Delegator opens a child task for the calling agent's running task and
+// drives it. Start returns as soon as the child is placed and running (or
+// sooner done); Await waits for it. The split exists because a child can
+// take minutes and a tool call cannot: a client that times out a request
+// must not take the child down with it. The gateway wires one; without it
+// the tools are not offered at all rather than offered and refused.
+type Delegator interface {
+	Start(ctx context.Context, conversationID, agentID string, req DelegateRequest) (DelegateResult, error)
+	Await(ctx context.Context, conversationID, agentID string, req AwaitRequest) (DelegateResult, error)
 }
 
 // anchor is where a conversation's sends currently land. The epoch advances
@@ -99,14 +151,15 @@ type Server struct {
 	listener net.Listener
 	srv      *http.Server
 
-	mu      sync.Mutex
-	sender  Sender
-	journal func(conversationID, agentID, messageID string)
-	tokens  map[string]binding
-	byBind  map[binding]string
-	anchors map[string]*anchor
-	sent    map[binding]*sentState
-	styles  map[string]string
+	mu        sync.Mutex
+	sender    Sender
+	delegator Delegator
+	journal   func(conversationID, agentID, messageID string)
+	tokens    map[string]binding
+	byBind    map[binding]string
+	anchors   map[string]*anchor
+	sent      map[binding]*sentState
+	styles    map[string]string
 }
 
 // New binds the loopback listener immediately so the URL is known before any
@@ -165,6 +218,10 @@ func (s *Server) URL() string {
 
 // Port reports the bound port, for the caller to persist and hand back to
 // New on the next start.
+// Addr is the loopback listener itself, for a forwarder that has to reach
+// this server without going through a URL.
+func (s *Server) Addr() string { return s.listener.Addr().String() }
+
 func (s *Server) Port() int {
 	addr, ok := s.listener.Addr().(*net.TCPAddr)
 	if !ok {
@@ -201,6 +258,50 @@ func (s *Server) Anchor(conversationID, chatID, messageID string) {
 // SetJournal registers a callback for every message an agent sends, so the
 // platform can persist what would otherwise be in-memory only — and clean
 // it up if the turn dies with the process.
+// SetDelegator enables steve_delegate.
+func (s *Server) SetDelegator(d Delegator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.delegator = d
+}
+
+// Delegated mints the capability for a child task: its own token, bound to
+// the child, so nothing it sends can be mistaken for the parent's, and its
+// milestone cards carry the attribution.
+func (s *Server) Delegated(conversationID, agentID, taskID, delegatedBy, token, endpoint string) []capability.Extra {
+	if s == nil || token == "" || conversationID == "" {
+		return nil
+	}
+	if endpoint == "" {
+		endpoint = s.URL()
+	}
+	b := binding{conversationID: conversationID, agentID: agentID, taskID: taskID, delegatedBy: delegatedBy}
+	s.mu.Lock()
+	s.tokens[token] = b
+	s.byBind[b] = token
+	s.mu.Unlock()
+	return []capability.Extra{{
+		Name: ServerName,
+		Server: capability.MCPServer{
+			Type:    "http",
+			URL:     endpoint,
+			Headers: map[string]string{"Authorization": "Bearer " + token},
+		},
+		Instructions: Instructions,
+	}}
+}
+
+// Revoke forgets a token once the work it authorised is over. A child task
+// ends; its token must not outlive it.
+func (s *Server) Revoke(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if b, ok := s.tokens[token]; ok {
+		delete(s.byBind, b)
+		delete(s.tokens, token)
+	}
+}
+
 func (s *Server) SetJournal(journal func(conversationID, agentID, messageID string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -248,9 +349,18 @@ func (s *Server) Interim(conversationID string) bool {
 // capability to inject into that session's MCP config. A rebind with a new
 // token revokes the old one, so a cleared session's credentials do not
 // linger.
-func (s *Server) Extras(conversationID, agentID, token string) []capability.Extra {
+// Extras injects the messaging capability for one session. endpoint is the
+// URL *the agent* should call: empty for an agent on the hub, and the node's
+// own loopback port for a remote one, which the node forwards back here over
+// the connection it already has. Either way the agent only ever talks to
+// 127.0.0.1 on its own machine, so "loopback only, one bearer token per
+// session" survives the move to another host.
+func (s *Server) Extras(conversationID, agentID, token, endpoint string) []capability.Extra {
 	if s == nil || token == "" || conversationID == "" {
 		return nil
+	}
+	if endpoint == "" {
+		endpoint = s.URL()
 	}
 	b := binding{conversationID: conversationID, agentID: agentID}
 	s.mu.Lock()
@@ -264,7 +374,7 @@ func (s *Server) Extras(conversationID, agentID, token string) []capability.Extr
 		Name: ServerName,
 		Server: capability.MCPServer{
 			Type:    "http",
-			URL:     s.URL(),
+			URL:     endpoint,
 			Headers: map[string]string{"Authorization": "Bearer " + token},
 		},
 		Instructions: Instructions,
@@ -317,7 +427,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	case "ping":
 		writeRPCResult(w, req.ID, struct{}{})
 	case "tools/list":
-		writeRPCResult(w, req.ID, map[string]any{"tools": toolList()})
+		writeRPCResult(w, req.ID, map[string]any{"tools": s.toolList()})
 	case "tools/call":
 		writeRPCResult(w, req.ID, s.callTool(r.Context(), bind, req.Params))
 	default:
@@ -342,8 +452,11 @@ func initializeResult(params json.RawMessage) map[string]any {
 	}
 }
 
-func toolList() []map[string]any {
-	return []map[string]any{
+func (s *Server) toolList() []map[string]any {
+	s.mu.Lock()
+	delegating := s.delegator != nil
+	s.mu.Unlock()
+	tools := []map[string]any{
 		{
 			"name": "feishu_send",
 			"description": "Post an interim milestone message into the current Feishu conversation. " +
@@ -411,6 +524,57 @@ func toolList() []map[string]any {
 			},
 		},
 	}
+	if delegating {
+		tools = append(tools, map[string]any{
+			"name": "steve_delegate",
+			"description": "Hand one bounded piece of work to another agent, possibly on another machine. " +
+				"Name the agent, or say what capability the work needs (gpu, internal-net, prod-cred) and Steve picks who can. " +
+				"Returns as soon as the child is placed: read `state`. If it is `running`, call steve_await with the task_id until it is `done` or `failed`. " +
+				"The child gets its own budget carved from yours, its own session, and only what you pass here — never your transcript. " +
+				"Use for work that needs a machine or credential you do not have; not for splitting work you could do yourself.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"goal": map[string]any{
+						"type":        "string",
+						"description": "One bounded goal, stated so someone with none of your context could act on it.",
+					},
+					"agent": map[string]any{
+						"type":        "string",
+						"description": "A specific agent id. Leave empty to place by capability.",
+					},
+					"requires": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "Capabilities the machine must have, e.g. [\"gpu\"]. Used when agent is empty.",
+					},
+					"refs": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "Pointers the child needs: \"git <commit-or-branch>\", \"blob <digest>\". Pass refs, not content.",
+					},
+					"expect": map[string]any{
+						"type":        "string",
+						"description": "What a good result looks like, in one line. Becomes the child's acceptance line.",
+					},
+				},
+				"required": []string{"goal"},
+			},
+		}, map[string]any{
+			"name": "steve_await",
+			"description": "Wait for a delegated child task and return its result. Waits up to wait_seconds (max 50) and returns " +
+				"`state: running` if it is not finished yet — call again. Only the caller's own children can be awaited.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"task_id":      map[string]any{"type": "string", "description": "The task_id steve_delegate returned."},
+					"wait_seconds": map[string]any{"type": "integer", "description": "How long to wait this call, 1–50. Default 30."},
+				},
+				"required": []string{"task_id"},
+			},
+		})
+	}
+	return tools
 }
 
 func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMessage) map[string]any {
@@ -430,6 +594,10 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 		out, err = s.update(ctx, bind, call.Arguments)
 	case "feishu_recall":
 		out, err = s.recall(ctx, bind, call.Arguments)
+	case "steve_delegate":
+		out, err = s.delegate(ctx, bind, call.Arguments)
+	case "steve_await":
+		out, err = s.await(ctx, bind, call.Arguments)
 	default:
 		err = fmt.Errorf("unknown tool %q", call.Name)
 	}
@@ -502,6 +670,9 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 	seq := st.count
 	progress := sanitizeProgress(args.Progress)
 	tail := milestoneTail(s.styles[bind.conversationID], bind.agentID, seq, progress)
+	if bind.delegatedBy != "" {
+		tail = bind.agentID + " · 受 " + bind.delegatedBy + " 委派 · " + strings.TrimPrefix(tail, s.styles[bind.conversationID]+" · ")
+	}
 	anchorID := a.messageID
 	epoch := a.epoch
 	s.mu.Unlock()
@@ -541,8 +712,67 @@ func sanitizeProgress(raw string) string {
 	return truncateRunes(compact, 16)
 }
 
+// delegate hands work to another agent and blocks until it is done. The
+// result is a typed summary — answer, refs, outcome — not the child's
+// transcript: what the child saw stays inspectable on the child's task, and
+// what comes back is bounded.
+func (s *Server) delegate(ctx context.Context, bind binding, raw json.RawMessage) (string, error) {
+	s.mu.Lock()
+	d := s.delegator
+	s.mu.Unlock()
+	if d == nil {
+		return "", fmt.Errorf("delegation is not enabled on this gateway")
+	}
+	var req DelegateRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return "", fmt.Errorf("bad steve_delegate arguments: %w", err)
+	}
+	if strings.TrimSpace(req.Goal) == "" {
+		return "", fmt.Errorf("steve_delegate needs a goal")
+	}
+	result, err := d.Start(ctx, bind.conversationID, bind.agentID, req)
+	if err != nil {
+		return "", err
+	}
+	out, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// await returns a child's result, waiting a bounded time for it. Bounded so
+// the tool call returns before any client's timeout; the caller calls again
+// while State is still running.
+func (s *Server) await(ctx context.Context, bind binding, raw json.RawMessage) (string, error) {
+	s.mu.Lock()
+	d := s.delegator
+	s.mu.Unlock()
+	if d == nil {
+		return "", fmt.Errorf("delegation is not enabled on this gateway")
+	}
+	var req AwaitRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return "", fmt.Errorf("bad steve_await arguments: %w", err)
+	}
+	if strings.TrimSpace(req.TaskID) == "" {
+		return "", fmt.Errorf("steve_await needs the task_id steve_delegate returned")
+	}
+	result, err := d.Await(ctx, bind.conversationID, bind.agentID, req)
+	if err != nil {
+		return "", err
+	}
+	out, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 // milestoneTail builds the interim card's footer: the same identity line
-// the final card wears, plus which stage this is.
+// the final card wears, plus which stage this is. A delegated child's tail
+// names who delegated it, so a card from another machine is not mistaken
+// for the parent's own progress.
 func milestoneTail(style, agentID string, seq int, progress string) string {
 	base := style
 	if base == "" {

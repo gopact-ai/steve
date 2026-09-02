@@ -26,8 +26,11 @@ import (
 const waitDeadline = 10 * time.Second
 
 type fakeManager struct {
-	runners  map[string]*fakeRunner
-	opened   []string
+	runners map[string]*fakeRunner
+	opened  []string
+	// placed records where each session was asked to run, so a test can
+	// assert an agent reached its node rather than the hub.
+	placed   []harness.Placement
 	workdirs []string
 	servers  [][]acp.MCPServer
 	fail     error
@@ -35,7 +38,7 @@ type fakeManager struct {
 	mcpHTTP  bool
 }
 
-func (m *fakeManager) OpenSession(_ context.Context, harnessID, upstreamID, workdir string, servers []acp.MCPServer) (harness.Runner, error) {
+func (m *fakeManager) OpenSession(_ context.Context, at harness.Placement, upstreamID, workdir string, servers []acp.MCPServer) (harness.Runner, error) {
 	if m.fail != nil {
 		err := m.fail
 		if m.failOnce {
@@ -45,19 +48,22 @@ func (m *fakeManager) OpenSession(_ context.Context, harnessID, upstreamID, work
 	}
 	id := upstreamID
 	if id == "" {
-		id = harnessID + "-session"
+		id = at.Harness + "-session"
 	}
-	runner := m.runners[harnessID]
+	runner := m.runners[at.Harness]
 	runner.id = id
-	m.opened = append(m.opened, harnessID+":"+upstreamID)
+	m.opened = append(m.opened, at.Harness+":"+upstreamID)
+	m.placed = append(m.placed, at)
 	m.workdirs = append(m.workdirs, workdir)
 	m.servers = append(m.servers, servers)
 	return runner, nil
 }
 
-func (m *fakeManager) CloseSession(context.Context, string, string) error { return nil }
+func (m *fakeManager) CloseSession(context.Context, harness.Placement, string) error { return nil }
 
-func (m *fakeManager) SupportsHTTPMCP(context.Context, string) (bool, error) { return m.mcpHTTP, nil }
+func (m *fakeManager) SupportsHTTPMCP(context.Context, harness.Placement) (bool, error) {
+	return m.mcpHTTP, nil
+}
 
 type fakeRunner struct {
 	id       string
@@ -118,12 +124,12 @@ func (r *fakeRunner) Abort() { r.aborts.Add(1) }
 
 func TestCoordinatorDropsSessionOnTurnErrorWithoutKillingProcess(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
-		"codex": {Harness: "codex", Workspace: t.TempDir(), SystemPrompt: "rules", Default: true},
+		"codex": {Harness: "codex", SystemPrompt: "rules", Default: true},
 	})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{err: errors.New("prompt failed")}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	if _, err := handle(coordinator, t.Context(), "hello"); err == nil {
 		t.Fatal("expected prompt error")
 	}
@@ -142,7 +148,7 @@ func TestCoordinatorAbortsStuckTurnOnTimeout(t *testing.T) {
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, 50*time.Millisecond)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 50*time.Millisecond)
 	if _, err := handle(coordinator, t.Context(), "stuck"); err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded, got %v", err)
 	}
@@ -161,16 +167,17 @@ func TestCoordinatorDropsStaleSessionWhenOpenFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir := t.TempDir()
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err := store.SaveSession(state.Session{
 		ConversationID: "chat", AgentID: "codex", HarnessID: "codex",
-		UpstreamID: "stale-session", Workspace: catalog.Default().Workspace,
+		UpstreamID: "stale-session", Workspace: dir,
 		CapabilityHash: capabilities.Fingerprint,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	failing := &fakeManager{fail: errors.New("session/load: not found")}
-	coordinator := New(catalog, store, assembler, failing, time.Minute)
+	coordinator := newCoordinatorIn(t, map[string]string{"codex": dir}, catalog, store, assembler, failing, time.Minute)
 	if _, err := handle(coordinator, t.Context(), "hello"); err == nil {
 		t.Fatal("expected open error")
 	}
@@ -186,10 +193,11 @@ func TestCoordinatorRetriesNewSessionAfterLoadFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	dir := t.TempDir()
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err := store.SaveSession(state.Session{
 		ConversationID: "chat", AgentID: "codex", HarnessID: "codex",
-		UpstreamID: "stale-session", Workspace: catalog.Default().Workspace,
+		UpstreamID: "stale-session", Workspace: dir,
 		CapabilityHash: capabilities.Fingerprint,
 	}); err != nil {
 		t.Fatal(err)
@@ -199,7 +207,7 @@ func TestCoordinatorRetriesNewSessionAfterLoadFails(t *testing.T) {
 		failOnce: true,
 		runners:  map[string]*fakeRunner{"codex": {reply: "recovered"}},
 	}
-	coordinator := New(catalog, store, assembler, manager, time.Minute)
+	coordinator := newCoordinatorIn(t, map[string]string{"codex": dir}, catalog, store, assembler, manager, time.Minute)
 	result, err := handle(coordinator, t.Context(), "hello")
 	if err != nil || result.Text != "recovered" {
 		t.Fatalf("retry = %#v, %v", result, err)
@@ -212,7 +220,7 @@ func TestCoordinatorRetriesNewSessionAfterLoadFails(t *testing.T) {
 func TestCoordinatorStatusHasFields(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
-	coordinator := New(catalog, store, capability.NewAssembler(nil), &fakeManager{}, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), &fakeManager{}, time.Minute)
 	result, err := handle(coordinator, t.Context(), "/status")
 	if err != nil {
 		t.Fatal(err)
@@ -229,7 +237,7 @@ func TestCoordinatorCancelDuringOpenCancelsContextImmediately(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	manager := &blockingOpenManager{started: make(chan struct{})}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	turnDone := make(chan error, 1)
 	go func() {
 		_, err := handle(coordinator, t.Context(), "hello")
@@ -263,15 +271,17 @@ type blockingOpenManager struct {
 	once    sync.Once
 }
 
-func (m *blockingOpenManager) OpenSession(ctx context.Context, _, _, _ string, _ []acp.MCPServer) (harness.Runner, error) {
+func (m *blockingOpenManager) OpenSession(ctx context.Context, _ harness.Placement, _, _ string, _ []acp.MCPServer) (harness.Runner, error) {
 	m.once.Do(func() { close(m.started) })
 	<-ctx.Done()
 	return nil, ctx.Err()
 }
 
-func (m *blockingOpenManager) CloseSession(context.Context, string, string) error { return nil }
+func (m *blockingOpenManager) CloseSession(context.Context, harness.Placement, string) error {
+	return nil
+}
 
-func (m *blockingOpenManager) SupportsHTTPMCP(context.Context, string) (bool, error) {
+func (m *blockingOpenManager) SupportsHTTPMCP(context.Context, harness.Placement) (bool, error) {
 	return false, nil
 }
 
@@ -280,7 +290,7 @@ func TestCoordinatorPendingCancelStopsNextTurn(t *testing.T) {
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	if result, err := handle(coordinator, t.Context(), "/cancel"); err != nil || result.Text != i18n.New(i18n.LocaleZH).T(i18n.NoRunningTurn) {
 		t.Fatalf("cancel = %#v, %v", result, err)
 	}
@@ -294,17 +304,18 @@ func TestCoordinatorPendingCancelStopsNextTurn(t *testing.T) {
 
 func TestCoordinatorRejectsTaintedSession(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{
-		"codex": {Harness: "codex", Workspace: t.TempDir(), Default: true},
+		"codex": {Harness: "codex", Default: true},
 	})
+	dir := t.TempDir()
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	if err := store.SaveSession(state.Session{
-		ConversationID: "chat", AgentID: "codex", HarnessID: "codex", Workspace: catalog.Default().Workspace,
+		ConversationID: "chat", AgentID: "codex", HarnessID: "codex", Workspace: dir,
 		CapabilityHash: "ignored", Tainted: true,
 	}); err != nil {
 		t.Fatal(err)
 	}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinatorIn(t, map[string]string{"codex": dir}, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	if _, err := handle(coordinator, t.Context(), "hello"); err == nil || !strings.Contains(err.Error(), "/new") {
 		t.Fatalf("expected tainted session error, got %v", err)
 	}
@@ -323,7 +334,7 @@ func TestCoordinatorSwitchesAgentsAndRestoresSessions(t *testing.T) {
 		t.Fatal(err)
 	}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}, "claude": {}}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 
 	first, err := handle(coordinator, t.Context(), "hello")
 	if err != nil || first.AgentID != "codex" {
@@ -354,7 +365,7 @@ func TestCoordinatorRejectsCapabilityDrift(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	if _, err := handle(coordinator, t.Context(), "hello"); err != nil {
 		t.Fatal(err)
 	}
@@ -377,7 +388,7 @@ func TestCoordinatorCancelsRunningTurn(t *testing.T) {
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	turnDone := make(chan error, 1)
 	go func() {
 		_, err := handle(coordinator, t.Context(), "long task")
@@ -409,7 +420,7 @@ func TestCoordinatorCancelWithoutRunningTurn(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	result, err := handle(coordinator, t.Context(), "/cancel")
 	if err != nil || result.Text != i18n.New(i18n.LocaleZH).T(i18n.NoRunningTurn) {
 		t.Fatalf("cancel = %#v, %v", result, err)
@@ -421,7 +432,7 @@ func TestCoordinatorKeepsSessionWhenAgentCancelsTurn(t *testing.T) {
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{err: fmt.Errorf("%w: %w", harness.ErrTurnCanceled, context.Canceled)}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	if _, err := handle(coordinator, t.Context(), "hello"); err == nil {
 		t.Fatal("expected canceled turn error")
 	}
@@ -451,7 +462,7 @@ func TestGracefullyCancelledTurnKeepsItsSession(t *testing.T) {
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{id: "sess-1", err: harness.ErrTurnCanceled}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	if _, err := handle(coordinator, t.Context(), "first"); !errors.Is(err, harness.ErrTurnCanceled) {
 		t.Fatalf("err = %v, want ErrTurnCanceled", err)
 	}
@@ -472,7 +483,7 @@ func TestAbandonedTurnDropsItsSession(t *testing.T) {
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{id: "sess-1", err: context.Canceled}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	if _, err := handle(coordinator, t.Context(), "first"); !errors.Is(err, context.Canceled) {
 		t.Fatalf("err = %v, want context.Canceled", err)
 	}
@@ -487,7 +498,7 @@ func TestCoordinatorSwitchOnlyAndNew(t *testing.T) {
 	})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}, "claude": {}}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 
 	result, err := handle(coordinator, t.Context(), "/use claude")
 	if err != nil || result.Text != i18n.New(i18n.LocaleZH).T(i18n.Switched, "claude") {
@@ -510,7 +521,7 @@ func TestCoordinatorEnglishLocale(t *testing.T) {
 	})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {}, "claude": {}}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	coordinator.SetCatalog(i18n.New(i18n.LocaleEN))
 	result, err := handle(coordinator, t.Context(), "/use claude")
 	if err != nil || result.Text != i18n.New(i18n.LocaleEN).T(i18n.Switched, "claude") {
@@ -530,7 +541,7 @@ func TestNewMessageQueuesBehindRunningTurn(t *testing.T) {
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 
 	first := make(chan error, 1)
 	go func() {
@@ -581,7 +592,7 @@ func TestPlusPrefixStillQueuesAndStrips(t *testing.T) {
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 	if _, err := handle(coordinator, t.Context(), "+ 后续任务"); err != nil {
 		t.Fatal(err)
 	}
@@ -598,7 +609,7 @@ func TestFullwidthBangInterrupts(t *testing.T) {
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
 
 	first := make(chan error, 1)
 	go func() {
@@ -633,5 +644,61 @@ func TestFullwidthBangInterrupts(t *testing.T) {
 	got := runner.seen()
 	if len(got) != 2 || !strings.Contains(got[1], "改做这个") || strings.Contains(got[1], "！") {
 		t.Fatalf("agent saw %v, want the second prompt with the bang stripped", got)
+	}
+}
+
+// TestAgentRunsOnItsConfiguredNode: placement follows the agent's config all
+// the way to the runtime, and the session records it so a restart reconnects
+// to the same machine. The directory over there is the project's, so the
+// conversation is bound to a project homed on that node first.
+func TestAgentRunsOnItsConfiguredNode(t *testing.T) {
+	catalog, err := agent.NewCatalog(map[string]agent.Config{
+		"codex": {Harness: "codex", Default: true},
+		"lab":   {Harness: "codex", Node: "host-3", Aliases: []string{"lab"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
+	labWork := t.TempDir()
+	coordinator := newCoordinatorIn(t, map[string]string{"lab": labWork}, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+
+	// A hub-homed project cannot be worked on from host-3: the refusal
+	// names both places and the way out.
+	if _, err := handle(coordinator, t.Context(), "@lab do the thing"); err == nil || !strings.Contains(err.Error(), "host-3") || !strings.Contains(err.Error(), "/project") {
+		t.Fatalf("expected a not-home refusal naming host-3 and /project, got %v", err)
+	}
+	if _, err := handle(coordinator, t.Context(), "/project use lab"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle(coordinator, t.Context(), "@lab do the thing"); err != nil {
+		t.Fatal(err)
+	}
+	if len(manager.placed) != 1 {
+		t.Fatalf("placements = %v", manager.placed)
+	}
+	if got := manager.placed[0]; got.Node != "host-3" || got.Harness != "codex" {
+		t.Fatalf("placement = %+v, want host-3/codex", got)
+	}
+	// A remote workspace stays the node's own path, untouched by the hub.
+	if manager.workdirs[0] != labWork {
+		t.Fatalf("remote workspace = %q, want the project's home on the node", manager.workdirs[0])
+	}
+	saved := store.Conversation("chat").Sessions["lab"]
+	if saved.NodeID != "host-3" || saved.ProjectID != "lab" || saved.ProjectVersion != 2 {
+		t.Fatalf("session = %+v, want host-3 under project lab v2", saved)
+	}
+
+	// A hub-local agent keeps an empty node rather than inheriting one —
+	// once the conversation is back on a hub-homed project.
+	if _, err := handle(coordinator, t.Context(), "/project use codex"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle(coordinator, t.Context(), "@codex and this"); err != nil {
+		t.Fatal(err)
+	}
+	if got := manager.placed[1]; got.Node != "" {
+		t.Fatalf("local placement = %+v, want no node", got)
 	}
 }

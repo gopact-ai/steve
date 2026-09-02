@@ -1,0 +1,265 @@
+package readmodel
+
+import (
+	"bufio"
+	"context"
+	"encoding/json"
+	"net/http"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/gopact-ai/gopact"
+	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/plan"
+	"github.com/gopact-ai/steve/internal/roster"
+	"github.com/gopact-ai/steve/internal/task"
+)
+
+type fakeNodes struct{ statuses []node.Status }
+
+func (f fakeNodes) Statuses() []node.Status { return f.statuses }
+
+func (fakeNodes) EnsureConnected(context.Context) {}
+
+func fixture(t *testing.T) *Model {
+	t.Helper()
+	catalog, err := agent.NewCatalog(map[string]agent.Config{
+		"local":   {Harness: "mock", Default: true},
+		"builder": {Harness: "mock", Node: "node-a", Requires: []string{"gpu"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := roster.New(catalog)
+	r.SetHubCapabilities([]string{"basic"})
+	nodes := fakeNodes{statuses: []node.Status{
+		{Name: "node-a", Addr: "10.0.0.1:7701", Up: true, Advert: nodewire.Advert{
+			Node: "node-a", OS: "linux", Arch: "amd64", Capabilities: []string{"gpu"},
+			Harnesses: []nodewire.Harness{{ID: "mock", Models: []string{"m1"}}},
+		}},
+		{Name: "node-b", Addr: "10.0.0.2:7701", Up: false, LastError: "connection refused"},
+	}}
+	r.SetNodes(nodes)
+
+	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent, err := tasks.Create(task.Task{Goal: "ship it", Channel: "chat", Member: "local"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Create(task.Task{
+		Goal: "build it", Channel: "chat", Member: "builder", Node: "node-a", Parent: parent.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	plans, err := plan.Open(filepath.Join(t.TempDir(), "plans.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := plans.Create(plan.Plan{
+		TaskID: parent.ID, Goal: "ship it", By: "rule",
+		Steps: []plan.Step{{
+			ID: "build", Goal: "compile", Requires: []string{"gpu"}, State: plan.StepPending,
+			Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "fixture"},
+		}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	return New(Sources{
+		Hub:    Hub{Node: "hub-1", Capabilities: []string{"basic"}},
+		Roster: r, Nodes: nodes, Tasks: tasks, Plans: plans,
+	})
+}
+
+func TestSnapshotCoversTheWholeSystem(t *testing.T) {
+	snap := fixture(t).Snapshot(t.Context())
+
+	if len(snap.Nodes) != 2 {
+		t.Fatalf("nodes = %d, want both the live one and the dead one", len(snap.Nodes))
+	}
+	// A node that is down must still appear, with its reason: a roster that
+	// hides what is broken sends someone hunting for a ghost.
+	var down Node
+	for _, n := range snap.Nodes {
+		if n.Name == "node-b" {
+			down = n
+		}
+	}
+	if down.Up || down.LastError == "" {
+		t.Fatalf("down node = %+v, want it listed with a reason", down)
+	}
+	if len(snap.Agents) != 2 {
+		t.Fatalf("agents = %d", len(snap.Agents))
+	}
+	if len(snap.Plans) != 1 || len(snap.Plans[0].Steps) != 1 {
+		t.Fatalf("plans = %+v", snap.Plans)
+	}
+
+	// The tree must be linked, because delegated work is the case a flat
+	// list hides.
+	var parent Task
+	for _, item := range snap.Tasks {
+		if item.Parent == "" {
+			parent = item
+		}
+	}
+	if len(parent.Children) != 1 {
+		t.Fatalf("parent task children = %v, want the delegated task", parent.Children)
+	}
+	if parent.MaxTurns == 0 || parent.MaxElapse == "" {
+		t.Fatalf("budget missing from the snapshot: %+v", parent)
+	}
+}
+
+// The stream carries gopact's node transitions straight through.
+func TestEventStreamCarriesWorkflowTransitions(t *testing.T) {
+	model := fixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	stream, stop := model.Subscribe(ctx)
+	defer stop()
+
+	if err := model.Emit(ctx, gopact.Event{
+		Type: "node.started", NodeID: "build", RunID: "run-1", Sequence: 4,
+		Timestamp: time.Now(), Summary: "builder on node-a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case ev := <-stream:
+		if ev.Kind != "node.started" || ev.StepID != "build" || ev.Seq != 4 || ev.RunID != "run-1" {
+			t.Fatalf("event = %+v", ev)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("no event arrived")
+	}
+}
+
+// A slow renderer must never stall the workflow runtime.
+func TestSlowSubscriberDoesNotBlockThePublisher(t *testing.T) {
+	model := fixture(t)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	if _, stop := model.Subscribe(ctx); stop != nil {
+		defer stop()
+	}
+	done := make(chan struct{})
+	go func() {
+		for i := range 500 {
+			_ = model.Emit(ctx, gopact.Event{Type: "node.completed", Sequence: int64(i)})
+		}
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(10 * time.Second):
+		t.Fatal("publishing blocked on a subscriber that never read")
+	}
+}
+
+func serve(t *testing.T, model *Model, cfg ServerConfig) *Server {
+	t.Helper()
+	server, err := NewServer(model, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.Serve() }()
+	t.Cleanup(func() { _ = server.Close() })
+	return server
+}
+
+func TestServerServesStateEventsAndPage(t *testing.T) {
+	model := fixture(t)
+	server := serve(t, model, ServerConfig{})
+
+	res, err := http.Get(server.URL() + "/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res.Body.Close()
+	var snap Snapshot
+	if err := json.NewDecoder(res.Body).Decode(&snap); err != nil {
+		t.Fatal(err)
+	}
+	if len(snap.Nodes) != 2 || snap.Hub.Node != "hub-1" {
+		t.Fatalf("snapshot over http = %+v", snap.Hub)
+	}
+
+	page, err := http.Get(server.URL() + "/")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer page.Body.Close()
+	body := make([]byte, 4096)
+	n, _ := page.Body.Read(body)
+	if !strings.Contains(string(body[:n]), "steve") {
+		t.Fatal("dashboard did not render")
+	}
+
+	// The stream must deliver without the client polling.
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, server.URL()+"/events", nil)
+	stream, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Body.Close()
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		_ = model.Emit(context.Background(), gopact.Event{Type: "node.failed", NodeID: "build"})
+	}()
+	scanner := bufio.NewScanner(stream.Body)
+	for scanner.Scan() {
+		if strings.Contains(scanner.Text(), "node.failed") {
+			return
+		}
+	}
+	t.Fatal("the event never reached the stream")
+}
+
+// Binding off loopback without a token is refused: the snapshot names hosts,
+// goals and agents, and that is not something to hand to the network by
+// accident.
+func TestNonLoopbackRequiresAToken(t *testing.T) {
+	model := fixture(t)
+	if _, err := NewServer(model, ServerConfig{Addr: "0.0.0.0:0"}); err == nil {
+		t.Fatal("a public bind was accepted with no token")
+	} else if !strings.Contains(err.Error(), "token") {
+		t.Fatalf("error = %v", err)
+	}
+	server, err := NewServer(model, ServerConfig{Addr: "0.0.0.0:0", Token: "s3cret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.Serve() }()
+	t.Cleanup(func() { _ = server.Close() })
+
+	res, err := http.Get(server.URL() + "/state")
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("no token = %d, want 401", res.StatusCode)
+	}
+
+	req, _ := http.NewRequest(http.MethodGet, server.URL()+"/state", nil)
+	req.Header.Set("Authorization", "Bearer s3cret")
+	ok, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ok.Body.Close()
+	if ok.StatusCode != http.StatusOK {
+		t.Fatalf("with token = %d, want 200", ok.StatusCode)
+	}
+}

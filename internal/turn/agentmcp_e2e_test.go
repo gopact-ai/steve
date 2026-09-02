@@ -84,7 +84,7 @@ func TestAgentSendPrimitiveE2E(t *testing.T) {
 	})
 
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
-		"mock": {Harness: "mock", Workspace: t.TempDir(), Default: true},
+		"mock": {Harness: "mock", Default: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestAgentSendPrimitiveE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(manager.Stop)
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
 	coordinator.SetAgentGate(gate)
 	gate.Anchor("chat", "oc_chat", "om_user_1")
 

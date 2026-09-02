@@ -211,3 +211,83 @@ func writeConfig(t *testing.T, data string) string {
 	}
 	return path
 }
+
+func TestLoadMigratesAgentWorkspacesIntoProjects(t *testing.T) {
+	path := writeConfig(t, `{
+		"agents": {
+			"codex": {"harness": "codex", "workspace": "/tmp/steve-codex", "default": true},
+			"lab": {"harness": "codex", "node": "host-3", "workspace": "/srv/lab"}
+		},
+		"nodes": {"host-3": {"addr": "10.0.0.3:7701", "token": "t"}},
+		"harnesses": {"codex": {"command": "true"}},
+		"feishu": {"app_id": "cli", "app_secret": "s"}
+	}`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Projects["codex"].Home; got.Node != "" || got.Path != "/tmp/steve-codex" {
+		t.Fatalf("hub project home = %+v", got)
+	}
+	if got := cfg.Projects["lab"].Home; got.Node != "host-3" || got.Path != "/srv/lab" {
+		t.Fatalf("remote project home = %+v (must stay the node's own path)", got)
+	}
+	if cfg.Gateway.DefaultProject != "codex" {
+		t.Fatalf("default project = %q, want the default agent's", cfg.Gateway.DefaultProject)
+	}
+	if len(cfg.Migrated) != 1 || !strings.Contains(cfg.Migrated[0], "projects") {
+		t.Fatalf("migration note = %v", cfg.Migrated)
+	}
+	for id, a := range cfg.Agents {
+		if a.LegacyWorkspace != "" {
+			t.Fatalf("agent %s still carries a workspace after migration", id)
+		}
+	}
+	list := cfg.ProjectList()
+	if len(list) != 2 || list[0].ID != "codex" || list[1].ID != "lab" {
+		t.Fatalf("project list = %+v", list)
+	}
+}
+
+func TestLoadRefusesBothLayoutsAndReservedName(t *testing.T) {
+	both := writeConfig(t, `{
+		"projects": {"p": {"home": {"path": "/tmp/p"}}},
+		"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-codex", "default": true}},
+		"harnesses": {"codex": {"command": "true"}},
+		"feishu": {"app_id": "cli", "app_secret": "s"}
+	}`)
+	if _, err := Load(both); err == nil || !strings.Contains(err.Error(), "no longer read") {
+		t.Fatalf("both layouts = %v", err)
+	}
+	reserved := writeConfig(t, `{
+		"projects": {"home": {"home": {"path": "/tmp/p"}}},
+		"agents": {"codex": {"harness": "codex", "default": true}},
+		"harnesses": {"codex": {"command": "true"}},
+		"feishu": {"app_id": "cli", "app_secret": "s"}
+	}`)
+	if _, err := Load(reserved); err == nil || !strings.Contains(err.Error(), "reserved") {
+		t.Fatalf("reserved name = %v", err)
+	}
+	orphan := writeConfig(t, `{
+		"projects": {"p": {"home": {"node": "ghost", "path": "/tmp/p"}}},
+		"agents": {"codex": {"harness": "codex", "default": true}},
+		"harnesses": {"codex": {"command": "true"}},
+		"feishu": {"app_id": "cli", "app_secret": "s"}
+	}`)
+	if _, err := Load(orphan); err == nil || !strings.Contains(err.Error(), "nodes{}") {
+		t.Fatalf("unknown home node = %v", err)
+	}
+	two := writeConfig(t, `{
+		"projects": {"a": {"home": {"path": "/tmp/a"}}, "b": {"home": {"path": "/tmp/b"}}},
+		"agents": {"codex": {"harness": "codex", "default": true}},
+		"harnesses": {"codex": {"command": "true"}},
+		"feishu": {"app_id": "cli", "app_secret": "s"}
+	}`)
+	cfg, err := Load(two)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Gateway.DefaultProject != "" {
+		t.Fatalf("two projects must not pick a default silently, got %q", cfg.Gateway.DefaultProject)
+	}
+}

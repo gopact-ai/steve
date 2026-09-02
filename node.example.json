@@ -1,0 +1,21 @@
+{
+  "name": "host-3",
+  "listen": "0.0.0.0:7701",
+  "token": "replace-me-with-a-long-random-secret",
+  "workspace_root": "~/steve-workspace",
+  "state_dir": "~/.steve-node",
+  "capabilities": ["gpu", "internal-net"],
+  "harnesses": {
+    "codex": {
+      "command": "npx",
+      "args": ["-y", "@agentclientprotocol/codex-acp"],
+      "models": ["gpt-5"],
+      "env": ["PATH=/home/me/.local/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"]
+    },
+    "claude-code": {
+      "command": "npx",
+      "args": ["-y", "@agentclientprotocol/claude-agent-acp"],
+      "models": ["opus-5", "sonnet-5"]
+    }
+  }
+}

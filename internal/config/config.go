@@ -7,12 +7,15 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/project"
 )
 
 const (
@@ -111,24 +114,88 @@ type Gateway struct {
 	// injected messages default to.
 	DebugAddr   string `json:"debug_addr,omitempty"`
 	DebugChatID string `json:"debug_chat_id,omitempty"`
+	// Capabilities are what the hub's own machine offers. Hub-local agents
+	// are not exempt from capability matching: running work here because
+	// here is the default is how a GPU step ends up on a box without one.
+	Capabilities []string `json:"capabilities,omitempty"`
+	// ReadModelAddr serves the snapshot, the change stream and the
+	// dashboard. It defaults to loopback; anywhere else needs a token,
+	// because the snapshot names hosts, goals and agents.
+	ReadModelAddr  string `json:"read_model_addr,omitempty"`
+	ReadModelToken string `json:"read_model_token,omitempty"`
+	// Planner names the agent that decomposes /plan goals. Empty keeps the
+	// rule planner, which places but does not decompose: an open goal is
+	// then one step, which is honest but not automatic.
+	Planner string `json:"planner,omitempty"`
+	// DefaultProject is what a conversation is bound to on its first turn
+	// when nobody has said otherwise. With one project it is implied.
+	DefaultProject string `json:"default_project,omitempty"`
+}
+
+// ReservedHomeProject is the project the gateway declares for its own home
+// directory; a config may not claim the name.
+const ReservedHomeProject = "home"
+
+// Project is the operator's declaration of a project: where its canonical
+// workspace lives and the facts the hub assigns to it.
+type Project struct {
+	Home           ProjectHome `json:"home"`
+	Level          string      `json:"level,omitempty"`
+	Repo           string      `json:"repo,omitempty"`
+	Skills         []string    `json:"skills,omitempty"`
+	DurablePlaces  []string    `json:"durable_places,omitempty"`
+	ExternalRemote string      `json:"external_remote,omitempty"`
+}
+
+// ProjectHome is the (node, path) of a project's canonical workspace. An
+// empty node is the hub; a path on another node is that node's path and
+// is never resolved against the hub's filesystem.
+type ProjectHome struct {
+	Node string `json:"node,omitempty"`
+	Path string `json:"path"`
 }
 
 type Config struct {
 	Agents     map[string]Agent     `json:"agents"`
+	Projects   map[string]Project   `json:"projects,omitempty"`
 	Harnesses  map[string]Harness   `json:"harnesses"`
+	Nodes      map[string]Node      `json:"nodes,omitempty"`
 	MCPServers map[string]MCPServer `json:"mcp_servers"`
 	Feishu     Feishu               `json:"feishu"`
 	Gateway    Gateway              `json:"gateway"`
+	// Migrated lists what Load rewrote from an older layout, for the
+	// operator to move into the file: the runtime never reads the old
+	// fields again.
+	Migrated []string `json:"-"`
+}
+
+// Node is one remote machine running steve-node. Everything about what it
+// can run comes from its advert on connect, never from here: this is only
+// how to reach it and how to prove we may.
+type Node struct {
+	Addr  string   `json:"addr"`
+	Token string   `json:"token"`
+	Dial  Duration `json:"dial_timeout,omitempty"`
 }
 
 type Agent struct {
-	Aliases      []string `json:"aliases"`
-	Harness      string   `json:"harness"`
-	Workspace    string   `json:"workspace"`
-	SystemPrompt string   `json:"system_prompt"`
-	Skills       []string `json:"skills"`
-	MCPServers   []string `json:"mcp_servers"`
-	Default      bool     `json:"default"`
+	Aliases []string `json:"aliases"`
+	Harness string   `json:"harness"`
+	// Node places this agent on a machine; empty runs it on the hub.
+	Node string `json:"node,omitempty"`
+	// Model is the preferred model. The node's advert decides what is
+	// really on offer there.
+	Model string `json:"model,omitempty"`
+	// Requires are capabilities the node must advertise.
+	Requires []string `json:"requires,omitempty"`
+	// LegacyWorkspace is the pre-project per-agent directory. It is read
+	// only to migrate into projects{}; an agent has no directory of its
+	// own — a conversation's project decides where work happens.
+	LegacyWorkspace string   `json:"workspace,omitempty"`
+	SystemPrompt    string   `json:"system_prompt"`
+	Skills          []string `json:"skills"`
+	MCPServers      []string `json:"mcp_servers"`
+	Default         bool     `json:"default"`
 }
 
 type Harness struct {
@@ -180,17 +247,20 @@ func StarterFeishu(feishu Feishu) *Config {
 	return &Config{
 		Agents: map[string]Agent{
 			harness.Codex: {
-				Aliases: []string{harness.Codex}, Harness: harness.Codex, Workspace: "~/steve-workspace/codex", Default: true,
+				Aliases: []string{harness.Codex}, Harness: harness.Codex, Default: true,
 			},
 			"claude": {
-				Aliases: []string{"claude"}, Harness: harness.ClaudeCode, Workspace: "~/steve-workspace/claude",
+				Aliases: []string{"claude"}, Harness: harness.ClaudeCode,
 			},
 			harness.Grok: {
-				Aliases: []string{harness.Grok, "grok-build"}, Harness: harness.Grok, Workspace: "~/steve-workspace/grok",
+				Aliases: []string{harness.Grok, "grok-build"}, Harness: harness.Grok,
 			},
 			harness.Kimi: {
-				Aliases: []string{harness.Kimi, "kimi-code"}, Harness: harness.Kimi, Workspace: "~/steve-workspace/kimi",
+				Aliases: []string{harness.Kimi, "kimi-code"}, Harness: harness.Kimi,
 			},
+		},
+		Projects: map[string]Project{
+			"workspace": {Home: ProjectHome{Path: "~/steve-workspace"}},
 		},
 		Harnesses: map[string]Harness{
 			harness.Codex: {
@@ -290,20 +360,55 @@ func Load(path string) (*Config, error) {
 	if cfg.Gateway.StatePath == "" {
 		cfg.Gateway.StatePath = "~/.steve/state.json"
 	}
+	if cfg.Gateway.ReadModelAddr == "" {
+		cfg.Gateway.ReadModelAddr = "127.0.0.1:7710"
+	}
 	cfg.Gateway.StatePath = absolute(cfg.Gateway.StatePath)
 	if cfg.Gateway.HomePath == "" {
 		cfg.Gateway.HomePath = filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "home")
 	}
 	cfg.Gateway.HomePath = absolute(cfg.Gateway.HomePath)
 	for id, item := range cfg.Agents {
-		if item.Workspace == "" {
-			return nil, fmt.Errorf("agent %q workspace is required", id)
-		}
-		item.Workspace = absolute(item.Workspace)
 		for i, skill := range item.Skills {
 			item.Skills[i] = absolute(skill)
 		}
 		cfg.Agents[id] = item
+	}
+	if err := cfg.migrateProjects(); err != nil {
+		return nil, err
+	}
+	for id, item := range cfg.Projects {
+		if id == ReservedHomeProject {
+			return nil, fmt.Errorf("project id %q is reserved for Steve's own home directory", id)
+		}
+		if item.Home.Path == "" {
+			return nil, fmt.Errorf("project %q home.path is required", id)
+		}
+		// A remote home is a path on the node's filesystem. Resolving it
+		// against the hub's home would produce a path that means something
+		// different — or nothing — over there.
+		if item.Home.Node == "" {
+			item.Home.Path = absolute(item.Home.Path)
+		}
+		if item.Home.Node != "" {
+			if _, ok := cfg.Nodes[item.Home.Node]; !ok {
+				return nil, fmt.Errorf("project %q home.node %q is not in nodes{}", id, item.Home.Node)
+			}
+		}
+		for i, skill := range item.Skills {
+			item.Skills[i] = absolute(skill)
+		}
+		cfg.Projects[id] = item
+	}
+	if cfg.Gateway.DefaultProject == "" && len(cfg.Projects) == 1 {
+		for id := range cfg.Projects {
+			cfg.Gateway.DefaultProject = id
+		}
+	}
+	if cfg.Gateway.DefaultProject != "" {
+		if _, ok := cfg.Projects[cfg.Gateway.DefaultProject]; !ok {
+			return nil, fmt.Errorf("gateway.default_project %q is not in projects{}", cfg.Gateway.DefaultProject)
+		}
 	}
 	for id, item := range cfg.Harnesses {
 		if item.Permission == "" {
@@ -311,6 +416,19 @@ func Load(path string) (*Config, error) {
 		}
 		item.ProcessDir = absolute(item.ProcessDir)
 		cfg.Harnesses[id] = item
+	}
+	if cfg.Gateway.Planner != "" {
+		if _, ok := cfg.Agents[cfg.Gateway.Planner]; !ok {
+			return nil, fmt.Errorf("gateway.planner references unknown agent %q", cfg.Gateway.Planner)
+		}
+	}
+	for id, item := range cfg.Nodes {
+		if strings.TrimSpace(item.Addr) == "" {
+			return nil, fmt.Errorf("node %q addr is required", id)
+		}
+		if strings.TrimSpace(item.Token) == "" {
+			return nil, fmt.Errorf("node %q token is required", id)
+		}
 	}
 	if _, err := cfg.AgentCatalog(); err != nil {
 		return nil, err
@@ -321,6 +439,11 @@ func Load(path string) (*Config, error) {
 	for id, item := range cfg.Agents {
 		if _, ok := cfg.Harnesses[item.Harness]; !ok {
 			return nil, fmt.Errorf("agent %q references unknown harness %q", id, item.Harness)
+		}
+		if item.Node != "" {
+			if _, ok := cfg.Nodes[item.Node]; !ok {
+				return nil, fmt.Errorf("agent %q references unknown node %q", id, item.Node)
+			}
 		}
 		for _, server := range item.MCPServers {
 			if _, ok := cfg.MCPServers[server]; !ok {
@@ -335,7 +458,8 @@ func (c *Config) AgentCatalog() (*agent.Catalog, error) {
 	configs := make(map[string]agent.Config, len(c.Agents))
 	for id, item := range c.Agents {
 		configs[id] = agent.Config{
-			Harness: item.Harness, Aliases: item.Aliases, Workspace: item.Workspace,
+			Harness: item.Harness, Node: item.Node, Model: item.Model, Requires: item.Requires,
+			Aliases:      item.Aliases,
 			SystemPrompt: item.SystemPrompt, Skills: item.Skills, MCPServers: item.MCPServers, Default: item.Default,
 		}
 	}
@@ -352,6 +476,15 @@ func (c *Config) HarnessManager() (*harness.Manager, error) {
 	return harness.NewManager(configs)
 }
 
+// NodeConfigs is what the registry needs to reach each remote machine.
+func (c *Config) NodeConfigs() map[string]node.Config {
+	out := make(map[string]node.Config, len(c.Nodes))
+	for id, item := range c.Nodes {
+		out[id] = node.Config{Addr: item.Addr, Token: item.Token, DialTimeout: time.Duration(item.Dial)}
+	}
+	return out
+}
+
 func (c *Config) CapabilityAssembler() *capability.Assembler {
 	servers := make(map[string]capability.MCPServer, len(c.MCPServers))
 	for id, item := range c.MCPServers {
@@ -360,6 +493,61 @@ func (c *Config) CapabilityAssembler() *capability.Assembler {
 		}
 	}
 	return capability.NewAssembler(servers)
+}
+
+// migrateProjects turns the pre-project layout — a workspace on every
+// agent — into projects{}: one project per agent, homed where the agent
+// ran, the default agent's as the default project. It runs only when the
+// file has no projects{} of its own; a file with both is refused so the two
+// cannot disagree.
+func (c *Config) migrateProjects() error {
+	legacy := map[string]Agent{}
+	for id, item := range c.Agents {
+		if item.LegacyWorkspace != "" {
+			legacy[id] = item
+		}
+	}
+	if len(legacy) == 0 {
+		if len(c.Projects) == 0 {
+			return fmt.Errorf("projects{} is required: at least one project with a home path (agents[].workspace moved there)")
+		}
+		return nil
+	}
+	if len(c.Projects) > 0 {
+		return fmt.Errorf("agents[].workspace is no longer read; remove it, the project's home path in projects{} is what counts")
+	}
+	c.Projects = map[string]Project{}
+	ids := make([]string, 0, len(legacy))
+	for id := range legacy {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		item := legacy[id]
+		c.Projects[id] = Project{Home: ProjectHome{Node: item.Node, Path: item.LegacyWorkspace}}
+		if item.Default && c.Gateway.DefaultProject == "" {
+			c.Gateway.DefaultProject = id
+		}
+		item.LegacyWorkspace = ""
+		c.Agents[id] = item
+	}
+	rendered, _ := json.MarshalIndent(c.Projects, "", "  ")
+	c.Migrated = append(c.Migrated, fmt.Sprintf("agents[].workspace is now projects{}; move this into the config and set gateway.default_project = %q:\n%s", c.Gateway.DefaultProject, rendered))
+	return nil
+}
+
+// ProjectList renders projects{} as the runtime's records.
+func (c *Config) ProjectList() []project.Project {
+	out := make([]project.Project, 0, len(c.Projects))
+	for id, item := range c.Projects {
+		out = append(out, project.Project{
+			ID: id, Level: project.Level(item.Level), Repo: project.RepoMode(item.Repo), Skills: item.Skills,
+			DurablePlaces: item.DurablePlaces, ExternalRemote: item.ExternalRemote,
+			Home: project.Home{Node: item.Home.Node, Path: item.Home.Path},
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out
 }
 
 func absolute(path string) string {
