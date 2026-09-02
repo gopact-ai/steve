@@ -18,6 +18,7 @@ type fakeSender struct {
 	patches []string // "messageID:payload"
 	deleted []string
 	fail    bool
+	timeout bool
 	next    int
 }
 
@@ -29,6 +30,9 @@ func (f *fakeSender) id() string {
 func (f *fakeSender) ReplyCard(_ context.Context, messageID string, payload []byte) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.timeout {
+		return "", context.DeadlineExceeded
+	}
 	if f.fail {
 		return "", fmt.Errorf("boom")
 	}

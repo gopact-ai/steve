@@ -693,7 +693,7 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 			st.count--
 		}
 		s.mu.Unlock()
-		return "", fmt.Errorf("send failed: %v", err)
+		return "", fmt.Errorf("send failed: %w", err)
 	}
 	if st.epoch == epoch && id != "" {
 		st.ids[id] = sentMsg{format: format, seq: seq, progress: progress}
@@ -835,7 +835,7 @@ func (s *Server) update(ctx context.Context, bind binding, rawArgs json.RawMessa
 	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
 	if err := sender.PatchCard(callCtx, args.MessageID, milestoneCard(content, tail)); err != nil {
-		return "", fmt.Errorf("update failed: %v", err)
+		return "", fmt.Errorf("update failed: %w", err)
 	}
 	return "updated " + args.MessageID, nil
 }
@@ -862,7 +862,7 @@ func (s *Server) recall(ctx context.Context, bind binding, rawArgs json.RawMessa
 	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
 	if err := sender.DeleteMessage(callCtx, args.MessageID); err != nil {
-		return "", fmt.Errorf("recall failed: %v", err)
+		return "", fmt.Errorf("recall failed: %w", err)
 	}
 	s.mu.Lock()
 	delete(st.ids, args.MessageID)
