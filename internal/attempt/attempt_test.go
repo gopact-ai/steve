@@ -282,3 +282,55 @@ func TestAReservedSlotWaitsForItsAttempt(t *testing.T) {
 		t.Fatal("an expired reservation was taken over")
 	}
 }
+
+func TestAttemptLeasesAreIssuedByTheMachinesRegion(t *testing.T) {
+	s, c := newService(t)
+	west, err := ledger.Open(t.TempDir(), ledger.Options{Now: c.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer west.Close()
+	west.SetRegion("west")
+	s.l.SetRegion("east")
+	s.l.RegisterIssuer("west", west) // an in-process issuer: same contract as the HTTP one
+	ctx := context.Background()
+	rec, err := s.Open(ctx, Spec{ID: "a1", Kind: KindStep, Project: "p", Node: "node-w", Harness: "codex", Slots: 1, Region: "west",
+		Workspace: worktree("wt-w", "p"), Scope: ScopePathSet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	regions := map[string]string{}
+	for _, l := range rec.Leases {
+		regions[l.Key] = l.Region
+	}
+	if regions["attempt:a1"] != "east" || regions["workspace:wt-w"] != "west" || regions["endpoint:node-w/codex:slot:1"] != "west" {
+		t.Fatalf("lease regions = %v", regions)
+	}
+	if _, ok, _ := west.LeaseOf(ctx, "workspace:wt-w"); !ok {
+		t.Fatal("the workspace lease is not in west's ledger")
+	}
+	if _, ok, _ := s.l.LeaseOf(ctx, "workspace:wt-w"); ok {
+		t.Fatal("the workspace lease leaked into east's ledger")
+	}
+	if err := s.Renew(ctx, "a1"); err != nil {
+		t.Fatalf("renew across regions: %v", err)
+	}
+	// West cuts the slot: the attempt is lost, exactly as with a local lease.
+	if err := west.Invalidate(ctx, "endpoint:node-w/codex:slot:1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Renew(ctx, "a1"); !errors.Is(err, ErrLost) {
+		t.Fatalf("renew after west cut the slot = %v", err)
+	}
+	if _, err := s.Advance(ctx, "a1", Prepared, "hub", nil); !errors.Is(err, ErrLost) {
+		t.Fatalf("advance after west cut the slot = %v", err)
+	}
+	// An unknown region is refused before anything is leased.
+	if _, err := s.Open(ctx, Spec{ID: "a2", Kind: KindStep, Project: "p", Node: "node-s", Harness: "codex", Region: "south",
+		Workspace: worktree("wt-s", "p"), Scope: ScopePathSet}); !errors.Is(err, ledger.ErrUnknownRegion) {
+		t.Fatalf("unknown region = %v", err)
+	}
+	if live, _ := s.Live(ctx); len(live) != 1 {
+		t.Fatalf("live = %d", len(live))
+	}
+}

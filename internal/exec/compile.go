@@ -554,6 +554,7 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 	spec := attempt.Spec{
 		ID: attemptID, TaskID: p.TaskID, TurnID: p.ID + "/" + step.ID, Kind: attempt.KindStep, Project: p.ProjectID,
 		Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID, Slots: candidate.Slots,
+		Region: candidate.Region, CanonicalRegion: deps.Roster.RegionOf(proj.Home.Node),
 		Workspace: workspace, Scope: attempt.ScopePathSet, Touches: step.Touches, Base: base, By: "exec",
 	}
 	// A retry is a takeover, not a fresh start: the previous attempt of

@@ -59,6 +59,8 @@ type Nodes interface {
 	Git(ctx context.Context, node string) (version string, root string, state string, err error)
 	// Level is the data level the hub assigned the node ("" is the hub).
 	Level(ctx context.Context, node string) (string, error)
+	// Region is whose leases the node's resources carry ("" is the hub's).
+	Region(ctx context.Context, node string) (string, error)
 }
 
 // Store holds every project's shadow repository on the hub — the default
@@ -562,4 +564,13 @@ func (s *Store) Changed(ctx context.Context, projectID, from, to string) ([]stri
 		return nil, err
 	}
 	return repo.Changed(ctx, from, to)
+}
+
+// homeRegion is the region of the project's canonical workspace.
+func (s *Store) homeRegion(ctx context.Context, p project.Project) string {
+	region, err := s.nodes.Region(ctx, p.Home.Node)
+	if err != nil {
+		return ""
+	}
+	return region
 }

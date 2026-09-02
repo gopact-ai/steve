@@ -105,13 +105,13 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		}
 		lease = *held
 	} else {
-		acquired, err := s.ledger.Acquire(ctx, "canonical:"+p.ID, land.ID, landTTL)
+		acquired, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, land.ID, landTTL)
 		if err != nil {
 			_ = s.fail(ctx, &land, LandProposed, LandMergeConflicted, err.Error(), nil)
 			return land, err
 		}
 		lease = acquired
-		defer func() { _ = s.ledger.Release(context.WithoutCancel(ctx), lease) }()
+		defer func() { _ = s.ledger.ReleaseAny(context.WithoutCancel(ctx), lease) }()
 	}
 	land.Lease = &lease
 	if err := s.move(ctx, &land, LandProposed, LandLocked, nil); err != nil {

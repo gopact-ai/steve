@@ -113,6 +113,12 @@ type Spec struct {
 	// Slots is the endpoint's capacity for (node, harness); zero is
 	// unlimited and takes no slot lease.
 	Slots int `json:"slots,omitempty"`
+	// Region is the region of the machine the attempt runs on: its slot
+	// and workspace leases are issued there. CanonicalRegion is where the
+	// project's canonical workspace lives, for the write lock. Empty is
+	// the hub's own region.
+	Region          string `json:"region,omitempty"`
+	CanonicalRegion string `json:"canonical_region,omitempty"`
 	// Reservation names a capacity reservation whose slot this attempt
 	// takes over instead of competing for one.
 	Reservation string            `json:"reservation,omitempty"`
@@ -224,34 +230,37 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 	var held []ledger.Lease
 	release := func() {
 		for _, lease := range held {
-			_ = s.l.Release(ctx, lease)
+			_ = s.l.ReleaseAny(ctx, lease)
 		}
 	}
-	take := func(key string) error {
-		lease, err := s.l.Acquire(ctx, key, spec.ID, s.TTL)
+	take := func(region, key string) error {
+		lease, err := s.l.AcquireIn(ctx, region, key, spec.ID, s.TTL)
 		if err != nil {
 			if errors.Is(err, ledger.ErrHeld) {
-				current, _, _ := s.l.LeaseOf(ctx, key)
-				return Busy{Resource: key, Holder: current.Holder, Until: current.ExpiresAt}
+				holder, until := "", time.Time{}
+				if current, ok, _ := s.l.LeaseOf(ctx, key); ok && (region == "" || region == s.l.Region()) {
+					holder, until = current.Holder, current.ExpiresAt
+				}
+				return Busy{Resource: key, Holder: holder, Until: until}
 			}
 			return err
 		}
 		held = append(held, lease)
 		return nil
 	}
-	if err := take("attempt:" + spec.ID); err != nil {
+	if err := take("", "attempt:"+spec.ID); err != nil {
 		return Record{}, err
 	}
 	switch spec.Workspace.Kind {
 	case project.KindCanonical:
 		if spec.Scope == ScopeUnrestricted {
-			if err := take("canonical:" + spec.Project); err != nil {
+			if err := take(spec.CanonicalRegion, "canonical:"+spec.Project); err != nil {
 				release()
 				return Record{}, err
 			}
 		}
 	case project.KindWorktree:
-		if err := take("workspace:" + spec.Workspace.ID); err != nil {
+		if err := take(spec.Region, "workspace:"+spec.Workspace.ID); err != nil {
 			release()
 			return Record{}, err
 		}
@@ -269,7 +278,7 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 		endpoint := endpointKey(spec.Node, spec.Harness)
 		taken := false
 		for i := 1; i <= spec.Slots; i++ {
-			err := take(fmt.Sprintf("%s:slot:%d", endpoint, i))
+			err := take(spec.Region, fmt.Sprintf("%s:slot:%d", endpoint, i))
 			if err == nil {
 				taken = true
 				break
@@ -328,7 +337,7 @@ func (s *Service) Advance(ctx context.Context, id string, to State, actor string
 	}
 	if to.Terminal() {
 		for _, lease := range next.Leases {
-			_ = s.l.Release(ctx, lease)
+			_ = s.l.ReleaseAny(ctx, lease)
 		}
 	}
 	return next, nil
@@ -346,7 +355,7 @@ func (s *Service) Renew(ctx context.Context, id string) error {
 	}
 	renewed := make([]ledger.Lease, 0, len(current.Leases))
 	for _, lease := range current.Leases {
-		next, err := s.l.Renew(ctx, lease, s.TTL)
+		next, err := s.l.RenewAny(ctx, lease, s.TTL)
 		if err != nil {
 			return fmt.Errorf("%w: %v", ErrLost, err)
 		}
@@ -442,6 +451,11 @@ func (s *Service) Supersede(ctx context.Context, oldID string, spec Spec, actor 
 	}
 	if _, err := s.l.InvalidateHeldBy(ctx, oldID); err != nil {
 		return Record{}, err
+	}
+	for _, lease := range old.Leases {
+		if lease.Region != "" && lease.Region != s.l.Region() {
+			_ = s.l.InvalidateIn(ctx, lease.Region, lease.Key)
+		}
 	}
 	if spec.ID == "" {
 		spec.ID = newID()
@@ -660,12 +674,17 @@ const reservationKind = "reservation"
 // Reserve holds one slot of (node, harness) for whoever will need it. It
 // fails with NoSlot when every slot is leased.
 func (s *Service) Reserve(ctx context.Context, id, node, harness string, slots int, forWhat, by string, ttl time.Duration) (Reservation, error) {
+	return s.ReserveIn(ctx, "", id, node, harness, slots, forWhat, by, ttl)
+}
+
+// ReserveIn reserves in the region that issues the endpoint's leases.
+func (s *Service) ReserveIn(ctx context.Context, region, id, node, harness string, slots int, forWhat, by string, ttl time.Duration) (Reservation, error) {
 	if slots <= 0 {
 		return Reservation{}, fmt.Errorf("attempt: %s has no slot cap; nothing to reserve", endpointKey(node, harness))
 	}
 	endpoint := endpointKey(node, harness)
 	for i := 1; i <= slots; i++ {
-		lease, err := s.l.Acquire(ctx, fmt.Sprintf("%s:slot:%d", endpoint, i), id, ttl)
+		lease, err := s.l.AcquireIn(ctx, region, fmt.Sprintf("%s:slot:%d", endpoint, i), id, ttl)
 		if err == nil {
 			r := Reservation{ID: id, Endpoint: endpoint, Lease: lease, For: forWhat, By: by}
 			return r, s.l.PutBinding(ctx, reservationKind, id, r)
@@ -684,7 +703,7 @@ func (s *Service) ReleaseReservation(ctx context.Context, id string) error {
 	if err != nil || !ok {
 		return err
 	}
-	_ = s.l.Release(ctx, r.Lease)
+	_ = s.l.ReleaseAny(ctx, r.Lease)
 	return s.l.DeleteBinding(ctx, reservationKind, id)
 }
 
@@ -706,10 +725,14 @@ func (s *Service) takeReservation(ctx context.Context, spec Spec, held []ledger.
 	if r.Endpoint != endpointKey(spec.Node, spec.Harness) {
 		return held, fmt.Errorf("attempt: reservation %s is for %s, not %s", r.ID, r.Endpoint, endpointKey(spec.Node, spec.Harness))
 	}
+	if r.Lease.Region != "" && r.Lease.Region != s.l.Region() {
+		return held, fmt.Errorf("attempt: reservation %s was issued by region %s; taking it over needs a transfer there", r.ID, r.Lease.Region)
+	}
 	lease, err := s.l.Transfer(ctx, r.Lease, spec.ID, s.TTL)
 	if err != nil {
 		return held, fmt.Errorf("attempt: take reservation %s: %w", r.ID, err)
 	}
+	lease.Region = s.l.Region()
 	_ = s.l.DeleteBinding(ctx, reservationKind, r.ID)
 	return append(held, lease), nil
 }
@@ -728,8 +751,13 @@ func (s *Service) ReservationFor(ctx context.Context, key string) (Reservation, 
 
 // ReserveFor reserves a slot and remembers which key it is for.
 func (s *Service) ReserveFor(ctx context.Context, key, node, harness string, slots int, by string, ttl time.Duration) (Reservation, error) {
+	return s.ReserveForIn(ctx, "", key, node, harness, slots, by, ttl)
+}
+
+// ReserveForIn is ReserveFor in a region.
+func (s *Service) ReserveForIn(ctx context.Context, region, key, node, harness string, slots int, by string, ttl time.Duration) (Reservation, error) {
 	id := "resv-" + strings.NewReplacer("/", "-", ":", "-").Replace(key)
-	r, err := s.Reserve(ctx, id, node, harness, slots, key, by, ttl)
+	r, err := s.ReserveIn(ctx, region, id, node, harness, slots, key, by, ttl)
 	if err != nil {
 		return Reservation{}, err
 	}
@@ -746,4 +774,6 @@ func (s *Service) ReleaseReservationFor(ctx context.Context, key string) {
 }
 
 // LeaseOf exposes a resource's lease for diagnostics.
-func (s *Service) LeaseOf(ctx context.Context, key string) (ledger.Lease, bool, error) { return s.l.LeaseOf(ctx, key) }
+func (s *Service) LeaseOf(ctx context.Context, key string) (ledger.Lease, bool, error) {
+	return s.l.LeaseOf(ctx, key)
+}

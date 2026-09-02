@@ -48,6 +48,8 @@ type Candidate struct {
 	// unlimited. Level is the data level of the machine.
 	Slots int
 	Level project.Level
+	// Region is whose leases the machine's resources carry ("" = hub's).
+	Region string
 }
 
 type Roster struct {
@@ -63,6 +65,7 @@ type Roster struct {
 	hubLevel   project.Level
 	hubSlots   map[string]int
 	nodeLevels map[string]project.Level
+	regions    map[string]string
 	nodes      NodeSource
 }
 
@@ -88,6 +91,20 @@ func (r *Roster) SetHubSlots(slots map[string]int) {
 	r.hubSlots = slots
 }
 
+// SetNodeRegions declares each node's region.
+func (r *Roster) SetNodeRegions(regions map[string]string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.regions = regions
+}
+
+// RegionOf is a node's region; the hub's own is "".
+func (r *Roster) RegionOf(node string) string {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.regions[node]
+}
+
 // SetNodeLevels declares the level the hub assigned each node.
 func (r *Roster) SetNodeLevels(levels map[string]project.Level) {
 	r.mu.Lock()
@@ -107,7 +124,7 @@ func (r *Roster) SetHubCapabilities(caps []string) {
 func (r *Roster) All(ctx context.Context) []Candidate {
 	r.mu.RLock()
 	nodes, hubCaps := r.nodes, append([]string(nil), r.hubCaps...)
-	hub, levels := place{level: r.hubLevel, slots: r.hubSlots}, r.nodeLevels
+	hub, levels, regions := place{level: r.hubLevel, slots: r.hubSlots}, r.nodeLevels, r.regions
 	r.mu.RUnlock()
 
 	byNode := map[string]node.Status{}
@@ -120,7 +137,9 @@ func (r *Roster) All(ctx context.Context) []Candidate {
 
 	out := make([]Candidate, 0, len(r.catalog.List()))
 	for _, a := range r.catalog.List() {
-		out = append(out, describe(a, byNode, hubCaps, hub, levels))
+		c := describe(a, byNode, hubCaps, hub, levels)
+		c.Region = regions[a.Node]
+		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Agent.ID < out[j].Agent.ID })
 	return out

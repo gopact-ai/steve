@@ -149,6 +149,12 @@ outcome-unknown 的对外动作列出来给人对账；`steve ledger status` 看
 - **attestation**：验证结果先作为独立事实（带 hub 回执）落账，步骤只在有本 attempt 的通过记录时才绑名。
 - **副本**：产物在每个节点的副本有记录（transferring / present / verified / quarantined / lost / evicted）；
   节点每次重连是一个新 generation，旧 generation 的副本先隔离再校验。
+- **容量预留**：计划开始前 supervisor 为每一步在放置会落到的机器上预留一个槽位（`endpoint:<node>/<harness>:slot:<n>` 租约，持有者是预留本身），
+  步骤开始时把预留原子转成自己的租约（epoch 前进）；抢不到槽位的步骤等，不失败。计划结束释放剩余预留。
+- **区域租约**：`gateway.region` 是本 hub 的区域，`nodes[].region` 说机器归谁签租约，`gateway.regions` 列出其他区域 hub 的
+  `url`/`token`，`gateway.issuer_addr` + `issuer_token` 把本 hub 的租约签发给别人。attempt 的槽位与工作树租约由机器所在区域签，
+  规范锁由项目 home 所在区域签；本地转换若 fence 到外区域租约，先问签发方再提交（这个窗口是多区域的代价，也是为什么外区域租约
+  守着的东西没有该区域回执不绑名）。
 - **恢复**：hub 重启时先扫过期 attempt，再把中断在写入阶段的 landing 按 WAL 逐路径收尾
   （已是新内容的跳过、还是旧内容的重写、被人改过的算冲突留档）；重试一个步骤是**接管**——
   旧 attempt 记为 superseded 并指向新的，它的租约全部作废。飞书出口的每次发送都先记

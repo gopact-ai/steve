@@ -200,7 +200,7 @@ func (s *Supervisor) reserve(ctx context.Context, p plan.Plan) {
 		if _, ok, _ := s.deps.Attempts.ReservationFor(ctx, key); ok {
 			continue
 		}
-		if _, err := s.deps.Attempts.ReserveFor(ctx, key, candidate.Node, candidate.Harness, candidate.Slots, "plan "+p.ID, ReservationTTL); err != nil {
+		if _, err := s.deps.Attempts.ReserveForIn(ctx, candidate.Region, key, candidate.Node, candidate.Harness, candidate.Slots, "plan "+p.ID, ReservationTTL); err != nil {
 			log.Printf("exec: plan %s step %s: no capacity to reserve on %s: %v", p.ID, step.ID, endpointOf(candidate.Node, candidate.Harness), err)
 		}
 	}

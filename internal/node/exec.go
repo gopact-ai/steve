@@ -184,3 +184,15 @@ func (r *Registry) Level(ctx context.Context, nodeName string) (string, error) {
 	}
 	return cfg.Level, nil
 }
+
+// Region is the region the node's leases are issued in ("" is the hub's).
+func (r *Registry) Region(_ context.Context, nodeName string) (string, error) {
+	if nodeName == "" {
+		return "", nil
+	}
+	cfg, ok := r.config(nodeName)
+	if !ok {
+		return "", fmt.Errorf("node %q is not configured", nodeName)
+	}
+	return cfg.Region, nil
+}

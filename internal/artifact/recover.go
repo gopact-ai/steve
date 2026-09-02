@@ -63,12 +63,12 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		}
 	}
 	// Nothing may be written before the lock is held again.
-	lease, err := s.ledger.Acquire(ctx, "canonical:"+p.ID, land.ID, landTTL)
+	lease, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, land.ID, landTTL)
 	if err != nil {
 		return land, fmt.Errorf("landing %s: %w", land.ID, err)
 	}
 	land.Lease = &lease
-	defer func() { _ = s.ledger.Release(context.WithoutCancel(ctx), lease) }()
+	defer func() { _ = s.ledger.ReleaseAny(context.WithoutCancel(ctx), lease) }()
 
 	land.Round++
 	journal := s.ledger.Journal()

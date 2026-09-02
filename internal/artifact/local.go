@@ -15,12 +15,19 @@ import (
 // directory, no wire.
 type LocalNodes struct {
 	Dir string
-	// Levels is the level per node name; unset is internal.
-	Levels map[string]string
+	// Levels is the level per node name; unset is internal. Regions is the
+	// region per node name; unset is the hub's own.
+	Levels  map[string]string
+	Regions map[string]string
 }
 
 // Generation is fixed for a local node: it never reconnects.
 func (l LocalNodes) Generation(context.Context, string) (int64, error) { return 1, nil }
+
+// Region of a local node is the hub's own unless Regions says otherwise.
+func (l LocalNodes) Region(_ context.Context, node string) (string, error) {
+	return l.Regions[node], nil
+}
 
 func (l LocalNodes) Level(_ context.Context, node string) (string, error) {
 	if level := l.Levels[node]; level != "" {

@@ -34,6 +34,7 @@ import (
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/intent"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/onboard"
@@ -437,7 +438,26 @@ func serve(args []string) error {
 	fleet.SetHubLevel(cfg.HubLevel())
 	fleet.SetHubSlots(cfg.HubSlots())
 	fleet.SetNodeLevels(cfg.NodeLevels())
+	fleet.SetNodeRegions(cfg.NodeRegions())
 	nodes.SetHubLevel(string(cfg.HubLevel()))
+	// Regions: this hub issues leases for its own machines and honours the
+	// other hubs' for theirs.
+	if cfg.Gateway.Region != "" {
+		book.SetRegion(cfg.Gateway.Region)
+	}
+	for name, region := range cfg.Gateway.Regions {
+		book.RegisterIssuer(name, ledger.NewHTTPIssuer(region.URL, region.Token))
+	}
+	if cfg.Gateway.IssuerAddr != "" {
+		issuer := &http.Server{Addr: cfg.Gateway.IssuerAddr, Handler: ledger.IssuerHandler(book, cfg.Gateway.IssuerToken)}
+		go func() {
+			if err := issuer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Printf("steve: lease issuer on %s: %v", cfg.Gateway.IssuerAddr, err)
+			}
+		}()
+		defer issuer.Close()
+		log.Printf("steve: issuing region %s leases on %s", book.Region(), cfg.Gateway.IssuerAddr)
+	}
 
 	coordinator := turn.New(
 		catalog, store, assembler, manager, time.Duration(cfg.Gateway.PromptTimeout),

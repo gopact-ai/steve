@@ -129,6 +129,13 @@ type Gateway struct {
 	Planner string `json:"planner,omitempty"`
 	// Level is the hub machine's own data level. Empty is internal.
 	Level string `json:"level,omitempty"`
+	// Region names this hub's region; Regions lists the other hubs whose
+	// leases this one must honour; IssuerAddr and IssuerToken serve this
+	// hub's own leases to them.
+	Region      string            `json:"region,omitempty"`
+	Regions     map[string]Region `json:"regions,omitempty"`
+	IssuerAddr  string            `json:"issuer_addr,omitempty"`
+	IssuerToken string            `json:"issuer_token,omitempty"`
 	// DefaultProject is what a conversation is bound to on its first turn
 	// when nobody has said otherwise. With one project it is implied.
 	DefaultProject string `json:"default_project,omitempty"`
@@ -186,6 +193,15 @@ type Node struct {
 	// project may be for its artifacts to be held or run there. Empty is
 	// internal.
 	Level string `json:"level,omitempty"`
+	// Region is whose leases the node's resources carry. Empty is this
+	// hub's own region; another region must be listed in gateway.regions.
+	Region string `json:"region,omitempty"`
+}
+
+// Region is another hub that issues leases for its own machines.
+type Region struct {
+	URL   string `json:"url"`
+	Token string `json:"token"`
 }
 
 type Agent struct {
@@ -414,6 +430,11 @@ func Load(path string) (*Config, error) {
 		cfg.Projects[id] = item
 	}
 	for id, item := range cfg.Nodes {
+		if item.Region != "" && item.Region != cfg.Gateway.Region && cfg.Gateway.Region != "" || item.Region != "" && cfg.Gateway.Region == "" && item.Region != "default" {
+			if _, ok := cfg.Gateway.Regions[item.Region]; !ok {
+				return nil, fmt.Errorf("node %q is in region %q, which gateway.regions does not list", id, item.Region)
+			}
+		}
 		if item.Level != "" && !project.Level(item.Level).Valid() {
 			return nil, fmt.Errorf("node %q level %q is not public, internal, restricted or sealed", id, item.Level)
 		}
@@ -501,7 +522,7 @@ func (c *Config) HarnessManager() (*harness.Manager, error) {
 func (c *Config) NodeConfigs() map[string]node.Config {
 	out := make(map[string]node.Config, len(c.Nodes))
 	for id, item := range c.Nodes {
-		out[id] = node.Config{Addr: item.Addr, Token: item.Token, DialTimeout: time.Duration(item.Dial), Level: item.Level}
+		out[id] = node.Config{Addr: item.Addr, Token: item.Token, DialTimeout: time.Duration(item.Dial), Level: item.Level, Region: item.Region}
 	}
 	return out
 }
@@ -644,5 +665,14 @@ func (c *Config) GrantList() []project.Grant {
 		}
 		return out[i].Principal < out[j].Principal
 	})
+	return out
+}
+
+// NodeRegions is the region of each node; unset means the hub's own.
+func (c *Config) NodeRegions() map[string]string {
+	out := map[string]string{}
+	for id, n := range c.Nodes {
+		out[id] = n.Region
+	}
 	return out
 }

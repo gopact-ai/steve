@@ -31,6 +31,9 @@ type Config struct {
 	// Level is the data level the hub assigns this node: what it may hold.
 	// Empty is internal.
 	Level string
+	// Region is whose leases the node's resources carry; empty is the
+	// hub's own region.
+	Region string
 }
 
 // Status is a node as the registry currently knows it — the roster's raw

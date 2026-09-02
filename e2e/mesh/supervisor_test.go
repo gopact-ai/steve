@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -54,6 +55,9 @@ func declareProjects(t *testing.T, dir string, nodes artifact.Nodes, extra ...pr
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { book.Close() })
+	ledgersMu.Lock()
+	ledgers[dir] = book
+	ledgersMu.Unlock()
 	projects := project.Open(book)
 	declared := []project.Project{
 		{ID: "local", Home: project.Home{Path: t.TempDir()}},
@@ -453,4 +457,21 @@ func stripANSI(s string) string {
 
 func placementOf(node, harnessID string) harness.Placement {
 	return harness.Placement{Node: node, Harness: harnessID}
+}
+
+var (
+	ledgersMu sync.Mutex
+	ledgers   = map[string]*ledger.Ledger{}
+)
+
+// ledgerOf is the ledger declareProjects opened under dir.
+func ledgerOf(t *testing.T, dir string) *ledger.Ledger {
+	t.Helper()
+	ledgersMu.Lock()
+	defer ledgersMu.Unlock()
+	book, ok := ledgers[dir]
+	if !ok {
+		t.Fatalf("no ledger under %s", dir)
+	}
+	return book
 }

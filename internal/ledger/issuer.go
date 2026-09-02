@@ -145,3 +145,16 @@ func (l *Ledger) checkForeign(ctx context.Context, fencings []Lease) error {
 func (l *Ledger) foreign(lease Lease) bool {
 	return lease.Region != "" && lease.Region != l.Region()
 }
+
+// InvalidateIn forces a resource's epoch forward in the region that
+// issues it.
+func (l *Ledger) InvalidateIn(ctx context.Context, region, key string) error {
+	issuer, ok := l.issuerFor(region)
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrUnknownRegion, region)
+	}
+	if issuer == nil {
+		return l.Invalidate(ctx, key)
+	}
+	return issuer.Invalidate(ctx, key)
+}

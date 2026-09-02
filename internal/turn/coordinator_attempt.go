@@ -34,6 +34,10 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 				continue
 			}
 			spec.Slots = cand.Slots
+			spec.Region = cand.Region
+			if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok {
+				spec.CanonicalRegion = c.fleet.RegionOf(p.Home.Node)
+			}
 			if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok && !p.Level.OrDefault().Admits(cand.Level.OrDefault()) {
 				return attempt.Record{}, UserError{Text: c.text.T(i18n.ProjectLevel, p.ID, p.Level.OrDefault(), selected.ID, placeLabel(selected.Node), cand.Level.OrDefault(), protocol.CommandProject)}
 			}

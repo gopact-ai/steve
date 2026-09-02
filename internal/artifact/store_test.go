@@ -70,6 +70,8 @@ func (n *localNode) Git(context.Context, string) (string, string, string, error)
 	return string(out), n.root, n.state, nil
 }
 
+func (n *localNode) Region(context.Context, string) (string, error) { return "", nil }
+
 func (n *localNode) Level(_ context.Context, node string) (string, error) {
 	if node != "" && n.level != "" {
 		return n.level, nil
