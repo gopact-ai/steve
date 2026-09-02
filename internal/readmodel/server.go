@@ -1,6 +1,7 @@
 package readmodel
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,7 @@ type ServerConfig struct {
 
 // Server exposes the snapshot, the change stream and the dashboard.
 type Server struct {
+	console  Console
 	model    *Model
 	token    string
 	listener net.Listener
@@ -49,6 +51,8 @@ func (s *Server) Serve() error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /state", s.guard(s.state))
 	mux.HandleFunc("GET /events", s.guard(s.events))
+	mux.HandleFunc("POST /console/send", s.guard(s.consoleSend))
+	mux.HandleFunc("GET /console/replies", s.guard(s.consoleReplies))
 	mux.HandleFunc("GET /", s.guard(s.page))
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	if err := server.Serve(s.listener); err != nil && err != http.ErrServerClosed {
@@ -149,4 +153,70 @@ func loopback(addr string) bool {
 	}
 	ip := net.ParseIP(host)
 	return host == "localhost" || (ip != nil && ip.IsLoopback())
+}
+
+// Console is what the page needs to act, not only to watch: send a line as
+// the owner into a conversation and read what came back. The token that
+// guards the read model is the owner's credential here; without a
+// console wired, the endpoints answer that acting is off.
+type Console interface {
+	Send(ctx context.Context, conversation, input string) (Reply, error)
+	Replies(conversation string) []Reply
+}
+
+// Reply is one exchange on the console.
+type Reply struct {
+	At           time.Time `json:"at"`
+	Conversation string    `json:"conversation"`
+	Input        string    `json:"input,omitempty"`
+	Title        string    `json:"title,omitempty"`
+	Text         string    `json:"text"`
+	Error        string    `json:"error,omitempty"`
+	Kind         string    `json:"kind"` // reply | milestone | notice
+}
+
+// SetConsole wires the acting half of the page.
+func (s *Server) SetConsole(c Console) { s.console = c }
+
+func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
+	if s.console == nil {
+		http.Error(w, "the console is not enabled on this gateway", http.StatusNotImplemented)
+		return
+	}
+	var req struct {
+		Conversation string `json:"conversation"`
+		Input        string `json:"input"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if strings.TrimSpace(req.Input) == "" {
+		http.Error(w, "input is required", http.StatusBadRequest)
+		return
+	}
+	if req.Conversation == "" {
+		req.Conversation = "console:main"
+	}
+	reply, err := s.console.Send(r.Context(), req.Conversation, req.Input)
+	w.Header().Set("Content-Type", "application/json")
+	if err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "reply": reply})
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"reply": reply})
+}
+
+func (s *Server) consoleReplies(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.console == nil {
+		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false, "replies": []Reply{}})
+		return
+	}
+	conversation := r.URL.Query().Get("conversation")
+	if conversation == "" {
+		conversation = "console:main"
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "replies": s.console.Replies(conversation)})
 }

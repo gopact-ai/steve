@@ -49,6 +49,8 @@ go build -o steve ./cmd/steve
 | `/approve 编号` `/deny 编号` | owner 批准或拒绝 sealed 项目的答案离开 |
 | `/effects` | 结果未知的对外动作；`/effects 编号 happened\|new` 由 owner 裁决 |
 
+以上动词在 dashboard 的控制台和 `steve say` 里同样可用。
+
 多阶段任务里 agent 会用内置的 `feishu_send` / `feishu_update` / `feishu_recall`
 维护一张演进的进度卡（带 `2/3` 阶段角标、与最终卡同族的尾标）。
 
@@ -167,6 +169,20 @@ outcome-unknown 的对外动作列出来给人对账；`steve ledger status` 看
   （运行时不肯接的检查点就按计划存档重跑一次，做完的步骤直接跳过），进行中的步骤接管旧 attempt，
   结果沿任务锚点回到聊天。sealed 项目 home 在老版本 git（< 2.38）的节点上照样能落地，走的是
   read-tree + merge-one-file 的老路径。
+
+## 控制台
+
+dashboard 不只看：页面顶部的 Console 用 owner 身份把一行文字送进同一个 coordinator——说话、`/plan`、`/project use`、
+`/tasks pause|resume|cancel`、`/grant`、`/approve`、`/effects`，回复和 agent 发的里程碑都留在页面上（`console:<name>` 会话，
+锚点不是飞书消息，所以不会漏到群里）。任务行、披露行、对外动作行、agent 行上带按钮，一键发对应动词。
+shell 里同样能用：
+
+```bash
+steve say -url http://<hub>:7710 -token <token> /fleet
+steve say -url http://<hub>:7710 -token <token> "@builder 把 README 补一段安装说明"
+```
+
+控制台要 `feishu.owner_open_id`：它以 owner 的身份行事，读模型的 token 就是它的凭据。
 
 ## 计划与协作
 

@@ -281,8 +281,13 @@ type Event struct {
 	PlanID string `json:"plan_id,omitempty"`
 	StepID string `json:"step_id,omitempty"`
 	State  string `json:"state,omitempty"`
-	Rev    int    `json:"rev,omitempty"`
-	Detail string `json:"detail,omitempty"`
+	// Conversation and Text carry the console's traffic: what was sent
+	// from the page, what came back, and milestones agents posted.
+	Conversation string `json:"conversation,omitempty"`
+	Text         string `json:"text,omitempty"`
+	Title        string `json:"title,omitempty"`
+	Rev          int    `json:"rev,omitempty"`
+	Detail       string `json:"detail,omitempty"`
 }
 
 const recentKept = 200

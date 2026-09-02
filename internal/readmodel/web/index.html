@@ -48,6 +48,17 @@
   .feed div{padding:.2rem .6rem;border-bottom:1px solid var(--rule);font-size:.74rem}
   .feed div:last-child{border-bottom:0}
   .empty{color:var(--slate);padding:.6rem}
+#console .row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; }
+#console input { flex: 1; padding: 6px 8px; font: inherit; }
+#console select, #console button, .act { padding: 5px 8px; font: inherit; cursor: pointer; }
+.act { margin-right: 4px; font-size: 12px; }
+#console .log { max-height: 320px; overflow: auto; border: 1px solid #ddd; padding: 8px; background: #fafafa; }
+#console .log .entry { margin: 0 0 8px; }
+#console .log pre { white-space: pre-wrap; margin: 2px 0 0; }
+#console .log .sent { color: #555; }
+#console .log .milestone { color: #2a6; }
+#console .log .notice { color: #a60; }
+#console .log .err { color: #c22; }
 </style>
 <div class="wrap">
   <header>
@@ -55,6 +66,17 @@
     <span class="meta" id="hub"></span>
     <span class="live" id="live">connecting…</span>
   </header>
+
+  <h2>Console</h2>
+  <div id="console">
+    <div class="row">
+      <select id="conv"><option value="console:main">console:main</option></select>
+      <input id="line" type="text" placeholder="说话，或 /plan … /project use … /tasks … /grant … /approve … /effects …" autocomplete="off">
+      <button id="send">Send</button>
+      <span class="dim" id="console-state"></span>
+    </div>
+    <div class="log" id="console-log"></div>
+  </div>
 
   <h2>Nodes</h2>
   <div id="nodes"></div>
@@ -122,10 +144,11 @@ function renderNodes(nodes) {
 
 function renderAgents(agents) {
   const rows = (agents || []).map(a => {
+    const act = `<button class="act" onclick="prefill('@${esc(a.id)}')">@</button>`;
     const state = a.eligible
       ? `<span class="pill up">ready</span>`
       : `<span class="pill down">blocked</span>`;
-    return `<tr><td>${esc(a.id)}</td><td>${state}</td>`
+    return `<tr><td>${act}${esc(a.id)}</td><td>${state}</td>`
       + `<td>${esc(a.node || "hub")}</td><td>${esc(a.harness)}</td>`
       + `<td class="dim">${esc(a.model || "—")}</td>`
       + `<td class="dim">${esc(a.level || "internal")}${a.slots ? " · " + esc(a.slots) + " slots" : ""}${a.region ? " · " + esc(a.region) : ""}</td>`
@@ -144,7 +167,8 @@ function renderTasks(tasks) {
   const rows = [];
   const walk = (t, depth) => {
     const pct = t.max_turns ? Math.min(100, Math.round(100 * t.turns / t.max_turns)) : 0;
-    rows.push(`<tr><td class="tree">${"  ".repeat(depth)}${depth ? "└ " : ""}#${esc(t.id)}</td>`
+    const acts = `<button class="act" onclick="act('/tasks pause ${esc(t.id)}')">pause</button><button class="act" onclick="act('/tasks resume ${esc(t.id)}')">resume</button><button class="act" onclick="act('/tasks cancel ${esc(t.id)}')">cancel</button>`;
+    rows.push(`<tr><td class="tree">${"  ".repeat(depth)}${depth ? "└ " : ""}#${esc(t.id)} ${acts}</td>`
       + `<td><span class="pill ${t.state === "running" ? "busy" : "dim"}">${esc(t.state)}</span></td>`
       + `<td>${esc(t.member || "—")}</td><td>${esc(t.node || "hub")}</td>`
       + `<td><span class="bar"><i style="width:${pct}%"></i></span>`
@@ -213,9 +237,9 @@ function renderFacts(f) {
   sections.push(block("Reservations", ["id", "endpoint", "for", "region", "expires"],
     rows(f.reservations, r => `<tr><td>${esc(r.id)}</td><td>${esc(r.endpoint)}</td><td>${esc(r.for)}</td><td class="dim">${esc(r.region || "—")}</td><td class="dim">${when(r.expires_at)}</td></tr>`), "no capacity reserved"));
   sections.push(block("Disclosures awaiting the owner", ["id", "project", "task", "requester", "bytes", "since"],
-    rows(f.disclosures, d => `<tr><td>${esc(d.id)}</td><td>${esc(d.project)}</td><td>${esc(d.task_id || "—")}</td><td>${esc(d.requester)}</td><td>${esc(d.bytes)}</td><td class="dim">${when(d.at)}</td></tr>`), "nothing waiting"));
+    rows(f.disclosures, d => `<tr><td><button class="act" onclick="act('/approve ${esc(d.id)}')">approve</button><button class="act" onclick="act('/deny ${esc(d.id)}')">deny</button>${esc(d.id)}</td><td>${esc(d.project)}</td><td>${esc(d.task_id || "—")}</td><td>${esc(d.requester)}</td><td>${esc(d.bytes)}</td><td class="dim">${when(d.at)}</td></tr>`), "nothing waiting"));
   sections.push(block("Effects with an unknown outcome", ["id", "tool", "task", "attempt", "error", "at"],
-    rows(f.effects, e => `<tr><td>${esc(e.id)}</td><td>${esc(e.tool)}</td><td>${esc(e.task_id)}</td><td class="dim">${esc(e.attempt)}</td><td class="down">${esc(e.error || "")}</td><td class="dim">${when(e.at)}</td></tr>`), "none"));
+    rows(f.effects, e => `<tr><td><button class="act" onclick="act('/effects ${esc(e.id)} happened')">happened</button><button class="act" onclick="act('/effects ${esc(e.id)} new')">new</button>${esc(e.id)}</td><td>${esc(e.tool)}</td><td>${esc(e.task_id)}</td><td class="dim">${esc(e.attempt)}</td><td class="down">${esc(e.error || "")}</td><td class="dim">${when(e.at)}</td></tr>`), "none"));
   sections.push(block("Attestations", ["artifact", "step", "kind", "verifier", "verdict", "attempt", "at"],
     rows(f.attestations, a => `<tr><td class="dim">${esc((a.artifact || "").slice(0, 12))}</td><td>${esc(a.step || "—")}</td><td>${esc(a.kind)}</td><td>${esc(a.verifier)}</td><td><span class="pill ${a.verdict === "pass" ? "up" : "down"}">${esc(a.verdict)}</span></td><td class="dim">${esc(a.attempt)}</td><td class="dim">${when(a.at)}</td></tr>`), "no verdicts yet"));
   sections.push(block("Replicas", ["artifact", "node", "generation", "state", "note", "at"],
@@ -234,6 +258,51 @@ async function refresh() {
     + ` · ${new Date(s.at).toLocaleTimeString()}`;
   renderNodes(s.nodes); renderAgents(s.agents); renderAttempts(s.attempts); renderTasks(s.tasks); renderPlans(s.plans); renderLandings(s.landings); renderFacts(s.facts);
 }
+
+// The console: the owner's verbs, through the same coordinator the chat
+// uses. Replies come back on the request and on the change stream.
+const log = document.getElementById("console-log");
+function entry(r) {
+  const el = document.createElement("div");
+  el.className = "entry " + esc(r.kind || "reply") + (r.error ? " err" : "");
+  const when = r.at ? new Date(r.at).toLocaleTimeString() : "";
+  const head = r.kind === "sent" ? "› " + esc(r.input) : (r.title ? "<b>" + esc(r.title) + "</b>" : esc(r.kind));
+  el.innerHTML = `<span class="dim">${esc(when)}</span> ${head}` + (r.text ? `<pre>${esc(r.text)}</pre>` : "");
+  log.appendChild(el);
+  while (log.childElementCount > 200) log.firstElementChild.remove();
+  log.scrollTop = log.scrollHeight;
+}
+async function loadReplies() {
+  const conv = document.getElementById("conv").value;
+  const res = await fetch("/console/replies" + q + (q ? "&" : "?") + "conversation=" + encodeURIComponent(conv), { headers: auth });
+  if (!res.ok) return;
+  const data = await res.json();
+  log.innerHTML = "";
+  if (!data.enabled) { document.getElementById("console-state").textContent = "console off (set feishu.owner_open_id)"; return; }
+  (data.replies || []).forEach(entry);
+}
+async function send(text) {
+  const line = document.getElementById("line");
+  const input = (text ?? line.value).trim();
+  if (!input) return;
+  line.value = "";
+  const conv = document.getElementById("conv").value;
+  document.getElementById("console-state").textContent = "running…";
+  try {
+    const res = await fetch("/console/send" + q, { method: "POST", headers: Object.assign({ "Content-Type": "application/json" }, auth),
+      body: JSON.stringify({ conversation: conv, input }) });
+    const data = await res.json();
+    document.getElementById("console-state").textContent = res.ok ? "" : (data.error || res.status);
+  } catch (e) {
+    document.getElementById("console-state").textContent = String(e);
+  }
+  scheduleRefresh();
+}
+document.getElementById("send").onclick = () => send();
+document.getElementById("line").addEventListener("keydown", e => { if (e.key === "Enter") send(); });
+document.getElementById("conv").onchange = loadReplies;
+window.act = (cmd) => { document.getElementById("line").value = cmd; send(cmd); };
+window.prefill = (cmd) => { const l = document.getElementById("line"); l.value = cmd + " "; l.focus(); };
 
 const feed = document.getElementById("feed");
 function note(ev) {
@@ -257,7 +326,15 @@ function scheduleRefresh() {
 function connect() {
   const source = new EventSource("/events" + q);
   source.onopen = () => document.getElementById("live").innerHTML = "<b>live</b>";
-  source.onmessage = e => { const ev = JSON.parse(e.data); note(ev); scheduleRefresh(); };
+  source.onmessage = e => {
+    const ev = JSON.parse(e.data);
+    if ((ev.kind || "").startsWith("console.")) {
+      if (ev.conversation === document.getElementById("conv").value) entry({ at: ev.at, kind: ev.kind.slice(8), title: ev.title, text: ev.text, input: ev.kind === "console.sent" ? ev.text : "" });
+      scheduleRefresh();
+      return;
+    }
+    note(ev); scheduleRefresh();
+  };
   source.onerror = () => {
     document.getElementById("live").textContent = "reconnecting…";
     source.close();
@@ -266,6 +343,7 @@ function connect() {
 }
 
 refresh();
+loadReplies();
 connect();
 setInterval(refresh, 10000); // a floor, in case the stream drops silently
 </script>

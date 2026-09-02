@@ -1,7 +1,9 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -26,6 +28,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/debugapi"
 	"github.com/gopact-ai/steve/internal/delegate"
 	"github.com/gopact-ai/steve/internal/exec"
@@ -113,6 +116,8 @@ func run(args []string) error {
 			return dash(os.Args[2:])
 		case "ledger":
 			return ledgerCmd(args[1:])
+		case "say":
+			return say(args[1:])
 		case "run":
 			args = args[1:]
 		}
@@ -572,6 +577,10 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	// The console: the owner acting from the page, through this same
+	// coordinator. Notices anchored on the console stay on the page.
+	cons := console.New(coordinator, cfg.Feishu.OwnerOpenID, view)
+	dashboard.SetConsole(cons)
 	defer dashboard.Close()
 	go func() {
 		if err := dashboard.Serve(); err != nil {
@@ -654,7 +663,7 @@ func serve(args []string) error {
 	gw.BindChannel(channel)
 	channel.SetJournal(book.Journal())
 	if gate != nil {
-		gate.BindChannel(channel)
+		gate.BindChannel(console.Sender{Feishu: channel, Console: cons})
 	}
 
 	// /tasks resume re-enters through the same path a crash recovery does:
@@ -662,6 +671,10 @@ func serve(args []string) error {
 	// arrives as an ordinary message.
 	coordinator.SetOfflineReminder(time.Duration(cfg.Gateway.OfflineReminderAfter))
 	coordinator.SetNotifier(func(n turn.TaskNotice) {
+		if n.ChatID == console.ChatID || console.IsConsole(n.MessageID) {
+			cons.Notice(n)
+			return
+		}
 		gw.Notify(gateway.Notice{
 			TaskID: n.TaskID, MessageID: n.MessageID,
 			Requester: n.Requester, Text: n.Text,
@@ -991,4 +1004,54 @@ func choosePlanner(cfg *config.Config, catalog *agent.Catalog, manager *harness.
 		Agent: selected.ID, Sessions: manager, Workspaces: workspaces,
 		At: harness.Placement{Node: selected.Node, Harness: selected.Harness},
 	}
+}
+
+// say sends one line to a running gateway's console and prints the reply:
+// the page's send box, from a shell.
+func say(args []string) error {
+	flags := flag.NewFlagSet("say", flag.ContinueOnError)
+	url := flags.String("url", defaultReadModelURL, "read model URL of a running gateway")
+	token := flags.String("token", "", "token, when the read model is not on loopback")
+	conversation := flags.String("conversation", "console:main", "console conversation")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	input := strings.TrimSpace(strings.Join(flags.Args(), " "))
+	if input == "" {
+		return errors.New("usage: steve say [-url …] [-token …] <text or /verb …>")
+	}
+	body, _ := json.Marshal(map[string]string{"conversation": *conversation, "input": input})
+	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, *url+"/console/send", bytes.NewReader(body))
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	if *token != "" {
+		req.Header.Set("Authorization", "Bearer "+*token)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("no gateway at %s — is `steve run` up? %w", *url, err)
+	}
+	defer res.Body.Close()
+	var out struct {
+		Error string `json:"error"`
+		Reply struct {
+			Title string `json:"title"`
+			Text  string `json:"text"`
+		} `json:"reply"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
+		return fmt.Errorf("console at %s answered %s", *url, res.Status)
+	}
+	if out.Reply.Title != "" {
+		fmt.Println("== " + out.Reply.Title)
+	}
+	fmt.Println(out.Reply.Text)
+	if out.Error != "" {
+		return errors.New(out.Error)
+	}
+	return nil
 }

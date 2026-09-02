@@ -1,8 +1,14 @@
 package mesh
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/planner"
+	"github.com/gopact-ai/steve/internal/state"
+	"github.com/gopact-ai/steve/internal/turn"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -345,6 +351,41 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 	if snap.Attempts == nil || snap.Landings == nil {
 		t.Logf("attempts/landings nil in snapshot (%d/%d)", len(snap.Attempts), len(snap.Landings))
 	}
+	// The page can act: a /fleet sent through the console comes back from
+	// the same coordinator the chat uses, naming the real nodes.
+	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator := turn.New(f.catalog, store, capability.NewAssembler(nil), f.manager, 2*time.Minute)
+	coordinator.SetProjects(f.projects, "local", "")
+	coordinator.SetAttempts(f.attempts)
+	coordinator.SetArtifacts(f.artifacts)
+	coordinator.SetIdentity("ou_owner", nil)
+	consoleSup := exec.NewSupervisor(planner.Rule{}, exec.Deps{Workspaces: f.artifacts, Attempts: f.attempts, Artifacts: f.artifacts, Roster: f.roster,
+		Runner: exec.NewAgentRunner(f.manager, noCaps{}, f.roster), Recorder: f.plans}, nil)
+	consoleSup.SetPlans(f.plans)
+	coordinator.SetSupervisor(consoleSup, f.plans, f.roster)
+	server.SetConsole(console.New(coordinator, "ou_owner", f.view))
+	payload, _ := json.Marshal(map[string]string{"conversation": "console:main", "input": "/fleet"})
+	req, _ := http.NewRequest(http.MethodPost, server.URL()+"/console/send", bytes.NewReader(payload))
+	req.Header.Set("Content-Type", "application/json")
+	res2, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer res2.Body.Close()
+	var sent struct {
+		Reply readmodel.Reply `json:"reply"`
+		Error string          `json:"error"`
+	}
+	if err := json.NewDecoder(res2.Body).Decode(&sent); err != nil {
+		t.Fatal(err)
+	}
+	if res2.StatusCode != http.StatusOK || !strings.Contains(sent.Reply.Text, nodeA) || !strings.Contains(sent.Reply.Text, nodeB) {
+		t.Fatalf("console /fleet = %d %+v %s", res2.StatusCode, sent.Reply, sent.Error)
+	}
+	t.Logf("console /fleet ->\n%s", sent.Reply.Text)
 	// The roster must reflect the real adverts, not the config's hopes.
 	ready := 0
 	for _, a := range snap.Agents {
