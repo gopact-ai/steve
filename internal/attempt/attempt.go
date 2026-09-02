@@ -112,12 +112,15 @@ type Spec struct {
 	Agent   string `json:"agent"`
 	// Slots is the endpoint's capacity for (node, harness); zero is
 	// unlimited and takes no slot lease.
-	Slots     int               `json:"slots,omitempty"`
-	Workspace project.Workspace `json:"workspace"`
-	Scope     Scope             `json:"scope"`
-	Touches   []string          `json:"touches,omitempty"`
-	Base      string            `json:"base,omitempty"`
-	By        string            `json:"by,omitempty"`
+	Slots int `json:"slots,omitempty"`
+	// Reservation names a capacity reservation whose slot this attempt
+	// takes over instead of competing for one.
+	Reservation string            `json:"reservation,omitempty"`
+	Workspace   project.Workspace `json:"workspace"`
+	Scope       Scope             `json:"scope"`
+	Touches     []string          `json:"touches,omitempty"`
+	Base        string            `json:"base,omitempty"`
+	By          string            `json:"by,omitempty"`
 }
 
 // Result is what a finished attempt produced.
@@ -253,7 +256,16 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 			return Record{}, err
 		}
 	}
-	if spec.Slots > 0 {
+	if spec.Reservation != "" {
+		// The reservation's slot becomes this attempt's, atomically: an
+		// attempt that arrives late finds its slot waiting, not taken.
+		taken, err := s.takeReservation(ctx, spec, held)
+		if err != nil {
+			release()
+			return Record{}, err
+		}
+		held = taken
+	} else if spec.Slots > 0 {
 		endpoint := endpointKey(spec.Node, spec.Harness)
 		taken := false
 		for i := 1; i <= spec.Slots; i++ {
@@ -631,3 +643,107 @@ func (s *Service) LiveAttemptOf(ctx context.Context, taskID string) (string, boo
 	}
 	return "", false
 }
+
+// Reservation is capacity held ahead of an attempt: one endpoint slot,
+// leased to the reservation's own id until an attempt takes it over or it
+// expires.
+type Reservation struct {
+	ID       string       `json:"id"`
+	Endpoint string       `json:"endpoint"`
+	Lease    ledger.Lease `json:"lease"`
+	For      string       `json:"for"` // what it was made for: plan/step
+	By       string       `json:"by"`
+}
+
+const reservationKind = "reservation"
+
+// Reserve holds one slot of (node, harness) for whoever will need it. It
+// fails with NoSlot when every slot is leased.
+func (s *Service) Reserve(ctx context.Context, id, node, harness string, slots int, forWhat, by string, ttl time.Duration) (Reservation, error) {
+	if slots <= 0 {
+		return Reservation{}, fmt.Errorf("attempt: %s has no slot cap; nothing to reserve", endpointKey(node, harness))
+	}
+	endpoint := endpointKey(node, harness)
+	for i := 1; i <= slots; i++ {
+		lease, err := s.l.Acquire(ctx, fmt.Sprintf("%s:slot:%d", endpoint, i), id, ttl)
+		if err == nil {
+			r := Reservation{ID: id, Endpoint: endpoint, Lease: lease, For: forWhat, By: by}
+			return r, s.l.PutBinding(ctx, reservationKind, id, r)
+		}
+		if !errors.Is(err, ledger.ErrHeld) {
+			return Reservation{}, err
+		}
+	}
+	return Reservation{}, NoSlot{Endpoint: endpoint, Slots: slots}
+}
+
+// ReleaseReservation gives an unused reservation back.
+func (s *Service) ReleaseReservation(ctx context.Context, id string) error {
+	var r Reservation
+	ok, err := s.l.GetBinding(ctx, reservationKind, id, &r)
+	if err != nil || !ok {
+		return err
+	}
+	_ = s.l.Release(ctx, r.Lease)
+	return s.l.DeleteBinding(ctx, reservationKind, id)
+}
+
+// Reservation reads one.
+func (s *Service) Reservation(ctx context.Context, id string) (Reservation, bool, error) {
+	var r Reservation
+	ok, err := s.l.GetBinding(ctx, reservationKind, id, &r)
+	return r, ok, err
+}
+
+func (s *Service) takeReservation(ctx context.Context, spec Spec, held []ledger.Lease) ([]ledger.Lease, error) {
+	r, ok, err := s.Reservation(ctx, spec.Reservation)
+	if err != nil {
+		return held, err
+	}
+	if !ok {
+		return held, fmt.Errorf("attempt: reservation %s does not exist", spec.Reservation)
+	}
+	if r.Endpoint != endpointKey(spec.Node, spec.Harness) {
+		return held, fmt.Errorf("attempt: reservation %s is for %s, not %s", r.ID, r.Endpoint, endpointKey(spec.Node, spec.Harness))
+	}
+	lease, err := s.l.Transfer(ctx, r.Lease, spec.ID, s.TTL)
+	if err != nil {
+		return held, fmt.Errorf("attempt: take reservation %s: %w", r.ID, err)
+	}
+	_ = s.l.DeleteBinding(ctx, reservationKind, r.ID)
+	return append(held, lease), nil
+}
+
+const reservationForKind = "reservation-for"
+
+// ReservationFor is the reservation made for a key such as "plan/step".
+func (s *Service) ReservationFor(ctx context.Context, key string) (Reservation, bool, error) {
+	var id string
+	ok, err := s.l.GetBinding(ctx, reservationForKind, key, &id)
+	if err != nil || !ok {
+		return Reservation{}, false, err
+	}
+	return s.Reservation(ctx, id)
+}
+
+// ReserveFor reserves a slot and remembers which key it is for.
+func (s *Service) ReserveFor(ctx context.Context, key, node, harness string, slots int, by string, ttl time.Duration) (Reservation, error) {
+	id := "resv-" + strings.NewReplacer("/", "-", ":", "-").Replace(key)
+	r, err := s.Reserve(ctx, id, node, harness, slots, key, by, ttl)
+	if err != nil {
+		return Reservation{}, err
+	}
+	return r, s.l.PutBinding(ctx, reservationForKind, key, id)
+}
+
+// ReleaseReservationFor releases a key's reservation if it is still held.
+func (s *Service) ReleaseReservationFor(ctx context.Context, key string) {
+	var id string
+	if ok, err := s.l.GetBinding(ctx, reservationForKind, key, &id); err == nil && ok {
+		_ = s.ReleaseReservation(ctx, id)
+		_ = s.l.DeleteBinding(ctx, reservationForKind, key)
+	}
+}
+
+// LeaseOf exposes a resource's lease for diagnostics.
+func (s *Service) LeaseOf(ctx context.Context, key string) (ledger.Lease, bool, error) { return s.l.LeaseOf(ctx, key) }

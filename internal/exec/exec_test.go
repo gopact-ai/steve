@@ -903,3 +903,55 @@ func TestVerifiedStepRecordsAnAttestation(t *testing.T) {
 		t.Fatalf("attestations pass=%d fail=%d, want one of each", pass, fail)
 	}
 }
+
+// Capacity: a single slot on node-a is reserved for the plan's steps up
+// front; two parallel gpu steps share it in turn — the second waits for
+// the slot instead of failing — and nothing stays reserved afterwards.
+func TestReservedCapacityIsTakenOverAndWaitedFor(t *testing.T) {
+	art, att := stores(t)
+	slotPollInterval = 50 * time.Millisecond
+	t.Cleanup(func() { slotPollInterval = 3 * time.Second })
+	nodes := &fakeNodes{statuses: []node.Status{{Name: "node-a", Up: true, Advert: nodewire.Advert{
+		Node: "node-a", Capabilities: []string{"gpu", "basic"}, Harnesses: []nodewire.Harness{{ID: "mock", Slots: 1}},
+	}}}}
+	plans, err := plan.Open(filepath.Join(t.TempDir(), "plans.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &fakeRunner{}
+	sup := NewSupervisor(planner.Rule{}, Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, nodes), Runner: runner}, nil)
+	sup.SetPlans(plans)
+	created, err := plans.Create(plan.Plan{ProjectID: "p", TaskID: "tcap", Goal: "capacity", By: "test", Steps: []plan.Step{
+		step("left", "half", []string{"gpu"}),
+		step("right", "other half", []string{"gpu"}),
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	outcome, err := sup.Execute(context.Background(), created)
+	if err != nil || outcome.Err != nil {
+		t.Fatalf("execute = %v / %v", err, outcome.Err)
+	}
+	if runner.maxInFlight != 1 {
+		t.Fatalf("max in flight = %d; one slot must serialise the two steps", runner.maxInFlight)
+	}
+	for _, id := range []string{"left", "right"} {
+		if _, ok, _ := att.ReservationFor(context.Background(), created.ID+"/"+id); ok {
+			t.Fatalf("reservation for %s survived the plan", id)
+		}
+	}
+	// One of the two attempts took a reservation over (its slot lease is at
+	// a transferred epoch); the other waited for the slot to free.
+	records, _ := att.ForTask(context.Background(), "tcap")
+	transferred := 0
+	for _, r := range records {
+		for _, l := range r.Leases {
+			if strings.HasPrefix(l.Key, "endpoint:node-a/mock:slot:") && l.Epoch >= 2 {
+				transferred++
+			}
+		}
+	}
+	if transferred == 0 {
+		t.Fatalf("no attempt took over a reserved slot: %+v", records)
+	}
+}

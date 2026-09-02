@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/gopact-ai/gopact/workflow"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -81,6 +82,8 @@ func (s *Supervisor) Plan(ctx context.Context, req planner.Request) (plan.Plan, 
 func (s *Supervisor) Execute(ctx context.Context, p plan.Plan) (Outcome, error) {
 	s.opened(ctx, p)
 	defer s.closed(ctx, p)
+	s.reserve(ctx, p)
+	defer s.unreserve(ctx, p)
 	outcome, err := s.runs.Execute(ctx, p, s.deps)
 	if err == nil || ctx.Err() != nil {
 		return outcome, err
@@ -167,4 +170,47 @@ func keepFinished(current plan.Plan, proposed []plan.Step) []plan.Step {
 		out[i] = s
 	}
 	return out
+}
+
+// ReservationTTL bounds how long a plan's reserved capacity is held for a
+// step that has not started yet.
+var ReservationTTL = 45 * time.Minute
+
+// reserve holds one endpoint slot per pending step on the machine
+// placement would pick now, so parallel branches do not starve each other
+// once they are running. A reservation that cannot be had is not an
+// error: the step will wait for a slot when its turn comes.
+func (s *Supervisor) reserve(ctx context.Context, p plan.Plan) {
+	if s.deps.Attempts == nil || s.deps.Roster == nil || s.deps.Artifacts == nil {
+		return
+	}
+	proj, ok, err := s.deps.Artifacts.Project(ctx, p.ProjectID)
+	if err != nil || !ok {
+		return
+	}
+	for _, step := range p.Steps {
+		if step.State == plan.StepDone {
+			continue
+		}
+		candidate, err := place(ctx, step, s.deps.Roster, proj)
+		if err != nil || candidate.Slots <= 0 {
+			continue
+		}
+		key := p.ID + "/" + step.ID
+		if _, ok, _ := s.deps.Attempts.ReservationFor(ctx, key); ok {
+			continue
+		}
+		if _, err := s.deps.Attempts.ReserveFor(ctx, key, candidate.Node, candidate.Harness, candidate.Slots, "plan "+p.ID, ReservationTTL); err != nil {
+			log.Printf("exec: plan %s step %s: no capacity to reserve on %s: %v", p.ID, step.ID, endpointOf(candidate.Node, candidate.Harness), err)
+		}
+	}
+}
+
+func (s *Supervisor) unreserve(ctx context.Context, p plan.Plan) {
+	if s.deps.Attempts == nil {
+		return
+	}
+	for _, step := range p.Steps {
+		s.deps.Attempts.ReleaseReservationFor(context.WithoutCancel(ctx), p.ID+"/"+step.ID)
+	}
 }

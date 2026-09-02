@@ -240,3 +240,45 @@ func TestHeartbeatReportsLoss(t *testing.T) {
 		t.Fatal("heartbeat never noticed the lost lease")
 	}
 }
+
+func TestAReservedSlotWaitsForItsAttempt(t *testing.T) {
+	s, c := newService(t)
+	ctx := context.Background()
+	// One slot on node-a/codex, reserved for a plan step.
+	r, err := s.Reserve(ctx, "resv-1", "node-a", "codex", 1, "plan 1/build", "supervisor", time.Minute)
+	if err != nil || r.Endpoint != "endpoint:node-a/codex" {
+		t.Fatalf("reserve = %+v err=%v", r, err)
+	}
+	// Nobody else gets the slot meanwhile.
+	_, err = s.Open(ctx, Spec{ID: "other", Kind: KindStep, Project: "p", Node: "node-a", Harness: "codex", Slots: 1, Workspace: worktree("wt-o", "p"), Scope: ScopePathSet})
+	var full NoSlot
+	if !errors.As(err, &full) {
+		t.Fatalf("open while reserved = %v", err)
+	}
+	if _, err := s.Reserve(ctx, "resv-2", "node-a", "codex", 1, "plan 1/other", "supervisor", time.Minute); !errors.As(err, &full) {
+		t.Fatalf("second reservation = %v", err)
+	}
+	// The attempt made for it takes the slot over under a new epoch.
+	rec, err := s.Open(ctx, Spec{ID: "a1", Kind: KindStep, Project: "p", Node: "node-a", Harness: "codex", Slots: 1, Reservation: "resv-1", Workspace: worktree("wt-1", "p"), Scope: ScopePathSet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rec.Leases) != 3 || rec.Leases[2].Holder != "a1" || rec.Leases[2].Epoch != r.Lease.Epoch+1 {
+		t.Fatalf("leases after takeover = %+v", rec.Leases)
+	}
+	if _, ok, _ := s.Reservation(ctx, "resv-1"); ok {
+		t.Fatal("the reservation survived being taken")
+	}
+	if _, err := s.l.Renew(ctx, r.Lease, time.Minute); !errors.Is(err, ledger.ErrStale) {
+		t.Fatal("the reservation's own lease still matches after transfer")
+	}
+	// A reservation nobody takes expires and frees the slot.
+	r2, _ := s.Reserve(ctx, "resv-3", "node-b", "codex", 1, "x", "supervisor", time.Minute)
+	c.t = c.t.Add(2 * time.Minute)
+	if _, err := s.Open(ctx, Spec{ID: "b1", Kind: KindStep, Project: "p", Node: "node-b", Harness: "codex", Slots: 1, Workspace: worktree("wt-b", "p"), Scope: ScopePathSet}); err != nil {
+		t.Fatalf("open after the reservation expired = %v", err)
+	}
+	if _, err := s.Open(ctx, Spec{ID: "b2", Kind: KindStep, Project: "p", Node: "node-b", Harness: "codex", Slots: 1, Reservation: r2.ID, Workspace: worktree("wt-b2", "p"), Scope: ScopePathSet}); err == nil {
+		t.Fatal("an expired reservation was taken over")
+	}
+}

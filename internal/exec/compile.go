@@ -351,6 +351,16 @@ func runStepWithRecovery(ctx context.Context, p plan.Plan, step plan.Step, upstr
 	return last, ErrExhausted{StepID: step.ID, Attempts: step.Attempts, Cause: lastErr}
 }
 
+// slotPollInterval is how often a step waiting for capacity looks again.
+var slotPollInterval = 3 * time.Second
+
+func endpointOf(node, harness string) string {
+	if node == "" {
+		node = "hub"
+	}
+	return "endpoint:" + node + "/" + harness
+}
+
 // admits says why a candidate may not hold the project's data, or "".
 func admits(p project.Project, c roster.Candidate) string {
 	if p.Level == project.LevelSealed && c.Node != p.Home.Node {
@@ -549,12 +559,37 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 	// A retry is a takeover, not a fresh start: the previous attempt of
 	// this step is superseded — its leases cut, its record pointing here —
 	// so nothing it might still be doing can bind.
+	// Capacity reserved for this step ahead of time is taken over; a
+	// reservation on another endpoint than placement chose is given back.
+	if r, ok, _ := deps.Attempts.ReservationFor(ctx, spec.TurnID); ok {
+		if r.Endpoint == endpointOf(candidate.Node, candidate.Harness) {
+			spec.Reservation = r.ID
+		} else {
+			deps.Attempts.ReleaseReservationFor(ctx, spec.TurnID)
+		}
+	}
 	var record attempt.Record
 	previous, had, err := deps.Attempts.LatestForTurn(ctx, spec.TurnID)
-	if err == nil && had && previous.TakeoverAllowed() {
-		record, err = deps.Attempts.Supersede(ctx, previous.ID, spec, "exec")
-	} else if err == nil {
-		record, err = deps.Attempts.Open(ctx, spec)
+	takeover := err == nil && had && previous.TakeoverAllowed()
+	for err == nil {
+		if takeover {
+			record, err = deps.Attempts.Supersede(ctx, previous.ID, spec, "exec")
+		} else {
+			record, err = deps.Attempts.Open(ctx, spec)
+		}
+		var full attempt.NoSlot
+		if err == nil || !errors.As(err, &full) {
+			break
+		}
+		// Every slot is taken: wait for one rather than fail the step. The
+		// plan's own deadline bounds the wait.
+		log.Printf("exec: step %s waits for a slot on %s", step.ID, full.Endpoint)
+		select {
+		case <-ctx.Done():
+			err = fmt.Errorf("%w while waiting: %v", ctx.Err(), full)
+		case <-time.After(slotPollInterval):
+			err = nil
+		}
 	}
 	if err != nil {
 		_ = deps.Artifacts.Discard(ctx, workspace)
@@ -573,7 +608,9 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 	}()
 	ctx = stepCtx
 	fail := func(cause error) {
-		_, _ = deps.Attempts.Fail(context.WithoutCancel(ctx), record.ID, "exec", cause.Error())
+		if _, ferr := deps.Attempts.Fail(context.WithoutCancel(ctx), record.ID, "exec", cause.Error()); ferr != nil {
+			log.Printf("exec: attempt %s could not be failed: %v", record.ID, ferr)
+		}
 		_ = deps.Artifacts.Discard(context.WithoutCancel(ctx), workspace)
 	}
 

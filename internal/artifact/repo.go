@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 )
 
 // Repo is one project's bare shadow repository.
@@ -26,8 +27,17 @@ type Repo struct {
 	Dir string
 }
 
+// openMu serialises repository creation: two attempts materialising the
+// same project at once must not both run git init on the same directory.
+var openMu sync.Mutex
+
 // Open opens or creates the bare repository at dir.
 func Open(ctx context.Context, dir string) (*Repo, error) {
+	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err == nil {
+		return &Repo{Dir: dir}, nil
+	}
+	openMu.Lock()
+	defer openMu.Unlock()
 	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err == nil {
 		return &Repo{Dir: dir}, nil
 	}
@@ -321,8 +331,9 @@ func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + 
 
 // InitScript creates the bare repository if absent.
 func (Script) Init(dir string) string {
-	return fmt.Sprintf("test -f %s/HEAD || (mkdir -p %s && git init --bare --quiet %s && git --git-dir=%s config user.name steve && git --git-dir=%s config user.email steve@localhost)",
-		quote(dir), quote(filepath.Dir(dir)), quote(dir), quote(dir), quote(dir))
+	// mkdir of the lock directory is atomic: the loser waits for HEAD.
+	return fmt.Sprintf("test -f %s/HEAD || { mkdir -p %s; if mkdir %s.lock 2>/dev/null; then git init --bare --quiet %s && git --git-dir=%s config user.name steve && git --git-dir=%s config user.email steve@localhost; rc=$?; rmdir %s.lock; exit $rc; else for i in $(seq 1 100); do test -f %s/HEAD && exit 0; sleep 0.1; done; exit 1; fi; }",
+		quote(dir), quote(filepath.Dir(dir)), quote(dir), quote(dir), quote(dir), quote(dir), quote(dir), quote(dir))
 }
 
 // Unbundle fetches a bundle's tips into the bare repository.

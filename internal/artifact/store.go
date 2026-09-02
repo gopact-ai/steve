@@ -197,15 +197,23 @@ func (s *Store) SnapshotCanonical(ctx context.Context, p project.Project, parent
 }
 
 func (s *Store) setCanonical(ctx context.Context, projectID, sha string) error {
-	current, _, err := s.ledger.Name(ctx, CanonicalRef(projectID))
-	if err != nil {
-		return err
+	// Two attempts may snapshot the same directory at the same moment and
+	// race to name the result; the same content loses nothing by losing
+	// the race, and different content is retried against the fresh version.
+	for i := 0; i < 5; i++ {
+		current, _, err := s.ledger.Name(ctx, CanonicalRef(projectID))
+		if err != nil {
+			return err
+		}
+		if current.Artifact == sha {
+			return nil
+		}
+		_, err = s.Bind(ctx, CanonicalRef(projectID), current.Version, sha)
+		if err == nil || !errors.Is(err, ledger.ErrConflict) {
+			return err
+		}
 	}
-	if current.Artifact == sha {
-		return nil
-	}
-	_, err = s.Bind(ctx, CanonicalRef(projectID), current.Version, sha)
-	return err
+	return fmt.Errorf("canonical name of %s kept moving", projectID)
 }
 
 // snapshotOnNode snapshots a directory on a node into the node's shadow

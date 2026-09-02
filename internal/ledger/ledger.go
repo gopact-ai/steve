@@ -75,6 +75,9 @@ type Ledger struct {
 
 	mu       sync.Mutex
 	recovery bool
+
+	region  string
+	issuers map[string]Issuer
 }
 
 // Options tune an Open.
@@ -349,6 +352,8 @@ func (l *Ledger) Command(ctx context.Context, id, kind, actor string, run func(c
 
 // Lease is a fencing token: exactly this tuple, or nothing.
 type Lease struct {
+	// Region is who issued the lease; empty is the local ledger.
+	Region      string    `json:"region,omitempty"`
 	Key         string    `json:"key"`
 	Incarnation uint64    `json:"incarnation"`
 	Epoch       uint64    `json:"epoch"`
@@ -434,6 +439,33 @@ func (l *Ledger) Release(ctx context.Context, lease Lease) error {
 		return err
 	}
 	return tx.Commit()
+}
+
+// Transfer hands a lease from its holder to another under a new epoch: the
+// old tuple stops matching, the new holder gets a fresh one, and nobody in
+// between could have taken the resource. A reservation becomes an
+// attempt's lease this way.
+func (l *Ledger) Transfer(ctx context.Context, lease Lease, to string, ttl time.Duration) (Lease, error) {
+	if to == "" || ttl <= 0 {
+		return Lease{}, errors.New("ledger: transfer needs a holder and a ttl")
+	}
+	tx, err := l.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Lease{}, err
+	}
+	defer tx.Rollback()
+	if err := l.checkLease(ctx, tx, lease); err != nil {
+		return Lease{}, err
+	}
+	next := Lease{Key: lease.Key, Incarnation: l.incarnation, Epoch: lease.Epoch + 1, Holder: to, ExpiresAt: l.now().Add(ttl)}
+	if _, err := tx.ExecContext(ctx, `UPDATE leases SET incarnation = ?, epoch = ?, holder = ?, expires_at = ? WHERE resource_key = ? AND epoch = ?`,
+		next.Incarnation, next.Epoch, to, next.ExpiresAt.UTC().Format(time.RFC3339Nano), lease.Key, lease.Epoch); err != nil {
+		return Lease{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Lease{}, err
+	}
+	return next, nil
 }
 
 // Invalidate forces the epoch forward and clears the holder, whoever it is.
@@ -583,6 +615,9 @@ func (l *Ledger) Transition(ctx context.Context, id, from, to, actor string, fen
 	if err != nil {
 		return Event{}, err
 	}
+	if err := l.checkForeign(ctx, fencings); err != nil {
+		return Event{}, err
+	}
 	tx, err := l.db.BeginTx(ctx, nil)
 	if err != nil {
 		return Event{}, err
@@ -605,6 +640,9 @@ func (l *Ledger) Transition(ctx context.Context, id, from, to, actor string, fen
 		return Event{}, fmt.Errorf("%w: operation %s is %s, not %s", ErrConflict, id, op.State, from)
 	}
 	for _, lease := range fencings {
+		if l.foreign(lease) {
+			continue
+		}
 		if err := l.checkLease(ctx, tx, lease); err != nil {
 			return Event{}, err
 		}
