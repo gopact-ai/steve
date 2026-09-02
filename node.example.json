@@ -10,8 +10,7 @@
       "command": "npx",
       "args": ["-y", "@agentclientprotocol/codex-acp"],
       "models": ["gpt-5"],
-      "env": ["PATH=/home/me/.local/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"]
-    },
+      "env": ["PATH=/home/me/.local/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"], "slots": 4 },
     "claude-code": {
       "command": "npx",
       "args": ["-y", "@agentclientprotocol/claude-agent-acp"],

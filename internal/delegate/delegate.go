@@ -388,7 +388,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	base := s.baseOf(workspace.ID)
 	record, err := s.attempts.Open(ctx, attempt.Spec{
 		ID: strings.TrimPrefix(workspace.ID, "wt-"), TaskID: child.ID, TurnID: "delegate/" + child.ID, Kind: attempt.KindDelegate,
-		Project: parent.ProjectID, Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID,
+		Project: parent.ProjectID, Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID, Slots: candidate.Slots,
 		Workspace: workspace, Scope: attempt.ScopePathSet, Base: base, By: delegatedBy,
 	})
 	if err != nil {

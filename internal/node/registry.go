@@ -28,6 +28,9 @@ type Config struct {
 	Token string
 	// DialTimeout bounds one connection attempt; zero takes the default.
 	DialTimeout time.Duration
+	// Level is the data level the hub assigns this node: what it may hold.
+	// Empty is internal.
+	Level string
 }
 
 // Status is a node as the registry currently knows it — the roster's raw
@@ -54,6 +57,31 @@ type Registry struct {
 	confs map[string]Config
 	live  map[string]*conn
 	last  map[string]*Status
+	// hubLvl is the hub machine's own data level.
+	hubLvl string
+}
+
+// SetHubLevel declares the hub machine's data level (default internal).
+func (r *Registry) SetHubLevel(level string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hubLvl = level
+}
+
+func (r *Registry) hubLevel() string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.hubLvl == "" {
+		return "internal"
+	}
+	return r.hubLvl
+}
+
+func (r *Registry) config(name string) (Config, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	cfg, ok := r.confs[name]
+	return cfg, ok
 }
 
 const defaultDialTimeout = 10 * time.Second

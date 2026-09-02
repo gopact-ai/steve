@@ -129,6 +129,16 @@ outcome-unknown 的对外动作列出来给人对账；`steve ledger status` 看
   （每条路径先记 started、写完记 confirmed）→ 提交（规范名 CAS 前进）。冲突不硬来：
   merge-conflicted / apply-conflicted / commit-conflicted 三种状态各自留档，路径列出来给人。
 - 步骤可以声明 `touches`（它会写的路径），并行步骤不得重叠。
+- **等级**：`projects[].level` 与 `nodes[].level` / `gateway.level`（public < internal < restricted < sealed）。
+  放置与物化都先看等级：机器够不到项目的等级就不去；`sealed` 项目只在它的 home 执行，
+  hub 只存元数据（回执由 home 节点签）。restricted / sealed 项目的回合答案发出去会记一条
+  disclosure。`gateway.level` 不写时取 hub 要耐久保存的最高等级。
+- **槽位**：`harnesses[].slots`（hub）与 node 配置里的 `slots` 限制同一台机器同一 harness 的
+  并发会话，attempt 开始时租一个槽位，满了就明说。
+- **恢复**：hub 重启时先扫过期 attempt，再把中断在写入阶段的 landing 按 WAL 逐路径收尾
+  （已是新内容的跳过、还是旧内容的重写、被人改过的算冲突留档）；重试一个步骤是**接管**——
+  旧 attempt 记为 superseded 并指向新的，它的租约全部作废。飞书出口的每次发送都先记
+  started、拿到 message_id 再记 confirmed，`steve ledger recover` 列出 outcome-unknown 的。
 
 ## 计划与协作
 

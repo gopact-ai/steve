@@ -49,7 +49,8 @@
     "codex": {
       "command": "npx",
       "args": ["-y", "@agentclientprotocol/codex-acp"],
-      "permission": "read"
+      "permission": "read",
+      "slots": 4
     },
     "claude-code": {
       "command": "npx",
@@ -79,10 +80,11 @@
     "allow_unmentioned": false
   },
   "nodes": {
-    "host-3": { "addr": "10.0.0.3:7701", "token": "replace-me", "dial_timeout": "10s" }
+    "host-3": { "addr": "10.0.0.3:7701", "token": "replace-me", "dial_timeout": "10s", "level": "restricted" }
   },
   "gateway": {
     "default_project": "steve",
+    "level": "restricted",
     "planner": "claude",
     "capabilities": ["basic"],
     "read_model_addr": "127.0.0.1:7710",

@@ -354,6 +354,13 @@ func (Script) Snapshot(dir, workTree, parent, message string) string {
 		quote(dir), quote(workTree), quote(workTree), readParent, compare, quote(parent), quote(message), parentArg)
 }
 
+// Merge three-way merges two commits at the node and prints the merged
+// commit, or "CONFLICT" followed by the conflicting paths with exit 1.
+func (Script) Merge(dir, ours, theirs, message string) string {
+	return fmt.Sprintf("export GIT_DIR=%s; out=$(git merge-tree --write-tree --name-only %s %s); rc=$?; if [ $rc -eq 1 ]; then echo CONFLICT; echo \"$out\" | sed -n '2,/^$/p' | sed '/^$/d'; exit 1; fi; [ $rc -eq 0 ] || exit $rc; tree=$(echo \"$out\" | head -1); sha=$(git commit-tree \"$tree\" -m %s -p %s -p %s) && git update-ref \"refs/steve/artifacts/$sha\" \"$sha\" && echo \"$sha\"",
+		quote(dir), quote(ours), quote(theirs), quote(message), quote(ours), quote(theirs))
+}
+
 // Apply brings a directory from one tree to another, as Repo.Apply does.
 func (Script) Apply(dir, from, to, target string) string {
 	return fmt.Sprintf("export GIT_DIR=%s GIT_WORK_TREE=%s GIT_INDEX_FILE=%s.land-index; cd \"$GIT_WORK_TREE\" && rm -f \"$GIT_INDEX_FILE\" && git read-tree %s && git update-index --refresh -q --ignore-missing; git read-tree -m -u %s %s; rc=$?; rm -f \"$GIT_INDEX_FILE\"; exit $rc",

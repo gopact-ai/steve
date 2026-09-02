@@ -550,6 +550,42 @@ func (s *Service) ForTask(ctx context.Context, taskID string) ([]Record, error) 
 	return out, nil
 }
 
+// LatestForTurn is the most recent attempt of a logical turn, if any.
+func (s *Service) LatestForTurn(ctx context.Context, turnID string) (Record, bool, error) {
+	ops, err := s.l.Operations(ctx, kind, "")
+	if err != nil {
+		return Record{}, false, err
+	}
+	var latest Record
+	found := false
+	for _, op := range ops {
+		r, err := decode(op)
+		if err != nil {
+			return Record{}, false, err
+		}
+		if r.TurnID != turnID {
+			continue
+		}
+		if !found || r.StartedAt.After(latest.StartedAt) {
+			latest, found = r, true
+		}
+	}
+	return latest, found, nil
+}
+
+// TakeoverAllowed says whether a previous attempt of the turn leaves work
+// a new attempt may take over, and did not run in place.
+func (r Record) TakeoverAllowed() bool {
+	if r.Scope == ScopeUnrestricted {
+		return false
+	}
+	switch r.State {
+	case Expired, Failed, BindConflict, Superseded, Bound:
+		return r.State != Superseded && r.State != Bound
+	}
+	return true // live but abandoned by whoever drove it
+}
+
 // History is the attempt's events.
 func (s *Service) History(ctx context.Context, id string) ([]ledger.Event, error) {
 	return s.l.Events(ctx, id)

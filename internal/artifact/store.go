@@ -57,6 +57,8 @@ type Nodes interface {
 	PutBlob(ctx context.Context, node, name string, content io.Reader, size int64) error
 	GetBlob(ctx context.Context, node, name string, into io.Writer) error
 	Git(ctx context.Context, node string) (version string, root string, state string, err error)
+	// Level is the data level the hub assigned the node ("" is the hub).
+	Level(ctx context.Context, node string) (string, error)
 }
 
 // Store holds every project's shadow repository on the hub — the default
@@ -74,6 +76,40 @@ func New(dir string, l *ledger.Ledger, projects *project.Store, nodes Nodes) *St
 }
 
 const manifestKind = "artifact"
+
+// Project reads a project's record.
+func (s *Store) Project(ctx context.Context, id string) (project.Project, bool, error) {
+	return s.projects.Get(ctx, id)
+}
+
+// admits checks that a node may hold the project's data: the node's level
+// must reach the project's, and a sealed project never leaves its home.
+func (s *Store) admits(ctx context.Context, p project.Project, node string) error {
+	if p.Level == project.LevelSealed && node != p.Home.Node {
+		return fmt.Errorf("project %s is sealed: it runs only at its home, %s", p.ID, placeName(p.Home.Node))
+	}
+	level, err := s.nodes.Level(ctx, node)
+	if err != nil {
+		return err
+	}
+	if !p.Level.OrDefault().Admits(project.Level(level).OrDefault()) {
+		return fmt.Errorf("project %s is %s; %s is only %s", p.ID, p.Level.OrDefault(), placeName(node), project.Level(level).OrDefault())
+	}
+	return nil
+}
+
+func placeName(node string) string {
+	if node == "" {
+		return "the hub"
+	}
+	return node
+}
+
+// metadataOnly says the hub keeps no objects of the project: sealed data
+// stays at its home node, which is its durable place.
+func metadataOnly(p project.Project) bool {
+	return p.Level == project.LevelSealed && p.Home.Node != ""
+}
 
 // Repo opens the project's shadow repository on the hub.
 func (s *Store) Repo(ctx context.Context, projectID string) (*Repo, error) {
@@ -109,6 +145,16 @@ func (s *Store) hubReceipt(ctx context.Context, m Manifest) (Manifest, error) {
 	return s.record(ctx, m)
 }
 
+// receipt signs where the artifact is actually held: the hub, or — for a
+// sealed project — its home node, the only durable place it has.
+func (s *Store) receipt(ctx context.Context, p project.Project, m Manifest) (Manifest, error) {
+	if metadataOnly(p) {
+		m.Receipts = []Receipt{{Place: p.Home.Node, At: s.now().UTC()}}
+		return s.record(ctx, m)
+	}
+	return s.hubReceipt(ctx, m)
+}
+
 // ---------------------------------------------------------------- canonical
 
 // SnapshotCanonical takes a before- or after-snapshot of the project's
@@ -139,7 +185,7 @@ func (s *Store) SnapshotCanonical(ctx context.Context, p project.Project, parent
 			return m, false, nil
 		}
 	}
-	m, err := s.hubReceipt(ctx, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message, Canonical: true})
+	m, err := s.receipt(ctx, p, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message, Canonical: true})
 	if err != nil {
 		return m, changed, err
 	}
@@ -186,6 +232,9 @@ func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Proje
 	}
 	if sha == parent {
 		return sha, false, nil
+	}
+	if metadataOnly(p) {
+		return sha, true, nil
 	}
 	if err := s.pull(ctx, node, bare, hub, sha, []string{parent}); err != nil {
 		return "", false, err
@@ -283,6 +332,9 @@ func (s *Store) Materialize(ctx context.Context, req project.Request) (project.W
 	if !ok {
 		return project.Workspace{}, fmt.Errorf("%w: %s", project.ErrUnknown, req.Project)
 	}
+	if err := s.admits(ctx, p, req.Node); err != nil {
+		return project.Workspace{}, err
+	}
 	base := req.Base
 	if base == "" {
 		m, _, err := s.SnapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), req.Owner, "base for "+req.Owner)
@@ -295,7 +347,7 @@ func (s *Store) Materialize(ctx context.Context, req project.Request) (project.W
 	if err != nil {
 		return project.Workspace{}, err
 	}
-	if !hub.Has(ctx, base) {
+	if !metadataOnly(p) && !hub.Has(ctx, base) {
 		return project.Workspace{}, fmt.Errorf("artifact %s is not on the hub", short(base))
 	}
 	id := "wt-" + short(base) + "-" + strings.TrimPrefix(req.Owner, "att-")
@@ -328,6 +380,9 @@ func (s *Store) Materialize(ctx context.Context, req project.Request) (project.W
 	wanted := append([]string{base}, inputArtifacts(req.Inputs)...)
 	for _, sha := range wanted {
 		if !s.nodeHas(ctx, req.Node, bare, sha) {
+			if metadataOnly(p) {
+				return project.Workspace{}, fmt.Errorf("artifact %s is not at %s, the only place sealed project %s lives", short(sha), req.Node, p.ID)
+			}
 			if err := s.push(ctx, req.Node, bare, hub, sha, nil); err != nil {
 				return project.Workspace{}, err
 			}
@@ -386,7 +441,7 @@ func (s *Store) Publish(ctx context.Context, ws project.Workspace, parent, by, m
 			return m, false, nil
 		}
 	}
-	m, err := s.hubReceipt(ctx, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message})
+	m, err := s.receipt(ctx, p, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message})
 	return m, changed, err
 }
 

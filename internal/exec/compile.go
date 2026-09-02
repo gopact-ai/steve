@@ -351,6 +351,34 @@ func runStepWithRecovery(ctx context.Context, p plan.Plan, step plan.Step, upstr
 	return last, ErrExhausted{StepID: step.ID, Attempts: step.Attempts, Cause: lastErr}
 }
 
+// admits says why a candidate may not hold the project's data, or "".
+func admits(p project.Project, c roster.Candidate) string {
+	if p.Level == project.LevelSealed && c.Node != p.Home.Node {
+		return "sealed project " + p.ID + " runs only at " + placeLabel(p.Home.Node)
+	}
+	if !p.Level.OrDefault().Admits(c.Level.OrDefault()) {
+		return placeLabel(c.Node) + " is " + string(c.Level.OrDefault()) + ", project " + p.ID + " is " + string(p.Level.OrDefault())
+	}
+	return ""
+}
+
+func admitted(p project.Project, in []roster.Candidate) []roster.Candidate {
+	out := in[:0:0]
+	for _, c := range in {
+		if admits(p, c) == "" {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+func placeLabel(node string) string {
+	if node == "" {
+		return "hub"
+	}
+	return node
+}
+
 // materialize asks for the step's own worktree on the node placement chose.
 func materialize(ctx context.Context, deps Deps, p plan.Plan, node, base string, inputs []project.Input, owner string) (project.Workspace, error) {
 	if deps.Workspaces == nil {
@@ -472,12 +500,17 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 	// Placement is solved here, immediately before the step runs, not when
 	// the plan was written. A node that went away in between is the normal
 	// case; on a retry this is what picks a different machine.
-	candidate, err := place(ctx, step, deps.Roster)
-	if err != nil {
-		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
-	}
 	if deps.Attempts == nil || deps.Artifacts == nil {
 		err := fmt.Errorf("no attempts or artifacts wired: a step cannot be recorded")
+		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
+	}
+	proj, ok, err := deps.Artifacts.Project(ctx, p.ProjectID)
+	if err != nil || !ok {
+		err := fmt.Errorf("plan %s: project %q is unknown", p.ID, p.ProjectID)
+		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
+	}
+	candidate, err := place(ctx, step, deps.Roster, proj)
+	if err != nil {
 		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
 	}
 	// The step runs in its own worktree: from the plan's base, or from the
@@ -493,11 +526,21 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 	if base == "" {
 		base = workspace.Base
 	}
-	record, err := deps.Attempts.Open(ctx, attempt.Spec{
+	spec := attempt.Spec{
 		ID: attemptID, TaskID: p.TaskID, TurnID: p.ID + "/" + step.ID, Kind: attempt.KindStep, Project: p.ProjectID,
-		Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID,
+		Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID, Slots: candidate.Slots,
 		Workspace: workspace, Scope: attempt.ScopePathSet, Touches: step.Touches, Base: base, By: "exec",
-	})
+	}
+	// A retry is a takeover, not a fresh start: the previous attempt of
+	// this step is superseded — its leases cut, its record pointing here —
+	// so nothing it might still be doing can bind.
+	var record attempt.Record
+	previous, had, err := deps.Attempts.LatestForTurn(ctx, spec.TurnID)
+	if err == nil && had && previous.TakeoverAllowed() {
+		record, err = deps.Attempts.Supersede(ctx, previous.ID, spec, "exec")
+	} else if err == nil {
+		record, err = deps.Attempts.Open(ctx, spec)
+	}
 	if err != nil {
 		_ = deps.Artifacts.Discard(ctx, workspace)
 		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
@@ -638,11 +681,14 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 	return result, nil
 }
 
-func place(ctx context.Context, step plan.Step, r *roster.Roster) (roster.Candidate, error) {
+func place(ctx context.Context, step plan.Step, r *roster.Roster, p project.Project) (roster.Candidate, error) {
 	if step.Agent != "" {
 		for _, c := range r.All(ctx) {
 			if c.Agent.ID != step.Agent {
 				continue
+			}
+			if reason := admits(p, c); reason != "" {
+				return roster.Candidate{}, ErrNowhereToRun{StepID: step.ID, Requires: step.Requires, Reasons: step.Agent + " is pinned but " + reason}
 			}
 			if !c.Eligible {
 				return roster.Candidate{}, ErrNowhereToRun{
@@ -662,13 +708,19 @@ func place(ctx context.Context, step plan.Step, r *roster.Roster) (roster.Candid
 	// it again, not to declare the plan impossible. A flaky test and a
 	// broken node look the same from here, and only a retry tells them
 	// apart.
-	candidates := r.Candidates(ctx, step.Requires, step.Tried)
+	candidates := admitted(p, r.Candidates(ctx, step.Requires, step.Tried))
 	if len(candidates) == 0 {
-		candidates = r.Candidates(ctx, step.Requires, nil)
+		candidates = admitted(p, r.Candidates(ctx, step.Requires, nil))
 	}
 	if len(candidates) == 0 {
+		reasons := r.Explain(ctx, step.Requires)
+		for _, c := range r.Candidates(ctx, step.Requires, nil) {
+			if reason := admits(p, c); reason != "" {
+				reasons += "; " + c.Agent.ID + ": " + reason
+			}
+		}
 		return roster.Candidate{}, ErrNowhereToRun{
-			StepID: step.ID, Requires: step.Requires, Reasons: r.Explain(ctx, step.Requires),
+			StepID: step.ID, Requires: step.Requires, Reasons: reasons,
 		}
 	}
 	return candidates[0], nil

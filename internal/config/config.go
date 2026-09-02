@@ -127,6 +127,8 @@ type Gateway struct {
 	// rule planner, which places but does not decompose: an open goal is
 	// then one step, which is honest but not automatic.
 	Planner string `json:"planner,omitempty"`
+	// Level is the hub machine's own data level. Empty is internal.
+	Level string `json:"level,omitempty"`
 	// DefaultProject is what a conversation is bound to on its first turn
 	// when nobody has said otherwise. With one project it is implied.
 	DefaultProject string `json:"default_project,omitempty"`
@@ -176,6 +178,10 @@ type Node struct {
 	Addr  string   `json:"addr"`
 	Token string   `json:"token"`
 	Dial  Duration `json:"dial_timeout,omitempty"`
+	// Level is the data level the hub assigns the node: the highest a
+	// project may be for its artifacts to be held or run there. Empty is
+	// internal.
+	Level string `json:"level,omitempty"`
 }
 
 type Agent struct {
@@ -204,6 +210,9 @@ type Harness struct {
 	ProcessDir string   `json:"process_dir"`
 	Env        []string `json:"env"`
 	Permission string   `json:"permission"`
+	// Slots caps concurrent sessions of this harness on the hub; zero is
+	// unlimited. Nodes declare their own in their config.
+	Slots int `json:"slots,omitempty"`
 }
 
 type MCPServer struct {
@@ -400,6 +409,14 @@ func Load(path string) (*Config, error) {
 		}
 		cfg.Projects[id] = item
 	}
+	for id, item := range cfg.Nodes {
+		if item.Level != "" && !project.Level(item.Level).Valid() {
+			return nil, fmt.Errorf("node %q level %q is not public, internal, restricted or sealed", id, item.Level)
+		}
+	}
+	if cfg.Gateway.Level != "" && !project.Level(cfg.Gateway.Level).Valid() {
+		return nil, fmt.Errorf("gateway.level %q is not public, internal, restricted or sealed", cfg.Gateway.Level)
+	}
 	if cfg.Gateway.DefaultProject == "" && len(cfg.Projects) == 1 {
 		for id := range cfg.Projects {
 			cfg.Gateway.DefaultProject = id
@@ -480,7 +497,7 @@ func (c *Config) HarnessManager() (*harness.Manager, error) {
 func (c *Config) NodeConfigs() map[string]node.Config {
 	out := make(map[string]node.Config, len(c.Nodes))
 	for id, item := range c.Nodes {
-		out[id] = node.Config{Addr: item.Addr, Token: item.Token, DialTimeout: time.Duration(item.Dial)}
+		out[id] = node.Config{Addr: item.Addr, Token: item.Token, DialTimeout: time.Duration(item.Dial), Level: item.Level}
 	}
 	return out
 }
@@ -565,4 +582,46 @@ func absolute(path string) string {
 		return path
 	}
 	return result
+}
+
+// HubSlots is the per-harness session cap on the hub.
+func (c *Config) HubSlots() map[string]int {
+	out := map[string]int{}
+	for id, h := range c.Harnesses {
+		if h.Slots > 0 {
+			out[id] = h.Slots
+		}
+	}
+	return out
+}
+
+// NodeLevels is the level the hub assigned each node.
+func (c *Config) NodeLevels() map[string]project.Level {
+	out := map[string]project.Level{}
+	for id, n := range c.Nodes {
+		out[id] = project.Level(n.Level).OrDefault()
+	}
+	return out
+}
+
+// HubLevel is the hub machine's data level: what was configured, or else
+// the highest level of anything the hub is the durable place for — every
+// project except a sealed one homed on a node, and Steve's own home, which
+// is restricted. A hub that could not hold what it stores would refuse
+// its own projects at the first turn.
+func (c *Config) HubLevel() project.Level {
+	if c.Gateway.Level != "" {
+		return project.Level(c.Gateway.Level)
+	}
+	level := project.LevelRestricted
+	for _, p := range c.Projects {
+		candidate := project.Level(p.Level).OrDefault()
+		if candidate == project.LevelSealed && p.Home.Node != "" {
+			continue
+		}
+		if !candidate.Admits(level) {
+			level = candidate
+		}
+	}
+	return level
 }

@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/project"
 )
 
 // NodeSource is the live view of remote machines. The node registry
@@ -43,6 +44,10 @@ type Candidate struct {
 	Capabilities []string
 	Models       []string
 	Harness      string
+	// Slots is the endpoint's session cap for (node, harness); zero is
+	// unlimited. Level is the data level of the machine.
+	Slots int
+	Level project.Level
 }
 
 type Roster struct {
@@ -53,7 +58,12 @@ type Roster struct {
 	// not exempt from capability matching: an agent that needs a GPU should
 	// not silently run here just because here is the default.
 	hubCaps []string
-	nodes   NodeSource
+	// hubLevel and hubSlots describe the hub machine the same way a
+	// node's advert and config describe a node.
+	hubLevel   project.Level
+	hubSlots   map[string]int
+	nodeLevels map[string]project.Level
+	nodes      NodeSource
 }
 
 func New(catalog *agent.Catalog) *Roster { return &Roster{catalog: catalog} }
@@ -62,6 +72,27 @@ func (r *Roster) SetNodes(nodes NodeSource) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.nodes = nodes
+}
+
+// SetHubLevel declares the hub machine's data level.
+func (r *Roster) SetHubLevel(level project.Level) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hubLevel = level
+}
+
+// SetHubSlots declares the hub's per-harness session caps.
+func (r *Roster) SetHubSlots(slots map[string]int) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hubSlots = slots
+}
+
+// SetNodeLevels declares the level the hub assigned each node.
+func (r *Roster) SetNodeLevels(levels map[string]project.Level) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.nodeLevels = levels
 }
 
 // SetHubCapabilities declares what the hub's own machine can do.
@@ -76,6 +107,7 @@ func (r *Roster) SetHubCapabilities(caps []string) {
 func (r *Roster) All(ctx context.Context) []Candidate {
 	r.mu.RLock()
 	nodes, hubCaps := r.nodes, append([]string(nil), r.hubCaps...)
+	hub, levels := place{level: r.hubLevel, slots: r.hubSlots}, r.nodeLevels
 	r.mu.RUnlock()
 
 	byNode := map[string]node.Status{}
@@ -88,7 +120,7 @@ func (r *Roster) All(ctx context.Context) []Candidate {
 
 	out := make([]Candidate, 0, len(r.catalog.List()))
 	for _, a := range r.catalog.List() {
-		out = append(out, describe(a, byNode, hubCaps))
+		out = append(out, describe(a, byNode, hubCaps, hub, levels))
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Agent.ID < out[j].Agent.ID })
 	return out
@@ -139,14 +171,16 @@ func (r *Roster) Explain(ctx context.Context, requires []string) string {
 	return strings.Join(reasons, "; ")
 }
 
-func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string) Candidate {
-	c := Candidate{Agent: a, Node: a.Node, Harness: a.Harness, Eligible: true}
+func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hub place, levels map[string]project.Level) Candidate {
+	c := Candidate{Agent: a, Node: a.Node, Harness: a.Harness, Eligible: true, Level: levels[a.Node].OrDefault()}
 	if a.Model != "" {
 		c.Models = []string{a.Model}
 	}
 	if a.Node == "" {
 		c.Up = true
 		c.Capabilities = hubCaps
+		c.Level = hub.level.OrDefault()
+		c.Slots = hub.slots[a.Harness]
 	} else {
 		status, known := byNode[a.Node]
 		if !known {
@@ -167,6 +201,7 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string) Ca
 			c.Eligible, c.Why = false, missing
 			return c
 		}
+		c.Slots = harnessSlots(status.Advert, a.Harness)
 		offered := harnessModels(status.Advert, a.Harness)
 		if len(offered) > 0 {
 			c.Models = offered
@@ -229,4 +264,19 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// place is how the hub describes its own machine to describe().
+type place struct {
+	level project.Level
+	slots map[string]int
+}
+
+func harnessSlots(advert nodewire.Advert, id string) int {
+	for _, h := range advert.Harnesses {
+		if h.ID == id {
+			return h.Slots
+		}
+	}
+	return 0
 }

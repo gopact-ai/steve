@@ -18,6 +18,7 @@ package project
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -44,6 +45,17 @@ var levelOrder = map[Level]int{LevelPublic: 0, LevelInternal: 1, LevelRestricted
 
 // Admits reports whether data at level l may sit at a place of level at.
 func (l Level) Admits(at Level) bool { return levelOrder[at] >= levelOrder[l] }
+
+// Valid says whether the level is one of the four.
+func (l Level) Valid() bool { _, ok := levelOrder[l]; return ok }
+
+// OrDefault is internal when unset.
+func (l Level) OrDefault() Level {
+	if l == "" {
+		return LevelInternal
+	}
+	return l
+}
 
 // RepoMode is the user's explicit choice of how agents touch the project.
 type RepoMode string
@@ -335,4 +347,16 @@ func (s *Store) Materialize(ctx context.Context, req Request) (Workspace, error)
 	return Workspace{
 		ID: "canonical:" + p.ID, Project: p.ID, Node: p.Home.Node, Path: p.Home.Path, Kind: KindCanonical,
 	}, nil
+}
+
+const kindDisclosure = "disclosure"
+
+// Disclose records that project content left Steve through a channel.
+func (s *Store) Disclose(ctx context.Context, id string, record any) error {
+	return s.l.PutBinding(ctx, kindDisclosure, id, record)
+}
+
+// Disclosures lists every disclosure record as raw JSON keyed by id.
+func (s *Store) Disclosures(ctx context.Context) (map[string]json.RawMessage, error) {
+	return s.l.Bindings(ctx, kindDisclosure)
 }

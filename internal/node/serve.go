@@ -32,6 +32,9 @@ type HarnessSpec struct {
 	// authority on what it will actually accept; this is what the node
 	// promises so the hub can refuse an impossible placement up front.
 	Models []string `json:"models,omitempty"`
+	// Slots caps concurrent sessions of this harness on this node. The hub
+	// leases one slot per attempt; zero is unlimited.
+	Slots int `json:"slots,omitempty"`
 }
 
 // ServerConfig is the node's own configuration file.
@@ -230,7 +233,7 @@ func (s *Server) advert() nodewire.Advert {
 	harnesses := make([]nodewire.Harness, 0, len(ids))
 	for _, id := range ids {
 		spec := s.cfg.Harnesses[id]
-		h := nodewire.Harness{ID: id, Command: spec.Command, Models: spec.Models}
+		h := nodewire.Harness{ID: id, Command: spec.Command, Models: spec.Models, Slots: spec.Slots}
 		if _, err := exec.LookPath(spec.Command); err != nil {
 			h.Missing = fmt.Sprintf("%q not on this node's PATH", spec.Command)
 		}

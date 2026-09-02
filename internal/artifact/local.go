@@ -15,6 +15,15 @@ import (
 // directory, no wire.
 type LocalNodes struct {
 	Dir string
+	// Levels is the level per node name; unset is internal.
+	Levels map[string]string
+}
+
+func (l LocalNodes) Level(_ context.Context, node string) (string, error) {
+	if level := l.Levels[node]; level != "" {
+		return level, nil
+	}
+	return "internal", nil
 }
 
 func (l LocalNodes) root(node string) string  { return filepath.Join(l.Dir, node, "work") }

@@ -428,6 +428,10 @@ func serve(args []string) error {
 	fleet := roster.New(catalog)
 	fleet.SetNodes(nodes)
 	fleet.SetHubCapabilities(cfg.Gateway.Capabilities)
+	fleet.SetHubLevel(cfg.HubLevel())
+	fleet.SetHubSlots(cfg.HubSlots())
+	fleet.SetNodeLevels(cfg.NodeLevels())
+	nodes.SetHubLevel(string(cfg.HubLevel()))
 
 	coordinator := turn.New(
 		catalog, store, assembler, manager, time.Duration(cfg.Gateway.PromptTimeout),
@@ -452,6 +456,15 @@ func serve(args []string) error {
 	// repository on the hub, materialised wherever a step runs.
 	artifacts := artifact.New(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "artifacts"), book, projects, nodes)
 	coordinator.SetArtifacts(artifacts)
+	// A landing the previous process was cut off in is finished — or
+	// stopped at a conflict — before any turn can touch the canonical.
+	if recovered, err := artifacts.RecoverLandings(context.Background()); err != nil {
+		return fmt.Errorf("recover landings: %w", err)
+	} else {
+		for _, l := range recovered {
+			log.Printf("steve: recovered landing %s of %s into %s: %s", l.ID, l.Artifact, l.Project, l.State)
+		}
+	}
 	tasks, err := task.OpenLedger(book, filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "tasks.json"))
 	if err != nil {
 		return fmt.Errorf("open tasks: %w", err)
@@ -595,6 +608,7 @@ func serve(args []string) error {
 		return err
 	}
 	gw.BindChannel(channel)
+	channel.SetJournal(book.Journal())
 	if gate != nil {
 		gate.BindChannel(channel)
 	}

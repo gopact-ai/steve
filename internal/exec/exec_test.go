@@ -706,3 +706,58 @@ func TestResultOutsideDeclaredTouchesDoesNotBind(t *testing.T) {
 		t.Fatal("an in-scope result was not bound")
 	}
 }
+
+// A retry takes the previous attempt over: the failed one is superseded and
+// points at its successor, so the lineage of the step is on record.
+func TestRetryTakesOverThePreviousAttempt(t *testing.T) {
+	art, att := stores(t)
+	var calls int
+	runner := &fakeRunner{reply: func(req StepRequest) (plan.StepResult, error) {
+		calls++
+		if calls == 1 {
+			return plan.StepResult{}, errors.New("first try broke")
+		}
+		return plan.StepResult{Answer: "second try worked"}, nil
+	}}
+	outcome := execute(t, plan.Plan{ProjectID: "p", ID: "take", TaskID: "ttake", Goal: "g", Steps: []plan.Step{{
+		ID: "work", Goal: "do", Requires: []string{"basic"},
+		State: plan.StepPending, Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "fixture"},
+	}}}, Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Runner: runner})
+	if outcome.Err != nil {
+		t.Fatal(outcome.Err)
+	}
+	records, _ := att.ForTask(context.Background(), "ttake")
+	if len(records) != 2 {
+		t.Fatalf("attempts = %d, want the failed one and its successor", len(records))
+	}
+	first, second := records[0], records[1]
+	if first.State != "superseded" || first.SupersededBy != second.ID || second.State != "bound" {
+		t.Fatalf("first = %s (by %s), second = %s", first.State, first.SupersededBy, second.State)
+	}
+}
+
+// Placement refuses a machine whose level does not reach the project's.
+func TestPlacementRespectsTheProjectLevel(t *testing.T) {
+	art, att := stores(t)
+	book, _ := ledger.Open(t.TempDir(), ledger.Options{})
+	t.Cleanup(func() { book.Close() })
+	projects := project.Open(book)
+	if err := projects.Declare(context.Background(), []project.Project{{ID: "p", Level: project.LevelRestricted, Home: project.Home{Path: t.TempDir()}}}); err != nil {
+		t.Fatal(err)
+	}
+	art = artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir(), Levels: map[string]string{"node-a": "public"}})
+	att = attempt.New(book)
+	r := testRoster(t, bothNodes())
+	r.SetNodeLevels(map[string]project.Level{"node-a": project.LevelPublic, "node-b": project.LevelRestricted})
+	runner := &fakeRunner{}
+	outcome := execute(t, plan.Plan{ProjectID: "p", ID: "lvl", TaskID: "tlvl", Goal: "g", Steps: []plan.Step{{
+		ID: "gpu-work", Goal: "needs the gpu box", Requires: []string{"gpu"},
+		State: plan.StepPending, Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "fixture"},
+	}}}, Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: r, Runner: runner})
+	if outcome.Err == nil || !strings.Contains(outcome.Err.Error(), "public") {
+		t.Fatalf("a restricted project was placed on a public node: %v", outcome.Err)
+	}
+	if len(runner.requests()) != 0 {
+		t.Fatal("the step ran anyway")
+	}
+}

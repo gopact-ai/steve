@@ -107,7 +107,13 @@ func (s *Store) Land(ctx context.Context, p project.Project, artifactID, by stri
 	if err != nil {
 		return land, err
 	}
-	merged, conflicts, err := repo.Merge(ctx, base, now.ID, artifactID, "land "+short(artifactID)+" into "+p.ID)
+	var merged string
+	var conflicts []string
+	if metadataOnly(p) {
+		merged, conflicts, err = s.mergeOnNode(ctx, p, base, now.ID, artifactID)
+	} else {
+		merged, conflicts, err = repo.Merge(ctx, base, now.ID, artifactID, "land "+short(artifactID)+" into "+p.ID)
+	}
 	if err != nil {
 		return land, s.fail(ctx, &land, LandLocked, LandMergeConflicted, err.Error(), nil)
 	}
@@ -116,7 +122,12 @@ func (s *Store) Land(ctx context.Context, p project.Project, artifactID, by stri
 		return land, Conflict{State: LandMergeConflicted, Paths: conflicts}
 	}
 	land.Merged = merged
-	paths, err := repo.Changed(ctx, now.ID, merged)
+	var paths []string
+	if metadataOnly(p) {
+		paths, err = s.changedOnNode(ctx, p, now.ID, merged)
+	} else {
+		paths, err = repo.Changed(ctx, now.ID, merged)
+	}
 	if err != nil {
 		return land, err
 	}
@@ -174,11 +185,67 @@ func (s *Store) Land(ctx context.Context, p project.Project, artifactID, by stri
 		}
 		return land, err
 	}
-	if _, err := s.record(ctx, Manifest{ID: merged, Project: p.ID, Parent: now.ID, Label: p.Level, By: land.ID, Message: "landed " + short(artifactID),
-		Canonical: true, Receipts: []Receipt{{Place: "", At: s.now().UTC()}}}); err != nil {
+	if _, err := s.receipt(ctx, p, Manifest{ID: merged, Project: p.ID, Parent: now.ID, Label: p.Level, By: land.ID, Message: "landed " + short(artifactID), Canonical: true}); err != nil {
 		return land, err
 	}
 	return land, nil
+}
+
+// mergeOnNode three-way merges at the home node of a sealed project, which
+// needs the node's git to know merge-tree --write-tree (2.38+).
+func (s *Store) mergeOnNode(ctx context.Context, p project.Project, base, ours, theirs string) (string, []string, error) {
+	version, _, state, err := s.nodes.Git(ctx, p.Home.Node)
+	if err != nil {
+		return "", nil, err
+	}
+	if !gitAtLeast(version, 2, 38) {
+		return "", nil, fmt.Errorf("sealed project %s lives on %s whose git %s cannot merge in place (2.38 or newer needed)", p.ID, p.Home.Node, strings.TrimSpace(version))
+	}
+	if ours == base {
+		return theirs, nil, nil
+	}
+	if theirs == base {
+		return ours, nil, nil
+	}
+	bare := nodeBare(state, p.ID)
+	out, err := s.nodes.Exec(ctx, p.Home.Node, "", Script{}.Merge(bare, ours, theirs, "land "+short(theirs)+" into "+p.ID))
+	if err != nil {
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if len(lines) > 1 && strings.HasPrefix(lines[0], "CONFLICT ") {
+			return "", lines[1:], nil
+		}
+		return "", nil, fmt.Errorf("merge on %s: %w", p.Home.Node, err)
+	}
+	return lastLine(out), nil, nil
+}
+
+func (s *Store) changedOnNode(ctx context.Context, p project.Project, from, to string) ([]string, error) {
+	_, _, state, err := s.nodes.Git(ctx, p.Home.Node)
+	if err != nil {
+		return nil, err
+	}
+	out, err := s.nodes.Exec(ctx, p.Home.Node, "", fmt.Sprintf("git --git-dir=%s diff-tree -r --name-only --no-commit-id %s %s", quote(nodeBare(state, p.ID)), quote(from), quote(to)))
+	if err != nil {
+		return nil, err
+	}
+	var paths []string
+	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+		if line != "" {
+			paths = append(paths, line)
+		}
+	}
+	return paths, nil
+}
+
+func gitAtLeast(version string, major, minor int) bool {
+	fields := strings.Split(strings.TrimSpace(strings.TrimPrefix(version, "git version ")), ".")
+	if len(fields) < 2 {
+		return false
+	}
+	var a, b int
+	fmt.Sscanf(fields[0], "%d", &a)
+	fmt.Sscanf(fields[1], "%d", &b)
+	return a > major || (a == major && b >= minor)
 }
 
 // applyOnNode writes the merged tree into a canonical workspace that lives
@@ -190,7 +257,7 @@ func (s *Store) applyOnNode(ctx context.Context, p project.Project, from, merged
 		return err
 	}
 	bare := nodeBare(state, p.ID)
-	if !s.nodeHas(ctx, p.Home.Node, bare, merged) {
+	if !metadataOnly(p) && !s.nodeHas(ctx, p.Home.Node, bare, merged) {
 		if err := s.push(ctx, p.Home.Node, bare, hub, merged, []string{from}); err != nil {
 			return err
 		}

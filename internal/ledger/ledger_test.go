@@ -331,3 +331,37 @@ func TestBindingsRoundTrip(t *testing.T) {
 		t.Fatalf("bindings = %v", all)
 	}
 }
+
+// A command still running is not run again by a retry that arrives
+// meanwhile: the second caller is told it is in flight, and gets the one
+// answer once it exists.
+func TestCommandInFlightIsNotRunTwice(t *testing.T) {
+	c := &clock{t: time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC)}
+	l := open(t, t.TempDir(), c)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := l.Command(t.Context(), "msg-9", "chat", "user", func(context.Context) (json.RawMessage, error) {
+			close(started)
+			<-release
+			return json.RawMessage(`{"n":1}`), nil
+		})
+		done <- err
+	}()
+	<-started
+	if _, replayed, err := l.Command(t.Context(), "msg-9", "chat", "user", func(context.Context) (json.RawMessage, error) {
+		t.Fatal("the in-flight command was run a second time")
+		return nil, nil
+	}); !replayed || !errors.Is(err, ErrInFlight) {
+		t.Fatalf("concurrent retry = replayed:%v err:%v", replayed, err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	out, replayed, err := l.Command(t.Context(), "msg-9", "chat", "user", nil)
+	if err != nil || !replayed || string(out) != `{"n":1}` {
+		t.Fatalf("after completion = %s replayed=%v err=%v", out, replayed, err)
+	}
+}

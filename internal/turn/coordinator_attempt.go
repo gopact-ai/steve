@@ -26,6 +26,19 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 		Node: selected.Node, Harness: selected.Harness, Agent: selected.ID,
 		Workspace: workspace, Scope: attempt.ScopeUnrestricted, By: req.SenderOpenID,
 	}
+	// The machine must qualify for the project's level; the roster knows
+	// both the machine's level and the endpoint's session cap.
+	if c.fleet != nil {
+		for _, cand := range c.fleet.All(ctx) {
+			if cand.Agent.ID != selected.ID {
+				continue
+			}
+			spec.Slots = cand.Slots
+			if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok && !p.Level.OrDefault().Admits(cand.Level.OrDefault()) {
+				return attempt.Record{}, UserError{Text: c.text.T(i18n.ProjectLevel, p.ID, p.Level.OrDefault(), selected.ID, placeLabel(selected.Node), cand.Level.OrDefault(), protocol.CommandProject)}
+			}
+		}
+	}
 	record, err := c.attempts.Open(ctx, spec)
 	if err == nil {
 		// The before-snapshot is the precondition of running in place: what
@@ -95,6 +108,7 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 		if _, err := c.attempts.Finish(ctx, id, "turn", outcome); err != nil {
 			log.Printf("turn: attempt %s finish: %v", id, err)
 		}
+		c.recordDisclosure(ctx, record, result)
 		return
 	}
 	if _, err := c.attempts.Fail(ctx, id, "turn", turnErr.Error()); err != nil {
@@ -118,5 +132,39 @@ func (c *Coordinator) landPending(ctx context.Context, p project.Project) {
 	}
 	for _, l := range landed {
 		log.Printf("turn: landing %s of %s into %s: %s (%d paths)", l.ID, l.Artifact, p.ID, l.State, len(l.Paths))
+	}
+}
+
+// Disclosure is the record that content of a restricted or sealed project
+// left through the chat: the only egress this version has. It is a fact
+// for the audit, written before the answer is sent.
+type Disclosure struct {
+	Project string    `json:"project"`
+	Level   string    `json:"level"`
+	TaskID  string    `json:"task_id,omitempty"`
+	Attempt string    `json:"attempt"`
+	Turn    string    `json:"turn"`
+	Channel string    `json:"channel"`
+	Bytes   int       `json:"bytes"`
+	By      string    `json:"by,omitempty"`
+	At      time.Time `json:"at"`
+}
+
+func (c *Coordinator) recordDisclosure(ctx context.Context, record attempt.Record, result Result) {
+	if c.projects == nil || result.Text == "" {
+		return
+	}
+	p, ok, err := c.projects.Get(ctx, record.Project)
+	if err != nil || !ok {
+		return
+	}
+	// Internal and public content leaving is not a disclosure.
+	if level := p.Level.OrDefault(); level != project.LevelRestricted && level != project.LevelSealed {
+		return
+	}
+	d := Disclosure{Project: p.ID, Level: string(p.Level), TaskID: record.TaskID, Attempt: record.ID, Turn: record.TurnID,
+		Channel: "feishu", Bytes: len(result.Text), By: record.By, At: time.Now().UTC()}
+	if err := c.projects.Disclose(ctx, record.ID, d); err != nil {
+		log.Printf("turn: record disclosure for %s: %v", record.ID, err)
 	}
 }

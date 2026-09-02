@@ -61,6 +61,7 @@ const (
 	ProjectUnbound         Key = "project_unbound"
 	ProjectsDisabled       Key = "projects_disabled"
 	ProjectBusy            Key = "project_busy"
+	ProjectLevel           Key = "project_level"
 	StateSaveFailed        Key = "state_save_failed"
 	Reset                  Key = "reset"
 	NoRunningTurn          Key = "no_running_turn"

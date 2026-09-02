@@ -19,6 +19,7 @@ import (
 // node receives.
 type localNode struct {
 	root, state string
+	level       string
 }
 
 func (n *localNode) Exec(ctx context.Context, node, dir, command string) (string, error) {
@@ -57,7 +58,15 @@ func (n *localNode) GetBlob(_ context.Context, node, name string, into io.Writer
 }
 
 func (n *localNode) Git(context.Context, string) (string, string, string, error) {
-	return "2.x", n.root, n.state, nil
+	out, _ := exec.Command("git", "--version").Output()
+	return string(out), n.root, n.state, nil
+}
+
+func (n *localNode) Level(_ context.Context, node string) (string, error) {
+	if node != "" && n.level != "" {
+		return n.level, nil
+	}
+	return "internal", nil
 }
 
 func newStore(t *testing.T, node *localNode, home project.Home) (*Store, project.Project) {

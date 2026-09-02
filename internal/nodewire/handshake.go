@@ -38,6 +38,9 @@ type Harness struct {
 	Command string   `json:"command"`
 	Version string   `json:"version,omitempty"`
 	Models  []string `json:"models,omitempty"`
+	// Slots is how many sessions this harness may run here at once; zero
+	// means the node did not say, and the hub treats it as unlimited.
+	Slots int `json:"slots,omitempty"`
 	// Missing records why a configured harness is unusable here — a binary
 	// that is not on the node's PATH, say. An honest roster reports what is
 	// broken instead of omitting it.

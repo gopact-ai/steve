@@ -168,3 +168,19 @@ func (r *Registry) Git(ctx context.Context, nodeName string) (string, string, st
 	}
 	return advert.Git, advert.WorkspaceRoot, advert.StateDir, nil
 }
+
+// Level is the data level the hub assigned the node; the hub itself (node
+// "") answers with what the caller configured for it via SetHubLevel.
+func (r *Registry) Level(ctx context.Context, nodeName string) (string, error) {
+	if nodeName == "" {
+		return r.hubLevel(), nil
+	}
+	cfg, ok := r.config(nodeName)
+	if !ok {
+		return "", fmt.Errorf("node %q is not configured", nodeName)
+	}
+	if cfg.Level == "" {
+		return "internal", nil
+	}
+	return cfg.Level, nil
+}
