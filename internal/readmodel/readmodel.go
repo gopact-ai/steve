@@ -39,6 +39,74 @@ type Snapshot struct {
 	// Landings are the most recent results brought into a canonical
 	// workspace, conflicts included.
 	Landings []Landing `json:"landings"`
+	// Facts are the rest of what the ledger holds and a person may want
+	// to see at a glance: capacity reservations, attestations, replicas,
+	// disclosures awaiting the owner, side effects with an unknown
+	// outcome, and grants.
+	Facts Facts `json:"facts"`
+}
+
+// Facts is the ledger seen from the outside.
+type Facts struct {
+	Reservations []Reservation `json:"reservations"`
+	Attestations []Attestation `json:"attestations"`
+	Replicas     []Replica     `json:"replicas"`
+	Disclosures  []Disclosure  `json:"disclosures"`
+	Effects      []Effect      `json:"effects"`
+	Grants       []Grant       `json:"grants"`
+}
+
+type Reservation struct {
+	ID        string    `json:"id"`
+	Endpoint  string    `json:"endpoint"`
+	For       string    `json:"for"`
+	Region    string    `json:"region,omitempty"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
+type Attestation struct {
+	Artifact string    `json:"artifact"`
+	Step     string    `json:"step,omitempty"`
+	Kind     string    `json:"kind"`
+	Verifier string    `json:"verifier"`
+	Verdict  string    `json:"verdict"`
+	Detail   string    `json:"detail,omitempty"`
+	Attempt  string    `json:"attempt"`
+	At       time.Time `json:"at"`
+}
+
+type Replica struct {
+	Artifact   string    `json:"artifact"`
+	Node       string    `json:"node"`
+	Generation int64     `json:"generation"`
+	State      string    `json:"state"`
+	Note       string    `json:"note,omitempty"`
+	At         time.Time `json:"at"`
+}
+
+type Disclosure struct {
+	ID        string    `json:"id"`
+	Project   string    `json:"project"`
+	TaskID    string    `json:"task_id,omitempty"`
+	Requester string    `json:"requester"`
+	Bytes     int       `json:"bytes"`
+	At        time.Time `json:"at"`
+}
+
+type Effect struct {
+	ID      string    `json:"id"`
+	Tool    string    `json:"tool"`
+	TaskID  string    `json:"task_id"`
+	Attempt string    `json:"attempt"`
+	Error   string    `json:"error,omitempty"`
+	At      time.Time `json:"at"`
+}
+
+type Grant struct {
+	Project   string `json:"project"`
+	Principal string `json:"principal"`
+	Role      string `json:"role"`
+	By        string `json:"by"`
 }
 
 type Attempt struct {
@@ -82,6 +150,7 @@ type Node struct {
 	Harnesses    []Harness `json:"harnesses,omitempty"`
 	LastError    string    `json:"last_error,omitempty"`
 	Level        string    `json:"level,omitempty"`
+	Region       string    `json:"region,omitempty"`
 }
 
 type Harness struct {
@@ -100,6 +169,7 @@ type Agent struct {
 	Requires []string `json:"requires,omitempty"`
 	Level    string   `json:"level,omitempty"`
 	Slots    int      `json:"slots,omitempty"`
+	Region   string   `json:"region,omitempty"`
 }
 
 type Task struct {
@@ -176,6 +246,7 @@ type Sources struct {
 type LedgerSource interface {
 	LiveAttempts(ctx context.Context) []Attempt
 	RecentLandings(ctx context.Context) []Landing
+	Facts(ctx context.Context) Facts
 }
 
 type NodeSource interface {

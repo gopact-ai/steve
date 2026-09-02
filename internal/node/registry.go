@@ -45,7 +45,9 @@ type Status struct {
 	Name string
 	Addr string
 	// Level is the data level the hub assigned this node.
-	Level     string
+	Level string
+	// Region is whose leases the node\'s resources carry.
+	Region    string
 	Up        bool
 	Since     time.Time
 	Advert    nodewire.Advert
@@ -311,7 +313,7 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 	r.mu.Unlock()
 
 	r.remember(&Status{
-		Name: name, Addr: cfg.Addr, Level: levelOr(cfg.Level), Up: true, Since: time.Now(), Advert: c.advert,
+		Name: name, Addr: cfg.Addr, Level: levelOr(cfg.Level), Region: cfg.Region, Up: true, Since: time.Now(), Advert: c.advert,
 	})
 	go func() {
 		<-c.mux.Done()

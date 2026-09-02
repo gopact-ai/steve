@@ -6,6 +6,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -14,6 +15,59 @@ type Ledger struct {
 	Attempts  *attempt.Service
 	Artifacts *artifact.Store
 	Projects  *project.Store
+	Intents   *intent.Service
+}
+
+// Facts gathers the ledger's other records. Every list is non-nil so the
+// JSON says "none" rather than "unknown".
+func (l Ledger) Facts(ctx context.Context) Facts {
+	f := Facts{Reservations: []Reservation{}, Attestations: []Attestation{}, Replicas: []Replica{}, Disclosures: []Disclosure{}, Effects: []Effect{}, Grants: []Grant{}}
+	if l.Attempts != nil {
+		if rs, err := l.Attempts.Reservations(ctx); err == nil {
+			for _, r := range rs {
+				f.Reservations = append(f.Reservations, Reservation{ID: r.ID, Endpoint: r.Endpoint, For: r.For, Region: r.Lease.Region, ExpiresAt: r.Lease.ExpiresAt})
+			}
+		}
+	}
+	if l.Artifacts != nil {
+		if as, err := l.Artifacts.Attestations(ctx, ""); err == nil {
+			for _, a := range tail(as, 30) {
+				f.Attestations = append(f.Attestations, Attestation{Artifact: a.Artifact, Step: a.Step, Kind: a.Kind, Verifier: a.Verifier, Verdict: a.Verdict, Detail: a.Detail, Attempt: a.By, At: a.At})
+			}
+		}
+		if rs, err := l.Artifacts.Replicas(ctx, ""); err == nil {
+			for _, r := range tail(rs, 40) {
+				f.Replicas = append(f.Replicas, Replica{Artifact: r.Artifact, Node: r.Node, Generation: r.Generation, State: r.State, Note: r.Note, At: r.At})
+			}
+		}
+	}
+	if l.Projects != nil {
+		if ds, err := l.Projects.PendingDisclosures(ctx); err == nil {
+			for _, d := range ds {
+				f.Disclosures = append(f.Disclosures, Disclosure{ID: d.ID, Project: d.Project, TaskID: d.TaskID, Requester: d.Requester, Bytes: d.Bytes, At: d.ProposedAt})
+			}
+		}
+		if gs, err := l.Projects.Grants(ctx, ""); err == nil {
+			for _, g := range gs {
+				f.Grants = append(f.Grants, Grant{Project: g.Project, Principal: g.Principal, Role: string(g.Role), By: g.By})
+			}
+		}
+	}
+	if l.Intents != nil {
+		if is, err := l.Intents.Unresolved(ctx); err == nil {
+			for _, it := range is {
+				f.Effects = append(f.Effects, Effect{ID: it.ID, Tool: it.Tool, TaskID: it.TaskID, Attempt: it.AttemptID, Error: it.Error, At: it.At})
+			}
+		}
+	}
+	return f
+}
+
+func tail[T any](in []T, n int) []T {
+	if len(in) > n {
+		return in[len(in)-n:]
+	}
+	return in
 }
 
 func (l Ledger) LiveAttempts(ctx context.Context) []Attempt {

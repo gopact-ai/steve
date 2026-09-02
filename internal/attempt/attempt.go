@@ -777,3 +777,20 @@ func (s *Service) ReleaseReservationFor(ctx context.Context, key string) {
 func (s *Service) LeaseOf(ctx context.Context, key string) (ledger.Lease, bool, error) {
 	return s.l.LeaseOf(ctx, key)
 }
+
+// Reservations lists every capacity reservation still held.
+func (s *Service) Reservations(ctx context.Context) ([]Reservation, error) {
+	raw, err := s.l.Bindings(ctx, reservationKind)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Reservation, 0, len(raw))
+	for _, data := range raw {
+		var r Reservation
+		if err := json.Unmarshal(data, &r); err == nil {
+			out = append(out, r)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
+	return out, nil
+}

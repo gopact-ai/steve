@@ -51,6 +51,7 @@ const (
 	viewOverview = iota
 	viewPlans
 	viewFeed
+	viewLedger
 	viewCount
 )
 

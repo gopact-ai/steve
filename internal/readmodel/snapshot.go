@@ -24,7 +24,7 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 			snap.Agents = append(snap.Agents, Agent{
 				ID: c.Agent.ID, Node: c.Node, Harness: c.Harness,
 				Model: c.Agent.Model, Eligible: c.Eligible, Why: c.Why,
-				Requires: c.Agent.Requires, Level: string(c.Level.OrDefault()), Slots: c.Slots,
+				Requires: c.Agent.Requires, Level: string(c.Level.OrDefault()), Slots: c.Slots, Region: c.Region,
 			})
 		}
 	}
@@ -40,9 +40,18 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	if m.src.Tasks != nil {
 		snap.Tasks = tasks(m.src.Tasks.List(""), planByTask)
 	}
+	// Absence is a fact too: every list is present, empty or not, so a
+	// renderer never has to guess whether "none" meant "not asked".
+	snap.Attempts, snap.Landings = []Attempt{}, []Landing{}
+	snap.Facts = Facts{Reservations: []Reservation{}, Attestations: []Attestation{}, Replicas: []Replica{}, Disclosures: []Disclosure{}, Effects: []Effect{}, Grants: []Grant{}}
 	if m.src.Ledger != nil {
-		snap.Attempts = m.src.Ledger.LiveAttempts(ctx)
-		snap.Landings = m.src.Ledger.RecentLandings(ctx)
+		if live := m.src.Ledger.LiveAttempts(ctx); live != nil {
+			snap.Attempts = live
+		}
+		if recent := m.src.Ledger.RecentLandings(ctx); recent != nil {
+			snap.Landings = recent
+		}
+		snap.Facts = m.src.Ledger.Facts(ctx)
 	}
 	return snap
 }
@@ -53,7 +62,7 @@ func nodes(statuses []node.Status) []Node {
 		n := Node{
 			Name: s.Name, Addr: s.Addr, Up: s.Up, Since: s.Since,
 			OS: s.Advert.OS, Arch: s.Advert.Arch,
-			Capabilities: s.Advert.Capabilities, LastError: s.LastError, Level: s.Level,
+			Capabilities: s.Advert.Capabilities, LastError: s.LastError, Level: s.Level, Region: s.Region,
 		}
 		for _, h := range s.Advert.Harnesses {
 			n.Harnesses = append(n.Harnesses, Harness{ID: h.ID, Models: h.Models, Missing: h.Missing})

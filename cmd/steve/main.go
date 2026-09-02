@@ -564,7 +564,7 @@ func serve(args []string) error {
 			Node: nodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities,
 		},
 		Roster: fleet, Nodes: nodes, Tasks: tasks, Plans: plans,
-		Ledger: readmodel.Ledger{Attempts: attempts, Artifacts: artifacts, Projects: projects},
+		Ledger: readmodel.Ledger{Attempts: attempts, Artifacts: artifacts, Projects: projects, Intents: intents},
 	})
 	dashboard, err := readmodel.NewServer(view, readmodel.ServerConfig{
 		Addr: cfg.Gateway.ReadModelAddr, Token: cfg.Gateway.ReadModelToken,

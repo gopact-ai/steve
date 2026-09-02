@@ -510,3 +510,20 @@ func (s *Store) ResolveDisclosure(ctx context.Context, id string, approved bool,
 	})
 	return err
 }
+
+// PendingDisclosures lists disclosure requests awaiting the owner.
+func (s *Store) PendingDisclosures(ctx context.Context) ([]DisclosureRequest, error) {
+	ops, err := s.l.Operations(ctx, kindDisclosureOp, DisclosureProposed)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]DisclosureRequest, 0, len(ops))
+	for _, op := range ops {
+		var req DisclosureRequest
+		if err := json.Unmarshal(op.Data, &req); err == nil {
+			out = append(out, req)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].ProposedAt.Before(out[j].ProposedAt) })
+	return out, nil
+}

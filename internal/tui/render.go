@@ -36,6 +36,8 @@ func (m *Model) render() string {
 		b.WriteString(renderLandings(snap, width))
 	case viewFeed:
 		b.WriteString(renderFeed(feed, height-6))
+	case viewLedger:
+		b.WriteString(renderLedger(snap, width))
 	default:
 		b.WriteString(renderNodes(snap, width))
 		b.WriteString(renderAgents(snap, width))
@@ -344,4 +346,56 @@ func levelSlots(a readmodel.Agent) string {
 		return fmt.Sprintf("%s/%d", a.Level, a.Slots)
 	}
 	return a.Level
+}
+
+func renderLedger(snap readmodel.Snapshot, width int) string {
+	var b strings.Builder
+	f := snap.Facts
+	section := func(title string, n int, none string) bool {
+		b.WriteString("\n" + bold + title + reset + "\n")
+		if n == 0 {
+			b.WriteString(dim + "  " + none + "\n" + reset)
+			return false
+		}
+		return true
+	}
+	if section("DISCLOSURES AWAITING THE OWNER", len(f.Disclosures), "nothing waiting") {
+		for _, d := range f.Disclosures {
+			fmt.Fprintf(&b, "  %-16s %-12s task #%-6s %s  %d bytes  %s%s%s\n", d.ID, d.Project, d.TaskID, d.Requester, d.Bytes, dim, d.At.Format("15:04:05"), reset)
+		}
+	}
+	if section("EFFECTS WITH AN UNKNOWN OUTCOME", len(f.Effects), "none") {
+		for _, e := range f.Effects {
+			fmt.Fprintf(&b, "  %-24s %-14s task #%-6s %s%s%s\n", e.ID, e.Tool, e.TaskID, red, truncate(e.Error, max(10, width-56)), reset)
+		}
+	}
+	if section("RESERVATIONS", len(f.Reservations), "no capacity reserved") {
+		for _, r := range f.Reservations {
+			fmt.Fprintf(&b, "  %-28s %-32s %s%s until %s%s\n", r.ID, r.Endpoint, dim, r.For, r.ExpiresAt.Format("15:04:05"), reset)
+		}
+	}
+	if section("ATTESTATIONS", len(f.Attestations), "no verdicts yet") {
+		for _, a := range f.Attestations {
+			color := green
+			if a.Verdict != "pass" {
+				color = red
+			}
+			fmt.Fprintf(&b, "  %s%-5s%s %-12s %-8s %-10s %s%s%s\n", color, a.Verdict, reset, a.Artifact[:min(12, len(a.Artifact))], a.Step, a.Kind, dim, truncate(a.Verifier, max(10, width-46)), reset)
+		}
+	}
+	if section("REPLICAS", len(f.Replicas), "no copies on nodes") {
+		for _, r := range f.Replicas {
+			color := green
+			if r.State != "verified" {
+				color = yellow
+			}
+			fmt.Fprintf(&b, "  %-12s %-10s gen %-3d %s%-12s%s %s%s%s\n", r.Artifact[:min(12, len(r.Artifact))], r.Node, r.Generation, color, r.State, reset, dim, r.Note, reset)
+		}
+	}
+	if section("GRANTS", len(f.Grants), "no grants; defaults apply") {
+		for _, g := range f.Grants {
+			fmt.Fprintf(&b, "  %-12s %-28s %-6s %sby %s%s\n", g.Project, g.Principal, g.Role, dim, g.By, reset)
+		}
+	}
+	return b.String()
 }

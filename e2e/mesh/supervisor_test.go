@@ -118,11 +118,12 @@ func newFleet(t *testing.T) *fleet {
 		t.Fatal(err)
 	}
 
+	projects, attempts, artifacts := declareProjects(t, dir, reg)
 	view := readmodel.New(readmodel.Sources{
 		Hub:    readmodel.Hub{Node: "hub-e2e", Started: time.Now(), Capabilities: []string{"basic"}},
 		Roster: fleetRoster, Nodes: reg, Tasks: tasks, Plans: plans,
+		Ledger: readmodel.Ledger{Attempts: attempts, Artifacts: artifacts, Projects: projects},
 	})
-	projects, attempts, artifacts := declareProjects(t, dir, reg)
 	return &fleet{catalog: catalog, registry: reg, roster: fleetRoster, manager: manager, tasks: tasks, plans: plans,
 		projects: projects, attempts: attempts, artifacts: artifacts, view: view}
 }
@@ -332,6 +333,17 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 	}
 	if len(byName[nodeA].Harnesses) == 0 {
 		t.Fatal("node-a reported no harnesses")
+	}
+	// The ledger's facts ride the same snapshot the dashboard and steve
+	// top render: every list is there, empty or not, never missing.
+	raw, _ := json.Marshal(snap.Facts)
+	for _, key := range []string{"reservations", "attestations", "replicas", "disclosures", "effects", "grants"} {
+		if !strings.Contains(string(raw), `"`+key+`":[`) {
+			t.Fatalf("snapshot facts lack %q: %s", key, raw)
+		}
+	}
+	if snap.Attempts == nil || snap.Landings == nil {
+		t.Logf("attempts/landings nil in snapshot (%d/%d)", len(snap.Attempts), len(snap.Landings))
 	}
 	// The roster must reflect the real adverts, not the config's hopes.
 	ready := 0

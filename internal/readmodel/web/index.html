@@ -74,6 +74,9 @@
   <h2>Landings</h2>
   <div id="landings"></div>
 
+  <h2>Ledger</h2>
+  <div id="facts"></div>
+
   <h2>Activity</h2>
   <div class="feed" id="feed"></div>
 </div>
@@ -125,7 +128,7 @@ function renderAgents(agents) {
     return `<tr><td>${esc(a.id)}</td><td>${state}</td>`
       + `<td>${esc(a.node || "hub")}</td><td>${esc(a.harness)}</td>`
       + `<td class="dim">${esc(a.model || "—")}</td>`
-      + `<td class="dim">${esc(a.level || "internal")}${a.slots ? " · " + esc(a.slots) + " slots" : ""}</td>`
+      + `<td class="dim">${esc(a.level || "internal")}${a.slots ? " · " + esc(a.slots) + " slots" : ""}${a.region ? " · " + esc(a.region) : ""}</td>`
       + `<td class="dim">${esc((a.requires || []).join(", ")) || "—"}</td>`
       + `<td class="down">${esc(a.why || "")}</td></tr>`;
   });
@@ -201,6 +204,27 @@ function renderLandings(landings) {
     ? table(["when", "project", "state", "artifact", "paths", "note"], rows) : empty("nothing landed yet");
 }
 
+function renderFacts(f) {
+  f = f || {};
+  const sections = [];
+  const rows = (list, fn) => (list || []).map(fn);
+  const block = (title, cols, body, none) => `<h3>${title}</h3>` + (body.length ? table(cols, body) : empty(none));
+  const when = t => esc(new Date(t).toLocaleTimeString());
+  sections.push(block("Reservations", ["id", "endpoint", "for", "region", "expires"],
+    rows(f.reservations, r => `<tr><td>${esc(r.id)}</td><td>${esc(r.endpoint)}</td><td>${esc(r.for)}</td><td class="dim">${esc(r.region || "—")}</td><td class="dim">${when(r.expires_at)}</td></tr>`), "no capacity reserved"));
+  sections.push(block("Disclosures awaiting the owner", ["id", "project", "task", "requester", "bytes", "since"],
+    rows(f.disclosures, d => `<tr><td>${esc(d.id)}</td><td>${esc(d.project)}</td><td>${esc(d.task_id || "—")}</td><td>${esc(d.requester)}</td><td>${esc(d.bytes)}</td><td class="dim">${when(d.at)}</td></tr>`), "nothing waiting"));
+  sections.push(block("Effects with an unknown outcome", ["id", "tool", "task", "attempt", "error", "at"],
+    rows(f.effects, e => `<tr><td>${esc(e.id)}</td><td>${esc(e.tool)}</td><td>${esc(e.task_id)}</td><td class="dim">${esc(e.attempt)}</td><td class="down">${esc(e.error || "")}</td><td class="dim">${when(e.at)}</td></tr>`), "none"));
+  sections.push(block("Attestations", ["artifact", "step", "kind", "verifier", "verdict", "attempt", "at"],
+    rows(f.attestations, a => `<tr><td class="dim">${esc((a.artifact || "").slice(0, 12))}</td><td>${esc(a.step || "—")}</td><td>${esc(a.kind)}</td><td>${esc(a.verifier)}</td><td><span class="pill ${a.verdict === "pass" ? "up" : "down"}">${esc(a.verdict)}</span></td><td class="dim">${esc(a.attempt)}</td><td class="dim">${when(a.at)}</td></tr>`), "no verdicts yet"));
+  sections.push(block("Replicas", ["artifact", "node", "generation", "state", "note", "at"],
+    rows(f.replicas, r => `<tr><td class="dim">${esc((r.artifact || "").slice(0, 12))}</td><td>${esc(r.node)}</td><td>${esc(r.generation)}</td><td><span class="pill ${r.state === "verified" ? "up" : r.state === "lost" ? "down" : "busy"}">${esc(r.state)}</span></td><td class="dim">${esc(r.note || "")}</td><td class="dim">${when(r.at)}</td></tr>`), "no copies on nodes"));
+  sections.push(block("Grants", ["project", "principal", "role", "by"],
+    rows(f.grants, g => `<tr><td>${esc(g.project)}</td><td>${esc(g.principal)}</td><td>${esc(g.role)}</td><td class="dim">${esc(g.by)}</td></tr>`), "no grants; defaults apply"));
+  document.getElementById("facts").innerHTML = sections.join("");
+}
+
 async function refresh() {
   const res = await fetch("/state" + q, { headers: auth });
   if (!res.ok) { document.getElementById("live").textContent = "unauthorized"; return; }
@@ -208,7 +232,7 @@ async function refresh() {
   document.getElementById("hub").textContent =
     `hub ${s.hub.node || "—"}${s.hub.capabilities?.length ? " · " + s.hub.capabilities.join(", ") : ""}`
     + ` · ${new Date(s.at).toLocaleTimeString()}`;
-  renderNodes(s.nodes); renderAgents(s.agents); renderAttempts(s.attempts); renderTasks(s.tasks); renderPlans(s.plans); renderLandings(s.landings);
+  renderNodes(s.nodes); renderAgents(s.agents); renderAttempts(s.attempts); renderTasks(s.tasks); renderPlans(s.plans); renderLandings(s.landings); renderFacts(s.facts);
 }
 
 const feed = document.getElementById("feed");
