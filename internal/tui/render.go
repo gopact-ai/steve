@@ -116,8 +116,8 @@ func renderAgents(snap readmodel.Snapshot, width int) string {
 		if where == "" {
 			where = "hub"
 		}
-		fmt.Fprintf(&b, "  %s  %-12s %-10s %-12s %s\n",
-			mark, a.ID, where, a.Harness, dim+a.Model+reset)
+		fmt.Fprintf(&b, "  %s  %-12s %-10s %-12s %-10s %s\n",
+			mark, a.ID, where, a.Harness, levelSlots(a), dim+a.Model+reset)
 		if a.Why != "" {
 			fmt.Fprintf(&b, "        %s%s%s\n", yellow, truncate(a.Why, width-10), reset)
 		}
@@ -337,4 +337,11 @@ func renderLandings(snap readmodel.Snapshot, width int) string {
 			color, l.State, reset, l.Project, l.Artifact[:min(12, len(l.Artifact))], l.Paths, dim, truncate(l.Error, max(10, width-60)), reset)
 	}
 	return b.String()
+}
+
+func levelSlots(a readmodel.Agent) string {
+	if a.Slots > 0 {
+		return fmt.Sprintf("%s/%d", a.Level, a.Slots)
+	}
+	return a.Level
 }

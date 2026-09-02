@@ -361,6 +361,18 @@ func (Script) Merge(dir, ours, theirs, message string) string {
 		quote(dir), quote(ours), quote(theirs), quote(message), quote(ours), quote(theirs))
 }
 
+// MergeLegacy three-way merges on a git too old for merge-tree
+// --write-tree: a throwaway index and work tree, read-tree -m with
+// git-merge-one-file for what read-tree leaves, then write-tree. Same
+// contract as Merge.
+func (Script) MergeLegacy(dir, base, ours, theirs, message string) string {
+	return fmt.Sprintf("export GIT_DIR=%s; tmp=$(mktemp -d) && export GIT_WORK_TREE=\"$tmp\" GIT_INDEX_FILE=\"$tmp.index\"; cd \"$tmp\" && "+
+		"git read-tree -m -u --aggressive %s %s %s >/dev/null 2>&1; git merge-index git-merge-one-file -a >/dev/null 2>&1; "+
+		"if [ -n \"$(git ls-files --unmerged)\" ]; then echo CONFLICT; git ls-files --unmerged | awk '{print $4}' | sort -u; rm -rf \"$tmp\" \"$tmp.index\"; exit 1; fi; "+
+		"tree=$(git write-tree) && sha=$(git commit-tree \"$tree\" -m %s -p %s -p %s) && git update-ref \"refs/steve/artifacts/$sha\" \"$sha\"; rc=$?; rm -rf \"$tmp\" \"$tmp.index\"; [ $rc -eq 0 ] && echo \"$sha\"",
+		quote(dir), quote(base), quote(ours), quote(theirs), quote(message), quote(ours), quote(theirs))
+}
+
 // Apply brings a directory from one tree to another, as Repo.Apply does.
 func (Script) Apply(dir, from, to, target string) string {
 	return fmt.Sprintf("export GIT_DIR=%s GIT_WORK_TREE=%s GIT_INDEX_FILE=%s.land-index; cd \"$GIT_WORK_TREE\" && rm -f \"$GIT_INDEX_FILE\" && git read-tree %s && git update-index --refresh -q --ignore-missing; git read-tree -m -u %s %s; rc=$?; rm -f \"$GIT_INDEX_FILE\"; exit $rc",

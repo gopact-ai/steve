@@ -55,6 +55,9 @@ func (c *Coordinator) resolveWorkspace(ctx context.Context, req Request, selecte
 	if err != nil {
 		return project.Binding{}, project.Workspace{}, err
 	}
+	if err := c.require(ctx, binding.ProjectID, req.SenderOpenID, project.RoleWrite); err != nil {
+		return project.Binding{}, project.Workspace{}, err
+	}
 	workspace, err := c.projects.Materialize(ctx, project.Request{Project: binding.ProjectID, Node: selected.Node})
 	if err != nil {
 		var notHome project.NotHomeError
@@ -102,6 +105,9 @@ func (c *Coordinator) projectCmd(ctx context.Context, req Request, rest string) 
 	}
 	if !ok {
 		return Result{Title: title, Text: c.text.T(i18n.ProjectUnknown, target)}, nil
+	}
+	if err := c.require(ctx, p.ID, req.SenderOpenID, project.RoleRead); err != nil {
+		return Result{}, err
 	}
 	conversation := c.store.Conversation(req.ConversationID)
 	for agentID := range conversation.Sessions {

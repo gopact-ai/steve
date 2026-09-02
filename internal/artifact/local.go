@@ -19,6 +19,9 @@ type LocalNodes struct {
 	Levels map[string]string
 }
 
+// Generation is fixed for a local node: it never reconnects.
+func (l LocalNodes) Generation(context.Context, string) (int64, error) { return 1, nil }
+
 func (l LocalNodes) Level(_ context.Context, node string) (string, error) {
 	if level := l.Levels[node]; level != "" {
 		return level, nil

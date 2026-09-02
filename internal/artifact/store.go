@@ -69,6 +69,9 @@ type Store struct {
 	projects *project.Store
 	nodes    Nodes
 	now      func() time.Time
+	// LegacyMerge forces the pre-2.38 merge path at nodes; tests use it
+	// to exercise that path on a modern git.
+	LegacyMerge bool
 }
 
 func New(dir string, l *ledger.Ledger, projects *project.Store, nodes Nodes) *Store {
@@ -233,6 +236,7 @@ func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Proje
 	if sha == parent {
 		return sha, false, nil
 	}
+	s.setReplica(ctx, sha, node, s.generationOf(ctx, node), ReplicaVerified, "made here")
 	if metadataOnly(p) {
 		return sha, true, nil
 	}
@@ -379,13 +383,8 @@ func (s *Store) Materialize(ctx context.Context, req project.Request) (project.W
 	}
 	wanted := append([]string{base}, inputArtifacts(req.Inputs)...)
 	for _, sha := range wanted {
-		if !s.nodeHas(ctx, req.Node, bare, sha) {
-			if metadataOnly(p) {
-				return project.Workspace{}, fmt.Errorf("artifact %s is not at %s, the only place sealed project %s lives", short(sha), req.Node, p.ID)
-			}
-			if err := s.push(ctx, req.Node, bare, hub, sha, nil); err != nil {
-				return project.Workspace{}, err
-			}
+		if err := s.ensureOnNode(ctx, p, req.Node, bare, hub, sha); err != nil {
+			return project.Workspace{}, err
 		}
 	}
 	dir := filepath.Join(root, "worktrees", id)

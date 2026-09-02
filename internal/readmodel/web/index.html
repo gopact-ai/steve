@@ -125,11 +125,12 @@ function renderAgents(agents) {
     return `<tr><td>${esc(a.id)}</td><td>${state}</td>`
       + `<td>${esc(a.node || "hub")}</td><td>${esc(a.harness)}</td>`
       + `<td class="dim">${esc(a.model || "—")}</td>`
+      + `<td class="dim">${esc(a.level || "internal")}${a.slots ? " · " + esc(a.slots) + " slots" : ""}</td>`
       + `<td class="dim">${esc((a.requires || []).join(", ")) || "—"}</td>`
       + `<td class="down">${esc(a.why || "")}</td></tr>`;
   });
   document.getElementById("agents").innerHTML =
-    table(["agent", "state", "where", "harness", "model", "requires", "why"], rows);
+    table(["agent", "state", "where", "harness", "model", "level", "requires", "why"], rows);
 }
 
 // Tasks draw as a tree: delegated work is the case that needs explaining,

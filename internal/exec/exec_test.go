@@ -11,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	gopactsqlite "github.com/gopact-ai/gopact-ext/stores/sqlite"
 	"github.com/gopact-ai/gopact/workflow"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -759,5 +760,146 @@ func TestPlacementRespectsTheProjectLevel(t *testing.T) {
 	}
 	if len(runner.requests()) != 0 {
 		t.Fatal("the step ran anyway")
+	}
+}
+
+// The takeover drill: a hub dies mid-step. The next process resumes the
+// run from its checkpoint, the step in flight is retried as a takeover of
+// the attempt the dead process left live, and the plan finishes.
+func TestResumeAfterCrashTakesOverTheLiveAttempt(t *testing.T) {
+	art, att := stores(t)
+	dbPath := filepath.Join(t.TempDir(), "workflows.db")
+	if err := gopactsqlite.Migrate(dbPath); err != nil {
+		t.Fatal(err)
+	}
+	store, err := gopactsqlite.Open(dbPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	plans, err := plan.Open(filepath.Join(t.TempDir(), "plans.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	created, err := plans.Create(plan.Plan{ProjectID: "p", TaskID: "tcrash", Goal: "survive", By: "test", Steps: []plan.Step{
+		{ID: "first", Goal: "one", Requires: []string{"basic"}, State: plan.StepPending, Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "fixture"}},
+		{ID: "second", Goal: "two", Requires: []string{"basic"}, Needs: []string{"first"}, State: plan.StepPending, Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "fixture"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Process one: the second step hangs until the process "dies".
+	reached := make(chan struct{})
+	book := att
+	one := &Runs{store: store}
+	ctx1, die := context.WithCancel(context.Background())
+	deps1 := Deps{Workspaces: art, Attempts: book, Artifacts: art, Roster: testRoster(t, bothNodes()), Recorder: plans,
+		Runner: runnerFunc(func(ctx context.Context, req StepRequest) (plan.StepResult, error) {
+			if req.StepID == "second" {
+				close(reached)
+				<-ctx.Done()
+				return plan.StepResult{}, ctx.Err()
+			}
+			return plan.StepResult{Answer: "did first"}, nil
+		})}
+	done1 := make(chan struct{})
+	go func() {
+		defer close(done1)
+		_, _ = one.Execute(ctx1, created, deps1)
+	}()
+	<-reached
+	// The hub dies: the step's attempt stays live in the ledger.
+	die()
+	<-done1
+	live, _ := att.Live(context.Background())
+	if len(live) != 1 || live[0].TurnID != created.ID+"/second" {
+		// The cancelled step may have failed its attempt on the way out;
+		// either way there must be a previous attempt of "second".
+		prev, ok, _ := att.LatestForTurn(context.Background(), created.ID+"/second")
+		if !ok {
+			t.Fatalf("no attempt of the interrupted step on record (live=%v)", live)
+		}
+		t.Logf("previous attempt of second: %s", prev.State)
+	}
+
+	// Process two: same stores, fresh runtime, resume from the checkpoint.
+	two := &Runs{store: store}
+	calls := map[string]int{}
+	deps2 := Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Recorder: plans,
+		Runner: runnerFunc(func(ctx context.Context, req StepRequest) (plan.StepResult, error) {
+			calls[req.StepID]++
+			return plan.StepResult{Answer: "did " + req.StepID}, nil
+		})}
+	latest, _ := plans.Latest(created.ID)
+	outcome, err := two.Resume(context.Background(), latest, deps2, runIDFor(latest))
+	if err != nil || outcome.Err != nil {
+		t.Fatalf("resume = %v / %v", err, outcome.Err)
+	}
+	if calls["first"] != 0 || calls["second"] != 1 {
+		t.Fatalf("resumed calls = %v; want only the interrupted step rerun (finished steps come from the plan store)", calls)
+	}
+	if got, _ := plans.Latest(created.ID); got.Steps[1].State != plan.StepDone || got.Steps[0].Result.Answer != "did first" {
+		t.Fatalf("plan after resume = %+v", got.Steps)
+	}
+	records, _ := att.ForTask(context.Background(), "tcrash")
+	var superseded, bound int
+	for _, r := range records {
+		if r.TurnID != created.ID+"/second" {
+			continue
+		}
+		switch r.State {
+		case "superseded":
+			superseded++
+		case "bound":
+			bound++
+		}
+	}
+	if superseded != 1 || bound != 1 {
+		t.Fatalf("attempts of the interrupted step: %+v", records)
+	}
+}
+
+// runnerFunc adapts a function to Runner.
+type runnerFunc func(ctx context.Context, req StepRequest) (plan.StepResult, error)
+
+func (f runnerFunc) RunStep(ctx context.Context, req StepRequest) (plan.StepResult, error) {
+	return f(ctx, req)
+}
+
+// A verified step leaves a durable attestation behind, and binds only on it.
+func TestVerifiedStepRecordsAnAttestation(t *testing.T) {
+	art, att := stores(t)
+	verdicts := 0
+	deps := Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Runner: &fakeRunner{},
+		Verifier: verifyFunc(func(req StepRequest) error {
+			verdicts++
+			if verdicts == 1 {
+				return errors.New("not yet")
+			}
+			return nil
+		})}
+	outcome := execute(t, plan.Plan{ProjectID: "p", ID: "att", TaskID: "tatt", Goal: "g", Steps: []plan.Step{{
+		ID: "checked", Goal: "do", Requires: []string{"basic"}, State: plan.StepPending,
+		Verify: &plan.Verify{Kind: plan.VerifyCommand, Command: "make check"},
+	}}}, deps)
+	if outcome.Err != nil {
+		t.Fatal(outcome.Err)
+	}
+	all, _ := art.Attestations(context.Background(), "")
+	var pass, fail int
+	for _, a := range all {
+		if a.Step != "checked" || a.Kind != "command" || a.Verifier != "make check" || len(a.Receipts) == 0 {
+			t.Fatalf("attestation = %+v", a)
+		}
+		switch a.Verdict {
+		case "pass":
+			pass++
+		case "fail":
+			fail++
+		}
+	}
+	if pass != 1 || fail != 1 {
+		t.Fatalf("attestations pass=%d fail=%d, want one of each", pass, fail)
 	}
 }

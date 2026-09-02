@@ -25,6 +25,8 @@ type Supervisor interface {
 	Plan(ctx context.Context, req planner.Request) (plan.Plan, error)
 	Execute(ctx context.Context, p plan.Plan) (exec.Outcome, error)
 	Name() string
+	OpenRuns(ctx context.Context) ([]exec.RunRecord, error)
+	Resume(ctx context.Context, rec exec.RunRecord) (exec.Outcome, error)
 }
 
 // SetSupervisor enables the planning verbs.
@@ -311,4 +313,47 @@ func (c *Coordinator) landSinks(ctx context.Context, p plan.Plan) string {
 		return ""
 	}
 	return "\n\n" + strings.Join(lines, "\n")
+}
+
+// ResumePlans picks up every plan run a previous process left open: the
+// run continues from its checkpoint, the steps in flight take over their
+// abandoned attempts, and the outcome reaches the chat through the task's
+// anchor like a turn that finished late.
+func (c *Coordinator) ResumePlans(ctx context.Context) {
+	if c.supervisor == nil || c.plans == nil || c.tasks == nil {
+		return
+	}
+	open, err := c.supervisor.OpenRuns(ctx)
+	if err != nil {
+		log.Printf("turn: list open plan runs: %v", err)
+		return
+	}
+	for _, rec := range open {
+		tracked, ok := c.tasks.Get(rec.TaskID)
+		if !ok || !tracked.State.Holds() || tracked.State == task.StatePaused {
+			log.Printf("turn: plan %s run not resumed: task #%s is %s", rec.PlanID, rec.TaskID, tracked.State)
+			continue
+		}
+		go c.resumePlan(ctx, rec, tracked)
+	}
+}
+
+func (c *Coordinator) resumePlan(ctx context.Context, rec exec.RunRecord, tracked task.Task) {
+	log.Printf("turn: resuming plan %s (run %s) for task #%s", rec.PlanID, rec.RunID, tracked.ID)
+	ctx, cancel := context.WithTimeout(ctx, planTimeout)
+	defer cancel()
+	outcome, runErr := c.supervisor.Resume(ctx, rec)
+	final, _ := c.plans.Latest(rec.PlanID)
+	var text string
+	if runErr != nil {
+		text = c.text.T(i18n.PlanStopped, rec.PlanID, runErr) + "\n\n" + c.planTree(final, outcome)
+	} else {
+		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
+			log.Printf("turn: close resumed plan task %s: %v", tracked.ID, err)
+		}
+		text = c.text.T(i18n.PlanDone, rec.PlanID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + c.landSinks(ctx, final)
+	}
+	if c.notifier != nil && tracked.AnchorMessage != "" {
+		c.notifier(TaskNotice{TaskID: tracked.ID, ChatID: tracked.ChatID, MessageID: tracked.AnchorMessage, Requester: tracked.Requester, Text: text})
+	}
 }

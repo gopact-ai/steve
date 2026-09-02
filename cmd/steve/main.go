@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
-	"github.com/gopact-ai/gopact/workflow"
+	gopactsqlite "github.com/gopact-ai/gopact-ext/stores/sqlite"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -33,6 +33,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/onboard"
@@ -211,12 +212,17 @@ func doctor(args []string) error {
 	for _, note := range cfg.Migrated {
 		log.Printf("steve: config migrated: %s", note)
 	}
+	for _, g := range cfg.GrantList() {
+		if _, err := projects.Grant(context.Background(), g.Project, g.Principal, g.Role, g.By); err != nil {
+			return fmt.Errorf("grant %s in %s: %w", g.Principal, g.Project, err)
+		}
+	}
 	for _, status := range nodes.Probe(ctx) {
 		if !status.Up {
 			return fmt.Errorf("node %q at %s unreachable: %s", status.Name, status.Addr, status.LastError)
 		}
-		log.Printf("steve: node %s up — %s/%s, harnesses=%s, caps=%v",
-			status.Name, status.Advert.OS, status.Advert.Arch,
+		log.Printf("steve: node %s up — %s/%s, level=%s, harnesses=%s, caps=%v",
+			status.Name, status.Advert.OS, status.Advert.Arch, status.Level,
 			harnessSummary(status.Advert), status.Advert.Capabilities)
 		for _, h := range status.Advert.Harnesses {
 			if h.Missing != "" {
@@ -456,6 +462,10 @@ func serve(args []string) error {
 	// repository on the hub, materialised wherever a step runs.
 	artifacts := artifact.New(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "artifacts"), book, projects, nodes)
 	coordinator.SetArtifacts(artifacts)
+	// Side effects agents ask for are intents: claimed, journaled, and
+	// blocked across attempts until a person resolves an unknown outcome.
+	intents := intent.New(book)
+	coordinator.SetIntents(intents)
 	// A landing the previous process was cut off in is finished — or
 	// stopped at a conflict — before any turn can touch the canonical.
 	if recovered, err := artifacts.RecoverLandings(context.Background()); err != nil {
@@ -497,6 +507,17 @@ func serve(args []string) error {
 	// planned it — placement against the live roster, the budget, the
 	// verification rule, the recovery limit.
 	stepRunner := exec.NewAgentRunner(manager, capabilitiesFor(assembler), fleet)
+	// Workflow checkpoints are durable so a plan outlives the process that
+	// started it; the ledger records which runs are open.
+	workflowsDB := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "workflows.db")
+	if err := gopactsqlite.Migrate(workflowsDB); err != nil {
+		return fmt.Errorf("migrate workflow checkpoints: %w", err)
+	}
+	checkpoints, err := gopactsqlite.Open(workflowsDB)
+	if err != nil {
+		return fmt.Errorf("open workflow checkpoints: %w", err)
+	}
+	defer checkpoints.Close()
 	supervisor := exec.NewSupervisor(
 		choosePlanner(cfg, catalog, manager, artifacts),
 		exec.Deps{
@@ -508,9 +529,10 @@ func serve(args []string) error {
 			Attempts:   attempts,
 			Artifacts:  artifacts,
 		},
-		workflow.NewMemoryStore(),
+		checkpoints,
 	)
 	supervisor.SetPlans(plans)
+	supervisor.SetLedger(book, nodeName())
 	coordinator.SetSupervisor(supervisor, plans, fleet)
 
 	// One read model, two renderers. `steve top` and the browser are both
@@ -592,6 +614,7 @@ func serve(args []string) error {
 		}()
 		log.Printf("steve: agent messaging MCP server on %s", gate.URL())
 	}
+	gate.SetIntents(intent.ForAgents{S: intents, Attempts: attempts})
 	go func() {
 		<-ctx.Done()
 		stop()
@@ -637,6 +660,7 @@ func serve(args []string) error {
 	// the resumed turn renders a card like any other turn.
 	var revivals []gateway.Revival
 	var dropped []gateway.Notice
+	coordinator.ResumePlans(context.Background())
 	for _, interrupted := range tasks.Interrupted() {
 		if _, err := tasks.Finish(interrupted.ID, task.OutcomeInterrupted, task.Tokens{}, 0); err != nil {
 			log.Printf("steve: close interrupted attempt #%s: %v", interrupted.ID, err)
@@ -853,12 +877,19 @@ func harnessSummary(advert nodewire.Advert) string {
 	names := make([]string, 0, len(advert.Harnesses))
 	for _, h := range advert.Harnesses {
 		if h.Missing != "" {
-			names = append(names, h.ID+"(missing)")
+			names = append(names, withSlots(h)+"(missing)")
 			continue
 		}
-		names = append(names, h.ID)
+		names = append(names, withSlots(h))
 	}
 	return strings.Join(names, ",")
+}
+
+func withSlots(h nodewire.Harness) string {
+	if h.Slots > 0 {
+		return fmt.Sprintf("%s(%d)", h.ID, h.Slots)
+	}
+	return h.ID
 }
 
 // nodeName labels which machine ran a turn. It is cosmetic today and load

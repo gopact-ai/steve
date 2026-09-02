@@ -20,6 +20,14 @@ import (
 type localNode struct {
 	root, state string
 	level       string
+	gen         int64
+}
+
+func (n *localNode) Generation(context.Context, string) (int64, error) {
+	if n.gen == 0 {
+		return 1, nil
+	}
+	return n.gen, nil
 }
 
 func (n *localNode) Exec(ctx context.Context, node, dir, command string) (string, error) {

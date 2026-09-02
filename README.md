@@ -45,6 +45,9 @@ go build -o steve ./cmd/steve
 | `/plan 目标` | 多步计划：拆成步骤，按能力放到能跑的机器上，回一棵带「谁在哪台跑的」的树；`/plans` 看历史与修订 |
 | `/fleet` | 现在能到哪些机器、哪些 agent 可用 —— 读的是活的申报，不是配置 |
 | `/project` | 这个会话在哪个项目上干活；`/project use 名字` 切换（会话随之重开，身份与记忆保留） |
+| `/grant 项目 open_id 角色` | 授权（read / write / admin / none），owner 或项目 admin 可用；`/grant 项目` 看授权 |
+| `/approve 编号` `/deny 编号` | owner 批准或拒绝 sealed 项目的答案离开 |
+| `/effects` | 结果未知的对外动作；`/effects 编号 happened\|new` 由 owner 裁决 |
 
 多阶段任务里 agent 会用内置的 `feishu_send` / `feishu_update` / `feishu_recall`
 维护一张演进的进度卡（带 `2/3` 阶段角标、与最终卡同族的尾标）。
@@ -135,10 +138,25 @@ outcome-unknown 的对外动作列出来给人对账；`steve ledger status` 看
   disclosure。`gateway.level` 不写时取 hub 要耐久保存的最高等级。
 - **槽位**：`harnesses[].slots`（hub）与 node 配置里的 `slots` 限制同一台机器同一 harness 的
   并发会话，attempt 开始时租一个槽位，满了就明说。
+- **权限**：`projects[].grants` 把 open_id 映到角色，`default_role` 给其他人（public/internal 默认 write，
+  restricted/sealed 默认 none）；owner 到处都是 admin。切项目要 read，开一轮要 write，授权要 admin。
+- **披露**：sealed 项目的答案不直接进聊天——记一条 disclosure 请求（只有元数据，内容留在内存），
+  提问者收到编号，owner `/approve` 后答案才发到原会话；hub 重启会清空等待中的披露。
+  Derive（改内容降密）是产物层的操作，降到源等级以下必须带 approval 编号。
+- **对外动作即 intent**：agent 发的每条飞书消息先由当前 attempt 认领、记 dispatched、拿到回执记
+  succeeded；没等到回执的是 outcome-unknown。同一任务的下一个 attempt 若要发同样的调用会被挡住，
+  直到 `/effects 编号 happened|new`（或 `steve ledger resolve`）裁决。
+- **attestation**：验证结果先作为独立事实（带 hub 回执）落账，步骤只在有本 attempt 的通过记录时才绑名。
+- **副本**：产物在每个节点的副本有记录（transferring / present / verified / quarantined / lost / evicted）；
+  节点每次重连是一个新 generation，旧 generation 的副本先隔离再校验。
 - **恢复**：hub 重启时先扫过期 attempt，再把中断在写入阶段的 landing 按 WAL 逐路径收尾
   （已是新内容的跳过、还是旧内容的重写、被人改过的算冲突留档）；重试一个步骤是**接管**——
   旧 attempt 记为 superseded 并指向新的，它的租约全部作废。飞书出口的每次发送都先记
-  started、拿到 message_id 再记 confirmed，`steve ledger recover` 列出 outcome-unknown 的。
+  started、拿到 message_id 再记 confirmed，`steve ledger effects` 列出 outcome-unknown 的。
+  计划的 workflow 检查点落在 `workflows.db`，账本记着哪些 run 还开着：hub 重启后从检查点续跑
+  （运行时不肯接的检查点就按计划存档重跑一次，做完的步骤直接跳过），进行中的步骤接管旧 attempt，
+  结果沿任务锚点回到聊天。sealed 项目 home 在老版本 git（< 2.38）的节点上照样能落地，走的是
+  read-tree + merge-one-file 的老路径。
 
 ## 计划与协作
 

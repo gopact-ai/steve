@@ -6,8 +6,10 @@ import (
 	"flag"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -27,7 +29,7 @@ func openLedger(cfg *config.Config) (*ledger.Ledger, error) {
 // before the gateway serves again.
 func ledgerCmd(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: steve ledger status|rotate|recover [--config config.json]")
+		return errors.New("usage: steve ledger status|rotate|recover|effects|resolve <id> happened|new [--config config.json]")
 	}
 	verb := args[0]
 	flags := flag.NewFlagSet("ledger "+verb, flag.ContinueOnError)
@@ -95,6 +97,48 @@ func ledgerCmd(args []string) error {
 		}
 		book.RecoveryDone()
 		fmt.Printf("ledger at incarnation %d: every lease invalidated, %d effects reviewed\n", book.Incarnation(), len(outcomes))
+		return nil
+	case "effects":
+		book, err := ledger.Open(dir, ledger.Options{})
+		if err != nil {
+			return err
+		}
+		defer book.Close()
+		unresolved, err := intent.New(book).Unresolved(context.Background())
+		if err != nil {
+			return err
+		}
+		outcomes, err := book.Journal().Reconcile()
+		if err != nil {
+			return err
+		}
+		for _, it := range unresolved {
+			fmt.Printf("intent %s  %s  task #%s attempt %s  %s  %s\n", it.ID, it.Tool, it.TaskID, it.AttemptID, it.At.Format(time.RFC3339), it.Error)
+		}
+		for _, o := range outcomes {
+			if !o.Known() && o.Effect.Kind != "dispatch" && o.Started != nil {
+				fmt.Printf("effect %s  started %s  outcome unknown\n", o.Effect, o.Started.At.Format(time.RFC3339))
+			}
+		}
+		if len(unresolved) == 0 {
+			fmt.Println("no intents with an unknown outcome")
+		}
+		return nil
+	case "resolve":
+		rest := flags.Args()
+		if len(rest) != 2 {
+			return errors.New("usage: steve ledger resolve <intent id> happened|new")
+		}
+		book, err := ledger.Open(dir, ledger.Options{})
+		if err != nil {
+			return err
+		}
+		defer book.Close()
+		it, err := intent.New(book).Resolve(context.Background(), rest[0], rest[1], "operator")
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s is now %s\n", it.ID, it.State)
 		return nil
 	}
 	return fmt.Errorf("unknown ledger verb %q", verb)

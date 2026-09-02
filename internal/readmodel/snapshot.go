@@ -24,7 +24,7 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 			snap.Agents = append(snap.Agents, Agent{
 				ID: c.Agent.ID, Node: c.Node, Harness: c.Harness,
 				Model: c.Agent.Model, Eligible: c.Eligible, Why: c.Why,
-				Requires: c.Agent.Requires,
+				Requires: c.Agent.Requires, Level: string(c.Level.OrDefault()), Slots: c.Slots,
 			})
 		}
 	}
@@ -53,7 +53,7 @@ func nodes(statuses []node.Status) []Node {
 		n := Node{
 			Name: s.Name, Addr: s.Addr, Up: s.Up, Since: s.Since,
 			OS: s.Advert.OS, Arch: s.Advert.Arch,
-			Capabilities: s.Advert.Capabilities, LastError: s.LastError,
+			Capabilities: s.Advert.Capabilities, LastError: s.LastError, Level: s.Level,
 		}
 		for _, h := range s.Advert.Harnesses {
 			n.Harnesses = append(n.Harnesses, Harness{ID: h.ID, Models: h.Models, Missing: h.Missing})

@@ -90,6 +90,10 @@ type Project struct {
 	DurablePlaces  []string `json:"durable_places,omitempty"`
 	ExternalRemote string   `json:"external_remote,omitempty"`
 	Home           Home     `json:"home"`
+	// DefaultRole is what a principal without a grant gets. Empty means
+	// write for public and internal projects, none for restricted and
+	// sealed ones.
+	DefaultRole Role `json:"default_role,omitempty"`
 }
 
 // Durable reports whether node is one of the places this project's
@@ -132,6 +136,9 @@ func (p Project) normalized() (Project, error) {
 	}
 	if p.Level == LevelSealed && !p.Durable(p.Home.Node) {
 		p.DurablePlaces = append(p.DurablePlaces, p.Home.Node)
+	}
+	if p.DefaultRole != "" && !p.DefaultRole.Valid() {
+		return p, fmt.Errorf("project %s: default_role %q is not none, read, write or admin", p.ID, p.DefaultRole)
 	}
 	return p, nil
 }
@@ -359,4 +366,147 @@ func (s *Store) Disclose(ctx context.Context, id string, record any) error {
 // Disclosures lists every disclosure record as raw JSON keyed by id.
 func (s *Store) Disclosures(ctx context.Context) (map[string]json.RawMessage, error) {
 	return s.l.Bindings(ctx, kindDisclosure)
+}
+
+// Role is what a principal may do in a project.
+type Role string
+
+const (
+	RoleNone  Role = "none"
+	RoleRead  Role = "read"
+	RoleWrite Role = "write"
+	RoleAdmin Role = "admin"
+)
+
+var roleOrder = map[Role]int{RoleNone: 0, RoleRead: 1, RoleWrite: 2, RoleAdmin: 3}
+
+// Valid says whether the role is one of the four.
+func (r Role) Valid() bool { _, ok := roleOrder[r]; return ok }
+
+// AtLeast compares roles.
+func (r Role) AtLeast(want Role) bool { return roleOrder[r] >= roleOrder[want] }
+
+// Grant is a principal's role in a project, and who gave it.
+type Grant struct {
+	Project   string    `json:"project"`
+	Principal string    `json:"principal"`
+	Role      Role      `json:"role"`
+	By        string    `json:"by"`
+	At        time.Time `json:"at"`
+}
+
+const kindGrant = "grant"
+
+// Grant records a principal's role in a project.
+func (s *Store) Grant(ctx context.Context, projectID, principal string, role Role, by string) (Grant, error) {
+	if !role.Valid() {
+		return Grant{}, fmt.Errorf("role %q is not none, read, write or admin", role)
+	}
+	if _, ok, err := s.Get(ctx, projectID); err != nil {
+		return Grant{}, err
+	} else if !ok {
+		return Grant{}, fmt.Errorf("%w: %s", ErrUnknown, projectID)
+	}
+	principal = strings.TrimSpace(principal)
+	if principal == "" {
+		return Grant{}, errors.New("a grant needs a principal")
+	}
+	g := Grant{Project: projectID, Principal: principal, Role: role, By: by, At: s.now().UTC()}
+	return g, s.l.PutBinding(ctx, kindGrant, projectID+"/"+principal, g)
+}
+
+// Grants lists a project's grants.
+func (s *Store) Grants(ctx context.Context, projectID string) ([]Grant, error) {
+	raw, err := s.l.Bindings(ctx, kindGrant)
+	if err != nil {
+		return nil, err
+	}
+	var out []Grant
+	for _, data := range raw {
+		var g Grant
+		if err := json.Unmarshal(data, &g); err == nil && (projectID == "" || g.Project == projectID) {
+			out = append(out, g)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Principal < out[j].Principal })
+	return out, nil
+}
+
+// Access is the role a principal has in a project: the owner is admin
+// everywhere; an explicit grant wins; otherwise the project's default —
+// write for public and internal projects, nothing for restricted and
+// sealed ones, unless the project says otherwise.
+func (s *Store) Access(ctx context.Context, projectID, principal, owner string) (Role, error) {
+	p, ok, err := s.Get(ctx, projectID)
+	if err != nil {
+		return RoleNone, err
+	}
+	if !ok {
+		return RoleNone, fmt.Errorf("%w: %s", ErrUnknown, projectID)
+	}
+	if owner != "" && principal == owner {
+		return RoleAdmin, nil
+	}
+	if principal != "" {
+		var g Grant
+		if ok, err := s.l.GetBinding(ctx, kindGrant, projectID+"/"+principal, &g); err != nil {
+			return RoleNone, err
+		} else if ok {
+			return g.Role, nil
+		}
+	}
+	if p.DefaultRole != "" {
+		return p.DefaultRole, nil
+	}
+	switch p.Level.OrDefault() {
+	case LevelRestricted, LevelSealed:
+		return RoleNone, nil
+	}
+	return RoleWrite, nil
+}
+
+// DisclosureRequest is the metadata of content waiting to leave a sealed
+// project. The content itself never enters the ledger: the hub is not a
+// place sealed data lives.
+type DisclosureRequest struct {
+	ID             string    `json:"id"`
+	Project        string    `json:"project"`
+	TaskID         string    `json:"task_id,omitempty"`
+	Attempt        string    `json:"attempt"`
+	ConversationID string    `json:"conversation_id"`
+	Requester      string    `json:"requester"`
+	Bytes          int       `json:"bytes"`
+	ProposedAt     time.Time `json:"proposed_at"`
+	ResolvedBy     string    `json:"resolved_by,omitempty"`
+}
+
+const (
+	DisclosureProposed = "proposed"
+	DisclosureApproved = "approved"
+	DisclosureDenied   = "denied"
+	kindDisclosureOp   = "disclosure-request"
+)
+
+// ProposeDisclosure opens the operation; the content waits elsewhere.
+func (s *Store) ProposeDisclosure(ctx context.Context, req DisclosureRequest) error {
+	req.ProposedAt = s.now().UTC()
+	_, err := s.l.Begin(ctx, req.ID, kindDisclosureOp, DisclosureProposed, req.Requester, req)
+	return err
+}
+
+// ResolveDisclosure is the owner's decision.
+func (s *Store) ResolveDisclosure(ctx context.Context, id string, approved bool, by string) error {
+	to := DisclosureDenied
+	if approved {
+		to = DisclosureApproved
+	}
+	_, err := s.l.Transition(ctx, id, DisclosureProposed, to, by, nil, nil, func(tx *ledger.Tx, op *ledger.Operation) error {
+		var req DisclosureRequest
+		if err := json.Unmarshal(op.Data, &req); err != nil {
+			return err
+		}
+		req.ResolvedBy = by
+		return tx.SetData(op, req)
+	})
+	return err
 }

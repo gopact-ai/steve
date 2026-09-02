@@ -21,6 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -126,6 +127,8 @@ type Coordinator struct {
 	projects    *project.Store
 	attempts    *attempt.Service
 	artifacts   *artifact.Store
+	intents     *intent.Service
+	disclosures map[string]held
 	// defaultProject binds a fresh conversation; homeProject binds the
 	// owner's DM, where Steve's own home directory is the project.
 	defaultProject string
@@ -312,8 +315,19 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 		return c.fleetCmd(ctx, req), nil
 	case protocol.CommandProject:
 		return c.projectCmd(ctx, req, rest)
+	case protocol.CommandGrant:
+		return c.grantCmd(ctx, req, rest)
+	case protocol.CommandApprove, protocol.CommandDeny:
+		return c.decideCmd(ctx, req, cmd, rest)
+	case protocol.CommandEffects:
+		return c.effectsCmd(ctx, req, rest)
 	}
-	return c.prompt(ctx, req, selected, prompt)
+	result, err := c.prompt(ctx, req, selected, prompt)
+	if err != nil {
+		return result, err
+	}
+	// Content of a sealed project leaves only with the owner's approval.
+	return c.gateDisclosure(ctx, req, result)
 }
 
 func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, string, bool, error) {

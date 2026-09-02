@@ -81,6 +81,7 @@ type Node struct {
 	Capabilities []string  `json:"capabilities,omitempty"`
 	Harnesses    []Harness `json:"harnesses,omitempty"`
 	LastError    string    `json:"last_error,omitempty"`
+	Level        string    `json:"level,omitempty"`
 }
 
 type Harness struct {
@@ -97,6 +98,8 @@ type Agent struct {
 	Eligible bool     `json:"eligible"`
 	Why      string   `json:"why,omitempty"`
 	Requires []string `json:"requires,omitempty"`
+	Level    string   `json:"level,omitempty"`
+	Slots    int      `json:"slots,omitempty"`
 }
 
 type Task struct {

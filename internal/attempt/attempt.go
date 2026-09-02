@@ -616,3 +616,18 @@ func Describe(r Record) string {
 	}
 	return b.String()
 }
+
+// LiveAttemptOf is the id of the task's attempt in flight, if any: what a
+// side effect made on the task's behalf is claimed by.
+func (s *Service) LiveAttemptOf(ctx context.Context, taskID string) (string, bool) {
+	records, err := s.ForTask(ctx, taskID)
+	if err != nil {
+		return "", false
+	}
+	for i := len(records) - 1; i >= 0; i-- {
+		if !records[i].State.Terminal() {
+			return records[i].ID, true
+		}
+	}
+	return "", false
+}

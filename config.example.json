@@ -7,7 +7,9 @@
     },
     "lab": {
       "home": { "node": "host-3", "path": "/srv/steve-work/lab" },
-      "level": "restricted"
+      "level": "restricted",
+      "grants": { "ou_xxxxxxxxxxxxx": "write" },
+      "default_role": "none"
     }
   },
   "agents": {

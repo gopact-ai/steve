@@ -148,6 +148,7 @@ type sentState struct {
 }
 
 type Server struct {
+	intents  Intents
 	listener net.Listener
 	srv      *http.Server
 
@@ -589,11 +590,11 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 	var err error
 	switch call.Name {
 	case "feishu_send":
-		out, err = s.send(ctx, bind, call.Arguments)
+		out, err = s.effect(ctx, bind, call.Name, call.Arguments, func() (string, error) { return s.send(ctx, bind, call.Arguments) })
 	case "feishu_update":
-		out, err = s.update(ctx, bind, call.Arguments)
+		out, err = s.effect(ctx, bind, call.Name, call.Arguments, func() (string, error) { return s.update(ctx, bind, call.Arguments) })
 	case "feishu_recall":
-		out, err = s.recall(ctx, bind, call.Arguments)
+		out, err = s.effect(ctx, bind, call.Name, call.Arguments, func() (string, error) { return s.recall(ctx, bind, call.Arguments) })
 	case "steve_delegate":
 		out, err = s.delegate(ctx, bind, call.Arguments)
 	case "steve_await":
@@ -885,4 +886,43 @@ func writeJSON(w http.ResponseWriter, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("agentmcp: write response: %v", err)
 	}
+}
+
+// Intents is the side-effect ledger: every agent-made call is claimed by
+// the attempt, journaled as dispatched before it leaves, and confirmed or
+// marked unknown after. A call an earlier attempt made and never heard
+// back about blocks the same call until a person resolves it.
+type Intents interface {
+	Claim(ctx context.Context, taskID, tool string, args []byte) (string, error)
+	Dispatched(ctx context.Context, id string) error
+	Confirmed(ctx context.Context, id string, receipt any) error
+	Failed(ctx context.Context, id string, cause error) error
+	Lost(ctx context.Context, id string, cause error) error
+}
+
+// SetIntents wires the side-effect ledger.
+func (s *Server) SetIntents(i Intents) { s.intents = i }
+
+// effect runs one side-effecting tool under the intent protocol.
+func (s *Server) effect(ctx context.Context, bind binding, tool string, args json.RawMessage, call func() (string, error)) (string, error) {
+	if s.intents == nil {
+		return call()
+	}
+	id, err := s.intents.Claim(ctx, bind.taskID, tool, args)
+	if err != nil {
+		return "", err
+	}
+	if err := s.intents.Dispatched(ctx, id); err != nil {
+		return "", fmt.Errorf("record intent: %w", err)
+	}
+	out, err := call()
+	switch {
+	case err == nil:
+		_ = s.intents.Confirmed(ctx, id, map[string]string{"message_id": out})
+	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded):
+		_ = s.intents.Lost(ctx, id, err)
+	default:
+		_ = s.intents.Failed(ctx, id, err)
+	}
+	return out, err
 }

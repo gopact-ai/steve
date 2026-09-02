@@ -28,6 +28,7 @@ import (
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
@@ -469,10 +470,29 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	_, _ = s.attempts.Advance(ctx, record.ID, attempt.Bound, "delegate", nil)
 	_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
 	if changed {
+		result.Refs = append(result.Refs, "artifact "+published.ID)
+		// The parent asked for this and holds the canonical lock right now:
+		// the result lands under its lease, into the directory it is
+		// working in, so the parent sees the files this turn. A conflict
+		// is queued for after the turn and reported as such.
+		if lease, ok := s.parentLease(ctx, parent); ok {
+			if p, found, perr := s.artifacts.Project(ctx, parent.ProjectID); perr == nil && found {
+				landed, lerr := s.artifacts.LandUnder(ctx, p, published.ID, "task #"+child.ID, lease)
+				switch {
+				case lerr == nil:
+					result.Refs = append(result.Refs, fmt.Sprintf("landed into your working directory: %d path(s)", len(landed.Paths)))
+					s.finish(child.ID, task.OutcomeOK)
+					return result, nil
+				default:
+					log.Printf("delegate: land %s under parent's lease: %v", published.ID, lerr)
+					result.Refs = append(result.Refs, "not landed yet: "+lerr.Error())
+				}
+			}
+		}
 		if err := s.artifacts.Defer(ctx, parent.ProjectID, published.ID, "task #"+child.ID); err != nil {
 			log.Printf("delegate: queue landing of %s: %v", published.ID, err)
 		}
-		result.Refs = append(result.Refs, "artifact "+published.ID+" (lands when this turn ends)")
+		result.Refs = append(result.Refs, "queued to land when this turn ends")
 	}
 	s.finish(child.ID, task.OutcomeOK)
 
@@ -587,6 +607,26 @@ func newToken() (string, error) {
 		return "", fmt.Errorf("mint token: %w", err)
 	}
 	return hex.EncodeToString(buf[:]), nil
+}
+
+// parentLease finds the canonical lease the parent's in-place attempt holds.
+func (s *Service) parentLease(ctx context.Context, parent task.Task) (ledger.Lease, bool) {
+	records, err := s.attempts.ForTask(ctx, parent.ID)
+	if err != nil {
+		return ledger.Lease{}, false
+	}
+	for i := len(records) - 1; i >= 0; i-- {
+		r := records[i]
+		if r.State.Terminal() || r.Scope != attempt.ScopeUnrestricted {
+			continue
+		}
+		for _, lease := range r.Leases {
+			if lease.Key == "canonical:"+parent.ProjectID {
+				return lease, true
+			}
+		}
+	}
+	return ledger.Lease{}, false
 }
 
 // rememberBase keeps the base a child's worktree came from until run()

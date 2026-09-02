@@ -68,6 +68,18 @@ func (c Conflict) Error() string {
 // caller must not hold the canonical lock: the landing takes it, and
 // ErrHeld comes back as ledger.ErrHeld when someone else has it.
 func (s *Store) Land(ctx context.Context, p project.Project, artifactID, by string) (Landing, error) {
+	return s.land(ctx, p, artifactID, by, nil)
+}
+
+// LandUnder lands while someone else legitimately holds the canonical lock
+// and asked for it: a parent turn in place, taking a delegate's result into
+// its own directory. The landing is fenced on that lease and releases
+// nothing.
+func (s *Store) LandUnder(ctx context.Context, p project.Project, artifactID, by string, held ledger.Lease) (Landing, error) {
+	return s.land(ctx, p, artifactID, by, &held)
+}
+
+func (s *Store) land(ctx context.Context, p project.Project, artifactID, by string, held *ledger.Lease) (Landing, error) {
 	m, ok, err := s.Manifest(ctx, artifactID)
 	if err != nil {
 		return Landing{}, err
@@ -86,13 +98,22 @@ func (s *Store) Land(ctx context.Context, p project.Project, artifactID, by stri
 	if _, err := s.ledger.Begin(ctx, land.ID, landKind, LandProposed, by, land); err != nil {
 		return Landing{}, err
 	}
-	lease, err := s.ledger.Acquire(ctx, "canonical:"+p.ID, land.ID, landTTL)
-	if err != nil {
-		_ = s.fail(ctx, &land, LandProposed, LandMergeConflicted, err.Error(), nil)
-		return land, err
+	var lease ledger.Lease
+	if held != nil {
+		if held.Key != "canonical:"+p.ID {
+			return land, fmt.Errorf("landing %s: the lease offered is for %s, not the project's canonical", land.ID, held.Key)
+		}
+		lease = *held
+	} else {
+		acquired, err := s.ledger.Acquire(ctx, "canonical:"+p.ID, land.ID, landTTL)
+		if err != nil {
+			_ = s.fail(ctx, &land, LandProposed, LandMergeConflicted, err.Error(), nil)
+			return land, err
+		}
+		lease = acquired
+		defer func() { _ = s.ledger.Release(context.WithoutCancel(ctx), lease) }()
 	}
 	land.Lease = &lease
-	defer func() { _ = s.ledger.Release(context.WithoutCancel(ctx), lease) }()
 	if err := s.move(ctx, &land, LandProposed, LandLocked, nil); err != nil {
 		return land, err
 	}
@@ -100,7 +121,8 @@ func (s *Store) Land(ctx context.Context, p project.Project, artifactID, by stri
 	// Under the lock: what the canonical workspace holds right now.
 	now, _, err := s.SnapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before landing "+short(artifactID))
 	if err != nil {
-		return land, s.fail(ctx, &land, LandLocked, LandMergeConflicted, "snapshot: "+err.Error(), nil)
+		_ = s.fail(ctx, &land, LandLocked, LandMergeConflicted, "snapshot: "+err.Error(), nil)
+		return land, err
 	}
 	land.Now = now.ID
 	repo, err := s.Repo(ctx, p.ID)
@@ -115,7 +137,8 @@ func (s *Store) Land(ctx context.Context, p project.Project, artifactID, by stri
 		merged, conflicts, err = repo.Merge(ctx, base, now.ID, artifactID, "land "+short(artifactID)+" into "+p.ID)
 	}
 	if err != nil {
-		return land, s.fail(ctx, &land, LandLocked, LandMergeConflicted, err.Error(), nil)
+		_ = s.fail(ctx, &land, LandLocked, LandMergeConflicted, err.Error(), nil)
+		return land, err
 	}
 	if len(conflicts) > 0 {
 		_ = s.fail(ctx, &land, LandLocked, LandMergeConflicted, "conflicts", conflicts)
@@ -198,9 +221,6 @@ func (s *Store) mergeOnNode(ctx context.Context, p project.Project, base, ours, 
 	if err != nil {
 		return "", nil, err
 	}
-	if !gitAtLeast(version, 2, 38) {
-		return "", nil, fmt.Errorf("sealed project %s lives on %s whose git %s cannot merge in place (2.38 or newer needed)", p.ID, p.Home.Node, strings.TrimSpace(version))
-	}
 	if ours == base {
 		return theirs, nil, nil
 	}
@@ -208,10 +228,14 @@ func (s *Store) mergeOnNode(ctx context.Context, p project.Project, base, ours, 
 		return ours, nil, nil
 	}
 	bare := nodeBare(state, p.ID)
-	out, err := s.nodes.Exec(ctx, p.Home.Node, "", Script{}.Merge(bare, ours, theirs, "land "+short(theirs)+" into "+p.ID))
+	script := Script{}.Merge(bare, ours, theirs, "land "+short(theirs)+" into "+p.ID)
+	if s.LegacyMerge || !gitAtLeast(version, 2, 38) {
+		script = Script{}.MergeLegacy(bare, base, ours, theirs, "land "+short(theirs)+" into "+p.ID)
+	}
+	out, err := s.nodes.Exec(ctx, p.Home.Node, "", script)
 	if err != nil {
 		lines := strings.Split(strings.TrimSpace(out), "\n")
-		if len(lines) > 1 && strings.HasPrefix(lines[0], "CONFLICT ") {
+		if len(lines) > 1 && strings.TrimSpace(lines[0]) == "CONFLICT" {
 			return "", lines[1:], nil
 		}
 		return "", nil, fmt.Errorf("merge on %s: %w", p.Home.Node, err)

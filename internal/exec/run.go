@@ -61,6 +61,10 @@ type Outcome struct {
 
 // Execute compiles and runs the plan once. Retries happen inside the steps.
 func (r *Runs) Execute(ctx context.Context, p plan.Plan, deps Deps) (Outcome, error) {
+	return r.run(ctx, p, deps, gopact.WithRunID(runIDFor(p)))
+}
+
+func (r *Runs) run(ctx context.Context, p plan.Plan, deps Deps, extra ...gopact.RunOption) (Outcome, error) {
 	track := &tracker{}
 	r.mu.Lock()
 	sinks := append([]gopact.EventSink{gopact.EventSink(track)}, r.sinks...)
@@ -72,10 +76,11 @@ func (r *Runs) Execute(ctx context.Context, p plan.Plan, deps Deps) (Outcome, er
 	if err != nil {
 		return Outcome{}, err
 	}
-	options := make([]gopact.RunOption, 0, len(sinks))
+	options := make([]gopact.RunOption, 0, len(sinks)+len(extra))
 	for _, sink := range sinks {
 		options = append(options, gopact.WithEventSink(sink))
 	}
+	options = append(options, extra...)
 	out, runErr := wf.Invoke(ctx, p.Goal, options...)
 	return Outcome{Output: out, RunID: track.runID, Recoveries: int(recoveries.Load()), Err: runErr}, runErr
 }

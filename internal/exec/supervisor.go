@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/gopact-ai/gopact/workflow"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/roster"
@@ -44,6 +45,8 @@ type Supervisor struct {
 	deps    Deps
 	plans   PlanStore
 	fleet   *roster.Roster
+	ledger  *ledger.Ledger
+	owner   string
 }
 
 func NewSupervisor(p planner.Planner, deps Deps, store workflow.Store) *Supervisor {
@@ -76,11 +79,19 @@ func (s *Supervisor) Plan(ctx context.Context, req planner.Request) (plan.Plan, 
 // plan itself was wrong. It returns the last outcome either way: a plan that
 // was called off is a result too, and the caller needs to see where it got.
 func (s *Supervisor) Execute(ctx context.Context, p plan.Plan) (Outcome, error) {
+	s.opened(ctx, p)
+	defer s.closed(ctx, p)
+	outcome, err := s.runs.Execute(ctx, p, s.deps)
+	if err == nil || ctx.Err() != nil {
+		return outcome, err
+	}
+	return s.continueFrom(ctx, p, outcome, err, 0)
+}
+
+// continueFrom is the revise-and-rerun loop after a first run failed.
+func (s *Supervisor) continueFrom(ctx context.Context, p plan.Plan, outcome Outcome, err error, revision int) (Outcome, error) {
 	current := p
-	var outcome Outcome
-	var err error
-	for revision := 0; ; revision++ {
-		outcome, err = s.runs.Execute(ctx, current, s.deps)
+	for ; ; revision++ {
 		if err == nil || ctx.Err() != nil {
 			return outcome, err
 		}
@@ -98,6 +109,8 @@ func (s *Supervisor) Execute(ctx context.Context, p plan.Plan) (Outcome, error) 
 			return outcome, err
 		}
 		current = revised
+		s.opened(ctx, current)
+		outcome, err = s.runs.Execute(ctx, current, s.deps)
 	}
 }
 

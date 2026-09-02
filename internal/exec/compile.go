@@ -447,6 +447,21 @@ func outsideScope(ctx context.Context, deps Deps, projectID, base, artifactID st
 	return strayed, nil
 }
 
+// attestationFor turns a verification into the fact it records.
+func attestationFor(p plan.Plan, step plan.Step, attemptID, node, artifactID string, verifyErr error) artifact.Attestation {
+	a := artifact.Attestation{Artifact: artifactID, Project: p.ProjectID, TaskID: p.TaskID, Step: step.ID, Node: node, By: attemptID, Verdict: "pass"}
+	switch step.Verify.Kind {
+	case plan.VerifyCommand:
+		a.Kind, a.Verifier = "command", step.Verify.Command
+	case plan.VerifyAgent:
+		a.Kind, a.Verifier = "agent", step.Verify.Agent
+	}
+	if verifyErr != nil {
+		a.Verdict, a.Detail = "fail", verifyErr.Error()
+	}
+	return a
+}
+
 // stepRef is the name a step's result is bound to.
 func stepRef(taskID, stepID string) string { return "steve/" + taskID + "/" + stepID }
 
@@ -649,13 +664,31 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 			fail(err)
 			return result, err
 		}
-		if err := deps.Verifier.Verify(ctx, req, *step.Verify, result); err != nil {
+		verifyErr := deps.Verifier.Verify(ctx, req, *step.Verify, result)
+		// The verdict is a fact either way, written before it is acted on.
+		if _, aerr := deps.Artifacts.Attest(ctx, attestationFor(p, step, record.ID, candidate.Node, published.ID, verifyErr)); aerr != nil {
+			result.Error = "attest: " + aerr.Error()
+			fail(aerr)
+			return result, aerr
+		}
+		if err := verifyErr; err != nil {
 			_, _ = deps.Attempts.Fail(context.WithoutCancel(ctx), record.ID, "exec", "verification failed: "+err.Error())
 			result.Error = "verification failed: " + err.Error()
 			return result, fmt.Errorf("%s", result.Error)
 		}
 	}
 	result.Verified = true
+	// A verified step binds only on a durable, passing attestation from
+	// this very attempt: the bind trusts the record, not the call stack.
+	if step.Verify != nil && step.Verify.Kind != plan.VerifyNone {
+		attested, err := deps.Artifacts.Attested(ctx, published.ID, record.ID)
+		if err != nil || !attested {
+			err := fmt.Errorf("step %s: no durable passing attestation of %s on record", step.ID, published.ID[:12])
+			result.Error = err.Error()
+			fail(err)
+			return result, err
+		}
+	}
 	// Bound: the step's name points at its artifact, under compare-and-set
 	// on the name's version, in the same breath as the attempt's last
 	// transition. A name that moved underneath is a bind-conflict.

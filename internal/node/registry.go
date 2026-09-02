@@ -36,8 +36,10 @@ type Config struct {
 // Status is a node as the registry currently knows it — the roster's raw
 // material and what `/status` and `steve doctor` report.
 type Status struct {
-	Name      string
-	Addr      string
+	Name string
+	Addr string
+	// Level is the data level the hub assigned this node.
+	Level     string
 	Up        bool
 	Since     time.Time
 	Advert    nodewire.Advert
@@ -59,6 +61,19 @@ type Registry struct {
 	last  map[string]*Status
 	// hubLvl is the hub machine's own data level.
 	hubLvl string
+	// gens counts connections per node: the node's generation.
+	gens map[string]int64
+}
+
+// Generation is how many times the node has connected: it moves on every
+// reconnect, so a replica recorded under an older generation is suspect.
+func (r *Registry) Generation(_ context.Context, name string) (int64, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if _, ok := r.confs[name]; !ok {
+		return 0, fmt.Errorf("node %q is not configured", name)
+	}
+	return r.gens[name], nil
 }
 
 // SetHubLevel declares the hub machine's data level (default internal).
@@ -281,10 +296,16 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 		return existing, nil
 	}
 	r.live[name] = c
+	// Every fresh connection is a new generation of the node: whatever was
+	// held there before is not known to have survived until checked.
+	if r.gens == nil {
+		r.gens = map[string]int64{}
+	}
+	r.gens[name]++
 	r.mu.Unlock()
 
 	r.remember(&Status{
-		Name: name, Addr: cfg.Addr, Up: true, Since: time.Now(), Advert: c.advert,
+		Name: name, Addr: cfg.Addr, Level: levelOr(cfg.Level), Up: true, Since: time.Now(), Advert: c.advert,
 	})
 	go func() {
 		<-c.mux.Done()
@@ -302,4 +323,11 @@ func (r *Registry) remember(status *Status) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.last[status.Name] = status
+}
+
+func levelOr(level string) string {
+	if level == "" {
+		return "internal"
+	}
+	return level
 }

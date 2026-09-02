@@ -147,6 +147,10 @@ type Project struct {
 	Skills         []string    `json:"skills,omitempty"`
 	DurablePlaces  []string    `json:"durable_places,omitempty"`
 	ExternalRemote string      `json:"external_remote,omitempty"`
+	// Grants maps a principal (Feishu open_id) to a role: read, write or
+	// admin. DefaultRole is what everyone else gets.
+	Grants      map[string]string `json:"grants,omitempty"`
+	DefaultRole string            `json:"default_role,omitempty"`
 }
 
 // ProjectHome is the (node, path) of a project's canonical workspace. An
@@ -559,7 +563,7 @@ func (c *Config) ProjectList() []project.Project {
 	for id, item := range c.Projects {
 		out = append(out, project.Project{
 			ID: id, Level: project.Level(item.Level), Repo: project.RepoMode(item.Repo), Skills: item.Skills,
-			DurablePlaces: item.DurablePlaces, ExternalRemote: item.ExternalRemote,
+			DurablePlaces: item.DurablePlaces, ExternalRemote: item.ExternalRemote, DefaultRole: project.Role(item.DefaultRole),
 			Home: project.Home{Node: item.Home.Node, Path: item.Home.Path},
 		})
 	}
@@ -624,4 +628,21 @@ func (c *Config) HubLevel() project.Level {
 		}
 	}
 	return level
+}
+
+// GrantList renders every configured grant.
+func (c *Config) GrantList() []project.Grant {
+	var out []project.Grant
+	for id, item := range c.Projects {
+		for principal, role := range item.Grants {
+			out = append(out, project.Grant{Project: id, Principal: principal, Role: project.Role(role), By: "config"})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Project != out[j].Project {
+			return out[i].Project < out[j].Project
+		}
+		return out[i].Principal < out[j].Principal
+	})
+	return out
 }
