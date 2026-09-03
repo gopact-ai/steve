@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
-import { MessageChatSquare, Send01 } from "@untitledui/icons";
+import { CheckCircle, ChevronDown, Loading01, MessageChatSquare, Send01, XCircle } from "@untitledui/icons";
 import { Avatar } from "@/components/base/avatar/avatar";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
@@ -9,10 +9,14 @@ import { Select } from "@/components/base/select/select";
 import { TextArea } from "@/components/base/textarea/textarea";
 import { fetchReplies, send, when } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
-import type { Reply } from "@/lib/types";
-import { Nothing } from "@/lib/ui";
+import type { Event, Plan, Process, Progress, Reply, Step, StepProcess, ToolCall } from "@/lib/types";
+import { Nothing, StateBadge } from "@/lib/ui";
 
 const verbs = ["/fleet", "/tasks", "/plans", "/project", "/plan ", "/project use ", "/grant ", "/effects", "@"];
+
+// Live is what the current line is doing: the turn's own progress, and
+// each plan step's, until the reply lands.
+interface Live { since: string; turn?: Progress; steps: Record<string, Progress>; order: string[] }
 
 export function ConsolePage() {
     const { snap, consoleEvents, refresh } = useFleet();
@@ -24,6 +28,7 @@ export function ConsolePage() {
     const [text, setText] = useState("");
     const [busy, setBusy] = useState(false);
     const [status, setStatus] = useState("");
+    const [live, setLive] = useState<Live | null>(null);
     const box = useRef<HTMLTextAreaElement>(null);
     const bottom = useRef<HTMLDivElement>(null);
     const seen = useRef(0);
@@ -45,9 +50,12 @@ export function ConsolePage() {
         seen.current = consoleEvents.length;
         const mine = fresh.filter((ev) => ev.conversation === conversation);
         if (!mine.length) return;
+        setLive((cur) => mine.reduce(applyLive, cur));
+        const lines = mine.filter((ev) => ev.kind.startsWith("console.") && ev.kind !== "console.progress");
+        if (!lines.length) return;
         setEntries((list) => {
             const next = [...list];
-            for (const ev of mine) {
+            for (const ev of lines) {
                 const kind = ev.kind.slice("console.".length);
                 const r: Reply = { at: ev.at, conversation, kind, title: ev.title, text: kind === "sent" ? "" : ev.text || "", input: kind === "sent" ? ev.text : undefined };
                 if (!next.some((x) => x.at === r.at && x.kind === r.kind && (x.text === r.text || x.input === r.input))) next.push(r);
@@ -56,7 +64,17 @@ export function ConsolePage() {
         });
     }, [consoleEvents, conversation]);
 
-    useEffect(() => { bottom.current?.scrollIntoView({ block: "end" }); }, [entries]);
+    // A reply carries its process; the stream's copy of the reply does
+    // not, so pull the stored one once the line has landed.
+    useEffect(() => {
+        if (live || !entries.length) return;
+        const last = entries[entries.length - 1];
+        if (last.kind !== "reply" || last.process) return;
+        void fetchReplies(conversation).then((data) => setEntries(data.replies || [])).catch(() => undefined);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [live]);
+
+    useEffect(() => { bottom.current?.scrollIntoView({ block: "end" }); }, [entries, live]);
 
     useEffect(() => {
         if (!intent || intent.n === handled.current) return;
@@ -73,12 +91,14 @@ export function ConsolePage() {
         setBusy(true);
         setStatus("running…");
         try {
-            await send(conversation, input);
+            const reply = await send(conversation, input);
             setStatus("");
+            if (reply?.process) setEntries((list) => list.map((x) => (x.at === reply.at && x.kind === "reply" ? reply : x)));
         } catch (e) {
             setStatus(String(e).replace(/^Error: /, ""));
         } finally {
             setBusy(false);
+            setLive(null);
             refresh();
             box.current?.focus();
         }
@@ -86,6 +106,13 @@ export function ConsolePage() {
 
     const conversations = Array.from(new Set(["console:main", ...known, ...snap.tasks.map((t) => t.channel || "").filter((c) => c.startsWith("console:"))])).sort();
     const items = conversations.map((c) => ({ id: c, label: c }));
+    // Plans running for this conversation: their steps are the live view's
+    // skeleton, and the snapshot keeps their states current.
+    const settled = ["done", "failed", "skipped", "cancelled"];
+    const runningPlans = snap.plans.filter((p) => {
+        const task = snap.tasks.find((t) => t.id === p.task_id);
+        return task && task.channel === conversation && (p.steps || []).some((s) => !settled.includes(s.state));
+    });
 
     return (
         <div className="flex h-full flex-col">
@@ -106,13 +133,14 @@ export function ConsolePage() {
                 <span className="ml-auto text-xs text-tertiary">{status}</span>
             </header>
 
-            <div className="min-h-0 flex-1 overflow-auto px-6 py-5">
+            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-5">
                 {!enabled && <Nothing icon={MessageChatSquare} title="The console is off">Set feishu.owner_open_id — the console acts as the owner.</Nothing>}
-                {enabled && entries.length === 0 && (
+                {enabled && entries.length === 0 && !live && (
                     <Nothing icon={MessageChatSquare} title="Nothing said here yet">Talk to the current agent, or start with a verb like /fleet.</Nothing>
                 )}
                 <div className="mx-auto flex max-w-4xl flex-col gap-5">
                     {entries.map((r, i) => <Message key={i} r={r} />)}
+                    {live && <Working live={live} plans={runningPlans} />}
                     <div ref={bottom} />
                 </div>
             </div>
@@ -138,34 +166,185 @@ export function ConsolePage() {
     );
 }
 
+// applyLive folds one event into the live view: a sent line opens it, a
+// reply closes it, progress fills it in.
+function applyLive(cur: Live | null, ev: Event): Live | null {
+    switch (ev.kind) {
+        case "console.sent":
+            return { since: ev.at, steps: {}, order: [] };
+        case "console.reply":
+        case "console.notice":
+            return null;
+        case "console.progress":
+            return { ...(cur ?? { since: ev.at, steps: {}, order: [] }), turn: ev.progress };
+        case "step.progress": {
+            const base = cur ?? { since: ev.at, steps: {}, order: [] };
+            const id = ev.step_id || "?";
+            return { ...base, steps: { ...base.steps, [id]: ev.progress || {} }, order: base.order.includes(id) ? base.order : [...base.order, id] };
+        }
+        default:
+            return cur;
+    }
+}
+
 function Message({ r }: { r: Reply }) {
     if (r.kind === "sent") {
         return (
             <div className="flex justify-end">
                 <div className="flex max-w-[80%] flex-col items-end gap-1">
                     <span className="text-xs text-quaternary">you · {when(r.at)}</span>
-                    <div className="rounded-2xl rounded-tr-sm bg-brand-solid px-4 py-2.5 text-sm text-white shadow-xs whitespace-pre-wrap">{r.input}</div>
+                    <div className="rounded-2xl rounded-tr-sm bg-brand-solid px-4 py-2.5 text-sm text-white shadow-xs whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{r.input}</div>
                 </div>
             </div>
         );
     }
     const tone = r.error ? "error" : r.kind === "milestone" ? "success" : r.kind === "notice" ? "warning" : "gray";
     return (
-        <div className="flex gap-3">
+        <div className="flex min-w-0 gap-3">
             <Avatar size="sm" initials="S" alt="steve" className="mt-5 shrink-0" />
-            <div className="flex max-w-[85%] flex-col gap-1">
+            <div className="flex min-w-0 max-w-[85%] flex-col gap-1">
                 <div className="flex items-center gap-2 text-xs text-quaternary">
                     <span>steve · {when(r.at)}</span>
                     {r.kind !== "reply" && <Badge type="pill-color" size="sm" color={tone}>{r.kind}</Badge>}
                     {r.error && <Badge type="pill-color" size="sm" color="error">error</Badge>}
                 </div>
-                <div className={`rounded-2xl rounded-tl-sm bg-primary px-4 py-3 shadow-xs ring-1 ring-secondary ring-inset ${r.error ? "ring-error" : ""}`}>
+                <div className={`min-w-0 rounded-2xl rounded-tl-sm bg-primary px-4 py-3 shadow-xs ring-1 ring-secondary ring-inset ${r.error ? "ring-error" : ""}`}>
                     {r.title && <div className="mb-1 text-sm font-semibold text-primary">{r.title}</div>}
-                    <div className="md prose prose-sm max-w-none">
+                    <div className="md prose prose-sm max-w-none break-words [overflow-wrap:anywhere]">
                         <Markdown remarkPlugins={[remarkBreaks]}>{r.text}</Markdown>
                     </div>
+                    {r.process && <ProcessFold process={r.process} />}
                 </div>
             </div>
         </div>
+    );
+}
+
+// Working is the bubble for the line in flight: plan steps with their
+// states, and under each the agent's reasoning and tool calls as they
+// happen; or, for a plain turn, the agent's own.
+function Working({ live, plans }: { live: Live; plans: Plan[] }) {
+    const [now, setNow] = useState(Date.now());
+    useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(t); }, []);
+    const elapsed = Math.max(0, Math.round((now - Date.parse(live.since)) / 1000));
+    const steps: Step[] = plans.flatMap((p) => p.steps || []);
+    return (
+        <div className="flex min-w-0 gap-3">
+            <Avatar size="sm" initials="S" alt="steve" className="mt-5 shrink-0" />
+            <div className="flex min-w-0 max-w-[85%] flex-col gap-1">
+                <div className="flex items-center gap-2 text-xs text-quaternary">
+                    <span>steve · working</span>
+                    <Loading01 className="size-3 animate-spin text-fg-brand-primary" />
+                    <span>{elapsed}s</span>
+                </div>
+                <div className="flex min-w-0 flex-col gap-3 rounded-2xl rounded-tl-sm bg-primary px-4 py-3 shadow-xs ring-1 ring-secondary ring-inset">
+                    {steps.length > 0 && (
+                        <div className="flex flex-col gap-2">
+                            {steps.map((s) => (
+                                <div key={s.id} className="flex flex-col gap-1.5">
+                                    <div className="flex items-center gap-2 text-sm">
+                                        <StateBadge state={s.state} />
+                                        <span className="font-medium text-primary">{s.id}</span>
+                                        <span className="text-xs text-tertiary">{s.agent || "—"}{s.node ? ` @ ${s.node}` : ""}</span>
+                                    </div>
+                                    {live.steps[s.id] && <Trace p={live.steps[s.id]} />}
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                    {live.order.filter((id) => !steps.some((s) => s.id === id)).map((id) => (
+                        <div key={id} className="flex flex-col gap-1.5">
+                            <div className="text-sm font-medium text-primary">{id}</div>
+                            <Trace p={live.steps[id]} />
+                        </div>
+                    ))}
+                    {live.turn && <Trace p={live.turn} showAnswer />}
+                    {!live.turn && !live.order.length && steps.length === 0 && (
+                        <span className="text-sm text-tertiary">Placing the work…</span>
+                    )}
+                </div>
+            </div>
+        </div>
+    );
+}
+
+// Trace is one agent's progress: its checklist, its reasoning tail, its
+// tool calls, and (for a plain turn) the answer forming.
+function Trace({ p, showAnswer }: { p: Progress; showAnswer?: boolean }) {
+    return (
+        <div className="flex min-w-0 flex-col gap-2">
+            {(p.agent || p.model) && (
+                <div className="text-xs text-quaternary">{[p.agent, p.node, p.model].filter(Boolean).join(" · ")}</div>
+            )}
+            {p.plan?.length ? (
+                <ul className="flex flex-col gap-0.5 text-xs">
+                    {p.plan.map((line, i) => (
+                        <li key={i} className="flex items-start gap-1.5 text-secondary">
+                            {line.status === "completed" ? <CheckCircle className="mt-0.5 size-3 shrink-0 text-fg-success-primary" /> : line.status === "in_progress" ? <Loading01 className="mt-0.5 size-3 shrink-0 animate-spin text-fg-brand-primary" /> : <span className="mt-1 size-2 shrink-0 rounded-full border border-secondary" />}
+                            <span className={line.status === "completed" ? "text-tertiary line-through" : ""}>{line.text}</span>
+                        </li>
+                    ))}
+                </ul>
+            ) : null}
+            {p.reasoning && (
+                <div className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-lg bg-secondary px-3 py-2 text-xs italic text-tertiary">{p.reasoning}</div>
+            )}
+            {p.tools?.length ? <Tools tools={p.tools} /> : null}
+            {showAnswer && p.answer && (
+                <div className="md prose prose-sm max-w-none break-words [overflow-wrap:anywhere]">
+                    <Markdown remarkPlugins={[remarkBreaks]}>{p.answer}</Markdown>
+                </div>
+            )}
+        </div>
+    );
+}
+
+function Tools({ tools }: { tools: ToolCall[] }) {
+    return (
+        <ul className="flex flex-col gap-1">
+            {tools.map((t, i) => (
+                <li key={t.id || i} className="min-w-0">
+                    <details className="group">
+                        <summary className="flex cursor-pointer list-none items-center gap-2 text-xs">
+                            {t.status === "completed" ? <CheckCircle className="size-3.5 shrink-0 text-fg-success-primary" /> : t.status === "failed" ? <XCircle className="size-3.5 shrink-0 text-fg-error-primary" /> : <Loading01 className="size-3.5 shrink-0 animate-spin text-fg-brand-primary" />}
+                            <Badge type="modern" size="sm" color="gray">{t.kind || "tool"}</Badge>
+                            <span className="truncate text-secondary">{t.name || t.detail || ""}</span>
+                            {(t.input || t.output) && <ChevronDown className="size-3 shrink-0 text-quaternary transition group-open:rotate-180" />}
+                        </summary>
+                        {(t.input || t.output) && (
+                            <div className="mt-1 ml-5 flex flex-col gap-1">
+                                {t.input && <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-md bg-secondary px-2 py-1 font-mono text-[11px] text-secondary">{t.input}</pre>}
+                                {t.output && <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-md bg-secondary px-2 py-1 font-mono text-[11px] text-tertiary">{t.output}</pre>}
+                            </div>
+                        )}
+                    </details>
+                </li>
+            ))}
+        </ul>
+    );
+}
+
+// ProcessFold is the reply's "how": closed by default, one line saying
+// how much there is, the whole trace when opened.
+function ProcessFold({ process }: { process: Process }) {
+    const steps: StepProcess[] = process.steps || [];
+    const count = (process.tools?.length || 0) + steps.reduce((n, s) => n + (s.tools?.length || 0), 0);
+    const label = steps.length ? `${steps.length} step${steps.length > 1 ? "s" : ""} · ${count} tool call${count === 1 ? "" : "s"}` : `${count} tool call${count === 1 ? "" : "s"}${process.reasoning ? " · reasoning" : ""}`;
+    return (
+        <details className="group mt-2 border-t border-secondary pt-2">
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-tertiary hover:text-primary">
+                <ChevronDown className="size-3.5 transition group-open:rotate-180" />
+                <span>Process · {label}</span>
+            </summary>
+            <div className="mt-2 flex flex-col gap-3">
+                {steps.map((s) => (
+                    <div key={s.id} className="flex flex-col gap-1.5">
+                        <div className="text-xs font-medium text-primary">{s.id} <span className="font-normal text-tertiary">{[s.agent, s.node].filter(Boolean).join(" @ ")}</span></div>
+                        <Trace p={{ reasoning: s.reasoning, tools: s.tools }} />
+                    </div>
+                ))}
+                {(process.reasoning || process.tools?.length) ? <Trace p={{ reasoning: process.reasoning, tools: process.tools }} /> : null}
+            </div>
+        </details>
     );
 }

@@ -179,6 +179,8 @@ type Reply struct {
 	Text         string    `json:"text"`
 	Error        string    `json:"error,omitempty"`
 	Kind         string    `json:"kind"` // reply | milestone | notice
+	// Process is how the reply was made, for the page to unfold.
+	Process *Process `json:"process,omitempty"`
 }
 
 // SetConsole wires the acting half of the page.

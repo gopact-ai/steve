@@ -41,8 +41,17 @@ export interface Snapshot {
     at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[];
     attempts: Attempt[]; landings: Landing[]; facts: Facts;
 }
+export interface ToolCall { id?: string; kind?: string; name?: string; detail?: string; status: string; input?: string; output?: string }
+export interface PlanLine { text: string; status: string }
+export interface Progress {
+    agent?: string; node?: string; model?: string; reasoning?: string; answer?: string; tools?: ToolCall[]; plan?: PlanLine[];
+}
+export interface StepProcess { id: string; agent?: string; node?: string; reasoning?: string; tools?: ToolCall[] }
+export interface Process { reasoning?: string; tools?: ToolCall[]; steps?: StepProcess[] }
 export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
-    state?: string; conversation?: string; text?: string; title?: string; detail?: string;
+    state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress;
 }
-export interface Reply { at: string; conversation: string; input?: string; title?: string; text: string; error?: string; kind: string }
+export interface Reply {
+    at: string; conversation: string; input?: string; title?: string; text: string; error?: string; kind: string; process?: Process;
+}

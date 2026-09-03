@@ -39,6 +39,9 @@ type AgentRunner struct {
 	roster   *roster.Roster
 	// Timeout bounds one step. Zero takes the default.
 	Timeout time.Duration
+	// observe sees each step's progress as it streams: what the agent is
+	// thinking and calling, for whoever is watching the plan run.
+	observe func(StepRequest, view.Progress)
 }
 
 func NewAgentRunner(sessions Sessions, caps Capabilities, r *roster.Roster) *AgentRunner {
@@ -89,7 +92,7 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (plan.StepRe
 	if instructions != "" {
 		prompt = instructions + "\n\n" + prompt
 	}
-	answer, _, err := session.Prompt(ctx, prompt, func(view.Progress) {})
+	answer, _, err := session.Prompt(ctx, prompt, a.progress(req))
 	if err != nil {
 		return plan.StepResult{}, err
 	}
@@ -174,3 +177,13 @@ const ReportingContract = `
 - 后面的步骤应该知道的事实（环境、约束、你的判断），用一行 ` + "`FINDING: <一句话>`" + `；它会被带给后续步骤，不会打断计划
 - 只有当你发现**后面的步骤本身已经错了、照原计划做下去没有意义**时，才用一行 ` + "`REPLAN: <为什么>`" + `；这会停下整个计划重新规划，代价很大，不要用它报告小事
 - 其余正常写。没有就不写，不要编。`
+
+// SetObserver installs where step progress goes; nil discards it.
+func (a *AgentRunner) SetObserver(observe func(StepRequest, view.Progress)) { a.observe = observe }
+
+func (a *AgentRunner) progress(req StepRequest) func(view.Progress) {
+	if a.observe == nil {
+		return func(view.Progress) {}
+	}
+	return func(p view.Progress) { a.observe(req, p) }
+}

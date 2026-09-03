@@ -14,8 +14,10 @@ package readmodel
 
 import (
 	"context"
+	"fmt"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/view"
 	"sync"
 	"time"
 
@@ -306,7 +308,8 @@ type Model struct {
 	next int
 	// recent keeps the last events so a renderer that attaches mid-flight
 	// has something to show immediately instead of a blank screen.
-	recent []Event
+	recent   []Event
+	throttle map[string]throttled
 }
 
 // Event is one change worth waking a renderer for.
@@ -322,18 +325,189 @@ type Event struct {
 	StepID string `json:"step_id,omitempty"`
 	State  string `json:"state,omitempty"`
 	// Conversation and Text carry the console's traffic: what was sent
-	// from the page, what came back, and milestones agents posted.
+	// from the page, what came back, and milestones agents posted. A run
+	// event is stamped with the conversation its task came from, so a
+	// page can follow one conversation's work.
 	Conversation string `json:"conversation,omitempty"`
 	Text         string `json:"text,omitempty"`
-	Title        string `json:"title,omitempty"`
-	Rev          int    `json:"rev,omitempty"`
-	Detail       string `json:"detail,omitempty"`
+	// Progress is what an agent is doing right now: console.progress for
+	// a chat turn, step.progress for a plan step.
+	Progress *Progress `json:"progress,omitempty"`
+	Title    string    `json:"title,omitempty"`
+	Rev      int       `json:"rev,omitempty"`
+	Detail   string    `json:"detail,omitempty"`
 }
 
 const recentKept = 200
 
 func New(src Sources) *Model {
 	return &Model{src: src, subs: map[int]chan Event{}}
+}
+
+// Progress is one agent's turn as it happens, small enough to stream:
+// reasoning and answer tails, the tool calls with their status, the
+// agent's own checklist. It is view.Progress cut down for a wire.
+type Progress struct {
+	Agent     string     `json:"agent,omitempty"`
+	Node      string     `json:"node,omitempty"`
+	Model     string     `json:"model,omitempty"`
+	Reasoning string     `json:"reasoning,omitempty"`
+	Answer    string     `json:"answer,omitempty"`
+	Tools     []ToolCall `json:"tools,omitempty"`
+	Plan      []PlanLine `json:"plan,omitempty"`
+}
+
+type ToolCall struct {
+	ID     string `json:"id,omitempty"`
+	Kind   string `json:"kind,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Detail string `json:"detail,omitempty"`
+	Status string `json:"status"`
+	Input  string `json:"input,omitempty"`
+	Output string `json:"output,omitempty"`
+}
+
+type PlanLine struct {
+	Text   string `json:"text"`
+	Status string `json:"status"`
+}
+
+// Caps keep a streamed progress and a stored process small: the tail of
+// reasoning is what a person reads, and a tool's full output belongs in
+// the workspace, not in the transcript.
+const (
+	reasoningKept = 4000
+	answerKept    = 8000
+	toolTextKept  = 1200
+	toolsKept     = 60
+)
+
+// FromProgress cuts a turn's progress down to what is worth sending.
+func FromProgress(p view.Progress) Progress {
+	out := Progress{
+		Agent: p.Settings.Harness, Node: p.Settings.Node, Model: p.Settings.Model,
+		Reasoning: tailText(p.Reasoning, reasoningKept), Answer: tailText(p.Answer, answerKept),
+	}
+	out.Tools = toolCalls(p.Tools, 0)
+	for _, s := range p.Plan {
+		out.Plan = append(out.Plan, PlanLine{Text: s.Text, Status: string(s.Status)})
+	}
+	return out
+}
+
+func toolCalls(tools []view.Tool, depth int) []ToolCall {
+	var out []ToolCall
+	for _, t := range tools {
+		if len(out) >= toolsKept {
+			break
+		}
+		out = append(out, ToolCall{
+			ID: t.ID, Kind: t.Kind, Name: t.Name, Detail: t.Detail, Status: string(t.Status),
+			Input: headText(t.Input, toolTextKept), Output: headText(t.Output, toolTextKept),
+		})
+		if depth < 2 {
+			out = append(out, toolCalls(t.Children, depth+1)...)
+		}
+	}
+	return out
+}
+
+func tailText(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return "…" + s[len(s)-n:]
+}
+
+func headText(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "…"
+}
+
+// Process is how a reply was made, kept with it: the turn's own reasoning
+// and tool calls, and for a plan each step's. It is the answer to "what
+// did it actually do" after the live view is gone.
+type Process struct {
+	Reasoning string        `json:"reasoning,omitempty"`
+	Tools     []ToolCall    `json:"tools,omitempty"`
+	Steps     []StepProcess `json:"steps,omitempty"`
+}
+
+type StepProcess struct {
+	ID        string     `json:"id"`
+	Agent     string     `json:"agent,omitempty"`
+	Node      string     `json:"node,omitempty"`
+	Reasoning string     `json:"reasoning,omitempty"`
+	Tools     []ToolCall `json:"tools,omitempty"`
+}
+
+// StepProgress publishes what a plan step's agent is doing, stamped with
+// the conversation the plan's task came from. It is throttled per step:
+// a token stream is not a change worth a page repaint each time, but a
+// tool call starting or finishing always is.
+func (m *Model) StepProgress(taskID, planID, stepID, agent, node string, p view.Progress) {
+	key := planID + "/" + stepID
+	signature := fmt.Sprintf("%d", len(p.Tools))
+	if n := len(p.Tools); n > 0 {
+		signature += "/" + string(p.Tools[n-1].Status)
+	}
+	m.mu.Lock()
+	if m.throttle == nil {
+		m.throttle = map[string]throttled{}
+	}
+	last := m.throttle[key]
+	now := time.Now()
+	if now.Sub(last.at) < progressEvery && last.signature == signature {
+		m.mu.Unlock()
+		return
+	}
+	m.throttle[key] = throttled{at: now, signature: signature}
+	m.mu.Unlock()
+	progress := FromProgress(p)
+	if progress.Agent == "" {
+		progress.Agent = agent
+	}
+	if progress.Node == "" {
+		progress.Node = node
+	}
+	m.Publish(Event{
+		Kind: "step.progress", TaskID: taskID, PlanID: planID, StepID: stepID,
+		Conversation: m.conversationOf(taskID), Progress: &progress,
+	})
+}
+
+type throttled struct {
+	at        time.Time
+	signature string
+}
+
+// progressEvery bounds how often one step's token stream repaints a page.
+const progressEvery = 400 * time.Millisecond
+
+// conversationOf is the channel a task was asked in, "" when unknown.
+func (m *Model) conversationOf(taskID string) string {
+	if taskID == "" || m.src.Tasks == nil {
+		return ""
+	}
+	if t, ok := m.src.Tasks.Get(taskID); ok {
+		return t.Channel
+	}
+	return ""
+}
+
+// taskOfPlan is the task a plan belongs to, through the plan store.
+func (m *Model) taskOfPlan(planID string) string {
+	if planID == "" || m.src.Plans == nil {
+		return ""
+	}
+	for _, p := range m.src.Plans.List() {
+		if p.ID == planID {
+			return p.TaskID
+		}
+	}
+	return ""
 }
 
 // Emit makes the model a gopact.EventSink, so workflow node transitions reach
@@ -343,14 +517,18 @@ func New(src Sources) *Model {
 // projection for screens. A renderer that misses an event re-reads the
 // snapshot, which is why dropping is preferable to blocking the runtime.
 func (m *Model) Emit(_ context.Context, ev gopact.Event) error {
+	taskID := m.taskOfPlan(ev.DefinitionID)
 	m.Publish(Event{
 		At:     ev.Timestamp,
 		Kind:   ev.Type,
 		RunID:  ev.RunID,
+		TaskID: taskID,
 		PlanID: ev.DefinitionID,
 		StepID: ev.NodeID,
 		Seq:    ev.Sequence,
 		Detail: ev.Summary,
+
+		Conversation: m.conversationOf(taskID),
 	})
 	return nil
 }
@@ -364,19 +542,17 @@ func (m *Model) Publish(ev Event) {
 	if len(m.recent) > recentKept {
 		m.recent = m.recent[len(m.recent)-recentKept:]
 	}
-	subs := make([]chan Event, 0, len(m.subs))
+	// Sent under the lock, so a subscriber cancelling — which closes its
+	// channel — cannot race a send. The send never blocks: a renderer that
+	// cannot keep up misses events and re-reads the snapshot, which is
+	// the right tradeoff.
 	for _, ch := range m.subs {
-		subs = append(subs, ch)
-	}
-	m.mu.Unlock()
-	for _, ch := range subs {
-		// Never block the publisher: a renderer that cannot keep up misses
-		// events and re-reads the snapshot, which is the right tradeoff.
 		select {
 		case ch <- ev:
 		default:
 		}
 	}
+	m.mu.Unlock()
 }
 
 // Subscribe returns a channel of changes and a cancel function.

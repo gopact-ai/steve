@@ -19,6 +19,7 @@ import (
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 // Prefix marks a console conversation and its message ids.
@@ -90,7 +91,11 @@ func IsConsole(conversationOrAnchor string) bool {
 	return strings.HasPrefix(conversationOrAnchor, Prefix) || strings.HasPrefix(conversationOrAnchor, AnchorMark)
 }
 
-// Send runs one line as the owner and records the answer.
+// Send runs one line as the owner and records the answer, and while the
+// line runs, what is being done for it: the agent's reasoning and tool
+// calls stream to the page as console.progress, a plan's steps report
+// theirs as step.progress, and the reply keeps the whole process so it
+// can be unfolded later.
 func (s *Service) Send(ctx context.Context, conversation, input string) (readmodel.Reply, error) {
 	if s.owner == "" {
 		return readmodel.Reply{}, fmt.Errorf("the console needs feishu.owner_open_id: it acts as the owner")
@@ -100,11 +105,16 @@ func (s *Service) Send(ctx context.Context, conversation, input string) (readmod
 	}
 	id := fmt.Sprintf("%s%d", AnchorMark, time.Now().UnixNano())
 	s.record(readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Input: input, Kind: "sent"})
+
+	work := newProcess()
+	stop := s.follow(ctx, conversation, work)
 	result, err := s.handler.Handle(ctx, turn.Request{
 		ConversationID: conversation, ChatID: ChatID, MessageID: id, Input: input,
 		SenderOpenID: s.owner, ChatType: protocol.ChatP2P, Mentioned: true,
+		OnProgress: s.progress(conversation, work),
 	})
-	reply := readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Title: result.Title, Text: result.Text, Kind: "reply"}
+	stop()
+	reply := readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary()}
 	if err != nil {
 		reply.Error = err.Error()
 		if reply.Text == "" {
@@ -113,6 +123,106 @@ func (s *Service) Send(ctx context.Context, conversation, input string) (readmod
 	}
 	s.record(reply)
 	return reply, err
+}
+
+// progress is the turn's own stream, published no more often than a page
+// can usefully repaint, and kept as the reply's process.
+func (s *Service) progress(conversation string, work *process) func(view.Progress) {
+	var mu sync.Mutex
+	var last time.Time
+	return func(p view.Progress) {
+		cut := readmodel.FromProgress(p)
+		work.turn(cut)
+		if s.model == nil {
+			return
+		}
+		mu.Lock()
+		due := time.Since(last) >= progressEvery || toolsChanged(work, cut)
+		if due {
+			last = time.Now()
+		}
+		mu.Unlock()
+		if due {
+			s.model.Publish(readmodel.Event{Kind: "console.progress", Conversation: conversation, Progress: &cut})
+		}
+	}
+}
+
+// progressEvery bounds how often a token stream repaints the page.
+const progressEvery = 500 * time.Millisecond
+
+func toolsChanged(work *process, next readmodel.Progress) bool {
+	work.mu.Lock()
+	defer work.mu.Unlock()
+	if len(next.Tools) != work.publishedTools {
+		work.publishedTools = len(next.Tools)
+		return true
+	}
+	return false
+}
+
+// follow collects the steps' progress for a plan run on this conversation
+// while the line runs. The read model stamps step.progress with the
+// conversation, so this is the same stream the page watches.
+func (s *Service) follow(ctx context.Context, conversation string, work *process) func() {
+	if s.model == nil {
+		return func() {}
+	}
+	events, stop := s.model.Subscribe(ctx)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for ev := range events {
+			if ev.Kind == "step.progress" && ev.Conversation == conversation && ev.Progress != nil {
+				work.step(ev.StepID, *ev.Progress)
+			}
+		}
+	}()
+	return func() {
+		stop()
+		<-done
+	}
+}
+
+// process is what one console line caused, gathered as it happens.
+type process struct {
+	mu             sync.Mutex
+	last           readmodel.Progress
+	steps          map[string]readmodel.StepProcess
+	order          []string
+	publishedTools int
+}
+
+func newProcess() *process { return &process{steps: map[string]readmodel.StepProcess{}} }
+
+func (w *process) turn(p readmodel.Progress) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	w.last = p
+}
+
+func (w *process) step(id string, p readmodel.Progress) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if _, seen := w.steps[id]; !seen {
+		w.order = append(w.order, id)
+	}
+	w.steps[id] = readmodel.StepProcess{ID: id, Agent: p.Agent, Node: p.Node, Reasoning: p.Reasoning, Tools: p.Tools}
+}
+
+// summary is the process as the reply keeps it, or nil when nothing was
+// observed — a verb answered from state has no process worth a fold.
+func (w *process) summary() *readmodel.Process {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	out := &readmodel.Process{Reasoning: w.last.Reasoning, Tools: w.last.Tools}
+	for _, id := range w.order {
+		out.Steps = append(out.Steps, w.steps[id])
+	}
+	if out.Reasoning == "" && len(out.Tools) == 0 && len(out.Steps) == 0 {
+		return nil
+	}
+	return out
 }
 
 // Replies is a conversation's recent exchanges, oldest first.

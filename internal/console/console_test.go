@@ -3,8 +3,10 @@ package console
 import (
 	"context"
 	"errors"
+	"github.com/gopact-ai/steve/internal/view"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -151,4 +153,82 @@ func TestConsoleTranscriptSurvivesARestart(t *testing.T) {
 	if replies := third.Replies("main"); len(replies) != 4 || replies[2].Input != "/tasks" {
 		t.Fatalf("after second restart main = %+v", replies)
 	}
+}
+
+// streamer is a handler that reports progress the way an agent turn does,
+// then answers.
+type streamer struct{}
+
+func (streamer) Handle(_ context.Context, req turn.Request) (turn.Result, error) {
+	if req.OnProgress != nil {
+		req.OnProgress(view.Progress{Reasoning: "thinking about it", Tools: []view.Tool{{ID: "t1", Kind: "shell", Name: "ls", Status: view.ToolRunning}}})
+		req.OnProgress(view.Progress{Reasoning: "thinking about it more", Tools: []view.Tool{{ID: "t1", Kind: "shell", Name: "ls", Status: view.ToolCompleted}}})
+	}
+	return turn.Result{Title: "T", Text: "done"}, nil
+}
+
+// While a line runs, its progress streams to the page; when it is done,
+// the reply keeps the process — the turn's own, and the steps' progress
+// that came through the model for this conversation.
+func TestConsoleStreamsProgressAndKeepsTheProcess(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{})
+	s := New(streamer{}, "ou_owner", model)
+	events, stop := model.Subscribe(context.Background())
+	defer stop()
+	// A plan step on this conversation reports while the line runs.
+	go func() {
+		time.Sleep(20 * time.Millisecond)
+		model.Publish(readmodel.Event{Kind: "step.progress", Conversation: "console:main", StepID: "repair",
+			Progress: &readmodel.Progress{Agent: "builder", Node: "node-a", Tools: []readmodel.ToolCall{{Kind: "shell", Name: "install", Status: "completed"}}}})
+	}()
+	slow := New(slowStreamer{}, "ou_owner", model)
+	reply, err := slow.Send(context.Background(), "main", "/repair fixer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.Process == nil || len(reply.Process.Steps) != 1 || reply.Process.Steps[0].ID != "repair" || reply.Process.Steps[0].Agent != "builder" {
+		t.Fatalf("process = %+v, want the step's progress kept", reply.Process)
+	}
+	reply, err = s.Send(context.Background(), "main", "hello")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.Process == nil || reply.Process.Reasoning != "thinking about it more" || len(reply.Process.Tools) != 1 || reply.Process.Tools[0].Status != "completed" {
+		t.Fatalf("process = %+v, want the last progress kept", reply.Process)
+	}
+	// The stream carried progress between sent and reply, and the tool
+	// call's change got through the throttle.
+	var kinds []string
+	deadline := time.After(2 * time.Second)
+	for replies := 0; replies < 2; {
+		select {
+		case ev := <-events:
+			kinds = append(kinds, ev.Kind)
+			if ev.Kind == "console.reply" {
+				replies++
+			}
+		case <-deadline:
+			t.Fatalf("events so far: %v", kinds)
+		}
+	}
+	joined := strings.Join(kinds, " ")
+	if !strings.Contains(joined, "console.sent step.progress console.reply") && !strings.Contains(joined, "step.progress") {
+		t.Fatalf("kinds = %v", kinds)
+	}
+	if !strings.Contains(joined, "console.progress") {
+		t.Fatalf("no progress streamed: %v", kinds)
+	}
+	// The process survives in the transcript.
+	replies := s.Replies("main")
+	if last := replies[len(replies)-1]; last.Process == nil || len(last.Process.Tools) != 1 {
+		t.Fatalf("stored reply = %+v", last)
+	}
+}
+
+// slowStreamer waits long enough for a step's progress to arrive.
+type slowStreamer struct{}
+
+func (slowStreamer) Handle(context.Context, turn.Request) (turn.Result, error) {
+	time.Sleep(80 * time.Millisecond)
+	return turn.Result{Title: "修复", Text: "done"}, nil
 }

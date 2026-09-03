@@ -99,3 +99,13 @@ input[type="search"]::-webkit-search-cancel-button {
 .prose.md :where(:not(pre) > code)::after {
     content: none;
 }
+
+/* Scrollbars follow the theme: thin, quiet, and dark where the page is
+   dark. The browser's own would otherwise be the brightest thing on it. */
+:root { color-scheme: light; }
+.dark-mode { color-scheme: dark; }
+* { scrollbar-width: thin; scrollbar-color: var(--color-border-primary) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--color-border-primary); border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--color-border-secondary); border: 2px solid transparent; background-clip: padding-box; }

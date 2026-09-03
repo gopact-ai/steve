@@ -47,7 +47,9 @@ export function FleetProvider({ children }: { children: ReactNode }) {
             source.onopen = () => setLive("live");
             source.onmessage = (e) => {
                 const ev = JSON.parse(e.data) as Event;
-                if (ev.kind.startsWith("console.")) setConsoleEvents((list) => [...list.slice(-199), ev]);
+                // The console follows its own traffic and the progress of
+                // work asked from it; everything else is the activity feed.
+                if (ev.kind.startsWith("console.") || ev.kind === "step.progress") setConsoleEvents((list) => [...list.slice(-399), ev]);
                 else setEvents((list) => [ev, ...list].slice(0, 300));
                 refresh();
             };

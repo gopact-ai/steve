@@ -181,7 +181,9 @@ outcome-unknown 的对外动作列出来给人对账；`steve ledger status` 看
 
 dashboard 不只看：页面顶部的 Console 用 owner 身份把一行文字送进同一个 coordinator——说话、`/plan`、`/project use`、
 `/tasks pause|resume|cancel`、`/grant`、`/approve`、`/effects`，回复和 agent 发的里程碑都留在页面上（`console:<name>` 会话，
-锚点不是飞书消息，所以不会漏到群里）。对话记录存在账本里，hub 重启后还在。任务行、披露行、对外动作行、agent 行上带按钮，一键发对应动词。
+锚点不是飞书消息，所以不会漏到群里）。对话记录存在账本里，hub 重启后还在。一行在跑的时候页面上就能看到过程：
+agent 的推理、工具调用和它自己的清单实时刷新，计划类动词（`/plan`、`/repair`）按步骤显示每一步的 agent 在干什么；
+回复落下后过程折叠在回复下面，随时展开。任务行、披露行、对外动作行、agent 行上带按钮，一键发对应动词。
 shell 里同样能用：
 
 ```bash

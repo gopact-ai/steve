@@ -8,7 +8,7 @@ import (
 	"flag"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/models"
-	"github.com/gopact-ai/steve/internal/view"
+	steveview "github.com/gopact-ai/steve/internal/view"
 	"log"
 	"net"
 	"net/http"
@@ -462,7 +462,7 @@ func serve(args []string) error {
 		return err
 	}
 	fleet.SetModels(seen)
-	manager.SetObserver(func(at harness.Placement, s view.Settings) {
+	manager.SetObserver(func(at harness.Placement, s steveview.Settings) {
 		seen.Observe(models.Observation{Node: at.Node, Harness: at.Harness, Current: s.Model, Available: s.Models, Source: "session"})
 	})
 	prober := models.NewProber(manager, seen, func(ctx context.Context, node, dir string) error {
@@ -641,6 +641,9 @@ func serve(args []string) error {
 		Models:    seen,
 		Roster:    fleet, Nodes: nodes, Tasks: tasks, Plans: plans,
 		Ledger: readmodel.Ledger{Attempts: attempts, Artifacts: artifacts, Projects: projects, Intents: intents},
+	})
+	stepRunner.SetObserver(func(req exec.StepRequest, p steveview.Progress) {
+		view.StepProgress(req.TaskID, req.PlanID, req.StepID, req.Agent, req.Node, p)
 	})
 	dashboard, err := readmodel.NewServer(view, readmodel.ServerConfig{
 		Addr: cfg.Gateway.ReadModelAddr, Token: cfg.Gateway.ReadModelToken,
