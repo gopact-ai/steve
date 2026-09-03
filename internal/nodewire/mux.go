@@ -55,6 +55,10 @@ const (
 	// placement was made on a snapshot that may since have changed. The
 	// request and reply are one JSON document each.
 	StreamAdmit = "admit"
+	// StreamSkills asks the node to materialize the skill bundle it was
+	// just sent as a blob: the command is "apply <bundle hash>". The node
+	// answers with an exit status like StreamExec.
+	StreamSkills = "skills"
 )
 
 // ExitPrefix leads the close reason of a finished exec stream, followed by

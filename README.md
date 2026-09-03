@@ -227,9 +227,14 @@ MCP 服务器定义在拥有它的机器上，env 不出机器，也不注入 ag
 `capabilities: ["gpu"]` 仍可用，等价于 `tag:gpu`。
 
 计划步骤和 `steve_delegate` 的 `requires` 用同一套选择器：`tool:docker`、`hardware:gpu`、`model:claude*`、`a|b`、`!x`、
-`tool:docker@>=27`。**当前只有 harness / tool / hardware / model / tag 参与调度**；mcp / skill / a2a / network / credential
+`tool:docker@>=27`。**当前 harness / tool / hardware / model / skill / tag 参与调度**；mcp / a2a / network / credential
 只观察、只在页面上显示，写进 requires 会得到 `NOT_SCHEDULABLE`，等各自的探测、绑定与秘密隔离链条完成后再逐类打开
 （见 `docs/capability-manifest.md`）。匹配是三值的：机器没查这一类、或证据过期，是"不知道"，不是"没有"。
+
+AI 工具与命令按"能启动"核实（后台跑 `--version`，3 秒内起得来就是 launchable，起不来标不可用并写明原因；版本只从真二进制
+解析，`npx` 这类启动器不算）；hub 每分钟让每台 node 重新看一次自己，证据不会过期。每台 node 的 AI 工具都跑在 node 自己的
+home 里（`state_dir/runtimes/<harness>`），不再用那台机器用户的 `~/.codex`、`~/.claude`；hub 启用的技能打成按内容寻址的包，
+node 连上时与技能变更时下发、校验、物化到每个 home，并在快照里按内容哈希上报，`requires: ["skill:deploy"]` 只会落到真有它的机器。
 
 放置只是决定；每次执行前，机器要在**此刻**的观测上对它拥有的条款做终审（`execution_admission.v1`），hub 判它拥有的
 （模型、hub 本机），结果连同快照版本写进 Attempt。不满足时原因是结构化的：`steve_delegate` 返回

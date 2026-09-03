@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	steveruntime "github.com/gopact-ai/steve/internal/runtime"
+	"github.com/gopact-ai/steve/internal/skills"
 	"io"
 	"net"
 	"net/http"
@@ -474,4 +476,81 @@ func TestHubRefreshesSnapshotsOnItsOwn(t *testing.T) {
 		time.Sleep(50 * time.Millisecond)
 	}
 	t.Fatalf("snapshot sequence stayed at %d; the hub never refreshed it", first.Snapshot.Sequence)
+}
+
+// The hub ships its enabled skills to a node as a content-addressed
+// bundle; the node checks the hash, materializes every skill into every
+// isolated harness home, and reports them by content in its snapshot —
+// so "skill:deploy" places only where deploy is really on disk. The
+// harness homes themselves are the node's own, not the user's.
+func TestSkillsArePushedAndMaterialized(t *testing.T) {
+	bin := buildMockAgent(t)
+	state := t.TempDir()
+	server := startNode(t, ServerConfig{
+		Name: "host-8", Token: "tok", StateDir: state,
+		Harnesses: map[string]HarnessSpec{"codex": {Command: bin}, "claude-code": {Command: bin}},
+	})
+	registry := NewRegistry("hub-1", map[string]Config{"host-8": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(registry.Close)
+	before, err := registry.Advert(t.Context(), "host-8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if before.Skills != "" || !nodewire.HasFeature(before.Features, nodewire.FeatureSkills) {
+		t.Fatalf("fresh node advert = skills %q features %v", before.Skills, before.Features)
+	}
+	if _, err := os.Stat(filepath.Join(state, "runtimes", "codex")); err != nil {
+		t.Fatalf("no isolated codex home: %v", err)
+	}
+
+	src := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(src, "deploy"), 0o755)
+	_ = os.WriteFile(filepath.Join(src, "deploy", "SKILL.md"), []byte("# deploy\n"), 0o644)
+	bundle, err := skills.Pack([]skills.Ref{{Name: "deploy", Path: filepath.Join(src, "deploy")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := registry.PushSkills(t.Context(), "host-8", bundle); err != nil {
+		t.Fatal(err)
+	}
+	for _, dest := range steveruntime.SkillDests(state) {
+		if _, err := os.ReadFile(filepath.Join(dest, "deploy", "SKILL.md")); err != nil {
+			t.Errorf("skill not materialized in %s: %v", dest, err)
+		}
+	}
+	after, err := registry.Refresh(t.Context(), "host-8")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.Skills != bundle.Hash {
+		t.Fatalf("advert skills = %q, want %s", after.Skills, bundle.Hash)
+	}
+	var found []string
+	for _, c := range after.Snapshot.Offers {
+		if c.Kind == ability.Skill {
+			found = append(found, c.Key())
+			if c.Availability != ability.Available || c.Version == nil || c.Version.Value != bundle.Skills[0].Hash {
+				t.Errorf("skill offer %+v", c)
+			}
+		}
+	}
+	if len(found) != 2 || after.Snapshot.Coverage[ability.Skill] != ability.Complete {
+		t.Fatalf("skill offers = %v, coverage %s", found, after.Snapshot.Coverage[ability.Skill])
+	}
+	req, _ := ability.Compile([]string{"skill:deploy"})
+	if m := ability.Match(req, after.Snapshot, "codex", time.Now()); !m.OK() {
+		t.Fatalf("skill:deploy should match on codex: %s", m.Unmet())
+	}
+	if m := ability.Match(req, before.Snapshot, "codex", time.Now()); m.Verdict != ability.False {
+		t.Fatalf("before the push, skill:deploy should be absent, got %v", m.Verdict)
+	}
+	// Pushing the same bundle again is a no-op; a tampered blob is refused.
+	if err := registry.PushSkills(t.Context(), "host-8", bundle); err != nil {
+		t.Fatal(err)
+	}
+	bad := bundle
+	bad.Hash = "0000000000000000000000000000000000000000000000000000000000000000"
+	if err := registry.PushSkills(t.Context(), "host-8", bad); err == nil {
+		t.Fatal("a bundle whose bytes do not match its hash was applied")
+	}
 }

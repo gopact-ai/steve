@@ -21,6 +21,8 @@ import (
 
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	steveruntime "github.com/gopact-ai/steve/internal/runtime"
+	"github.com/gopact-ai/steve/internal/skills"
 )
 
 // HarnessSpec is one agent runtime this node can start. The command line is
@@ -79,6 +81,11 @@ type Observe struct {
 	MCP       map[string]MCPSpec
 	Declares  []string
 	Tags      []string
+	// Skills are the skills materialized into every harness home on this
+	// machine, with their content hashes. SkillsKnown says the list is
+	// authoritative (it is on any machine that isolates its homes).
+	Skills      []skills.Entry
+	SkillsKnown bool
 	// Launch answers whether a resolved binary was seen to start, from a
 	// LaunchProbe running on its own clock. Nil means existence only.
 	Launch func(path string) (LaunchResult, bool)
@@ -125,6 +132,17 @@ func (s *Server) Serve(ctx context.Context) error {
 		<-ctx.Done()
 		_ = listener.Close()
 	}()
+	// Every harness runs in a home this node owns, never the user's own
+	// ~/.codex or ~/.claude: personal MCP servers, skills and instructions
+	// there would otherwise leak into every task the hub sends here.
+	if err := steveruntime.Prepare(s.cfg.StateDir); err != nil {
+		return fmt.Errorf("prepare harness homes under %s: %w", s.cfg.StateDir, err)
+	}
+	if hash := s.currentSkills(); hash != "" {
+		if err := s.materializeSkills(hash); err != nil {
+			log.Printf("steve-node: skills %s from last run could not be materialized: %v", hash[:12], err)
+		}
+	}
 	go s.launch.Run(ctx, s.commands)
 	for {
 		socket, err := listener.Accept()
@@ -212,6 +230,8 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 			go s.fetch(ctx, stream)
 		case nodewire.StreamAdmit:
 			go s.admit(stream)
+		case nodewire.StreamSkills:
+			go s.applySkills(stream)
 		default:
 			go s.runAgent(ctx, stream)
 		}
@@ -265,7 +285,7 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	}
 	proc, err := acphost.LocalTransport{
 		Command: spec.Command, Args: spec.Args,
-		ProcessDir: s.processDir(spec), Env: spec.Env,
+		ProcessDir: s.processDir(spec), Env: steveruntime.ApplyEnv(spec.Env, req.Harness, s.cfg.StateDir),
 	}.Start(ctx)
 	if err != nil {
 		log.Printf("steve-node: start %s: %v", req.Harness, err)
@@ -339,12 +359,141 @@ func (s *Server) advert() nodewire.Advert {
 	adv.Features = nodewire.Features()
 	adv.WorkspaceRoot = s.cfg.WorkspaceRoot
 	adv.StateDir = s.cfg.StateDir
+	adv.Skills = s.currentSkills()
 	return adv
+}
+
+// SkillsDir holds materialized bundles, one directory per hash, and
+// "current" naming the one the harness homes link to.
+func (s *Server) SkillsDir() string { return filepath.Join(s.cfg.StateDir, "skills") }
+
+func (s *Server) currentSkills() string {
+	b, err := os.ReadFile(filepath.Join(s.SkillsDir(), "current"))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(b))
+}
+
+func (s *Server) skillEntries() []skills.Entry {
+	hash := s.currentSkills()
+	if hash == "" {
+		return nil
+	}
+	b, err := os.ReadFile(filepath.Join(s.SkillsDir(), hash, ".manifest.json"))
+	if err != nil {
+		return nil
+	}
+	var entries []skills.Entry
+	if err := json.Unmarshal(b, &entries); err != nil {
+		return nil
+	}
+	return entries
+}
+
+// applySkills takes the bundle the hub just put in the blob directory,
+// checks it is the bundle it claims to be, unpacks it next to the other
+// bundles and links every skill into every harness home. Old bundles go
+// once the new one is current. New sessions see the new skills; running
+// ones keep what they started with until the hub restarts them.
+func (s *Server) applySkills(stream *nodewire.Stream) {
+	defer stream.Close()
+	verb, hash, _ := strings.Cut(stream.Request().Command, " ")
+	hash = strings.TrimSpace(hash)
+	fail := func(code string, err error) {
+		log.Printf("steve-node: skills %s: %v", hash, err)
+		fmt.Fprintln(stream, err.Error())
+		_ = stream.CloseWithReason(nodewire.ExitPrefix + code)
+	}
+	if verb != "apply" || hash == "" || hash != filepath.Base(hash) {
+		fail("2", fmt.Errorf("bad request %q", stream.Request().Command))
+		return
+	}
+	blob := filepath.Join(s.BlobDir(), "skills-"+hash+".tar")
+	data, err := os.ReadFile(blob)
+	if err != nil {
+		fail("1", fmt.Errorf("bundle not received: %w", err))
+		return
+	}
+	if got := skills.HashOf(data); got != hash {
+		fail("1", fmt.Errorf("bundle hash is %s, not %s", got[:12], hash[:12]))
+		return
+	}
+	dir := filepath.Join(s.SkillsDir(), hash)
+	staging := dir + ".staging"
+	_ = os.RemoveAll(staging)
+	entries, err := skills.Unpack(data, staging)
+	if err != nil {
+		_ = os.RemoveAll(staging)
+		fail("1", fmt.Errorf("unpack: %w", err))
+		return
+	}
+	manifest, _ := json.Marshal(entries)
+	if err := os.WriteFile(filepath.Join(staging, ".manifest.json"), manifest, 0o600); err != nil {
+		fail("1", err)
+		return
+	}
+	_ = os.RemoveAll(dir)
+	if err := os.Rename(staging, dir); err != nil {
+		fail("1", err)
+		return
+	}
+	if err := s.materializeSkills(hash); err != nil {
+		fail("1", err)
+		return
+	}
+	if err := os.WriteFile(filepath.Join(s.SkillsDir(), "current"), []byte(hash+"\n"), 0o600); err != nil {
+		fail("1", err)
+		return
+	}
+	_ = os.Remove(blob)
+	if old, err := os.ReadDir(s.SkillsDir()); err == nil {
+		for _, e := range old {
+			if e.IsDir() && e.Name() != hash {
+				_ = os.RemoveAll(filepath.Join(s.SkillsDir(), e.Name()))
+			}
+		}
+	}
+	log.Printf("steve-node: skills %s materialized: %d skills", hash[:12], len(entries))
+	_ = stream.CloseWithReason(nodewire.ExitPrefix + "0")
+}
+
+// materializeSkills links every skill of the bundle into every harness
+// home, replacing whatever was linked before.
+func (s *Server) materializeSkills(hash string) error {
+	dir := filepath.Join(s.SkillsDir(), hash)
+	names, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, dest := range steveruntime.SkillDests(s.cfg.StateDir) {
+		if err := os.MkdirAll(dest, 0o700); err != nil {
+			return err
+		}
+		old, err := os.ReadDir(dest)
+		if err != nil {
+			return err
+		}
+		for _, e := range old {
+			if err := os.RemoveAll(filepath.Join(dest, e.Name())); err != nil {
+				return err
+			}
+		}
+		for _, n := range names {
+			if !n.IsDir() {
+				continue
+			}
+			if err := os.Symlink(filepath.Join(dir, n.Name()), filepath.Join(dest, n.Name())); err != nil {
+				return fmt.Errorf("link skill %q: %w", n.Name(), err)
+			}
+		}
+	}
+	return nil
 }
 
 // snapshot observes this machine now, as the next revision.
 func (s *Server) snapshot() *ability.Snapshot {
-	return Snapshot(s.cfg.Name, s.generation, s.nextSequence(), Observe{Harnesses: s.cfg.Harnesses, Tools: s.cfg.Tools, MCP: s.cfg.MCPServers, Declares: s.cfg.Declares, Tags: s.cfg.Capabilities, Launch: s.launch.Lookup})
+	return Snapshot(s.cfg.Name, s.generation, s.nextSequence(), Observe{Harnesses: s.cfg.Harnesses, Tools: s.cfg.Tools, MCP: s.cfg.MCPServers, Declares: s.cfg.Declares, Tags: s.cfg.Capabilities, Launch: s.launch.Lookup, Skills: s.skillEntries(), SkillsKnown: true})
 }
 
 // commands is every binary this machine offers and should see start.
@@ -461,6 +610,19 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 		}
 	}
 	s.Offers = append(s.Offers, hardware(now)...)
+	// Skills are what this machine materialized into its harness homes:
+	// present for every harness, addressed by content. A machine that
+	// isolates its homes knows the whole list, so the kind is covered.
+	if o.SkillsKnown {
+		s.Coverage[ability.Skill] = ability.Complete
+		for _, sk := range o.Skills {
+			for _, h := range ids {
+				s.Offers = append(s.Offers, ability.Capability{Kind: ability.Skill, ID: sk.Name, Scope: h, Assurance: ability.Existence,
+					Version:  &ability.Version{Scheme: "opaque", Value: sk.Hash},
+					Evidence: []ability.Evidence{{Kind: ability.Observed, Method: "materialized", OK: true, Result: sk.Hash[:12], At: now}}})
+			}
+		}
+	}
 	for _, d := range o.Declares {
 		atom, err := ability.ParseAtom(d)
 		if err != nil || atom.ID == "" {

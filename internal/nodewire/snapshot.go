@@ -32,10 +32,14 @@ type AdmitReply struct {
 const (
 	FeatureManifest  = "manifest.v1"
 	FeatureAdmission = "execution_admission.v1"
+	// FeatureSkills says the node takes skill bundles: a content-addressed
+	// tar the hub puts in its blob directory and asks it to materialize
+	// into every harness home it isolates.
+	FeatureSkills = "skill_bundle.v1"
 )
 
 // Features is what this build supports.
-func Features() []string { return []string{FeatureManifest, FeatureAdmission} }
+func Features() []string { return []string{FeatureManifest, FeatureAdmission, FeatureSkills} }
 
 // HasFeature says whether a list names a feature.
 func HasFeature(list []string, feature string) bool {

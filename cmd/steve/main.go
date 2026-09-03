@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"syscall"
 	"time"
@@ -655,10 +656,22 @@ func serve(args []string) error {
 	nodes.SetDriftObserver(func(name string, changes []string) {
 		view.Observe("node.manifest", name, name+": "+strings.Join(changes, "; "))
 	})
+	// Skills are the hub's to enable and every machine's to have: each
+	// node gets the enabled set as a content-addressed bundle when it
+	// connects and whenever the set changes, before harnesses restart.
+	hubSkills = &skillShipper{nodes: nodes, live: live, observe: view.Observe}
+	if _, err := hubSkills.pack(); err != nil {
+		log.Printf("steve: skills could not be packed for nodes: %v", err)
+	}
+	live.After = func() error {
+		hubSkills.shipAll(context.Background())
+		return manager.Restart()
+	}
 	// Machines coming and going are history, not just log lines.
 	nodes.SetObserver(func(s node.Status) {
 		if s.Up {
 			view.Observe("node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion))
+			go hubSkills.ship(context.Background(), s.Name)
 			return
 		}
 		view.Observe("node.down", s.Name, fmt.Sprintf("%s disconnected: %s", s.Name, s.LastError))
@@ -1061,10 +1074,90 @@ func hubAdvert(cfg *config.Config) nodewire.Advert {
 	for id, m := range cfg.MCPServers {
 		mcp[id] = node.MCPSpec{Type: m.Type, Command: m.Command, Args: m.Args, URL: m.URL}
 	}
-	adv.Snapshot = node.Snapshot(nodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: hubLaunch.Lookup})
+	entries, known := hubSkills.entries()
+	adv.Snapshot = node.Snapshot(nodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: hubLaunch.Lookup, Skills: entries, SkillsKnown: known})
 	adv.Features = nodewire.Features()
 	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
 	return adv
+}
+
+// hubSkills ships the enabled skills to every node. Nil until run wires it;
+// doctor then reports the hub's skills as unknown rather than none.
+var hubSkills *skillShipper
+
+// skillShipper keeps every node's harness homes holding the same skills
+// the hub enabled. The bundle is packed from the live map each time it is
+// needed — skills are small, and a stale bundle would ship stale skills.
+type skillShipper struct {
+	nodes   *node.Registry
+	live    *skills.Live
+	observe func(kind, subject, text string)
+
+	mu     sync.Mutex
+	bundle skills.Bundle
+	packed bool
+}
+
+func (s *skillShipper) pack() (skills.Bundle, error) {
+	if s == nil || s.live == nil || s.live.Map == nil {
+		return skills.Bundle{}, errors.New("skills are not configured")
+	}
+	refs, err := s.live.Map.Enabled()
+	if err != nil {
+		return skills.Bundle{}, err
+	}
+	b, err := skills.Pack(refs)
+	if err != nil {
+		return skills.Bundle{}, err
+	}
+	s.mu.Lock()
+	s.bundle, s.packed = b, true
+	s.mu.Unlock()
+	return b, nil
+}
+
+// entries is what the hub's own machine has: the last packed bundle.
+func (s *skillShipper) entries() ([]skills.Entry, bool) {
+	if s == nil {
+		return nil, false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.bundle.Skills, s.packed
+}
+
+func (s *skillShipper) ship(ctx context.Context, name string) {
+	b, err := s.pack()
+	if err != nil {
+		log.Printf("steve: skills for %s: %v", name, err)
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	if err := s.nodes.PushSkills(ctx, name, b); err != nil {
+		if strings.Contains(err.Error(), "does not take skill bundles") {
+			return
+		}
+		log.Printf("steve: skills to %s: %v", name, err)
+		if s.observe != nil {
+			s.observe("node.skills", name, fmt.Sprintf("%s: skills %s not materialized: %v", name, b.Hash[:12], err))
+		}
+		return
+	}
+	if s.observe != nil {
+		s.observe("node.skills", name, fmt.Sprintf("%s: skills %s materialized (%d skills)", name, b.Hash[:12], len(b.Skills)))
+	}
+}
+
+func (s *skillShipper) shipAll(ctx context.Context) {
+	if s == nil || s.nodes == nil {
+		return
+	}
+	for _, st := range s.nodes.Statuses() {
+		if st.Up {
+			s.ship(ctx, st.Name)
+		}
+	}
 }
 
 // hubLaunch checks that the hub machine's own binaries start, the way a

@@ -10,6 +10,7 @@
 package node
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/skills"
 )
 
 // Config is one remote node as the operator declared it. Everything about
@@ -335,6 +337,38 @@ func (r *Registry) Admit(ctx context.Context, name string, req nodewire.AdmitReq
 		return ability.Admission{}, fmt.Errorf("node %q: admission: %s", name, reply.Error)
 	}
 	return reply.Admission, nil
+}
+
+// PushSkills sends a skill bundle to a node and has it materialized. A
+// node that already has this bundle is not sent it again; a node that does
+// not take bundles is left alone, and its snapshot says so.
+func (r *Registry) PushSkills(ctx context.Context, name string, b skills.Bundle) error {
+	c, err := r.connect(ctx, name)
+	if err != nil {
+		return err
+	}
+	adv := c.getAdvert()
+	if !nodewire.HasFeature(adv.Features, nodewire.FeatureSkills) {
+		return fmt.Errorf("node %q does not take skill bundles", name)
+	}
+	if adv.Skills == b.Hash {
+		return nil
+	}
+	if err := r.PutBlob(ctx, name, "skills-"+b.Hash+".tar", bytes.NewReader(b.Data), int64(len(b.Data))); err != nil {
+		return err
+	}
+	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamSkills, Command: "apply " + b.Hash})
+	if err != nil {
+		return fmt.Errorf("node %q: apply skills: %w", name, err)
+	}
+	defer stream.Close()
+	if err := awaitExit(ctx, stream, name); err != nil {
+		return fmt.Errorf("node %q: apply skills: %w", name, err)
+	}
+	adv.Skills = b.Hash
+	c.setAdvert(adv)
+	log.Printf("node: %s materialized skills %s (%d skills)", name, b.Hash[:12], len(b.Skills))
+	return nil
 }
 
 // MCPEndpoint is the URL an agent on this node should call to reach the

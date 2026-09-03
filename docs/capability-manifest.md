@@ -92,4 +92,11 @@ AST 的 property / fuzz（三值、版本、any / one_of / not、canonical）；
 - **单 hub**：第二个 hub 在握手内被拒（`Advert.Refused`），而不是先拿到 advert 再被断开。
 - 页面：attempt 表新增"准入"列（机器终审 / hub 判定 / 缓存快照 / 旧版 node，带快照版本）。
 
+**同日第二批**：
+
+- **时效**：hub 每分钟（带抖动）向每台在线 node 要一次新快照（`StreamAdvert`），修掉了"握手后 15 分钟所有 tool 证据过期、什么都放不下去"的线上问题。node 侧与 hub 自身跑 `LaunchProbe`：`--version`、3 秒、独立进程组、后台 10 分钟一轮；快照里 `launch` 是独立证据、独立时间；起不来 → unavailable；`npx / python / sh` 这类启动器只证明启动器能起，不报版本。**assurance 现在到 launchable**。
+- **工具 home 隔离（协作审计 3-4）**：steve-node 启动时 `runtime.Prepare(state_dir)`，每个 harness 用 `state_dir/runtimes/<harness>`，进程 env 由 `runtime.ApplyEnv` 指过去；不再碰用户真实的 `~/.codex` 等。
+- **技能下发与物化（协作审计 3-1，`skill_bundle.v1`）**：hub 把启用技能打成确定性 tar（`skills.Pack`，无时间无属主，按内容寻址；≤32MB），经 blob 流放到 node，再用 `StreamSkills apply <hash>` 让 node 校验哈希、安全解包（拒绝越界、拒绝非常规文件）、原子替换、软链进每个 harness home、清理旧包；node 在 advert 里报 `skills=<hash>`，快照里按 harness scope 报 `skill:<name>`（version = 内容哈希，coverage complete）。触发：node 上线、`live.Apply()`（技能变更先推 node 再重启 harness）。**`skill` 类已打开调度**。
+- 未做：`launchable` 之上的 `functional`；chat 会话的 resume 校验 effective hash；跨 node 的 skill 生效仍依赖 hub 重启远端 harness。
+
 已回退的错误做法：把 node 全部 MCP env 注入共享 agent 进程（第 1 轮评审第 9 条）。

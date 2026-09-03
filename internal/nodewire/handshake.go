@@ -79,6 +79,10 @@ type Advert struct {
 	WorkspaceRoot string   `json:"workspace_root,omitempty"`
 	// StateDir is the node's own directory: blobs, shadow repositories.
 	StateDir string `json:"state_dir,omitempty"`
+	// Skills is the hash of the skill bundle the node has materialized
+	// into its harness homes; empty means none. The hub compares it with
+	// the bundle it would send and sends only on a difference.
+	Skills string `json:"skills,omitempty"`
 	// Git is the node's git version, empty when git is not on its PATH.
 	// A node without git cannot hold a workspace that is not its own.
 	Git string `json:"git,omitempty"`

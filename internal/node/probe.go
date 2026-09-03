@@ -95,6 +95,10 @@ func (p *LaunchProbe) pass(ctx context.Context, commands []string) {
 			return
 		}
 		r := Launch(ctx, path)
+		if ctx.Err() != nil {
+			// The process is going away, not the binary: record nothing.
+			return
+		}
 		checked++
 		if r.OK {
 			started++

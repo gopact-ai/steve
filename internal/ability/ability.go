@@ -68,8 +68,14 @@ func (k Kind) declaredOK() bool { return k == Tag }
 // then they are observed and shown, never matched — a declared credential
 // is not a credential. Tags stay schedulable as the legacy declaration.
 func (k Kind) Schedulable() bool {
+	// Skills are materialized by the hub into every harness home it
+	// controls, and reported back by content hash; that is a checked
+	// fact, so the kind takes part in placement.
+	if k == Skill {
+		return true
+	}
 	switch k {
-	case MCP, Skill, A2A, Network, Credential:
+	case MCP, A2A, Network, Credential:
 		return false
 	}
 	return true
