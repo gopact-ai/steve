@@ -191,6 +191,18 @@ steve say -url http://<hub>:7710 -token <token> "@builder 把 README 补一段�
 
 控制台要 `feishu.owner_open_id`：它以 owner 的身份行事，读模型的 token 就是它的凭据。
 
+### 模型从哪来，harness 坏了怎么办
+
+Fleet 页的 Model 列不是配置写的，是看出来的：ACP 的 `session/new` 会报当前模型和可选模型，每开一个会话就记一笔
+（存账本，重启不丢）；hub 启动后还会在后台把没用过的 harness 各拉起一次问一遍（只开关会话，不发 prompt）。
+`/fleet probe` 手动再问一轮。harness 不报模型（比如 grok）就显示"—"，不猜。
+
+harness 在某台机器上起不来（配置里有、PATH 上没有）时，agent 标 blocked 并说明原因；如果同一台机器上还有健康的
+agent，行尾出现 **Repair with …**，`/fleet` 里也提示 `/repair <agent>`。`/repair` 起一个钉在那个健康 agent 上的
+单步计划：目标是把命令装好、让正在跑的 steve 进程的 PATH 能找到；修没修好由 `command -v` 在那台机器上说了算，
+然后让机器重新申报一次。这个计划是声明式的（`fixed`），失败了就失败，不会送去 planner 改写。
+node 掉线、模型不提供，这类不是装个东西能解决的，不给按钮。
+
 ## 计划与协作
 
 `/plan` 把一个目标交给规划 agent 拆成步骤（`gateway.planner` 指定哪个 agent 负责拆解；

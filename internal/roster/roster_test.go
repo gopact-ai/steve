@@ -2,10 +2,12 @@ package roster
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
@@ -143,4 +145,97 @@ func names(cs []Candidate) []string {
 		out[i] = c.Agent.ID
 	}
 	return out
+}
+
+// A blocked agent is repairable only when its harness's binary is missing
+// on a machine that is up and has another healthy agent; the helper is the
+// one best at installing things. Everything else says why not.
+func TestRepairPicksAHelperOnTheSameMachine(t *testing.T) {
+	catalog := mustCatalog(t, map[string]agent.Config{
+		"kimi":    {Harness: "kimi", Node: "node-a"},
+		"builder": {Harness: "codex", Node: "node-a"},
+		"fixer":   {Harness: "claude-code", Node: "node-a"},
+		"shipper": {Harness: "codex", Node: "node-b"},
+		"ghost":   {Harness: "codex", Node: "node-c"},
+		"local":   {Harness: "kimi", Default: true},
+	})
+	r := New(catalog)
+	r.SetNodes(fakeNodes{statuses: []node.Status{
+		{Name: "node-a", Up: true, Advert: nodewire.Advert{Harnesses: []nodewire.Harness{
+			{ID: "kimi", Command: "kimi", Missing: `"kimi" not on this node's PATH`},
+			{ID: "codex", Command: "codex"},
+			{ID: "claude-code", Command: "claude-code-acp"},
+		}}},
+		{Name: "node-b", Up: true, Advert: nodewire.Advert{Harnesses: []nodewire.Harness{{ID: "codex", Command: "codex"}}}},
+		{Name: "node-c", Up: false, LastError: "connection refused"},
+	}})
+	r.SetHubAdvert(func() nodewire.Advert {
+		return nodewire.Advert{Harnesses: []nodewire.Harness{{ID: "kimi", Command: "kimi", Missing: `"kimi" not on this node's PATH`}}}
+	})
+
+	fix, err := r.Repair(t.Context(), "kimi")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fix.Helper.Agent.ID != "fixer" || fix.Command != "kimi" || fix.Broken.Missing == "" {
+		t.Fatalf("fix = helper %s command %q broken %+v", fix.Helper.Agent.ID, fix.Command, fix.Broken)
+	}
+	if _, err := r.Repair(t.Context(), "builder"); !errors.Is(err, ErrNotBroken) {
+		t.Fatalf("repairing a healthy agent: %v", err)
+	}
+	if _, err := r.Repair(t.Context(), "ghost"); err == nil || !strings.Contains(err.Error(), "down") {
+		t.Fatalf("a node that is down is not repaired by running something on it: %v", err)
+	}
+	// The hub's own broken harness has nobody else on the hub to fix it.
+	if _, err := r.Repair(t.Context(), "local"); err == nil || !strings.Contains(err.Error(), "no healthy agent") {
+		t.Fatalf("hub without a helper: %v", err)
+	}
+	if _, err := r.Repair(t.Context(), "nobody"); err == nil {
+		t.Fatal("unknown agent repaired")
+	}
+}
+
+type fakeBook map[string]models.Observation
+
+func (b fakeBook) Get(node, harness string) (models.Observation, bool) {
+	o, ok := b[node+"/"+harness]
+	return o, ok
+}
+
+// A model observed running fills in for one nobody declared; a pinned one
+// still wins.
+func TestObservedModelsFillTheRoster(t *testing.T) {
+	catalog := mustCatalog(t, map[string]agent.Config{
+		"codex":   {Harness: "codex", Default: true},
+		"pinned":  {Harness: "codex", Model: "gpt-5-mini"},
+		"builder": {Harness: "codex", Node: "node-a"},
+	})
+	r := New(catalog)
+	r.SetNodes(fakeNodes{statuses: []node.Status{{Name: "node-a", Up: true, Advert: nodewire.Advert{Harnesses: []nodewire.Harness{{ID: "codex", Command: "codex"}}}}}})
+	r.SetModels(fakeBook{
+		"/codex":       {Current: "GPT 5", Available: []string{"GPT 5", "GPT 5 mini"}},
+		"node-a/codex": {Current: "GPT 5 mini"},
+	})
+	byID := map[string]Candidate{}
+	for _, c := range r.All(t.Context()) {
+		byID[c.Agent.ID] = c
+	}
+	if c := byID["codex"]; c.Model != "GPT 5" || len(c.Models) != 2 {
+		t.Fatalf("hub codex = %+v", c)
+	}
+	if c := byID["pinned"]; c.Model != "gpt-5-mini" || len(c.Models) != 1 {
+		t.Fatalf("pinned = %+v", c)
+	}
+	if c := byID["builder"]; c.Model != "GPT 5 mini" {
+		t.Fatalf("builder = %+v", c)
+	}
+}
+
+func mustCatalog(t *testing.T, agents map[string]agent.Config) *agent.Catalog {
+	t.Helper()
+	catalog, err := agent.NewCatalog(agents)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return catalog
 }

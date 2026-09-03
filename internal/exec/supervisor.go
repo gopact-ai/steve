@@ -98,7 +98,7 @@ func (s *Supervisor) continueFrom(ctx context.Context, p plan.Plan, outcome Outc
 		if err == nil || ctx.Err() != nil {
 			return outcome, err
 		}
-		if s.plans == nil || !NeedsRevision(err) {
+		if s.plans == nil || !NeedsRevision(err) || current.Fixed {
 			return outcome, err
 		}
 		if revision >= MaxRevisions {

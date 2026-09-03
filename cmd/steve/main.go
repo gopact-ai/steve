@@ -7,6 +7,8 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/models"
+	"github.com/gopact-ai/steve/internal/view"
 	"log"
 	"net"
 	"net/http"
@@ -450,8 +452,54 @@ func serve(args []string) error {
 	fleet := roster.New(catalog)
 	fleet.SetNodes(nodes)
 	fleet.SetHubCapabilities(cfg.Gateway.Capabilities)
-	fleet.SetHubAdvert(hubAdvert(cfg))
+	fleet.SetHubAdvert(func() nodewire.Advert { return hubAdvert(cfg) })
 	fleet.SetHubLevel(cfg.HubLevel())
+	// What every harness was seen running, per machine: sessions report
+	// it as they open, and a probe asks on purpose for the ones nobody
+	// has used yet.
+	seen := models.New()
+	if err := seen.Persist(book.Document("models")); err != nil {
+		return err
+	}
+	fleet.SetModels(seen)
+	manager.SetObserver(func(at harness.Placement, s view.Settings) {
+		seen.Observe(models.Observation{Node: at.Node, Harness: at.Harness, Current: s.Model, Available: s.Models, Source: "session"})
+	})
+	prober := models.NewProber(manager, seen, func(ctx context.Context, node, dir string) error {
+		if node == "" {
+			return os.MkdirAll(dir, 0o700)
+		}
+		_, err := nodes.Exec(ctx, node, "", "mkdir -p '"+dir+"'")
+		return err
+	})
+	probeDir := func(node string) string {
+		if node == "" {
+			return filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "probe")
+		}
+		for _, s := range nodes.Statuses() {
+			if s.Name == node && s.Advert.StateDir != "" {
+				return filepath.Join(s.Advert.StateDir, "probe")
+			}
+		}
+		return ""
+	}
+	endpoints := func(ctx context.Context) []models.Endpoint {
+		var eps []models.Endpoint
+		known := map[string]bool{}
+		for _, c := range fleet.All(ctx) {
+			key := c.Node + "/" + c.Harness
+			if !c.Eligible || known[key] {
+				continue
+			}
+			dir := probeDir(c.Node)
+			if dir == "" {
+				continue
+			}
+			known[key] = true
+			eps = append(eps, models.Endpoint{Node: c.Node, Harness: c.Harness, Workdir: dir})
+		}
+		return eps
+	}
 	fleet.SetHubSlots(cfg.HubSlots())
 	fleet.SetNodeLevels(cfg.NodeLevels())
 	fleet.SetNodeRegions(cfg.NodeRegions())
@@ -571,6 +619,15 @@ func serve(args []string) error {
 	supervisor.SetPlans(plans)
 	supervisor.SetLedger(book, nodeName())
 	coordinator.SetSupervisor(supervisor, plans, fleet)
+	coordinator.SetRepair(nodes, nodes)
+	coordinator.SetProber(func(ctx context.Context, node, harnessID string) error {
+		dir := probeDir(node)
+		if dir == "" {
+			return fmt.Errorf("no state dir known for %s", nodewire.Place(node))
+		}
+		_, err := prober.Probe(ctx, models.Endpoint{Node: node, Harness: harnessID, Workdir: dir})
+		return err
+	}, func(ctx context.Context) []models.Result { return prober.ProbeAll(ctx, endpoints(ctx), true) })
 
 	// One read model, two renderers. `steve top` and the browser are both
 	// clients of this; neither reads the stores directly, so what the
@@ -578,9 +635,11 @@ func serve(args []string) error {
 	view := readmodel.New(readmodel.Sources{
 		Hub: readmodel.Hub{
 			Node: nodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities,
-			Level: string(cfg.HubLevel()), Advert: hubAdvert(cfg),
+			Level: string(cfg.HubLevel()),
 		},
-		Roster: fleet, Nodes: nodes, Tasks: tasks, Plans: plans,
+		HubAdvert: func() nodewire.Advert { return hubAdvert(cfg) },
+		Models:    seen,
+		Roster:    fleet, Nodes: nodes, Tasks: tasks, Plans: plans,
 		Ledger: readmodel.Ledger{Attempts: attempts, Artifacts: artifacts, Projects: projects, Intents: intents},
 	})
 	dashboard, err := readmodel.NewServer(view, readmodel.ServerConfig{
@@ -612,6 +671,23 @@ func serve(args []string) error {
 	// just started would report every node as down and refuse every
 	// placement — describing its own ignorance rather than the fleet.
 	nodes.Start(ctx)
+	// Discover models for whatever nobody has run yet. It is discovery,
+	// not work: a session opened and closed, no prompt sent. Done off the
+	// startup path so a slow adapter never delays the first message.
+	go func() {
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(5 * time.Second):
+		}
+		for _, r := range prober.ProbeAll(ctx, endpoints(ctx), false) {
+			if r.Err != nil {
+				log.Printf("steve: probe %s/%s: %v", nodewire.Place(r.Endpoint.Node), r.Endpoint.Harness, r.Err)
+				continue
+			}
+			log.Printf("steve: %s/%s runs %q, offers %v", nodewire.Place(r.Endpoint.Node), r.Endpoint.Harness, r.Current, r.Available)
+		}
+	}()
 
 	// The messaging server's URL is baked into session fingerprints, so the
 	// port is remembered across restarts: losing it would ask every live

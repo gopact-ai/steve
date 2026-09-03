@@ -12,6 +12,7 @@ import (
 
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -30,6 +31,9 @@ func fixture(t *testing.T) *Model {
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
 		"local":   {Harness: "mock", Default: true},
 		"builder": {Harness: "mock", Node: "node-a", Requires: []string{"gpu"}},
+		// A harness whose binary is missing on node-a, with builder there
+		// to fix it: the snapshot should say so.
+		"fixme": {Harness: "absent", Node: "node-a"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +43,10 @@ func fixture(t *testing.T) *Model {
 	nodes := fakeNodes{statuses: []node.Status{
 		{Name: "node-a", Addr: "10.0.0.1:7701", Up: true, Advert: nodewire.Advert{
 			Node: "node-a", OS: "linux", Arch: "amd64", Capabilities: []string{"gpu"},
-			Harnesses: []nodewire.Harness{{ID: "mock", Models: []string{"m1"}}},
+			Harnesses: []nodewire.Harness{
+				{ID: "mock", Command: "mockagent", Models: []string{"m1"}},
+				{ID: "absent", Command: "absent-bin", Missing: `"absent-bin" not on this node's PATH`},
+			},
 		}},
 		{Name: "node-b", Addr: "10.0.0.2:7701", Up: false, LastError: "connection refused"},
 	}}
@@ -73,8 +80,17 @@ func fixture(t *testing.T) *Model {
 		t.Fatal(err)
 	}
 
+	// What harnesses were seen running: the hub's mock, by a session.
+	seen := models.New()
+	seen.Observe(models.Observation{Harness: "mock", Current: "mock-fast", Available: []string{"mock-fast", "mock-deep"}, Source: "session"})
+	r.SetModels(seen)
+
 	return New(Sources{
-		Hub:    Hub{Node: "hub-1", Capabilities: []string{"basic"}},
+		Hub: Hub{Node: "hub-1", Capabilities: []string{"basic"}},
+		HubAdvert: func() nodewire.Advert {
+			return nodewire.Advert{Node: "hub-1", Hostname: "hub-1.local", Harnesses: []nodewire.Harness{{ID: "mock", Command: "mockagent"}}}
+		},
+		Models: seen,
 		Roster: r, Nodes: nodes, Tasks: tasks, Plans: plans,
 	})
 }
@@ -109,7 +125,7 @@ func TestSnapshotCoversTheWholeSystem(t *testing.T) {
 	if down.Up || down.LastError == "" {
 		t.Fatalf("down node = %+v, want it listed with a reason", down)
 	}
-	if len(snap.Agents) != 2 {
+	if len(snap.Agents) != 3 {
 		t.Fatalf("agents = %d", len(snap.Agents))
 	}
 	if len(snap.Plans) != 1 || len(snap.Plans[0].Steps) != 1 {
@@ -274,5 +290,31 @@ func TestNonLoopbackRequiresAToken(t *testing.T) {
 	defer ok.Body.Close()
 	if ok.StatusCode != http.StatusOK {
 		t.Fatalf("with token = %d, want 200", ok.StatusCode)
+	}
+}
+
+// The model column comes from observation: a harness seen running reports
+// its model on the agent and on the node, and a blocked agent whose
+// binary is missing names who could repair it.
+func TestSnapshotShowsObservedModelsAndRepairs(t *testing.T) {
+	snap := fixture(t).Snapshot(t.Context())
+	byID := map[string]Agent{}
+	for _, a := range snap.Agents {
+		byID[a.ID] = a
+	}
+	if a := byID["local"]; a.Model != "mock-fast" || len(a.Models) != 2 {
+		t.Fatalf("local = %+v, want the observed model and both alternatives", a)
+	}
+	if a := byID["builder"]; a.Model != "" || len(a.Models) != 1 || a.Models[0] != "m1" {
+		t.Fatalf("builder = %+v, want the node's declared model only", a)
+	}
+	if a := byID["fixme"]; a.Eligible || a.Repair != "builder" || a.Node != "node-a" {
+		t.Fatalf("fixme = %+v, want blocked with builder as the repair", a)
+	}
+	// The hub's node row carries what was observed on its harness, and
+	// the fresh advert's identity.
+	hub := snap.Nodes[0]
+	if hub.Role != RoleHub || hub.Host != "hub-1.local" || len(hub.Harnesses) != 1 || hub.Harnesses[0].Model != "mock-fast" {
+		t.Fatalf("hub row = %+v", hub)
 	}
 }

@@ -8,7 +8,7 @@ import { Mono, Nothing, StateBadge, Tags, Where } from "@/lib/ui";
 
 export function FleetPage() {
     const { snap } = useFleet();
-    const { fill } = useIntent();
+    const { fill, act } = useIntent();
     const up = snap.nodes.filter((n) => n.up).length;
     return (
         <div className="flex flex-col gap-6 p-6">
@@ -53,7 +53,8 @@ export function FleetPage() {
                                                 <div key={h.id} className="flex items-center gap-1.5">
                                                     <span className={h.missing ? "text-error-primary line-through" : ""}>{h.id}</span>
                                                     {h.slots ? <span className="text-xs text-tertiary">{h.slots} slots</span> : null}
-                                                    {h.models?.length ? <span className="text-xs text-quaternary">{h.models.join(", ")}</span> : null}
+                                                    {h.model ? <span className="text-xs text-tertiary">{h.model}</span> : null}
+                                                    {h.models?.length ? <span className="text-xs text-quaternary" title={h.models.join("\n")}>{h.model ? `+${Math.max(0, h.models.length - 1)}` : h.models.join(", ")}</span> : null}
                                                 </div>
                                             ))}
                                         </div>
@@ -91,10 +92,20 @@ export function FleetPage() {
                                 <Table.Cell><StateBadge state={a.eligible ? "ready" : "blocked"} /></Table.Cell>
                                 <Table.Cell><Where node={a.node} /></Table.Cell>
                                 <Table.Cell>{a.harness}</Table.Cell>
-                                <Table.Cell><span className="text-tertiary">{a.model || "—"}</span></Table.Cell>
+                                <Table.Cell>
+                                    <div className="flex flex-col">
+                                        <span className={a.model ? "text-primary" : "text-quaternary"}>{a.model || "—"}</span>
+                                        {a.models?.length ? <span className="text-xs text-tertiary" title={a.models.join("\n")}>{a.models.length} offered</span> : null}
+                                    </div>
+                                </Table.Cell>
                                 <Table.Cell><span className="text-tertiary">{a.level || "internal"}{a.slots ? ` · ${a.slots} slots` : ""}{a.region ? ` · ${a.region}` : ""}</span></Table.Cell>
                                 <Table.Cell><Tags items={a.requires} /></Table.Cell>
-                                <Table.Cell><span className="text-error-primary">{a.why || ""}</span></Table.Cell>
+                                <Table.Cell>
+                                    <div className="flex items-center gap-3">
+                                        <span className="text-error-primary">{a.why || ""}</span>
+                                        {a.repair ? <Button size="sm" color="secondary" onClick={() => act(`/repair ${a.id}`)}>Repair with {a.repair}</Button> : null}
+                                    </div>
+                                </Table.Cell>
                             </Table.Row>
                         )}
                     </Table.Body>

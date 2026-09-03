@@ -14,11 +14,25 @@ import (
 // conn is one live node: the multiplexed connection plus what the node said
 // it can run when it answered.
 type conn struct {
-	name   string
-	mux    *nodewire.Mux
+	name string
+	mux  *nodewire.Mux
+
+	advMu  sync.RWMutex
 	advert nodewire.Advert
 
 	closeOnce sync.Once
+}
+
+func (c *conn) getAdvert() nodewire.Advert {
+	c.advMu.RLock()
+	defer c.advMu.RUnlock()
+	return c.advert
+}
+
+func (c *conn) setAdvert(adv nodewire.Advert) {
+	c.advMu.Lock()
+	defer c.advMu.Unlock()
+	c.advert = adv
 }
 
 func dial(ctx context.Context, name, hub string, cfg Config, mcpDial func(context.Context) (net.Conn, error)) (*conn, error) {

@@ -22,6 +22,7 @@ import (
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/intent"
+	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -124,6 +125,10 @@ type Coordinator struct {
 	supervisor  Supervisor
 	plans       *plan.Store
 	fleet       *roster.Roster
+	refresher   Refresher
+	commands    Commands
+	probeOne    func(ctx context.Context, node, harness string) error
+	probeAll    func(ctx context.Context) []models.Result
 	projects    *project.Store
 	attempts    *attempt.Service
 	artifacts   *artifact.Store
@@ -312,7 +317,12 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 	case protocol.CommandPlans:
 		return c.plansCmd(req, rest), nil
 	case protocol.CommandFleet:
+		if strings.TrimSpace(rest) == "probe" {
+			return c.probeCmd(ctx), nil
+		}
 		return c.fleetCmd(ctx, req), nil
+	case protocol.CommandRepair:
+		return c.repairCmd(ctx, req, rest), nil
 	case protocol.CommandProject:
 		return c.projectCmd(ctx, req, rest)
 	case protocol.CommandGrant:

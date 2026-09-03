@@ -34,6 +34,10 @@ const (
 	// exists for verification: a step's check has to run where the step's
 	// work is, and taking the agent's word for it is not verification.
 	StreamExec = "exec"
+	// StreamAdvert asks the node to check itself again and send a fresh
+	// advert, so a harness repaired after the handshake shows up without
+	// dropping the connection and every session on it.
+	StreamAdvert = "advert"
 	// StreamBlob moves one file between hub and node, size-prefixed: the
 	// hub's "put <name>" sends 8 bytes of big-endian length then the bytes;
 	// "get <name>" receives the same. Artifacts travel this way as git

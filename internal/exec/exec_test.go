@@ -955,3 +955,27 @@ func TestReservedCapacityIsTakenOverAndWaitedFor(t *testing.T) {
 		t.Fatalf("no attempt took over a reserved slot: %+v", records)
 	}
 }
+
+// A fixed plan — a repair, declared rather than planned — is never sent
+// back to the planner: its one step is the point, and a planner routing
+// around the broken machine would defeat it. The failure stands as is.
+func TestFixedPlanIsNotRevised(t *testing.T) {
+	art, att := stores(t)
+	plans := planStore(t)
+	created, _ := plans.Create(plan.Plan{ProjectID: "p", TaskID: "t", Goal: "g", By: "repair", Fixed: true, Steps: []plan.Step{
+		step("exotic", "impossible", []string{"quantum"}),
+	}})
+	p := &scriptedPlanner{revisions: [][]plan.Step{{step("plain", "do it the ordinary way", []string{"gpu"})}}}
+	sup := NewSupervisor(p, Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Runner: &fakeRunner{}}, nil)
+	sup.SetPlans(plans)
+	_, err := sup.Execute(t.Context(), created)
+	if err == nil || !strings.Contains(err.Error(), "quantum") {
+		t.Fatalf("err = %v, want the placement failure itself", err)
+	}
+	if len(p.asked) != 0 {
+		t.Fatalf("planner asked %d times about a fixed plan", len(p.asked))
+	}
+	if final, _ := plans.Latest(created.ID); final.Rev != 1 {
+		t.Fatalf("rev = %d, want the declared plan untouched", final.Rev)
+	}
+}

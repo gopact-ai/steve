@@ -3,10 +3,12 @@ package node
 import (
 	"context"
 	"errors"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -280,5 +282,60 @@ func TestExecRunsCommandsOnTheNode(t *testing.T) {
 	local, err := registry.Exec(t.Context(), "", t.TempDir(), "echo local")
 	if err != nil || !strings.Contains(local, "local") {
 		t.Fatalf("local exec = %q, %v", local, err)
+	}
+}
+
+// A harness that appears after the handshake is seen when the hub asks the
+// node to check itself again — without a reconnect, so nothing running on
+// the node notices.
+func TestRefreshSeesARepairedHarness(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "later-installed")
+	server := startNode(t, ServerConfig{
+		Name: "host-3", Token: "tok", StateDir: t.TempDir(),
+		Harnesses: map[string]HarnessSpec{
+			"codex": {Command: buildMockAgent(t)},
+			"later": {Command: bin},
+		},
+	})
+	registry := NewRegistry("hub-1", map[string]Config{"host-3": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(registry.Close)
+
+	missing := func(adv nodewire.Advert) string {
+		for _, h := range adv.Harnesses {
+			if h.ID == "later" {
+				return h.Missing
+			}
+		}
+		return "not listed"
+	}
+	first, err := registry.Advert(t.Context(), "host-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(missing(first), "PATH") {
+		t.Fatalf("before install: %q", missing(first))
+	}
+	if err := os.WriteFile(bin, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Nothing changes until asked: the advert is a statement, not a poll.
+	if cached, _ := registry.Advert(t.Context(), "host-3"); missing(cached) == "" {
+		t.Fatal("advert changed without a refresh")
+	}
+	fresh, err := registry.Refresh(t.Context(), "host-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing(fresh) != "" || fresh.Node != "host-3" {
+		t.Fatalf("after refresh: %+v", fresh)
+	}
+	// The refreshed advert is what the roster reads from now on.
+	for _, s := range registry.Statuses() {
+		if s.Name == "host-3" && missing(s.Advert) != "" {
+			t.Fatalf("status still says %q", missing(s.Advert))
+		}
+	}
+	if again, _ := registry.Advert(t.Context(), "host-3"); missing(again) != "" {
+		t.Fatal("connection kept the old advert")
 	}
 }

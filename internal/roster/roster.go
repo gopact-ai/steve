@@ -8,11 +8,14 @@ package roster
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"sort"
 	"strings"
 	"sync"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
@@ -44,6 +47,13 @@ type Candidate struct {
 	Capabilities []string
 	Models       []string
 	Harness      string
+	// Model is the model the agent would run with: pinned in config, or
+	// the one the harness was last seen running here. Empty means nobody
+	// has looked yet. Command is the harness's executable on that machine
+	// and Missing why it cannot start there, both from the advert.
+	Model   string
+	Command string
+	Missing string
 	// Slots is the endpoint's session cap for (node, harness); zero is
 	// unlimited. Level is the data level of the machine.
 	Slots int
@@ -64,10 +74,13 @@ type Roster struct {
 	// node's advert and config describe a node.
 	hubLevel project.Level
 	hubSlots map[string]int
-	// hubAdvert is what the hub machine checked about itself: a harness
-	// whose binary is not on this PATH blocks a hub-local agent exactly as
-	// it would on a node.
-	hubAdvert  nodewire.Advert
+	// hubAdvert is what the hub machine checks about itself, asked fresh
+	// each time: a harness whose binary is not on this PATH blocks a
+	// hub-local agent exactly as it would on a node, and one installed a
+	// minute ago is seen a minute ago.
+	hubAdvert func() nodewire.Advert
+	// models is what harnesses have been observed running, per machine.
+	models     Models
 	nodeLevels map[string]project.Level
 	regions    map[string]string
 	nodes      NodeSource
@@ -88,11 +101,23 @@ func (r *Roster) SetHubLevel(level project.Level) {
 	r.hubLevel = level
 }
 
-// SetHubAdvert declares what the hub machine found it can run.
-func (r *Roster) SetHubAdvert(adv nodewire.Advert) {
+// SetHubAdvert installs how the hub machine checks itself.
+func (r *Roster) SetHubAdvert(adv func() nodewire.Advert) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.hubAdvert = adv
+}
+
+// Models is the book of observed models; the models package satisfies it.
+type Models interface {
+	Get(node, harness string) (models.Observation, bool)
+}
+
+// SetModels wires the observations in.
+func (r *Roster) SetModels(book Models) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.models = book
 }
 
 // SetHubSlots declares the hub's per-harness session caps.
@@ -135,7 +160,11 @@ func (r *Roster) SetHubCapabilities(caps []string) {
 func (r *Roster) All(ctx context.Context) []Candidate {
 	r.mu.RLock()
 	nodes, hubCaps := r.nodes, append([]string(nil), r.hubCaps...)
-	hub, levels, regions := place{level: r.hubLevel, slots: r.hubSlots, advert: r.hubAdvert}, r.nodeLevels, r.regions
+	hub, levels, regions := place{level: r.hubLevel, slots: r.hubSlots}, r.nodeLevels, r.regions
+	book := r.models
+	if r.hubAdvert != nil {
+		hub.advert = r.hubAdvert()
+	}
 	r.mu.RUnlock()
 
 	byNode := map[string]node.Status{}
@@ -150,6 +179,16 @@ func (r *Roster) All(ctx context.Context) []Candidate {
 	for _, a := range r.catalog.List() {
 		c := describe(a, byNode, hubCaps, hub, levels)
 		c.Region = regions[a.Node]
+		if book != nil {
+			if seen, ok := book.Get(a.Node, a.Harness); ok {
+				if c.Model == "" {
+					c.Model = seen.Current
+				}
+				if len(c.Models) == 0 {
+					c.Models = seen.Available
+				}
+			}
+		}
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Agent.ID < out[j].Agent.ID })
@@ -202,7 +241,7 @@ func (r *Roster) Explain(ctx context.Context, requires []string) string {
 }
 
 func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hub place, levels map[string]project.Level) Candidate {
-	c := Candidate{Agent: a, Node: a.Node, Harness: a.Harness, Eligible: true, Level: levels[a.Node].OrDefault()}
+	c := Candidate{Agent: a, Node: a.Node, Harness: a.Harness, Model: a.Model, Eligible: true, Level: levels[a.Node].OrDefault()}
 	if a.Model != "" {
 		c.Models = []string{a.Model}
 	}
@@ -214,6 +253,7 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 		// A hub that has checked itself is held to the same standard as a
 		// node; one that has not (tests, an older wiring) is trusted.
 		if len(hub.advert.Harnesses) > 0 {
+			c.Command, c.Missing = harnessCommand(hub.advert, a.Harness)
 			if missing := harnessTrouble(hub.advert, a.Harness); missing != "" {
 				c.Eligible, c.Why = false, missing
 				return c
@@ -234,6 +274,7 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 		}
 		c.Up = status.Up
 		c.Capabilities = status.Advert.Capabilities
+		c.Command, c.Missing = harnessCommand(status.Advert, a.Harness)
 		if !status.Up {
 			c.Eligible = false
 			c.Why = "node " + a.Node + " is down"
@@ -277,6 +318,15 @@ func harnessModels(advert nodewire.Advert, harnessID string) []string {
 	return nil
 }
 
+func harnessCommand(advert nodewire.Advert, harnessID string) (command, missing string) {
+	for _, h := range advert.Harnesses {
+		if h.ID == harnessID {
+			return h.Command, h.Missing
+		}
+	}
+	return "", ""
+}
+
 func harnessTrouble(advert nodewire.Advert, harnessID string) string {
 	for _, h := range advert.Harnesses {
 		if h.ID == harnessID {
@@ -309,6 +359,73 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// Fix is a repair the fleet can attempt: a broken agent, a healthy agent
+// on the same machine to do the work, and the command whose presence
+// proves it done.
+type Fix struct {
+	Broken  Candidate
+	Helper  Candidate
+	Command string
+}
+
+// Repair says how a blocked agent could be fixed, or why it cannot be. The
+// only repair the fleet knows is "the harness's binary is missing on that
+// machine": that is something another agent there can install. A node that
+// is down, or a model the harness does not offer, is not fixed by running
+// something on the node.
+func (r *Roster) Repair(ctx context.Context, agentID string) (Fix, error) {
+	all := r.All(ctx)
+	var broken *Candidate
+	for i := range all {
+		if all[i].Agent.ID == agentID {
+			broken = &all[i]
+		}
+	}
+	if broken == nil {
+		return Fix{}, fmt.Errorf("no agent %q", agentID)
+	}
+	if broken.Eligible {
+		return Fix{}, ErrNotBroken
+	}
+	if !broken.Up {
+		return Fix{}, fmt.Errorf("%s: nothing on that machine can run", broken.Why)
+	}
+	if broken.Missing == "" || broken.Command == "" {
+		return Fix{}, fmt.Errorf("%s: not a missing binary, so not something to install", broken.Why)
+	}
+	var helper *Candidate
+	for i := range all {
+		c := &all[i]
+		if c.Agent.ID == agentID || c.Node != broken.Node || !c.Eligible {
+			continue
+		}
+		if helper == nil || helperRank(c.Harness) < helperRank(helper.Harness) ||
+			(helperRank(c.Harness) == helperRank(helper.Harness) && c.Agent.ID < helper.Agent.ID) {
+			helper = c
+		}
+	}
+	if helper == nil {
+		return Fix{}, fmt.Errorf("no healthy agent on %s to do the repair", nodewire.Place(broken.Node))
+	}
+	return Fix{Broken: *broken, Helper: *helper, Command: broken.Command}, nil
+}
+
+// ErrNotBroken is Repair's answer for an agent that is fine.
+var ErrNotBroken = errors.New("agent is not broken")
+
+// helperRank prefers harnesses that are good at installing things on a
+// machine; anything else is a fallback.
+func helperRank(harness string) int {
+	switch harness {
+	case "claude-code":
+		return 0
+	case "codex":
+		return 1
+	default:
+		return 2
+	}
 }
 
 // place is how the hub describes its own machine to describe().

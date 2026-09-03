@@ -60,6 +60,7 @@ type Transports interface {
 type Manager struct {
 	configs map[string]Config
 	remote  Transports
+	observe Observer
 	mu      sync.Mutex
 	hosts   map[string]*acphost.Host
 	stopped bool
@@ -83,6 +84,18 @@ func NewManager(configs map[string]Config) (*Manager, error) {
 // SetTransports wires remote placements. Without it every placement must be
 // local, and one naming a node is refused rather than silently run here —
 // running a "GPU" step on the wrong machine is worse than not running it.
+// Observer learns what a session reported when it opened: which model the
+// harness runs here and which it offers. That is how the fleet's model
+// column fills without anyone typing model names into a config.
+type Observer func(at Placement, settings view.Settings)
+
+// SetObserver installs the observer; nil turns it off.
+func (m *Manager) SetObserver(observe Observer) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.observe = observe
+}
+
 func (m *Manager) SetTransports(remote Transports) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -110,13 +123,17 @@ func (m *Manager) OpenSession(ctx context.Context, at Placement, upstreamID, wor
 		return nil, err
 	}
 	m.mu.Lock()
-	stopped := m.stopped
+	stopped, observe := m.stopped, m.observe
 	m.mu.Unlock()
 	if stopped {
 		host.Close()
 		return nil, fmt.Errorf("harness manager is stopped")
 	}
-	return &Session{at: at, id: id, generation: generation, host: host}, nil
+	session := &Session{at: at, id: id, generation: generation, host: host}
+	if observe != nil {
+		observe(at, session.Settings())
+	}
+	return session, nil
 }
 
 // SupportsHTTPMCP reports whether the harness's agent can take an HTTP MCP

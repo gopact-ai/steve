@@ -14,6 +14,7 @@ package readmodel
 
 import (
 	"context"
+	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"sync"
 	"time"
@@ -139,7 +140,8 @@ type Hub struct {
 	Started      time.Time `json:"started"`
 	Capabilities []string  `json:"capabilities,omitempty"`
 	// Level is the hub machine's own data level; Advert is what it can
-	// run, checked the way a node checks itself.
+	// run, checked the way a node checks itself. Sources.HubAdvert fills
+	// it fresh for every snapshot.
 	Level  string          `json:"level,omitempty"`
 	Advert nodewire.Advert `json:"advert"`
 }
@@ -171,16 +173,24 @@ type Node struct {
 }
 
 type Harness struct {
-	ID      string   `json:"id"`
-	Slots   int      `json:"slots,omitempty"`
+	ID    string `json:"id"`
+	Slots int    `json:"slots,omitempty"`
+	// Model is what the harness was last seen running here; Models what
+	// it offers, declared or observed.
+	Model   string   `json:"model,omitempty"`
 	Models  []string `json:"models,omitempty"`
 	Missing string   `json:"missing,omitempty"`
 }
 
 type Agent struct {
-	ID       string   `json:"id"`
-	Node     string   `json:"node,omitempty"`
-	Harness  string   `json:"harness"`
+	ID      string `json:"id"`
+	Node    string `json:"node,omitempty"`
+	Harness string `json:"harness"`
+	// Models are what the harness offers here, by observation or config;
+	// Repair names the agent that could fix this one when it is blocked
+	// by a harness missing on its machine.
+	Models   []string `json:"models,omitempty"`
+	Repair   string   `json:"repair,omitempty"`
 	Model    string   `json:"model,omitempty"`
 	Eligible bool     `json:"eligible"`
 	Why      string   `json:"why,omitempty"`
@@ -249,6 +259,12 @@ type StepContext struct {
 
 // Sources are the live stores the model reads. Each is optional: a hub with
 // no plans still reports its nodes.
+// Models is what harnesses were seen running; the models package's Book
+// satisfies it.
+type Models interface {
+	Get(node, harness string) (models.Observation, bool)
+}
+
 type Sources struct {
 	Hub    Hub
 	Roster *roster.Roster
@@ -257,6 +273,12 @@ type Sources struct {
 	Plans  PlanSource
 	// Ledger is where attempts and landings are read from.
 	Ledger LedgerSource
+	// HubAdvert describes the hub machine now, not at startup: a harness
+	// installed since is seen by the next snapshot.
+	HubAdvert func() nodewire.Advert
+	// Models is the book of observed models, for node harnesses that
+	// declare none.
+	Models Models
 }
 
 // LedgerSource is what the read model needs from the ledger-backed

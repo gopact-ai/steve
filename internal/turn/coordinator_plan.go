@@ -266,6 +266,7 @@ func (c *Coordinator) fleetCmd(ctx context.Context, req Request) Result {
 		}
 		if item.Why != "" {
 			fmt.Fprintf(&b, "\n> %s", item.Why)
+			b.WriteString(c.repairHint(ctx, item))
 		}
 	}
 	return Result{Title: title, Text: b.String()}

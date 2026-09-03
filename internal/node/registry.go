@@ -11,6 +11,7 @@ package node
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"net"
@@ -190,7 +191,33 @@ func (r *Registry) Advert(ctx context.Context, name string) (nodewire.Advert, er
 	if err != nil {
 		return nodewire.Advert{}, err
 	}
-	return c.advert, nil
+	return c.getAdvert(), nil
+}
+
+// Refresh asks a connected node to check itself again and returns the fresh
+// advert. A harness repaired after the handshake becomes visible this way,
+// without dropping the connection and every session riding on it.
+func (r *Registry) Refresh(ctx context.Context, name string) (nodewire.Advert, error) {
+	c, err := r.connect(ctx, name)
+	if err != nil {
+		return nodewire.Advert{}, err
+	}
+	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamAdvert})
+	if err != nil {
+		return nodewire.Advert{}, fmt.Errorf("node %q: ask for advert: %w", name, err)
+	}
+	defer stream.Close()
+	var adv nodewire.Advert
+	if err := json.NewDecoder(stream).Decode(&adv); err != nil {
+		return nodewire.Advert{}, fmt.Errorf("node %q: read advert: %w", name, err)
+	}
+	c.setAdvert(adv)
+	r.mu.Lock()
+	if last := r.last[name]; last != nil && last.Up {
+		last.Advert = adv
+	}
+	r.mu.Unlock()
+	return adv, nil
 }
 
 // MCPEndpoint is the URL an agent on this node should call to reach the
@@ -201,10 +228,10 @@ func (r *Registry) MCPEndpoint(ctx context.Context, name string) (string, error)
 	if err != nil {
 		return "", err
 	}
-	if c.advert.MCPPort == 0 {
+	if c.getAdvert().MCPPort == 0 {
 		return "", fmt.Errorf("node %q offers no reverse messaging channel", name)
 	}
-	return fmt.Sprintf("http://127.0.0.1:%d/mcp", c.advert.MCPPort), nil
+	return fmt.Sprintf("http://127.0.0.1:%d/mcp", c.getAdvert().MCPPort), nil
 }
 
 // Probe dials every node once and reports the outcome. This is what
@@ -313,7 +340,7 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 	r.mu.Unlock()
 
 	r.remember(&Status{
-		Name: name, Addr: cfg.Addr, Level: levelOr(cfg.Level), Region: cfg.Region, Up: true, Since: time.Now(), Advert: c.advert,
+		Name: name, Addr: cfg.Addr, Level: levelOr(cfg.Level), Region: cfg.Region, Up: true, Since: time.Now(), Advert: c.getAdvert(),
 	})
 	go func() {
 		<-c.mux.Done()

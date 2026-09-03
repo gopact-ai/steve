@@ -2,14 +2,14 @@
 // events it streams at /events. Every list is present, empty or not.
 export interface Advert { node?: string; hostname?: string; ips?: string[]; os?: string; arch?: string; harnesses?: Harness[]; capabilities?: string[] }
 export interface Hub { node: string; started: string; capabilities?: string[]; level?: string; advert?: Advert }
-export interface Harness { id: string; command?: string; version?: string; models?: string[]; missing?: string; slots?: number }
+export interface Harness { id: string; command?: string; version?: string; model?: string; models?: string[]; missing?: string; slots?: number }
 export interface Node {
     name: string; role?: string; addr?: string; host?: string; ips?: string[]; up: boolean; since?: string; os?: string; arch?: string;
     capabilities?: string[]; harnesses?: Harness[]; last_error?: string; level?: string; region?: string;
 }
 export interface Agent {
-    id: string; node?: string; harness: string; model?: string; eligible: boolean; why?: string;
-    requires?: string[]; level?: string; slots?: number; region?: string;
+    id: string; node?: string; harness: string; model?: string; models?: string[]; eligible: boolean; why?: string;
+    requires?: string[]; level?: string; slots?: number; region?: string; repair?: string;
 }
 export interface Task {
     id: string; goal: string; state: string; member?: string; node?: string; channel?: string; parent?: string;

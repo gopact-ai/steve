@@ -133,6 +133,11 @@ type Plan struct {
 	Rev   int    `json:"rev"`
 	Goal  string `json:"goal"`
 	Steps []Step `json:"steps"`
+	// Fixed says this plan is declared, not planned: a failed step ends
+	// it rather than sending it back to a planner. A repair is one — the
+	// step is the whole point, and a planner "improving" it would only
+	// route around the machine that needs fixing.
+	Fixed bool `json:"fixed,omitempty"`
 	// By is the planner that produced this revision: "declared", "rule",
 	// "llm:<agent>". Planning is an attributable act like any other.
 	By string `json:"by"`

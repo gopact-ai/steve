@@ -17,19 +17,31 @@ import (
 // one subsystem is off is worse than one that shows the rest.
 func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	snap := Snapshot{At: time.Now(), Hub: m.src.Hub}
+	if m.src.HubAdvert != nil {
+		snap.Hub.Advert = m.src.HubAdvert()
+	}
 	if m.src.Hub.Node != "" {
-		snap.Nodes = append(snap.Nodes, hubNode(m.src.Hub))
+		snap.Nodes = append(snap.Nodes, hubNode(snap.Hub))
 	}
 	if m.src.Nodes != nil {
 		snap.Nodes = append(snap.Nodes, nodes(m.src.Nodes.Statuses())...)
 	}
+	for i := range snap.Nodes {
+		m.observedModels(&snap.Nodes[i])
+	}
 	if m.src.Roster != nil {
 		for _, c := range m.src.Roster.All(ctx) {
-			snap.Agents = append(snap.Agents, Agent{
+			a := Agent{
 				ID: c.Agent.ID, Node: m.place(c.Node), Harness: c.Harness,
-				Model: c.Agent.Model, Eligible: c.Eligible, Why: c.Why,
+				Model: c.Model, Models: c.Models, Eligible: c.Eligible, Why: c.Why,
 				Requires: c.Agent.Requires, Level: string(c.Level.OrDefault()), Slots: c.Slots, Region: c.Region,
-			})
+			}
+			if !c.Eligible {
+				if fix, err := m.src.Roster.Repair(ctx, c.Agent.ID); err == nil {
+					a.Repair = fix.Helper.Agent.ID
+				}
+			}
+			snap.Agents = append(snap.Agents, a)
 		}
 	}
 	planByTask := map[string]plan.Plan{}
@@ -73,6 +85,28 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 		snap.Facts = m.src.Ledger.Facts(ctx)
 	}
 	return snap
+}
+
+// observedModels fills a node's harness model lists from what was seen
+// running there, for harnesses whose config declares none. The node's
+// name in the book is the model's: "" for the hub.
+func (m *Model) observedModels(n *Node) {
+	if m.src.Models == nil {
+		return
+	}
+	node := n.Name
+	if n.Role == RoleHub {
+		node = ""
+	}
+	for i := range n.Harnesses {
+		h := &n.Harnesses[i]
+		if seen, ok := m.src.Models.Get(node, h.ID); ok {
+			if len(h.Models) == 0 {
+				h.Models = seen.Available
+			}
+			h.Model = seen.Current
+		}
+	}
 }
 
 // place resolves the model's "" — this machine — to the hub's node name,

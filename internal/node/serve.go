@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"crypto/subtle"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -140,6 +141,8 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 		switch stream.Request().Kind {
 		case nodewire.StreamExec:
 			go s.runCommand(ctx, stream)
+		case nodewire.StreamAdvert:
+			go s.sendAdvert(stream)
 		case nodewire.StreamBlob:
 			go s.transferBlob(ctx, stream)
 		case nodewire.StreamGrant:
@@ -270,6 +273,16 @@ func Advertise(name string, specs map[string]HarnessSpec, caps []string) nodewir
 		Hostname: hostname, IPs: ips,
 		Harnesses: harnesses, Capabilities: caps,
 		Git: gitVersion(),
+	}
+}
+
+// sendAdvert answers a hub asking "check yourself again": the same advert
+// the handshake carried, computed now, so a harness installed since then
+// is seen without dropping the connection.
+func (s *Server) sendAdvert(stream *nodewire.Stream) {
+	defer stream.Close()
+	if err := json.NewEncoder(stream).Encode(s.advert()); err != nil {
+		log.Printf("steve-node: send advert: %v", err)
 	}
 }
 
