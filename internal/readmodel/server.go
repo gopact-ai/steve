@@ -166,6 +166,8 @@ func loopback(addr string) bool {
 type Console interface {
 	Send(ctx context.Context, conversation, input string) (Reply, error)
 	Replies(conversation string) []Reply
+	// Conversations names every console conversation with a transcript.
+	Conversations() []string
 }
 
 // Reply is one exchange on the console.
@@ -215,12 +217,16 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 func (s *Server) consoleReplies(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.console == nil {
-		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false, "replies": []Reply{}})
+		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false, "replies": []Reply{}, "conversations": []string{}})
 		return
 	}
 	conversation := r.URL.Query().Get("conversation")
 	if conversation == "" {
 		conversation = "console:main"
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "replies": s.console.Replies(conversation)})
+	names := s.console.Conversations()
+	if names == nil {
+		names = []string{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "replies": s.console.Replies(conversation), "conversations": names})
 }

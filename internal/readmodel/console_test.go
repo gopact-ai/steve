@@ -17,6 +17,7 @@ func (f *fakeConsole) Send(_ context.Context, conversation, input string) (Reply
 	return r, nil
 }
 func (f *fakeConsole) Replies(string) []Reply { return f.replies }
+func (f *fakeConsole) Conversations() []string { return []string{"console:main"} }
 
 // The console endpoints sit behind the same token as the snapshot and are
 // off — honestly off — until a console is wired.

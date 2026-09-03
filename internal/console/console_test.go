@@ -95,3 +95,60 @@ func (r *recorder) ReplyText(context.Context, string, string) (string, error) {
 }
 func (r *recorder) PatchCard(context.Context, string, []byte) error { return nil }
 func (r *recorder) DeleteMessage(context.Context, string) error     { return nil }
+
+// memDoc is a durable document that lives for one test.
+type memDoc struct {
+	raw   []byte
+	saved bool
+}
+
+func (d *memDoc) Load() ([]byte, bool, error) { return d.raw, d.saved, nil }
+func (d *memDoc) Save(raw []byte) error {
+	d.raw, d.saved = append([]byte(nil), raw...), true
+	return nil
+}
+func (d *memDoc) Check() error { return nil }
+
+// A restart must not empty the console: the transcript is kept in a
+// document and comes back, per conversation, in order, and the page can
+// list which conversations exist.
+func TestConsoleTranscriptSurvivesARestart(t *testing.T) {
+	doc := &memDoc{}
+	h := &echo{}
+	first := New(h, "ou_owner", nil)
+	if err := first.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Send(context.Background(), "main", "/fleet"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Send(context.Background(), "ops", "hello"); err != nil {
+		t.Fatal(err)
+	}
+	if !doc.saved {
+		t.Fatal("nothing was written")
+	}
+
+	second := New(h, "ou_owner", nil)
+	if err := second.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	replies := second.Replies("main")
+	if len(replies) != 2 || replies[0].Input != "/fleet" || replies[1].Text != "echo: /fleet" {
+		t.Fatalf("restored main = %+v", replies)
+	}
+	if got := second.Conversations(); len(got) != 2 || got[0] != "console:main" || got[1] != "console:ops" {
+		t.Fatalf("conversations = %v", got)
+	}
+	// New lines append after the restored ones and are saved too.
+	if _, err := second.Send(context.Background(), "main", "/tasks"); err != nil {
+		t.Fatal(err)
+	}
+	third := New(h, "ou_owner", nil)
+	if err := third.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	if replies := third.Replies("main"); len(replies) != 4 || replies[2].Input != "/tasks" {
+		t.Fatalf("after second restart main = %+v", replies)
+	}
+}

@@ -580,6 +580,9 @@ func serve(args []string) error {
 	// The console: the owner acting from the page, through this same
 	// coordinator. Notices anchored on the console stay on the page.
 	cons := console.New(coordinator, cfg.Feishu.OwnerOpenID, view)
+	if err := cons.Persist(book.Document("console")); err != nil {
+		return err
+	}
 	dashboard.SetConsole(cons)
 	defer dashboard.Close()
 	go func() {

@@ -7,11 +7,15 @@ package console
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"log"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -37,10 +41,48 @@ type Service struct {
 
 	mu      sync.Mutex
 	replies map[string][]readmodel.Reply
+	// doc keeps the transcript across restarts. A console whose history
+	// vanishes with the process would make every restart look like the
+	// owner had never said anything.
+	doc ledger.Doc
 }
 
 func New(handler Handler, owner string, model *readmodel.Model) *Service {
 	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]readmodel.Reply{}}
+}
+
+// Persist keeps the transcript in a durable document and loads what an
+// earlier process left there.
+func (s *Service) Persist(doc ledger.Doc) error {
+	raw, ok, err := doc.Load()
+	if err != nil {
+		return fmt.Errorf("console: load transcript: %w", err)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if ok && len(raw) > 0 {
+		var saved map[string][]readmodel.Reply
+		if err := json.Unmarshal(raw, &saved); err != nil {
+			return fmt.Errorf("console: transcript is not readable: %w", err)
+		}
+		for conversation, list := range saved {
+			s.replies[conversation] = append(list, s.replies[conversation]...)
+		}
+	}
+	s.doc = doc
+	return nil
+}
+
+// Conversations lists every console conversation with a transcript.
+func (s *Service) Conversations() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]string, 0, len(s.replies))
+	for name := range s.replies {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // IsConsole says whether an anchor or conversation belongs to the page.
@@ -105,6 +147,15 @@ func (s *Service) record(r readmodel.Reply) {
 		list = list[len(list)-keep:]
 	}
 	s.replies[r.Conversation] = list
+	if s.doc != nil {
+		// The whole transcript is small (keep entries per conversation);
+		// one durable replace is simpler than a log to compact.
+		if raw, err := json.Marshal(s.replies); err == nil {
+			if err := s.doc.Save(raw); err != nil {
+				log.Printf("console: save transcript: %v", err)
+			}
+		}
+	}
 	s.mu.Unlock()
 	if s.model != nil {
 		text := r.Text
