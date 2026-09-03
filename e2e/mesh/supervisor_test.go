@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/planner"
@@ -202,6 +203,27 @@ func TestC1PlacementAndFanOutAcrossHosts(t *testing.T) {
 		if r.Result.Node == "" {
 			t.Errorf("step %s reports no node; placement was not recorded", r.StepID)
 		}
+	}
+
+	// Every attempt on a node carries the node's own admission: its final
+	// word on the requirement, on an observation taken then — not the
+	// hub's cached view of the machine.
+	records, _ := f.attempts.ForTask(ctx, "e2e-1")
+	if len(records) == 0 {
+		t.Fatal("no attempts were recorded for the plan")
+	}
+	for _, rec := range records {
+		if rec.Node == "" {
+			continue
+		}
+		if rec.Admission == nil {
+			t.Errorf("attempt %s on %s has no admission", rec.ID, rec.Node)
+			continue
+		}
+		if rec.Admission.Source != ability.SourceNode || !rec.Admission.OK() || rec.Admission.Generation == 0 || len(rec.Requires) == 0 {
+			t.Errorf("attempt %s on %s: admission %+v requires %v, want the node's own verdict", rec.ID, rec.Node, *rec.Admission, rec.Requires)
+		}
+		t.Logf("attempt %s on %s: %v admitted by %s at %d/%d", rec.ID, rec.Node, rec.Requires, rec.Admission.Source, rec.Admission.Generation, rec.Admission.Sequence)
 	}
 
 	// C2: the two branches really overlapped in time on two machines. The

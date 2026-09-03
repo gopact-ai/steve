@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"github.com/gopact-ai/steve/internal/ability"
 	"io"
+	"strings"
 	"time"
 )
 
@@ -101,7 +102,16 @@ func Dial(conn io.ReadWriter, hello Hello) (Advert, error) {
 		return Advert{}, fmt.Errorf("read advert: %w", err)
 	}
 	if advert.Refused != "" {
-		return Advert{}, fmt.Errorf("%w: %s", ErrBadToken, advert.Refused)
+		// The node says why in words; the error says it in kind, so a
+		// hub can tell a wrong token from a node another hub already holds.
+		cause := ErrRefused
+		switch {
+		case advert.Refused == "token rejected":
+			cause = ErrBadToken
+		case strings.HasPrefix(advert.Refused, "hub speaks v"):
+			cause = ErrVersionMismatch
+		}
+		return Advert{}, fmt.Errorf("%w: %s", cause, advert.Refused)
 	}
 	if advert.Version != ProtocolVersion {
 		return Advert{}, fmt.Errorf("%w: node speaks v%d, hub speaks v%d",

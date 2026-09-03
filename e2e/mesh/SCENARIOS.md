@@ -2,6 +2,7 @@
 
 状态：mock 17/17 + 真模型 3/3 在真机通过。
 mock：`STEVE_MESH_E2E=1 go test ./e2e/mesh/`；真模型：再加 `STEVE_MESH_REAL=1`（约 10 分钟）。
+一台 node 一次只服务一个 hub：跑真机场景前先停掉正在用这两台 node 的 hub，否则握手被拒（`this node is served by hub …`），套件会报"node is down"。
 A1–A5 连接层；B1/B3 读模型与两个渲染器（B2 变更流由 C1 覆盖）；C1+C2 跨机放置与实测并行重叠；
 C3 命令验证在 node 上跑（ssh 核实标记文件）+ 跨机 agent 审核 FAIL 有约束力；C4 无处可跑指名原因；
 C5 委派子任务预算从父任务扣减并回记；C6 环在结构上拒绝；C7 REPLAN 触发规划 agent 修订、已完成步骤复用；

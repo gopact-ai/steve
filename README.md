@@ -318,6 +318,7 @@ REPLAN 触发修订并复用已完成步骤、规划 agent 自动拆解、以及
 约 10 分钟，花真 token。
 
 ```bash
+# 先停掉正在用这两台 node 的 hub：一台 node 一次只服务一个 hub
 STEVE_MESH_E2E=1 STEVE_MESH_NODE_A=host-a:7701 STEVE_MESH_NODE_B=host-b:7701   go test ./e2e/mesh/ -v
 ```
 
