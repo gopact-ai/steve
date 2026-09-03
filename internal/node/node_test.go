@@ -387,7 +387,7 @@ func TestNodeReportsASnapshot(t *testing.T) {
 			t.Errorf("%s = %q, want %q", key, got[key], want)
 		}
 	}
-	if snap.Coverage[ability.Tool] != ability.Complete || snap.Coverage[ability.Skill] != ability.Unsupported {
+	if snap.Coverage[ability.Tool] != ability.Complete || snap.Coverage[ability.Skill] != ability.Complete {
 		t.Fatalf("coverage = %v", snap.Coverage)
 	}
 }
