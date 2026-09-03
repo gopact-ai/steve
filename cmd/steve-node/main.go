@@ -33,6 +33,9 @@ func run(args []string) error {
 	if len(args) > 0 && args[0] == node.LaunchVerb {
 		return launch(args[1:])
 	}
+	if len(args) > 0 && args[0] == "adopt" {
+		return adopt(args[1:])
+	}
 	flags := flag.NewFlagSet("steve-node", flag.ContinueOnError)
 	configPath := flags.String("config", "node.json", "path to the node config file")
 	listen := flags.String("listen", "", "override the configured listen address")
@@ -49,6 +52,27 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return node.NewServer(cfg).Serve(ctx)
+}
+
+// adopt hands this node to a named hub: "steve-node adopt -config node.json <hub>".
+func adopt(args []string) error {
+	flags := flag.NewFlagSet("steve-node adopt", flag.ContinueOnError)
+	configPath := flags.String("config", "node.json", "path to the node config file")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return fmt.Errorf("usage: steve-node adopt [-config node.json] <hub>")
+	}
+	cfg, err := load(*configPath)
+	if err != nil {
+		return err
+	}
+	if err := node.Adopt(cfg.StateDir, flags.Arg(0)); err != nil {
+		return err
+	}
+	fmt.Printf("%s now belongs to hub %q\n", cfg.Name, flags.Arg(0))
+	return nil
 }
 
 // launch is the MCP launcher an agent runs: it carries a binding id and a

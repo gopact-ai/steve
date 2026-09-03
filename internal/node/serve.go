@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/ability"
 	"io"
@@ -346,8 +347,23 @@ func (s *Server) claim(hub string) error {
 	if s.hubLive > 0 && s.hubName != hub {
 		return fmt.Errorf("this node is served by hub %q; refuse %q", s.hubName, hub)
 	}
+	// A node remembers its hub across restarts: a hub that vanished
+	// without saying goodbye keeps the node for OwnerGrace, so a second
+	// hub pointed at the same machine cannot take it over during a blip.
+	// A hub that disconnected cleanly has handed the node back.
+	if s.hubLive == 0 {
+		owner := s.owner()
+		if owner.Hub != "" && owner.Hub != hub && !owner.Released && time.Since(owner.LastSeen) < OwnerGrace {
+			return fmt.Errorf("this node belongs to hub %q, last seen %s ago; it is free %s after that hub goes silent, or now with `steve-node adopt %s`",
+				owner.Hub, time.Since(owner.LastSeen).Round(time.Second), OwnerGrace, hub)
+		}
+		if owner.Hub != hub && owner.Hub != "" {
+			log.Printf("steve-node: hub changed from %q to %q", owner.Hub, hub)
+		}
+	}
 	s.hubName = hub
 	s.hubLive++
+	s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC()})
 	return nil
 }
 
@@ -356,7 +372,59 @@ func (s *Server) release(hub string) {
 	defer s.hubMu.Unlock()
 	if s.hubName == hub && s.hubLive > 0 {
 		s.hubLive--
+		if s.hubLive == 0 {
+			s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC(), Released: true})
+		}
 	}
+}
+
+// OwnerGrace is how long a node stays with a hub that went silent.
+const OwnerGrace = 10 * time.Minute
+
+// hubOwner is the hub a node last served, kept on disk.
+type hubOwner struct {
+	Hub      string    `json:"hub"`
+	LastSeen time.Time `json:"last_seen"`
+	// Released says the hub disconnected on purpose; the node is free.
+	Released bool `json:"released,omitempty"`
+}
+
+func (s *Server) ownerPath() string { return filepath.Join(s.cfg.StateDir, "hub.json") }
+
+func (s *Server) owner() hubOwner {
+	var o hubOwner
+	if b, err := os.ReadFile(s.ownerPath()); err == nil {
+		_ = json.Unmarshal(b, &o)
+	}
+	return o
+}
+
+func (s *Server) writeOwner(o hubOwner) {
+	b, _ := json.Marshal(o)
+	if err := os.MkdirAll(s.cfg.StateDir, 0o700); err == nil {
+		_ = os.WriteFile(s.ownerPath(), b, 0o600)
+	}
+}
+
+// touchOwner marks the serving hub as seen now; the hub's minute refresh
+// keeps this current while the connection lives.
+func (s *Server) touchOwner() {
+	s.hubMu.Lock()
+	defer s.hubMu.Unlock()
+	if s.hubLive > 0 {
+		s.writeOwner(hubOwner{Hub: s.hubName, LastSeen: time.Now().UTC()})
+	}
+}
+
+// Adopt hands the node to a hub explicitly: the next handshake from it is
+// accepted whatever the previous owner's grace says.
+func Adopt(stateDir, hub string) error {
+	if hub == "" {
+		return errors.New("adopt: hub name is required")
+	}
+	s := &Server{cfg: ServerConfig{StateDir: stateDir}}
+	s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC(), Released: true})
+	return nil
 }
 
 // advert reports what this machine can honestly do. Harnesses whose command
@@ -738,6 +806,7 @@ func Advertise(name string, specs map[string]HarnessSpec, caps []string) nodewir
 // is seen without dropping the connection.
 func (s *Server) sendAdvert(stream *nodewire.Stream) {
 	defer stream.Close()
+	s.touchOwner()
 	if err := json.NewEncoder(stream).Encode(s.advert()); err != nil {
 		log.Printf("steve-node: send advert: %v", err)
 	}

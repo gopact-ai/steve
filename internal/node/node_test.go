@@ -650,3 +650,52 @@ func TestMCPBindingKeepsSecretsOnTheNode(t *testing.T) {
 		t.Fatalf("an http server should refuse until the node proxies it: %+v", adm)
 	}
 }
+
+// A node remembers its hub. While that hub is silent but within grace a
+// second hub is refused, so a blip cannot hand the machine to whoever
+// dials next; a hub that disconnected cleanly has given the node back;
+// adopt hands it over explicitly.
+func TestNodeRemembersItsHub(t *testing.T) {
+	bin := buildMockAgent(t)
+	state := t.TempDir()
+	server := startNode(t, ServerConfig{Name: "host-10", Token: "tok", StateDir: state, Harnesses: map[string]HarnessSpec{"codex": {Command: bin}}})
+	first := NewRegistry("hub-1", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
+	if _, err := first.Advert(t.Context(), "host-10"); err != nil {
+		t.Fatal(err)
+	}
+	// The owner went silent: pretend by rewriting the record it wrote.
+	first.Close()
+	time.Sleep(100 * time.Millisecond)
+	server.writeOwner(hubOwner{Hub: "hub-1", LastSeen: time.Now().Add(-time.Minute)})
+	second := NewRegistry("hub-2", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(second.Close)
+	if _, err := second.Advert(t.Context(), "host-10"); err == nil || !errors.Is(err, nodewire.ErrRefused) {
+		t.Fatalf("a second hub took over a node whose hub went silent a minute ago: %v", err)
+	}
+	// Beyond grace, or after a clean release, or by adoption, it is free.
+	server.writeOwner(hubOwner{Hub: "hub-1", LastSeen: time.Now().Add(-OwnerGrace - time.Minute)})
+	if _, err := second.Advert(t.Context(), "host-10"); err != nil {
+		t.Fatalf("after grace: %v", err)
+	}
+	second.Close()
+	time.Sleep(100 * time.Millisecond)
+	if o := server.owner(); o.Hub != "hub-2" || !o.Released {
+		t.Fatalf("owner after a clean disconnect = %+v", o)
+	}
+	third := NewRegistry("hub-3", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(third.Close)
+	if _, err := third.Advert(t.Context(), "host-10"); err != nil {
+		t.Fatalf("after a clean release: %v", err)
+	}
+	third.Close()
+	time.Sleep(100 * time.Millisecond)
+	server.writeOwner(hubOwner{Hub: "hub-3", LastSeen: time.Now()})
+	if err := Adopt(state, "hub-4"); err != nil {
+		t.Fatal(err)
+	}
+	fourth := NewRegistry("hub-4", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(fourth.Close)
+	if _, err := fourth.Advert(t.Context(), "host-10"); err != nil {
+		t.Fatalf("after adopt: %v", err)
+	}
+}

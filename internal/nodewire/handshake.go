@@ -12,7 +12,29 @@ import (
 )
 
 // ProtocolVersion is bumped when a frame or handshake field changes meaning.
-const ProtocolVersion = 1
+// ProtocolMin is the oldest version this build still speaks; a peer whose
+// range does not overlap ours is refused with both ranges in the reason.
+const (
+	ProtocolVersion = 1
+	ProtocolMin     = 1
+)
+
+// Negotiate picks the newest version both sides speak, or 0 when the
+// ranges do not overlap. A peer that names no range speaks exactly its
+// Version.
+func Negotiate(peerMin, peerMax int) int {
+	if peerMax == 0 {
+		return 0
+	}
+	if peerMin == 0 {
+		peerMin = peerMax
+	}
+	chosen := min(peerMax, ProtocolVersion)
+	if chosen < peerMin || chosen < ProtocolMin {
+		return 0
+	}
+	return chosen
+}
 
 // HandshakeTimeout bounds the hello/advert exchange so a wrong port does not
 // hang a dial forever.
@@ -30,6 +52,11 @@ type Hello struct {
 	Version int    `json:"version"`
 	Token   string `json:"token"`
 	Hub     string `json:"hub,omitempty"`
+	// ProtocolMin and ProtocolMax are the range the hub speaks; the node
+	// answers with the newest both sides share as Advert.Version. A hub
+	// that sends only Version speaks that one version.
+	ProtocolMin int `json:"protocol_min,omitempty"`
+	ProtocolMax int `json:"protocol_max,omitempty"`
 	// Features are the protocol extensions the hub supports.
 	Features []string `json:"features,omitempty"`
 }
@@ -98,6 +125,7 @@ type Advert struct {
 // Dial performs the hub side of the handshake on an established connection.
 func Dial(conn io.ReadWriter, hello Hello) (Advert, error) {
 	hello.Version = ProtocolVersion
+	hello.ProtocolMin, hello.ProtocolMax = ProtocolMin, ProtocolVersion
 	if err := writeJSON(conn, hello); err != nil {
 		return Advert{}, fmt.Errorf("send hello: %w", err)
 	}
@@ -117,7 +145,7 @@ func Dial(conn io.ReadWriter, hello Hello) (Advert, error) {
 		}
 		return Advert{}, fmt.Errorf("%w: %s", cause, advert.Refused)
 	}
-	if advert.Version != ProtocolVersion {
+	if advert.Version < ProtocolMin || advert.Version > ProtocolVersion {
 		return Advert{}, fmt.Errorf("%w: node speaks v%d, hub speaks v%d",
 			ErrVersionMismatch, advert.Version, ProtocolVersion)
 	}
@@ -152,11 +180,18 @@ func AcceptClaim(conn io.ReadWriter, valid func(token string) bool, claim func(H
 	if err := readJSON(conn, &hello); err != nil {
 		return Hello{}, fmt.Errorf("read hello: %w", err)
 	}
-	if hello.Version != ProtocolVersion {
+	peerMin, peerMax := hello.ProtocolMin, hello.ProtocolMax
+	if peerMax == 0 {
+		peerMin, peerMax = hello.Version, hello.Version
+	}
+	chosen := Negotiate(peerMin, peerMax)
+	if chosen == 0 {
 		_ = writeJSON(conn, Advert{Version: ProtocolVersion,
-			Refused: fmt.Sprintf("hub speaks v%d, node speaks v%d", hello.Version, ProtocolVersion)})
+			Refused: fmt.Sprintf("hub speaks v%d–v%d, node speaks v%d–v%d", peerMin, peerMax, ProtocolMin, ProtocolVersion)})
 		return Hello{}, ErrVersionMismatch
 	}
+	hello.Version = chosen
+	advert.Version = chosen
 	if !valid(hello.Token) {
 		_ = writeJSON(conn, Advert{Version: ProtocolVersion, Refused: "token rejected"})
 		return Hello{}, ErrBadToken
