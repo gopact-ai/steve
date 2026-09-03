@@ -9,8 +9,10 @@ import (
 	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/turn"
+	"io"
 	"net/http"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -398,18 +400,29 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 		t.Fatalf("only %d agents eligible; the roster is not seeing the live nodes", ready)
 	}
 
-	// The dashboard is served by the same process, from the same model.
+	// The console is served by the same process, from the same model: the
+	// shell names its bundle, and the bundle subscribes to the change
+	// stream and can act through the console endpoint.
 	page, err := http.Get(server.URL() + "/")
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer page.Body.Close()
-	body := make([]byte, 8192)
-	n, _ := page.Body.Read(body)
-	if !strings.Contains(string(body[:n]), "/events") {
-		t.Fatal("the dashboard does not subscribe to the change stream")
+	shell, _ := io.ReadAll(page.Body)
+	page.Body.Close()
+	m := regexp.MustCompile(`assets/index-[A-Za-z0-9_-]+\.js`).Find(shell)
+	if m == nil {
+		t.Fatalf("the shell names no bundle: %s", shell)
 	}
-	t.Logf("dashboard at %s", server.URL())
+	asset, err := http.Get(server.URL() + "/" + string(m))
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, _ := io.ReadAll(asset.Body)
+	asset.Body.Close()
+	if asset.StatusCode != http.StatusOK || !strings.Contains(string(bundle), "/events") || !strings.Contains(string(bundle), "console/send") {
+		t.Fatalf("the bundle (%d, %d bytes) does not subscribe to the stream or reach the console", asset.StatusCode, len(bundle))
+	}
+	t.Logf("console at %s (%s, %d bytes)", server.URL(), m, len(bundle))
 }
 
 func orHub(node string) string {

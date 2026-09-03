@@ -172,6 +172,10 @@ outcome-unknown 的对外动作列出来给人对账；`steve ledger status` 看
 
 ## 控制台
 
+页面是 React（Vite + TypeScript，源码在 `web/console/`），构建产物嵌进二进制（`internal/readmodel/web/dist`，已提交），
+运行时不需要 Node；改了前端就 `make console` 再 `go build`。左栏 Console / Fleet / Tasks / Plans / Ledger / Activity，
+右上是 hub 名、连接状态；Ledger 的角标是等你处理的事（待批准的披露 + 结果未知的对外动作）。
+
 dashboard 不只看：页面顶部的 Console 用 owner 身份把一行文字送进同一个 coordinator——说话、`/plan`、`/project use`、
 `/tasks pause|resume|cancel`、`/grant`、`/approve`、`/effects`，回复和 agent 发的里程碑都留在页面上（`console:<name>` 会话，
 锚点不是飞书消息，所以不会漏到群里）。任务行、披露行、对外动作行、agent 行上带按钮，一键发对应动词。
