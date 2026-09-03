@@ -833,3 +833,66 @@ func TestExternalBrokerHoldsTheSecrets(t *testing.T) {
 		t.Fatalf("a server the broker lacks: %+v", adm)
 	}
 }
+
+// A machine is configured from the hub: the settings it sent come back as
+// applied, its own file is rewritten so a restart keeps them, and the
+// next snapshot shows the new tool, declaration and AI tool. A bad
+// setting is refused whole and changes nothing.
+func TestHubConfiguresANode(t *testing.T) {
+	bin := buildMockAgent(t)
+	state := t.TempDir()
+	source := filepath.Join(state, "node.json")
+	cfg := ServerConfig{Source: source, Name: "host-13", Token: "tok", StateDir: state, Listen: "127.0.0.1:0",
+		Harnesses: map[string]HarnessSpec{"codex": {Command: bin}}, Tools: []string{"sh"}}
+	raw, _ := json.Marshal(cfg)
+	_ = os.WriteFile(source, raw, 0o600)
+	server := startNode(t, cfg)
+	registry := NewRegistry("hub-1", map[string]Config{"host-13": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(registry.Close)
+	got, err := registry.Settings(t.Context(), "host-13")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Harnesses) != 1 || got.Harnesses["codex"].Command != bin || len(got.Tools) != 1 {
+		t.Fatalf("settings = %+v", got)
+	}
+	got.Tools = append(got.Tools, "git", "no-such-tool-xyz")
+	got.Declares = []string{"network:lab"}
+	got.Capabilities = []string{"gpu"}
+	got.Harnesses["mock2"] = nodewire.HarnessSetting{Command: bin, Args: []string{"--flag"}}
+	applied, err := registry.Configure(t.Context(), "host-13", got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(applied.Harnesses) != 2 || len(applied.Tools) != 3 || applied.Declares[0] != "network:lab" {
+		t.Fatalf("applied = %+v", applied)
+	}
+	// The file the node started from now says the same.
+	var onDisk ServerConfig
+	saved, _ := os.ReadFile(source)
+	if err := json.Unmarshal(saved, &onDisk); err != nil {
+		t.Fatal(err)
+	}
+	if onDisk.Token != "tok" || len(onDisk.Harnesses) != 2 || onDisk.Harnesses["mock2"].Args[0] != "--flag" || len(onDisk.Tools) != 3 || onDisk.Capabilities[0] != "gpu" {
+		t.Fatalf("node.json after configure = %+v", onDisk)
+	}
+	// The snapshot the hub holds reflects it.
+	adv, _ := registry.Advert(t.Context(), "host-13")
+	keys := map[string]ability.Availability{}
+	for _, c := range adv.Snapshot.Offers {
+		keys[c.Key()] = c.Availability
+	}
+	if keys["harness:mock2"] != ability.Available || keys["tool:git"] != ability.Available || keys["tool:no-such-tool-xyz"] != ability.Unavailable || keys["tag:gpu"] != ability.Available {
+		t.Fatalf("offers after configure = %v", keys)
+	}
+	// A bad setting is refused and nothing changes.
+	bad := applied
+	bad.Harnesses = map[string]nodewire.HarnessSetting{}
+	if _, err := registry.Configure(t.Context(), "host-13", bad); err == nil {
+		t.Fatal("a node with no AI tool was accepted")
+	}
+	again, _ := registry.Settings(t.Context(), "host-13")
+	if len(again.Harnesses) != 2 {
+		t.Fatalf("a refused setting changed the node: %+v", again)
+	}
+}

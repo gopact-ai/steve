@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
@@ -46,6 +47,10 @@ type HarnessSpec struct {
 
 // ServerConfig is the node's own configuration file.
 type ServerConfig struct {
+	// Source is the file this configuration came from; settings changed
+	// from the hub are written back there. Empty means nowhere.
+	Source string `json:"-"`
+
 	Name      string                 `json:"name"`
 	Listen    string                 `json:"listen"`
 	Token     string                 `json:"token"`
@@ -115,7 +120,12 @@ type Observe struct {
 
 // Server accepts hub connections and runs agents on this machine.
 type Server struct {
-	cfg ServerConfig
+	// cfg is replaced whole when the hub changes the node's settings;
+	// readers take the current one without locking.
+	cfg atomic.Pointer[ServerConfig]
+	// ctx is the serving context, kept so a broker can be started later
+	// when settings first name an MCP server.
+	ctx context.Context
 	// generation identifies this process; sequence counts its snapshots.
 	// Together they let the hub reject a snapshot that arrives out of order.
 	generation int64
@@ -140,19 +150,25 @@ type Server struct {
 }
 
 func NewServer(cfg ServerConfig) *Server {
-	return &Server{cfg: cfg, mcpPort: rememberedPort(cfg), generation: time.Now().Unix(), launch: NewLaunchProbe()}
+	s := &Server{mcpPort: rememberedPort(cfg), generation: time.Now().Unix(), launch: NewLaunchProbe()}
+	s.cfg.Store(&cfg)
+	return s
 }
+
+// conf is the configuration in force.
+func (s *Server) conf() ServerConfig { return *s.cfg.Load() }
 
 // Serve blocks until ctx ends or the listener fails.
 func (s *Server) Serve(ctx context.Context) error {
-	listener, err := net.Listen("tcp", s.cfg.Listen)
+	s.ctx = ctx
+	listener, err := net.Listen("tcp", s.conf().Listen)
 	if err != nil {
-		return fmt.Errorf("listen on %s: %w", s.cfg.Listen, err)
+		return fmt.Errorf("listen on %s: %w", s.conf().Listen, err)
 	}
 	s.mu.Lock()
 	s.listener = listener
 	s.mu.Unlock()
-	log.Printf("steve-node: %s listening on %s", s.cfg.Name, listener.Addr())
+	log.Printf("steve-node: %s listening on %s", s.conf().Name, listener.Addr())
 	go func() {
 		<-ctx.Done()
 		_ = listener.Close()
@@ -160,8 +176,8 @@ func (s *Server) Serve(ctx context.Context) error {
 	// Every harness runs in a home this node owns, never the user's own
 	// ~/.codex or ~/.claude: personal MCP servers, skills and instructions
 	// there would otherwise leak into every task the hub sends here.
-	if err := steveruntime.Prepare(s.cfg.StateDir); err != nil {
-		return fmt.Errorf("prepare harness homes under %s: %w", s.cfg.StateDir, err)
+	if err := steveruntime.Prepare(s.conf().StateDir); err != nil {
+		return fmt.Errorf("prepare harness homes under %s: %w", s.conf().StateDir, err)
 	}
 	if hash := s.currentSkills(); hash != "" {
 		if err := s.materializeSkills(hash); err != nil {
@@ -169,21 +185,8 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 	}
 	go s.launch.Run(ctx, s.commands)
-	switch {
-	case s.cfg.MCPBroker != nil && s.cfg.MCPBroker.Socket != "":
-		if len(s.cfg.MCPServers) > 0 {
-			return errors.New("mcp_servers and mcp_broker are exclusive: the servers belong to the broker")
-		}
-		s.broker = remoteBroker{socket: s.cfg.MCPBroker.Socket, token: s.cfg.MCPBroker.Token}
-	case len(s.cfg.MCPServers) > 0:
-		b := NewBroker(BrokerConfig{Socket: s.SocketPath(), MCPServers: s.cfg.MCPServers, WorkspaceRoot: s.cfg.WorkspaceRoot,
-			PortFile: filepath.Join(s.cfg.StateDir, "mcp-proxy.port")})
-		s.broker = localBroker{b}
-		go func() {
-			if err := b.Serve(ctx); err != nil {
-				log.Printf("steve-node: %v", err)
-			}
-		}()
+	if err := s.startBroker(); err != nil {
+		return err
 	}
 	for {
 		socket, err := listener.Accept()
@@ -202,7 +205,7 @@ func (s *Server) Addr() string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.listener == nil {
-		return s.cfg.Listen
+		return s.conf().Listen
 	}
 	return s.listener.Addr().String()
 }
@@ -278,6 +281,8 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 			go s.applySkills(stream)
 		case nodewire.StreamRelease:
 			go s.releaseAttempt(stream)
+		case nodewire.StreamConfig:
+			go s.configure(stream)
 		default:
 			go s.runAgent(ctx, stream)
 		}
@@ -296,7 +301,7 @@ func (s *Server) runCommand(ctx context.Context, stream *nodewire.Stream) {
 	req := stream.Request()
 	dir := req.Dir
 	if dir == "" {
-		dir = s.cfg.WorkspaceRoot
+		dir = s.conf().WorkspaceRoot
 	}
 	ctx, cancel := context.WithTimeout(ctx, commandTimeout)
 	defer cancel()
@@ -324,14 +329,14 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	if req.Kind != nodewire.StreamACP {
 		return
 	}
-	spec, ok := s.cfg.Harnesses[req.Harness]
+	spec, ok := s.conf().Harnesses[req.Harness]
 	if !ok {
 		log.Printf("steve-node: hub asked for unknown harness %q", req.Harness)
 		return
 	}
 	proc, err := acphost.LocalTransport{
 		Command: spec.Command, Args: spec.Args,
-		ProcessDir: s.processDir(spec), Env: steveruntime.ApplyEnv(spec.Env, req.Harness, s.cfg.StateDir),
+		ProcessDir: s.processDir(spec), Env: steveruntime.ApplyEnv(spec.Env, req.Harness, s.conf().StateDir),
 	}.Start(ctx)
 	if err != nil {
 		log.Printf("steve-node: start %s: %v", req.Harness, err)
@@ -363,7 +368,7 @@ func (s *Server) processDir(spec HarnessSpec) string {
 	if spec.ProcessDir != "" {
 		return spec.ProcessDir
 	}
-	return s.cfg.WorkspaceRoot
+	return s.conf().WorkspaceRoot
 }
 
 func (s *Server) nextSequence() int64 {
@@ -424,7 +429,7 @@ type hubOwner struct {
 	Released bool `json:"released,omitempty"`
 }
 
-func (s *Server) ownerPath() string { return filepath.Join(s.cfg.StateDir, "hub.json") }
+func (s *Server) ownerPath() string { return filepath.Join(s.conf().StateDir, "hub.json") }
 
 func (s *Server) owner() hubOwner {
 	var o hubOwner
@@ -436,7 +441,7 @@ func (s *Server) owner() hubOwner {
 
 func (s *Server) writeOwner(o hubOwner) {
 	b, _ := json.Marshal(o)
-	if err := os.MkdirAll(s.cfg.StateDir, 0o700); err == nil {
+	if err := os.MkdirAll(s.conf().StateDir, 0o700); err == nil {
 		_ = os.WriteFile(s.ownerPath(), b, 0o600)
 	}
 }
@@ -457,7 +462,9 @@ func Adopt(stateDir, hub string) error {
 	if hub == "" {
 		return errors.New("adopt: hub name is required")
 	}
-	s := &Server{cfg: ServerConfig{StateDir: stateDir}}
+	s := &Server{}
+	c := ServerConfig{StateDir: stateDir}
+	s.cfg.Store(&c)
 	s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC(), Released: true})
 	return nil
 }
@@ -467,19 +474,19 @@ func Adopt(stateDir, hub string) error {
 // roster that hides what is broken sends the hub hunting for a node that
 // silently vanished.
 func (s *Server) advert() nodewire.Advert {
-	adv := Advertise(s.cfg.Name, s.cfg.Harnesses, s.cfg.Capabilities)
+	adv := Advertise(s.conf().Name, s.conf().Harnesses, s.conf().Capabilities)
 	adv.Snapshot = s.snapshot()
 	adv.Features = nodewire.Features()
-	adv.WorkspaceRoot = s.cfg.WorkspaceRoot
-	adv.StateDir = s.cfg.StateDir
+	adv.WorkspaceRoot = s.conf().WorkspaceRoot
+	adv.StateDir = s.conf().StateDir
 	adv.Skills = s.currentSkills()
-	adv.Health = CheckHealth(s.cfg.WorkspaceRoot, s.cfg.StateDir)
+	adv.Health = CheckHealth(s.conf().WorkspaceRoot, s.conf().StateDir)
 	return adv
 }
 
 // SkillsDir holds materialized bundles, one directory per hash, and
 // "current" naming the one the harness homes link to.
-func (s *Server) SkillsDir() string { return filepath.Join(s.cfg.StateDir, "skills") }
+func (s *Server) SkillsDir() string { return filepath.Join(s.conf().StateDir, "skills") }
 
 func (s *Server) currentSkills() string {
 	b, err := os.ReadFile(filepath.Join(s.SkillsDir(), "current"))
@@ -580,7 +587,7 @@ func (s *Server) materializeSkills(hash string) error {
 	if err != nil {
 		return err
 	}
-	for _, dest := range steveruntime.SkillDests(s.cfg.StateDir) {
+	for _, dest := range steveruntime.SkillDests(s.conf().StateDir) {
 		if err := os.MkdirAll(dest, 0o700); err != nil {
 			return err
 		}
@@ -607,7 +614,7 @@ func (s *Server) materializeSkills(hash string) error {
 
 // snapshot observes this machine now, as the next revision.
 func (s *Server) snapshot() *ability.Snapshot {
-	o := Observe{Harnesses: s.cfg.Harnesses, Tools: s.cfg.Tools, MCP: s.cfg.MCPServers, Declares: s.cfg.Declares, Tags: s.cfg.Capabilities, Launch: s.launch.Lookup, Skills: s.skillEntries(), SkillsKnown: true}
+	o := Observe{Harnesses: s.conf().Harnesses, Tools: s.conf().Tools, MCP: s.conf().MCPServers, Declares: s.conf().Declares, Tags: s.conf().Capabilities, Launch: s.launch.Lookup, Skills: s.skillEntries(), SkillsKnown: true}
 	if rb, ok := s.broker.(remoteBroker); ok {
 		// The servers are the broker's: what it lists is what there is,
 		// and the broker vouches for them, not a PATH lookup here.
@@ -621,16 +628,16 @@ func (s *Server) snapshot() *ability.Snapshot {
 			o.MCPListed = listed
 		}
 	}
-	return Snapshot(s.cfg.Name, s.generation, s.nextSequence(), o)
+	return Snapshot(s.conf().Name, s.generation, s.nextSequence(), o)
 }
 
 // commands is every binary this machine offers and should see start.
 func (s *Server) commands() []string {
-	out := make([]string, 0, len(s.cfg.Harnesses)+len(s.cfg.Tools))
-	for _, h := range s.cfg.Harnesses {
+	out := make([]string, 0, len(s.conf().Harnesses)+len(s.conf().Tools))
+	for _, h := range s.conf().Harnesses {
 		out = append(out, h.Command)
 	}
-	return append(out, s.cfg.Tools...)
+	return append(out, s.conf().Tools...)
 }
 
 // admit is the node's final word before an attempt runs here: the hub
@@ -954,7 +961,7 @@ func rememberedPort(cfg ServerConfig) int {
 }
 
 func (s *Server) rememberPort(port int) {
-	path := portFile(s.cfg)
+	path := portFile(s.conf())
 	if path == "" {
 		return
 	}
@@ -976,7 +983,7 @@ func gitVersion() string {
 }
 
 // BlobDir is where the hub's files land on this node.
-func (s *Server) BlobDir() string { return filepath.Join(s.cfg.StateDir, "blobs") }
+func (s *Server) BlobDir() string { return filepath.Join(s.conf().StateDir, "blobs") }
 
 // transferBlob serves one "put <name>" or "get <name>". Names are single
 // path segments; the hub cannot reach outside the blob directory.
@@ -1056,7 +1063,7 @@ type peerGrant struct {
 }
 
 func (s *Server) validToken(token string) bool {
-	if s.cfg.Token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.Token)) == 1 {
+	if s.conf().Token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.conf().Token)) == 1 {
 		return true
 	}
 	if hub, _ := s.hubOf(token); hub != "" {
@@ -1069,7 +1076,7 @@ func (s *Server) validToken(token string) bool {
 // hubOf is the hub name a token vouches for, from the hubs table; "" when
 // the token is the shared one or unknown.
 func (s *Server) hubOf(token string) (string, bool) {
-	for name, t := range s.cfg.Hubs {
+	for name, t := range s.conf().Hubs {
 		if t != "" && subtle.ConstantTimeCompare([]byte(token), []byte(t)) == 1 {
 			return name, true
 		}
@@ -1157,7 +1164,7 @@ func (s *Server) fetch(ctx context.Context, stream *nodewire.Stream) {
 	}
 	defer socket.Close()
 	_ = socket.SetDeadline(time.Now().Add(nodewire.HandshakeTimeout))
-	if _, err := nodewire.Dial(socket, nodewire.Hello{Token: token, Hub: "peer:" + s.cfg.Name}); err != nil {
+	if _, err := nodewire.Dial(socket, nodewire.Hello{Token: token, Hub: "peer:" + s.conf().Name}); err != nil {
 		fail("1", err)
 		return
 	}

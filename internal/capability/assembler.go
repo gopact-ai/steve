@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
@@ -37,9 +38,21 @@ type skillFingerprinter interface {
 }
 
 type Assembler struct {
+	mu      sync.RWMutex
 	servers map[string]MCPServer
 	home    home.Loader
 	skills  skillFingerprinter
+}
+
+// SetServers replaces the MCP servers the hub machine can start.
+func (a *Assembler) SetServers(servers map[string]MCPServer) {
+	copied := make(map[string]MCPServer, len(servers))
+	for k, v := range servers {
+		copied[k] = v
+	}
+	a.mu.Lock()
+	a.servers = copied
+	a.mu.Unlock()
 }
 
 func NewAssembler(servers map[string]MCPServer) *Assembler {
@@ -120,7 +133,9 @@ func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras [
 		if selected.Node != "" {
 			continue
 		}
+		a.mu.RLock()
 		cfg, ok := a.servers[name]
+		a.mu.RUnlock()
 		if !ok {
 			return Capabilities{}, fmt.Errorf("unknown MCP server %q", name)
 		}

@@ -696,7 +696,7 @@ func serve(args []string) error {
 		return err
 	}
 	dashboard.SetConsole(cons)
-	dashboard.SetAdmin(&fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet})
+	dashboard.SetAdmin(&fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler})
 	defer dashboard.Close()
 	go func() {
 		if err := dashboard.Serve(); err != nil {
@@ -1070,6 +1070,8 @@ var (
 // describes a node: the same harness check against this PATH, the same
 // identity, so the fleet has one shape for every machine.
 func hubAdvert(cfg *config.Config) nodewire.Advert {
+	configMu.RLock()
+	defer configMu.RUnlock()
 	specs := make(map[string]node.HarnessSpec, len(cfg.Harnesses))
 	for id, h := range cfg.Harnesses {
 		specs[id] = node.HarnessSpec{Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir, Slots: h.Slots}
@@ -1098,9 +1100,141 @@ type fleetAdmin struct {
 	nodes   *node.Registry
 	catalog *agent.Catalog
 	fleet   *roster.Roster
+	// manager and assembler take the hub machine's own harness and MCP
+	// changes at runtime.
+	manager   *harness.Manager
+	assembler *capability.Assembler
 	// hubURL is how the last page that added a machine reached the hub;
 	// the bootstrap script fetches the binary from there.
 	hubURL string
+}
+
+// configMu guards the loaded configuration: the admin rewrites parts of
+// it from the page while hubAdvert and the launch probe read it.
+var configMu sync.RWMutex
+
+// NodeSettings reads what a machine offers: the hub's own from its
+// config, a node's from the node.
+func (a *fleetAdmin) NodeSettings(ctx context.Context, name string) (nodewire.Settings, error) {
+	if name == nodeName() {
+		return a.hubSettings(), nil
+	}
+	return a.nodes.Settings(ctx, name)
+}
+
+// SetNodeSettings rewrites what a machine offers and answers what is in
+// force: on the hub, the config file and the running manager, assembler,
+// roster and launch probe; on a node, the node itself.
+func (a *fleetAdmin) SetNodeSettings(ctx context.Context, name string, set nodewire.Settings) (nodewire.Settings, error) {
+	if name != nodeName() {
+		return a.nodes.Configure(ctx, name, set)
+	}
+	if len(set.Harnesses) == 0 {
+		return nodewire.Settings{}, fmt.Errorf("hub 至少要有一个 AI 工具")
+	}
+	harnesses := make(map[string]config.Harness, len(set.Harnesses))
+	for id, h := range set.Harnesses {
+		if !nameShape.MatchString(strings.ToLower(id)) || strings.TrimSpace(h.Command) == "" {
+			return nodewire.Settings{}, fmt.Errorf("AI 工具 %q 需要一个合法的名字和启动命令", id)
+		}
+		item := config.Harness{Command: h.Command, Args: h.Args, ProcessDir: h.ProcessDir, Env: h.Env}
+		configMu.RLock()
+		if old, ok := a.cfg.Harnesses[id]; ok {
+			item.Permission = old.Permission
+		}
+		configMu.RUnlock()
+		harnesses[id] = item
+	}
+	servers := make(map[string]config.MCPServer, len(set.MCPServers))
+	for id, m := range set.MCPServers {
+		if !nameShape.MatchString(strings.ToLower(id)) {
+			return nodewire.Settings{}, fmt.Errorf("MCP 服务器 %q 的名字不合法", id)
+		}
+		switch m.Type {
+		case "", "stdio":
+			if strings.TrimSpace(m.Command) == "" {
+				return nodewire.Settings{}, fmt.Errorf("MCP 服务器 %q 需要启动命令", id)
+			}
+			m.Type = "stdio"
+		case "http", "sse":
+			if !strings.HasPrefix(m.URL, "http://") && !strings.HasPrefix(m.URL, "https://") {
+				return nodewire.Settings{}, fmt.Errorf("MCP 服务器 %q 需要 http(s) 地址", id)
+			}
+		default:
+			return nodewire.Settings{}, fmt.Errorf("MCP 服务器 %q：不认识的类型 %q", id, m.Type)
+		}
+		servers[id] = config.MCPServer{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
+	}
+	for _, d := range set.Declares {
+		if !strings.Contains(d, ":") {
+			return nodewire.Settings{}, fmt.Errorf("声明 %q 要写成 kind:id，如 network:office", d)
+		}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	configMu.Lock()
+	// Agents keep naming harnesses that exist.
+	for id, ag := range a.cfg.Agents {
+		if ag.Node == "" {
+			if _, ok := harnesses[ag.Harness]; !ok {
+				configMu.Unlock()
+				return nodewire.Settings{}, fmt.Errorf("Agent %s 还在用 AI 工具 %s，不能删", id, ag.Harness)
+			}
+			for _, srv := range ag.MCPServers {
+				if _, ok := servers[srv]; !ok {
+					configMu.Unlock()
+					return nodewire.Settings{}, fmt.Errorf("Agent %s 还在用 MCP 服务器 %s，不能删", id, srv)
+				}
+			}
+		}
+	}
+	old := *a.cfg
+	a.cfg.Harnesses = harnesses
+	a.cfg.MCPServers = servers
+	a.cfg.Gateway.Tools = append([]string(nil), set.Tools...)
+	a.cfg.Gateway.Declares = append([]string(nil), set.Declares...)
+	a.cfg.Gateway.Capabilities = append([]string(nil), set.Capabilities...)
+	if err := config.Save(a.path, a.cfg); err != nil {
+		a.cfg.Harnesses, a.cfg.MCPServers, a.cfg.Gateway = old.Harnesses, old.MCPServers, old.Gateway
+		configMu.Unlock()
+		return nodewire.Settings{}, fmt.Errorf("写 %s 失败：%w", a.path, err)
+	}
+	configMu.Unlock()
+	// The running pieces follow the file.
+	for id, h := range harnesses {
+		if err := a.manager.Set(id, harness.Config{Command: h.Command, Args: h.Args, ProcessDir: h.ProcessDir, Env: h.Env, Permission: h.Permission}); err != nil {
+			log.Printf("steve: harness %s: %v", id, err)
+		}
+	}
+	for id := range old.Harnesses {
+		if _, keep := harnesses[id]; !keep {
+			a.manager.Remove(id)
+		}
+	}
+	caps := make(map[string]capability.MCPServer, len(servers))
+	for id, m := range servers {
+		caps[id] = capability.MCPServer{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
+	}
+	a.assembler.SetServers(caps)
+	a.fleet.SetHubCapabilities(set.Capabilities)
+	hubLaunch.Wake()
+	log.Printf("steve: hub settings applied from the page: %d harnesses, %d tools, %d mcp, %d declares, %d tags",
+		len(harnesses), len(set.Tools), len(servers), len(set.Declares), len(set.Capabilities))
+	return a.hubSettings(), nil
+}
+
+func (a *fleetAdmin) hubSettings() nodewire.Settings {
+	configMu.RLock()
+	defer configMu.RUnlock()
+	out := nodewire.Settings{Harnesses: map[string]nodewire.HarnessSetting{}, Tools: append([]string{}, a.cfg.Gateway.Tools...),
+		MCPServers: map[string]nodewire.MCPSetting{}, Declares: append([]string{}, a.cfg.Gateway.Declares...), Capabilities: append([]string{}, a.cfg.Gateway.Capabilities...)}
+	for id, h := range a.cfg.Harnesses {
+		out.Harnesses[id] = nodewire.HarnessSetting{Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir}
+	}
+	for id, m := range a.cfg.MCPServers {
+		out.MCPServers[id] = nodewire.MCPSetting{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
+	}
+	return out
 }
 
 var nameShape = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
@@ -1332,6 +1466,8 @@ var hubLaunch = node.NewLaunchProbe()
 
 func startHubLaunch(ctx context.Context, cfg *config.Config) {
 	go hubLaunch.Run(ctx, func() []string {
+		configMu.RLock()
+		defer configMu.RUnlock()
 		out := make([]string, 0, len(cfg.Harnesses)+len(cfg.Gateway.Tools))
 		for _, h := range cfg.Harnesses {
 			out = append(out, h.Command)

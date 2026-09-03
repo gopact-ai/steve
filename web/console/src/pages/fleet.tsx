@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Plus, Server01, Users01, X, Zap } from "@untitledui/icons";
+import { Edit05, Plus, Server01, Users01, X, Zap } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
@@ -12,6 +12,7 @@ import { addAgent, addNode, type AddNodeResult } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
 import type { AbilitySnapshot, Attempt, Capability, Node as NodeT } from "@/lib/types";
 import { KeyValue, PageBody, PageHeader } from "@/lib/page";
+import { SettingsEditor } from "@/pages/fleet-settings";
 import { Mono, Nothing, StateBadge, Tags, Where } from "@/lib/ui";
 
 // Runtimes lists what a machine can start and what it cannot, on separate
@@ -141,8 +142,9 @@ const levelHint = "这台机器最多能处理哪一等级的项目数据：公�
 // MachineRow is one line per machine: who it is, where, which build and
 // system, what it may handle, how much room it has, whether it is here.
 // What it offers is a click away, in the drawer, where there is room.
-function MachineDrawer({ n, onClose }: { n: NodeT; onClose: () => void }) {
+function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => void; onChanged: () => void }) {
     const h = n.health;
+    const [editing, setEditing] = useState(false);
     return (
         <div className="fixed inset-y-0 right-0 z-20 flex w-[560px] flex-col border-l border-secondary bg-primary shadow-xl">
             <div className="flex items-start gap-3 border-b border-secondary px-5 py-4">
@@ -154,6 +156,7 @@ function MachineDrawer({ n, onClose }: { n: NodeT; onClose: () => void }) {
                     </div>
                     {!n.up && n.last_error && <div className="mt-1 text-xs text-error-primary">{n.last_error}</div>}
                 </div>
+                {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>编辑配置</Button>}
                 <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label="关闭" />
             </div>
             <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4 text-sm">
@@ -168,10 +171,14 @@ function MachineDrawer({ n, onClose }: { n: NodeT; onClose: () => void }) {
                     { k: "健康", v: h && h.disk_total > 0 ? `${(h.disk_free / (1 << 30)).toFixed(0)} GB 空闲 · 负载 ${h.load1.toFixed(1)} · ${h.worktrees} 个工作树` : "未申报" },
                     { k: "连接", v: n.since ? when(n.since) : "—" },
                 ]} />
-                <section>
-                    <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">能做什么</h3>
-                    <Abilities snapshot={n.snapshot} />
-                </section>
+                {editing ? (
+                    <SettingsEditor node={n.name} onClose={() => setEditing(false)} onSaved={onChanged} />
+                ) : (
+                    <section>
+                        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">能做什么</h3>
+                        <Abilities snapshot={n.snapshot} />
+                    </section>
+                )}
             </div>
         </div>
     );
@@ -273,7 +280,7 @@ export function FleetPage() {
                     </Table>
                 )}
             </TableCard.Root>
-            {opened && snap.nodes.find((n) => n.name === opened) && <MachineDrawer n={snap.nodes.find((n) => n.name === opened)!} onClose={() => setOpened(null)} />}
+            {opened && snap.nodes.find((n) => n.name === opened) && <MachineDrawer n={snap.nodes.find((n) => n.name === opened)!} onClose={() => setOpened(null)} onChanged={() => refresh()} />}
 
             <TableCard.Root size="sm">
                 <TableCard.Header title="Agent" badge={`${snap.agents.length}`} description="Agent 是一个命名的执行配置：固定机器和 AI 工具，可选固定偏好模型；实际模型以会话报告为准。可用 = 此刻能开工；不可用会写明原因，以及谁能修。" />

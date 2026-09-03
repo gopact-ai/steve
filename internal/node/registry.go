@@ -15,6 +15,7 @@ import (
 	cryptorand "crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/ability"
 	"log"
@@ -373,6 +374,52 @@ func (r *Registry) Admit(ctx context.Context, name string, req nodewire.AdmitReq
 	c.lastBindings[req.Attempt] = reply.Bindings
 	c.bindingsMu.Unlock()
 	return reply.Admission, nil
+}
+
+// Settings reads what a node offers, as its operator wrote it.
+func (r *Registry) Settings(ctx context.Context, name string) (nodewire.Settings, error) {
+	return r.configStream(ctx, name, "get", nil)
+}
+
+// Configure rewrites what a node offers. The node validates, writes its
+// own file, and answers with what is in force; a fresh advert follows.
+func (r *Registry) Configure(ctx context.Context, name string, set nodewire.Settings) (nodewire.Settings, error) {
+	out, err := r.configStream(ctx, name, "set", &set)
+	if err != nil {
+		return out, err
+	}
+	if _, err := r.Refresh(ctx, name); err != nil {
+		log.Printf("node: %s: refresh after configure: %v", name, err)
+	}
+	return out, nil
+}
+
+func (r *Registry) configStream(ctx context.Context, name, verb string, set *nodewire.Settings) (nodewire.Settings, error) {
+	c, err := r.connect(ctx, name)
+	if err != nil {
+		return nodewire.Settings{}, err
+	}
+	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureConfig) {
+		return nodewire.Settings{}, fmt.Errorf("node %q runs an older steve-node that cannot be configured from here; edit its node.json", name)
+	}
+	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamConfig, Command: verb})
+	if err != nil {
+		return nodewire.Settings{}, fmt.Errorf("node %q: config: %w", name, err)
+	}
+	defer stream.Close()
+	if set != nil {
+		if err := json.NewEncoder(stream).Encode(set); err != nil {
+			return nodewire.Settings{}, err
+		}
+	}
+	var reply nodewire.ConfigReply
+	if err := json.NewDecoder(stream).Decode(&reply); err != nil {
+		return nodewire.Settings{}, fmt.Errorf("node %q: config: %w", name, err)
+	}
+	if reply.Error != "" {
+		return reply.Settings, errors.New(reply.Error)
+	}
+	return reply.Settings, nil
 }
 
 // Release tells a node an attempt is over: whatever it bound for the

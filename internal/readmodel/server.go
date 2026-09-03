@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"io"
 	"log"
 	"net"
@@ -59,6 +60,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/conversations", s.guard(s.consoleConversations))
 	mux.HandleFunc("POST /console/nodes", s.guard(s.consoleAddNode))
 	mux.HandleFunc("POST /console/agents", s.guard(s.consoleAddAgent))
+	mux.HandleFunc("GET /console/nodes/{name}/settings", s.guard(s.nodeSettings))
+	mux.HandleFunc("PUT /console/nodes/{name}/settings", s.guard(s.nodeSettings))
 	mux.HandleFunc("GET /bootstrap/{name}", s.bootstrap)
 	mux.HandleFunc("GET /dist/steve-node", s.nodeBinary)
 	mux.HandleFunc("GET /console/context", s.guard(s.consoleContext))
@@ -279,6 +282,10 @@ type Admin interface {
 	// NodeBinary is the steve-node executable to hand a machine presenting
 	// a node token, if the hub has one.
 	NodeBinary(token string) (string, bool)
+	// NodeSettings reads what a machine offers; SetNodeSettings rewrites
+	// it and answers what is in force. The hub machine is one of them.
+	NodeSettings(ctx context.Context, name string) (nodewire.Settings, error)
+	SetNodeSettings(ctx context.Context, name string, set nodewire.Settings) (nodewire.Settings, error)
 }
 
 // Conversation is one console thread as the sidebar lists it: named by
@@ -334,6 +341,32 @@ func (s *Server) consoleAddNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "not wired", http.StatusNotImplemented)
+		return
+	}
+	name := r.PathValue("name")
+	var out nodewire.Settings
+	var err error
+	if r.Method == http.MethodPut {
+		var set nodewire.Settings
+		if derr := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&set); derr != nil {
+			http.Error(w, "bad request: "+derr.Error(), http.StatusBadRequest)
+			return
+		}
+		out, err = s.admin.SetNodeSettings(r.Context(), name, set)
+	} else {
+		out, err = s.admin.NodeSettings(r.Context(), name)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"settings": out})
 }
 
 func (s *Server) consoleAddAgent(w http.ResponseWriter, r *http.Request) {

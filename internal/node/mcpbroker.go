@@ -128,7 +128,7 @@ func (b *Broker) Serve(ctx context.Context) error {
 		<-ctx.Done()
 		listener.Close()
 	}()
-	log.Printf("steve-node: mcp broker on %s: %d server(s)", sock, len(b.cfg.MCPServers))
+	log.Printf("steve-node: mcp broker on %s: %d server(s)", sock, len(b.List()))
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -141,10 +141,32 @@ func (b *Broker) Serve(ctx context.Context) error {
 	}
 }
 
+// SetServers replaces what the broker offers; bindings already made keep
+// working against the new set by id.
+func (b *Broker) SetServers(servers map[string]MCPSpec) {
+	copied := make(map[string]MCPSpec, len(servers))
+	for k, v := range servers {
+		copied[k] = v
+	}
+	b.mu.Lock()
+	b.cfg.MCPServers = copied
+	b.mu.Unlock()
+}
+
+func (b *Broker) server(id string) (MCPSpec, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	spec, ok := b.cfg.MCPServers[id]
+	return spec, ok
+}
+
 // List is what the broker offers: id → transport, nothing secret.
 func (b *Broker) List() map[string]string {
-	out := make(map[string]string, len(b.cfg.MCPServers))
-	for id, spec := range b.cfg.MCPServers {
+	b.mu.Lock()
+	servers := b.cfg.MCPServers
+	b.mu.Unlock()
+	out := make(map[string]string, len(servers))
+	for id, spec := range servers {
 		t := spec.Type
 		if t == "" {
 			t = "stdio"
@@ -156,7 +178,7 @@ func (b *Broker) List() map[string]string {
 
 // Bind mints a binding and describes how a session reaches it.
 func (b *Broker) Bind(mcp, attempt, harness string) (ability.Binding, error) {
-	spec, ok := b.cfg.MCPServers[mcp]
+	spec, ok := b.server(mcp)
 	if !ok {
 		return ability.Binding{}, ErrNoSuchServer
 	}
@@ -299,7 +321,7 @@ func (b *Broker) launch(ctx context.Context, c net.Conn, reader io.Reader, id st
 		log.Printf("steve-node: mcp broker: unknown or expired binding")
 		return
 	}
-	spec, ok := b.cfg.MCPServers[nb.mcp]
+	spec, ok := b.server(nb.mcp)
 	if !ok || (spec.Type != "stdio" && spec.Type != "") {
 		log.Printf("steve-node: mcp broker: %s is not a stdio server here", nb.mcp)
 		return
@@ -414,7 +436,7 @@ func (b *Broker) proxy(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unknown or expired binding", http.StatusForbidden)
 		return
 	}
-	spec, ok := b.cfg.MCPServers[nb.mcp]
+	spec, ok := b.server(nb.mcp)
 	if !ok || (spec.Type != "http" && spec.Type != "sse") {
 		http.Error(w, "not an http server", http.StatusBadGateway)
 		return
@@ -608,4 +630,4 @@ func LaunchBinding(ctx context.Context, socket, id string, stdin io.Reader, stdo
 }
 
 // SocketPath is where the node's own in-process broker listens.
-func (s *Server) SocketPath() string { return filepath.Join(s.cfg.StateDir, "mcp.sock") }
+func (s *Server) SocketPath() string { return filepath.Join(s.conf().StateDir, "mcp.sock") }

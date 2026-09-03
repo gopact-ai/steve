@@ -101,3 +101,15 @@ export async function addAgent(req: { id: string; harness: string; node?: string
     return json(await fetch(`./console/agents${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(req) }));
 }
 
+export interface HarnessSetting { command: string; args?: string[]; env?: string[]; process_dir?: string; models?: string[] }
+export interface MCPSetting { type: string; command?: string; args?: string[]; env?: Record<string, string>; url?: string; headers?: Record<string, string> }
+export interface NodeSettings {
+    harnesses: Record<string, HarnessSetting>; tools: string[]; mcp_servers: Record<string, MCPSetting>; declares: string[]; capabilities: string[]; external_broker?: boolean;
+}
+export async function fetchNodeSettings(name: string): Promise<{ settings: NodeSettings }> {
+    return json(await fetch(`./console/nodes/${encodeURIComponent(name)}/settings${q}`, { headers }));
+}
+export async function saveNodeSettings(name: string, settings: NodeSettings): Promise<{ settings: NodeSettings }> {
+    return json(await fetch(`./console/nodes/${encodeURIComponent(name)}/settings${q}`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(settings) }));
+}
+

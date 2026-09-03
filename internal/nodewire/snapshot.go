@@ -6,6 +6,48 @@ import (
 	"github.com/gopact-ai/steve/internal/ability"
 )
 
+// Settings is what a machine offers, as its operator writes it: the AI
+// tools it can start, the commands to look for, the MCP servers it can
+// bind, and what is only declared. It is the editable part of node.json,
+// and of the hub's own configuration for the hub machine.
+type Settings struct {
+	Harnesses    map[string]HarnessSetting `json:"harnesses"`
+	Tools        []string                  `json:"tools"`
+	MCPServers   map[string]MCPSetting     `json:"mcp_servers"`
+	Declares     []string                  `json:"declares"`
+	Capabilities []string                  `json:"capabilities"`
+	// ExternalBroker says the MCP servers belong to a broker process of
+	// its own and cannot be edited here.
+	ExternalBroker bool `json:"external_broker,omitempty"`
+}
+
+// HarnessSetting is one AI tool: how to start it.
+type HarnessSetting struct {
+	Command    string   `json:"command"`
+	Args       []string `json:"args,omitempty"`
+	Env        []string `json:"env,omitempty"`
+	ProcessDir string   `json:"process_dir,omitempty"`
+	Models     []string `json:"models,omitempty"`
+}
+
+// MCPSetting is one MCP server as the machine can start or reach it. Env
+// and headers are secrets; they travel hub→node inside the connection and
+// are written to the node's own file, never into an advert.
+type MCPSetting struct {
+	Type    string            `json:"type"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+// ConfigReply answers StreamConfig: the settings in force, or why not.
+type ConfigReply struct {
+	Settings Settings `json:"settings"`
+	Error    string   `json:"error,omitempty"`
+}
+
 // AdmitRequest asks a node for its final word on the part of a requirement
 // it owns. The hub sends the tree, not text, so there is no second parser
 // to disagree with the first; Generation and Sequence say which snapshot
@@ -49,11 +91,14 @@ const (
 	// hands back a secret-free launcher for each, instead of the hub
 	// shipping commands and env in session/new.
 	FeatureMCP = "node_mcp_binding.v1"
+	// FeatureConfig says the node takes its offers from the hub over
+	// StreamConfig and writes them to its own config file.
+	FeatureConfig = "node_config.v1"
 )
 
 // Features is what this build supports.
 func Features() []string {
-	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP}
+	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig}
 }
 
 // HasFeature says whether a list names a feature.

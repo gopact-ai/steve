@@ -63,6 +63,12 @@ const (
 	// minted for it are dropped and the servers behind them stopped. The
 	// command is the attempt id.
 	StreamRelease = "release"
+	// StreamConfig reads or rewrites what a node offers — its AI tools,
+	// the commands it checks for, its MCP servers, its declarations — so
+	// a machine is configured from the hub's page and keeps the result in
+	// its own node.json. The command is "get" or "set"; a set carries a
+	// Settings document and answers with the settings as applied.
+	StreamConfig = "config"
 )
 
 // ExitPrefix leads the close reason of a finished exec stream, followed by

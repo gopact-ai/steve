@@ -49,6 +49,7 @@ func run(args []string) error {
 	if err != nil {
 		return err
 	}
+	cfg.Source = absolute(*configPath)
 	if *listen != "" {
 		cfg.Listen = *listen
 	}

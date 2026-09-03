@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 
 	"github.com/gopact-ai/acp"
@@ -79,6 +80,38 @@ func NewManager(configs map[string]Config) (*Manager, error) {
 		}
 	}
 	return &Manager{configs: configs, hosts: map[string]*acphost.Host{}}, nil
+}
+
+// Set adds or replaces one harness's configuration at runtime. Hosts
+// already running the old configuration keep it until they restart.
+func (m *Manager) Set(id string, cfg Config) error {
+	if id == "" || cfg.Command == "" {
+		return fmt.Errorf("harness id and command are required")
+	}
+	if _, err := permission.New(cfg.Permission); err != nil {
+		return fmt.Errorf("harness %q: %w", id, err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.configs[id] = cfg
+	return nil
+}
+
+// Remove forgets a harness; a host running it is closed.
+func (m *Manager) Remove(id string) {
+	m.mu.Lock()
+	delete(m.configs, id)
+	var closing []*acphost.Host
+	for key, host := range m.hosts {
+		if strings.HasSuffix(key, "/"+id) || key == id {
+			closing = append(closing, host)
+			delete(m.hosts, key)
+		}
+	}
+	m.mu.Unlock()
+	for _, host := range closing {
+		host.Close()
+	}
 }
 
 // SetTransports wires remote placements. Without it every placement must be
