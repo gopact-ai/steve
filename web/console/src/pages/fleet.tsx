@@ -12,42 +12,6 @@ import { Mono, Nothing, StateBadge, Tags, Where } from "@/lib/ui";
 // Runtimes lists what a machine can start and what it cannot, on separate
 // lines: nothing is struck through, a missing runtime says why and offers
 // the repair the roster knows.
-function Runtimes({ node }: { node: NodeT }) {
-    const all = node.harnesses || [];
-    const installed = all.filter((h) => !h.missing);
-    const missing = all.filter((h) => h.missing);
-    return (
-        <div className="flex flex-col gap-1.5">
-            {installed.length > 0 && (
-                <div className="flex flex-col gap-0.5">
-                    {installed.map((h) => (
-                        <div key={h.id} className="flex items-center gap-1.5">
-                            <span className="text-primary" title={h.version ? `适配器：${h.version}（上次观测）` : undefined}>{h.id}</span>
-                            {h.model ? <span className="text-xs text-tertiary">{h.model}</span> : null}
-                            {h.models?.length ? <span className="text-xs text-quaternary" title={h.models.join("\n")}>{h.model ? `+${Math.max(0, h.models.length - 1)}` : h.models.join(", ")}</span> : null}
-                            {h.slots ? <span className="text-xs text-quaternary">{h.slots} slots</span> : null}
-                        </div>
-                    ))}
-                </div>
-            )}
-            {missing.length > 0 && (
-                <div className="flex flex-col gap-0.5 border-t border-secondary pt-1">
-                    {missing.map((h) => (
-                        <div key={h.id} className="flex items-center gap-1.5 text-xs">
-                            <span className="text-tertiary">{h.id}</span>
-                            <span className="text-quaternary" title={h.missing}>已配置但不可用</span>
-                        </div>
-                    ))}
-                </div>
-            )}
-            {all.length === 0 && <span className="text-quaternary">—</span>}
-        </div>
-    );
-}
-
-// AddMachine generates what adding a machine takes: the node.json to
-// place there, the command to run, and the nodes{} entry for the hub. The
-// page writes no files; the hub applies the config on restart.
 function AddMachine({ hub }: { hub: string }) {
     const [name, setName] = useState("");
     const [addr, setAddr] = useState("");
@@ -85,7 +49,6 @@ function AddMachine({ hub }: { hub: string }) {
 }
 
 const kindWords: Record<string, string> = { harness: "AI 工具", model: "模型", mcp: "MCP", skill: "技能", tool: "命令", hardware: "硬件", network: "网络", credential: "凭据", a2a: "A2A", tag: "标签" };
-const kindOrder = ["harness", "model", "mcp", "skill", "tool", "hardware", "network", "credential", "a2a", "tag"];
 
 // Abilities shows a machine's manifest grouped by kind: what it observed
 // it can do, what it was declared to have, and what it was configured for
@@ -116,28 +79,84 @@ function merge(items: Capability[]): { c: Capability; scopes: string[] }[] {
     return [...out.values()];
 }
 
+const levelWords: Record<string, string> = { public: "公开", internal: "内部", restricted: "受限", sealed: "密封" };
+const levelHint = "这台机器最多能处理哪一等级的项目数据：公开 < 内部 < 受限 < 密封。项目等级高于机器等级的活不会放到这里。";
+
+// MachineCard is one machine: who it is and whether it is here, then
+// what it offers, each kind in its own block so the eye finds "命令" or
+// "硬件" by position rather than by reading a wall of chips.
+function MachineCard({ n, showRegion }: { n: NodeT; showRegion: boolean }) {
+    const h = n.health;
+    const disk = h && h.disk_total > 0 ? `${(h.disk_free / (1 << 30)).toFixed(0)} GB 空闲` : null;
+    const lowDisk = !!h && h.disk_total > 0 && h.disk_free < 1 << 30;
+    return (
+        <div className={`flex flex-col gap-4 rounded-xl bg-primary p-5 shadow-xs ring-1 ring-inset ${n.up ? "ring-secondary" : "ring-error"}`}>
+            <div className="flex flex-wrap items-start gap-x-4 gap-y-2">
+                <div className="flex min-w-0 flex-1 flex-col gap-1">
+                    <div className="flex items-center gap-2">
+                        <span className="text-base font-semibold text-primary">{n.name}</span>
+                        <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role === "hub" ? "hub" : "worker"}</Badge>
+                        <StateBadge state={n.up ? "up" : "down"} />
+                        {!n.up && n.last_error && <span className="truncate text-xs text-error-primary" title={n.last_error}>{n.last_error}</span>}
+                    </div>
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-tertiary">
+                        {n.host && n.host !== n.name && <span title="主机名">{n.host}</span>}
+                        {n.addr && <span title="hub 拨号地址"><Mono>{n.addr}</Mono></span>}
+                        {(n.ips || []).length > 0 && <span title={(n.ips || []).join("\n")} className="font-mono">{(n.ips || [])[0]}{(n.ips || []).length > 1 ? ` +${(n.ips || []).length - 1}` : ""}</span>}
+                    </div>
+                </div>
+                <dl className="grid shrink-0 grid-cols-[auto_auto] gap-x-3 gap-y-0.5 text-xs">
+                    <dt className="text-quaternary">版本</dt><dd className="font-mono text-secondary">{n.version || "—"}</dd>
+                    <dt className="text-quaternary">系统</dt><dd className="text-secondary">{n.os ? `${n.os} / ${n.arch}` : "—"}</dd>
+                    <dt className="text-quaternary" title={levelHint}>数据等级</dt><dd className="text-secondary" title={levelHint}>{levelWords[n.level || "internal"] || n.level}</dd>
+                    {showRegion && <><dt className="text-quaternary" title="多 hub 部署时，这台机器的租约由哪个区域签发">租约区域</dt><dd className="text-secondary">{n.region || "本 hub"}</dd></>}
+                    <dt className="text-quaternary">健康</dt>
+                    <dd className={lowDisk ? "text-error-primary" : "text-secondary"} title="磁盘空闲 · 1 分钟负载 · 持有的工作树">
+                        {h && h.disk_total > 0 ? `${disk} · 负载 ${h.load1.toFixed(1)}${h.worktrees ? ` · ${h.worktrees} 个工作树` : ""}` : "未申报"}
+                    </dd>
+                </dl>
+            </div>
+            <Abilities snapshot={n.snapshot} />
+        </div>
+    );
+}
+
+// Abilities is what the machine offers, one block per kind. Observed
+// kinds come first; what was only declared (networks, credentials, tags)
+// is one block at the end, since it was never checked.
 function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
     const list = snapshot?.offers || [];
-    if (!snapshot || !list.length) return <span className="text-quaternary">旧版本，未申报清单</span>;
-    const groups = kindOrder.map((k) => ({ k, items: list.filter((c) => c.kind === k) })).filter((g) => g.items.length);
+    if (!snapshot || !list.length) return <span className="text-sm text-quaternary">旧版本，未申报清单</span>;
+    const blocks: { title: string; kinds: string[]; hint?: string }[] = [
+        { title: "AI 工具", kinds: ["harness"] },
+        { title: "命令", kinds: ["tool"] },
+        { title: "硬件", kinds: ["hardware"] },
+        { title: "MCP", kinds: ["mcp"], hint: "这台机器能为会话启动的 MCP 服务器" },
+        { title: "技能", kinds: ["skill"], hint: "hub 下发并已在每个 AI 工具 home 里物化的技能" },
+        { title: "声明", kinds: ["network", "credential", "tag"], hint: "只能由运维声明、没人核实过的：网络、凭据、标签" },
+    ];
+    const shown = blocks.map((b) => ({ ...b, items: list.filter((c) => b.kinds.includes(c.kind)) })).filter((b) => b.items.length);
     return (
-        <div className="flex min-w-[32rem] flex-col gap-1">
-            {groups.map((g) => (
-                <div key={g.k} className="flex flex-wrap items-baseline gap-1 text-xs">
-                    <span className="w-12 shrink-0 text-quaternary" title={snapshot.coverage?.[g.k] ? `覆盖：${snapshot.coverage[g.k]}` : undefined}>{kindWords[g.k] ?? g.k}</span>
-                    {merge(g.items).map(({ c, scopes }) => {
-                        const st = state(c, snapshot);
-                        const where = scopes.filter(Boolean).length ? ` · 适用 ${scopes.filter(Boolean).join(", ")}` : "";
-                        return (
-                            <span key={c.id} title={`${c.kind}:${c.id}${where}${c.version ? " · " + c.version.value.slice(0, 12) : ""} · ${st.word}${c.detail ? " · " + c.detail : ""}`}
-                                className={`rounded px-1 font-mono ${st.cls}`}>
-                                {c.id}{c.attrs?.count ? "×" + c.attrs.count : ""}
-                            </span>
-                        );
-                    })}
+        <div className="grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-3">
+            {shown.map((b) => (
+                <div key={b.title} className="flex min-w-0 flex-col gap-1.5">
+                    <div className="text-[11px] font-medium uppercase tracking-wide text-quaternary" title={b.hint ?? (snapshot.coverage?.[b.kinds[0]] ? `覆盖：${snapshot.coverage[b.kinds[0]]}` : undefined)}>{b.title}</div>
+                    <div className="flex flex-wrap gap-1 text-xs">
+                        {merge(b.items).map(({ c, scopes }) => {
+                            const st = state(c, snapshot);
+                            const where = scopes.filter(Boolean).length ? ` · 适用 ${scopes.filter(Boolean).join(", ")}` : "";
+                            const shownID = c.kind === "hardware" && c.attrs?.count ? `${c.id}×${c.attrs.count}` : c.id;
+                            return (
+                                <span key={c.id} title={`${c.kind}:${c.id}${where}${c.version ? " · " + c.version.value.slice(0, 12) : ""} · ${st.word}${c.detail ? " · " + c.detail : ""}`}
+                                    className={`rounded-md px-1.5 py-0.5 font-mono ${st.cls}`}>
+                                    {b.kinds.length > 1 ? <span className="mr-1 font-sans text-quaternary">{kindWords[c.kind]}</span> : null}{shownID}
+                                </span>
+                            );
+                        })}
+                    </div>
                 </div>
             ))}
-            {snapshot.source === "legacy" && <span className="text-[11px] text-quaternary">旧版本 node：只知道 AI 工具与标签，其它类别未知。</span>}
+            {snapshot.source === "legacy" && <span className="col-span-full text-[11px] text-quaternary">旧版本 node：只知道 AI 工具与标签，其它类别未知。</span>}
         </div>
     );
 }
@@ -153,60 +172,18 @@ export function FleetPage() {
                 actions={<Button size="md" color="secondary" iconLeading={Plus} onClick={() => setAdding((v) => !v)}>添加机器 / Agent</Button>} />
             <PageBody>
             {adding && <AddMachine hub={snap.hub.node} />}
-            <TableCard.Root size="sm">
-                <TableCard.Header title="机器" badge={`${up}/${snap.nodes.length} 在线`} description="每一台跑着 steve 的机器，hub 也在内。机器各不相同，这是正常的；每台自己申报能做什么：能观测的（AI 工具、命令、MCP、硬件）标已观测，只能声明的（网络、凭据）标声明。计划步骤和 agent 派活用 kind:id 选择器按这张表匹配。" />
+            <section className="flex flex-col gap-3">
+                <div className="flex items-baseline gap-2 px-1">
+                    <h2 className="text-sm font-semibold text-primary">机器</h2>
+                    <Badge type="pill-color" size="sm" color="gray">{up}/{snap.nodes.length} 在线</Badge>
+                    <span className="text-xs text-tertiary">每台跑着 steve 的机器，hub 也在内。每台自己申报能做什么；计划步骤和 agent 派活按 kind:id 选择器匹配这里的申报。</span>
+                </div>
                 {snap.nodes.length === 0 ? <Nothing icon={Server01} title="还没有机器">hub 还没报名字，也没有配置远程机器。</Nothing> : (
-                    <Table aria-label="Nodes" size="sm">
-                        <Table.Header>
-                            <Table.Head id="node" label="机器" isRowHeader />
-                            <Table.Head id="address" label="地址" />
-                            <Table.Head id="version" label="版本" />
-                            <Table.Head id="state" label="状态" />
-                            <Table.Head id="level" label="等级" />
-                            <Table.Head id="region" label="区域" />
-                            <Table.Head id="abilities" label="能做什么" />
-                            <Table.Head id="harness" label="AI 工具" />
-                            <Table.Head id="since" label="连接" />
-                        </Table.Header>
-                        <Table.Body items={snap.nodes.map((n) => ({ ...n, id: n.name }))}>
-                            {(n) => (
-                                <Table.Row id={n.name}>
-                                    <Table.Cell>
-                                        <div className="flex items-center gap-2">
-                                            <span className="font-medium text-primary">{n.name}</span>
-                                            <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role || "worker"}</Badge>
-                                        </div>
-                                    </Table.Cell>
-                                    <Table.Cell>
-                                        <div className="flex flex-col gap-0.5">
-                                            {n.host && n.host !== n.name ? <span className="text-primary">{n.host}</span> : null}
-                                            {n.addr ? <Mono>{n.addr}</Mono> : null}
-                                            {(n.ips || []).map((ip) => <Mono key={ip} className="text-tertiary">{ip}</Mono>)}
-                                            {!n.host && !n.addr && !(n.ips || []).length ? <span className="text-quaternary">—</span> : null}
-                                        </div>
-                                    </Table.Cell>
-                                    <Table.Cell><span className="font-mono text-xs text-tertiary" title="steve 构建版本">{n.version || "—"}</span>{n.os ? <div className="text-[11px] text-quaternary">{n.os}/{n.arch}</div> : null}</Table.Cell>
-                                    <Table.Cell>
-                                        <div className="flex flex-col gap-1">
-                                            <StateBadge state={n.up ? "up" : "down"} />
-                                            {n.health && n.health.disk_total > 0 && (
-                                                <span className={`text-xs ${n.health.disk_free < 1 << 30 ? "text-error-primary" : "text-tertiary"}`} title="磁盘空闲 · 1 分钟负载 · 持有的工作树">
-                                                    {(n.health.disk_free / (1 << 30)).toFixed(0)}G 空闲 · 负载 {n.health.load1.toFixed(1)}{n.health.worktrees ? ` · ${n.health.worktrees} 工作树` : ""}
-                                                </span>
-                                            )}
-                                        </div>
-                                    </Table.Cell>
-                                    <Table.Cell>{n.level || "internal"}</Table.Cell>
-                                    <Table.Cell><span className="text-tertiary">{n.region || "—"}</span></Table.Cell>
-                                    <Table.Cell><Abilities snapshot={n.snapshot} /></Table.Cell>
-                                    <Table.Cell><Runtimes node={n} /></Table.Cell>
-                                    <Table.Cell><span className="text-tertiary">{n.up ? relative(n.since) : n.last_error}</span></Table.Cell>
-                                </Table.Row>
-                            )}
-                        </Table.Body>
-                    </Table>
+                    <div className="grid grid-cols-1 gap-3 2xl:grid-cols-2">
+                        {snap.nodes.map((n) => <MachineCard key={n.name} n={n} showRegion={snap.nodes.some((x) => !!x.region)} />)}
+                    </div>
                 )}
-            </TableCard.Root>
+            </section>
 
             <TableCard.Root size="sm">
                 <TableCard.Header title="Agent" badge={`${snap.agents.length}`} description="Agent 是一个命名的执行配置：固定机器和 AI 工具，可选固定偏好模型；实际模型以会话报告为准。可用 = 此刻能开工；不可用会写明原因，以及谁能修。" />
@@ -218,7 +195,7 @@ export function FleetPage() {
                         <Table.Head id="where" label="机器" />
                         <Table.Head id="harness" label="AI 工具" />
                         <Table.Head id="model" label="模型" />
-                        <Table.Head id="level" label="等级" />
+                        <Table.Head id="level" label="数据等级" />
                         <Table.Head id="requires" label="需要" />
                         <Table.Head id="why" label="" />
                     </Table.Header>
