@@ -187,4 +187,5 @@ HumanRequest { id, type, source_operation_id, project_id, task_id, summary, choi
 - **关系页签**：右栏第三个页签画本会话的调用树——任务 → 计划步骤（哪个 agent 在哪台机器、状态、依赖 / 汇合）→ 委派出去的子任务（递归，"X 委派 →"），进行中的转圈。组件 `lib/tree.tsx` 的 `CallGraph`，任务看板抽屉里复用（替换原来只列子任务名的"子任务"节）。数据全部来自已有投影（Task.parent/children/member/node，Plan.steps.agent/node），没有新增后端字段。
 - **顺手修的线上崩溃**：`roster.addModels` / `markFunctional` 浅拷贝快照但共用 `Coverage` map，多个请求并发 `All()` 时 fatal "concurrent map writes"，hub 进程直接退出。已深拷贝并加 16 协程并发读的 race 测试。
 - 仍然明显的问题（不属于本次）：聊天类任务永远停在"进行中"（协作审计 3-5），关系页签里一眼就能看到。
+- **composer 第二版（用户对照 Codex app 截图后）**：去掉大按钮与带边框下拉。底部一行全是文字级控件：左 "+"（动词菜单，来自 `/console/verbs`）、项目（文件夹图标 + 名字 + 机器，菜单切换）、右侧 Agent（名字 + 模型灰字，菜单里带机器 / 工具 / 模型，不可用的置灰并写原因）、圆形箭头发送键（进行中变成方块"停止"）。消息不再用彩色气泡：用户消息是浅灰圆角块靠右，回复是正文加一行小字时间与"过程"链接。左栏"新会话"是带图标的普通行，选中项只有浅底。
 

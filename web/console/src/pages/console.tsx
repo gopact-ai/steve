@@ -1,16 +1,16 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import Markdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
-import { CheckCircle, ChevronDown, GitBranch01, Loading01, MessageChatSquare, Plus, Send01, StopCircle, XCircle } from "@untitledui/icons";
+import { ArrowUp, CheckCircle, ChevronDown, Edit05, Folder, GitBranch01, Loading01, MessageChatSquare, Plus, Square, XCircle } from "@untitledui/icons";
+import { Button as AriaButton } from "react-aria-components";
+import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { Avatar } from "@/components/base/avatar/avatar";
 import { Badge } from "@/components/base/badges/badges";
-import { Button } from "@/components/base/buttons/button";
-import { Select } from "@/components/base/select/select";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { Chips, KeyValue, Panel } from "@/lib/page";
-import { fetchContext, fetchConversations, fetchReplies, fetchSuggest, send, when } from "@/lib/api";
+import { fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, when } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
-import type { Conversation, ConversationContext, Event, Plan, Process, Progress, Reply, Step, StepProcess, Suggestion, Task, ToolCall } from "@/lib/types";
+import type { Conversation, ConversationContext, Event, Plan, Process, Progress, Reply, Step, StepProcess, Suggestion, Task, ToolCall, Verb } from "@/lib/types";
 import { CallGraph } from "@/lib/tree";
 import { label, zh } from "@/lib/labels";
 import { formatToolText } from "@/lib/tooltext";
@@ -37,6 +37,8 @@ export function ConsolePage() {
     const [pick, setPick] = useState(0);
     const [selectedReply, setSelectedReply] = useState<Reply | null>(null);
     const [tab, setTab] = useState<RailTab>("context");
+    const [verbs, setVerbs] = useState<Verb[]>([]);
+    useEffect(() => { void fetchVerbs().then((d) => setVerbs(d.verbs || [])).catch(() => undefined); }, []);
     const box = useRef<HTMLTextAreaElement>(null);
     const bottom = useRef<HTMLDivElement>(null);
     const seen = useRef(0);
@@ -184,10 +186,6 @@ export function ConsolePage() {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submit(); }
     }
 
-    const projectItems = snap.projects.map((p) => ({ id: p.id, label: p.id }));
-    const projectDetail = Object.fromEntries(snap.projects.map((p) => [p.id, `${p.node} · ${p.path}`]));
-    const agentItems = (context?.agents ?? []).map((a) => ({ id: a.id, label: a.id, isDisabled: !a.usable }));
-    const agentDetail = Object.fromEntries((context?.agents ?? []).map((a) => [a.id, `${a.node} · ${a.harness}${a.model ? " · " + a.model : ""}${a.usable ? "" : " · " + (a.because || a.why || "")}`]));
     const lastWithProcess = [...entries].reverse().find((r) => r.kind === "reply" && r.process);
     const shownProcess = selectedReply ?? lastWithProcess ?? null;
     const current = conversations.find((c) => c.id === conversation);
@@ -224,7 +222,7 @@ export function ConsolePage() {
                             </div>
                         </div>
                         <div className="bg-primary px-8 pb-5 pt-2">
-                            <div className="relative mx-auto max-w-4xl">
+                            <div className="relative mx-auto max-w-3xl">
                                 {suggestions.length > 0 && (
                                     <div className="absolute bottom-full left-0 z-10 mb-2 w-full max-w-2xl overflow-hidden rounded-xl bg-primary shadow-lg ring-1 ring-secondary">
                                         <ul className="max-h-72 overflow-y-auto py-1">
@@ -242,31 +240,84 @@ export function ConsolePage() {
                                         <div className="border-t border-secondary px-3 py-1 text-[11px] text-quaternary">↑↓ 选择 · Tab 填入 · Enter 发送 · Esc 收起</div>
                                     </div>
                                 )}
-                                <div className="flex flex-col rounded-2xl bg-primary shadow-sm ring-1 ring-secondary transition focus-within:ring-2 focus-within:ring-brand">
+                                <div className="flex flex-col rounded-2xl bg-primary shadow-xs ring-1 ring-secondary transition focus-within:ring-brand">
                                     <textarea
                                         ref={box}
                                         aria-label="Message"
                                         value={text}
                                         rows={1}
-                                        placeholder={busy ? "正在进行，可先写下一句…" : "说你想做的事。/ 看动词，@ 指派一次，Shift+Enter 换行。"}
+                                        placeholder={busy ? "正在进行…" : "想做什么"}
                                         onChange={(e) => setText(e.target.value)}
                                         onKeyDown={onKey}
-                                        className="max-h-[200px] w-full resize-none bg-transparent px-4 pb-1 pt-3.5 text-sm text-primary outline-none placeholder:text-placeholder"
+                                        className="max-h-[200px] w-full resize-none bg-transparent px-4 pb-1 pt-3 text-sm text-primary outline-none placeholder:text-placeholder"
                                     />
-                                    <div className="flex flex-wrap items-center gap-2 px-2.5 pb-2.5">
-                                        <div className="w-44" title="项目决定活在哪台机器的哪个目录里干。切换只影响本会话。">
-                                            <Select aria-label="项目" size="sm" placeholder="项目" selectedKey={context?.project?.id ?? null} onSelectionChange={(k) => k && String(k) !== context?.project?.id && void submit(`/project use ${String(k)}`)} items={projectItems}>
-                                                {(item) => <Select.Item id={item.id} supportingText={projectDetail[item.id]}>{item.label}</Select.Item>}
-                                            </Select>
-                                        </div>
-                                        <div className="w-48" title="当前 Agent 接普通消息；在这里选 = /use 切换。输入框里 @ 某个 Agent = 只指派下一条。">
-                                            <Select aria-label="Agent" size="sm" placeholder="Agent" selectedKey={context?.agent?.id ?? null} onSelectionChange={(k) => k && String(k) !== context?.agent?.id && void submit(`/use ${String(k)}`)} items={agentItems}>
-                                                {(item) => <Select.Item id={item.id} supportingText={agentDetail[item.id]} isDisabled={item.isDisabled}>{item.label}</Select.Item>}
-                                            </Select>
-                                        </div>
-                                        <span className="ml-auto hidden text-[11px] text-quaternary md:inline">/ 动词 · @ 指派 · Enter 发送</span>
-                                        {busy && <Button size="sm" color="secondary-destructive" iconLeading={StopCircle} onClick={() => void send(conversation, "/cancel").catch(() => undefined)}>停止</Button>}
-                                        <Button size="sm" color="primary" iconTrailing={Send01} isLoading={busy} isDisabled={!text.trim() || busy} onClick={() => void submit()}>发送</Button>
+                                    <div className="flex items-center gap-0.5 px-2 pb-2">
+                                        <Dropdown.Root>
+                                            <AriaButton aria-label="动词" className="flex size-7 items-center justify-center rounded-full text-fg-quaternary outline-none transition hover:bg-secondary hover:text-fg-quaternary_hover">
+                                                <Plus className="size-4" />
+                                            </AriaButton>
+                                            <Dropdown.Popover placement="top start" className="w-80">
+                                                <Dropdown.Menu onAction={(k) => { setText(String(k) + " "); box.current?.focus(); }}>
+                                                    <Dropdown.Section>
+                                                        <Dropdown.SectionHeader className="px-2 py-1 text-[11px] text-quaternary">动词 · 选一个填进输入框</Dropdown.SectionHeader>
+                                                        {verbs.map((v) => (
+                                                            <Dropdown.Item key={v.command} id={v.command} textValue={v.command}>
+                                                                <div className="flex min-w-0 flex-col">
+                                                                    <span className="font-mono text-xs text-primary">{v.command} <span className="text-quaternary">{v.args || ""}</span></span>
+                                                                    <span className="truncate text-xs text-tertiary">{v.summary}</span>
+                                                                </div>
+                                                            </Dropdown.Item>
+                                                        ))}
+                                                    </Dropdown.Section>
+                                                </Dropdown.Menu>
+                                            </Dropdown.Popover>
+                                        </Dropdown.Root>
+                                        <Dropdown.Root>
+                                            <AriaButton aria-label="项目" className="flex h-7 items-center gap-1.5 rounded-full px-2 text-xs text-tertiary outline-none transition hover:bg-secondary hover:text-secondary">
+                                                <Folder className="size-3.5" />
+                                                <span>{context?.project?.id || "项目"}</span>
+                                                {context?.project && <span className="text-quaternary">{context.project.node}</span>}
+                                                <ChevronDown className="size-3 text-fg-quaternary" />
+                                            </AriaButton>
+                                            <Dropdown.Popover placement="top start" className="w-80">
+                                                <Dropdown.Menu onAction={(k) => { if (String(k) !== context?.project?.id) void submit(`/project use ${String(k)}`); }}>
+                                                    {snap.projects.map((p) => (
+                                                        <Dropdown.Item key={p.id} id={p.id} textValue={p.id} label={p.id} addon={p.node} />
+                                                    ))}
+                                                </Dropdown.Menu>
+                                            </Dropdown.Popover>
+                                        </Dropdown.Root>
+                                        <span className="flex-1" />
+                                        <Dropdown.Root>
+                                            <AriaButton aria-label="Agent" className="flex h-7 items-center gap-1.5 rounded-full px-2 text-xs text-secondary outline-none transition hover:bg-secondary">
+                                                <span>{context?.agent?.id || "Agent"}</span>
+                                                {context?.agent?.model && <span className="text-quaternary">{context.agent.model}</span>}
+                                                <ChevronDown className="size-3 text-fg-quaternary" />
+                                            </AriaButton>
+                                            <Dropdown.Popover placement="top end" className="w-96">
+                                                <Dropdown.Menu onAction={(k) => { if (String(k) !== context?.agent?.id) void submit(`/use ${String(k)}`); }}>
+                                                    {(context?.agents ?? []).map((a) => (
+                                                        <Dropdown.Item key={a.id} id={a.id} textValue={a.id} isDisabled={!a.usable}>
+                                                            <div className="flex min-w-0 flex-col">
+                                                                <span className="text-sm text-primary">{a.id} <span className="text-xs text-quaternary">{a.node} · {a.harness}{a.model ? " · " + a.model : ""}</span></span>
+                                                                {!a.usable && <span className="truncate text-xs text-tertiary">{a.because || a.why}</span>}
+                                                            </div>
+                                                        </Dropdown.Item>
+                                                    ))}
+                                                </Dropdown.Menu>
+                                            </Dropdown.Popover>
+                                        </Dropdown.Root>
+                                        {busy ? (
+                                            <button type="button" aria-label="停止" title="停止（/cancel）" onClick={() => void send(conversation, "/cancel").catch(() => undefined)}
+                                                className="ml-1 flex size-8 items-center justify-center rounded-full bg-secondary text-fg-secondary ring-1 ring-secondary transition hover:bg-tertiary">
+                                                <Square className="size-3.5" />
+                                            </button>
+                                        ) : (
+                                            <button type="button" aria-label="发送" title="发送（Enter）" disabled={!text.trim()} onClick={() => void submit()}
+                                                className="ml-1 flex size-8 items-center justify-center rounded-full bg-brand-solid text-white transition hover:bg-brand-solid_hover disabled:bg-disabled disabled:text-fg-disabled">
+                                                <ArrowUp className="size-4" />
+                                            </button>
+                                        )}
                                     </div>
                                 </div>
                             </div>
@@ -289,8 +340,11 @@ function Sessions({ list, current, onPick, onNew }: { list: Conversation[]; curr
     }
     return (
         <aside className="hidden w-64 shrink-0 flex-col border-r border-secondary bg-secondary lg:flex">
-            <div className="px-3 pt-3 pb-2">
-                <Button size="sm" color="secondary" iconLeading={Plus} className="w-full" onClick={onNew}>新会话</Button>
+            <div className="px-2 pt-3 pb-1">
+                <button type="button" onClick={onNew} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-primary transition hover:bg-primary/70">
+                    <Edit05 className="size-4 text-fg-quaternary" />
+                    <span>新会话</span>
+                </button>
             </div>
             <div className="min-h-0 flex-1 overflow-y-auto pb-4">
                 {[...groups.entries()].map(([project, items]) => (
@@ -300,7 +354,7 @@ function Sessions({ list, current, onPick, onNew }: { list: Conversation[]; curr
                             {items.map((c) => (
                                 <li key={c.id}>
                                     <button type="button" onClick={() => onPick(c.id)}
-                                        className={`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left transition ${c.id === current ? "bg-primary shadow-xs ring-1 ring-secondary" : "hover:bg-primary/60"}`}>
+                                        className={`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left transition ${c.id === current ? "bg-primary" : "hover:bg-primary/50"}`}>
                                         <span className="flex items-center gap-1.5">
                                             {c.running && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
                                             <span className="truncate text-sm text-primary">{c.title || "新会话"}</span>
@@ -423,31 +477,24 @@ function Message({ r, selected, onSelect }: { r: Reply; selected?: boolean; onSe
     if (r.kind === "sent") {
         return (
             <div className="flex justify-end">
-                <div className="flex max-w-[80%] flex-col items-end gap-1">
-                    <span className="text-xs text-quaternary">你 · {when(r.at)}</span>
-                    <div className="rounded-2xl rounded-tr-sm bg-brand-solid px-4 py-2.5 text-sm text-white shadow-xs whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{r.input}</div>
-                </div>
+                <div className="max-w-[75%] rounded-2xl bg-secondary px-4 py-2.5 text-sm text-primary whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{r.input}</div>
             </div>
         );
     }
     const tone = r.error ? "error" : r.kind === "milestone" ? "success" : r.kind === "notice" ? "warning" : "gray";
     return (
-        <div className="flex min-w-0 gap-3">
-            <Avatar size="sm" initials="S" alt="steve" className="mt-5 shrink-0" />
-            <div className="flex min-w-0 max-w-[85%] flex-col gap-1">
-                <div className="flex items-center gap-2 text-xs text-quaternary">
-                    <span>steve · {when(r.at)}</span>
-                    {r.kind !== "reply" && <Badge type="pill-color" size="sm" color={tone}>{r.kind}</Badge>}
-                    {r.error && <Badge type="pill-color" size="sm" color="error">error</Badge>}
-                </div>
-                <div onClick={onSelect} className={`min-w-0 rounded-2xl rounded-tl-sm bg-primary px-4 py-3 shadow-xs ring-1 ring-inset ${r.error ? "ring-error" : selected ? "ring-brand" : "ring-secondary"} ${onSelect ? "cursor-pointer" : ""}`}>
-                    {r.title && <div className="mb-1 text-sm font-semibold text-primary">{r.title}</div>}
-                    <div className="md prose prose-sm max-w-none break-words [overflow-wrap:anywhere]">
-                        <Markdown remarkPlugins={[remarkBreaks]}>{r.text}</Markdown>
-                    </div>
-                    {r.process && <div className="xl:hidden"><ProcessFold process={r.process} /></div>}
-                </div>
+        <div className={`flex min-w-0 flex-col gap-1 rounded-xl px-2 py-1 ${selected ? "bg-secondary/60" : ""}`}>
+            {r.title && <div className="text-sm font-semibold text-primary">{r.title}</div>}
+            <div className={`md prose prose-sm max-w-none break-words [overflow-wrap:anywhere] ${r.error ? "text-error-primary" : ""}`}>
+                <Markdown remarkPlugins={[remarkBreaks]}>{r.text}</Markdown>
             </div>
+            <div className="flex items-center gap-2 text-[11px] text-quaternary">
+                <span>{when(r.at)}</span>
+                {r.kind !== "reply" && <Badge type="pill-color" size="sm" color={tone}>{r.kind}</Badge>}
+                {r.error && <Badge type="pill-color" size="sm" color="error">error</Badge>}
+                {onSelect && <button type="button" onClick={onSelect} className="hover:text-primary">过程</button>}
+            </div>
+            {r.process && <div className="xl:hidden"><ProcessFold process={r.process} /></div>}
         </div>
     );
 }
