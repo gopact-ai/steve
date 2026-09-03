@@ -106,6 +106,7 @@ AST 的 property / fuzz（三值、版本、any / one_of / not、canonical）；
 - 真机验证：node-a 配 `fs`（`npx @modelcontextprotocol/server-filesystem`），hub 上 builder 配 `mcp_servers: ["fs"]`；控制台 `@builder` 用 fs 列目录成功，node-a 日志显示 broker 为该 attempt 启动 fs；advert / binding 的 JSON 里没有 env。
 - **hub 身份与协商（第 7 节的一部分）**：node 把服务过的 hub 记在 `state_dir/hub.json`（hub、last_seen、released）；hub 每分钟的刷新会续 last_seen；hub 静默（未 released）10 分钟内其它 hub 被拒，干净断开即交还；`steve-node adopt <hub>` 显式移交。握手 `Hello{protocol_min, protocol_max}` → node 选双方共有的最新版本作 `Advert.Version`，无交集拒绝并写明双方区间。**仍缺**：身份与 mTLS / overlay 绑定（`Hello.Hub` 名字仍不可信，部署不变量），持久 epoch / lease。
 - **同日第四批**：binding 随 Attempt 结束释放（`StreamRelease`，exec / delegate / turn 三处在 Attempt 收尾时调用；node 删 binding 并杀掉其后端进程；TTL 只是兜底）；`AdmitRequest.Nonce` 回显校验；**http / sse 的回环代理**（node 在 127.0.0.1 上起 `mcp-proxy.port`，binding URL 为 `/b/<id>`，代理转发到真实 URL 并注入配置的 headers；descriptor 只有 URL）；harness 的 **functional** 证据：hub 通过 ACP 真正对话过的 harness，在 roster 的候选快照上加 `acp` 证据、assurance=functional。
+- **同日第五批**：node.json `hubs: {name: token}` 把 token 绑到 hub 名字（拿着 hub-1 的 token 自称 hub-2 会被拒），单一 `token` 仍可用；advert 携带 `Health{disk_free, disk_total, load1, worktrees}`（每次 advert 刷新），roster 对空闲磁盘不足 1GB 的机器拒绝放置，资源页显示。这是第 1 节"容量不在清单里"的最小实现，还没有槽位 allocatable 与显存。
 - **仍缺（第 4 节其余）**：broker 作为独立 OS principal（当前与 node 同 UID，同用户进程仍可读 node.json——这是部署要求，代码无法强制）；`(hub identity, project, principal, mcp id)` ACL；MCP contract / tool-set digest；fence（当前只有 nonce，没有 lease epoch）。
 
 已回退的错误做法：把 node 全部 MCP env 注入共享 agent 进程（第 1 轮评审第 9 条）。

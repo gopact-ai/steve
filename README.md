@@ -244,7 +244,8 @@ node 连上时与技能变更时下发、校验、物化到每个 home，并在�
 （模型、hub 本机），结果连同快照版本写进 Attempt。不满足时原因是结构化的：`steve_delegate` 返回
 `{code, retryable, failures[{agent, node, reasons[{atom, code}]}]}`；`steve_fleet(requires)` 能先看谁满足、其他人缺什么。
 清单变化记进历史；一台 node 一次只服务一个 hub，并记住它：hub 静默（没有干净断开）10 分钟内别的 hub 连不上，
-`steve-node adopt <hub>` 可显式移交。
+`steve-node adopt <hub>` 可显式移交。node.json 里 `hubs: {"<hub 名>": "<token>"}` 能把 token 绑到 hub 名字，防止拿着 token 冒名。
+每台机器还申报健康（空闲磁盘、负载、持有的工作树）；空闲不足 1GB 的机器不再接新活。
 
 ## 计划与协作
 
