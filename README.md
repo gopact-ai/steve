@@ -223,11 +223,14 @@ skill / tool / hardware / network / credential / a2a / tag。能观测的必须�
 "declares":    ["network:internal", "credential:prod"] // 只能声明的
 ```
 
-MCP 服务器定义在拥有它的机器上，env 不出机器，也不注入 agent 进程；node 只申报 `mcp:<id>` 能不能启动。旧的
-`capabilities: ["gpu"]` 仍可用，等价于 `tag:gpu`。
+MCP 服务器定义在拥有它的机器上，env 不出机器，也不注入 agent 进程。node 上跑一个 MCP broker（`state_dir/mcp.sock`）：
+agent 配置 `mcp_servers: ["fs"]` 指的是**它所在机器**的 `fs`；准入时 node 为该次执行发一个 binding，会话里 MCP 的启动命令只是
+`steve-node mcp-launch -socket … <binding>`，broker 再用本机的 env 起真正的服务器并把两头接起来。node 没有这个服务器就拒绝准入；
+hub 本机的 agent 仍用 hub 自己的 `mcp_servers{}`。http / sse 类型的 MCP 目前只申报不绑定。旧的 `capabilities: ["gpu"]` 仍可用，
+等价于 `tag:gpu`。
 
 计划步骤和 `steve_delegate` 的 `requires` 用同一套选择器：`tool:docker`、`hardware:gpu`、`model:claude*`、`a|b`、`!x`、
-`tool:docker@>=27`。**当前 harness / tool / hardware / model / skill / tag 参与调度**；mcp / a2a / network / credential
+`tool:docker@>=27`。**当前 harness / tool / hardware / model / skill / mcp / tag 参与调度**；a2a / network / credential
 只观察、只在页面上显示，写进 requires 会得到 `NOT_SCHEDULABLE`，等各自的探测、绑定与秘密隔离链条完成后再逐类打开
 （见 `docs/capability-manifest.md`）。匹配是三值的：机器没查这一类、或证据过期，是"不知道"，不是"没有"。
 

@@ -82,7 +82,7 @@ AST 的 property / fuzz（三值、版本、any / one_of / not、canonical）；
 
 **hub**：接收时 `Validate` 失败即拒绝整份并保留上一份；按 (generation, sequence) 拒绝旧快照；stamp `received_at`；漂移记结构化 diff 到历史；hub 自身也出快照。roster 按 harness scope 匹配、结构化解释；**pinned agent 不豁免 requires**（exec 与 delegate 两处）；plan 校验 AST；规划 prompt 与步骤上下文只给 id 摘要（本机、4KB）；`steve_fleet` 工具；资源页六态展示。
 
-**门禁（按第 9 节）**：当前只有 `harness / tool / hardware / tag` 参与调度（tag 为 legacy `declared_ok`）；`mcp / skill / a2a / network / credential` 只观察、不匹配（`NOT_SCHEDULABLE`，且对其取反也是 unknown）。**assurance 仍是 existence**，`launchable` 探测、时效心跳、node 终审流、AdmissionContract 的 uses 绑定、MCP broker、工具 home 隔离、协议协商中的 `protocol_min/max`、hub 身份绑定，均未实现——这些是第一部分的内容，也是打开更多 kind 的前提。
+**门禁（按第 9 节）**：截至本文最后一批，`harness / tool / hardware / model / skill / mcp / tag` 参与调度（tag 为 legacy `declared_ok`）；`a2a / network / credential` 只观察、不匹配（`NOT_SCHEDULABLE`，且对其取反也是 unknown）。**assurance 仍是 existence**，`launchable` 探测、时效心跳、node 终审流、AdmissionContract 的 uses 绑定、MCP broker、工具 home 隔离、协议协商中的 `protocol_min/max`、hub 身份绑定，均未实现——这些是第一部分的内容，也是打开更多 kind 的前提。
 
 **本轮追加（同日）**：
 
@@ -98,5 +98,12 @@ AST 的 property / fuzz（三值、版本、any / one_of / not、canonical）；
 - **工具 home 隔离（协作审计 3-4）**：steve-node 启动时 `runtime.Prepare(state_dir)`，每个 harness 用 `state_dir/runtimes/<harness>`，进程 env 由 `runtime.ApplyEnv` 指过去；不再碰用户真实的 `~/.codex` 等。
 - **技能下发与物化（协作审计 3-1，`skill_bundle.v1`）**：hub 把启用技能打成确定性 tar（`skills.Pack`，无时间无属主，按内容寻址；≤32MB），经 blob 流放到 node，再用 `StreamSkills apply <hash>` 让 node 校验哈希、安全解包（拒绝越界、拒绝非常规文件）、原子替换、软链进每个 harness home、清理旧包；node 在 advert 里报 `skills=<hash>`，快照里按 harness scope 报 `skill:<name>`（version = 内容哈希，coverage complete）。触发：node 上线、`live.Apply()`（技能变更先推 node 再重启 harness）。**`skill` 类已打开调度**。
 - 未做：`launchable` 之上的 `functional`；chat 会话的 resume 校验 effective hash；跨 node 的 skill 生效仍依赖 hub 重启远端 harness。
+
+**同日第三批：MCP broker（`node_mcp_binding.v1`，第 4 节的第一段，协作审计 3-2）**
+
+- node 的 `mcp_servers{}`（含 env）只在 node；`Server.serveBroker` 在 `state_dir/mcp.sock`（0600）上服务。`AdmitRequest.Uses` 列出会话要用的 MCP；node 在准入通过后为每个 id 发 binding（随机 128 位、TTL 24h、内存态、随进程消失），回 `AdmitReply.Bindings[]{name, command=steve-node 绝对路径, args=[mcp-launch, -socket, sock, id]}`；`Admission.Bound` 只记名字，binding id 不进账本。hub 侧 `roster.Admit(…, uses, …)` 把每个 uses 翻成硬约束 `mcp:<id>`，通过后把 launcher 追加进 `session/new` 的 MCP 列表（exec 的 `StepRequest.MCP`、delegate、turn 三条路径）；`capability.Assembler` 对 `Node != ""` 的 agent 不再在 hub 上解析 / LookPath；hub 配置校验只对 hub 本机 agent 检查名字。
+- launcher `steve-node mcp-launch` 连 socket、写 binding id、把 stdio 接过去；broker 校验 binding、用 `os.Environ()+spec.Env` 起后端（独立进程组，连接断即杀）。http / sse 的 MCP 保持 declared → unknown，准入 uses 到它们时拒绝（UNAVAILABLE）。**`mcp` 类已打开调度。**
+- 真机验证：node-a 配 `fs`（`npx @modelcontextprotocol/server-filesystem`），hub 上 builder 配 `mcp_servers: ["fs"]`；控制台 `@builder` 用 fs 列目录成功，node-a 日志显示 broker 为该 attempt 启动 fs；advert / binding 的 JSON 里没有 env。
+- **仍缺（第 4 节其余）**：broker 作为独立 OS principal（当前与 node 同 UID，同用户进程仍可读 node.json——这是部署要求，代码无法强制）；binding 与 SessionLease 绑定的释放（现在只有 TTL）；http / sse 的回环代理；`(hub identity, project, principal, mcp id)` ACL；MCP contract / tool-set digest。
 
 已回退的错误做法：把 node 全部 MCP env 注入共享 agent 进程（第 1 轮评审第 9 条）。
