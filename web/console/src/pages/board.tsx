@@ -9,6 +9,7 @@ import { relative, short, when } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { fmtSeconds, fmtTokens, label, spend, zh } from "@/lib/labels";
 import type { Plan, Task } from "@/lib/types";
+import { PageHeader } from "@/lib/page";
 import { Mono, Nothing, StateBadge, Where } from "@/lib/ui";
 
 type TabKey = "active" | "all" | "scheduled" | "usage";
@@ -37,26 +38,21 @@ export function BoardPage() {
 
     return (
         <div className="flex h-full flex-col">
-            <div className="flex flex-col gap-3 border-b border-secondary bg-primary px-6 py-4">
-                <div className="flex items-center gap-6">
-                    <div>
-                        <h1 className="text-lg font-semibold text-primary">任务</h1>
-                        <p className="text-sm text-tertiary">任务是一段有目标和预算的工作线程；一条消息是其中一个回合。<Mono>/new</Mono> 开新任务，<Mono>/plan</Mono> 拆步骤跨机器，agent 也会自己派子任务。</p>
-                    </div>
-                    <div className="ml-auto flex items-center gap-4 text-sm">
-                        <Stat label="执行中" value={running} tone={running ? "blue" : "gray"} />
-                        <Stat label="等你处理" value={needsYou} tone={needsYou ? "warning" : "gray"} />
-                        <Stat label="今日用量" value={todayUsage ? `${fmtTokens(todayUsage.tokens.total)} tok · ${fmtSeconds(todayUsage.seconds)}` : "—"} tone="gray" />
-                        <Button size="sm" color="secondary" onClick={() => fill("/plan")}>新计划</Button>
-                    </div>
-                </div>
+            <PageHeader title="任务"
+                description={<>任务是一段有目标和预算的工作线程；一条消息是其中一个回合。<Mono>/new</Mono> 开新任务，<Mono>/plan</Mono> 拆步骤跨机器，agent 也会自己派子任务。</>}
+                actions={<>
+                    <Stat label="执行中" value={running} tone={running ? "blue" : "gray"} />
+                    <Stat label="等你处理" value={needsYou} tone={needsYou ? "warning" : "gray"} />
+                    <Stat label="今日用量" value={todayUsage ? `${spend(todayUsage.tokens)} · ${fmtSeconds(todayUsage.seconds)}` : "—"} tone="gray" />
+                    <Button size="md" color="secondary" onClick={() => fill("/plan")}>新计划</Button>
+                </>}>
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as TabKey)}>
                     <TabList type="button-border" size="sm" items={[{ id: "active", label: "进行中" }, { id: "all", label: "全部" }, { id: "scheduled", label: "已安排", badge: snap.schedules.length || undefined }, { id: "usage", label: "用量" }]}>
                         {(item) => <Tab {...item} />}
                     </TabList>
                 </Tabs>
-            </div>
-            <div className="min-h-0 flex-1 overflow-auto p-6">
+            </PageHeader>
+            <div className="min-h-0 flex-1 overflow-auto px-8 py-6">
                 {tab === "active" && (
                     <div className="grid grid-cols-4 gap-4">
                         {lanes.map((lane) => {

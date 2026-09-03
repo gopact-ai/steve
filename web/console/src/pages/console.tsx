@@ -6,10 +6,12 @@ import { Avatar } from "@/components/base/avatar/avatar";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Select } from "@/components/base/select/select";
+import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
+import { Chips, KeyValue, Panel } from "@/lib/page";
 import { TextArea } from "@/components/base/textarea/textarea";
 import { fetchContext, fetchReplies, fetchSuggest, send, when } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
-import type { ConversationContext, Event, Plan, Process, Progress, Project, Reply, Step, StepProcess, Suggestion, ToolCall } from "@/lib/types";
+import type { ConversationContext, Event, Plan, Process, Progress, Reply, Step, StepProcess, Suggestion, ToolCall } from "@/lib/types";
 import { label, zh } from "@/lib/labels";
 import { Mono, Nothing, StateBadge } from "@/lib/ui";
 
@@ -32,6 +34,7 @@ export function ConsolePage() {
     const [context, setContext] = useState<ConversationContext | null>(null);
     const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
     const [pick, setPick] = useState(0);
+    const [selectedReply, setSelectedReply] = useState<Reply | null>(null);
     const box = useRef<HTMLTextAreaElement>(null);
     const bottom = useRef<HTMLDivElement>(null);
     const seen = useRef(0);
@@ -110,6 +113,7 @@ export function ConsolePage() {
         } finally {
             setBusy(false);
             setLive(null);
+            setSelectedReply(null);
             refresh();
             loadContext();
             box.current?.focus();
@@ -151,118 +155,160 @@ export function ConsolePage() {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submit(); }
     }
 
+    const projectItems = snap.projects.map((p) => ({ id: p.id, label: p.id }));
+    const projectDetail = Object.fromEntries(snap.projects.map((p) => [p.id, `${p.node} · ${p.path}`]));
+    const agentItems = (context?.agents ?? []).map((a) => ({ id: a.id, label: a.id, isDisabled: !a.usable }));
+    const agentDetail = Object.fromEntries((context?.agents ?? []).map((a) => [a.id, `${a.node} · ${a.harness}${a.model ? " · " + a.model : ""}${a.usable ? "" : " · " + (a.because || a.why || "")}`]));
+    const lastWithProcess = [...entries].reverse().find((r) => r.kind === "reply" && r.process);
+    const shownProcess = selectedReply ?? lastWithProcess ?? null;
+
     return (
         <div className="flex h-full flex-col">
-            <header className="flex items-center gap-3 border-b border-secondary bg-primary px-6 py-3">
-                <div className="w-56">
-                    <Select aria-label="Conversation" size="sm" selectedKey={conversation} onSelectionChange={(k) => k && setConversation(String(k))} items={items}>
+            <header className="flex items-center gap-4 border-b border-secondary bg-primary px-6 py-3">
+                <Picker label="会话" width="w-48">
+                    <Select aria-label="会话" size="sm" selectedKey={conversation} onSelectionChange={(k) => k && setConversation(String(k))} items={items}>
                         {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                     </Select>
-                </div>
-                <span className="text-xs text-tertiary">直接说话就是给当前 Agent 派活；输入 <span className="font-mono">/</span> 看 Steve 能做什么，<span className="font-mono">@</span> 选 Agent。</span>
-                <span className="ml-auto text-xs text-tertiary">{status}</span>
+                </Picker>
+                <Picker label="项目" width="w-44" hint="项目决定活在哪台机器的哪个目录里干。切换只影响本会话。">
+                    <Select aria-label="项目" size="sm" selectedKey={context?.project?.id ?? null} onSelectionChange={(k) => k && String(k) !== context?.project?.id && void submit(`/project use ${String(k)}`)} items={projectItems}>
+                        {(item) => <Select.Item id={item.id} supportingText={projectDetail[item.id]}>{item.label}</Select.Item>}
+                    </Select>
+                </Picker>
+                <Picker label="Agent" width="w-44" hint="当前 Agent 接普通消息；在这里选 = /use 切换。输入框里 @ 某个 Agent = 只指派下一条。">
+                    <Select aria-label="Agent" size="sm" selectedKey={context?.agent?.id ?? null} onSelectionChange={(k) => k && String(k) !== context?.agent?.id && void submit(`/use ${String(k)}`)} items={agentItems}>
+                        {(item) => <Select.Item id={item.id} supportingText={agentDetail[item.id]} isDisabled={item.isDisabled}>{item.label}</Select.Item>}
+                    </Select>
+                </Picker>
+                <span className="ml-auto text-xs text-tertiary">{status || (live ? "进行中…" : "")}</span>
             </header>
 
-            <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-6 py-5">
-                {!enabled && <Nothing icon={MessageChatSquare} title="控制台未启用">配置 feishu.owner_open_id：控制台以 owner 身份行事。</Nothing>}
-                {enabled && entries.length === 0 && !live && (
-                    <Nothing icon={MessageChatSquare} title="这里还没说过话">说你想做的事。输入 / 看动词，@ 选 Agent。</Nothing>
-                )}
-                <div className="mx-auto flex max-w-4xl flex-col gap-5">
-                    {entries.map((r, i) => <Message key={i} r={r} />)}
-                    {live && <Working live={live} plans={runningPlans} />}
-                    <div ref={bottom} />
-                </div>
-            </div>
-
-            <div className="border-t border-secondary bg-primary px-6 py-3">
-                <div className="mx-auto flex max-w-4xl flex-col gap-2">
-                    <ContextBar context={context} projects={snap.projects} onProject={(id) => void submit(`/project use ${id}`)} onAgent={(id) => void submit(`/use ${id}`)} />
-                    <div className="relative flex items-end gap-3">
-                        {suggestions.length > 0 && (
-                            <div className="absolute bottom-full left-0 z-10 mb-2 w-full max-w-2xl overflow-hidden rounded-xl bg-primary shadow-lg ring-1 ring-secondary">
-                                <ul className="max-h-72 overflow-y-auto py-1">
-                                    {suggestions.map((sg, i) => (
-                                        <li key={sg.insert + i}>
-                                            <button type="button" onMouseDown={(e) => { e.preventDefault(); apply(sg); }}
-                                                className={`flex w-full items-baseline gap-3 px-3 py-1.5 text-left text-sm ${i === pick ? "bg-secondary" : "hover:bg-secondary"} ${sg.muted ? "opacity-60" : ""}`}>
-                                                <span className="shrink-0 font-mono text-xs text-primary">{sg.label}</span>
-                                                {sg.args && <span className="shrink-0 font-mono text-xs text-quaternary">{sg.args}</span>}
-                                                <span className="truncate text-xs text-tertiary">{sg.detail}</span>
-                                            </button>
-                                        </li>
-                                    ))}
-                                </ul>
-                                <div className="border-t border-secondary px-3 py-1 text-[11px] text-quaternary">↑↓ 选择 · Tab 填入 · Enter 发送 · Esc 收起</div>
-                            </div>
+            <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_400px]">
+                <div className="flex min-h-0 flex-col">
+                    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-8 py-6">
+                        {!enabled && <Nothing icon={MessageChatSquare} title="控制台未启用">配置 feishu.owner_open_id：控制台以 owner 身份行事。</Nothing>}
+                        {enabled && entries.length === 0 && !live && (
+                            <Nothing icon={MessageChatSquare} title="这里还没说过话">说你想做的事。输入 / 看动词，@ 选 Agent。</Nothing>
                         )}
-                        <TextArea
-                            aria-label="Message"
-                            textAreaRef={box}
-                            value={text}
-                            rows={2}
-                            placeholder="说你想做的事。/ 看动词，@ 选 Agent。Enter 发送，Shift+Enter 换行。"
-                            onChange={(v) => setText(v)}
-                            onKeyDown={onKey}
-                            className="flex-1"
-                        />
-                        <Button size="lg" color="primary" iconTrailing={Send01} isLoading={busy} isDisabled={!text.trim()} onClick={() => void submit()}>
-                            发送
-                        </Button>
+                        <div className="mx-auto flex max-w-5xl flex-col gap-5">
+                            {entries.map((r, i) => <Message key={i} r={r} selected={shownProcess === r} onSelect={r.process ? () => setSelectedReply(r) : undefined} />)}
+                            {live && <Working live={live} plans={runningPlans} compact />}
+                            <div ref={bottom} />
+                        </div>
+                    </div>
+                    <div className="border-t border-secondary bg-primary px-8 py-4">
+                        <div className="relative mx-auto flex max-w-5xl items-end gap-3">
+                            {suggestions.length > 0 && (
+                                <div className="absolute bottom-full left-0 z-10 mb-2 w-full max-w-2xl overflow-hidden rounded-xl bg-primary shadow-lg ring-1 ring-secondary">
+                                    <ul className="max-h-72 overflow-y-auto py-1">
+                                        {suggestions.map((sg, i) => (
+                                            <li key={sg.insert + i}>
+                                                <button type="button" onMouseDown={(e) => { e.preventDefault(); apply(sg); }}
+                                                    className={`flex w-full items-baseline gap-3 px-3 py-1.5 text-left text-sm ${i === pick ? "bg-secondary" : "hover:bg-secondary"} ${sg.muted ? "opacity-60" : ""}`}>
+                                                    <span className="shrink-0 font-mono text-xs text-primary">{sg.label}</span>
+                                                    {sg.args && <span className="shrink-0 font-mono text-xs text-quaternary">{sg.args}</span>}
+                                                    <span className="truncate text-xs text-tertiary">{sg.detail}</span>
+                                                </button>
+                                            </li>
+                                        ))}
+                                    </ul>
+                                    <div className="border-t border-secondary px-3 py-1 text-[11px] text-quaternary">↑↓ 选择 · Tab 填入 · Enter 发送 · Esc 收起</div>
+                                </div>
+                            )}
+                            <TextArea
+                                aria-label="Message"
+                                textAreaRef={box}
+                                value={text}
+                                rows={2}
+                                placeholder="说你想做的事。/ 看动词，@ 选 Agent。Enter 发送，Shift+Enter 换行。"
+                                onChange={(v) => setText(v)}
+                                onKeyDown={onKey}
+                                className="flex-1"
+                            />
+                            <Button size="md" color="primary" iconTrailing={Send01} isLoading={busy} isDisabled={!text.trim()} onClick={() => void submit()}>
+                                发送
+                            </Button>
+                        </div>
                     </div>
                 </div>
+                <Rail context={context} live={live} plans={runningPlans} reply={shownProcess} />
             </div>
         </div>
     );
 }
 
-// ContextBar is where this conversation stands: the project (and so the
-// machine and directory), the current agent, and who else could take the
-// next line — by the same rules a turn is judged by.
-function ContextBar({ context, projects, onProject, onAgent }: { context: ConversationContext | null; projects: Project[]; onProject: (id: string) => void; onAgent: (id: string) => void }) {
-    if (!context) return null;
-    const usable = context.agents.filter((a) => a.usable);
-    const elsewhere = context.agents.filter((a) => !a.usable);
-    const projectItems = projects.map((p) => ({ id: p.id, label: p.id, supportingText: `${p.node} · ${p.path}` }));
-    const agentItems = context.agents.map((a) => ({ id: a.id, label: a.id, supportingText: `${a.node} · ${a.harness}${a.model ? " · " + a.model : ""}${a.usable ? "" : " · " + (a.because || a.why || "")}`, isDisabled: !a.usable }));
+function Picker({ label, width, hint, children }: { label: string; width: string; hint?: string; children: React.ReactNode }) {
     return (
-        <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-xs text-tertiary">
-            <div className="flex items-center gap-2">
-                <span className="text-quaternary" title="项目决定活在哪台机器的哪个目录里干。切换只影响本会话：已有任务不迁移；当前 Agent 的会话归档并新开；有回合在跑时不能切。">项目</span>
-                <div className="w-64">
-                    <Select aria-label="Project" size="sm" selectedKey={context.project?.id ?? null} onSelectionChange={(k) => k && String(k) !== context.project?.id && onProject(String(k))} items={projectItems}>
-                        {(item) => <Select.Item id={item.id} supportingText={item.supportingText}>{item.label}</Select.Item>}
-                    </Select>
-                </div>
-                {context.project && (
-                    <span className="flex items-center gap-1.5">
-                        <span className="text-quaternary">项目主机</span><Mono>{context.project.node}</Mono>
-                        <span className="text-quaternary">主目录</span><Mono className="text-quaternary">{context.project.path}</Mono>
-                        <Badge type="modern" size="sm" color="gray">{context.project.level}</Badge>
-                        <Badge type="modern" size="sm" color="gray">{label(zh.repo, context.project.repo)}</Badge>
-                        {!context.project.bound && <span className="text-quaternary" title="本会话还没绑定项目；第一条消息时按默认绑定。">（默认）</span>}
-                    </span>
-                )}
-            </div>
-            <div className="flex items-center gap-2">
-                <span className="text-quaternary" title="当前 Agent 接普通消息。在这里选 = /use 切换当前 Agent；在输入框里 @ 某个 Agent = 只指派下一条消息。">Agent</span>
-                <div className="w-64">
-                    <Select aria-label="Agent" size="sm" selectedKey={context.agent?.id ?? null} onSelectionChange={(k) => k && String(k) !== context.agent?.id && onAgent(String(k))} items={agentItems}>
-                        {(item) => <Select.Item id={item.id} supportingText={item.supportingText} isDisabled={item.isDisabled}>{item.label}</Select.Item>}
-                    </Select>
-                </div>
-                {context.agent && <span>{context.agent.node} · {context.agent.harness}{context.agent.model ? ` · 实际 ${context.agent.model}` : ""} · {context.agent.ready ? <span className="text-success-primary">可用</span> : <span className="text-error-primary" title={context.agent.why}>不可用</span>}</span>}
-            </div>
-            <div className="flex items-center gap-1.5">
-                <span className="text-quaternary">可接本会话</span>
-                {usable.length ? usable.map((a) => <Mono key={a.id}>{a.id}</Mono>) : <span className="text-error-primary">没有 — 换一个 Agent 所在机器上的项目</span>}
-                {elsewhere.length > 0 && (
-                    <span className="ml-2 text-quaternary" title={elsewhere.map((a) => `${a.id}: ${a.because || a.why}`).join("\n")}>
-                        不能：{elsewhere.map((a) => a.id).join("、")}
-                    </span>
-                )}
-            </div>
+        <div className="flex items-center gap-2">
+            <span className="text-xs text-tertiary" title={hint}>{label}</span>
+            <div className={width}>{children}</div>
         </div>
+    );
+}
+
+// Rail is the wide screen's right column: where this conversation stands,
+// and what its work is doing (the live turn) or did (a reply's process).
+function Rail({ context, live, plans, reply }: { context: ConversationContext | null; live: Live | null; plans: Plan[]; reply: Reply | null }) {
+    const [tab, setTab] = useState<"context" | "trace">("context");
+    // The trace tab takes over while something runs, and returns to
+    // context when the user asks.
+    useEffect(() => { if (live) setTab("trace"); }, [live]);
+    const usable = context?.agents.filter((a) => a.usable) ?? [];
+    const elsewhere = context?.agents.filter((a) => !a.usable) ?? [];
+    return (
+        <aside className="hidden min-h-0 flex-col border-l border-secondary bg-secondary xl:flex">
+            <div className="border-b border-secondary bg-primary px-4 py-2">
+                <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as "context" | "trace")}>
+                    <TabList type="button-border" size="sm" items={[{ id: "context", label: "上下文" }, { id: "trace", label: live ? "过程（进行中）" : "过程" }]}>{(item) => <Tab {...item} />}</TabList>
+                </Tabs>
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+                {tab === "context" && context && (
+                    <>
+                        <Panel title="项目" badge={context.project && !context.project.bound ? <Badge type="pill-color" size="sm" color="gray">默认，未绑定</Badge> : undefined}>
+                            {context.project ? (
+                                <KeyValue dense rows={[
+                                    { k: "名字", v: <span className="font-medium">{context.project.id}</span> },
+                                    { k: "项目主机", v: <Mono>{context.project.node}</Mono> },
+                                    { k: "主目录", v: <Mono className="text-secondary">{context.project.path}</Mono> },
+                                    { k: "工作方式", v: label(zh.repo, context.project.repo), hint: "直接修改主目录：只有项目主机上的 Agent 能接。隔离副本：计划在别的机器上物化副本，完成后合并。" },
+                                    { k: "数据等级", v: context.project.level },
+                                ]} />
+                            ) : <span className="text-sm text-quaternary">没有项目</span>}
+                            <p className="text-xs text-quaternary">切换项目只影响本会话：已有任务不迁移，当前 Agent 的会话归档并新开，有回合在跑时不能切。</p>
+                        </Panel>
+                        <Panel title="当前 Agent">
+                            {context.agent ? (
+                                <KeyValue dense rows={[
+                                    { k: "名字", v: <span className="font-medium">{context.agent.id}</span> },
+                                    { k: "机器", v: <Mono>{context.agent.node}</Mono> },
+                                    { k: "AI 工具", v: context.agent.harness },
+                                    { k: "实际模型", v: context.agent.model || <span className="text-quaternary">未观测到</span> },
+                                    { k: "状态", v: context.agent.ready ? <span className="text-success-primary">可用</span> : <span className="text-error-primary">不可用 · {context.agent.why}</span> },
+                                ]} />
+                            ) : <span className="text-sm text-quaternary">没有当前 Agent</span>}
+                        </Panel>
+                        <Panel title="谁能接本会话">
+                            <div className="flex flex-col gap-2 text-sm">
+                                <Chips items={usable.map((a) => ({ id: a.id, title: `${a.node} · ${a.harness}` }))} empty={<span className="text-error-primary">没有 — 换一个 Agent 所在机器上的项目</span>} />
+                                {elsewhere.length > 0 && (
+                                    <ul className="flex flex-col gap-1 text-xs text-tertiary">
+                                        {elsewhere.map((a) => <li key={a.id}><Mono className="text-quaternary">{a.id}</Mono> <span>{a.because || a.why}</span></li>)}
+                                    </ul>
+                                )}
+                            </div>
+                        </Panel>
+                    </>
+                )}
+                {tab === "trace" && (
+                    live ? <Working live={live} plans={plans} /> : reply?.process ? (
+                        <Panel title={`过程 · ${when(reply.at)}`}>
+                            <ProcessBody process={reply.process} />
+                        </Panel>
+                    ) : <Nothing icon={MessageChatSquare} title="还没有过程">发一条消息，这里会实时显示推理、工具调用和步骤。</Nothing>
+                )}
+            </div>
+        </aside>
     );
 }
 
@@ -287,7 +333,7 @@ function applyLive(cur: Live | null, ev: Event): Live | null {
     }
 }
 
-function Message({ r }: { r: Reply }) {
+function Message({ r, selected, onSelect }: { r: Reply; selected?: boolean; onSelect?: () => void }) {
     if (r.kind === "sent") {
         return (
             <div className="flex justify-end">
@@ -308,12 +354,12 @@ function Message({ r }: { r: Reply }) {
                     {r.kind !== "reply" && <Badge type="pill-color" size="sm" color={tone}>{r.kind}</Badge>}
                     {r.error && <Badge type="pill-color" size="sm" color="error">error</Badge>}
                 </div>
-                <div className={`min-w-0 rounded-2xl rounded-tl-sm bg-primary px-4 py-3 shadow-xs ring-1 ring-secondary ring-inset ${r.error ? "ring-error" : ""}`}>
+                <div onClick={onSelect} className={`min-w-0 rounded-2xl rounded-tl-sm bg-primary px-4 py-3 shadow-xs ring-1 ring-inset ${r.error ? "ring-error" : selected ? "ring-brand" : "ring-secondary"} ${onSelect ? "cursor-pointer" : ""}`}>
                     {r.title && <div className="mb-1 text-sm font-semibold text-primary">{r.title}</div>}
                     <div className="md prose prose-sm max-w-none break-words [overflow-wrap:anywhere]">
                         <Markdown remarkPlugins={[remarkBreaks]}>{r.text}</Markdown>
                     </div>
-                    {r.process && <ProcessFold process={r.process} />}
+                    {r.process && <div className="xl:hidden"><ProcessFold process={r.process} /></div>}
                 </div>
             </div>
         </div>
@@ -323,21 +369,40 @@ function Message({ r }: { r: Reply }) {
 // Working is the bubble for the line in flight: plan steps with their
 // states, and under each the agent's reasoning and tool calls as they
 // happen; or, for a plain turn, the agent's own.
-function Working({ live, plans }: { live: Live; plans: Plan[] }) {
+function Working({ live, plans, compact }: { live: Live; plans: Plan[]; compact?: boolean }) {
     const [now, setNow] = useState(Date.now());
     useEffect(() => { const t = window.setInterval(() => setNow(Date.now()), 1000); return () => window.clearInterval(t); }, []);
     const elapsed = Math.max(0, Math.round((now - Date.parse(live.since)) / 1000));
     const steps: Step[] = plans.flatMap((p) => p.steps || []);
-    return (
-        <div className="flex min-w-0 gap-3">
-            <Avatar size="sm" initials="S" alt="steve" className="mt-5 shrink-0" />
-            <div className="flex min-w-0 max-w-[85%] flex-col gap-1">
-                <div className="flex items-center gap-2 text-xs text-quaternary">
-                    <span>steve · 进行中</span>
-                    <Loading01 className="size-3 animate-spin text-fg-brand-primary" />
-                    <span>{elapsed}s</span>
+    const latest = live.turn ?? (live.order.length ? live.steps[live.order[live.order.length - 1]] : undefined);
+    const lastTool = latest?.tools?.length ? latest.tools[latest.tools.length - 1] : undefined;
+    if (compact) {
+        // In the transcript, one line: the rail has the detail on wide
+        // screens, and the fold appears below on narrow ones.
+        return (
+            <div className="flex min-w-0 gap-3">
+                <Avatar size="sm" initials="S" alt="steve" className="mt-5 shrink-0" />
+                <div className="flex min-w-0 max-w-[85%] flex-col gap-1">
+                    <div className="flex items-center gap-2 text-xs text-quaternary">
+                        <span>steve · 进行中</span>
+                        <Loading01 className="size-3 animate-spin text-fg-brand-primary" />
+                        <span>{elapsed}s</span>
+                    </div>
+                    <div className="flex min-w-0 flex-col gap-2 rounded-2xl rounded-tl-sm bg-primary px-4 py-3 shadow-xs ring-1 ring-secondary ring-inset">
+                        <div className="truncate text-sm text-secondary">
+                            {latest ? [latest.agent, latest.model].filter(Boolean).join(" · ") : "正在放置…"}
+                            {lastTool ? <span className="text-tertiary"> · {lastTool.kind} {lastTool.name}</span> : null}
+                        </div>
+                        {latest?.answer && <div className="md prose prose-sm max-w-none break-words [overflow-wrap:anywhere]"><Markdown remarkPlugins={[remarkBreaks]}>{latest.answer}</Markdown></div>}
+                        <div className="xl:hidden"><Trace p={latest ?? {}} /></div>
+                    </div>
                 </div>
-                <div className="flex min-w-0 flex-col gap-3 rounded-2xl rounded-tl-sm bg-primary px-4 py-3 shadow-xs ring-1 ring-secondary ring-inset">
+            </div>
+        );
+    }
+    return (
+        <Panel title="进行中" badge={<span className="flex items-center gap-1 text-xs text-tertiary"><Loading01 className="size-3 animate-spin text-fg-brand-primary" />{elapsed}s</span>}>
+            <div className="flex min-w-0 flex-col gap-3">
                     {steps.length > 0 && (
                         <div className="flex flex-col gap-2">
                             {steps.map((s) => (
@@ -362,9 +427,8 @@ function Working({ live, plans }: { live: Live; plans: Plan[] }) {
                     {!live.turn && !live.order.length && steps.length === 0 && (
                         <span className="text-sm text-tertiary">正在放置…</span>
                     )}
-                </div>
             </div>
-        </div>
+        </Panel>
     );
 }
 
@@ -424,8 +488,24 @@ function Tools({ tools }: { tools: ToolCall[] }) {
     );
 }
 
-// ProcessFold is the reply's "how": closed by default, one line saying
-// how much there is, the whole trace when opened.
+// ProcessBody is a reply's trace: each step's, then the turn's own.
+function ProcessBody({ process }: { process: Process }) {
+    const steps: StepProcess[] = process.steps || [];
+    return (
+        <div className="flex flex-col gap-3">
+            {steps.map((s) => (
+                <div key={s.id} className="flex flex-col gap-1.5">
+                    <div className="text-xs font-medium text-primary">{s.id} <span className="font-normal text-tertiary">{[s.agent, s.node].filter(Boolean).join(" @ ")}</span></div>
+                    <Trace p={{ reasoning: s.reasoning, tools: s.tools }} />
+                </div>
+            ))}
+            {(process.reasoning || process.tools?.length) ? <Trace p={{ reasoning: process.reasoning, tools: process.tools }} /> : null}
+        </div>
+    );
+}
+
+// ProcessFold is the reply's "how" on a narrow screen: closed by default,
+// one line saying how much there is, the whole trace when opened.
 function ProcessFold({ process }: { process: Process }) {
     const steps: StepProcess[] = process.steps || [];
     const count = (process.tools?.length || 0) + steps.reduce((n, s) => n + (s.tools?.length || 0), 0);
@@ -436,15 +516,7 @@ function ProcessFold({ process }: { process: Process }) {
                 <ChevronDown className="size-3.5 transition group-open:rotate-180" />
                 <span>过程 · {label}</span>
             </summary>
-            <div className="mt-2 flex flex-col gap-3">
-                {steps.map((s) => (
-                    <div key={s.id} className="flex flex-col gap-1.5">
-                        <div className="text-xs font-medium text-primary">{s.id} <span className="font-normal text-tertiary">{[s.agent, s.node].filter(Boolean).join(" @ ")}</span></div>
-                        <Trace p={{ reasoning: s.reasoning, tools: s.tools }} />
-                    </div>
-                ))}
-                {(process.reasoning || process.tools?.length) ? <Trace p={{ reasoning: process.reasoning, tools: process.tools }} /> : null}
-            </div>
+            <div className="mt-2"><ProcessBody process={process} /></div>
         </details>
     );
 }

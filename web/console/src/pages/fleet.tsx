@@ -6,6 +6,7 @@ import { Button } from "@/components/base/buttons/button";
 import { relative } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
 import type { Node as NodeT } from "@/lib/types";
+import { PageBody, PageHeader } from "@/lib/page";
 import { Mono, Nothing, StateBadge, Tags, Where } from "@/lib/ui";
 
 // Runtimes lists what a machine can start and what it cannot, on separate
@@ -21,8 +22,7 @@ function Runtimes({ node }: { node: NodeT }) {
                 <div className="flex flex-col gap-0.5">
                     {installed.map((h) => (
                         <div key={h.id} className="flex items-center gap-1.5">
-                            <span className="text-primary">{h.id}</span>
-                            {h.version ? <span className="text-[11px] text-quaternary" title="适配器自报的版本（上次观测）">{h.version}</span> : null}
+                            <span className="text-primary" title={h.version ? `适配器：${h.version}（上次观测）` : undefined}>{h.id}</span>
                             {h.model ? <span className="text-xs text-tertiary">{h.model}</span> : null}
                             {h.models?.length ? <span className="text-xs text-quaternary" title={h.models.join("\n")}>{h.model ? `+${Math.max(0, h.models.length - 1)}` : h.models.join(", ")}</span> : null}
                             {h.slots ? <span className="text-xs text-quaternary">{h.slots} slots</span> : null}
@@ -90,14 +90,10 @@ export function FleetPage() {
     const up = snap.nodes.filter((n) => n.up).length;
     const [adding, setAdding] = useState(false);
     return (
-        <div className="flex flex-col gap-6 p-6">
-            <div className="flex items-start gap-4">
-                <div>
-                    <h1 className="text-lg font-semibold text-primary">资源</h1>
-                    <p className="text-sm text-tertiary">我有哪些机器、AI 工具和 Agent，是否健康，怎么加。机器上的一切以它自己的申报为准。</p>
-                </div>
-                <Button className="ml-auto" size="sm" color="secondary" iconLeading={Plus} onClick={() => setAdding((v) => !v)}>添加机器 / Agent</Button>
-            </div>
+        <div className="flex flex-col">
+            <PageHeader title="资源" description="我有哪些机器、AI 工具和 Agent，是否健康，怎么加。机器上的一切以它自己的申报为准。"
+                actions={<Button size="md" color="secondary" iconLeading={Plus} onClick={() => setAdding((v) => !v)}>添加机器 / Agent</Button>} />
+            <PageBody>
             {adding && <AddMachine hub={snap.hub.node} />}
             <TableCard.Root size="sm">
                 <TableCard.Header title="机器" badge={`${up}/${snap.nodes.length} 在线`} description="每一台跑着 steve 的机器，hub 也在内。每台自己申报：它是谁、什么版本、能启动哪些 AI 工具。" />
@@ -228,6 +224,7 @@ export function FleetPage() {
                     </Table>
                 )}
             </TableCard.Root>
+            </PageBody>
         </div>
     );
 }

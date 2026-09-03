@@ -7,6 +7,7 @@ import { Button } from "@/components/base/buttons/button";
 import { fetchHistory, short, when } from "@/lib/api";
 import { useFleet } from "@/lib/fleet";
 import type { HistoryEntry } from "@/lib/types";
+import { PageBody, PageHeader } from "@/lib/page";
 import { Mono, Nothing, StateBadge } from "@/lib/ui";
 
 // HistoryPage answers "what happened, who did it, how did it end". The
@@ -33,18 +34,13 @@ export function HistoryPage() {
     const shown = entries.filter((e) => !filter || `${e.subject} ${e.text} ${e.actor}`.toLowerCase().includes(filter.toLowerCase()));
     const f = snap.facts;
     return (
-        <div className="flex flex-col gap-4 p-6">
-            <div className="flex items-start gap-4">
-                <div>
-                    <h1 className="text-lg font-semibold text-primary">历史与审计</h1>
-                    <p className="text-sm text-tertiary">发生过什么：账本里每一次状态变化，加上机器的上线与离线。审计标签里是原始记录：租约、预留、副本、见证、授权。</p>
-                </div>
-                <div className="ml-auto">
-                    <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as "timeline" | "audit")}>
-                        <TabList type="button-border" size="sm" items={[{ id: "timeline", label: "时间线" }, { id: "audit", label: "审计" }]}>{(item) => <Tab {...item} />}</TabList>
-                    </Tabs>
-                </div>
-            </div>
+        <div className="flex flex-col">
+            <PageHeader title="历史与审计" description="发生过什么：账本里每一次状态变化，加上机器的上线与离线。审计标签里是原始记录：租约、预留、副本、见证、授权。">
+                <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as "timeline" | "audit")}>
+                    <TabList type="button-border" size="sm" items={[{ id: "timeline", label: "时间线" }, { id: "audit", label: "审计" }]}>{(item) => <Tab {...item} />}</TabList>
+                </Tabs>
+            </PageHeader>
+            <PageBody>
             {tab === "timeline" && (
                 <div className="rounded-xl bg-primary shadow-xs ring-1 ring-secondary">
                     <div className="flex items-center gap-3 border-b border-secondary px-5 py-3">
@@ -116,6 +112,7 @@ export function HistoryPage() {
                     </TableCard.Root>
                 </div>
             )}
+            </PageBody>
         </div>
     );
 }

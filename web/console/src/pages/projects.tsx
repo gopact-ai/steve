@@ -6,6 +6,7 @@ import { fetchContext } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { label, zh } from "@/lib/labels";
 import type { ConversationContext, Project } from "@/lib/types";
+import { Chips, KeyValue, PageBody, PageHeader } from "@/lib/page";
 import { Mono, Nothing } from "@/lib/ui";
 
 // ProjectsPage answers "where does work happen, and who can do it there".
@@ -18,20 +19,18 @@ export function ProjectsPage() {
     const current = context?.project?.id;
     const ordered = [...snap.projects].sort((a, b) => (a.id === current ? -1 : b.id === current ? 1 : a.id.localeCompare(b.id)));
     return (
-        <div className="flex flex-col gap-4 p-6">
-            <div className="flex items-start gap-4">
-                <div>
-                    <h1 className="text-lg font-semibold text-primary">项目</h1>
-                    <p className="text-sm text-tertiary">项目决定活在哪台机器的哪个目录里干。<b>直接修改主目录</b>的项目只能由项目主机上的 Agent 接手；<b>隔离副本</b>的项目由计划在满足条件的机器上物化副本，完成后合并回主目录。</p>
-                </div>
-                <Button className="ml-auto" size="sm" color="secondary" iconLeading={Plus} onClick={() => setAdding((v) => !v)}>添加项目</Button>
-            </div>
+        <div className="flex flex-col">
+            <PageHeader title="项目"
+                description={<>项目决定活在哪台机器的哪个目录里干。<b>直接修改主目录</b>的项目只能由项目主机上的 Agent 接手；<b>隔离副本</b>的项目由计划在满足条件的机器上物化副本，完成后合并回主目录。</>}
+                actions={<Button size="md" color="secondary" iconLeading={Plus} onClick={() => setAdding((v) => !v)}>添加项目</Button>} />
+            <PageBody>
             {adding && <AddProject hub={snap.hub.node} />}
             {ordered.length === 0 ? <div className="rounded-xl bg-primary shadow-xs ring-1 ring-secondary"><Nothing icon={Folder} title="还没有项目">在 config.json 的 projects{} 里声明一个，重启 hub 后出现在这里。</Nothing></div> : (
-                <div className="grid grid-cols-2 gap-4">
+                <div className="grid grid-cols-2 gap-6 2xl:grid-cols-3">
                     {ordered.map((p) => <ProjectCard key={p.id} p={p} current={p.id === current} bound={!!context?.project?.bound} onUse={() => act(`/project use ${p.id}`)} />)}
                 </div>
             )}
+            </PageBody>
         </div>
     );
 }
@@ -50,16 +49,16 @@ function ProjectCard({ p, current, bound, onUse }: { p: Project; current: boolea
                 <Badge type="modern" size="sm" color="gray">{p.level}</Badge>
                 <span className="ml-auto">{!current && <Button size="sm" color="secondary" onClick={onUse}>在工作台用它</Button>}</span>
             </div>
-            <div className="grid grid-cols-[6rem_1fr] gap-x-3 gap-y-1 text-sm">
-                <span className="text-tertiary">项目主机</span><Mono>{p.node}</Mono>
-                <span className="text-tertiary">主目录</span><Mono className="text-secondary">{p.path}</Mono>
-                <span className="text-tertiary">工作方式</span><span className="text-primary">{label(zh.repo, p.repo)}</span>
-                <span className="text-tertiary">可接对话</span><span>{p.agents.length ? p.agents.map((a) => <Mono key={a} className="mr-1">{a}</Mono>) : <span className="text-error-primary">没有 Agent 在项目主机上</span>}</span>
-                <span className="text-tertiary">可跑计划步骤</span><span>{stepAgents.length ? stepAgents.map((a) => <Mono key={a} className="mr-1">{a}</Mono>) : <span className="text-quaternary">—</span>}</span>
-                <span className="text-tertiary">访问权限</span><span className="text-secondary">{grants.length ? grants.map((g) => `${g.principal}: ${g.role}`).join(" · ") : `默认 ${p.default_role || "owner 之外无权限"}`}</span>
-                <span className="text-tertiary">活动任务</span><span className="text-secondary">{tasks.length ? tasks.map((t) => `#${t.id}`).join(" ") : "无"}</span>
-                <span className="text-tertiary">最近合并</span><span className="text-secondary">{landings.length ? landings.map((l) => l.state).join(" · ") : "无"}</span>
-            </div>
+            <KeyValue rows={[
+                { k: "项目主机", v: <Mono>{p.node}</Mono> },
+                { k: "主目录", v: <Mono className="text-secondary">{p.path}</Mono> },
+                { k: "工作方式", v: label(zh.repo, p.repo) },
+                { k: "可接对话", v: <Chips items={p.agents.map((a) => ({ id: a }))} empty={<span className="text-error-primary">没有 Agent 在项目主机上</span>} /> },
+                { k: "可跑计划步骤", v: <Chips items={stepAgents.map((a) => ({ id: a }))} /> },
+                { k: "访问权限", v: <span className="text-secondary">{grants.length ? grants.map((g) => `${g.principal}: ${g.role}`).join(" · ") : `默认 ${p.default_role || "owner 之外无权限"}`}</span> },
+                { k: "活动任务", v: <span className="text-secondary">{tasks.length ? tasks.map((t) => `#${t.id}`).join(" ") : "无"}</span> },
+                { k: "最近合并", v: <span className="text-secondary">{landings.length ? landings.map((l) => l.state).join(" · ") : "无"}</span> },
+            ]} />
         </div>
     );
 }

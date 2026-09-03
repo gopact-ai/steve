@@ -4,6 +4,7 @@ import { Button } from "@/components/base/buttons/button";
 import { when } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { label, zh } from "@/lib/labels";
+import { PageBody, PageHeader } from "@/lib/page";
 import { Nothing } from "@/lib/ui";
 
 // InboxPage answers "what exactly do I have to decide right now". Only
@@ -14,11 +15,9 @@ export function InboxPage() {
     const { act } = useIntent();
     const groups = ["disclosure", "effect", "question", "pairing"].map((type) => ({ type, items: snap.inbox.filter((r) => r.type === type && r.resolvable) })).filter((g) => g.items.length);
     return (
-        <div className="flex flex-col gap-4 p-6">
-            <div>
-                <h1 className="text-lg font-semibold text-primary">待处理</h1>
-                <p className="text-sm text-tertiary">只有你能定的事：允许 sealed 项目的内容发出去，对账结果未知的对外动作。回答 agent 提问与飞书接入申请的通道尚未接入控制台，这里暂不显示。</p>
-            </div>
+        <div className="flex flex-col">
+            <PageHeader title="待处理" description="只有你能定的事：允许 sealed 项目的内容发出去，对账结果未知的对外动作。回答 agent 提问与飞书接入申请的通道尚未接入控制台，这里暂不显示。" />
+            <PageBody>
             {groups.length === 0 && <div className="rounded-xl bg-primary shadow-xs ring-1 ring-secondary"><Nothing icon={Inbox01} title="没有要你处理的">有事时侧栏角标会亮。</Nothing></div>}
             {groups.map((g) => (
                 <section key={g.type} className="rounded-xl bg-primary shadow-xs ring-1 ring-secondary">
@@ -43,6 +42,7 @@ export function InboxPage() {
                     </ul>
                 </section>
             ))}
+            </PageBody>
         </div>
     );
 }
