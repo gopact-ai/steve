@@ -596,7 +596,7 @@ type PlanLine struct {
 const (
 	reasoningKept = 4000
 	answerKept    = 8000
-	toolTextKept  = 1200
+	toolTextKept  = 3000
 	toolsKept     = 60
 )
 

@@ -13,6 +13,7 @@ import { fetchContext, fetchReplies, fetchSuggest, send, when } from "@/lib/api"
 import { useFleet, useIntent } from "@/lib/fleet";
 import type { ConversationContext, Event, Plan, Process, Progress, Reply, Step, StepProcess, Suggestion, ToolCall } from "@/lib/types";
 import { label, zh } from "@/lib/labels";
+import { formatToolText } from "@/lib/tooltext";
 import { Mono, Nothing, StateBadge } from "@/lib/ui";
 
 
@@ -476,15 +477,33 @@ function Tools({ tools }: { tools: ToolCall[] }) {
                             {(t.input || t.output) && <ChevronDown className="size-3 shrink-0 text-quaternary transition group-open:rotate-180" />}
                         </summary>
                         {(t.input || t.output) && (
-                            <div className="mt-1 ml-5 flex flex-col gap-1">
-                                {t.input && <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-md bg-secondary px-2 py-1 font-mono text-[11px] text-secondary">{t.input}</pre>}
-                                {t.output && <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-md bg-secondary px-2 py-1 font-mono text-[11px] text-tertiary">{t.output}</pre>}
+                            <div className="mt-1 ml-5 flex flex-col gap-1.5">
+                                <ToolText label="输入" raw={t.input} />
+                                <ToolText label="输出" raw={t.output} muted />
                             </div>
                         )}
                     </details>
                 </li>
             ))}
         </ul>
+    );
+}
+
+// ToolText shows one side of a tool call as a person would read it: a
+// shell line as a shell line, an output envelope as its text, JSON as
+// indented JSON. The exit code and other scalars become a small meta line.
+function ToolText({ label: name, raw, muted }: { label: string; raw?: string; muted?: boolean }) {
+    const shown = formatToolText(raw);
+    if (!shown) return null;
+    return (
+        <div className="flex flex-col gap-0.5">
+            <div className="flex items-center gap-2 text-[11px] text-quaternary">
+                <span>{name}</span>
+                {shown.lang === "shell" && <span className="font-mono">$</span>}
+                {shown.meta && <span>{shown.meta}</span>}
+            </div>
+            <pre className={`max-h-64 overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-md bg-secondary px-2.5 py-1.5 font-mono text-[11px] leading-relaxed ${muted ? "text-tertiary" : "text-secondary"}`}>{shown.body}</pre>
+        </div>
     );
 }
 
