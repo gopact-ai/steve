@@ -499,7 +499,10 @@ func Load(path string) (*Config, error) {
 			}
 		}
 		for _, server := range item.MCPServers {
-			if _, ok := cfg.MCPServers[server]; !ok {
+			// An agent on another machine uses that machine's servers,
+			// bound there at admission; only a hub-local agent's names must
+			// exist in this configuration.
+			if _, ok := cfg.MCPServers[server]; !ok && item.Node == "" {
 				return nil, fmt.Errorf("agent %q references unknown MCP server %q", id, server)
 			}
 		}
