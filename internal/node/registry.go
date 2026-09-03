@@ -368,6 +368,11 @@ func (r *Registry) PushSkills(ctx context.Context, name string, b skills.Bundle)
 	adv.Skills = b.Hash
 	c.setAdvert(adv)
 	log.Printf("node: %s materialized skills %s (%d skills)", name, b.Hash[:12], len(b.Skills))
+	// The snapshot the hub holds predates the skills; ask for a new one
+	// now rather than at the next tick, so placement sees them at once.
+	if _, err := r.Refresh(ctx, name); err != nil {
+		log.Printf("node: %s: refresh after skills: %v", name, err)
+	}
 	return nil
 }
 
