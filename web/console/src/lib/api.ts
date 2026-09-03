@@ -92,3 +92,12 @@ export const relative = (t?: string) => {
     if (s < 86400) return `${Math.round(s / 3600)}h ago`;
     return `${Math.round(s / 86400)}d ago`;
 };
+
+export interface AddNodeResult { name: string; token: string; command: string; note?: string }
+export async function addNode(req: { name: string; addr: string; level: string }): Promise<AddNodeResult> {
+    return json(await fetch(`./console/nodes${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(req) }));
+}
+export async function addAgent(req: { id: string; harness: string; node?: string; model?: string }): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/agents${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(req) }));
+}
+

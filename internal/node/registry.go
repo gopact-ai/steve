@@ -220,6 +220,21 @@ func (r *Registry) SetMCPDialer(dial func(ctx context.Context) (net.Conn, error)
 	r.mcpDial = dial
 }
 
+// Add registers a machine at runtime — the page adding one, not a
+// restart — and dials it. A known name has its config replaced.
+func (r *Registry) Add(name string, cfg Config) {
+	r.mu.Lock()
+	r.confs[name] = cfg
+	r.mu.Unlock()
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), defaultDialTimeout)
+		defer cancel()
+		if _, err := r.connect(ctx, name); err != nil {
+			log.Printf("node: %s added; not reachable yet: %v", name, err)
+		}
+	}()
+}
+
 // Names lists configured nodes in a stable order.
 func (r *Registry) Names() []string {
 	r.mu.Lock()

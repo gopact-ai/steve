@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"net/http"
@@ -25,6 +26,7 @@ type ServerConfig struct {
 // Server exposes the snapshot, the change stream and the dashboard.
 type Server struct {
 	console  Console
+	admin    Admin
 	model    *Model
 	token    string
 	listener net.Listener
@@ -55,6 +57,10 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("POST /console/send", s.guard(s.consoleSend))
 	mux.HandleFunc("GET /console/replies", s.guard(s.consoleReplies))
 	mux.HandleFunc("GET /console/conversations", s.guard(s.consoleConversations))
+	mux.HandleFunc("POST /console/nodes", s.guard(s.consoleAddNode))
+	mux.HandleFunc("POST /console/agents", s.guard(s.consoleAddAgent))
+	mux.HandleFunc("GET /bootstrap/{name}", s.bootstrap)
+	mux.HandleFunc("GET /dist/steve-node", s.nodeBinary)
 	mux.HandleFunc("GET /console/context", s.guard(s.consoleContext))
 	mux.HandleFunc("GET /console/verbs", s.guard(s.consoleVerbs))
 	mux.HandleFunc("GET /console/suggest", s.guard(s.consoleSuggest))
@@ -235,6 +241,46 @@ type Verb struct {
 }
 
 // Reply is one exchange on the console.
+// AddNodeRequest is the page adding a machine: a name, where the hub
+// dials it, and the data level it may handle. HubURL is where the machine
+// will fetch its bootstrap from, as the page reached the hub.
+type AddNodeRequest struct {
+	Name   string `json:"name"`
+	Addr   string `json:"addr"`
+	Level  string `json:"level,omitempty"`
+	HubURL string `json:"-"`
+}
+
+// AddNodeResult is what to run on the machine: one command that writes
+// its config, fetches the binary if the hub has one, and starts it.
+type AddNodeResult struct {
+	Name    string `json:"name"`
+	Token   string `json:"token"`
+	Command string `json:"command"`
+	Note    string `json:"note,omitempty"`
+}
+
+// AddAgentRequest is the page adding an agent: an id, the AI tool it
+// runs, the machine it runs on ("" is the hub), a preferred model.
+type AddAgentRequest struct {
+	ID      string `json:"id"`
+	Harness string `json:"harness"`
+	Node    string `json:"node,omitempty"`
+	Model   string `json:"model,omitempty"`
+}
+
+// Admin changes the fleet at runtime and persists the change: the page
+// adds machines and agents without a restart.
+type Admin interface {
+	AddNode(ctx context.Context, req AddNodeRequest) (AddNodeResult, error)
+	AddAgent(ctx context.Context, req AddAgentRequest) error
+	// Bootstrap is the script a machine runs, given its own token.
+	Bootstrap(name, token string) (string, bool)
+	// NodeBinary is the steve-node executable to hand a machine presenting
+	// a node token, if the hub has one.
+	NodeBinary(token string) (string, bool)
+}
+
 // Conversation is one console thread as the sidebar lists it: named by
 // its first line, placed by its project and agent, and marked while a
 // line of it runs.
@@ -262,6 +308,81 @@ type Reply struct {
 
 // SetConsole wires the acting half of the page.
 func (s *Server) SetConsole(c Console) { s.console = c }
+
+// SetAdmin wires adding machines and agents from the page.
+func (s *Server) SetAdmin(a Admin) { s.admin = a }
+
+func (s *Server) consoleAddNode(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "adding machines is not wired", http.StatusNotImplemented)
+		return
+	}
+	var req AddNodeRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	req.HubURL = scheme + "://" + r.Host
+	out, err := s.admin.AddNode(r.Context(), req)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (s *Server) consoleAddAgent(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "adding agents is not wired", http.StatusNotImplemented)
+		return
+	}
+	var req AddAgentRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.AddAgent(r.Context(), req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// bootstrap hands a machine its start script. The machine presents its
+// own node token, not the owner's: the script is the machine's business.
+func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
+	if s.admin == nil {
+		http.NotFound(w, r)
+		return
+	}
+	script, ok := s.admin.Bootstrap(r.PathValue("name"), r.URL.Query().Get("token"))
+	if !ok {
+		http.Error(w, "unknown machine or wrong token", http.StatusUnauthorized)
+		return
+	}
+	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
+	_, _ = io.WriteString(w, script)
+}
+
+func (s *Server) nodeBinary(w http.ResponseWriter, r *http.Request) {
+	if s.admin == nil {
+		http.NotFound(w, r)
+		return
+	}
+	path, ok := s.admin.NodeBinary(r.URL.Query().Get("token"))
+	if !ok {
+		http.Error(w, "no binary here, or wrong token", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/octet-stream")
+	http.ServeFile(w, r, path)
+}
 
 func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 	if s.console == nil {

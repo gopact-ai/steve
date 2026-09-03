@@ -3,6 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,6 +19,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -692,6 +696,7 @@ func serve(args []string) error {
 		return err
 	}
 	dashboard.SetConsole(cons)
+	dashboard.SetAdmin(&fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet})
 	defer dashboard.Close()
 	go func() {
 		if err := dashboard.Serve(); err != nil {
@@ -1080,6 +1085,166 @@ func hubAdvert(cfg *config.Config) nodewire.Advert {
 	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
 	adv.Health = node.CheckHealth("", adv.StateDir)
 	return adv
+}
+
+// fleetAdmin adds machines and agents from the page: the running
+// registry and catalog take them at once, and the config file records
+// them so a restart keeps them. A new machine gets a token of its own
+// and one command to run.
+type fleetAdmin struct {
+	mu      sync.Mutex
+	cfg     *config.Config
+	path    string
+	nodes   *node.Registry
+	catalog *agent.Catalog
+	fleet   *roster.Roster
+	// hubURL is how the last page that added a machine reached the hub;
+	// the bootstrap script fetches the binary from there.
+	hubURL string
+}
+
+var nameShape = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
+
+func (a *fleetAdmin) AddNode(_ context.Context, req readmodel.AddNodeRequest) (readmodel.AddNodeResult, error) {
+	name := strings.TrimSpace(req.Name)
+	if !nameShape.MatchString(name) {
+		return readmodel.AddNodeResult{}, fmt.Errorf("机器名只能是小写字母、数字、点、下划线、连字符，如 node-c")
+	}
+	addr := strings.TrimSpace(req.Addr)
+	if _, _, err := net.SplitHostPort(addr); err != nil {
+		return readmodel.AddNodeResult{}, fmt.Errorf("地址要写成 ip:端口，如 10.0.0.5:7701")
+	}
+	level := project.Level(strings.TrimSpace(req.Level)).OrDefault()
+	if _, ok := map[project.Level]bool{project.LevelPublic: true, project.LevelInternal: true, project.LevelRestricted: true, project.LevelSealed: true}[level]; !ok {
+		return readmodel.AddNodeResult{}, fmt.Errorf("数据等级只能是 public / internal / restricted / sealed")
+	}
+	var raw [24]byte
+	if _, err := rand.Read(raw[:]); err != nil {
+		return readmodel.AddNodeResult{}, err
+	}
+	token := hex.EncodeToString(raw[:])
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.hubURL = req.HubURL
+	if _, exists := a.cfg.Nodes[name]; exists {
+		return readmodel.AddNodeResult{}, fmt.Errorf("机器 %s 已经存在", name)
+	}
+	if name == nodeName() {
+		return readmodel.AddNodeResult{}, fmt.Errorf("%s 是 hub 自己", name)
+	}
+	if a.cfg.Nodes == nil {
+		a.cfg.Nodes = map[string]config.Node{}
+	}
+	a.cfg.Nodes[name] = config.Node{Addr: addr, Token: token, Level: string(level)}
+	if err := config.Save(a.path, a.cfg); err != nil {
+		delete(a.cfg.Nodes, name)
+		return readmodel.AddNodeResult{}, fmt.Errorf("写 %s 失败：%w", a.path, err)
+	}
+	a.nodes.Add(name, node.Config{Addr: addr, Token: token, Level: string(level)})
+	a.fleet.SetNodeLevels(a.cfg.NodeLevels())
+	a.fleet.SetNodeRegions(a.cfg.NodeRegions())
+	log.Printf("steve: machine %s added (%s, %s); waiting for it to come up", name, addr, level)
+	out := readmodel.AddNodeResult{Name: name, Token: token,
+		Command: fmt.Sprintf("curl -fsSL '%s/bootstrap/%s?token=%s' | bash -l", req.HubURL, name, token)}
+	if a.cfg.Gateway.NodeBinary == "" {
+		out.Note = "hub 没有配置 gateway.node_binary，脚本不会下载 steve-node：先把它放到那台机器的 ~/steve-bin/steve-node。"
+	}
+	return out, nil
+}
+
+func (a *fleetAdmin) AddAgent(_ context.Context, req readmodel.AddAgentRequest) error {
+	id := strings.ToLower(strings.TrimSpace(req.ID))
+	if !nameShape.MatchString(id) {
+		return fmt.Errorf("Agent 名只能是小写字母、数字、点、下划线、连字符")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, ok := a.cfg.Harnesses[req.Harness]; !ok {
+		return fmt.Errorf("hub 的 harnesses 里没有 %q；Agent 用的 AI 工具要先在 hub 配置", req.Harness)
+	}
+	if req.Node != "" {
+		if _, ok := a.cfg.Nodes[req.Node]; !ok {
+			return fmt.Errorf("没有叫 %q 的机器", req.Node)
+		}
+	}
+	if _, exists := a.cfg.Agents[id]; exists {
+		return fmt.Errorf("Agent %s 已经存在", id)
+	}
+	item := config.Agent{Harness: req.Harness, Node: req.Node, Model: req.Model}
+	if err := a.catalog.Add(id, agent.Config{Harness: item.Harness, Node: item.Node, Model: item.Model}); err != nil {
+		return err
+	}
+	if a.cfg.Agents == nil {
+		a.cfg.Agents = map[string]config.Agent{}
+	}
+	a.cfg.Agents[id] = item
+	if err := config.Save(a.path, a.cfg); err != nil {
+		return fmt.Errorf("写 %s 失败：%w", a.path, err)
+	}
+	log.Printf("steve: agent %s added (%s on %s)", id, req.Harness, orHubName(req.Node))
+	return nil
+}
+
+func orHubName(node string) string {
+	if node == "" {
+		return "hub"
+	}
+	return node
+}
+
+// Bootstrap is the script a new machine runs: it writes node.json with
+// the hub's harness commands, fetches steve-node from the hub when the
+// hub has one, and starts it from a login shell so the harnesses find
+// their credentials.
+func (a *fleetAdmin) Bootstrap(name, token string) (string, bool) {
+	a.mu.Lock()
+	n, ok := a.cfg.Nodes[name]
+	harnesses := make(map[string]any, len(a.cfg.Harnesses))
+	for id, h := range a.cfg.Harnesses {
+		spec := map[string]any{"command": h.Command}
+		if len(h.Args) > 0 {
+			spec["args"] = h.Args
+		}
+		harnesses[id] = spec
+	}
+	binary, hubURL := a.cfg.Gateway.NodeBinary, a.hubURL
+	a.mu.Unlock()
+	if !ok || token == "" || subtle.ConstantTimeCompare([]byte(n.Token), []byte(token)) != 1 {
+		return "", false
+	}
+	_, port, _ := net.SplitHostPort(n.Addr)
+	if port == "" {
+		port = "7701"
+	}
+	nodeJSON, _ := json.MarshalIndent(map[string]any{
+		"name": name, "listen": "0.0.0.0:" + port, "token": token,
+		"workspace_root": "~/steve-work", "state_dir": "~/.steve-node", "harnesses": harnesses,
+	}, "", "  ")
+	var b strings.Builder
+	b.WriteString("#!/bin/bash\nset -e\nmkdir -p ~/steve-bin ~/steve-work\n")
+	fmt.Fprintf(&b, "cat > ~/steve-bin/node.json <<'STEVE_EOF'\n%s\nSTEVE_EOF\nchmod 600 ~/steve-bin/node.json\n", nodeJSON)
+	if binary != "" && hubURL != "" {
+		fmt.Fprintf(&b, "if [ ! -x ~/steve-bin/steve-node ]; then curl -fsSL '%s/dist/steve-node?token=%s' -o ~/steve-bin/steve-node && chmod +x ~/steve-bin/steve-node; fi\n", hubURL, token)
+	}
+	b.WriteString("if [ ! -x ~/steve-bin/steve-node ]; then echo 'steve-node is not in ~/steve-bin; copy it there and run this again' >&2; exit 1; fi\n")
+	b.WriteString("for p in $(pgrep -f 'steve-bin/steve-node -config' 2>/dev/null); do kill \"$p\" 2>/dev/null || true; done\n")
+	b.WriteString("nohup bash -lc \"~/steve-bin/steve-node -config ~/steve-bin/node.json\" > ~/steve-node.log 2>&1 < /dev/null &\n")
+	fmt.Fprintf(&b, "echo 'steve-node %s started; log: ~/steve-node.log'\n", name)
+	return b.String(), true
+}
+
+func (a *fleetAdmin) NodeBinary(token string) (string, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.cfg.Gateway.NodeBinary == "" || token == "" {
+		return "", false
+	}
+	for _, n := range a.cfg.Nodes {
+		if subtle.ConstantTimeCompare([]byte(n.Token), []byte(token)) == 1 {
+			return a.cfg.Gateway.NodeBinary, true
+		}
+	}
+	return "", false
 }
 
 // hubSkills ships the enabled skills to every node. Nil until run wires it;

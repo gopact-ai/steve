@@ -97,6 +97,10 @@ func validateIDs(field string, ids []string) error {
 const DefaultOfflineReminder = 15 * time.Minute
 
 type Gateway struct {
+	// NodeBinary is a steve-node executable the hub can hand to a machine
+	// being added (static build, the nodes' architecture); empty means the
+	// bootstrap script expects the binary to be there already.
+	NodeBinary    string   `json:"node_binary,omitempty"`
 	PromptTimeout Duration `json:"prompt_timeout"`
 	StatePath     string   `json:"state_path"`
 	HomePath      string   `json:"home_path,omitempty"`

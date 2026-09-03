@@ -128,3 +128,29 @@ func TestSelectorRejectsUnknownTag(t *testing.T) {
 		t.Fatal("unknown tag was accepted")
 	}
 }
+
+// An agent added at runtime is held to the same rules as one from the
+// file: a duplicate id or alias is refused and leaves the catalog as it
+// was; a good one resolves at once, and readers see whole catalogs only.
+func TestCatalogAddsAnAgentAtRuntime(t *testing.T) {
+	c, err := NewCatalog(map[string]Config{"codex": {Harness: "codex", Default: true, Aliases: []string{"cx"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Add("codex", Config{Harness: "codex"}); err == nil {
+		t.Fatal("a duplicate id was accepted")
+	}
+	if err := c.Add("cx", Config{Harness: "codex"}); err == nil {
+		t.Fatal("an id that is another agent's alias was accepted")
+	}
+	if err := c.Add("reviewer", Config{Harness: "claude-code", Node: "node-a"}); err != nil {
+		t.Fatal(err)
+	}
+	got, ok := c.Resolve("reviewer")
+	if !ok || got.Node != "node-a" || got.Harness != "claude-code" {
+		t.Fatalf("resolve after add = %+v, %v", got, ok)
+	}
+	if len(c.List()) != 2 || c.Default().ID != "codex" {
+		t.Fatalf("list = %d, default = %s", len(c.List()), c.Default().ID)
+	}
+}
