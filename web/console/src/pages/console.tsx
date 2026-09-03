@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useLocation, useNavigate } from "react-router";
 import Markdown from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import { ArrowUp, CheckCircle, ChevronDown, Edit05, Folder, GitBranch01, Loading01, MessageChatSquare, Plus, Square, XCircle } from "@untitledui/icons";
@@ -45,6 +46,24 @@ export function ConsolePage() {
     const handled = useRef(0);
 
     useEffect(() => { sessionStorage.setItem("steve.conversation", conversation); }, [conversation]);
+
+    // "/console?new=1&project=x" — from the projects page: a fresh thread
+    // bound to that project, then the address is cleaned up.
+    const location = useLocation();
+    const navigate = useNavigate();
+    const opened = useRef(false);
+    useEffect(() => {
+        const params = new URLSearchParams(location.search);
+        if (!params.get("new") || opened.current) return;
+        opened.current = true;
+        const project = params.get("project") || "";
+        const id = "console:" + Date.now().toString(36);
+        setConversation(id);
+        setEntries([]);
+        navigate("/console", { replace: true });
+        if (project) window.setTimeout(() => { void send(id, `/project use ${project}`).catch(() => undefined).finally(() => { loadContext(); loadConversations(); }); }, 50);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [location.search]);
 
     const loadContext = useCallback(() => {
         void fetchContext(conversation).then((data) => setContext(data.context ?? null)).catch(() => undefined);

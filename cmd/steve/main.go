@@ -640,14 +640,18 @@ func serve(args []string) error {
 	// One read model, two renderers. `steve top` and the browser are both
 	// clients of this; neither reads the stores directly, so what the
 	// operator sees in one place cannot contradict the other.
+	// What each project's directory holds is asked of its machine on a
+	// slow clock and kept: a page must not run git on every repaint.
+	repos := &repoCache{projects: projects, nodes: nodes, hub: nodeName(), poke: make(chan struct{}, 1)}
 	view := readmodel.New(readmodel.Sources{
 		Hub: readmodel.Hub{
 			Node: nodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities,
 			Level: string(cfg.HubLevel()),
 		},
 		HubAdvert: func() nodewire.Advert { return hubAdvert(cfg) },
-		Models:    seen,
-		Roster:    fleet, Nodes: nodes, Tasks: tasks, Plans: plans,
+		Repos:     repos.get, HomeProject: homeProjectID, DefaultProject: cfg.Gateway.DefaultProject,
+		Models: seen,
+		Roster: fleet, Nodes: nodes, Tasks: tasks, Plans: plans,
 		Ledger:       readmodel.Ledger{Book: book, Attempts: attempts, Artifacts: artifacts, Projects: projects, Intents: intents},
 		Schedules:    schedules,
 		Observations: book.Document("observations"),
@@ -696,7 +700,7 @@ func serve(args []string) error {
 		return err
 	}
 	dashboard.SetConsole(cons)
-	dashboard.SetAdmin(&fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler})
+	dashboard.SetAdmin(&fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos})
 	defer dashboard.Close()
 	go func() {
 		if err := dashboard.Serve(); err != nil {
@@ -713,6 +717,7 @@ func serve(args []string) error {
 	// just started would report every node as down and refuse every
 	// placement — describing its own ignorance rather than the fleet.
 	nodes.Start(ctx)
+	go repos.run(ctx)
 	// Discover models for whatever nobody has run yet. It is discovery,
 	// not work: a session opened and closed, no prompt sent. Done off the
 	// startup path so a slow adapter never delays the first message.
@@ -1100,6 +1105,10 @@ type fleetAdmin struct {
 	nodes   *node.Registry
 	catalog *agent.Catalog
 	fleet   *roster.Roster
+	// projects is the ledger's project store; repos the hub's view of what
+	// each project's directory holds.
+	projects *project.Store
+	repos    *repoCache
 	// manager and assembler take the hub machine's own harness and MCP
 	// changes at runtime.
 	manager   *harness.Manager
@@ -1286,6 +1295,109 @@ func (a *fleetAdmin) AddNode(_ context.Context, req readmodel.AddNodeRequest) (r
 	return out, nil
 }
 
+// AddProject declares a project: the ledger takes it at once, the config
+// file records it, and its directory is inspected right away.
+func (a *fleetAdmin) AddProject(ctx context.Context, req readmodel.AddProjectRequest) error {
+	id := strings.TrimSpace(req.ID)
+	if !nameShape.MatchString(id) {
+		return fmt.Errorf("项目名只能是小写字母、数字、点、下划线、连字符")
+	}
+	if id == homeProjectID {
+		return fmt.Errorf("%s 是 Steve 自己的家，不能再声明", id)
+	}
+	path := strings.TrimSpace(req.Path)
+	if path == "" || !(strings.HasPrefix(path, "/") || strings.HasPrefix(path, "~")) {
+		return fmt.Errorf("目录要写绝对路径，如 /home/me/work 或 ~/work")
+	}
+	level := project.Level(strings.TrimSpace(req.Level)).OrDefault()
+	if _, ok := map[project.Level]bool{project.LevelPublic: true, project.LevelInternal: true, project.LevelRestricted: true, project.LevelSealed: true}[level]; !ok {
+		return fmt.Errorf("数据等级只能是 public / internal / restricted / sealed")
+	}
+	repo := project.RepoMode(strings.TrimSpace(req.Repo))
+	if repo == "" {
+		repo = project.RepoInPlace
+	}
+	if repo != project.RepoInPlace && repo != project.RepoIsolated {
+		return fmt.Errorf("工作方式只能是 inplace 或 isolated")
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	configMu.Lock()
+	if req.Node != "" {
+		if _, ok := a.cfg.Nodes[req.Node]; !ok {
+			configMu.Unlock()
+			return fmt.Errorf("没有叫 %q 的机器", req.Node)
+		}
+	}
+	if _, exists := a.cfg.Projects[id]; exists {
+		configMu.Unlock()
+		return fmt.Errorf("项目 %s 已经存在", id)
+	}
+	if a.cfg.Projects == nil {
+		a.cfg.Projects = map[string]config.Project{}
+	}
+	if req.Node == "" && strings.HasPrefix(path, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
+		}
+	}
+	a.cfg.Projects[id] = config.Project{Home: config.ProjectHome{Node: req.Node, Path: path}, Level: string(level), Repo: string(repo)}
+	declared := config.Config{Projects: map[string]config.Project{id: a.cfg.Projects[id]}}
+	if err := config.Save(a.path, a.cfg); err != nil {
+		delete(a.cfg.Projects, id)
+		configMu.Unlock()
+		return fmt.Errorf("写 %s 失败：%w", a.path, err)
+	}
+	configMu.Unlock()
+	if err := a.projects.Declare(ctx, declared.ProjectList()); err != nil {
+		return err
+	}
+	if a.repos != nil {
+		a.repos.wake()
+	}
+	log.Printf("steve: project %s declared (%s:%s, %s, %s)", id, orHubName(req.Node), path, level, repo)
+	return nil
+}
+
+// RemoveProject retires a project: gone from the ledger and from the
+// config file. Steve's home and the default project stay.
+func (a *fleetAdmin) RemoveProject(ctx context.Context, id string) error {
+	if id == homeProjectID {
+		return fmt.Errorf("%s 是 Steve 自己的家，不能移除", id)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	configMu.Lock()
+	if id == a.cfg.Gateway.DefaultProject {
+		configMu.Unlock()
+		return fmt.Errorf("%s 是默认项目，先在配置里换一个默认项目再移除", id)
+	}
+	_, inConfig := a.cfg.Projects[id]
+	if inConfig {
+		saved := a.cfg.Projects[id]
+		delete(a.cfg.Projects, id)
+		if err := config.Save(a.path, a.cfg); err != nil {
+			a.cfg.Projects[id] = saved
+			configMu.Unlock()
+			return fmt.Errorf("写 %s 失败：%w", a.path, err)
+		}
+	}
+	configMu.Unlock()
+	if _, ok, err := a.projects.Get(ctx, id); err != nil {
+		return err
+	} else if !ok && !inConfig {
+		return fmt.Errorf("没有叫 %q 的项目", id)
+	}
+	if err := a.projects.Retire(ctx, id); err != nil {
+		return err
+	}
+	if a.repos != nil {
+		a.repos.wake()
+	}
+	log.Printf("steve: project %s retired", id)
+	return nil
+}
+
 func (a *fleetAdmin) AddAgent(_ context.Context, req readmodel.AddAgentRequest) error {
 	id := strings.ToLower(strings.TrimSpace(req.ID))
 	if !nameShape.MatchString(id) {
@@ -1379,6 +1491,70 @@ func (a *fleetAdmin) NodeBinary(token string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// repoCache keeps what each project's directory holds, asked of its
+// machine every minute and whenever a project is added.
+type repoCache struct {
+	projects *project.Store
+	nodes    *node.Registry
+	hub      string
+
+	mu    sync.Mutex
+	repos map[string][]nodewire.Repo
+	poke  chan struct{}
+}
+
+func (c *repoCache) get(id string) []nodewire.Repo {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.repos[id]
+}
+
+func (c *repoCache) wake() {
+	select {
+	case c.poke <- struct{}{}:
+	default:
+	}
+}
+
+func (c *repoCache) run(ctx context.Context) {
+	for {
+		c.pass(ctx)
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(time.Minute):
+		case <-c.poke:
+		}
+	}
+}
+
+func (c *repoCache) pass(ctx context.Context) {
+	list, err := c.projects.List(ctx)
+	if err != nil {
+		return
+	}
+	next := make(map[string][]nodewire.Repo, len(list))
+	for _, p := range list {
+		var repos []nodewire.Repo
+		if p.Home.Node == "" || p.Home.Node == c.hub {
+			repos = node.InspectRepos(ctx, p.Home.Path)
+		} else {
+			ictx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			repos, err = c.nodes.Inspect(ictx, p.Home.Node, p.Home.Path)
+			cancel()
+			if err != nil {
+				// Keep what we knew: a machine that is down did not lose
+				// its repositories.
+				repos = c.get(p.ID)
+			}
+		}
+		next[p.ID] = repos
+	}
+	c.mu.Lock()
+	c.repos = next
+	c.mu.Unlock()
 }
 
 // hubSkills ships the enabled skills to every node. Nil until run wires it;

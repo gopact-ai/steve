@@ -283,6 +283,8 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 			go s.releaseAttempt(stream)
 		case nodewire.StreamConfig:
 			go s.configure(stream)
+		case nodewire.StreamInspect:
+			go s.inspect(ctx, stream)
 		default:
 			go s.runAgent(ctx, stream)
 		}

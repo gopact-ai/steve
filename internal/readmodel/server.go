@@ -60,6 +60,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/conversations", s.guard(s.consoleConversations))
 	mux.HandleFunc("POST /console/nodes", s.guard(s.consoleAddNode))
 	mux.HandleFunc("POST /console/agents", s.guard(s.consoleAddAgent))
+	mux.HandleFunc("POST /console/projects", s.guard(s.consoleAddProject))
+	mux.HandleFunc("DELETE /console/projects/{id}", s.guard(s.consoleRemoveProject))
 	mux.HandleFunc("GET /console/nodes/{name}/settings", s.guard(s.nodeSettings))
 	mux.HandleFunc("PUT /console/nodes/{name}/settings", s.guard(s.nodeSettings))
 	mux.HandleFunc("GET /bootstrap/{name}", s.bootstrap)
@@ -263,6 +265,16 @@ type AddNodeResult struct {
 	Note    string `json:"note,omitempty"`
 }
 
+// AddProjectRequest is the page declaring a project: a name, the machine
+// and directory it lives in, how agents may change it, its data level.
+type AddProjectRequest struct {
+	ID    string `json:"id"`
+	Node  string `json:"node,omitempty"`
+	Path  string `json:"path"`
+	Repo  string `json:"repo,omitempty"`
+	Level string `json:"level,omitempty"`
+}
+
 // AddAgentRequest is the page adding an agent: an id, the AI tool it
 // runs, the machine it runs on ("" is the hub), a preferred model.
 type AddAgentRequest struct {
@@ -282,6 +294,10 @@ type Admin interface {
 	// NodeBinary is the steve-node executable to hand a machine presenting
 	// a node token, if the hub has one.
 	NodeBinary(token string) (string, bool)
+	// AddProject declares a project and records it in the config file;
+	// RemoveProject retires one and drops it from the file.
+	AddProject(ctx context.Context, req AddProjectRequest) error
+	RemoveProject(ctx context.Context, id string) error
 	// NodeSettings reads what a machine offers; SetNodeSettings rewrites
 	// it and answers what is in force. The hub machine is one of them.
 	NodeSettings(ctx context.Context, name string) (nodewire.Settings, error)
@@ -341,6 +357,37 @@ func (s *Server) consoleAddNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (s *Server) consoleAddProject(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "not wired", http.StatusNotImplemented)
+		return
+	}
+	var req AddProjectRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.AddProject(r.Context(), req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleRemoveProject(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "not wired", http.StatusNotImplemented)
+		return
+	}
+	if err := s.admin.RemoveProject(r.Context(), r.PathValue("id")); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {

@@ -89,6 +89,10 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 			item := Project{
 				ID: p.ID, Node: m.place(p.Home.Node), Path: p.Home.Path,
 				Level: string(p.Level.OrDefault()), Repo: string(p.Repo), DefaultRole: string(p.DefaultRole), Agents: []string{},
+				Home: p.ID == m.src.HomeProject, Default: p.ID == m.src.DefaultProject,
+			}
+			if m.src.Repos != nil {
+				item.Repos = m.src.Repos(p.ID)
 			}
 			for _, a := range snap.Agents {
 				if a.Eligible && p.NotHome(nodeOf(a.Node, m.src.Hub.Node), false) == nil {

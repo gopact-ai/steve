@@ -68,7 +68,11 @@ export interface Schedule { id: string; conversation: string; agent?: string; pr
 export interface SourceHealth { name: string; wired: boolean; error?: string }
 export interface UsageRow { key: string; tokens: Tokens; seconds: number; attempts: number; unreported?: number }
 export interface Usage { by_day: UsageRow[]; by_agent: UsageRow[]; by_model: UsageRow[]; total: UsageRow }
-export interface Project { id: string; node: string; path: string; level: string; repo: string; default_role?: string; agents: string[] }
+export interface Repo { path: string; branch?: string; head?: string; subject?: string; at?: string; dirty: boolean; remote?: string; agents_md: boolean; missing?: boolean }
+export interface Project {
+    id: string; node: string; path: string; level: string; repo: string; default_role?: string; agents: string[];
+    repos?: Repo[]; home?: boolean; default?: boolean;
+}
 export interface ContextProject { id: string; node: string; path: string; level: string; repo: string; version: number; bound?: boolean }
 export interface AgentChoice {
     id: string; node: string; harness: string; model?: string; ready: boolean; why?: string; usable: boolean; because?: string; current?: boolean;

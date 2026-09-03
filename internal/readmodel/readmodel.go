@@ -345,6 +345,12 @@ type Sources struct {
 	// HubAdvert describes the hub machine now, not at startup: a harness
 	// installed since is seen by the next snapshot.
 	HubAdvert func() nodewire.Advert
+	// Repos answers what repositories a project's directory holds, from a
+	// cache the hub keeps; HomeProject and DefaultProject name the two
+	// special projects.
+	Repos          func(projectID string) []nodewire.Repo
+	HomeProject    string
+	DefaultProject string
 	// Models is the book of observed models, for node harnesses that
 	// declare none.
 	Models Models
@@ -576,6 +582,13 @@ type Project struct {
 	Repo        string   `json:"repo"`
 	DefaultRole string   `json:"default_role,omitempty"`
 	Agents      []string `json:"agents"`
+	// Repos are the git repositories inside the project's directory, as
+	// its machine last reported them. Home marks Steve's own home — the
+	// owner's private conversation space, not a codebase; Default marks
+	// what a fresh conversation binds to.
+	Repos   []nodewire.Repo `json:"repos"`
+	Home    bool            `json:"home,omitempty"`
+	Default bool            `json:"default,omitempty"`
 }
 
 // Progress is one agent's turn as it happens, small enough to stream:

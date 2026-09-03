@@ -6,6 +6,29 @@ import (
 	"github.com/gopact-ai/steve/internal/ability"
 )
 
+// Repo is one git repository inside a project's directory, as the machine
+// that holds it sees it: which branch is checked out, the last commit,
+// whether the tree is dirty, whether an instructions file is there.
+type Repo struct {
+	// Path is relative to the project directory; "." is the directory itself.
+	Path     string    `json:"path"`
+	Branch   string    `json:"branch,omitempty"`
+	Head     string    `json:"head,omitempty"`
+	Subject  string    `json:"subject,omitempty"`
+	At       time.Time `json:"at,omitzero"`
+	Dirty    bool      `json:"dirty"`
+	Remote   string    `json:"remote,omitempty"`
+	AgentsMD bool      `json:"agents_md"`
+	// Missing says the directory itself does not exist on the machine.
+	Missing bool `json:"missing,omitempty"`
+}
+
+// InspectReply answers StreamInspect.
+type InspectReply struct {
+	Repos []Repo `json:"repos"`
+	Error string `json:"error,omitempty"`
+}
+
 // Settings is what a machine offers, as its operator writes it: the AI
 // tools it can start, the commands to look for, the MCP servers it can
 // bind, and what is only declared. It is the editable part of node.json,
@@ -94,11 +117,13 @@ const (
 	// FeatureConfig says the node takes its offers from the hub over
 	// StreamConfig and writes them to its own config file.
 	FeatureConfig = "node_config.v1"
+	// FeatureInspect says the node answers StreamInspect.
+	FeatureInspect = "inspect.v1"
 )
 
 // Features is what this build supports.
 func Features() []string {
-	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig}
+	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureInspect}
 }
 
 // HasFeature says whether a list names a feature.

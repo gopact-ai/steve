@@ -113,3 +113,11 @@ export async function saveNodeSettings(name: string, settings: NodeSettings): Pr
     return json(await fetch(`./console/nodes/${encodeURIComponent(name)}/settings${q}`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(settings) }));
 }
 
+export async function addProject(req: { id: string; node?: string; path: string; repo: string; level: string }): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/projects${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(req) }));
+}
+
+export async function removeProject(id: string): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/projects/${encodeURIComponent(id)}${q}`, { method: "DELETE", headers }));
+}
+

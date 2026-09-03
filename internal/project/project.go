@@ -271,6 +271,13 @@ func (s *Store) Declare(ctx context.Context, projects []Project) error {
 	return nil
 }
 
+// Retire forgets a project the operator no longer wants. Conversations
+// bound to it keep their binding until they switch; tasks created under
+// it keep their record. Nothing on disk is touched.
+func (s *Store) Retire(ctx context.Context, id string) error {
+	return s.l.DeleteBinding(ctx, kindProject, id)
+}
+
 // Get reads one project.
 func (s *Store) Get(ctx context.Context, id string) (Project, bool, error) {
 	var p Project

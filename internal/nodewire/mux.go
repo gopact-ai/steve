@@ -69,6 +69,10 @@ const (
 	// its own node.json. The command is "get" or "set"; a set carries a
 	// Settings document and answers with the settings as applied.
 	StreamConfig = "config"
+	// StreamInspect asks the node what repositories a directory holds:
+	// the directory itself if it is one, else its immediate children.
+	// The command is the path; the reply is an InspectReply.
+	StreamInspect = "inspect"
 )
 
 // ExitPrefix leads the close reason of a finished exec stream, followed by

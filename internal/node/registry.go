@@ -376,6 +376,30 @@ func (r *Registry) Admit(ctx context.Context, name string, req nodewire.AdmitReq
 	return reply.Admission, nil
 }
 
+// Inspect asks a node what repositories a directory holds.
+func (r *Registry) Inspect(ctx context.Context, name, path string) ([]nodewire.Repo, error) {
+	c, err := r.connect(ctx, name)
+	if err != nil {
+		return nil, err
+	}
+	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureInspect) {
+		return nil, fmt.Errorf("node %q runs an older steve-node that cannot inspect directories", name)
+	}
+	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamInspect, Command: path})
+	if err != nil {
+		return nil, fmt.Errorf("node %q: inspect: %w", name, err)
+	}
+	defer stream.Close()
+	var reply nodewire.InspectReply
+	if err := json.NewDecoder(stream).Decode(&reply); err != nil {
+		return nil, fmt.Errorf("node %q: inspect: %w", name, err)
+	}
+	if reply.Error != "" {
+		return nil, errors.New(reply.Error)
+	}
+	return reply.Repos, nil
+}
+
 // Settings reads what a node offers, as its operator wrote it.
 func (r *Registry) Settings(ctx context.Context, name string) (nodewire.Settings, error) {
 	return r.configStream(ctx, name, "get", nil)
