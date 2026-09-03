@@ -177,3 +177,14 @@ HumanRequest { id, type, source_operation_id, project_id, task_id, summary, choi
 - 配置修订 / 热加载：添加面板生成片段与命令，明确写"重启 hub 生效"。
 - 回答 agent 提问、飞书接入申请：待处理页不显示，页面如实说明。
 - 多人使用与 token 会话化。
+
+## 12. 工作台 v3（2026-09-03，向 Codex app / Multica 对齐）
+
+用户反馈：没有新建会话的入口；agent 之间的调用关系看不出来；聊天框要学 Codex app，整体学 Multica。
+
+- **三栏**：左栏是会话列表——顶部"新会话"，其下按项目分组、最近优先，每条显示标题（第一句非动词输入）、Agent、最近时间，正在跑的带转圈；数据来自新接口 `GET /console/conversations`（`console.Service.Summaries`：标题、项目、Agent、最近时间、条数、是否在跑）。新会话在前端生成 `console:<base36 时间>`，第一句发出才在服务端出现。当前会话记在 sessionStorage。
+- **composer**：贴底的一张卡，输入框随内容长到 6 行；卡的下沿放项目与 Agent 两个选择（= `/project use` 与 `/use`），让上下文在第一句之前就可见（Codex app 的 issue 里正是这个抱怨）；进行中显示"停止"（发 `/cancel`）；顶栏显示会话标题与项目 / Agent 徽章。
+- **关系页签**：右栏第三个页签画本会话的调用树——任务 → 计划步骤（哪个 agent 在哪台机器、状态、依赖 / 汇合）→ 委派出去的子任务（递归，"X 委派 →"），进行中的转圈。组件 `lib/tree.tsx` 的 `CallGraph`，任务看板抽屉里复用（替换原来只列子任务名的"子任务"节）。数据全部来自已有投影（Task.parent/children/member/node，Plan.steps.agent/node），没有新增后端字段。
+- **顺手修的线上崩溃**：`roster.addModels` / `markFunctional` 浅拷贝快照但共用 `Coverage` map，多个请求并发 `All()` 时 fatal "concurrent map writes"，hub 进程直接退出。已深拷贝并加 16 协程并发读的 race 测试。
+- 仍然明显的问题（不属于本次）：聊天类任务永远停在"进行中"（协作审计 3-5），关系页签里一眼就能看到。
+
