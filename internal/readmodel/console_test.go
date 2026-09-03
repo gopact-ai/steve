@@ -73,3 +73,39 @@ func TestConsoleEndpointsAreGuardedAndOptional(t *testing.T) {
 		t.Fatalf("replies = %s", out.String())
 	}
 }
+
+// The shell needs the token; the bundle it names does not, or a browser
+// that opened the page with ?token= would load an empty page.
+func TestBundleIsServedOpenAndShellIsGuarded(t *testing.T) {
+	model := New(Sources{})
+	server, err := NewServer(model, ServerConfig{Addr: "127.0.0.1:0", Token: "t0k"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	go func() { _ = server.Serve() }()
+	t.Cleanup(func() { _ = server.Close() })
+	if res, _ := http.Get(server.URL() + "/"); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("shell without token = %d", res.StatusCode)
+	}
+	shell, _ := http.Get(server.URL() + "/?token=t0k")
+	body := make([]byte, 4096)
+	n, _ := shell.Body.Read(body)
+	shell.Body.Close()
+	start := strings.Index(string(body[:n]), "assets/index-")
+	if start < 0 {
+		t.Fatalf("shell names no bundle: %s", body[:n])
+	}
+	end := start + strings.Index(string(body[start:n]), ".js") + 3
+	asset := string(body[start:end])
+	res, err := http.Get(server.URL() + "/" + asset)
+	if err != nil {
+		t.Fatal(err)
+	}
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("bundle %s without token = %d; the page would be blank", asset, res.StatusCode)
+	}
+	if res, _ := http.Get(server.URL() + "/state"); res.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("state without token = %d", res.StatusCode)
+	}
+}

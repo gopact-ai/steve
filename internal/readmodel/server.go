@@ -53,6 +53,10 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /events", s.guard(s.events))
 	mux.HandleFunc("POST /console/send", s.guard(s.consoleSend))
 	mux.HandleFunc("GET /console/replies", s.guard(s.consoleReplies))
+	// The bundle is hashed, static code with nothing of the fleet in it,
+	// and the browser fetches it without the token the shell was opened
+	// with; it is served open. Everything that carries data stays guarded.
+	mux.HandleFunc("GET /assets/", s.page)
 	mux.HandleFunc("GET /", s.guard(s.page))
 	server := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	if err := server.Serve(s.listener); err != nil && err != http.ErrServerClosed {
