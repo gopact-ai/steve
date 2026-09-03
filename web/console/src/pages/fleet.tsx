@@ -103,6 +103,19 @@ function state(c: Capability, snap: AbilitySnapshot): { word: string; cls: strin
     return { word: "可用于新会话", cls: "bg-secondary text-primary" };
 }
 
+// merge folds the per-harness copies of a scoped capability (a skill or
+// an MCP server is offered once per AI tool) into one chip that names
+// the tools it applies to.
+function merge(items: Capability[]): { c: Capability; scopes: string[] }[] {
+    const out = new Map<string, { c: Capability; scopes: string[] }>();
+    for (const c of items) {
+        const seen = out.get(c.id);
+        if (seen) seen.scopes.push(c.scope || "");
+        else out.set(c.id, { c, scopes: [c.scope || ""] });
+    }
+    return [...out.values()];
+}
+
 function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
     const list = snapshot?.offers || [];
     if (!snapshot || !list.length) return <span className="text-quaternary">旧版本，未申报清单</span>;
@@ -112,10 +125,11 @@ function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
             {groups.map((g) => (
                 <div key={g.k} className="flex flex-wrap items-baseline gap-1 text-xs">
                     <span className="w-12 shrink-0 text-quaternary" title={snapshot.coverage?.[g.k] ? `覆盖：${snapshot.coverage[g.k]}` : undefined}>{kindWords[g.k] ?? g.k}</span>
-                    {g.items.map((c) => {
+                    {merge(g.items).map(({ c, scopes }) => {
                         const st = state(c, snapshot);
+                        const where = scopes.filter(Boolean).length ? ` · 适用 ${scopes.filter(Boolean).join(", ")}` : "";
                         return (
-                            <span key={`${c.id}@${c.scope || ""}`} title={`${c.kind}:${c.id}${c.scope ? "@" + c.scope : ""}${c.version ? " · " + c.version.value : ""} · ${st.word}${c.detail ? " · " + c.detail : ""}`}
+                            <span key={c.id} title={`${c.kind}:${c.id}${where}${c.version ? " · " + c.version.value.slice(0, 12) : ""} · ${st.word}${c.detail ? " · " + c.detail : ""}`}
                                 className={`rounded px-1 font-mono ${st.cls}`}>
                                 {c.id}{c.attrs?.count ? "×" + c.attrs.count : ""}
                             </span>
