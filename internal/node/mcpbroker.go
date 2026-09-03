@@ -10,13 +10,18 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/http"
+	"net/http/httputil"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 // The MCP broker keeps the machine's MCP servers — and their credentials
@@ -43,6 +48,167 @@ const LaunchVerb = "mcp-launch"
 type mcpBinding struct {
 	id, mcp, attempt, harness string
 	expires                   time.Time
+	// running is the server started for this binding, if one is up.
+	running *exec.Cmd
+}
+
+// attach remembers the server started for a binding so a release can
+// stop it.
+func (s *Server) attach(id string, cmd *exec.Cmd) {
+	s.bindMu.Lock()
+	defer s.bindMu.Unlock()
+	if b, ok := s.bindings[id]; ok {
+		b.running = cmd
+		s.bindings[id] = b
+	}
+}
+
+// releaseBindings drops every binding of an attempt and stops the
+// servers behind them. It is what the hub asks for when the attempt ends,
+// and what makes a binding's life the attempt's rather than a TTL's.
+func (s *Server) releaseBindings(attempt string) int {
+	s.bindMu.Lock()
+	defer s.bindMu.Unlock()
+	n := 0
+	for id, b := range s.bindings {
+		if b.attempt != attempt {
+			continue
+		}
+		if b.running != nil {
+			_ = killProcessGroup(b.running)
+		}
+		delete(s.bindings, id)
+		n++
+	}
+	return n
+}
+
+// releaseAttempt serves StreamRelease.
+func (s *Server) releaseAttempt(stream *nodewire.Stream) {
+	defer stream.Close()
+	attempt := strings.TrimSpace(stream.Request().Command)
+	if attempt == "" {
+		_ = stream.CloseWithReason(nodewire.ExitPrefix + "2")
+		return
+	}
+	if n := s.releaseBindings(attempt); n > 0 {
+		log.Printf("steve-node: released %d MCP binding(s) of attempt %s", n, attempt)
+	}
+	_ = stream.CloseWithReason(nodewire.ExitPrefix + "0")
+}
+
+// serveProxy listens on the loopback for http/sse MCP servers: a binding's
+// URL is /b/<id>/…, and the proxy adds the server's configured headers on
+// the way out. The port is remembered so a restart keeps old descriptors
+// valid for the sessions that hold them.
+func (s *Server) serveProxy(ctx context.Context) error {
+	preferred := rememberedProxyPort(s.cfg)
+	var listener net.Listener
+	var err error
+	if preferred > 0 {
+		listener, err = net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(preferred))
+	}
+	if listener == nil {
+		listener, err = net.Listen("tcp", "127.0.0.1:0")
+	}
+	if err != nil {
+		return fmt.Errorf("mcp proxy: listen: %w", err)
+	}
+	port := listener.Addr().(*net.TCPAddr).Port
+	s.bindMu.Lock()
+	s.proxyPort = port
+	s.bindMu.Unlock()
+	if path := proxyPortFile(s.cfg); path != "" {
+		_ = os.WriteFile(path, []byte(strconv.Itoa(port)), 0o600)
+	}
+	server := &http.Server{Handler: http.HandlerFunc(s.proxy), ReadHeaderTimeout: 10 * time.Second}
+	go func() {
+		<-ctx.Done()
+		_ = server.Close()
+	}()
+	go func() {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Printf("steve-node: mcp proxy: %v", err)
+		}
+	}()
+	return nil
+}
+
+func proxyPortFile(cfg ServerConfig) string {
+	if cfg.StateDir == "" {
+		return ""
+	}
+	return filepath.Join(cfg.StateDir, "mcp-proxy.port")
+}
+
+func rememberedProxyPort(cfg ServerConfig) int {
+	raw, err := os.ReadFile(proxyPortFile(cfg))
+	if err != nil {
+		return 0
+	}
+	port, err := strconv.Atoi(strings.TrimSpace(string(raw)))
+	if err != nil || port <= 0 || port > 65535 {
+		return 0
+	}
+	return port
+}
+
+func (s *Server) proxyAddr() string {
+	s.bindMu.Lock()
+	defer s.bindMu.Unlock()
+	if s.proxyPort == 0 {
+		return ""
+	}
+	return "http://127.0.0.1:" + strconv.Itoa(s.proxyPort)
+}
+
+// proxy forwards one request for a binding to the real server.
+func (s *Server) proxy(w http.ResponseWriter, r *http.Request) {
+	rest, ok := strings.CutPrefix(r.URL.Path, "/b/")
+	if !ok {
+		http.NotFound(w, r)
+		return
+	}
+	id, tail, _ := strings.Cut(rest, "/")
+	b, ok := s.binding(id)
+	if !ok {
+		http.Error(w, "unknown or expired binding", http.StatusForbidden)
+		return
+	}
+	spec, ok := s.cfg.MCPServers[b.mcp]
+	if !ok || (spec.Type != "http" && spec.Type != "sse") {
+		http.Error(w, "not an http server", http.StatusBadGateway)
+		return
+	}
+	target, err := url.Parse(spec.URL)
+	if err != nil {
+		http.Error(w, "bad upstream url", http.StatusBadGateway)
+		return
+	}
+	rp := &httputil.ReverseProxy{
+		Rewrite: func(pr *httputil.ProxyRequest) {
+			pr.SetURL(target)
+			pr.Out.URL.Path = joinPath(target.Path, tail)
+			pr.Out.URL.RawPath = ""
+			pr.Out.Host = target.Host
+			for k, v := range spec.Headers {
+				pr.Out.Header.Set(k, v)
+			}
+		},
+		FlushInterval: -1,
+	}
+	rp.ServeHTTP(w, r)
+}
+
+func joinPath(base, tail string) string {
+	base = strings.TrimSuffix(base, "/")
+	if tail == "" {
+		if base == "" {
+			return "/"
+		}
+		return base
+	}
+	return base + "/" + tail
 }
 
 // SocketPath is the broker's Unix socket.
@@ -121,7 +287,15 @@ func (s *Server) descriptor(b mcpBinding) (ability.Binding, error) {
 	if resolved, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = resolved
 	}
-	return ability.Binding{Name: b.mcp, Command: exe, Args: []string{LaunchVerb, "-socket", s.SocketPath(), b.id}}, nil
+	spec := s.cfg.MCPServers[b.mcp]
+	if spec.Type == "http" || spec.Type == "sse" {
+		addr := s.proxyAddr()
+		if addr == "" {
+			return ability.Binding{}, errors.New("the MCP proxy is not listening")
+		}
+		return ability.Binding{Name: b.mcp, Transport: spec.Type, URL: addr + "/b/" + b.id}, nil
+	}
+	return ability.Binding{Name: b.mcp, Transport: "stdio", Command: exe, Args: []string{LaunchVerb, "-socket", s.SocketPath(), b.id}}, nil
 }
 
 // brokerConn serves one launcher: reads the binding id, starts the MCP
@@ -173,6 +347,7 @@ func (s *Server) brokerConn(ctx context.Context, conn net.Conn) {
 		log.Printf("steve-node: mcp broker: start %s: %v", b.mcp, err)
 		return
 	}
+	s.attach(b.id, cmd)
 	log.Printf("steve-node: mcp %s started for attempt %s (%s)", b.mcp, b.attempt, b.harness)
 	done := make(chan struct{})
 	go func() {

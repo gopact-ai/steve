@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 	"github.com/gopact-ai/steve/internal/skills"
@@ -567,12 +568,18 @@ func TestSkillsArePushedAndMaterialized(t *testing.T) {
 func TestMCPBindingKeepsSecretsOnTheNode(t *testing.T) {
 	bin := buildMockAgent(t)
 	state := t.TempDir()
+	// A real HTTP MCP server would live here; this one shows what reached
+	// it, so the proxy's header injection can be seen from outside.
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "path=%s auth=%s", r.URL.Path, r.Header.Get("Authorization"))
+	}))
+	t.Cleanup(upstream.Close)
 	server := startNode(t, ServerConfig{
 		Name: "host-9", Token: "tok", StateDir: state,
 		Harnesses: map[string]HarnessSpec{"codex": {Command: bin}},
 		MCPServers: map[string]MCPSpec{
 			"echo": {Type: "stdio", Command: "sh", Args: []string{"-c", `read line; echo "got $line via $TOKEN"`}, Env: map[string]string{"TOKEN": "SECRET-42"}},
-			"web":  {Type: "http", URL: "http://127.0.0.1:1/mcp"},
+			"web":  {Type: "http", URL: upstream.URL + "/mcp", Headers: map[string]string{"Authorization": "Bearer WEB-SECRET"}},
 		},
 	})
 	registry := NewRegistry("hub-1", map[string]Config{"host-9": {Addr: server.Addr(), Token: "tok"}})
@@ -598,8 +605,11 @@ func TestMCPBindingKeepsSecretsOnTheNode(t *testing.T) {
 			}
 		}
 	}
-	if echo.Availability != ability.Available || web.Availability != ability.Unknown {
-		t.Fatalf("echo = %s, web = %s; stdio binds, http does not yet", echo.Availability, web.Availability)
+	if echo.Availability != ability.Available || web.Availability != ability.Available {
+		t.Fatalf("echo = %s, web = %s", echo.Availability, web.Availability)
+	}
+	if raw, _ := json.Marshal(advert); strings.Contains(string(raw), "WEB-SECRET") {
+		t.Fatal("the advert carries the HTTP header secret")
 	}
 
 	req, _ := ability.Compile(nil)
@@ -645,9 +655,38 @@ func TestMCPBindingKeepsSecretsOnTheNode(t *testing.T) {
 	if registry.Bindings(t.Context(), "host-9", "a-missing") != nil {
 		t.Fatal("a refused admission handed out bindings")
 	}
-	adm, _ = registry.Admit(t.Context(), "host-9", nodewire.AdmitRequest{Attempt: "a-http", Harness: "codex", Requirement: req, Uses: []string{"web"}})
-	if !adm.Refused() || adm.Code != ability.CodeUnavailable {
-		t.Fatalf("an http server should refuse until the node proxies it: %+v", adm)
+	// An HTTP server is reached through the node's loopback proxy, which
+	// adds the configured headers; the agent's URL names only a binding.
+	adm, err = registry.Admit(t.Context(), "host-9", nodewire.AdmitRequest{Attempt: "a-http", Harness: "codex", Requirement: req, Uses: []string{"web"}})
+	if err != nil || !adm.OK() {
+		t.Fatalf("http admission = %+v, %v", adm, err)
+	}
+	web1 := registry.Bindings(t.Context(), "host-9", "a-http")
+	if len(web1) != 1 || web1[0].Transport != "http" || !strings.HasPrefix(web1[0].URL, "http://127.0.0.1:") || strings.Contains(web1[0].URL, "WEB-SECRET") {
+		t.Fatalf("http binding = %+v", web1)
+	}
+	res, err := http.Get(web1[0].URL + "/tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if string(body) != "path=/mcp/tools auth=Bearer WEB-SECRET" {
+		t.Fatalf("through the proxy: %q", body)
+	}
+	// Release ends the attempt's bindings: the launcher and the URL both die.
+	if err := registry.Release(t.Context(), "host-9", "a-http"); err != nil {
+		t.Fatal(err)
+	}
+	if res, err := http.Get(web1[0].URL + "/tools"); err != nil || res.StatusCode != http.StatusForbidden {
+		t.Fatalf("after release the proxy answered %v, %v", res, err)
+	}
+	if err := registry.Release(t.Context(), "host-9", "a-mcp"); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := LaunchBinding(ctx, socket, id, strings.NewReader("hello\n"), &out); err != nil || out.Len() != 0 {
+		t.Fatalf("a released binding still launched: %q, %v", out.String(), err)
 	}
 }
 

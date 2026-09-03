@@ -111,6 +111,11 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Minute)
 	defer cancel()
 	usage := spent.attemptUsage()
+	if c.fleet != nil {
+		if record, err := c.attempts.Get(ctx, id); err == nil && record.Admission != nil && len(record.Admission.Bound) > 0 {
+			c.fleet.Release(ctx, record.Node, id)
+		}
+	}
 	if turnErr == nil {
 		outcome := attempt.Result{Summary: clip(result.Text, 200)}
 		record, err := c.attempts.Get(ctx, id)

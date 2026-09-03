@@ -10,6 +10,7 @@ import (
 	"io"
 	"log"
 	"net"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -71,6 +72,7 @@ type MCPSpec struct {
 	Args    []string          `json:"args,omitempty"`
 	Env     map[string]string `json:"env,omitempty"`
 	URL     string            `json:"url,omitempty"`
+	Headers map[string]string `json:"headers,omitempty"`
 }
 
 // Observe is what a machine can find out about itself without starting
@@ -101,9 +103,11 @@ type Server struct {
 	seq        int64
 	// launch checks that offered binaries start, in the background.
 	launch *LaunchProbe
-	// bindings are the MCP bindings minted at admission, by id.
-	bindMu   sync.Mutex
-	bindings map[string]mcpBinding
+	// bindings are the MCP bindings minted at admission, by id; proxyPort
+	// is where the broker proxies http/sse servers on the loopback.
+	bindMu    sync.Mutex
+	bindings  map[string]mcpBinding
+	proxyPort int
 	// hub is the hub currently served. A second hub is refused: two hubs
 	// placing work on one machine would each believe they own its slots.
 	hubMu   sync.Mutex
@@ -154,6 +158,9 @@ func (s *Server) Serve(ctx context.Context) error {
 				log.Printf("steve-node: %v", err)
 			}
 		}()
+		if err := s.serveProxy(ctx); err != nil {
+			log.Printf("steve-node: %v", err)
+		}
 	}
 	for {
 		socket, err := listener.Accept()
@@ -243,6 +250,8 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 			go s.admit(stream)
 		case nodewire.StreamSkills:
 			go s.applySkills(stream)
+		case nodewire.StreamRelease:
+			go s.releaseAttempt(stream)
 		default:
 			go s.runAgent(ctx, stream)
 		}
@@ -613,7 +622,10 @@ func (s *Server) admit(stream *nodewire.Stream) {
 		case !ok:
 			adm.Verdict, adm.Code = ability.False, ability.CodeAbsent
 			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: atom, Verdict: ability.False, Code: ability.CodeAbsent})
-		case spec.Type != "stdio" && spec.Type != "":
+		case (spec.Type == "http" || spec.Type == "sse") && s.proxyAddr() == "":
+			adm.Verdict, adm.Code = ability.False, ability.CodeUnavailable
+			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: atom, Verdict: ability.False, Code: ability.CodeUnavailable, Detail: "the node's MCP proxy is not listening"})
+		case spec.Type != "stdio" && spec.Type != "" && spec.Type != "http" && spec.Type != "sse":
 			adm.Verdict, adm.Code = ability.False, ability.CodeUnavailable
 			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: atom, Verdict: ability.False, Code: ability.CodeUnavailable})
 		default:
@@ -638,7 +650,7 @@ func (s *Server) admit(stream *nodewire.Stream) {
 		bindings, adm.Bound = nil, nil
 	}
 	log.Printf("steve-node: admission for attempt %s (%s): %s at %d/%d, bound %v", req.Attempt, req.Harness, adm.Verdict, snap.Generation, snap.Sequence, adm.Bound)
-	if err := json.NewEncoder(stream).Encode(nodewire.AdmitReply{Admission: adm, Bindings: bindings}); err != nil {
+	if err := json.NewEncoder(stream).Encode(nodewire.AdmitReply{Admission: adm, Bindings: bindings, Nonce: req.Nonce}); err != nil {
 		log.Printf("steve-node: admission reply: %v", err)
 	}
 }
@@ -710,10 +722,15 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 			case "stdio", "":
 				c = observed(ability.MCP, id, spec.Command)
 			case "http", "sse":
-				// The broker binds stdio servers only; an HTTP server here
-				// is known about, not yet usable through a binding.
-				c = ability.Capability{Kind: ability.MCP, ID: id, Evidence: []ability.Evidence{{Kind: ability.Declared, Method: "config", OK: true}},
-					Detail: spec.Type + " MCP servers are not bound by the node yet", Attrs: map[string]string{"transport": spec.Type}}
+				// Reached through the node's loopback proxy, which adds the
+				// configured headers; the URL itself is checked for shape.
+				parsed, perr := url.ParseRequestURI(spec.URL)
+				ok := perr == nil && parsed.Host != "" && (parsed.Scheme == "http" || parsed.Scheme == "https")
+				c = ability.Capability{Kind: ability.MCP, ID: id, Assurance: ability.Existence, Attrs: map[string]string{"transport": spec.Type},
+					Evidence: []ability.Evidence{{Kind: ability.Observed, Method: "url", OK: ok, At: now}}}
+				if !ok {
+					c.Detail = "url is not http(s)"
+				}
 			default:
 				c = ability.Capability{Kind: ability.MCP, ID: id, Evidence: []ability.Evidence{{Kind: ability.Observed, Method: "config", OK: false, Result: "unknown type " + spec.Type, At: now}}, Detail: "unknown type " + spec.Type}
 			}

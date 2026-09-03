@@ -32,9 +32,13 @@ type Admission struct {
 // Binding is how a session reaches one MCP server the machine bound for
 // it: a launcher command the agent can run, which carries no secret.
 type Binding struct {
-	Name    string   `json:"name"`
-	Command string   `json:"command"`
-	Args    []string `json:"args,omitempty"`
+	Name string `json:"name"`
+	// Transport is "" or "stdio" for a launcher command, "http" or "sse"
+	// for a URL on the machine's loopback proxy.
+	Transport string   `json:"transport,omitempty"`
+	Command   string   `json:"command,omitempty"`
+	Args      []string `json:"args,omitempty"`
+	URL       string   `json:"url,omitempty"`
 }
 
 const (

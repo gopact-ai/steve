@@ -59,6 +59,10 @@ const (
 	// just sent as a blob: the command is "apply <bundle hash>". The node
 	// answers with an exit status like StreamExec.
 	StreamSkills = "skills"
+	// StreamRelease tells the node an attempt is over: the bindings it
+	// minted for it are dropped and the servers behind them stopped. The
+	// command is the attempt id.
+	StreamRelease = "release"
 )
 
 // ExitPrefix leads the close reason of a finished exec stream, followed by

@@ -316,6 +316,8 @@ type admittingNodes struct {
 	asked  []nodewire.AdmitRequest
 }
 
+func (a *admittingNodes) Release(context.Context, string, string) error { return nil }
+
 func (a *admittingNodes) Bindings(context.Context, string, string) []ability.Binding { return nil }
 
 func (a *admittingNodes) Admit(_ context.Context, name string, req nodewire.AdmitRequest) (ability.Admission, error) {

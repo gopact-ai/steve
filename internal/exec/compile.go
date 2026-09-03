@@ -660,6 +660,9 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
 	}
 	req.MCP = roster.ToMCP(bindings)
+	if len(bindings) > 0 {
+		defer deps.Roster.Release(context.WithoutCancel(ctx), candidate.Node, record.ID)
+	}
 	if _, err := deps.Attempts.Advance(ctx, record.ID, attempt.Prepared, "exec", func(r *attempt.Record) { r.Admission = &admission }); err != nil {
 		fail(err)
 		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err

@@ -20,6 +20,9 @@ type AdmitRequest struct {
 	// each one for the attempt and returns a launcher; one it cannot bind
 	// refuses the admission.
 	Uses []string `json:"uses,omitempty"`
+	// Nonce is echoed in the reply, so a reply is known to answer this
+	// request and no other.
+	Nonce string `json:"nonce,omitempty"`
 }
 
 // AdmitReply is the node's verdict, on the snapshot it just took. Error is
@@ -27,6 +30,7 @@ type AdmitRequest struct {
 type AdmitReply struct {
 	Admission ability.Admission `json:"admission"`
 	Bindings  []ability.Binding `json:"bindings,omitempty"`
+	Nonce     string            `json:"nonce,omitempty"`
 	Error     string            `json:"error,omitempty"`
 }
 

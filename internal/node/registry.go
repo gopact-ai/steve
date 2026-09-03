@@ -12,6 +12,8 @@ package node
 import (
 	"bytes"
 	"context"
+	cryptorand "crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/ability"
@@ -328,6 +330,9 @@ func (r *Registry) Admit(ctx context.Context, name string, req nodewire.AdmitReq
 		}
 		return adm, nil
 	}
+	var nonce [12]byte
+	_, _ = cryptorand.Read(nonce[:])
+	req.Nonce = hex.EncodeToString(nonce[:])
 	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamAdmit})
 	if err != nil {
 		return ability.Admission{}, fmt.Errorf("node %q: ask for admission: %w", name, err)
@@ -343,6 +348,9 @@ func (r *Registry) Admit(ctx context.Context, name string, req nodewire.AdmitReq
 	if reply.Error != "" {
 		return ability.Admission{}, fmt.Errorf("node %q: admission: %s", name, reply.Error)
 	}
+	if reply.Nonce != req.Nonce {
+		return ability.Admission{}, fmt.Errorf("node %q: admission reply answers another request", name)
+	}
 	c.bindingsMu.Lock()
 	if c.lastBindings == nil {
 		c.lastBindings = map[string][]ability.Binding{}
@@ -350,6 +358,27 @@ func (r *Registry) Admit(ctx context.Context, name string, req nodewire.AdmitReq
 	c.lastBindings[req.Attempt] = reply.Bindings
 	c.bindingsMu.Unlock()
 	return reply.Admission, nil
+}
+
+// Release tells a node an attempt is over: whatever it bound for the
+// attempt is dropped and stopped. A node without bindings has nothing to
+// release; a node that is gone has already lost them.
+func (r *Registry) Release(ctx context.Context, name, attempt string) error {
+	r.mu.Lock()
+	c := r.live[name]
+	r.mu.Unlock()
+	if c == nil || !c.alive() || !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureMCP) {
+		return nil
+	}
+	c.bindingsMu.Lock()
+	delete(c.lastBindings, attempt)
+	c.bindingsMu.Unlock()
+	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamRelease, Command: attempt})
+	if err != nil {
+		return fmt.Errorf("node %q: release %s: %w", name, attempt, err)
+	}
+	defer stream.Close()
+	return awaitExit(ctx, stream, name)
 }
 
 // Bindings are the launchers the node handed back for an attempt's

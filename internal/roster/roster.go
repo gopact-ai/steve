@@ -10,6 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -101,6 +102,25 @@ func New(catalog *agent.Catalog) *Roster { return &Roster{catalog: catalog} }
 type Admitter interface {
 	Admit(ctx context.Context, node string, req nodewire.AdmitRequest) (ability.Admission, error)
 	Bindings(ctx context.Context, node, attempt string) []ability.Binding
+	Release(ctx context.Context, node, attempt string) error
+}
+
+// Release ends an attempt's admission on its machine: the bindings made
+// for it go, and the servers behind them stop. The hub's own machine has
+// nothing to release.
+func (r *Roster) Release(ctx context.Context, node, attemptID string) {
+	if node == "" || attemptID == "" {
+		return
+	}
+	r.mu.RLock()
+	admitter, ok := r.nodes.(Admitter)
+	r.mu.RUnlock()
+	if !ok {
+		return
+	}
+	if err := admitter.Release(ctx, node, attemptID); err != nil {
+		log.Printf("roster: release %s on %s: %v", attemptID, node, err)
+	}
 }
 
 // Admit is the final check before an attempt runs on a candidate: the
@@ -162,7 +182,14 @@ func (r *Roster) Admit(ctx context.Context, c Candidate, requires []string, uses
 func ToMCP(bindings []ability.Binding) []acp.MCPServer {
 	out := make([]acp.MCPServer, 0, len(bindings))
 	for _, b := range bindings {
-		out = append(out, acp.StdioMCPServer(b.Name, b.Command, b.Args, nil))
+		switch b.Transport {
+		case "http":
+			out = append(out, acp.HTTPMCPServer(b.Name, b.URL, nil))
+		case "sse":
+			out = append(out, acp.SSEMCPServer(b.Name, b.URL, nil))
+		default:
+			out = append(out, acp.StdioMCPServer(b.Name, b.Command, b.Args, nil))
+		}
 	}
 	return out
 }
@@ -267,6 +294,9 @@ func (r *Roster) All(ctx context.Context) []Candidate {
 					c.Models = seen.Available
 					c.addModels(seen.Available, seen.Version, seen.At)
 				}
+				// A harness that answered over ACP works, not merely
+				// starts: the hub's own evidence, at the hub's own time.
+				c.markFunctional(seen.Version, seen.At)
 			}
 		}
 		out = append(out, c)
@@ -476,6 +506,26 @@ func (c *Candidate) addModels(models []string, version string, at time.Time) {
 		copied.Offers = append(copied.Offers, cap)
 	}
 	copied.Coverage[ability.Model] = ability.Complete
+	_ = ability.Validate(&copied)
+	c.Snapshot = &copied
+}
+
+// markFunctional raises the harness's assurance on a copy of the snapshot:
+// a session or probe reached it and it answered.
+func (c *Candidate) markFunctional(version string, at time.Time) {
+	if c.Snapshot == nil {
+		return
+	}
+	copied := *c.Snapshot
+	copied.Offers = append([]ability.Capability(nil), c.Snapshot.Offers...)
+	for i, o := range copied.Offers {
+		if o.Kind != ability.Harness || o.ID != c.Harness || o.Availability != ability.Available {
+			continue
+		}
+		o.Evidence = append(append([]ability.Evidence(nil), o.Evidence...), ability.Evidence{Kind: ability.Observed, Method: "acp", OK: true, Result: version, At: at})
+		o.Assurance = ability.Functional
+		copied.Offers[i] = o
+	}
 	_ = ability.Validate(&copied)
 	c.Snapshot = &copied
 }

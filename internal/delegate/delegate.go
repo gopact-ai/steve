@@ -424,6 +424,9 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		failAttempt(err)
 		return result, err
 	}
+	if len(bindings) > 0 {
+		defer s.roster.Release(context.WithoutCancel(ctx), candidate.Node, record.ID)
+	}
 	session, err := s.sessions.OpenSession(ctx, at, "", child.Workspace, append(caps.MCPServers, roster.ToMCP(bindings)...))
 	if err != nil {
 		s.finish(child.ID, task.OutcomeError)
