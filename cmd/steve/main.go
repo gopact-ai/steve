@@ -454,6 +454,7 @@ func serve(args []string) error {
 	fleet := roster.New(catalog)
 	fleet.SetNodes(nodes)
 	fleet.SetHubCapabilities(cfg.Gateway.Capabilities)
+	startHubLaunch(context.Background(), cfg)
 	fleet.SetHubAdvert(func() nodewire.Advert { return hubAdvert(cfg) })
 	fleet.SetHubLevel(cfg.HubLevel())
 	// What every harness was seen running, per machine: sessions report

@@ -6,6 +6,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -79,6 +80,8 @@ func (p *LaunchProbe) Wake() {
 
 func (p *LaunchProbe) pass(ctx context.Context, commands []string) {
 	seen := map[string]bool{}
+	checked, started := 0, 0
+	defer func() { log.Printf("steve-node: launch probe: %d binaries checked, %d start", checked, started) }()
 	for _, command := range commands {
 		if command == "" {
 			continue
@@ -92,6 +95,10 @@ func (p *LaunchProbe) pass(ctx context.Context, commands []string) {
 			return
 		}
 		r := Launch(ctx, path)
+		checked++
+		if r.OK {
+			started++
+		}
 		p.mu.Lock()
 		p.results[path] = r
 		p.mu.Unlock()
@@ -144,8 +151,22 @@ func Launch(ctx context.Context, path string) LaunchResult {
 	if r.OK {
 		r.Version = versionIn(out.String())
 	}
+	// A generic launcher — npx, python, sh — starts, but the version it
+	// prints is its own, and the thing it will run has not been checked.
+	if base := filepath.Base(path); r.OK && genericLauncher(base) {
+		r.Version = nil
+		r.Result = base + " starts; what it runs is not checked"
+	}
 	return r
 }
+
+var launchers = map[string]bool{
+	"npx": true, "npm": true, "node": true, "bun": true, "bunx": true, "deno": true,
+	"python": true, "python3": true, "uv": true, "uvx": true, "pipx": true,
+	"sh": true, "bash": true, "zsh": true, "env": true,
+}
+
+func genericLauncher(base string) bool { return launchers[base] }
 
 func unrunnable(out string) bool {
 	for _, sign := range []string{"error while loading shared libraries", "cannot execute binary file", "Exec format error", "No such file or directory", "Permission denied"} {
