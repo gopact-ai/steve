@@ -242,7 +242,8 @@ node 连上时与技能变更时下发、校验、物化到每个 home，并在�
 放置只是决定；每次执行前，机器要在**此刻**的观测上对它拥有的条款做终审（`execution_admission.v1`），hub 判它拥有的
 （模型、hub 本机），结果连同快照版本写进 Attempt。不满足时原因是结构化的：`steve_delegate` 返回
 `{code, retryable, failures[{agent, node, reasons[{atom, code}]}]}`；`steve_fleet(requires)` 能先看谁满足、其他人缺什么。
-清单变化记进历史；一台 node 一次只服务一个 hub。
+清单变化记进历史；一台 node 一次只服务一个 hub，并记住它：hub 静默（没有干净断开）10 分钟内别的 hub 连不上，
+`steve-node adopt <hub>` 可显式移交。
 
 ## 计划与协作
 
@@ -326,7 +327,7 @@ REPLAN 触发修订并复用已完成步骤、规划 agent 自动拆解、以及
 约 10 分钟，花真 token。
 
 ```bash
-# 先停掉正在用这两台 node 的 hub：一台 node 一次只服务一个 hub
+# 先停掉正在用这两台 node 的 hub：一台 node 一次只服务一个 hub（干净停掉即交还；hub 崩溃后要等 10 分钟或 steve-node adopt）
 STEVE_MESH_E2E=1 STEVE_MESH_NODE_A=host-a:7701 STEVE_MESH_NODE_B=host-b:7701   go test ./e2e/mesh/ -v
 ```
 
