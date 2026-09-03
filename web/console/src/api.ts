@@ -19,7 +19,13 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export async function fetchState(): Promise<Snapshot> {
-  return json<Snapshot>(await fetch(`./state${q}`, { headers }));
+  const s = await json<Snapshot>(await fetch(`./state${q}`, { headers }));
+  // An older hub may say null where this page expects a list.
+  s.nodes ??= []; s.agents ??= []; s.tasks ??= []; s.plans ??= []; s.attempts ??= []; s.landings ??= [];
+  s.facts ??= { reservations: [], attestations: [], replicas: [], disclosures: [], effects: [], grants: [] };
+  for (const k of ["reservations", "attestations", "replicas", "disclosures", "effects", "grants"] as const) s.facts[k] ??= [];
+  for (const p of s.plans) p.steps ??= [];
+  return s;
 }
 
 export async function fetchReplies(conversation: string): Promise<{ enabled: boolean; replies: Reply[] }> {

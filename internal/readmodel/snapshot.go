@@ -42,6 +42,18 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	}
 	// Absence is a fact too: every list is present, empty or not, so a
 	// renderer never has to guess whether "none" meant "not asked".
+	if snap.Nodes == nil {
+		snap.Nodes = []Node{}
+	}
+	if snap.Agents == nil {
+		snap.Agents = []Agent{}
+	}
+	if snap.Tasks == nil {
+		snap.Tasks = []Task{}
+	}
+	if snap.Plans == nil {
+		snap.Plans = []Plan{}
+	}
 	snap.Attempts, snap.Landings = []Attempt{}, []Landing{}
 	snap.Facts = Facts{Reservations: []Reservation{}, Attestations: []Attestation{}, Replicas: []Replica{}, Disclosures: []Disclosure{}, Effects: []Effect{}, Grants: []Grant{}}
 	if m.src.Ledger != nil {
