@@ -227,7 +227,9 @@ MCP 服务器定义在拥有它的机器上，env 不出机器，也不注入 ag
 agent 配置 `mcp_servers: ["fs"]` 指的是**它所在机器**的 `fs`；准入时 node 为该次执行发一个 binding，会话里 MCP 的启动命令只是
 `steve-node mcp-launch -socket … <binding>`，broker 再用本机的 env 起真正的服务器并把两头接起来。node 没有这个服务器就拒绝准入；
 hub 本机的 agent 仍用 hub 自己的 `mcp_servers{}`。http / sse 类型的 MCP 经 node 本机回环代理转发并注入 `headers`，
-会话里只看到 `http://127.0.0.1:<port>/b/<binding>`。binding 随这次执行结束一起释放。旧的 `capabilities: ["gpu"]` 仍可用，
+会话里只看到 `http://127.0.0.1:<port>/b/<binding>`。binding 随这次执行结束一起释放。要把秘密和 node 进程彻底分开，
+用 `steve-node mcp-broker -config mcp.json` 以另一个用户单独跑 broker（mcp.json 放 `socket`、`token`、`mcp_servers`），
+node.json 里改成 `mcp_broker: {"socket": "…", "token": "…"}`，node 本身就不再持有任何 MCP 配置。旧的 `capabilities: ["gpu"]` 仍可用，
 等价于 `tag:gpu`。
 
 计划步骤和 `steve_delegate` 的 `requires` 用同一套选择器：`tool:docker`、`hardware:gpu`、`model:claude*`、`a|b`、`!x`、
