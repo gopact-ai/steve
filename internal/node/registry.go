@@ -321,6 +321,13 @@ func (r *Registry) Admit(ctx context.Context, name string, req nodewire.AdmitReq
 	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureAdmission) {
 		return ability.Admission{Node: name, Source: ability.SourceLegacy, Verdict: ability.Unsure, Code: ability.CodeNoAdmission, At: time.Now().UTC()}, nil
 	}
+	if len(req.Uses) > 0 && !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureMCP) {
+		adm := ability.Admission{Node: name, Source: ability.SourceLegacy, Verdict: ability.False, Code: ability.CodeNoBinding, At: time.Now().UTC()}
+		for _, id := range req.Uses {
+			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: "mcp:" + id, Verdict: ability.False, Code: ability.CodeNoBinding})
+		}
+		return adm, nil
+	}
 	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamAdmit})
 	if err != nil {
 		return ability.Admission{}, fmt.Errorf("node %q: ask for admission: %w", name, err)
@@ -336,7 +343,27 @@ func (r *Registry) Admit(ctx context.Context, name string, req nodewire.AdmitReq
 	if reply.Error != "" {
 		return ability.Admission{}, fmt.Errorf("node %q: admission: %s", name, reply.Error)
 	}
+	c.bindingsMu.Lock()
+	if c.lastBindings == nil {
+		c.lastBindings = map[string][]ability.Binding{}
+	}
+	c.lastBindings[req.Attempt] = reply.Bindings
+	c.bindingsMu.Unlock()
 	return reply.Admission, nil
+}
+
+// Bindings are the launchers the node handed back for an attempt's
+// admission, taken once: they go into session/new and nowhere else.
+func (r *Registry) Bindings(ctx context.Context, name, attempt string) []ability.Binding {
+	c, err := r.connect(ctx, name)
+	if err != nil {
+		return nil
+	}
+	c.bindingsMu.Lock()
+	defer c.bindingsMu.Unlock()
+	out := c.lastBindings[attempt]
+	delete(c.lastBindings, attempt)
+	return out
 }
 
 // PushSkills sends a skill bundle to a node and has it materialized. A

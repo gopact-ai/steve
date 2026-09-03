@@ -23,7 +23,18 @@ type Admission struct {
 	Sequence   int64        `json:"sequence,omitempty"`
 	Digest     string       `json:"digest,omitempty"`
 	Atoms      []AtomResult `json:"atoms,omitempty"`
-	At         time.Time    `json:"at"`
+	// Bound names the MCP servers the machine bound for this attempt's
+	// session. The bindings themselves are not kept: they are keys.
+	Bound []string  `json:"bound,omitempty"`
+	At    time.Time `json:"at"`
+}
+
+// Binding is how a session reaches one MCP server the machine bound for
+// it: a launcher command the agent can run, which carries no secret.
+type Binding struct {
+	Name    string   `json:"name"`
+	Command string   `json:"command"`
+	Args    []string `json:"args,omitempty"`
 }
 
 const (
@@ -34,6 +45,9 @@ const (
 
 	// CodeAdmitted is the code of a verdict that found nothing wanting.
 	CodeAdmitted Code = "ADMITTED"
+	// CodeNoBinding says the work needs an MCP server bound on the machine
+	// and the machine does not bind them: an older node.
+	CodeNoBinding Code = "NO_MCP_BINDING"
 	// CodeNoAdmission says the machine could not be asked: an older node,
 	// or a source that cannot re-observe. The verdict is Unsure.
 	CodeNoAdmission Code = "NO_ADMISSION"

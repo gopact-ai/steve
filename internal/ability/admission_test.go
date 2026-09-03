@@ -47,7 +47,7 @@ func TestAdmissionOfRecordsTheRevisionAndCode(t *testing.T) {
 	if !adm.Refused() || adm.Code != CodeAbsent || adm.Unmet() == "" {
 		t.Fatalf("refused = %+v", adm)
 	}
-	unsure, _ := Compile([]string{"mcp:github"})
+	unsure, _ := Compile([]string{"credential:prod"})
 	adm = AdmissionOf(Match(unsure, snap, "codex", now), snap, SourceHub, now)
 	if adm.OK() || adm.Refused() || adm.Code != CodeGated {
 		t.Fatalf("unsure = %+v", adm)

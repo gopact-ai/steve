@@ -24,6 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/gopact/workflow"
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -41,6 +42,9 @@ const maxParallelSteps = 8
 
 // StepRequest is one step handed to whatever actually drives agents.
 type StepRequest struct {
+	// MCP are the servers the machine bound for this step's session, as
+	// launchers, on top of what the agent's capabilities assemble.
+	MCP    []acp.MCPServer
 	TaskID string
 	PlanID string
 	StepID string
@@ -644,7 +648,7 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 	// Placement was a decision on a snapshot; admission is the machine's
 	// word on what it has now. A refusal fails this attempt and sends the
 	// step back to placement, which will not pick the same agent first.
-	admission, err := deps.Roster.Admit(ctx, candidate, step.Requires, record.ID)
+	admission, bindings, err := deps.Roster.Admit(ctx, candidate, step.Requires, candidate.Agent.MCPServers, record.ID)
 	if err != nil {
 		fail(err)
 		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
@@ -655,6 +659,7 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 		fail(err)
 		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
 	}
+	req.MCP = roster.ToMCP(bindings)
 	if _, err := deps.Attempts.Advance(ctx, record.ID, attempt.Prepared, "exec", func(r *attempt.Record) { r.Admission = &admission }); err != nil {
 		fail(err)
 		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err

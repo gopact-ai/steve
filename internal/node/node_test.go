@@ -1,7 +1,9 @@
 package node
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
@@ -552,5 +554,99 @@ func TestSkillsArePushedAndMaterialized(t *testing.T) {
 	bad.Hash = "0000000000000000000000000000000000000000000000000000000000000000"
 	if err := registry.PushSkills(t.Context(), "host-8", bad); err == nil {
 		t.Fatal("a bundle whose bytes do not match its hash was applied")
+	}
+}
+
+// An MCP server's command and credentials stay on the node. Admission
+// with uses binds the server for the attempt and hands back a launcher
+// that names only this binary, the broker socket and a binding id; the
+// launcher reaches the real server, started by the node with its env, and
+// nothing the hub receives carries the secret. A server the node does not
+// have refuses the admission; a binding the broker never minted goes
+// nowhere.
+func TestMCPBindingKeepsSecretsOnTheNode(t *testing.T) {
+	bin := buildMockAgent(t)
+	state := t.TempDir()
+	server := startNode(t, ServerConfig{
+		Name: "host-9", Token: "tok", StateDir: state,
+		Harnesses: map[string]HarnessSpec{"codex": {Command: bin}},
+		MCPServers: map[string]MCPSpec{
+			"echo": {Type: "stdio", Command: "sh", Args: []string{"-c", `read line; echo "got $line via $TOKEN"`}, Env: map[string]string{"TOKEN": "SECRET-42"}},
+			"web":  {Type: "http", URL: "http://127.0.0.1:1/mcp"},
+		},
+	})
+	registry := NewRegistry("hub-1", map[string]Config{"host-9": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(registry.Close)
+	advert, err := registry.Advert(t.Context(), "host-9")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw, _ := json.Marshal(advert); strings.Contains(string(raw), "SECRET-42") {
+		t.Fatal("the advert carries the MCP secret")
+	}
+	if !nodewire.HasFeature(advert.Features, nodewire.FeatureMCP) {
+		t.Fatalf("features = %v", advert.Features)
+	}
+	var echo, web ability.Capability
+	for _, c := range advert.Snapshot.Offers {
+		if c.Kind == ability.MCP && c.Scope == "codex" {
+			switch c.ID {
+			case "echo":
+				echo = c
+			case "web":
+				web = c
+			}
+		}
+	}
+	if echo.Availability != ability.Available || web.Availability != ability.Unknown {
+		t.Fatalf("echo = %s, web = %s; stdio binds, http does not yet", echo.Availability, web.Availability)
+	}
+
+	req, _ := ability.Compile(nil)
+	adm, err := registry.Admit(t.Context(), "host-9", nodewire.AdmitRequest{Attempt: "a-mcp", Harness: "codex", Requirement: req, Uses: []string{"echo"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !adm.OK() || len(adm.Bound) != 1 || adm.Bound[0] != "echo" {
+		t.Fatalf("admission = %+v", adm)
+	}
+	bindings := registry.Bindings(t.Context(), "host-9", "a-mcp")
+	if len(bindings) != 1 || bindings[0].Name != "echo" || len(bindings[0].Args) != 4 || bindings[0].Args[0] != LaunchVerb {
+		t.Fatalf("bindings = %+v", bindings)
+	}
+	if raw, _ := json.Marshal(bindings); strings.Contains(string(raw), "SECRET-42") || strings.Contains(string(raw), "TOKEN") {
+		t.Fatal("the binding carries the secret")
+	}
+	if again := registry.Bindings(t.Context(), "host-9", "a-mcp"); again != nil {
+		t.Fatal("bindings were handed out twice")
+	}
+	socket, id := bindings[0].Args[2], bindings[0].Args[3]
+	var out bytes.Buffer
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := LaunchBinding(ctx, socket, id, strings.NewReader("hello\n"), &out); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.TrimSpace(out.String()); got != "got hello via SECRET-42" {
+		t.Fatalf("through the broker: %q", got)
+	}
+	out.Reset()
+	if err := LaunchBinding(ctx, socket, "not-a-binding", strings.NewReader("hello\n"), &out); err != nil || out.Len() != 0 {
+		t.Fatalf("an unknown binding produced %q, %v", out.String(), err)
+	}
+
+	adm, err = registry.Admit(t.Context(), "host-9", nodewire.AdmitRequest{Attempt: "a-missing", Harness: "codex", Requirement: req, Uses: []string{"echo", "github"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !adm.Refused() || adm.Code != ability.CodeAbsent || len(adm.Bound) != 0 {
+		t.Fatalf("a server the node lacks should refuse: %+v", adm)
+	}
+	if registry.Bindings(t.Context(), "host-9", "a-missing") != nil {
+		t.Fatal("a refused admission handed out bindings")
+	}
+	adm, _ = registry.Admit(t.Context(), "host-9", nodewire.AdmitRequest{Attempt: "a-http", Harness: "codex", Requirement: req, Uses: []string{"web"}})
+	if !adm.Refused() || adm.Code != ability.CodeUnavailable {
+		t.Fatalf("an http server should refuse until the node proxies it: %+v", adm)
 	}
 }

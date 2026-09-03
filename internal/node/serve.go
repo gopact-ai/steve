@@ -100,6 +100,9 @@ type Server struct {
 	seq        int64
 	// launch checks that offered binaries start, in the background.
 	launch *LaunchProbe
+	// bindings are the MCP bindings minted at admission, by id.
+	bindMu   sync.Mutex
+	bindings map[string]mcpBinding
 	// hub is the hub currently served. A second hub is refused: two hubs
 	// placing work on one machine would each believe they own its slots.
 	hubMu   sync.Mutex
@@ -144,6 +147,13 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 	}
 	go s.launch.Run(ctx, s.commands)
+	if len(s.cfg.MCPServers) > 0 {
+		go func() {
+			if err := s.serveBroker(ctx); err != nil {
+				log.Printf("steve-node: %v", err)
+			}
+		}()
+	}
 	for {
 		socket, err := listener.Accept()
 		if err != nil {
@@ -524,8 +534,43 @@ func (s *Server) admit(stream *nodewire.Stream) {
 	now := time.Now().UTC()
 	m := ability.Match(req.Requirement, snap, req.Harness, now)
 	adm := ability.AdmissionOf(m, snap, ability.SourceNode, now)
-	log.Printf("steve-node: admission for attempt %s (%s): %s at %d/%d", req.Attempt, req.Harness, adm.Verdict, snap.Generation, snap.Sequence)
-	if err := json.NewEncoder(stream).Encode(nodewire.AdmitReply{Admission: adm}); err != nil {
+	// What the session will use is bound now, or the admission fails: a
+	// server this machine does not have, or cannot start for a session,
+	// is a definite no.
+	var bindings []ability.Binding
+	for _, id := range req.Uses {
+		spec, ok := s.cfg.MCPServers[id]
+		atom := "mcp:" + id
+		switch {
+		case !ok:
+			adm.Verdict, adm.Code = ability.False, ability.CodeAbsent
+			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: atom, Verdict: ability.False, Code: ability.CodeAbsent})
+		case spec.Type != "stdio" && spec.Type != "":
+			adm.Verdict, adm.Code = ability.False, ability.CodeUnavailable
+			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: atom, Verdict: ability.False, Code: ability.CodeUnavailable})
+		default:
+			if adm.Verdict != ability.True {
+				continue
+			}
+			b, err := s.bind(id, req.Attempt, req.Harness)
+			if err != nil {
+				_ = json.NewEncoder(stream).Encode(nodewire.AdmitReply{Error: "bind " + id + ": " + err.Error()})
+				return
+			}
+			d, err := s.descriptor(b)
+			if err != nil {
+				_ = json.NewEncoder(stream).Encode(nodewire.AdmitReply{Error: "describe binding: " + err.Error()})
+				return
+			}
+			bindings = append(bindings, d)
+			adm.Bound = append(adm.Bound, id)
+		}
+	}
+	if adm.Verdict != ability.True {
+		bindings, adm.Bound = nil, nil
+	}
+	log.Printf("steve-node: admission for attempt %s (%s): %s at %d/%d, bound %v", req.Attempt, req.Harness, adm.Verdict, snap.Generation, snap.Sequence, adm.Bound)
+	if err := json.NewEncoder(stream).Encode(nodewire.AdmitReply{Admission: adm, Bindings: bindings}); err != nil {
 		log.Printf("steve-node: admission reply: %v", err)
 	}
 }
@@ -597,11 +642,10 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 			case "stdio", "":
 				c = observed(ability.MCP, id, spec.Command)
 			case "http", "sse":
-				ok := strings.HasPrefix(spec.URL, "http://") || strings.HasPrefix(spec.URL, "https://")
-				c = ability.Capability{Kind: ability.MCP, ID: id, Assurance: ability.Existence, Evidence: []ability.Evidence{{Kind: ability.Observed, Method: "url", OK: ok, At: now}}}
-				if !ok {
-					c.Detail = "url is not http(s)"
-				}
+				// The broker binds stdio servers only; an HTTP server here
+				// is known about, not yet usable through a binding.
+				c = ability.Capability{Kind: ability.MCP, ID: id, Evidence: []ability.Evidence{{Kind: ability.Declared, Method: "config", OK: true}},
+					Detail: spec.Type + " MCP servers are not bound by the node yet", Attrs: map[string]string{"transport": spec.Type}}
 			default:
 				c = ability.Capability{Kind: ability.MCP, ID: id, Evidence: []ability.Evidence{{Kind: ability.Observed, Method: "config", OK: false, Result: "unknown type " + spec.Type, At: now}}, Detail: "unknown type " + spec.Type}
 			}

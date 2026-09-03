@@ -8,6 +8,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -19,6 +20,10 @@ type conn struct {
 
 	advMu  sync.RWMutex
 	advert nodewire.Advert
+	// lastBindings are the MCP launchers a node handed back per attempt
+	// at admission, held until the session open takes them.
+	bindingsMu   sync.Mutex
+	lastBindings map[string][]ability.Binding
 
 	closeOnce sync.Once
 }

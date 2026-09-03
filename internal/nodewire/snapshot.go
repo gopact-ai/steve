@@ -16,12 +16,17 @@ type AdmitRequest struct {
 	Requirement ability.Requirement `json:"requirement"`
 	Generation  int64               `json:"generation,omitempty"`
 	Sequence    int64               `json:"sequence,omitempty"`
+	// Uses names the MCP servers the session will use: the node binds
+	// each one for the attempt and returns a launcher; one it cannot bind
+	// refuses the admission.
+	Uses []string `json:"uses,omitempty"`
 }
 
 // AdmitReply is the node's verdict, on the snapshot it just took. Error is
 // set when the node could not evaluate at all.
 type AdmitReply struct {
 	Admission ability.Admission `json:"admission"`
+	Bindings  []ability.Binding `json:"bindings,omitempty"`
 	Error     string            `json:"error,omitempty"`
 }
 
@@ -36,10 +41,16 @@ const (
 	// tar the hub puts in its blob directory and asks it to materialize
 	// into every harness home it isolates.
 	FeatureSkills = "skill_bundle.v1"
+	// FeatureMCP says the node binds its own MCP servers at admission and
+	// hands back a secret-free launcher for each, instead of the hub
+	// shipping commands and env in session/new.
+	FeatureMCP = "node_mcp_binding.v1"
 )
 
 // Features is what this build supports.
-func Features() []string { return []string{FeatureManifest, FeatureAdmission, FeatureSkills} }
+func Features() []string {
+	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP}
+}
 
 // HasFeature says whether a list names a feature.
 func HasFeature(list []string, feature string) bool {

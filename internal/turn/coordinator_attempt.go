@@ -7,6 +7,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -18,10 +19,11 @@ import (
 // openAttempt leases a chat turn on the project's canonical workspace. A
 // project someone else is editing in place right now is refused with who
 // holds it and the two ways out.
-func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected agent.Agent, taskID string, binding project.Binding, workspace project.Workspace) (attempt.Record, error) {
+func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected agent.Agent, taskID string, binding project.Binding, workspace project.Workspace) (attempt.Record, []acp.MCPServer, error) {
 	if c.attempts == nil {
-		return attempt.Record{}, errors.New("turn: attempts are not wired")
+		return attempt.Record{}, nil, errors.New("turn: attempts are not wired")
 	}
+	var bound []acp.MCPServer
 	spec := attempt.Spec{
 		TaskID: taskID, TurnID: req.MessageID, Kind: attempt.KindChat, Project: binding.ProjectID,
 		Node: selected.Node, Harness: selected.Harness, Agent: selected.ID,
@@ -42,7 +44,7 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 				spec.CanonicalRegion = c.fleet.RegionOf(p.Home.Node)
 			}
 			if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok && !p.Level.OrDefault().Admits(cand.Level.OrDefault()) {
-				return attempt.Record{}, UserError{Text: c.text.T(i18n.ProjectLevel, p.ID, p.Level.OrDefault(), selected.ID, placeLabel(selected.Node), cand.Level.OrDefault(), protocol.CommandProject)}
+				return attempt.Record{}, nil, UserError{Text: c.text.T(i18n.ProjectLevel, p.ID, p.Level.OrDefault(), selected.ID, placeLabel(selected.Node), cand.Level.OrDefault(), protocol.CommandProject)}
 			}
 		}
 	}
@@ -53,16 +55,17 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 		// own word on the agent's requirements, taken now, kept on the
 		// record. A refusal ends the turn before a session is opened.
 		if chosen != nil {
-			adm, aerr := c.fleet.Admit(ctx, *chosen, selected.Requires, record.ID)
+			adm, bindings, aerr := c.fleet.Admit(ctx, *chosen, selected.Requires, selected.MCPServers, record.ID)
 			if aerr != nil {
 				_, _ = c.attempts.Fail(ctx, record.ID, "turn", "admission: "+aerr.Error())
-				return attempt.Record{}, fmt.Errorf("admission on %s: %w", placeLabel(selected.Node), aerr)
+				return attempt.Record{}, nil, fmt.Errorf("admission on %s: %w", placeLabel(selected.Node), aerr)
 			}
 			if adm.Refused() {
 				_, _ = c.attempts.Fail(ctx, record.ID, "turn", "admission refused: "+adm.Unmet())
-				return attempt.Record{}, UserError{Text: c.text.T(i18n.AdmissionRefused, selected.ID, placeLabel(selected.Node), adm.Unmet())}
+				return attempt.Record{}, nil, UserError{Text: c.text.T(i18n.AdmissionRefused, selected.ID, placeLabel(selected.Node), adm.Unmet())}
 			}
 			record.Admission = &adm
+			bound = roster.ToMCP(bindings)
 		}
 		// The before-snapshot is the precondition of running in place: what
 		// the turn changes is measured against it.
@@ -71,7 +74,7 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 				before, _, serr := c.artifacts.SnapshotCanonical(ctx, p, c.artifacts.CanonicalOf(ctx, p.ID), record.ID, "before turn "+req.MessageID)
 				if serr != nil {
 					_, _ = c.attempts.Fail(ctx, record.ID, "turn", "before-snapshot: "+serr.Error())
-					return attempt.Record{}, fmt.Errorf("before-snapshot: %w", serr)
+					return attempt.Record{}, nil, fmt.Errorf("before-snapshot: %w", serr)
 				}
 				admission := record.Admission
 				prepared, aerr := c.attempts.Advance(ctx, record.ID, attempt.Prepared, "turn", func(r *attempt.Record) { r.Base = before.ID; r.Admission = admission })
@@ -80,7 +83,7 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 				}
 			}
 		}
-		return record, nil
+		return record, bound, nil
 	}
 	var busy attempt.Busy
 	if errors.As(err, &busy) {
@@ -88,9 +91,9 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 		if holder, herr := c.attempts.Get(ctx, busy.Holder); herr == nil {
 			holderAgent, holderTask = holder.Agent, holder.TaskID
 		}
-		return attempt.Record{}, UserError{Text: c.text.T(i18n.ProjectBusy, binding.ProjectID, holderAgent, holderTask, protocol.CommandProject)}
+		return attempt.Record{}, nil, UserError{Text: c.text.T(i18n.ProjectBusy, binding.ProjectID, holderAgent, holderTask, protocol.CommandProject)}
 	}
-	return attempt.Record{}, fmt.Errorf("open attempt: %w", err)
+	return attempt.Record{}, nil, fmt.Errorf("open attempt: %w", err)
 }
 
 // advanceAttempt moves the turn's attempt; a refusal here means the lease

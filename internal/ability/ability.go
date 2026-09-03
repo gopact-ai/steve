@@ -75,7 +75,7 @@ func (k Kind) Schedulable() bool {
 		return true
 	}
 	switch k {
-	case MCP, A2A, Network, Credential:
+	case A2A, Network, Credential:
 		return false
 	}
 	return true

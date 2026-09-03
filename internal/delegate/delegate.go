@@ -411,7 +411,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	}
 	// The machine's final word on the requirement, taken now, before a
 	// session is opened there.
-	admission, err := s.roster.Admit(ctx, candidate, req.Requires, record.ID)
+	admission, bindings, err := s.roster.Admit(ctx, candidate, req.Requires, candidate.Agent.MCPServers, record.ID)
 	if err != nil {
 		s.finish(child.ID, task.OutcomeError)
 		failAttempt(err)
@@ -424,7 +424,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		failAttempt(err)
 		return result, err
 	}
-	session, err := s.sessions.OpenSession(ctx, at, "", child.Workspace, caps.MCPServers)
+	session, err := s.sessions.OpenSession(ctx, at, "", child.Workspace, append(caps.MCPServers, roster.ToMCP(bindings)...))
 	if err != nil {
 		s.finish(child.ID, task.OutcomeError)
 		failAttempt(err)

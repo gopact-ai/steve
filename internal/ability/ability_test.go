@@ -104,7 +104,7 @@ func TestMatchIsThreeValuedAndScoped(t *testing.T) {
 		{"tool:gh|tool:docker", "", True, ""},
 		{"gpu", "", False, CodeAbsent}, // tag, not hardware
 		{"hardware:gpu", "", True, ""},
-		{"mcp:github", "codex", Unsure, CodeGated},
+		{"a2a:peer", "", Unsure, CodeGated},
 	}
 	for _, tc := range cases {
 		req, err := Compile([]string{tc.req})

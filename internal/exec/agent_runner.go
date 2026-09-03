@@ -75,6 +75,7 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (plan.StepRe
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
+	servers = append(servers, req.MCP...)
 	session, err := a.sessions.OpenSession(ctx, at, "", req.Workspace, servers)
 	if err != nil {
 		return plan.StepResult{}, fmt.Errorf("open session on %s: %w", at, err)

@@ -114,6 +114,12 @@ func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras [
 	}
 	servers := make([]acp.MCPServer, 0, len(selected.MCPServers))
 	for _, name := range selected.MCPServers {
+		// An agent on another machine uses that machine's MCP servers:
+		// they are bound there at admission and joined to the session by
+		// the caller. Nothing about them is known, or checked, here.
+		if selected.Node != "" {
+			continue
+		}
 		cfg, ok := a.servers[name]
 		if !ok {
 			return Capabilities{}, fmt.Errorf("unknown MCP server %q", name)

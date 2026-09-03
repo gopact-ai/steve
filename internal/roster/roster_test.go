@@ -316,6 +316,8 @@ type admittingNodes struct {
 	asked  []nodewire.AdmitRequest
 }
 
+func (a *admittingNodes) Bindings(context.Context, string, string) []ability.Binding { return nil }
+
 func (a *admittingNodes) Admit(_ context.Context, name string, req nodewire.AdmitRequest) (ability.Admission, error) {
 	a.asked = append(a.asked, req)
 	adm := ability.Admission{Node: name, Source: ability.SourceNode, Verdict: ability.True, Code: ability.CodeAdmitted, Generation: 9, Sequence: 2, At: time.Now()}
@@ -344,7 +346,7 @@ func TestAdmissionAsksTheNodeForItsOwnClauses(t *testing.T) {
 	if builder.Agent.ID == "" {
 		t.Fatal("builder not in the roster")
 	}
-	adm, err := r.Admit(t.Context(), builder, []string{"tool:docker", "model:gpt-5"}, "att-1")
+	adm, _, err := r.Admit(t.Context(), builder, []string{"tool:docker", "model:gpt-5"}, nil, "att-1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +357,7 @@ func TestAdmissionAsksTheNodeForItsOwnClauses(t *testing.T) {
 		t.Fatalf("node was asked %+v, want only tool:docker for mock", nodes.asked)
 	}
 	// The hub refuses what it owns without asking the node.
-	adm, err = r.Admit(t.Context(), builder, []string{"tool:docker", "model:claude*"}, "att-2")
+	adm, _, err = r.Admit(t.Context(), builder, []string{"tool:docker", "model:claude*"}, nil, "att-2")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -364,7 +366,7 @@ func TestAdmissionAsksTheNodeForItsOwnClauses(t *testing.T) {
 	}
 	// A node's refusal is the verdict.
 	nodes.refuse = true
-	adm, err = r.Admit(t.Context(), builder, []string{"tool:docker"}, "att-3")
+	adm, _, err = r.Admit(t.Context(), builder, []string{"tool:docker"}, nil, "att-3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -373,7 +375,7 @@ func TestAdmissionAsksTheNodeForItsOwnClauses(t *testing.T) {
 	}
 	// A source that cannot be asked yields a cached verdict, never an error.
 	r.SetNodes(fakeNodes{statuses: nodes.statuses})
-	adm, err = r.Admit(t.Context(), builder, []string{"gpu"}, "att-4")
+	adm, _, err = r.Admit(t.Context(), builder, []string{"gpu"}, nil, "att-4")
 	if err != nil || adm.Source != ability.SourceCached || !adm.OK() {
 		t.Fatalf("cached admission = %+v, %v", adm, err)
 	}

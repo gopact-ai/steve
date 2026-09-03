@@ -15,6 +15,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/models"
@@ -99,6 +100,7 @@ func New(catalog *agent.Catalog) *Roster { return &Roster{catalog: catalog} }
 // verdict from the hub's last accepted snapshot, marked as such.
 type Admitter interface {
 	Admit(ctx context.Context, node string, req nodewire.AdmitRequest) (ability.Admission, error)
+	Bindings(ctx context.Context, node, attempt string) []ability.Binding
 }
 
 // Admit is the final check before an attempt runs on a candidate: the
@@ -106,36 +108,63 @@ type Admitter interface {
 // machine) on the candidate's snapshot; the node re-checks the clauses it
 // owns on an observation taken now. The first refusal wins; a node that
 // cannot be asked leaves the verdict Unsure with its source saying why.
-func (r *Roster) Admit(ctx context.Context, c Candidate, requires []string, attemptID string) (ability.Admission, error) {
+//
+// uses names the MCP servers the session will use. Each is a hard
+// requirement (mcp:<id>) on top of requires; on a node, each is also bound
+// at admission and the launchers come back with the verdict. On the hub's
+// own machine the servers are the hub's configuration, so no binding is
+// needed.
+func (r *Roster) Admit(ctx context.Context, c Candidate, requires []string, uses []string, attemptID string) (ability.Admission, []ability.Binding, error) {
 	now := time.Now().UTC()
-	req, err := ability.Compile(requires)
+	all := append([]string(nil), requires...)
+	for _, id := range uses {
+		all = append(all, "mcp:"+id)
+	}
+	req, err := ability.Compile(all)
 	if err != nil {
-		return ability.Admission{}, err
+		return ability.Admission{}, nil, err
 	}
 	if c.Node == "" {
-		return ability.AdmissionOf(c.Match(req), c.Snapshot, ability.SourceHub, now), nil
+		adm := ability.AdmissionOf(c.Match(req), c.Snapshot, ability.SourceHub, now)
+		if adm.OK() {
+			adm.Bound = append([]string(nil), uses...)
+		}
+		return adm, nil, nil
 	}
 	mine, rest := ability.Partition(req, ability.NodeOwned)
 	if !rest.Empty() {
 		if m := ability.Match(rest, c.Snapshot, c.Harness, now); m.Verdict == ability.False {
-			return ability.AdmissionOf(m, c.Snapshot, ability.SourceHub, now), nil
+			return ability.AdmissionOf(m, c.Snapshot, ability.SourceHub, now), nil, nil
 		}
 	}
 	r.mu.RLock()
 	admitter, ok := r.nodes.(Admitter)
 	r.mu.RUnlock()
-	if !ok || mine.Empty() {
+	if !ok || (mine.Empty() && len(uses) == 0) {
 		source := ability.SourceCached
 		if mine.Empty() {
 			source = ability.SourceHub
 		}
-		return ability.AdmissionOf(ability.Match(req, c.Snapshot, c.Harness, now), c.Snapshot, source, now), nil
+		return ability.AdmissionOf(ability.Match(req, c.Snapshot, c.Harness, now), c.Snapshot, source, now), nil, nil
 	}
-	ask := nodewire.AdmitRequest{Attempt: attemptID, Harness: c.Harness, Requirement: mine}
+	ask := nodewire.AdmitRequest{Attempt: attemptID, Harness: c.Harness, Requirement: mine, Uses: uses}
 	if c.Snapshot != nil {
 		ask.Generation, ask.Sequence = c.Snapshot.Generation, c.Snapshot.Sequence
 	}
-	return admitter.Admit(ctx, c.Node, ask)
+	adm, err := admitter.Admit(ctx, c.Node, ask)
+	if err != nil || !adm.OK() {
+		return adm, nil, err
+	}
+	return adm, admitter.Bindings(ctx, c.Node, attemptID), nil
+}
+
+// ToMCP turns bindings into the MCP servers a session is opened with.
+func ToMCP(bindings []ability.Binding) []acp.MCPServer {
+	out := make([]acp.MCPServer, 0, len(bindings))
+	for _, b := range bindings {
+		out = append(out, acp.StdioMCPServer(b.Name, b.Command, b.Args, nil))
+	}
+	return out
 }
 
 func (r *Roster) SetNodes(nodes NodeSource) {

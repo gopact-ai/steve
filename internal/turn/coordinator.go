@@ -431,10 +431,11 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	// workspace, renewed while it runs, and closed with whatever happened.
 	// A lost lease cancels the turn, because nothing done after it could
 	// be recorded.
-	att, err := c.openAttempt(ctx, req, selected, tracked, binding, workspace)
+	att, bound, err := c.openAttempt(ctx, req, selected, tracked, binding, workspace)
 	if err != nil {
 		return Result{}, err
 	}
+	servers := append(append([]acp.MCPServer(nil), capabilities.MCPServers...), bound...)
 	beat, stopBeat := context.WithCancel(ctx)
 	defer stopBeat()
 	lost := c.attempts.Heartbeat(beat, att.ID)
@@ -448,7 +449,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}()
 	defer func() { c.closeAttempt(parent, att.ID, result, err, spent) }()
 	req.phase(view.PhaseWaking)
-	runner, err := c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
+	runner, err := c.open(ctx, saved, selected, workspace.Path, servers)
 	if err != nil && saved.UpstreamID != "" {
 		// The saved upstream session could not be reopened; drop it and
 		// start a fresh session in this same turn instead of failing once
@@ -458,7 +459,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		}
 		saved.UpstreamID = ""
 		saved.InstructionsApplied = false
-		runner, err = c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
+		runner, err = c.open(ctx, saved, selected, workspace.Path, servers)
 	}
 	if err != nil {
 		return Result{}, err

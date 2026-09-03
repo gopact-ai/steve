@@ -30,6 +30,9 @@ func main() {
 }
 
 func run(args []string) error {
+	if len(args) > 0 && args[0] == node.LaunchVerb {
+		return launch(args[1:])
+	}
 	flags := flag.NewFlagSet("steve-node", flag.ContinueOnError)
 	configPath := flags.String("config", "node.json", "path to the node config file")
 	listen := flags.String("listen", "", "override the configured listen address")
@@ -46,6 +49,23 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return node.NewServer(cfg).Serve(ctx)
+}
+
+// launch is the MCP launcher an agent runs: it carries a binding id and a
+// socket, never a secret, and pipes the agent to the server the node's
+// broker starts for that binding.
+func launch(args []string) error {
+	flags := flag.NewFlagSet("steve-node mcp-launch", flag.ContinueOnError)
+	socket := flags.String("socket", "", "the node's MCP broker socket")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return fmt.Errorf("usage: steve-node %s -socket <path> <binding>", node.LaunchVerb)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return node.LaunchBinding(ctx, *socket, flags.Arg(0), os.Stdin, os.Stdout)
 }
 
 func load(path string) (node.ServerConfig, error) {
