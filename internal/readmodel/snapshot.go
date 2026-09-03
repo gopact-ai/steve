@@ -363,7 +363,7 @@ func hubNode(h Hub) Node {
 		caps = h.Advert.Capabilities
 	}
 	n := Node{
-		Name: h.Node, Role: RoleHub, Version: h.Advert.BuildVersion, Up: true, Since: h.Started, Snapshot: nodewire.Synthesize(h.Advert, time.Now()), Features: h.Advert.Features,
+		Name: h.Node, Role: RoleHub, Version: h.Advert.BuildVersion, Up: true, Since: h.Started, Snapshot: nodewire.Synthesize(h.Advert, time.Now()), Features: h.Advert.Features, Health: h.Advert.Health,
 		Host: h.Advert.Hostname, IPs: h.Advert.IPs, OS: h.Advert.OS, Arch: h.Advert.Arch,
 		Capabilities: caps, Level: h.Level, Harnesses: harnesses(h.Advert),
 	}
@@ -385,7 +385,7 @@ func nodes(statuses []node.Status) []Node {
 	out := make([]Node, 0, len(statuses))
 	for _, s := range statuses {
 		n := Node{
-			Name: s.Name, Role: RoleWorker, Version: s.Advert.BuildVersion, Addr: s.Addr, Up: s.Up, Since: s.Since, Snapshot: nodewire.Synthesize(s.Advert, time.Now()), Features: s.Advert.Features,
+			Name: s.Name, Role: RoleWorker, Version: s.Advert.BuildVersion, Addr: s.Addr, Up: s.Up, Since: s.Since, Snapshot: nodewire.Synthesize(s.Advert, time.Now()), Features: s.Advert.Features, Health: s.Advert.Health,
 			Host: s.Advert.Hostname, IPs: s.Advert.IPs, OS: s.Advert.OS, Arch: s.Advert.Arch,
 			Capabilities: s.Advert.Capabilities, LastError: s.LastError, Level: s.Level, Region: s.Region,
 			Harnesses: harnesses(s.Advert),

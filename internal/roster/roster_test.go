@@ -382,3 +382,24 @@ func TestAdmissionAsksTheNodeForItsOwnClauses(t *testing.T) {
 		t.Fatalf("cached admission = %+v, %v", adm, err)
 	}
 }
+
+// A machine with no room for a worktree is not placed on, whatever its
+// snapshot says it can do.
+func TestAFullDiskBlocksPlacement(t *testing.T) {
+	full := up("node-a", []string{"gpu"}, nodewire.Harness{ID: "mock"})
+	full.Advert.Health = &nodewire.Health{DiskFree: 100 << 20, DiskTotal: 500 << 30}
+	r := testRoster(t, []node.Status{full}, nil)
+	for _, c := range r.All(t.Context()) {
+		if c.Agent.ID == "builder" && (c.Eligible || !strings.Contains(c.Why, "disk nearly full")) {
+			t.Fatalf("builder = eligible %v, why %q", c.Eligible, c.Why)
+		}
+	}
+	roomy := up("node-a", []string{"gpu"}, nodewire.Harness{ID: "mock"})
+	roomy.Advert.Health = &nodewire.Health{DiskFree: 50 << 30, DiskTotal: 500 << 30}
+	r.SetNodes(fakeNodes{statuses: []node.Status{roomy}})
+	for _, c := range r.All(t.Context()) {
+		if c.Agent.ID == "builder" && !c.Eligible {
+			t.Fatalf("builder blocked with room to spare: %q", c.Why)
+		}
+	}
+}

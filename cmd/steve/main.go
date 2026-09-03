@@ -1078,6 +1078,7 @@ func hubAdvert(cfg *config.Config) nodewire.Advert {
 	adv.Snapshot = node.Snapshot(nodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: hubLaunch.Lookup, Skills: entries, SkillsKnown: known})
 	adv.Features = nodewire.Features()
 	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
+	adv.Health = node.CheckHealth("", adv.StateDir)
 	return adv
 }
 

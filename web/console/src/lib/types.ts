@@ -15,6 +15,7 @@ export interface AbilitySnapshot {
 export interface Node {
     name: string; role?: string; version?: string; addr?: string; host?: string; ips?: string[]; up: boolean; since?: string; os?: string; arch?: string;
     capabilities?: string[]; harnesses?: Harness[]; last_error?: string; level?: string; region?: string; snapshot?: AbilitySnapshot;
+    features?: string[]; health?: Health;
 }
 export interface Activity {
     agent: string; attempt_id?: string; kind?: string; workspace?: string; task_id?: string; step_id?: string; conversation?: string;
@@ -40,6 +41,7 @@ export interface Step {
     started_at?: string; ended_at?: string;
 }
 export interface Plan { id: string; task_id: string; rev: number; goal: string; by: string; because: string; steps: Step[]; created_at?: string; base?: string; fixed?: boolean }
+export interface Health { disk_free: number; disk_total: number; load1: number; worktrees: number; at: string }
 export interface Admission {
     node?: string; source: "node" | "hub" | "cached" | "legacy"; verdict: number; code?: string;
     generation?: number; sequence?: number; digest?: string; atoms?: { atom: string; verdict: number; code?: string }[]; at: string;

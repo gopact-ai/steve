@@ -186,7 +186,16 @@ export function FleetPage() {
                                         </div>
                                     </Table.Cell>
                                     <Table.Cell><span className="font-mono text-xs text-tertiary" title="steve 构建版本">{n.version || "—"}</span>{n.os ? <div className="text-[11px] text-quaternary">{n.os}/{n.arch}</div> : null}</Table.Cell>
-                                    <Table.Cell><StateBadge state={n.up ? "up" : "down"} /></Table.Cell>
+                                    <Table.Cell>
+                                        <div className="flex flex-col gap-1">
+                                            <StateBadge state={n.up ? "up" : "down"} />
+                                            {n.health && n.health.disk_total > 0 && (
+                                                <span className={`text-xs ${n.health.disk_free < 1 << 30 ? "text-error-primary" : "text-tertiary"}`} title="磁盘空闲 · 1 分钟负载 · 持有的工作树">
+                                                    {(n.health.disk_free / (1 << 30)).toFixed(0)}G 空闲 · 负载 {n.health.load1.toFixed(1)}{n.health.worktrees ? ` · ${n.health.worktrees} 工作树` : ""}
+                                                </span>
+                                            )}
+                                        </div>
+                                    </Table.Cell>
                                     <Table.Cell>{n.level || "internal"}</Table.Cell>
                                     <Table.Cell><span className="text-tertiary">{n.region || "—"}</span></Table.Cell>
                                     <Table.Cell><Abilities snapshot={n.snapshot} /></Table.Cell>

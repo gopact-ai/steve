@@ -411,6 +411,12 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 			c.Eligible, c.Why = false, missing
 			return c
 		}
+		// Capacity is not capability: a machine with no room for a
+		// worktree is not a machine to place work on today.
+		if h := status.Advert.Health; h != nil && h.DiskTotal > 0 && h.DiskFree < MinDiskFree {
+			c.Eligible, c.Why = false, fmt.Sprintf("disk nearly full on %s: %s free", nodewire.Place(a.Node), gigabytes(h.DiskFree))
+			return c
+		}
 		c.Slots = harnessSlots(status.Advert, a.Harness)
 		offered := harnessModels(status.Advert, a.Harness)
 		if len(offered) > 0 {
@@ -509,6 +515,11 @@ func (c *Candidate) addModels(models []string, version string, at time.Time) {
 	_ = ability.Validate(&copied)
 	c.Snapshot = &copied
 }
+
+// MinDiskFree is the room a machine must have left to take new work.
+const MinDiskFree = 1 << 30
+
+func gigabytes(b uint64) string { return fmt.Sprintf("%.1f GB", float64(b)/(1<<30)) }
 
 // markFunctional raises the harness's assurance on a copy of the snapshot:
 // a session or probe reached it and it answered.

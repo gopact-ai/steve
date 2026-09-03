@@ -738,3 +738,31 @@ func TestNodeRemembersItsHub(t *testing.T) {
 		t.Fatalf("after adopt: %v", err)
 	}
 }
+
+// A token can vouch for a hub's name: a hub presenting hub-1's token
+// while calling itself hub-2 is refused, so the name a node remembers is
+// one its configuration tied to a secret, not whatever the caller said.
+func TestHubTokenVouchesForTheName(t *testing.T) {
+	bin := buildMockAgent(t)
+	server := startNode(t, ServerConfig{Name: "host-11", StateDir: t.TempDir(), Hubs: map[string]string{"hub-1": "secret-1"},
+		Harnesses: map[string]HarnessSpec{"codex": {Command: bin}}})
+	wrong := NewRegistry("hub-2", map[string]Config{"host-11": {Addr: server.Addr(), Token: "secret-1"}})
+	t.Cleanup(wrong.Close)
+	if _, err := wrong.Advert(t.Context(), "host-11"); err == nil || !errors.Is(err, nodewire.ErrRefused) {
+		t.Fatalf("hub-2 used hub-1's token: %v", err)
+	}
+	right := NewRegistry("hub-1", map[string]Config{"host-11": {Addr: server.Addr(), Token: "secret-1"}})
+	t.Cleanup(right.Close)
+	adv, err := right.Advert(t.Context(), "host-11")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adv.Health == nil || adv.Health.DiskTotal == 0 {
+		t.Fatalf("advert carries no health: %+v", adv.Health)
+	}
+	stranger := NewRegistry("hub-1", map[string]Config{"host-11": {Addr: server.Addr(), Token: "nope"}})
+	t.Cleanup(stranger.Close)
+	if _, err := stranger.Advert(t.Context(), "host-11"); err == nil || !errors.Is(err, nodewire.ErrBadToken) {
+		t.Fatalf("an unknown token got in: %v", err)
+	}
+}

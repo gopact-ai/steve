@@ -199,6 +199,8 @@ type Node struct {
 	// Features are the protocol features the machine negotiated; a node
 	// without execution_admission.v1 cannot be asked for a final word.
 	Features []string `json:"features,omitempty"`
+	// Health is the machine's room to work, as of its last advert.
+	Health *nodewire.Health `json:"health,omitempty"`
 }
 
 type Harness struct {

@@ -55,12 +55,16 @@ type ServerConfig struct {
 	// this machine can start for its agents; Declares are capabilities
 	// nobody can check from inside a process ("network:internal",
 	// "credential:prod") and so are taken on the operator's word.
-	Capabilities  []string           `json:"capabilities,omitempty"`
-	Tools         []string           `json:"tools,omitempty"`
-	MCPServers    map[string]MCPSpec `json:"mcp_servers,omitempty"`
-	Declares      []string           `json:"declares,omitempty"`
-	WorkspaceRoot string             `json:"workspace_root,omitempty"`
-	StateDir      string             `json:"state_dir,omitempty"`
+	Capabilities []string           `json:"capabilities,omitempty"`
+	Tools        []string           `json:"tools,omitempty"`
+	MCPServers   map[string]MCPSpec `json:"mcp_servers,omitempty"`
+	Declares     []string           `json:"declares,omitempty"`
+	// Hubs binds a token to a hub name: a hub presenting that token must
+	// call itself that, so the name the node remembers is one the token
+	// vouches for. Token alone admits any name, as before.
+	Hubs          map[string]string `json:"hubs,omitempty"`
+	WorkspaceRoot string            `json:"workspace_root,omitempty"`
+	StateDir      string            `json:"state_dir,omitempty"`
 }
 
 // MCPSpec is an MCP server as this machine can start it. Env stays on
@@ -202,6 +206,9 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 	hello, err := nodewire.AcceptClaim(socket, s.validToken, func(h nodewire.Hello) error {
 		if _, peer := s.grantedName(h.Token); peer {
 			return nil
+		}
+		if bound, ok := s.hubOf(h.Token); ok && bound != h.Hub {
+			return fmt.Errorf("this token belongs to hub %q, not %q", bound, h.Hub)
 		}
 		if err := s.claim(h.Hub); err != nil {
 			return err
@@ -447,6 +454,7 @@ func (s *Server) advert() nodewire.Advert {
 	adv.WorkspaceRoot = s.cfg.WorkspaceRoot
 	adv.StateDir = s.cfg.StateDir
 	adv.Skills = s.currentSkills()
+	adv.Health = CheckHealth(s.cfg.WorkspaceRoot, s.cfg.StateDir)
 	return adv
 }
 
@@ -1006,11 +1014,25 @@ type peerGrant struct {
 }
 
 func (s *Server) validToken(token string) bool {
-	if subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.Token)) == 1 {
+	if s.cfg.Token != "" && subtle.ConstantTimeCompare([]byte(token), []byte(s.cfg.Token)) == 1 {
+		return true
+	}
+	if hub, _ := s.hubOf(token); hub != "" {
 		return true
 	}
 	_, ok := s.grantedName(token)
 	return ok
+}
+
+// hubOf is the hub name a token vouches for, from the hubs table; "" when
+// the token is the shared one or unknown.
+func (s *Server) hubOf(token string) (string, bool) {
+	for name, t := range s.cfg.Hubs {
+		if t != "" && subtle.ConstantTimeCompare([]byte(token), []byte(t)) == 1 {
+			return name, true
+		}
+	}
+	return "", false
 }
 
 func (s *Server) grantedName(token string) (string, bool) {

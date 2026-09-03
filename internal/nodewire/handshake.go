@@ -118,8 +118,22 @@ type Advert struct {
 	// still only ever talks to 127.0.0.1 — the security property survives
 	// the move to another host instead of being traded for an open port.
 	MCPPort int `json:"mcp_port,omitempty"`
+	// Health is the machine's room to work, refreshed with every advert.
+	Health *Health `json:"health,omitempty"`
 	// Refused is set instead of the rest when the node turns the hub away.
 	Refused string `json:"refused,omitempty"`
+}
+
+// Health is capacity rather than capability: free disk where workspaces
+// live, the one-minute load, and the worktrees the machine holds. A
+// machine that is full is not a machine to place work on, whatever its
+// snapshot says it can do.
+type Health struct {
+	DiskFree  uint64    `json:"disk_free"`
+	DiskTotal uint64    `json:"disk_total"`
+	Load1     float64   `json:"load1"`
+	Worktrees int       `json:"worktrees"`
+	At        time.Time `json:"at"`
 }
 
 // Dial performs the hub side of the handshake on an established connection.
