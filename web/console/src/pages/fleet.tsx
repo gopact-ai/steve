@@ -3,6 +3,8 @@ import { Plus, Server01, Users01, X, Zap } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
+import { Input } from "@/components/base/input/input";
+import { Select } from "@/components/base/select/select";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { relative, when } from "@/lib/api";
@@ -30,7 +32,6 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
     const [error, setError] = useState("");
     const [result, setResult] = useState<AddNodeResult | null>(null);
     const [done, setDone] = useState("");
-    const inputCls = "h-9 w-full rounded-lg bg-primary px-3 text-sm text-primary shadow-xs ring-1 ring-secondary ring-inset outline-none placeholder:text-placeholder focus:ring-2 focus:ring-brand";
     async function submit() {
         setBusy(true); setError("");
         try {
@@ -61,12 +62,12 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
                             </Tabs>
                         )}
                         {mode === "machine" && !result && (
-                            <div className="grid grid-cols-1 gap-3">
-                                <label className="flex flex-col gap-1 text-xs text-tertiary">名称<input className={inputCls} placeholder="node-c" value={name} onChange={(e) => setName(e.target.value)} autoFocus /></label>
-                                <label className="flex flex-col gap-1 text-xs text-tertiary">hub 拨号地址<input className={inputCls} placeholder="10.0.0.5:7701" value={addr} onChange={(e) => setAddr(e.target.value)} /></label>
-                                <label className="flex flex-col gap-1 text-xs text-tertiary" title={levelHint}>数据等级
-                                    <select className={inputCls} value={level} onChange={(e) => setLevel(e.target.value)}>{["public", "internal", "restricted", "sealed"].map((l) => <option key={l} value={l}>{levelWords[l]}（{l}）</option>)}</select>
-                                </label>
+                            <div className="grid grid-cols-1 gap-4">
+                                <Input size="sm" label="名称" placeholder="node-c" value={name} onChange={setName} autoFocus hint="小写字母、数字、点、下划线、连字符" />
+                                <Input size="sm" label="hub 拨号地址" placeholder="10.0.0.5:7701" value={addr} onChange={setAddr} hint="hub 从这里连过去；那台机器上 steve-node 监听同一个端口" />
+                                <Select size="sm" label="数据等级" hint={levelHint} selectedKey={level} onSelectionChange={(k) => k && setLevel(String(k))} items={["public", "internal", "restricted", "sealed"].map((l) => ({ id: l, label: `${levelWords[l]}（${l}）` }))}>
+                                    {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                                </Select>
                             </div>
                         )}
                         {mode === "machine" && result && (
@@ -80,10 +81,14 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
                             </div>
                         )}
                         {mode === "agent" && !done && (
-                            <div className="grid grid-cols-1 gap-3">
-                                <label className="flex flex-col gap-1 text-xs text-tertiary">名字<input className={inputCls} placeholder="reviewer" value={agent} onChange={(e) => setAgent(e.target.value)} autoFocus /></label>
-                                <label className="flex flex-col gap-1 text-xs text-tertiary">AI 工具<select className={inputCls} value={harness} onChange={(e) => setHarness(e.target.value)}>{harnesses.map((h) => <option key={h}>{h}</option>)}</select></label>
-                                <label className="flex flex-col gap-1 text-xs text-tertiary">机器<select className={inputCls} value={node} onChange={(e) => setNode(e.target.value)}><option value="">{hub}（hub）</option>{nodes.map((n) => <option key={n} value={n}>{n}</option>)}</select></label>
+                            <div className="grid grid-cols-1 gap-4">
+                                <Input size="sm" label="名字" placeholder="reviewer" value={agent} onChange={setAgent} autoFocus hint="聊天里用 @名字 指派它" />
+                                <Select size="sm" label="AI 工具" hint="要在 hub 的 harnesses 里配置过" selectedKey={harness} onSelectionChange={(k) => k && setHarness(String(k))} items={harnesses.map((h) => ({ id: h, label: h }))}>
+                                    {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                                </Select>
+                                <Select size="sm" label="机器" hint="它在哪台机器上跑；hub 自己也可以" selectedKey={node || "__hub"} onSelectionChange={(k) => setNode(!k || String(k) === "__hub" ? "" : String(k))} items={[{ id: "__hub", label: `${hub}（hub）` }, ...nodes.map((n) => ({ id: n, label: n }))]}>
+                                    {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                                </Select>
                             </div>
                         )}
                         {mode === "agent" && done && <div className="text-sm text-primary">{done}</div>}
