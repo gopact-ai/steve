@@ -766,3 +766,70 @@ func TestHubTokenVouchesForTheName(t *testing.T) {
 		t.Fatalf("an unknown token got in: %v", err)
 	}
 }
+
+// The broker can be another process: the node then has no MCP servers of
+// its own — nor their secrets — and reaches the broker over its socket
+// with a control token. Listing, binding, launching and releasing all
+// work the same; a caller without the token gets nothing.
+func TestExternalBrokerHoldsTheSecrets(t *testing.T) {
+	bin := buildMockAgent(t)
+	dir := t.TempDir()
+	socket := filepath.Join(dir, "mcp.sock")
+	broker := NewBroker(BrokerConfig{Socket: socket, Token: "ctl-secret", PortFile: filepath.Join(dir, "proxy.port"),
+		MCPServers: map[string]MCPSpec{"echo": {Type: "stdio", Command: "sh", Args: []string{"-c", `read line; echo "ext $line $TOKEN"`}, Env: map[string]string{"TOKEN": "S3"}}}})
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	go func() { _ = broker.Serve(ctx) }()
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if _, err := os.Stat(socket); err == nil || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	server := startNode(t, ServerConfig{Name: "host-12", Token: "tok", StateDir: t.TempDir(),
+		Harnesses: map[string]HarnessSpec{"codex": {Command: bin}}, MCPBroker: &BrokerRef{Socket: socket, Token: "ctl-secret"}})
+	registry := NewRegistry("hub-1", map[string]Config{"host-12": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(registry.Close)
+	advert, err := registry.Advert(t.Context(), "host-12")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var listed bool
+	for _, c := range advert.Snapshot.Offers {
+		if c.Kind == ability.MCP && c.ID == "echo" && c.Scope == "codex" && c.Availability == ability.Available {
+			listed = true
+		}
+	}
+	if !listed || advert.Snapshot.Coverage[ability.MCP] != ability.Complete {
+		t.Fatalf("the broker's servers are not in the snapshot: %v", advert.Snapshot.Coverage[ability.MCP])
+	}
+	req, _ := ability.Compile(nil)
+	adm, err := registry.Admit(t.Context(), "host-12", nodewire.AdmitRequest{Attempt: "x-1", Harness: "codex", Requirement: req, Uses: []string{"echo"}})
+	if err != nil || !adm.OK() {
+		t.Fatalf("admission = %+v, %v", adm, err)
+	}
+	b := registry.Bindings(t.Context(), "host-12", "x-1")
+	if len(b) != 1 || b[0].Args[2] != socket {
+		t.Fatalf("bindings = %+v", b)
+	}
+	var out bytes.Buffer
+	if err := LaunchBinding(ctx, socket, b[0].Args[3], strings.NewReader("hi\n"), &out); err != nil || strings.TrimSpace(out.String()) != "ext hi S3" {
+		t.Fatalf("through the external broker: %q, %v", out.String(), err)
+	}
+	// The control commands need the token; a stranger on the socket is refused.
+	if _, err := (remoteBroker{socket: socket, token: "wrong"}).List(ctx); err == nil {
+		t.Fatal("LIST without the token succeeded")
+	}
+	if err := registry.Release(t.Context(), "host-12", "x-1"); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	if err := LaunchBinding(ctx, socket, b[0].Args[3], strings.NewReader("hi\n"), &out); err != nil || out.Len() != 0 {
+		t.Fatalf("a released binding still launched: %q", out.String())
+	}
+	adm, _ = registry.Admit(t.Context(), "host-12", nodewire.AdmitRequest{Attempt: "x-2", Harness: "codex", Requirement: req, Uses: []string{"nope"}})
+	if !adm.Refused() || adm.Code != ability.CodeAbsent {
+		t.Fatalf("a server the broker lacks: %+v", adm)
+	}
+}

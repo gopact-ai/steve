@@ -36,6 +36,9 @@ func run(args []string) error {
 	if len(args) > 0 && args[0] == "adopt" {
 		return adopt(args[1:])
 	}
+	if len(args) > 0 && args[0] == "mcp-broker" {
+		return broker(args[1:])
+	}
 	flags := flag.NewFlagSet("steve-node", flag.ContinueOnError)
 	configPath := flags.String("config", "node.json", "path to the node config file")
 	listen := flags.String("listen", "", "override the configured listen address")
@@ -52,6 +55,39 @@ func run(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	return node.NewServer(cfg).Serve(ctx)
+}
+
+// broker runs the MCP broker as its own process: "steve-node mcp-broker
+// -config mcp.json". Run it as its own user with mcp.json readable by that
+// user alone, and point node.json's mcp_broker at its socket and token.
+func broker(args []string) error {
+	flags := flag.NewFlagSet("steve-node mcp-broker", flag.ContinueOnError)
+	configPath := flags.String("config", "mcp.json", "path to the broker config file")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(*configPath)
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+	var cfg node.BrokerConfig
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+	if cfg.Socket == "" || cfg.Token == "" {
+		return fmt.Errorf("mcp-broker: socket and token are required")
+	}
+	cfg.Socket = absolute(cfg.Socket)
+	cfg.PortFile = absolute(cfg.PortFile)
+	cfg.WorkspaceRoot = absolute(cfg.WorkspaceRoot)
+	if info, err := os.Stat(*configPath); err == nil && info.Mode().Perm()&0o077 != 0 {
+		log.Printf("steve-node: %s is readable by others (mode %o); the secrets in it are not only yours", *configPath, info.Mode().Perm())
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return node.NewBroker(cfg).Serve(ctx)
 }
 
 // adopt hands this node to a named hub: "steve-node adopt -config node.json <hub>".

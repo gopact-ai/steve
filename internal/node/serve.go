@@ -62,9 +62,19 @@ type ServerConfig struct {
 	// Hubs binds a token to a hub name: a hub presenting that token must
 	// call itself that, so the name the node remembers is one the token
 	// vouches for. Token alone admits any name, as before.
-	Hubs          map[string]string `json:"hubs,omitempty"`
-	WorkspaceRoot string            `json:"workspace_root,omitempty"`
-	StateDir      string            `json:"state_dir,omitempty"`
+	Hubs map[string]string `json:"hubs,omitempty"`
+	// MCPBroker names a broker running as its own process; when set,
+	// MCPServers here must be empty — the servers, and their secrets,
+	// are the broker's.
+	MCPBroker     *BrokerRef `json:"mcp_broker,omitempty"`
+	WorkspaceRoot string     `json:"workspace_root,omitempty"`
+	StateDir      string     `json:"state_dir,omitempty"`
+}
+
+// BrokerRef is how the node reaches an external broker.
+type BrokerRef struct {
+	Socket string `json:"socket"`
+	Token  string `json:"token"`
 }
 
 // MCPSpec is an MCP server as this machine can start it. Env stays on
@@ -93,6 +103,11 @@ type Observe struct {
 	// authoritative (it is on any machine that isolates its homes).
 	Skills      []skills.Entry
 	SkillsKnown bool
+	// MCPListed is what an external broker offers (id → transport), used
+	// instead of MCP when the servers are not this process's to check;
+	// MCPError says the broker could not be asked, so the kind is unknown.
+	MCPListed map[string]string
+	MCPError  string
 	// Launch answers whether a resolved binary was seen to start, from a
 	// LaunchProbe running on its own clock. Nil means existence only.
 	Launch func(path string) (LaunchResult, bool)
@@ -107,11 +122,9 @@ type Server struct {
 	seq        int64
 	// launch checks that offered binaries start, in the background.
 	launch *LaunchProbe
-	// bindings are the MCP bindings minted at admission, by id; proxyPort
-	// is where the broker proxies http/sse servers on the loopback.
-	bindMu    sync.Mutex
-	bindings  map[string]mcpBinding
-	proxyPort int
+	// broker binds this machine's MCP servers for sessions: in-process
+	// from node.json, or another process reached over its socket.
+	broker mcpBroker
 	// hub is the hub currently served. A second hub is refused: two hubs
 	// placing work on one machine would each believe they own its slots.
 	hubMu   sync.Mutex
@@ -156,15 +169,21 @@ func (s *Server) Serve(ctx context.Context) error {
 		}
 	}
 	go s.launch.Run(ctx, s.commands)
-	if len(s.cfg.MCPServers) > 0 {
+	switch {
+	case s.cfg.MCPBroker != nil && s.cfg.MCPBroker.Socket != "":
+		if len(s.cfg.MCPServers) > 0 {
+			return errors.New("mcp_servers and mcp_broker are exclusive: the servers belong to the broker")
+		}
+		s.broker = remoteBroker{socket: s.cfg.MCPBroker.Socket, token: s.cfg.MCPBroker.Token}
+	case len(s.cfg.MCPServers) > 0:
+		b := NewBroker(BrokerConfig{Socket: s.SocketPath(), MCPServers: s.cfg.MCPServers, WorkspaceRoot: s.cfg.WorkspaceRoot,
+			PortFile: filepath.Join(s.cfg.StateDir, "mcp-proxy.port")})
+		s.broker = localBroker{b}
 		go func() {
-			if err := s.serveBroker(ctx); err != nil {
+			if err := b.Serve(ctx); err != nil {
 				log.Printf("steve-node: %v", err)
 			}
 		}()
-		if err := s.serveProxy(ctx); err != nil {
-			log.Printf("steve-node: %v", err)
-		}
 	}
 	for {
 		socket, err := listener.Accept()
@@ -588,7 +607,21 @@ func (s *Server) materializeSkills(hash string) error {
 
 // snapshot observes this machine now, as the next revision.
 func (s *Server) snapshot() *ability.Snapshot {
-	return Snapshot(s.cfg.Name, s.generation, s.nextSequence(), Observe{Harnesses: s.cfg.Harnesses, Tools: s.cfg.Tools, MCP: s.cfg.MCPServers, Declares: s.cfg.Declares, Tags: s.cfg.Capabilities, Launch: s.launch.Lookup, Skills: s.skillEntries(), SkillsKnown: true})
+	o := Observe{Harnesses: s.cfg.Harnesses, Tools: s.cfg.Tools, MCP: s.cfg.MCPServers, Declares: s.cfg.Declares, Tags: s.cfg.Capabilities, Launch: s.launch.Lookup, Skills: s.skillEntries(), SkillsKnown: true}
+	if rb, ok := s.broker.(remoteBroker); ok {
+		// The servers are the broker's: what it lists is what there is,
+		// and the broker vouches for them, not a PATH lookup here.
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		listed, err := rb.List(ctx)
+		if err != nil {
+			log.Printf("steve-node: mcp broker: %v", err)
+			o.MCPError = err.Error()
+		} else {
+			o.MCPListed = listed
+		}
+	}
+	return Snapshot(s.cfg.Name, s.generation, s.nextSequence(), o)
 }
 
 // commands is every binary this machine offers and should see start.
@@ -624,32 +657,27 @@ func (s *Server) admit(stream *nodewire.Stream) {
 	// is a definite no.
 	var bindings []ability.Binding
 	for _, id := range req.Uses {
-		spec, ok := s.cfg.MCPServers[id]
 		atom := "mcp:" + id
+		if s.broker == nil {
+			adm.Verdict, adm.Code = ability.False, ability.CodeAbsent
+			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: atom, Verdict: ability.False, Code: ability.CodeAbsent, Detail: "this node has no MCP servers"})
+			continue
+		}
+		if adm.Verdict != ability.True {
+			continue
+		}
+		d, err := s.broker.Bind(context.Background(), id, req.Attempt, req.Harness)
 		switch {
-		case !ok:
+		case errors.Is(err, ErrNoSuchServer):
 			adm.Verdict, adm.Code = ability.False, ability.CodeAbsent
 			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: atom, Verdict: ability.False, Code: ability.CodeAbsent})
-		case (spec.Type == "http" || spec.Type == "sse") && s.proxyAddr() == "":
+		case errors.Is(err, ErrUnbindable):
 			adm.Verdict, adm.Code = ability.False, ability.CodeUnavailable
-			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: atom, Verdict: ability.False, Code: ability.CodeUnavailable, Detail: "the node's MCP proxy is not listening"})
-		case spec.Type != "stdio" && spec.Type != "" && spec.Type != "http" && spec.Type != "sse":
-			adm.Verdict, adm.Code = ability.False, ability.CodeUnavailable
-			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: atom, Verdict: ability.False, Code: ability.CodeUnavailable})
+			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: atom, Verdict: ability.False, Code: ability.CodeUnavailable, Detail: err.Error()})
+		case err != nil:
+			_ = json.NewEncoder(stream).Encode(nodewire.AdmitReply{Error: "bind " + id + ": " + err.Error()})
+			return
 		default:
-			if adm.Verdict != ability.True {
-				continue
-			}
-			b, err := s.bind(id, req.Attempt, req.Harness)
-			if err != nil {
-				_ = json.NewEncoder(stream).Encode(nodewire.AdmitReply{Error: "bind " + id + ": " + err.Error()})
-				return
-			}
-			d, err := s.descriptor(b)
-			if err != nil {
-				_ = json.NewEncoder(stream).Encode(nodewire.AdmitReply{Error: "describe binding: " + err.Error()})
-				return
-			}
 			bindings = append(bindings, d)
 			adm.Bound = append(adm.Bound, id)
 		}
@@ -713,6 +741,20 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 	}
 	for _, tool := range o.Tools {
 		s.Offers = append(s.Offers, observed(ability.Tool, tool, tool))
+	}
+	if o.MCPError != "" {
+		s.Coverage[ability.MCP] = ability.Errored
+	}
+	listed := make([]string, 0, len(o.MCPListed))
+	for id := range o.MCPListed {
+		listed = append(listed, id)
+	}
+	sort.Strings(listed)
+	for _, id := range listed {
+		for _, h := range ids {
+			s.Offers = append(s.Offers, ability.Capability{Kind: ability.MCP, ID: id, Scope: h, Assurance: ability.Existence, Attrs: map[string]string{"transport": o.MCPListed[id]},
+				Evidence: []ability.Evidence{{Kind: ability.Observed, Method: "broker", OK: true, At: now}}})
+		}
 	}
 	names := make([]string, 0, len(o.MCP))
 	for id := range o.MCP {
