@@ -56,6 +56,8 @@ type Service struct {
 	commands     map[string]outcome
 	commandOrder []string
 	inflight     map[string]bool
+	// running counts lines in flight per conversation, for the sidebar.
+	running map[string]int
 	// doc keeps the transcript across restarts. A console whose history
 	// vanishes with the process would make every restart look like the
 	// owner had never said anything.
@@ -98,6 +100,71 @@ func (s *Service) Conversations() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// Summaries describes every conversation for a sidebar: its first line as
+// its name, where it stands, when it last spoke, whether it is busy.
+// Newest first. Where a conversation stands is asked of the coordinator,
+// so a fresh page shows the project and agent each thread would use.
+func (s *Service) Summaries(ctx context.Context) []readmodel.Conversation {
+	s.mu.Lock()
+	var out []readmodel.Conversation
+	for name, list := range s.replies {
+		c := readmodel.Conversation{ID: name, Count: len(list), Running: s.running[name] > 0}
+		// The name is the first thing the owner said that was not a verb:
+		// "/fleet" names nothing, "把登录页改成深色" does.
+		first := ""
+		for _, r := range list {
+			if r.Kind == "sent" {
+				if first == "" {
+					first = r.Input
+				}
+				if c.Title == "" && !strings.HasPrefix(strings.TrimSpace(r.Input), "/") {
+					c.Title = clipTitle(r.Input)
+				}
+			}
+			if r.At.After(c.LastAt) {
+				c.LastAt = r.At
+			}
+		}
+		if c.Title == "" && first != "" {
+			c.Title = clipTitle(first)
+		}
+		if c.Title == "" {
+			c.Title = strings.TrimPrefix(name, Prefix)
+		}
+		out = append(out, c)
+	}
+	s.mu.Unlock()
+	for i := range out {
+		if got, err := s.Context(ctx, out[i].ID); err == nil {
+			if got.Project != nil {
+				out[i].Project = got.Project.ID
+			}
+			if got.Agent != nil {
+				out[i].Agent = got.Agent.ID
+			}
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Running != out[j].Running {
+			return out[i].Running
+		}
+		return out[i].LastAt.After(out[j].LastAt)
+	})
+	return out
+}
+
+// clipTitle is a line's first sentence-ish, short enough for a sidebar.
+func clipTitle(input string) string {
+	line := strings.TrimSpace(input)
+	if i := strings.IndexByte(line, '\n'); i >= 0 {
+		line = strings.TrimSpace(line[:i])
+	}
+	if r := []rune(line); len(r) > 48 {
+		return string(r[:48]) + "…"
+	}
+	return line
 }
 
 // Context is where a conversation stands, from the coordinator's own rules.
@@ -219,6 +286,17 @@ func (s *Service) SendCommand(ctx context.Context, conversation, input, commandI
 	}
 	id := fmt.Sprintf("%s%d", AnchorMark, time.Now().UnixNano())
 	s.record(readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Input: input, Kind: "sent"})
+	s.mu.Lock()
+	if s.running == nil {
+		s.running = map[string]int{}
+	}
+	s.running[conversation]++
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		s.running[conversation]--
+		s.mu.Unlock()
+	}()
 
 	work := newProcess()
 	stop := s.follow(ctx, conversation, work)

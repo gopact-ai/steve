@@ -18,6 +18,9 @@ func (f *fakeConsole) Send(_ context.Context, conversation, input string) (Reply
 }
 func (f *fakeConsole) Replies(string) []Reply  { return f.replies }
 func (f *fakeConsole) Conversations() []string { return []string{"console:main"} }
+func (f *fakeConsole) Summaries(context.Context) []Conversation {
+	return []Conversation{{ID: "console:main", Title: "main"}}
+}
 func (f *fakeConsole) Context(context.Context, string) (Context, error) {
 	return Context{Conversation: "console:main"}, nil
 }

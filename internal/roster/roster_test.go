@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -402,4 +403,28 @@ func TestAFullDiskBlocksPlacement(t *testing.T) {
 			t.Fatalf("builder blocked with room to spare: %q", c.Why)
 		}
 	}
+}
+
+// The roster is read by every request at once, and each reader lays its
+// own observations over a shared snapshot. Two readers must never write
+// the same map: that took the hub down.
+func TestAllIsSafeUnderConcurrentReaders(t *testing.T) {
+	r := testRoster(t, []node.Status{up("node-a", []string{"gpu"}, nodewire.Harness{ID: "mock", Models: []string{"gpt-5"}})}, nil)
+	r.SetModels(fakeBook{"node-a/mock": {Current: "gpt-5", Available: []string{"gpt-5", "gpt-5-mini"}, Version: "mock 1", At: time.Now()}})
+	var wg sync.WaitGroup
+	for i := 0; i < 16; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < 50; j++ {
+				for _, c := range r.All(t.Context()) {
+					if c.Agent.ID == "builder" && c.Snapshot != nil && c.Snapshot.Coverage[ability.Model] != ability.Complete {
+						t.Errorf("builder's snapshot lost model coverage")
+						return
+					}
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }

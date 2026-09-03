@@ -88,6 +88,7 @@ export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
     state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress;
 }
+export interface Conversation { id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean }
 export interface Reply {
     at: string; conversation: string; input?: string; title?: string; text: string; error?: string; kind: string; process?: Process;
 }

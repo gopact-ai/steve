@@ -496,8 +496,12 @@ func (c *Candidate) addModels(models []string, version string, at time.Time) {
 	}
 	copied := *c.Snapshot
 	copied.Offers = append([]ability.Capability(nil), c.Snapshot.Offers...)
-	if copied.Coverage == nil {
-		copied.Coverage = map[ability.Kind]ability.Coverage{}
+	// The coverage map is copied too: the snapshot is shared by every
+	// reader of the roster, and a write to a shared map from two requests
+	// at once is fatal, not merely racy.
+	copied.Coverage = make(map[ability.Kind]ability.Coverage, len(c.Snapshot.Coverage)+1)
+	for k, v := range c.Snapshot.Coverage {
+		copied.Coverage[k] = v
 	}
 	seen := map[string]bool{}
 	for _, o := range copied.Offers {
@@ -529,6 +533,10 @@ func (c *Candidate) markFunctional(version string, at time.Time) {
 	}
 	copied := *c.Snapshot
 	copied.Offers = append([]ability.Capability(nil), c.Snapshot.Offers...)
+	copied.Coverage = make(map[ability.Kind]ability.Coverage, len(c.Snapshot.Coverage))
+	for k, v := range c.Snapshot.Coverage {
+		copied.Coverage[k] = v
+	}
 	for i, o := range copied.Offers {
 		if o.Kind != ability.Harness || o.ID != c.Harness || o.Availability != ability.Available {
 			continue

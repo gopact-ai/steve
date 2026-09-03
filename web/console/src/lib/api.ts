@@ -1,4 +1,4 @@
-import type { ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
+import type { Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
 
 // The token guards everything: it rides as a bearer header on requests and
 // as a query parameter on the event stream, which cannot carry headers.
@@ -39,6 +39,10 @@ export async function fetchState(): Promise<Snapshot> {
 export async function fetchReplies(conversation: string): Promise<{ enabled: boolean; replies: Reply[]; conversations?: string[] }> {
     const sep = q ? "&" : "?";
     return json(await fetch(`./console/replies${q}${sep}conversation=${encodeURIComponent(conversation)}`, { headers }));
+}
+
+export async function fetchConversations(): Promise<{ enabled: boolean; conversations: Conversation[] }> {
+    return json(await fetch(`./console/conversations${q}`, { headers }));
 }
 
 export async function fetchContext(conversation: string): Promise<{ enabled: boolean; context?: ConversationContext }> {

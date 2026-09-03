@@ -54,6 +54,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /events", s.guard(s.events))
 	mux.HandleFunc("POST /console/send", s.guard(s.consoleSend))
 	mux.HandleFunc("GET /console/replies", s.guard(s.consoleReplies))
+	mux.HandleFunc("GET /console/conversations", s.guard(s.consoleConversations))
 	mux.HandleFunc("GET /console/context", s.guard(s.consoleContext))
 	mux.HandleFunc("GET /console/verbs", s.guard(s.consoleVerbs))
 	mux.HandleFunc("GET /console/suggest", s.guard(s.consoleSuggest))
@@ -173,8 +174,10 @@ type Console interface {
 	// SendCommand is Send with an idempotency key from the page.
 	SendCommand(ctx context.Context, conversation, input, commandID string) (Reply, error)
 	Replies(conversation string) []Reply
-	// Conversations names every console conversation with a transcript.
+	// Conversations names every console conversation with a transcript;
+	// Summaries describes each one for a sidebar.
 	Conversations() []string
+	Summaries(ctx context.Context) []Conversation
 	// Context is where a conversation stands; Verbs is what it can be told.
 	Context(ctx context.Context, conversation string) (Context, error)
 	Verbs() []Verb
@@ -232,6 +235,19 @@ type Verb struct {
 }
 
 // Reply is one exchange on the console.
+// Conversation is one console thread as the sidebar lists it: named by
+// its first line, placed by its project and agent, and marked while a
+// line of it runs.
+type Conversation struct {
+	ID      string    `json:"id"`
+	Title   string    `json:"title"`
+	Project string    `json:"project,omitempty"`
+	Agent   string    `json:"agent,omitempty"`
+	LastAt  time.Time `json:"last_at"`
+	Count   int       `json:"count"`
+	Running bool      `json:"running"`
+}
+
 type Reply struct {
 	At           time.Time `json:"at"`
 	Conversation string    `json:"conversation"`
@@ -343,6 +359,19 @@ func (s *Server) consoleVerbs(w http.ResponseWriter, _ *http.Request) {
 		verbs = append(verbs, s.console.Verbs()...)
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"verbs": verbs})
+}
+
+func (s *Server) consoleConversations(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.console == nil {
+		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false, "conversations": []Conversation{}})
+		return
+	}
+	list := s.console.Summaries(r.Context())
+	if list == nil {
+		list = []Conversation{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "conversations": list})
 }
 
 func (s *Server) consoleReplies(w http.ResponseWriter, r *http.Request) {

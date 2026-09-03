@@ -10,6 +10,7 @@ import { useFleet, useIntent } from "@/lib/fleet";
 import { fmtSeconds, fmtTokens, label, spend, zh } from "@/lib/labels";
 import type { Plan, Task } from "@/lib/types";
 import { PageHeader } from "@/lib/page";
+import { CallGraph } from "@/lib/tree";
 import { Mono, Nothing, StateBadge, Where } from "@/lib/ui";
 
 type TabKey = "active" | "all" | "scheduled" | "usage";
@@ -304,10 +305,10 @@ function Drawer({ t, tasks, plan, onClose }: { t: Task; tasks: Task[]; plan?: Pl
                         </ol>
                     </section>
                 )}
-                {children.length > 0 && (
+                {(children.length > 0 || plan) && (
                     <section>
-                        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">子任务</h3>
-                        <ul className="flex flex-col gap-1">{children.map((c) => <li key={c.id} className="flex items-center gap-2 text-sm"><StateBadge state={c.lifecycle} /><span>#{c.id}</span><span className="truncate text-secondary">{c.goal}</span><span className="ml-auto text-xs text-tertiary">{c.member}</span></li>)}</ul>
+                        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">调用关系 · 谁把活给了谁</h3>
+                        <CallGraph roots={[t]} tasks={tasks} plans={snap.plans} />
                     </section>
                 )}
                 <section>
