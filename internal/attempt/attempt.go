@@ -136,18 +136,36 @@ type Result struct {
 	Refs     []string `json:"refs,omitempty"`
 }
 
+// Usage is an attempt's spend. Reported false means the harness said
+// nothing about tokens — not the same as zero.
+type Usage struct {
+	Model       string `json:"model,omitempty"`
+	Input       int64  `json:"input,omitempty"`
+	Output      int64  `json:"output,omitempty"`
+	CachedRead  int64  `json:"cached_read,omitempty"`
+	CachedWrite int64  `json:"cached_write,omitempty"`
+	// Context is the context window in use at the last report — what
+	// ACP adapters reliably say, when they say nothing about tokens.
+	Context  int64 `json:"context,omitempty"`
+	Reported bool  `json:"reported"`
+}
+
 // Record is the attempt as the ledger holds it.
 type Record struct {
 	Spec
-	State        State          `json:"state"`
-	Revision     int64          `json:"revision"`
-	Session      string         `json:"session,omitempty"`
-	Leases       []ledger.Lease `json:"leases"`
-	Result       *Result        `json:"result,omitempty"`
-	Error        string         `json:"error,omitempty"`
-	SupersededBy string         `json:"superseded_by,omitempty"`
-	StartedAt    time.Time      `json:"started_at"`
-	EndedAt      time.Time      `json:"ended_at,omitempty"`
+	State    State          `json:"state"`
+	Revision int64          `json:"revision"`
+	Session  string         `json:"session,omitempty"`
+	Leases   []ledger.Lease `json:"leases"`
+	Result   *Result        `json:"result,omitempty"`
+	// Usage is what the attempt cost, as the harness last reported it,
+	// written with every terminal transition — success, failure, expiry
+	// alike — so failed work is not free in the books.
+	Usage        *Usage    `json:"usage,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	SupersededBy string    `json:"superseded_by,omitempty"`
+	StartedAt    time.Time `json:"started_at"`
+	EndedAt      time.Time `json:"ended_at,omitempty"`
 }
 
 // Busy is a refused open: a resource the attempt needs is leased to
@@ -399,12 +417,23 @@ func (s *Service) Heartbeat(ctx context.Context, id string) (lost <-chan struct{
 // Finish records success. An attempt with an artifact is expected to have
 // walked the publish states already; one without goes bind-ready now.
 func (s *Service) Finish(ctx context.Context, id, actor string, result Result) (Record, error) {
+	return s.FinishWith(ctx, id, actor, result, nil)
+}
+
+// FinishWith is Finish with what the attempt cost, written in the same
+// transition as its result: one record, one place the spend is true.
+func (s *Service) FinishWith(ctx context.Context, id, actor string, result Result, usage *Usage) (Record, error) {
 	current, err := s.Get(ctx, id)
 	if err != nil {
 		return Record{}, err
 	}
+	meter := func(r *Record) {
+		if usage != nil {
+			r.Usage = usage
+		}
+	}
 	if current.State == Running || current.State == Durable || current.State == Verifying {
-		if _, err := s.Advance(ctx, id, BindReady, actor, func(r *Record) { r.Result = &result }); err != nil {
+		if _, err := s.Advance(ctx, id, BindReady, actor, func(r *Record) { r.Result = &result; meter(r) }); err != nil {
 			return Record{}, err
 		}
 	}
@@ -412,12 +441,24 @@ func (s *Service) Finish(ctx context.Context, id, actor string, result Result) (
 		if r.Result == nil {
 			r.Result = &result
 		}
+		meter(r)
 	})
 }
 
 // Fail records a failure from any live state.
 func (s *Service) Fail(ctx context.Context, id, actor, cause string) (Record, error) {
-	return s.Advance(ctx, id, Failed, actor, func(r *Record) { r.Error = cause })
+	return s.FailWith(ctx, id, actor, cause, nil)
+}
+
+// FailWith is Fail with what the attempt cost anyway: failed work is not
+// free, and the books say so.
+func (s *Service) FailWith(ctx context.Context, id, actor, cause string, usage *Usage) (Record, error) {
+	return s.Advance(ctx, id, Failed, actor, func(r *Record) {
+		r.Error = cause
+		if usage != nil {
+			r.Usage = usage
+		}
+	})
 }
 
 // Supersede is the takeover: old must be over in a way that leaves work
@@ -545,6 +586,27 @@ func (s *Service) Live(ctx context.Context) ([]Record, error) {
 	var out []Record
 	for _, op := range ops {
 		if State(op.State).Terminal() {
+			continue
+		}
+		r, err := decode(op)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, nil
+}
+
+// Closed lists every attempt that reached a terminal state, oldest first:
+// the fleet's spend is the sum of their results.
+func (s *Service) Closed(ctx context.Context) ([]Record, error) {
+	ops, err := s.l.Operations(ctx, kind, "")
+	if err != nil {
+		return nil, err
+	}
+	var out []Record
+	for _, op := range ops {
+		if !State(op.State).Terminal() {
 			continue
 		}
 		r, err := decode(op)

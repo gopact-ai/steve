@@ -81,6 +81,8 @@ type Host struct {
 	opening      map[acp.SessionID]uint64
 	active       map[acp.SessionID]uint64
 	generation   uint64
+	// adapter is the ACP agent's name and version as it introduced itself.
+	adapter string
 }
 
 func New(cfg Config) *Host {
@@ -589,7 +591,9 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	if resp.AgentInfo != nil {
 		name = fmt.Sprintf("%s %s", resp.AgentInfo.Name, resp.AgentInfo.Version)
 	}
+	// The lock is already held here: this runs inside ensureStarted.
 	h.capabilities = resp.AgentCapabilities
+	h.adapter = name
 	log.Printf("acphost: connected to agent %s (protocol v%d)", name, resp.ProtocolVersion)
 	return nil
 }
@@ -999,6 +1003,9 @@ func (h *Host) sessionSettings(sid acp.SessionID) func() view.Settings {
 func (h *Host) Settings(sid acp.SessionID) view.Settings {
 	h.mu.Lock()
 	state := h.sessions[sid]
+	adapter := h.adapter
 	h.mu.Unlock()
-	return state.settings()
+	out := state.settings()
+	out.Adapter = adapter
+	return out
 }

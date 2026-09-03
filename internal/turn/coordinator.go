@@ -397,9 +397,13 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	// Timed from here, not from arrival: a queued prompt's wait is not the
 	// agent's running time, and the reminder is about how long the work took.
 	started := time.Now()
+	// Progress is stamped with the agent the turn runs as, and the last
+	// report's usage is what the task's attempt is charged.
+	spent := &turnSpend{}
+	req.OnProgress = spent.wrap(req.OnProgress, selected.ID)
 	if tracked != "" {
 		defer func() {
-			c.finishTask(tracked, err)
+			c.finishTask(tracked, err, spent.tokens(), spent.model())
 			c.offlineReminder(req, tracked, started, err)
 		}()
 	}
@@ -442,7 +446,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		case <-beat.Done():
 		}
 	}()
-	defer func() { c.closeAttempt(parent, att.ID, result, err) }()
+	defer func() { c.closeAttempt(parent, att.ID, result, err, spent) }()
 	req.phase(view.PhaseWaking)
 	runner, err := c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
 	if err != nil && saved.UpstreamID != "" {
@@ -931,6 +935,56 @@ func (c *Coordinator) clearActive(conversationID, agentID string) {
 		close(entry.done)
 	}
 	delete(c.cancels, key)
+}
+
+// turnSpend follows a turn's progress for what it cost and which model
+// ran it, since the ACP prompt result carries neither.
+type turnSpend struct {
+	mu    sync.Mutex
+	usage view.Usage
+	used  string
+}
+
+func (t *turnSpend) wrap(next func(view.Progress), agentID string) func(view.Progress) {
+	return func(p view.Progress) {
+		p.Agent = agentID
+		t.mu.Lock()
+		t.usage = p.Usage
+		if p.Settings.Model != "" {
+			t.used = p.Settings.Model
+		}
+		t.mu.Unlock()
+		if next != nil {
+			next(p)
+		}
+	}
+}
+
+func (t *turnSpend) tokens() task.Tokens {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return task.FromUsage(t.usage.InputTokens, t.usage.OutputTokens, t.usage.CacheReadTokens, t.usage.CacheWriteTokens)
+}
+
+// attemptUsage is the spend in the ledger's shape; nil-safe.
+func (t *turnSpend) attemptUsage() *attempt.Usage {
+	if t == nil {
+		return nil
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	u := t.usage
+	return &attempt.Usage{
+		Model: t.used, Input: int64(u.InputTokens), Output: int64(u.OutputTokens),
+		CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens), Context: int64(u.ContextTokens),
+		Reported: u.InputTokens+u.OutputTokens+u.CacheReadTokens > 0,
+	}
+}
+
+func (t *turnSpend) model() string {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.used
 }
 
 func promptTurn(ctx context.Context, runner harness.Runner, prompt string, req Request) (string, []string, error) {

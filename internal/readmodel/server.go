@@ -8,6 +8,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -55,6 +56,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/replies", s.guard(s.consoleReplies))
 	mux.HandleFunc("GET /console/context", s.guard(s.consoleContext))
 	mux.HandleFunc("GET /console/verbs", s.guard(s.consoleVerbs))
+	mux.HandleFunc("GET /console/suggest", s.guard(s.consoleSuggest))
+	mux.HandleFunc("GET /history", s.guard(s.history))
 	// The bundle is hashed, static code with nothing of the fleet in it,
 	// and the browser fetches it without the token the shell was opened
 	// with; it is served open. Everything that carries data stays guarded.
@@ -167,12 +170,26 @@ func loopback(addr string) bool {
 // console wired, the endpoints answer that acting is off.
 type Console interface {
 	Send(ctx context.Context, conversation, input string) (Reply, error)
+	// SendCommand is Send with an idempotency key from the page.
+	SendCommand(ctx context.Context, conversation, input, commandID string) (Reply, error)
 	Replies(conversation string) []Reply
 	// Conversations names every console conversation with a transcript.
 	Conversations() []string
 	// Context is where a conversation stands; Verbs is what it can be told.
 	Context(ctx context.Context, conversation string) (Context, error)
 	Verbs() []Verb
+	// Suggest completes a line the page is typing, by the coordinator's
+	// rules: verbs, agents, projects, this conversation's tasks.
+	Suggest(ctx context.Context, conversation, line string) []Suggestion
+}
+
+// Suggestion is one completion for the line being typed.
+type Suggestion struct {
+	Label  string `json:"label"`
+	Args   string `json:"args,omitempty"`
+	Detail string `json:"detail,omitempty"`
+	Insert string `json:"insert"`
+	Muted  bool   `json:"muted,omitempty"`
 }
 
 // Context is a conversation's standing for the page's context bar: its
@@ -192,6 +209,7 @@ type ContextProject struct {
 	Level   string `json:"level"`
 	Repo    string `json:"repo"`
 	Version int64  `json:"version"`
+	Bound   bool   `json:"bound"`
 }
 
 type AgentChoice struct {
@@ -237,6 +255,7 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Conversation string `json:"conversation"`
 		Input        string `json:"input"`
+		CommandID    string `json:"command_id"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -249,8 +268,13 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 	if req.Conversation == "" {
 		req.Conversation = "console:main"
 	}
-	reply, err := s.console.Send(r.Context(), req.Conversation, req.Input)
+	reply, err := s.console.SendCommand(r.Context(), req.Conversation, req.Input, req.CommandID)
 	w.Header().Set("Content-Type", "application/json")
+	if err != nil && strings.Contains(err.Error(), "already running") {
+		w.WriteHeader(http.StatusConflict)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+		return
+	}
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "reply": reply})
@@ -279,6 +303,37 @@ func (s *Server) consoleContext(w http.ResponseWriter, r *http.Request) {
 		ctx.Agents = []AgentChoice{}
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "context": ctx})
+}
+
+// history pages what happened, newest first; before is the ledger
+// sequence to continue from, as the previous page's next.
+func (s *Server) history(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	before, _ := strconv.ParseInt(r.URL.Query().Get("before"), 10, 64)
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	entries, next, err := s.model.History(r.Context(), before, limit)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+		return
+	}
+	if entries == nil {
+		entries = []HistoryEntry{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"entries": entries, "next": next})
+}
+
+func (s *Server) consoleSuggest(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	items := []Suggestion{}
+	if s.console != nil {
+		conversation := r.URL.Query().Get("conversation")
+		if conversation == "" {
+			conversation = "console:main"
+		}
+		items = append(items, s.console.Suggest(r.Context(), conversation, r.URL.Query().Get("q"))...)
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"suggestions": items})
 }
 
 func (s *Server) consoleVerbs(w http.ResponseWriter, _ *http.Request) {

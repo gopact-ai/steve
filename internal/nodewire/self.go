@@ -3,6 +3,7 @@ package nodewire
 import (
 	"net"
 	"os"
+	"runtime/debug"
 	"sort"
 	"strings"
 	"sync"
@@ -40,6 +41,45 @@ func Place(node string) string {
 		return self
 	}
 	return "hub"
+}
+
+// Version is this binary's build: the module version when there is one,
+// else the commit it was built from, marked when the tree was dirty. A
+// fleet whose machines cannot say which build they run cannot be
+// upgraded with confidence.
+func Version() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "unknown"
+	}
+	version := info.Main.Version
+	var rev, dirty string
+	for _, s := range info.Settings {
+		switch s.Key {
+		case "vcs.revision":
+			rev = s.Value
+		case "vcs.modified":
+			if s.Value == "true" {
+				dirty = "+dirty"
+			}
+		}
+	}
+	if len(rev) > 7 {
+		rev = rev[:7]
+	}
+	switch {
+	case strings.HasPrefix(version, "v0.0.0-") && rev != "":
+		// A pseudo-version is a timestamp and the same commit: say the commit.
+		return rev + dirty
+	case version != "" && version != "(devel)" && rev != "":
+		return version + " (" + rev + dirty + ")"
+	case rev != "":
+		return rev + dirty
+	case version != "":
+		return version
+	default:
+		return "unknown"
+	}
 }
 
 // Identity reports this machine's hostname and its non-loopback addresses,

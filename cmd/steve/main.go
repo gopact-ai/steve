@@ -463,7 +463,7 @@ func serve(args []string) error {
 	}
 	fleet.SetModels(seen)
 	manager.SetObserver(func(at harness.Placement, s steveview.Settings) {
-		seen.Observe(models.Observation{Node: at.Node, Harness: at.Harness, Current: s.Model, Available: s.Models, Source: "session"})
+		seen.Observe(models.Observation{Node: at.Node, Harness: at.Harness, Current: s.Model, Available: s.Models, Version: s.Adapter, Source: "session"})
 	})
 	prober := models.NewProber(manager, seen, func(ctx context.Context, node, dir string) error {
 		if node == "" {
@@ -640,7 +640,20 @@ func serve(args []string) error {
 		HubAdvert: func() nodewire.Advert { return hubAdvert(cfg) },
 		Models:    seen,
 		Roster:    fleet, Nodes: nodes, Tasks: tasks, Plans: plans,
-		Ledger: readmodel.Ledger{Attempts: attempts, Artifacts: artifacts, Projects: projects, Intents: intents},
+		Ledger:       readmodel.Ledger{Book: book, Attempts: attempts, Artifacts: artifacts, Projects: projects, Intents: intents},
+		Schedules:    schedules,
+		Observations: book.Document("observations"),
+	})
+	if err := view.LoadObservations(); err != nil {
+		log.Printf("steve: observations: %v", err)
+	}
+	// Machines coming and going are history, not just log lines.
+	nodes.SetObserver(func(s node.Status) {
+		if s.Up {
+			view.Observe("node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion))
+			return
+		}
+		view.Observe("node.down", s.Name, fmt.Sprintf("%s disconnected: %s", s.Name, s.LastError))
 	})
 	stepRunner.SetObserver(func(req exec.StepRequest, p steveview.Progress) {
 		view.StepProgress(req.TaskID, req.PlanID, req.StepID, req.Agent, req.Node, p)

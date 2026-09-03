@@ -800,6 +800,37 @@ func (l *Ledger) Operations(ctx context.Context, kind, state string) ([]Operatio
 }
 
 // Events returns an operation's history, oldest first.
+// RecentEvents pages the whole journal newest first: every transition of
+// every operation, before the given sequence (0 = from the end). This is
+// what a history view reads; SSE only says "look again".
+func (l *Ledger) RecentEvents(ctx context.Context, before int64, limit int) ([]Event, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	if before <= 0 {
+		before = 1 << 62
+	}
+	rows, err := l.db.QueryContext(ctx, `SELECT seq, operation_id, revision, incarnation, from_state, to_state, actor, fencings, effects, at FROM events WHERE seq < ? ORDER BY seq DESC LIMIT ?`, before, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Event
+	for rows.Next() {
+		var ev Event
+		var fencings, at string
+		var effects []byte
+		if err := rows.Scan(&ev.Seq, &ev.OperationID, &ev.Revision, &ev.Incarnation, &ev.From, &ev.To, &ev.Actor, &fencings, &effects, &at); err != nil {
+			return nil, err
+		}
+		_ = json.Unmarshal([]byte(fencings), &ev.Fencings)
+		ev.Effects = effects
+		ev.At, _ = time.Parse(rfc3339nano, at)
+		out = append(out, ev)
+	}
+	return out, rows.Err()
+}
+
 func (l *Ledger) Events(ctx context.Context, operationID string) ([]Event, error) {
 	rows, err := l.db.QueryContext(ctx, `SELECT seq, revision, incarnation, from_state, to_state, actor, fencings, effects, at FROM events WHERE operation_id = ? ORDER BY seq`, operationID)
 	if err != nil {

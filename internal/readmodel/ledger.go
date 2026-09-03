@@ -2,6 +2,7 @@ package readmodel
 
 import (
 	"context"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"sort"
 
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -12,10 +13,27 @@ import (
 
 // Ledger adapts the attempt and artifact services to the read model.
 type Ledger struct {
+	Book      *ledger.Ledger
 	Attempts  *attempt.Service
 	Artifacts *artifact.Store
 	Projects  *project.Store
 	Intents   *intent.Service
+}
+
+// ClosedAttempts are the attempts that reached a terminal state.
+func (l Ledger) ClosedAttempts(ctx context.Context) ([]attempt.Record, error) {
+	if l.Attempts == nil {
+		return nil, nil
+	}
+	return l.Attempts.Closed(ctx)
+}
+
+// Events pages the ledger journal newest first.
+func (l Ledger) Events(ctx context.Context, before int64, limit int) ([]ledger.Event, error) {
+	if l.Book == nil {
+		return nil, nil
+	}
+	return l.Book.RecentEvents(ctx, before, limit)
 }
 
 // ProjectList lists the projects on record.

@@ -27,6 +27,9 @@ type Observation struct {
 	// alternatives it offered, by display name.
 	Current   string   `json:"current,omitempty"`
 	Available []string `json:"available,omitempty"`
+	// Version is the adapter's own name and version, as it introduced
+	// itself over ACP.
+	Version string `json:"version,omitempty"`
 	// Source says how it was learned: "session" (ordinary work) or
 	// "probe" (asked on purpose).
 	Source string    `json:"source"`

@@ -79,6 +79,7 @@ type Service struct {
 	mu      sync.Mutex
 	pending map[string]*child
 	bases   map[string]string
+	spends  map[string]view.Progress
 }
 
 // child is a delegation in flight or recently finished.
@@ -437,7 +438,9 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	if caps.Instructions != "" {
 		prompt = caps.Instructions + "\n\n" + prompt
 	}
-	answer, _, err := session.Prompt(ctx, prompt, func(view.Progress) {})
+	var last view.Progress
+	answer, _, err := session.Prompt(ctx, prompt, func(p view.Progress) { last = p })
+	s.spent(child.ID, last)
 	if err != nil {
 		s.finish(child.ID, outcomeOf(err))
 		failAttempt(err)
@@ -533,9 +536,24 @@ func (s *Service) place(ctx context.Context, caller string, req agentmcp.Delegat
 }
 
 func (s *Service) finish(id string, outcome task.Outcome) {
-	if _, err := s.tasks.Finish(id, outcome, task.Tokens{}, 0); err != nil {
+	s.mu.Lock()
+	spent := s.spends[id]
+	delete(s.spends, id)
+	s.mu.Unlock()
+	tokens := task.FromUsage(spent.Usage.InputTokens, spent.Usage.OutputTokens, spent.Usage.CacheReadTokens, spent.Usage.CacheWriteTokens)
+	if _, err := s.tasks.FinishAs(id, outcome, tokens, 0, spent.Settings.Model); err != nil {
 		log.Printf("delegate: finish task #%s: %v", id, err)
 	}
+}
+
+// spent remembers a child's last progress until its task is finished.
+func (s *Service) spent(id string, p view.Progress) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.spends == nil {
+		s.spends = map[string]view.Progress{}
+	}
+	s.spends[id] = p
 }
 
 // ancestry is the chain of goals above the child, root first — what its

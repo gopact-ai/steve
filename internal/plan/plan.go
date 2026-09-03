@@ -89,6 +89,17 @@ type StepResult struct {
 	Verified  bool      `json:"verified,omitempty"`
 	StartedAt time.Time `json:"started_at,omitzero"`
 	EndedAt   time.Time `json:"ended_at,omitzero"`
+	// Usage is what the step's turn cost and the model it ran on.
+	Usage *Usage `json:"usage,omitempty"`
+}
+
+// Usage is a step's spend as the harness reported it.
+type Usage struct {
+	Model       string `json:"model,omitempty"`
+	Input       int64  `json:"input,omitempty"`
+	Output      int64  `json:"output,omitempty"`
+	CachedRead  int64  `json:"cached_read,omitempty"`
+	CachedWrite int64  `json:"cached_write,omitempty"`
 }
 
 // Step is one unit of work. Placement is expressed as Requires rather than a

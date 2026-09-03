@@ -14,10 +14,17 @@ package readmodel
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/view"
+	"log"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -48,8 +55,12 @@ type Snapshot struct {
 	// to see at a glance: capacity reservations, attestations, replicas,
 	// disclosures awaiting the owner, side effects with an unknown
 	// outcome, and grants.
-	Facts    Facts     `json:"facts"`
-	Projects []Project `json:"projects"`
+	Facts     Facts          `json:"facts"`
+	Projects  []Project      `json:"projects"`
+	Usage     Usage          `json:"usage"`
+	Inbox     []HumanRequest `json:"inbox"`
+	Schedules []Schedule     `json:"schedules"`
+	Sources   []SourceHealth `json:"sources"`
 }
 
 // Facts is the ledger seen from the outside.
@@ -146,8 +157,9 @@ type Hub struct {
 	// Level is the hub machine's own data level; Advert is what it can
 	// run, checked the way a node checks itself. Sources.HubAdvert fills
 	// it fresh for every snapshot.
-	Level  string          `json:"level,omitempty"`
-	Advert nodewire.Advert `json:"advert"`
+	Level   string          `json:"level,omitempty"`
+	Advert  nodewire.Advert `json:"advert"`
+	Version string          `json:"version,omitempty"`
 }
 
 // Roles a node can have. The hub is a node with the coordinating role,
@@ -160,6 +172,8 @@ const (
 type Node struct {
 	Name string `json:"name"`
 	Role string `json:"role"`
+	// Version is the steve build the machine runs.
+	Version string `json:"version,omitempty"`
 	// Addr is where the hub dials the node; Host and IPs are what the
 	// machine says about itself.
 	Addr         string    `json:"addr,omitempty"`
@@ -179,6 +193,8 @@ type Node struct {
 type Harness struct {
 	ID    string `json:"id"`
 	Slots int    `json:"slots,omitempty"`
+	// Version is the adapter as it introduced itself over ACP.
+	Version string `json:"version,omitempty"`
 	// Model is what the harness was last seen running here; Models what
 	// it offers, declared or observed.
 	Model   string   `json:"model,omitempty"`
@@ -202,6 +218,10 @@ type Agent struct {
 	Level    string   `json:"level,omitempty"`
 	Slots    int      `json:"slots,omitempty"`
 	Region   string   `json:"region,omitempty"`
+	// Activities are the agent's live attempts with the latest thing each
+	// was seen doing; Busy is their count.
+	Activities []Activity `json:"activities,omitempty"`
+	Busy       int        `json:"busy,omitempty"`
 }
 
 type Task struct {
@@ -220,6 +240,27 @@ type Task struct {
 	MaxElapse string    `json:"max_elapsed"`
 	UpdatedAt time.Time `json:"updated_at"`
 	PlanID    string    `json:"plan_id,omitempty"`
+	// Tokens and Seconds are what the task has spent across attempts.
+	Tokens  Tokens `json:"tokens"`
+	Seconds int64  `json:"seconds"`
+	Model   string `json:"model,omitempty"`
+	// Channel, ProjectID and Origin say where the task was asked, in
+	// which project, and by what (chat, plan, schedule, delegate).
+	Channel   string `json:"channel,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
+	Origin    string `json:"origin,omitempty"`
+	Requester string `json:"requester,omitempty"`
+	// AttemptRows are the task's turns as the task store caches them; the
+	// ledger's attempt records are the authority for what they cost.
+	AttemptRows []AttemptRow `json:"attempt_rows,omitempty"`
+	// Four axes, decided here and rolled up from every descendant task:
+	// Lifecycle is the task's own state; Execution says whether an
+	// attempt is live (idle|running); Attention counts the human requests
+	// waiting; Lane is the board column that follows from the three.
+	Lifecycle string `json:"lifecycle"`
+	Execution string `json:"execution"`
+	Attention int    `json:"attention"`
+	Lane      string `json:"lane"`
 }
 
 type Plan struct {
@@ -248,7 +289,10 @@ type Step struct {
 	// because "what did it see?" is the first question when a delegated
 	// step goes wrong, and a payload nobody can inspect is a payload nobody
 	// can debug.
-	Context *StepContext `json:"context,omitempty"`
+	Context   *StepContext `json:"context,omitempty"`
+	Usage     *StepUsage   `json:"usage,omitempty"`
+	StartedAt time.Time    `json:"started_at,omitzero"`
+	EndedAt   time.Time    `json:"ended_at,omitzero"`
 }
 
 type StepContext struct {
@@ -263,6 +307,11 @@ type StepContext struct {
 
 // Sources are the live stores the model reads. Each is optional: a hub with
 // no plans still reports its nodes.
+// ScheduleSource lists standing work; the schedule store satisfies it.
+type ScheduleSource interface {
+	List(conversationID string) []schedule.Job
+}
+
 // Models is what harnesses were seen running; the models package's Book
 // satisfies it.
 type Models interface {
@@ -283,6 +332,10 @@ type Sources struct {
 	// Models is the book of observed models, for node harnesses that
 	// declare none.
 	Models Models
+	// Schedules is standing work; Observations is where connectivity
+	// facts are kept for history.
+	Schedules    ScheduleSource
+	Observations ledger.Doc
 }
 
 // LedgerSource is what the read model needs from the ledger-backed
@@ -293,6 +346,10 @@ type LedgerSource interface {
 	Facts(ctx context.Context) Facts
 	// ProjectList lists every project, for the page and the context bar.
 	ProjectList(ctx context.Context) []project.Project
+	// ClosedAttempts are every attempt that reached a terminal state: the
+	// authority on spend. Events pages the journal for history.
+	ClosedAttempts(ctx context.Context) ([]attempt.Record, error)
+	Events(ctx context.Context, before int64, limit int) ([]ledger.Event, error)
 }
 
 type NodeSource interface {
@@ -312,8 +369,10 @@ type Model struct {
 	next int
 	// recent keeps the last events so a renderer that attaches mid-flight
 	// has something to show immediately instead of a blank screen.
-	recent   []Event
-	throttle map[string]throttled
+	recent       []Event
+	throttle     map[string]throttled
+	activity     map[string]Activity
+	observations []Observation
 }
 
 // Event is one change worth waking a renderer for.
@@ -346,6 +405,148 @@ const recentKept = 200
 
 func New(src Sources) *Model {
 	return &Model{src: src, subs: map[int]chan Event{}}
+}
+
+// AttemptRow is one turn of a task: who ran it, on what, for how long,
+// and what it reported spending. Reported false means the harness said
+// nothing about tokens, which is not the same as zero.
+type AttemptRow struct {
+	Day      string    `json:"day"`
+	Agent    string    `json:"agent"`
+	Node     string    `json:"node,omitempty"`
+	Model    string    `json:"model,omitempty"`
+	Outcome  string    `json:"outcome,omitempty"`
+	Started  time.Time `json:"started"`
+	Seconds  int64     `json:"seconds"`
+	Tokens   Tokens    `json:"tokens"`
+	Reported bool      `json:"reported"`
+}
+
+// StepUsage is a plan step's spend as the harness reported it.
+type StepUsage struct {
+	Day     string `json:"day"`
+	Model   string `json:"model,omitempty"`
+	Tokens  Tokens `json:"tokens"`
+	Seconds int64  `json:"seconds"`
+}
+
+// Activity is what an agent is doing right now, from its progress stream:
+// which task and step, the latest tool call, and since when.
+type Activity struct {
+	Agent        string    `json:"agent"`
+	AttemptID    string    `json:"attempt_id,omitempty"`
+	Kind         string    `json:"kind,omitempty"`
+	Workspace    string    `json:"workspace,omitempty"`
+	TaskID       string    `json:"task_id,omitempty"`
+	StepID       string    `json:"step_id,omitempty"`
+	Conversation string    `json:"conversation,omitempty"`
+	Tool         string    `json:"tool,omitempty"`
+	Detail       string    `json:"detail,omitempty"`
+	Since        time.Time `json:"since"`
+	At           time.Time `json:"at"`
+}
+
+// Tokens is a usage total, in the task store's own shape.
+type Tokens struct {
+	Input       int64 `json:"input,omitempty"`
+	Output      int64 `json:"output,omitempty"`
+	CachedRead  int64 `json:"cached_read,omitempty"`
+	CachedWrite int64 `json:"cached_write,omitempty"`
+	Total       int64 `json:"total,omitempty"`
+	// Context is the context window in use at the last report: what the
+	// adapters say when they report no token counts. Summed over
+	// attempts it is a size, not a spend; shown as such.
+	Context int64 `json:"context,omitempty"`
+}
+
+func (t Tokens) add(o Tokens) Tokens {
+	return Tokens{Input: t.Input + o.Input, Output: t.Output + o.Output, CachedRead: t.CachedRead + o.CachedRead, CachedWrite: t.CachedWrite + o.CachedWrite, Total: t.Total + o.Total, Context: t.Context + o.Context}
+}
+
+// Usage is what the fleet has spent: per day, per agent, per model, from
+// every closed attempt and step on record. Tokens and wall time only —
+// money needs a price table this system does not have.
+type Usage struct {
+	ByDay   []UsageRow `json:"by_day"`
+	ByAgent []UsageRow `json:"by_agent"`
+	ByModel []UsageRow `json:"by_model"`
+	Total   UsageRow   `json:"total"`
+}
+
+type UsageRow struct {
+	Key      string `json:"key"`
+	Tokens   Tokens `json:"tokens"`
+	Seconds  int64  `json:"seconds"`
+	Attempts int    `json:"attempts"`
+	// Unreported counts attempts whose harness said nothing about tokens.
+	Unreported int `json:"unreported,omitempty"`
+}
+
+// HumanRequest is one thing only a person can settle, projected from the
+// operation that is waiting: a disclosure, an effect with an unknown
+// outcome. The operation stays the authority; this is how the inbox
+// shows it, with the choices that are actually available.
+type HumanRequest struct {
+	ID         string    `json:"id"`
+	Type       string    `json:"type"`
+	Source     string    `json:"source"`
+	ProjectID  string    `json:"project_id,omitempty"`
+	TaskID     string    `json:"task_id,omitempty"`
+	Summary    string    `json:"summary"`
+	Choices    []Choice  `json:"choices"`
+	CreatedAt  time.Time `json:"created_at"`
+	Resolvable bool      `json:"resolvable"`
+}
+
+// Choice is one answer to a request, as the command that gives it.
+type Choice struct {
+	Label   string `json:"label"`
+	Command string `json:"command"`
+	Danger  bool   `json:"danger,omitempty"`
+}
+
+// Schedule is standing or one-off work the gateway will start by itself.
+type Schedule struct {
+	ID           string    `json:"id"`
+	Conversation string    `json:"conversation"`
+	Agent        string    `json:"agent,omitempty"`
+	Prompt       string    `json:"prompt"`
+	Spec         string    `json:"spec"`
+	NextAt       time.Time `json:"next_at"`
+	LastAt       time.Time `json:"last_at,omitzero"`
+	Runs         int       `json:"runs"`
+}
+
+// SourceHealth says whether a source contributed to the snapshot, so a
+// page can tell "none" from "could not read".
+type SourceHealth struct {
+	Name  string `json:"name"`
+	Wired bool   `json:"wired"`
+	Error string `json:"error,omitempty"`
+}
+
+// HistoryEntry is one thing that happened, in words, with the record
+// behind it: a ledger transition or a connectivity observation.
+type HistoryEntry struct {
+	At        time.Time `json:"at"`
+	Seq       int64     `json:"seq,omitempty"`
+	Kind      string    `json:"kind"`
+	Subject   string    `json:"subject,omitempty"`
+	Text      string    `json:"text"`
+	Actor     string    `json:"actor,omitempty"`
+	Operation string    `json:"operation,omitempty"`
+	From      string    `json:"from,omitempty"`
+	To        string    `json:"to,omitempty"`
+}
+
+// Observation is a connectivity fact worth remembering: a machine came
+// up with a build, went down with a reason, a probe answered. Kept in a
+// ledger document so history survives the process.
+type Observation struct {
+	At      time.Time `json:"at"`
+	Kind    string    `json:"kind"`
+	Subject string    `json:"subject"`
+	Text    string    `json:"text"`
 }
 
 // Project is where work happens: a directory on one machine, with a data
@@ -402,7 +603,7 @@ const (
 // FromProgress cuts a turn's progress down to what is worth sending.
 func FromProgress(p view.Progress) Progress {
 	out := Progress{
-		Agent: p.Settings.Harness, Node: p.Settings.Node, Model: p.Settings.Model,
+		Agent: p.Agent, Node: p.Settings.Node, Model: p.Settings.Model,
 		Reasoning: tailText(p.Reasoning, reasoningKept), Answer: tailText(p.Answer, answerKept),
 	}
 	out.Tools = toolCalls(p.Tools, 0)
@@ -555,6 +756,7 @@ func (m *Model) Publish(ev Event) {
 		ev.At = time.Now()
 	}
 	m.mu.Lock()
+	m.noteActivity(ev)
 	m.recent = append(m.recent, ev)
 	if len(m.recent) > recentKept {
 		m.recent = m.recent[len(m.recent)-recentKept:]
@@ -570,6 +772,146 @@ func (m *Model) Publish(ev Event) {
 		}
 	}
 	m.mu.Unlock()
+}
+
+// Observe records a connectivity fact and tells the page. The list is
+// kept in the ledger document so a restart does not forget it.
+func (m *Model) Observe(kind, subject, text string) {
+	obs := Observation{At: time.Now().UTC(), Kind: kind, Subject: subject, Text: text}
+	m.mu.Lock()
+	m.observations = append(m.observations, obs)
+	if len(m.observations) > observationsKept {
+		m.observations = m.observations[len(m.observations)-observationsKept:]
+	}
+	doc, list := m.src.Observations, append([]Observation(nil), m.observations...)
+	m.mu.Unlock()
+	if doc != nil {
+		if raw, err := json.Marshal(list); err == nil {
+			if err := doc.Save(raw); err != nil {
+				log.Printf("readmodel: save observations: %v", err)
+			}
+		}
+	}
+	m.Publish(Event{Kind: "observe." + kind, Detail: text, Text: subject})
+}
+
+const observationsKept = 1000
+
+// LoadObservations brings back what an earlier process observed.
+func (m *Model) LoadObservations() error {
+	if m.src.Observations == nil {
+		return nil
+	}
+	raw, ok, err := m.src.Observations.Load()
+	if err != nil || !ok || len(raw) == 0 {
+		return err
+	}
+	var list []Observation
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	m.observations = list
+	m.mu.Unlock()
+	return nil
+}
+
+// History pages what happened, newest first: ledger transitions in
+// words, merged with connectivity observations. before is the ledger
+// sequence to page from (0 = the end).
+func (m *Model) History(ctx context.Context, before int64, limit int) ([]HistoryEntry, int64, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 60
+	}
+	var out []HistoryEntry
+	var next int64
+	if m.src.Ledger != nil {
+		events, err := m.src.Ledger.Events(ctx, before, limit)
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, ev := range events {
+			out = append(out, HistoryEntry{
+				At: ev.At, Seq: ev.Seq, Kind: "ledger", Subject: ev.OperationID, Operation: ev.OperationID,
+				From: ev.From, To: ev.To, Actor: ev.Actor, Text: describeEvent(ev),
+			})
+			next = ev.Seq
+		}
+	}
+	// Observations have no sequence; they slot in by time. The first page
+	// takes everything newer than its oldest ledger entry; a later page
+	// takes what falls between its oldest and its newest.
+	var floor, ceiling time.Time
+	if len(out) > 0 {
+		floor = out[len(out)-1].At
+		if before > 0 {
+			ceiling = out[0].At
+		}
+	}
+	m.mu.Lock()
+	for _, o := range m.observations {
+		if !o.At.After(floor) && !floor.IsZero() {
+			continue
+		}
+		if !ceiling.IsZero() && o.At.After(ceiling) {
+			continue
+		}
+		out = append(out, HistoryEntry{At: o.At, Kind: "observe." + o.Kind, Subject: o.Subject, Text: o.Text})
+	}
+	m.mu.Unlock()
+	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
+	return out, next, nil
+}
+
+// describeEvent puts a ledger transition into words. The operation id's
+// prefix says what kind of thing moved; the states say what happened.
+func describeEvent(ev ledger.Event) string {
+	kind := "operation"
+	switch {
+	case strings.HasPrefix(ev.OperationID, "att-"):
+		kind = "attempt"
+	case strings.HasPrefix(ev.OperationID, "landing-"), strings.HasPrefix(ev.OperationID, "land-"):
+		kind = "landing"
+	case strings.HasPrefix(ev.OperationID, "disc-"):
+		kind = "disclosure"
+	case strings.HasPrefix(ev.OperationID, "intent-"), strings.HasPrefix(ev.OperationID, "eff-"):
+		kind = "effect"
+	}
+	who := ev.Actor
+	if who == "" {
+		who = "steve"
+	}
+	if ev.From == "" {
+		return fmt.Sprintf("%s %s opened as %s by %s", kind, ev.OperationID, ev.To, who)
+	}
+	return fmt.Sprintf("%s %s: %s → %s by %s", kind, ev.OperationID, ev.From, ev.To, who)
+}
+
+// noteActivity keeps, per agent, what its latest progress says it is
+// doing. Called under the lock. A reply or a step's end is not an event
+// here; the page judges staleness by At and by the attempts in flight.
+func (m *Model) noteActivity(ev Event) {
+	if ev.Progress == nil || ev.Progress.Agent == "" {
+		return
+	}
+	if ev.Kind != "console.progress" && ev.Kind != "step.progress" {
+		return
+	}
+	if m.activity == nil {
+		m.activity = map[string]Activity{}
+	}
+	prev := m.activity[ev.Progress.Agent]
+	next := Activity{Agent: ev.Progress.Agent, TaskID: ev.TaskID, StepID: ev.StepID, Conversation: ev.Conversation, At: ev.At, Since: prev.Since}
+	if prev.TaskID != next.TaskID || prev.StepID != next.StepID || prev.Since.IsZero() {
+		next.Since = ev.At
+	}
+	for _, t := range ev.Progress.Tools {
+		next.Tool, next.Detail = t.Kind, t.Name
+		if t.Status == "running" {
+			break
+		}
+	}
+	m.activity[ev.Progress.Agent] = next
 }
 
 // Subscribe returns a channel of changes and a cancel function.

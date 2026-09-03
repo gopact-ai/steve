@@ -317,6 +317,11 @@ func (s *Store) Begin(id, member, node, session string) (Task, error) {
 // Finish closes the open attempt and folds its cost into the budget. The task
 // state is left to the caller: a finished turn is not a finished task.
 func (s *Store) Finish(id string, outcome Outcome, tokens Tokens, toolCalls int) (Task, error) {
+	return s.FinishAs(id, outcome, tokens, toolCalls, "")
+}
+
+// FinishAs is Finish with the model the attempt ran on.
+func (s *Store) FinishAs(id string, outcome Outcome, tokens Tokens, toolCalls int, model string) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.clone()
@@ -335,6 +340,7 @@ func (s *Store) Finish(id string, outcome Outcome, tokens Tokens, toolCalls int)
 	attempt.EndedAt = now
 	attempt.Outcome = outcome
 	attempt.Tokens = tokens
+	attempt.Model = model
 	stored.Budget.Elapsed += now.Sub(attempt.StartedAt)
 	stored.Budget.ToolCalls += toolCalls
 	stored.Budget.Tokens = stored.Budget.Tokens.Add(tokens)

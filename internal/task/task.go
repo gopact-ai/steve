@@ -127,6 +127,16 @@ type Attempt struct {
 	EndedAt   time.Time `json:"ended_at,omitzero"`
 	Outcome   Outcome   `json:"outcome,omitempty"`
 	Tokens    Tokens    `json:"tokens,omitzero"`
+	// Model is what the attempt ran on, as the harness reported it, so
+	// usage can be read per model.
+	Model string `json:"model,omitempty"`
+}
+
+// FromUsage converts a turn's reported usage into the store's shape.
+func FromUsage(input, output, cachedRead, cachedWrite uint64) Tokens {
+	t := Tokens{Input: int64(input), Output: int64(output), CachedRead: int64(cachedRead), CachedWrite: int64(cachedWrite)}
+	t.Total = t.Input + t.Output
+	return t
 }
 
 func (a Attempt) Open() bool { return a.EndedAt.IsZero() }

@@ -1,46 +1,67 @@
 // Mirrors internal/readmodel: the snapshot the hub serves at /state and the
 // events it streams at /events. Every list is present, empty or not.
-export interface Advert { node?: string; hostname?: string; ips?: string[]; os?: string; arch?: string; harnesses?: Harness[]; capabilities?: string[] }
-export interface Hub { node: string; started: string; capabilities?: string[]; level?: string; advert?: Advert }
+export interface Advert { node?: string; build_version?: string; hostname?: string; ips?: string[]; os?: string; arch?: string; harnesses?: Harness[]; capabilities?: string[] }
+export interface Hub { node: string; started: string; capabilities?: string[]; level?: string; version?: string; advert?: Advert }
 export interface Harness { id: string; command?: string; version?: string; model?: string; models?: string[]; missing?: string; slots?: number }
 export interface Node {
-    name: string; role?: string; addr?: string; host?: string; ips?: string[]; up: boolean; since?: string; os?: string; arch?: string;
+    name: string; role?: string; version?: string; addr?: string; host?: string; ips?: string[]; up: boolean; since?: string; os?: string; arch?: string;
     capabilities?: string[]; harnesses?: Harness[]; last_error?: string; level?: string; region?: string;
+}
+export interface Activity {
+    agent: string; attempt_id?: string; kind?: string; workspace?: string; task_id?: string; step_id?: string; conversation?: string;
+    tool?: string; detail?: string; since: string; at: string;
 }
 export interface Agent {
     id: string; node?: string; harness: string; model?: string; models?: string[]; eligible: boolean; why?: string;
-    requires?: string[]; level?: string; slots?: number; region?: string; repair?: string;
+    requires?: string[]; level?: string; slots?: number; region?: string; repair?: string; activities?: Activity[]; busy?: number;
 }
+export interface Tokens { input?: number; output?: number; cached_read?: number; cached_write?: number; total?: number; context?: number }
+export interface AttemptRow { day: string; agent: string; node?: string; model?: string; outcome?: string; started: string; seconds: number; tokens: Tokens; reported: boolean }
 export interface Task {
-    id: string; goal: string; state: string; member?: string; node?: string; channel?: string; parent?: string;
-    turns: number; max_turns: number; elapsed?: string; max_elapsed?: string; project_id?: string;
-    plan_id?: string; attempts?: number; updated_at?: string; origin?: string;
+    id: string; goal: string; state: string; lifecycle: string; execution: string; attention: number; lane: string;
+    member?: string; node?: string; channel?: string; project_id?: string; origin?: string; requester?: string; parent?: string; children?: string[];
+    turns: number; max_turns: number; elapsed?: string; max_elapsed?: string; updated_at?: string; plan_id?: string;
+    tokens?: Tokens; seconds?: number; model?: string; attempt_rows?: AttemptRow[];
 }
 export interface StepContext { goal: string; ancestry?: string[]; refs?: string[]; findings?: string[]; facts?: string[]; bytes?: number }
+export interface StepUsage { day: string; model?: string; tokens: Tokens; seconds: number }
 export interface Step {
     id: string; goal: string; state: string; agent?: string; node?: string; needs?: string[]; merge?: string[];
-    requires?: string[]; verify?: string; error?: string; context?: StepContext; artifact?: string; attempts?: number;
+    requires?: string[]; verify?: string; error?: string; context?: StepContext; artifact?: string; attempts?: number; usage?: StepUsage;
+    started_at?: string; ended_at?: string;
 }
-export interface Plan { id: string; task_id: string; rev: number; goal: string; by: string; because: string; steps: Step[]; created_at?: string; base?: string }
+export interface Plan { id: string; task_id: string; rev: number; goal: string; by: string; because: string; steps: Step[]; created_at?: string; base?: string; fixed?: boolean }
 export interface Attempt {
     id: string; kind: string; state: string; task_id?: string; project: string; agent?: string; node?: string;
-    scope: string; workspace?: string; leases?: string[]; started_at: string;
+    scope?: string; workspace?: string; leases?: string[]; started_at: string;
 }
-export interface Landing { id: string; project: string; artifact: string; state: string; paths: number; error?: string; at: string }
-export interface Reservation { id: string; endpoint: string; for: string; region?: string; expires_at: string }
-export interface Attestation { artifact: string; step?: string; kind: string; verifier: string; verdict: string; detail?: string; attempt: string; at: string }
+export interface Landing { id: string; project: string; state: string; artifact: string; paths?: string; error?: string; at: string }
+export interface Reservation { id: string; key: string; node: string; harness: string; slots: number; for: string; by: string; expires_at: string }
+export interface Attestation { artifact: string; verdict: string; by: string; note?: string; at: string }
 export interface Replica { artifact: string; node: string; generation: number; state: string; note?: string; at: string }
 export interface Disclosure { id: string; project: string; task_id?: string; requester: string; bytes: number; at: string }
 export interface Effect { id: string; tool: string; task_id: string; attempt: string; error?: string; at: string }
 export interface Grant { project: string; principal: string; role: string; by: string }
 export interface Facts {
-    reservations: Reservation[]; attestations: Attestation[]; replicas: Replica[];
-    disclosures: Disclosure[]; effects: Effect[]; grants: Grant[];
+    reservations: Reservation[]; attestations: Attestation[]; replicas: Replica[]; disclosures: Disclosure[]; effects: Effect[]; grants: Grant[];
 }
-export interface Snapshot {
-    at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[]; projects: Project[];
-    attempts: Attempt[]; landings: Landing[]; facts: Facts;
+export interface Choice { label: string; command: string; danger?: boolean }
+export interface HumanRequest {
+    id: string; type: string; source: string; project_id?: string; task_id?: string; summary: string; choices: Choice[]; created_at: string; resolvable: boolean;
 }
+export interface Schedule { id: string; conversation: string; agent?: string; prompt: string; spec: string; next_at: string; last_at?: string; runs: number }
+export interface SourceHealth { name: string; wired: boolean; error?: string }
+export interface UsageRow { key: string; tokens: Tokens; seconds: number; attempts: number; unreported?: number }
+export interface Usage { by_day: UsageRow[]; by_agent: UsageRow[]; by_model: UsageRow[]; total: UsageRow }
+export interface Project { id: string; node: string; path: string; level: string; repo: string; default_role?: string; agents: string[] }
+export interface ContextProject { id: string; node: string; path: string; level: string; repo: string; version: number; bound?: boolean }
+export interface AgentChoice {
+    id: string; node: string; harness: string; model?: string; ready: boolean; why?: string; usable: boolean; because?: string; current?: boolean;
+}
+export interface ConversationContext { conversation: string; project?: ContextProject; agent?: AgentChoice; agents: AgentChoice[] }
+export interface Verb { command: string; args?: string; summary: string }
+export interface Suggestion { label: string; args?: string; detail?: string; insert: string; muted?: boolean }
+export interface HistoryEntry { at: string; seq?: number; kind: string; subject?: string; text: string; actor?: string; operation?: string; from?: string; to?: string }
 export interface ToolCall { id?: string; kind?: string; name?: string; detail?: string; status: string; input?: string; output?: string }
 export interface PlanLine { text: string; status: string }
 export interface Progress {
@@ -48,17 +69,14 @@ export interface Progress {
 }
 export interface StepProcess { id: string; agent?: string; node?: string; reasoning?: string; tools?: ToolCall[] }
 export interface Process { reasoning?: string; tools?: ToolCall[]; steps?: StepProcess[] }
-export interface ContextProject { id: string; node: string; path: string; level: string; repo: string; version: number }
-export interface AgentChoice {
-    id: string; node: string; harness: string; model?: string; ready: boolean; why?: string; usable: boolean; because?: string; current?: boolean;
-}
-export interface ConversationContext { conversation: string; project?: ContextProject; agent?: AgentChoice; agents: AgentChoice[] }
-export interface Verb { command: string; args?: string; summary: string }
-export interface Project { id: string; node: string; path: string; level: string; repo: string; default_role?: string; agents: string[] }
 export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
     state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress;
 }
 export interface Reply {
     at: string; conversation: string; input?: string; title?: string; text: string; error?: string; kind: string; process?: Process;
+}
+export interface Snapshot {
+    at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[]; projects: Project[];
+    attempts: Attempt[]; landings: Landing[]; facts: Facts; inbox: HumanRequest[]; schedules: Schedule[]; sources: SourceHealth[]; usage: Usage;
 }

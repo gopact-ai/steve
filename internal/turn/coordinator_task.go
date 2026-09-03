@@ -72,13 +72,13 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 	return tracked.ID, nil
 }
 
-// finishTask closes the attempt. Tokens stay zero for now: usage rides on the
-// ACP prompt response, which the runner does not surface yet.
-func (c *Coordinator) finishTask(id string, turnErr error) {
+// finishTask closes the attempt with what the turn cost and the model it
+// ran on, as the progress stream reported them.
+func (c *Coordinator) finishTask(id string, turnErr error, tokens task.Tokens, model string) {
 	if c.tasks == nil || id == "" {
 		return
 	}
-	if _, err := c.tasks.Finish(id, outcome(turnErr), task.Tokens{}, 0); err != nil {
+	if _, err := c.tasks.FinishAs(id, outcome(turnErr), tokens, 0, model); err != nil {
 		log.Printf("turn: finish task %s: %v", id, err)
 	}
 }

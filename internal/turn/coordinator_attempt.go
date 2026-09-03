@@ -84,9 +84,10 @@ func (c *Coordinator) advanceAttempt(ctx context.Context, id string, to attempt.
 
 // closeAttempt records the outcome even when the turn's own context is
 // gone: a cancelled turn is still a fact.
-func (c *Coordinator) closeAttempt(parent context.Context, id string, result Result, turnErr error) {
+func (c *Coordinator) closeAttempt(parent context.Context, id string, result Result, turnErr error, spent *turnSpend) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Minute)
 	defer cancel()
+	usage := spent.attemptUsage()
 	if turnErr == nil {
 		outcome := attempt.Result{Summary: clip(result.Text, 200)}
 		record, err := c.attempts.Get(ctx, id)
@@ -109,13 +110,13 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 				defer c.landPending(ctx, p)
 			}
 		}
-		if _, err := c.attempts.Finish(ctx, id, "turn", outcome); err != nil {
+		if _, err := c.attempts.FinishWith(ctx, id, "turn", outcome, usage); err != nil {
 			log.Printf("turn: attempt %s finish: %v", id, err)
 		}
 		c.recordDisclosure(ctx, record, result)
 		return
 	}
-	if _, err := c.attempts.Fail(ctx, id, "turn", turnErr.Error()); err != nil {
+	if _, err := c.attempts.FailWith(ctx, id, "turn", turnErr.Error(), usage); err != nil {
 		log.Printf("turn: attempt %s fail: %v", id, err)
 	}
 }

@@ -174,6 +174,10 @@ outcome-unknown 的对外动作列出来给人对账；`steve ledger status` 看
 
 ## 控制台
 
+页面按用户要回答的问题组织，六个入口：**工作台**（我在哪干活、跟谁说、能做什么）、**任务**（现在在做什么、卡在哪、花了多少；
+标签：进行中 / 全部 / 已安排 / 用量）、**项目**（活在哪台机器哪个目录、谁能接）、**资源**（机器、AI 工具、Agent 与版本，怎么加）、
+**待处理**（只放要你拍板的）、**历史与审计**。输入框上方常驻当前项目与 Agent，输入 `/` 与 `@` 有服务端补全。设计文档见 `docs/console.md`。
+
 页面是 React（Vite + TypeScript，源码在 `web/console/`），组件来自 [Untitled UI React](https://www.untitledui.com/react)
 （react-aria + Tailwind v4，随浏览器/系统切换明暗），构建产物嵌进二进制（`internal/readmodel/web/dist`，已提交），
 运行时不需要 Node；改了前端就 `make console` 再 `go build`。左栏 Console / Fleet / Tasks / Plans / Ledger / Activity，

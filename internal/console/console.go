@@ -8,6 +8,7 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"sort"
@@ -30,6 +31,14 @@ const (
 	keep       = 200
 )
 
+type outcome struct {
+	reply readmodel.Reply
+	err   error
+}
+
+// ErrCommandRunning says the same command id is being handled right now.
+var ErrCommandRunning = errors.New("this command is already running")
+
 // Handler is the coordinator's door.
 type Handler interface {
 	Handle(ctx context.Context, req turn.Request) (turn.Result, error)
@@ -42,6 +51,11 @@ type Service struct {
 
 	mu      sync.Mutex
 	replies map[string][]readmodel.Reply
+	// commands remembers each command id's answer; inflight guards a
+	// command still running.
+	commands     map[string]outcome
+	commandOrder []string
+	inflight     map[string]bool
 	// doc keeps the transcript across restarts. A console whose history
 	// vanishes with the process would make every restart look like the
 	// owner had never said anything.
@@ -103,7 +117,7 @@ func (s *Service) Context(ctx context.Context, conversation string) (readmodel.C
 	}
 	out := readmodel.Context{Conversation: conversation, Agents: []readmodel.AgentChoice{}}
 	if got.Project != nil {
-		out.Project = &readmodel.ContextProject{ID: got.Project.ID, Node: got.Project.Node, Path: got.Project.Path, Level: got.Project.Level, Repo: got.Project.Repo, Version: got.Project.Version}
+		out.Project = &readmodel.ContextProject{ID: got.Project.ID, Node: got.Project.Node, Path: got.Project.Path, Level: got.Project.Level, Repo: got.Project.Repo, Version: got.Project.Version, Bound: got.Project.Bound}
 	}
 	convert := func(a turn.AgentChoice) readmodel.AgentChoice {
 		return readmodel.AgentChoice{ID: a.ID, Node: a.Node, Harness: a.Harness, Model: a.Model, Ready: a.Ready, Why: a.Why, Usable: a.Usable, Because: a.Because, Current: a.Current}
@@ -116,6 +130,24 @@ func (s *Service) Context(ctx context.Context, conversation string) (readmodel.C
 		out.Agents = append(out.Agents, convert(a))
 	}
 	return out, nil
+}
+
+// Suggest completes a line by the coordinator's rules.
+func (s *Service) Suggest(ctx context.Context, conversation, line string) []readmodel.Suggestion {
+	if !strings.HasPrefix(conversation, Prefix) {
+		conversation = Prefix + conversation
+	}
+	aware, ok := s.handler.(interface {
+		Suggest(ctx context.Context, conversationID, line string) []turn.Suggestion
+	})
+	if !ok {
+		return nil
+	}
+	var out []readmodel.Suggestion
+	for _, x := range aware.Suggest(ctx, conversation, line) {
+		out = append(out, readmodel.Suggestion{Label: x.Label, Args: x.Args, Detail: x.Detail, Insert: x.Insert, Muted: x.Muted})
+	}
+	return out
 }
 
 // Verbs is what the console can be told, with help, from the coordinator.
@@ -142,6 +174,43 @@ func IsConsole(conversationOrAnchor string) bool {
 // theirs as step.progress, and the reply keeps the whole process so it
 // can be unfolded later.
 func (s *Service) Send(ctx context.Context, conversation, input string) (readmodel.Reply, error) {
+	return s.SendCommand(ctx, conversation, input, "")
+}
+
+// SendCommand is Send with an idempotency key: a page that retries, a
+// double click, a second tab — the same command id gets the first
+// answer back and nothing runs twice.
+func (s *Service) SendCommand(ctx context.Context, conversation, input, commandID string) (reply readmodel.Reply, err error) {
+	if commandID != "" {
+		s.mu.Lock()
+		if done, ok := s.commands[commandID]; ok {
+			s.mu.Unlock()
+			return done.reply, done.err
+		}
+		if s.inflight[commandID] {
+			s.mu.Unlock()
+			return readmodel.Reply{}, ErrCommandRunning
+		}
+		if s.inflight == nil {
+			s.inflight = map[string]bool{}
+		}
+		s.inflight[commandID] = true
+		s.mu.Unlock()
+		defer func() {
+			s.mu.Lock()
+			delete(s.inflight, commandID)
+			if s.commands == nil {
+				s.commands = map[string]outcome{}
+			}
+			s.commands[commandID] = outcome{reply: reply, err: err}
+			s.commandOrder = append(s.commandOrder, commandID)
+			if len(s.commandOrder) > keep {
+				delete(s.commands, s.commandOrder[0])
+				s.commandOrder = s.commandOrder[1:]
+			}
+			s.mu.Unlock()
+		}()
+	}
 	if s.owner == "" {
 		return readmodel.Reply{}, fmt.Errorf("the console needs feishu.owner_open_id: it acts as the owner")
 	}
@@ -159,7 +228,7 @@ func (s *Service) Send(ctx context.Context, conversation, input string) (readmod
 		OnProgress: s.progress(conversation, work),
 	})
 	stop()
-	reply := readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary()}
+	reply = readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary()}
 	if err != nil {
 		reply.Error = err.Error()
 		if reply.Text == "" {

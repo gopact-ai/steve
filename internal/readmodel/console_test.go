@@ -22,6 +22,10 @@ func (f *fakeConsole) Context(context.Context, string) (Context, error) {
 	return Context{Conversation: "console:main"}, nil
 }
 func (f *fakeConsole) Verbs() []Verb { return []Verb{{Command: "/plan", Summary: "split"}} }
+func (f *fakeConsole) SendCommand(ctx context.Context, conversation, input, _ string) (Reply, error) {
+	return f.Send(ctx, conversation, input)
+}
+func (f *fakeConsole) Suggest(context.Context, string, string) []Suggestion { return nil }
 
 // The console endpoints sit behind the same token as the snapshot and are
 // off — honestly off — until a console is wired.

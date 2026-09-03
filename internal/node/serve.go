@@ -270,7 +270,7 @@ func Advertise(name string, specs map[string]HarnessSpec, caps []string) nodewir
 	hostname, ips := nodewire.Identity()
 	return nodewire.Advert{
 		Node: name, OS: runtime.GOOS, Arch: runtime.GOARCH,
-		Hostname: hostname, IPs: ips,
+		BuildVersion: nodewire.Version(), Hostname: hostname, IPs: ips,
 		Harnesses: harnesses, Capabilities: caps,
 		Git: gitVersion(),
 	}

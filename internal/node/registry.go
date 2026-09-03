@@ -72,6 +72,25 @@ type Registry struct {
 	hubLvl string
 	// gens counts connections per node: the node's generation.
 	gens map[string]int64
+	// observe hears every change of a node's standing: up with an advert,
+	// or down with a reason. History is made of these.
+	observe func(Status)
+}
+
+// SetObserver installs where connectivity changes are reported.
+func (r *Registry) SetObserver(observe func(Status)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.observe = observe
+}
+
+func (r *Registry) observed(status Status) {
+	r.mu.Lock()
+	observe := r.observe
+	r.mu.Unlock()
+	if observe != nil {
+		observe(status)
+	}
 }
 
 // Generation is how many times the node has connected: it moves on every
@@ -339,9 +358,9 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 	r.gens[name]++
 	r.mu.Unlock()
 
-	r.remember(&Status{
-		Name: name, Addr: cfg.Addr, Level: levelOr(cfg.Level), Region: cfg.Region, Up: true, Since: time.Now(), Advert: c.getAdvert(),
-	})
+	up := Status{Name: name, Addr: cfg.Addr, Level: levelOr(cfg.Level), Region: cfg.Region, Up: true, Since: time.Now(), Advert: c.getAdvert()}
+	r.remember(&up)
+	r.observed(up)
 	go func() {
 		<-c.mux.Done()
 		log.Printf("node: %s disconnected", name)
@@ -350,6 +369,7 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 			delete(r.live, name)
 		}
 		r.mu.Unlock()
+		r.observed(Status{Name: name, Addr: cfg.Addr, Level: levelOr(cfg.Level), Region: cfg.Region, Up: false, LastError: "disconnected", Advert: c.getAdvert()})
 	}()
 	return c, nil
 }

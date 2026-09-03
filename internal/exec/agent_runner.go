@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -92,7 +93,8 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (plan.StepRe
 	if instructions != "" {
 		prompt = instructions + "\n\n" + prompt
 	}
-	answer, _, err := session.Prompt(ctx, prompt, a.progress(req))
+	var spent stepSpend
+	answer, _, err := session.Prompt(ctx, prompt, spent.wrap(a.progress(req), req.Agent))
 	if err != nil {
 		return plan.StepResult{}, err
 	}
@@ -100,7 +102,34 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (plan.StepRe
 		Answer:   strings.TrimSpace(answer),
 		Refs:     ParseRefs(answer),
 		Findings: parseFindings(answer),
+		Usage:    spent.usage(),
 	}, nil
+}
+
+// stepSpend follows a step's progress for its cost and model.
+type stepSpend struct {
+	mu   sync.Mutex
+	last view.Progress
+}
+
+func (s *stepSpend) wrap(next func(view.Progress), agentID string) func(view.Progress) {
+	return func(p view.Progress) {
+		p.Agent = agentID
+		s.mu.Lock()
+		s.last = p
+		s.mu.Unlock()
+		next(p)
+	}
+}
+
+func (s *stepSpend) usage() *plan.Usage {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	u := s.last.Usage
+	if u.InputTokens == 0 && u.OutputTokens == 0 && s.last.Settings.Model == "" {
+		return nil
+	}
+	return &plan.Usage{Model: s.last.Settings.Model, Input: int64(u.InputTokens), Output: int64(u.OutputTokens), CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens)}
 }
 
 func (a *AgentRunner) find(ctx context.Context, id string) (roster.Candidate, bool) {

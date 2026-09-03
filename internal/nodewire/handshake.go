@@ -56,10 +56,12 @@ type Advert struct {
 	OS      string `json:"os"`
 	Arch    string `json:"arch"`
 	// Hostname and IPs say which machine this is, independent of the
-	// name the hub's config gave it.
-	Hostname  string    `json:"hostname,omitempty"`
-	IPs       []string  `json:"ips,omitempty"`
-	Harnesses []Harness `json:"harnesses"`
+	// name the hub's config gave it; BuildVersion is the steve build
+	// running there (Version above is the protocol's).
+	BuildVersion string    `json:"build_version,omitempty"`
+	Hostname     string    `json:"hostname,omitempty"`
+	IPs          []string  `json:"ips,omitempty"`
+	Harnesses    []Harness `json:"harnesses"`
 	// Capabilities are free-form facts a step can require: "gpu",
 	// "prod-cred", "internal-net".
 	Capabilities  []string `json:"capabilities,omitempty"`

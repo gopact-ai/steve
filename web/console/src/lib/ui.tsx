@@ -22,8 +22,20 @@ export function colorOf(state: string): BadgeColors {
     }
 }
 
+const stateWords: Record<string, string> = {
+    draft: "草稿", running: "进行中", blocked: "受阻", review: "待审", done: "已完成", failed: "失败", paused: "已暂停", cancelled: "已取消",
+    pending: "待执行", ready: "可执行", verifying: "验证中", "awaiting-human": "等你回答", skipped: "跳过",
+    up: "在线", down: "离线", ready_agent: "可用", blocked_agent: "不可用",
+    bound: "已绑定", committed: "已提交", verified: "已验证", pass: "通过", fail: "未通过", succeeded: "成功",
+    leased: "已租", prepared: "已准备", applying: "应用中", transferring: "传输中", present: "在", lost: "丢失", expired: "过期",
+    "merge-conflicted": "合并冲突", "apply-conflicted": "应用冲突", "commit-conflicted": "提交冲突", "bind-conflict": "绑定冲突", "outcome-unknown": "结果未知",
+    merged: "已合并", locked: "已锁", quarantined: "隔离", proposed: "待定", "recovery-pending": "待恢复",
+};
+
+// StateBadge shows a state in the page's words; the internal word is the
+// tooltip, for anyone reading logs alongside.
 export const StateBadge = ({ state, size = "sm" }: { state: string; size?: "sm" | "md" }) => (
-    <Badge type="pill-color" size={size} color={colorOf(state)}>{state}</Badge>
+    <span title={state}><Badge type="pill-color" size={size} color={colorOf(state)}>{stateWords[state] ?? state}</Badge></span>
 );
 
 // The model's empty node is the hub's own machine; name it, never the role.
@@ -37,7 +49,7 @@ export const Mono = ({ children, className }: { children: ReactNode; className?:
 );
 
 export const Nothing = ({ icon, title, children }: { icon: FC<{ className?: string }>; title: string; children?: ReactNode }) => (
-    <EmptyState size="sm" className="py-10">
+    <EmptyState size="sm" className="overflow-hidden py-10">
         <EmptyState.Header>
             <EmptyState.FeaturedIcon icon={icon} color="gray" theme="modern" />
         </EmptyState.Header>

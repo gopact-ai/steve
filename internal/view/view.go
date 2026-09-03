@@ -85,6 +85,8 @@ type Field struct {
 // progress snapshot instead of being read once when the session opens.
 type Settings struct {
 	Harness string
+	// Adapter is the ACP agent's own name and version, from initialize.
+	Adapter string
 	Model   string
 	// Models are the alternatives the agent offered for this session, by
 	// the names a person would pick from. Empty when the harness does not
@@ -101,6 +103,10 @@ type Settings struct {
 func (s Settings) Empty() bool { return s.Harness == "" && s.Model == "" && s.Mode == "" }
 
 type Progress struct {
+	// Agent is the agent id the turn runs as — scheduling context stamped
+	// by whoever placed the turn, since a session knows only its
+	// placement, not which agent it is for.
+	Agent     string
 	Answer    string
 	Reasoning string
 	Tools     []Tool
