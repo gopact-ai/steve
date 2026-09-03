@@ -1,4 +1,4 @@
-import type { Reply, Snapshot } from "./types";
+import type { Reply, Snapshot, ConversationContext, Verb } from "./types";
 
 // The token guards everything: it rides as a bearer header on requests and
 // as a query parameter on the event stream, which cannot carry headers.
@@ -19,13 +19,13 @@ async function json<T>(res: Response): Promise<T> {
 }
 
 export const emptySnapshot: Snapshot = {
-    at: "", hub: { node: "", started: "" }, nodes: [], agents: [], tasks: [], plans: [], attempts: [], landings: [],
+    at: "", hub: { node: "", started: "" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [],
     facts: { reservations: [], attestations: [], replicas: [], disclosures: [], effects: [], grants: [] },
 };
 
 export async function fetchState(): Promise<Snapshot> {
     const s = await json<Snapshot>(await fetch(`./state${q}`, { headers }));
-    s.nodes ??= []; s.agents ??= []; s.tasks ??= []; s.plans ??= []; s.attempts ??= []; s.landings ??= [];
+    s.nodes ??= []; s.agents ??= []; s.tasks ??= []; s.plans ??= []; s.projects ??= []; s.attempts ??= []; s.landings ??= [];
     s.facts ??= { ...emptySnapshot.facts };
     for (const k of ["reservations", "attestations", "replicas", "disclosures", "effects", "grants"] as const) s.facts[k] ??= [];
     for (const p of s.plans) p.steps ??= [];
@@ -35,6 +35,15 @@ export async function fetchState(): Promise<Snapshot> {
 export async function fetchReplies(conversation: string): Promise<{ enabled: boolean; replies: Reply[]; conversations?: string[] }> {
     const sep = q ? "&" : "?";
     return json(await fetch(`./console/replies${q}${sep}conversation=${encodeURIComponent(conversation)}`, { headers }));
+}
+
+export async function fetchContext(conversation: string): Promise<{ enabled: boolean; context?: ConversationContext }> {
+    const sep = q ? "&" : "?";
+    return json(await fetch(`./console/context${q}${sep}conversation=${encodeURIComponent(conversation)}`, { headers }));
+}
+
+export async function fetchVerbs(): Promise<{ verbs: Verb[] }> {
+    return json(await fetch(`./console/verbs${q}`, { headers }));
 }
 
 export async function send(conversation: string, input: string): Promise<Reply> {

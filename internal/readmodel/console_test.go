@@ -18,6 +18,10 @@ func (f *fakeConsole) Send(_ context.Context, conversation, input string) (Reply
 }
 func (f *fakeConsole) Replies(string) []Reply  { return f.replies }
 func (f *fakeConsole) Conversations() []string { return []string{"console:main"} }
+func (f *fakeConsole) Context(context.Context, string) (Context, error) {
+	return Context{Conversation: "console:main"}, nil
+}
+func (f *fakeConsole) Verbs() []Verb { return []Verb{{Command: "/plan", Summary: "split"}} }
 
 // The console endpoints sit behind the same token as the snapshot and are
 // off — honestly off — until a console is wired.

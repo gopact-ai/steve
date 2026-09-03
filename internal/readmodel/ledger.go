@@ -18,6 +18,18 @@ type Ledger struct {
 	Intents   *intent.Service
 }
 
+// ProjectList lists the projects on record.
+func (l Ledger) ProjectList(ctx context.Context) []project.Project {
+	if l.Projects == nil {
+		return nil
+	}
+	all, err := l.Projects.List(ctx)
+	if err != nil {
+		return nil
+	}
+	return all
+}
+
 // Facts gathers the ledger's other records. Every list is non-nil so the
 // JSON says "none" rather than "unknown".
 func (l Ledger) Facts(ctx context.Context) Facts {

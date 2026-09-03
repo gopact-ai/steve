@@ -333,6 +333,17 @@ func (s *Store) Bind(ctx context.Context, conversationID, projectID, by string) 
 	return b, nil
 }
 
+// NotHome is the one rule for where a project's canonical workspace may be
+// worked: on its home machine, in place. Every surface that asks "can this
+// agent work here" — a turn, the console's context bar, a placement — asks
+// this, so the answer is the same everywhere.
+func (p Project) NotHome(node string, isolated bool) error {
+	if isolated || node != p.Home.Node {
+		return NotHomeError{Project: p.ID, Home: p.Home.Node, Wanted: node, Isolated: isolated}
+	}
+	return nil
+}
+
 // Materialize serves the canonical workspace on the project's home node.
 // Anything else is an honest refusal: the artifact store, not this
 // package, knows how to put a project somewhere it is not.
@@ -344,8 +355,8 @@ func (s *Store) Materialize(ctx context.Context, req Request) (Workspace, error)
 	if !ok {
 		return Workspace{}, fmt.Errorf("%w: %s", ErrUnknown, req.Project)
 	}
-	if req.Isolated || req.Node != p.Home.Node {
-		return Workspace{}, NotHomeError{Project: p.ID, Home: p.Home.Node, Wanted: req.Node, Isolated: req.Isolated}
+	if err := p.NotHome(req.Node, req.Isolated); err != nil {
+		return Workspace{}, err
 	}
 	return Workspace{
 		ID: "canonical:" + p.ID, Project: p.ID, Node: p.Home.Node, Path: p.Home.Path, Kind: KindCanonical,

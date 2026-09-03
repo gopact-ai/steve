@@ -53,6 +53,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /events", s.guard(s.events))
 	mux.HandleFunc("POST /console/send", s.guard(s.consoleSend))
 	mux.HandleFunc("GET /console/replies", s.guard(s.consoleReplies))
+	mux.HandleFunc("GET /console/context", s.guard(s.consoleContext))
+	mux.HandleFunc("GET /console/verbs", s.guard(s.consoleVerbs))
 	// The bundle is hashed, static code with nothing of the fleet in it,
 	// and the browser fetches it without the token the shell was opened
 	// with; it is served open. Everything that carries data stays guarded.
@@ -168,6 +170,47 @@ type Console interface {
 	Replies(conversation string) []Reply
 	// Conversations names every console conversation with a transcript.
 	Conversations() []string
+	// Context is where a conversation stands; Verbs is what it can be told.
+	Context(ctx context.Context, conversation string) (Context, error)
+	Verbs() []Verb
+}
+
+// Context is a conversation's standing for the page's context bar: its
+// project, its current agent, and every agent as a candidate with the
+// reason it can or cannot take the next line.
+type Context struct {
+	Conversation string          `json:"conversation"`
+	Project      *ContextProject `json:"project,omitempty"`
+	Agent        *AgentChoice    `json:"agent,omitempty"`
+	Agents       []AgentChoice   `json:"agents"`
+}
+
+type ContextProject struct {
+	ID      string `json:"id"`
+	Node    string `json:"node"`
+	Path    string `json:"path"`
+	Level   string `json:"level"`
+	Repo    string `json:"repo"`
+	Version int64  `json:"version"`
+}
+
+type AgentChoice struct {
+	ID      string `json:"id"`
+	Node    string `json:"node"`
+	Harness string `json:"harness"`
+	Model   string `json:"model,omitempty"`
+	Ready   bool   `json:"ready"`
+	Why     string `json:"why,omitempty"`
+	Usable  bool   `json:"usable"`
+	Because string `json:"because,omitempty"`
+	Current bool   `json:"current,omitempty"`
+}
+
+// Verb is one console verb with its argument shape and a line of help.
+type Verb struct {
+	Command string `json:"command"`
+	Args    string `json:"args,omitempty"`
+	Summary string `json:"summary"`
 }
 
 // Reply is one exchange on the console.
@@ -214,6 +257,37 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"reply": reply})
+}
+
+func (s *Server) consoleContext(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.console == nil {
+		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false})
+		return
+	}
+	conversation := r.URL.Query().Get("conversation")
+	if conversation == "" {
+		conversation = "console:main"
+	}
+	ctx, err := s.console.Context(r.Context(), conversation)
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+		return
+	}
+	if ctx.Agents == nil {
+		ctx.Agents = []AgentChoice{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "context": ctx})
+}
+
+func (s *Server) consoleVerbs(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	verbs := []Verb{}
+	if s.console != nil {
+		verbs = append(verbs, s.console.Verbs()...)
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"verbs": verbs})
 }
 
 func (s *Server) consoleReplies(w http.ResponseWriter, r *http.Request) {

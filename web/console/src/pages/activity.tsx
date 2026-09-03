@@ -9,7 +9,7 @@ export function ActivityPage() {
         <div className="p-6">
             <div className="rounded-xl bg-primary shadow-xs ring-1 ring-secondary">
                 <div className="border-b border-secondary px-5 py-4">
-                    <h2 className="text-md font-semibold text-primary">Activity</h2>
+                    <h2 className="text-md font-semibold text-primary">History</h2>
                     <p className="text-sm text-tertiary">The change stream, newest first.</p>
                 </div>
                 {events.length === 0 ? <Nothing icon={Activity} title="Quiet">Events appear as steps start, finish and land.</Nothing> : (

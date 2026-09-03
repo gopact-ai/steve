@@ -4,7 +4,44 @@ import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { relative } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
+import type { Node as NodeT } from "@/lib/types";
 import { Mono, Nothing, StateBadge, Tags, Where } from "@/lib/ui";
+
+// Runtimes lists what a machine can start and what it cannot, on separate
+// lines: nothing is struck through, a missing runtime says why and offers
+// the repair the roster knows.
+function Runtimes({ node }: { node: NodeT }) {
+    const all = node.harnesses || [];
+    const installed = all.filter((h) => !h.missing);
+    const missing = all.filter((h) => h.missing);
+    return (
+        <div className="flex flex-col gap-1.5">
+            {installed.length > 0 && (
+                <div className="flex flex-col gap-0.5">
+                    {installed.map((h) => (
+                        <div key={h.id} className="flex items-center gap-1.5">
+                            <span className="text-primary">{h.id}</span>
+                            {h.model ? <span className="text-xs text-tertiary">{h.model}</span> : null}
+                            {h.models?.length ? <span className="text-xs text-quaternary" title={h.models.join("\n")}>{h.model ? `+${Math.max(0, h.models.length - 1)}` : h.models.join(", ")}</span> : null}
+                            {h.slots ? <span className="text-xs text-quaternary">{h.slots} slots</span> : null}
+                        </div>
+                    ))}
+                </div>
+            )}
+            {missing.length > 0 && (
+                <div className="flex flex-col gap-0.5 border-t border-secondary pt-1">
+                    {missing.map((h) => (
+                        <div key={h.id} className="flex items-center gap-1.5 text-xs">
+                            <span className="text-tertiary">{h.id}</span>
+                            <span className="text-quaternary" title={h.missing}>not installed here</span>
+                        </div>
+                    ))}
+                </div>
+            )}
+            {all.length === 0 && <span className="text-quaternary">—</span>}
+        </div>
+    );
+}
 
 export function FleetPage() {
     const { snap } = useFleet();
@@ -13,7 +50,7 @@ export function FleetPage() {
     return (
         <div className="flex flex-col gap-6 p-6">
             <TableCard.Root size="sm">
-                <TableCard.Header title="Nodes" badge={`${up}/${snap.nodes.length} up`} description="Every machine, the hub included. What each one reports about itself, not what the config says." />
+                <TableCard.Header title="Machines" badge={`${up}/${snap.nodes.length} up`} description="Every machine running steve, the hub included. Each reports itself: what it is, and which runtimes (harnesses) it can actually start." />
                 {snap.nodes.length === 0 ? <Nothing icon={Server01} title="No nodes yet">The hub has not named itself and no remote nodes are configured.</Nothing> : (
                     <Table aria-label="Nodes" size="sm">
                         <Table.Header>
@@ -23,7 +60,7 @@ export function FleetPage() {
                             <Table.Head id="level" label="Level" />
                             <Table.Head id="region" label="Region" />
                             <Table.Head id="caps" label="Capabilities" />
-                            <Table.Head id="harness" label="Harnesses" />
+                            <Table.Head id="harness" label="Runtimes" />
                             <Table.Head id="since" label="Since" />
                         </Table.Header>
                         <Table.Body items={snap.nodes.map((n) => ({ ...n, id: n.name }))}>
@@ -47,18 +84,7 @@ export function FleetPage() {
                                     <Table.Cell>{n.level || "internal"}</Table.Cell>
                                     <Table.Cell><span className="text-tertiary">{n.region || "—"}</span></Table.Cell>
                                     <Table.Cell><Tags items={n.capabilities} /></Table.Cell>
-                                    <Table.Cell>
-                                        <div className="flex flex-col gap-0.5">
-                                            {(n.harnesses || []).map((h) => (
-                                                <div key={h.id} className="flex items-center gap-1.5">
-                                                    <span className={h.missing ? "text-error-primary line-through" : ""}>{h.id}</span>
-                                                    {h.slots ? <span className="text-xs text-tertiary">{h.slots} slots</span> : null}
-                                                    {h.model ? <span className="text-xs text-tertiary">{h.model}</span> : null}
-                                                    {h.models?.length ? <span className="text-xs text-quaternary" title={h.models.join("\n")}>{h.model ? `+${Math.max(0, h.models.length - 1)}` : h.models.join(", ")}</span> : null}
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </Table.Cell>
+                                    <Table.Cell><Runtimes node={n} /></Table.Cell>
                                     <Table.Cell><span className="text-tertiary">{n.up ? relative(n.since) : n.last_error}</span></Table.Cell>
                                 </Table.Row>
                             )}
@@ -68,7 +94,7 @@ export function FleetPage() {
             </TableCard.Root>
 
             <TableCard.Root size="sm">
-                <TableCard.Header title="Agents" badge={`${snap.agents.length}`} description="An agent is a machine, a harness and a model. Ready means it could start a session right now." />
+                <TableCard.Header title="Agents" badge={`${snap.agents.length}`} description="An agent is a runtime on a machine, running a model. Ready means it could start right now; blocked says why not, and who could fix it." />
                 <Table aria-label="Agents" size="sm">
                     <Table.Header>
                         <Table.Head id="agent" label="Agent" isRowHeader />

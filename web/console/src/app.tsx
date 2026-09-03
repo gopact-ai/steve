@@ -39,8 +39,8 @@ function Shell() {
         { href: "/fleet", label: "Fleet", icon: Server01, badge: snap.nodes.length ? `${snap.nodes.filter((n) => n.up).length}/${snap.nodes.length}` : undefined },
         { href: "/tasks", label: "Tasks", icon: ClipboardCheck, badge: running || undefined },
         { href: "/plans", label: "Plans", icon: GitBranch01, badge: snap.plans.length || undefined },
-        { href: "/ledger", label: "Ledger", icon: BookOpen01, badge: attention || undefined, hot: attention > 0 },
-        { href: "/activity", label: "Activity", icon: Activity },
+        { href: "/ledger", label: "Inbox", icon: BookOpen01, badge: attention || undefined, hot: attention > 0 },
+        { href: "/activity", label: "History", icon: Activity },
     ], [snap, attention, running]);
 
     const dark = theme === "dark" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);

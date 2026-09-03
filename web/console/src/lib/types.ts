@@ -38,7 +38,7 @@ export interface Facts {
     disclosures: Disclosure[]; effects: Effect[]; grants: Grant[];
 }
 export interface Snapshot {
-    at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[];
+    at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[]; projects: Project[];
     attempts: Attempt[]; landings: Landing[]; facts: Facts;
 }
 export interface ToolCall { id?: string; kind?: string; name?: string; detail?: string; status: string; input?: string; output?: string }
@@ -48,6 +48,13 @@ export interface Progress {
 }
 export interface StepProcess { id: string; agent?: string; node?: string; reasoning?: string; tools?: ToolCall[] }
 export interface Process { reasoning?: string; tools?: ToolCall[]; steps?: StepProcess[] }
+export interface ContextProject { id: string; node: string; path: string; level: string; repo: string; version: number }
+export interface AgentChoice {
+    id: string; node: string; harness: string; model?: string; ready: boolean; why?: string; usable: boolean; because?: string; current?: boolean;
+}
+export interface ConversationContext { conversation: string; project?: ContextProject; agent?: AgentChoice; agents: AgentChoice[] }
+export interface Verb { command: string; args?: string; summary: string }
+export interface Project { id: string; node: string; path: string; level: string; repo: string; default_role?: string; agents: string[] }
 export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
     state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress;

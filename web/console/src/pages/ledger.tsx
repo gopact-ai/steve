@@ -11,7 +11,9 @@ export function LedgerPage() {
     const { act } = useIntent();
     const f = snap.facts;
     return (
-        <div className="grid grid-cols-1 gap-6 p-6 xl:grid-cols-2">
+        <div className="flex flex-col gap-4 p-6">
+            <p className="text-sm text-tertiary">Inbox is what only you can decide: disclosures waiting for your word, and outward actions whose outcome nobody knows. Everything else the ledger keeps is under Advanced.</p>
+        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
             <TableCard.Root size="sm">
                 <TableCard.Header title="Disclosures awaiting the owner" badge={`${f.disclosures.length}`} description="Sealed content leaves only with the owner's word." />
                 {f.disclosures.length === 0 ? <Nothing icon={Lock01} title="Nothing waiting" /> : (
@@ -78,6 +80,11 @@ export function LedgerPage() {
                 )}
             </TableCard.Root>
 
+            <details className="group">
+                <summary className="flex cursor-pointer list-none items-center gap-2 text-sm text-tertiary hover:text-primary">
+                    <span className="text-xs">▸</span> Advanced · the ledger's other records: reservations, grants, attestations, replicas
+                </summary>
+                <div className="mt-4 flex flex-col gap-6">
             <TableCard.Root size="sm">
                 <TableCard.Header title="Reservations" badge={`${f.reservations.length}`} description="Capacity held for steps that have not started." />
                 {f.reservations.length === 0 ? <Nothing icon={Zap} title="No capacity reserved" /> : (
@@ -183,6 +190,9 @@ export function LedgerPage() {
                     </Table>
                 )}
             </TableCard.Root>
+                </div>
+            </details>
+        </div>
         </div>
     );
 }

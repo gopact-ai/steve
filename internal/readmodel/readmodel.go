@@ -24,6 +24,7 @@ import (
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/plan"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -47,7 +48,8 @@ type Snapshot struct {
 	// to see at a glance: capacity reservations, attestations, replicas,
 	// disclosures awaiting the owner, side effects with an unknown
 	// outcome, and grants.
-	Facts Facts `json:"facts"`
+	Facts    Facts     `json:"facts"`
+	Projects []Project `json:"projects"`
 }
 
 // Facts is the ledger seen from the outside.
@@ -289,6 +291,8 @@ type LedgerSource interface {
 	LiveAttempts(ctx context.Context) []Attempt
 	RecentLandings(ctx context.Context) []Landing
 	Facts(ctx context.Context) Facts
+	// ProjectList lists every project, for the page and the context bar.
+	ProjectList(ctx context.Context) []project.Project
 }
 
 type NodeSource interface {
@@ -342,6 +346,19 @@ const recentKept = 200
 
 func New(src Sources) *Model {
 	return &Model{src: src, subs: map[int]chan Event{}}
+}
+
+// Project is where work happens: a directory on one machine, with a data
+// level and a repo mode, and the agents that could work it right now —
+// judged by the same rule a turn is judged by.
+type Project struct {
+	ID          string   `json:"id"`
+	Node        string   `json:"node"`
+	Path        string   `json:"path"`
+	Level       string   `json:"level"`
+	Repo        string   `json:"repo"`
+	DefaultRole string   `json:"default_role,omitempty"`
+	Agents      []string `json:"agents"`
 }
 
 // Progress is one agent's turn as it happens, small enough to stream:

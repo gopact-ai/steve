@@ -100,11 +100,27 @@ func TestA1NodesRegister(t *testing.T) {
 }
 
 // A1b: a harness whose binary is absent is reported as broken, not omitted.
-// A roster that hides what is broken sends the hub hunting for a ghost.
+// A roster that hides what is broken sends the hub hunting for a ghost. The
+// broken harness lives on a steve-node started here for the purpose, so the
+// fleet's own machines carry no fixtures.
 func TestA1MissingHarnessIsReportedNotHidden(t *testing.T) {
 	requireMesh(t)
-	reg := registry(t)
-	advert, err := reg.Advert(t.Context(), nodeA)
+	broken := node.NewServer(node.ServerConfig{
+		Name: "fixture", Token: "fixture-token", StateDir: t.TempDir(), Listen: "127.0.0.1:0",
+		Harnesses: map[string]node.HarnessSpec{"absent": {Command: "definitely-not-installed"}},
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	go func() { _ = broken.Serve(ctx) }()
+	for range 100 {
+		if addr := broken.Addr(); addr != "" && !strings.HasSuffix(addr, ":0") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	reg := node.NewRegistry("hub-e2e", map[string]node.Config{"fixture": {Addr: broken.Addr(), Token: "fixture-token"}})
+	t.Cleanup(reg.Close)
+	advert, err := reg.Advert(t.Context(), "fixture")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -125,10 +141,10 @@ func TestA1MissingHarnessIsReportedNotHidden(t *testing.T) {
 		t.Error("the unusable harness was omitted from the advert instead of flagged")
 	}
 	// And starting it is refused with that reason, before any session opens.
-	if _, err := reg.Transport(nodeA, "absent").Start(t.Context()); err == nil {
+	if _, err := reg.Transport("fixture", "absent").Start(t.Context()); err == nil {
 		t.Error("starting an unavailable harness succeeded")
-	} else {
-		t.Logf("refused as expected: %v", err)
+	} else if !strings.Contains(err.Error(), "PATH") {
+		t.Errorf("refusal should carry the reason, got %v", err)
 	}
 }
 

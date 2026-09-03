@@ -70,6 +70,22 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	if snap.Plans == nil {
 		snap.Plans = []Plan{}
 	}
+	snap.Projects = []Project{}
+	if m.src.Ledger != nil {
+		for _, p := range m.src.Ledger.ProjectList(ctx) {
+			item := Project{
+				ID: p.ID, Node: m.place(p.Home.Node), Path: p.Home.Path,
+				Level: string(p.Level.OrDefault()), Repo: string(p.Repo), DefaultRole: string(p.DefaultRole), Agents: []string{},
+			}
+			for _, a := range snap.Agents {
+				if a.Eligible && p.NotHome(nodeOf(a.Node, m.src.Hub.Node), false) == nil {
+					item.Agents = append(item.Agents, a.ID)
+				}
+			}
+			snap.Projects = append(snap.Projects, item)
+		}
+		sort.Slice(snap.Projects, func(i, j int) bool { return snap.Projects[i].ID < snap.Projects[j].ID })
+	}
 	snap.Attempts, snap.Landings = []Attempt{}, []Landing{}
 	snap.Facts = Facts{Reservations: []Reservation{}, Attestations: []Attestation{}, Replicas: []Replica{}, Disclosures: []Disclosure{}, Effects: []Effect{}, Grants: []Grant{}}
 	if m.src.Ledger != nil {
@@ -107,6 +123,14 @@ func (m *Model) observedModels(n *Node) {
 			h.Model = seen.Current
 		}
 	}
+}
+
+// nodeOf is place's inverse: the hub's name back to the model's "".
+func nodeOf(placed, hub string) string {
+	if placed == hub {
+		return ""
+	}
+	return placed
 }
 
 // place resolves the model's "" — this machine — to the hub's node name,

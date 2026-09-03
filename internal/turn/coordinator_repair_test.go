@@ -238,3 +238,39 @@ func TestRepairReportsFailureHonestly(t *testing.T) {
 		t.Fatalf("node down: %q", res.Text)
 	}
 }
+
+// The context bar is computed by the rules a turn is judged by: an agent
+// on another machine is "not usable here" with the project's reason, a
+// blocked agent carries the roster's, and the current agent is marked.
+func TestContextSaysWhoCanWorkHere(t *testing.T) {
+	c, _, _, _, _ := repairCoordinator(t)
+	got, err := c.Context(t.Context(), "chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The default project is codex's own, homed on the hub.
+	if got.Project == nil || got.Project.ID != "codex" || got.Project.Node != "laptop" && got.Project.Node != "hub" {
+		t.Fatalf("project = %+v", got.Project)
+	}
+	byID := map[string]AgentChoice{}
+	for _, a := range got.Agents {
+		byID[a.ID] = a
+	}
+	if a := byID["codex"]; !a.Usable || !a.Ready || !a.Current {
+		t.Fatalf("codex = %+v, want usable and current", a)
+	}
+	if a := byID["builder"]; a.Usable || !a.Ready || !strings.Contains(a.Because, "codex") {
+		t.Fatalf("builder = %+v, want ready but not usable here, naming the project", a)
+	}
+	if a := byID["kimi"]; a.Usable || a.Ready || !strings.Contains(a.Because, "PATH") {
+		t.Fatalf("kimi = %+v, want blocked with the roster's reason", a)
+	}
+	// Usable agents come first, and the verbs come with help.
+	if !got.Agents[0].Usable {
+		t.Fatalf("first agent %+v is not usable", got.Agents[0])
+	}
+	verbs := c.Verbs()
+	if len(verbs) < 15 || verbs[0].Command != "/plan" || verbs[0].Summary == "" {
+		t.Fatalf("verbs = %+v", verbs[:2])
+	}
+}

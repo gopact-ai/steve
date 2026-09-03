@@ -86,6 +86,51 @@ func (s *Service) Conversations() []string {
 	return out
 }
 
+// Context is where a conversation stands, from the coordinator's own rules.
+func (s *Service) Context(ctx context.Context, conversation string) (readmodel.Context, error) {
+	if !strings.HasPrefix(conversation, Prefix) {
+		conversation = Prefix + conversation
+	}
+	aware, ok := s.handler.(interface {
+		Context(ctx context.Context, conversationID string) (turn.Context, error)
+	})
+	if !ok {
+		return readmodel.Context{Conversation: conversation, Agents: []readmodel.AgentChoice{}}, nil
+	}
+	got, err := aware.Context(ctx, conversation)
+	if err != nil {
+		return readmodel.Context{}, err
+	}
+	out := readmodel.Context{Conversation: conversation, Agents: []readmodel.AgentChoice{}}
+	if got.Project != nil {
+		out.Project = &readmodel.ContextProject{ID: got.Project.ID, Node: got.Project.Node, Path: got.Project.Path, Level: got.Project.Level, Repo: got.Project.Repo, Version: got.Project.Version}
+	}
+	convert := func(a turn.AgentChoice) readmodel.AgentChoice {
+		return readmodel.AgentChoice{ID: a.ID, Node: a.Node, Harness: a.Harness, Model: a.Model, Ready: a.Ready, Why: a.Why, Usable: a.Usable, Because: a.Because, Current: a.Current}
+	}
+	if got.Agent != nil {
+		current := convert(*got.Agent)
+		out.Agent = &current
+	}
+	for _, a := range got.Agents {
+		out.Agents = append(out.Agents, convert(a))
+	}
+	return out, nil
+}
+
+// Verbs is what the console can be told, with help, from the coordinator.
+func (s *Service) Verbs() []readmodel.Verb {
+	aware, ok := s.handler.(interface{ Verbs() []turn.Verb })
+	if !ok {
+		return nil
+	}
+	var out []readmodel.Verb
+	for _, v := range aware.Verbs() {
+		out = append(out, readmodel.Verb{Command: v.Command, Args: v.Args, Summary: v.Summary})
+	}
+	return out
+}
+
 // IsConsole says whether an anchor or conversation belongs to the page.
 func IsConsole(conversationOrAnchor string) bool {
 	return strings.HasPrefix(conversationOrAnchor, Prefix) || strings.HasPrefix(conversationOrAnchor, AnchorMark)
