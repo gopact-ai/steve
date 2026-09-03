@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/ability"
 	"strings"
 	"time"
 
@@ -209,6 +210,7 @@ func renderPrompt(req Request) string {
 	fmt.Fprintf(&b, "## 目标\n%s\n\n", req.Goal)
 
 	b.WriteString("## 可用的 agent 与机器\n")
+	b.WriteString("步骤的 requires 用选择器写：kind:id，如 tool:docker、mcp:github、hardware:gpu、model:claude*、network:internal；裸词是标签。只要求真的需要的。\n")
 	for _, c := range req.Roster {
 		where := c.Node
 		if where == "" {
@@ -218,7 +220,7 @@ func renderPrompt(req Request) string {
 			fmt.Fprintf(&b, "- %s（%s）不可用：%s\n", c.Agent.ID, where, c.Why)
 			continue
 		}
-		fmt.Fprintf(&b, "- %s 在 %s，能力：%s\n", c.Agent.ID, where, strings.Join(c.Capabilities, ", "))
+		fmt.Fprintf(&b, "- %s 在 %s，能力：%s\n", c.Agent.ID, where, ability.Compact(c.Snapshot, c.Harness, 8))
 	}
 	if req.TurnsLeft > 0 {
 		fmt.Fprintf(&b, "\n预算还剩 %d 轮。步骤数不要超过预算。\n", req.TurnsLeft)

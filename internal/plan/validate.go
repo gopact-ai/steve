@@ -2,6 +2,7 @@ package plan
 
 import (
 	"fmt"
+	"github.com/gopact-ai/steve/internal/ability"
 	"strings"
 )
 
@@ -36,6 +37,9 @@ func Validate(p Plan) error {
 		// otherwise the executor has to guess which machine it meant.
 		if s.Agent == "" && len(s.Requires) == 0 {
 			return fmt.Errorf("step %q names neither an agent nor any requirement", s.ID)
+		}
+		if err := ability.ValidateText(s.Requires); err != nil {
+			return fmt.Errorf("step %q: %w", s.ID, err)
 		}
 		if s.Verify == nil {
 			return fmt.Errorf("step %q does not say how it is verified; use verify.kind=none with a reason to opt out", s.ID)

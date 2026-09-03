@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/gopact/workflow"
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ctxpack"
@@ -552,6 +553,7 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 		Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID, Slots: candidate.Slots,
 		Region: candidate.Region, CanonicalRegion: deps.Roster.RegionOf(proj.Home.Node),
 		Workspace: workspace, Scope: attempt.ScopePathSet, Touches: step.Touches, Base: base, By: "exec",
+		Requires: step.Requires,
 	}
 	// A retry is a takeover, not a fresh start: the previous attempt of
 	// this step is superseded — its leases cut, its record pointing here —
@@ -626,7 +628,7 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 		Refs:      refs,
 		Findings:  findings,
 		Bearings:  ctxpack.Bearings(workspace.Path, refs) + inputsNote(inputs),
-		Facts:     candidate.Capabilities,
+		Facts:     facts(candidate, deps.Roster.All(ctx)),
 		TurnsLeft: turnsLeft,
 		Deadline:  deadlineLabel(deadline),
 	})
@@ -639,7 +641,21 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 		Agent: candidate.Agent.ID, Node: candidate.Node, Project: p.ProjectID, Workspace: workspace.Path,
 		Goal: step.Goal, Context: payload,
 	}
-	if _, err := deps.Attempts.Advance(ctx, record.ID, attempt.Prepared, "exec", nil); err != nil {
+	// Placement was a decision on a snapshot; admission is the machine's
+	// word on what it has now. A refusal fails this attempt and sends the
+	// step back to placement, which will not pick the same agent first.
+	admission, err := deps.Roster.Admit(ctx, candidate, step.Requires, record.ID)
+	if err != nil {
+		fail(err)
+		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
+	}
+	if admission.Refused() {
+		err := ErrNowhereToRun{StepID: step.ID, Requires: step.Requires,
+			Reasons: nodewire.Place(candidate.Node) + " refused at admission: " + admission.Unmet()}
+		fail(err)
+		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
+	}
+	if _, err := deps.Attempts.Advance(ctx, record.ID, attempt.Prepared, "exec", func(r *attempt.Record) { r.Admission = &admission }); err != nil {
 		fail(err)
 		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
 	}
@@ -763,6 +779,13 @@ func place(ctx context.Context, step plan.Step, r *roster.Roster, p project.Proj
 					Reasons: step.Agent + " is pinned but " + c.Why,
 				}
 			}
+			// Naming the agent narrows the choice; it does not waive the
+			// step's requirements.
+			if req, err := ability.Compile(step.Requires); err != nil {
+				return roster.Candidate{}, ErrNowhereToRun{StepID: step.ID, Requires: step.Requires, Reasons: err.Error()}
+			} else if m := c.Match(req); !m.OK() {
+				return roster.Candidate{}, ErrNowhereToRun{StepID: step.ID, Requires: step.Requires, Reasons: step.Agent + " is pinned but " + m.Unmet()}
+			}
 			return c, nil
 		}
 		return roster.Candidate{}, ErrNowhereToRun{
@@ -824,3 +847,18 @@ func deadlineLabel(at time.Time) string {
 	}
 	return at.Format("15:04")
 }
+
+// facts is what a step's agent is told about where it runs: its own
+// machine's abilities for its harness, ids only, under a small budget.
+// The rest of the fleet is a query away (steve_fleet), not a paragraph
+// in every step's context.
+func facts(self roster.Candidate, _ []roster.Candidate) []string {
+	line := "this machine (" + nodewire.Place(self.Node) + "): " + ability.Compact(self.Snapshot, self.Harness, 12)
+	if len(line) > factsBudget {
+		line = line[:factsBudget] + "… (truncated; ask steve_fleet)"
+	}
+	return []string{line}
+}
+
+// factsBudget bounds the ability line inside a step's context.
+const factsBudget = 4 << 10

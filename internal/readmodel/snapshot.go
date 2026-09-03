@@ -34,7 +34,7 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	if m.src.Roster != nil {
 		for _, c := range m.src.Roster.All(ctx) {
 			a := Agent{
-				ID: c.Agent.ID, Node: m.place(c.Node), Harness: c.Harness,
+				ID: c.Agent.ID, Node: m.place(c.Node), Harness: c.Harness, Snapshot: c.Snapshot,
 				Model: c.Model, Models: c.Models, Eligible: c.Eligible, Why: c.Why,
 				Requires: c.Agent.Requires, Level: string(c.Level.OrDefault()), Slots: c.Slots, Region: c.Region,
 			}
@@ -363,7 +363,7 @@ func hubNode(h Hub) Node {
 		caps = h.Advert.Capabilities
 	}
 	n := Node{
-		Name: h.Node, Role: RoleHub, Version: h.Advert.BuildVersion, Up: true, Since: h.Started,
+		Name: h.Node, Role: RoleHub, Version: h.Advert.BuildVersion, Up: true, Since: h.Started, Snapshot: nodewire.Synthesize(h.Advert, time.Now()), Features: h.Advert.Features,
 		Host: h.Advert.Hostname, IPs: h.Advert.IPs, OS: h.Advert.OS, Arch: h.Advert.Arch,
 		Capabilities: caps, Level: h.Level, Harnesses: harnesses(h.Advert),
 	}
@@ -385,7 +385,7 @@ func nodes(statuses []node.Status) []Node {
 	out := make([]Node, 0, len(statuses))
 	for _, s := range statuses {
 		n := Node{
-			Name: s.Name, Role: RoleWorker, Version: s.Advert.BuildVersion, Addr: s.Addr, Up: s.Up, Since: s.Since,
+			Name: s.Name, Role: RoleWorker, Version: s.Advert.BuildVersion, Addr: s.Addr, Up: s.Up, Since: s.Since, Snapshot: nodewire.Synthesize(s.Advert, time.Now()), Features: s.Advert.Features,
 			Host: s.Advert.Hostname, IPs: s.Advert.IPs, OS: s.Advert.OS, Arch: s.Advert.Arch,
 			Capabilities: s.Advert.Capabilities, LastError: s.LastError, Level: s.Level, Region: s.Region,
 			Harnesses: harnesses(s.Advert),

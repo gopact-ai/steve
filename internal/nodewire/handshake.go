@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/ability"
 	"io"
 	"time"
 )
@@ -28,6 +29,8 @@ type Hello struct {
 	Version int    `json:"version"`
 	Token   string `json:"token"`
 	Hub     string `json:"hub,omitempty"`
+	// Features are the protocol extensions the hub supports.
+	Features []string `json:"features,omitempty"`
 }
 
 // Harness is one agent runtime the node can actually start, with the models
@@ -62,6 +65,13 @@ type Advert struct {
 	Hostname     string    `json:"hostname,omitempty"`
 	IPs          []string  `json:"ips,omitempty"`
 	Harnesses    []Harness `json:"harnesses"`
+	// Snapshot is everything the machine can do, as the ability domain
+	// defines it: evidence, availability, coverage, a digest. An advert
+	// without one is from an older node; Synthesize fills in from the
+	// old fields and says so. Features are the protocol extensions the
+	// sender supports.
+	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
+	Features []string          `json:"features,omitempty"`
 	// Capabilities are free-form facts a step can require: "gpu",
 	// "prod-cred", "internal-net".
 	Capabilities  []string `json:"capabilities,omitempty"`
@@ -113,6 +123,17 @@ func Accept(conn io.ReadWriter, token string, advert Advert) (Hello, error) {
 // AcceptWith is Accept with the caller deciding which tokens are good: the
 // hub's, or a one-time grant a peer node was given for one transfer.
 func AcceptWith(conn io.ReadWriter, valid func(token string) bool, advert Advert) (Hello, error) {
+	return AcceptClaim(conn, valid, nil, advert)
+}
+
+// ErrRefused is a handshake the node declined for a reason of its own —
+// another hub already holds it, say — after the token checked out.
+var ErrRefused = errors.New("nodewire: refused")
+
+// AcceptClaim is AcceptWith with a claim step between the token check and
+// the advert: the node may decline a hub it will not serve, and the hub
+// learns why instead of receiving an advert and then losing the link.
+func AcceptClaim(conn io.ReadWriter, valid func(token string) bool, claim func(Hello) error, advert Advert) (Hello, error) {
 	var hello Hello
 	if err := readJSON(conn, &hello); err != nil {
 		return Hello{}, fmt.Errorf("read hello: %w", err)
@@ -125,6 +146,12 @@ func AcceptWith(conn io.ReadWriter, valid func(token string) bool, advert Advert
 	if !valid(hello.Token) {
 		_ = writeJSON(conn, Advert{Version: ProtocolVersion, Refused: "token rejected"})
 		return Hello{}, ErrBadToken
+	}
+	if claim != nil {
+		if err := claim(hello); err != nil {
+			_ = writeJSON(conn, Advert{Version: ProtocolVersion, Refused: err.Error()})
+			return Hello{}, fmt.Errorf("%w: %s", ErrRefused, err)
+		}
 	}
 	advert.Version = ProtocolVersion
 	if err := writeJSON(conn, advert); err != nil {

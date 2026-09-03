@@ -50,6 +50,11 @@ const (
 	// the data path; the hub stays the one that decides.
 	StreamGrant = "grant"
 	StreamFetch = "fetch"
+	// StreamAdmit asks the node to re-check a requirement on a fresh
+	// observation of itself before an attempt runs there: the hub's
+	// placement was made on a snapshot that may since have changed. The
+	// request and reply are one JSON document each.
+	StreamAdmit = "admit"
 )
 
 // ExitPrefix leads the close reason of a finished exec stream, followed by

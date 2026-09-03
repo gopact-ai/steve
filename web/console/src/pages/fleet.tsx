@@ -5,7 +5,7 @@ import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { relative } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
-import type { Node as NodeT } from "@/lib/types";
+import type { AbilitySnapshot, Attempt, Capability, Node as NodeT } from "@/lib/types";
 import { PageBody, PageHeader } from "@/lib/page";
 import { Mono, Nothing, StateBadge, Tags, Where } from "@/lib/ui";
 
@@ -84,6 +84,50 @@ function AddMachine({ hub }: { hub: string }) {
     );
 }
 
+const kindWords: Record<string, string> = { harness: "AI 工具", model: "模型", mcp: "MCP", skill: "技能", tool: "命令", hardware: "硬件", network: "网络", credential: "凭据", a2a: "A2A", tag: "标签" };
+const kindOrder = ["harness", "model", "mcp", "skill", "tool", "hardware", "network", "credential", "a2a", "tag"];
+
+// Abilities shows a machine's manifest grouped by kind: what it observed
+// it can do, what it was declared to have, and what it was configured for
+// but cannot start — each marked, none struck through.
+// state names one of the six ways a capability can stand: observed and
+// available, declared only, unavailable, unknown (not covered), stale,
+// or gated out of placement.
+function state(c: Capability, snap: AbilitySnapshot): { word: string; cls: string } {
+    const declaredOnly = !(c.evidence || []).some((e) => e.kind !== "declared");
+    if (c.availability === "unavailable") return { word: "已配置但不可用", cls: "text-quaternary line-through decoration-error-primary" };
+    if (c.availability === "unknown") return { word: "未知（未能核实）", cls: "text-quaternary ring-1 ring-secondary ring-inset" };
+    if (declaredOnly) return { word: "声明，未核实", cls: "text-tertiary ring-1 ring-secondary ring-inset" };
+    if (["mcp", "skill", "a2a"].includes(c.kind)) return { word: "已观测，暂不参与放置", cls: "bg-secondary text-tertiary" };
+    if (snap.coverage?.[c.kind] && snap.coverage[c.kind] !== "complete") return { word: "已观测（该类未查全）", cls: "bg-secondary text-primary" };
+    return { word: "可用于新会话", cls: "bg-secondary text-primary" };
+}
+
+function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
+    const list = snapshot?.offers || [];
+    if (!snapshot || !list.length) return <span className="text-quaternary">旧版本，未申报清单</span>;
+    const groups = kindOrder.map((k) => ({ k, items: list.filter((c) => c.kind === k) })).filter((g) => g.items.length);
+    return (
+        <div className="flex flex-col gap-1">
+            {groups.map((g) => (
+                <div key={g.k} className="flex flex-wrap items-baseline gap-1 text-xs">
+                    <span className="w-12 shrink-0 text-quaternary" title={snapshot.coverage?.[g.k] ? `覆盖：${snapshot.coverage[g.k]}` : undefined}>{kindWords[g.k] ?? g.k}</span>
+                    {g.items.map((c) => {
+                        const st = state(c, snapshot);
+                        return (
+                            <span key={`${c.id}@${c.scope || ""}`} title={`${c.kind}:${c.id}${c.scope ? "@" + c.scope : ""}${c.version ? " · " + c.version.value : ""} · ${st.word}${c.detail ? " · " + c.detail : ""}`}
+                                className={`rounded px-1 font-mono ${st.cls}`}>
+                                {c.id}{c.attrs?.count ? "×" + c.attrs.count : ""}
+                            </span>
+                        );
+                    })}
+                </div>
+            ))}
+            {snapshot.source === "legacy" && <span className="text-[11px] text-quaternary">旧版本 node：只知道 AI 工具与标签，其它类别未知。</span>}
+        </div>
+    );
+}
+
 export function FleetPage() {
     const { snap } = useFleet();
     const { fill, act } = useIntent();
@@ -96,7 +140,7 @@ export function FleetPage() {
             <PageBody>
             {adding && <AddMachine hub={snap.hub.node} />}
             <TableCard.Root size="sm">
-                <TableCard.Header title="机器" badge={`${up}/${snap.nodes.length} 在线`} description="每一台跑着 steve 的机器，hub 也在内。每台自己申报：它是谁、什么版本、能启动哪些 AI 工具。" />
+                <TableCard.Header title="机器" badge={`${up}/${snap.nodes.length} 在线`} description="每一台跑着 steve 的机器，hub 也在内。机器各不相同，这是正常的；每台自己申报能做什么：能观测的（AI 工具、命令、MCP、硬件）标已观测，只能声明的（网络、凭据）标声明。计划步骤和 agent 派活用 kind:id 选择器按这张表匹配。" />
                 {snap.nodes.length === 0 ? <Nothing icon={Server01} title="还没有机器">hub 还没报名字，也没有配置远程机器。</Nothing> : (
                     <Table aria-label="Nodes" size="sm">
                         <Table.Header>
@@ -106,7 +150,7 @@ export function FleetPage() {
                             <Table.Head id="state" label="状态" />
                             <Table.Head id="level" label="等级" />
                             <Table.Head id="region" label="区域" />
-                            <Table.Head id="caps" label="能力" />
+                            <Table.Head id="abilities" label="能做什么" />
                             <Table.Head id="harness" label="AI 工具" />
                             <Table.Head id="since" label="连接" />
                         </Table.Header>
@@ -131,7 +175,7 @@ export function FleetPage() {
                                     <Table.Cell><StateBadge state={n.up ? "up" : "down"} /></Table.Cell>
                                     <Table.Cell>{n.level || "internal"}</Table.Cell>
                                     <Table.Cell><span className="text-tertiary">{n.region || "—"}</span></Table.Cell>
-                                    <Table.Cell><Tags items={n.capabilities} /></Table.Cell>
+                                    <Table.Cell><Abilities snapshot={n.snapshot} /></Table.Cell>
                                     <Table.Cell><Runtimes node={n} /></Table.Cell>
                                     <Table.Cell><span className="text-tertiary">{n.up ? relative(n.since) : n.last_error}</span></Table.Cell>
                                 </Table.Row>
@@ -204,6 +248,7 @@ export function FleetPage() {
                             <Table.Head id="project" label="Project" />
                             <Table.Head id="scope" label="Scope" />
                             <Table.Head id="leases" label="Leases" />
+                            <Table.Head id="admission" label="准入" />
                             <Table.Head id="since" label="Since" />
                         </Table.Header>
                         <Table.Body items={snap.attempts}>
@@ -217,6 +262,7 @@ export function FleetPage() {
                                     <Table.Cell>{a.project}</Table.Cell>
                                     <Table.Cell><Badge type="modern" size="sm" color="gray">{a.scope}</Badge></Table.Cell>
                                     <Table.Cell><div className="flex flex-wrap gap-1">{(a.leases || []).map((l) => <Mono key={l}>{l}</Mono>)}</div></Table.Cell>
+                                    <Table.Cell><AdmissionBadge a={a} /></Table.Cell>
                                     <Table.Cell><span className="text-tertiary">{relative(a.started_at)}</span></Table.Cell>
                                 </Table.Row>
                             )}
@@ -225,6 +271,24 @@ export function FleetPage() {
                 )}
             </TableCard.Root>
             </PageBody>
+        </div>
+    );
+}
+
+// AdmissionBadge says who had the last word before the attempt ran and
+// on which revision: the node itself, the hub, the hub's cached snapshot,
+// or nobody (an older node).
+function AdmissionBadge({ a }: { a: Attempt }) {
+    const adm = a.admission;
+    const req = (a.requires || []).join(" ");
+    if (!adm) return <span className="text-tertiary">{req ? `要求 ${req} · 未留证` : "—"}</span>;
+    const who = ({ node: "机器终审", hub: "hub 判定", cached: "缓存快照", legacy: "旧版 node，未复核" } as Record<string, string>)[adm.source] || adm.source;
+    const color = adm.verdict === 1 ? "success" : adm.verdict === 0 ? "error" : "warning";
+    const rev = adm.generation ? ` @${adm.generation}/${adm.sequence}` : "";
+    return (
+        <div className="flex flex-col gap-0.5">
+            <Badge type="pill-color" size="sm" color={color}>{who}{rev}</Badge>
+            {req && <span className="text-xs text-tertiary">{req}</span>}
         </div>
     );
 }

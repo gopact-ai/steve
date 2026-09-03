@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/ability"
 	"log"
 	"net"
 	"sort"
@@ -73,8 +74,72 @@ type Registry struct {
 	// gens counts connections per node: the node's generation.
 	gens map[string]int64
 	// observe hears every change of a node's standing: up with an advert,
-	// or down with a reason. History is made of these.
+	// or down with a reason. History is made of these. drift hears what
+	// changed in a node's manifest between two adverts.
 	observe func(Status)
+	drift   func(node string, changes []string)
+}
+
+// SetDriftObserver installs where manifest changes are reported.
+func (r *Registry) SetDriftObserver(drift func(node string, changes []string)) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.drift = drift
+}
+
+// accept validates a node's snapshot on receipt — whole, fail closed —
+// stamps when it arrived by the hub's clock, and refuses one that is
+// older than what is already on record. A refused snapshot leaves the
+// previous one in force and is said so in the status.
+func (r *Registry) accept(name string, adv *nodewire.Advert) {
+	if adv.Snapshot == nil {
+		return
+	}
+	now := time.Now().UTC()
+	snap := *adv.Snapshot
+	snap.ReceivedAt = now
+	if err := ability.Validate(&snap); err != nil {
+		log.Printf("node: %s: snapshot rejected: %v", name, err)
+		adv.Snapshot = nil
+		adv.Capabilities = append(adv.Capabilities, "snapshot-rejected")
+		return
+	}
+	r.mu.Lock()
+	if last := r.last[name]; last != nil && last.Advert.Snapshot != nil {
+		prev := last.Advert.Snapshot
+		if prev.Generation == snap.Generation && prev.Sequence > snap.Sequence {
+			r.mu.Unlock()
+			log.Printf("node: %s: snapshot %d/%d is older than %d/%d on record; ignored", name, snap.Generation, snap.Sequence, prev.Generation, prev.Sequence)
+			adv.Snapshot = prev
+			return
+		}
+	}
+	r.mu.Unlock()
+	adv.Snapshot = &snap
+}
+
+// noteDrift compares a fresh advert with the last one on record and
+// reports the difference, if any, as structured changes.
+func (r *Registry) noteDrift(name string, adv nodewire.Advert) {
+	r.mu.Lock()
+	var before *ability.Snapshot
+	if last := r.last[name]; last != nil {
+		before = nodewire.Synthesize(last.Advert, time.Now())
+	}
+	drift := r.drift
+	r.mu.Unlock()
+	if drift == nil || before == nil {
+		return
+	}
+	changes := ability.Diff(before, nodewire.Synthesize(adv, time.Now()))
+	if len(changes) == 0 {
+		return
+	}
+	lines := make([]string, 0, len(changes))
+	for _, c := range changes {
+		lines = append(lines, c.String())
+	}
+	drift(name, lines)
 }
 
 // SetObserver installs where connectivity changes are reported.
@@ -230,6 +295,8 @@ func (r *Registry) Refresh(ctx context.Context, name string) (nodewire.Advert, e
 	if err := json.NewDecoder(stream).Decode(&adv); err != nil {
 		return nodewire.Advert{}, fmt.Errorf("node %q: read advert: %w", name, err)
 	}
+	r.accept(name, &adv)
+	r.noteDrift(name, adv)
 	c.setAdvert(adv)
 	r.mu.Lock()
 	if last := r.last[name]; last != nil && last.Up {
@@ -237,6 +304,36 @@ func (r *Registry) Refresh(ctx context.Context, name string) (nodewire.Advert, e
 	}
 	r.mu.Unlock()
 	return adv, nil
+}
+
+// Admit asks a node for its final word on the clauses of a requirement it
+// owns, on an observation it takes now. A node that does not speak the
+// admission protocol answers Unsure with NO_ADMISSION rather than an
+// error: the caller records that nobody re-checked, and decides.
+func (r *Registry) Admit(ctx context.Context, name string, req nodewire.AdmitRequest) (ability.Admission, error) {
+	c, err := r.connect(ctx, name)
+	if err != nil {
+		return ability.Admission{}, err
+	}
+	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureAdmission) {
+		return ability.Admission{Node: name, Source: ability.SourceLegacy, Verdict: ability.Unsure, Code: ability.CodeNoAdmission, At: time.Now().UTC()}, nil
+	}
+	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamAdmit})
+	if err != nil {
+		return ability.Admission{}, fmt.Errorf("node %q: ask for admission: %w", name, err)
+	}
+	defer stream.Close()
+	if err := json.NewEncoder(stream).Encode(req); err != nil {
+		return ability.Admission{}, fmt.Errorf("node %q: send admission request: %w", name, err)
+	}
+	var reply nodewire.AdmitReply
+	if err := json.NewDecoder(stream).Decode(&reply); err != nil {
+		return ability.Admission{}, fmt.Errorf("node %q: read admission: %w", name, err)
+	}
+	if reply.Error != "" {
+		return ability.Admission{}, fmt.Errorf("node %q: admission: %s", name, reply.Error)
+	}
+	return reply.Admission, nil
 }
 
 // MCPEndpoint is the URL an agent on this node should call to reach the
@@ -358,7 +455,11 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 	r.gens[name]++
 	r.mu.Unlock()
 
-	up := Status{Name: name, Addr: cfg.Addr, Level: levelOr(cfg.Level), Region: cfg.Region, Up: true, Since: time.Now(), Advert: c.getAdvert()}
+	adv := c.getAdvert()
+	r.accept(name, &adv)
+	c.setAdvert(adv)
+	up := Status{Name: name, Addr: cfg.Addr, Level: levelOr(cfg.Level), Region: cfg.Region, Up: true, Since: time.Now(), Advert: adv}
+	r.noteDrift(name, up.Advert)
 	r.remember(&up)
 	r.observed(up)
 	go func() {

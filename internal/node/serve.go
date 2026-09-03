@@ -5,6 +5,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/ability"
 	"io"
 	"log"
 	"net"
@@ -41,18 +42,57 @@ type HarnessSpec struct {
 
 // ServerConfig is the node's own configuration file.
 type ServerConfig struct {
-	Name          string                 `json:"name"`
-	Listen        string                 `json:"listen"`
-	Token         string                 `json:"token"`
-	Harnesses     map[string]HarnessSpec `json:"harnesses"`
-	Capabilities  []string               `json:"capabilities,omitempty"`
-	WorkspaceRoot string                 `json:"workspace_root,omitempty"`
-	StateDir      string                 `json:"state_dir,omitempty"`
+	Name      string                 `json:"name"`
+	Listen    string                 `json:"listen"`
+	Token     string                 `json:"token"`
+	Harnesses map[string]HarnessSpec `json:"harnesses"`
+	// Capabilities are free-form tags (kept for older configs); Tools
+	// are binaries to look for on PATH; MCPServers are the MCP servers
+	// this machine can start for its agents; Declares are capabilities
+	// nobody can check from inside a process ("network:internal",
+	// "credential:prod") and so are taken on the operator's word.
+	Capabilities  []string           `json:"capabilities,omitempty"`
+	Tools         []string           `json:"tools,omitempty"`
+	MCPServers    map[string]MCPSpec `json:"mcp_servers,omitempty"`
+	Declares      []string           `json:"declares,omitempty"`
+	WorkspaceRoot string             `json:"workspace_root,omitempty"`
+	StateDir      string             `json:"state_dir,omitempty"`
+}
+
+// MCPSpec is an MCP server as this machine can start it. Env stays on
+// the machine: it goes into the agent process's environment, never into
+// the advert.
+type MCPSpec struct {
+	Type    string            `json:"type"`
+	Command string            `json:"command,omitempty"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+	URL     string            `json:"url,omitempty"`
+}
+
+// Observe is what a machine can find out about itself without starting
+// anything: which configured harnesses, tools and MCP commands are on the
+// PATH, what hardware is present, plus the declarations it was given.
+type Observe struct {
+	Harnesses map[string]HarnessSpec
+	Tools     []string
+	MCP       map[string]MCPSpec
+	Declares  []string
+	Tags      []string
 }
 
 // Server accepts hub connections and runs agents on this machine.
 type Server struct {
 	cfg ServerConfig
+	// generation identifies this process; sequence counts its snapshots.
+	// Together they let the hub reject a snapshot that arrives out of order.
+	generation int64
+	seq        int64
+	// hub is the hub currently served. A second hub is refused: two hubs
+	// placing work on one machine would each believe they own its slots.
+	hubMu   sync.Mutex
+	hubName string
+	hubLive int
 
 	grantsMu sync.Mutex
 	grants   map[string]peerGrant
@@ -62,7 +102,9 @@ type Server struct {
 	listener net.Listener
 }
 
-func NewServer(cfg ServerConfig) *Server { return &Server{cfg: cfg, mcpPort: rememberedPort(cfg)} }
+func NewServer(cfg ServerConfig) *Server {
+	return &Server{cfg: cfg, mcpPort: rememberedPort(cfg), generation: time.Now().Unix()}
+}
 
 // Serve blocks until ctx ends or the listener fails.
 func (s *Server) Serve(ctx context.Context) error {
@@ -114,10 +156,23 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 		advert.MCPPort = mcp.Addr().(*net.TCPAddr).Port
 		defer mcp.Close()
 	}
-	hello, err := nodewire.AcceptWith(socket, s.validToken, advert)
+	claimed := false
+	hello, err := nodewire.AcceptClaim(socket, s.validToken, func(h nodewire.Hello) error {
+		if _, peer := s.grantedName(h.Token); peer {
+			return nil
+		}
+		if err := s.claim(h.Hub); err != nil {
+			return err
+		}
+		claimed = true
+		return nil
+	}, advert)
 	if err != nil {
 		log.Printf("steve-node: handshake from %s: %v", socket.RemoteAddr(), err)
 		return
+	}
+	if claimed {
+		defer s.release(hello.Hub)
 	}
 	if name, ok := s.grantedName(hello.Token); ok {
 		// A peer, not the hub: it may take the one blob it was granted and
@@ -149,6 +204,8 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 			go s.grant(stream)
 		case nodewire.StreamFetch:
 			go s.fetch(ctx, stream)
+		case nodewire.StreamAdmit:
+			go s.admit(stream)
 		default:
 			go s.runAgent(ctx, stream)
 		}
@@ -237,15 +294,179 @@ func (s *Server) processDir(spec HarnessSpec) string {
 	return s.cfg.WorkspaceRoot
 }
 
+func (s *Server) nextSequence() int64 {
+	s.hubMu.Lock()
+	defer s.hubMu.Unlock()
+	s.seq++
+	return s.seq
+}
+
+// claim admits one hub at a time by name. A second hub with the right
+// token is still refused while the first is connected: sharing a machine
+// between two schedulers is a decision, not an accident.
+func (s *Server) claim(hub string) error {
+	s.hubMu.Lock()
+	defer s.hubMu.Unlock()
+	if s.hubLive > 0 && s.hubName != hub {
+		return fmt.Errorf("this node is served by hub %q; refuse %q", s.hubName, hub)
+	}
+	s.hubName = hub
+	s.hubLive++
+	return nil
+}
+
+func (s *Server) release(hub string) {
+	s.hubMu.Lock()
+	defer s.hubMu.Unlock()
+	if s.hubName == hub && s.hubLive > 0 {
+		s.hubLive--
+	}
+}
+
 // advert reports what this machine can honestly do. Harnesses whose command
 // is not on this node's PATH are listed as missing rather than omitted: a
 // roster that hides what is broken sends the hub hunting for a node that
 // silently vanished.
 func (s *Server) advert() nodewire.Advert {
 	adv := Advertise(s.cfg.Name, s.cfg.Harnesses, s.cfg.Capabilities)
+	adv.Snapshot = s.snapshot()
+	adv.Features = nodewire.Features()
 	adv.WorkspaceRoot = s.cfg.WorkspaceRoot
 	adv.StateDir = s.cfg.StateDir
 	return adv
+}
+
+// snapshot observes this machine now, as the next revision.
+func (s *Server) snapshot() *ability.Snapshot {
+	return Snapshot(s.cfg.Name, s.generation, s.nextSequence(), Observe{Harnesses: s.cfg.Harnesses, Tools: s.cfg.Tools, MCP: s.cfg.MCPServers, Declares: s.cfg.Declares, Tags: s.cfg.Capabilities})
+}
+
+// admit is the node's final word before an attempt runs here: the hub
+// placed on a snapshot it accepted earlier; the node re-checks the clauses
+// it owns on an observation taken now and says what it found, with the
+// revision it found it on. A refusal is a verdict, not an error.
+func (s *Server) admit(stream *nodewire.Stream) {
+	defer stream.Close()
+	var req nodewire.AdmitRequest
+	if err := json.NewDecoder(stream).Decode(&req); err != nil {
+		_ = json.NewEncoder(stream).Encode(nodewire.AdmitReply{Error: "read request: " + err.Error()})
+		return
+	}
+	snap := s.snapshot()
+	if snap == nil {
+		_ = json.NewEncoder(stream).Encode(nodewire.AdmitReply{Error: "this node cannot observe itself"})
+		return
+	}
+	now := time.Now().UTC()
+	m := ability.Match(req.Requirement, snap, req.Harness, now)
+	adm := ability.AdmissionOf(m, snap, ability.SourceNode, now)
+	log.Printf("steve-node: admission for attempt %s (%s): %s at %d/%d", req.Attempt, req.Harness, adm.Verdict, snap.Generation, snap.Sequence)
+	if err := json.NewEncoder(stream).Encode(nodewire.AdmitReply{Admission: adm}); err != nil {
+		log.Printf("steve-node: admission reply: %v", err)
+	}
+}
+
+// Snapshot observes the machine into an ability snapshot. Everything that
+// can be checked is checked (existence on PATH; hardware present); the
+// rest is declared and says so. Coverage names the kinds that were fully
+// checked, so "not listed" means "absent" only for those.
+func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snapshot {
+	now := time.Now().UTC()
+	s := &ability.Snapshot{
+		Schema: ability.Schema, Node: name, Generation: generation, Sequence: sequence, GeneratedAt: now,
+		Coverage: map[ability.Kind]ability.Coverage{
+			ability.Harness: ability.Complete, ability.Tool: ability.Complete, ability.MCP: ability.Complete,
+			ability.Hardware: ability.Partial, ability.Network: ability.Complete, ability.Credential: ability.Complete,
+			ability.Tag: ability.Complete, ability.Model: ability.Partial, ability.Skill: ability.Unsupported, ability.A2A: ability.Unsupported,
+		},
+		Features: nodewire.Features(), Source: "node",
+	}
+	observed := func(kind ability.Kind, id, cmd string) ability.Capability {
+		c := ability.Capability{Kind: kind, ID: id, Assurance: ability.Existence}
+		if path, err := exec.LookPath(cmd); err != nil {
+			c.Evidence = []ability.Evidence{{Kind: ability.Observed, Method: "path", OK: false, Result: fmt.Sprintf("%q not on this node's PATH", cmd), At: now}}
+			c.Detail = fmt.Sprintf("%q not on this node's PATH", cmd)
+		} else {
+			c.Evidence = []ability.Evidence{{Kind: ability.Observed, Method: "path", OK: true, Result: path, At: now}}
+		}
+		return c
+	}
+	ids := make([]string, 0, len(o.Harnesses))
+	for id := range o.Harnesses {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		s.Offers = append(s.Offers, observed(ability.Harness, id, o.Harnesses[id].Command))
+	}
+	for _, tool := range o.Tools {
+		s.Offers = append(s.Offers, observed(ability.Tool, tool, tool))
+	}
+	names := make([]string, 0, len(o.MCP))
+	for id := range o.MCP {
+		names = append(names, id)
+	}
+	sort.Strings(names)
+	for _, id := range names {
+		spec := o.MCP[id]
+		// MCP servers are offered per harness scope? They are the machine's;
+		// a harness starts them. Until a broker exists they are observed
+		// only and never scheduled, so scope is every configured harness.
+		for _, h := range ids {
+			var c ability.Capability
+			switch spec.Type {
+			case "stdio", "":
+				c = observed(ability.MCP, id, spec.Command)
+			case "http", "sse":
+				ok := strings.HasPrefix(spec.URL, "http://") || strings.HasPrefix(spec.URL, "https://")
+				c = ability.Capability{Kind: ability.MCP, ID: id, Assurance: ability.Existence, Evidence: []ability.Evidence{{Kind: ability.Observed, Method: "url", OK: ok, At: now}}}
+				if !ok {
+					c.Detail = "url is not http(s)"
+				}
+			default:
+				c = ability.Capability{Kind: ability.MCP, ID: id, Evidence: []ability.Evidence{{Kind: ability.Observed, Method: "config", OK: false, Result: "unknown type " + spec.Type, At: now}}, Detail: "unknown type " + spec.Type}
+			}
+			c.Scope = h
+			s.Offers = append(s.Offers, c)
+		}
+	}
+	s.Offers = append(s.Offers, hardware(now)...)
+	for _, d := range o.Declares {
+		atom, err := ability.ParseAtom(d)
+		if err != nil || atom.ID == "" {
+			continue
+		}
+		s.Offers = append(s.Offers, ability.Capability{Kind: atom.Kind, ID: atom.ID, Evidence: []ability.Evidence{{Kind: ability.Declared, Method: "config", OK: true}}, Detail: "declared in config"})
+	}
+	for _, tag := range o.Tags {
+		s.Offers = append(s.Offers, ability.Capability{Kind: ability.Tag, ID: tag, Evidence: []ability.Evidence{{Kind: ability.Declared, Method: "config", OK: true}}})
+	}
+	if err := ability.Validate(s); err != nil {
+		// A snapshot this machine cannot even validate is not reported; the
+		// hub sees an old-style advert and treats coverage as partial.
+		log.Printf("steve-node: snapshot invalid, not reported: %v", err)
+		return nil
+	}
+	return s
+}
+
+// hardware is what can be seen without root: CPUs, the architecture, and
+// whether an NVIDIA GPU is present.
+func hardware(now time.Time) []ability.Capability {
+	seen := func(id, detail string, attrs map[string]string) ability.Capability {
+		return ability.Capability{Kind: ability.Hardware, ID: id, Assurance: ability.Existence, Attrs: attrs, Detail: detail,
+			Evidence: []ability.Evidence{{Kind: ability.Observed, Method: "probe", OK: true, At: now}}}
+	}
+	out := []ability.Capability{
+		seen("cpu", "", map[string]string{"count": strconv.Itoa(runtime.NumCPU())}),
+		seen(runtime.GOARCH, "", nil),
+	}
+	if _, err := exec.LookPath("nvidia-smi"); err == nil {
+		out = append(out, seen("gpu", "nvidia-smi on PATH", map[string]string{"vendor": "nvidia"}))
+	} else if _, err := os.Stat("/dev/nvidia0"); err == nil {
+		out = append(out, seen("gpu", "/dev/nvidia0", map[string]string{"vendor": "nvidia"}))
+	}
+	return out
 }
 
 // Advertise describes the machine this process runs on: its identity, and

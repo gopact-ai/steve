@@ -5,7 +5,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
@@ -238,4 +240,141 @@ func mustCatalog(t *testing.T, agents map[string]agent.Config) *agent.Catalog {
 		t.Fatal(err)
 	}
 	return catalog
+}
+
+// Requirements are matched against what each machine reports: a tool it
+// observed, hardware it has, a network it was declared on. A refusal names
+// the atom and the reason; a kind the machine did not cover is unknown,
+// not absent.
+func TestRequirementsMatchTheSnapshot(t *testing.T) {
+	catalog := mustCatalog(t, map[string]agent.Config{
+		"local":   {Harness: "codex", Default: true},
+		"builder": {Harness: "codex", Node: "node-a"},
+		"shipper": {Harness: "codex", Node: "node-b"},
+	})
+	now := time.Now()
+	seen := func(ok bool) []ability.Evidence {
+		return []ability.Evidence{{Kind: ability.Observed, Method: "path", OK: ok, At: now}}
+	}
+	said := []ability.Evidence{{Kind: ability.Declared, Method: "config", OK: true}}
+	snapA := &ability.Snapshot{Schema: ability.Schema, Node: "node-a", Coverage: map[ability.Kind]ability.Coverage{ability.Harness: ability.Complete, ability.Tool: ability.Complete, ability.Hardware: ability.Complete},
+		Offers: []ability.Capability{
+			{Kind: ability.Harness, ID: "codex", Evidence: seen(true)},
+			{Kind: ability.Tool, ID: "docker", Evidence: seen(true)},
+			{Kind: ability.Hardware, ID: "gpu", Evidence: seen(true)},
+		}}
+	snapB := &ability.Snapshot{Schema: ability.Schema, Node: "node-b", Coverage: map[ability.Kind]ability.Coverage{ability.Harness: ability.Complete, ability.Tool: ability.Complete, ability.Network: ability.Complete},
+		Offers: []ability.Capability{
+			{Kind: ability.Harness, ID: "codex", Evidence: seen(true)},
+			{Kind: ability.Tool, ID: "docker", Evidence: seen(false), Detail: `"docker" not on this node's PATH`},
+			{Kind: ability.Network, ID: "internal", Evidence: said},
+			{Kind: ability.Tag, ID: "internal-net", Evidence: said},
+		}}
+	for _, sn := range []*ability.Snapshot{snapA, snapB} {
+		if err := ability.Validate(sn); err != nil {
+			t.Fatal(err)
+		}
+	}
+	r := New(catalog)
+	r.SetNodes(fakeNodes{statuses: []node.Status{
+		{Name: "node-a", Up: true, Advert: nodewire.Advert{Harnesses: []nodewire.Harness{{ID: "codex", Command: "codex"}}, Snapshot: snapA}},
+		{Name: "node-b", Up: true, Advert: nodewire.Advert{Harnesses: []nodewire.Harness{{ID: "codex", Command: "codex"}}, Snapshot: snapB}},
+	}})
+	r.SetHubAdvert(func() nodewire.Advert {
+		return nodewire.Advert{Harnesses: []nodewire.Harness{{ID: "codex", Command: "codex"}}, Capabilities: []string{"basic"}}
+	})
+	ids := func(cs []Candidate) []string {
+		var out []string
+		for _, c := range cs {
+			out = append(out, c.Agent.ID)
+		}
+		return out
+	}
+	if got := ids(r.Candidates(t.Context(), []string{"tool:docker", "hardware:gpu"}, nil)); len(got) != 1 || got[0] != "builder" {
+		t.Fatalf("docker+gpu → %v", got)
+	}
+	if got := ids(r.Candidates(t.Context(), []string{"internal-net"}, nil)); len(got) != 1 || got[0] != "shipper" {
+		t.Fatalf("tag internal-net → %v (a declared tag still counts, the legacy way)", got)
+	}
+	if got := ids(r.Candidates(t.Context(), []string{"network:internal"}, nil)); len(got) != 0 {
+		t.Fatalf("a declared network placed work: %v", got)
+	}
+	if got := ids(r.Candidates(t.Context(), []string{"basic"}, nil)); len(got) != 1 || got[0] != "local" {
+		t.Fatalf("bare tag → %v", got)
+	}
+	why := r.Explain(t.Context(), []string{"tool:docker"})
+	if !strings.Contains(why, "shipper: lacks tool:docker (UNAVAILABLE") || !strings.Contains(why, "local: lacks tool:docker (UNKNOWN_COVERAGE") {
+		t.Fatalf("explain = %s", why)
+	}
+}
+
+// admittingNodes is a node source that can be asked for admission and
+// remembers what it was asked.
+type admittingNodes struct {
+	fakeNodes
+	refuse bool
+	asked  []nodewire.AdmitRequest
+}
+
+func (a *admittingNodes) Admit(_ context.Context, name string, req nodewire.AdmitRequest) (ability.Admission, error) {
+	a.asked = append(a.asked, req)
+	adm := ability.Admission{Node: name, Source: ability.SourceNode, Verdict: ability.True, Code: ability.CodeAdmitted, Generation: 9, Sequence: 2, At: time.Now()}
+	if a.refuse {
+		adm.Verdict, adm.Code = ability.False, ability.CodeAbsent
+		adm.Atoms = []ability.AtomResult{{Atom: ability.Text(req.Requirement), Verdict: ability.False, Code: ability.CodeAbsent}}
+	}
+	return adm, nil
+}
+
+// Admission asks the node only about the clauses it owns; what the hub
+// owns — models — is judged here, and a hub-side refusal never reaches
+// the node. A node's refusal is the verdict.
+func TestAdmissionAsksTheNodeForItsOwnClauses(t *testing.T) {
+	r := testRoster(t, nil, nil)
+	nodes := &admittingNodes{fakeNodes: fakeNodes{statuses: []node.Status{
+		up("node-a", []string{"gpu"}, nodewire.Harness{ID: "mock", Models: []string{"gpt-5"}}),
+	}}}
+	r.SetNodes(nodes)
+	var builder Candidate
+	for _, c := range r.All(t.Context()) {
+		if c.Agent.ID == "builder" {
+			builder = c
+		}
+	}
+	if builder.Agent.ID == "" {
+		t.Fatal("builder not in the roster")
+	}
+	adm, err := r.Admit(t.Context(), builder, []string{"tool:docker", "model:gpt-5"}, "att-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !adm.OK() || adm.Source != ability.SourceNode || adm.Generation != 9 {
+		t.Fatalf("admission = %+v", adm)
+	}
+	if len(nodes.asked) != 1 || ability.Text(nodes.asked[0].Requirement) != "tool:docker" || nodes.asked[0].Harness != "mock" || nodes.asked[0].Attempt != "att-1" {
+		t.Fatalf("node was asked %+v, want only tool:docker for mock", nodes.asked)
+	}
+	// The hub refuses what it owns without asking the node.
+	adm, err = r.Admit(t.Context(), builder, []string{"tool:docker", "model:claude*"}, "att-2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !adm.Refused() || adm.Source != ability.SourceHub || len(nodes.asked) != 1 {
+		t.Fatalf("a hub-owned refusal = %+v, node asked %d times", adm, len(nodes.asked))
+	}
+	// A node's refusal is the verdict.
+	nodes.refuse = true
+	adm, err = r.Admit(t.Context(), builder, []string{"tool:docker"}, "att-3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !adm.Refused() || adm.Source != ability.SourceNode || adm.Unmet() == "" {
+		t.Fatalf("node refusal = %+v", adm)
+	}
+	// A source that cannot be asked yields a cached verdict, never an error.
+	r.SetNodes(fakeNodes{statuses: nodes.statuses})
+	adm, err = r.Admit(t.Context(), builder, []string{"gpu"}, "att-4")
+	if err != nil || adm.Source != ability.SourceCached || !adm.OK() {
+		t.Fatalf("cached admission = %+v, %v", adm, err)
+	}
 }

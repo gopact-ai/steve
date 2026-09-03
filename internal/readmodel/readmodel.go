@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/models"
@@ -138,6 +139,10 @@ type Attempt struct {
 	Workspace string    `json:"workspace,omitempty"`
 	Leases    []string  `json:"leases,omitempty"`
 	StartedAt time.Time `json:"started_at"`
+	// Requires is what the work asked of the machine; Admission the
+	// machine's final word on it before the attempt ran.
+	Requires  []string           `json:"requires,omitempty"`
+	Admission *ability.Admission `json:"admission,omitempty"`
 }
 
 type Landing struct {
@@ -188,6 +193,12 @@ type Node struct {
 	LastError    string    `json:"last_error,omitempty"`
 	Level        string    `json:"level,omitempty"`
 	Region       string    `json:"region,omitempty"`
+	// Snapshot is what the machine says it can do, entry by entry, with
+	// the evidence and coverage behind each.
+	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
+	// Features are the protocol features the machine negotiated; a node
+	// without execution_admission.v1 cannot be asked for a final word.
+	Features []string `json:"features,omitempty"`
 }
 
 type Harness struct {
@@ -222,6 +233,9 @@ type Agent struct {
 	// was seen doing; Busy is their count.
 	Activities []Activity `json:"activities,omitempty"`
 	Busy       int        `json:"busy,omitempty"`
+	// Snapshot is the machine's, plus the models this harness was seen
+	// running: what a requirement is matched against.
+	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
 }
 
 type Task struct {

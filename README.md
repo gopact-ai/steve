@@ -209,6 +209,33 @@ agent，行尾出现 **Repair with …**，`/fleet` 里也提示 `/repair <agent
 然后让机器重新申报一次。这个计划是声明式的（`fixed`），失败了就失败，不会送去 planner 改写。
 node 掉线、模型不提供，这类不是装个东西能解决的，不给按钮。
 
+### 机器各不相同：能力清单与选择器
+
+机器上有什么 AI 工具、MCP、命令、硬件、网络、凭据，本来就不同，也不该拉平；要保证的是每台机器把"会什么、不会什么"说全说准，
+放置、规划、agent 派活都按它决定。每台机器（hub 也算）申报一份**清单**，一条能力一项：`kind:id`，kind 有 harness / model / mcp /
+skill / tool / hardware / network / credential / a2a / tag。能观测的必须观测（AI 工具、命令、MCP 命令在不在 PATH，有没有 GPU），
+只能声明的才允许声明（node.json 的 `declares`），页面上分别标"已观测 / 声明 / 已配置但不可用"，放置从不信任没有观测支撑的工具声明。
+
+```jsonc
+// node.json
+"tools":       ["docker", "gh"],                       // 要观测的命令
+"mcp_servers": { "github": { "type": "stdio", "command": "github-mcp-server", "env": { "GITHUB_TOKEN": "…" } } },
+"declares":    ["network:internal", "credential:prod"] // 只能声明的
+```
+
+MCP 服务器定义在拥有它的机器上，env 不出机器，也不注入 agent 进程；node 只申报 `mcp:<id>` 能不能启动。旧的
+`capabilities: ["gpu"]` 仍可用，等价于 `tag:gpu`。
+
+计划步骤和 `steve_delegate` 的 `requires` 用同一套选择器：`tool:docker`、`hardware:gpu`、`model:claude*`、`a|b`、`!x`、
+`tool:docker@>=27`。**当前只有 harness / tool / hardware / model / tag 参与调度**；mcp / skill / a2a / network / credential
+只观察、只在页面上显示，写进 requires 会得到 `NOT_SCHEDULABLE`，等各自的探测、绑定与秘密隔离链条完成后再逐类打开
+（见 `docs/capability-manifest.md`）。匹配是三值的：机器没查这一类、或证据过期，是"不知道"，不是"没有"。
+
+放置只是决定；每次执行前，机器要在**此刻**的观测上对它拥有的条款做终审（`execution_admission.v1`），hub 判它拥有的
+（模型、hub 本机），结果连同快照版本写进 Attempt。不满足时原因是结构化的：`steve_delegate` 返回
+`{code, retryable, failures[{agent, node, reasons[{atom, code}]}]}`；`steve_fleet(requires)` 能先看谁满足、其他人缺什么。
+清单变化记进历史；一台 node 一次只服务一个 hub。
+
 ## 计划与协作
 
 `/plan` 把一个目标交给规划 agent 拆成步骤（`gateway.planner` 指定哪个 agent 负责拆解；

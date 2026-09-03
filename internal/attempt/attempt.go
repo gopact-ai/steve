@@ -28,6 +28,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -127,6 +128,8 @@ type Spec struct {
 	Touches     []string          `json:"touches,omitempty"`
 	Base        string            `json:"base,omitempty"`
 	By          string            `json:"by,omitempty"`
+	// Requires is what the work asked of the machine, as placed.
+	Requires []string `json:"requires,omitempty"`
 }
 
 // Result is what a finished attempt produced.
@@ -161,11 +164,15 @@ type Record struct {
 	// Usage is what the attempt cost, as the harness last reported it,
 	// written with every terminal transition — success, failure, expiry
 	// alike — so failed work is not free in the books.
-	Usage        *Usage    `json:"usage,omitempty"`
-	Error        string    `json:"error,omitempty"`
-	SupersededBy string    `json:"superseded_by,omitempty"`
-	StartedAt    time.Time `json:"started_at"`
-	EndedAt      time.Time `json:"ended_at,omitempty"`
+	Usage *Usage `json:"usage,omitempty"`
+	// Admission is the final check made before the attempt ran: who
+	// judged Requires, on which snapshot, with what result. Written at
+	// leased→prepared.
+	Admission    *ability.Admission `json:"admission,omitempty"`
+	Error        string             `json:"error,omitempty"`
+	SupersededBy string             `json:"superseded_by,omitempty"`
+	StartedAt    time.Time          `json:"started_at"`
+	EndedAt      time.Time          `json:"ended_at,omitempty"`
 }
 
 // Busy is a refused open: a resource the attempt needs is leased to

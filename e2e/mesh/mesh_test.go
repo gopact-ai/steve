@@ -20,8 +20,12 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/roster"
+	"path/filepath"
 )
 
 const (
@@ -390,4 +394,74 @@ down:
 		t.Fatalf("prompt after reconnect = %q, %v", out, err)
 	}
 	t.Logf("reconnected and answered: %q", out)
+}
+
+// A1c: placement reads each machine's manifest. A step that needs a tool
+// lands on the machine that observed it; one that needs a tool nobody has
+// is refused with the selector and the reason, per machine.
+func TestA1PlacementFollowsTheManifest(t *testing.T) {
+	requireMesh(t)
+	fixture := node.NewServer(node.ServerConfig{
+		Name: "lab", Token: "lab-token", StateDir: t.TempDir(), Listen: "127.0.0.1:0",
+		Harnesses: map[string]node.HarnessSpec{"mock": {Command: mockAgentPath(t)}},
+		Tools:     []string{"sh", "no-such-tool"},
+		Declares:  []string{"network:lab"},
+	})
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	go func() { _ = fixture.Serve(ctx) }()
+	for range 100 {
+		if addr := fixture.Addr(); addr != "" && !strings.HasSuffix(addr, ":0") {
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	reg := node.NewRegistry("hub-e2e", map[string]node.Config{"lab": {Addr: fixture.Addr(), Token: "lab-token"}})
+	t.Cleanup(reg.Close)
+	catalog, err := agent.NewCatalog(map[string]agent.Config{
+		"local":  {Harness: "mock", Default: true},
+		"labber": {Harness: "mock", Node: "lab"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fleet := roster.New(catalog)
+	fleet.SetNodes(reg)
+	fleet.SetHubAdvert(func() nodewire.Advert {
+		return nodewire.Advert{Harnesses: []nodewire.Harness{{ID: "mock", Command: "mockagent"}}, Snapshot: node.Snapshot("hub-e2e", 1, 1, node.Observe{Harnesses: map[string]node.HarnessSpec{"mock": {Command: mockAgentPath(t)}}})}
+	})
+	names := func(cs []roster.Candidate) []string {
+		var out []string
+		for _, c := range cs {
+			out = append(out, c.Agent.ID)
+		}
+		return out
+	}
+	// Only the fixture was asked to look for sh; the hub covered tools too
+	// (it observed none), so it is absent there rather than unknown.
+	if got := names(fleet.Candidates(t.Context(), []string{"tool:sh"}, nil)); len(got) != 1 || got[0] != "labber" {
+		t.Fatalf("tool:sh → %v", got)
+	}
+	if got := names(fleet.Candidates(t.Context(), []string{"network:lab"}, nil)); len(got) != 0 {
+		t.Fatalf("a declared network placed work: %v (network is observed only until probes exist)", got)
+	}
+	if got := names(fleet.Candidates(t.Context(), []string{"tool:no-such-tool"}, nil)); len(got) != 0 {
+		t.Fatalf("a missing tool placed work: %v", got)
+	}
+	why := fleet.Explain(t.Context(), []string{"tool:no-such-tool"})
+	if !strings.Contains(why, "labber: lacks tool:no-such-tool (UNAVAILABLE") || !strings.Contains(why, "local: lacks tool:no-such-tool (ABSENT") {
+		t.Fatalf("explain = %s", why)
+	}
+}
+
+// mockAgentPath builds the ACP test agent for an in-process node.
+func mockAgentPath(t *testing.T) string {
+	t.Helper()
+	bin := filepath.Join(t.TempDir(), "mockagent")
+	cmd := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
+	cmd.Dir = "../.."
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("build mockagent: %v\n%s", err, out)
+	}
+	return bin
 }

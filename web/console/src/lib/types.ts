@@ -3,9 +3,18 @@
 export interface Advert { node?: string; build_version?: string; hostname?: string; ips?: string[]; os?: string; arch?: string; harnesses?: Harness[]; capabilities?: string[] }
 export interface Hub { node: string; started: string; capabilities?: string[]; level?: string; version?: string; advert?: Advert }
 export interface Harness { id: string; command?: string; version?: string; model?: string; models?: string[]; missing?: string; slots?: number }
+export interface Evidence { kind: "declared" | "observed" | "derived"; method?: string; result?: string; ok: boolean; at?: string }
+export interface Capability {
+    kind: string; id: string; scope?: string; version?: { scheme?: string; value: string }; availability: "available" | "unavailable" | "unknown";
+    evidence?: Evidence[]; assurance?: string; attrs?: Record<string, string>; detail?: string;
+}
+export interface AbilitySnapshot {
+    schema: string; node: string; generation: number; sequence: number; generated_at: string; received_at?: string; digest?: string;
+    coverage: Record<string, string>; offers: Capability[]; features?: string[]; source?: string;
+}
 export interface Node {
     name: string; role?: string; version?: string; addr?: string; host?: string; ips?: string[]; up: boolean; since?: string; os?: string; arch?: string;
-    capabilities?: string[]; harnesses?: Harness[]; last_error?: string; level?: string; region?: string;
+    capabilities?: string[]; harnesses?: Harness[]; last_error?: string; level?: string; region?: string; snapshot?: AbilitySnapshot;
 }
 export interface Activity {
     agent: string; attempt_id?: string; kind?: string; workspace?: string; task_id?: string; step_id?: string; conversation?: string;
@@ -13,7 +22,7 @@ export interface Activity {
 }
 export interface Agent {
     id: string; node?: string; harness: string; model?: string; models?: string[]; eligible: boolean; why?: string;
-    requires?: string[]; level?: string; slots?: number; region?: string; repair?: string; activities?: Activity[]; busy?: number;
+    requires?: string[]; level?: string; slots?: number; region?: string; repair?: string; activities?: Activity[]; busy?: number; snapshot?: AbilitySnapshot;
 }
 export interface Tokens { input?: number; output?: number; cached_read?: number; cached_write?: number; total?: number; context?: number }
 export interface AttemptRow { day: string; agent: string; node?: string; model?: string; outcome?: string; started: string; seconds: number; tokens: Tokens; reported: boolean }
@@ -31,9 +40,13 @@ export interface Step {
     started_at?: string; ended_at?: string;
 }
 export interface Plan { id: string; task_id: string; rev: number; goal: string; by: string; because: string; steps: Step[]; created_at?: string; base?: string; fixed?: boolean }
+export interface Admission {
+    node?: string; source: "node" | "hub" | "cached" | "legacy"; verdict: number; code?: string;
+    generation?: number; sequence?: number; digest?: string; atoms?: { atom: string; verdict: number; code?: string }[]; at: string;
+}
 export interface Attempt {
     id: string; kind: string; state: string; task_id?: string; project: string; agent?: string; node?: string;
-    scope?: string; workspace?: string; leases?: string[]; started_at: string;
+    scope?: string; workspace?: string; leases?: string[]; started_at: string; requires?: string[]; admission?: Admission;
 }
 export interface Landing { id: string; project: string; state: string; artifact: string; paths?: string; error?: string; at: string }
 export interface Reservation { id: string; key: string; node: string; harness: string; slots: number; for: string; by: string; expires_at: string }

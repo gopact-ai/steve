@@ -18,6 +18,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -647,6 +648,11 @@ func serve(args []string) error {
 	if err := view.LoadObservations(); err != nil {
 		log.Printf("steve: observations: %v", err)
 	}
+	// A machine's abilities changing is history too: a tool that vanished
+	// explains the placement that failed after it.
+	nodes.SetDriftObserver(func(name string, changes []string) {
+		view.Observe("node.manifest", name, name+": "+strings.Join(changes, "; "))
+	})
 	// Machines coming and going are history, not just log lines.
 	nodes.SetObserver(func(s node.Status) {
 		if s.Up {
@@ -1033,6 +1039,13 @@ func withSlots(h nodewire.Harness) string {
 	return h.ID
 }
 
+// hubGeneration identifies this hub process for its own snapshots;
+// hubSequence counts them.
+var (
+	hubGeneration = time.Now().Unix()
+	hubSequence   atomic.Int64
+)
+
 // hubAdvert describes the hub's own machine the way a node's advert
 // describes a node: the same harness check against this PATH, the same
 // identity, so the fleet has one shape for every machine.
@@ -1042,6 +1055,12 @@ func hubAdvert(cfg *config.Config) nodewire.Advert {
 		specs[id] = node.HarnessSpec{Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir, Slots: h.Slots}
 	}
 	adv := node.Advertise(nodeName(), specs, cfg.Gateway.Capabilities)
+	mcp := make(map[string]node.MCPSpec, len(cfg.MCPServers))
+	for id, m := range cfg.MCPServers {
+		mcp[id] = node.MCPSpec{Type: m.Type, Command: m.Command, Args: m.Args, URL: m.URL}
+	}
+	adv.Snapshot = node.Snapshot(nodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities})
+	adv.Features = nodewire.Features()
 	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
 	return adv
 }

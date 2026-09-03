@@ -117,6 +117,9 @@ type AwaitRequest struct {
 type Delegator interface {
 	Start(ctx context.Context, conversationID, agentID string, req DelegateRequest) (DelegateResult, error)
 	Await(ctx context.Context, conversationID, agentID string, req AwaitRequest) (DelegateResult, error)
+	// Fleet says who else there is and what each can do, so an agent
+	// deciding to delegate can name a requirement that exists.
+	Fleet(ctx context.Context, conversationID, agentID string, requires []string) (string, error)
 }
 
 // anchor is where a conversation's sends currently land. The epoch advances
@@ -511,6 +514,21 @@ func (s *Server) toolList() []map[string]any {
 			},
 		},
 		{
+			"name": "steve_fleet",
+			"description": "List the other agents in the fleet with the machine each runs on and what that machine can do " +
+				"(harnesses, models, MCP servers, tools, hardware, networks, credentials), in the selector form " +
+				"steve_delegate's requires accepts (tool:docker, mcp:github, hardware:gpu, model:claude*, network:internal). " +
+				"Call this before delegating by capability, so the requirement names something that exists. " +
+				"Pass requires to see who meets a requirement and what the others lack.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+				"requires": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Optional selectors, same form as steve_delegate's requires; every agent is judged against them.",
+				},
+			}},
+		},
+		{
 			"name":        "feishu_recall",
 			"description": "Recall (delete) a message this agent sent earlier in the current turn via feishu_send.",
 			"inputSchema": map[string]any{
@@ -595,6 +613,8 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 		out, err = s.effect(ctx, bind, call.Name, call.Arguments, func() (string, error) { return s.update(ctx, bind, call.Arguments) })
 	case "feishu_recall":
 		out, err = s.effect(ctx, bind, call.Name, call.Arguments, func() (string, error) { return s.recall(ctx, bind, call.Arguments) })
+	case "steve_fleet":
+		out, err = s.fleet(ctx, bind, call.Arguments)
 	case "steve_delegate":
 		out, err = s.delegate(ctx, bind, call.Arguments)
 	case "steve_await":
@@ -615,6 +635,26 @@ func toolError(text string) map[string]any {
 		"content": []map[string]any{{"type": "text", "text": text}},
 		"isError": true,
 	}
+}
+
+// fleet answers "who is there and what can they do" from the roster, in
+// the same selector vocabulary steve_delegate's requires uses.
+func (s *Server) fleet(ctx context.Context, bind binding, rawArgs json.RawMessage) (string, error) {
+	s.mu.Lock()
+	delegator := s.delegator
+	s.mu.Unlock()
+	if delegator == nil {
+		return "", errors.New("delegation is not enabled on this gateway")
+	}
+	var args struct {
+		Requires []string `json:"requires"`
+	}
+	if len(rawArgs) > 0 {
+		if err := json.Unmarshal(rawArgs, &args); err != nil {
+			return "", fmt.Errorf("steve_fleet: %w", err)
+		}
+	}
+	return delegator.Fleet(ctx, bind.conversationID, bind.agentID, args.Requires)
 }
 
 func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage) (string, error) {

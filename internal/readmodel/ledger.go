@@ -117,6 +117,7 @@ func (l Ledger) LiveAttempts(ctx context.Context) []Attempt {
 		out = append(out, Attempt{
 			ID: r.ID, Kind: string(r.Kind), State: string(r.State), TaskID: r.TaskID, Project: r.Project,
 			Agent: r.Agent, Node: r.Node, Scope: string(r.Scope), Workspace: r.Workspace.Path, Leases: leases, StartedAt: r.StartedAt,
+			Requires: r.Requires, Admission: r.Admission,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.Before(out[j].StartedAt) })

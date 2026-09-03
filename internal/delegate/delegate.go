@@ -12,7 +12,9 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"log"
 	"path/filepath"
@@ -393,7 +395,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		ID: strings.TrimPrefix(workspace.ID, "wt-"), TaskID: child.ID, TurnID: "delegate/" + child.ID, Kind: attempt.KindDelegate,
 		Project: parent.ProjectID, Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID, Slots: candidate.Slots,
 		Region: candidate.Region, CanonicalRegion: s.homeRegion(ctx, parent.ProjectID),
-		Workspace: workspace, Scope: attempt.ScopePathSet, Base: base, By: delegatedBy,
+		Workspace: workspace, Scope: attempt.ScopePathSet, Base: base, By: delegatedBy, Requires: req.Requires,
 	})
 	if err != nil {
 		s.finish(child.ID, task.OutcomeError)
@@ -407,13 +409,28 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		_, _ = s.attempts.Fail(context.WithoutCancel(ctx), record.ID, "delegate", cause.Error())
 		_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
 	}
+	// The machine's final word on the requirement, taken now, before a
+	// session is opened there.
+	admission, err := s.roster.Admit(ctx, candidate, req.Requires, record.ID)
+	if err != nil {
+		s.finish(child.ID, task.OutcomeError)
+		failAttempt(err)
+		return result, fmt.Errorf("admission on %s: %w", at, err)
+	}
+	if admission.Refused() {
+		err := &Refusal{Code: "REFUSED_AT_ADMISSION", Retryable: true, Requires: req.Requires,
+			Failures: []Failure{{Agent: candidate.Agent.ID, Node: candidate.Node, Reasons: admission.Atoms}}}
+		s.finish(child.ID, task.OutcomeError)
+		failAttempt(err)
+		return result, err
+	}
 	session, err := s.sessions.OpenSession(ctx, at, "", child.Workspace, caps.MCPServers)
 	if err != nil {
 		s.finish(child.ID, task.OutcomeError)
 		failAttempt(err)
 		return result, fmt.Errorf("open session on %s: %w", at, err)
 	}
-	_, _ = s.attempts.Advance(ctx, record.ID, attempt.Prepared, "delegate", nil)
+	_, _ = s.attempts.Advance(ctx, record.ID, attempt.Prepared, "delegate", func(r *attempt.Record) { r.Admission = &admission })
 	_, _ = s.attempts.Advance(ctx, record.ID, attempt.Running, "delegate", nil)
 	runCtx, stopRun := context.WithCancel(ctx)
 	defer stopRun()
@@ -521,18 +538,84 @@ func (s *Service) place(ctx context.Context, caller string, req agentmcp.Delegat
 				continue
 			}
 			if !c.Eligible {
-				return roster.Candidate{}, fmt.Errorf("%s cannot take this now: %s", req.Agent, c.Why)
+				return roster.Candidate{}, &Refusal{Code: "NOT_ELIGIBLE", Retryable: true, Requires: req.Requires,
+					Failures: []Failure{{Agent: c.Agent.ID, Node: c.Node, Why: c.Why}}}
+			}
+			// A named agent still has to meet the requirements.
+			compiled, err := ability.Compile(req.Requires)
+			if err != nil {
+				return roster.Candidate{}, &Refusal{Code: "BAD_REQUIREMENT", Requires: req.Requires, Why: err.Error()}
+			}
+			if m := c.Match(compiled); !m.OK() {
+				return roster.Candidate{}, &Refusal{Code: "UNMET", Requires: req.Requires,
+					Failures: []Failure{{Agent: c.Agent.ID, Node: c.Node, Reasons: m.Atoms}}}
 			}
 			return c, nil
 		}
-		return roster.Candidate{}, fmt.Errorf("no agent named %q", req.Agent)
+		return roster.Candidate{}, &Refusal{Code: "UNKNOWN_AGENT", Requires: req.Requires, Why: "no agent named " + req.Agent}
 	}
 	candidates := s.roster.Candidates(ctx, req.Requires, []string{caller})
 	if len(candidates) == 0 {
-		return roster.Candidate{}, fmt.Errorf("nothing can take work needing %v: %s",
-			req.Requires, s.roster.Explain(ctx, req.Requires))
+		return roster.Candidate{}, s.refusal(ctx, caller, req.Requires)
 	}
 	return candidates[0], nil
+}
+
+// Refusal is a delegation that could not be placed, in a form an agent
+// can act on without parsing prose: a code, whether waiting might help,
+// and per candidate which atoms of the requirement failed. It is also
+// readable, since its text is the JSON.
+type Refusal struct {
+	Code      string    `json:"code"`
+	Retryable bool      `json:"retryable"`
+	Requires  []string  `json:"requires,omitempty"`
+	Why       string    `json:"why,omitempty"`
+	Failures  []Failure `json:"failures,omitempty"`
+}
+
+// Failure is one candidate that was not chosen and why.
+type Failure struct {
+	Agent   string               `json:"agent"`
+	Node    string               `json:"node,omitempty"`
+	Why     string               `json:"why,omitempty"`
+	Reasons []ability.AtomResult `json:"reasons,omitempty"`
+}
+
+func (r *Refusal) Error() string {
+	body, err := json.Marshal(r)
+	if err != nil {
+		return "delegation refused: " + r.Code
+	}
+	return "delegation refused: " + string(body)
+}
+
+// refusal explains an empty candidate list per agent: what each one was
+// missing, or why it could not take work at all.
+func (s *Service) refusal(ctx context.Context, caller string, requires []string) *Refusal {
+	compiled, err := ability.Compile(requires)
+	if err != nil {
+		return &Refusal{Code: "BAD_REQUIREMENT", Requires: requires, Why: err.Error()}
+	}
+	out := &Refusal{Code: "NO_CANDIDATE", Requires: requires}
+	for _, c := range s.roster.All(ctx) {
+		if c.Agent.ID == caller {
+			continue
+		}
+		f := Failure{Agent: c.Agent.ID, Node: c.Node}
+		if !c.Eligible {
+			f.Why = c.Why
+			out.Retryable = true
+		}
+		if m := c.Match(compiled); !m.OK() {
+			for _, atom := range m.Atoms {
+				if atom.Verdict != ability.True {
+					f.Reasons = append(f.Reasons, atom)
+				}
+			}
+		}
+		out.Failures = append(out.Failures, f)
+	}
+	return out
 }
 
 func (s *Service) finish(id string, outcome task.Outcome) {
@@ -701,4 +784,41 @@ func (s *Service) homeRegion(ctx context.Context, projectID string) string {
 		return ""
 	}
 	return s.roster.RegionOf(p.Home.Node)
+}
+
+// Fleet renders the roster for an agent: one line per other agent, with
+// its machine, harness, observed model, whether it can take work now, and
+// its manifest in selector form. Requirements are written in that form.
+func (s *Service) Fleet(ctx context.Context, _ string, caller string, requires []string) (string, error) {
+	var b strings.Builder
+	b.WriteString("Agents and what their machines can do. Write requires as kind:id (tool:docker, mcp:github, hardware:gpu, model:claude*, network:internal); a bare word is a tag.\n")
+	compiled, err := ability.Compile(requires)
+	if err != nil {
+		return "", err
+	}
+	if !compiled.Empty() {
+		fmt.Fprintf(&b, "Judged against %v.\n", requires)
+	}
+	for _, c := range s.roster.All(ctx) {
+		if c.Agent.ID == caller {
+			continue
+		}
+		state := "ready"
+		if !c.Eligible {
+			state = "blocked: " + c.Why
+		}
+		if !compiled.Empty() {
+			if m := c.Match(compiled); m.OK() {
+				state += "; meets the requirement"
+			} else {
+				state += "; lacks " + m.Unmet()
+			}
+		}
+		model := c.Model
+		if model == "" {
+			model = "model unknown"
+		}
+		fmt.Fprintf(&b, "- %s on %s (%s, %s) — %s\n  %s\n", c.Agent.ID, nodewire.Place(c.Node), c.Harness, model, state, ability.Compact(c.Snapshot, c.Harness, 10))
+	}
+	return b.String(), nil
 }

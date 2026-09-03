@@ -3,6 +3,7 @@ package exec
 import (
 	"context"
 	"errors"
+	"github.com/gopact-ai/steve/internal/ability"
 	"os"
 	"path/filepath"
 	"strings"
@@ -977,5 +978,29 @@ func TestFixedPlanIsNotRevised(t *testing.T) {
 	}
 	if final, _ := plans.Latest(created.ID); final.Rev != 1 {
 		t.Fatalf("rev = %d, want the declared plan untouched", final.Rev)
+	}
+}
+
+// Every step's attempt records what it required and the admission that
+// let it run: the last check before execution is evidence, not a log line.
+func TestStepRecordsItsAdmission(t *testing.T) {
+	art, att := stores(t)
+	runner := &fakeRunner{}
+	outcome := execute(t, plan.Plan{ProjectID: "p", ID: "adm", TaskID: "tadm", Goal: "g", Steps: []plan.Step{
+		step("gpu-work", "train", []string{"gpu"}),
+	}}, Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Runner: runner})
+	if outcome.Err != nil {
+		t.Fatalf("plan failed: %v", outcome.Err)
+	}
+	records, _ := att.ForTask(context.Background(), "tadm")
+	if len(records) != 1 {
+		t.Fatalf("attempts = %d, want 1", len(records))
+	}
+	r := records[0]
+	if len(r.Requires) != 1 || r.Requires[0] != "gpu" {
+		t.Fatalf("requires = %v", r.Requires)
+	}
+	if r.Admission == nil || !r.Admission.OK() || r.Admission.Source != ability.SourceCached || r.Admission.Node != "node-a" {
+		t.Fatalf("admission = %+v", r.Admission)
 	}
 }

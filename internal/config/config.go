@@ -118,6 +118,10 @@ type Gateway struct {
 	// are not exempt from capability matching: running work here because
 	// here is the default is how a GPU step ends up on a box without one.
 	Capabilities []string `json:"capabilities,omitempty"`
+	// Tools are binaries the hub machine should look for; Declares are
+	// capabilities taken on the operator's word ("network:internal").
+	Tools    []string `json:"tools,omitempty"`
+	Declares []string `json:"declares,omitempty"`
 	// ReadModelAddr serves the snapshot, the change stream and the
 	// dashboard. It defaults to loopback; anywhere else needs a token,
 	// because the snapshot names hosts, goals and agents.

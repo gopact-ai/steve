@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/permission"
 )
@@ -337,5 +338,108 @@ func TestRefreshSeesARepairedHarness(t *testing.T) {
 	}
 	if again, _ := registry.Advert(t.Context(), "host-3"); missing(again) != "" {
 		t.Fatal("connection kept the old advert")
+	}
+}
+
+// A node reports a snapshot: harnesses and tools it checked on its PATH,
+// MCP servers it can start (per harness scope), the hardware it sees, and
+// the declarations it was given — each with its evidence, and coverage
+// saying which kinds were fully checked. Nothing secret rides along.
+func TestNodeReportsASnapshot(t *testing.T) {
+	bin := buildMockAgent(t)
+	server := startNode(t, ServerConfig{
+		Name: "host-4", Token: "tok", StateDir: t.TempDir(),
+		Harnesses:    map[string]HarnessSpec{"codex": {Command: bin}},
+		Tools:        []string{"sh", "definitely-not-a-tool"},
+		MCPServers:   map[string]MCPSpec{"local": {Type: "stdio", Command: "sh", Env: map[string]string{"TOKEN": "SECRET"}}, "gone": {Type: "stdio", Command: "no-such-mcp"}},
+		Declares:     []string{"network:internal", "credential:prod"},
+		Capabilities: []string{"build"},
+	})
+	registry := NewRegistry("hub-1", map[string]Config{"host-4": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(registry.Close)
+	advert, err := registry.Advert(t.Context(), "host-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	snap := advert.Snapshot
+	if snap == nil || snap.Schema != ability.Schema || snap.Digest == "" || snap.ReceivedAt.IsZero() {
+		t.Fatalf("snapshot = %+v", snap)
+	}
+	if !nodewire.HasFeature(advert.Features, nodewire.FeatureManifest) {
+		t.Fatalf("features = %v", advert.Features)
+	}
+	got := map[string]ability.Availability{}
+	for _, c := range snap.Offers {
+		got[c.Key()] = c.Availability
+		if strings.Contains(c.Detail, "SECRET") {
+			t.Fatalf("env leaked into the snapshot: %+v", c)
+		}
+	}
+	for key, want := range map[string]ability.Availability{
+		"harness:codex": ability.Available, "tool:sh": ability.Available, "tool:definitely-not-a-tool": ability.Unavailable,
+		"mcp:local@codex": ability.Available, "mcp:gone@codex": ability.Unavailable,
+		"network:internal": ability.Unknown, "credential:prod": ability.Unknown, "tag:build": ability.Available,
+		"hardware:cpu": ability.Available,
+	} {
+		if got[key] != want {
+			t.Errorf("%s = %q, want %q", key, got[key], want)
+		}
+	}
+	if snap.Coverage[ability.Tool] != ability.Complete || snap.Coverage[ability.Skill] != ability.Unsupported {
+		t.Fatalf("coverage = %v", snap.Coverage)
+	}
+}
+
+// A node serves one hub at a time: a second hub with the right token is
+// refused while the first is connected.
+func TestNodeRefusesASecondHub(t *testing.T) {
+	server := startNode(t, ServerConfig{Name: "host-5", Token: "tok", StateDir: t.TempDir(), Harnesses: map[string]HarnessSpec{"codex": {Command: buildMockAgent(t)}}})
+	first := NewRegistry("hub-1", map[string]Config{"host-5": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(first.Close)
+	if _, err := first.Advert(t.Context(), "host-5"); err != nil {
+		t.Fatal(err)
+	}
+	second := NewRegistry("hub-2", map[string]Config{"host-5": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(second.Close)
+	if _, err := second.Advert(t.Context(), "host-5"); err == nil {
+		t.Fatal("a second hub was served alongside the first")
+	}
+}
+
+// Admission is the node's word on what it has now, not what it said at the
+// handshake: each request observes afresh, so the reply carries a newer
+// sequence than the advert, and a tool that is not there is refused with
+// the atom that failed rather than an error.
+func TestNodeAdmitsOnAFreshObservation(t *testing.T) {
+	bin := buildMockAgent(t)
+	server := startNode(t, ServerConfig{
+		Name: "host-6", Token: "tok", StateDir: t.TempDir(),
+		Harnesses: map[string]HarnessSpec{"codex": {Command: bin}},
+		Tools:     []string{"sh", "definitely-not-a-tool"},
+	})
+	registry := NewRegistry("hub-1", map[string]Config{"host-6": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(registry.Close)
+	advert, err := registry.Advert(t.Context(), "host-6")
+	if err != nil {
+		t.Fatal(err)
+	}
+	present, _ := ability.Compile([]string{"tool:sh", "harness:codex"})
+	adm, err := registry.Admit(t.Context(), "host-6", nodewire.AdmitRequest{Attempt: "a1", Harness: "codex", Requirement: present})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !adm.OK() || adm.Source != ability.SourceNode || adm.Node != "host-6" || adm.Code != ability.CodeAdmitted {
+		t.Fatalf("admission = %+v", adm)
+	}
+	if adm.Generation != advert.Snapshot.Generation || adm.Sequence <= advert.Snapshot.Sequence {
+		t.Fatalf("admission judged on %d/%d, advert was %d/%d: not a fresh observation", adm.Generation, adm.Sequence, advert.Snapshot.Generation, advert.Snapshot.Sequence)
+	}
+	absent, _ := ability.Compile([]string{"tool:definitely-not-a-tool"})
+	adm, err = registry.Admit(t.Context(), "host-6", nodewire.AdmitRequest{Attempt: "a2", Harness: "codex", Requirement: absent})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !adm.Refused() || adm.Code != ability.CodeUnavailable {
+		t.Fatalf("a missing tool should be refused as UNAVAILABLE, got %+v", adm)
 	}
 }

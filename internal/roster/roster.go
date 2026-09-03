@@ -13,7 +13,9 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
@@ -45,8 +47,12 @@ type Candidate struct {
 	// is missing there, a required capability is absent.
 	Why          string
 	Capabilities []string
-	Models       []string
-	Harness      string
+	// Snapshot is what the agent's machine can do — the node's own report
+	// plus the models this harness was seen running here — and what a
+	// requirement is matched against, scoped to this harness.
+	Snapshot *ability.Snapshot
+	Models   []string
+	Harness  string
 	// Model is the model the agent would run with: pinned in config, or
 	// the one the harness was last seen running here. Empty means nobody
 	// has looked yet. Command is the harness's executable on that machine
@@ -87,6 +93,50 @@ type Roster struct {
 }
 
 func New(catalog *agent.Catalog) *Roster { return &Roster{catalog: catalog} }
+
+// Admitter is a node source that can ask a machine to re-check a
+// requirement on a fresh observation of itself. Sources without it get a
+// verdict from the hub's last accepted snapshot, marked as such.
+type Admitter interface {
+	Admit(ctx context.Context, node string, req nodewire.AdmitRequest) (ability.Admission, error)
+}
+
+// Admit is the final check before an attempt runs on a candidate: the
+// hub judges the clauses it owns (models, and everything on its own
+// machine) on the candidate's snapshot; the node re-checks the clauses it
+// owns on an observation taken now. The first refusal wins; a node that
+// cannot be asked leaves the verdict Unsure with its source saying why.
+func (r *Roster) Admit(ctx context.Context, c Candidate, requires []string, attemptID string) (ability.Admission, error) {
+	now := time.Now().UTC()
+	req, err := ability.Compile(requires)
+	if err != nil {
+		return ability.Admission{}, err
+	}
+	if c.Node == "" {
+		return ability.AdmissionOf(c.Match(req), c.Snapshot, ability.SourceHub, now), nil
+	}
+	mine, rest := ability.Partition(req, ability.NodeOwned)
+	if !rest.Empty() {
+		if m := ability.Match(rest, c.Snapshot, c.Harness, now); m.Verdict == ability.False {
+			return ability.AdmissionOf(m, c.Snapshot, ability.SourceHub, now), nil
+		}
+	}
+	r.mu.RLock()
+	admitter, ok := r.nodes.(Admitter)
+	r.mu.RUnlock()
+	if !ok || mine.Empty() {
+		source := ability.SourceCached
+		if mine.Empty() {
+			source = ability.SourceHub
+		}
+		return ability.AdmissionOf(ability.Match(req, c.Snapshot, c.Harness, now), c.Snapshot, source, now), nil
+	}
+	ask := nodewire.AdmitRequest{Attempt: attemptID, Harness: c.Harness, Requirement: mine}
+	if c.Snapshot != nil {
+		ask.Generation, ask.Sequence = c.Snapshot.Generation, c.Snapshot.Sequence
+	}
+	return admitter.Admit(ctx, c.Node, ask)
+}
 
 func (r *Roster) SetNodes(nodes NodeSource) {
 	r.mu.Lock()
@@ -186,6 +236,7 @@ func (r *Roster) All(ctx context.Context) []Candidate {
 				}
 				if len(c.Models) == 0 {
 					c.Models = seen.Available
+					c.addModels(seen.Available, seen.Version, seen.At)
 				}
 			}
 		}
@@ -199,6 +250,10 @@ func (r *Roster) All(ctx context.Context) []Candidate {
 // best first: reachable agents before unreachable ones, and among equals the
 // stable alphabetical order so a plan re-run lands the same way.
 func (r *Roster) Candidates(ctx context.Context, requires []string, exclude []string) []Candidate {
+	req, err := ability.Compile(requires)
+	if err != nil {
+		return nil
+	}
 	skip := make(map[string]bool, len(exclude))
 	for _, id := range exclude {
 		skip[id] = true
@@ -211,7 +266,7 @@ func (r *Roster) Candidates(ctx context.Context, requires []string, exclude []st
 		if !c.Eligible {
 			continue
 		}
-		if missing := missingCaps(requires, c.Capabilities); missing != "" {
+		if !c.Match(req).OK() {
 			continue
 		}
 		out = append(out, c)
@@ -223,14 +278,18 @@ func (r *Roster) Candidates(ctx context.Context, requires []string, exclude []st
 // reason. A placement failure that only says "no agent available" sends
 // someone reading config files instead of restarting a node.
 func (r *Roster) Explain(ctx context.Context, requires []string) string {
+	req, err := ability.Compile(requires)
+	if err != nil {
+		return err.Error()
+	}
 	var reasons []string
 	for _, c := range r.All(ctx) {
 		switch {
 		case !c.Eligible:
 			reasons = append(reasons, c.Agent.ID+": "+c.Why)
 		default:
-			if missing := missingCaps(requires, c.Capabilities); missing != "" {
-				reasons = append(reasons, c.Agent.ID+": lacks "+missing)
+			if m := c.Match(req); !m.OK() {
+				reasons = append(reasons, c.Agent.ID+": lacks "+m.Unmet())
 			}
 		}
 	}
@@ -248,6 +307,11 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 	if a.Node == "" {
 		c.Up = true
 		c.Capabilities = hubCaps
+		adv := hub.advert
+		if len(adv.Capabilities) == 0 {
+			adv.Capabilities = hubCaps
+		}
+		c.Snapshot = nodewire.Synthesize(adv, time.Now())
 		c.Level = hub.level.OrDefault()
 		c.Slots = hub.slots[a.Harness]
 		// A hub that has checked itself is held to the same standard as a
@@ -274,6 +338,7 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 		}
 		c.Up = status.Up
 		c.Capabilities = status.Advert.Capabilities
+		c.Snapshot = nodewire.Synthesize(status.Advert, time.Now())
 		c.Command, c.Missing = harnessCommand(status.Advert, a.Harness)
 		if !status.Up {
 			c.Eligible = false
@@ -302,9 +367,12 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 		}
 	}
 	// An agent's own requirements gate it wherever it runs, the hub included.
-	if missing := missingCaps(a.Requires, c.Capabilities); missing != "" {
+	c.addModels(c.Models, "", time.Time{})
+	if req, err := ability.Compile(a.Requires); err != nil {
+		c.Eligible, c.Why = false, err.Error()
+	} else if m := c.Match(req); !m.OK() {
 		c.Eligible = false
-		c.Why = "lacks " + missing
+		c.Why = "lacks " + m.Unmet()
 	}
 	return c
 }
@@ -339,19 +407,6 @@ func harnessTrouble(advert nodewire.Advert, harnessID string) string {
 	return "node " + advert.Node + " does not offer harness " + harnessID
 }
 
-// missingCaps names the first requirement not met, or "" when all are.
-func missingCaps(requires, have []string) string {
-	for _, want := range requires {
-		if want == "" || want == "any" {
-			continue
-		}
-		if !contains(have, want) {
-			return want
-		}
-	}
-	return ""
-}
-
 func contains(list []string, want string) bool {
 	for _, item := range list {
 		if item == want {
@@ -359,6 +414,41 @@ func contains(list []string, want string) bool {
 		}
 	}
 	return false
+}
+
+// Match evaluates a requirement against this candidate's machine for its
+// harness, now. Nil snapshots yield unknown, never a match.
+func (c Candidate) Match(req ability.Requirement) ability.MatchResult {
+	return ability.Match(req, c.Snapshot, c.Harness, time.Now())
+}
+
+// addModels records models this harness was seen running as observed,
+// harness-scoped capabilities on a copy of the machine's snapshot: the
+// machine's report stays the machine's.
+func (c *Candidate) addModels(models []string, version string, at time.Time) {
+	if len(models) == 0 || c.Snapshot == nil {
+		return
+	}
+	copied := *c.Snapshot
+	copied.Offers = append([]ability.Capability(nil), c.Snapshot.Offers...)
+	if copied.Coverage == nil {
+		copied.Coverage = map[ability.Kind]ability.Coverage{}
+	}
+	seen := map[string]bool{}
+	for _, o := range copied.Offers {
+		seen[o.Key()] = true
+	}
+	for _, m := range models {
+		cap := ability.Capability{Kind: ability.Model, ID: m, Scope: c.Harness, Assurance: ability.Functional, Detail: version,
+			Evidence: []ability.Evidence{{Kind: ability.Observed, Method: "session", OK: true, At: at}}}
+		if seen[cap.Key()] {
+			continue
+		}
+		copied.Offers = append(copied.Offers, cap)
+	}
+	copied.Coverage[ability.Model] = ability.Complete
+	_ = ability.Validate(&copied)
+	c.Snapshot = &copied
 }
 
 // Fix is a repair the fleet can attempt: a broken agent, a healthy agent

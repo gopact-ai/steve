@@ -4,17 +4,55 @@
   "token": "replace-me-with-a-long-random-secret",
   "workspace_root": "~/steve-workspace",
   "state_dir": "~/.steve-node",
-  "capabilities": ["gpu", "internal-net"],
+  "capabilities": [
+    "gpu",
+    "internal-net"
+  ],
   "harnesses": {
     "codex": {
       "command": "npx",
-      "args": ["-y", "@agentclientprotocol/codex-acp"],
-      "models": ["gpt-5"],
-      "env": ["PATH=/home/me/.local/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"], "slots": 4 },
+      "args": [
+        "-y",
+        "@agentclientprotocol/codex-acp"
+      ],
+      "models": [
+        "gpt-5"
+      ],
+      "env": [
+        "PATH=/home/me/.local/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
+      ],
+      "slots": 4
+    },
     "claude-code": {
       "command": "npx",
-      "args": ["-y", "@agentclientprotocol/claude-agent-acp"],
-      "models": ["opus-5", "sonnet-5"]
+      "args": [
+        "-y",
+        "@agentclientprotocol/claude-agent-acp"
+      ],
+      "models": [
+        "opus-5",
+        "sonnet-5"
+      ]
     }
-  }
+  },
+  "tools": [
+    "docker",
+    "gh"
+  ],
+  "mcp_servers": {
+    "github": {
+      "type": "stdio",
+      "command": "github-mcp-server",
+      "args": [
+        "stdio"
+      ],
+      "env": {
+        "GITHUB_TOKEN": "…"
+      }
+    }
+  },
+  "declares": [
+    "network:internal",
+    "credential:prod"
+  ]
 }
