@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"log"
 	"strings"
 	"time"
@@ -168,9 +169,4 @@ func homeLabel(p project.Project) string {
 	return placeLabel(p.Home.Node) + ":" + p.Home.Path
 }
 
-func placeLabel(node string) string {
-	if node == "" {
-		return "hub"
-	}
-	return node
-}
+func placeLabel(node string) string { return nodewire.Place(node) }

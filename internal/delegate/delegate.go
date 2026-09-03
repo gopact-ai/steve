@@ -13,6 +13,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"log"
 	"path/filepath"
 	"strings"
@@ -663,12 +664,7 @@ func (s *Service) worktreeID(child task.Task) string {
 	return filepath.Base(child.Workspace)
 }
 
-func nodeLabel(node string) string {
-	if node == "" {
-		return "hub"
-	}
-	return node
-}
+func nodeLabel(node string) string { return nodewire.Place(node) }
 
 func orHub(node, hub string) string {
 	if node == "" {

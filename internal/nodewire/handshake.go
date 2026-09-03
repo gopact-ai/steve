@@ -51,10 +51,14 @@ type Harness struct {
 // authority on this node's capabilities; a config line claiming otherwise is
 // wrong, and the hub refuses placements the advert does not support.
 type Advert struct {
-	Version   int       `json:"version"`
-	Node      string    `json:"node"`
-	OS        string    `json:"os"`
-	Arch      string    `json:"arch"`
+	Version int    `json:"version"`
+	Node    string `json:"node"`
+	OS      string `json:"os"`
+	Arch    string `json:"arch"`
+	// Hostname and IPs say which machine this is, independent of the
+	// name the hub's config gave it.
+	Hostname  string    `json:"hostname,omitempty"`
+	IPs       []string  `json:"ips,omitempty"`
 	Harnesses []Harness `json:"harnesses"`
 	// Capabilities are free-form facts a step can require: "gpu",
 	// "prod-cred", "internal-net".

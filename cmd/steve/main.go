@@ -202,6 +202,7 @@ func doctor(args []string) error {
 	// Nodes are probed before agents: availability is a real dial, not a
 	// line in the config, and an agent placed on an unreachable node should
 	// fail with that fact rather than with a mystery session error.
+	nodewire.SetSelf(nodeName())
 	nodes := node.NewRegistry(nodeName(), cfg.NodeConfigs())
 	defer nodes.Close()
 	manager.SetTransports(nodes)
@@ -221,6 +222,14 @@ func doctor(args []string) error {
 	for _, g := range cfg.GrantList() {
 		if _, err := projects.Grant(context.Background(), g.Project, g.Principal, g.Role, g.By); err != nil {
 			return fmt.Errorf("grant %s in %s: %w", g.Principal, g.Project, err)
+		}
+	}
+	self := hubAdvert(cfg)
+	log.Printf("steve: hub %s — %s %v, %s/%s, level=%s, harnesses=%s, caps=%v",
+		self.Node, self.Hostname, self.IPs, self.OS, self.Arch, cfg.HubLevel(), harnessSummary(self), self.Capabilities)
+	for _, h := range self.Harnesses {
+		if h.Missing != "" {
+			log.Printf("steve: hub cannot run %s: %s", h.ID, h.Missing)
 		}
 	}
 	for _, status := range nodes.Probe(ctx) {
@@ -418,6 +427,7 @@ func serve(args []string) error {
 			}
 		}
 	}
+	nodewire.SetSelf(nodeName())
 	nodes := node.NewRegistry(nodeName(), cfg.NodeConfigs())
 	defer nodes.Close()
 	manager.SetTransports(nodes)
@@ -440,6 +450,7 @@ func serve(args []string) error {
 	fleet := roster.New(catalog)
 	fleet.SetNodes(nodes)
 	fleet.SetHubCapabilities(cfg.Gateway.Capabilities)
+	fleet.SetHubAdvert(hubAdvert(cfg))
 	fleet.SetHubLevel(cfg.HubLevel())
 	fleet.SetHubSlots(cfg.HubSlots())
 	fleet.SetNodeLevels(cfg.NodeLevels())
@@ -567,6 +578,7 @@ func serve(args []string) error {
 	view := readmodel.New(readmodel.Sources{
 		Hub: readmodel.Hub{
 			Node: nodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities,
+			Level: string(cfg.HubLevel()), Advert: hubAdvert(cfg),
 		},
 		Roster: fleet, Nodes: nodes, Tasks: tasks, Plans: plans,
 		Ledger: readmodel.Ledger{Attempts: attempts, Artifacts: artifacts, Projects: projects, Intents: intents},
@@ -929,8 +941,20 @@ func withSlots(h nodewire.Harness) string {
 	return h.ID
 }
 
-// nodeName labels which machine ran a turn. It is cosmetic today and load
-// bearing once tasks can be placed on more than one node.
+// hubAdvert describes the hub's own machine the way a node's advert
+// describes a node: the same harness check against this PATH, the same
+// identity, so the fleet has one shape for every machine.
+func hubAdvert(cfg *config.Config) nodewire.Advert {
+	specs := make(map[string]node.HarnessSpec, len(cfg.Harnesses))
+	for id, h := range cfg.Harnesses {
+		specs[id] = node.HarnessSpec{Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir, Slots: h.Slots}
+	}
+	adv := node.Advertise(nodeName(), specs, cfg.Gateway.Capabilities)
+	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
+	return adv
+}
+
+// nodeName labels which machine ran a turn: the hub's own node name.
 func nodeName() string {
 	if name := strings.TrimSpace(os.Getenv("STEVE_NODE")); name != "" {
 		return name

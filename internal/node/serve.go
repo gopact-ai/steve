@@ -239,26 +239,37 @@ func (s *Server) processDir(spec HarnessSpec) string {
 // roster that hides what is broken sends the hub hunting for a node that
 // silently vanished.
 func (s *Server) advert() nodewire.Advert {
-	ids := make([]string, 0, len(s.cfg.Harnesses))
-	for id := range s.cfg.Harnesses {
+	adv := Advertise(s.cfg.Name, s.cfg.Harnesses, s.cfg.Capabilities)
+	adv.WorkspaceRoot = s.cfg.WorkspaceRoot
+	adv.StateDir = s.cfg.StateDir
+	return adv
+}
+
+// Advertise describes the machine this process runs on: its identity, and
+// each configured harness checked against the PATH right here. The hub
+// uses it for its own machine, so the fleet has one shape for every node
+// and the coordinating one is not described by its config alone.
+func Advertise(name string, specs map[string]HarnessSpec, caps []string) nodewire.Advert {
+	ids := make([]string, 0, len(specs))
+	for id := range specs {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	harnesses := make([]nodewire.Harness, 0, len(ids))
 	for _, id := range ids {
-		spec := s.cfg.Harnesses[id]
+		spec := specs[id]
 		h := nodewire.Harness{ID: id, Command: spec.Command, Models: spec.Models, Slots: spec.Slots}
 		if _, err := exec.LookPath(spec.Command); err != nil {
 			h.Missing = fmt.Sprintf("%q not on this node's PATH", spec.Command)
 		}
 		harnesses = append(harnesses, h)
 	}
+	hostname, ips := nodewire.Identity()
 	return nodewire.Advert{
-		Node: s.cfg.Name, OS: runtime.GOOS, Arch: runtime.GOARCH,
-		Harnesses: harnesses, Capabilities: s.cfg.Capabilities,
-		WorkspaceRoot: s.cfg.WorkspaceRoot,
-		Git:           gitVersion(),
-		StateDir:      s.cfg.StateDir,
+		Node: name, OS: runtime.GOOS, Arch: runtime.GOARCH,
+		Hostname: hostname, IPs: ips,
+		Harnesses: harnesses, Capabilities: caps,
+		Git: gitVersion(),
 	}
 }
 

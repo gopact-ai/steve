@@ -13,11 +13,12 @@ export function FleetPage() {
     return (
         <div className="flex flex-col gap-6 p-6">
             <TableCard.Root size="sm">
-                <TableCard.Header title="Nodes" badge={`${up}/${snap.nodes.length} up`} description="What each machine reports, not what the config says." />
-                {snap.nodes.length === 0 ? <Nothing icon={Server01} title="Hub only">No remote nodes are configured.</Nothing> : (
+                <TableCard.Header title="Nodes" badge={`${up}/${snap.nodes.length} up`} description="Every machine, the hub included. What each one reports about itself, not what the config says." />
+                {snap.nodes.length === 0 ? <Nothing icon={Server01} title="No nodes yet">The hub has not named itself and no remote nodes are configured.</Nothing> : (
                     <Table aria-label="Nodes" size="sm">
                         <Table.Header>
                             <Table.Head id="node" label="Node" isRowHeader />
+                            <Table.Head id="address" label="Address" />
                             <Table.Head id="state" label="State" />
                             <Table.Head id="level" label="Level" />
                             <Table.Head id="region" label="Region" />
@@ -28,7 +29,20 @@ export function FleetPage() {
                         <Table.Body items={snap.nodes.map((n) => ({ ...n, id: n.name }))}>
                             {(n) => (
                                 <Table.Row id={n.name}>
-                                    <Table.Cell className="font-medium text-primary">{n.name}</Table.Cell>
+                                    <Table.Cell>
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-medium text-primary">{n.name}</span>
+                                            <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role || "worker"}</Badge>
+                                        </div>
+                                    </Table.Cell>
+                                    <Table.Cell>
+                                        <div className="flex flex-col gap-0.5">
+                                            {n.host && n.host !== n.name ? <span className="text-primary">{n.host}</span> : null}
+                                            {n.addr ? <Mono>{n.addr}</Mono> : null}
+                                            {(n.ips || []).map((ip) => <Mono key={ip} className="text-tertiary">{ip}</Mono>)}
+                                            {!n.host && !n.addr && !(n.ips || []).length ? <span className="text-quaternary">—</span> : null}
+                                        </div>
+                                    </Table.Cell>
                                     <Table.Cell><StateBadge state={n.up ? "up" : "down"} /></Table.Cell>
                                     <Table.Cell>{n.level || "internal"}</Table.Cell>
                                     <Table.Cell><span className="text-tertiary">{n.region || "—"}</span></Table.Cell>

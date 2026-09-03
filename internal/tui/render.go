@@ -86,8 +86,19 @@ func renderNodes(snap readmodel.Snapshot, width int) string {
 		if !n.Up {
 			mark = red + "down" + reset
 		}
-		fmt.Fprintf(&b, "  %s  %-10s %-20s %-12s %s\n",
-			mark, n.Name, dim+n.Addr+reset, n.OS+"/"+n.Arch,
+		name := n.Name
+		if n.Role == readmodel.RoleHub {
+			name += " ★"
+		}
+		where := n.Addr
+		if where == "" {
+			where = strings.Join(n.IPs, ",")
+		}
+		if n.Host != "" && n.Host != n.Name {
+			where = n.Host + " " + where
+		}
+		fmt.Fprintf(&b, "  %s  %-12s %-28s %-12s %s\n",
+			mark, name, dim+truncate(where, 28)+reset, n.OS+"/"+n.Arch,
 			cyan+strings.Join(n.Capabilities, ",")+reset)
 		for _, h := range n.Harnesses {
 			if h.Missing != "" {
@@ -114,12 +125,8 @@ func renderAgents(snap readmodel.Snapshot, width int) string {
 		if !a.Eligible {
 			mark = yellow + "blocked" + reset
 		}
-		where := a.Node
-		if where == "" {
-			where = "hub"
-		}
 		fmt.Fprintf(&b, "  %s  %-12s %-10s %-12s %-10s %s\n",
-			mark, a.ID, where, a.Harness, levelSlots(a), dim+a.Model+reset)
+			mark, a.ID, whereOf(snap, a.Node), a.Harness, levelSlots(a), dim+a.Model+reset)
 		if a.Why != "" {
 			fmt.Fprintf(&b, "        %s%s%s\n", yellow, truncate(a.Why, width-10), reset)
 		}
@@ -148,7 +155,7 @@ func renderTasks(snap readmodel.Snapshot, width int) string {
 		}
 		fmt.Fprintf(&b, "  %s%s%s#%s%s %s  %-10s %-9s %s\n",
 			indent, branch, bold, t.ID, reset, stateMark(t.State),
-			t.Member, whereOf(t.NodeID), budgetBar(t.Turns, t.MaxTurns)+dim+
+			t.Member, whereOf(snap, t.NodeID), budgetBar(t.Turns, t.MaxTurns)+dim+
 				fmt.Sprintf(" %d/%d · %s", t.Turns, t.MaxTurns, t.Elapsed)+reset)
 		if t.Goal != "" {
 			fmt.Fprintf(&b, "  %s    %s%s%s\n", indent, dim, truncate(t.Goal, width-12), reset)
@@ -186,7 +193,7 @@ func renderPlans(snap readmodel.Snapshot, width int) string {
 				after = dim + " after " + strings.Join(deps, ",") + reset
 			}
 			fmt.Fprintf(&b, "    %s %-12s %-10s %-9s %s%s\n",
-				stepMark(s.State), s.ID, s.Agent, whereOf(s.Node),
+				stepMark(s.State), s.ID, s.Agent, whereOf(snap, s.Node),
 				truncate(s.Goal, max(10, width-52)), after)
 			if s.Error != "" {
 				fmt.Fprintf(&b, "        %s%s%s\n", red, truncate(s.Error, width-10), reset)
@@ -292,11 +299,15 @@ func budgetBar(used, total int) string {
 	return color + strings.Repeat("█", filled) + reset + dim + strings.Repeat("·", cells-filled) + reset
 }
 
-func whereOf(node string) string {
-	if node == "" {
-		return "hub"
+// whereOf names the machine: the model's "" is the hub's own node.
+func whereOf(snap readmodel.Snapshot, node string) string {
+	if node != "" {
+		return node
 	}
-	return node
+	if snap.Hub.Node != "" {
+		return snap.Hub.Node
+	}
+	return "hub"
 }
 
 func truncate(s string, width int) string {
@@ -318,7 +329,7 @@ func renderAttempts(snap readmodel.Snapshot, width int) string {
 	}
 	for _, a := range snap.Attempts {
 		fmt.Fprintf(&b, "  %-22s %-9s %-11s %-10s %-9s %s%s%s\n",
-			a.ID, a.Kind, a.State, a.Agent, whereOf(a.Node),
+			a.ID, a.Kind, a.State, a.Agent, whereOf(snap, a.Node),
 			dim, truncate(a.Project+" · "+a.Scope+" · "+strings.Join(a.Leases, ","), max(10, width-66)), reset)
 	}
 	return b.String()

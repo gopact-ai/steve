@@ -82,8 +82,21 @@ func fixture(t *testing.T) *Model {
 func TestSnapshotCoversTheWholeSystem(t *testing.T) {
 	snap := fixture(t).Snapshot(t.Context())
 
-	if len(snap.Nodes) != 2 {
-		t.Fatalf("nodes = %d, want both the live one and the dead one", len(snap.Nodes))
+	// The hub is a node too — first, with the coordinating role — and the
+	// workers follow, the dead one included.
+	if len(snap.Nodes) != 3 || snap.Nodes[0].Role != RoleHub || snap.Nodes[0].Name != snap.Hub.Node || !snap.Nodes[0].Up {
+		t.Fatalf("nodes = %+v, want the hub first then both workers", snap.Nodes)
+	}
+	for _, n := range snap.Nodes[1:] {
+		if n.Role != RoleWorker {
+			t.Fatalf("worker %s has role %q", n.Name, n.Role)
+		}
+	}
+	// An agent on the hub is placed on a named machine, not on a role.
+	for _, a := range snap.Agents {
+		if a.Node == "" {
+			t.Fatalf("agent %s has no place", a.ID)
+		}
 	}
 	// A node that is down must still appear, with its reason: a roster that
 	// hides what is broken sends someone hunting for a ghost.
@@ -189,7 +202,7 @@ func TestServerServesStateEventsAndPage(t *testing.T) {
 	if err := json.NewDecoder(res.Body).Decode(&snap); err != nil {
 		t.Fatal(err)
 	}
-	if len(snap.Nodes) != 2 || snap.Hub.Node != "hub-1" {
+	if len(snap.Nodes) != 3 || snap.Hub.Node != "hub-1" {
 		t.Fatalf("snapshot over http = %+v", snap.Hub)
 	}
 

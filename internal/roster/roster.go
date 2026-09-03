@@ -62,8 +62,12 @@ type Roster struct {
 	hubCaps []string
 	// hubLevel and hubSlots describe the hub machine the same way a
 	// node's advert and config describe a node.
-	hubLevel   project.Level
-	hubSlots   map[string]int
+	hubLevel project.Level
+	hubSlots map[string]int
+	// hubAdvert is what the hub machine checked about itself: a harness
+	// whose binary is not on this PATH blocks a hub-local agent exactly as
+	// it would on a node.
+	hubAdvert  nodewire.Advert
 	nodeLevels map[string]project.Level
 	regions    map[string]string
 	nodes      NodeSource
@@ -82,6 +86,13 @@ func (r *Roster) SetHubLevel(level project.Level) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.hubLevel = level
+}
+
+// SetHubAdvert declares what the hub machine found it can run.
+func (r *Roster) SetHubAdvert(adv nodewire.Advert) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.hubAdvert = adv
 }
 
 // SetHubSlots declares the hub's per-harness session caps.
@@ -124,7 +135,7 @@ func (r *Roster) SetHubCapabilities(caps []string) {
 func (r *Roster) All(ctx context.Context) []Candidate {
 	r.mu.RLock()
 	nodes, hubCaps := r.nodes, append([]string(nil), r.hubCaps...)
-	hub, levels, regions := place{level: r.hubLevel, slots: r.hubSlots}, r.nodeLevels, r.regions
+	hub, levels, regions := place{level: r.hubLevel, slots: r.hubSlots, advert: r.hubAdvert}, r.nodeLevels, r.regions
 	r.mu.RUnlock()
 
 	byNode := map[string]node.Status{}
@@ -200,6 +211,21 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 		c.Capabilities = hubCaps
 		c.Level = hub.level.OrDefault()
 		c.Slots = hub.slots[a.Harness]
+		// A hub that has checked itself is held to the same standard as a
+		// node; one that has not (tests, an older wiring) is trusted.
+		if len(hub.advert.Harnesses) > 0 {
+			if missing := harnessTrouble(hub.advert, a.Harness); missing != "" {
+				c.Eligible, c.Why = false, missing
+				return c
+			}
+			if offered := harnessModels(hub.advert, a.Harness); len(offered) > 0 {
+				c.Models = offered
+				if a.Model != "" && !contains(offered, a.Model) {
+					c.Eligible, c.Why = false, "this machine does not offer model "+a.Model
+					return c
+				}
+			}
+		}
 	} else {
 		status, known := byNode[a.Node]
 		if !known {
@@ -287,8 +313,9 @@ func contains(list []string, want string) bool {
 
 // place is how the hub describes its own machine to describe().
 type place struct {
-	level project.Level
-	slots map[string]int
+	level  project.Level
+	slots  map[string]int
+	advert nodewire.Advert
 }
 
 func harnessSlots(advert nodewire.Advert, id string) int {

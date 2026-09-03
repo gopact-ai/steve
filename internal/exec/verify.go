@@ -3,6 +3,7 @@ package exec
 import (
 	"context"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"strings"
 	"time"
 
@@ -171,12 +172,7 @@ func firstLine(s string) string {
 	return line
 }
 
-func nodeLabel(node string) string {
-	if node == "" {
-		return "hub"
-	}
-	return node
-}
+func nodeLabel(node string) string { return nodewire.Place(node) }
 
 func discardWorkspace(ctx context.Context, w project.Workspaces, ws project.Workspace) {
 	if d, ok := w.(interface {

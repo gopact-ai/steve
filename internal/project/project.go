@@ -21,6 +21,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"sort"
 	"strings"
 	"time"
@@ -236,12 +237,7 @@ func (e NotHomeError) Is(target error) bool {
 	return target == ErrNotHome
 }
 
-func nodeLabel(node string) string {
-	if node == "" {
-		return "hub"
-	}
-	return node
-}
+func nodeLabel(node string) string { return nodewire.Place(node) }
 
 const (
 	kindProject     = "project"

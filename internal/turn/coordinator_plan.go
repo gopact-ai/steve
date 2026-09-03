@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"log"
 	"sort"
 	"strings"
@@ -157,7 +158,7 @@ func (c *Coordinator) planTree(p plan.Plan, outcome exec.Outcome) string {
 		if s.Result != nil && s.Result.Node != "" {
 			where = s.Result.Node
 		} else if s.Result != nil {
-			where = "hub"
+			where = nodewire.Place("")
 		}
 		agent := s.Agent
 		if s.Result != nil && s.Result.Agent != "" {
@@ -259,11 +260,7 @@ func (c *Coordinator) fleetCmd(ctx context.Context, req Request) Result {
 		if !item.Eligible {
 			mark = "✗"
 		}
-		where := item.Node
-		if where == "" {
-			where = "hub"
-		}
-		fmt.Fprintf(&b, "%s **%s** · %s · %s", mark, item.Agent.ID, where, item.Harness)
+		fmt.Fprintf(&b, "%s **%s** · %s · %s", mark, item.Agent.ID, nodewire.Place(item.Node), item.Harness)
 		if len(item.Capabilities) > 0 {
 			fmt.Fprintf(&b, "\n%s", strings.Join(item.Capabilities, ", "))
 		}

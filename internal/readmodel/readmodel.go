@@ -14,6 +14,7 @@ package readmodel
 
 import (
 	"context"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"sync"
 	"time"
 
@@ -137,11 +138,27 @@ type Hub struct {
 	Node         string    `json:"node"`
 	Started      time.Time `json:"started"`
 	Capabilities []string  `json:"capabilities,omitempty"`
+	// Level is the hub machine's own data level; Advert is what it can
+	// run, checked the way a node checks itself.
+	Level  string          `json:"level,omitempty"`
+	Advert nodewire.Advert `json:"advert"`
 }
 
+// Roles a node can have. The hub is a node with the coordinating role,
+// not a place of its own.
+const (
+	RoleHub    = "hub"
+	RoleWorker = "worker"
+)
+
 type Node struct {
-	Name         string    `json:"name"`
-	Addr         string    `json:"addr"`
+	Name string `json:"name"`
+	Role string `json:"role"`
+	// Addr is where the hub dials the node; Host and IPs are what the
+	// machine says about itself.
+	Addr         string    `json:"addr,omitempty"`
+	Host         string    `json:"host,omitempty"`
+	IPs          []string  `json:"ips,omitempty"`
 	Up           bool      `json:"up"`
 	Since        time.Time `json:"since,omitzero"`
 	OS           string    `json:"os,omitempty"`
@@ -155,6 +172,7 @@ type Node struct {
 
 type Harness struct {
 	ID      string   `json:"id"`
+	Slots   int      `json:"slots,omitempty"`
 	Models  []string `json:"models,omitempty"`
 	Missing string   `json:"missing,omitempty"`
 }

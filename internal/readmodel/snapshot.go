@@ -3,6 +3,7 @@ package readmodel
 import (
 	"context"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"sort"
 	"time"
 
@@ -16,13 +17,16 @@ import (
 // one subsystem is off is worse than one that shows the rest.
 func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	snap := Snapshot{At: time.Now(), Hub: m.src.Hub}
+	if m.src.Hub.Node != "" {
+		snap.Nodes = append(snap.Nodes, hubNode(m.src.Hub))
+	}
 	if m.src.Nodes != nil {
-		snap.Nodes = nodes(m.src.Nodes.Statuses())
+		snap.Nodes = append(snap.Nodes, nodes(m.src.Nodes.Statuses())...)
 	}
 	if m.src.Roster != nil {
 		for _, c := range m.src.Roster.All(ctx) {
 			snap.Agents = append(snap.Agents, Agent{
-				ID: c.Agent.ID, Node: c.Node, Harness: c.Harness,
+				ID: c.Agent.ID, Node: m.place(c.Node), Harness: c.Harness,
 				Model: c.Agent.Model, Eligible: c.Eligible, Why: c.Why,
 				Requires: c.Agent.Requires, Level: string(c.Level.OrDefault()), Slots: c.Slots, Region: c.Region,
 			})
@@ -58,6 +62,9 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	snap.Facts = Facts{Reservations: []Reservation{}, Attestations: []Attestation{}, Replicas: []Replica{}, Disclosures: []Disclosure{}, Effects: []Effect{}, Grants: []Grant{}}
 	if m.src.Ledger != nil {
 		if live := m.src.Ledger.LiveAttempts(ctx); live != nil {
+			for i := range live {
+				live[i].Node = m.place(live[i].Node)
+			}
 			snap.Attempts = live
 		}
 		if recent := m.src.Ledger.RecentLandings(ctx); recent != nil {
@@ -68,16 +75,49 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	return snap
 }
 
+// place resolves the model's "" — this machine — to the hub's node name,
+// so nothing downstream renders a role where a machine belongs.
+func (m *Model) place(node string) string {
+	if node == "" {
+		return m.src.Hub.Node
+	}
+	return node
+}
+
+// hubNode is the hub's own machine as a node: role hub, always up (it is
+// answering), described by its own advert.
+func hubNode(h Hub) Node {
+	caps := h.Capabilities
+	if caps == nil {
+		caps = h.Advert.Capabilities
+	}
+	n := Node{
+		Name: h.Node, Role: RoleHub, Up: true, Since: h.Started,
+		Host: h.Advert.Hostname, IPs: h.Advert.IPs, OS: h.Advert.OS, Arch: h.Advert.Arch,
+		Capabilities: caps, Level: h.Level, Harnesses: harnesses(h.Advert),
+	}
+	if n.Level == "" {
+		n.Level = "internal"
+	}
+	return n
+}
+
+func harnesses(adv nodewire.Advert) []Harness {
+	out := make([]Harness, 0, len(adv.Harnesses))
+	for _, h := range adv.Harnesses {
+		out = append(out, Harness{ID: h.ID, Slots: h.Slots, Models: h.Models, Missing: h.Missing})
+	}
+	return out
+}
+
 func nodes(statuses []node.Status) []Node {
 	out := make([]Node, 0, len(statuses))
 	for _, s := range statuses {
 		n := Node{
-			Name: s.Name, Addr: s.Addr, Up: s.Up, Since: s.Since,
-			OS: s.Advert.OS, Arch: s.Advert.Arch,
+			Name: s.Name, Role: RoleWorker, Addr: s.Addr, Up: s.Up, Since: s.Since,
+			Host: s.Advert.Hostname, IPs: s.Advert.IPs, OS: s.Advert.OS, Arch: s.Advert.Arch,
 			Capabilities: s.Advert.Capabilities, LastError: s.LastError, Level: s.Level, Region: s.Region,
-		}
-		for _, h := range s.Advert.Harnesses {
-			n.Harnesses = append(n.Harnesses, Harness{ID: h.ID, Models: h.Models, Missing: h.Missing})
+			Harnesses: harnesses(s.Advert),
 		}
 		out = append(out, n)
 	}

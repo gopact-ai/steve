@@ -3,6 +3,7 @@ import { Badge } from "@/components/base/badges/badges";
 import type { BadgeColors } from "@/components/base/badges/badge-types";
 import { EmptyState } from "@/components/application/empty-state/empty-state";
 import type { FC } from "react";
+import { useFleet } from "@/lib/fleet";
 
 // One vocabulary of colours for every state the ledger speaks.
 export function colorOf(state: string): BadgeColors {
@@ -25,9 +26,11 @@ export const StateBadge = ({ state, size = "sm" }: { state: string; size?: "sm" 
     <Badge type="pill-color" size={size} color={colorOf(state)}>{state}</Badge>
 );
 
-export const Where = ({ node }: { node?: string }) => (
-    <span className="font-mono text-xs text-tertiary">{node || "hub"}</span>
-);
+// The model's empty node is the hub's own machine; name it, never the role.
+export const Where = ({ node }: { node?: string }) => {
+    const { snap } = useFleet();
+    return <span className="font-mono text-xs text-tertiary">{node || snap.hub.node || "—"}</span>;
+};
 
 export const Mono = ({ children, className }: { children: ReactNode; className?: string }) => (
     <code className={`font-mono text-xs text-secondary ${className ?? ""}`}>{children}</code>

@@ -54,7 +54,7 @@ function Shell() {
                     </span>
                     <div className="leading-tight">
                         <div className="text-md font-semibold text-primary">steve</div>
-                        <div className="text-xs text-tertiary">{snap.hub.node ? `hub · ${snap.hub.node}` : "console"}</div>
+                        <div className="text-xs text-tertiary">{snap.hub.node ? `${snap.hub.node} · hub` : "console"}</div>
                     </div>
                 </div>
                 <ul className="flex flex-col gap-0.5 px-4 pt-2">

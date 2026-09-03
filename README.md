@@ -61,7 +61,9 @@ go build -o steve ./cmd/steve
 
 ## 多主机
 
-一个 hub 带若干 `steve-node`。node 上跑的是本机的 agent 进程，hub 通过一条长连接
+一个 hub 带若干 `steve-node`。hub 也是一个 node，只是角色是 hub（协调）：它的机器名、主机名、IP、
+能跑哪些 harness，都和别的 node 一样申报、一样出现在 `/fleet`、Fleet 页和 `steve top` 里，配置里
+声明了但本机 PATH 上没有的 harness 一样标 missing。node 上跑的是本机的 agent 进程，hub 通过一条长连接
 把整个 **ACP 会话**隧道过去 —— 不是自己发明一套 RPC，因为 Steve 用到的 ACP 面本来
 就是位置无关的（只 advertise `Elicitation`，从不让客户端读写文件或开终端）。
 

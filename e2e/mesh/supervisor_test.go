@@ -327,8 +327,8 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if len(snap.Nodes) != 2 {
-		t.Fatalf("snapshot has %d nodes, want both", len(snap.Nodes))
+	if len(snap.Nodes) != 3 || snap.Nodes[0].Role != readmodel.RoleHub {
+		t.Fatalf("snapshot has %d nodes, want the hub and both workers", len(snap.Nodes))
 	}
 	byName := map[string]readmodel.Node{}
 	for _, n := range snap.Nodes {

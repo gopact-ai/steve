@@ -17,6 +17,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"log"
 	"sort"
 	"strings"
@@ -382,12 +383,7 @@ func admitted(p project.Project, in []roster.Candidate) []roster.Candidate {
 	return out
 }
 
-func placeLabel(node string) string {
-	if node == "" {
-		return "hub"
-	}
-	return node
-}
+func placeLabel(node string) string { return nodewire.Place(node) }
 
 // materialize asks for the step's own worktree on the node placement chose.
 func materialize(ctx context.Context, deps Deps, p plan.Plan, node, base string, inputs []project.Input, owner string) (project.Workspace, error) {
