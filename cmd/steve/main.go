@@ -227,6 +227,7 @@ func doctor(args []string) error {
 			return fmt.Errorf("grant %s in %s: %w", g.Principal, g.Project, err)
 		}
 	}
+	startHubLaunch(context.Background(), cfg)
 	self := hubAdvert(cfg)
 	log.Printf("steve: hub %s — %s %v, %s/%s, level=%s, harnesses=%s, caps=%v",
 		self.Node, self.Hostname, self.IPs, self.OS, self.Arch, cfg.HubLevel(), harnessSummary(self), self.Capabilities)
@@ -1059,10 +1060,24 @@ func hubAdvert(cfg *config.Config) nodewire.Advert {
 	for id, m := range cfg.MCPServers {
 		mcp[id] = node.MCPSpec{Type: m.Type, Command: m.Command, Args: m.Args, URL: m.URL}
 	}
-	adv.Snapshot = node.Snapshot(nodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities})
+	adv.Snapshot = node.Snapshot(nodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: hubLaunch.Lookup})
 	adv.Features = nodewire.Features()
 	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
 	return adv
+}
+
+// hubLaunch checks that the hub machine's own binaries start, the way a
+// node checks its own. startHubLaunch runs it for the life of the process.
+var hubLaunch = node.NewLaunchProbe()
+
+func startHubLaunch(ctx context.Context, cfg *config.Config) {
+	go hubLaunch.Run(ctx, func() []string {
+		out := make([]string, 0, len(cfg.Harnesses)+len(cfg.Gateway.Tools))
+		for _, h := range cfg.Harnesses {
+			out = append(out, h.Command)
+		}
+		return append(out, cfg.Gateway.Tools...)
+	})
 }
 
 // nodeName labels which machine ran a turn: the hub's own node name.

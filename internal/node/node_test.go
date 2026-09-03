@@ -443,3 +443,35 @@ func TestNodeAdmitsOnAFreshObservation(t *testing.T) {
 		t.Fatalf("a missing tool should be refused as UNAVAILABLE, got %+v", adm)
 	}
 }
+
+// The hub keeps a connected node's snapshot fresh on its own: evidence has
+// a TTL, and a hub that only read the handshake would a quarter of an hour
+// later be unable to place anything that needs a tool.
+func TestHubRefreshesSnapshotsOnItsOwn(t *testing.T) {
+	old := RefreshEvery
+	RefreshEvery = 150 * time.Millisecond
+	t.Cleanup(func() { RefreshEvery = old })
+	bin := buildMockAgent(t)
+	server := startNode(t, ServerConfig{
+		Name: "host-7", Token: "tok", StateDir: t.TempDir(),
+		Harnesses: map[string]HarnessSpec{"codex": {Command: bin}}, Tools: []string{"sh"},
+	})
+	registry := NewRegistry("hub-1", map[string]Config{"host-7": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(registry.Close)
+	ctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	registry.Start(ctx)
+	first, err := registry.Advert(ctx, "host-7")
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		adv, _ := registry.Advert(ctx, "host-7")
+		if adv.Snapshot != nil && adv.Snapshot.Sequence > first.Snapshot.Sequence+1 {
+			return
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	t.Fatalf("snapshot sequence stayed at %d; the hub never refreshed it", first.Snapshot.Sequence)
+}

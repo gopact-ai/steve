@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"github.com/gopact-ai/steve/internal/ability"
 	"log"
+	"math/rand/v2"
 	"net"
 	"sort"
 	"sync"
@@ -367,8 +368,15 @@ func (r *Registry) Probe(ctx context.Context) []Status {
 // to send a message that happens to need one.
 const RedialEvery = 15 * time.Second
 
+// RefreshEvery is how often a connected node is asked to look at itself
+// again. Evidence has a TTL — a tool seen fifteen minutes ago is a tool
+// nobody has checked since — so a hub that only read the handshake advert
+// would, a quarter of an hour later, be unable to place anything that
+// needs a tool. Each node is asked on its own jittered clock.
+var RefreshEvery = time.Minute
+
 // Start dials every node and keeps redialing the ones that are down until the
-// context ends.
+// context ends, and keeps every connected node's snapshot fresh.
 //
 // Without this the registry only connects when something asks it to, so a hub
 // that has just started reports every node as down and refuses every
@@ -394,6 +402,38 @@ func (r *Registry) Start(ctx context.Context) {
 					dialCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
 					_, _ = r.connect(dialCtx, name)
 					cancel()
+				}
+			}
+		}
+	}()
+	go func() {
+		ticker := time.NewTicker(RefreshEvery)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				for _, name := range r.Names() {
+					r.mu.Lock()
+					live := r.live[name]
+					r.mu.Unlock()
+					if live == nil || !live.alive() {
+						continue
+					}
+					go func(name string) {
+						// Jitter, so a fleet does not check itself in lockstep.
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(time.Duration(rand.Int64N(int64(RefreshEvery / 5)))):
+						}
+						refreshCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
+						defer cancel()
+						if _, err := r.Refresh(refreshCtx, name); err != nil {
+							log.Printf("node: refresh %s: %v", name, err)
+						}
+					}(name)
 				}
 			}
 		}

@@ -79,6 +79,9 @@ type Observe struct {
 	MCP       map[string]MCPSpec
 	Declares  []string
 	Tags      []string
+	// Launch answers whether a resolved binary was seen to start, from a
+	// LaunchProbe running on its own clock. Nil means existence only.
+	Launch func(path string) (LaunchResult, bool)
 }
 
 // Server accepts hub connections and runs agents on this machine.
@@ -88,6 +91,8 @@ type Server struct {
 	// Together they let the hub reject a snapshot that arrives out of order.
 	generation int64
 	seq        int64
+	// launch checks that offered binaries start, in the background.
+	launch *LaunchProbe
 	// hub is the hub currently served. A second hub is refused: two hubs
 	// placing work on one machine would each believe they own its slots.
 	hubMu   sync.Mutex
@@ -103,7 +108,7 @@ type Server struct {
 }
 
 func NewServer(cfg ServerConfig) *Server {
-	return &Server{cfg: cfg, mcpPort: rememberedPort(cfg), generation: time.Now().Unix()}
+	return &Server{cfg: cfg, mcpPort: rememberedPort(cfg), generation: time.Now().Unix(), launch: NewLaunchProbe()}
 }
 
 // Serve blocks until ctx ends or the listener fails.
@@ -120,6 +125,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		<-ctx.Done()
 		_ = listener.Close()
 	}()
+	go s.launch.Run(ctx, s.commands)
 	for {
 		socket, err := listener.Accept()
 		if err != nil {
@@ -338,7 +344,16 @@ func (s *Server) advert() nodewire.Advert {
 
 // snapshot observes this machine now, as the next revision.
 func (s *Server) snapshot() *ability.Snapshot {
-	return Snapshot(s.cfg.Name, s.generation, s.nextSequence(), Observe{Harnesses: s.cfg.Harnesses, Tools: s.cfg.Tools, MCP: s.cfg.MCPServers, Declares: s.cfg.Declares, Tags: s.cfg.Capabilities})
+	return Snapshot(s.cfg.Name, s.generation, s.nextSequence(), Observe{Harnesses: s.cfg.Harnesses, Tools: s.cfg.Tools, MCP: s.cfg.MCPServers, Declares: s.cfg.Declares, Tags: s.cfg.Capabilities, Launch: s.launch.Lookup})
+}
+
+// commands is every binary this machine offers and should see start.
+func (s *Server) commands() []string {
+	out := make([]string, 0, len(s.cfg.Harnesses)+len(s.cfg.Tools))
+	for _, h := range s.cfg.Harnesses {
+		out = append(out, h.Command)
+	}
+	return append(out, s.cfg.Tools...)
 }
 
 // admit is the node's final word before an attempt runs here: the hub
@@ -383,11 +398,26 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 	}
 	observed := func(kind ability.Kind, id, cmd string) ability.Capability {
 		c := ability.Capability{Kind: kind, ID: id, Assurance: ability.Existence}
-		if path, err := exec.LookPath(cmd); err != nil {
+		path, err := exec.LookPath(cmd)
+		if err != nil {
 			c.Evidence = []ability.Evidence{{Kind: ability.Observed, Method: "path", OK: false, Result: fmt.Sprintf("%q not on this node's PATH", cmd), At: now}}
 			c.Detail = fmt.Sprintf("%q not on this node's PATH", cmd)
-		} else {
-			c.Evidence = []ability.Evidence{{Kind: ability.Observed, Method: "path", OK: true, Result: path, At: now}}
+			return c
+		}
+		c.Evidence = []ability.Evidence{{Kind: ability.Observed, Method: "path", OK: true, Result: path, At: now}}
+		// Being on PATH is existence; having started is launchable. The
+		// launch check ran on its own clock, so it carries its own time,
+		// and a binary that would not start makes the entry unavailable.
+		if o.Launch != nil {
+			if r, ok := o.Launch(path); ok {
+				c.Evidence = append(c.Evidence, ability.Evidence{Kind: ability.Observed, Method: "launch", OK: r.OK, Result: r.Result, At: r.At})
+				if r.OK {
+					c.Assurance = ability.Launchable
+					c.Version = r.Version
+				} else {
+					c.Detail = "does not start: " + r.Result
+				}
+			}
 		}
 		return c
 	}
