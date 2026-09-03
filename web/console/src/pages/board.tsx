@@ -292,7 +292,8 @@ function Drawer({ t, tasks, plan, onClose }: { t: Task; tasks: Task[]; plan?: Pl
                 </section>
                 {plan && (
                     <section>
-                        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">计划 {plan.id} · 第 {plan.rev} 版 · {plan.by}{plan.because ? ` · ${plan.because}` : ""}</h3>
+                        <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-quaternary">计划 {plan.id} · 第 {plan.rev} 版 · {plan.by}</h3>
+                        {plan.because && <p className="mb-2 line-clamp-3 text-xs text-tertiary" title={plan.because}>为什么改：{plan.because}</p>}
                         <ol className="flex flex-col divide-y divide-secondary rounded-lg ring-1 ring-secondary">
                             {plan.steps.map((s) => (
                                 <li key={s.id} className="flex flex-col gap-1 px-3 py-2">

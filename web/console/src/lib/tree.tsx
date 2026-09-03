@@ -24,24 +24,26 @@ function TaskNode({ t, tasks, plans, depth, liveSteps, seen }: { t: Task; tasks:
     const running = t.execution === "running" || t.lifecycle === "running";
     return (
         <div className="flex flex-col gap-1.5">
-            <div className="flex min-w-0 items-center gap-2 text-sm">
-                <Who agent={t.member} node={t.node} running={running} />
-                <span className="truncate text-secondary" title={t.goal}>{t.goal}</span>
-                <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                    <StateBadge state={t.lifecycle} />
-                    <Mono className="text-quaternary">#{t.id}</Mono>
-                </span>
+            <div className="flex min-w-0 flex-col gap-0.5">
+                <div className="flex min-w-0 items-center gap-2 text-sm">
+                    <Who agent={t.member || "steve"} node={t.member ? t.node : undefined} running={running} />
+                    <span className="ml-auto flex shrink-0 items-center gap-1.5">
+                        <StateBadge state={t.lifecycle} />
+                        <Mono className="text-quaternary">#{t.id}</Mono>
+                    </span>
+                </div>
+                <div className="line-clamp-2 text-xs text-secondary" title={t.goal}>{t.goal}</div>
             </div>
             {(plan?.steps?.length || children.length) ? (
                 <ul className="ml-3 flex flex-col gap-1.5 border-l border-secondary pl-3">
                     {(plan?.steps || []).map((s) => (
                         <li key={s.id} className="flex min-w-0 flex-col gap-1">
                             <div className="flex min-w-0 items-center gap-2 text-xs">
-                                <span className="shrink-0 text-quaternary">步骤</span>
+                                <span className="shrink-0 text-quaternary">步骤 {s.id}</span>
                                 <Who agent={s.agent} node={s.node} running={s.state === "running" || liveSteps?.includes(s.id)} small />
-                                <span className="truncate text-secondary" title={s.goal}>{s.id} · {s.goal}</span>
                                 <span className="ml-auto shrink-0"><StateBadge state={s.state} /></span>
                             </div>
+                            <div className="ml-4 line-clamp-1 text-[11px] text-secondary" title={s.goal}>{s.goal}</div>
                             {s.needs?.length ? <div className="ml-4 text-[11px] text-quaternary">依赖 {s.needs.join(", ")}{s.merge?.length ? ` · 汇合 ${s.merge.join(", ")}` : ""}</div> : null}
                         </li>
                     ))}
