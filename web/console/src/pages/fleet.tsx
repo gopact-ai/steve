@@ -108,7 +108,7 @@ function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
     if (!snapshot || !list.length) return <span className="text-quaternary">旧版本，未申报清单</span>;
     const groups = kindOrder.map((k) => ({ k, items: list.filter((c) => c.kind === k) })).filter((g) => g.items.length);
     return (
-        <div className="flex flex-col gap-1">
+        <div className="flex min-w-[32rem] flex-col gap-1">
             {groups.map((g) => (
                 <div key={g.k} className="flex flex-wrap items-baseline gap-1 text-xs">
                     <span className="w-12 shrink-0 text-quaternary" title={snapshot.coverage?.[g.k] ? `覆盖：${snapshot.coverage[g.k]}` : undefined}>{kindWords[g.k] ?? g.k}</span>
