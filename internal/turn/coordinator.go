@@ -464,7 +464,10 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return Result{}, err
 	}
 	if att.State == attempt.Leased {
-		c.advanceAttempt(ctx, att.ID, attempt.Prepared)
+		admission := att.Admission
+		if _, err := c.attempts.Advance(ctx, att.ID, attempt.Prepared, "turn", func(r *attempt.Record) { r.Admission = admission }); err != nil {
+			log.Printf("turn: attempt %s → prepared: %v", att.ID, err)
+		}
 	}
 	req.phase(view.PhaseRunning)
 	session := state.Session{

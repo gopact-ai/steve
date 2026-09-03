@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/roster"
 )
 
 // openAttempt leases a chat turn on the project's canonical workspace. A
@@ -28,11 +29,13 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 	}
 	// The machine must qualify for the project's level; the roster knows
 	// both the machine's level and the endpoint's session cap.
+	var chosen *roster.Candidate
 	if c.fleet != nil {
 		for _, cand := range c.fleet.All(ctx) {
 			if cand.Agent.ID != selected.ID {
 				continue
 			}
+			chosen = &cand
 			spec.Slots = cand.Slots
 			spec.Region = cand.Region
 			if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok {
@@ -43,8 +46,24 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 			}
 		}
 	}
+	spec.Requires = selected.Requires
 	record, err := c.attempts.Open(ctx, spec)
 	if err == nil {
+		// A chat turn is admitted like any other attempt: the machine's
+		// own word on the agent's requirements, taken now, kept on the
+		// record. A refusal ends the turn before a session is opened.
+		if chosen != nil {
+			adm, aerr := c.fleet.Admit(ctx, *chosen, selected.Requires, record.ID)
+			if aerr != nil {
+				_, _ = c.attempts.Fail(ctx, record.ID, "turn", "admission: "+aerr.Error())
+				return attempt.Record{}, fmt.Errorf("admission on %s: %w", placeLabel(selected.Node), aerr)
+			}
+			if adm.Refused() {
+				_, _ = c.attempts.Fail(ctx, record.ID, "turn", "admission refused: "+adm.Unmet())
+				return attempt.Record{}, UserError{Text: c.text.T(i18n.AdmissionRefused, selected.ID, placeLabel(selected.Node), adm.Unmet())}
+			}
+			record.Admission = &adm
+		}
 		// The before-snapshot is the precondition of running in place: what
 		// the turn changes is measured against it.
 		if c.artifacts != nil {
@@ -54,7 +73,8 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 					_, _ = c.attempts.Fail(ctx, record.ID, "turn", "before-snapshot: "+serr.Error())
 					return attempt.Record{}, fmt.Errorf("before-snapshot: %w", serr)
 				}
-				prepared, aerr := c.attempts.Advance(ctx, record.ID, attempt.Prepared, "turn", func(r *attempt.Record) { r.Base = before.ID })
+				admission := record.Admission
+				prepared, aerr := c.attempts.Advance(ctx, record.ID, attempt.Prepared, "turn", func(r *attempt.Record) { r.Base = before.ID; r.Admission = admission })
 				if aerr == nil {
 					record = prepared
 				}

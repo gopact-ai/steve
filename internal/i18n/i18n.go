@@ -62,6 +62,7 @@ const (
 	ProjectsDisabled       Key = "projects_disabled"
 	ProjectBusy            Key = "project_busy"
 	ProjectLevel           Key = "project_level"
+	AdmissionRefused       Key = "admission_refused"
 	ProjectAccess          Key = "project_access"
 	OwnerOnly              Key = "owner_only"
 	GrantUsage             Key = "grant_usage"
