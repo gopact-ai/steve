@@ -29,6 +29,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	gopactsqlite "github.com/gopact-ai/gopact-ext/stores/sqlite"
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -1356,6 +1357,81 @@ func (a *fleetAdmin) AddProject(ctx context.Context, req readmodel.AddProjectReq
 		a.repos.wake()
 	}
 	log.Printf("steve: project %s declared (%s:%s, %s, %s)", id, orHubName(req.Node), path, level, repo)
+	return nil
+}
+
+// UpdateAgent replaces the editable part of an agent; its aliases,
+// prompt, skills and default flag stay as the file has them.
+func (a *fleetAdmin) UpdateAgent(_ context.Context, id string, spec readmodel.AgentSpec) error {
+	id = strings.ToLower(strings.TrimSpace(id))
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	configMu.Lock()
+	defer configMu.Unlock()
+	item, ok := a.cfg.Agents[id]
+	if !ok {
+		return fmt.Errorf("没有叫 %q 的 Agent", id)
+	}
+	if _, ok := a.cfg.Harnesses[spec.Harness]; !ok {
+		return fmt.Errorf("hub 的 harnesses 里没有 %q", spec.Harness)
+	}
+	if spec.Node != "" {
+		if _, ok := a.cfg.Nodes[spec.Node]; !ok {
+			return fmt.Errorf("没有叫 %q 的机器", spec.Node)
+		}
+	}
+	if err := ability.ValidateText(spec.Requires); err != nil {
+		return fmt.Errorf("运行条件：%w", err)
+	}
+	if spec.Node == "" {
+		for _, srv := range spec.MCPServers {
+			if _, ok := a.cfg.MCPServers[srv]; !ok {
+				return fmt.Errorf("hub 上没有 MCP 服务器 %q；在 hub 机器的配置里加，或把 Agent 放到有它的机器上", srv)
+			}
+		}
+	}
+	old := item
+	item.Harness, item.Node, item.Model = spec.Harness, spec.Node, strings.TrimSpace(spec.Model)
+	item.Requires = append([]string{}, spec.Requires...)
+	item.MCPServers = append([]string{}, spec.MCPServers...)
+	if err := a.catalog.Set(id, agent.Config{Harness: item.Harness, Node: item.Node, Model: item.Model, Requires: item.Requires, Aliases: item.Aliases,
+		SystemPrompt: item.SystemPrompt, Skills: item.Skills, MCPServers: item.MCPServers, Default: item.Default}); err != nil {
+		return err
+	}
+	a.cfg.Agents[id] = item
+	if err := config.Save(a.path, a.cfg); err != nil {
+		a.cfg.Agents[id] = old
+		_ = a.catalog.Set(id, agent.Config{Harness: old.Harness, Node: old.Node, Model: old.Model, Requires: old.Requires, Aliases: old.Aliases,
+			SystemPrompt: old.SystemPrompt, Skills: old.Skills, MCPServers: old.MCPServers, Default: old.Default})
+		return fmt.Errorf("写 %s 失败：%w", a.path, err)
+	}
+	log.Printf("steve: agent %s updated (%s on %s, model %q)", id, item.Harness, orHubName(item.Node), item.Model)
+	return nil
+}
+
+// RemoveAgent forgets an agent; the default one stays.
+func (a *fleetAdmin) RemoveAgent(_ context.Context, id string) error {
+	id = strings.ToLower(strings.TrimSpace(id))
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	configMu.Lock()
+	defer configMu.Unlock()
+	item, ok := a.cfg.Agents[id]
+	if !ok {
+		return fmt.Errorf("没有叫 %q 的 Agent", id)
+	}
+	if item.Default {
+		return fmt.Errorf("%s 是默认 Agent，不能删；先在配置里换一个默认", id)
+	}
+	if err := a.catalog.Remove(id); err != nil {
+		return err
+	}
+	delete(a.cfg.Agents, id)
+	if err := config.Save(a.path, a.cfg); err != nil {
+		a.cfg.Agents[id] = item
+		return fmt.Errorf("写 %s 失败：%w", a.path, err)
+	}
+	log.Printf("steve: agent %s removed", id)
 	return nil
 }
 

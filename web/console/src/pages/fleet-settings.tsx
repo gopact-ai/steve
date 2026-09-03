@@ -86,7 +86,7 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 }
 
 // ListEditor is a list of words: one per line, add below, remove beside.
-function ListEditor({ items, placeholder, onChange }: { items: string[]; placeholder: string; onChange: (items: string[]) => void }) {
+export function ListEditor({ items, placeholder, onChange }: { items: string[]; placeholder: string; onChange: (items: string[]) => void }) {
     const [draft, setDraft] = useState("");
     const add = () => {
         const v = draft.trim();

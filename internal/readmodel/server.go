@@ -60,6 +60,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/conversations", s.guard(s.consoleConversations))
 	mux.HandleFunc("POST /console/nodes", s.guard(s.consoleAddNode))
 	mux.HandleFunc("POST /console/agents", s.guard(s.consoleAddAgent))
+	mux.HandleFunc("PUT /console/agents/{id}", s.guard(s.consoleUpdateAgent))
+	mux.HandleFunc("DELETE /console/agents/{id}", s.guard(s.consoleRemoveAgent))
 	mux.HandleFunc("POST /console/projects", s.guard(s.consoleAddProject))
 	mux.HandleFunc("DELETE /console/projects/{id}", s.guard(s.consoleRemoveProject))
 	mux.HandleFunc("GET /console/nodes/{name}/settings", s.guard(s.nodeSettings))
@@ -265,6 +267,17 @@ type AddNodeResult struct {
 	Note    string `json:"note,omitempty"`
 }
 
+// AgentSpec is the editable part of an agent: where it runs, with what,
+// which model it prefers, what its machine must offer, which MCP
+// servers it uses.
+type AgentSpec struct {
+	Harness    string   `json:"harness"`
+	Node       string   `json:"node,omitempty"`
+	Model      string   `json:"model,omitempty"`
+	Requires   []string `json:"requires"`
+	MCPServers []string `json:"mcp_servers"`
+}
+
 // AddProjectRequest is the page declaring a project: a name, the machine
 // and directory it lives in, how agents may change it, its data level.
 type AddProjectRequest struct {
@@ -294,6 +307,10 @@ type Admin interface {
 	// NodeBinary is the steve-node executable to hand a machine presenting
 	// a node token, if the hub has one.
 	NodeBinary(token string) (string, bool)
+	// UpdateAgent replaces an agent's placement, model and conditions;
+	// RemoveAgent forgets it. Both persist to the config file.
+	UpdateAgent(ctx context.Context, id string, spec AgentSpec) error
+	RemoveAgent(ctx context.Context, id string) error
 	// AddProject declares a project and records it in the config file;
 	// RemoveProject retires one and drops it from the file.
 	AddProject(ctx context.Context, req AddProjectRequest) error
@@ -371,6 +388,37 @@ func (s *Server) consoleAddProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.admin.AddProject(r.Context(), req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleUpdateAgent(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "not wired", http.StatusNotImplemented)
+		return
+	}
+	var spec AgentSpec
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&spec); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.UpdateAgent(r.Context(), r.PathValue("id"), spec); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleRemoveAgent(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "not wired", http.StatusNotImplemented)
+		return
+	}
+	if err := s.admin.RemoveAgent(r.Context(), r.PathValue("id")); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

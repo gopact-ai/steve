@@ -121,3 +121,11 @@ export async function removeProject(id: string): Promise<{ ok: boolean }> {
     return json(await fetch(`./console/projects/${encodeURIComponent(id)}${q}`, { method: "DELETE", headers }));
 }
 
+export interface AgentSpec { harness: string; node?: string; model?: string; requires: string[]; mcp_servers: string[] }
+export async function updateAgent(id: string, spec: AgentSpec): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/agents/${encodeURIComponent(id)}${q}`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(spec) }));
+}
+export async function removeAgent(id: string): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/agents/${encodeURIComponent(id)}${q}`, { method: "DELETE", headers }));
+}
+

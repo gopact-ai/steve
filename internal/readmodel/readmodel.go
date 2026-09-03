@@ -145,6 +145,14 @@ type Attempt struct {
 	Admission *ability.Admission `json:"admission,omitempty"`
 }
 
+// Condition is one of an agent's requirements as the machine meets it.
+type Condition struct {
+	Atom   string `json:"atom"`
+	Met    bool   `json:"met"`
+	Code   string `json:"code,omitempty"`
+	Detail string `json:"detail,omitempty"`
+}
+
 type Landing struct {
 	ID       string    `json:"id"`
 	Project  string    `json:"project"`
@@ -228,9 +236,17 @@ type Agent struct {
 	Eligible bool     `json:"eligible"`
 	Why      string   `json:"why,omitempty"`
 	Requires []string `json:"requires,omitempty"`
-	Level    string   `json:"level,omitempty"`
-	Slots    int      `json:"slots,omitempty"`
-	Region   string   `json:"region,omitempty"`
+	// Preferred is the model the agent's configuration pins, applied at
+	// session open; Observed is what the harness was last seen running.
+	// Conditions are Requires judged against the machine, one by one.
+	Preferred  string      `json:"preferred,omitempty"`
+	Observed   string      `json:"observed,omitempty"`
+	Conditions []Condition `json:"conditions,omitempty"`
+	MCPServers []string    `json:"mcp_servers,omitempty"`
+	Default    bool        `json:"default,omitempty"`
+	Level      string      `json:"level,omitempty"`
+	Slots      int         `json:"slots,omitempty"`
+	Region     string      `json:"region,omitempty"`
 	// Activities are the agent's live attempts with the latest thing each
 	// was seen doing; Busy is their count.
 	Activities []Activity `json:"activities,omitempty"`

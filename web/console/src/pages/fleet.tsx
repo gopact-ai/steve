@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Edit05, Plus, Server01, Users01, X, Zap } from "@untitledui/icons";
+import { CheckCircle, Edit05, Plus, Server01, Users01, X, XCircle, Zap } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
@@ -8,16 +8,139 @@ import { Select } from "@/components/base/select/select";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { relative, when } from "@/lib/api";
-import { addAgent, addNode, type AddNodeResult } from "@/lib/api";
+import { addAgent, addNode, removeAgent, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
-import type { AbilitySnapshot, Attempt, Capability, Node as NodeT } from "@/lib/types";
-import { KeyValue, PageBody, PageHeader } from "@/lib/page";
-import { SettingsEditor } from "@/pages/fleet-settings";
-import { Mono, Nothing, StateBadge, Tags, Where } from "@/lib/ui";
+import type { AbilitySnapshot, Agent, Attempt, Capability, Condition, Node as NodeT } from "@/lib/types";
+import { Chips, KeyValue, PageBody, PageHeader } from "@/lib/page";
+import { ListEditor, SettingsEditor } from "@/pages/fleet-settings";
+import { Mono, Nothing, StateBadge, Where } from "@/lib/ui";
 
 // Runtimes lists what a machine can start and what it cannot, on separate
 // lines: nothing is struck through, a missing runtime says why and offers
 // the repair the roster knows.
+// Conditions shows an agent's requirements as its machine meets them:
+// every ✓ is why it may run there, any ✗ is why it may not.
+function Conditions({ a }: { a: Agent }) {
+    if (!a.requires?.length) return <span className="text-xs text-quaternary">无</span>;
+    const judged: Condition[] = a.conditions?.length ? a.conditions : a.requires.map((r) => ({ atom: r, met: a.eligible }));
+    return (
+        <div className="flex flex-wrap gap-1">
+            {judged.map((c) => (
+                <span key={c.atom} title={c.met ? "机器满足" : `机器不满足${c.code ? "：" + c.code : ""}${c.detail ? " · " + c.detail : ""}`}
+                    className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs ${c.met ? "bg-secondary text-primary" : "bg-error-primary text-error-primary ring-1 ring-error ring-inset"}`}>
+                    {c.met ? <CheckCircle className="size-3 text-fg-success-primary" /> : <XCircle className="size-3 text-fg-error-primary" />}{c.atom}
+                </span>
+            ))}
+        </div>
+    );
+}
+
+const levelOrder = ["public", "internal", "restricted", "sealed"];
+
+// AgentDrawer is one agent in full, and the place to change it: where it
+// runs, with which AI tool and model, what its machine must offer, which
+// MCP servers it uses. Saved changes reach the running catalog at once
+// and the config file with it.
+function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void; onChanged: () => void }) {
+    const { snap } = useFleet();
+    const { fill } = useIntent();
+    const [editing, setEditing] = useState(false);
+    const [removing, setRemoving] = useState(false);
+    const [error, setError] = useState("");
+    const [busy, setBusy] = useState(false);
+    const [spec, setSpec] = useState<AgentSpec>({ harness: a.harness, node: a.node === snap.hub.node ? "" : a.node || "", model: a.preferred || "", requires: a.requires || [], mcp_servers: a.mcp_servers || [] });
+    const harnesses = Array.from(new Set([...snap.agents.map((x) => x.harness), a.harness])).filter(Boolean).sort();
+    const nodes = snap.nodes.filter((n) => n.role !== "hub").map((n) => n.name);
+    const canTake = levelOrder.slice(0, levelOrder.indexOf(a.level || "internal") + 1).map((l) => levelWords[l]).join("、");
+    async function save() {
+        setBusy(true); setError("");
+        try { await updateAgent(a.id, spec); onChanged(); setEditing(false); } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
+    }
+    async function remove() {
+        setError("");
+        try { await removeAgent(a.id); onChanged(); onClose(); } catch (e) { setError(String(e).replace(/^Error: /, "")); setRemoving(false); }
+    }
+    const modelItems = [{ id: "__none", label: "不固定（用 AI 工具的默认）" }, ...(a.models || []).map((m) => ({ id: m, label: m }))];
+    if (spec.model && !(a.models || []).includes(spec.model)) modelItems.push({ id: spec.model, label: spec.model });
+    return (
+        <div className="fixed inset-y-0 right-0 z-20 flex w-[560px] flex-col border-l border-secondary bg-primary shadow-xl">
+            <div className="flex items-start gap-3 border-b border-secondary px-5 py-4">
+                <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                        <span className="text-base font-semibold text-primary">{a.id}</span>
+                        {a.default && <Badge type="pill-color" size="sm" color="brand">默认</Badge>}
+                        <StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />
+                    </div>
+                    {a.why && <div className="mt-1 text-xs text-error-primary">{a.why}</div>}
+                </div>
+                <Button size="sm" color="secondary" onClick={() => fill("@" + a.id + " ")}>@ 指派</Button>
+                {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} onClick={() => setEditing(true)}>编辑</Button>}
+                <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label="关闭" />
+            </div>
+            <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4 text-sm">
+                {!editing ? (
+                    <>
+                        <KeyValue dense rows={[
+                            { k: "机器", v: <Where node={a.node} /> },
+                            { k: "AI 工具", v: a.harness },
+                            { k: "模型偏好", v: a.preferred || <span className="text-quaternary">未固定，用 AI 工具的默认</span>, hint: "配置里固定的模型；开会话时 Steve 会把它设给 AI 工具。" },
+                            { k: "上次实际", v: a.observed || <span className="text-quaternary">还没开过会话</span>, hint: "上次会话打开时 AI 工具报告的模型。" },
+                            { k: "可选模型", v: a.models?.length ? <span className="text-secondary">{a.models.length} 个</span> : <span className="text-quaternary">未知</span> },
+                            { k: "能接的项目", v: `数据等级 ${canTake}`, hint: "由它所在机器的数据等级决定：机器等级不低于项目等级才能碰项目的文件。" },
+                            { k: "MCP 服务器", v: a.mcp_servers?.length ? <Chips items={a.mcp_servers.map((m) => ({ id: m }))} /> : <span className="text-quaternary">无</span>, hint: "会话打开时接上的 MCP 服务器；远端 Agent 用它所在机器上的同名服务器。" },
+                            { k: "运行条件", v: <Conditions a={a} />, hint: "它所在的机器必须提供这些；任一不满足它就不可用。" },
+                        ]} />
+                        {a.models?.length ? (
+                            <details className="text-xs">
+                                <summary className="cursor-pointer text-tertiary">可选模型列表</summary>
+                                <div className="mt-1 flex flex-wrap gap-1">{a.models.map((m) => <Mono key={m} className="text-secondary">{m}</Mono>)}</div>
+                            </details>
+                        ) : null}
+                        <section>
+                            <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">此刻</h3>
+                            {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="text-xs text-secondary">#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since)}{x.detail ? ` · ${x.detail}` : ""}</div>) : <div className="text-xs text-quaternary">空闲</div>}
+                        </section>
+                        <section className="rounded-lg bg-secondary/40 p-3">
+                            <div className="flex items-center gap-3">
+                                <div className="flex-1 text-xs text-tertiary">删除只是让 hub 忘掉这个 Agent 的配置；它跑过的任务记录保留。</div>
+                                {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>算了</Button><Button size="sm" color="primary-destructive" onClick={() => void remove()}>确认删除</Button></>) : <Button size="sm" color="secondary-destructive" isDisabled={!!a.default} onClick={() => setRemoving(true)}>删除 Agent</Button>}
+                            </div>
+                            {error && <div className="mt-2 text-xs text-error-primary">{error}</div>}
+                        </section>
+                    </>
+                ) : (
+                    <div className="flex flex-col gap-4">
+                        <Select size="sm" label="机器" hint="它在哪台机器上跑" selectedKey={spec.node || "__hub"} onSelectionChange={(k) => setSpec({ ...spec, node: !k || String(k) === "__hub" ? "" : String(k) })} items={[{ id: "__hub", label: `${snap.hub.node}（hub）` }, ...nodes.map((n) => ({ id: n, label: n }))]}>
+                            {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                        </Select>
+                        <Select size="sm" label="AI 工具" hint="要在 hub 的 harnesses 里配置过" selectedKey={spec.harness} onSelectionChange={(k) => k && setSpec({ ...spec, harness: String(k) })} items={harnesses.map((h) => ({ id: h, label: h }))}>
+                            {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                        </Select>
+                        <Select size="sm" label="模型" hint="固定后每次开会话都设成它；列表来自 AI 工具上次报告的可选模型" selectedKey={spec.model || "__none"} onSelectionChange={(k) => setSpec({ ...spec, model: !k || String(k) === "__none" ? "" : String(k) })} items={modelItems}>
+                            {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                        </Select>
+                        <div className="flex flex-col gap-1.5">
+                            <div className="text-xs font-medium text-secondary">运行条件</div>
+                            <div className="text-xs text-tertiary">它所在的机器必须提供的：kind:id 选择器，如 tool:docker、hardware:gpu、mcp:github；裸词是标签。</div>
+                            <ListEditor items={spec.requires} placeholder="tool:docker" onChange={(requires) => setSpec({ ...spec, requires })} />
+                        </div>
+                        <div className="flex flex-col gap-1.5">
+                            <div className="text-xs font-medium text-secondary">MCP 服务器</div>
+                            <div className="text-xs text-tertiary">按名字；hub 上的 Agent 用 hub 配置的，远端 Agent 用它所在机器上配置的。</div>
+                            <ListEditor items={spec.mcp_servers} placeholder="github" onChange={(mcp_servers) => setSpec({ ...spec, mcp_servers })} />
+                        </div>
+                        {error && <div className="text-sm text-error-primary">{error}</div>}
+                        <div className="flex justify-end gap-2">
+                            <Button size="sm" color="secondary" onClick={() => setEditing(false)}>取消</Button>
+                            <Button size="sm" color="primary" isLoading={busy} onClick={() => void save()}>保存</Button>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
+}
+
 // AddMachine is a dialog, not a snippet: the hub registers the machine
 // and writes its own config; what comes back is the one command to run
 // on that machine. An agent can be added the same way.
@@ -226,10 +349,11 @@ function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
 
 export function FleetPage() {
     const { snap, refresh } = useFleet();
-    const { fill, act } = useIntent();
+    const { act } = useIntent();
     const up = snap.nodes.filter((n) => n.up).length;
     const [adding, setAdding] = useState(false);
     const [opened, setOpened] = useState<string | null>(null);
+    const [openedAgent, setOpenedAgent] = useState<string | null>(null);
     const hubHarnesses = Array.from(new Set(snap.agents.map((a) => a.harness).filter(Boolean))) as string[];
     return (
         <div className="flex flex-col">
@@ -283,46 +407,42 @@ export function FleetPage() {
             {opened && snap.nodes.find((n) => n.name === opened) && <MachineDrawer n={snap.nodes.find((n) => n.name === opened)!} onClose={() => setOpened(null)} onChanged={() => refresh()} />}
 
             <TableCard.Root size="sm">
-                <TableCard.Header title="Agent" badge={`${snap.agents.length}`} description="Agent 是一个命名的执行配置：固定机器和 AI 工具，可选固定偏好模型；实际模型以会话报告为准。可用 = 此刻能开工；不可用会写明原因，以及谁能修。" />
-                <Table aria-label="Agents" size="sm">
+                <TableCard.Header title="Agent" badge={`${snap.agents.length}`} description="Agent 是一个有名字的执行配置：在哪台机器上用哪个 AI 工具，可以固定一个模型。可用 = 此刻能开工；不可用会写明原因和谁能修。点一行看详情、改配置。" />
+                <Table aria-label="Agents" size="sm" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpenedAgent(id ? String(id) : null); }}>
                     <Table.Header>
                         <Table.Head id="agent" label="Agent" isRowHeader />
                         <Table.Head id="state" label="状态" />
                         <Table.Head id="now" label="此刻" />
-                        <Table.Head id="where" label="机器" />
-                        <Table.Head id="harness" label="AI 工具" />
+                        <Table.Head id="where" label="机器 · AI 工具" />
                         <Table.Head id="model" label="模型" />
-                        <Table.Head id="level" label="数据等级" />
-                        <Table.Head id="requires" label="需要" />
+                        <Table.Head id="requires" label="运行条件" />
                         <Table.Head id="why" label="" />
                     </Table.Header>
                     <Table.Body items={snap.agents}>
                         {(a) => (
-                            <Table.Row id={a.id}>
+                            <Table.Row id={a.id} className="cursor-pointer">
                                 <Table.Cell>
                                     <div className="flex items-center gap-2">
                                         <span className="font-medium text-primary">{a.id}</span>
-                                        <Button size="sm" color="link-gray" onClick={() => fill("@" + a.id)}>@</Button>
+                                        {a.default && <Badge type="pill-color" size="sm" color="brand">默认</Badge>}
                                     </div>
                                 </Table.Cell>
                                 <Table.Cell><StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />{a.busy ? <span className="ml-1 text-xs text-tertiary">忙 {a.busy}{a.slots ? `/${a.slots}` : ""}</span> : null}</Table.Cell>
                                 <Table.Cell>
                                     {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="truncate text-xs text-secondary" title={x.detail}>#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since)}</div>) : <span className="text-xs text-quaternary">空闲</span>}
                                 </Table.Cell>
-                                <Table.Cell><Where node={a.node} /></Table.Cell>
-                                <Table.Cell>{a.harness}</Table.Cell>
+                                <Table.Cell><div className="flex items-center gap-1.5"><Where node={a.node} /><span className="text-quaternary">·</span><span>{a.harness}</span></div></Table.Cell>
                                 <Table.Cell>
                                     <div className="flex flex-col">
-                                        <span className={a.model ? "text-primary" : "text-quaternary"}>{a.model || "—"}</span>
-                                        {a.models?.length ? <span className="text-xs text-tertiary" title={a.models.join("\n")}>可选 {a.models.length}</span> : null}
+                                        {a.preferred ? <span className="text-primary" title="配置里固定的模型，开会话时设给 AI 工具">{a.preferred}</span> : <span className="text-quaternary" title="没有固定：AI 工具用它自己的默认模型">未固定</span>}
+                                        {a.observed && <span className="text-xs text-tertiary" title="上次会话里 AI 工具实际报告的模型">上次 {a.observed}</span>}
                                     </div>
                                 </Table.Cell>
-                                <Table.Cell><span className="text-tertiary">{a.level || "internal"}{a.slots ? ` · ${a.slots} slots` : ""}{a.region ? ` · ${a.region}` : ""}</span></Table.Cell>
-                                <Table.Cell><Tags items={a.requires} /></Table.Cell>
+                                <Table.Cell><Conditions a={a} /></Table.Cell>
                                 <Table.Cell>
                                     <div className="flex items-center gap-3">
                                         <span className="text-error-primary">{a.why || ""}</span>
-                                        {a.repair ? <Button size="sm" color="secondary" onClick={() => act(`/repair ${a.id}`)}>让 {a.repair} 修</Button> : null}
+                                        {a.repair ? <Button size="sm" color="secondary" onClick={(e: React.MouseEvent) => { e.stopPropagation(); act(`/repair ${a.id}`); }}>让 {a.repair} 修</Button> : null}
                                     </div>
                                 </Table.Cell>
                             </Table.Row>
@@ -331,6 +451,7 @@ export function FleetPage() {
                 </Table>
                 {snap.agents.length === 0 && <Nothing icon={Users01} title="没有配置 Agent" />}
             </TableCard.Root>
+            {openedAgent && snap.agents.find((a) => a.id === openedAgent) && <AgentDrawer a={snap.agents.find((a) => a.id === openedAgent)!} onClose={() => setOpenedAgent(null)} onChanged={() => refresh()} />}
 
             <TableCard.Root size="sm">
                 <TableCard.Header title="正在执行的 attempt" badge={`${snap.attempts.length}`} description="每一次执行都持有租约；租约丢失即取消。" />

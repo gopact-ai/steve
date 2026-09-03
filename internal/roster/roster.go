@@ -59,9 +59,12 @@ type Candidate struct {
 	// the one the harness was last seen running here. Empty means nobody
 	// has looked yet. Command is the harness's executable on that machine
 	// and Missing why it cannot start there, both from the advert.
-	Model   string
-	Command string
-	Missing string
+	Model string
+	// Observed is the model the harness was last seen running here,
+	// whatever the agent prefers.
+	Observed string
+	Command  string
+	Missing  string
 	// Slots is the endpoint's session cap for (node, harness); zero is
 	// unlimited. Level is the data level of the machine.
 	Slots int
@@ -287,6 +290,7 @@ func (r *Roster) All(ctx context.Context) []Candidate {
 		c.Region = regions[a.Node]
 		if book != nil {
 			if seen, ok := book.Get(a.Node, a.Harness); ok {
+				c.Observed = seen.Current
 				if c.Model == "" {
 					c.Model = seen.Current
 				}

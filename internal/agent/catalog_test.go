@@ -154,3 +154,33 @@ func TestCatalogAddsAnAgentAtRuntime(t *testing.T) {
 		t.Fatalf("list = %d, default = %s", len(c.List()), c.Default().ID)
 	}
 }
+
+// Set replaces an agent whole and Remove forgets one; the default agent
+// cannot be removed, and a bad replacement leaves the catalog as it was.
+func TestCatalogSetsAndRemovesAgents(t *testing.T) {
+	c, err := NewCatalog(map[string]Config{"codex": {Harness: "codex", Default: true}, "builder": {Harness: "codex", Node: "node-a", Requires: []string{"gpu"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Set("builder", Config{Harness: "claude-code", Node: "node-b", Model: "opus"}); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := c.Resolve("builder"); got.Harness != "claude-code" || got.Node != "node-b" || got.Model != "opus" || len(got.Requires) != 0 {
+		t.Fatalf("after set = %+v", got)
+	}
+	if err := c.Set("builder", Config{}); err == nil {
+		t.Fatal("an agent without a harness was accepted")
+	}
+	if got, _ := c.Resolve("builder"); got.Harness != "claude-code" {
+		t.Fatalf("a refused set changed the catalog: %+v", got)
+	}
+	if err := c.Remove("codex"); err == nil {
+		t.Fatal("the default agent was removed")
+	}
+	if err := c.Remove("builder"); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := c.Resolve("builder"); ok || len(c.List()) != 1 {
+		t.Fatal("builder is still there")
+	}
+}

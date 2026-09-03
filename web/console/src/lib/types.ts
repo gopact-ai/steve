@@ -21,9 +21,11 @@ export interface Activity {
     agent: string; attempt_id?: string; kind?: string; workspace?: string; task_id?: string; step_id?: string; conversation?: string;
     tool?: string; detail?: string; since: string; at: string;
 }
+export interface Condition { atom: string; met: boolean; code?: string; detail?: string }
 export interface Agent {
     id: string; node?: string; harness: string; model?: string; models?: string[]; eligible: boolean; why?: string;
     requires?: string[]; level?: string; slots?: number; region?: string; repair?: string; activities?: Activity[]; busy?: number; snapshot?: AbilitySnapshot;
+    preferred?: string; observed?: string; conditions?: Condition[]; mcp_servers?: string[]; default?: boolean;
 }
 export interface Tokens { input?: number; output?: number; cached_read?: number; cached_write?: number; total?: number; context?: number }
 export interface AttemptRow { day: string; agent: string; node?: string; model?: string; outcome?: string; started: string; seconds: number; tokens: Tokens; reported: boolean }

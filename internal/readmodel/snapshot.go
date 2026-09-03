@@ -3,6 +3,7 @@ package readmodel
 import (
 	"context"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"sort"
@@ -37,6 +38,12 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 				ID: c.Agent.ID, Node: m.place(c.Node), Harness: c.Harness, Snapshot: c.Snapshot,
 				Model: c.Model, Models: c.Models, Eligible: c.Eligible, Why: c.Why,
 				Requires: c.Agent.Requires, Level: string(c.Level.OrDefault()), Slots: c.Slots, Region: c.Region,
+				Preferred: c.Agent.Model, Observed: c.Observed, MCPServers: c.Agent.MCPServers, Default: c.Agent.Default,
+			}
+			if req, err := ability.Compile(c.Agent.Requires); err == nil && !req.Empty() {
+				for _, atom := range c.Match(req).Atoms {
+					a.Conditions = append(a.Conditions, Condition{Atom: atom.Atom, Met: atom.Verdict == ability.True, Code: string(atom.Code), Detail: atom.Detail})
+				}
 			}
 			if !c.Eligible {
 				if fix, err := m.src.Roster.Repair(ctx, c.Agent.ID); err == nil {

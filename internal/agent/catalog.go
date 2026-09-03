@@ -56,6 +56,51 @@ type catalogData struct {
 
 func (c *Catalog) snap() *catalogData { return c.d.Load() }
 
+// Set replaces one agent's configuration, or adds it. What is not in cfg
+// is gone: the caller passes the whole thing.
+func (c *Catalog) Set(id string, cfg Config) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	all := make(map[string]Config, len(c.configs)+1)
+	for k, v := range c.configs {
+		all[k] = v
+	}
+	all[id] = cfg
+	fresh, err := NewCatalog(all)
+	if err != nil {
+		return err
+	}
+	c.configs = all
+	c.d.Store(fresh.snap())
+	return nil
+}
+
+// Remove forgets an agent. The default agent stays: a catalog needs one.
+func (c *Catalog) Remove(id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cfg, ok := c.configs[id]
+	if !ok {
+		return fmt.Errorf("no agent %q", id)
+	}
+	if cfg.Default {
+		return fmt.Errorf("%s is the default agent; make another the default first", id)
+	}
+	all := make(map[string]Config, len(c.configs))
+	for k, v := range c.configs {
+		if k != id {
+			all[k] = v
+		}
+	}
+	fresh, err := NewCatalog(all)
+	if err != nil {
+		return err
+	}
+	c.configs = all
+	c.d.Store(fresh.snap())
+	return nil
+}
+
 // Add puts one more agent in the catalog, or fails with why it cannot:
 // a duplicate id or alias, a missing harness. The file the hub was loaded
 // from is the caller's to update.
