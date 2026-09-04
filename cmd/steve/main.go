@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/mcpprobe"
 	"github.com/gopact-ai/steve/internal/mcpregistry"
 	"github.com/gopact-ai/steve/internal/mcpscan"
+	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/models"
 	steveview "github.com/gopact-ai/steve/internal/view"
 	"log"
@@ -576,6 +577,11 @@ func serve(args []string) error {
 	coordinator.SetIdentity(cfg.Feishu.OwnerOpenID, home.Dir{Path: cfg.Gateway.HomePath})
 	coordinator.SetSkills(live)
 	coordinator.SetProjects(projects, cfg.Gateway.DefaultProject, homeProjectID)
+	// Memory: the home's MEMORY.md for the owner, one file per project,
+	// every write locked and audited under the state directory.
+	memoryDir := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "memory")
+	memories := memory.NewService(memory.NewMarkdown(cfg.Gateway.HomePath, memoryDir), filepath.Join(memoryDir, "audit.jsonl"))
+	coordinator.SetMemory(memories)
 	// Attempts: every execution is leased and fenced. Anything left live by
 	// a previous process is expired now, before a single turn runs.
 	attempts := attempt.New(book)
@@ -749,7 +755,7 @@ func serve(args []string) error {
 		return project.Level(level)
 	}
 	admin := &fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos, attempts: attempts,
-		skills: live, shipper: hubSkills, coordinator: coordinator, homePath: cfg.Gateway.HomePath}
+		skills: live, shipper: hubSkills, coordinator: coordinator, homePath: cfg.Gateway.HomePath, memory: memories}
 	dashboard.SetAdmin(admin)
 	defer dashboard.Close()
 	go func() {
@@ -838,6 +844,7 @@ func serve(args []string) error {
 	// are answered by the coordinator, live.
 	gate.SetInformer(coordinatorInformer{c: coordinator})
 	gate.SetFleeter(fleetTools{admin: admin, view: view})
+	gate.SetMemorizer(coordinator)
 	go func() {
 		<-ctx.Done()
 		stop()
@@ -1175,6 +1182,8 @@ type fleetAdmin struct {
 	// homePath is Steve's own directory: who it is, who the owner is,
 	// what it remembers.
 	homePath string
+	// memory is what Steve remembers, for the page to read and edit.
+	memory *memory.Service
 	// probes remembers what each MCP deployment answered when last
 	// probed, by "<machine>/<name>", with the shape it had then; a
 	// deployment whose shape moved is shown as stale. provenance
@@ -2741,6 +2750,11 @@ func (a *fleetAdmin) Home(_ context.Context) (readmodel.HomeView, error) {
 	}
 	view := readmodel.HomeView{Path: a.homePath, TotalBudget: home.BudgetTotal, Files: []readmodel.HomeFile{}, Warnings: []string{}}
 	for _, f := range files {
+		if f.Name == home.FileMemory && a.memory != nil && !f.Missing {
+			if text, err := a.memory.Text(context.Background(), memory.Global); err == nil {
+				f.Text = text
+			}
+		}
 		view.Files = append(view.Files, readmodel.HomeFile{Name: f.Name, Text: f.Text, Bytes: len([]byte(f.Text)), Budget: f.Budget, Template: f.Template, Missing: f.Missing})
 	}
 	dir := home.Dir{Path: a.homePath}
@@ -2753,14 +2767,53 @@ func (a *fleetAdmin) Home(_ context.Context) (readmodel.HomeView, error) {
 	if snap, err := dir.Load(home.ModeGuest); err == nil {
 		view.GuestBytes = len([]byte(snap.Identity))
 	}
+	view.Projects = []readmodel.ProjectMemory{}
+	if a.memory != nil && a.projects != nil {
+		view.Audit = a.memory.AuditPath()
+		list, err := a.projects.List(context.Background())
+		if err != nil {
+			view.Warnings = append(view.Warnings, err.Error())
+		}
+		for _, p := range list {
+			if p.ID == homeProjectID {
+				continue
+			}
+			scope := memory.ProjectScope(p.ID)
+			text, err := a.memory.Text(context.Background(), scope)
+			if err != nil {
+				view.Warnings = append(view.Warnings, p.ID+": "+err.Error())
+				continue
+			}
+			items, _ := a.memory.List(context.Background(), scope)
+			view.Projects = append(view.Projects, readmodel.ProjectMemory{ID: p.ID, Path: a.memory.Where(scope), Text: text, Bytes: len([]byte(text)), Budget: memory.Budget(scope), Facts: len(items)})
+		}
+	}
 	return view, nil
+}
+
+// SetProjectMemory rewrites one project's memory whole, through the
+// same lock the agents' writes take.
+func (a *fleetAdmin) SetProjectMemory(ctx context.Context, id, text string) error {
+	if a.memory == nil {
+		return errors.New("memory is not wired")
+	}
+	if _, ok, err := a.projects.Get(ctx, id); err != nil {
+		return err
+	} else if !ok {
+		return fmt.Errorf("no project %q", id)
+	}
+	return a.memory.Replace(ctx, memory.ProjectScope(id), text, memory.Actor{By: "console"})
 }
 
 // SetHomeFile rewrites one of the three. The next turn reads it; a
 // session already open is told its instructions changed.
-func (a *fleetAdmin) SetHomeFile(_ context.Context, name, text string) error {
+func (a *fleetAdmin) SetHomeFile(ctx context.Context, name, text string) error {
 	if a.homePath == "" {
 		return errors.New("没有配置档案目录（gateway.home_path）")
+	}
+	if name == home.FileMemory && a.memory != nil {
+		// The global memory is a scope: same lock, ids kept, audited.
+		return a.memory.Replace(ctx, memory.Global, text, memory.Actor{By: "console"})
 	}
 	return home.Write(a.homePath, name, text)
 }

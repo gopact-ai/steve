@@ -86,6 +86,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("POST /console/mcp/install", s.guard(s.consoleInstallMCP))
 	mux.HandleFunc("GET /console/home", s.guard(s.consoleHome))
 	mux.HandleFunc("PUT /console/home/{name}", s.guard(s.consoleSetHomeFile))
+	mux.HandleFunc("PUT /console/memory/{project}", s.guard(s.consoleSetProjectMemory))
 	mux.HandleFunc("POST /console/projects/{id}/workspaces", s.guard(s.consoleAddWorkspace))
 	mux.HandleFunc("DELETE /console/projects/{id}/workspaces/{node}", s.guard(s.consoleRemoveWorkspace))
 	mux.HandleFunc("GET /console/nodes/{name}/settings", s.guard(s.nodeSettings))
@@ -404,6 +405,8 @@ type Admin interface {
 	// what it remembers; SetHomeFile rewrites one.
 	Home(ctx context.Context) (HomeView, error)
 	SetHomeFile(ctx context.Context, name, text string) error
+	// SetProjectMemory rewrites one project's memory whole.
+	SetProjectMemory(ctx context.Context, project, text string) error
 }
 
 // SkillsView is the skills page: where skills are looked for, every
@@ -624,6 +627,20 @@ type HomeView struct {
 	OwnerBytes  int        `json:"owner_bytes"`
 	GuestBytes  int        `json:"guest_bytes"`
 	Warnings    []string   `json:"warnings"`
+	// Projects are each project's own memory, home project excluded.
+	Projects []ProjectMemory `json:"projects"`
+	// Audit is where memory writes are logged.
+	Audit string `json:"audit,omitempty"`
+}
+
+// ProjectMemory is one project's memory as the page edits it.
+type ProjectMemory struct {
+	ID     string `json:"id"`
+	Path   string `json:"path"`
+	Text   string `json:"text"`
+	Bytes  int    `json:"bytes"`
+	Budget int    `json:"budget"`
+	Facts  int    `json:"facts"`
 }
 
 // HomeFile is one of the three: what it is for is the page's to say.
@@ -1131,6 +1148,24 @@ func (s *Server) consoleSetHomeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.admin.SetHomeFile(r.Context(), r.PathValue("name"), req.Text); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleSetProjectMemory(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.SetProjectMemory(r.Context(), r.PathValue("project"), req.Text); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -82,6 +82,9 @@ type Extra struct {
 	Name         string
 	Server       MCPServer
 	Instructions string
+	// Memory is remembered text to append after the home's memory: it
+	// reaches the agent but, like the home's memory, not the fingerprint.
+	Memory string
 }
 
 func (a *Assembler) AssembleMode(selected agent.Agent, mode home.Mode) (Capabilities, error) {
@@ -118,11 +121,20 @@ func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras [
 	}
 	identity := strings.Join(parts, "\n\n")
 	instructions := identity
+	memories := []string{}
 	if snap.Memory != "" {
+		memories = append(memories, snap.Memory)
+	}
+	for _, extra := range extras {
+		if strings.TrimSpace(extra.Memory) != "" {
+			memories = append(memories, extra.Memory)
+		}
+	}
+	for _, m := range memories {
 		if instructions != "" {
-			instructions += "\n\n" + snap.Memory
+			instructions += "\n\n" + m
 		} else {
-			instructions = snap.Memory
+			instructions = m
 		}
 	}
 	servers := make([]acp.MCPServer, 0, len(selected.MCPServers))
@@ -146,6 +158,10 @@ func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras [
 		servers = append(servers, server)
 	}
 	for _, extra := range extras {
+		if extra.Server.Type == "" {
+			// Instructions or memory only: nothing to connect.
+			continue
+		}
 		server, err := makeMCPServer(extra.Name, extra.Server)
 		if err != nil {
 			return Capabilities{}, err

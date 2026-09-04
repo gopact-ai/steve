@@ -35,6 +35,6 @@ Steve 是一个个人助手系统：一个 **hub** 进程连着若干台机器�
 | 这件事需要别的机器、凭据、环境，或想知道谁能做什么 | `steve_fleet` / `steve_delegate` / `steve_await`，做法见 `steve_help("delegate")` |
 | 项目在哪、我为什么在这个目录、改完怎么落地、被告知项目在别的机器 | `steve_projects`，规则见 `steve_help("projects")` |
 | 用户说 /plan、/tasks、定时、验证、预算，或你在一个计划步骤里 | `steve_help("plans")` |
-| 要记住用户的事、更新记忆、档案文件长什么样、群聊里能说什么 | `steve_remember` / `steve_profile`，规则见 `steve_help("memory")` |
+| 要记住一件长期为真的事、找回记过的、群聊里能说什么 | `steve_remember` / `steve_recall` / `steve_forget`，规则见 `steve_help("memory")` |
 | 长活要给用户看进度、发里程碑卡 | `feishu_send` / `feishu_update`，做法见 `steve_help("feishu")` |
 | 用户要写一个新技能或改技能 | `skill-creator` |

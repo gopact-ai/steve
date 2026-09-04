@@ -54,6 +54,11 @@ go build -o steve ./cmd/steve
 "steve 怎么协作"不是技能，是 steve 为每个会话生成的 MCP 服务器 `steve` 上的工具：`steve_context`（你在哪）、`steve_projects`
 （项目在哪）、`steve_help`（做法，按主题）、进度卡与委派。技能的控制权在 agent 手里，工具的在 steve 手里。
 
+记忆有两层，都由 steve 保管、只在 owner 私聊的新会话第一轮注入：**全局**（关于用户：偏好 / 项目 / 人，就是档案里的
+MEMORY.md，24 KB）和**项目**（关于这个项目：约定 / 决策 / 坑，`<state_dir>/memory/projects/<id>.md`，16 KB）。
+agent 用 `steve_remember` / `steve_recall` / `steve_forget` 读写，不直接改文件；项目只能是会话绑定的那个；每条事实有稳定 id，
+写入带锁、记审计（`<state_dir>/memory/audit.jsonl`）；控制台"档案"页能逐项目编辑。群聊、访客、被委派的子任务都写不了。
+
 以上动词在 dashboard 的控制台和 `steve say` 里同样可用。
 
 多阶段任务里 agent 会用内置的 `feishu_send` / `feishu_update` / `feishu_recall`
@@ -347,7 +352,7 @@ agentmcp：内置 loopback MCP server（每会话 token），远端经反向隧�
 - `config.json` 含应用凭据：0600、已 gitignore，绝不入库
 - 状态目录 `~/.steve/` 持锁（flock）：同一状态只允许一个网关进程
 - 内置 MCP server 只绑 127.0.0.1，每会话独立 bearer token，随会话持久化
-- 权限策略按 harness 配置；owner 与 guest 的 home（身份/记忆）严格隔离
+- 权限策略按 harness 配置；owner 与 guest 的 home（身份/记忆）严格隔离；项目记忆同样只进 owner 私聊
 - agent 内容中的 `<at>` 会被剥离：@ 人是平台最终卡的专属行为
 
 ## 测试

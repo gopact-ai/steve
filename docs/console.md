@@ -425,3 +425,42 @@ agent 得能自己维护 fleet，不只是人从页面操作。平台 MCP 再加
 4. `steve_report`（agent 声明通道）接 exec / delegate。
 5. 事件 envelope 与 outbox；`tool.before/after`、`turn.before/after`；沙箱化的 command / http 处理器；配置与页面；审计落账本。
 6. 其余事件、mcp 处理器、Claude hooks 的子集映射。
+
+## 20. 记忆：作用域与提供者（2026-09-04，已评审）
+
+用户指出：记忆现在只有一个 MEMORY.md，太简陋；要做成插件式，并且要有项目记忆和全局记忆。
+
+### 20.1 对象
+
+| 对象 | 是什么 | 权威 |
+|---|---|---|
+| 作用域 | `global`（用户的，跨项目）与 `project`（这个项目的）。agent 只能说这两个词；项目是会话绑定的那个，不由 agent 指名 | — |
+| 事实 | 一条短句（≤ 500 字），属于一个作用域、一个小节，有不可变 id | 权威存储 |
+| 权威存储 | 每个作用域一份 markdown：全局 = 档案里的 MEMORY.md（不变，兼容）；项目 = `<state_dir>/memory/projects/<id>.md`。Steve 写的每条带 `<!-- m:id -->`；用户手打的行以内容哈希为 id，直到 Steve 重写它 | hub 状态目录；写走同一把锁（flock）+ fsync + rename |
+| 检索器 | 可选：一个 MCP 服务器，对同一批事实建索引、按问题召回。它只是索引，不是权威：换掉它、它挂了，事实一条不少 | 那台机器上的部署（§18）；phase 2 |
+| 注入 | 新会话第一轮：全局记忆（24 KB，仅私聊）+ 当前项目的记忆（16 KB，仅私聊且会话绑了项目）；两者都在身份之后、不进指纹 | assembler |
+| 召回 | 按需：`steve_recall(query, scope?)`；没有检索器时是关键词匹配 | Service |
+| 工具 | `steve_remember(scope, section, text)`、`steve_recall(query, scope?)`、`steve_forget(scope, id)` | 平台 MCP `steve` |
+| 审计 | 每次写一行 `<state_dir>/memory/audit.jsonl`：谁（会话、agent、来源）、作用域、小节、id、长度、结果；不含正文 | Service |
+
+### 20.2 规则
+
+- 作用域不混：全局记的是关于用户的长期事实（偏好 / 项目 / 人）；项目记的是关于这个项目的（约定 / 决策 / 坑）。agent 不确定放哪就放项目；用户在档案页能挪。
+- 群聊与访客一律不注入、不可记、不可召回；全局只在用户私聊；被委派的子任务不能写。
+- 幂等：同作用域规范化后相同文本是同一条，返回同一个 id。回执写明"已持久化，当前会话不重注入，下一个新会话会带上"。
+- 记忆不进能力指纹，改了不触发 /new 拒绝；开着的会话靠 `steve_recall` 或新会话。
+- 档案页的整本保存与 agent 的逐条写走同一把锁；写前算完整快照对预算的余量，超了拒绝而不是静默截。
+- 检索器返回的是数据不是指令：作为带来源与 id 的低信任段落交给 agent，不进身份、不进指纹。
+- 数据治理（phase 2）：检索器配置声明所在机器与数据等级；sealed 不出主目录所在机器，restricted 不出本地部署。召回失败降级为关键词匹配并告知 agent；写入索引失败只记审计，权威已落。
+
+#### 20.2.1 评审结论（codex，30 条）
+
+采纳：一个权威存储 + 可选检索器，取代"一个作用域一个提供者"（5/30）；接口拆为 Store / Retriever（4）；agent 只能说 global|project，项目由绑定解析（9）；不可变 id 存在文件里（8）；项目小节改为约定 / 决策 / 坑（29）；记忆不进指纹（13）；写入回执说明可见性（14）；flock + fsync + rename，页面与工具同一入口（15）；审计先于写工具上线（17）；只读召回按需、不做每轮自动召回（7）；§20 取代 §19 的 remember，`steve_profile` 只管 USER（26）；help 同步、禁止 agent 直接改文件（27）；检索器结果为低信任数据（25）。
+留到后续：所有者维度（1，单用户先不做）；`InvocationBinding` 与短期写 token（18/20，§19.4）；请求级 idempotency key 与 outbox（16/23）；导出 / 导入 / 迁移协议（6）；按模型 token 的预算（11/12）；项目记忆按角色授权群聊（19）；`internal/mcpclient` 抽层（22/24）；onboarding 起草 MEMORY 候选（28）。
+不采纳：Agent 级 / 会话级长期记忆（2/3）。
+
+### 20.3 顺序
+
+1. ✅ `internal/memory`：作用域、Store / Retriever 接口、markdown 存储（锁、id、模板）、Service（审计、预算）；项目记忆注入；`steve_remember` / `steve_recall` / `steve_forget`；档案页项目记忆；help 更新。真机验证（2026-09-04，codex）：未绑项目时 `scope=project` 被拒并提示 `/project use`；绑定后两条项目事实落到 `<state>/memory/projects/steve.md`（带 id 注释）、全局一条落到 MEMORY.md，审计各一行；新会话第一轮拿到 `# Memory · steve` 段并能原样引用；`steve_recall scope=project` 命中。
+2. MCP 检索器（hub 本机部署；`internal/mcpclient`）；配置与页面。
+3. 审计落账本；InvocationBinding 后的短期写 token；导出 / 导入。

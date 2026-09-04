@@ -151,6 +151,9 @@ export async function removeSkillPath(path: string): Promise<{ ok: boolean }> {
     return json(await fetch(`./console/skills/paths${q}${q ? "&" : "?"}path=${encodeURIComponent(path)}`, { method: "DELETE", headers }));
 }
 export async function fetchHome(): Promise<HomeView> { return json(await fetch(`./console/home${q}`, { headers })); }
+export async function saveProjectMemory(project: string, text: string): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/memory/${encodeURIComponent(project)}${q}`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ text }) }));
+}
 export async function saveHomeFile(name: string, text: string): Promise<{ ok: boolean }> {
     return json(await fetch(`./console/home/${encodeURIComponent(name)}${q}`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ text }) }));
 }

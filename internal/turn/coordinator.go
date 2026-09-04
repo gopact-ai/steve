@@ -21,6 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/onboard"
@@ -147,6 +148,8 @@ type Coordinator struct {
 	// modes is how each conversation last reached Steve, for a tool call
 	// that has no request to read it from.
 	modes map[string]home.Mode
+	// memory is what Steve remembers, by scope; nil until wired.
+	memory *memory.Service
 	schedules   *schedule.Store
 	supervisor  Supervisor
 	plans       *plan.Store
@@ -441,6 +444,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return Result{}, err
 	}
 	saved.AgentToken = agentToken
+	extras = append(extras, c.projectMemory(ctx, conversationID, req)...)
 	capabilities, err := c.assemble(selected, req, extras)
 	if err != nil {
 		return Result{}, err

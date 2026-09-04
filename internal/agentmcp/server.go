@@ -163,6 +163,7 @@ type Server struct {
 	delegator Delegator
 	informer  Informer
 	fleeter   Fleeter
+	memorizer Memorizer
 	journal   func(conversationID, agentID, messageID string)
 	tokens    map[string]binding
 	byBind    map[binding]string
@@ -471,7 +472,7 @@ type PlatformTool struct {
 // the Feishu set always, delegation when a delegator is wired.
 func PlatformTools(delegating bool) []PlatformTool {
 	var out []PlatformTool
-	for _, t := range toolList(delegating, true, true) {
+	for _, t := range toolList(delegating, true, true, true) {
 		name, _ := t["name"].(string)
 		desc, _ := t["description"].(string)
 		out = append(out, PlatformTool{Name: name, Description: desc})
@@ -481,12 +482,12 @@ func PlatformTools(delegating bool) []PlatformTool {
 
 func (s *Server) toolList() []map[string]any {
 	s.mu.Lock()
-	informing, fleeting := s.informer != nil, s.fleeter != nil
+	informing, fleeting, remembering := s.informer != nil, s.fleeter != nil, s.memorizer != nil
 	s.mu.Unlock()
-	return toolList(s.delegator != nil, informing, fleeting)
+	return toolList(s.delegator != nil, informing, fleeting, remembering)
 }
 
-func toolList(delegating, informing, fleeting bool) []map[string]any {
+func toolList(delegating, informing, fleeting, remembering bool) []map[string]any {
 	tools := []map[string]any{
 		{
 			"name": "feishu_send",
@@ -626,6 +627,9 @@ func toolList(delegating, informing, fleeting bool) []map[string]any {
 	if fleeting {
 		tools = append(tools, fleetTools()...)
 	}
+	if remembering {
+		tools = append(tools, memoryTools()...)
+	}
 	return tools
 }
 
@@ -666,6 +670,12 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 		out, err = s.steveNodeRemove(ctx, bind, call.Arguments)
 	case "steve_node_refresh":
 		out, err = s.steveNodeRefresh(ctx, bind, call.Arguments)
+	case "steve_remember":
+		out, err = s.steveRemember(ctx, bind, call.Arguments)
+	case "steve_recall":
+		out, err = s.steveRecall(ctx, bind, call.Arguments)
+	case "steve_forget":
+		out, err = s.steveForget(ctx, bind, call.Arguments)
 	default:
 		err = fmt.Errorf("unknown tool %q", call.Name)
 	}

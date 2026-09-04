@@ -32,7 +32,7 @@ export function Panel({ title, badge, aside, children, className }: { title?: Re
         <section className={`flex flex-col rounded-xl bg-primary shadow-xs ring-1 ring-secondary ${className ?? ""}`}>
             {title && (
                 <header className="flex items-center gap-2 border-b border-secondary px-5 py-3">
-                    <h2 className="text-sm font-semibold text-primary">{title}</h2>
+                    <h2 className="shrink-0 whitespace-nowrap text-sm font-semibold text-primary">{title}</h2>
                     {badge}
                     {aside && <div className="ml-auto flex items-center gap-2">{aside}</div>}
                 </header>

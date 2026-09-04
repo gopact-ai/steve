@@ -129,7 +129,8 @@ export interface FoundSkill { name: string; path: string; title?: string; descri
 export interface MachineSkills { name: string; hub?: boolean; up: boolean; skills: FoundSkill[]; error?: string }
 // Steve's home: the three files and how much of them reaches the agent.
 export interface HomeFile { name: string; text: string; bytes: number; budget: number; template?: boolean; missing?: boolean }
-export interface HomeView { path: string; files: HomeFile[]; total_budget: number; owner_bytes: number; guest_bytes: number; warnings: string[] }
+export interface ProjectMemory { id: string; path: string; text: string; bytes: number; budget: number; facts: number }
+export interface HomeView { path: string; files: HomeFile[]; total_budget: number; owner_bytes: number; guest_bytes: number; warnings: string[]; projects: ProjectMemory[]; audit?: string }
 
 // MCP: deployments on machines, the platform's own session servers, and
 // what machines' coding agents configured themselves.
