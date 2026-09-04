@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Download01, Plus, PuzzlePiece01, RefreshCw01, Trash01 } from "@untitledui/icons";
+import { Download01, Plus, PuzzlePiece01, RefreshCw01, Server01, Trash01 } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
@@ -10,9 +10,9 @@ import { Drawer } from "@/components/steve/drawer";
 import { Md } from "@/components/steve/markdown";
 import { Chips, KeyValue, PageBody, PageHeader, Panel } from "@/components/steve/page";
 import { Mono, Nothing } from "@/components/steve/ui";
-import { addSkillPath, addSkillSource, fetchSkill, fetchSkills, removeSkillPath, removeSkillSource, setSkill, updateSkillSources, when } from "@/lib/api";
+import { addSkillPath, addSkillSource, fetchMachineSkills, fetchSkill, fetchSkills, importSkill, removeSkillPath, removeSkillSource, setSkill, updateSkillSources, when } from "@/lib/api";
 import { useFleet } from "@/lib/fleet";
-import type { SkillDoc, SkillView, SkillsView } from "@/lib/types";
+import type { MachineSkills, SkillDoc, SkillView, SkillsView } from "@/lib/types";
 
 const fail = (e: unknown) => String(e).replace(/^Error: /, "");
 
@@ -29,14 +29,22 @@ export function SkillsPage() {
     const [opened, setOpened] = useState<SkillDoc | null>(null);
     const [newPath, setNewPath] = useState("");
     const [spec, setSpec] = useState("");
+    const [machines, setMachines] = useState<MachineSkills[] | null>(null);
     const load = useCallback(() => { void fetchSkills().then((v) => { setView(v); setError(""); }).catch((e) => setError(fail(e))); }, []);
+    const loadMachines = useCallback(() => { void fetchMachineSkills().then((v) => setMachines(v.machines)).catch((e) => setError(fail(e))); }, []);
     useEffect(() => { load(); }, [load, snap.at]);
+    useEffect(() => { loadMachines(); }, [loadMachines]);
     async function run(key: string, op: () => Promise<unknown>) {
         setBusy(key); setError("");
         try { await op(); load(); } catch (e) { setError(fail(e)); } finally { setBusy(""); }
     }
-    const skills = view?.skills ?? [];
-    const on = skills.filter((s) => s.enabled).length;
+    // The table is what the hub hands out or could: shipped skills, the
+    // owner's own, and what has been turned on from a source. A source's
+    // other skills are listed with the source, where they can be turned on.
+    const all = view?.skills ?? [];
+    const skills = all.filter((s) => s.builtin || !s.source || s.enabled);
+    const on = all.filter((s) => s.enabled).length;
+    const enabledOf = (name: string) => all.find((s) => s.name === name)?.enabled ?? false;
     return (
         <div className="flex flex-col">
             <PageHeader title="技能"
@@ -44,7 +52,7 @@ export function SkillsPage() {
             <PageBody>
                 {error && <div className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error}</div>}
                 <TableCard.Root size="sm">
-                    <TableCard.Header title="技能" badge={`${on}/${skills.length} 已启用`} description="启用 = 交给所有 Agent。内置的随 steve 发布，默认打开：官方的 skill-creator，和讲这套系统怎么协作的 steve 套件（steve 是入口，按功能路由到 steve-*）。「固定在」是某个 Agent 或项目按目录另外要的技能，不受这里的开关影响。" />
+                    <TableCard.Header title="技能" badge={`${on} 已启用`} description="启用 = 交给所有 Agent。内置的随 steve 发布，默认打开：官方的 skill-creator，和引导 agent 在这套系统里怎么干活的 steve 套件。从互联网来源启用的会列在这里，来源里没启用的只在下面的来源里看。「固定在」是某个 Agent 或项目按目录另外要的技能，不受这里的开关影响。" />
                     {!view ? <div className="px-5 py-6 text-sm text-tertiary">读取中…</div> : skills.length === 0 ? (
                         <Nothing icon={PuzzlePiece01} title="还没有技能">连内置的都没有，说明 hub 还没启动完或状态目录写不进去。用户技能放在下面的目录里：一个带 SKILL.md 的文件夹就是一个。</Nothing>
                     ) : (
@@ -103,10 +111,51 @@ export function SkillsPage() {
                                             {src.error && <Badge type="pill-color" size="sm" color="error">更新失败</Badge>}
                                         </div>
                                         <div className="truncate font-mono text-[11px] text-quaternary" title={src.url}>{src.url}{src.ref ? ` @ ${src.ref}` : ""}{src.subdir ? ` · ${src.subdir}` : ""}</div>
-                                        <div className="mt-1 flex flex-wrap items-center gap-1 text-xs"><span className="text-tertiary">{src.skills.length} 个技能</span><Chips items={src.skills.map((n) => ({ id: n }))} />{src.fetched_at && <span className="text-quaternary">· 拉取于 {when(src.fetched_at)}</span>}</div>
+                                        <div className="mt-1 text-xs text-tertiary">{src.skills.length} 个技能{src.fetched_at ? ` · 拉取于 ${when(src.fetched_at)}` : ""} · 打开的会进上表</div>
+                                        <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
+                                            {src.skills.map((n) => (
+                                                <li key={n} className="flex items-center gap-1.5 text-xs">
+                                                    <Toggle size="sm" aria-label={`启用 ${n}`} isSelected={enabledOf(n)} isDisabled={busy !== ""} onChange={(v) => void run(n, () => setSkill(n, v))} />
+                                                    <Mono className={enabledOf(n) ? "text-primary" : "text-tertiary"}>{n}</Mono>
+                                                </li>
+                                            ))}
+                                        </ul>
                                         {src.error && <div className="mt-1 text-xs text-error-primary">{src.error}</div>}
                                     </div>
                                     <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip="忘掉这个来源；从它启用的技能一起关掉" isDisabled={busy !== ""} onClick={() => void run("rmsrc:" + src.slug, () => removeSkillSource(src.slug))} />
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </Panel>
+                <Panel title="机器上已有的技能" badge={<span className="text-xs text-tertiary">各机器 AI 工具自己目录里的技能（~/.codex/skills、~/.claude/skills …）；加载到 hub 后成为一个普通技能，再决定要不要启用</span>}
+                    aside={<Button size="sm" color="link-gray" iconLeading={RefreshCw01} onClick={loadMachines}>重新扫描</Button>}>
+                    {!machines ? <div className="text-xs text-tertiary">正在问各机器…</div> : (
+                        <ul className="flex flex-col gap-3">
+                            {machines.map((m) => (
+                                <li key={m.name} className="flex flex-col gap-1">
+                                    <div className="flex items-center gap-2 text-sm">
+                                        <Server01 className="size-3.5 text-fg-quaternary" />
+                                        <span className="font-medium text-primary">{m.name}</span>
+                                        {m.hub && <Badge type="pill-color" size="sm" color="brand">hub</Badge>}
+                                        {!m.up && <Badge type="pill-color" size="sm" color="gray">没问到</Badge>}
+                                        {m.error && <span className="truncate text-xs text-error-primary" title={m.error}>{m.error}</span>}
+                                        {m.up && m.skills.length === 0 && <span className="text-xs text-quaternary">没有</span>}
+                                    </div>
+                                    {m.skills.length > 0 && (
+                                        <ul className="ml-5 flex flex-col divide-y divide-secondary">
+                                            {m.skills.map((f) => (
+                                                <li key={f.path} className="flex items-center gap-3 py-1.5">
+                                                    <div className="min-w-0 flex-1">
+                                                        <div className="flex items-center gap-2 text-sm"><span className="font-medium text-primary">{f.name}</span><Mono className="truncate text-quaternary" >{f.path}</Mono></div>
+                                                        {f.description && <div className="line-clamp-1 text-xs text-tertiary" title={f.description}>{f.description}</div>}
+                                                    </div>
+                                                    {f.loaded ? <span className="text-xs text-quaternary">hub 上已有同名技能</span>
+                                                        : <Button size="sm" color="secondary" iconLeading={Download01} isDisabled={busy !== ""} isLoading={busy === "import:" + m.name + f.path} onClick={() => void run("import:" + m.name + f.path, async () => { await importSkill(m.name, f.path); loadMachines(); })}>加载到 hub</Button>}
+                                                </li>
+                                            ))}
+                                        </ul>
+                                    )}
                                 </li>
                             ))}
                         </ul>

@@ -1,4 +1,4 @@
-import type { HomeView, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
+import type { HomeView, MachineSkills, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
 
 // The token guards everything: it rides as a bearer header on requests and
 // as a query parameter on the event stream, which cannot carry headers.
@@ -163,4 +163,9 @@ export async function updateSkillSources(): Promise<{ sources: SkillSource[] }> 
 }
 export async function removeSkillSource(slug: string): Promise<{ ok: boolean }> {
     return json(await fetch(`./console/skills/sources/${encodeURIComponent(slug)}${q}`, { method: "DELETE", headers }));
+}
+
+export async function fetchMachineSkills(): Promise<{ machines: MachineSkills[] }> { return json(await fetch(`./console/skills/machines${q}`, { headers })); }
+export async function importSkill(node: string, path: string): Promise<{ ok: boolean; name: string }> {
+    return json(await fetch(`./console/skills/import${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ node, path }) }));
 }

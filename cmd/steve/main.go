@@ -1841,6 +1841,73 @@ func (a *fleetAdmin) SkillContent(_ context.Context, name string) (readmodel.Ski
 	return readmodel.SkillDoc{}, fmt.Errorf("没有叫 %q 的技能", name)
 }
 
+// MachineSkills asks every machine, the hub included, what skills its AI
+// tools have of their own. Machines are asked at once; one that is down
+// or slow says so and does not hold the rest.
+func (a *fleetAdmin) MachineSkills(ctx context.Context) []readmodel.MachineSkills {
+	names := append([]string{""}, a.nodes.Names()...)
+	out := make([]readmodel.MachineSkills, len(names))
+	have := map[string]bool{}
+	if a.skills != nil && a.skills.Map != nil {
+		if avail, err := a.skills.Map.Available(); err == nil {
+			for _, ref := range avail {
+				have[ref.Name] = true
+			}
+		}
+	}
+	var wg sync.WaitGroup
+	for i, name := range names {
+		wg.Add(1)
+		go func(i int, name string) {
+			defer wg.Done()
+			item := readmodel.MachineSkills{Name: nodewire.Place(name), Hub: name == "", Skills: []readmodel.FoundSkill{}}
+			sctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+			raw, err := a.nodes.Exec(sctx, name, "", skills.ScanScript())
+			if err != nil {
+				item.Error = clip(strings.TrimSpace(err.Error()), 200)
+				out[i] = item
+				return
+			}
+			item.Up = true
+			for _, f := range skills.ParseScan(raw) {
+				item.Skills = append(item.Skills, readmodel.FoundSkill{Name: f.Name, Path: f.Path, Title: f.Title, Description: f.Description, Loaded: have[f.Name]})
+			}
+			out[i] = item
+		}(i, name)
+	}
+	wg.Wait()
+	return out
+}
+
+// ImportSkill loads a machine's skill onto the hub, into the owner's own
+// skills directory, where it is a hub skill like any other — not enabled
+// until the owner says so.
+func (a *fleetAdmin) ImportSkill(ctx context.Context, nodeName, path string) (string, error) {
+	if a.skills == nil || a.skills.Map == nil {
+		return "", errors.New("技能没有配置")
+	}
+	path = strings.TrimSpace(path)
+	if path == "" || !strings.HasPrefix(path, "/") {
+		return "", fmt.Errorf("目录 %q 不是绝对路径", path)
+	}
+	name := filepath.Base(path)
+	dest := filepath.Join(a.skills.Map.UserDir(), name)
+	if _, err := os.Lstat(dest); err == nil {
+		return "", fmt.Errorf("hub 上已经有叫 %s 的技能（%s）", name, dest)
+	}
+	sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	defer cancel()
+	encoded, err := a.nodes.Exec(sctx, a.nodeKey(nodeName), "", skills.ImportScript(path))
+	if err != nil {
+		return "", fmt.Errorf("从 %s 取 %s：%s", nodewire.Place(a.nodeKey(nodeName)), path, clip(strings.TrimSpace(err.Error()), 200))
+	}
+	if err := skills.UnpackImport(encoded, dest); err != nil {
+		return "", err
+	}
+	return name, nil
+}
+
 func skillSource(s skills.Source) readmodel.SkillSource {
 	out := readmodel.SkillSource{Slug: s.Slug, URL: s.URL, Ref: s.Ref, Subdir: s.Subdir, Root: s.Root, Head: s.Head, FetchedAt: s.FetchedAt, Skills: s.Skills, Error: s.Error}
 	if out.Skills == nil {

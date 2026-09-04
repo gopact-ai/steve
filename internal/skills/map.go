@@ -39,6 +39,10 @@ func DefaultPath(stateDir string) string {
 	return filepath.Join(stateDir, "skills.json")
 }
 
+// UserDir is the owner's own skills directory beside the map: where a
+// skill loaded from a machine lands.
+func (m *Map) UserDir() string { return DefaultSearchPath(filepath.Dir(m.path)) }
+
 func DefaultSearchPath(stateDir string) string {
 	return filepath.Join(stateDir, "skills")
 }

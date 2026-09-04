@@ -2,6 +2,7 @@ package skills
 
 import (
 	"bufio"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -23,8 +24,13 @@ func Describe(dir string) Description {
 		return Description{}
 	}
 	defer f.Close()
+	return DescribeText(f)
+}
+
+// DescribeText reads a SKILL.md's description from its text.
+func DescribeText(r io.Reader) Description {
 	var d Description
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 64*1024), 64*1024)
 	inFront, first := false, true
 	var para []string

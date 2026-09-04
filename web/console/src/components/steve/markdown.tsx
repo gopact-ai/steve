@@ -1,6 +1,7 @@
 import { useState, type ReactElement, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkBreaks from "remark-breaks";
+import remarkGfm from "remark-gfm";
 import { Check, Code02, Copy01, Terminal } from "@untitledui/icons";
 
 // Md renders a piece of markdown the way the transcript wants it: the
@@ -9,7 +10,7 @@ import { Check, Code02, Copy01, Terminal } from "@untitledui/icons";
 export function Md({ text, size = "sm", className }: { text: string; size?: "sm" | "xs"; className?: string }) {
     return (
         <div className={`md prose prose-sm max-w-none break-words [overflow-wrap:anywhere] ${size === "xs" ? "text-xs prose-p:my-0.5 prose-strong:font-medium" : ""} ${className ?? ""}`}>
-            <Markdown remarkPlugins={[remarkBreaks]} components={components}>{text}</Markdown>
+            <Markdown remarkPlugins={[remarkGfm, remarkBreaks]} components={components}>{text}</Markdown>
         </div>
     );
 }

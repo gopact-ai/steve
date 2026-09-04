@@ -125,6 +125,8 @@ export interface SkillSource { slug: string; url: string; ref?: string; subdir?:
 export interface SkillNode { name: string; up: boolean; synced: boolean; takes: boolean }
 export interface SkillsView { fingerprint: string; search_paths: string[]; builtin_root?: string; skills: SkillView[]; nodes: SkillNode[]; sources: SkillSource[] }
 export interface SkillDoc { name: string; path: string; content: string }
+export interface FoundSkill { name: string; path: string; title?: string; description?: string; loaded?: boolean }
+export interface MachineSkills { name: string; hub?: boolean; up: boolean; skills: FoundSkill[]; error?: string }
 // Steve's home: the three files and how much of them reaches the agent.
 export interface HomeFile { name: string; text: string; bytes: number; budget: number; template?: boolean; missing?: boolean }
 export interface HomeView { path: string; files: HomeFile[]; total_budget: number; owner_bytes: number; guest_bytes: number; warnings: string[] }

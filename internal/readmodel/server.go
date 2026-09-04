@@ -71,6 +71,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("PUT /console/skills/{name}", s.guard(s.consoleSetSkill))
 	mux.HandleFunc("POST /console/skills/paths", s.guard(s.consoleAddSkillPath))
 	mux.HandleFunc("DELETE /console/skills/paths", s.guard(s.consoleRemoveSkillPath))
+	mux.HandleFunc("GET /console/skills/machines", s.guard(s.consoleMachineSkills))
+	mux.HandleFunc("POST /console/skills/import", s.guard(s.consoleImportSkill))
 	mux.HandleFunc("POST /console/skills/sources", s.guard(s.consoleAddSkillSource))
 	mux.HandleFunc("POST /console/skills/sources/update", s.guard(s.consoleUpdateSkillSources))
 	mux.HandleFunc("DELETE /console/skills/sources/{slug}", s.guard(s.consoleRemoveSkillSource))
@@ -372,6 +374,10 @@ type Admin interface {
 	AddSkillSource(ctx context.Context, spec string) (SkillSource, error)
 	UpdateSkillSources(ctx context.Context) ([]SkillSource, error)
 	RemoveSkillSource(ctx context.Context, slug string) error
+	// MachineSkills lists the skills each machine's AI tools already
+	// have, outside Steve; ImportSkill loads one onto the hub.
+	MachineSkills(ctx context.Context) []MachineSkills
+	ImportSkill(ctx context.Context, node, path string) (string, error)
 	// Home is Steve's own three files — who it is, who the owner is,
 	// what it remembers; SetHomeFile rewrites one.
 	Home(ctx context.Context) (HomeView, error)
@@ -429,6 +435,25 @@ type SkillNode struct {
 	Up     bool   `json:"up"`
 	Synced bool   `json:"synced"`
 	Takes  bool   `json:"takes"`
+}
+
+// MachineSkills is what one machine's AI tools have of their own.
+type MachineSkills struct {
+	Name   string       `json:"name"`
+	Hub    bool         `json:"hub,omitempty"`
+	Up     bool         `json:"up"`
+	Skills []FoundSkill `json:"skills"`
+	Error  string       `json:"error,omitempty"`
+}
+
+// FoundSkill is one of them.
+type FoundSkill struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	// Loaded says the hub already has a skill of this name.
+	Loaded bool `json:"loaded,omitempty"`
 }
 
 // SkillDoc is one skill's SKILL.md.
@@ -736,6 +761,37 @@ func (s *Server) consoleRemoveSkillPath(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleMachineSkills(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	out := s.admin.MachineSkills(r.Context())
+	if out == nil {
+		out = []MachineSkills{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"machines": out})
+}
+
+func (s *Server) consoleImportSkill(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	var req struct {
+		Node string `json:"node"`
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	name, err := s.admin.ImportSkill(r.Context(), req.Node, req.Path)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "name": name})
 }
 
 func (s *Server) consoleAddSkillSource(w http.ResponseWriter, r *http.Request) {
