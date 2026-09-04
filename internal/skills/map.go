@@ -94,6 +94,28 @@ func (m *Map) EnsureBuiltins(root string, names []string) error {
 	if !contains(data.SearchPaths, root) {
 		data.SearchPaths = append(data.SearchPaths, root)
 	}
+	// A shipped skill that no longer ships, and that nothing else
+	// provides, leaves the enabled set on its own: a hub must not refuse
+	// to start over a skill its last version had.
+	kept := data.Builtins[:0]
+	for _, name := range data.Builtins {
+		if contains(names, name) {
+			kept = append(kept, name)
+			continue
+		}
+		if _, err := m.resolveLocked(data, name); err != nil {
+			enabled := data.Enabled[:0]
+			for _, e := range data.Enabled {
+				if e != name {
+					enabled = append(enabled, e)
+				}
+			}
+			data.Enabled = enabled
+			continue
+		}
+		kept = append(kept, name)
+	}
+	data.Builtins = kept
 	for _, name := range names {
 		if contains(data.Builtins, name) {
 			continue

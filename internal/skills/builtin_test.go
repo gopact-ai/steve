@@ -14,7 +14,7 @@ func TestSetupShipsBuiltinsOnByDefaultButRemembersADisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	names, _ := BuiltinNames()
-	for _, want := range []string{"skill-creator", "steve", "steve-delegate", "steve-projects", "steve-plans", "steve-memory", "steve-feishu"} {
+	for _, want := range []string{"skill-creator", "steve"} {
 		if !contains(names, want) {
 			t.Fatalf("builtin %s missing from %v", want, names)
 		}
@@ -26,7 +26,7 @@ func TestSetupShipsBuiltinsOnByDefaultButRemembersADisable(t *testing.T) {
 			t.Fatalf("%s describes itself as %+v", want, d)
 		}
 	}
-	if !contains(m.EnabledNames(), "steve") || !contains(m.EnabledNames(), "skill-creator") {
+	if !contains(m.EnabledNames(), "skill-creator") {
 		t.Fatalf("builtins not enabled: %v", m.EnabledNames())
 	}
 	// The shipped directory is searched last, so a user's skill of the
@@ -40,18 +40,15 @@ func TestSetupShipsBuiltinsOnByDefaultButRemembersADisable(t *testing.T) {
 	}
 	// Turning one off sticks across a restart; a fresh install rewrites
 	// the files but not the choice.
-	if err := m.Disable("steve-feishu"); err != nil {
+	if err := m.Disable("skill-creator"); err != nil {
 		t.Fatal(err)
 	}
 	m2, err := Setup(stateDir)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if contains(m2.EnabledNames(), "steve-feishu") {
+	if contains(m2.EnabledNames(), "skill-creator") {
 		t.Fatal("disabled builtin came back on")
-	}
-	if !contains(m2.EnabledNames(), "steve") {
-		t.Fatal("builtin lost on restart")
 	}
 	if m2.BuiltinRootPath() != BuiltinRoot(stateDir) {
 		t.Fatalf("builtin root = %q", m2.BuiltinRootPath())
@@ -72,5 +69,30 @@ func TestDescribeReadsBlockScalars(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("# Plain\n\nA paragraph\nthat wraps.\n\nMore.\n"), 0o644)
 	if d := Describe(dir); d.Title != "Plain" || d.Description != "A paragraph that wraps." {
 		t.Fatalf("plain = %+v", d)
+	}
+}
+
+func TestStaleBuiltinLeavesTheEnabledSet(t *testing.T) {
+	stateDir := t.TempDir()
+	m, err := Setup(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Pretend a previous version shipped and enabled "steve-gone".
+	m.mu.Lock()
+	data, _ := m.readLocked()
+	data.Builtins = append(data.Builtins, "steve-gone")
+	data.Enabled = append(data.Enabled, "steve-gone")
+	_ = m.writeLocked(data)
+	m.mu.Unlock()
+	m2, err := Setup(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if contains(m2.EnabledNames(), "steve-gone") {
+		t.Fatal("a skill that no longer ships stayed enabled")
+	}
+	if _, err := m2.Enabled(); err != nil {
+		t.Fatalf("enabled set does not resolve: %v", err)
 	}
 }

@@ -26,7 +26,7 @@ import (
 
 // ServerName is the MCP server name agents see; tool calls arrive as
 // feishu_send / feishu_recall under it.
-const ServerName = "feishu"
+const ServerName = "steve"
 
 const (
 	maxSendsPerTurn = 8
@@ -41,7 +41,10 @@ const (
 // Instructions teaches the agent when to reach for the tools. It is injected
 // once per session alongside the rest of the capability instructions, and it
 // is part of the capability fingerprint, so keep it stable.
-const Instructions = `## Feishu messaging (feishu_send / feishu_update / feishu_recall)
+const Instructions = `## Steve (steve_context / steve_projects / steve_help)
+- Call steve_context first: it says who you are, where you are working, your budget, and what you have. steve_help(topic) has the way things are done here; steve_projects says where every project is.
+
+## Feishu messaging (feishu_send / feishu_update / feishu_recall)
 The "feishu" MCP server posts and maintains interim messages in the current Feishu conversation while you work.
 - feishu_send posts a milestone: a phase conclusion, a produced artifact, a decision worth surfacing early. Most turns need zero interim messages; never narrate step by step.
 - Prefer ONE evolving progress card per task: feishu_update(message_id, content) rewrites a markdown card you sent earlier this turn. Update it as phases complete instead of sending a new card each time.
@@ -158,6 +161,7 @@ type Server struct {
 	mu        sync.Mutex
 	sender    Sender
 	delegator Delegator
+	informer  Informer
 	journal   func(conversationID, agentID, messageID string)
 	tokens    map[string]binding
 	byBind    map[binding]string
@@ -466,7 +470,7 @@ type PlatformTool struct {
 // the Feishu set always, delegation when a delegator is wired.
 func PlatformTools(delegating bool) []PlatformTool {
 	var out []PlatformTool
-	for _, t := range toolList(delegating) {
+	for _, t := range toolList(delegating, true) {
 		name, _ := t["name"].(string)
 		desc, _ := t["description"].(string)
 		out = append(out, PlatformTool{Name: name, Description: desc})
@@ -474,9 +478,14 @@ func PlatformTools(delegating bool) []PlatformTool {
 	return out
 }
 
-func (s *Server) toolList() []map[string]any { return toolList(s.delegator != nil) }
+func (s *Server) toolList() []map[string]any {
+	s.mu.Lock()
+	informing := s.informer != nil
+	s.mu.Unlock()
+	return toolList(s.delegator != nil, informing)
+}
 
-func toolList(delegating bool) []map[string]any {
+func toolList(delegating, informing bool) []map[string]any {
 	tools := []map[string]any{
 		{
 			"name": "feishu_send",
@@ -610,6 +619,9 @@ func toolList(delegating bool) []map[string]any {
 			},
 		})
 	}
+	if informing {
+		tools = append(tools, informTools()...)
+	}
 	return tools
 }
 
@@ -636,6 +648,12 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 		out, err = s.delegate(ctx, bind, call.Arguments)
 	case "steve_await":
 		out, err = s.await(ctx, bind, call.Arguments)
+	case "steve_context":
+		out, err = s.steveContext(ctx, bind)
+	case "steve_projects":
+		out, err = s.steveProjects(ctx, bind)
+	case "steve_help":
+		out, err = s.steveHelp(call.Arguments)
 	default:
 		err = fmt.Errorf("unknown tool %q", call.Name)
 	}

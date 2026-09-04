@@ -324,13 +324,13 @@ func (a *agent) mcpFull(sessionID acp.SessionID) string {
 	servers, _ := raw.([]acp.MCPServer)
 	var target *acp.MCPServer
 	for i := range servers {
-		if servers[i].Name == "feishu" && servers[i].Type == acp.MCPServerTypeHTTP {
+		if servers[i].Name == "steve" && servers[i].Type == acp.MCPServerTypeHTTP {
 			target = &servers[i]
 			break
 		}
 	}
 	if target == nil {
-		return "[mcp: no feishu server]"
+		return "[mcp: no steve server]"
 	}
 	if _, _, err := a.mcpRPC(target, "initialize", map[string]any{
 		"protocolVersion": "2025-06-18",
@@ -364,13 +364,13 @@ func (a *agent) mcpUpdate(sessionID acp.SessionID) string {
 	servers, _ := raw.([]acp.MCPServer)
 	var target *acp.MCPServer
 	for i := range servers {
-		if servers[i].Name == "feishu" && servers[i].Type == acp.MCPServerTypeHTTP {
+		if servers[i].Name == "steve" && servers[i].Type == acp.MCPServerTypeHTTP {
 			target = &servers[i]
 			break
 		}
 	}
 	if target == nil {
-		return "[mcp: no feishu server]"
+		return "[mcp: no steve server]"
 	}
 	sent, isError, err := a.mcpTool(target, "feishu_send", map[string]any{"content": "progress v1", "progress": "1/2"})
 	if err != nil || isError {

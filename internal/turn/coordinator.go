@@ -144,6 +144,9 @@ type Coordinator struct {
 	gate        AgentGate
 	endpoints   NodeEndpoints
 	tasks       *task.Store
+	// modes is how each conversation last reached Steve, for a tool call
+	// that has no request to read it from.
+	modes map[string]home.Mode
 	schedules   *schedule.Store
 	supervisor  Supervisor
 	plans       *plan.Store
@@ -285,6 +288,7 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 	// offline reminder reads exactly this: nothing arrived while the turn
 	// ran, so the person who asked is no longer watching.
 	c.noteActivity(req.ConversationID)
+	c.rememberMode(req)
 	selected, prompt, switchOnly, err := c.selectAgent(req.ConversationID, req.Input)
 	if err != nil {
 		return Result{}, err

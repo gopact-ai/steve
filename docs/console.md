@@ -356,3 +356,68 @@ HumanRequest { id, type, source_operation_id, project_id, task_id, summary, choi
 - 扫项目内 `.mcp.json`、Kimi / Grok 的 MCP 配置（格式未核实）。
 - 调用 MCP 工具做健康检查；周期性自动探测。
 - OAuth 类的远端认证。
+
+## 19. steve 自己的 MCP，与钩子（2026-09-04，方案）
+
+用户看到 botmux 的 MCP 后指出：steve 的那套"怎么协作"不该是技能，该是 MCP。技能的控制权在 client（agent 读不读、照不照做都是它的事）；MCP 工具一旦被调用，控制权在 server——steve 能给活数据、能校验参数、能记账、能拒绝。另外钩子要正式支持。
+
+### 19.1 把套件变成工具
+
+hub 已经为每个会话现场生成一个 MCP 服务器（今天叫 `feishu`：进度卡三件套，接了委派时再加 `steve_fleet / steve_delegate / steve_await`；每个会话一个 token，绑定会话、Agent、任务）。套件里的内容按"是活数据还是做法"分：活数据变成工具，做法留在工具的 description 与 `steve_help` 里。
+
+| 套件里的内容 | 变成 | 为什么在 server 侧更好 |
+|---|---|---|
+| 你是谁、在哪台机器、哪个项目、哪个工作区、任务预算、接了哪些 MCP、启用了哪些技能、私聊还是群聊 | `steve_context()` | 全是活数据；技能里只能写"看本轮指令"，指令只在第一轮 |
+| 项目 / 主目录 / 副本 / 数据等级、被告知项目在别的机器时的三条路 | `steve_projects()`：列项目、各自在哪、本机能接哪些；答复里直接给出"换 Agent / 加副本 / 换项目"的具体选项 | 放置规则由 hub 算，agent 不必复述 |
+| 记住一件事、更新用户档案 | `steve_remember(section, text)`、`steve_profile(field, value)` | 预算、小节、去重、审计都在 server 做；不再依赖 agent 有写文件权限 |
+| 步骤做完怎么报告 | `steve_report(changed_paths, verified_by, unfinished, notes)` | 结构化落账，重规划靠它，不靠 agent 的散文 |
+| 各主题的做法（委派怎么写目标、什么时候发卡、什么值得记） | `steve_help(topic)` | 按需拉取，不占首轮窗口；内容随二进制更新 |
+| 委派、看机器、等结果、进度卡 | 已是工具 | — |
+
+规则：
+
+- 服务器名从 `feishu` 改为 `steve`（它早就不只是飞书）；工具名保持 `feishu_*` 与 `steve_*`。改名进能力指纹，已开会话会提示 /new。
+- 每个工具的 description 写清何时用、参数意义与副作用——这是 agent 真正会读的"技能"。`Instructions`（会话首轮的一段）缩成一句：先调 `steve_context`。
+- `steve_remember` 只写 MEMORY.md 的三个小节之一（偏好 / 项目 / 人），server 校验预算与重复，写入用 `home.Write` 的原子改写，并记一条审计事件；群聊 / 访客会话调用直接拒绝。`steve_profile` 只改称呼与时区两项。
+- `steve_report` 只在计划步骤或委派的 attempt 里可用（token 绑定的 task 能判），写进 attempt 的 Result；聊天回合调用返回"这不是一个步骤"。
+- 内置技能只剩 `skill-creator`；`steve` 与 `steve-*` 删除，内容并入 `steve_help` 的主题。
+
+### 19.2 钩子
+
+评审（§18）说得对：先有 steve 自己的事件模型，再谈兼容谁的 hook。
+
+| 事件 | 在哪发 | 可阻断 |
+|---|---|---|
+| `turn.before` / `turn.after` | 交互回合开工前 / 结束后（coordinator） | before 可 |
+| `attempt.open` / `attempt.close` | 租约拿到 / 落账（attempt.Service） | 否 |
+| `step.publish` | 计划步骤发布产物后、验证前（exec） | 可（拒绝即视为验证失败） |
+| `landing.before` / `landing.after` | 合并落回主目录前 / 后（artifact） | before 可 |
+| `delegate.start` / `delegate.done` | 委派发起 / 收回（delegate） | start 可 |
+| `tool.before` / `tool.after` | steve 自己的 MCP 工具被调用前 / 后（agentmcp） | before 可 |
+| `memory.write` | `steve_remember` / `steve_profile` 写入后 | 否 |
+
+- **处理器**三种：`command`（hub 上跑一条命令，事件 JSON 进 stdin，可阻断的事件看退出码与 stdout 的 `{"decision":"block","reason":...}`）、`http`（POST 到一个地址）、`mcp`（调用某台机器上某个 MCP 服务器的工具）。每个处理器有超时（默认 10 秒）、失败策略（`ignore` / `block`）。
+- **配置**在 hub：`hooks: [{event, match: {project?, agent?, tool?}, run: {...}, blocking, timeout}]`，页面上有"钩子"一节（放在 MCP 页或单独页），每条钩子显示最近触发记录。
+- **审计**：每次触发进历史（事件、处理器、耗时、结论）。
+- **兼容 Claude 插件的 hooks**：只有能映射到上表的才接——`PreToolUse` / `PostToolUse` 仅对 steve 自己的 MCP 工具生效（harness 内部的工具调用 steve 看不见）；其它事件标"不支持"。是否把插件 hooks 写进 harness 的原生配置（Claude Code 的 hooks、Codex 没有），由各 harness 适配器决定，第一版不做——今天隔离运行目录明确过滤了宿主的 hooks，那是为了可重复，不轻易放开。
+
+### 19.2.1 评审结论（codex，39 条，原文在会话 scratchpad `hooks-codex-1.md`）
+
+采纳并已改：`steve_help` 只是指南，控制仍在 coordinator / attempt / exec / artifact 里，文档不再把"工具化"说成"受控"；`Instructions` 保留完整契约，只在开头加一句先调 `steve_context`；不支持 HTTP MCP 的 AI 工具和计划步骤拿不到平台 MCP，所以保留一份只读的 `steve` 总览技能作为兼容；群聊 / 访客的 `steve_context` 不返回目录路径。
+
+采纳、进后续顺序：平台 MCP 要有版本号进指纹（工具 schema 与 help 内容变化才会触发 /new）；引入 `InvocationBinding`（会话、回合、任务、attempt、principal、模式），有副作用的工具只在活跃回合里可调；计划步骤也注入平台 MCP（`StepRequest` 带 attempt id，一次性 token）；`steve_remember` / `steve_profile` 建在 home 包的事务写入（文件锁 + CAS + fsync）之上，按完整 owner 快照算实际能进 prompt 的预算，幂等键，审计先记 intent 再写文件；`steve_report` 只接受 agent 的声明（summary / refs / findings{invalidates} / unfinished / notes），changed paths、验证、产物由 server 填，不推进 attempt 状态，`unfinished` 产生明确的未完成结果而不是落地；事件有稳定 envelope（schema 版本、event id、correlation / causation、task / attempt / revision、principal、payload 分级），每个事件写明状态机位置，blocking 串行首个 block 即止、after 强制非阻断、安全类 fail-closed、通知类 fail-open、总耗时上限、递归深度；`command` 处理器用 argv 不经 shell、最小环境、受限 cwd、无 gateway secret；`http` 处理器 allowlist + 解析后 IP 检查 + 不跟重定向；`mcp` 处理器走 admission / Bind / Release / Intents，禁止调平台自己的 `steve`；审计落账本；Claude 的 `PreToolUse` / `PostToolUse` 只算语义子集，其余事件标不兼容；服务器改名一次性让已开会话提示 /new（单主人可接受），`reservedMCP` 下沉到配置加载。
+
+### 19.3 已做（第一步）
+
+- 平台 MCP 服务器改名 `steve`；新工具 `steve_context`（coordinator 的 `Where`：Agent / 机器 / 模式 / 项目 / 工作区或为什么没有 / 任务预算 / MCP / 技能，外加平台替你做的事）、`steve_projects`（`WhereProjects`：每个项目在哪、本机能不能接、三条出路）、`steve_help(topic)`（六个主题的做法，随二进制发布）。`Instructions` 开头加一句"先调 steve_context"。
+- 内置技能剩 `skill-creator` 和一份只读的 `steve` 总览（给拿不到平台 MCP 的环境）；`steve-*` 删除，正文并入 `steve_help` 的主题（`internal/agentmcp/help/`）。
+- 会话的模式（私聊 / 群聊）在每条请求进来时记下，工具调用时查。
+
+### 19.4 顺序（按评审改）
+
+1. 已做：`steve_context`、`steve_help`、`steve_projects`；改名 `steve`；套件改为 help 主题，保留只读总览技能。
+2. 平台 MCP 版本化进指纹；`InvocationBinding`；计划步骤注入平台 MCP。
+3. home 事务写入与耐久审计 → `steve_remember`、`steve_profile`。
+4. `steve_report`（agent 声明通道）接 exec / delegate。
+5. 事件 envelope 与 outbox；`tool.before/after`、`turn.before/after`；沙箱化的 command / http 处理器；配置与页面；审计落账本。
+6. 其余事件、mcp 处理器、Claude hooks 的子集映射。

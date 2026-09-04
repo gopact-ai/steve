@@ -1,8 +1,3 @@
----
-name: steve-delegate
-description: 在 Steve 里把一件事交给别的 agent（可能在别的机器上）：用 steve_fleet 看谁在哪台机器、能做什么；用 steve_delegate 委派一个有边界的目标并传引用；用 steve_await 等结果。需要你没有的机器、凭据、GPU、内网、AI 工具或技能时读这个；也说明怎么把目标写得让别人能动手、子任务在哪跑、结果怎么回来、以及什么情况自己做更合适。
----
-
 # 先看有谁
 
 `steve_fleet(requires?)` 列出别的 agent：各在哪台机器、机器有什么、此刻能不能接活。`requires` 用选择器过滤，每个 agent 都会被逐条判定并给出原因，看一眼就知道为什么某台不行：

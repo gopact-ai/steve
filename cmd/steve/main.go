@@ -833,6 +833,9 @@ func serve(args []string) error {
 		log.Printf("steve: agent messaging MCP server on %s", gate.URL())
 	}
 	gate.SetIntents(intent.ForAgents{S: intents, Attempts: attempts})
+	// The platform's own questions — where am I, where are the projects —
+	// are answered by the coordinator, live.
+	gate.SetInformer(coordinatorInformer{c: coordinator})
 	go func() {
 		<-ctx.Done()
 		stop()
@@ -1942,6 +1945,23 @@ func (a *fleetAdmin) ImportSkill(ctx context.Context, nodeName, path string) (st
 	return name, nil
 }
 
+// coordinatorInformer answers the platform MCP server's questions from
+// the coordinator, in the server's own shapes.
+type coordinatorInformer struct{ c *turn.Coordinator }
+
+func (i coordinatorInformer) Context(ctx context.Context, conversationID, agentID string) (agentmcp.ContextInfo, error) {
+	w, err := i.c.Where(ctx, conversationID, agentID)
+	if err != nil {
+		return agentmcp.ContextInfo{}, err
+	}
+	return agentmcp.ContextInfo{Agent: w.Agent, Node: w.Node, Harness: w.Harness, Model: w.Model, Mode: w.Mode, Project: w.Project, ProjectNode: w.ProjectNode, Level: w.Level, Repo: w.Repo,
+		Workspace: w.Workspace, WorkspaceKind: w.WorkspaceKind, Why: w.Why, Task: w.Task, Turns: w.Turns, MaxTurns: w.MaxTurns, Elapsed: w.Elapsed, MaxElapsed: w.MaxElapsed, MCPServers: w.MCPServers, Skills: w.Skills}, nil
+}
+
+func (i coordinatorInformer) Projects(ctx context.Context, conversationID, agentID string) (string, error) {
+	return i.c.WhereProjects(ctx, conversationID, agentID)
+}
+
 func skillSource(s skills.Source) readmodel.SkillSource {
 	out := readmodel.SkillSource{Slug: s.Slug, URL: s.URL, Ref: s.Ref, Subdir: s.Subdir, Root: s.Root, Head: s.Head, FetchedAt: s.FetchedAt, Skills: s.Skills, Error: s.Error}
 	if out.Skills == nil {
@@ -2181,7 +2201,7 @@ func (a *fleetAdmin) MCP(ctx context.Context) (readmodel.MCPView, error) {
 	for _, t := range agentmcp.PlatformTools(true) {
 		tools = append(tools, readmodel.PlatformTool{Name: t.Name, Description: t.Description})
 	}
-	view.Platform = append(view.Platform, readmodel.MCPPlatform{Name: "feishu", Description: "hub 为每个会话现场生成：进度卡，以及（接了委派时）看机器、委派、等结果", Tools: tools})
+	view.Platform = append(view.Platform, readmodel.MCPPlatform{Name: agentmcp.ServerName, Description: "hub 为每个会话现场生成：你在哪（steve_context）、项目在哪（steve_projects）、做法（steve_help）、进度卡，以及（接了委派时）看机器、委派、等结果", Tools: tools})
 	return view, nil
 }
 

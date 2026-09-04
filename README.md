@@ -49,9 +49,10 @@ go build -o steve ./cmd/steve
 | `/approve 编号` `/deny 编号` | owner 批准或拒绝 sealed 项目的答案离开 |
 | `/effects` | 结果未知的对外动作；`/effects 编号 happened\|new` 由 owner 裁决 |
 
-技能（一个目录里的一份 SKILL.md）随 hub 一起发布一套**内置的**：Anthropic 官方的 `skill-creator`，和讲这套系统怎么协作的
-`steve` 套件（`steve` 是入口，按功能路由到 `steve-delegate` / `steve-projects` / `steve-plans` / `steve-memory` / `steve-feishu`）。
-启动时写到 `<state_dir>/skills-builtin/`，默认启用，打成包发给每台机器；控制台"技能"页可以逐个关、加自己的目录。
+技能（一个目录里的一份 SKILL.md）随 hub 一起发布一个**内置的**：Anthropic 官方的 `skill-creator`。启动时写到
+`<state_dir>/skills-builtin/`，默认启用，打成包发给每台机器；控制台"技能"页可以逐个关、加自己的目录、从 git 仓库装、从各机器加载。
+"steve 怎么协作"不是技能，是 steve 为每个会话生成的 MCP 服务器 `steve` 上的工具：`steve_context`（你在哪）、`steve_projects`
+（项目在哪）、`steve_help`（做法，按主题）、进度卡与委派。技能的控制权在 agent 手里，工具的在 steve 手里。
 
 以上动词在 dashboard 的控制台和 `steve say` 里同样可用。
 

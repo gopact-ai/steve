@@ -5,7 +5,7 @@
 
 | 技能 | 来源 |
 |---|---|
+| `steve` | 本仓库；总览的只读副本，给拿不到平台 MCP 的环境（不支持 HTTP MCP 的 AI 工具、计划步骤）。正文与 `steve_help("overview")` 相同 |
 | `skill-creator` | Anthropic 官方，https://github.com/anthropics/skills（commit 41bbe19d1a1a，2026-09-03），Apache-2.0，原文未改，许可证见其目录内 LICENSE.txt |
-| `steve` 及 `steve-*` | 本仓库；讲这套系统怎么协作。`steve` 是入口与路由，其余按功能分：委派、项目与工作区、计划与任务、档案与记忆、飞书消息 |
 
-改 `steve-*` 的内容时，对照 README 与 `internal/agentmcp/server.go` 里的工具定义，不要写代码里没有的东西。
+"steve 怎么协作"不再是技能：活数据是 steve 自己 MCP 服务器的工具（`steve_context` 等），做法在 `steve_help` 的主题里（`internal/agentmcp/help/`）。技能的控制权在 agent 手里，工具的在 steve 手里。
