@@ -482,8 +482,23 @@ func (s *Server) advert() nodewire.Advert {
 	adv.WorkspaceRoot = s.conf().WorkspaceRoot
 	adv.StateDir = s.conf().StateDir
 	adv.Skills = s.currentSkills()
+	adv.OwnSkills = OwnSkills(5 * time.Minute)
 	adv.Health = CheckHealth(s.conf().WorkspaceRoot, s.conf().StateDir)
 	return adv
+}
+
+// ownSkills is this machine's scan of its AI tools' own skills; the
+// advert carries it, so the hub's refresh loop keeps its copy fresh.
+var ownSkills skills.Local
+
+// OwnSkills is the machine's own skills, rescanned when older than maxAge.
+func OwnSkills(maxAge time.Duration) []nodewire.OwnSkill {
+	found := ownSkills.Get(maxAge)
+	out := make([]nodewire.OwnSkill, 0, len(found))
+	for _, f := range found {
+		out = append(out, nodewire.OwnSkill{Name: f.Name, Path: f.Path, Title: f.Title, Description: f.Description})
+	}
+	return out
 }
 
 // SkillsDir holds materialized bundles, one directory per hash, and

@@ -100,6 +100,11 @@ type Advert struct {
 	// sender supports.
 	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
 	Features []string          `json:"features,omitempty"`
+	// OwnSkills are the skills the machine's AI tools have of their own,
+	// outside Steve — under ~/.codex/skills and the like — so the owner
+	// can see them from the hub and load one. A machine that predates
+	// the field sends none.
+	OwnSkills []OwnSkill `json:"own_skills,omitempty"`
 	// Capabilities are free-form facts a step can require: "gpu",
 	// "prod-cred", "internal-net".
 	Capabilities  []string `json:"capabilities,omitempty"`
@@ -243,4 +248,12 @@ func readJSON(r io.Reader, into any) error {
 		return fmt.Errorf("nodewire: expected handshake frame, got kind %d", f.Kind)
 	}
 	return json.Unmarshal(f.Payload, into)
+}
+
+// OwnSkill is one skill a machine's AI tools have of their own.
+type OwnSkill struct {
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
 }

@@ -72,6 +72,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("POST /console/skills/paths", s.guard(s.consoleAddSkillPath))
 	mux.HandleFunc("DELETE /console/skills/paths", s.guard(s.consoleRemoveSkillPath))
 	mux.HandleFunc("GET /console/skills/machines", s.guard(s.consoleMachineSkills))
+	mux.HandleFunc("POST /console/skills/machines/refresh", s.guard(s.consoleRefreshMachineSkills))
 	mux.HandleFunc("POST /console/skills/import", s.guard(s.consoleImportSkill))
 	mux.HandleFunc("POST /console/skills/sources", s.guard(s.consoleAddSkillSource))
 	mux.HandleFunc("POST /console/skills/sources/update", s.guard(s.consoleUpdateSkillSources))
@@ -377,6 +378,7 @@ type Admin interface {
 	// MachineSkills lists the skills each machine's AI tools already
 	// have, outside Steve; ImportSkill loads one onto the hub.
 	MachineSkills(ctx context.Context) []MachineSkills
+	RefreshMachineSkills(ctx context.Context) []MachineSkills
 	ImportSkill(ctx context.Context, node, path string) (string, error)
 	// Home is Steve's own three files — who it is, who the owner is,
 	// what it remembers; SetHomeFile rewrites one.
@@ -768,6 +770,17 @@ func (s *Server) consoleMachineSkills(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	out := s.admin.MachineSkills(r.Context())
+	if out == nil {
+		out = []MachineSkills{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"machines": out})
+}
+
+func (s *Server) consoleRefreshMachineSkills(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	out := s.admin.RefreshMachineSkills(r.Context())
 	if out == nil {
 		out = []MachineSkills{}
 	}

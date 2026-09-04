@@ -166,6 +166,7 @@ export async function removeSkillSource(slug: string): Promise<{ ok: boolean }> 
 }
 
 export async function fetchMachineSkills(): Promise<{ machines: MachineSkills[] }> { return json(await fetch(`./console/skills/machines${q}`, { headers })); }
+export async function refreshMachineSkills(): Promise<{ machines: MachineSkills[] }> { return json(await fetch(`./console/skills/machines/refresh${q}`, { method: "POST", headers })); }
 export async function importSkill(node: string, path: string): Promise<{ ok: boolean; name: string }> {
     return json(await fetch(`./console/skills/import${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ node, path }) }));
 }

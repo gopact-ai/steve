@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestScanAndImportRoundTrip(t *testing.T) {
+func TestScanLocalAndImportRoundTrip(t *testing.T) {
 	home := t.TempDir()
 	dir := filepath.Join(home, ".codex", "skills", "notes")
 	_ = os.MkdirAll(filepath.Join(dir, "scripts"), 0o755)
@@ -16,19 +16,12 @@ func TestScanAndImportRoundTrip(t *testing.T) {
 	_ = os.WriteFile(filepath.Join(dir, "scripts", "run.sh"), []byte("#!/bin/sh\necho hi\n"), 0o755)
 	// A second tool linking to the first's directory lists nothing new.
 	_ = os.Symlink(filepath.Join(home, ".codex", "skills"), filepath.Join(home, ".agents"))
-	_ = os.MkdirAll(filepath.Join(home, ".agents"), 0o755)
-	cmd := exec.Command("/bin/sh", "-c", ScanScript())
-	cmd.Env = []string{"HOME=" + home, "PATH=" + os.Getenv("PATH")}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		t.Fatalf("scan: %v: %s", err, out)
-	}
-	found := ParseScan(string(out))
+	found := ScanLocal(home)
 	real, _ := filepath.EvalSymlinks(dir)
 	if len(found) != 1 || found[0].Name != "notes" || found[0].Description != "keep notes" || found[0].Path != real {
-		t.Fatalf("found = %+v (%s)", found, out)
+		t.Fatalf("found = %+v", found)
 	}
-	cmd = exec.Command("/bin/sh", "-c", ImportScript(dir))
+	cmd := exec.Command("/bin/sh", "-c", ImportScript(dir))
 	encoded, err := cmd.Output()
 	if err != nil {
 		t.Fatal(err)

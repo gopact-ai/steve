@@ -9,16 +9,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 )
 
-// A machine's own skills are the ones its AI tools were given outside
-// Steve: directories with a SKILL.md under the tools' home directories.
-// The hub asks each machine for the list with a shell script — the exec
-// stream is what every machine has — and, when the owner loads one,
-// for its files as a tar stream, which land in the owner's own skills
-// directory on the hub. From there it is a hub skill like any other.
+// Loading a machine's skill onto the hub: the machine sends the
+// directory as a tar stream over the exec stream (what every machine
+// has), and the hub unpacks it into the owner's own skills directory.
+// From there it is a hub skill like any other.
 
 // Found is one skill on a machine, as the scan reports it.
 type Found struct {
@@ -28,70 +25,7 @@ type Found struct {
 	Description string `json:"description,omitempty"`
 }
 
-// machineDirs are where the AI tools keep skills of their own. Steve's
-// isolated runtime homes are not among them: what is there came from
-// the hub.
-var machineDirs = []string{"$HOME/.codex/skills", "$HOME/.claude/skills", "$HOME/.grok/skills", "$HOME/.kimi/skills", "$HOME/.agents/skills"}
-
-const (
-	scanBegin = "=== steve-skill "
-	scanEnd   = "=== steve-skill-end"
-	importCap = 16 << 20
-)
-
-// ScanScript lists the skills on a machine: for each, its directory and
-// the head of its SKILL.md, framed so the hub can read them back.
-func ScanScript() string {
-	// The directory is printed as its physical path: a tool that links
-	// its skills directory to another's (~/.agents/skills is often
-	// ~/.codex/skills) would otherwise list every skill twice.
-	return strings.Join([]string{
-		`for d in ` + strings.Join(machineDirs, " ") + `; do`,
-		`  [ -d "$d" ] || continue`,
-		`  for s in "$d"/*; do`,
-		`    [ -f "$s/SKILL.md" ] || continue`,
-		`    real=$(cd "$s" 2>/dev/null && pwd -P) || continue`,
-		`    printf '` + scanBegin + `%s\n' "$real"`,
-		`    head -c 6000 "$s/SKILL.md"`,
-		`    printf '\n` + scanEnd + `\n'`,
-		`  done`,
-		`done 2>/dev/null`,
-	}, "\n")
-}
-
-// ParseScan reads what ScanScript printed.
-func ParseScan(output string) []Found {
-	var out []Found
-	seen := map[string]bool{}
-	rest := output
-	for {
-		i := strings.Index(rest, scanBegin)
-		if i < 0 {
-			break
-		}
-		rest = rest[i+len(scanBegin):]
-		nl := strings.IndexByte(rest, '\n')
-		if nl < 0 {
-			break
-		}
-		path := strings.TrimSpace(rest[:nl])
-		rest = rest[nl+1:]
-		end := strings.Index(rest, scanEnd)
-		if end < 0 {
-			break
-		}
-		body := rest[:end]
-		rest = rest[end+len(scanEnd):]
-		if path == "" || seen[path] {
-			continue
-		}
-		seen[path] = true
-		d := DescribeText(strings.NewReader(body))
-		out = append(out, Found{Name: filepath.Base(path), Path: path, Title: d.Title, Description: d.Description})
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
-	return out
-}
+const importCap = 16 << 20
 
 // ImportScript sends a skill's files as a base64 tar stream.
 func ImportScript(path string) string {

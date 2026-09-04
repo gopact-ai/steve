@@ -1134,6 +1134,7 @@ func hubAdvert(cfg *config.Config) nodewire.Advert {
 	entries, known := hubSkills.entries()
 	adv.Snapshot = node.Snapshot(nodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: hubLaunch.Lookup, Skills: entries, SkillsKnown: known})
 	adv.Features = nodewire.Features()
+	adv.OwnSkills = node.OwnSkills(5 * time.Minute)
 	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
 	adv.Health = node.CheckHealth("", adv.StateDir)
 	return adv
@@ -1841,12 +1842,11 @@ func (a *fleetAdmin) SkillContent(_ context.Context, name string) (readmodel.Ski
 	return readmodel.SkillDoc{}, fmt.Errorf("没有叫 %q 的技能", name)
 }
 
-// MachineSkills asks every machine, the hub included, what skills its AI
-// tools have of their own. Machines are asked at once; one that is down
-// or slow says so and does not hold the rest.
+// MachineSkills is what every machine last said its AI tools have of
+// their own: the hub's own scan, and each node's advert as the registry
+// holds it. Nothing is asked here; the refresh loop asks every minute,
+// and RefreshMachineSkills asks now.
 func (a *fleetAdmin) MachineSkills(ctx context.Context) []readmodel.MachineSkills {
-	names := append([]string{""}, a.nodes.Names()...)
-	out := make([]readmodel.MachineSkills, len(names))
 	have := map[string]bool{}
 	if a.skills != nil && a.skills.Map != nil {
 		if avail, err := a.skills.Map.Available(); err == nil {
@@ -1855,30 +1855,46 @@ func (a *fleetAdmin) MachineSkills(ctx context.Context) []readmodel.MachineSkill
 			}
 		}
 	}
-	var wg sync.WaitGroup
-	for i, name := range names {
-		wg.Add(1)
-		go func(i int, name string) {
-			defer wg.Done()
-			item := readmodel.MachineSkills{Name: nodewire.Place(name), Hub: name == "", Skills: []readmodel.FoundSkill{}}
-			sctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			defer cancel()
-			raw, err := a.nodes.Exec(sctx, name, "", skills.ScanScript())
-			if err != nil {
-				item.Error = clip(strings.TrimSpace(err.Error()), 200)
-				out[i] = item
-				return
-			}
-			item.Up = true
-			for _, f := range skills.ParseScan(raw) {
-				item.Skills = append(item.Skills, readmodel.FoundSkill{Name: f.Name, Path: f.Path, Title: f.Title, Description: f.Description, Loaded: have[f.Name]})
-			}
-			out[i] = item
-		}(i, name)
+	found := func(name string, hub bool, own []nodewire.OwnSkill, err error) readmodel.MachineSkills {
+		item := readmodel.MachineSkills{Name: nodewire.Place(name), Hub: hub, Skills: []readmodel.FoundSkill{}}
+		if err != nil {
+			item.Error = clip(strings.TrimSpace(err.Error()), 200)
+			return item
+		}
+		item.Up = true
+		for _, f := range own {
+			item.Skills = append(item.Skills, readmodel.FoundSkill{Name: f.Name, Path: f.Path, Title: f.Title, Description: f.Description, Loaded: have[f.Name]})
+		}
+		return item
 	}
-	wg.Wait()
+	out := []readmodel.MachineSkills{found("", true, node.OwnSkills(5*time.Minute), nil)}
+	for _, name := range a.nodes.Names() {
+		adv, err := a.nodes.Advert(ctx, name)
+		out = append(out, found(name, false, adv.OwnSkills, err))
+	}
 	return out
 }
+
+// RefreshMachineSkills asks every machine to look again, at once, and
+// returns what they said; one that is down or slow says so.
+func (a *fleetAdmin) RefreshMachineSkills(ctx context.Context) []readmodel.MachineSkills {
+	ownSkillsRescan()
+	names := a.nodes.Names()
+	var wg sync.WaitGroup
+	for _, name := range names {
+		wg.Add(1)
+		go func(name string) {
+			defer wg.Done()
+			rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+			defer cancel()
+			_, _ = a.nodes.Refresh(rctx, name)
+		}(name)
+	}
+	wg.Wait()
+	return a.MachineSkills(ctx)
+}
+
+func ownSkillsRescan() { node.OwnSkills(0) }
 
 // ImportSkill loads a machine's skill onto the hub, into the owner's own
 // skills directory, where it is a hub skill like any other — not enabled

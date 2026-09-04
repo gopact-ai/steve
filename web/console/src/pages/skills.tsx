@@ -10,7 +10,7 @@ import { Drawer } from "@/components/steve/drawer";
 import { Md } from "@/components/steve/markdown";
 import { Chips, KeyValue, PageBody, PageHeader, Panel } from "@/components/steve/page";
 import { Mono, Nothing } from "@/components/steve/ui";
-import { addSkillPath, addSkillSource, fetchMachineSkills, fetchSkill, fetchSkills, importSkill, removeSkillPath, removeSkillSource, setSkill, updateSkillSources, when } from "@/lib/api";
+import { addSkillPath, addSkillSource, fetchMachineSkills, fetchSkill, fetchSkills, importSkill, refreshMachineSkills, removeSkillPath, removeSkillSource, setSkill, updateSkillSources, when } from "@/lib/api";
 import { useFleet } from "@/lib/fleet";
 import type { MachineSkills, SkillDoc, SkillView, SkillsView } from "@/lib/types";
 
@@ -32,6 +32,8 @@ export function SkillsPage() {
     const [machines, setMachines] = useState<MachineSkills[] | null>(null);
     const load = useCallback(() => { void fetchSkills().then((v) => { setView(v); setError(""); }).catch((e) => setError(fail(e))); }, []);
     const loadMachines = useCallback(() => { void fetchMachineSkills().then((v) => setMachines(v.machines)).catch((e) => setError(fail(e))); }, []);
+    const [rescanning, setRescanning] = useState(false);
+    const rescan = () => { setRescanning(true); void refreshMachineSkills().then((v) => setMachines(v.machines)).catch((e) => setError(fail(e))).finally(() => setRescanning(false)); };
     useEffect(() => { load(); }, [load, snap.at]);
     useEffect(() => { loadMachines(); }, [loadMachines]);
     async function run(key: string, op: () => Promise<unknown>) {
@@ -128,9 +130,9 @@ export function SkillsPage() {
                         </ul>
                     )}
                 </Panel>
-                <Panel title="机器上已有的技能" badge={<span className="text-xs text-tertiary">各机器 AI 工具自己目录里的技能（~/.codex/skills、~/.claude/skills …）；加载到 hub 后成为一个普通技能，再决定要不要启用</span>}
-                    aside={<Button size="sm" color="link-gray" iconLeading={RefreshCw01} onClick={loadMachines}>重新扫描</Button>}>
-                    {!machines ? <div className="text-xs text-tertiary">正在问各机器…</div> : (
+                <Panel title="机器上已有的技能" badge={<span className="text-xs text-tertiary">各机器 AI 工具自己目录里的技能（~/.codex/skills、~/.claude/skills …），随机器的申报上报，hub 每分钟刷新；加载到 hub 后成为一个普通技能，再决定要不要启用</span>}
+                    aside={<Button size="sm" color="link-gray" iconLeading={RefreshCw01} isLoading={rescanning} onClick={rescan}>让机器现在重扫</Button>}>
+                    {!machines ? <div className="text-xs text-tertiary">读取中…</div> : (
                         <ul className="flex flex-col gap-3">
                             {machines.map((m) => (
                                 <li key={m.name} className="flex flex-col gap-1">
