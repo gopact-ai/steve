@@ -441,3 +441,87 @@ func budgetWarnings(soul, user, memory string) []string {
 	}
 	return warnings
 }
+
+// File is one of the three files of Steve's home as a page shows it:
+// what it is for, what it holds, how much room it has.
+type File struct {
+	Name     string
+	Text     string
+	Budget   int
+	Template bool
+	Missing  bool
+}
+
+// Budgets is how much of each file reaches the prompt.
+var Budgets = map[string]int{FileSoul: BudgetSoul, FileUser: BudgetUser, FileMemory: BudgetMemory}
+
+// Files reads the three files as they are, for editing. A missing file
+// is listed as missing rather than failing the read: the page is where
+// it gets written.
+func Files(path string) ([]File, error) {
+	resolved, err := resolveHome(path)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]File, 0, 3)
+	for _, name := range []string{FileSoul, FileUser, FileMemory} {
+		f := File{Name: name, Budget: Budgets[name]}
+		body, err := readHomeFile(resolved, name)
+		if errors.Is(err, ErrMissing) {
+			f.Missing = true
+		} else if err != nil {
+			return nil, err
+		} else {
+			f.Text, f.Template = body, IsTemplate(body)
+		}
+		out = append(out, f)
+	}
+	return out, nil
+}
+
+// Write replaces one of the three files. The text must fit the file's
+// budget — what does not fit would be cut before the agent saw it — and
+// a symlinked file is followed only inside the home. The write is a
+// rename, so a reader sees the old file or the new one, never a torn one.
+func Write(path, name, text string) error {
+	budget, ok := Budgets[name]
+	if !ok {
+		return fmt.Errorf("%s is not one of %s, %s, %s", name, FileSoul, FileUser, FileMemory)
+	}
+	if len([]byte(text)) > budget {
+		return fmt.Errorf("%s is %d bytes; only %d reach the agent — shorten it", name, len([]byte(text)), budget)
+	}
+	resolved, err := resolveHome(path)
+	if err != nil {
+		return err
+	}
+	target := filepath.Join(resolved, name)
+	if info, err := os.Lstat(target); err == nil && info.Mode()&os.ModeSymlink != 0 {
+		real, err := filepath.EvalSymlinks(target)
+		if err != nil {
+			return fmt.Errorf("resolve %s: %w", name, err)
+		}
+		if err := withinHome(resolved, real); err != nil {
+			return err
+		}
+		target = real
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(target), "."+name+".*")
+	if err != nil {
+		return err
+	}
+	if _, err := tmp.WriteString(text); err != nil {
+		tmp.Close()
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+		_ = os.Remove(tmp.Name())
+		return err
+	}
+	return os.Rename(tmp.Name(), target)
+}

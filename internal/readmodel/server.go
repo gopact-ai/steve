@@ -66,6 +66,13 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("DELETE /console/agents/{id}", s.guard(s.consoleRemoveAgent))
 	mux.HandleFunc("POST /console/projects", s.guard(s.consoleAddProject))
 	mux.HandleFunc("DELETE /console/projects/{id}", s.guard(s.consoleRemoveProject))
+	mux.HandleFunc("GET /console/skills", s.guard(s.consoleSkills))
+	mux.HandleFunc("GET /console/skills/{name}", s.guard(s.consoleSkill))
+	mux.HandleFunc("PUT /console/skills/{name}", s.guard(s.consoleSetSkill))
+	mux.HandleFunc("POST /console/skills/paths", s.guard(s.consoleAddSkillPath))
+	mux.HandleFunc("DELETE /console/skills/paths", s.guard(s.consoleRemoveSkillPath))
+	mux.HandleFunc("GET /console/home", s.guard(s.consoleHome))
+	mux.HandleFunc("PUT /console/home/{name}", s.guard(s.consoleSetHomeFile))
 	mux.HandleFunc("POST /console/projects/{id}/workspaces", s.guard(s.consoleAddWorkspace))
 	mux.HandleFunc("DELETE /console/projects/{id}/workspaces/{node}", s.guard(s.consoleRemoveWorkspace))
 	mux.HandleFunc("GET /console/nodes/{name}/settings", s.guard(s.nodeSettings))
@@ -349,6 +356,78 @@ type Admin interface {
 	// it and answers what is in force. The hub machine is one of them.
 	NodeSettings(ctx context.Context, name string) (nodewire.Settings, error)
 	SetNodeSettings(ctx context.Context, name string, set nodewire.Settings) (nodewire.Settings, error)
+	// Skills is what the hub can hand its agents and what it does hand
+	// them; SetSkill turns one on or off, the paths are where skills are
+	// looked for, SkillContent is one skill's SKILL.md.
+	Skills(ctx context.Context) (SkillsView, error)
+	SetSkill(ctx context.Context, name string, enabled bool) error
+	AddSkillPath(ctx context.Context, path string) error
+	RemoveSkillPath(ctx context.Context, path string) error
+	SkillContent(ctx context.Context, name string) (SkillDoc, error)
+	// Home is Steve's own three files — who it is, who the owner is,
+	// what it remembers; SetHomeFile rewrites one.
+	Home(ctx context.Context) (HomeView, error)
+	SetHomeFile(ctx context.Context, name, text string) error
+}
+
+// SkillsView is the skills page: where skills are looked for, every
+// skill found there with whether it is handed to agents, and whether
+// each machine holds the current bundle.
+type SkillsView struct {
+	Fingerprint string      `json:"fingerprint"`
+	SearchPaths []string    `json:"search_paths"`
+	Skills      []SkillView `json:"skills"`
+	Nodes       []SkillNode `json:"nodes"`
+}
+
+// SkillView is one skill: named by its directory, described by its
+// SKILL.md, and pinned by agents or projects that ask for it by path.
+type SkillView struct {
+	Name        string   `json:"name"`
+	Path        string   `json:"path"`
+	Root        string   `json:"root"`
+	Title       string   `json:"title,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Enabled     bool     `json:"enabled"`
+	Agents      []string `json:"agents"`
+	Projects    []string `json:"projects"`
+}
+
+// SkillNode says whether a machine holds the bundle the hub last packed.
+type SkillNode struct {
+	Name   string `json:"name"`
+	Up     bool   `json:"up"`
+	Synced bool   `json:"synced"`
+	Takes  bool   `json:"takes"`
+}
+
+// SkillDoc is one skill's SKILL.md.
+type SkillDoc struct {
+	Name    string `json:"name"`
+	Path    string `json:"path"`
+	Content string `json:"content"`
+}
+
+// HomeView is Steve's home as a page shows it: the directory, the three
+// files with how much room each has, and how much of it reaches the
+// agent in the owner's private chat and in front of anyone else.
+type HomeView struct {
+	Path        string     `json:"path"`
+	Files       []HomeFile `json:"files"`
+	TotalBudget int        `json:"total_budget"`
+	OwnerBytes  int        `json:"owner_bytes"`
+	GuestBytes  int        `json:"guest_bytes"`
+	Warnings    []string   `json:"warnings"`
+}
+
+// HomeFile is one of the three: what it is for is the page's to say.
+type HomeFile struct {
+	Name     string `json:"name"`
+	Text     string `json:"text"`
+	Bytes    int    `json:"bytes"`
+	Budget   int    `json:"budget"`
+	Template bool   `json:"template,omitempty"`
+	Missing  bool   `json:"missing,omitempty"`
 }
 
 // Conversation is one console thread as the sidebar lists it: named by
@@ -540,6 +619,124 @@ func (s *Server) consoleRemoveWorkspace(w http.ResponseWriter, r *http.Request) 
 // ErrBusy is an admin action refused because something is running where
 // it would act.
 var ErrBusy = errors.New("busy")
+
+func (s *Server) adminOr(w http.ResponseWriter) bool {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "not wired", http.StatusNotImplemented)
+		return false
+	}
+	return true
+}
+
+func (s *Server) consoleSkills(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	view, err := s.admin.Skills(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(view)
+}
+
+func (s *Server) consoleSkill(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	doc, err := s.admin.SkillContent(r.Context(), r.PathValue("name"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(doc)
+}
+
+func (s *Server) consoleSetSkill(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	var req struct {
+		Enabled bool `json:"enabled"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.SetSkill(r.Context(), r.PathValue("name"), req.Enabled); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, ErrBusy) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleAddSkillPath(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	var req struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.AddSkillPath(r.Context(), req.Path); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleRemoveSkillPath(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	if err := s.admin.RemoveSkillPath(r.Context(), r.URL.Query().Get("path")); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, ErrBusy) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleHome(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	view, err := s.admin.Home(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(view)
+}
+
+func (s *Server) consoleSetHomeFile(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.SetHomeFile(r.Context(), r.PathValue("name"), req.Text); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
 
 func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

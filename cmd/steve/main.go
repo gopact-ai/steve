@@ -20,6 +20,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -742,7 +743,8 @@ func serve(args []string) error {
 		}
 		return project.Level(level)
 	}
-	dashboard.SetAdmin(&fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos, attempts: attempts})
+	dashboard.SetAdmin(&fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos, attempts: attempts,
+		skills: live, shipper: hubSkills, coordinator: coordinator, homePath: cfg.Gateway.HomePath})
 	defer dashboard.Close()
 	go func() {
 		if err := dashboard.Serve(); err != nil {
@@ -1154,6 +1156,14 @@ type fleetAdmin struct {
 	repos    *repoCache
 	// attempts is where a copy's lock is taken before it is forgotten.
 	attempts *attempt.Service
+	// skills is the live map of what agents are handed, shipper what each
+	// machine holds of it; coordinator holds the lock a change needs.
+	skills      *skills.Live
+	shipper     *skillShipper
+	coordinator *turn.Coordinator
+	// homePath is Steve's own directory: who it is, who the owner is,
+	// what it remembers.
+	homePath string
 	// manager and assembler take the hub machine's own harness and MCP
 	// changes at runtime.
 	manager   *harness.Manager
@@ -1728,6 +1738,184 @@ func (a *fleetAdmin) RemoveWorkspace(ctx context.Context, projectID, nodeName st
 	return nil
 }
 
+// Skills is the skills page: what is found where, what is on, who pins
+// what by path, and which machines hold the current bundle.
+func (a *fleetAdmin) Skills(ctx context.Context) (readmodel.SkillsView, error) {
+	if a.skills == nil || a.skills.Map == nil {
+		return readmodel.SkillsView{}, errors.New("技能没有配置")
+	}
+	view := readmodel.SkillsView{Fingerprint: a.skills.Map.Fingerprint(), SearchPaths: a.skills.Map.SearchPaths(), Skills: []readmodel.SkillView{}, Nodes: []readmodel.SkillNode{}}
+	if view.SearchPaths == nil {
+		view.SearchPaths = []string{}
+	}
+	enabled, err := a.skills.Map.Enabled()
+	if err != nil {
+		return view, err
+	}
+	on := map[string]bool{}
+	for _, ref := range enabled {
+		on[ref.Name] = true
+	}
+	available, err := a.skills.Map.Available()
+	if err != nil {
+		return view, err
+	}
+	// Who asks for a skill by path: an agent's or a project's pinned
+	// skill sources are directories, matched against the skill's.
+	byPath := map[string]*readmodel.SkillView{}
+	for _, ref := range available {
+		d := skills.Describe(ref.Path)
+		item := readmodel.SkillView{Name: ref.Name, Path: ref.Path, Root: filepath.Dir(ref.Path), Title: d.Title, Description: d.Description, Enabled: on[ref.Name], Agents: []string{}, Projects: []string{}}
+		view.Skills = append(view.Skills, item)
+		byPath[filepath.Clean(ref.Path)] = &view.Skills[len(view.Skills)-1]
+	}
+	if a.catalog != nil {
+		for _, ag := range a.catalog.List() {
+			for _, src := range ag.Skills {
+				if item, ok := byPath[filepath.Clean(src)]; ok {
+					item.Agents = append(item.Agents, ag.ID)
+				}
+			}
+		}
+	}
+	if a.projects != nil {
+		if list, err := a.projects.List(ctx); err == nil {
+			for _, p := range list {
+				for _, src := range p.Skills {
+					if item, ok := byPath[filepath.Clean(src)]; ok {
+						item.Projects = append(item.Projects, p.ID)
+					}
+				}
+			}
+		}
+	}
+	want := a.shipper.hash()
+	for _, name := range a.nodes.Names() {
+		item := readmodel.SkillNode{Name: name}
+		if adv, err := a.nodes.Advert(ctx, name); err == nil {
+			item.Up = true
+			item.Takes = slices.Contains(adv.Features, nodewire.FeatureSkills)
+			item.Synced = want != "" && adv.Skills == want
+		}
+		view.Nodes = append(view.Nodes, item)
+	}
+	return view, nil
+}
+
+// SkillContent is one skill's SKILL.md.
+func (a *fleetAdmin) SkillContent(_ context.Context, name string) (readmodel.SkillDoc, error) {
+	if a.skills == nil || a.skills.Map == nil {
+		return readmodel.SkillDoc{}, errors.New("技能没有配置")
+	}
+	available, err := a.skills.Map.Available()
+	if err != nil {
+		return readmodel.SkillDoc{}, err
+	}
+	for _, ref := range available {
+		if ref.Name == name {
+			content, err := skills.Content(ref.Path)
+			if err != nil {
+				return readmodel.SkillDoc{}, err
+			}
+			return readmodel.SkillDoc{Name: ref.Name, Path: ref.Path, Content: content}, nil
+		}
+	}
+	return readmodel.SkillDoc{}, fmt.Errorf("没有叫 %q 的技能", name)
+}
+
+// withSkillsLock runs a change to the skills the way the chat verb does:
+// not while a turn runs, since the change restarts the AI tools.
+func (a *fleetAdmin) withSkillsLock(op func() error) error {
+	if a.skills == nil || a.skills.Map == nil {
+		return errors.New("技能没有配置")
+	}
+	if a.coordinator != nil {
+		release, ok := a.coordinator.SkillsLock()
+		if !ok {
+			return fmt.Errorf("%w：有回合在跑，改技能会重启 AI 工具，等它结束再改", readmodel.ErrBusy)
+		}
+		defer release()
+	}
+	return op()
+}
+
+// SetSkill turns a skill on or off for every agent. Agents in flight
+// keep their session; the next session opens with the new set, and the
+// changed fingerprint tells the owner to /new.
+func (a *fleetAdmin) SetSkill(_ context.Context, name string, enabled bool) error {
+	return a.withSkillsLock(func() error {
+		if enabled {
+			return a.skills.Enable(name)
+		}
+		return a.skills.Disable(name)
+	})
+}
+
+// AddSkillPath adds a directory to look for skills in.
+func (a *fleetAdmin) AddSkillPath(_ context.Context, path string) error {
+	if a.skills == nil || a.skills.Map == nil {
+		return errors.New("技能没有配置")
+	}
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return errors.New("目录不能为空")
+	}
+	if strings.HasPrefix(path, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
+		}
+	}
+	if info, err := os.Stat(path); err != nil || !info.IsDir() {
+		return fmt.Errorf("hub 上没有目录 %s", path)
+	}
+	return a.skills.AddPath(path)
+}
+
+// RemoveSkillPath stops looking in a directory; skills enabled from it
+// go with it, so it takes the lock.
+func (a *fleetAdmin) RemoveSkillPath(_ context.Context, path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return errors.New("目录不能为空")
+	}
+	return a.withSkillsLock(func() error { return a.skills.RemovePath(path) })
+}
+
+// Home is Steve's own directory as the page shows it.
+func (a *fleetAdmin) Home(_ context.Context) (readmodel.HomeView, error) {
+	if a.homePath == "" {
+		return readmodel.HomeView{}, errors.New("没有配置 Steve 的家（gateway.home_path）")
+	}
+	files, err := home.Files(a.homePath)
+	if err != nil {
+		return readmodel.HomeView{}, err
+	}
+	view := readmodel.HomeView{Path: a.homePath, TotalBudget: home.BudgetTotal, Files: []readmodel.HomeFile{}, Warnings: []string{}}
+	for _, f := range files {
+		view.Files = append(view.Files, readmodel.HomeFile{Name: f.Name, Text: f.Text, Bytes: len([]byte(f.Text)), Budget: f.Budget, Template: f.Template, Missing: f.Missing})
+	}
+	dir := home.Dir{Path: a.homePath}
+	if snap, err := dir.Load(home.ModeOwner); err == nil {
+		view.OwnerBytes = len([]byte(snap.Identity))
+		view.Warnings = append(view.Warnings, snap.Warnings...)
+	} else {
+		view.Warnings = append(view.Warnings, err.Error())
+	}
+	if snap, err := dir.Load(home.ModeGuest); err == nil {
+		view.GuestBytes = len([]byte(snap.Identity))
+	}
+	return view, nil
+}
+
+// SetHomeFile rewrites one of the three. The next turn reads it; a
+// session already open is told its instructions changed.
+func (a *fleetAdmin) SetHomeFile(_ context.Context, name, text string) error {
+	if a.homePath == "" {
+		return errors.New("没有配置 Steve 的家（gateway.home_path）")
+	}
+	return home.Write(a.homePath, name, text)
+}
+
 func (a *fleetAdmin) RemoveProject(ctx context.Context, id string) error {
 	if id == homeProjectID {
 		return fmt.Errorf("%s 是 Steve 自己的家，不能移除", id)
@@ -1981,6 +2169,19 @@ func (s *skillShipper) pack() (skills.Bundle, error) {
 }
 
 // entries is what the hub's own machine has: the last packed bundle.
+// hash is the bundle the hub last packed, or "" before the first pack.
+func (s *skillShipper) hash() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.packed {
+		return ""
+	}
+	return s.bundle.Hash
+}
+
 func (s *skillShipper) entries() ([]skills.Entry, bool) {
 	if s == nil {
 		return nil, false

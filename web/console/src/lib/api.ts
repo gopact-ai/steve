@@ -1,4 +1,4 @@
-import type { Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
+import type { HomeView, SkillDoc, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
 
 // The token guards everything: it rides as a bearer header on requests and
 // as a query parameter on the event stream, which cannot carry headers.
@@ -138,3 +138,19 @@ export async function removeAgent(id: string): Promise<{ ok: boolean }> {
     return json(await fetch(`./console/agents/${encodeURIComponent(id)}${q}`, { method: "DELETE", headers }));
 }
 
+
+export async function fetchSkills(): Promise<SkillsView> { return json(await fetch(`./console/skills${q}`, { headers })); }
+export async function fetchSkill(name: string): Promise<SkillDoc> { return json(await fetch(`./console/skills/${encodeURIComponent(name)}${q}`, { headers })); }
+export async function setSkill(name: string, enabled: boolean): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/skills/${encodeURIComponent(name)}${q}`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ enabled }) }));
+}
+export async function addSkillPath(path: string): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/skills/paths${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ path }) }));
+}
+export async function removeSkillPath(path: string): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/skills/paths${q}${q ? "&" : "?"}path=${encodeURIComponent(path)}`, { method: "DELETE", headers }));
+}
+export async function fetchHome(): Promise<HomeView> { return json(await fetch(`./console/home${q}`, { headers })); }
+export async function saveHomeFile(name: string, text: string): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/home/${encodeURIComponent(name)}${q}`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ text }) }));
+}

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
-import { Activity, BookOpen01, ClipboardCheck, Folder, Inbox01, Moon01, Server01, Sun, Terminal } from "@untitledui/icons";
+import { Activity, BookOpen01, ClipboardCheck, Folder, Home02, Inbox01, Moon01, PuzzlePiece01, Server01, Sun, Terminal } from "@untitledui/icons";
 import { NavItemBase } from "@/components/application/app-navigation/base-components/nav-item";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { FleetProvider, IntentProvider, useFleet } from "@/lib/fleet";
@@ -11,6 +11,8 @@ import { FleetPage } from "@/pages/fleet";
 import { HistoryPage } from "@/pages/history";
 import { InboxPage } from "@/pages/inbox";
 import { ProjectsPage } from "@/pages/projects";
+import { SkillsPage } from "@/pages/skills";
+import { HomePage } from "@/pages/home";
 
 export function App() {
     const navigate = useNavigate();
@@ -43,6 +45,8 @@ function Shell() {
         { title: "环境", items: [
             { href: "/projects", label: "项目", icon: Folder, badge: snap.projects.length || undefined },
             { href: "/fleet", label: "资源", icon: Server01, badge: `${up}/${snap.nodes.length}` },
+            { href: "/skills", label: "技能", icon: PuzzlePiece01 },
+            { href: "/home", label: "Steve 的家", icon: Home02 },
         ] },
         { title: "关注", items: [
             { href: "/inbox", label: "待处理", icon: Inbox01, badge: needsYou || undefined, hot: needsYou > 0 },
@@ -101,6 +105,8 @@ function Shell() {
                     <Route path="/plans" element={<Navigate to="/tasks" replace />} />
                     <Route path="/projects" element={<ProjectsPage />} />
                     <Route path="/fleet" element={<FleetPage />} />
+                    <Route path="/skills" element={<SkillsPage />} />
+                    <Route path="/home" element={<HomePage />} />
                     <Route path="/inbox" element={<InboxPage />} />
                     <Route path="/ledger" element={<Navigate to="/inbox" replace />} />
                     <Route path="/history" element={<HistoryPage />} />

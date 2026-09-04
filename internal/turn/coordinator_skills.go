@@ -168,3 +168,13 @@ func (c *Coordinator) skillsUsage() string {
 	cmd := protocol.CommandSkills
 	return c.text.T(i18n.SkillsUsage, cmd, cmd, cmd, cmd, protocol.CommandNew)
 }
+
+// SkillsLock is the page's way in: skills may not change while a turn
+// runs, since the change restarts the AI tools. The release is what the
+// caller does when done; ok false means a turn is in flight.
+func (c *Coordinator) SkillsLock() (release func(), ok bool) {
+	if !c.lockSkills() {
+		return nil, false
+	}
+	return c.unlockSkills, true
+}
