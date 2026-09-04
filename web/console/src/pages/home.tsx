@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Home02 } from "@untitledui/icons";
+import { BookOpen01 } from "@untitledui/icons";
 import { useNavigate } from "react-router";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
@@ -16,7 +16,7 @@ const kb = (n: number) => `${(n / 1024).toFixed(1)} KB`;
 // What each file is for, in the owner's words.
 const roles: Record<string, { title: string; what: string }> = {
     "SOUL.md": { title: "身份", what: "Steve 是谁、怎么说话、什么不做。每个 Agent 每次开会话都先读它；群聊和访客面前也带着。" },
-    "USER.md": { title: "用户", what: "你是谁：称呼、时区、习惯、备注。只在你的私聊里注入，群聊和访客看不到。渠道身份（飞书 open_id 之类）不放这里，那是配置的事。" },
+    "USER.md": { title: "用户档案", what: "你是谁：称呼、时区、习惯、备注。只在你的私聊里注入，群聊和访客看不到。渠道身份（飞书 open_id 之类）不放这里，那是配置的事。" },
     "MEMORY.md": { title: "记忆", what: "长期仍然为真的事：偏好、项目、人。Steve 自己也会往里写；只在你的私聊里注入。" },
 };
 
@@ -33,8 +33,8 @@ export function HomePage() {
     const home = snap.projects.find((p) => p.home);
     return (
         <div className="flex flex-col">
-            <PageHeader title="Steve 的家"
-                description={<>三份文件让 Steve 成为 Steve：<b>身份</b>、<b>用户</b>、<b>记忆</b>。每一轮开始前都会重新读，所以这里保存的就是下一轮 Agent 看到的。你的私聊里三份都注入；群聊和访客面前只有身份。改了以后，已经开着的会话会提示 /new。</>}
+            <PageHeader title="档案"
+                description={<>三份档案让 Steve 成为 Steve：它的<b>身份</b>、你的<b>用户档案</b>、它的<b>记忆</b>。每一轮开始前都会重新读，所以这里保存的就是下一轮 Agent 看到的。你的私聊里三份都注入；群聊和访客面前只有身份。改了以后，已经开着的会话会提示 /new。</>}
                 actions={home && <Button size="md" color="secondary" onClick={() => navigate(`/console?new=1&project=${encodeURIComponent(home.id)}`)}>去私聊</Button>} />
             <PageBody>
                 {error && <div className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error}</div>}
@@ -48,7 +48,7 @@ export function HomePage() {
                                 ...(view.warnings.length ? [{ k: "提醒", v: <ul className="flex flex-col gap-0.5 text-warning-primary">{view.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul> }] : []),
                             ]} />
                         </Panel>
-                        {view.files.length === 0 ? <Nothing icon={Home02} title="家里没有文件">目录在，但三份文件都不在。发一句私聊，Steve 会按模板建起来。</Nothing> : view.files.map((f) => <FileEditor key={f.name} f={f} onSaved={load} />)}
+                        {view.files.length === 0 ? <Nothing icon={BookOpen01} title="还没有档案">目录在，但三份文件都不在。发一句私聊，Steve 会按模板建起来。</Nothing> : view.files.map((f) => <FileEditor key={f.name} f={f} onSaved={load} />)}
                     </>
                 )}
             </PageBody>

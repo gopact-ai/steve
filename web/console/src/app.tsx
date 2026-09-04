@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
-import { Activity, BookOpen01, ClipboardCheck, Folder, Home02, Inbox01, Moon01, PuzzlePiece01, Server01, Sun, Terminal } from "@untitledui/icons";
+import { Activity, BookOpen01, ClipboardCheck, Folder, Inbox01, Moon01, PuzzlePiece01, Server01, Sun, Terminal } from "@untitledui/icons";
 import { NavItemBase } from "@/components/application/app-navigation/base-components/nav-item";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { FleetProvider, IntentProvider, useFleet } from "@/lib/fleet";
@@ -46,7 +46,7 @@ function Shell() {
             { href: "/projects", label: "项目", icon: Folder, badge: snap.projects.length || undefined },
             { href: "/fleet", label: "资源", icon: Server01, badge: `${up}/${snap.nodes.length}` },
             { href: "/skills", label: "技能", icon: PuzzlePiece01 },
-            { href: "/home", label: "Steve 的家", icon: Home02 },
+            { href: "/home", label: "档案", icon: BookOpen01 },
         ] },
         { title: "关注", items: [
             { href: "/inbox", label: "待处理", icon: Inbox01, badge: needsYou || undefined, hot: needsYou > 0 },

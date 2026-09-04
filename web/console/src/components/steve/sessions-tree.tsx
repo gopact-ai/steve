@@ -90,8 +90,8 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate 
                 )}
                 {home && (
                     <>
-                        <TreeHeading>Steve 的家</TreeHeading>
-                        <ul className="flex flex-col gap-0.5">{node(home, "私聊 · " + home.id, "你和 Steve 的私聊默认在这里；放身份与记忆，不是代码。")}</ul>
+                        <TreeHeading>私聊</TreeHeading>
+                        <ul className="flex flex-col gap-0.5">{node(home, home.id, "你和 Steve 的私聊默认在这里；放的是档案，不是代码。")}</ul>
                     </>
                 )}
                 {archived.length > 0 && (

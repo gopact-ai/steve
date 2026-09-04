@@ -92,7 +92,7 @@ export function ProjectsPage() {
             {home && (
                 <div className="flex items-center gap-4 rounded-xl bg-primary px-5 py-4 shadow-xs ring-1 ring-secondary">
                     <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2"><span className="text-sm font-semibold text-primary">Steve 的家</span><Mono className="text-quaternary">{home.id}</Mono><Badge type="modern" size="sm" color="gray">{levelWords[home.level] || home.level}</Badge></div>
+                        <div className="flex items-center gap-2"><span className="text-sm font-semibold text-primary">私聊</span><Mono className="text-quaternary">{home.id}</Mono><Badge type="modern" size="sm" color="gray">{levelWords[home.level] || home.level}</Badge></div>
                         <div className="mt-0.5 text-xs text-tertiary">你和 Steve 的私聊默认在这里。放的是它的身份、画像和记忆，不是代码。目录 <Mono>{home.path}</Mono>。</div>
                     </div>
                     <Button size="sm" color="link-color" onClick={() => newSession(home.id)}>新会话</Button>

@@ -1884,7 +1884,7 @@ func (a *fleetAdmin) RemoveSkillPath(_ context.Context, path string) error {
 // Home is Steve's own directory as the page shows it.
 func (a *fleetAdmin) Home(_ context.Context) (readmodel.HomeView, error) {
 	if a.homePath == "" {
-		return readmodel.HomeView{}, errors.New("没有配置 Steve 的家（gateway.home_path）")
+		return readmodel.HomeView{}, errors.New("没有配置档案目录（gateway.home_path）")
 	}
 	files, err := home.Files(a.homePath)
 	if err != nil {
@@ -1911,7 +1911,7 @@ func (a *fleetAdmin) Home(_ context.Context) (readmodel.HomeView, error) {
 // session already open is told its instructions changed.
 func (a *fleetAdmin) SetHomeFile(_ context.Context, name, text string) error {
 	if a.homePath == "" {
-		return errors.New("没有配置 Steve 的家（gateway.home_path）")
+		return errors.New("没有配置档案目录（gateway.home_path）")
 	}
 	return home.Write(a.homePath, name, text)
 }

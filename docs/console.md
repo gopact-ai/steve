@@ -278,11 +278,11 @@ HumanRequest { id, type, source_operation_id, project_id, task_id, summary, choi
 - **存储**：会话的名字、谁起的、是否归档记在控制台转录文档的 `meta` 段（`console.Meta`），与转录一起持久；旧格式（只有转录）照读。`PUT /console/conversations/{id} {title?, archived?}`；变化以 `console.meta` 事件推给页面。
 - 真机：codex 在 hub 上给"看一下当前目录里有几个文件"起名"统计当前目录文件数"，8 秒内出现；改名、归档、交还都经接口验过。
 
-## 16. 技能页与 Steve 的家（2026-09-04）
+## 16. 技能页与档案页（2026-09-04）
 
 用户问：还是没有 skill 管理跟 profile 管理的页面？此前两者只有聊天动词（`/skills`）和直接改文件。
 
 - **技能**（`#/skills`）：定义写在页头——一个技能是一个目录里的一份 SKILL.md；hub 在搜索目录里找，这里打开的技能打成一个包发给每台机器、交给每个 Agent。表格一行一个技能：名称（SKILL.md 的 name / 首个标题）、说明（front matter 的 description 或第一段）、来源目录、固定在（哪些 Agent / 项目按目录另外要了它）、启用开关、"看 SKILL.md"（抽屉里渲染）。下面两块：搜索目录（列表 + 添加 / 移除）、机器上的技能包（每台机器：已同步 / 未同步 / 离线 / 不接收，按 advert 里的包哈希对 hub 最近打的包）。改动走与 `/skills` 同一把锁（`Coordinator.SkillsLock`）：有回合在跑时拒绝（409），因为改完会重启 AI 工具。接口 `GET /console/skills`、`GET|PUT /console/skills/{name}`、`POST|DELETE /console/skills/paths`。
-- **Steve 的家**（`#/home`）：三份文件各一张卡——身份 SOUL.md、用户 USER.md、记忆 MEMORY.md——等宽编辑框、字节数 / 预算条（8 KB / 8 KB / 24 KB）、"还是模板" / "文件不存在"徽章、保存（超预算拒绝，因为超出的部分本来就到不了 Agent）与还原。顶部"注入"块说明：私聊注入三份（总上限 40 KB，超出从记忆末尾截）、群聊 / 访客只有身份，并给出两种模式实际的字节数与 `home.Load` 的提醒。写入是同目录临时文件 + rename，符号链接只跟到家目录之内（`home.Write`）。接口 `GET /console/home`、`PUT /console/home/{name}`。
+- **档案**（`#/home`，起初叫"Steve 的家"，用户觉得怪，改名）：三份文件各一张卡——身份 SOUL.md、用户 USER.md、记忆 MEMORY.md——等宽编辑框、字节数 / 预算条（8 KB / 8 KB / 24 KB）、"还是模板" / "文件不存在"徽章、保存（超预算拒绝，因为超出的部分本来就到不了 Agent）与还原。顶部"注入"块说明：私聊注入三份（总上限 40 KB，超出从记忆末尾截）、群聊 / 访客只有身份，并给出两种模式实际的字节数与 `home.Load` 的提醒。写入是同目录临时文件 + rename，符号链接只跟到家目录之内（`home.Write`）。接口 `GET /console/home`、`PUT /console/home/{name}`。
 - 导航"环境"组新增两项。
 - 用户随后指出三处：SOUL 模板把 Codex / Claude Code / Grok / Kimi 写死（工具是什么由 fleet 决定，模板改成"你调度的 AI 工具是你的手，有哪些看本轮的清单"）；"主人"这个词去掉（模板、包裹、onboarding、setup 文案里改成"用户"或角色名 owner）；USER.md 模板里的 "Feishu open_id" 行去掉——渠道身份是配置的事，不是用户画像；onboarding 的起草规则同步改为"不要把渠道标识写进 USER.md"。线上的 SOUL.md / USER.md 按同样的改法改了两行。
