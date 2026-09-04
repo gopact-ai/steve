@@ -540,4 +540,6 @@ agent 得能自己维护 fleet，不只是人从页面操作。平台 MCP 再加
 ### 22.3 顺序
 
 1. ✅ delegate 观察者 + 读模型 `DelegateProgress`（`delegate.progress`）+ console `StepProcess` 扩字段；前端 `DelegationCard`、`ToolCalls` 折叠与限高。真机验收（2026-09-04，claude 委派 node-b 的 shipper 改 README）：进行中看到"委派 #45 shipper @ node-b · 进行中 · 23s"、目标、它自己的读文件调用和当前想法；结束后卡片变"完成 · 1m58s"，19 条命令 13 次工具折叠，artifact 与落地 refs；父 agent 的 `steve_await ×2` 折成一行。第一次验收发现落地路径上子任务的回答没进结果（评审第 6 条），已修（af6e82f）。
+   补：用户看后要求卡片可折叠、引用别用大号斜体——卡片改成折叠行（进行中 / 失败展开，完成折起），聊天里的 blockquote 改成正常字号、不斜体、左侧一条线（7fcde65）。
+   并发验证（同日 21:54）：claude 先后发出两个 `steve_delegate`（hub 的 codex 建 CHANGELOG.md，node-b 的 shipper 建 CONTRIBUTING.md），#49 21:54:33–21:55:22、#50 21:54:55–21:55:37 重叠运行，各自的工作树、租约互不相干，先后在父回合租约下落地，两个文件都在主目录；对话里是两张并列的折叠卡，过程面板里两段各自的思考与工具。并发的边界：每台机器每个 harness 的会话槽位（advert 的 slots）；子任务共用父任务预算；改同一批文件会在落地时冲突并排队等人。
 2. 会话侧栏里给运行中的子任务一个角标；`/tasks` 树与卡片互相跳转。
