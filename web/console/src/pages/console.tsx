@@ -11,7 +11,7 @@ import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { Chips, KeyValue, Panel } from "@/lib/page";
 import { fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, when } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
-import type { Conversation, ConversationContext, Event, Plan, Process, Progress, Reply, Step, StepProcess, Suggestion, Task, ToolCall, Verb } from "@/lib/types";
+import type { Conversation, ConversationContext, Event, Injected, Plan, Process, Progress, Project, Reply, Step, StepProcess, Suggestion, Task, ToolCall, Verb } from "@/lib/types";
 import { CallGraph } from "@/lib/tree";
 import { label, zh } from "@/lib/labels";
 import { formatToolText } from "@/lib/tooltext";
@@ -137,11 +137,12 @@ export function ConsolePage() {
         el.style.height = Math.min(el.scrollHeight, 200) + "px";
     }, [text]);
 
-    function newSession() {
+    function newSession(project?: string) {
         const id = "console:" + Date.now().toString(36);
         setConversation(id);
         setEntries([]);
         setText("");
+        if (project) window.setTimeout(() => { void send(id, `/project use ${project}`).catch(() => undefined).finally(() => { loadContext(); loadConversations(); }); }, 50);
         window.setTimeout(() => box.current?.focus(), 0);
     }
 
@@ -205,7 +206,7 @@ export function ConsolePage() {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submit(); }
     }
 
-    const lastWithProcess = [...entries].reverse().find((r) => r.kind === "reply" && r.process);
+    const lastWithProcess = [...entries].reverse().find((r) => r.kind === "reply" && (r.process || r.injected));
     const shownProcess = selectedReply ?? lastWithProcess ?? null;
     const current = conversations.find((c) => c.id === conversation);
     const title = current?.title || (entries.find((r) => r.kind === "sent")?.input?.split("\n")[0]) || "新会话";
@@ -213,7 +214,7 @@ export function ConsolePage() {
 
     return (
         <div className="flex h-full min-h-0">
-            <Sessions list={listed} current={conversation} onPick={(id) => setConversation(id)} onNew={newSession} />
+            <Sessions list={listed} projects={snap.projects} current={conversation} onPick={(id) => setConversation(id)} onNew={newSession} />
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 <header className="flex items-center gap-3 border-b border-secondary bg-primary px-6 py-2.5">
@@ -235,7 +236,7 @@ export function ConsolePage() {
                                 </div>
                             )}
                             <div className="mx-auto flex max-w-4xl flex-col gap-5">
-                                {entries.map((r, i) => <Message key={i} r={r} selected={shownProcess === r} onSelect={r.process ? () => { setSelectedReply(r); setTab("trace"); } : undefined} />)}
+                                {entries.map((r, i) => <Message key={i} r={r} selected={shownProcess === r} onSelect={(r.process || r.injected) ? () => { setSelectedReply(r); setTab("trace"); } : undefined} />)}
                                 {live && <Working live={live} plans={runningPlans} compact />}
                                 <div ref={bottom} />
                             </div>
@@ -349,44 +350,90 @@ export function ConsolePage() {
     );
 }
 
-// Sessions is the left column: a new thread on top, then every thread
-// grouped by project, newest first, the busy ones marked.
-function Sessions({ list, current, onPick, onNew }: { list: Conversation[]; current: string; onPick: (id: string) => void; onNew: () => void }) {
-    const groups = new Map<string, Conversation[]>();
+// Sessions is the left column, a tree: each project is a node that folds,
+// with the threads under it and a way to start one there; Steve's home
+// sits apart at the bottom. A thread whose project is not known any more
+// goes under 未归属.
+function Sessions({ list, projects, current, onPick, onNew }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void }) {
+    const [folded, setFolded] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem("steve.folded") || "{}"); } catch { return {}; } });
+    const toggle = (id: string) => setFolded((f) => { const next = { ...f, [id]: !f[id] }; try { localStorage.setItem("steve.folded", JSON.stringify(next)); } catch { /* ignore */ } return next; });
+    const byProject = new Map<string, Conversation[]>();
     for (const c of list) {
-        const key = c.project || "（无项目）";
-        groups.set(key, [...(groups.get(key) || []), c]);
+        const key = c.project || "";
+        byProject.set(key, [...(byProject.get(key) || []), c]);
     }
+    const home = projects.find((p) => p.home);
+    const work = projects.filter((p) => !p.home).sort((a, b) => (a.default ? -1 : b.default ? 1 : a.id.localeCompare(b.id)));
+    const known = new Set(projects.map((p) => p.id));
+    const orphans = [...byProject.entries()].filter(([k]) => !known.has(k)).flatMap(([, v]) => v);
+    const node = (p: Project, title: string, hint?: string) => {
+        const threads = byProject.get(p.id) || [];
+        const open = !folded[p.id];
+        const holdsCurrent = threads.some((c) => c.id === current);
+        return (
+            <li key={p.id} className="flex flex-col">
+                <div className={`group flex items-center gap-1 rounded-lg px-1.5 py-1 ${holdsCurrent && !open ? "bg-primary/60" : ""}`}>
+                    <button type="button" onClick={() => toggle(p.id)} className="flex size-5 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-primary/60" aria-label={open ? "折叠" : "展开"}>
+                        <ChevronDown className={`size-3.5 transition ${open ? "" : "-rotate-90"}`} />
+                    </button>
+                    <Folder className="size-4 shrink-0 text-fg-quaternary" />
+                    <button type="button" onClick={() => toggle(p.id)} className="min-w-0 flex-1 truncate text-left text-sm text-primary" title={hint || `${p.node} · ${p.path}`}>{title}</button>
+                    {threads.some((c) => c.running) && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
+                    <button type="button" onClick={() => onNew(p.id)} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary opacity-0 transition hover:bg-primary/60 hover:text-fg-quaternary_hover group-hover:opacity-100" aria-label={`在 ${p.id} 下新会话`} title={`在 ${p.id} 下新会话`}>
+                        <Plus className="size-3.5" />
+                    </button>
+                </div>
+                {open && (
+                    <ul className="ml-4 flex flex-col gap-0.5 border-l border-secondary pl-2">
+                        {threads.length === 0 && <li className="px-2 py-1 text-[11px] text-quaternary">还没有会话</li>}
+                        {threads.map((c) => <Thread key={c.id} c={c} current={c.id === current} onPick={onPick} />)}
+                    </ul>
+                )}
+            </li>
+        );
+    };
     return (
-        <aside className="hidden w-64 shrink-0 flex-col border-r border-secondary bg-secondary lg:flex">
+        <aside className="hidden w-72 shrink-0 flex-col border-r border-secondary bg-secondary lg:flex">
             <div className="px-2 pt-3 pb-1">
-                <button type="button" onClick={onNew} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-primary transition hover:bg-primary/70">
+                <button type="button" onClick={() => onNew()} className="flex w-full items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-primary transition hover:bg-primary/70" title="在当前项目下开一条新会话">
                     <Edit05 className="size-4 text-fg-quaternary" />
                     <span>新会话</span>
                 </button>
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto pb-4">
-                {[...groups.entries()].map(([project, items]) => (
-                    <div key={project}>
-                        <div className="px-4 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-quaternary">{project}</div>
-                        <ul className="flex flex-col gap-0.5 px-2">
-                            {items.map((c) => (
-                                <li key={c.id}>
-                                    <button type="button" onClick={() => onPick(c.id)}
-                                        className={`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left transition ${c.id === current ? "bg-primary" : "hover:bg-primary/50"}`}>
-                                        <span className="flex items-center gap-1.5">
-                                            {c.running && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
-                                            <span className="truncate text-sm text-primary">{c.title || "新会话"}</span>
-                                        </span>
-                                        <span className="truncate text-[11px] text-tertiary">{c.agent || "默认 Agent"}{c.last_at ? ` · ${ago(c.last_at)}` : " · 未开始"}</span>
-                                    </button>
-                                </li>
-                            ))}
-                        </ul>
-                    </div>
-                ))}
+            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+                <div className="px-2 pt-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-quaternary">项目</div>
+                <ul className="flex flex-col gap-0.5">
+                    {work.map((p) => node(p, p.id + (p.default ? " · 默认" : "")))}
+                </ul>
+                {orphans.length > 0 && (
+                    <>
+                        <div className="px-2 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-quaternary">未归属</div>
+                        <ul className="ml-2 flex flex-col gap-0.5">{orphans.map((c) => <Thread key={c.id} c={c} current={c.id === current} onPick={onPick} />)}</ul>
+                    </>
+                )}
+                {home && (
+                    <>
+                        <div className="px-2 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-quaternary">Steve 的家</div>
+                        <ul className="flex flex-col gap-0.5">{node(home, "私聊 · " + home.id, "你和 Steve 的私聊默认在这里；放身份与记忆，不是代码。")}</ul>
+                    </>
+                )}
             </div>
         </aside>
+    );
+}
+
+function Thread({ c, current, onPick }: { c: Conversation; current: boolean; onPick: (id: string) => void }) {
+    return (
+        <li>
+            <button type="button" onClick={() => onPick(c.id)}
+                className={`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left transition ${current ? "bg-primary" : "hover:bg-primary/50"}`}>
+                <span className="flex items-center gap-1.5">
+                    {c.running && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
+                    <span className="truncate text-sm text-primary">{c.title || "新会话"}</span>
+                </span>
+                <span className="truncate text-[11px] text-tertiary">{c.agent || "默认 Agent"}{c.last_at ? ` · ${ago(c.last_at)}` : " · 未开始"}</span>
+            </button>
+        </li>
     );
 }
 
@@ -411,7 +458,7 @@ function Rail({ context, live, plans, reply, tab, setTab, roots }: { context: Co
         <aside className="hidden min-h-0 flex-col border-l border-secondary bg-secondary xl:flex">
             <div className="border-b border-secondary bg-primary px-4 py-2">
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as RailTab)}>
-                    <TabList type="button-border" size="sm" items={[{ id: "context", label: "上下文" }, { id: "trace", label: live ? "过程（进行中）" : "过程" }, { id: "graph", label: roots.length ? `关系 (${roots.length})` : "关系" }]}>{(item) => <Tab {...item} />}</TabList>
+                    <TabList type="button-border" size="sm" items={[{ id: "context", label: "会话" }, { id: "trace", label: live ? "过程（进行中）" : "过程" }, { id: "graph", label: roots.length ? `关系 (${roots.length})` : "关系" }]}>{(item) => <Tab {...item} />}</TabList>
                 </Tabs>
             </div>
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
@@ -453,11 +500,16 @@ function Rail({ context, live, plans, reply, tab, setTab, roots }: { context: Co
                     </>
                 )}
                 {tab === "trace" && (
-                    live ? <Working live={live} plans={plans} /> : reply?.process ? (
-                        <Panel title={`过程 · ${when(reply.at)}`}>
-                            <ProcessBody process={reply.process} />
-                        </Panel>
-                    ) : <Nothing icon={MessageChatSquare} title="还没有过程">发一条消息，这里会实时显示推理、工具调用和步骤。</Nothing>
+                    live ? <Working live={live} plans={plans} /> : (reply?.process || reply?.injected) ? (
+                        <>
+                            {reply.injected && <InjectedPanel at={reply.at} in={reply.injected} />}
+                            {reply.process && (
+                                <Panel title={`过程 · ${when(reply.at)}`}>
+                                    <ProcessBody process={reply.process} />
+                                </Panel>
+                            )}
+                        </>
+                    ) : <Nothing icon={MessageChatSquare} title="还没有过程">发一条消息，这里会显示给 agent 的上下文、它的推理、工具调用和步骤。</Nothing>
                 )}
                 {tab === "graph" && (
                     roots.length ? (
@@ -515,6 +567,40 @@ function Message({ r, selected, onSelect }: { r: Reply; selected?: boolean; onSe
             </div>
             {r.process && <div className="xl:hidden"><ProcessFold process={r.process} /></div>}
         </div>
+    );
+}
+
+// InjectedPanel is what the agent was given for a turn: where it worked,
+// as whom, with which model and options, on a new or resumed session,
+// which MCP servers were attached, and — the first turn of a session —
+// the assembled instructions it read before the prompt.
+function InjectedPanel({ at, in: x }: { at: string; in: Injected }) {
+    const opts = Object.entries(x.options || {});
+    return (
+        <Panel title={`给 agent 的 · ${when(at)}`} badge={<span className="text-xs text-tertiary">{x.new_session ? "新会话" : "续用会话"}</span>}>
+            <KeyValue dense rows={[
+                { k: "Agent", v: <span>{x.agent} <span className="text-tertiary">· {x.harness}{x.node ? " @ " + x.node : ""}</span></span> },
+                { k: "项目", v: x.project ? <span>{x.project} <Mono className="text-tertiary">{x.workspace}</Mono></span> : <span className="text-quaternary">—</span> },
+                { k: "模型", v: x.model ? <span>固定为 {x.model}</span> : <span className="text-quaternary">未固定，AI 工具默认</span> },
+                ...(opts.length ? [{ k: "选项", v: <span>{opts.map(([k, v]) => `${k}=${v}`).join(" · ")}</span> }] : []),
+                { k: "MCP", v: x.mcp_servers?.length ? <Chips items={x.mcp_servers.map((m) => ({ id: m }))} /> : <span className="text-quaternary">无</span> },
+                { k: "指令", v: x.instructions_sent ? <span>本轮发送，{(x.instructions_bytes / 1024).toFixed(1)} KB（身份 + 技能 + 记忆）</span> : <span className="text-tertiary">会话开头已发过，本轮未重发（{(x.instructions_bytes / 1024).toFixed(1)} KB）</span>, hint: "拼装好的指令只在会话的第一轮放在 prompt 前面；之后的回合 AI 工具靠自己的会话记忆。" },
+                { k: "会话", v: x.session ? <Mono className="text-tertiary">{x.session.slice(0, 24)}</Mono> : <span className="text-quaternary">—</span> },
+                ...(x.fingerprint ? [{ k: "指纹", v: <Mono className="text-quaternary">{x.fingerprint.slice(0, 16)}</Mono>, hint: "指令 + MCP + 技能的摘要；变了会提示 /new。" }] : []),
+            ]} />
+            {x.prompt && (
+                <details className="mt-2 text-xs">
+                    <summary className="cursor-pointer text-tertiary hover:text-primary">本轮发给它的 prompt（{x.prompt.length} 字）</summary>
+                    <pre className="mt-1 max-h-64 overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-md bg-secondary px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-secondary">{x.prompt}</pre>
+                </details>
+            )}
+            {x.instructions && (
+                <details className="mt-1 text-xs">
+                    <summary className="cursor-pointer text-tertiary hover:text-primary">指令全文（{(x.instructions_bytes / 1024).toFixed(1)} KB）</summary>
+                    <pre className="mt-1 max-h-96 overflow-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-md bg-secondary px-2.5 py-1.5 font-mono text-[11px] leading-relaxed text-secondary">{x.instructions}</pre>
+                </details>
+            )}
+        </Panel>
     );
 }
 
@@ -603,7 +689,12 @@ function Trace({ p, showAnswer }: { p: Progress; showAnswer?: boolean }) {
                 </ul>
             ) : null}
             {p.reasoning && (
-                <div className="max-h-40 overflow-y-auto whitespace-pre-wrap break-words [overflow-wrap:anywhere] rounded-lg bg-secondary px-3 py-2 text-xs italic text-tertiary">{p.reasoning}</div>
+                <div className="flex flex-col gap-1 rounded-lg bg-secondary px-3 py-2">
+                    <div className="text-[11px] text-quaternary" title="AI 工具在每一步之前给出的一句话概要；它不暴露完整的思考过程。">思考摘要</div>
+                    <div className="md prose prose-sm max-h-40 max-w-none overflow-y-auto break-words text-xs text-tertiary [overflow-wrap:anywhere] prose-p:my-0.5 prose-strong:font-medium prose-strong:text-secondary">
+                        <Markdown remarkPlugins={[remarkBreaks]}>{p.reasoning}</Markdown>
+                    </div>
+                </div>
             )}
             {p.tools?.length ? <Tools tools={p.tools} /> : null}
             {showAnswer && p.answer && (

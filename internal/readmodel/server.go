@@ -344,8 +344,29 @@ type Reply struct {
 	Text         string    `json:"text"`
 	Error        string    `json:"error,omitempty"`
 	Kind         string    `json:"kind"` // reply | milestone | notice
-	// Process is how the reply was made, for the page to unfold.
-	Process *Process `json:"process,omitempty"`
+	// Process is how the reply was made, for the page to unfold; Injected
+	// what the agent was given for the turn.
+	Process  *Process  `json:"process,omitempty"`
+	Injected *Injected `json:"injected,omitempty"`
+}
+
+// Injected is what a turn gave the agent, as the console keeps it.
+type Injected struct {
+	Project           string            `json:"project,omitempty"`
+	Workspace         string            `json:"workspace,omitempty"`
+	Agent             string            `json:"agent"`
+	Node              string            `json:"node,omitempty"`
+	Harness           string            `json:"harness"`
+	Model             string            `json:"model,omitempty"`
+	Options           map[string]string `json:"options,omitempty"`
+	Session           string            `json:"session,omitempty"`
+	NewSession        bool              `json:"new_session"`
+	InstructionsSent  bool              `json:"instructions_sent"`
+	Instructions      string            `json:"instructions,omitempty"`
+	InstructionsBytes int               `json:"instructions_bytes"`
+	MCPServers        []string          `json:"mcp_servers,omitempty"`
+	Fingerprint       string            `json:"fingerprint,omitempty"`
+	Prompt            string            `json:"prompt,omitempty"`
 }
 
 // SetConsole wires the acting half of the page.

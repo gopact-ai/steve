@@ -27,12 +27,13 @@ function TaskNode({ t, tasks, plans, depth, liveSteps, seen }: { t: Task; tasks:
             <div className="flex min-w-0 flex-col gap-0.5">
                 <div className="flex min-w-0 items-center gap-2 text-sm">
                     <Who agent={t.member || "steve"} node={t.member ? t.node : undefined} running={running} />
+                    <span className="text-xs text-tertiary">{kindOf(t)}</span>
                     <span className="ml-auto flex shrink-0 items-center gap-1.5">
                         <StateBadge state={taskState(t)} />
                         <Mono className="text-quaternary">#{t.id}</Mono>
                     </span>
                 </div>
-                <div className="line-clamp-2 text-xs text-secondary" title={t.goal}>{t.goal}</div>
+                <div className="line-clamp-2 text-xs text-secondary" title={t.goal}>{chat(t) ? "第一句：" : ""}{t.goal}</div>
             </div>
             {(plan?.steps?.length || children.length) ? (
                 <ul className="ml-3 flex flex-col gap-1.5 border-l border-secondary pl-3">
@@ -57,6 +58,17 @@ function TaskNode({ t, tasks, plans, depth, liveSteps, seen }: { t: Task; tasks:
             ) : null}
         </div>
     );
+}
+
+// chat says a task is a conversation thread rather than a planned or
+// delegated piece of work: its "goal" is just the first thing said.
+function chat(t: Task): boolean { return !t.origin || t.origin === "chat"; }
+
+function kindOf(t: Task): string {
+    if (chat(t)) return `聊天线程 · ${t.turns}/${t.max_turns} 回合`;
+    if (t.origin === "delegate") return "委派";
+    if (t.origin === "schedule") return "定时";
+    return t.origin || "任务";
 }
 
 function Who({ agent, node, running, small }: { agent?: string; node?: string; running?: boolean; small?: boolean }) {

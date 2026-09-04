@@ -97,8 +97,12 @@ export interface Event {
     state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress;
 }
 export interface Conversation { id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean }
+export interface Injected {
+    project?: string; workspace?: string; agent: string; node?: string; harness: string; model?: string; options?: Record<string, string>;
+    session?: string; new_session: boolean; instructions_sent: boolean; instructions?: string; instructions_bytes: number; mcp_servers?: string[]; fingerprint?: string; prompt?: string;
+}
 export interface Reply {
-    at: string; conversation: string; input?: string; title?: string; text: string; error?: string; kind: string; process?: Process;
+    at: string; conversation: string; input?: string; title?: string; text: string; error?: string; kind: string; process?: Process; injected?: Injected;
 }
 export interface Snapshot {
     at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[]; projects: Project[];

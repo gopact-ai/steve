@@ -96,12 +96,35 @@ type NodeEndpoints interface {
 	MCPEndpoint(ctx context.Context, node string) (string, error)
 }
 
+// Injected is what a turn actually gave the agent, kept so "what did it
+// see" can be answered from the record rather than recomputed from a
+// configuration that may since have changed.
+type Injected struct {
+	Project, Workspace          string
+	Agent, Node, Harness, Model string
+	Options                     map[string]string
+	Session                     string
+	NewSession                  bool
+	// InstructionsSent says the assembled instructions (identity, skills,
+	// memory) went in front of this turn's prompt; they go once per
+	// session. Instructions holds the text only when sent.
+	InstructionsSent  bool
+	Instructions      string
+	InstructionsBytes int
+	MCPServers        []string
+	Fingerprint       string
+	// Prompt is the text of this turn as sent, without the instructions.
+	Prompt string
+}
+
 type Result struct {
 	AgentID  string
 	Title    string
 	Text     string
 	Activity []string
 	Fields   []view.Field
+	// Injected is what the agent was given for this turn.
+	Injected *Injected
 	// Recover marks a result whose card should offer to restore the
 	// just-archived session — the /clear confirmation.
 	Recover bool
@@ -502,8 +525,19 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if building {
 		user = onboard.Continue(c.text.Locale(), c.homePath, c.excerpts(prompt)) + "\n\n" + user
 	}
+	injected := &Injected{
+		Project: binding.ProjectID, Workspace: workspace.Path,
+		Agent: selected.ID, Node: selected.Node, Harness: selected.Harness, Model: selected.Model, Options: selected.Options,
+		Session: runner.ID(), NewSession: saved.UpstreamID == "", Fingerprint: capabilities.Fingerprint,
+		InstructionsBytes: len(capabilities.Instructions), Prompt: user,
+	}
+	for _, srv := range servers {
+		injected.MCPServers = append(injected.MCPServers, srv.Name)
+	}
 	if !session.InstructionsApplied && capabilities.Instructions != "" {
 		user = capabilities.Instructions + "\n\n" + user
+		injected.InstructionsSent = true
+		injected.Instructions = capabilities.Instructions
 	}
 	prompt = user
 	c.setRunner(conversationID, selected.ID, runner)
@@ -561,7 +595,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		}
 		activity = nil
 	}
-	return Result{AgentID: selected.ID, Text: out, Activity: activity}, nil
+	return Result{AgentID: selected.ID, Text: out, Activity: activity, Injected: injected}, nil
 }
 
 func (c *Coordinator) buildingProfile(req Request) bool {

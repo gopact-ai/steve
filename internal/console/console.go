@@ -307,6 +307,11 @@ func (s *Service) SendCommand(ctx context.Context, conversation, input, commandI
 	})
 	stop()
 	reply = readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary()}
+	if in := result.Injected; in != nil {
+		reply.Injected = &readmodel.Injected{Project: in.Project, Workspace: in.Workspace, Agent: in.Agent, Node: in.Node, Harness: in.Harness, Model: in.Model, Options: in.Options,
+			Session: in.Session, NewSession: in.NewSession, InstructionsSent: in.InstructionsSent, Instructions: in.Instructions, InstructionsBytes: in.InstructionsBytes,
+			MCPServers: in.MCPServers, Fingerprint: in.Fingerprint, Prompt: in.Prompt}
+	}
 	if err != nil {
 		reply.Error = err.Error()
 		if reply.Text == "" {
