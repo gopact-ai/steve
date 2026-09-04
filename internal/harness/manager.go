@@ -163,7 +163,7 @@ func (m *Manager) OpenSession(ctx context.Context, at Placement, upstreamID, wor
 		host.Close()
 		return nil, fmt.Errorf("harness manager is stopped")
 	}
-	session := &Session{at: at, id: id, generation: generation, host: host}
+	session := &Session{at: at, id: id, generation: generation, host: host, observe: observe}
 	if observe != nil {
 		observe(at, session.Settings())
 	}
@@ -298,6 +298,14 @@ func ApplyPreferences(ctx context.Context, r Runner, agentID, model string, opti
 	if !ok {
 		return
 	}
+	changed := false
+	defer func() {
+		if changed {
+			if r, ok := r.(interface{ Reobserve() }); ok {
+				r.Reobserve()
+			}
+		}
+	}()
 	if model != "" {
 		optionID, choices := configurable.ModelChoices()
 		if optionID == "" || len(choices) == 0 {
@@ -306,6 +314,8 @@ func ApplyPreferences(ctx context.Context, r Runner, agentID, model string, opti
 			log.Printf("harness: agent %q prefers model %q, not among %d offered", agentID, model, len(choices))
 		} else if err := configurable.SetModel(ctx, optionID, picked.Value); err != nil {
 			log.Printf("harness: agent %q set preferred model %q: %v", agentID, model, err)
+		} else {
+			changed = true
 		}
 	}
 	if len(options) == 0 {
@@ -337,6 +347,9 @@ func ApplyPreferences(ctx context.Context, r Runner, agentID, model string, opti
 		}
 		if err := configurable.SetOption(ctx, id, picked.Value); err != nil {
 			log.Printf("harness: agent %q set %s=%q: %v", agentID, id, want, err)
+		} else {
+			log.Printf("harness: agent %q set %s=%q (was %q)", agentID, id, picked.Value, found.Current)
+			changed = true
 		}
 	}
 }
@@ -381,6 +394,18 @@ type Session struct {
 	id         acp.SessionID
 	generation uint64
 	host       *acphost.Host
+	// observe is the manager's observer, kept so a session whose
+	// selectors were just pinned can report its settings again.
+	observe Observer
+}
+
+// Reobserve reports the session's settings to the observer once more:
+// what the book keeps should be what the session runs with after its
+// agent's pins were applied, not what it opened with.
+func (s *Session) Reobserve() {
+	if s.observe != nil {
+		s.observe(s.at, s.Settings())
+	}
 }
 
 func (s *Session) ID() string { return string(s.id) }
