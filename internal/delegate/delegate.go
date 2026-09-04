@@ -519,6 +519,13 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		failAttempt(err)
 		return result, err
 	}
+	// What the child said is the result from here on, whatever happens
+	// to its files: every return below carries it.
+	result.Outcome = string(task.OutcomeOK)
+	result.Answer = strings.TrimSpace(answer)
+	for _, ref := range exec.ParseRefs(answer) {
+		result.Refs = append(result.Refs, ref.Kind+" "+ref.Value)
+	}
 	// The child's result becomes an artifact bound to its name and queued
 	// to land once the parent's turn releases the canonical lock.
 	published, changed, err := s.artifacts.Publish(ctx, workspace, base, record.ID, "delegation #"+child.ID)
@@ -573,12 +580,6 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		result.Refs = append(result.Refs, "queued to land when this turn ends")
 	}
 	s.finish(child.ID, task.OutcomeOK)
-
-	result.Outcome = string(task.OutcomeOK)
-	result.Answer = strings.TrimSpace(answer)
-	for _, ref := range exec.ParseRefs(answer) {
-		result.Refs = append(result.Refs, ref.Kind+" "+ref.Value)
-	}
 	return result, nil
 }
 

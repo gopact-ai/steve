@@ -434,3 +434,20 @@ func TestAChildIsCutForSilenceNotForWork(t *testing.T) {
 		t.Fatalf("err = %v, want the idle deadline", err)
 	}
 }
+
+// The child's answer is the result whether or not its files landed.
+func TestAChildsAnswerSurvivesLanding(t *testing.T) {
+	w := newWorld(t)
+	w.running(t, "codex")
+	w.sessions.reply = func(string) (string, error) { return "I wrote it.\nREF: git abc123 — the change", nil }
+	res, err := w.service.Delegate(t.Context(), "chat", "codex", agentmcp.DelegateRequest{Goal: "write it", Requires: []string{"gpu"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.State != "done" || !strings.Contains(res.Answer, "I wrote it.") {
+		t.Fatalf("answer lost: %+v", res)
+	}
+	if !strings.Contains(strings.Join(res.Refs, "\n"), "git abc123") {
+		t.Fatalf("refs lost: %+v", res.Refs)
+	}
+}
