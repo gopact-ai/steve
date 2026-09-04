@@ -100,7 +100,11 @@ export interface PlanLine { text: string; status: string }
 export interface Progress {
     agent?: string; node?: string; model?: string; reasoning?: string; answer?: string; tools?: ToolCall[]; plan?: PlanLine[];
 }
-export interface StepInfo { kind?: string; goal?: string; state?: string; since?: string; elapsed?: string; answer?: string; refs?: string[] }
+export interface StepInfo { kind?: string; goal?: string; state?: string; since?: string; elapsed?: string; answer?: string; refs?: string[]; attempt?: string; files?: number }
+export interface ChangeSummary { attempt: string; project?: string; base?: string; artifact?: string; files: number; note?: string }
+export interface Change { path: string; status: string; added: number; deleted: number; binary?: boolean }
+export interface ChangeIndex { attempt: string; project?: string; base?: string; artifact?: string; changes: Change[]; truncated?: boolean; note?: string }
+export interface FileDiff { path: string; diff: string; truncated?: boolean }
 export interface StepProcess extends StepInfo { id: string; agent?: string; node?: string; reasoning?: string; tools?: ToolCall[] }
 export interface Process { reasoning?: string; tools?: ToolCall[]; steps?: StepProcess[] }
 export interface Event {
@@ -117,6 +121,7 @@ export interface Injected {
 }
 export interface Reply {
     at: string; conversation: string; input?: string; title?: string; text: string; error?: string; kind: string; process?: Process; injected?: Injected;
+    changes?: ChangeSummary;
 }
 export interface Snapshot {
     at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[]; projects: Project[];

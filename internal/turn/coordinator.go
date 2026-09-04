@@ -127,6 +127,9 @@ type Result struct {
 	Fields   []view.Field
 	// Injected is what the agent was given for this turn.
 	Injected *Injected
+	// Attempt is the attempt the turn ran as; its record holds the
+	// before and after snapshots.
+	Attempt string
 	// Recover marks a result whose card should offer to restore the
 	// just-archived session — the /clear confirmation.
 	Recover bool
@@ -607,7 +610,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		}
 		activity = nil
 	}
-	return Result{AgentID: selected.ID, Text: out, Activity: activity, Injected: injected}, nil
+	return Result{AgentID: selected.ID, Text: out, Activity: activity, Injected: injected, Attempt: att.ID}, nil
 }
 
 func (c *Coordinator) buildingProfile(req Request) bool {

@@ -78,6 +78,8 @@ type Service struct {
 	// observe, when set, is told what each child is doing and how it
 	// ended; the console shows it under the parent's delegate call.
 	observe func(Child, view.Progress)
+	// attempts_ is each child's attempt id, for the end report.
+	attempts_ map[string]string
 	// InlineWait is how long steve_delegate itself waits before answering
 	// "running": a child that finishes in seconds comes back done in one
 	// call, and a slow one does not hold the request open past any
@@ -339,7 +341,7 @@ func (s *Service) drive(ctx context.Context, conversationID, agentID string, par
 	close(entry.done)
 	log.Printf("delegate: task #%s %s on %s", spawned.ID, result.State, nodeLabel(candidate.Node))
 	s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node,
-		Goal: req.Goal, State: result.State, Since: since, Elapsed: time.Since(since), Answer: result.Answer, Refs: result.Refs}, last)
+		Goal: req.Goal, State: result.State, Since: since, Elapsed: time.Since(since), Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}, last)
 
 	// Keep the result around for a late awaiter, then let it go.
 	time.AfterFunc(keepFinished, func() {
@@ -360,10 +362,29 @@ type Child struct {
 	Elapsed                        time.Duration
 	Answer                         string
 	Refs                           []string
+	// Attempt is the child's attempt, once opened: its record holds the
+	// before and after snapshots.
+	Attempt string
 }
 
 // SetObserver installs where a child's progress goes; nil discards it.
 func (s *Service) SetObserver(observe func(Child, view.Progress)) { s.observe = observe }
+
+// attemptOf is the attempt a child ran as, remembered when it opened.
+func (s *Service) attemptOf(childID string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.attempts_[childID]
+}
+
+func (s *Service) rememberAttempt(childID, attemptID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.attempts_ == nil {
+		s.attempts_ = map[string]string{}
+	}
+	s.attempts_[childID] = attemptID
+}
 
 func (s *Service) report(c Child, p view.Progress) {
 	if s.observe != nil {
@@ -448,6 +469,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
 		return result, fmt.Errorf("lease delegation: %w", err)
 	}
+	s.rememberAttempt(child.ID, record.ID)
 	beat, stopBeat := context.WithCancel(ctx)
 	defer stopBeat()
 	lost := s.attempts.Heartbeat(beat, record.ID)

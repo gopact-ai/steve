@@ -1,11 +1,12 @@
 package readmodel
 
 import (
-	"errors"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"io"
 	"log"
@@ -87,6 +88,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/home", s.guard(s.consoleHome))
 	mux.HandleFunc("PUT /console/home/{name}", s.guard(s.consoleSetHomeFile))
 	mux.HandleFunc("PUT /console/memory/{project}", s.guard(s.consoleSetProjectMemory))
+	mux.HandleFunc("GET /console/attempts/{attempt}/changes", s.guard(s.consoleAttemptChanges))
+	mux.HandleFunc("GET /console/attempts/{attempt}/diff", s.guard(s.consoleAttemptDiff))
 	mux.HandleFunc("POST /console/projects/{id}/workspaces", s.guard(s.consoleAddWorkspace))
 	mux.HandleFunc("DELETE /console/projects/{id}/workspaces/{node}", s.guard(s.consoleRemoveWorkspace))
 	mux.HandleFunc("GET /console/nodes/{name}/settings", s.guard(s.nodeSettings))
@@ -407,14 +410,18 @@ type Admin interface {
 	SetHomeFile(ctx context.Context, name, text string) error
 	// SetProjectMemory rewrites one project's memory whole.
 	SetProjectMemory(ctx context.Context, project, text string) error
+	// AttemptChanges is the files an attempt changed; AttemptDiff one of
+	// them. Owner-only, like the rest of the console.
+	AttemptChanges(ctx context.Context, attempt string) (ChangeIndex, error)
+	AttemptDiff(ctx context.Context, attempt, path string) (FileDiff, error)
 }
 
 // SkillsView is the skills page: where skills are looked for, every
 // skill found there with whether it is handed to agents, and whether
 // each machine holds the current bundle.
 type SkillsView struct {
-	Fingerprint string      `json:"fingerprint"`
-	SearchPaths []string    `json:"search_paths"`
+	Fingerprint string   `json:"fingerprint"`
+	SearchPaths []string `json:"search_paths"`
 	// BuiltinRoot is the directory the skills shipped with steve are
 	// written to; it is searched last and cannot be removed.
 	BuiltinRoot string      `json:"builtin_root,omitempty"`
@@ -441,17 +448,17 @@ type SkillSource struct {
 // SkillView is one skill: named by its directory, described by its
 // SKILL.md, and pinned by agents or projects that ask for it by path.
 type SkillView struct {
-	Name        string   `json:"name"`
-	Path        string   `json:"path"`
-	Root        string   `json:"root"`
-	Title       string   `json:"title,omitempty"`
-	Description string   `json:"description,omitempty"`
-	Enabled     bool     `json:"enabled"`
-	Builtin     bool     `json:"builtin,omitempty"`
+	Name        string `json:"name"`
+	Path        string `json:"path"`
+	Root        string `json:"root"`
+	Title       string `json:"title,omitempty"`
+	Description string `json:"description,omitempty"`
+	Enabled     bool   `json:"enabled"`
+	Builtin     bool   `json:"builtin,omitempty"`
 	// Source names the installed repository a skill came from, if one.
-	Source string `json:"source,omitempty"`
-	Agents      []string `json:"agents"`
-	Projects    []string `json:"projects"`
+	Source   string   `json:"source,omitempty"`
+	Agents   []string `json:"agents"`
+	Projects []string `json:"projects"`
 }
 
 // SkillNode says whether a machine holds the bundle the hub last packed.
@@ -516,15 +523,15 @@ type MCPDeployment struct {
 // MCPProbeView is the last probe of a deployment as the hub remembers
 // it. Stale says the machine's configuration changed since.
 type MCPProbeView struct {
-	At            time.Time         `json:"at"`
-	OK            bool              `json:"ok"`
-	Error         string            `json:"error,omitempty"`
-	Stale         bool              `json:"stale,omitempty"`
+	At            time.Time          `json:"at"`
+	OK            bool               `json:"ok"`
+	Error         string             `json:"error,omitempty"`
+	Stale         bool               `json:"stale,omitempty"`
 	Tools         []nodewire.MCPTool `json:"tools"`
-	Digest        string            `json:"digest,omitempty"`
-	ServerName    string            `json:"server_name,omitempty"`
-	ServerVersion string            `json:"server_version,omitempty"`
-	Protocol      string            `json:"protocol,omitempty"`
+	Digest        string             `json:"digest,omitempty"`
+	ServerName    string             `json:"server_name,omitempty"`
+	ServerVersion string             `json:"server_version,omitempty"`
+	Protocol      string             `json:"protocol,omitempty"`
 }
 
 // MCPPlatform is a server the hub makes per session.
@@ -633,6 +640,36 @@ type HomeView struct {
 	Audit string `json:"audit,omitempty"`
 }
 
+// ChangeSummary is what a turn changed, as the reply keeps it: the
+// attempt to ask for the index, and the count. Paths and diffs are
+// read on demand, never stored with the reply.
+type ChangeSummary struct {
+	Attempt  string `json:"attempt"`
+	Project  string `json:"project,omitempty"`
+	Base     string `json:"base,omitempty"`
+	Artifact string `json:"artifact,omitempty"`
+	Files    int    `json:"files"`
+	Note     string `json:"note,omitempty"`
+}
+
+// ChangeIndex is the files an attempt changed, bounded.
+type ChangeIndex struct {
+	Attempt   string            `json:"attempt"`
+	Project   string            `json:"project,omitempty"`
+	Base      string            `json:"base,omitempty"`
+	Artifact  string            `json:"artifact,omitempty"`
+	Changes   []artifact.Change `json:"changes"`
+	Truncated bool              `json:"truncated,omitempty"`
+	Note      string            `json:"note,omitempty"`
+}
+
+// FileDiff is one changed file's unified diff, cut at the store's limit.
+type FileDiff struct {
+	Path      string `json:"path"`
+	Diff      string `json:"diff"`
+	Truncated bool   `json:"truncated,omitempty"`
+}
+
 // ProjectMemory is one project's memory as the page edits it.
 type ProjectMemory struct {
 	ID     string `json:"id"`
@@ -657,10 +694,10 @@ type HomeFile struct {
 // its first line, placed by its project and agent, and marked while a
 // line of it runs.
 type Conversation struct {
-	ID      string    `json:"id"`
-	Title   string    `json:"title"`
-	Project string    `json:"project,omitempty"`
-	Agent   string    `json:"agent,omitempty"`
+	ID      string `json:"id"`
+	Title   string `json:"title"`
+	Project string `json:"project,omitempty"`
+	Agent   string `json:"agent,omitempty"`
 	// Place is where the conversation's agent works in its project now.
 	Place   *Placement `json:"place,omitempty"`
 	LastAt  time.Time  `json:"last_at"`
@@ -691,6 +728,8 @@ type Reply struct {
 	// what the agent was given for the turn.
 	Process  *Process  `json:"process,omitempty"`
 	Injected *Injected `json:"injected,omitempty"`
+	// Changes is what the turn changed, when an attempt captured it.
+	Changes *ChangeSummary `json:"changes,omitempty"`
 }
 
 // Injected is what a turn gave the agent, as the console keeps it.
@@ -1152,6 +1191,35 @@ func (s *Server) consoleSetHomeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleAttemptChanges(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	index, err := s.admin.AttemptChanges(r.Context(), r.PathValue("attempt"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if index.Changes == nil {
+		index.Changes = []artifact.Change{}
+	}
+	_ = json.NewEncoder(w).Encode(index)
+}
+
+func (s *Server) consoleAttemptDiff(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	diff, err := s.admin.AttemptDiff(r.Context(), r.PathValue("attempt"), r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(diff)
 }
 
 func (s *Server) consoleSetProjectMemory(w http.ResponseWriter, r *http.Request) {

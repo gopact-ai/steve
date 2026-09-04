@@ -755,8 +755,9 @@ func serve(args []string) error {
 		return project.Level(level)
 	}
 	admin := &fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos, attempts: attempts,
-		skills: live, shipper: hubSkills, coordinator: coordinator, homePath: cfg.Gateway.HomePath, memory: memories}
+		skills: live, shipper: hubSkills, coordinator: coordinator, homePath: cfg.Gateway.HomePath, memory: memories, artifacts: artifacts}
 	dashboard.SetAdmin(admin)
+	cons.SetInspector(admin)
 	defer dashboard.Close()
 	go func() {
 		if err := dashboard.Serve(); err != nil {
@@ -823,8 +824,14 @@ func serve(args []string) error {
 			if where == "" {
 				where = nodeName() // the hub itself, named like any machine
 			}
-			view.DelegateProgress(c.Task, c.Agent, where, readmodel.StepInfo{Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
-				Elapsed: c.Elapsed.Round(time.Second).String(), Answer: c.Answer, Refs: c.Refs}, p)
+			info := readmodel.StepInfo{Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
+				Elapsed: c.Elapsed.Round(time.Second).String(), Answer: c.Answer, Refs: c.Refs}
+			if c.State != "running" && c.Attempt != "" {
+				if changes, err := admin.Changes(context.Background(), c.Attempt); err == nil && changes != nil {
+					info.Attempt, info.Files = changes.Attempt, changes.Files
+				}
+			}
+			view.DelegateProgress(c.Task, c.Agent, where, info, p)
 		})
 		gate.SetDelegator(delegation)
 		// Remote agents call a loopback port on their own machine; the node
@@ -1182,6 +1189,8 @@ type fleetAdmin struct {
 	repos    *repoCache
 	// attempts is where a copy's lock is taken before it is forgotten.
 	attempts *attempt.Service
+	// artifacts is the project snapshots, for a turn's changes.
+	artifacts *artifact.Store
 	// skills is the live map of what agents are handed, shipper what each
 	// machine holds of it; coordinator holds the lock a change needs.
 	skills      *skills.Live
@@ -2797,6 +2806,80 @@ func (a *fleetAdmin) Home(_ context.Context) (readmodel.HomeView, error) {
 		}
 	}
 	return view, nil
+}
+
+// changeSnapshots is the before and after of an attempt, when it captured
+// one: nothing changed leaves the after empty.
+func (a *fleetAdmin) changeSnapshots(ctx context.Context, attemptID string) (attempt.Record, string, string, error) {
+	if a.attempts == nil || a.artifacts == nil {
+		return attempt.Record{}, "", "", errors.New("attempts are not wired")
+	}
+	record, err := a.attempts.Get(ctx, attemptID)
+	if err != nil {
+		return attempt.Record{}, "", "", err
+	}
+	after := ""
+	if record.Result != nil {
+		after = record.Result.Artifact
+	}
+	return record, record.Base, after, nil
+}
+
+// Changes is what an attempt changed, as the reply keeps it.
+func (a *fleetAdmin) Changes(ctx context.Context, attemptID string) (*readmodel.ChangeSummary, error) {
+	record, base, after, err := a.changeSnapshots(ctx, attemptID)
+	if err != nil {
+		return nil, err
+	}
+	summary := &readmodel.ChangeSummary{Attempt: attemptID, Project: record.Project, Base: base, Artifact: after}
+	if after == "" || after == base {
+		return summary, nil // nothing changed: the fold says so
+	}
+	changes, truncated, err := a.artifacts.Changes(ctx, record.Project, base, after)
+	if err != nil {
+		summary.Note = err.Error()
+		return summary, nil
+	}
+	summary.Files = len(changes)
+	if truncated {
+		summary.Note = "只统计了前 " + fmt.Sprint(len(changes)) + " 个"
+	}
+	return summary, nil
+}
+
+// AttemptChanges is the files an attempt changed.
+func (a *fleetAdmin) AttemptChanges(ctx context.Context, attemptID string) (readmodel.ChangeIndex, error) {
+	record, base, after, err := a.changeSnapshots(ctx, attemptID)
+	if err != nil {
+		return readmodel.ChangeIndex{}, err
+	}
+	index := readmodel.ChangeIndex{Attempt: attemptID, Project: record.Project, Base: base, Artifact: after}
+	if after == "" || after == base {
+		index.Note = "没有改动"
+		return index, nil
+	}
+	changes, truncated, err := a.artifacts.Changes(ctx, record.Project, base, after)
+	if err != nil {
+		return readmodel.ChangeIndex{}, err
+	}
+	index.Changes, index.Truncated = changes, truncated
+	return index, nil
+}
+
+// AttemptDiff is one changed file's diff.
+func (a *fleetAdmin) AttemptDiff(ctx context.Context, attemptID, path string) (readmodel.FileDiff, error) {
+	record, base, after, err := a.changeSnapshots(ctx, attemptID)
+	if err != nil {
+		return readmodel.FileDiff{}, err
+	}
+	if after == "" {
+		return readmodel.FileDiff{}, errors.New("没有改动")
+	}
+	diff, truncated, err := a.artifacts.FileDiff(ctx, record.Project, base, after, path)
+	if err != nil {
+		return readmodel.FileDiff{}, err
+	}
+	return readmodel.FileDiff{Path: path, Diff: diff, Truncated: truncated}, nil
 }
 
 // SetProjectMemory rewrites one project's memory whole, through the

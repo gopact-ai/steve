@@ -2,6 +2,7 @@ import { ChevronDown } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { when } from "@/lib/api";
 import type { Process, Reply, StepProcess } from "@/lib/types";
+import { ChangesFold } from "./changes";
 import { DelegationCard } from "./delegation";
 import { Md } from "./markdown";
 import { ToolCalls, headingOf } from "./tool-calls";
@@ -24,6 +25,7 @@ export function AssistantMessage({ r, selected, onSelect }: { r: Reply; selected
         <div className={`flex min-w-0 flex-col gap-2 rounded-xl px-2 py-1 ${selected ? "bg-secondary/60" : ""}`}>
             {r.title && <div className="text-sm font-semibold text-primary">{r.title}</div>}
             {r.process && <InlineProcess process={r.process} />}
+            {r.changes && <ChangesFold summary={r.changes} label="本轮净改动，含已落地的子任务" />}
             {r.text && <Md text={r.text} className={r.error ? "text-error-primary" : ""} />}
             <div className="flex items-center gap-2 text-[11px] text-quaternary">
                 <span>{when(r.at)}</span>

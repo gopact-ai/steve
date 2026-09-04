@@ -1,6 +1,7 @@
 import { ChevronDown, Loading01 } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import type { Progress, StepInfo, ToolCall } from "@/lib/types";
+import { ChangesFold } from "./changes";
 import { Md } from "./markdown";
 import { ToolCalls } from "./tool-calls";
 
@@ -45,6 +46,7 @@ export function DelegationCard({ id, info, progress, tools, reasoning, live }: {
                         <Md size="xs" text={info.answer} className="max-h-72 overflow-y-auto text-secondary" />
                     </div>
                 )}
+                {!running && info.attempt && info.files ? <ChangesFold summary={{ attempt: info.attempt, files: info.files }} /> : null}
                 {!running && info.refs?.length ? (
                     <ul className="flex flex-col gap-0.5 text-[11px] text-quaternary">{info.refs.map((r, i) => <li key={i} className="truncate font-mono" title={r}>{r}</li>)}</ul>
                 ) : null}

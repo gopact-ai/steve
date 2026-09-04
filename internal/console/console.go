@@ -68,10 +68,11 @@ type transcript struct {
 }
 
 type Service struct {
-	handler Handler
-	owner   string
-	model   *readmodel.Model
-	titler  Titler
+	handler   Handler
+	owner     string
+	model     *readmodel.Model
+	titler    Titler
+	inspector Inspector
 
 	mu      sync.Mutex
 	replies map[string][]readmodel.Reply
@@ -96,6 +97,14 @@ func New(handler Handler, owner string, model *readmodel.Model) *Service {
 // SetTitler gives the service a way to name conversations. Without one,
 // a conversation is named by its first line.
 func (s *Service) SetTitler(t Titler) { s.titler = t }
+
+// Inspector says what an attempt changed, for the reply to carry.
+type Inspector interface {
+	Changes(ctx context.Context, attempt string) (*readmodel.ChangeSummary, error)
+}
+
+// SetInspector wires where a reply's changes come from.
+func (s *Service) SetInspector(i Inspector) { s.inspector = i }
 
 // Persist keeps the transcript in a durable document and loads what an
 // earlier process left there.
@@ -462,6 +471,13 @@ func (s *Service) SendCommand(ctx context.Context, conversation, input, commandI
 	})
 	stop()
 	reply = readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary()}
+	if result.Attempt != "" && s.inspector != nil {
+		if changes, cerr := s.inspector.Changes(ctx, result.Attempt); cerr != nil {
+			log.Printf("console: changes of attempt %s: %v", result.Attempt, cerr)
+		} else if changes != nil {
+			reply.Changes = changes
+		}
+	}
 	if in := result.Injected; in != nil {
 		reply.Injected = &readmodel.Injected{Project: in.Project, Workspace: in.Workspace, Agent: in.Agent, Node: in.Node, Harness: in.Harness, Model: in.Model, Options: in.Options,
 			Session: in.Session, NewSession: in.NewSession, InstructionsSent: in.InstructionsSent, Instructions: in.Instructions, InstructionsBytes: in.InstructionsBytes,
@@ -573,6 +589,7 @@ func (w *process) step(id string, p readmodel.Progress, info *readmodel.StepInfo
 	step := readmodel.StepProcess{ID: id, Agent: p.Agent, Node: p.Node, Reasoning: p.Reasoning, Tools: p.Tools}
 	if info != nil {
 		step.Kind, step.Goal, step.State, step.Since, step.Elapsed, step.Answer, step.Refs = info.Kind, info.Goal, info.State, info.Since, info.Elapsed, info.Answer, info.Refs
+		step.Attempt, step.Files = info.Attempt, info.Files
 	}
 	w.steps[id] = step
 }

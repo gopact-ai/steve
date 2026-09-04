@@ -745,6 +745,8 @@ type StepProcess struct {
 	Elapsed string   `json:"elapsed,omitempty"`
 	Answer  string   `json:"answer,omitempty"`
 	Refs    []string `json:"refs,omitempty"`
+	Attempt string   `json:"attempt,omitempty"`
+	Files   int      `json:"files,omitempty"`
 }
 
 // StepInfo is what a step.progress event says about the step itself,
@@ -758,6 +760,9 @@ type StepInfo struct {
 	Elapsed string   `json:"elapsed,omitempty"`
 	Answer  string   `json:"answer,omitempty"`
 	Refs    []string `json:"refs,omitempty"`
+	// Attempt and Files say what the child changed, once it ended.
+	Attempt string `json:"attempt,omitempty"`
+	Files   int    `json:"files,omitempty"`
 }
 
 // DelegateProgress publishes what a delegated child is doing, as a step
