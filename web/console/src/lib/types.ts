@@ -76,10 +76,20 @@ export interface Repo { path: string; branch?: string; head?: string; subject?: 
 export interface Project {
     id: string; node: string; path: string; level: string; repo: string; default_role?: string; agents: string[];
     repos?: Repo[]; home?: boolean; default?: boolean;
+    // Where the project is: its home first, then its copies.
+    workspaces: Workspace[];
 }
+export interface Workspace {
+    id: string; node: string; path: string; kind: "canonical" | "copy" | "worktree" | string; origin?: string; source?: string;
+    state?: "ready" | "provisioning" | "failed" | string; error?: string; busy?: boolean;
+    repos?: Repo[]; agents: string[];
+}
+// Placement is where an agent works in a project, as the server decides.
+export interface Placement { workspace: string; kind: string; node: string }
 export interface ContextProject { id: string; node: string; path: string; level: string; repo: string; version: number; bound?: boolean }
 export interface AgentChoice {
     id: string; node: string; harness: string; model?: string; ready: boolean; why?: string; usable: boolean; because?: string; current?: boolean;
+    place?: Placement;
 }
 export interface ConversationContext { conversation: string; project?: ContextProject; agent?: AgentChoice; agents: AgentChoice[] }
 export interface Verb { command: string; args?: string; summary: string }
@@ -96,7 +106,7 @@ export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
     state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress;
 }
-export interface Conversation { id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean }
+export interface Conversation { id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean; place?: Placement }
 export interface Injected {
     project?: string; workspace?: string; agent: string; node?: string; harness: string; model?: string; options?: Record<string, string>;
     session?: string; new_session: boolean; instructions_sent: boolean; instructions?: string; instructions_bytes: number; mcp_servers?: string[]; fingerprint?: string; prompt?: string;

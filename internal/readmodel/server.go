@@ -1,6 +1,7 @@
 package readmodel
 
 import (
+	"errors"
 	"context"
 	"crypto/subtle"
 	"encoding/json"
@@ -64,6 +65,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("DELETE /console/agents/{id}", s.guard(s.consoleRemoveAgent))
 	mux.HandleFunc("POST /console/projects", s.guard(s.consoleAddProject))
 	mux.HandleFunc("DELETE /console/projects/{id}", s.guard(s.consoleRemoveProject))
+	mux.HandleFunc("POST /console/projects/{id}/workspaces", s.guard(s.consoleAddWorkspace))
+	mux.HandleFunc("DELETE /console/projects/{id}/workspaces/{node}", s.guard(s.consoleRemoveWorkspace))
 	mux.HandleFunc("GET /console/nodes/{name}/settings", s.guard(s.nodeSettings))
 	mux.HandleFunc("PUT /console/nodes/{name}/settings", s.guard(s.nodeSettings))
 	mux.HandleFunc("GET /bootstrap/{name}", s.bootstrap)
@@ -238,6 +241,17 @@ type AgentChoice struct {
 	Usable  bool   `json:"usable"`
 	Because string `json:"because,omitempty"`
 	Current bool   `json:"current,omitempty"`
+	// Place is where this agent would work in the conversation's project:
+	// the project's own rule, answered by the server, so no page has to
+	// know it. Nil when the agent's machine has no workspace of it.
+	Place *Placement `json:"place,omitempty"`
+}
+
+// Placement is one workspace as a place to work: which, what kind, where.
+type Placement struct {
+	Workspace string `json:"workspace"`
+	Kind      string `json:"kind"`
+	Node      string `json:"node"`
 }
 
 // Verb is one console verb with its argument shape and a line of help.
@@ -290,6 +304,14 @@ type AddProjectRequest struct {
 	Level string `json:"level,omitempty"`
 }
 
+// AddWorkspaceRequest is the page giving a project a copy on a machine:
+// "adopt" a directory already there, or "clone" the project into one.
+type AddWorkspaceRequest struct {
+	Node   string `json:"node,omitempty"`
+	Path   string `json:"path"`
+	Origin string `json:"origin,omitempty"`
+}
+
 // AddAgentRequest is the page adding an agent: an id, the AI tool it
 // runs, the machine it runs on ("" is the hub), a preferred model.
 type AddAgentRequest struct {
@@ -317,6 +339,10 @@ type Admin interface {
 	// RemoveProject retires one and drops it from the file.
 	AddProject(ctx context.Context, req AddProjectRequest) error
 	RemoveProject(ctx context.Context, id string) error
+	// AddWorkspace gives a project a copy on a machine — a directory that
+	// is there, or one cloned into place; RemoveWorkspace forgets one.
+	AddWorkspace(ctx context.Context, projectID string, req AddWorkspaceRequest) error
+	RemoveWorkspace(ctx context.Context, projectID, node string) error
 	// NodeSettings reads what a machine offers; SetNodeSettings rewrites
 	// it and answers what is in force. The hub machine is one of them.
 	NodeSettings(ctx context.Context, name string) (nodewire.Settings, error)
@@ -331,9 +357,11 @@ type Conversation struct {
 	Title   string    `json:"title"`
 	Project string    `json:"project,omitempty"`
 	Agent   string    `json:"agent,omitempty"`
-	LastAt  time.Time `json:"last_at"`
-	Count   int       `json:"count"`
-	Running bool      `json:"running"`
+	// Place is where the conversation's agent works in its project now.
+	Place   *Placement `json:"place,omitempty"`
+	LastAt  time.Time  `json:"last_at"`
+	Count   int        `json:"count"`
+	Running bool       `json:"running"`
 }
 
 type Reply struct {
@@ -460,6 +488,45 @@ func (s *Server) consoleRemoveProject(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
+
+func (s *Server) consoleAddWorkspace(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "not wired", http.StatusNotImplemented)
+		return
+	}
+	var req AddWorkspaceRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.AddWorkspace(r.Context(), r.PathValue("id"), req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleRemoveWorkspace(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "not wired", http.StatusNotImplemented)
+		return
+	}
+	if err := s.admin.RemoveWorkspace(r.Context(), r.PathValue("id"), r.PathValue("node")); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, ErrBusy) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// ErrBusy is an admin action refused because something is running where
+// it would act.
+var ErrBusy = errors.New("busy")
 
 func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")

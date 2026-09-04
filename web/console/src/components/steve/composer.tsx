@@ -3,6 +3,7 @@ import { ArrowUp, ChevronDown, Folder, Plus, Square } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import type { ConversationContext, Project, Suggestion, Verb } from "@/lib/types";
+import { placeLabel } from "@/lib/workspaces";
 
 // Composer is the console's input, in the proportions of a chat app's:
 // a textarea that grows, a row of small round controls under it — the
@@ -87,7 +88,7 @@ export function Composer(p: ComposerProps) {
                         <AriaButton aria-label="项目" className={`${chip} text-tertiary hover:text-secondary`}>
                             <Folder className="size-3.5" />
                             <span>{p.project?.id || "项目"}</span>
-                            {p.project && <span className="text-quaternary">{p.project.node}</span>}
+                            {p.project && (p.agent?.place ? <span className="text-quaternary">{placeLabel(p.agent.place)}</span> : p.agent ? <span className="text-error-primary">{p.agent.node} 上没有工作区</span> : <span className="text-quaternary">{p.project.node}</span>)}
                             <ChevronDown className="size-3 text-fg-quaternary" />
                         </AriaButton>
                         <Dropdown.Popover placement="top start" className="w-80">

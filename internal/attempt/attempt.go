@@ -92,7 +92,7 @@ type Scope string
 
 const (
 	// ScopeUnrestricted is an in-place turn on the canonical workspace,
-	// under the canonical write lock.
+	// under the canonical write lock — or on a copy, under that copy's.
 	ScopeUnrestricted Scope = "unrestricted"
 	// ScopePathSet is a step in an isolated workspace, allowed to touch
 	// only the declared paths.
@@ -236,6 +236,25 @@ func endpointKey(node, harness string) string {
 	return "endpoint:" + node + "/" + harness
 }
 
+// Hold takes a resource's lease for the caller — an admin action that
+// must not race a turn, such as forgetting a copy — and returns how to let
+// go. A resource someone holds is reported as Busy.
+func (s *Service) Hold(ctx context.Context, region, key, holder string) (func(), error) {
+	lease, err := s.l.AcquireIn(ctx, region, key, holder, s.TTL)
+	if err != nil {
+		if errors.Is(err, ledger.ErrHeld) {
+			current, ok, _ := s.l.LeaseOf(ctx, key)
+			busy := Busy{Resource: key}
+			if ok {
+				busy.Holder, busy.Until = current.Holder, current.ExpiresAt
+			}
+			return nil, busy
+		}
+		return nil, err
+	}
+	return func() { _ = s.l.ReleaseAny(context.Background(), lease) }, nil
+}
+
 // Open takes every lease the attempt needs and records it leased. It is
 // all or nothing: a lease that cannot be had releases the ones already
 // taken and reports which resource is busy.
@@ -246,10 +265,19 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 	if spec.Scope == "" {
 		return Record{}, errors.New("attempt: write scope must be fixed")
 	}
-	if spec.Scope != ScopeUnrestricted && spec.Workspace.Kind == project.KindCanonical {
+	if spec.Workspace.Project != "" && spec.Workspace.Project != spec.Project {
+		return Record{}, fmt.Errorf("attempt: workspace %s belongs to project %s, not %s", spec.Workspace.ID, spec.Workspace.Project, spec.Project)
+	}
+	inPlace := spec.Workspace.Kind == project.KindCanonical || spec.Workspace.Kind == project.KindCopy
+	if inPlace && spec.Workspace.Node != spec.Node {
+		// The lock is issued where the workspace is; an attempt elsewhere
+		// would lock one directory and write another.
+		return Record{}, fmt.Errorf("attempt: workspace %s is on %q, the attempt on %q", spec.Workspace.ID, spec.Workspace.Node, spec.Node)
+	}
+	if spec.Scope != ScopeUnrestricted && inPlace {
 		return Record{}, fmt.Errorf("attempt: scope %s is only allowed in an isolated workspace", spec.Scope)
 	}
-	if spec.Scope == ScopeUnrestricted && spec.Workspace.Kind != project.KindCanonical {
+	if spec.Scope == ScopeUnrestricted && !inPlace {
 		return Record{}, errors.New("attempt: unrestricted scope is only allowed in place")
 	}
 	var held []ledger.Lease
@@ -283,6 +311,13 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 				release()
 				return Record{}, err
 			}
+		}
+	case project.KindCopy:
+		// A copy is one directory with one writer; its lock is its own
+		// id ("copy:<project>/<node>"), issued where the copy is.
+		if err := take(spec.Region, spec.Workspace.ID); err != nil {
+			release()
+			return Record{}, err
 		}
 	case project.KindWorktree:
 		if err := take(spec.Region, "workspace:"+spec.Workspace.ID); err != nil {

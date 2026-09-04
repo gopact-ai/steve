@@ -6,6 +6,8 @@ import (
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/project"
+	"slices"
 	"sort"
 	"time"
 
@@ -92,6 +94,13 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 		snap.Plans = []Plan{}
 	}
 	snap.Projects = []Project{}
+	var liveAttempts []Attempt
+	if m.src.Ledger != nil {
+		liveAttempts = m.src.Ledger.LiveAttempts(ctx)
+		for i := range liveAttempts {
+			liveAttempts[i].Node = m.place(liveAttempts[i].Node)
+		}
+	}
 	if m.src.Ledger != nil {
 		for _, p := range m.src.Ledger.ProjectList(ctx) {
 			item := Project{
@@ -99,13 +108,32 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 				Level: string(p.Level.OrDefault()), Repo: string(p.Repo), DefaultRole: string(p.DefaultRole), Agents: []string{},
 				Home: p.ID == m.src.HomeProject, Default: p.ID == m.src.DefaultProject,
 			}
-			if m.src.Repos != nil {
-				item.Repos = m.src.Repos(p.ID)
-			}
-			for _, a := range snap.Agents {
-				if a.Eligible && p.NotHome(nodeOf(a.Node, m.src.Hub.Node), false) == nil {
-					item.Agents = append(item.Agents, a.ID)
+			item.Workspaces = []Workspace{}
+			for _, ws := range p.Workspaces() {
+				w := Workspace{ID: ws.ID, Node: m.place(ws.Node), Path: ws.Path, Kind: string(ws.Kind), Agents: []string{}}
+				if c, ok := p.CopyOn(ws.Node); ok {
+					w.Origin, w.Source, w.State, w.Error = string(c.Origin), c.Source, string(c.State), c.Error
 				}
+				for _, a := range liveAttempts {
+					if a.Node == w.Node && a.Workspace == ws.Path {
+						w.Busy = true
+					}
+				}
+				if m.src.Repos != nil {
+					w.Repos = m.src.Repos(ws.ID)
+				}
+				for _, a := range snap.Agents {
+					if a.Eligible && ws.Kind == project.KindCanonical && nodeOf(a.Node, m.src.Hub.Node) == ws.Node || a.Eligible && ws.Kind != project.KindCanonical && placed(p, nodeOf(a.Node, m.src.Hub.Node), ws.ID) {
+						w.Agents = append(w.Agents, a.ID)
+						if !slices.Contains(item.Agents, a.ID) {
+							item.Agents = append(item.Agents, a.ID)
+						}
+					}
+				}
+				if ws.Kind == project.KindCanonical {
+					item.Repos = w.Repos
+				}
+				item.Workspaces = append(item.Workspaces, w)
 			}
 			snap.Projects = append(snap.Projects, item)
 		}
@@ -114,11 +142,8 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	snap.Attempts, snap.Landings = []Attempt{}, []Landing{}
 	snap.Facts = Facts{Reservations: []Reservation{}, Attestations: []Attestation{}, Replicas: []Replica{}, Disclosures: []Disclosure{}, Effects: []Effect{}, Grants: []Grant{}}
 	if m.src.Ledger != nil {
-		if live := m.src.Ledger.LiveAttempts(ctx); live != nil {
-			for i := range live {
-				live[i].Node = m.place(live[i].Node)
-			}
-			snap.Attempts = live
+		if liveAttempts != nil {
+			snap.Attempts = liveAttempts
 		}
 		if recent := m.src.Ledger.RecentLandings(ctx); recent != nil {
 			snap.Landings = recent
@@ -494,4 +519,11 @@ func DescribeContext(goal string, ancestry []string, refs []plan.Ref, findings [
 		out.Findings = append(out.Findings, f.Text)
 	}
 	return out
+}
+
+// placed says whether an agent on node would work in the workspace: the
+// project's one rule, asked once here for the page.
+func placed(p project.Project, node, workspaceID string) bool {
+	ws, err := p.Place(node)
+	return err == nil && ws.ID == workspaceID
 }

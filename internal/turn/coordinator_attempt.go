@@ -9,6 +9,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/project"
@@ -71,7 +72,7 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 		// the turn changes is measured against it.
 		if c.artifacts != nil {
 			if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok {
-				before, _, serr := c.artifacts.SnapshotCanonical(ctx, p, c.artifacts.CanonicalOf(ctx, p.ID), record.ID, "before turn "+req.MessageID)
+				before, _, serr := c.snapshot(ctx, p, workspace, "", record.ID, "before turn "+req.MessageID)
 				if serr != nil {
 					_, _ = c.attempts.Fail(ctx, record.ID, "turn", "before-snapshot: "+serr.Error())
 					return attempt.Record{}, nil, fmt.Errorf("before-snapshot: %w", serr)
@@ -124,7 +125,7 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 			// name; then whatever delegations queued up lands under a lock
 			// this turn no longer holds.
 			if p, ok, perr := c.projects.Get(ctx, record.Project); perr == nil && ok {
-				after, changed, serr := c.artifacts.SnapshotCanonical(ctx, p, record.Base, id, "after turn "+record.TurnID)
+				after, changed, serr := c.snapshot(ctx, p, record.Workspace, record.Base, id, "after turn "+record.TurnID)
 				if serr != nil {
 					log.Printf("turn: attempt %s after-snapshot: %v", id, serr)
 				} else if changed {
@@ -135,7 +136,9 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 						log.Printf("turn: bind %s: %v", name, err)
 					}
 				}
-				defer c.landPending(ctx, p)
+				if record.Workspace.Kind == project.KindCanonical {
+					defer c.landPending(ctx, p)
+				}
 			}
 		}
 		if _, err := c.attempts.FinishWith(ctx, id, "turn", outcome, usage); err != nil {
@@ -200,4 +203,20 @@ func (c *Coordinator) recordDisclosure(ctx context.Context, record attempt.Recor
 	if err := c.projects.Disclose(ctx, record.ID, d); err != nil {
 		log.Printf("turn: record disclosure for %s: %v", record.ID, err)
 	}
+}
+
+// snapshot takes a before- or after-snapshot of the workspace a turn runs
+// in: the canonical one moves the project's canonical name, a copy moves
+// its own head. An empty parent means "from the workspace's last snapshot".
+func (c *Coordinator) snapshot(ctx context.Context, p project.Project, ws project.Workspace, parent, by, message string) (artifact.Manifest, bool, error) {
+	if ws.Kind == project.KindCopy {
+		if parent == "" {
+			parent = c.artifacts.HeadOf(ctx, ws.ID)
+		}
+		return c.artifacts.SnapshotWorkspace(ctx, p, ws, parent, by, message)
+	}
+	if parent == "" {
+		parent = c.artifacts.CanonicalOf(ctx, p.ID)
+	}
+	return c.artifacts.SnapshotCanonical(ctx, p, parent, by, message)
 }

@@ -27,8 +27,11 @@ type Manifest struct {
 	Message   string        `json:"message,omitempty"`
 	CreatedAt time.Time     `json:"created_at"`
 	// Canonical marks a snapshot of the canonical workspace itself: the
-	// merge base for whatever descends from it.
-	Canonical bool `json:"canonical,omitempty"`
+	// merge base for whatever descends from it. Workspace names the copy
+	// a snapshot was taken in; such a snapshot descends from the copy's
+	// own previous one, never from canonical, and is not landed.
+	Canonical bool   `json:"canonical,omitempty"`
+	Workspace string `json:"workspace,omitempty"`
 	// Receipts say where the artifact is durably held. It counts as durable
 	// once one of the project's durable places has signed for it.
 	Receipts []Receipt `json:"receipts,omitempty"`
@@ -201,24 +204,77 @@ func (s *Store) SnapshotCanonical(ctx context.Context, p project.Project, parent
 	return m, changed, s.setCanonical(ctx, p.ID, sha)
 }
 
+// SnapshotWorkspace takes a before- or after-snapshot of a copy, wherever
+// it is, brings it to the hub, and records it against the copy. parent is
+// the copy's previous snapshot; the artifact returned is parent itself
+// when nothing changed. It never moves the project's canonical name: a
+// copy's history is its own, and only what an isolated step publishes
+// enters the landing graph.
+func (s *Store) SnapshotWorkspace(ctx context.Context, p project.Project, ws project.Workspace, parent, by, message string) (Manifest, bool, error) {
+	if ws.Kind != project.KindCopy {
+		return Manifest{}, false, fmt.Errorf("artifact: %s is not a copy", ws.ID)
+	}
+	repo, err := s.Repo(ctx, p.ID)
+	if err != nil {
+		return Manifest{}, false, err
+	}
+	var sha string
+	var changed bool
+	if ws.Node == "" {
+		sha, changed, err = repo.Snapshot(ctx, ws.Path, parent, message)
+	} else {
+		sha, changed, err = s.snapshotOnNode(ctx, ws.Node, p, ws.Path, parent, message, repo)
+	}
+	if err != nil {
+		return Manifest{}, false, err
+	}
+	if !changed {
+		if m, ok, err := s.Manifest(ctx, sha); err == nil && ok {
+			return m, false, nil
+		}
+	}
+	m, err := s.receipt(ctx, p, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message, Workspace: ws.ID})
+	if err != nil {
+		return m, changed, err
+	}
+	return m, changed, s.setHead(ctx, CopyRef(ws.ID), sha)
+}
+
+// CopyRef names a copy's last known snapshot.
+func CopyRef(workspaceID string) string { return "workspace/" + workspaceID + "/head" }
+
+// HeadOf is the last known snapshot of a copy, or "".
+func (s *Store) HeadOf(ctx context.Context, workspaceID string) string {
+	ref, ok, err := s.ledger.Name(ctx, CopyRef(workspaceID))
+	if err != nil || !ok {
+		return ""
+	}
+	return ref.Artifact
+}
+
 func (s *Store) setCanonical(ctx context.Context, projectID, sha string) error {
+	return s.setHead(ctx, CanonicalRef(projectID), sha)
+}
+
+// setHead moves a name to sha under compare-and-set.
+func (s *Store) setHead(ctx context.Context, name, sha string) error {
 	// Two attempts may snapshot the same directory at the same moment and
 	// race to name the result; the same content loses nothing by losing
 	// the race, and different content is retried against the fresh version.
 	for i := 0; i < 5; i++ {
-		current, _, err := s.ledger.Name(ctx, CanonicalRef(projectID))
+		current, _, err := s.ledger.Name(ctx, name)
 		if err != nil {
 			return err
 		}
 		if current.Artifact == sha {
 			return nil
 		}
-		_, err = s.Bind(ctx, CanonicalRef(projectID), current.Version, sha)
+		_, err = s.Bind(ctx, name, current.Version, sha)
 		if err == nil || !errors.Is(err, ledger.ErrConflict) {
 			return err
 		}
 	}
-	return fmt.Errorf("canonical name of %s kept moving", projectID)
+	return fmt.Errorf("name %s kept moving", name)
 }
 
 // snapshotOnNode snapshots a directory on a node into the node's shadow

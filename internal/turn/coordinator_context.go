@@ -1,6 +1,7 @@
 package turn
 
 import (
+	"errors"
 	"context"
 	"github.com/gopact-ai/steve/internal/home"
 	"regexp"
@@ -241,6 +242,16 @@ type AgentChoice struct {
 	Usable  bool
 	Because string
 	Current bool
+	// Place is where the agent would work in the current project; nil
+	// when its machine has no workspace of it.
+	Place *Placement
+}
+
+// Placement is one workspace as a place to work: which, what kind, where.
+type Placement struct {
+	Workspace string
+	Kind      string
+	Node      string
 }
 
 // Context answers for one conversation.
@@ -277,9 +288,16 @@ func (c *Coordinator) Context(ctx context.Context, conversationID string) (Conte
 			if !cand.Eligible {
 				choice.Because = cand.Why
 			} else if current != nil {
-				if err := current.NotHome(cand.Node, false); err != nil {
+				if ws, err := current.Place(cand.Node); err == nil {
+					choice.Place = &Placement{Workspace: ws.ID, Kind: string(ws.Kind), Node: nodewire.Place(ws.Node)}
+				} else {
+					places := nodewire.Place(current.Home.Node)
+					var notHome project.NotHomeError
+					if errors.As(err, &notHome) {
+						places = notHome.PlaceList()
+					}
 					choice.Usable = false
-					choice.Because = c.text.T(i18n.ContextNotHome, current.ID, nodewire.Place(current.Home.Node), choice.Node)
+					choice.Because = c.text.T(i18n.ContextNotHome, current.ID, places, choice.Node)
 				}
 			}
 			out.Agents = append(out.Agents, choice)

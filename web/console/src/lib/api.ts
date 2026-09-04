@@ -28,7 +28,7 @@ export function emptyUsage(): Usage { return { by_day: [], by_agent: [], by_mode
 
 export async function fetchState(): Promise<Snapshot> {
     const s = await json<Snapshot>(await fetch(`./state${q}`, { headers }));
-    s.nodes ??= []; s.agents ??= []; s.tasks ??= []; s.plans ??= []; s.projects ??= []; s.inbox ??= []; s.schedules ??= []; s.sources ??= [];
+    s.nodes ??= []; s.agents ??= []; s.tasks ??= []; s.plans ??= []; s.projects ??= []; for (const p of s.projects) p.workspaces ??= []; s.inbox ??= []; s.schedules ??= []; s.sources ??= [];
     s.usage ??= emptyUsage(); s.usage.by_day ??= []; s.usage.by_agent ??= []; s.usage.by_model ??= []; s.attempts ??= []; s.landings ??= [];
     s.facts ??= { ...emptySnapshot.facts };
     for (const k of ["reservations", "attestations", "replicas", "disclosures", "effects", "grants"] as const) s.facts[k] ??= [];
@@ -117,6 +117,12 @@ export async function addProject(req: { id: string; node?: string; path: string;
     return json(await fetch(`./console/projects${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(req) }));
 }
 
+export async function addWorkspace(project: string, req: { node?: string; path: string; origin: "adopt" | "clone" }): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/projects/${encodeURIComponent(project)}/workspaces${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(req) }));
+}
+export async function removeWorkspace(project: string, node: string): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/projects/${encodeURIComponent(project)}/workspaces/${encodeURIComponent(node)}${q}`, { method: "DELETE", headers }));
+}
 export async function removeProject(id: string): Promise<{ ok: boolean }> {
     return json(await fetch(`./console/projects/${encodeURIComponent(id)}${q}`, { method: "DELETE", headers }));
 }

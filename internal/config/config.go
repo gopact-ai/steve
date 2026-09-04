@@ -170,6 +170,16 @@ type Project struct {
 	// admin. DefaultRole is what everyone else gets.
 	Grants      map[string]string `json:"grants,omitempty"`
 	DefaultRole string            `json:"default_role,omitempty"`
+	// Workspaces are the project's copies: directories on machines other
+	// than its home where interactive turns may run. Each is adopted as
+	// it is; cloning happens before it is written here.
+	Workspaces []ProjectWorkspace `json:"workspaces,omitempty"`
+}
+
+// ProjectWorkspace is one copy of a project: a machine and a directory.
+type ProjectWorkspace struct {
+	Node string `json:"node,omitempty"`
+	Path string `json:"path"`
 }
 
 // ProjectHome is the (node, path) of a project's canonical workspace. An
@@ -603,11 +613,18 @@ func (c *Config) migrateProjects() error {
 func (c *Config) ProjectList() []project.Project {
 	out := make([]project.Project, 0, len(c.Projects))
 	for id, item := range c.Projects {
-		out = append(out, project.Project{
+		p := project.Project{
 			ID: id, Level: project.Level(item.Level), Repo: project.RepoMode(item.Repo), Skills: item.Skills,
 			DurablePlaces: item.DurablePlaces, ExternalRemote: item.ExternalRemote, DefaultRole: project.Role(item.DefaultRole),
 			Home: project.Home{Node: item.Home.Node, Path: item.Home.Path},
-		})
+		}
+		for _, ws := range item.Workspaces {
+			if p.Copies == nil {
+				p.Copies = map[string]project.Copy{}
+			}
+			p.Copies[ws.Node] = project.Copy{Node: ws.Node, Path: ws.Path}
+		}
+		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out

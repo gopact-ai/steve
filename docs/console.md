@@ -207,3 +207,64 @@ HumanRequest { id, type, source_operation_id, project_id, task_id, summary, choi
 - **组件层**：`web/console/src/components/steve/`（见该目录 README 的表与约定）。Untitled UI 原样引入；Steve 自己的组件一文件一件事：`page`（页骨架、Panel、KeyValue、Chips）、`ui`（状态徽章、Mono、空态）、`drawer`（右侧抽屉与其分节，Esc 关闭）、`markdown`（Md、CodeBlock）、`tool-calls`、`message`、`trace`（进行中、过程、给 agent 的）、`composer`、`sessions-tree`、`rail`、`call-graph`、`settings-editor`。`pages/` 只剩拼装：工作台从 783 行降到 254 行，四个页面的抽屉（机器、Agent、项目、任务）共用一个 `Drawer`；`lib/` 只放 api、类型、文案、hook、文本整理。
 - 约定写在 README 里：表单控件一律 Untitled UI；字号三档（sm / xs / 11px）与语义色 token；折叠一律 `<details>` + 旋转箭头；组件不发请求。
 - 没做：Codex 左侧的段落小地图；代码高亮（没有引入高亮库，只有语言名）。
+
+## 14. 项目与工作区（2026-09-04）
+
+用户看完组件化后的控制台说：把"一台机器上的一个目录"叫项目不对，那更像工作区；而且应该有一层在项目之上，可现在没有工作区的管理和切换。
+
+代码里这两层其实都在（`internal/project`）：`Project` 是与机器无关的规则加一个主目录，`Workspace` 是项目在某台机器上落地的一个目录，每次执行都通过 `Materialize` 拿目录。别扭来自两处：页面和 README 把项目定义成了目录；`Materialize` 对交互回合只会给主目录，同一份东西要在别的机器上干活只能再声明一个项目——scratch / scratch-a / scratch-b 三个"项目"其实是一个项目的三个工作区。
+
+"workspace"有两种用法，要分开：VS Code / Cursor / Codex 里它是你打开的那个文件夹，在项目之下；Linear / Slack / Multica 里它是组织或团队空间，在一切之上。steve 只有一个主人，组织这一层没有任何行为可挂，不做。本节采用前一种：**项目在上，工作区在下**。
+
+初稿经 codex（gpt-5.6-sol）对照代码评审 24 条（原文在会话 scratchpad `workspace-codex-1.md`），采纳的结论直接写进了下面的表和规则；主要改动：副本不另立一张表，挂在项目记录上随项目一起改；放置是项目记录上的纯函数，不查库；副本的快照有自己的 head，不进主目录的合并图；克隆是异步作业，经暂存目录原子落位；左栏保持两层，工作区管理放项目页；composer 与左栏的"落点"由服务端算好下发，页面不复制规则。
+
+### 14.1 对象
+
+| 对象 | 是什么 | 权威 | 一个项目里有几个 |
+|---|---|---|---|
+| 项目 | 一件要做的事及其规矩：仓库（外部 remote）、怎么改（直接 / 隔离）、数据等级、固定的技能、耐久落点、权限；有一个主目录；**带着它的副本表** | 账本 `project`（配置 `projects{}` 在启动时 Declare；副本在 `projects.<id>.workspaces[]`） | — |
+| 主目录（canonical 工作区） | 项目在其主机器上的目录本身；合并落回这里；写锁 `canonical:<project>`，在主目录所在区域签发 | 由项目的 `home` 派生 | 恰好 1 |
+| 副本（`Copy`，**新**） | 用户声明的、长期存在的另一个目录：认领某台机器上已有的目录，或从项目的 remote 克隆；交互回合可以在这里跑；有状态 ready / provisioning / failed；写锁就是它的 id `copy:<project>/<node>`，在副本所在区域签发 | 项目记录里的 `copies` 映射（按机器）；配置只声明位置，账本记来历（origin / source / by / at / state） | 0..n，每台机器至多 1 个，主机器上不能有 |
+| 执行工作树（worktree） | artifact store 为一次 attempt 从某个 artifact 检出的临时目录（计划步骤、委派、验证）；结束即弃；锁 `workspace:<id>` | artifact store | 随 attempt 生灭 |
+| 会话 | 绑定项目（不绑工作区）。它此刻在哪个工作区，由当前 Agent 所在机器经放置规则得出，服务端算好随会话摘要下发 | 账本 `conversation-project` | — |
+| 任务 / attempt | attempt 记录它实际运行的工作区（`Spec.Workspace`，解析后的快照，不是权威）；`Open` 校验它与 attempt 的项目、机器一致 | 账本 | — |
+
+配置与账本的关系：配置是声明，账本是记录。启动时 `Declare` 把整个项目记录按配置重写，副本按机器合并——同一位置的副本保留账本里的来历与状态，换了位置的按新认领处理，配置里没有的忘掉。页面上加删副本先写账本再写配置，配置写失败回滚账本。
+
+### 14.2 规则（一处判定，处处一致）
+
+- **放置**：`Project.Place(node)` 是项目记录上的纯函数——机器是主机器 → 主目录；机器上有 **ready** 的副本 → 副本；否则拒绝，错误带项目现有工作区的位置。交互回合的 `Materialize(Isolated:false)`、上下文栏每个 Agent 的可用性与落点、会话摘要的落点、readmodel 里每个工作区能接的 Agent、doctor 的探测目录，全部走它。`Isolated:true` 仍由 artifact store 开工作树。
+- **写锁**：`attempt.Open` 允许 `ScopeUnrestricted` 落在主目录或副本；主目录锁 `canonical:<project>`（主目录所在区域），副本锁 `copy:<project>/<node>`（副本所在区域），工作树锁 `workspace:<id>`——三个名字空间不共用。`Open` 拒绝工作区与 attempt 项目 / 机器不一致的 spec。
+- **数据等级**：副本只能放在等级不低于项目的机器上；声明（启动 Declare 与页面添加）时由 store 经 `Levels` 钩子查机器等级；sealed 项目不能有副本。
+- **目录唯一**：同一台机器上，任何两个工作区（任何项目的主目录或副本）的目录不得相同或嵌套；`Store.Conflict` 一处判定，添加项目与添加副本都经它。已知不覆盖 symlink / 共享挂载 / 大小写别名。
+- **快照**：直接修改模式下，回合在哪个工作区跑就给哪个工作区拍前后快照。主目录走 `SnapshotCanonical`，推进项目的 canonical 名；副本走 `SnapshotWorkspace`：parent 是该副本上一次快照（名 `workspace/<id>/head`），Manifest 记 `workspace`，**不**标 canonical、**不**推进 canonical 名、**不**触发 pending landing——副本的历史是它自己的，只有隔离步骤发布的结果进合并图。副本不自动落回主目录，靠 git 与主目录同步，页面用分支 / 未提交 / remote 把差异摆出来。
+- **计划与委派的基线仍是主目录**：副本会话里发起的 `/plan`、委派、验证，以主目录当前快照为 base，结果落回主目录。副本里没推回主目录的修改，子 Agent 看不到——这是现状，页面在副本会话里要写明；改成按 attempt 固定 execution base 是下一步。
+- **克隆来源**：项目配了 `external_remote` 用它；否则用主目录本身作为单个 git 仓库的 remote（inspect 报告的）；两者都没有就不能克隆，只能认领。不再用影子仓库冒充 remote。
+- **克隆是作业**：请求立刻返回，副本以 provisioning 记录并显示；hub 在那台机器上经 `exec` 流跑脚本：`GIT_TERMINAL_PROMPT=0`，在目标的父目录下 `mktemp` 一个暂存目录克隆，成功后 `mv` 到目标，失败只清理暂存；10 分钟上限；结果写回副本状态（ready / failed + 输出尾部）。目标已存在拒绝克隆（认领它）；认领的目录不存在拒绝认领（克隆它）。
+- **移除**：先取副本的锁（`attempt.Service.Hold`），取不到就是有回合在跑，拒绝（409）；取到后从项目记录删掉副本、写配置。目录不动。绑定过它的会话在下一回合按 `sessionDrifted` 归档重开。主目录不能移除（那是退役项目）。
+- **仓库信息**：`inspect.v1` 对每个工作区各查一次（`repoCache` 以工作区 id 为键）。
+
+### 14.3 页面
+
+- **左栏**保持两层：项目 → 会话。项目名下一行小字列出它在哪："主目录 hub · 副本 node-a"。会话行在项目有多个工作区时显示落点徽章（服务端下发的 `place`）；Agent 所在机器上没有工作区的会话带红色标记。评审否决了三层树：会话不属于工作区（`/use` 换 Agent 就换了落点，会在树里跳），只有主目录时又平白多一层。
+- **项目页**：表格"工作区"一列列出每个工作区（种类 · 机器 · 目录，非 ready 的带状态）。抽屉"工作区"一节一卡一个：种类、机器、目录、状态（正在克隆 / 克隆失败 + 输出）、有回合在跑、来源、仓库（分支 / 未提交 / 最近提交 / remote / AGENTS.md）、这里能接的 Agent；副本卡有"移除"（确认后忘掉，目录不动）。"添加副本"对话框：机器（排除已有工作区的）、怎么来（认领已有目录 / 克隆一份——没有 remote 时克隆不可选并说明）、目录。页头定义改成：项目是一件要做的事及其规矩；工作区是它在机器上的目录，主目录一个，副本每台机器至多一个。
+- **composer**：项目芯片上显示落点（"home · 主目录 · n251"，或红色"node-b 上没有工作区"），来自 `/console/context` 里每个 Agent 的 `place`。不做单独的"切换工作区"：每台机器至多一个副本，换机器就是换 Agent。
+- **文案**：`ProjectNotHome` 列出项目有工作区的机器，并提示可以在 Agent 所在机器上添加一个；`ContextNotHome` 同样列出位置。
+
+### 14.4 接口与配置
+
+- `POST /console/projects/{id}/workspaces {node, path, origin: "adopt"|"clone"}`；`DELETE /console/projects/{id}/workspaces/{node}`（忙则 409）。
+- readmodel `Project.workspaces[]`：`id, node, path, kind, origin, source, state, error, busy, repos, agents`；顶层 `node / path / repos` 是主目录的，`agents` 是各工作区之并。`AgentChoice.place` 与 `Conversation.place`：`{workspace, kind, node}`。
+- 配置 `projects.<id>.workspaces: [{node, path}]`。
+
+### 14.5 顺序与线上迁移
+
+1. 对象与规则（已做）：项目记录带副本、纯放置、锁、快照、投影、页面。
+2. 认领 / 移除（已做）：线上把 scratch-a、scratch-b 退役，把它们的目录认领为 scratch 在 node-a / node-b 的副本。它们下面只有测试用的 `/project use` 会话，历史任务保留旧项目 id，不改审计记录；正式项目要迁移时得先冻结、清空在途 attempt 与 pending landing、重绑会话，再认领——这套 migration 没做。
+3. 克隆（已做）：线上用 steve-self 在 node-a 克隆一个副本验收。
+
+### 14.6 不做 / 已知缺口
+
+- 组织 / 团队级的"空间"；多主人。
+- 换主目录（退役再声明）；副本自动同步或自动落回主目录；执行工作树进左栏树。
+- 评审指出但本次没动的既有问题：artifact Manifest 以裸 commit SHA 为全局键、`homeRegion` 查询失败时静默用本区域、`RepoMode=isolated` 对交互回合并未生效、目录唯一不识别 symlink 与共享挂载、机器改名会改变副本 id。

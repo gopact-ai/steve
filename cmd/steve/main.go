@@ -122,13 +122,16 @@ func sweepAttempts(ctx context.Context, attempts *attempt.Service) {
 // default project's if it is homed there, else any project's.
 func probeWorkspace(projects []project.Project, node string) (string, bool) {
 	for _, p := range projects {
-		if p.Home.Node == node && p.ID != homeProjectID {
-			return p.Home.Path, true
+		if p.ID == homeProjectID {
+			continue
+		}
+		if ws, err := p.Place(node); err == nil {
+			return ws.Path, true
 		}
 	}
 	for _, p := range projects {
-		if p.Home.Node == node {
-			return p.Home.Path, true
+		if ws, err := p.Place(node); err == nil {
+			return ws.Path, true
 		}
 	}
 	return "", false
@@ -729,7 +732,16 @@ func serve(args []string) error {
 		return err
 	}
 	dashboard.SetConsole(cons)
-	dashboard.SetAdmin(&fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos})
+	// A copy may only sit where the project's level admits; the store
+	// asks the registry, which knows every machine's level.
+	projects.Levels = func(node string) project.Level {
+		level, err := nodes.Level(context.Background(), node)
+		if err != nil {
+			return ""
+		}
+		return project.Level(level)
+	}
+	dashboard.SetAdmin(&fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos, attempts: attempts})
 	defer dashboard.Close()
 	go func() {
 		if err := dashboard.Serve(); err != nil {
@@ -1139,6 +1151,8 @@ type fleetAdmin struct {
 	// each project's directory holds.
 	projects *project.Store
 	repos    *repoCache
+	// attempts is where a copy's lock is taken before it is forgotten.
+	attempts *attempt.Service
 	// manager and assembler take the hub machine's own harness and MCP
 	// changes at runtime.
 	manager   *harness.Manager
@@ -1371,19 +1385,15 @@ func (a *fleetAdmin) AddProject(ctx context.Context, req readmodel.AddProjectReq
 			path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
 		}
 	}
-	// A directory belongs to one project. Two projects on one machine
-	// whose directories nest would both claim the same files, and a
-	// single-writer lock on one would not know about the other.
-	clean := filepath.Clean(path)
-	for other, p := range a.cfg.Projects {
-		if p.Home.Node != req.Node {
-			continue
-		}
-		theirs := filepath.Clean(p.Home.Path)
-		if theirs == clean || strings.HasPrefix(clean, theirs+"/") || strings.HasPrefix(theirs, clean+"/") {
-			configMu.Unlock()
-			return fmt.Errorf("目录与项目 %s（%s）重叠：一个目录只能属于一个项目，也不能套在另一个项目的目录里", other, theirs)
-		}
+	// A directory belongs to one workspace, of one project: the store
+	// knows every home and every copy, and judges nesting the same way
+	// for both.
+	if other, taken, err := a.projects.Conflict(ctx, req.Node, path); err != nil {
+		configMu.Unlock()
+		return err
+	} else if taken {
+		configMu.Unlock()
+		return fmt.Errorf("目录与项目 %s 的工作区（%s）重叠：一个目录只能属于一个工作区，也不能套在另一个工作区的目录里", other.Project, other.Path)
 	}
 	a.cfg.Projects[id] = config.Project{Home: config.ProjectHome{Node: req.Node, Path: path}, Level: string(level), Repo: string(repo)}
 	declared := config.Config{Projects: map[string]config.Project{id: a.cfg.Projects[id]}}
@@ -1492,6 +1502,231 @@ func (a *fleetAdmin) RemoveAgent(_ context.Context, id string) error {
 
 // RemoveProject retires a project: gone from the ledger and from the
 // config file. Steve's home and the default project stay.
+// nodeKey is the registry's name for a machine the page named: the hub
+// is "" inside, whatever it is called outside.
+func (a *fleetAdmin) nodeKey(name string) string {
+	if name == "" || name == "hub" || name == nodewire.Place("") {
+		return ""
+	}
+	return name
+}
+
+// inspect asks a machine what a directory holds.
+func (a *fleetAdmin) inspect(ctx context.Context, nodeKey, path string) []nodewire.Repo {
+	if nodeKey == "" {
+		return node.InspectRepos(ctx, path)
+	}
+	ictx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	repos, err := a.nodes.Inspect(ictx, nodeKey, path)
+	if err != nil {
+		return nil
+	}
+	return repos
+}
+
+// AddWorkspace gives a project a copy on a machine. Adopting takes a
+// directory that is there as it is. Cloning needs somewhere to clone
+// from — the project's external remote, or the remote of the single
+// repository its home directory is — and a path with nothing at it; the
+// copy is recorded as provisioning and the clone runs behind the reply,
+// in a staging directory beside the destination that becomes it only
+// when the clone is whole.
+func (a *fleetAdmin) AddWorkspace(ctx context.Context, projectID string, req readmodel.AddWorkspaceRequest) error {
+	nodeKey := a.nodeKey(req.Node)
+	path := strings.TrimSpace(req.Path)
+	if path == "" {
+		return errors.New("目录不能为空")
+	}
+	if nodeKey == "" && strings.HasPrefix(path, "~") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
+		}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if nodeKey != "" {
+		configMu.Lock()
+		_, known := a.cfg.Nodes[nodeKey]
+		configMu.Unlock()
+		if !known {
+			return fmt.Errorf("没有叫 %q 的机器", req.Node)
+		}
+	}
+	p, ok, err := a.projects.Get(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("没有叫 %q 的项目", projectID)
+	}
+	found := a.inspect(ctx, nodeKey, path)
+	missing := len(found) == 1 && found[0].Missing
+	c := project.Copy{Node: nodeKey, Path: path, Origin: project.OriginAdopted, By: "console", State: project.CopyReady}
+	if req.Origin == "clone" {
+		source := a.cloneSource(p)
+		if source == "" {
+			return fmt.Errorf("项目 %s 没有可以克隆的来源：主目录不是单个 git 仓库或没有 remote，也没配 external_remote。可以先在机器上放好目录，再认领它", p.ID)
+		}
+		if !missing {
+			return fmt.Errorf("%s 上已经有 %s 了；要用它就认领，要克隆就换一个还不存在的目录", nodewire.Place(nodeKey), path)
+		}
+		c.Origin, c.Source, c.State = project.OriginCloned, source, project.CopyProvisioning
+	} else if missing {
+		return fmt.Errorf("%s 上没有目录 %s；认领的目录要已经存在，不存在就选克隆", nodewire.Place(nodeKey), path)
+	}
+	if _, err := a.projects.SetCopy(ctx, projectID, c); err != nil {
+		return err
+	}
+	if err := a.saveWorkspaces(ctx, projectID); err != nil {
+		_ = a.projects.DeleteCopy(ctx, projectID, nodeKey)
+		return err
+	}
+	if c.State == project.CopyProvisioning {
+		go a.clone(projectID, nodeKey, path, c)
+	} else if a.repos != nil {
+		a.repos.wake()
+	}
+	return nil
+}
+
+// cloneSource is what a copy of the project is cloned from: the external
+// remote it declares, else the remote of the repository its home is.
+func (a *fleetAdmin) cloneSource(p project.Project) string {
+	if p.ExternalRemote != "" {
+		return p.ExternalRemote
+	}
+	if a.repos == nil {
+		return ""
+	}
+	for _, r := range a.repos.get(p.Canonical().ID) {
+		if r.Path == "." && r.Remote != "" {
+			return r.Remote
+		}
+	}
+	return ""
+}
+
+// clone runs the clone on the machine and records how it went.
+func (a *fleetAdmin) clone(projectID, nodeKey, path string, c project.Copy) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	out, err := a.nodes.Exec(ctx, nodeKey, "", cloneScript(path, c.Source))
+	if err != nil {
+		c.State, c.Error = project.CopyFailed, clip(strings.TrimSpace(out+"\n"+err.Error()), 400)
+		log.Printf("steve: clone %s onto %s: %v", projectID, nodewire.Place(nodeKey), err)
+	} else {
+		c.State, c.Error = project.CopyReady, ""
+		log.Printf("steve: cloned %s onto %s at %s", projectID, nodewire.Place(nodeKey), path)
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if _, err := a.projects.SetCopy(ctx, projectID, c); err != nil {
+		log.Printf("steve: record clone of %s: %v", projectID, err)
+	}
+	if a.repos != nil {
+		a.repos.wake()
+	}
+}
+
+// cloneScript clones source into dest through a staging directory beside
+// it, so a clone that dies leaves nothing at dest. Git may not ask for
+// credentials: there is no one at the terminal to answer.
+func cloneScript(dest, source string) string {
+	return strings.Join([]string{
+		"set -e",
+		"export GIT_TERMINAL_PROMPT=0",
+		"dest=" + shellQuote(dest),
+		"src=" + shellQuote(source),
+		`parent=$(dirname "$dest")`,
+		`mkdir -p "$parent"`,
+		`tmp=$(mktemp -d "$parent/.steve-clone.XXXXXX")`,
+		`trap 'rm -rf "$tmp"' EXIT`,
+		`git clone --quiet -- "$src" "$tmp/repo" 2>&1`,
+		`mv "$tmp/repo" "$dest"`,
+	}, "\n")
+}
+
+func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
+
+func clip(s string, n int) string {
+	if r := []rune(s); len(r) > n {
+		return string(r[:n]) + "…"
+	}
+	return s
+}
+
+// saveWorkspaces writes the project's copies to the config file, from
+// the ledger's record of them.
+func (a *fleetAdmin) saveWorkspaces(ctx context.Context, projectID string) error {
+	p, ok, err := a.projects.Get(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("没有叫 %q 的项目", projectID)
+	}
+	configMu.Lock()
+	defer configMu.Unlock()
+	item, inConfig := a.cfg.Projects[projectID]
+	if !inConfig {
+		return nil
+	}
+	saved := item.Workspaces
+	item.Workspaces = nil
+	for _, ws := range p.Workspaces() {
+		if ws.Kind == project.KindCopy {
+			item.Workspaces = append(item.Workspaces, config.ProjectWorkspace{Node: ws.Node, Path: ws.Path})
+		}
+	}
+	a.cfg.Projects[projectID] = item
+	if err := config.Save(a.path, a.cfg); err != nil {
+		item.Workspaces = saved
+		a.cfg.Projects[projectID] = item
+		return fmt.Errorf("写 %s 失败：%w", a.path, err)
+	}
+	return nil
+}
+
+// RemoveWorkspace forgets a project's copy. It takes the copy's lock
+// first, so a turn cannot start in a directory the hub is forgetting.
+func (a *fleetAdmin) RemoveWorkspace(ctx context.Context, projectID, nodeName string) error {
+	nodeKey := a.nodeKey(nodeName)
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	p, ok, err := a.projects.Get(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("没有叫 %q 的项目", projectID)
+	}
+	if _, has := p.CopyOn(nodeKey); !has {
+		return fmt.Errorf("项目 %s 在 %s 上没有副本", projectID, nodewire.Place(nodeKey))
+	}
+	if a.attempts != nil {
+		release, err := a.attempts.Hold(ctx, a.fleet.RegionOf(nodeKey), project.CopyID(projectID, nodeKey), "console")
+		if err != nil {
+			var busy attempt.Busy
+			if errors.As(err, &busy) {
+				return fmt.Errorf("%w：副本里有回合在跑（%s），等它结束再移除", readmodel.ErrBusy, busy.Holder)
+			}
+			return err
+		}
+		defer release()
+	}
+	if err := a.projects.DeleteCopy(ctx, projectID, nodeKey); err != nil {
+		return err
+	}
+	if err := a.saveWorkspaces(ctx, projectID); err != nil {
+		return err
+	}
+	if a.repos != nil {
+		a.repos.wake()
+	}
+	return nil
+}
+
 func (a *fleetAdmin) RemoveProject(ctx context.Context, id string) error {
 	if id == homeProjectID {
 		return fmt.Errorf("%s 是 Steve 自己的家，不能移除", id)
@@ -1668,20 +1903,22 @@ func (c *repoCache) pass(ctx context.Context) {
 	}
 	next := make(map[string][]nodewire.Repo, len(list))
 	for _, p := range list {
-		var repos []nodewire.Repo
-		if p.Home.Node == "" || p.Home.Node == c.hub {
-			repos = node.InspectRepos(ctx, p.Home.Path)
-		} else {
-			ictx, cancel := context.WithTimeout(ctx, 20*time.Second)
-			repos, err = c.nodes.Inspect(ictx, p.Home.Node, p.Home.Path)
-			cancel()
-			if err != nil {
-				// Keep what we knew: a machine that is down did not lose
-				// its repositories.
-				repos = c.get(p.ID)
+		for _, ws := range p.Workspaces() {
+			var repos []nodewire.Repo
+			if ws.Node == "" || ws.Node == c.hub {
+				repos = node.InspectRepos(ctx, ws.Path)
+			} else {
+				ictx, cancel := context.WithTimeout(ctx, 20*time.Second)
+				repos, err = c.nodes.Inspect(ictx, ws.Node, ws.Path)
+				cancel()
+				if err != nil {
+					// Keep what we knew: a machine that is down did not
+					// lose its repositories.
+					repos = c.get(ws.ID)
+				}
 			}
+			next[ws.ID] = repos
 		}
-		next[p.ID] = repos
 	}
 	c.mu.Lock()
 	c.repos = next

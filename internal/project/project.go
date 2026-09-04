@@ -21,10 +21,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/nodewire"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/nodewire"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 )
@@ -95,6 +97,8 @@ type Project struct {
 	// write for public and internal projects, none for restricted and
 	// sealed ones.
 	DefaultRole Role `json:"default_role,omitempty"`
+	// Copies are the project's workspaces away from home, by machine.
+	Copies map[string]Copy `json:"copies,omitempty"`
 }
 
 // Durable reports whether node is one of the places this project's
@@ -141,7 +145,39 @@ func (p Project) normalized() (Project, error) {
 	if p.DefaultRole != "" && !p.DefaultRole.Valid() {
 		return p, fmt.Errorf("project %s: default_role %q is not none, read, write or admin", p.ID, p.DefaultRole)
 	}
+	for node, c := range p.Copies {
+		fixed, err := p.copyShape(node, c)
+		if err != nil {
+			return p, err
+		}
+		p.Copies[node] = fixed
+	}
 	return p, nil
+}
+
+// copyShape is what every copy must satisfy, declared or added: not on
+// the home machine, an absolute directory, a state, and — for a sealed
+// project — not at all.
+func (p Project) copyShape(node string, c Copy) (Copy, error) {
+	if p.Level == LevelSealed {
+		return c, fmt.Errorf("project %s is sealed: its data stays at %s, so it cannot have copies", p.ID, nodeLabel(p.Home.Node))
+	}
+	if node == p.Home.Node {
+		return c, fmt.Errorf("project %s already lives on %s: that is its home, not a copy", p.ID, nodeLabel(node))
+	}
+	c.Node = node
+	c.Path = strings.TrimSpace(c.Path)
+	if c.Path == "" || !strings.HasPrefix(c.Path, "/") {
+		return c, fmt.Errorf("project %s: copy on %s: path %q must be absolute", p.ID, nodeLabel(node), c.Path)
+	}
+	c.Path = filepath.Clean(c.Path)
+	if c.Origin == "" {
+		c.Origin = OriginAdopted
+	}
+	if c.State == "" {
+		c.State = CopyReady
+	}
+	return c, nil
 }
 
 // Binding is a conversation's current project, with the version that lets
@@ -160,11 +196,30 @@ type Kind string
 const (
 	// KindCanonical is the user's directory itself: the ProjectHome path.
 	KindCanonical Kind = "canonical"
+	// KindCopy is a long-lived directory of the project on a machine other
+	// than its home, declared by the user: adopted where it already was,
+	// or cloned. Interactive turns run there when the agent is on that
+	// machine. It is not landed; it keeps up with the canonical workspace
+	// through git, which is what the user chose by declaring it.
+	KindCopy Kind = "copy"
 	// KindWorktree is an isolated checkout made for one attempt.
 	KindWorktree Kind = "worktree"
 )
 
-// Workspace is a directory an attempt can run in, on one node.
+// Origin says how a copy came to be.
+type Origin string
+
+const (
+	// OriginAdopted is a directory that already existed on the machine.
+	OriginAdopted Origin = "adopted"
+	// OriginCloned is a directory Steve made from the project's remote or
+	// from a snapshot of its canonical workspace.
+	OriginCloned Origin = "cloned"
+)
+
+// Workspace is a directory an attempt can run in, on one node: the
+// resolved place, as an attempt records it. What a copy is and how it
+// came to be lives on the project (Copy); a worktree's base is here.
 type Workspace struct {
 	ID      string `json:"id"`
 	Project string `json:"project"`
@@ -173,6 +228,83 @@ type Workspace struct {
 	Kind    Kind   `json:"kind"`
 	// Base is the artifact an isolated workspace was materialised from.
 	Base string `json:"base,omitempty"`
+}
+
+// CopyState is where a copy is in its life: being cloned, usable, or
+// failed to come up.
+type CopyState string
+
+const (
+	CopyReady        CopyState = "ready"
+	CopyProvisioning CopyState = "provisioning"
+	CopyFailed       CopyState = "failed"
+)
+
+// Copy is a project's long-lived directory on a machine other than its
+// home, declared by the user: adopted where it already was, or cloned.
+// Interactive turns run there when the agent is on that machine. It is
+// not landed; it keeps up with the canonical workspace through git, which
+// is what the user chose by declaring it. Copies live on the project
+// record, so a project and where it is change together.
+type Copy struct {
+	Node   string    `json:"node"`
+	Path   string    `json:"path"`
+	Origin Origin    `json:"origin"`
+	Source string    `json:"source,omitempty"`
+	By     string    `json:"by,omitempty"`
+	At     time.Time `json:"at,omitzero"`
+	State  CopyState `json:"state"`
+	Error  string    `json:"error,omitempty"`
+}
+
+// Canonical is the project's home as a workspace: the directory itself.
+func (p Project) Canonical() Workspace {
+	return Workspace{ID: "canonical:" + p.ID, Project: p.ID, Node: p.Home.Node, Path: p.Home.Path, Kind: KindCanonical}
+}
+
+// CopyID names a project's copy on a machine. A project id may not
+// contain a slash, so the pair reads back unambiguously; the hub is "".
+func CopyID(projectID, node string) string { return "copy:" + projectID + "/" + node }
+
+// CopyOn is the project's copy on a machine, if it has one.
+func (p Project) CopyOn(node string) (Copy, bool) {
+	c, ok := p.Copies[node]
+	return c, ok
+}
+
+// Workspaces is where the project is: its home first, then its copies
+// by machine, every state included so a page can show one coming up.
+func (p Project) Workspaces() []Workspace {
+	out := []Workspace{p.Canonical()}
+	nodes := make([]string, 0, len(p.Copies))
+	for node := range p.Copies {
+		nodes = append(nodes, node)
+	}
+	sort.Strings(nodes)
+	for _, node := range nodes {
+		out = append(out, p.Copies[node].workspace(p.ID, node))
+	}
+	return out
+}
+
+func (c Copy) workspace(projectID, node string) Workspace {
+	return Workspace{ID: CopyID(projectID, node), Project: projectID, Node: node, Path: c.Path, Kind: KindCopy}
+}
+
+// Place is the one rule for where a project may be worked in place: on
+// its home machine, in the canonical workspace; on a machine that holds
+// a ready copy, in that copy; nowhere else. Every surface that asks "can
+// this agent work here" — a turn, the console's context bar, the read
+// model's projection — asks this, so the answer is the same everywhere.
+// The refusal names where the project is.
+func (p Project) Place(node string) (Workspace, error) {
+	if node == p.Home.Node {
+		return p.Canonical(), nil
+	}
+	if c, ok := p.Copies[node]; ok && c.State == CopyReady {
+		return c.workspace(p.ID, node), nil
+	}
+	return Workspace{}, NotHomeError{Project: p.ID, Home: p.Home.Node, Wanted: node, Places: p.Workspaces()}
 }
 
 // Request asks for a workspace of a project on a node.
@@ -215,19 +347,40 @@ var (
 	ErrNotMaterializable = errors.New("project: workspace cannot be materialised here")
 )
 
-// NotHomeError carries the two places so the message can name them.
+// NotHomeError says a project has no workspace on the machine asked for,
+// and carries where it does have them so the message can name places.
 type NotHomeError struct {
 	Project  string
 	Home     string
 	Wanted   string
 	Isolated bool
+	// Places are the machines the project has a workspace on: its home
+	// first, then its copies.
+	Places []Workspace
 }
 
 func (e NotHomeError) Error() string {
 	if e.Isolated {
 		return fmt.Sprintf("project %s: isolated workspace on %s is not available yet (home is %s)", e.Project, nodeLabel(e.Wanted), nodeLabel(e.Home))
 	}
-	return fmt.Sprintf("project %s lives on %s, not %s", e.Project, nodeLabel(e.Home), nodeLabel(e.Wanted))
+	return fmt.Sprintf("project %s lives on %s, not %s", e.Project, e.PlaceList(), nodeLabel(e.Wanted))
+}
+
+// PlaceList names the machines the project has a workspace on, home
+// first: "hub (home), node-a".
+func (e NotHomeError) PlaceList() string {
+	if len(e.Places) == 0 {
+		return nodeLabel(e.Home)
+	}
+	parts := make([]string, 0, len(e.Places))
+	for _, ws := range e.Places {
+		if ws.Kind == KindCanonical {
+			parts = append(parts, nodeLabel(ws.Node)+" (home)")
+		} else {
+			parts = append(parts, nodeLabel(ws.Node))
+		}
+	}
+	return strings.Join(parts, ", ")
 }
 
 func (e NotHomeError) Is(target error) bool {
@@ -249,6 +402,21 @@ const (
 type Store struct {
 	l   *ledger.Ledger
 	now func() time.Time
+	// Levels answers a machine's data level, when the store is given a way
+	// to know; a copy may only sit where the project's level admits.
+	Levels func(node string) Level
+}
+
+// admits checks a copy's machine against the project's level.
+func (s *Store) admits(p Project, node string) error {
+	if s.Levels == nil {
+		return nil
+	}
+	at := s.Levels(node)
+	if !p.Level.OrDefault().Admits(at.OrDefault()) {
+		return fmt.Errorf("project %s is %s; %s is only %s", p.ID, p.Level.OrDefault(), nodeLabel(node), at.OrDefault())
+	}
+	return nil
 }
 
 func Open(l *ledger.Ledger) *Store {
@@ -258,11 +426,31 @@ func Open(l *ledger.Ledger) *Store {
 // Declare records the operator's projects as the hub's assignment. It is
 // run at boot from config; the ledger copy is what the runtime reads, so a
 // project removed from config stays known until it is retired here.
+//
+// Config declares where a project's copies are; the ledger remembers how
+// each came to be. A copy declared at the same place keeps its record —
+// origin, source, who added it, whether it is ready; one declared at a
+// new place starts over as adopted; one no longer declared is forgotten.
 func (s *Store) Declare(ctx context.Context, projects []Project) error {
 	for _, p := range projects {
 		normalized, err := p.normalized()
 		if err != nil {
 			return err
+		}
+		var previous Project
+		if ok, err := s.l.GetBinding(ctx, kindProject, normalized.ID, &previous); err != nil {
+			return err
+		} else if ok {
+			for node, c := range normalized.Copies {
+				if had, ok := previous.Copies[node]; ok && had.Path == c.Path {
+					normalized.Copies[node] = had
+				}
+			}
+		}
+		for node := range normalized.Copies {
+			if err := s.admits(normalized, node); err != nil {
+				return err
+			}
 		}
 		if err := s.l.PutBinding(ctx, kindProject, normalized.ID, normalized); err != nil {
 			return err
@@ -340,20 +528,92 @@ func (s *Store) Bind(ctx context.Context, conversationID, projectID, by string) 
 	return b, nil
 }
 
-// NotHome is the one rule for where a project's canonical workspace may be
-// worked: on its home machine, in place. Every surface that asks "can this
-// agent work here" — a turn, the console's context bar, a placement — asks
-// this, so the answer is the same everywhere.
-func (p Project) NotHome(node string, isolated bool) error {
-	if isolated || node != p.Home.Node {
-		return NotHomeError{Project: p.ID, Home: p.Home.Node, Wanted: node, Isolated: isolated}
+// Conflict finds the workspace, of any project, whose directory on node is
+// the same as path or nests with it. A directory belongs to one workspace:
+// two would both claim the same files, and a single-writer lock on one
+// would not know about the other.
+func (s *Store) Conflict(ctx context.Context, node, path string) (Workspace, bool, error) {
+	clean := filepath.Clean(path)
+	list, err := s.List(ctx)
+	if err != nil {
+		return Workspace{}, false, err
 	}
-	return nil
+	for _, p := range list {
+		for _, ws := range p.Workspaces() {
+			if ws.Node != node {
+				continue
+			}
+			theirs := filepath.Clean(ws.Path)
+			if theirs == clean || strings.HasPrefix(clean, theirs+"/") || strings.HasPrefix(theirs, clean+"/") {
+				return ws, true, nil
+			}
+		}
+	}
+	return Workspace{}, false, nil
 }
 
-// Materialize serves the canonical workspace on the project's home node.
-// Anything else is an honest refusal: the artifact store, not this
-// package, knows how to put a project somewhere it is not.
+// SetCopy records a copy of a project on a machine — a new one, or a
+// change of state for one being cloned. A new copy must satisfy the copy
+// shape, the machine's level, and own its directory alone; a project has
+// one copy per machine.
+func (s *Store) SetCopy(ctx context.Context, projectID string, c Copy) (Workspace, error) {
+	p, ok, err := s.Get(ctx, projectID)
+	if err != nil {
+		return Workspace{}, err
+	}
+	if !ok {
+		return Workspace{}, fmt.Errorf("%w: %s", ErrUnknown, projectID)
+	}
+	c, err = p.copyShape(c.Node, c)
+	if err != nil {
+		return Workspace{}, err
+	}
+	if had, exists := p.Copies[c.Node]; exists && had.Path != c.Path {
+		return Workspace{}, fmt.Errorf("project %s already has a copy on %s (%s); a project has one copy per machine", p.ID, nodeLabel(c.Node), had.Path)
+	} else if !exists {
+		if err := s.admits(p, c.Node); err != nil {
+			return Workspace{}, err
+		}
+		if other, taken, err := s.Conflict(ctx, c.Node, c.Path); err != nil {
+			return Workspace{}, err
+		} else if taken {
+			return Workspace{}, fmt.Errorf("%s on %s already belongs to project %s (%s)", c.Path, nodeLabel(c.Node), other.Project, other.Path)
+		}
+		if c.At.IsZero() {
+			c.At = s.now().UTC()
+		}
+	}
+	if p.Copies == nil {
+		p.Copies = map[string]Copy{}
+	}
+	p.Copies[c.Node] = c
+	if err := s.l.PutBinding(ctx, kindProject, p.ID, p); err != nil {
+		return Workspace{}, err
+	}
+	return c.workspace(p.ID, c.Node), nil
+}
+
+// DeleteCopy forgets a project's copy on a machine. The directory is not
+// touched. Whether something is running there is the caller's check.
+func (s *Store) DeleteCopy(ctx context.Context, projectID, node string) error {
+	p, ok, err := s.Get(ctx, projectID)
+	if err != nil {
+		return err
+	}
+	if !ok {
+		return fmt.Errorf("%w: %s", ErrUnknown, projectID)
+	}
+	if _, has := p.Copies[node]; !has {
+		return fmt.Errorf("project %s has no copy on %s", projectID, nodeLabel(node))
+	}
+	delete(p.Copies, node)
+	return s.l.PutBinding(ctx, kindProject, p.ID, p)
+}
+
+// Materialize serves the project's workspace on a machine for an in-place
+// turn: the canonical one at home, a copy elsewhere. An isolated
+// workspace is an honest refusal: the artifact store, not this package,
+// knows how to put a project somewhere it is not.
 func (s *Store) Materialize(ctx context.Context, req Request) (Workspace, error) {
 	p, ok, err := s.Get(ctx, req.Project)
 	if err != nil {
@@ -362,12 +622,10 @@ func (s *Store) Materialize(ctx context.Context, req Request) (Workspace, error)
 	if !ok {
 		return Workspace{}, fmt.Errorf("%w: %s", ErrUnknown, req.Project)
 	}
-	if err := p.NotHome(req.Node, req.Isolated); err != nil {
-		return Workspace{}, err
+	if req.Isolated {
+		return Workspace{}, NotHomeError{Project: p.ID, Home: p.Home.Node, Wanted: req.Node, Isolated: true}
 	}
-	return Workspace{
-		ID: "canonical:" + p.ID, Project: p.ID, Node: p.Home.Node, Path: p.Home.Path, Kind: KindCanonical,
-	}, nil
+	return p.Place(req.Node)
 }
 
 const kindDisclosure = "disclosure"

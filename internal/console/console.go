@@ -143,6 +143,7 @@ func (s *Service) Summaries(ctx context.Context) []readmodel.Conversation {
 			}
 			if got.Agent != nil {
 				out[i].Agent = got.Agent.ID
+				out[i].Place = got.Agent.Place
 			}
 		}
 	}
@@ -153,6 +154,13 @@ func (s *Service) Summaries(ctx context.Context) []readmodel.Conversation {
 		return out[i].LastAt.After(out[j].LastAt)
 	})
 	return out
+}
+
+func placement(p *turn.Placement) *readmodel.Placement {
+	if p == nil {
+		return nil
+	}
+	return &readmodel.Placement{Workspace: p.Workspace, Kind: p.Kind, Node: p.Node}
 }
 
 // clipTitle is a line's first sentence-ish, short enough for a sidebar.
@@ -187,7 +195,7 @@ func (s *Service) Context(ctx context.Context, conversation string) (readmodel.C
 		out.Project = &readmodel.ContextProject{ID: got.Project.ID, Node: got.Project.Node, Path: got.Project.Path, Level: got.Project.Level, Repo: got.Project.Repo, Version: got.Project.Version, Bound: got.Project.Bound}
 	}
 	convert := func(a turn.AgentChoice) readmodel.AgentChoice {
-		return readmodel.AgentChoice{ID: a.ID, Node: a.Node, Harness: a.Harness, Model: a.Model, Ready: a.Ready, Why: a.Why, Usable: a.Usable, Because: a.Because, Current: a.Current}
+		return readmodel.AgentChoice{ID: a.ID, Node: a.Node, Harness: a.Harness, Model: a.Model, Ready: a.Ready, Why: a.Why, Usable: a.Usable, Because: a.Because, Current: a.Current, Place: placement(a.Place)}
 	}
 	if got.Agent != nil {
 		current := convert(*got.Agent)

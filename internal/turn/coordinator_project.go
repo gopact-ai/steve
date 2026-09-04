@@ -64,7 +64,7 @@ func (c *Coordinator) resolveWorkspace(ctx context.Context, req Request, selecte
 		var notHome project.NotHomeError
 		if errors.As(err, &notHome) {
 			return project.Binding{}, project.Workspace{}, UserError{Text: c.text.T(i18n.ProjectNotHome,
-				binding.ProjectID, placeLabel(notHome.Home), selected.ID, placeLabel(selected.Node), placeLabel(notHome.Home), protocol.CommandProject)}
+				binding.ProjectID, notHome.PlaceList(), selected.ID, placeLabel(selected.Node), placeLabel(selected.Node), protocol.CommandProject)}
 		}
 		return project.Binding{}, project.Workspace{}, err
 	}

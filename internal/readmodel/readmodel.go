@@ -366,10 +366,10 @@ type Sources struct {
 	// HubAdvert describes the hub machine now, not at startup: a harness
 	// installed since is seen by the next snapshot.
 	HubAdvert func() nodewire.Advert
-	// Repos answers what repositories a project's directory holds, from a
-	// cache the hub keeps; HomeProject and DefaultProject name the two
-	// special projects.
-	Repos          func(projectID string) []nodewire.Repo
+	// Repos answers what repositories a workspace's directory holds, by
+	// workspace id, from a cache the hub keeps; HomeProject and
+	// DefaultProject name the two special projects.
+	Repos          func(workspaceID string) []nodewire.Repo
 	HomeProject    string
 	DefaultProject string
 	// Models is the book of observed models, for node harnesses that
@@ -603,13 +603,37 @@ type Project struct {
 	Repo        string   `json:"repo"`
 	DefaultRole string   `json:"default_role,omitempty"`
 	Agents      []string `json:"agents"`
-	// Repos are the git repositories inside the project's directory, as
-	// its machine last reported them. Home marks Steve's own home — the
-	// owner's private conversation space, not a codebase; Default marks
-	// what a fresh conversation binds to.
+	// Repos are the git repositories inside the project's home directory,
+	// as its machine last reported them; Node, Path and Repos describe the
+	// home, Agents is the union over every workspace. Home marks Steve's
+	// own home — the owner's private conversation space, not a codebase;
+	// Default marks what a fresh conversation binds to.
 	Repos   []nodewire.Repo `json:"repos"`
 	Home    bool            `json:"home,omitempty"`
 	Default bool            `json:"default,omitempty"`
+	// Workspaces are where the project is: its home first, then its
+	// copies on other machines.
+	Workspaces []Workspace `json:"workspaces"`
+}
+
+// Workspace is one place a project is: a directory on a machine, what it
+// holds, and which agents can work in it.
+type Workspace struct {
+	ID     string `json:"id"`
+	Node   string `json:"node"`
+	Path   string `json:"path"`
+	Kind   string `json:"kind"`
+	Origin string `json:"origin,omitempty"`
+	Source string `json:"source,omitempty"`
+	// State is ready, provisioning or failed (a copy being cloned, or one
+	// that could not be); Error says why it failed. Busy says an attempt
+	// is running in it now.
+	State string `json:"state,omitempty"`
+	Error string `json:"error,omitempty"`
+	Busy  bool   `json:"busy,omitempty"`
+	// Repos is nil until the machine has been asked.
+	Repos  []nodewire.Repo `json:"repos"`
+	Agents []string        `json:"agents"`
 }
 
 // Progress is one agent's turn as it happens, small enough to stream:

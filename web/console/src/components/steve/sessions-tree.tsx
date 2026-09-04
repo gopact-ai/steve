@@ -1,11 +1,16 @@
 import { useState } from "react";
-import { ChevronDown, Edit05, Folder, Loading01, Plus } from "@untitledui/icons";
+import { AlertCircle, ChevronDown, Edit05, Folder, Loading01, Plus } from "@untitledui/icons";
 import type { Conversation, Project } from "@/lib/types";
+import { kindWord, placeLabel } from "@/lib/workspaces";
 
-// SessionsTree is the console's left column, a tree: each project is a
-// node that folds, with the threads under it and a way to start one
-// there; Steve's home sits apart at the bottom. A thread whose project
-// is not known any more goes under 未归属.
+// SessionsTree is the console's left column, a tree of two levels: a
+// project, and the threads in it. A thread is not owned by a workspace —
+// its agent can change, and with it where it runs — so where it runs
+// now is a badge on the row, from the server's own placement rule; a
+// thread whose agent has no workspace of the project on its machine
+// carries a mark instead. Where a project is shows under its name.
+// Steve's home sits apart at the bottom; a thread whose project is not
+// known any more goes under 未归属.
 export function SessionsTree({ list, projects, current, onPick, onNew }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void }) {
     const [folded, setFolded] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem("steve.folded") || "{}"); } catch { return {}; } });
     const toggle = (id: string) => setFolded((f) => { const next = { ...f, [id]: !f[id] }; try { localStorage.setItem("steve.folded", JSON.stringify(next)); } catch { /* ignore */ } return next; });
@@ -22,6 +27,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew }: { list:
         const threads = byProject.get(p.id) || [];
         const open = !folded[p.id];
         const holdsCurrent = threads.some((c) => c.id === current);
+        const places = p.workspaces.map((w) => `${kindWord(w.kind)} ${w.node}`).join(" · ");
         return (
             <li key={p.id} className="flex flex-col">
                 <div className={`group flex items-center gap-1 rounded-lg px-1.5 py-1 ${holdsCurrent && !open ? "bg-primary/60" : ""}`}>
@@ -29,7 +35,10 @@ export function SessionsTree({ list, projects, current, onPick, onNew }: { list:
                         <ChevronDown className={`size-3.5 transition ${open ? "" : "-rotate-90"}`} />
                     </button>
                     <Folder className="size-4 shrink-0 text-fg-quaternary" />
-                    <button type="button" onClick={() => toggle(p.id)} className="min-w-0 flex-1 truncate text-left text-sm text-primary" title={hint || `${p.node} · ${p.path}`}>{title}</button>
+                    <button type="button" onClick={() => toggle(p.id)} className="flex min-w-0 flex-1 flex-col text-left" title={hint || places}>
+                        <span className="truncate text-sm text-primary">{title}</span>
+                        <span className="truncate text-[11px] text-quaternary">{places}</span>
+                    </button>
                     {threads.some((c) => c.running) && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
                     <button type="button" onClick={() => onNew(p.id)} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary opacity-0 transition hover:bg-primary/60 hover:text-fg-quaternary_hover group-hover:opacity-100" aria-label={`在 ${p.id} 下新会话`} title={`在 ${p.id} 下新会话`}>
                         <Plus className="size-3.5" />
@@ -38,7 +47,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew }: { list:
                 {open && (
                     <ul className="ml-4 flex flex-col gap-0.5 border-l border-secondary pl-2">
                         {threads.length === 0 && <li className="px-2 py-1 text-[11px] text-quaternary">还没有会话</li>}
-                        {threads.map((c) => <Thread key={c.id} c={c} current={c.id === current} onPick={onPick} />)}
+                        {threads.map((c) => <Thread key={c.id} c={c} current={c.id === current} onPick={onPick} many={p.workspaces.length > 1} />)}
                     </ul>
                 )}
             </li>
@@ -76,15 +85,24 @@ function TreeHeading({ children }: { children: string }) {
     return <div className="px-2 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-quaternary first:pt-2">{children}</div>;
 }
 
-function Thread({ c, current, onPick }: { c: Conversation; current: boolean; onPick: (id: string) => void }) {
+// Thread is one conversation: its title, its agent, when it last spoke,
+// and — when the project is in more than one place, or the agent has
+// nowhere to work — where it runs.
+function Thread({ c, current, onPick, many }: { c: Conversation; current: boolean; onPick: (id: string) => void; many?: boolean }) {
+    const nowhere = !!c.project && !!c.agent && !c.place;
     return (
         <li>
-            <button type="button" onClick={() => onPick(c.id)} className={`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left transition ${current ? "bg-primary" : "hover:bg-primary/50"}`}>
+            <button type="button" onClick={() => onPick(c.id)} className={`flex w-full flex-col gap-0.5 rounded-lg px-2 py-1.5 text-left transition ${current ? "bg-primary" : "hover:bg-primary/50"}`} title={nowhere ? "它的 Agent 所在机器上没有这个项目的工作区" : c.place ? placeLabel(c.place) : undefined}>
                 <span className="flex items-center gap-1.5">
                     {c.running && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
+                    {nowhere && <AlertCircle className="size-3 shrink-0 text-fg-error-primary" />}
                     <span className="truncate text-sm text-primary">{c.title || "新会话"}</span>
                 </span>
-                <span className="truncate text-[11px] text-tertiary">{c.agent || "默认 Agent"}{c.last_at ? ` · ${ago(c.last_at)}` : " · 未开始"}</span>
+                <span className="truncate text-[11px] text-tertiary">
+                    {c.agent || "默认 Agent"}
+                    {many && c.place ? <span className="text-quaternary"> · {placeLabel(c.place)}</span> : null}
+                    {c.last_at ? ` · ${ago(c.last_at)}` : " · 未开始"}
+                </span>
             </button>
         </li>
     );
