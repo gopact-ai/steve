@@ -539,5 +539,5 @@ agent 得能自己维护 fleet，不只是人从页面操作。平台 MCP 再加
 
 ### 22.3 顺序
 
-1. delegate 观察者 + 读模型 `DelegateProgress` + console `StepProcess` 扩字段；前端 `DelegationCard`、`ToolCalls` 折叠与限高；真机委派一次截图验收。
+1. ✅ delegate 观察者 + 读模型 `DelegateProgress`（`delegate.progress`）+ console `StepProcess` 扩字段；前端 `DelegationCard`、`ToolCalls` 折叠与限高。真机验收（2026-09-04，claude 委派 node-b 的 shipper 改 README）：进行中看到"委派 #45 shipper @ node-b · 进行中 · 23s"、目标、它自己的读文件调用和当前想法；结束后卡片变"完成 · 1m58s"，19 条命令 13 次工具折叠，artifact 与落地 refs；父 agent 的 `steve_await ×2` 折成一行。第一次验收发现落地路径上子任务的回答没进结果（评审第 6 条），已修（af6e82f）。
 2. 会话侧栏里给运行中的子任务一个角标；`/tasks` 树与卡片互相跳转。
