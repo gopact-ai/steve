@@ -1,4 +1,4 @@
-package turn
+package idle
 
 import (
 	"context"
@@ -8,7 +8,7 @@ import (
 )
 
 func TestIdleTimeoutRunsOutOnSilenceNotOnWork(t *testing.T) {
-	ctx, stop, touch := withIdleTimeout(context.Background(), 60*time.Millisecond)
+	ctx, stop, touch := WithTimeout(context.Background(), 60*time.Millisecond)
 	defer stop()
 	// Busy for longer than the timeout, never silent for it.
 	for i := 0; i < 6; i++ {
@@ -30,7 +30,7 @@ func TestIdleTimeoutRunsOutOnSilenceNotOnWork(t *testing.T) {
 
 func TestIdleTimeoutFollowsItsParent(t *testing.T) {
 	parent, cancel := context.WithCancel(context.Background())
-	ctx, stop, _ := withIdleTimeout(parent, time.Hour)
+	ctx, stop, _ := WithTimeout(parent, time.Hour)
 	defer stop()
 	cancel()
 	select {

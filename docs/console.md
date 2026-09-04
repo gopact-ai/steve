@@ -478,7 +478,8 @@ agent 得能自己维护 fleet，不只是人从页面操作。平台 MCP 再加
 | 3 | 第二轮：claude 等子任务等到第 10 分钟整，回合被 `prompt_timeout` 砍掉 | 超时是整回合的硬上限，协调型回合光等子任务就超过 | 改成**静默超时**：每个进度事件重置时钟，只抓卡死的 agent（f396fc6） |
 | 4 | 子任务落地只有 1 个路径，主目录里 `hostline/` 是空目录 | builder 在自己目录里 `git init` 并提交，快照把它当子模块（gitlink） | 快照前拍平嵌套 `.git`（hub 本地与节点脚本）；子任务提示里说明"这是 Steve 快照的工作树，别 git init / commit"（f396fc6） |
 | 5 | 之后所有对该目录的改动都"无变化"、不落地 | 父树里已有的 gitlink 读进 index 后，git 忽略该路径下的文件 | 读完父树先删掉 index 里的 gitlink 条目（本地 + 脚本，脚本用真 shell 跑测试）（17d79a8） |
-| 6 | 父回合死了之后，子任务的结果 `Defer` 进队列，等下一回合落地 | 设计如此（等主目录锁释放）；但 #39 因为 5 根本没有产生 artifact | 5 修后队列路径可用；孤儿子任务的落地仍要等项目上的下一回合，见 21.3 |
+| 6 | 父回合死了之后，子任务的结果 `Defer` 进队列，等下一回合落地 | 设计如此（等主目录锁释放）；但 #39 因为 5 根本没有产生 artifact | 5 修后队列路径可用；孤儿子任务的落地仍要等项目上的下一回合，见 21.4 |
+| 7 | 第三轮：#41 跑到 9m30s 整被取消，codex 回 `StopReasonCanceled`，父 agent 只看到 "context canceled" | `delegate.MaxWait = PromptTimeout − 30s` 是子任务的硬上限；node 上 reasoning=max 的 codex 做三个文件要 8–10 分钟 | 子任务同样改成静默超时（`internal/idle`，父回合与子任务共用），硬上限只剩任务预算 `MaxElapsed` |
 
 ### 21.2 第三轮：跑通了
 
@@ -487,7 +488,7 @@ agent 得能自己维护 fleet，不只是人从页面操作。平台 MCP 再加
 | 步骤 | 谁 / 在哪 | 用时 | 结果 |
 |---|---|---|---|
 | 看有谁 | claude / hub：`steve_context` → `steve_fleet` → `steve_projects` → `steve_help` | 20 s | 挑出 node-a 的 builder、node-b 的 shipper |
-| 写 main.go / go.mod / README | #41 builder / node-a | 9m30s | **失败**：codex 自己以 `cancelled` 结束回合（原因未定，见 21.4） |
+| 写 main.go / go.mod / README | #41 builder / node-a | 9m30s | **失败**：hub 在 `PromptTimeout − 30s` = 570 s 处取消了子任务（发现 7，已修） |
 | 重试 | #42 builder / node-a | 7m49s | 成功；3 个文件落进主目录（`LandUnder`） |
 | 写 main_test.go | #43 shipper / node-b，带上 #42 的 artifact ref | 1m18s | 成功；1 个文件落进主目录 |
 | 复核 | claude / hub | 15 s | `go build` 通过、`TestLine` PASS、`go run` 打出 `host=n251-239-109 time=…` |
@@ -507,5 +508,5 @@ agent 得能自己维护 fleet，不只是人从页面操作。平台 MCP 再加
 - 节点断线时正在跑的子任务标记为 failed，工作树留在节点上（`wt-770e70f8c717-392a8c4de3ecb3f3`），没有清理。
 - 节点上 builder（codex）做一个三文件的 Go 程序要 8–9 分钟；`steve_await` 一次 50 秒、每次都是一次 MCP 往返，回合的 trace 里全是 await。
 - 取消的根任务在读模型里一直 `running`（多轮任务的语义），但用户看不出它其实没人在跑。
-- #41 在 570 s 时以 `agent canceled the turn` 结束：是 codex 回了 `StopReasonCanceled`，hub 侧没有任何取消（租约没丢、父回合还在、没有 session/cancel 日志）。node-a 的 codex 配的是 `model_reasoning_effort = "max"`，一个三文件的程序要 8–10 分钟；第二轮的 #38 跑了 9m0s 恰好过线。下一步：子任务失败时把 ACP 的 stopReason 和最后一条进度一起写进回执，并给 node 上的 codex 换低一档的 reasoning。
+- node-a 的 codex 配的是 `model_reasoning_effort = "max"`，一个三文件的程序要 8–10 分钟；子任务的回执里没有 ACP 的 stopReason 和最后一条进度，父 agent 只看到 "context canceled"，猜不出是谁取消的。
 - builder 在 hub 上复核时 `go build ./...` 留下了 2.3 MB 的 `fleetline` 二进制在主目录里；下一次快照会把它记进项目。要么主目录快照忽略常见产物，要么 claude 的复核放到临时目录。

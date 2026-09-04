@@ -253,7 +253,7 @@ func TestRealClaudeDelegatesToTheNodeThatCan(t *testing.T) {
 	service.SetLedger(f.attempts, f.artifacts)
 	service.SetGate(gate)
 	service.SetEndpoints(f.registry)
-	service.MaxWait = 10 * time.Minute
+	service.MaxSilence = 10 * time.Minute
 	gate.SetDelegator(service)
 	f.registry.SetMCPDialer(loopbackDialer(gate.Addr()))
 

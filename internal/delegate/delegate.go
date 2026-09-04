@@ -31,6 +31,7 @@ import (
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
@@ -68,10 +69,12 @@ type Service struct {
 	gate       Gate
 	endpoints  Endpoints
 	node       string
-	// MaxWait caps one delegation regardless of the child's budget. The
-	// child runs detached from the tool call that started it, so this is
-	// about the child not living forever, not about the parent's turn.
-	MaxWait time.Duration
+	// MaxSilence is how long a child may go without a sign of life — no
+	// tool call, no text — before it is cancelled. It is an idle clock,
+	// not a cap: a child that builds and tests for twenty minutes while
+	// reporting is left alone, one that hung is not. The child's own
+	// budget (MaxElapsed) stays the hard limit.
+	MaxSilence time.Duration
 	// InlineWait is how long steve_delegate itself waits before answering
 	// "running": a child that finishes in seconds comes back done in one
 	// call, and a slow one does not hold the request open past any
@@ -388,12 +391,14 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		return result, err
 	}
 
-	wait := child.Budget.MaxElapsed
-	if s.MaxWait > 0 && wait > s.MaxWait {
-		wait = s.MaxWait
-	}
-	ctx, cancel := context.WithTimeout(ctx, wait)
+	ctx, cancel := context.WithTimeout(ctx, child.Budget.MaxElapsed)
 	defer cancel()
+	touch := func() {}
+	if s.MaxSilence > 0 {
+		var stop func()
+		ctx, stop, touch = idle.WithTimeout(ctx, s.MaxSilence)
+		defer stop()
+	}
 
 	at := harness.Placement{Node: candidate.Node, Harness: candidate.Harness}
 	if _, err := s.tasks.Begin(child.ID, candidate.Agent.ID, orHub(candidate.Node, s.node), ""); err != nil {
@@ -470,7 +475,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		prompt = caps.Instructions + "\n\n" + prompt
 	}
 	var last view.Progress
-	answer, _, err := session.Prompt(ctx, prompt, func(p view.Progress) { last = p })
+	answer, _, err := session.Prompt(ctx, prompt, func(p view.Progress) { last = p; touch() })
 	s.spent(child.ID, last)
 	if err != nil {
 		s.finish(child.ID, outcomeOf(err))

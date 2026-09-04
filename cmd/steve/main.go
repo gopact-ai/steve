@@ -817,7 +817,7 @@ func serve(args []string) error {
 		delegation.SetLedger(attempts, artifacts)
 		delegation.SetGate(gate)
 		delegation.SetEndpoints(nodes)
-		delegation.MaxWait = time.Duration(cfg.Gateway.PromptTimeout) - 30*time.Second
+		delegation.MaxSilence = time.Duration(cfg.Gateway.PromptTimeout)
 		gate.SetDelegator(delegation)
 		// Remote agents call a loopback port on their own machine; the node
 		// forwards it back here over the connection it already holds, so the

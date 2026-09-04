@@ -21,6 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/models"
@@ -410,7 +411,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	// And it is an idle clock: it runs out after c.timeout of silence,
 	// not of work, so a turn that awaits other agents is not cut short
 	// while they are still answering.
-	ctx, expire, touch := withIdleTimeout(turnCtx, c.timeout)
+	ctx, expire, touch := idle.WithTimeout(turnCtx, c.timeout)
 	defer expire()
 	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
 		return Result{}, context.Canceled

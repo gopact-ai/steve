@@ -1,4 +1,10 @@
-package turn
+// Package idle is a context that ends after silence, not after a fixed
+// total. A turn that coordinates other agents, or a delegated child
+// that builds and tests, can honestly take longer than any prompt
+// would, but it never goes quiet for long: every tool call and every
+// chunk of text is a sign of life. What the timeout catches is an
+// agent that hung, not one that is busy.
+package idle
 
 import (
 	"context"
@@ -6,12 +12,8 @@ import (
 	"time"
 )
 
-// idleContext ends after a stretch of silence rather than after a fixed
-// total. A turn that coordinates other agents — delegating, awaiting,
-// merging — can honestly take longer than any prompt would, but it never
-// goes quiet for long: every tool call and every chunk of text is a
-// sign of life. What the timeout catches is an agent that hung, not one
-// that is busy. Its error is context.DeadlineExceeded, as before.
+// idleContext is the context; its error on expiry is
+// context.DeadlineExceeded, like a deadline's.
 type idleContext struct {
 	context.Context
 	done  chan struct{}
@@ -21,8 +23,8 @@ type idleContext struct {
 	d     time.Duration
 }
 
-// withIdleTimeout wraps parent; touch resets the clock, stop ends it.
-func withIdleTimeout(parent context.Context, d time.Duration) (ctx context.Context, stop func(), touch func()) {
+// WithTimeout wraps parent; touch resets the clock, stop ends it.
+func WithTimeout(parent context.Context, d time.Duration) (ctx context.Context, stop func(), touch func()) {
 	c := &idleContext{Context: parent, done: make(chan struct{}), d: d}
 	c.timer = time.AfterFunc(d, func() { c.finish(context.DeadlineExceeded) })
 	go func() {

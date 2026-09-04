@@ -39,6 +39,9 @@ type fakeSessions struct {
 	prompts []string
 	servers [][]acp.MCPServer
 	reply   func(prompt string) (string, error)
+	// run, when set, is the child's whole turn: it sees the context and
+	// may report progress, the way a real session does.
+	run func(ctx context.Context, progress func(view.Progress)) (string, error)
 }
 
 func (f *fakeSessions) OpenSession(_ context.Context, at harness.Placement, _, _ string, servers []acp.MCPServer) (harness.Runner, error) {
@@ -54,11 +57,15 @@ func (f *fakeSessions) CloseSession(context.Context, harness.Placement, string) 
 type fakeRunner struct{ owner *fakeSessions }
 
 func (r *fakeRunner) ID() string { return "child-session" }
-func (r *fakeRunner) Prompt(_ context.Context, text string, _ func(view.Progress)) (string, []string, error) {
+func (r *fakeRunner) Prompt(ctx context.Context, text string, progress func(view.Progress)) (string, []string, error) {
 	r.owner.mu.Lock()
 	r.owner.prompts = append(r.owner.prompts, text)
-	reply := r.owner.reply
+	reply, run := r.owner.reply, r.owner.run
 	r.owner.mu.Unlock()
+	if run != nil {
+		out, err := run(ctx, progress)
+		return out, nil, err
+	}
 	if reply != nil {
 		out, err := reply(text)
 		return out, nil, err
@@ -383,4 +390,47 @@ func stores(t *testing.T) (*artifact.Store, *attempt.Service) {
 		t.Fatal(err)
 	}
 	return artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()}), attempt.New(book)
+}
+
+// A child is cut for silence, not for taking long: one that keeps
+// reporting past the limit finishes, one that goes quiet is cancelled.
+func TestAChildIsCutForSilenceNotForWork(t *testing.T) {
+	w := newWorld(t)
+	w.running(t, "codex")
+	w.service.MaxSilence = 80 * time.Millisecond
+
+	w.sessions.run = func(ctx context.Context, progress func(view.Progress)) (string, error) {
+		for i := 0; i < 12; i++ { // 240ms of work, never 80ms of silence
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(20 * time.Millisecond):
+			}
+			progress(view.Progress{})
+		}
+		return "done\nREF: git chatty", nil
+	}
+	res, err := w.service.Delegate(t.Context(), "chat", "codex", agentmcp.DelegateRequest{Goal: "build it", Requires: []string{"gpu"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.State != "done" {
+		t.Fatalf("a working child was cut: %+v", res)
+	}
+
+	w.sessions.run = func(ctx context.Context, _ func(view.Progress)) (string, error) {
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-time.After(400 * time.Millisecond):
+			return "too late", nil
+		}
+	}
+	res, err = w.service.Delegate(t.Context(), "chat", "codex", agentmcp.DelegateRequest{Goal: "hang", Requires: []string{"gpu"}})
+	if err == nil || res.State != "failed" {
+		t.Fatalf("a silent child was not cut: res=%+v err=%v", res, err)
+	}
+	if !strings.Contains(err.Error(), "deadline") {
+		t.Fatalf("err = %v, want the idle deadline", err)
+	}
 }
