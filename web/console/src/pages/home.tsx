@@ -16,7 +16,7 @@ const kb = (n: number) => `${(n / 1024).toFixed(1)} KB`;
 // What each file is for, in the owner's words.
 const roles: Record<string, { title: string; what: string }> = {
     "SOUL.md": { title: "身份", what: "Steve 是谁、怎么说话、什么不做。每个 Agent 每次开会话都先读它；群聊和访客面前也带着。" },
-    "USER.md": { title: "主人", what: "你是谁：称呼、时区、习惯、备注。只在你的私聊里注入，群聊和访客看不到。" },
+    "USER.md": { title: "用户", what: "你是谁：称呼、时区、习惯、备注。只在你的私聊里注入，群聊和访客看不到。渠道身份（飞书 open_id 之类）不放这里，那是配置的事。" },
     "MEMORY.md": { title: "记忆", what: "长期仍然为真的事：偏好、项目、人。Steve 自己也会往里写；只在你的私聊里注入。" },
 };
 
@@ -34,7 +34,7 @@ export function HomePage() {
     return (
         <div className="flex flex-col">
             <PageHeader title="Steve 的家"
-                description={<>三份文件让 Steve 成为 Steve：<b>身份</b>、<b>主人</b>、<b>记忆</b>。每一轮开始前都会重新读，所以这里保存的就是下一轮 Agent 看到的。你的私聊里三份都注入；群聊和访客面前只有身份。改了以后，已经开着的会话会提示 /new。</>}
+                description={<>三份文件让 Steve 成为 Steve：<b>身份</b>、<b>用户</b>、<b>记忆</b>。每一轮开始前都会重新读，所以这里保存的就是下一轮 Agent 看到的。你的私聊里三份都注入；群聊和访客面前只有身份。改了以后，已经开着的会话会提示 /new。</>}
                 actions={home && <Button size="md" color="secondary" onClick={() => navigate(`/console?new=1&project=${encodeURIComponent(home.id)}`)}>去私聊</Button>} />
             <PageBody>
                 {error && <div className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error}</div>}

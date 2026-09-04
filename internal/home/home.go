@@ -75,7 +75,7 @@ func BootstrapLocale(path, ownerOpenID string, locale Locale) error {
 		return fmt.Errorf("create steve home: %w", err)
 	}
 	pack := templatesFor(locale)
-	user := strings.ReplaceAll(pack.user, templateOwnerID, ownerLabel(ownerOpenID, locale))
+	user := pack.user
 	files := []struct {
 		name string
 		body string
@@ -90,13 +90,6 @@ func BootstrapLocale(path, ownerOpenID string, locale Locale) error {
 		}
 	}
 	return nil
-}
-
-func ownerLabel(ownerOpenID string, locale Locale) string {
-	if strings.TrimSpace(ownerOpenID) == "" {
-		return unsetOwnerLabel(locale)
-	}
-	return ownerOpenID
 }
 
 func IsTemplate(body string) bool {
@@ -519,7 +512,7 @@ func Write(path, name, text string) error {
 		_ = os.Remove(tmp.Name())
 		return err
 	}
-	if err := os.Chmod(tmp.Name(), 0o644); err != nil {
+	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
 		_ = os.Remove(tmp.Name())
 		return err
 	}

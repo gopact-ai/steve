@@ -21,12 +21,12 @@ coding agent 接进飞书聊天，像同事一样给它派活。
 
 ```bash
 go build -o steve ./cmd/steve
-./steve setup     # 交互式：应用凭据、群策略、主人 open_id（本人自填绑定）
+./steve setup     # 交互式：应用凭据、群策略、owner 的飞书 open_id（本人自填绑定）
 ./steve doctor    # 体检：凭据、home、每个 agent 拉起一次会话
 ./steve run       # 启动网关（flock 单例，重复启动会被拒绝）
 ```
 
-绑定主人后首次 `run` 会主动私聊建立 **home 会话**（身份初始化：SOUL/USER/MEMORY）。
+绑定 owner 后首次 `run` 会主动私聊建立 **home 会话**（身份初始化：SOUL/USER/MEMORY）。
 不知道自己的 open_id？先 `run` 起来私聊 bot 一句话，网关日志里
 `gateway: message ... sender=` 就是（open_id 按应用作用域，别处查到的无效）。
 
@@ -230,7 +230,7 @@ node 掉线、模型不提供，这类不是装个东西能解决的，不给按
 **工作区**：主目录只有一个，合并落回那里；副本可以有多个，各在一台机器上（认领已有目录，或从项目的 remote 克隆），那台机器上的 Agent
 就在副本里干活，副本靠 git 与主目录同步。会话和任务属于项目，跑在它的某个工作区里；目录里可以有一个或多个 git 仓库。数据等级
 （公开 < 内部 < 受限 < 密封，决定哪些机器能持有它的文件）。项目页上能看到每个项目里的仓库（分支、最近提交、有没有 AGENTS.md），
-"添加项目"和"移除项目"都是即时生效并写回配置的动作。Steve 自己的家（`gateway.home_path`）也是一个项目，主人的私聊默认在那里。
+"添加项目"和"移除项目"都是即时生效并写回配置的动作。Steve 自己的家（`gateway.home_path`）也是一个项目，owner 的私聊默认在那里。
 
 ### 加一台机器
 

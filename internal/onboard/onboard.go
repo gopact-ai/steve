@@ -88,9 +88,9 @@ func Prompt(locale i18n.Locale, homePath string) string {
 			"Tell them you will scan local Codex / Claude / Cursor / Grok / Kimi sessions on this machine to draft their profile, unless they say not to.\n" +
 			"Do not write the files in this turn. Do not use tools. Start the conversation now."
 	}
-	return "你是 Steve。这是你第一次通过飞书私聊联系主人。\n" +
+	return "你是 Steve。这是你第一次通过飞书私聊联系用户。\n" +
 		"当前工作目录是 Steve home：" + homePath + "（SOUL.md / USER.md / MEMORY.md，现在还是模板）。\n" +
 		"先简短自我介绍，问怎么称呼，并确认时区。\n" +
-		"明确告诉主人：除非他们说不要，你会扫描这台机器上已有的 Codex / Claude / Cursor / Grok / Kimi 会话来构建 USER.md 画像。\n" +
+		"明确告诉用户：除非他们说不要，你会扫描这台机器上已有的 Codex / Claude / Cursor / Grok / Kimi 会话来构建 USER.md 画像。\n" +
 		"这一轮不要写文件，不要用工具。现在开始对话。"
 }
