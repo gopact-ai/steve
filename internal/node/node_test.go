@@ -896,3 +896,41 @@ func TestHubConfiguresANode(t *testing.T) {
 		t.Fatalf("a refused setting changed the node: %+v", again)
 	}
 }
+
+// The hub dials its machines before its messaging server exists; the
+// dialer wired afterwards must reach the connections already up, not
+// only the next redial.
+func TestReverseMCPTunnelReachesConnectionsAlreadyUp(t *testing.T) {
+	hubServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(`{"late":true}`))
+	}))
+	t.Cleanup(hubServer.Close)
+	hubAddr := strings.TrimPrefix(hubServer.URL, "http://")
+
+	server := startNode(t, ServerConfig{
+		Name: "host-4", Token: "tok", StateDir: t.TempDir(),
+		Harnesses: map[string]HarnessSpec{"codex": {Command: "echo"}},
+	})
+	registry := NewRegistry("hub-1", map[string]Config{
+		"host-4": {Addr: server.Addr(), Token: "tok"},
+	})
+	t.Cleanup(registry.Close)
+	registry.Probe(t.Context()) // connected, no dialer yet
+	registry.SetMCPDialer(func(ctx context.Context) (net.Conn, error) {
+		var dialer net.Dialer
+		return dialer.DialContext(ctx, "tcp", hubAddr)
+	})
+	endpoint, err := registry.MCPEndpoint(t.Context(), "host-4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint, strings.NewReader(`{}`))
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("the tunnel on a connection dialed before the dialer was wired: %v", err)
+	}
+	defer resp.Body.Close()
+	if body, _ := io.ReadAll(resp.Body); string(body) != `{"late":true}` {
+		t.Fatalf("response = %q", body)
+	}
+}

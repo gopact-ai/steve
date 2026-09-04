@@ -26,6 +26,18 @@ type conn struct {
 	lastBindings map[string][]ability.Binding
 
 	closeOnce sync.Once
+	// reverseOnce guards the reverse MCP server: started at dial time
+	// when the dialer is known, or later when it is wired — the hub dials
+	// its machines before its messaging server exists.
+	reverseOnce sync.Once
+}
+
+// startReverse serves the node's reverse MCP streams, once.
+func (c *conn) startReverse(mcpDial func(context.Context) (net.Conn, error)) {
+	if mcpDial == nil {
+		return
+	}
+	c.reverseOnce.Do(func() { go c.serveReverse(mcpDial) })
 }
 
 func (c *conn) getAdvert() nodewire.Advert {
@@ -61,9 +73,7 @@ func dial(ctx context.Context, name, hub string, cfg Config, mcpDial func(contex
 	_ = socket.SetDeadline(time.Time{})
 
 	c := &conn{name: name, mux: nodewire.NewMux(socket, true), advert: advert}
-	if mcpDial != nil {
-		go c.serveReverse(mcpDial)
-	}
+	c.startReverse(mcpDial)
 	log.Printf("node: %s up — %s/%s, harnesses=%d, caps=%v",
 		name, advert.OS, advert.Arch, len(advert.Harnesses), advert.Capabilities)
 	return c, nil

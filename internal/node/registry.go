@@ -10,7 +10,6 @@
 package node
 
 import (
-	"strings"
 	"bytes"
 	"context"
 	cryptorand "crypto/rand"
@@ -23,6 +22,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -218,8 +218,19 @@ func NewRegistry(hub string, configs map[string]Config) *Registry {
 // listener and its agents lose the send primitive rather than the session.
 func (r *Registry) SetMCPDialer(dial func(ctx context.Context) (net.Conn, error)) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.mcpDial = dial
+	live := make([]*conn, 0, len(r.live))
+	for _, c := range r.live {
+		live = append(live, c)
+	}
+	r.mu.Unlock()
+	// Connections already up were dialed before the server existed;
+	// they serve the channel from now on rather than after a redial.
+	for _, c := range live {
+		if c.alive() {
+			c.startReverse(dial)
+		}
+	}
 }
 
 // Add registers a machine at runtime — the page adding one, not a

@@ -543,3 +543,37 @@ agent 得能自己维护 fleet，不只是人从页面操作。平台 MCP 再加
    补：用户看后要求卡片可折叠、引用别用大号斜体——卡片改成折叠行（进行中 / 失败展开，完成折起），聊天里的 blockquote 改成正常字号、不斜体、左侧一条线（7fcde65）。
    并发验证（同日 21:54）：claude 先后发出两个 `steve_delegate`（hub 的 codex 建 CHANGELOG.md，node-b 的 shipper 建 CONTRIBUTING.md），#49 21:54:33–21:55:22、#50 21:54:55–21:55:37 重叠运行，各自的工作树、租约互不相干，先后在父回合租约下落地，两个文件都在主目录；对话里是两张并列的折叠卡，过程面板里两段各自的思考与工具。并发的边界：每台机器每个 harness 的会话槽位（advert 的 slots）；子任务共用父任务预算；改同一批文件会在落地时冲突并排队等人。
 2. 会话侧栏里给运行中的子任务一个角标；`/tasks` 树与卡片互相跳转。
+
+## 23. 改动、产物与附件（2026-09-04，方案）
+
+用户看完对话页：发出消息后到回复前没有任何等待提示；看不到 diff、文件审查、产物审查、附件。
+
+### 23.1 对象
+
+| 对象 | 是什么 | 来源 |
+|---|---|---|
+| 一轮的改动 | 这一轮 agent 在工作区改了哪些文件、每个文件的 diff。父回合 = attempt 的 `Base` → 结束快照 `Result.Artifact`；子任务 = 它的 `Base` → 发布的 artifact | 账本里的 attempt 记录 + artifact 仓库（`git diff-tree` / `git diff`） |
+| 产物 | 这一轮产生的 artifact：id、落地状态（直接改主目录 / 已落地 N 路径 / 排队 / 冲突）、绑定名 | artifact 绑定与 landing 记录 |
+| 审查 | 在对话里按文件看 diff，能折叠、能复制；不是编辑器 | 前端 `ChangesFold` + diff 视图 |
+| 附件 | 用户发给 agent 的文件（图片、文本）与 agent 交回的非文本产物 | phase 2：blob 存储 + 消息里的引用 |
+| 等待提示 | 发出去到第一个进度事件之间，对话里立即出现"进行中"的占位（本地状态，不等 SSE） | 前端 |
+
+### 23.2 规则
+
+- 回复带 `changes`：`{attempt, project, base, artifact, paths, landing}`；`paths` 随回复存下来，diff 按需拉（`GET /console/diff?project=&from=&to=`），限 200 KB，超出按文件截断并注明。
+- 子任务卡同样带 `changes`（Child 的 `Base` / `Artifact`），落地状态来自它的 refs。
+- 二进制文件只列路径与大小，不出 diff；删除的文件标 `D`，新增标 `A`。
+- diff 是主目录快照之间的差异，与 agent 是否 `git commit` 无关；主目录本身是 git 仓库时也一样（我们的快照仓库独立）。
+- 等待提示：发送即在本地把 `live` 置为"已发出"，SSE 的 `console.sent` 到了再补时间；回复到了清掉。
+
+#### 23.2.1 评审结论（codex，15 条）
+
+采纳：diff 端点按 attempt 走（`/console/attempts/{id}/changes`，服务端从 attempt 取 project / base / artifact，校验 SHA，不接受任意三元组）（7）；改动索引用 `--name-status -z` / `--numstat -z`，关掉 rename 检测，只给 A / M / D 与大小（9）；先给有界索引再按文件拉 diff，总字节、单文件、文件数、超时都在读子进程输出时就限住，`--no-ext-diff --no-textconv`（8）；回复只存 attempt id 与计数，路径与 diff 按需读（4）；无改动时 `Result.Artifact` 为空，端点如实说"没有改动"（2）；owner-only、`Cache-Control: no-store`，sealed 且主目录不在 hub 的项目拒绝网页 diff（5，6）；父回合的 diff 标为"本轮净改动"，含已落地的子任务（11）；**快照不得修改用户目录**：拍平只对平台自己的工作树，用户目录里的嵌套仓库按 pathspec 排除、不删（14）。
+留到后续：显式 `finalizeAttempt` 与 `capture_error`（1）；失败回合也做结束快照（2）；`Exchange{id}` 贯穿 sent / progress / reply / HTTP（3，15）；子任务 base 的语义写清是"委派时的主目录快照"（10）；landing 状态从账本投影而不是 refs 字符串、deferred landing 独立 worker（12）；大工作树的快照成本与上限（13）。
+
+**事故记录（2026-09-04）**：第 14 条评审时已经发生——拍平逻辑跑在 scratch 主目录的回合后快照上，删掉了用户目录 `steve-work/steve-self/.git`（steve-self 项目的主目录，一个 steve 仓库的克隆）。已按 917475f 恢复 `.git`（`git clone -n` 后 `git reset`，工作文件一字未动，37 处未提交改动保留为工作树差异）；node-a 上的副本没受影响。修复：`Repo.Snapshot(…, flatten)` 与 `Script.Snapshot(…, flatten)`，只有 `KindWorktree` 传 true；其余路径用 `:(exclude)` 排除嵌套仓库，测试覆盖本地与脚本两条路径、含无提交的嵌套仓库。
+
+### 23.3 顺序
+
+1. `Repo.Diff` + `Store.Diff`；`turn.Result.Attempt`；console 记录回复时解析 `changes`；`delegate.Child` 带 `Base` / `Artifact`；前端 `ChangesFold`、diff 视图、等待占位；真机验收。
+2. 附件：上传到 blob、消息里引用、agent 侧作为图片/文件送入；agent 交回的非文本产物在卡片里可下载。

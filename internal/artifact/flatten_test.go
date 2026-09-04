@@ -29,7 +29,7 @@ func TestSnapshotFlattensAnAgentsNestedRepo(t *testing.T) {
 	if out, err := exec.Command("git", "-C", sub, "init", "-q").CombinedOutput(); err != nil {
 		t.Fatalf("git init: %v: %s", err, out)
 	}
-	sha, changed, err := repo.Snapshot(context.Background(), work, "", "test")
+	sha, changed, err := repo.Snapshot(context.Background(), work, "", "test", true)
 	if err != nil || !changed {
 		t.Fatalf("snapshot: %v changed=%v", err, changed)
 	}
@@ -43,7 +43,7 @@ func TestSnapshotFlattensAnAgentsNestedRepo(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(sub, ".git")); !os.IsNotExist(err) {
 		t.Fatal("the nested repository is still there")
 	}
-	script := Script{}.Snapshot("/objects.git", "/wt", "", "m")
+	script := Script{}.Snapshot("/objects.git", "/wt", "", "m", true)
 	if !strings.Contains(script, "find . -mindepth 2 -name .git -prune -exec rm -rf {} +") {
 		t.Fatalf("the node script does not flatten nested repositories:\n%s", script)
 	}
@@ -88,7 +88,7 @@ func TestSnapshotDropsAnInheritedGitlink(t *testing.T) {
 	// Locally.
 	work := t.TempDir()
 	write(work)
-	sha, changed, err := repo.Snapshot(ctx, work, parent, "files")
+	sha, changed, err := repo.Snapshot(ctx, work, parent, "files", false)
 	if err != nil || !changed {
 		t.Fatalf("snapshot: %v changed=%v", err, changed)
 	}
@@ -98,7 +98,7 @@ func TestSnapshotDropsAnInheritedGitlink(t *testing.T) {
 	// Through the node's script, run by a real shell.
 	work2 := t.TempDir()
 	write(work2)
-	script := Script{}.Snapshot(repo.Dir, work2, parent, "files")
+	script := Script{}.Snapshot(repo.Dir, work2, parent, "files", false)
 	out, err := exec.Command("sh", "-c", script).CombinedOutput()
 	if err != nil {
 		t.Fatalf("script: %v\n%s\n%s", err, out, script)
@@ -109,5 +109,55 @@ func TestSnapshotDropsAnInheritedGitlink(t *testing.T) {
 	}
 	if listing, _ := repo.git(ctx, nil, "ls-tree", "-r", "--name-only", got); !strings.Contains(listing, "hostline/main.go") {
 		t.Fatalf("script snapshot hid the files under the gitlink:\n%s", listing)
+	}
+}
+
+// A user's directory is never modified: a nested repository in it keeps
+// its .git and is simply not part of the snapshot, locally and through
+// the node script.
+func TestSnapshotLeavesAUsersNestedRepoAlone(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("no git")
+	}
+	ctx := context.Background()
+	repo, err := Open(ctx, filepath.Join(t.TempDir(), "objects.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, viaScript := range []bool{false, true} {
+		work := t.TempDir()
+		if err := os.WriteFile(filepath.Join(work, "notes.md"), []byte("hi\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		sub := filepath.Join(work, "vendored")
+		if err := os.MkdirAll(sub, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := exec.Command("git", "-C", sub, "init", "-q").CombinedOutput(); err != nil {
+			t.Fatalf("git init: %v: %s", err, out)
+		}
+		if err := os.WriteFile(filepath.Join(sub, "lib.go"), []byte("package lib\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		var sha string
+		if viaScript {
+			out, err := exec.Command("sh", "-c", Script{}.Snapshot(repo.Dir, work, "", "m", false)).CombinedOutput()
+			if err != nil {
+				t.Fatalf("script: %v\n%s", err, out)
+			}
+			sha = strings.TrimSpace(string(out))
+		} else {
+			sha, _, err = repo.Snapshot(ctx, work, "", "m", false)
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+		if _, err := os.Stat(filepath.Join(sub, ".git")); err != nil {
+			t.Fatalf("script=%v: the user's nested repository lost its .git: %v", viaScript, err)
+		}
+		listing, _ := repo.git(ctx, nil, "ls-tree", "-r", "--name-only", sha)
+		if !strings.Contains(listing, "notes.md") || strings.Contains(listing, "vendored") {
+			t.Fatalf("script=%v: tree = %q; want notes.md and no vendored entry", viaScript, listing)
+		}
 	}
 }

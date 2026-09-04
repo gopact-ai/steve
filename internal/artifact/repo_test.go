@@ -35,7 +35,7 @@ func TestSnapshotShadowsADirectoryWithoutTouchingIt(t *testing.T) {
 	work := t.TempDir()
 	write(t, work, "a.txt", "one")
 	write(t, work, "sub/b.txt", "two")
-	first, changed, err := repo.Snapshot(ctx, work, "", "before")
+	first, changed, err := repo.Snapshot(ctx, work, "", "before", false)
 	if err != nil || !changed {
 		t.Fatalf("first snapshot = %s changed=%v err=%v", first, changed, err)
 	}
@@ -43,14 +43,14 @@ func TestSnapshotShadowsADirectoryWithoutTouchingIt(t *testing.T) {
 		t.Fatal("the user's directory grew a .git")
 	}
 	// Nothing changed: same commit back, no empty commit.
-	again, changed, _ := repo.Snapshot(ctx, work, first, "again")
+	again, changed, _ := repo.Snapshot(ctx, work, first, "again", false)
 	if changed || again != first {
 		t.Fatalf("unchanged snapshot = %s changed=%v", again, changed)
 	}
 	write(t, work, "a.txt", "one more")
 	os.Remove(filepath.Join(work, "sub/b.txt"))
 	write(t, work, "c.txt", "three")
-	second, changed, _ := repo.Snapshot(ctx, work, first, "after")
+	second, changed, _ := repo.Snapshot(ctx, work, first, "after", false)
 	if !changed || second == first {
 		t.Fatal("a change was not recorded")
 	}
@@ -81,7 +81,7 @@ func TestBundleCarriesAClosureBetweenRepositories(t *testing.T) {
 	node, _ := Open(ctx, filepath.Join(t.TempDir(), "node.git"))
 	work := t.TempDir()
 	write(t, work, "f", "1")
-	base, _, _ := hub.Snapshot(ctx, work, "", "base")
+	base, _, _ := hub.Snapshot(ctx, work, "", "base", false)
 	bundle := filepath.Join(t.TempDir(), "base.bundle")
 	if err := hub.Bundle(ctx, bundle, base, nil); err != nil {
 		t.Fatal(err)
@@ -98,7 +98,7 @@ func TestBundleCarriesAClosureBetweenRepositories(t *testing.T) {
 		t.Fatal(err)
 	}
 	write(t, wt, "g", "2")
-	result, changed, err := node.Snapshot(ctx, wt, base, "step")
+	result, changed, err := node.Snapshot(ctx, wt, base, "step", false)
 	if err != nil || !changed {
 		t.Fatalf("node snapshot = %s changed=%v err=%v", result, changed, err)
 	}
@@ -120,15 +120,15 @@ func TestMergeAndApplyLandDisjointBranchesAndReportConflicts(t *testing.T) {
 	canonical := t.TempDir()
 	write(t, canonical, "a", "a0")
 	write(t, canonical, "b", "b0")
-	base, _, _ := repo.Snapshot(ctx, canonical, "", "base")
+	base, _, _ := repo.Snapshot(ctx, canonical, "", "base", false)
 
 	// Branch one edits a; the user meanwhile edits b in place.
 	wt := filepath.Join(t.TempDir(), "wt")
 	_ = repo.Checkout(ctx, base, wt)
 	write(t, wt, "a", "a1")
-	branch, _, _ := repo.Snapshot(ctx, wt, base, "branch")
+	branch, _, _ := repo.Snapshot(ctx, wt, base, "branch", false)
 	write(t, canonical, "b", "b-user")
-	now, _, _ := repo.Snapshot(ctx, canonical, base, "now")
+	now, _, _ := repo.Snapshot(ctx, canonical, base, "now", false)
 
 	merged, conflicts, err := repo.Merge(ctx, base, now, branch, "land")
 	if err != nil || len(conflicts) != 0 || merged == "" {
@@ -145,7 +145,7 @@ func TestMergeAndApplyLandDisjointBranchesAndReportConflicts(t *testing.T) {
 	wt2 := filepath.Join(t.TempDir(), "wt2")
 	_ = repo.Checkout(ctx, base, wt2)
 	write(t, wt2, "a", "a-other")
-	other, _, _ := repo.Snapshot(ctx, wt2, base, "other")
+	other, _, _ := repo.Snapshot(ctx, wt2, base, "other", false)
 	_, conflicts, err = repo.Merge(ctx, base, merged, other, "land")
 	if err != nil || len(conflicts) != 1 || conflicts[0] != "a" {
 		t.Fatalf("conflicting merge = %v err=%v", conflicts, err)

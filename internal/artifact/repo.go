@@ -62,7 +62,12 @@ var shaPattern = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 // previous snapshot (empty for the first). It returns the commit and
 // whether anything changed against the parent's tree; an unchanged tree
 // returns the parent itself rather than an empty commit.
-func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string) (sha string, changed bool, err error) {
+//
+// flatten says the directory is the platform's own — a worktree made
+// for one attempt — so a repository an agent started inside it is
+// noise to remove. A user's directory is never modified: a nested
+// repository there is left alone and simply not part of the snapshot.
+func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, flatten bool) (sha string, changed bool, err error) {
 	index, cleanup, err := r.tempIndex()
 	if err != nil {
 		return "", false, err
@@ -83,11 +88,31 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string) (
 			}
 		}
 	}
-	if flattened := flattenNestedRepos(workTree); len(flattened) > 0 {
-		log.Printf("artifact: %s: flattened nested git repositories at %s", workTree, strings.Join(flattened, ", "))
+	add := []string{"add", "-A", "--", "."}
+	if flatten {
+		if flattened := flattenNestedRepos(workTree); len(flattened) > 0 {
+			log.Printf("artifact: %s: flattened nested git repositories at %s", workTree, strings.Join(flattened, ", "))
+		}
+	} else if nested := nestedRepos(workTree); len(nested) > 0 {
+		// Left alone and left out: git would otherwise record them as
+		// links, or refuse one that has no commit yet.
+		log.Printf("artifact: %s: nested git repositories left out of the snapshot: %s", workTree, strings.Join(nested, ", "))
+		for _, dir := range nested {
+			add = append(add, ":(exclude)"+dir)
+		}
 	}
-	if _, err := r.git(ctx, env, "add", "-A", "--", "."); err != nil {
+	if _, err := r.git(ctx, env, add...); err != nil {
 		return "", false, fmt.Errorf("stage %s: %w", workTree, err)
+	}
+	// A nested repository staged as a gitlink would land as an empty
+	// directory; it is not this snapshot's to carry.
+	if links, err := r.gitlinks(ctx, env); err != nil {
+		return "", false, err
+	} else if len(links) > 0 {
+		log.Printf("artifact: %s: nested git repositories left out of the snapshot: %s", workTree, strings.Join(links, ", "))
+		if _, err := r.git(ctx, env, append([]string{"update-index", "--force-remove", "--"}, links...)...); err != nil {
+			return "", false, fmt.Errorf("drop gitlinks: %w", err)
+		}
 	}
 	tree, err := r.git(ctx, env, "write-tree")
 	if err != nil {
@@ -133,6 +158,24 @@ func (r *Repo) gitlinks(ctx context.Context, env []string) ([]string, error) {
 		}
 	}
 	return links, nil
+}
+
+// nestedRepos lists the directories below the top level that hold a
+// .git, relative to workTree, without touching them.
+func nestedRepos(workTree string) []string {
+	var found []string
+	_ = filepath.WalkDir(workTree, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || path == workTree || d.Name() != ".git" {
+			return nil
+		}
+		if filepath.Dir(path) == workTree {
+			return filepath.SkipDir
+		}
+		rel, _ := filepath.Rel(workTree, filepath.Dir(path))
+		found = append(found, rel)
+		return filepath.SkipDir
+	})
+	return found
 }
 
 // flattenNestedRepos removes any .git below the top level of workTree
@@ -407,22 +450,34 @@ func (Script) Checkout(dir, sha, target string) string {
 
 // Snapshot commits a directory's contents on top of parent and prints the
 // commit id, or the parent's id when nothing changed.
-func (Script) Snapshot(dir, workTree, parent, message string) string {
+func (Script) Snapshot(dir, workTree, parent, message string, flatten bool) string {
+	// dropLinks removes every gitlink from the index: a nested repository
+	// is not this snapshot's to carry, whether it came from the parent
+	// tree or from the directory.
+	const dropLinks = "{ links=$(git ls-files --stage | awk -F'\t' '$1 ~ /^160000 / {print $2}'); [ -z \"$links\" ] || printf '%s\\n' \"$links\" | xargs -d '\\n' git update-index --force-remove --; }"
 	parentArg := ""
 	readParent := "true"
 	if parent != "" {
 		parentArg = " -p " + quote(parent)
-		// Same as Snapshot: the parent's tree, minus any gitlink in it.
-		readParent = "git read-tree " + quote(parent) + " && { links=$(git ls-files --stage | awk -F'\t' '$1 ~ /^160000 / {print $2}'); [ -z \"$links\" ] || printf '%s\\n' \"$links\" | xargs -d '\\n' git update-index --force-remove --; }"
+		readParent = "git read-tree " + quote(parent) + " && " + dropLinks
 	}
 	compare := "false"
 	if parent != "" {
 		compare = fmt.Sprintf("[ \"$tree\" = \"$(git rev-parse %s^{tree})\" ]", quote(parent))
 	}
-	// A .git below the top level is an agent's own git init, not a
-	// submodule: flattened, so the files land rather than an empty link.
-	return fmt.Sprintf("export GIT_DIR=%s GIT_WORK_TREE=%s GIT_INDEX_FILE=%s.index; cd \"$GIT_WORK_TREE\" && rm -f \"$GIT_INDEX_FILE\"; find . -mindepth 2 -name .git -prune -exec rm -rf {} + ; %s && git add -A -- . && tree=$(git write-tree) && rm -f \"$GIT_INDEX_FILE\" && if %s; then echo %s; else sha=$(git commit-tree \"$tree\" -m %s%s) && git update-ref \"refs/steve/artifacts/$sha\" \"$sha\" && echo \"$sha\"; fi",
-		quote(dir), quote(workTree), quote(workTree), readParent, compare, quote(parent), quote(message), parentArg)
+	// Only the platform's own worktree is flattened: a .git below its top
+	// level is an agent's git init, not a submodule. A user's directory is
+	// never touched; its nested repositories are left out instead.
+	prune := "true"
+	// Everything under the top level, minus each nested repository's
+	// directory, as NUL-separated pathspecs: left alone and left out.
+	add := "{ printf '.\\0'; find . -mindepth 2 -name .git -prune -printf ':(exclude)%h\\0'; } | git add -A --pathspec-from-file=- --pathspec-file-nul"
+	if flatten {
+		prune = "find . -mindepth 2 -name .git -prune -exec rm -rf {} +"
+		add = "git add -A -- ."
+	}
+	return fmt.Sprintf("export GIT_DIR=%s GIT_WORK_TREE=%s GIT_INDEX_FILE=%s.index; cd \"$GIT_WORK_TREE\" && rm -f \"$GIT_INDEX_FILE\"; %s ; %s && %s && %s && tree=$(git write-tree) && rm -f \"$GIT_INDEX_FILE\" && if %s; then echo %s; else sha=$(git commit-tree \"$tree\" -m %s%s) && git update-ref \"refs/steve/artifacts/$sha\" \"$sha\" && echo \"$sha\"; fi",
+		quote(dir), quote(workTree), quote(workTree), prune, readParent, add, dropLinks, compare, quote(parent), quote(message), parentArg)
 }
 
 // Merge three-way merges two commits at the node and prints the merged

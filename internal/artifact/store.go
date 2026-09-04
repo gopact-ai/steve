@@ -180,12 +180,12 @@ func (s *Store) SnapshotCanonical(ctx context.Context, p project.Project, parent
 	var sha string
 	var changed bool
 	if p.Home.Node == "" {
-		sha, changed, err = repo.Snapshot(ctx, p.Home.Path, parent, message)
+		sha, changed, err = repo.Snapshot(ctx, p.Home.Path, parent, message, false)
 		if err != nil {
 			return Manifest{}, false, err
 		}
 	} else {
-		sha, changed, err = s.snapshotOnNode(ctx, p.Home.Node, p, p.Home.Path, parent, message, repo)
+		sha, changed, err = s.snapshotOnNode(ctx, p.Home.Node, p, p.Home.Path, parent, message, repo, false)
 		if err != nil {
 			return Manifest{}, false, err
 		}
@@ -221,9 +221,9 @@ func (s *Store) SnapshotWorkspace(ctx context.Context, p project.Project, ws pro
 	var sha string
 	var changed bool
 	if ws.Node == "" {
-		sha, changed, err = repo.Snapshot(ctx, ws.Path, parent, message)
+		sha, changed, err = repo.Snapshot(ctx, ws.Path, parent, message, false)
 	} else {
-		sha, changed, err = s.snapshotOnNode(ctx, ws.Node, p, ws.Path, parent, message, repo)
+		sha, changed, err = s.snapshotOnNode(ctx, ws.Node, p, ws.Path, parent, message, repo, false)
 	}
 	if err != nil {
 		return Manifest{}, false, err
@@ -279,7 +279,7 @@ func (s *Store) setHead(ctx context.Context, name, sha string) error {
 
 // snapshotOnNode snapshots a directory on a node into the node's shadow
 // repository and fetches the result to the hub.
-func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo) (string, bool, error) {
+func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo, flatten bool) (string, bool, error) {
 	_, root, state, err := s.nodes.Git(ctx, node)
 	if err != nil {
 		return "", false, err
@@ -294,7 +294,7 @@ func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Proje
 			return "", false, err
 		}
 	}
-	out, err := s.nodes.Exec(ctx, node, "", Script{}.Snapshot(bare, dir, parent, message))
+	out, err := s.nodes.Exec(ctx, node, "", Script{}.Snapshot(bare, dir, parent, message, flatten))
 	if err != nil {
 		return "", false, fmt.Errorf("snapshot %s on %s: %w", dir, node, err)
 	}
@@ -495,10 +495,12 @@ func (s *Store) Publish(ctx context.Context, ws project.Workspace, parent, by, m
 	var changed bool
 	if ws.Node == "" {
 		s.dropInputs(ws.Path)
-		sha, changed, err = hub.Snapshot(ctx, ws.Path, parent, message)
+		// The platform's own worktree: whatever repository an agent started
+		// inside it is flattened so the files come through.
+		sha, changed, err = hub.Snapshot(ctx, ws.Path, parent, message, ws.Kind == project.KindWorktree)
 	} else {
 		_, _ = s.nodes.Exec(ctx, ws.Node, "", "rm -rf "+quote(filepath.Join(ws.Path, "inputs")))
-		sha, changed, err = s.snapshotOnNode(ctx, ws.Node, p, ws.Path, parent, message, hub)
+		sha, changed, err = s.snapshotOnNode(ctx, ws.Node, p, ws.Path, parent, message, hub, ws.Kind == project.KindWorktree)
 	}
 	if err != nil {
 		return Manifest{}, false, err

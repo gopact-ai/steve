@@ -819,7 +819,11 @@ func serve(args []string) error {
 		delegation.SetEndpoints(nodes)
 		delegation.MaxSilence = time.Duration(cfg.Gateway.PromptTimeout)
 		delegation.SetObserver(func(c delegate.Child, p steveview.Progress) {
-			view.DelegateProgress(c.Task, c.Agent, c.Node, readmodel.StepInfo{Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
+			where := c.Node
+			if where == "" {
+				where = nodeName() // the hub itself, named like any machine
+			}
+			view.DelegateProgress(c.Task, c.Agent, where, readmodel.StepInfo{Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
 				Elapsed: c.Elapsed.Round(time.Second).String(), Answer: c.Answer, Refs: c.Refs}, p)
 		})
 		gate.SetDelegator(delegation)
