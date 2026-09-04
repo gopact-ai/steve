@@ -1,7 +1,7 @@
 // The words the page uses, and the internal ones they stand for. Internal
 // terms show only in tooltips and the audit view.
 export const zh = {
-    status: { queued: "待执行", running: "执行中", "needs-you": "等你处理", paused: "已暂停", ended: "已结束" } as Record<string, string>,
+    status: { pending: "空闲", running: "执行中", needs_you: "等你处理", set_aside: "已搁置", ended: "已结束" } as Record<string, string>,
     taskState: { draft: "草稿", running: "进行中", idle: "空闲", blocked: "受阻", review: "待审", done: "已完成", failed: "失败", paused: "已暂停", cancelled: "已取消" } as Record<string, string>,
     stepState: { pending: "待执行", ready: "可执行", running: "执行中", verifying: "验证中", "awaiting-human": "等你回答", done: "完成", failed: "失败", skipped: "跳过" } as Record<string, string>,
     repo: { inplace: "直接修改主目录", isolated: "隔离副本，完成后合并" } as Record<string, string>,
