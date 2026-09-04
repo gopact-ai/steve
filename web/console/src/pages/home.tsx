@@ -43,8 +43,8 @@ export function HomePage() {
                         <Panel title="注入">
                             <KeyValue dense rows={[
                                 { k: "目录", v: <Mono>{view.path}</Mono> },
-                                { k: "你的私聊", v: <span>{kb(view.owner_bytes)} <span className="text-tertiary">/ 上限 {kb(view.total_budget)}（身份 + 主人 + 记忆，超出的部分从记忆末尾起截掉）</span></span> },
-                                { k: "群聊 / 访客", v: <span>{kb(view.guest_bytes)} <span className="text-tertiary">（只有身份，外加一段"不要泄露主人私事"的包裹）</span></span> },
+                                { k: "你的私聊", v: <span>{kb(view.owner_bytes)} <span className="text-tertiary">/ 上限 {kb(view.total_budget)}（身份 + 用户 + 记忆，超出的部分从记忆末尾起截掉）</span></span> },
+                                { k: "群聊 / 访客", v: <span>{kb(view.guest_bytes)} <span className="text-tertiary">（只有身份，外加一段"不要泄露用户私事"的包裹）</span></span> },
                                 ...(view.warnings.length ? [{ k: "提醒", v: <ul className="flex flex-col gap-0.5 text-warning-primary">{view.warnings.map((w, i) => <li key={i}>{w}</li>)}</ul> }] : []),
                             ]} />
                         </Panel>
