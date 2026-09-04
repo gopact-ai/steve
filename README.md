@@ -209,6 +209,13 @@ agent，行尾出现 **Repair with …**，`/fleet` 里也提示 `/repair <agent
 然后让机器重新申报一次。这个计划是声明式的（`fixed`），失败了就失败，不会送去 planner 改写。
 node 掉线、模型不提供，这类不是装个东西能解决的，不给按钮。
 
+### AI 工具的启动命令：别用 `npx -y`
+
+`npx -y @agentclientprotocol/codex-acp` 每次启动都会去装最新版；上游一发新版本（或某个可选依赖装不上），一次启动就要几分钟，
+超过 ACP 初始化的 60 秒上限，所有会话都打不开。把适配器装到本机（`npm i -g --prefix ~/.npm-global @agentclientprotocol/codex-acp
+@agentclientprotocol/claude-agent-acp`），harness 的 `command` 写成 `~/.npm-global/bin/codex-acp` 这样的绝对路径，启动只要 0.1 秒，
+资源页也能报出它的真实版本。资源页里改机器配置就能改这个。
+
 ### Agent 是什么
 
 一个 Agent 是一份有名字的执行配置：在哪台机器上、用哪个 AI 工具、（可选）固定哪个模型、它所在的机器必须提供什么（运行条件，
