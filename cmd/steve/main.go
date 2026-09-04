@@ -748,8 +748,9 @@ func serve(args []string) error {
 		}
 		return project.Level(level)
 	}
-	dashboard.SetAdmin(&fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos, attempts: attempts,
-		skills: live, shipper: hubSkills, coordinator: coordinator, homePath: cfg.Gateway.HomePath})
+	admin := &fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos, attempts: attempts,
+		skills: live, shipper: hubSkills, coordinator: coordinator, homePath: cfg.Gateway.HomePath}
+	dashboard.SetAdmin(admin)
 	defer dashboard.Close()
 	go func() {
 		if err := dashboard.Serve(); err != nil {
@@ -836,6 +837,7 @@ func serve(args []string) error {
 	// The platform's own questions — where am I, where are the projects —
 	// are answered by the coordinator, live.
 	gate.SetInformer(coordinatorInformer{c: coordinator})
+	gate.SetFleeter(fleetTools{admin: admin, view: view})
 	go func() {
 		<-ctx.Done()
 		stop()
@@ -1370,6 +1372,58 @@ func (a *fleetAdmin) AddNode(_ context.Context, req readmodel.AddNodeRequest) (r
 		out.Note = "hub 没有配置 gateway.node_binary，脚本不会下载 steve-node：先把它放到那台机器的 ~/steve-bin/steve-node。"
 	}
 	return out, nil
+}
+
+// RemoveNode forgets a machine. Nothing may still live on it: an agent
+// placed there, a project homed there or with a copy there, keep it.
+func (a *fleetAdmin) RemoveNode(ctx context.Context, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" || name == nodeName() || name == "hub" {
+		return fmt.Errorf("%q 是 hub 自己，不能移除", name)
+	}
+	if a.catalog != nil {
+		for _, ag := range a.catalog.List() {
+			if ag.Node == name {
+				return fmt.Errorf("Agent %s 还在 %s 上；先把它移到别的机器或删掉", ag.ID, name)
+			}
+		}
+	}
+	if a.projects != nil {
+		if list, err := a.projects.List(ctx); err == nil {
+			for _, p := range list {
+				for _, ws := range p.Workspaces() {
+					if ws.Node == name {
+						kind := "主目录"
+						if ws.Kind == project.KindCopy {
+							kind = "副本"
+						}
+						return fmt.Errorf("项目 %s 的%s还在 %s 上；先移除它", p.ID, kind, name)
+					}
+				}
+			}
+		}
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	configMu.Lock()
+	saved, inConfig := a.cfg.Nodes[name]
+	if !inConfig {
+		configMu.Unlock()
+		return fmt.Errorf("没有叫 %q 的机器", name)
+	}
+	delete(a.cfg.Nodes, name)
+	if err := config.Save(a.path, a.cfg); err != nil {
+		a.cfg.Nodes[name] = saved
+		configMu.Unlock()
+		return fmt.Errorf("写 %s 失败：%w", a.path, err)
+	}
+	levels, regions := a.cfg.NodeLevels(), a.cfg.NodeRegions()
+	configMu.Unlock()
+	a.nodes.Remove(name)
+	a.fleet.SetNodeLevels(levels)
+	a.fleet.SetNodeRegions(regions)
+	log.Printf("steve: machine %s removed", name)
+	return nil
 }
 
 // AddProject declares a project: the ledger takes it at once, the config
@@ -1960,6 +2014,121 @@ func (i coordinatorInformer) Context(ctx context.Context, conversationID, agentI
 
 func (i coordinatorInformer) Projects(ctx context.Context, conversationID, agentID string) (string, error) {
 	return i.c.WhereProjects(ctx, conversationID, agentID)
+}
+
+// fleetTools answers the platform MCP server's fleet questions and
+// changes from the admin and the read model.
+type fleetTools struct {
+	admin *fleetAdmin
+	view  *readmodel.Model
+}
+
+func (f fleetTools) Nodes(ctx context.Context) (string, error) {
+	snap := f.view.Snapshot(ctx)
+	type harness struct {
+		ID    string `json:"id"`
+		State string `json:"state"`
+		Model string `json:"model,omitempty"`
+		Why   string `json:"why,omitempty"`
+	}
+	type machine struct {
+		Name      string    `json:"name"`
+		Role      string    `json:"role"`
+		Up        bool      `json:"up"`
+		Since     string    `json:"since,omitempty"`
+		LastError string    `json:"last_error,omitempty"`
+		Version   string    `json:"version,omitempty"`
+		Level     string    `json:"level,omitempty"`
+		OS        string    `json:"os,omitempty"`
+		DiskFree  string    `json:"disk_free,omitempty"`
+		Load      float64   `json:"load1,omitempty"`
+		Worktrees int       `json:"worktrees,omitempty"`
+		Harnesses []harness `json:"harnesses"`
+		MCP       []string  `json:"mcp_servers"`
+		OwnSkills int       `json:"own_skills"`
+		Agents    []string  `json:"agents"`
+	}
+	agentsOn := map[string][]string{}
+	for _, ag := range snap.Agents {
+		agentsOn[ag.Node] = append(agentsOn[ag.Node], ag.ID)
+	}
+	out := make([]machine, 0, len(snap.Nodes))
+	for _, n := range snap.Nodes {
+		m := machine{Name: n.Name, Role: n.Role, Up: n.Up, Version: n.Version, Level: n.Level, OS: n.OS, LastError: n.LastError, Harnesses: []harness{}, MCP: []string{}, Agents: agentsOn[n.Name]}
+		if !n.Since.IsZero() {
+			m.Since = n.Since.UTC().Format(time.RFC3339)
+		}
+		if n.Health != nil && n.Health.DiskTotal > 0 {
+			m.DiskFree = fmt.Sprintf("%.0f GB", float64(n.Health.DiskFree)/(1<<30))
+			m.Load, m.Worktrees = n.Health.Load1, n.Health.Worktrees
+		}
+		for _, h := range n.Harnesses {
+			state := "ready"
+			if h.Missing != "" {
+				state = "missing"
+			}
+			m.Harnesses = append(m.Harnesses, harness{ID: h.ID, State: state, Model: h.Model, Why: h.Missing})
+		}
+		if n.Snapshot != nil {
+			for _, c := range n.Snapshot.Offers {
+				if c.Kind == ability.MCP {
+					m.MCP = append(m.MCP, c.ID)
+				}
+			}
+		}
+		if adv, err := f.admin.advertOf(ctx, f.admin.nodeKey(n.Name)); err == nil {
+			m.OwnSkills = len(adv.OwnSkills)
+		}
+		if m.Agents == nil {
+			m.Agents = []string{}
+		}
+		sort.Strings(m.MCP)
+		out = append(out, m)
+	}
+	raw, err := json.MarshalIndent(out, "", "  ")
+	return string(raw), err
+}
+
+func (f fleetTools) AddNode(ctx context.Context, name, addr, level, hubURL string) (string, error) {
+	if hubURL == "" {
+		f.admin.mu.Lock()
+		hubURL = f.admin.hubURL
+		f.admin.mu.Unlock()
+	}
+	if hubURL == "" {
+		return "", errors.New("需要 hub_url：那台机器怎么访问 hub 的控制台，如 http://10.0.0.1:7710")
+	}
+	res, err := f.admin.AddNode(ctx, readmodel.AddNodeRequest{Name: name, Addr: addr, Level: level, HubURL: hubURL})
+	if err != nil {
+		return "", err
+	}
+	text := fmt.Sprintf("机器 %s 已登记（%s）。在那台机器上以登录 shell 跑这一条，它会装好 steve-node 并连上来：\n\n%s", res.Name, addr, res.Command)
+	if res.Note != "" {
+		text += "\n\n" + res.Note
+	}
+	return text, nil
+}
+
+func (f fleetTools) RemoveNode(ctx context.Context, name string) error { return f.admin.RemoveNode(ctx, name) }
+
+func (f fleetTools) RefreshNode(ctx context.Context, name string) (string, error) {
+	key := f.admin.nodeKey(name)
+	if key == "" {
+		return "", errors.New("hub 自己不用刷新，它的申报是现算的")
+	}
+	rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	adv, err := f.admin.nodes.Refresh(rctx, key)
+	if err != nil {
+		return "", err
+	}
+	summary := map[string]any{"name": name, "version": adv.BuildVersion, "harnesses": len(adv.Harnesses), "own_skills": len(adv.OwnSkills), "own_mcp": len(adv.OwnMCP), "features": adv.Features}
+	if adv.Health != nil && adv.Health.DiskTotal > 0 {
+		summary["disk_free_gb"] = adv.Health.DiskFree >> 30
+		summary["load1"] = adv.Health.Load1
+	}
+	raw, err := json.MarshalIndent(summary, "", "  ")
+	return string(raw), err
 }
 
 func skillSource(s skills.Source) readmodel.SkillSource {

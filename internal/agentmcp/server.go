@@ -162,6 +162,7 @@ type Server struct {
 	sender    Sender
 	delegator Delegator
 	informer  Informer
+	fleeter   Fleeter
 	journal   func(conversationID, agentID, messageID string)
 	tokens    map[string]binding
 	byBind    map[binding]string
@@ -470,7 +471,7 @@ type PlatformTool struct {
 // the Feishu set always, delegation when a delegator is wired.
 func PlatformTools(delegating bool) []PlatformTool {
 	var out []PlatformTool
-	for _, t := range toolList(delegating, true) {
+	for _, t := range toolList(delegating, true, true) {
 		name, _ := t["name"].(string)
 		desc, _ := t["description"].(string)
 		out = append(out, PlatformTool{Name: name, Description: desc})
@@ -480,12 +481,12 @@ func PlatformTools(delegating bool) []PlatformTool {
 
 func (s *Server) toolList() []map[string]any {
 	s.mu.Lock()
-	informing := s.informer != nil
+	informing, fleeting := s.informer != nil, s.fleeter != nil
 	s.mu.Unlock()
-	return toolList(s.delegator != nil, informing)
+	return toolList(s.delegator != nil, informing, fleeting)
 }
 
-func toolList(delegating, informing bool) []map[string]any {
+func toolList(delegating, informing, fleeting bool) []map[string]any {
 	tools := []map[string]any{
 		{
 			"name": "feishu_send",
@@ -622,6 +623,9 @@ func toolList(delegating, informing bool) []map[string]any {
 	if informing {
 		tools = append(tools, informTools()...)
 	}
+	if fleeting {
+		tools = append(tools, fleetTools()...)
+	}
 	return tools
 }
 
@@ -654,6 +658,14 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 		out, err = s.steveProjects(ctx, bind)
 	case "steve_help":
 		out, err = s.steveHelp(call.Arguments)
+	case "steve_nodes":
+		out, err = s.steveNodes(ctx, bind)
+	case "steve_node_add":
+		out, err = s.steveNodeAdd(ctx, bind, call.Arguments)
+	case "steve_node_remove":
+		out, err = s.steveNodeRemove(ctx, bind, call.Arguments)
+	case "steve_node_refresh":
+		out, err = s.steveNodeRefresh(ctx, bind, call.Arguments)
 	default:
 		err = fmt.Errorf("unknown tool %q", call.Name)
 	}

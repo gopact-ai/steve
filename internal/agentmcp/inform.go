@@ -182,3 +182,126 @@ func informTools() []map[string]any {
 		},
 	}
 }
+
+// Fleeter maintains the fleet for the platform's own tools: what the
+// machines are and how they are, and adding or forgetting one. The
+// owner in private may change the fleet; anyone else may only look.
+type Fleeter interface {
+	Nodes(ctx context.Context) (string, error)
+	AddNode(ctx context.Context, name, addr, level, hubURL string) (string, error)
+	RemoveNode(ctx context.Context, name string) error
+	RefreshNode(ctx context.Context, name string) (string, error)
+}
+
+// SetFleeter wires fleet maintenance.
+func (s *Server) SetFleeter(f Fleeter) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.fleeter = f
+}
+
+func (s *Server) fleeterFor(bind binding, change bool) (Fleeter, error) {
+	s.mu.Lock()
+	f, informer := s.fleeter, s.informer
+	s.mu.Unlock()
+	if f == nil {
+		return nil, errors.New("fleet maintenance is not wired on this gateway")
+	}
+	if change {
+		if informer == nil {
+			return nil, errors.New("cannot tell who is asking; the fleet stays as it is")
+		}
+		info, err := informer.Context(context.Background(), bind.conversationID, bind.agentID)
+		if err != nil {
+			return nil, err
+		}
+		if info.Mode != "owner" || bind.delegatedBy != "" {
+			return nil, errors.New("only the owner, in private, may change the fleet; ask them")
+		}
+	}
+	return f, nil
+}
+
+func (s *Server) steveNodes(ctx context.Context, bind binding) (string, error) {
+	f, err := s.fleeterFor(bind, false)
+	if err != nil {
+		return "", err
+	}
+	return f.Nodes(ctx)
+}
+
+func (s *Server) steveNodeAdd(ctx context.Context, bind binding, raw json.RawMessage) (string, error) {
+	f, err := s.fleeterFor(bind, true)
+	if err != nil {
+		return "", err
+	}
+	var args struct {
+		Name, Addr, Level, HubURL string
+	}
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return "", errors.New("bad steve_node_add arguments")
+	}
+	return f.AddNode(ctx, args.Name, args.Addr, args.Level, args.HubURL)
+}
+
+func (s *Server) steveNodeRemove(ctx context.Context, bind binding, raw json.RawMessage) (string, error) {
+	f, err := s.fleeterFor(bind, true)
+	if err != nil {
+		return "", err
+	}
+	var args struct{ Name string }
+	if err := json.Unmarshal(raw, &args); err != nil || args.Name == "" {
+		return "", errors.New("steve_node_remove needs a name")
+	}
+	if err := f.RemoveNode(ctx, args.Name); err != nil {
+		return "", err
+	}
+	return "机器 " + args.Name + " 已从 hub 忘掉：不再拨号、不再列出；它上面的进程没有动。", nil
+}
+
+func (s *Server) steveNodeRefresh(ctx context.Context, bind binding, raw json.RawMessage) (string, error) {
+	f, err := s.fleeterFor(bind, false)
+	if err != nil {
+		return "", err
+	}
+	var args struct{ Name string }
+	if err := json.Unmarshal(raw, &args); err != nil || args.Name == "" {
+		return "", errors.New("steve_node_refresh needs a name")
+	}
+	return f.RefreshNode(ctx, args.Name)
+}
+
+// fleetTools are the schemas of the four, offered when a fleeter is wired.
+func fleetTools() []map[string]any {
+	return []map[string]any{
+		{
+			"name": "steve_nodes",
+			"description": "Every machine in the fleet and how it is right now: up or down and since when, version, data level, health (free disk, load, worktrees), the AI tools on it and whether each can start, MCP servers, skills of its own, and the agents placed on it. Read this before placing work, delegating by capability, or judging whether a machine is in trouble. steve_fleet lists agents; this lists machines. It changes nothing.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
+		},
+		{
+			"name": "steve_node_add",
+			"description": "Add a machine to the fleet: the hub records it with a fresh token and returns the one-line bootstrap command to run on that machine, which installs steve-node and connects it. Owner-only, in private. Confirm the name, address and data level with the owner first.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+				"name":    map[string]any{"type": "string", "description": "Machine name: lowercase letters, digits, dot, underscore, dash, e.g. node-c."},
+				"addr":    map[string]any{"type": "string", "description": "Where the hub dials it: host:port, e.g. 10.0.0.5:7701."},
+				"level":   map[string]any{"type": "string", "description": "Data level the hub assigns: public, internal, restricted or sealed. Default internal."},
+				"hub_url": map[string]any{"type": "string", "description": "How that machine reaches the hub's console, e.g. http://10.0.0.1:7710; needed for the bootstrap command. Optional when the hub already knows one."},
+			}, "required": []string{"name", "addr"}},
+		},
+		{
+			"name": "steve_node_remove",
+			"description": "Forget a machine: the hub stops dialing and listing it. Refused while an agent is placed on it or a project has its home or a copy there — move those first. Owner-only, in private. Nothing on the machine itself is touched.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+				"name": map[string]any{"type": "string"},
+			}, "required": []string{"name"}},
+		},
+		{
+			"name": "steve_node_refresh",
+			"description": "Ask a machine to look at itself again now — its AI tools, health, skills, MCP servers — and return what it says. Use it when a machine was just repaired or seems stale. It changes nothing on the machine.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+				"name": map[string]any{"type": "string"},
+			}, "required": []string{"name"}},
+		},
+	}
+}

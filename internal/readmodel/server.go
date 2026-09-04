@@ -61,6 +61,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/conversations", s.guard(s.consoleConversations))
 	mux.HandleFunc("PUT /console/conversations/{id}", s.guard(s.consoleUpdateConversation))
 	mux.HandleFunc("POST /console/nodes", s.guard(s.consoleAddNode))
+	mux.HandleFunc("DELETE /console/nodes/{name}", s.guard(s.consoleRemoveNode))
 	mux.HandleFunc("POST /console/agents", s.guard(s.consoleAddAgent))
 	mux.HandleFunc("PUT /console/agents/{id}", s.guard(s.consoleUpdateAgent))
 	mux.HandleFunc("DELETE /console/agents/{id}", s.guard(s.consoleRemoveAgent))
@@ -346,6 +347,8 @@ type AddAgentRequest struct {
 // adds machines and agents without a restart.
 type Admin interface {
 	AddNode(ctx context.Context, req AddNodeRequest) (AddNodeResult, error)
+	// RemoveNode forgets a machine: nothing may still live on it.
+	RemoveNode(ctx context.Context, name string) error
 	AddAgent(ctx context.Context, req AddAgentRequest) error
 	// Bootstrap is the script a machine runs, given its own token.
 	Bootstrap(name, token string) (string, bool)
@@ -720,6 +723,17 @@ func (s *Server) consoleAddNode(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(out)
+}
+
+func (s *Server) consoleRemoveNode(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	if err := s.admin.RemoveNode(r.Context(), r.PathValue("name")); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 func (s *Server) consoleAddProject(w http.ResponseWriter, r *http.Request) {

@@ -8,7 +8,7 @@ import { Select } from "@/components/base/select/select";
 import { TextArea } from "@/components/base/textarea/textarea";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
-import { relative, when } from "@/lib/api";
+import { relative, removeNode, when } from "@/lib/api";
 import { addAgent, addNode, removeAgent, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
 import type { AbilitySnapshot, Agent, Attempt, Capability, Condition, Node as NodeT } from "@/lib/types";
@@ -273,6 +273,12 @@ const levelHint = "这台机器最多能处理哪一等级的项目数据：公�
 function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => void; onChanged: () => void }) {
     const h = n.health;
     const [editing, setEditing] = useState(false);
+    const [removing, setRemoving] = useState(false);
+    const [removeError, setRemoveError] = useState("");
+    async function remove() {
+        setRemoveError("");
+        try { await removeNode(n.name); onChanged(); onClose(); } catch (e) { setRemoveError(String(e).replace(/^Error: /, "")); setRemoving(false); }
+    }
     return (
         <Drawer title={<><span className="text-base font-semibold text-primary">{n.name}</span>
                         <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role === "hub" ? "hub" : "worker"}</Badge>
@@ -294,6 +300,16 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
                     <DrawerSection title="能做什么">
                         <Abilities snapshot={n.snapshot} />
                     </DrawerSection>
+                )}
+                {n.role !== "hub" && (
+                    <section className="rounded-lg bg-secondary/40 p-3">
+                        <div className="flex items-center gap-3">
+                            <div className="flex-1 text-xs text-tertiary">移除只是让 hub 忘掉这台机器：不再拨号、不再列出；机器上的进程不动。上面还有 Agent、或有项目的主目录 / 副本时会先拒绝。</div>
+                            {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>算了</Button><Button size="sm" color="primary-destructive" onClick={() => void remove()}>确认移除</Button></>)
+                                : <Button size="sm" color="secondary-destructive" onClick={() => setRemoving(true)}>移除机器</Button>}
+                        </div>
+                        {removeError && <div className="mt-2 text-xs text-error-primary">{removeError}</div>}
+                    </section>
                 )}
         </Drawer>
     );

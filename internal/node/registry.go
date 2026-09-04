@@ -237,6 +237,21 @@ func (r *Registry) Add(name string, cfg Config) {
 	}()
 }
 
+// Remove forgets a machine: its connection is closed, and it is no
+// longer dialed, refreshed or listed. Sessions that were on it end with
+// the connection.
+func (r *Registry) Remove(name string) {
+	r.mu.Lock()
+	c := r.live[name]
+	delete(r.confs, name)
+	delete(r.live, name)
+	delete(r.last, name)
+	r.mu.Unlock()
+	if c != nil {
+		c.close()
+	}
+}
+
 // Names lists configured nodes in a stable order.
 func (r *Registry) Names() []string {
 	r.mu.Lock()

@@ -413,6 +413,10 @@ hub 已经为每个会话现场生成一个 MCP 服务器（今天叫 `feishu`�
 - 内置技能剩 `skill-creator` 和一份只读的 `steve` 总览（给拿不到平台 MCP 的环境）；`steve-*` 删除，正文并入 `steve_help` 的主题（`internal/agentmcp/help/`）。
 - 会话的模式（私聊 / 群聊）在每条请求进来时记下，工具调用时查。
 
+### 19.3.1 维护这套系统（用户：增删节点、感知其他节点的状态）
+
+agent 得能自己维护 fleet，不只是人从页面操作。平台 MCP 再加四个工具：`steve_nodes`（每台机器：在线与否及自何时、版本、数据等级、系统、健康——空闲磁盘 / 负载 / 工作树、AI 工具及各自能否启动、MCP 服务器、自有技能数、放在上面的 Agent；`steve_fleet` 列 agent，它列机器）、`steve_node_add(name, addr, level?, hub_url?)`（登记并返回那台机器要跑的一行 bootstrap 命令）、`steve_node_remove(name)`（忘掉一台机器：上面还有 Agent、或有项目的主目录 / 副本时拒绝）、`steve_node_refresh(name)`（让机器现在重新看自己并返回摘要）。增删只允许用户在私聊里发起的会话（模式 owner，且不是受委派的子任务）；看和刷新谁都可以。页面同步补上"移除机器"（此前只有添加），接口 `DELETE /console/nodes/{name}`，注册表新增 `Remove`（关连接、停拨号、不再列出）。
+
 ### 19.4 顺序（按评审改）
 
 1. 已做：`steve_context`、`steve_help`、`steve_projects`；改名 `steve`；套件改为 help 主题，保留只读总览技能。

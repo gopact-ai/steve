@@ -187,3 +187,7 @@ export async function searchMCPRegistry(query: string): Promise<{ entries: MCPRe
 export async function installMCP(req: { node: string; name: string; entry: string; package?: number; remote?: number; values: Record<string, string> }): Promise<{ ok: boolean }> {
     return json(await fetch(`./console/mcp/install${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(req) }));
 }
+
+export async function removeNode(name: string): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/nodes/${encodeURIComponent(name)}${q}`, { method: "DELETE", headers }));
+}
