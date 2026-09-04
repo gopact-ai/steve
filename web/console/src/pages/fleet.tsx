@@ -12,9 +12,10 @@ import { relative, when } from "@/lib/api";
 import { addAgent, addNode, removeAgent, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
 import type { AbilitySnapshot, Agent, Attempt, Capability, Condition, Node as NodeT } from "@/lib/types";
-import { Chips, KeyValue, PageBody, PageHeader } from "@/lib/page";
-import { ListEditor, SettingsEditor } from "@/pages/fleet-settings";
-import { Mono, Nothing, StateBadge, Where } from "@/lib/ui";
+import { Drawer, DrawerSection } from "@/components/steve/drawer";
+import { Chips, KeyValue, PageBody, PageHeader } from "@/components/steve/page";
+import { ListEditor, SettingsEditor } from "@/components/steve/settings-editor";
+import { Mono, Nothing, StateBadge, Where } from "@/components/steve/ui";
 
 // Runtimes lists what a machine can start and what it cannot, on separate
 // lines: nothing is struck through, a missing runtime says why and offers
@@ -69,21 +70,10 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
     const modelItems = [{ id: "__none", label: "不固定（用 AI 工具的默认）" }, ...(a.models || []).map((m) => ({ id: m, label: m }))];
     if (spec.model && !(a.models || []).includes(spec.model)) modelItems.push({ id: spec.model, label: spec.model });
     return (
-        <div className="fixed inset-y-0 right-0 z-20 flex w-[560px] flex-col border-l border-secondary bg-primary shadow-xl">
-            <div className="flex items-start gap-3 border-b border-secondary px-5 py-4">
-                <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                        <span className="text-base font-semibold text-primary">{a.id}</span>
+        <Drawer title={<><span className="text-base font-semibold text-primary">{a.id}</span>
                         {a.default && <Badge type="pill-color" size="sm" color="brand">默认</Badge>}
-                        <StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />
-                    </div>
-                    {a.why && <div className="mt-1 text-xs text-error-primary">{a.why}</div>}
-                </div>
-                <Button size="sm" color="secondary" onClick={() => fill("@" + a.id + " ")}>@ 指派</Button>
-                {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} onClick={() => setEditing(true)}>编辑</Button>}
-                <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label="关闭" />
-            </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4 text-sm">
+                        <StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} /></>} subtitle={<>{a.why && <div className="mt-1 text-xs text-error-primary">{a.why}</div>}</>} actions={<><Button size="sm" color="secondary" onClick={() => fill("@" + a.id + " ")}>@ 指派</Button>
+                {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} onClick={() => setEditing(true)}>编辑</Button>}</>} onClose={onClose}>
                 {!editing ? (
                     <>
                         <KeyValue dense rows={[
@@ -104,10 +94,9 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
                                 <div className="mt-1 flex flex-wrap gap-1">{a.models.map((m) => <Mono key={m} className="text-secondary">{m}</Mono>)}</div>
                             </details>
                         ) : null}
-                        <section>
-                            <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">此刻</h3>
+                        <DrawerSection title="此刻">
                             {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="text-xs text-secondary">#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since)}{x.detail ? ` · ${x.detail}` : ""}</div>) : <div className="text-xs text-quaternary">空闲</div>}
-                        </section>
+                        </DrawerSection>
                         <section className="rounded-lg bg-secondary/40 p-3">
                             <div className="flex items-center gap-3">
                                 <div className="flex-1 text-xs text-tertiary">删除只是让 hub 忘掉这个 Agent 的配置；它跑过的任务记录保留。</div>
@@ -153,8 +142,7 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
                         </div>
                     </div>
                 )}
-            </div>
-        </div>
+        </Drawer>
     );
 }
 
@@ -286,20 +274,9 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
     const h = n.health;
     const [editing, setEditing] = useState(false);
     return (
-        <div className="fixed inset-y-0 right-0 z-20 flex w-[560px] flex-col border-l border-secondary bg-primary shadow-xl">
-            <div className="flex items-start gap-3 border-b border-secondary px-5 py-4">
-                <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
-                        <span className="text-base font-semibold text-primary">{n.name}</span>
+        <Drawer title={<><span className="text-base font-semibold text-primary">{n.name}</span>
                         <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role === "hub" ? "hub" : "worker"}</Badge>
-                        <StateBadge state={n.up ? "up" : "down"} />
-                    </div>
-                    {!n.up && n.last_error && <div className="mt-1 text-xs text-error-primary">{n.last_error}</div>}
-                </div>
-                {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>编辑配置</Button>}
-                <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label="关闭" />
-            </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4 text-sm">
+                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{!n.up && n.last_error && <div className="mt-1 text-xs text-error-primary">{n.last_error}</div>}</>} actions={<>{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>编辑配置</Button>}</>} onClose={onClose}>
                 <KeyValue dense rows={[
                     { k: "主机名", v: n.host || "—" },
                     { k: "IP", v: (n.ips || []).length ? <div className="flex flex-col">{(n.ips || []).map((ip) => <Mono key={ip}>{ip}</Mono>)}</div> : "—" },
@@ -314,13 +291,11 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
                 {editing ? (
                     <SettingsEditor node={n.name} onClose={() => setEditing(false)} onSaved={onChanged} />
                 ) : (
-                    <section>
-                        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">能做什么</h3>
+                    <DrawerSection title="能做什么">
                         <Abilities snapshot={n.snapshot} />
-                    </section>
+                    </DrawerSection>
                 )}
-            </div>
-        </div>
+        </Drawer>
     );
 }
 

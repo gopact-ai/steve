@@ -197,3 +197,13 @@ HumanRequest { id, type, source_operation_id, project_id, task_id, summary, choi
 - 验证思考强度时踩到的线上问题：三台机器的 codex / claude-code 都用 `npx -y …` 启动适配器，上游发新版后每次启动都重装、卡超 60 秒初始化上限，所有会话打不开。已把三台机器的适配器改为本地安装的绝对路径（用新做的机器配置接口推过去），README 记了这条。
 - **自举试验后的三处修正（2026-09-04）**：① 聊天任务不再永远"进行中"——页面上有 attempt 在跑才叫"进行中"，开着但没人说话的叫"空闲"（`taskState()`，看板 / 项目 / 关系图统一），hub 每小时把 24 小时没人说话的聊天任务（无 origin、无 live attempt）关成已完成并记进历史（`task.Store.CloseIdle`）；② 三台机器的 codex / claude-code 加 `GOCACHE=/tmp/steve-go-build`，沙箱里跑 Go 测试不再撞只读缓存；③ 同一机器上目录重叠（相同、包含、被包含）的项目拒绝登记。自举本身：steve 在自己仓库的克隆里补测试、跑测试、按要求用命令级作者身份提交，提交 87ed25c 已合回主仓库并推送。
 
+
+## 13. 对话区向 Codex app 对齐，前端组件化（2026-09-04）
+
+用户拿 Codex app 的截图要求：工具调用要像"Ran commands ⌄"那样折在正文里、每条可展开；代码块要有语言标签和复制按钮；并要求前端代码组件化、工程化，各组件风格一致。
+
+- **对话区**：一条回复按 Codex 的顺序排——先"思考摘要 ⌄"（折叠，默认收起），再"运行了 N 条命令 ⌄"（一行一个调用：状态点、动词、等宽的命令或文件名、退出码；展开是"命令 · cwd"与"输出 · exit N"两个代码块），最后正文，末尾一行小字时间与"细节"。计划驱动的回合每个步骤一组（"repair · 运行了 13 条命令，调用了 4 次工具"，默认收起）。进行中的那一行也是同一套：头一行谁在做、多久了，随后思考摘要的最新一段、已落地的工具调用、正在成形的回答。`bash -lc "…"` 这层适配器包装被剥掉，只显示 agent 自己的命令。
+- **代码块**：正文里的围栏、工具的输入输出、prompt、指令全文都经同一个 `CodeBlock`：头部图标 + 语言名（Shell / JSON / Go …，命令用终端图标）+ 元信息（cwd、exit）+ 复制按钮，超高滚动。页面里不再手写 `<pre>`。
+- **组件层**：`web/console/src/components/steve/`（见该目录 README 的表与约定）。Untitled UI 原样引入；Steve 自己的组件一文件一件事：`page`（页骨架、Panel、KeyValue、Chips）、`ui`（状态徽章、Mono、空态）、`drawer`（右侧抽屉与其分节，Esc 关闭）、`markdown`（Md、CodeBlock）、`tool-calls`、`message`、`trace`（进行中、过程、给 agent 的）、`composer`、`sessions-tree`、`rail`、`call-graph`、`settings-editor`。`pages/` 只剩拼装：工作台从 783 行降到 254 行，四个页面的抽屉（机器、Agent、项目、任务）共用一个 `Drawer`；`lib/` 只放 api、类型、文案、hook、文本整理。
+- 约定写在 README 里：表单控件一律 Untitled UI；字号三档（sm / xs / 11px）与语义色 token；折叠一律 `<details>` + 旋转箭头；组件不发请求。
+- 没做：Codex 左侧的段落小地图；代码高亮（没有引入高亮库，只有语言名）。

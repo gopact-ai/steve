@@ -1,6 +1,6 @@
 import { Loading01 } from "@untitledui/icons";
 import type { Plan, Task } from "@/lib/types";
-import { Mono, StateBadge, taskState } from "@/lib/ui";
+import { Mono, StateBadge, taskState } from "@/components/steve/ui";
 
 // CallGraph is who asked whom: a task, the plan steps it split into and
 // which agent on which machine took each, and the tasks its agent handed

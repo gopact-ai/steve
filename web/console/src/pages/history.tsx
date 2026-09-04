@@ -7,8 +7,8 @@ import { Button } from "@/components/base/buttons/button";
 import { fetchHistory, short, when } from "@/lib/api";
 import { useFleet } from "@/lib/fleet";
 import type { HistoryEntry } from "@/lib/types";
-import { PageBody, PageHeader } from "@/lib/page";
-import { Mono, Nothing, StateBadge } from "@/lib/ui";
+import { PageBody, PageHeader } from "@/components/steve/page";
+import { Mono, Nothing, StateBadge } from "@/components/steve/ui";
 
 // HistoryPage answers "what happened, who did it, how did it end". The
 // timeline reads the ledger journal and the connectivity observations,

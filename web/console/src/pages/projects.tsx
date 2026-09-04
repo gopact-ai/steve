@@ -11,8 +11,9 @@ import { addProject, removeProject, when } from "@/lib/api";
 import { useFleet } from "@/lib/fleet";
 import { label, zh } from "@/lib/labels";
 import type { Project, Repo } from "@/lib/types";
-import { Chips, KeyValue, PageBody, PageHeader } from "@/lib/page";
-import { Mono, Nothing, StateBadge, taskState } from "@/lib/ui";
+import { Drawer, DrawerSection } from "@/components/steve/drawer";
+import { Chips, KeyValue, PageBody, PageHeader } from "@/components/steve/page";
+import { Mono, Nothing, StateBadge, taskState } from "@/components/steve/ui";
 
 const levelWords: Record<string, string> = { public: "公开", internal: "内部", restricted: "受限", sealed: "密封" };
 const levelHint = "项目数据的等级：公开 < 内部 < 受限 < 密封。只有等级不低于它的机器能持有它的文件。";
@@ -127,18 +128,8 @@ function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () =
     const grants = snap.facts.grants.filter((g) => g.project === p.id);
     const stepAgents = snap.agents.filter((a) => a.eligible && (p.repo === "isolated" || a.node === p.node)).map((a) => a.id);
     return (
-        <div className="fixed inset-y-0 right-0 z-20 flex w-[600px] flex-col border-l border-secondary bg-primary shadow-xl">
-            <div className="flex items-start gap-3 border-b border-secondary px-5 py-4">
-                <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2"><span className="text-base font-semibold text-primary">{p.id}</span>{p.default && <Badge type="pill-color" size="sm" color="brand">默认项目</Badge>}<Badge type="modern" size="sm" color="gray">{levelWords[p.level] || p.level}</Badge></div>
-                    <div className="mt-0.5 text-xs text-tertiary">{p.node} · <Mono>{p.path}</Mono></div>
-                </div>
-                <Button size="sm" color="primary" onClick={onNewSession}>新会话</Button>
-                <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label="关闭" />
-            </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4 text-sm">
-                <section>
-                    <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">仓库</h3>
+        <Drawer width={600} title={<><span className="text-base font-semibold text-primary">{p.id}</span>{p.default && <Badge type="pill-color" size="sm" color="brand">默认项目</Badge>}<Badge type="modern" size="sm" color="gray">{levelWords[p.level] || p.level}</Badge></>} subtitle={<><div className="mt-0.5 text-xs text-tertiary">{p.node} · <Mono>{p.path}</Mono></div></>} actions={<><Button size="sm" color="primary" onClick={onNewSession}>新会话</Button></>} onClose={onClose}>
+                <DrawerSection title="仓库">
                     {!p.repos ? <div className="text-xs text-quaternary">还没看过这个目录。</div> : p.repos.length === 1 && p.repos[0].missing ? <div className="text-xs text-error-primary">这台机器上没有这个目录。</div> : !p.repos.length ? <div className="text-xs text-quaternary">目录里没有 git 仓库；Agent 仍能在里面干活，只是没有版本记录。</div> : (
                         <ul className="flex flex-col divide-y divide-secondary rounded-lg ring-1 ring-secondary">
                             {p.repos.map((r) => (
@@ -156,7 +147,7 @@ function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () =
                             ))}
                         </ul>
                     )}
-                </section>
+                </DrawerSection>
                 <KeyValue dense rows={[
                     { k: "怎么改", v: repoWords[p.repo] || p.repo, hint: "直接改主目录：只有项目主机上的 Agent 能接手，一次只有一个写者。隔离副本：计划可以在别的机器上物化副本，完成后合并回来。" },
                     { k: "数据等级", v: `${levelWords[p.level] || p.level}（${p.level}）`, hint: levelHint },
@@ -164,12 +155,11 @@ function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () =
                     { k: "可跑计划步骤", v: <Chips items={stepAgents.map((a) => ({ id: a }))} /> },
                     { k: "访问权限", v: grants.length ? grants.map((g) => `${g.principal}: ${g.role}`).join(" · ") : `默认 ${p.default_role || "owner 之外无权限"}` },
                 ]} />
-                <section>
-                    <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">活动任务</h3>
+                <DrawerSection title="活动任务">
                     {tasks.length === 0 ? <div className="text-xs text-quaternary">没有</div> : (
                         <ul className="flex flex-col gap-1">{tasks.map((t) => <li key={t.id} className="flex items-center gap-2 text-sm"><StateBadge state={taskState(t)} /><span>#{t.id}</span><span className="truncate text-secondary">{t.goal}</span><span className="ml-auto text-xs text-tertiary">{t.member}</span></li>)}</ul>
                     )}
-                </section>
+                </DrawerSection>
                 <section className="rounded-lg bg-secondary/40 p-3">
                     <div className="flex items-center gap-3">
                         <div className="flex-1 text-xs text-tertiary">移除只是让 hub 忘掉这个项目：目录和仓库都不动；它下面的任务记录保留。{tasks.length ? ` 现在还有 ${tasks.length} 个活动任务。` : ""}</div>
@@ -182,14 +172,12 @@ function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () =
                     </div>
                     {error && <div className="mt-2 text-xs text-error-primary">{error}</div>}
                 </section>
-                <section>
-                    <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">最近合并</h3>
+                <DrawerSection title="最近合并">
                     {landings.length === 0 ? <div className="text-xs text-quaternary">没有</div> : (
                         <ul className="flex flex-col gap-1 text-xs">{landings.map((l) => <li key={l.id} className="flex items-center gap-2"><StateBadge state={l.state} /><Mono>{l.artifact.slice(0, 12)}</Mono><span className="text-tertiary">{when(l.at)}</span>{l.error && <span className="text-error-primary">{l.error}</span>}</li>)}</ul>
                     )}
-                </section>
-            </div>
-        </div>
+                </DrawerSection>
+        </Drawer>
     );
 }
 

@@ -4,8 +4,8 @@ import { Button } from "@/components/base/buttons/button";
 import { when } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { label, zh } from "@/lib/labels";
-import { PageBody, PageHeader } from "@/lib/page";
-import { Nothing } from "@/lib/ui";
+import { PageBody, PageHeader } from "@/components/steve/page";
+import { Nothing } from "@/components/steve/ui";
 
 // InboxPage answers "what exactly do I have to decide right now". Only
 // requests that are still resolvable appear; the operations behind them

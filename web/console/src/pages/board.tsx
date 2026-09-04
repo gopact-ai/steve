@@ -1,5 +1,5 @@
 import { useMemo, useState } from "react";
-import { ClipboardCheck, Clock, X } from "@untitledui/icons";
+import { ClipboardCheck, Clock } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { Badge } from "@/components/base/badges/badges";
@@ -9,9 +9,10 @@ import { relative, short, when } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { fmtSeconds, fmtTokens, label, spend, zh } from "@/lib/labels";
 import type { Plan, Task } from "@/lib/types";
-import { PageHeader } from "@/lib/page";
-import { CallGraph } from "@/lib/tree";
-import { Mono, Nothing, StateBadge, Where, taskState } from "@/lib/ui";
+import { Drawer, DrawerSection } from "@/components/steve/drawer";
+import { PageHeader } from "@/components/steve/page";
+import { CallGraph } from "@/components/steve/call-graph";
+import { Mono, Nothing, StateBadge, Where, taskState } from "@/components/steve/ui";
 
 type TabKey = "active" | "all" | "scheduled" | "usage";
 const lanes: { key: string; title: string; hint: string }[] = [
@@ -79,7 +80,7 @@ export function BoardPage() {
                 {tab === "scheduled" && <Scheduled />}
                 {tab === "usage" && <UsagePanel />}
             </div>
-            {current && <Drawer t={current} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === current.id)} onClose={() => setSelected(null)} />}
+            {current && <TaskDrawer t={current} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === current.id)} onClose={() => setSelected(null)} />}
         </div>
     );
 }
@@ -256,25 +257,16 @@ function UsagePanel() {
 
 // Drawer is a task's detail: the result first, then the tree, the plan,
 // the attempts and what they cost.
-function Drawer({ t, tasks, plan, onClose }: { t: Task; tasks: Task[]; plan?: Plan; onClose: () => void }) {
+function TaskDrawer({ t, tasks, plan, onClose }: { t: Task; tasks: Task[]; plan?: Plan; onClose: () => void }) {
     const { snap } = useFleet();
     const { act } = useIntent();
     const children = tasks.filter((c) => c.parent === t.id);
     const landings = snap.landings.filter((l) => l.project === t.project_id).slice(0, 5);
     const holds = ["running", "blocked", "review", "paused", "draft", "failed"].includes(t.lifecycle);
     return (
-        <div className="fixed inset-y-0 right-0 z-20 flex w-[560px] flex-col border-l border-secondary bg-primary shadow-xl">
-            <div className="flex items-start gap-3 border-b border-secondary px-5 py-4">
-                <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2"><span className="text-sm font-semibold text-primary">#{t.id}</span><StateBadge state={taskState(t)} /><span className="text-xs text-tertiary">{label(zh.status, t.lane)}</span></div>
-                    <div className="mt-1 text-sm text-primary">{t.goal}</div>
-                    <div className="mt-1 text-xs text-tertiary">{t.member} @ {t.node || snap.hub.node} · 项目 {t.project_id || "—"} · {label(zh.origin, t.origin || "chat")} · 会话 {t.channel}</div>
-                </div>
-                <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label="关闭" />
-            </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-5 py-4 text-sm">
-                <section>
-                    <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">结果</h3>
+        <Drawer title={<><span className="text-sm font-semibold text-primary">#{t.id}</span><StateBadge state={taskState(t)} /><span className="text-xs text-tertiary">{label(zh.status, t.lane)}</span></>} subtitle={<><div className="mt-1 text-sm text-primary">{t.goal}</div>
+                    <div className="mt-1 text-xs text-tertiary">{t.member} @ {t.node || snap.hub.node} · 项目 {t.project_id || "—"} · {label(zh.origin, t.origin || "chat")} · 会话 {t.channel}</div></>} onClose={onClose}>
+                <DrawerSection title="结果">
                     <div className="flex flex-col gap-1 text-sm">
                         <Row k="执行" v={t.execution === "running" ? "有 attempt 在跑" : "空闲"} />
                         <Row k="待你处理" v={t.attention ? `${t.attention} 项，见待处理页` : "无"} />
@@ -289,10 +281,9 @@ function Drawer({ t, tasks, plan, onClose }: { t: Task; tasks: Task[]; plan?: Pl
                         {holds && <Button size="sm" color="secondary-destructive" onClick={() => act(`/tasks cancel ${t.id}`)}>取消</Button>}
                         <Button size="sm" color="link-gray" onClick={() => act(`/tasks ${t.id}`)}>在工作台里看</Button>
                     </div>
-                </section>
+                </DrawerSection>
                 {plan && (
-                    <section>
-                        <h3 className="mb-1 text-xs font-medium uppercase tracking-wide text-quaternary">计划 {plan.id} · 第 {plan.rev} 版 · {plan.by}</h3>
+                    <DrawerSection title={<>计划 {plan.id} · 第 {plan.rev} 版 · {plan.by}</>}>
                         {plan.because && <p className="mb-2 line-clamp-3 text-xs text-tertiary" title={plan.because}>为什么改：{plan.because}</p>}
                         <ol className="flex flex-col divide-y divide-secondary rounded-lg ring-1 ring-secondary">
                             {plan.steps.map((s) => (
@@ -304,16 +295,14 @@ function Drawer({ t, tasks, plan, onClose }: { t: Task; tasks: Task[]; plan?: Pl
                                 </li>
                             ))}
                         </ol>
-                    </section>
+                    </DrawerSection>
                 )}
                 {(children.length > 0 || plan) && (
-                    <section>
-                        <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">调用关系 · 谁把活给了谁</h3>
+                    <DrawerSection title="调用关系 · 谁把活给了谁">
                         <CallGraph roots={[t]} tasks={tasks} plans={snap.plans} />
-                    </section>
+                    </DrawerSection>
                 )}
-                <section>
-                    <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">回合</h3>
+                <DrawerSection title="回合">
                     {(t.attempt_rows || []).length === 0 ? <div className="text-xs text-quaternary">还没有回合</div> : (
                         <ul className="flex flex-col divide-y divide-secondary rounded-lg ring-1 ring-secondary text-xs">
                             {(t.attempt_rows || []).map((a, i) => (
@@ -327,9 +316,8 @@ function Drawer({ t, tasks, plan, onClose }: { t: Task; tasks: Task[]; plan?: Pl
                             ))}
                         </ul>
                     )}
-                </section>
-            </div>
-        </div>
+                </DrawerSection>
+        </Drawer>
     );
 }
 
