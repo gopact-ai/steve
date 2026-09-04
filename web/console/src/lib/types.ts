@@ -120,9 +120,10 @@ export interface Snapshot {
 }
 
 // Skills: what the hub can hand its agents, and what it does.
-export interface SkillView { name: string; path: string; root: string; title?: string; description?: string; enabled: boolean; builtin?: boolean; agents: string[]; projects: string[] }
+export interface SkillView { name: string; path: string; root: string; title?: string; description?: string; enabled: boolean; builtin?: boolean; source?: string; agents: string[]; projects: string[] }
+export interface SkillSource { slug: string; url: string; ref?: string; subdir?: string; root: string; head?: string; fetched_at?: string; skills: string[]; error?: string }
 export interface SkillNode { name: string; up: boolean; synced: boolean; takes: boolean }
-export interface SkillsView { fingerprint: string; search_paths: string[]; builtin_root?: string; skills: SkillView[]; nodes: SkillNode[] }
+export interface SkillsView { fingerprint: string; search_paths: string[]; builtin_root?: string; skills: SkillView[]; nodes: SkillNode[]; sources: SkillSource[] }
 export interface SkillDoc { name: string; path: string; content: string }
 // Steve's home: the three files and how much of them reaches the agent.
 export interface HomeFile { name: string; text: string; bytes: number; budget: number; template?: boolean; missing?: boolean }

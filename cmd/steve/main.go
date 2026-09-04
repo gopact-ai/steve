@@ -1744,7 +1744,20 @@ func (a *fleetAdmin) Skills(ctx context.Context) (readmodel.SkillsView, error) {
 	if a.skills == nil || a.skills.Map == nil {
 		return readmodel.SkillsView{}, errors.New("技能没有配置")
 	}
-	view := readmodel.SkillsView{Fingerprint: a.skills.Map.Fingerprint(), SearchPaths: a.skills.Map.SearchPaths(), BuiltinRoot: a.skills.Map.BuiltinRootPath(), Skills: []readmodel.SkillView{}, Nodes: []readmodel.SkillNode{}}
+	view := readmodel.SkillsView{Fingerprint: a.skills.Map.Fingerprint(), SearchPaths: a.skills.Map.SearchPaths(), BuiltinRoot: a.skills.Map.BuiltinRootPath(), Skills: []readmodel.SkillView{}, Nodes: []readmodel.SkillNode{}, Sources: []readmodel.SkillSource{}}
+	// A skill from a source resolves into its clone; that, not the name,
+	// says which source it came from — a skill of the same name from
+	// the user's directory or the shipped set is not the source's.
+	type clone struct{ slug, root, dir string }
+	var clones []clone
+	for _, src := range a.skills.Map.Sources() {
+		view.Sources = append(view.Sources, skillSource(src))
+		dir := src.Dir
+		if real, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = real
+		}
+		clones = append(clones, clone{src.Slug, src.Root, dir})
+	}
 	if view.SearchPaths == nil {
 		view.SearchPaths = []string{}
 	}
@@ -1766,6 +1779,11 @@ func (a *fleetAdmin) Skills(ctx context.Context) (readmodel.SkillsView, error) {
 	for _, ref := range available {
 		d := skills.Describe(ref.Path)
 		item := readmodel.SkillView{Name: ref.Name, Path: ref.Path, Root: filepath.Dir(ref.Path), Title: d.Title, Description: d.Description, Enabled: on[ref.Name], Builtin: view.BuiltinRoot != "" && filepath.Dir(ref.Path) == view.BuiltinRoot, Agents: []string{}, Projects: []string{}}
+		for _, c := range clones {
+			if strings.HasPrefix(ref.Path, c.dir+string(filepath.Separator)) {
+				item.Source, item.Root = c.slug, c.root
+			}
+		}
 		view.Skills = append(view.Skills, item)
 		byPath[filepath.Clean(ref.Path)] = &view.Skills[len(view.Skills)-1]
 	}
@@ -1821,6 +1839,46 @@ func (a *fleetAdmin) SkillContent(_ context.Context, name string) (readmodel.Ski
 		}
 	}
 	return readmodel.SkillDoc{}, fmt.Errorf("没有叫 %q 的技能", name)
+}
+
+func skillSource(s skills.Source) readmodel.SkillSource {
+	out := readmodel.SkillSource{Slug: s.Slug, URL: s.URL, Ref: s.Ref, Subdir: s.Subdir, Root: s.Root, Head: s.Head, FetchedAt: s.FetchedAt, Skills: s.Skills, Error: s.Error}
+	if out.Skills == nil {
+		out.Skills = []string{}
+	}
+	return out
+}
+
+// AddSkillSource installs a git repository of skills; nothing is
+// enabled by it, so nothing restarts.
+func (a *fleetAdmin) AddSkillSource(ctx context.Context, spec string) (readmodel.SkillSource, error) {
+	if a.skills == nil || a.skills.Map == nil {
+		return readmodel.SkillSource{}, errors.New("技能没有配置")
+	}
+	src, err := a.skills.AddSource(ctx, spec)
+	if err != nil {
+		return readmodel.SkillSource{}, err
+	}
+	return skillSource(src), nil
+}
+
+// UpdateSkillSources fetches every source again; the text of enabled
+// skills may change, so it takes the lock and restarts the AI tools.
+func (a *fleetAdmin) UpdateSkillSources(ctx context.Context) ([]readmodel.SkillSource, error) {
+	var out []readmodel.SkillSource
+	err := a.withSkillsLock(func() error {
+		updated, err := a.skills.UpdateSources(ctx)
+		for _, s := range updated {
+			out = append(out, skillSource(s))
+		}
+		return err
+	})
+	return out, err
+}
+
+// RemoveSkillSource forgets a source; skills enabled from it go with it.
+func (a *fleetAdmin) RemoveSkillSource(_ context.Context, slug string) error {
+	return a.withSkillsLock(func() error { return a.skills.RemoveSource(slug) })
 }
 
 // withSkillsLock runs a change to the skills the way the chat verb does:

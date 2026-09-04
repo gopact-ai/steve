@@ -21,6 +21,8 @@ type fileData struct {
 	// a user who turns one off is not overruled at the next boot.
 	BuiltinRoot string   `json:"builtin_root,omitempty"`
 	Builtins    []string `json:"builtins,omitempty"`
+	// Sources are the git repositories skills were installed from.
+	Sources []Source `json:"sources,omitempty"`
 }
 
 type Ref struct {
@@ -263,6 +265,15 @@ func (m *Map) Available() ([]Ref, error) {
 				continue
 			}
 			seen[entry.Name()] = struct{}{}
+			// A link (an installed source lists its skills through
+			// links) resolves to the directory itself, so a bundle walks
+			// the files and a harness sees a real directory. A plain
+			// directory keeps its path as listed, links above it and all.
+			if entry.Type()&os.ModeSymlink != 0 {
+				if real, err := filepath.EvalSymlinks(path); err == nil {
+					path = real
+				}
+			}
 			out = append(out, Ref{Name: entry.Name(), Path: path})
 		}
 	}

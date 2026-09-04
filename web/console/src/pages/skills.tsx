@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Plus, PuzzlePiece01, Trash01 } from "@untitledui/icons";
+import { Download01, Plus, PuzzlePiece01, RefreshCw01, Trash01 } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
@@ -10,7 +10,7 @@ import { Drawer } from "@/components/steve/drawer";
 import { Md } from "@/components/steve/markdown";
 import { Chips, KeyValue, PageBody, PageHeader, Panel } from "@/components/steve/page";
 import { Mono, Nothing } from "@/components/steve/ui";
-import { addSkillPath, fetchSkill, fetchSkills, removeSkillPath, setSkill } from "@/lib/api";
+import { addSkillPath, addSkillSource, fetchSkill, fetchSkills, removeSkillPath, removeSkillSource, setSkill, updateSkillSources, when } from "@/lib/api";
 import { useFleet } from "@/lib/fleet";
 import type { SkillDoc, SkillView, SkillsView } from "@/lib/types";
 
@@ -28,6 +28,7 @@ export function SkillsPage() {
     const [busy, setBusy] = useState("");
     const [opened, setOpened] = useState<SkillDoc | null>(null);
     const [newPath, setNewPath] = useState("");
+    const [spec, setSpec] = useState("");
     const load = useCallback(() => { void fetchSkills().then((v) => { setView(v); setError(""); }).catch((e) => setError(fail(e))); }, []);
     useEffect(() => { load(); }, [load, snap.at]);
     async function run(key: string, op: () => Promise<unknown>) {
@@ -66,7 +67,7 @@ export function SkillsPage() {
                                             </div>
                                         </Table.Cell>
                                         <Table.Cell><span className="line-clamp-2 max-w-md text-xs text-secondary" title={s.description}>{s.description || <span className="text-quaternary">SKILL.md 没写说明</span>}</span></Table.Cell>
-                                        <Table.Cell><Mono className="text-tertiary">{s.root}</Mono></Table.Cell>
+                                        <Table.Cell>{s.source ? <span className="flex items-center gap-1.5 text-xs"><Download01 className="size-3.5 text-fg-quaternary" /><Mono className="text-tertiary">{s.source}</Mono></span> : <Mono className="text-tertiary">{s.root}</Mono>}</Table.Cell>
                                         <Table.Cell>
                                             {s.agents.length + s.projects.length === 0 ? <span className="text-xs text-quaternary">—</span> : (
                                                 <div className="flex flex-col gap-1">
@@ -85,10 +86,36 @@ export function SkillsPage() {
                         </Table>
                     )}
                 </TableCard.Root>
+                <Panel title="从互联网安装" badge={<span className="text-xs text-tertiary">一个 git 仓库就是一个来源：hub 浅克隆它，里面带 SKILL.md 的目录就成为技能，在上表里逐个启用</span>}
+                    aside={(view?.sources.length ?? 0) > 0 ? <Button size="sm" color="secondary" iconLeading={RefreshCw01} isLoading={busy === "update"} isDisabled={busy !== ""} onClick={() => void run("update", updateSkillSources)}>全部更新</Button> : undefined}>
+                    <div className="flex items-end gap-2">
+                        <Input size="sm" label="仓库" placeholder="anthropics/skills，或 https://github.com/anthropics/skills/tree/main/skills/pdf" value={spec} onChange={setSpec} className="flex-1" hint="GitHub 链接、owner/repo、或指到子目录的 tree 链接；也接受任何 git 地址。要认证的私有仓库用 ssh 地址，hub 用自己的密钥。" />
+                        <Button size="sm" color="primary" iconLeading={Download01} isDisabled={!spec.trim() || busy !== ""} isLoading={busy === "install"} onClick={() => void run("install", async () => { await addSkillSource(spec.trim()); setSpec(""); })}>安装</Button>
+                    </div>
+                    {(view?.sources.length ?? 0) > 0 && (
+                        <ul className="flex flex-col divide-y divide-secondary">
+                            {view!.sources.map((src) => (
+                                <li key={src.slug} className="flex items-start gap-3 py-2">
+                                    <div className="min-w-0 flex-1">
+                                        <div className="flex items-center gap-2 text-sm">
+                                            <span className="font-medium text-primary">{src.slug}</span>
+                                            {src.head && <Mono className="text-quaternary">{src.head}</Mono>}
+                                            {src.error && <Badge type="pill-color" size="sm" color="error">更新失败</Badge>}
+                                        </div>
+                                        <div className="truncate font-mono text-[11px] text-quaternary" title={src.url}>{src.url}{src.ref ? ` @ ${src.ref}` : ""}{src.subdir ? ` · ${src.subdir}` : ""}</div>
+                                        <div className="mt-1 flex flex-wrap items-center gap-1 text-xs"><span className="text-tertiary">{src.skills.length} 个技能</span><Chips items={src.skills.map((n) => ({ id: n }))} />{src.fetched_at && <span className="text-quaternary">· 拉取于 {when(src.fetched_at)}</span>}</div>
+                                        {src.error && <div className="mt-1 text-xs text-error-primary">{src.error}</div>}
+                                    </div>
+                                    <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip="忘掉这个来源；从它启用的技能一起关掉" isDisabled={busy !== ""} onClick={() => void run("rmsrc:" + src.slug, () => removeSkillSource(src.slug))} />
+                                </li>
+                            ))}
+                        </ul>
+                    )}
+                </Panel>
                 <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                     <Panel title="搜索目录" badge={<span className="text-xs text-tertiary">hub 上的目录；每个子文件夹带 SKILL.md 就是一个技能</span>}>
                         <ul className="flex flex-col divide-y divide-secondary">
-                            {(view?.search_paths ?? []).map((p) => (
+                            {(view?.search_paths ?? []).filter((p) => !view?.sources.some((src) => src.root === p)).map((p) => (
                                 <li key={p} className="flex items-center gap-2 py-1.5">
                                     <Mono className="min-w-0 flex-1 truncate text-primary">{p}</Mono>
                                     {p === view?.builtin_root ? <span className="text-[11px] text-quaternary" title="随 steve 发布的技能：官方的 skill-creator，和讲这套系统怎么协作的 steve 套件。每次启动重写，不能移除，可以逐个关掉。">内置 · 随 steve 更新</span>

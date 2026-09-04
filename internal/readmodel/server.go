@@ -71,6 +71,9 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("PUT /console/skills/{name}", s.guard(s.consoleSetSkill))
 	mux.HandleFunc("POST /console/skills/paths", s.guard(s.consoleAddSkillPath))
 	mux.HandleFunc("DELETE /console/skills/paths", s.guard(s.consoleRemoveSkillPath))
+	mux.HandleFunc("POST /console/skills/sources", s.guard(s.consoleAddSkillSource))
+	mux.HandleFunc("POST /console/skills/sources/update", s.guard(s.consoleUpdateSkillSources))
+	mux.HandleFunc("DELETE /console/skills/sources/{slug}", s.guard(s.consoleRemoveSkillSource))
 	mux.HandleFunc("GET /console/home", s.guard(s.consoleHome))
 	mux.HandleFunc("PUT /console/home/{name}", s.guard(s.consoleSetHomeFile))
 	mux.HandleFunc("POST /console/projects/{id}/workspaces", s.guard(s.consoleAddWorkspace))
@@ -364,6 +367,11 @@ type Admin interface {
 	AddSkillPath(ctx context.Context, path string) error
 	RemoveSkillPath(ctx context.Context, path string) error
 	SkillContent(ctx context.Context, name string) (SkillDoc, error)
+	// AddSkillSource installs a git repository of skills; UpdateSkillSources
+	// fetches them all again; RemoveSkillSource forgets one.
+	AddSkillSource(ctx context.Context, spec string) (SkillSource, error)
+	UpdateSkillSources(ctx context.Context) ([]SkillSource, error)
+	RemoveSkillSource(ctx context.Context, slug string) error
 	// Home is Steve's own three files — who it is, who the owner is,
 	// what it remembers; SetHomeFile rewrites one.
 	Home(ctx context.Context) (HomeView, error)
@@ -381,6 +389,22 @@ type SkillsView struct {
 	BuiltinRoot string      `json:"builtin_root,omitempty"`
 	Skills      []SkillView `json:"skills"`
 	Nodes       []SkillNode `json:"nodes"`
+	// Sources are the git repositories skills were installed from.
+	Sources []SkillSource `json:"sources"`
+}
+
+// SkillSource is one installed repository: where it came from, what
+// was fetched, and the skills it lists.
+type SkillSource struct {
+	Slug      string    `json:"slug"`
+	URL       string    `json:"url"`
+	Ref       string    `json:"ref,omitempty"`
+	Subdir    string    `json:"subdir,omitempty"`
+	Root      string    `json:"root"`
+	Head      string    `json:"head,omitempty"`
+	FetchedAt time.Time `json:"fetched_at,omitzero"`
+	Skills    []string  `json:"skills"`
+	Error     string    `json:"error,omitempty"`
 }
 
 // SkillView is one skill: named by its directory, described by its
@@ -393,6 +417,8 @@ type SkillView struct {
 	Description string   `json:"description,omitempty"`
 	Enabled     bool     `json:"enabled"`
 	Builtin     bool     `json:"builtin,omitempty"`
+	// Source names the installed repository a skill came from, if one.
+	Source string `json:"source,omitempty"`
 	Agents      []string `json:"agents"`
 	Projects    []string `json:"projects"`
 }
@@ -702,6 +728,59 @@ func (s *Server) consoleRemoveSkillPath(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err := s.admin.RemoveSkillPath(r.Context(), r.URL.Query().Get("path")); err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, ErrBusy) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleAddSkillSource(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	var req struct {
+		Spec string `json:"spec"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	src, err := s.admin.AddSkillSource(r.Context(), req.Spec)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(src)
+}
+
+func (s *Server) consoleUpdateSkillSources(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	out, err := s.admin.UpdateSkillSources(r.Context())
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, ErrBusy) {
+			status = http.StatusConflict
+		}
+		http.Error(w, err.Error(), status)
+		return
+	}
+	if out == nil {
+		out = []SkillSource{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"sources": out})
+}
+
+func (s *Server) consoleRemoveSkillSource(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	if err := s.admin.RemoveSkillSource(r.Context(), r.PathValue("slug")); err != nil {
 		status := http.StatusBadRequest
 		if errors.Is(err, ErrBusy) {
 			status = http.StatusConflict

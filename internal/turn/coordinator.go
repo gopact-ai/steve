@@ -324,7 +324,7 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 	case protocol.CommandCancel:
 		return c.cancel(ctx, req.ConversationID, selected)
 	case protocol.CommandSkills:
-		return c.skillsCmd(req, selected, rest)
+		return c.skillsCmd(ctx, req, selected, rest)
 	case protocol.CommandTasks:
 		return c.tasksCmd(ctx, req, rest), nil
 	case protocol.CommandEvery, protocol.CommandAt:

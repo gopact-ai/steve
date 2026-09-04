@@ -57,3 +57,20 @@ func TestSetupShipsBuiltinsOnByDefaultButRemembersADisable(t *testing.T) {
 		t.Fatalf("builtin root = %q", m2.BuiltinRootPath())
 	}
 }
+
+func TestDescribeReadsBlockScalars(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: folded\ndescription: >\n  first line\n  second line\nother: x\n---\n# Folded\n\nbody\n"), 0o644)
+	d := Describe(dir)
+	if d.Title != "folded" || d.Description != "first line second line" {
+		t.Fatalf("folded = %+v", d)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: literal\ndescription: |-\n  one\n  two\n---\n"), 0o644)
+	if d := Describe(dir); d.Description != "one\ntwo" {
+		t.Fatalf("literal = %+v", d)
+	}
+	_ = os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("# Plain\n\nA paragraph\nthat wraps.\n\nMore.\n"), 0o644)
+	if d := Describe(dir); d.Title != "Plain" || d.Description != "A paragraph that wraps." {
+		t.Fatalf("plain = %+v", d)
+	}
+}

@@ -15,6 +15,10 @@ const (
 	ActionDisable
 	ActionPathAdd
 	ActionPathRemove
+	// ActionSourceAdd installs a git source; ActionUpdate fetches every
+	// source again.
+	ActionSourceAdd
+	ActionUpdate
 )
 
 const (
@@ -25,6 +29,8 @@ const (
 	TokenRm      = "rm"
 	TokenRemove  = "remove"
 	TokenHelp    = "help"
+	TokenAddSrc  = "add"
+	TokenUpdate  = "update"
 )
 
 func ParseAction(rest string) (Action, string) {
@@ -40,6 +46,10 @@ func ParseAction(rest string) (Action, string) {
 		return ActionDisable, arg
 	case TokenHelp:
 		return ActionHelp, arg
+	case TokenAddSrc:
+		return ActionSourceAdd, arg
+	case TokenUpdate:
+		return ActionUpdate, arg
 	case TokenPath:
 		sub, path := splitCmd(arg)
 		switch sub {

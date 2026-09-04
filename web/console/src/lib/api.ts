@@ -1,4 +1,4 @@
-import type { HomeView, SkillDoc, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
+import type { HomeView, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
 
 // The token guards everything: it rides as a bearer header on requests and
 // as a query parameter on the event stream, which cannot carry headers.
@@ -153,4 +153,14 @@ export async function removeSkillPath(path: string): Promise<{ ok: boolean }> {
 export async function fetchHome(): Promise<HomeView> { return json(await fetch(`./console/home${q}`, { headers })); }
 export async function saveHomeFile(name: string, text: string): Promise<{ ok: boolean }> {
     return json(await fetch(`./console/home/${encodeURIComponent(name)}${q}`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ text }) }));
+}
+
+export async function addSkillSource(spec: string): Promise<SkillSource> {
+    return json(await fetch(`./console/skills/sources${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ spec }) }));
+}
+export async function updateSkillSources(): Promise<{ sources: SkillSource[] }> {
+    return json(await fetch(`./console/skills/sources/update${q}`, { method: "POST", headers }));
+}
+export async function removeSkillSource(slug: string): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/skills/sources/${encodeURIComponent(slug)}${q}`, { method: "DELETE", headers }));
 }

@@ -99,6 +99,8 @@ const (
 	SkillsNoneOff          Key = "skills_none_off"
 	SkillsSearchNone       Key = "skills_search_none"
 	SkillsUsage            Key = "skills_usage"
+	SkillsSourceAdded      Key = "skills_source_added"
+	SkillsUpdated          Key = "skills_updated"
 	SetupEditHome          Key = "setup_edit_home"
 	SetupCreatedConfig     Key = "setup_created_config"
 	SetupBotIdentity       Key = "setup_bot_identity"

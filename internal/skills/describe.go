@@ -28,6 +28,26 @@ func Describe(dir string) Description {
 	sc.Buffer(make([]byte, 64*1024), 64*1024)
 	inFront, first := false, true
 	var para []string
+	// A front-matter value may be a block scalar ("description: >" or
+	// "|-"), continuing on the indented lines below; block collects them.
+	block, style := "", ""
+	var blockLines []string
+	flush := func() {
+		if block == "" {
+			return
+		}
+		text := strings.Join(blockLines, " ")
+		if strings.HasPrefix(style, "|") {
+			text = strings.Join(blockLines, "\n")
+		}
+		switch block {
+		case "name":
+			d.Title = strings.TrimSpace(text)
+		case "description":
+			d.Description = strings.TrimSpace(text)
+		}
+		block, style, blockLines = "", "", nil
+	}
 	for sc.Scan() {
 		line := strings.TrimRight(sc.Text(), " \t\r")
 		if first {
@@ -39,16 +59,31 @@ func Describe(dir string) Description {
 		}
 		if inFront {
 			if line == "---" {
+				flush()
 				inFront = false
 				continue
 			}
-			if k, v, ok := strings.Cut(line, ":"); ok {
-				v = strings.Trim(strings.TrimSpace(v), `"'`)
-				switch strings.ToLower(strings.TrimSpace(k)) {
-				case "name":
-					d.Title = v
-				case "description":
-					d.Description = v
+			if block != "" && (strings.HasPrefix(line, " ") || strings.HasPrefix(line, "\t") || line == "") {
+				if line != "" {
+					blockLines = append(blockLines, strings.TrimSpace(line))
+				}
+				continue
+			}
+			flush()
+			if k, v, ok := strings.Cut(line, ":"); ok && !strings.HasPrefix(line, " ") {
+				key := strings.ToLower(strings.TrimSpace(k))
+				v = strings.TrimSpace(v)
+				if key == "name" || key == "description" {
+					if v == ">" || v == ">-" || v == "|" || v == "|-" || v == ">+" || v == "|+" {
+						block, style = key, v
+						continue
+					}
+					v = strings.Trim(v, `"'`)
+					if key == "name" {
+						d.Title = v
+					} else {
+						d.Description = v
+					}
 				}
 			}
 			continue
