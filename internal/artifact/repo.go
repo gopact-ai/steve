@@ -73,6 +73,15 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string) (
 		if _, err := r.git(ctx, env, "read-tree", parent); err != nil {
 			return "", false, fmt.Errorf("read parent tree: %w", err)
 		}
+		// A gitlink inherited from the parent would make git ignore every
+		// file under that path; whatever is there now is plain files.
+		if links, err := r.gitlinks(ctx, env); err != nil {
+			return "", false, err
+		} else if len(links) > 0 {
+			if _, err := r.git(ctx, env, append([]string{"update-index", "--force-remove", "--"}, links...)...); err != nil {
+				return "", false, fmt.Errorf("drop gitlinks: %w", err)
+			}
+		}
 	}
 	if flattened := flattenNestedRepos(workTree); len(flattened) > 0 {
 		log.Printf("artifact: %s: flattened nested git repositories at %s", workTree, strings.Join(flattened, ", "))
@@ -108,6 +117,24 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string) (
 
 // pin gives a commit a ref so it is an artifact git will keep, and a name
 // a bundle can carry.
+// gitlinks lists the submodule entries in the index.
+func (r *Repo) gitlinks(ctx context.Context, env []string) ([]string, error) {
+	out, err := r.git(ctx, env, "ls-files", "--stage")
+	if err != nil {
+		return nil, fmt.Errorf("list index: %w", err)
+	}
+	var links []string
+	for _, line := range strings.Split(out, "\n") {
+		if !strings.HasPrefix(line, "160000 ") {
+			continue
+		}
+		if _, path, ok := strings.Cut(line, "\t"); ok {
+			links = append(links, path)
+		}
+	}
+	return links, nil
+}
+
 // flattenNestedRepos removes any .git below the top level of workTree
 // and returns where they were. An agent that ran git init inside its
 // directory did not make a submodule: git would record the directory as
@@ -385,7 +412,8 @@ func (Script) Snapshot(dir, workTree, parent, message string) string {
 	readParent := "true"
 	if parent != "" {
 		parentArg = " -p " + quote(parent)
-		readParent = "git read-tree " + quote(parent)
+		// Same as Snapshot: the parent's tree, minus any gitlink in it.
+		readParent = "git read-tree " + quote(parent) + " && { links=$(git ls-files --stage | awk -F'\t' '$1 ~ /^160000 / {print $2}'); [ -z \"$links\" ] || printf '%s\\n' \"$links\" | xargs -d '\\n' git update-index --force-remove --; }"
 	}
 	compare := "false"
 	if parent != "" {
