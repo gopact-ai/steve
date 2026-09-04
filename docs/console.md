@@ -464,3 +464,48 @@ agent 得能自己维护 fleet，不只是人从页面操作。平台 MCP 再加
 1. ✅ `internal/memory`：作用域、Store / Retriever 接口、markdown 存储（锁、id、模板）、Service（审计、预算）；项目记忆注入；`steve_remember` / `steve_recall` / `steve_forget`；档案页项目记忆；help 更新。真机验证（2026-09-04，codex）：未绑项目时 `scope=project` 被拒并提示 `/project use`；绑定后两条项目事实落到 `<state>/memory/projects/steve.md`（带 id 注释）、全局一条落到 MEMORY.md，审计各一行；新会话第一轮拿到 `# Memory · steve` 段并能原样引用；`steve_recall scope=project` 命中。
 2. MCP 检索器（hub 本机部署；`internal/mcpclient`）；配置与页面。
 3. 审计落账本；InvocationBinding 后的短期写 token；导出 / 导入。
+
+## 21. 跨机器协作 e2e（2026-09-04）
+
+用户要的验收：@claude 一句话，claude 自动协调不同 node 上的实例与能力，完成一个项目。跑法：控制台会话绑定 `scratch`（主目录在 hub），`/use claude`，一段话交代目标与分工（node-a 写代码、node-b 写测试、hub 上的 claude 只协调）。三轮跑下来，每轮都暴露一个平台问题，修了再跑。
+
+### 21.1 发现与修复
+
+| # | 现象 | 原因 | 修复 |
+|---|---|---|---|
+| 1 | 第一轮：claude 委派后 60 秒回合被取消，子任务在 node-a 上继续跑成孤儿 | 控制台 `send` 把回合挂在 HTTP 请求的 ctx 上；驱动脚本 60 秒超时断开就取消了回合 | `console.SendCommand` 用 `context.WithoutCancel`；回合只由 `/cancel` 停（22c690d） |
+| 2 | 委派到 node 的子任务拿不到平台 MCP（"offers no reverse messaging channel"） | 节点二进制落后三个提交，没有 `Advert.MCPPort`；更新后又发现定时 advert 刷新会把端口丢掉 | 节点重新部署；`advert()` 每次都带 `MCPPort`，hub 侧刷新时保留旧值（f396fc6） |
+| 3 | 第二轮：claude 等子任务等到第 10 分钟整，回合被 `prompt_timeout` 砍掉 | 超时是整回合的硬上限，协调型回合光等子任务就超过 | 改成**静默超时**：每个进度事件重置时钟，只抓卡死的 agent（f396fc6） |
+| 4 | 子任务落地只有 1 个路径，主目录里 `hostline/` 是空目录 | builder 在自己目录里 `git init` 并提交，快照把它当子模块（gitlink） | 快照前拍平嵌套 `.git`（hub 本地与节点脚本）；子任务提示里说明"这是 Steve 快照的工作树，别 git init / commit"（f396fc6） |
+| 5 | 之后所有对该目录的改动都"无变化"、不落地 | 父树里已有的 gitlink 读进 index 后，git 忽略该路径下的文件 | 读完父树先删掉 index 里的 gitlink 条目（本地 + 脚本，脚本用真 shell 跑测试）（17d79a8） |
+| 6 | 父回合死了之后，子任务的结果 `Defer` 进队列，等下一回合落地 | 设计如此（等主目录锁释放）；但 #39 因为 5 根本没有产生 artifact | 5 修后队列路径可用；孤儿子任务的落地仍要等项目上的下一回合，见 21.3 |
+
+### 21.2 第三轮：跑通了
+
+修完 1–5 之后第三轮（会话 `console:e2e3`，项目 `scratch`，子项目 `fleetline`）一句话交给 claude，20 分钟后回报"项目已完成"，与事实一致：
+
+| 步骤 | 谁 / 在哪 | 用时 | 结果 |
+|---|---|---|---|
+| 看有谁 | claude / hub：`steve_context` → `steve_fleet` → `steve_projects` → `steve_help` | 20 s | 挑出 node-a 的 builder、node-b 的 shipper |
+| 写 main.go / go.mod / README | #41 builder / node-a | 9m30s | **失败**：codex 自己以 `cancelled` 结束回合（原因未定，见 21.4） |
+| 重试 | #42 builder / node-a | 7m49s | 成功；3 个文件落进主目录（`LandUnder`） |
+| 写 main_test.go | #43 shipper / node-b，带上 #42 的 artifact ref | 1m18s | 成功；1 个文件落进主目录 |
+| 复核 | claude / hub | 15 s | `go build` 通过、`TestLine` PASS、`go run` 打出 `host=n251-239-109 time=…` |
+
+根任务 #40 共 1188 s；父回合全程没被超时砍掉（静默超时生效）；两次落地都是子任务结束时在父回合租约下直接进主目录，claude 下一步就能看到文件。
+
+### 21.3 观察到能用的
+
+- `steve_fleet` 列出六个 agent 及所在机器，claude 据此挑 node-a 的 builder；`steve_delegate` 立刻返回 task_id，`steve_await` 每 50 秒一轮。
+- 委派时主目录快照成 git bundle 推到 node-a，物化成隔离工作树；子任务结束后快照、绑定到 `steve/<id>/result`、在父回合的租约下 `LandUnder` 到主目录、清理工作树。
+- 父回合被取消，子任务不受影响跑完（`context.WithoutCancel`）。
+- claude 看到落地是空目录后自己判断"结果不对"，重新委派了一次（#39），并在目标里加了"不要 git init"。
+
+### 21.4 未解决
+
+- 孤儿子任务（父回合已死）的结果排队等下一回合才落地；没人再对这个项目说话就一直不落。要么给项目一个"空闲时落地"的后台步骤，要么让 `/tasks` 能手动落地。
+- 节点断线时正在跑的子任务标记为 failed，工作树留在节点上（`wt-770e70f8c717-392a8c4de3ecb3f3`），没有清理。
+- 节点上 builder（codex）做一个三文件的 Go 程序要 8–9 分钟；`steve_await` 一次 50 秒、每次都是一次 MCP 往返，回合的 trace 里全是 await。
+- 取消的根任务在读模型里一直 `running`（多轮任务的语义），但用户看不出它其实没人在跑。
+- #41 在 570 s 时以 `agent canceled the turn` 结束：是 codex 回了 `StopReasonCanceled`，hub 侧没有任何取消（租约没丢、父回合还在、没有 session/cancel 日志）。node-a 的 codex 配的是 `model_reasoning_effort = "max"`，一个三文件的程序要 8–10 分钟；第二轮的 #38 跑了 9m0s 恰好过线。下一步：子任务失败时把 ACP 的 stopReason 和最后一条进度一起写进回执，并给 node 上的 codex 换低一档的 reasoning。
+- builder 在 hub 上复核时 `go build ./...` 留下了 2.3 MB 的 `fleetline` 二进制在主目录里；下一次快照会把它记进项目。要么主目录快照忽略常见产物，要么 claude 的复核放到临时目录。
