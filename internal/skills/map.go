@@ -16,6 +16,11 @@ import (
 type fileData struct {
 	SearchPaths []string `json:"search_paths"`
 	Enabled     []string `json:"enabled"`
+	// BuiltinRoot is the directory the shipped skills are written to;
+	// Builtins are the shipped skills that have been turned on once —
+	// a user who turns one off is not overruled at the next boot.
+	BuiltinRoot string   `json:"builtin_root,omitempty"`
+	Builtins    []string `json:"builtins,omitempty"`
 }
 
 type Ref struct {
@@ -59,6 +64,52 @@ func (m *Map) Ensure(defaultSearch string) error {
 		}
 	}
 	return m.writeLocked(data)
+}
+
+// EnsureBuiltins lists the shipped skills' directory last among the
+// search paths and turns on every shipped skill seen for the first time.
+func (m *Map) EnsureBuiltins(root string, names []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, err := m.readLocked()
+	if err != nil {
+		return err
+	}
+	if data.BuiltinRoot != "" && data.BuiltinRoot != root {
+		next := data.SearchPaths[:0]
+		for _, item := range data.SearchPaths {
+			if item != data.BuiltinRoot {
+				next = append(next, item)
+			}
+		}
+		data.SearchPaths = next
+	}
+	data.BuiltinRoot = root
+	if !contains(data.SearchPaths, root) {
+		data.SearchPaths = append(data.SearchPaths, root)
+	}
+	for _, name := range names {
+		if contains(data.Builtins, name) {
+			continue
+		}
+		data.Builtins = append(data.Builtins, name)
+		if !contains(data.Enabled, name) {
+			data.Enabled = append(data.Enabled, name)
+		}
+	}
+	return m.writeLocked(data)
+}
+
+// BuiltinRootPath is the shipped skills' directory, or "" before any
+// shipped.
+func (m *Map) BuiltinRootPath() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, err := m.readLocked()
+	if err != nil {
+		return ""
+	}
+	return data.BuiltinRoot
 }
 
 func (m *Map) Enable(name string) error {
@@ -144,6 +195,9 @@ func (m *Map) RemovePath(path string) error {
 	data, err := m.readLocked()
 	if err != nil {
 		return err
+	}
+	if data.BuiltinRoot != "" && (path == data.BuiltinRoot || resolved == data.BuiltinRoot) {
+		return fmt.Errorf("%s holds the skills that ship with steve; turn them off one by one instead", path)
 	}
 	next := make([]string, 0, len(data.SearchPaths))
 	for _, item := range data.SearchPaths {

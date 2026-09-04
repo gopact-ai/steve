@@ -49,6 +49,10 @@ go build -o steve ./cmd/steve
 | `/approve 编号` `/deny 编号` | owner 批准或拒绝 sealed 项目的答案离开 |
 | `/effects` | 结果未知的对外动作；`/effects 编号 happened\|new` 由 owner 裁决 |
 
+技能（一个目录里的一份 SKILL.md）随 hub 一起发布一套**内置的**：Anthropic 官方的 `skill-creator`，和讲这套系统怎么协作的
+`steve` 套件（`steve` 是入口，按功能路由到 `steve-delegate` / `steve-projects` / `steve-plans` / `steve-memory` / `steve-feishu`）。
+启动时写到 `<state_dir>/skills-builtin/`，默认启用，打成包发给每台机器；控制台"技能"页可以逐个关、加自己的目录。
+
 以上动词在 dashboard 的控制台和 `steve say` 里同样可用。
 
 多阶段任务里 agent 会用内置的 `feishu_send` / `feishu_update` / `feishu_recall`

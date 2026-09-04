@@ -43,9 +43,9 @@ export function SkillsPage() {
             <PageBody>
                 {error && <div className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error}</div>}
                 <TableCard.Root size="sm">
-                    <TableCard.Header title="技能" badge={`${on}/${skills.length} 已启用`} description="启用 = 交给所有 Agent。「固定在」是某个 Agent 或项目按目录另外要的技能，不受这里的开关影响。" />
+                    <TableCard.Header title="技能" badge={`${on}/${skills.length} 已启用`} description="启用 = 交给所有 Agent。内置的随 steve 发布，默认打开：官方的 skill-creator，和讲这套系统怎么协作的 steve 套件（steve 是入口，按功能路由到 steve-*）。「固定在」是某个 Agent 或项目按目录另外要的技能，不受这里的开关影响。" />
                     {!view ? <div className="px-5 py-6 text-sm text-tertiary">读取中…</div> : skills.length === 0 ? (
-                        <Nothing icon={PuzzlePiece01} title="还没有技能">在下面的目录里放一个带 SKILL.md 的文件夹，或者添加一个已有技能的目录。</Nothing>
+                        <Nothing icon={PuzzlePiece01} title="还没有技能">连内置的都没有，说明 hub 还没启动完或状态目录写不进去。用户技能放在下面的目录里：一个带 SKILL.md 的文件夹就是一个。</Nothing>
                     ) : (
                         <Table aria-label="Skills" size="sm">
                             <Table.Header>
@@ -61,7 +61,7 @@ export function SkillsPage() {
                                     <Table.Row id={s.name}>
                                         <Table.Cell>
                                             <div className="flex flex-col">
-                                                <span className="font-medium text-primary">{s.name}</span>
+                                                <span className="flex items-center gap-1.5"><span className="font-medium text-primary">{s.name}</span>{s.builtin && <Badge type="modern" size="sm" color="gray">内置</Badge>}</span>
                                                 {s.title && s.title !== s.name && <span className="text-xs text-tertiary">{s.title}</span>}
                                             </div>
                                         </Table.Cell>
@@ -91,7 +91,8 @@ export function SkillsPage() {
                             {(view?.search_paths ?? []).map((p) => (
                                 <li key={p} className="flex items-center gap-2 py-1.5">
                                     <Mono className="min-w-0 flex-1 truncate text-primary">{p}</Mono>
-                                    <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip="不再在这里找" isDisabled={busy !== ""} onClick={() => void run("rm:" + p, () => removeSkillPath(p))} />
+                                    {p === view?.builtin_root ? <span className="text-[11px] text-quaternary" title="随 steve 发布的技能：官方的 skill-creator，和讲这套系统怎么协作的 steve 套件。每次启动重写，不能移除，可以逐个关掉。">内置 · 随 steve 更新</span>
+                                        : <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip="不再在这里找" isDisabled={busy !== ""} onClick={() => void run("rm:" + p, () => removeSkillPath(p))} />}
                                 </li>
                             ))}
                             {view && view.search_paths.length === 0 && <li className="py-1.5 text-xs text-quaternary">没有搜索目录。</li>}

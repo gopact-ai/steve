@@ -376,6 +376,9 @@ type Admin interface {
 type SkillsView struct {
 	Fingerprint string      `json:"fingerprint"`
 	SearchPaths []string    `json:"search_paths"`
+	// BuiltinRoot is the directory the skills shipped with steve are
+	// written to; it is searched last and cannot be removed.
+	BuiltinRoot string      `json:"builtin_root,omitempty"`
 	Skills      []SkillView `json:"skills"`
 	Nodes       []SkillNode `json:"nodes"`
 }
@@ -389,6 +392,7 @@ type SkillView struct {
 	Title       string   `json:"title,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Enabled     bool     `json:"enabled"`
+	Builtin     bool     `json:"builtin,omitempty"`
 	Agents      []string `json:"agents"`
 	Projects    []string `json:"projects"`
 }

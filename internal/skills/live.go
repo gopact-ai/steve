@@ -15,12 +15,27 @@ type Live struct {
 	mu sync.Mutex
 }
 
+// Setup opens the map, makes sure the user's own skills directory is
+// there, and brings the shipped skills up to date: written fresh under
+// the state directory, listed last, on by default the first time each
+// is seen.
 func Setup(stateDir string) (*Map, error) {
 	m, err := Open(DefaultPath(stateDir))
 	if err != nil {
 		return nil, err
 	}
 	if err := m.Ensure(DefaultSearchPath(stateDir)); err != nil {
+		return nil, err
+	}
+	root, err := InstallBuiltins(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	names, err := BuiltinNames()
+	if err != nil {
+		return nil, err
+	}
+	if err := m.EnsureBuiltins(root, names); err != nil {
 		return nil, err
 	}
 	return m, nil

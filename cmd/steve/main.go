@@ -1744,7 +1744,7 @@ func (a *fleetAdmin) Skills(ctx context.Context) (readmodel.SkillsView, error) {
 	if a.skills == nil || a.skills.Map == nil {
 		return readmodel.SkillsView{}, errors.New("技能没有配置")
 	}
-	view := readmodel.SkillsView{Fingerprint: a.skills.Map.Fingerprint(), SearchPaths: a.skills.Map.SearchPaths(), Skills: []readmodel.SkillView{}, Nodes: []readmodel.SkillNode{}}
+	view := readmodel.SkillsView{Fingerprint: a.skills.Map.Fingerprint(), SearchPaths: a.skills.Map.SearchPaths(), BuiltinRoot: a.skills.Map.BuiltinRootPath(), Skills: []readmodel.SkillView{}, Nodes: []readmodel.SkillNode{}}
 	if view.SearchPaths == nil {
 		view.SearchPaths = []string{}
 	}
@@ -1765,7 +1765,7 @@ func (a *fleetAdmin) Skills(ctx context.Context) (readmodel.SkillsView, error) {
 	byPath := map[string]*readmodel.SkillView{}
 	for _, ref := range available {
 		d := skills.Describe(ref.Path)
-		item := readmodel.SkillView{Name: ref.Name, Path: ref.Path, Root: filepath.Dir(ref.Path), Title: d.Title, Description: d.Description, Enabled: on[ref.Name], Agents: []string{}, Projects: []string{}}
+		item := readmodel.SkillView{Name: ref.Name, Path: ref.Path, Root: filepath.Dir(ref.Path), Title: d.Title, Description: d.Description, Enabled: on[ref.Name], Builtin: view.BuiltinRoot != "" && filepath.Dir(ref.Path) == view.BuiltinRoot, Agents: []string{}, Projects: []string{}}
 		view.Skills = append(view.Skills, item)
 		byPath[filepath.Clean(ref.Path)] = &view.Skills[len(view.Skills)-1]
 	}

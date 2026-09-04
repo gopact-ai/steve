@@ -286,3 +286,12 @@ HumanRequest { id, type, source_operation_id, project_id, task_id, summary, choi
 - **档案**（`#/home`，起初叫"Steve 的家"，用户觉得怪，改名）：三份文件各一张卡——身份 SOUL.md、用户 USER.md、记忆 MEMORY.md——等宽编辑框、字节数 / 预算条（8 KB / 8 KB / 24 KB）、"还是模板" / "文件不存在"徽章、保存（超预算拒绝，因为超出的部分本来就到不了 Agent）与还原。顶部"注入"块说明：私聊注入三份（总上限 40 KB，超出从记忆末尾截）、群聊 / 访客只有身份，并给出两种模式实际的字节数与 `home.Load` 的提醒。写入是同目录临时文件 + rename，符号链接只跟到家目录之内（`home.Write`）。接口 `GET /console/home`、`PUT /console/home/{name}`。
 - 导航"环境"组新增两项。
 - 用户随后指出三处：SOUL 模板把 Codex / Claude Code / Grok / Kimi 写死（工具是什么由 fleet 决定，模板改成"你调度的 AI 工具是你的手，有哪些看本轮的清单"）；"主人"这个词去掉（模板、包裹、onboarding、setup 文案里改成"用户"或角色名 owner）；USER.md 模板里的 "Feishu open_id" 行去掉——渠道身份是配置的事，不是用户画像；onboarding 的起草规则同步改为"不要把渠道标识写进 USER.md"。线上的 SOUL.md / USER.md 按同样的改法改了两行。
+
+## 17. 内置技能（2026-09-04）
+
+用户指出：技能没有系统内置，至少要带 Anthropic 官方的 skill-creator；还要有讲 steve 怎么协作的技能，否则 agent 不知道这套东西怎么用；steve 的技能可以是套件，按功能路由。
+
+- **随二进制发布**：`internal/skills/builtin/` 用 `go:embed` 打进 hub，启动时写到 `<state_dir>/skills-builtin/`（写到旁边再整体换名，不会出现半个目录），作为**最后一个**搜索目录——用户同名技能盖过内置。首次见到的内置技能自动启用；用户关掉过的记在 map 文件的 `builtins` 里，下次启动不再打开。内置目录不能从搜索路径移除（逐个关）。技能包按启用集打包发给各机器，内置的自然在内。
+- **skill-creator**：Anthropic 官方原文（anthropics/skills，commit 见 `internal/skills/builtin/README.md`），Apache-2.0，含 scripts / references / eval-viewer；许可证随目录带着。
+- **steve 套件**：`steve`（入口：一分钟模型、开工时拿到了什么、路由表、硬规则）→ `steve-delegate`（steve_fleet / steve_delegate / steve_await、选择器词表、引用不传内容、结果怎么落地、何时不委派）、`steve-projects`（项目 / 主目录 / 副本 / 工作树、只在工作区内写、被告知项目在别的机器时的三条路、数据等级、/project 与 /grant）、`steve-plans`（任务与回合预算、attempt 租约、/plan 的 DAG / 隔离工作树 / 验证 / 重规划、在步骤里该怎么做、/every /at /schedules、/repair /fleet）、`steve-memory`（三份档案何时注入、预算、群聊与访客、怎么记、写被拒怎么办、第一次见面）、`steve-feishu`（进度卡的时机与用法、不 @、最终答案不用它发）。内容只写代码里有的：动词表来自 i18n，工具参数来自 `agentmcp/server.go`，工作区规则来自 README 与 §14。
+- **页面**：技能表里内置的带"内置"徽章；内置目录那行不给移除按钮，写"内置 · 随 steve 更新"。
