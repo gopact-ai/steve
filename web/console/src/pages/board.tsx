@@ -11,7 +11,7 @@ import { fmtSeconds, fmtTokens, label, spend, zh } from "@/lib/labels";
 import type { Plan, Task } from "@/lib/types";
 import { PageHeader } from "@/lib/page";
 import { CallGraph } from "@/lib/tree";
-import { Mono, Nothing, StateBadge, Where } from "@/lib/ui";
+import { Mono, Nothing, StateBadge, Where, taskState } from "@/lib/ui";
 
 type TabKey = "active" | "all" | "scheduled" | "usage";
 const lanes: { key: string; title: string; hint: string }[] = [
@@ -103,7 +103,7 @@ function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () 
         <button type="button" onClick={onOpen} className={`flex w-full flex-col gap-2 rounded-xl bg-primary p-3 text-left shadow-xs ring-1 ring-inset transition hover:ring-brand ${selected ? "ring-brand" : "ring-secondary"}`}>
             <div className="flex items-center gap-2">
                 <span className="text-xs font-medium text-tertiary">#{t.id}</span>
-                <StateBadge state={t.lifecycle} />
+                <StateBadge state={taskState(t)} />
                 {t.attention ? <Badge type="pill-color" size="sm" color="warning">{t.attention} 项待处理</Badge> : null}
                 <span className="ml-auto text-[11px] text-quaternary">{label(zh.origin, t.origin || "chat")}</span>
             </div>
@@ -154,7 +154,7 @@ function AllTasks({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => vo
                             <Table.Row id={t.id} onAction={() => onOpen(t.id)}>
                                 <Table.Cell><span style={{ paddingLeft: t.depth * 16 }} className="font-medium text-primary">{t.depth ? "└ " : ""}#{t.id}</span></Table.Cell>
                                 <Table.Cell><span className="text-tertiary">{label(zh.status, t.lane)}</span></Table.Cell>
-                                <Table.Cell><StateBadge state={t.lifecycle} /></Table.Cell>
+                                <Table.Cell><StateBadge state={taskState(t)} /></Table.Cell>
                                 <Table.Cell><span className="line-clamp-2 max-w-sm text-primary">{t.goal}</span></Table.Cell>
                                 <Table.Cell>{t.member || "—"} <Where node={t.node} /></Table.Cell>
                                 <Table.Cell><span className="text-tertiary">{t.project_id || "—"}</span></Table.Cell>
@@ -266,7 +266,7 @@ function Drawer({ t, tasks, plan, onClose }: { t: Task; tasks: Task[]; plan?: Pl
         <div className="fixed inset-y-0 right-0 z-20 flex w-[560px] flex-col border-l border-secondary bg-primary shadow-xl">
             <div className="flex items-start gap-3 border-b border-secondary px-5 py-4">
                 <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2"><span className="text-sm font-semibold text-primary">#{t.id}</span><StateBadge state={t.lifecycle} /><span className="text-xs text-tertiary">{label(zh.status, t.lane)}</span></div>
+                    <div className="flex items-center gap-2"><span className="text-sm font-semibold text-primary">#{t.id}</span><StateBadge state={taskState(t)} /><span className="text-xs text-tertiary">{label(zh.status, t.lane)}</span></div>
                     <div className="mt-1 text-sm text-primary">{t.goal}</div>
                     <div className="mt-1 text-xs text-tertiary">{t.member} @ {t.node || snap.hub.node} · 项目 {t.project_id || "—"} · {label(zh.origin, t.origin || "chat")} · 会话 {t.channel}</div>
                 </div>

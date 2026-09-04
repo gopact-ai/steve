@@ -428,3 +428,35 @@ func TestListingOrdersIdsNumerically(t *testing.T) {
 		t.Fatalf("List order = %v; want %v", listed, want)
 	}
 }
+
+// A chat task nobody has spoken to for a day is closed; one with a live
+// attempt, one spoken to recently, and one a schedule or delegation
+// opened are left alone.
+func TestCloseIdleEndsQuietChatTasks(t *testing.T) {
+	s, clock := newStore(t)
+	now := *clock
+	*clock = now.Add(-30 * time.Hour)
+	old, _ := s.Create(Task{Goal: "old chat", Channel: "c1", Member: "codex"})
+	busy, _ := s.Create(Task{Goal: "busy chat", Channel: "c2", Member: "codex"})
+	sched, _ := s.Create(Task{Goal: "cron", Channel: "c3", Member: "codex", Origin: "schedule"})
+	for _, id := range []string{old.ID, busy.ID, sched.ID} {
+		if _, err := s.Begin(id, "codex", "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	*clock = now.Add(-time.Hour)
+	fresh, _ := s.Create(Task{Goal: "fresh chat", Channel: "c4", Member: "codex"})
+	if _, err := s.Begin(fresh.ID, "codex", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	*clock = now
+	closed := s.CloseIdle(24*time.Hour, func(id string) bool { return id == busy.ID })
+	if len(closed) != 1 || closed[0].ID != old.ID {
+		t.Fatalf("closed = %+v", closed)
+	}
+	for _, id := range []string{busy.ID, sched.ID, fresh.ID} {
+		if got, _ := s.Get(id); got.State != StateRunning {
+			t.Fatalf("task %s = %s, want running", id, got.State)
+		}
+	}
+}

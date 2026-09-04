@@ -1,6 +1,6 @@
 import { Loading01 } from "@untitledui/icons";
 import type { Plan, Task } from "@/lib/types";
-import { Mono, StateBadge } from "@/lib/ui";
+import { Mono, StateBadge, taskState } from "@/lib/ui";
 
 // CallGraph is who asked whom: a task, the plan steps it split into and
 // which agent on which machine took each, and the tasks its agent handed
@@ -28,7 +28,7 @@ function TaskNode({ t, tasks, plans, depth, liveSteps, seen }: { t: Task; tasks:
                 <div className="flex min-w-0 items-center gap-2 text-sm">
                     <Who agent={t.member || "steve"} node={t.member ? t.node : undefined} running={running} />
                     <span className="ml-auto flex shrink-0 items-center gap-1.5">
-                        <StateBadge state={t.lifecycle} />
+                        <StateBadge state={taskState(t)} />
                         <Mono className="text-quaternary">#{t.id}</Mono>
                     </span>
                 </div>

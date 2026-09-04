@@ -192,6 +192,30 @@ func (s *Store) List(channel string) []Task {
 	return out
 }
 
+// CloseIdle ends chat tasks nobody has touched for longer than age: a
+// thread that stopped being spoken to has finished, and a task that
+// keeps counting as running for it misleads every list. Only tasks a
+// person opened by talking (no origin) are closed, only when nothing is
+// live on them, and only past the age. The closed tasks are returned.
+func (s *Store) CloseIdle(age time.Duration, live func(id string) bool) []Task {
+	cutoff := s.now().Add(-age)
+	var closed []Task
+	for _, t := range s.List("") {
+		if t.State != StateRunning || t.Origin != "" || !t.UpdatedAt.Before(cutoff) {
+			continue
+		}
+		if live != nil && live(t.ID) {
+			continue
+		}
+		done, err := s.Advance(t.ID, StateDone)
+		if err != nil {
+			continue
+		}
+		closed = append(closed, done)
+	}
+	return closed
+}
+
 // SetBudget raises the default budgets new tasks are created with.
 // Non-positive values keep the current default.
 func (s *Store) SetBudget(maxTurns int, maxElapsed time.Duration) {

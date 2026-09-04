@@ -12,7 +12,7 @@ import { useFleet } from "@/lib/fleet";
 import { label, zh } from "@/lib/labels";
 import type { Project, Repo } from "@/lib/types";
 import { Chips, KeyValue, PageBody, PageHeader } from "@/lib/page";
-import { Mono, Nothing, StateBadge } from "@/lib/ui";
+import { Mono, Nothing, StateBadge, taskState } from "@/lib/ui";
 
 const levelWords: Record<string, string> = { public: "公开", internal: "内部", restricted: "受限", sealed: "密封" };
 const levelHint = "项目数据的等级：公开 < 内部 < 受限 < 密封。只有等级不低于它的机器能持有它的文件。";
@@ -167,7 +167,7 @@ function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () =
                 <section>
                     <h3 className="mb-2 text-xs font-medium uppercase tracking-wide text-quaternary">活动任务</h3>
                     {tasks.length === 0 ? <div className="text-xs text-quaternary">没有</div> : (
-                        <ul className="flex flex-col gap-1">{tasks.map((t) => <li key={t.id} className="flex items-center gap-2 text-sm"><StateBadge state={t.lifecycle} /><span>#{t.id}</span><span className="truncate text-secondary">{t.goal}</span><span className="ml-auto text-xs text-tertiary">{t.member}</span></li>)}</ul>
+                        <ul className="flex flex-col gap-1">{tasks.map((t) => <li key={t.id} className="flex items-center gap-2 text-sm"><StateBadge state={taskState(t)} /><span>#{t.id}</span><span className="truncate text-secondary">{t.goal}</span><span className="ml-auto text-xs text-tertiary">{t.member}</span></li>)}</ul>
                     )}
                 </section>
                 <section className="rounded-lg bg-secondary/40 p-3">

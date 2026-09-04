@@ -70,6 +70,34 @@ import (
 // homeProjectID names Steve's home directory as a project.
 const homeProjectID = config.ReservedHomeProject
 
+// idleTaskAge is how long a chat thread may go unspoken to before its
+// task is closed. A person can always start a new one by talking.
+const idleTaskAge = 24 * time.Hour
+
+// sweepIdleTasks closes chat tasks that have gone quiet, at start and
+// then hourly, and puts each closing in the history.
+func sweepIdleTasks(ctx context.Context, tasks *task.Store, attempts *attempt.Service, view *readmodel.Model) {
+	live := func(id string) bool {
+		_, ok := attempts.LiveAttemptOf(ctx, id)
+		return ok
+	}
+	ticker := time.NewTicker(time.Hour)
+	defer ticker.Stop()
+	for {
+		for _, t := range tasks.CloseIdle(idleTaskAge, live) {
+			log.Printf("steve: task #%s closed after %s without a word", t.ID, idleTaskAge)
+			if view != nil {
+				view.Observe("task.idle", t.ID, fmt.Sprintf("task #%s (%s) closed: quiet for more than %s", t.ID, t.Member, idleTaskAge))
+			}
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
 // sweepAttempts keeps expiring attempts whose drivers stopped renewing.
 func sweepAttempts(ctx context.Context, attempts *attempt.Service) {
 	ticker := time.NewTicker(attempts.TTL)
@@ -719,6 +747,7 @@ func serve(args []string) error {
 	// placement — describing its own ignorance rather than the fleet.
 	nodes.Start(ctx)
 	go repos.run(ctx)
+	go sweepIdleTasks(ctx, tasks, attempts, view)
 	// Discover models for whatever nobody has run yet. It is discovery,
 	// not work: a session opened and closed, no prompt sent. Done off the
 	// startup path so a slow adapter never delays the first message.
@@ -1340,6 +1369,20 @@ func (a *fleetAdmin) AddProject(ctx context.Context, req readmodel.AddProjectReq
 	if req.Node == "" && strings.HasPrefix(path, "~") {
 		if home, err := os.UserHomeDir(); err == nil {
 			path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
+		}
+	}
+	// A directory belongs to one project. Two projects on one machine
+	// whose directories nest would both claim the same files, and a
+	// single-writer lock on one would not know about the other.
+	clean := filepath.Clean(path)
+	for other, p := range a.cfg.Projects {
+		if p.Home.Node != req.Node {
+			continue
+		}
+		theirs := filepath.Clean(p.Home.Path)
+		if theirs == clean || strings.HasPrefix(clean, theirs+"/") || strings.HasPrefix(theirs, clean+"/") {
+			configMu.Unlock()
+			return fmt.Errorf("目录与项目 %s（%s）重叠：一个目录只能属于一个项目，也不能套在另一个项目的目录里", other, theirs)
 		}
 	}
 	a.cfg.Projects[id] = config.Project{Home: config.ProjectHome{Node: req.Node, Path: path}, Level: string(level), Repo: string(repo)}

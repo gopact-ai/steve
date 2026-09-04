@@ -83,3 +83,12 @@ export const Section = ({ title, description, aside, children }: { title: string
         {children}
     </section>
 );
+
+// taskState is what to call a task right now: "running" only while an
+// attempt is live; an open task nobody is working on is idle — a chat
+// thread waiting for its next line — not 进行中.
+export function taskState(t: { lifecycle: string; execution?: string }): string {
+    if (t.lifecycle === "running") return t.execution === "running" ? "running" : "idle";
+    return t.lifecycle;
+}
+
