@@ -510,3 +510,34 @@ agent 得能自己维护 fleet，不只是人从页面操作。平台 MCP 再加
 - 取消的根任务在读模型里一直 `running`（多轮任务的语义），但用户看不出它其实没人在跑。
 - node-a 的 codex 配的是 `model_reasoning_effort = "max"`，一个三文件的程序要 8–10 分钟；子任务的回执里没有 ACP 的 stopReason 和最后一条进度，父 agent 只看到 "context canceled"，猜不出是谁取消的。
 - builder 在 hub 上复核时 `go build ./...` 留下了 2.3 MB 的 `fleetline` 二进制在主目录里；下一次快照会把它记进项目。要么主目录快照忽略常见产物，要么 claude 的复核放到临时目录。
+
+## 22. 控制台里看见每个 agent（2026-09-04，方案）
+
+用户看完第三轮 e2e 的对话页：工具列表 30 行里 20 行是 `steve_await`，无脑堆叠；子 agent 在 node-a / node-b 上干什么完全看不见，只有主 agent 的调用；"跟 botmux 差太多"。
+
+### 22.1 对象
+
+| 对象 | 是什么 | 来源 |
+|---|---|---|
+| 子任务卡 | 一次委派在对话里的样子：谁（agent @ node）、#id、状态、用时、目标一句话、它自己的工具调用、思考尾巴、最终回答与 refs | delegate 的进度观察者 → 读模型 `delegate.progress`（带 `step` 元数据）→ console `process.steps` |
+| 位置 | 嵌在父 agent 这一轮的过程里，在它自己的工具列表之前；进行中的回合（Working）和落地后的回复（AssistantMessage）用同一张卡 | 前端 `DelegationCard` |
+| 工具列表 | 连续同名的非命令调用折成一行 `调用 steve_await ×20`，可展开逐条看；超过 12 行的列表限高可滚动；标题照旧统计 | 前端 `ToolCalls` |
+| 计划步骤 | 已有的 `step.progress`（`plan_id` 为真计划）不变，仍按步骤分组 | 不动 |
+
+### 22.2 规则
+
+- 子任务的进度走父任务的会话：事件用子任务的 `Channel`（= 父的）打标，页面按会话过滤就能收到。节流沿用每步 400 ms，但终态事件（done / failed，带回答）不节流、必发。
+- 卡片里的工具调用默认折叠，进行中展开；思考只显示最后一段；回答用 Markdown，refs 原样列出。
+- 一个 `process` 里子任务按出现顺序排；同一子任务多次事件覆盖同一张卡。
+- 父 agent 自己的 `steve_await` 只是等待，折叠后一行；等待总时长写在那一行后面。
+- 读模型的 `Event.step` 是可选元数据：`kind`（delegate / plan）、`goal`、`state`、`elapsed`、`answer`、`refs`。旧事件没有它，页面按原来的步骤分组渲染。
+
+#### 22.2.1 评审结论（codex，15 条）
+
+采纳：独立的 `delegate.progress` 事件而不是伪装成计划步骤（2）；终态删掉节流条目（13）；`steve_await` 的返回里 `state: failed` 按失败样式显示、不折叠（9）；父回合结束后子任务的进度不再从空生成幽灵回合（7）；页面事件缓冲用到达序号做游标，修掉 400 条后停更的 bug（12）；卡片按生命周期渲染，不以有没有工具为条件（14）；成功路径上回答与 refs 已在结果里（6 已核实）。
+留到后续：统一的 `Execution{id, kind, task_id, parent_task_id, turn_id, revision, result}` 投影替代 live / stored / task / delegate 四份状态（15，5，3）；回复带稳定 `turn_id`、HTTP 返回做 upsert（11）；`ToolCall` 保留起止时间（10）；群聊 / 访客的进度脱敏（8，现在控制台只有 owner）；"紧跟在 delegate 调用之后"暂不承诺，子任务卡放在父工具列表之前（4）。
+
+### 22.3 顺序
+
+1. delegate 观察者 + 读模型 `DelegateProgress` + console `StepProcess` 扩字段；前端 `DelegationCard`、`ToolCalls` 折叠与限高；真机委派一次截图验收。
+2. 会话侧栏里给运行中的子任务一个角标；`/tasks` 树与卡片互相跳转。

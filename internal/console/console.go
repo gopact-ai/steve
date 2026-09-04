@@ -536,8 +536,8 @@ func (s *Service) follow(ctx context.Context, conversation string, work *process
 	go func() {
 		defer close(done)
 		for ev := range events {
-			if ev.Kind == "step.progress" && ev.Conversation == conversation && ev.Progress != nil {
-				work.step(ev.StepID, *ev.Progress)
+			if (ev.Kind == "step.progress" || ev.Kind == "delegate.progress") && ev.Conversation == conversation && ev.Progress != nil {
+				work.step(ev.StepID, *ev.Progress, ev.Step)
 			}
 		}
 	}()
@@ -564,13 +564,17 @@ func (w *process) turn(p readmodel.Progress) {
 	w.last = p
 }
 
-func (w *process) step(id string, p readmodel.Progress) {
+func (w *process) step(id string, p readmodel.Progress, info *readmodel.StepInfo) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if _, seen := w.steps[id]; !seen {
 		w.order = append(w.order, id)
 	}
-	w.steps[id] = readmodel.StepProcess{ID: id, Agent: p.Agent, Node: p.Node, Reasoning: p.Reasoning, Tools: p.Tools}
+	step := readmodel.StepProcess{ID: id, Agent: p.Agent, Node: p.Node, Reasoning: p.Reasoning, Tools: p.Tools}
+	if info != nil {
+		step.Kind, step.Goal, step.State, step.Since, step.Elapsed, step.Answer, step.Refs = info.Kind, info.Goal, info.State, info.Since, info.Elapsed, info.Answer, info.Refs
+	}
+	w.steps[id] = step
 }
 
 // summary is the process as the reply keeps it, or nil when nothing was

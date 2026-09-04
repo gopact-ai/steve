@@ -2,6 +2,7 @@ import { ChevronDown } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { when } from "@/lib/api";
 import type { Process, Reply, StepProcess } from "@/lib/types";
+import { DelegationCard } from "./delegation";
 import { Md } from "./markdown";
 import { ToolCalls, headingOf } from "./tool-calls";
 
@@ -40,11 +41,13 @@ export function AssistantMessage({ r, selected, onSelect }: { r: Reply; selected
 export function InlineProcess({ process }: { process: Process }) {
     const steps: StepProcess[] = process.steps || [];
     const calls = (process.tools?.length || 0) + steps.reduce((n, s) => n + (s.tools?.length || 0), 0);
-    if (!calls && !process.reasoning) return null;
+    if (!calls && !process.reasoning && !steps.some((s) => s.kind === "delegate")) return null;
     return (
         <div className="flex min-w-0 flex-col gap-0.5">
             {process.reasoning && <ThinkingFold text={process.reasoning} />}
-            {steps.map((s) => (s.tools?.length ? <ToolCalls key={s.id} tools={s.tools} title={`${s.id} · ${headingOf(s.tools)}`} defaultOpen={false} /> : null))}
+            {steps.map((s) => s.kind === "delegate"
+                ? <DelegationCard key={s.id} id={s.id} info={s} progress={{ agent: s.agent, node: s.node }} tools={s.tools} reasoning={s.reasoning} />
+                : (s.tools?.length ? <ToolCalls key={s.id} tools={s.tools} title={`${s.id} · ${headingOf(s.tools)}`} defaultOpen={false} /> : null))}
             {process.tools?.length ? <ToolCalls tools={process.tools} defaultOpen={steps.length === 0} /> : null}
         </div>
     );

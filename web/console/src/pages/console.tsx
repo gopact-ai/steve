@@ -83,8 +83,10 @@ export function ConsolePage() {
     useEffect(() => { loadContext(); }, [snap.at, loadContext]);
 
     useEffect(() => {
-        const fresh = consoleEvents.slice(seen.current);
-        seen.current = consoleEvents.length;
+        // The buffer is trimmed from the front, so the cursor is the
+        // arrival number of the last event handled, not an index.
+        const fresh = consoleEvents.filter((ev) => (ev.n ?? 0) > seen.current);
+        if (fresh.length) seen.current = fresh[fresh.length - 1].n ?? seen.current;
         if (fresh.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.meta")) loadConversations();
         const mine = fresh.filter((ev) => ev.conversation === conversation);
         if (!mine.length) return;

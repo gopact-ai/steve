@@ -1,7 +1,8 @@
+import { DelegationCard } from "./delegation";
 import { useEffect, useState } from "react";
 import { CheckCircle, Loading01 } from "@untitledui/icons";
 import { when } from "@/lib/api";
-import type { Event, Injected, Plan, Process, Progress, Step, StepProcess } from "@/lib/types";
+import type { Event, Injected, Plan, Process, Progress, Step, StepProcess, StepInfo } from "@/lib/types";
 import { CodeBlock, Md } from "./markdown";
 import { Chips, KeyValue, Panel } from "./page";
 import { ThinkingFold } from "./message";
@@ -10,7 +11,7 @@ import { Mono, StateBadge } from "./ui";
 
 // Live is what the current line is doing: the turn's own progress, and
 // each plan step's, until the reply lands.
-export interface Live { since: string; turn?: Progress; steps: Record<string, Progress>; order: string[] }
+export interface Live { since: string; turn?: Progress; steps: Record<string, Progress>; order: string[]; info?: Record<string, StepInfo> }
 
 // applyLive folds one event into the live view: a sent line opens it, a
 // reply closes it, progress fills it in.
@@ -23,10 +24,15 @@ export function applyLive(cur: Live | null, ev: Event): Live | null {
             return null;
         case "console.progress":
             return { ...(cur ?? { since: ev.at, steps: {}, order: [] }), turn: ev.progress };
-        case "step.progress": {
-            const base = cur ?? { since: ev.at, steps: {}, order: [] };
+        case "step.progress":
+        case "delegate.progress": {
+            // A child that outlives its parent's turn reports into no
+            // turn: without one open, its progress is not a turn of its own.
+            if (!cur) return null;
+            const base = cur;
             const id = ev.step_id || "?";
-            return { ...base, steps: { ...base.steps, [id]: ev.progress || {} }, order: base.order.includes(id) ? base.order : [...base.order, id] };
+            const info = ev.step ? { ...(base.info ?? {}), [id]: ev.step } : base.info;
+            return { ...base, steps: { ...base.steps, [id]: ev.progress || {} }, order: base.order.includes(id) ? base.order : [...base.order, id], info };
         }
         default:
             return cur;
@@ -49,7 +55,12 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
     const latest = live.turn ?? (live.order.length ? live.steps[live.order[live.order.length - 1]] : undefined);
     if (compact) {
         const extra = live.order.filter((id) => !steps.some((s) => s.id === id));
-        const group = (id: string) => { const tools = live.steps[id]?.tools; return tools?.length ? <ToolCalls key={id} tools={tools} title={`${id} · ${headingOf(tools)}`} /> : null; };
+        const group = (id: string) => {
+            const info = live.info?.[id];
+            if (info?.kind === "delegate") return <DelegationCard key={id} id={id} info={info} progress={live.steps[id]} live />;
+            const tools = live.steps[id]?.tools;
+            return tools?.length ? <ToolCalls key={id} tools={tools} title={`${id} · ${headingOf(tools)}`} /> : null;
+        };
         return (
             <div className="flex min-w-0 flex-col gap-1 px-2 py-1">
                 <div className="flex items-center gap-2 text-xs text-quaternary">
@@ -82,12 +93,14 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
                         ))}
                     </div>
                 )}
-                {live.order.filter((id) => !steps.some((s) => s.id === id)).map((id) => (
-                    <div key={id} className="flex flex-col gap-1.5">
-                        <div className="text-sm font-medium text-primary">{id}</div>
-                        <Trace p={live.steps[id]} />
-                    </div>
-                ))}
+                {live.order.filter((id) => !steps.some((s) => s.id === id)).map((id) => live.info?.[id]?.kind === "delegate"
+                    ? <DelegationCard key={id} id={id} info={live.info[id]} progress={live.steps[id]} live />
+                    : (
+                        <div key={id} className="flex flex-col gap-1.5">
+                            <div className="text-sm font-medium text-primary">{id}</div>
+                            <Trace p={live.steps[id]} />
+                        </div>
+                    ))}
                 {live.turn && <Trace p={live.turn} showAnswer />}
                 {!live.turn && !live.order.length && steps.length === 0 && <span className="text-sm text-tertiary">正在放置…</span>}
             </div>

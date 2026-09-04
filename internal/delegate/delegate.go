@@ -75,6 +75,9 @@ type Service struct {
 	// reporting is left alone, one that hung is not. The child's own
 	// budget (MaxElapsed) stays the hard limit.
 	MaxSilence time.Duration
+	// observe, when set, is told what each child is doing and how it
+	// ended; the console shows it under the parent's delegate call.
+	observe func(Child, view.Progress)
 	// InlineWait is how long steve_delegate itself waits before answering
 	// "running": a child that finishes in seconds comes back done in one
 	// call, and a slow one does not hold the request open past any
@@ -301,7 +304,13 @@ func (s *Service) descends(taskID, ancestorID string) bool {
 // or is not still waiting.
 func (s *Service) drive(ctx context.Context, conversationID, agentID string, parent, spawned task.Task,
 	candidate roster.Candidate, req agentmcp.DelegateRequest, entry *child) {
-	result, runErr := s.run(ctx, conversationID, agentID, parent, spawned, candidate, req)
+	since := time.Now()
+	var last view.Progress
+	result, runErr := s.run(ctx, conversationID, agentID, parent, spawned, candidate, req, func(p view.Progress) {
+		last = p
+		s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node,
+			Goal: req.Goal, State: "running", Since: since, Elapsed: time.Since(since)}, p)
+	})
 
 	// Whatever happened, the spend is the tree's now.
 	if err := s.tasks.Charge(spawned.ID); err != nil {
@@ -329,6 +338,8 @@ func (s *Service) drive(ctx context.Context, conversationID, agentID string, par
 	s.mu.Unlock()
 	close(entry.done)
 	log.Printf("delegate: task #%s %s on %s", spawned.ID, result.State, nodeLabel(candidate.Node))
+	s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node,
+		Goal: req.Goal, State: result.State, Since: since, Elapsed: time.Since(since), Answer: result.Answer, Refs: result.Refs}, last)
 
 	// Keep the result around for a late awaiter, then let it go.
 	time.AfterFunc(keepFinished, func() {
@@ -340,11 +351,31 @@ func (s *Service) drive(ctx context.Context, conversationID, agentID string, par
 	})
 }
 
+// Child is a delegated task as an observer sees it.
+type Child struct {
+	Conversation, ParentTask, Task string
+	Agent, Node, Goal              string
+	State                          string // running | done | failed
+	Since                          time.Time
+	Elapsed                        time.Duration
+	Answer                         string
+	Refs                           []string
+}
+
+// SetObserver installs where a child's progress goes; nil discards it.
+func (s *Service) SetObserver(observe func(Child, view.Progress)) { s.observe = observe }
+
+func (s *Service) report(c Child, p view.Progress) {
+	if s.observe != nil {
+		s.observe(c, p)
+	}
+}
+
 func (s *Service) SetGate(g Gate)           { s.gate = g }
 func (s *Service) SetEndpoints(e Endpoints) { s.endpoints = e }
 
 func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, parent, child task.Task,
-	candidate roster.Candidate, req agentmcp.DelegateRequest) (agentmcp.DelegateResult, error) {
+	candidate roster.Candidate, req agentmcp.DelegateRequest, progress func(view.Progress)) (agentmcp.DelegateResult, error) {
 	result := agentmcp.DelegateResult{TaskID: child.ID, Agent: candidate.Agent.ID, Node: candidate.Node}
 
 	// The child's own token: bound to the child task, revoked when it ends.
@@ -475,7 +506,13 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		prompt = caps.Instructions + "\n\n" + prompt
 	}
 	var last view.Progress
-	answer, _, err := session.Prompt(ctx, prompt, func(p view.Progress) { last = p; touch() })
+	answer, _, err := session.Prompt(ctx, prompt, func(p view.Progress) {
+		last = p
+		touch()
+		if progress != nil {
+			progress(p)
+		}
+	})
 	s.spent(child.ID, last)
 	if err != nil {
 		s.finish(child.ID, outcomeOf(err))

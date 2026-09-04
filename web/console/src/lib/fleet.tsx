@@ -42,6 +42,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
         const floor = window.setInterval(() => void load(), 10000);
         let source: EventSource | null = null;
         let retry: number | null = null;
+        let arrived = 0;
         const connect = () => {
             source = new EventSource(eventsURL());
             source.onopen = () => setLive("live");
@@ -49,7 +50,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
                 const ev = JSON.parse(e.data) as Event;
                 // The console follows its own traffic and the progress of
                 // work asked from it; everything else is the activity feed.
-                if (ev.kind.startsWith("console.") || ev.kind === "step.progress") setConsoleEvents((list) => [...list.slice(-399), ev]);
+                if (ev.kind.startsWith("console.") || ev.kind === "step.progress" || ev.kind === "delegate.progress") setConsoleEvents((list) => [...list.slice(-399), { ...ev, n: ++arrived }]);
                 else setEvents((list) => [ev, ...list].slice(0, 300));
                 refresh();
             };

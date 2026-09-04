@@ -439,9 +439,12 @@ type Event struct {
 	// Progress is what an agent is doing right now: console.progress for
 	// a chat turn, step.progress for a plan step.
 	Progress *Progress `json:"progress,omitempty"`
-	Title    string    `json:"title,omitempty"`
-	Rev      int       `json:"rev,omitempty"`
-	Detail   string    `json:"detail,omitempty"`
+	// Step is what a step.progress event knows about the step itself; a
+	// delegated child carries its goal, state and answer here.
+	Step   *StepInfo `json:"step,omitempty"`
+	Title  string    `json:"title,omitempty"`
+	Rev    int       `json:"rev,omitempty"`
+	Detail string    `json:"detail,omitempty"`
 }
 
 const recentKept = 200
@@ -733,6 +736,72 @@ type StepProcess struct {
 	Node      string     `json:"node,omitempty"`
 	Reasoning string     `json:"reasoning,omitempty"`
 	Tools     []ToolCall `json:"tools,omitempty"`
+	// The rest is what a delegated child adds: what it was asked, how it
+	// ended, what it said. A plan step leaves them empty.
+	Kind    string   `json:"kind,omitempty"`
+	Goal    string   `json:"goal,omitempty"`
+	State   string   `json:"state,omitempty"`
+	Since   string   `json:"since,omitempty"`
+	Elapsed string   `json:"elapsed,omitempty"`
+	Answer  string   `json:"answer,omitempty"`
+	Refs    []string `json:"refs,omitempty"`
+}
+
+// StepInfo is what a step.progress event says about the step itself,
+// beyond the agent's progress: for a delegated child, who asked what
+// and how it is going.
+type StepInfo struct {
+	Kind    string   `json:"kind,omitempty"`
+	Goal    string   `json:"goal,omitempty"`
+	State   string   `json:"state,omitempty"`
+	Since   string   `json:"since,omitempty"`
+	Elapsed string   `json:"elapsed,omitempty"`
+	Answer  string   `json:"answer,omitempty"`
+	Refs    []string `json:"refs,omitempty"`
+}
+
+// DelegateProgress publishes what a delegated child is doing, as a step
+// of its parent's conversation: the page shows it as a card under the
+// parent's delegate call. A terminal state is never throttled — the
+// last word must land.
+func (m *Model) DelegateProgress(childTaskID, agent, node string, info StepInfo, p view.Progress) {
+	stepID := "#" + childTaskID
+	key := "delegate/" + stepID
+	terminal := info.State == "done" || info.State == "failed"
+	if terminal {
+		m.mu.Lock()
+		delete(m.throttle, key)
+		m.mu.Unlock()
+	} else {
+		signature := fmt.Sprintf("%d", len(p.Tools))
+		if n := len(p.Tools); n > 0 {
+			signature += "/" + string(p.Tools[n-1].Status)
+		}
+		m.mu.Lock()
+		if m.throttle == nil {
+			m.throttle = map[string]throttled{}
+		}
+		last := m.throttle[key]
+		now := time.Now()
+		if now.Sub(last.at) < progressEvery && last.signature == signature {
+			m.mu.Unlock()
+			return
+		}
+		m.throttle[key] = throttled{at: now, signature: signature}
+		m.mu.Unlock()
+	}
+	progress := FromProgress(p)
+	if progress.Agent == "" {
+		progress.Agent = agent
+	}
+	if progress.Node == "" {
+		progress.Node = node
+	}
+	info.Kind = "delegate"
+	m.Publish(Event{
+		Kind: "delegate.progress", TaskID: childTaskID, StepID: stepID,
+		Conversation: m.conversationOf(childTaskID), Progress: &progress, Step: &info,
+	})
 }
 
 // StepProgress publishes what a plan step's agent is doing, stamped with
@@ -968,7 +1037,7 @@ func (m *Model) noteActivity(ev Event) {
 	if ev.Progress == nil || ev.Progress.Agent == "" {
 		return
 	}
-	if ev.Kind != "console.progress" && ev.Kind != "step.progress" {
+	if ev.Kind != "console.progress" && ev.Kind != "step.progress" && ev.Kind != "delegate.progress" {
 		return
 	}
 	if m.activity == nil {

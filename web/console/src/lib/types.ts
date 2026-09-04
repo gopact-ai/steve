@@ -100,11 +100,15 @@ export interface PlanLine { text: string; status: string }
 export interface Progress {
     agent?: string; node?: string; model?: string; reasoning?: string; answer?: string; tools?: ToolCall[]; plan?: PlanLine[];
 }
-export interface StepProcess { id: string; agent?: string; node?: string; reasoning?: string; tools?: ToolCall[] }
+export interface StepInfo { kind?: string; goal?: string; state?: string; since?: string; elapsed?: string; answer?: string; refs?: string[] }
+export interface StepProcess extends StepInfo { id: string; agent?: string; node?: string; reasoning?: string; tools?: ToolCall[] }
 export interface Process { reasoning?: string; tools?: ToolCall[]; steps?: StepProcess[] }
 export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
-    state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress;
+    state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress; step?: StepInfo;
+    // n is the page's own arrival counter, so a reader can keep a cursor
+    // over a buffer that is trimmed from the front.
+    n?: number;
 }
 export interface Conversation { id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean; place?: Placement; title_by?: "agent" | "user" | string; archived?: boolean }
 export interface Injected {

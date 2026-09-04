@@ -818,6 +818,10 @@ func serve(args []string) error {
 		delegation.SetGate(gate)
 		delegation.SetEndpoints(nodes)
 		delegation.MaxSilence = time.Duration(cfg.Gateway.PromptTimeout)
+		delegation.SetObserver(func(c delegate.Child, p steveview.Progress) {
+			view.DelegateProgress(c.Task, c.Agent, c.Node, readmodel.StepInfo{Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
+				Elapsed: c.Elapsed.Round(time.Second).String(), Answer: c.Answer, Refs: c.Refs}, p)
+		})
 		gate.SetDelegator(delegation)
 		// Remote agents call a loopback port on their own machine; the node
 		// forwards it back here over the connection it already holds, so the
