@@ -69,6 +69,34 @@ func TestBundleIsContentAddressed(t *testing.T) {
 	}
 }
 
+func TestPackOfNothingIsStable(t *testing.T) {
+	one, err := Pack([]Ref{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	two, err := Pack([]Ref{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if one.Hash != two.Hash {
+		t.Fatalf("hashes differ: %q != %q", one.Hash, two.Hash)
+	}
+	if len(one.Skills) != 0 || len(two.Skills) != 0 {
+		t.Fatalf("skills are not empty: %+v, %+v", one.Skills, two.Skills)
+	}
+	if len(one.Data) == 0 || len(two.Data) == 0 {
+		t.Fatal("packed data is empty")
+	}
+
+	entries, err := Unpack(one.Data, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("unpacked entries = %+v", entries)
+	}
+}
+
 // A bundle from the network cannot write outside its directory.
 func TestUnpackRefusesEscapes(t *testing.T) {
 	for _, name := range []string{"../evil", "/abs/evil", "skill/../../evil", ".hidden/x", "noskill"} {
