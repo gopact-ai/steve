@@ -102,6 +102,16 @@ const (
 	keepFinished = 30 * time.Minute
 )
 
+// worktreeContract tells a delegated agent what its directory is: a
+// worktree Steve snapshots when the task ends. A git init or commit
+// inside it does not record anything; it only hides the files.
+const worktreeContract = `
+
+## 你的目录
+- 这是 Steve 为这个子任务准备的隔离工作树；任务结束时 Steve 会快照整个目录，把改动落回项目。
+- 直接写文件就行。**不要** git init / git add / git commit：目录里新建的 git 仓库会让你写的文件落不回去。
+- 编译产物、下载的依赖、临时文件用完删掉，或者放到目录外；它们会跟着快照走。`
+
 // SetLedger wires what makes a delegation an attempt: leases and the
 // artifact its result becomes. Without them nothing is delegated.
 func (s *Service) SetLedger(attempts *attempt.Service, artifacts *artifact.Store) {
@@ -455,7 +465,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		}
 	}()
 
-	prompt := payload.Render() + exec.ReportingContract
+	prompt := payload.Render() + exec.ReportingContract + worktreeContract
 	if caps.Instructions != "" {
 		prompt = caps.Instructions + "\n\n" + prompt
 	}

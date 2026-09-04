@@ -14,6 +14,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -72,6 +74,9 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string) (
 			return "", false, fmt.Errorf("read parent tree: %w", err)
 		}
 	}
+	if flattened := flattenNestedRepos(workTree); len(flattened) > 0 {
+		log.Printf("artifact: %s: flattened nested git repositories at %s", workTree, strings.Join(flattened, ", "))
+	}
 	if _, err := r.git(ctx, env, "add", "-A", "--", "."); err != nil {
 		return "", false, fmt.Errorf("stage %s: %w", workTree, err)
 	}
@@ -103,6 +108,31 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string) (
 
 // pin gives a commit a ref so it is an artifact git will keep, and a name
 // a bundle can carry.
+// flattenNestedRepos removes any .git below the top level of workTree
+// and returns where they were. An agent that ran git init inside its
+// directory did not make a submodule: git would record the directory as
+// a bare link and the files it wrote would never reach the project. The
+// files are what was asked for; the repository around them is not.
+func flattenNestedRepos(workTree string) []string {
+	var found []string
+	_ = filepath.WalkDir(workTree, func(path string, d fs.DirEntry, err error) error {
+		if err != nil || path == workTree {
+			return nil
+		}
+		if d.Name() != ".git" {
+			return nil
+		}
+		if filepath.Dir(path) == workTree {
+			return filepath.SkipDir // the worktree's own, if any: git ignores it
+		}
+		rel, _ := filepath.Rel(workTree, filepath.Dir(path))
+		found = append(found, rel)
+		_ = os.RemoveAll(path)
+		return filepath.SkipDir
+	})
+	return found
+}
+
 func (r *Repo) pin(ctx context.Context, sha string) error {
 	_, err := r.git(ctx, nil, "update-ref", RefFor(sha), sha)
 	return err
@@ -361,7 +391,9 @@ func (Script) Snapshot(dir, workTree, parent, message string) string {
 	if parent != "" {
 		compare = fmt.Sprintf("[ \"$tree\" = \"$(git rev-parse %s^{tree})\" ]", quote(parent))
 	}
-	return fmt.Sprintf("export GIT_DIR=%s GIT_WORK_TREE=%s GIT_INDEX_FILE=%s.index; cd \"$GIT_WORK_TREE\" && rm -f \"$GIT_INDEX_FILE\"; %s && git add -A -- . && tree=$(git write-tree) && rm -f \"$GIT_INDEX_FILE\" && if %s; then echo %s; else sha=$(git commit-tree \"$tree\" -m %s%s) && git update-ref \"refs/steve/artifacts/$sha\" \"$sha\" && echo \"$sha\"; fi",
+	// A .git below the top level is an agent's own git init, not a
+	// submodule: flattened, so the files land rather than an empty link.
+	return fmt.Sprintf("export GIT_DIR=%s GIT_WORK_TREE=%s GIT_INDEX_FILE=%s.index; cd \"$GIT_WORK_TREE\" && rm -f \"$GIT_INDEX_FILE\"; find . -mindepth 2 -name .git -prune -exec rm -rf {} + ; %s && git add -A -- . && tree=$(git write-tree) && rm -f \"$GIT_INDEX_FILE\" && if %s; then echo %s; else sha=$(git commit-tree \"$tree\" -m %s%s) && git update-ref \"refs/steve/artifacts/$sha\" \"$sha\" && echo \"$sha\"; fi",
 		quote(dir), quote(workTree), quote(workTree), readParent, compare, quote(parent), quote(message), parentArg)
 }
 

@@ -334,6 +334,11 @@ func (r *Registry) Refresh(ctx context.Context, name string) (nodewire.Advert, e
 	}
 	r.accept(name, &adv)
 	r.noteDrift(name, adv)
+	if adv.MCPPort == 0 {
+		// An older node reports its messaging port only at the handshake;
+		// the connection still has it.
+		adv.MCPPort = c.getAdvert().MCPPort
+	}
 	c.setAdvert(adv)
 	r.mu.Lock()
 	if last := r.last[name]; last != nil && last.Up {

@@ -405,9 +405,12 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
 	defer c.clearActive(conversationID, selected.ID)
-	// The deadline starts now, not at arrival: a queued prompt must not
+	// The clock starts now, not at arrival: a queued prompt must not
 	// burn its own running time standing behind the turn it waited for.
-	ctx, expire := context.WithTimeout(turnCtx, c.timeout)
+	// And it is an idle clock: it runs out after c.timeout of silence,
+	// not of work, so a turn that awaits other agents is not cut short
+	// while they are still answering.
+	ctx, expire, touch := withIdleTimeout(turnCtx, c.timeout)
 	defer expire()
 	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
 		return Result{}, context.Canceled
@@ -429,7 +432,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	started := time.Now()
 	// Progress is stamped with the agent the turn runs as, and the last
 	// report's usage is what the task's attempt is charged.
-	spent := &turnSpend{}
+	spent := &turnSpend{touch: touch}
 	req.OnProgress = spent.wrap(req.OnProgress, selected.ID)
 	if tracked != "" {
 		defer func() {
@@ -969,11 +972,16 @@ type turnSpend struct {
 	mu    sync.Mutex
 	usage view.Usage
 	used  string
+	// touch resets the turn's idle clock: every report is a sign of life.
+	touch func()
 }
 
 func (t *turnSpend) wrap(next func(view.Progress), agentID string) func(view.Progress) {
 	return func(p view.Progress) {
 		p.Agent = agentID
+		if t.touch != nil {
+			t.touch()
+		}
 		t.mu.Lock()
 		t.usage = p.Usage
 		if p.Settings.Model != "" {

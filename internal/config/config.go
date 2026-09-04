@@ -100,7 +100,10 @@ type Gateway struct {
 	// NodeBinary is a steve-node executable the hub can hand to a machine
 	// being added (static build, the nodes' architecture); empty means the
 	// bootstrap script expects the binary to be there already.
-	NodeBinary    string   `json:"node_binary,omitempty"`
+	NodeBinary string `json:"node_binary,omitempty"`
+	// PromptTimeout is how long a turn may go silent — no tool call, no
+	// text, no report — before it is cut. It is not a cap on the turn: a
+	// turn that awaits other agents runs as long as they keep answering.
 	PromptTimeout Duration `json:"prompt_timeout"`
 	StatePath     string   `json:"state_path"`
 	HomePath      string   `json:"home_path,omitempty"`
