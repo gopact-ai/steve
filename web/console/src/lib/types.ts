@@ -106,7 +106,7 @@ export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
     state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress;
 }
-export interface Conversation { id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean; place?: Placement }
+export interface Conversation { id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean; place?: Placement; title_by?: "agent" | "user" | string; archived?: boolean }
 export interface Injected {
     project?: string; workspace?: string; agent: string; node?: string; harness: string; model?: string; options?: Record<string, string>;
     session?: string; new_session: boolean; instructions_sent: boolean; instructions?: string; instructions_bytes: number; mcp_servers?: string[]; fingerprint?: string; prompt?: string;

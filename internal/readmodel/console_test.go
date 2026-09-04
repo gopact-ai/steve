@@ -121,3 +121,5 @@ func TestBundleIsServedOpenAndShellIsGuarded(t *testing.T) {
 		t.Fatalf("state without token = %d", res.StatusCode)
 	}
 }
+
+func (f *fakeConsole) Update(context.Context, string, ConversationPatch) error { return nil }

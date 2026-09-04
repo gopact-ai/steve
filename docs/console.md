@@ -268,3 +268,12 @@ HumanRequest { id, type, source_operation_id, project_id, task_id, summary, choi
 - 组织 / 团队级的"空间"；多主人。
 - 换主目录（退役再声明）；副本自动同步或自动落回主目录；执行工作树进左栏树。
 - 评审指出但本次没动的既有问题：artifact Manifest 以裸 commit SHA 为全局键、`homeRegion` 查询失败时静默用本区域、`RepoMode=isolated` 对交互回合并未生效、目录唯一不识别 symlink 与共享挂载、机器改名会改变副本 id。
+
+## 15. 会话的名字与归档（2026-09-04）
+
+用户指出：会话不能归档、不能改名；标题应该像 ChatGPT 那样是摘要，而不是第一句话，最好由 agent 给。
+
+- **名字**：第一次真正的交换（非动词的一句加上它的回复）落地后，hub 在后台让默认 Agent 在一个只为这件事开的会话里看这段开头，起一个不超过 12 个字的标题（`cmd/steve/titler.go`：新开 ACP 会话、发一个问句、拿到就关，不碰这条会话自己的上下文）。答案清理掉引号、前缀和标点后记为 `title_by: agent`。没有 titler 时仍用第一句。用户改名记为 `title_by: user`，之后 agent 不再覆盖；留空提交则交还给 agent 重新起。
+- **归档**：会话行的 "⋯" 菜单：重命名（就地编辑，Enter 保存、Esc 取消）、归档 / 取消归档。归档的会话从项目下移到底部折叠的"已归档 · n"，当前打开的那条即使归档也留在原处。
+- **存储**：会话的名字、谁起的、是否归档记在控制台转录文档的 `meta` 段（`console.Meta`），与转录一起持久；旧格式（只有转录）照读。`PUT /console/conversations/{id} {title?, archived?}`；变化以 `console.meta` 事件推给页面。
+- 真机：codex 在 hub 上给"看一下当前目录里有几个文件"起名"统计当前目录文件数"，8 秒内出现；改名、归档、交还都经接口验过。

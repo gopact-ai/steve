@@ -59,6 +59,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("POST /console/send", s.guard(s.consoleSend))
 	mux.HandleFunc("GET /console/replies", s.guard(s.consoleReplies))
 	mux.HandleFunc("GET /console/conversations", s.guard(s.consoleConversations))
+	mux.HandleFunc("PUT /console/conversations/{id}", s.guard(s.consoleUpdateConversation))
 	mux.HandleFunc("POST /console/nodes", s.guard(s.consoleAddNode))
 	mux.HandleFunc("POST /console/agents", s.guard(s.consoleAddAgent))
 	mux.HandleFunc("PUT /console/agents/{id}", s.guard(s.consoleUpdateAgent))
@@ -194,6 +195,7 @@ type Console interface {
 	// Summaries describes each one for a sidebar.
 	Conversations() []string
 	Summaries(ctx context.Context) []Conversation
+	Update(ctx context.Context, conversation string, patch ConversationPatch) error
 	// Context is where a conversation stands; Verbs is what it can be told.
 	Context(ctx context.Context, conversation string) (Context, error)
 	Verbs() []Verb
@@ -362,6 +364,17 @@ type Conversation struct {
 	LastAt  time.Time  `json:"last_at"`
 	Count   int        `json:"count"`
 	Running bool       `json:"running"`
+	// TitleBy says who named it — "agent" or "user" — and Archived
+	// whether the owner put it away.
+	TitleBy  string `json:"title_by,omitempty"`
+	Archived bool   `json:"archived,omitempty"`
+}
+
+// ConversationPatch is what the owner may change about a conversation: its
+// name (empty gives it back to the agent) and whether it is put away.
+type ConversationPatch struct {
+	Title    *string `json:"title,omitempty"`
+	Archived *bool   `json:"archived,omitempty"`
 }
 
 type Reply struct {
@@ -711,6 +724,24 @@ func (s *Server) consoleConversations(w http.ResponseWriter, r *http.Request) {
 		list = []Conversation{}
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "conversations": list})
+}
+
+func (s *Server) consoleUpdateConversation(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.console == nil {
+		http.Error(w, "console is not enabled", http.StatusNotImplemented)
+		return
+	}
+	var patch ConversationPatch
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<14)).Decode(&patch); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.console.Update(r.Context(), r.PathValue("id"), patch); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
 func (s *Server) consoleReplies(w http.ResponseWriter, r *http.Request) {

@@ -731,6 +731,7 @@ func serve(args []string) error {
 	if err := cons.Persist(book.Document("console")); err != nil {
 		return err
 	}
+	cons.SetTitler(&conversationTitler{manager: manager, catalog: catalog, projects: projects, home: cfg.Gateway.HomePath})
 	dashboard.SetConsole(cons)
 	// A copy may only sit where the project's level admits; the store
 	// asks the registry, which knows every machine's level.

@@ -44,13 +44,38 @@ type Handler interface {
 	Handle(ctx context.Context, req turn.Request) (turn.Result, error)
 }
 
+// Meta is what is known about a conversation beyond its lines: a name —
+// the agent's summary of the first exchange, or the owner's own — and
+// whether it has been put away.
+type Meta struct {
+	Title     string    `json:"title,omitempty"`
+	TitleBy   string    `json:"title_by,omitempty"`
+	Archived  bool      `json:"archived,omitempty"`
+	UpdatedAt time.Time `json:"updated_at,omitzero"`
+}
+
+// Titler names a conversation from its first exchange: a short summary of
+// what the owner wants, the way a chat app names a thread.
+type Titler interface {
+	Title(ctx context.Context, prompt, reply string) (string, error)
+}
+
+// transcript is the durable shape: every conversation's lines, and what
+// is known about each beyond them.
+type transcript struct {
+	Replies map[string][]readmodel.Reply `json:"replies"`
+	Meta    map[string]Meta              `json:"meta,omitempty"`
+}
+
 type Service struct {
 	handler Handler
 	owner   string
 	model   *readmodel.Model
+	titler  Titler
 
 	mu      sync.Mutex
 	replies map[string][]readmodel.Reply
+	meta    map[string]Meta
 	// commands remembers each command id's answer; inflight guards a
 	// command still running.
 	commands     map[string]outcome
@@ -65,8 +90,12 @@ type Service struct {
 }
 
 func New(handler Handler, owner string, model *readmodel.Model) *Service {
-	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]readmodel.Reply{}}
+	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]readmodel.Reply{}, meta: map[string]Meta{}}
 }
+
+// SetTitler gives the service a way to name conversations. Without one,
+// a conversation is named by its first line.
+func (s *Service) SetTitler(t Titler) { s.titler = t }
 
 // Persist keeps the transcript in a durable document and loads what an
 // earlier process left there.
@@ -78,16 +107,127 @@ func (s *Service) Persist(doc ledger.Doc) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if ok && len(raw) > 0 {
-		var saved map[string][]readmodel.Reply
-		if err := json.Unmarshal(raw, &saved); err != nil {
-			return fmt.Errorf("console: transcript is not readable: %w", err)
+		var saved transcript
+		if err := json.Unmarshal(raw, &saved); err != nil || saved.Replies == nil {
+			// The earlier shape: just the lines, by conversation.
+			var legacy map[string][]readmodel.Reply
+			if err := json.Unmarshal(raw, &legacy); err != nil {
+				return fmt.Errorf("console: transcript is not readable: %w", err)
+			}
+			saved = transcript{Replies: legacy}
 		}
-		for conversation, list := range saved {
+		for conversation, list := range saved.Replies {
 			s.replies[conversation] = append(list, s.replies[conversation]...)
+		}
+		for conversation, m := range saved.Meta {
+			s.meta[conversation] = m
 		}
 	}
 	s.doc = doc
 	return nil
+}
+
+// save writes the transcript; the caller holds the lock. The whole thing
+// is small (keep lines per conversation), so one durable replace is
+// simpler than a log to compact.
+func (s *Service) save() {
+	if s.doc == nil {
+		return
+	}
+	if raw, err := json.Marshal(transcript{Replies: s.replies, Meta: s.meta}); err == nil {
+		if err := s.doc.Save(raw); err != nil {
+			log.Printf("console: save transcript: %v", err)
+		}
+	}
+}
+
+// Update takes what the owner said about a conversation: a name of their
+// own (empty gives it back to the agent's), or whether it is put away.
+func (s *Service) Update(_ context.Context, conversation string, patch readmodel.ConversationPatch) error {
+	if !strings.HasPrefix(conversation, Prefix) {
+		conversation = Prefix + conversation
+	}
+	s.mu.Lock()
+	if _, known := s.replies[conversation]; !known {
+		if _, known = s.meta[conversation]; !known {
+			s.mu.Unlock()
+			return fmt.Errorf("no conversation %q", conversation)
+		}
+	}
+	m := s.meta[conversation]
+	if patch.Title != nil {
+		if title := strings.TrimSpace(*patch.Title); title != "" {
+			m.Title, m.TitleBy = clipTitle(title), "user"
+		} else {
+			m.Title, m.TitleBy = "", ""
+		}
+	}
+	if patch.Archived != nil {
+		m.Archived = *patch.Archived
+	}
+	m.UpdatedAt = time.Now().UTC()
+	s.meta[conversation] = m
+	s.save()
+	s.mu.Unlock()
+	if s.model != nil {
+		s.model.Publish(readmodel.Event{At: m.UpdatedAt, Kind: "console.meta", Conversation: conversation, Text: m.Title})
+	}
+	// A name given back to the agent is asked for again.
+	if patch.Title != nil && m.Title == "" && s.titler != nil {
+		if prompt, reply, ok := s.firstExchange(conversation); ok {
+			go s.autoTitle(conversation, prompt, reply)
+		}
+	}
+	return nil
+}
+
+// firstExchange is the first line the owner sent that was not a verb, and
+// the reply to it.
+func (s *Service) firstExchange(conversation string) (prompt, reply string, ok bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	list := s.replies[conversation]
+	for i, r := range list {
+		if r.Kind != "sent" || strings.HasPrefix(strings.TrimSpace(r.Input), "/") {
+			continue
+		}
+		for _, next := range list[i+1:] {
+			if next.Kind == "reply" && next.Error == "" && strings.TrimSpace(next.Text) != "" {
+				return r.Input, next.Text, true
+			}
+		}
+		return "", "", false
+	}
+	return "", "", false
+}
+
+// autoTitle asks the titler to name a conversation and keeps the answer,
+// unless the owner named it meanwhile.
+func (s *Service) autoTitle(conversation, prompt, reply string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	title, err := s.titler.Title(ctx, prompt, reply)
+	if err != nil {
+		log.Printf("console: title %s: %v", conversation, err)
+		return
+	}
+	title = clipTitle(title)
+	if title == "" {
+		return
+	}
+	s.mu.Lock()
+	m := s.meta[conversation]
+	if m.Title != "" {
+		s.mu.Unlock()
+		return
+	}
+	m.Title, m.TitleBy, m.UpdatedAt = title, "agent", time.Now().UTC()
+	s.meta[conversation] = m
+	s.save()
+	s.mu.Unlock()
+	if s.model != nil {
+		s.model.Publish(readmodel.Event{At: m.UpdatedAt, Kind: "console.meta", Conversation: conversation, Text: title})
+	}
 }
 
 // Conversations lists every console conversation with a transcript.
@@ -110,7 +250,8 @@ func (s *Service) Summaries(ctx context.Context) []readmodel.Conversation {
 	s.mu.Lock()
 	var out []readmodel.Conversation
 	for name, list := range s.replies {
-		c := readmodel.Conversation{ID: name, Count: len(list), Running: s.running[name] > 0}
+		m := s.meta[name]
+		c := readmodel.Conversation{ID: name, Count: len(list), Running: s.running[name] > 0, Title: m.Title, TitleBy: m.TitleBy, Archived: m.Archived}
 		// The name is the first thing the owner said that was not a verb:
 		// "/fleet" names nothing, "把登录页改成深色" does.
 		first := ""
@@ -119,7 +260,7 @@ func (s *Service) Summaries(ctx context.Context) []readmodel.Conversation {
 				if first == "" {
 					first = r.Input
 				}
-				if c.Title == "" && !strings.HasPrefix(strings.TrimSpace(r.Input), "/") {
+				if c.Title == "" && m.Title == "" && !strings.HasPrefix(strings.TrimSpace(r.Input), "/") {
 					c.Title = clipTitle(r.Input)
 				}
 			}
@@ -327,6 +468,17 @@ func (s *Service) SendCommand(ctx context.Context, conversation, input, commandI
 		}
 	}
 	s.record(reply)
+	// The first real exchange names the conversation, unless it has a
+	// name already: the agent summarises what the owner wants, the way a
+	// chat app names a thread. Verbs name nothing.
+	if err == nil && s.titler != nil && !strings.HasPrefix(strings.TrimSpace(input), "/") && strings.TrimSpace(reply.Text) != "" {
+		s.mu.Lock()
+		untitled := s.meta[conversation].Title == ""
+		s.mu.Unlock()
+		if untitled {
+			go s.autoTitle(conversation, input, reply.Text)
+		}
+	}
 	return reply, err
 }
 
@@ -462,15 +614,7 @@ func (s *Service) record(r readmodel.Reply) {
 		list = list[len(list)-keep:]
 	}
 	s.replies[r.Conversation] = list
-	if s.doc != nil {
-		// The whole transcript is small (keep entries per conversation);
-		// one durable replace is simpler than a log to compact.
-		if raw, err := json.Marshal(s.replies); err == nil {
-			if err := s.doc.Save(raw); err != nil {
-				log.Printf("console: save transcript: %v", err)
-			}
-		}
-	}
+	s.save()
 	s.mu.Unlock()
 	if s.model != nil {
 		text := r.Text

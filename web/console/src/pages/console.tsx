@@ -8,7 +8,7 @@ import { Rail, type RailTab } from "@/components/steve/rail";
 import { SessionsTree } from "@/components/steve/sessions-tree";
 import { Working, applyLive, type Live } from "@/components/steve/trace";
 import { Nothing } from "@/components/steve/ui";
-import { fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send } from "@/lib/api";
+import { fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
 import type { Conversation, ConversationContext, Reply, Suggestion, Verb } from "@/lib/types";
 
@@ -85,7 +85,7 @@ export function ConsolePage() {
     useEffect(() => {
         const fresh = consoleEvents.slice(seen.current);
         seen.current = consoleEvents.length;
-        if (fresh.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply")) loadConversations();
+        if (fresh.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.meta")) loadConversations();
         const mine = fresh.filter((ev) => ev.conversation === conversation);
         if (!mine.length) return;
         setLive((cur) => mine.reduce(applyLive, cur));
@@ -207,7 +207,8 @@ export function ConsolePage() {
 
     return (
         <div className="flex h-full min-h-0">
-            <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={(id) => setConversation(id)} onNew={newSession} />
+            <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={(id) => setConversation(id)} onNew={newSession}
+                onUpdate={(id, patch) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))} />
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 <header className="flex items-center gap-3 border-b border-secondary bg-primary px-6 py-2.5">

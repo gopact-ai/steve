@@ -117,6 +117,9 @@ export async function addProject(req: { id: string; node?: string; path: string;
     return json(await fetch(`./console/projects${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(req) }));
 }
 
+export async function updateConversation(id: string, patch: { title?: string; archived?: boolean }): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/conversations/${encodeURIComponent(id)}${q}`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(patch) }));
+}
 export async function addWorkspace(project: string, req: { node?: string; path: string; origin: "adopt" | "clone" }): Promise<{ ok: boolean }> {
     return json(await fetch(`./console/projects/${encodeURIComponent(project)}/workspaces${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(req) }));
 }
