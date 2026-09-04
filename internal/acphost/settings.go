@@ -269,6 +269,37 @@ func (h *Host) ModelChoices(sid acp.SessionID) (acp.SessionConfigID, []view.Choi
 	return opt.ID, out
 }
 
+// optionsView renders every select-type option the agent exposes.
+func optionsView(options []acp.SessionConfigOption) []view.Option {
+	var out []view.Option
+	for _, opt := range options {
+		if opt.Type != "" && opt.Type != acp.SessionConfigOptionTypeSelect {
+			continue
+		}
+		o := view.Option{ID: string(opt.ID), Name: opt.Name}
+		if opt.Category != nil {
+			o.Category = string(*opt.Category)
+		}
+		if value, ok := selectValue(opt); ok {
+			o.Current = value
+		}
+		if opt.Options.Ungrouped != nil {
+			for _, choice := range *opt.Options.Ungrouped {
+				o.Choices = append(o.Choices, view.Choice{Value: string(choice.Value), Label: choice.Name})
+			}
+		}
+		if opt.Options.Groups != nil {
+			for _, group := range *opt.Options.Groups {
+				for _, choice := range group.Options {
+					o.Choices = append(o.Choices, view.Choice{Value: string(choice.Value), Label: group.Name + " · " + choice.Name})
+				}
+			}
+		}
+		out = append(out, o)
+	}
+	return out
+}
+
 // SetOption changes one of the agent's selectors. The agent confirms with a
 // config_option_update, which is what actually moves Steve's own record, so
 // this does not write the new value locally: an agent that refuses or

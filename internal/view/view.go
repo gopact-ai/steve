@@ -93,6 +93,10 @@ type Settings struct {
 	// expose a model selector.
 	Models []string
 	Mode   string
+	// Options are every selector the agent exposes for this session —
+	// model, reasoning effort, mode, whatever it has — with the choice in
+	// force and the choices on offer. Steve pins any of them per agent.
+	Options []Option
 	// Node is the machine the agent ran on; empty means the hub itself.
 	// Placement belongs on the card's tail rather than in the chat's
 	// addressing, so where an agent lives can change without every message
@@ -164,6 +168,17 @@ type Choice struct {
 	Value  string
 	Label  string
 	Detail string
+}
+
+// Option is one selector an agent exposes: its id and name, the category
+// it declares ("model", "mode", or its own), what it is set to now, and
+// what it could be set to.
+type Option struct {
+	ID       string
+	Name     string
+	Category string
+	Current  string
+	Choices  []Choice
 }
 
 // Answer carries the chosen Choice.Value. An empty Value means the user

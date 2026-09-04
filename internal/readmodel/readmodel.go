@@ -239,14 +239,19 @@ type Agent struct {
 	// Preferred is the model the agent's configuration pins, applied at
 	// session open; Observed is what the harness was last seen running.
 	// Conditions are Requires judged against the machine, one by one.
-	Preferred  string      `json:"preferred,omitempty"`
-	Observed   string      `json:"observed,omitempty"`
-	Conditions []Condition `json:"conditions,omitempty"`
-	MCPServers []string    `json:"mcp_servers,omitempty"`
-	Default    bool        `json:"default,omitempty"`
-	Level      string      `json:"level,omitempty"`
-	Slots      int         `json:"slots,omitempty"`
-	Region     string      `json:"region,omitempty"`
+	Preferred string `json:"preferred,omitempty"`
+	Observed  string `json:"observed,omitempty"`
+	// Options are the other selectors the agent pins; Selectors every
+	// selector its harness exposed last time; About what it is for.
+	Options    map[string]string `json:"options,omitempty"`
+	Selectors  []models.Selector `json:"selectors,omitempty"`
+	About      string            `json:"about,omitempty"`
+	Conditions []Condition       `json:"conditions,omitempty"`
+	MCPServers []string          `json:"mcp_servers,omitempty"`
+	Default    bool              `json:"default,omitempty"`
+	Level      string            `json:"level,omitempty"`
+	Slots      int               `json:"slots,omitempty"`
+	Region     string            `json:"region,omitempty"`
 	// Activities are the agent's live attempts with the latest thing each
 	// was seen doing; Busy is their count.
 	Activities []Activity `json:"activities,omitempty"`

@@ -220,7 +220,11 @@ func renderPrompt(req Request) string {
 			fmt.Fprintf(&b, "- %s（%s）不可用：%s\n", c.Agent.ID, where, c.Why)
 			continue
 		}
-		fmt.Fprintf(&b, "- %s 在 %s，能力：%s\n", c.Agent.ID, where, ability.Compact(c.Snapshot, c.Harness, 8))
+		about := ""
+		if c.Agent.About != "" {
+			about = "，适合：" + c.Agent.About
+		}
+		fmt.Fprintf(&b, "- %s 在 %s%s，能力：%s\n", c.Agent.ID, where, about, ability.Compact(c.Snapshot, c.Harness, 8))
 	}
 	if req.TurnsLeft > 0 {
 		fmt.Fprintf(&b, "\n预算还剩 %d 轮。步骤数不要超过预算。\n", req.TurnsLeft)

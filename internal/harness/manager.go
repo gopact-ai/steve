@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"fmt"
+	"log"
 	"os"
 	"strings"
 	"sync"
@@ -280,6 +281,94 @@ type Configurable interface {
 	Settings() view.Settings
 	ModelChoices() (string, []view.Choice)
 	SetModel(context.Context, string, string) error
+	// SetOption sets any selector by id; SetModel is the model's case.
+	SetOption(context.Context, string, string) error
+}
+
+// ApplyPreferences sets what an agent's configuration pins on a session
+// that has just opened: the model, and any other selector the harness
+// exposes (reasoning effort, thinking, mode) by option id. The agent is
+// the authority on what it offers: a preference it cannot honour is
+// logged and skipped, never a failed session.
+func ApplyPreferences(ctx context.Context, r Runner, agentID, model string, options map[string]string) {
+	if model == "" && len(options) == 0 {
+		return
+	}
+	configurable, ok := r.(Configurable)
+	if !ok {
+		return
+	}
+	if model != "" {
+		optionID, choices := configurable.ModelChoices()
+		if optionID == "" || len(choices) == 0 {
+			log.Printf("harness: agent %q prefers model %q but exposes no model selector", agentID, model)
+		} else if picked, ok := MatchChoice(choices, model); !ok {
+			log.Printf("harness: agent %q prefers model %q, not among %d offered", agentID, model, len(choices))
+		} else if err := configurable.SetModel(ctx, optionID, picked.Value); err != nil {
+			log.Printf("harness: agent %q set preferred model %q: %v", agentID, model, err)
+		}
+	}
+	if len(options) == 0 {
+		return
+	}
+	exposed := configurable.Settings().Options
+	for id, want := range options {
+		var found *view.Option
+		for i := range exposed {
+			if exposed[i].ID == id {
+				found = &exposed[i]
+				break
+			}
+		}
+		if found == nil {
+			log.Printf("harness: agent %q pins option %q but the harness exposes no such selector", agentID, id)
+			continue
+		}
+		if found.Category == "model" {
+			continue // the model is handled above, by name
+		}
+		picked, ok := MatchChoice(found.Choices, want)
+		if !ok {
+			log.Printf("harness: agent %q pins %s=%q, not among %d choices", agentID, id, want, len(found.Choices))
+			continue
+		}
+		if picked.Value == found.Current {
+			continue
+		}
+		if err := configurable.SetOption(ctx, id, picked.Value); err != nil {
+			log.Printf("harness: agent %q set %s=%q: %v", agentID, id, want, err)
+		}
+	}
+}
+
+// MatchChoice finds the choice a person meant: by value, by label, or by
+// a unique case-insensitive prefix of either.
+func MatchChoice(choices []view.Choice, want string) (view.Choice, bool) {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return view.Choice{}, false
+	}
+	lower := strings.ToLower(want)
+	for _, c := range choices {
+		if c.Value == want || c.Label == want {
+			return c, true
+		}
+	}
+	for _, c := range choices {
+		if strings.EqualFold(c.Value, want) || strings.EqualFold(c.Label, want) {
+			return c, true
+		}
+	}
+	var hits []view.Choice
+	for _, c := range choices {
+		if strings.HasPrefix(strings.ToLower(c.Value), lower) || strings.HasPrefix(strings.ToLower(c.Label), lower) {
+			hits = append(hits, c)
+		}
+	}
+	if len(hits) == 1 {
+		return hits[0], true
+	}
+	return view.Choice{}, false
 }
 
 type TurnRunner interface {
@@ -349,6 +438,11 @@ func (s *Session) ModelChoices() (string, []view.Choice) {
 }
 
 func (s *Session) SetModel(ctx context.Context, optionID, value string) error {
+	return s.host.SetOption(ctx, s.id, s.generation, acp.SessionConfigID(optionID), value)
+}
+
+// SetOption sets any selector the agent exposes, by id.
+func (s *Session) SetOption(ctx context.Context, optionID, value string) error {
 	return s.host.SetOption(ctx, s.id, s.generation, acp.SessionConfigID(optionID), value)
 }
 

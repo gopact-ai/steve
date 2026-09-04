@@ -472,7 +472,7 @@ func serve(args []string) error {
 	}
 	fleet.SetModels(seen)
 	manager.SetObserver(func(at harness.Placement, s steveview.Settings) {
-		seen.Observe(models.Observation{Node: at.Node, Harness: at.Harness, Current: s.Model, Available: s.Models, Version: s.Adapter, Source: "session"})
+		seen.Observe(models.Observation{Node: at.Node, Harness: at.Harness, Current: s.Model, Available: s.Models, Version: s.Adapter, Source: "session", Selectors: selectorsOf(s.Options)})
 	})
 	prober := models.NewProber(manager, seen, func(ctx context.Context, node, dir string) error {
 		if node == "" {
@@ -1392,17 +1392,29 @@ func (a *fleetAdmin) UpdateAgent(_ context.Context, id string, spec readmodel.Ag
 	}
 	old := item
 	item.Harness, item.Node, item.Model = spec.Harness, spec.Node, strings.TrimSpace(spec.Model)
+	item.About = strings.TrimSpace(spec.About)
+	item.Options = map[string]string{}
+	for k, v := range spec.Options {
+		if k = strings.TrimSpace(k); k != "" && strings.TrimSpace(v) != "" {
+			item.Options[k] = strings.TrimSpace(v)
+		}
+	}
+	if len(item.Options) == 0 {
+		item.Options = nil
+	}
 	item.Requires = append([]string{}, spec.Requires...)
 	item.MCPServers = append([]string{}, spec.MCPServers...)
-	if err := a.catalog.Set(id, agent.Config{Harness: item.Harness, Node: item.Node, Model: item.Model, Requires: item.Requires, Aliases: item.Aliases,
-		SystemPrompt: item.SystemPrompt, Skills: item.Skills, MCPServers: item.MCPServers, Default: item.Default}); err != nil {
+	toAgent := func(it config.Agent) agent.Config {
+		return agent.Config{Harness: it.Harness, Node: it.Node, Model: it.Model, Options: it.Options, About: it.About, Requires: it.Requires, Aliases: it.Aliases,
+			SystemPrompt: it.SystemPrompt, Skills: it.Skills, MCPServers: it.MCPServers, Default: it.Default}
+	}
+	if err := a.catalog.Set(id, toAgent(item)); err != nil {
 		return err
 	}
 	a.cfg.Agents[id] = item
 	if err := config.Save(a.path, a.cfg); err != nil {
 		a.cfg.Agents[id] = old
-		_ = a.catalog.Set(id, agent.Config{Harness: old.Harness, Node: old.Node, Model: old.Model, Requires: old.Requires, Aliases: old.Aliases,
-			SystemPrompt: old.SystemPrompt, Skills: old.Skills, MCPServers: old.MCPServers, Default: old.Default})
+		_ = a.catalog.Set(id, toAgent(old))
 		return fmt.Errorf("写 %s 失败：%w", a.path, err)
 	}
 	log.Printf("steve: agent %s updated (%s on %s, model %q)", id, item.Harness, orHubName(item.Node), item.Model)
@@ -1631,6 +1643,25 @@ func (c *repoCache) pass(ctx context.Context) {
 	c.mu.Lock()
 	c.repos = next
 	c.mu.Unlock()
+}
+
+// selectorsOf keeps every selector a session exposed, choices by label
+// and by value, so the page can offer them and a pin can be matched.
+func selectorsOf(options []steveview.Option) []models.Selector {
+	var out []models.Selector
+	for _, o := range options {
+		sel := models.Selector{ID: o.ID, Name: o.Name, Category: o.Category, Current: o.Current}
+		for _, c := range o.Choices {
+			label := c.Label
+			if label == "" {
+				label = c.Value
+			}
+			sel.Choices = append(sel.Choices, label)
+			sel.Values = append(sel.Values, c.Value)
+		}
+		out = append(out, sel)
+	}
+	return out
 }
 
 // hubSkills ships the enabled skills to every node. Nil until run wires it;

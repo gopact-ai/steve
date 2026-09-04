@@ -271,11 +271,13 @@ type AddNodeResult struct {
 // which model it prefers, what its machine must offer, which MCP
 // servers it uses.
 type AgentSpec struct {
-	Harness    string   `json:"harness"`
-	Node       string   `json:"node,omitempty"`
-	Model      string   `json:"model,omitempty"`
-	Requires   []string `json:"requires"`
-	MCPServers []string `json:"mcp_servers"`
+	Harness    string            `json:"harness"`
+	Node       string            `json:"node,omitempty"`
+	Model      string            `json:"model,omitempty"`
+	Options    map[string]string `json:"options,omitempty"`
+	About      string            `json:"about,omitempty"`
+	Requires   []string          `json:"requires"`
+	MCPServers []string          `json:"mcp_servers"`
 }
 
 // AddProjectRequest is the page declaring a project: a name, the machine

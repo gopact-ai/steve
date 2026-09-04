@@ -5,6 +5,7 @@ import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/mod
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
+import { TextArea } from "@/components/base/textarea/textarea";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { relative, when } from "@/lib/api";
@@ -37,6 +38,10 @@ function Conditions({ a }: { a: Agent }) {
 
 const levelOrder = ["public", "internal", "restricted", "sealed"];
 
+function selectorName(a: Agent, id: string): string {
+    return (a.selectors || []).find((s) => s.id === id)?.name || id;
+}
+
 // AgentDrawer is one agent in full, and the place to change it: where it
 // runs, with which AI tool and model, what its machine must offer, which
 // MCP servers it uses. Saved changes reach the running catalog at once
@@ -48,7 +53,8 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
     const [removing, setRemoving] = useState(false);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
-    const [spec, setSpec] = useState<AgentSpec>({ harness: a.harness, node: a.node === snap.hub.node ? "" : a.node || "", model: a.preferred || "", requires: a.requires || [], mcp_servers: a.mcp_servers || [] });
+    const [spec, setSpec] = useState<AgentSpec>({ harness: a.harness, node: a.node === snap.hub.node ? "" : a.node || "", model: a.preferred || "", options: { ...(a.options || {}) }, about: a.about || "", requires: a.requires || [], mcp_servers: a.mcp_servers || [] });
+    const extras = (a.selectors || []).filter((sel) => sel.category !== "model" && (sel.choices || []).length > 0);
     const harnesses = Array.from(new Set([...snap.agents.map((x) => x.harness), a.harness])).filter(Boolean).sort();
     const nodes = snap.nodes.filter((n) => n.role !== "hub").map((n) => n.name);
     const canTake = levelOrder.slice(0, levelOrder.indexOf(a.level || "internal") + 1).map((l) => levelWords[l]).join("、");
@@ -81,11 +87,13 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
                 {!editing ? (
                     <>
                         <KeyValue dense rows={[
+                            { k: "适合做什么", v: a.about ? <span className="text-secondary">{a.about}</span> : <span className="text-quaternary">还没写。写了以后，规划器和其它 Agent 派活时会照它选人。</span> },
                             { k: "机器", v: <Where node={a.node} /> },
                             { k: "AI 工具", v: a.harness },
                             { k: "模型偏好", v: a.preferred || <span className="text-quaternary">未固定，用 AI 工具的默认</span>, hint: "配置里固定的模型；开会话时 Steve 会把它设给 AI 工具。" },
                             { k: "上次实际", v: a.observed || <span className="text-quaternary">还没开过会话</span>, hint: "上次会话打开时 AI 工具报告的模型。" },
                             { k: "可选模型", v: a.models?.length ? <span className="text-secondary">{a.models.length} 个</span> : <span className="text-quaternary">未知</span> },
+                            ...extras.map((sel) => ({ k: sel.name || sel.id, v: a.options?.[sel.id] ? <span className="text-primary">{a.options[sel.id]}</span> : <span className="text-quaternary">未固定{sel.current ? `，上次 ${sel.current}` : ""}</span>, hint: "AI 工具暴露的会话选项；固定后每次开会话都设成它。" })),
                             { k: "能接的项目", v: `数据等级 ${canTake}`, hint: "由它所在机器的数据等级决定：机器等级不低于项目等级才能碰项目的文件。" },
                             { k: "MCP 服务器", v: a.mcp_servers?.length ? <Chips items={a.mcp_servers.map((m) => ({ id: m }))} /> : <span className="text-quaternary">无</span>, hint: "会话打开时接上的 MCP 服务器；远端 Agent 用它所在机器上的同名服务器。" },
                             { k: "运行条件", v: <Conditions a={a} />, hint: "它所在的机器必须提供这些；任一不满足它就不可用。" },
@@ -119,6 +127,15 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
                         <Select size="sm" label="模型" hint="固定后每次开会话都设成它；列表来自 AI 工具上次报告的可选模型" selectedKey={spec.model || "__none"} onSelectionChange={(k) => setSpec({ ...spec, model: !k || String(k) === "__none" ? "" : String(k) })} items={modelItems}>
                             {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                         </Select>
+                        {extras.map((sel) => (
+                            <Select key={sel.id} size="sm" label={sel.name || sel.id} hint={`AI 工具的会话选项${sel.current ? `，上次是 ${sel.current}` : ""}；固定后每次开会话都设成它`} selectedKey={spec.options?.[sel.id] || "__none"}
+                                onSelectionChange={(k) => { const next = { ...(spec.options || {}) }; if (!k || String(k) === "__none") delete next[sel.id]; else next[sel.id] = String(k); setSpec({ ...spec, options: next }); }}
+                                items={[{ id: "__none", label: "不固定（用 AI 工具的默认）" }, ...(sel.choices || []).map((c) => ({ id: c, label: c }))]}>
+                                {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                            </Select>
+                        ))}
+                        {extras.length === 0 && <div className="text-xs text-quaternary">思考强度等其它选项要等这个 AI 工具开过一次会话、报告了它有哪些选项后才能固定。</div>}
+                        <TextArea label="适合做什么" rows={3} placeholder="一句话说清它擅长什么、该派给它什么活。规划器和其它 Agent 派活时会读这句。" value={spec.about || ""} onChange={(v) => setSpec({ ...spec, about: v })} />
                         <div className="flex flex-col gap-1.5">
                             <div className="text-xs font-medium text-secondary">运行条件</div>
                             <div className="text-xs text-tertiary">它所在的机器必须提供的：kind:id 选择器，如 tool:docker、hardware:gpu、mcp:github；裸词是标签。</div>
@@ -422,9 +439,12 @@ export function FleetPage() {
                         {(a) => (
                             <Table.Row id={a.id} className="cursor-pointer">
                                 <Table.Cell>
-                                    <div className="flex items-center gap-2">
-                                        <span className="font-medium text-primary">{a.id}</span>
-                                        {a.default && <Badge type="pill-color" size="sm" color="brand">默认</Badge>}
+                                    <div className="flex flex-col">
+                                        <div className="flex items-center gap-2">
+                                            <span className="font-medium text-primary">{a.id}</span>
+                                            {a.default && <Badge type="pill-color" size="sm" color="brand">默认</Badge>}
+                                        </div>
+                                        {a.about && <span className="line-clamp-1 max-w-64 text-xs text-tertiary" title={a.about}>{a.about}</span>}
                                     </div>
                                 </Table.Cell>
                                 <Table.Cell><StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />{a.busy ? <span className="ml-1 text-xs text-tertiary">忙 {a.busy}{a.slots ? `/${a.slots}` : ""}</span> : null}</Table.Cell>
@@ -436,6 +456,7 @@ export function FleetPage() {
                                     <div className="flex flex-col">
                                         {a.preferred ? <span className="text-primary" title="配置里固定的模型，开会话时设给 AI 工具">{a.preferred}</span> : <span className="text-quaternary" title="没有固定：AI 工具用它自己的默认模型">未固定</span>}
                                         {a.observed && <span className="text-xs text-tertiary" title="上次会话里 AI 工具实际报告的模型">上次 {a.observed}</span>}
+                                        {a.options && Object.keys(a.options).length > 0 && <span className="text-xs text-tertiary">{Object.entries(a.options).map(([k, v]) => `${selectorName(a, k)} ${v}`).join(" · ")}</span>}
                                     </div>
                                 </Table.Cell>
                                 <Table.Cell><Conditions a={a} /></Table.Cell>

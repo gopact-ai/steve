@@ -61,10 +61,11 @@ type Candidate struct {
 	// and Missing why it cannot start there, both from the advert.
 	Model string
 	// Observed is the model the harness was last seen running here,
-	// whatever the agent prefers.
-	Observed string
-	Command  string
-	Missing  string
+	// whatever the agent prefers; Selectors every option it exposed.
+	Observed  string
+	Selectors []models.Selector
+	Command   string
+	Missing   string
 	// Slots is the endpoint's session cap for (node, harness); zero is
 	// unlimited. Level is the data level of the machine.
 	Slots int
@@ -291,6 +292,7 @@ func (r *Roster) All(ctx context.Context) []Candidate {
 		if book != nil {
 			if seen, ok := book.Get(a.Node, a.Harness); ok {
 				c.Observed = seen.Current
+				c.Selectors = seen.Selectors
 				if c.Model == "" {
 					c.Model = seen.Current
 				}

@@ -433,6 +433,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		failAttempt(err)
 		return result, fmt.Errorf("open session on %s: %w", at, err)
 	}
+	harness.ApplyPreferences(ctx, session, candidate.Agent.ID, candidate.Agent.Model, candidate.Agent.Options)
 	_, _ = s.attempts.Advance(ctx, record.ID, attempt.Prepared, "delegate", func(r *attempt.Record) { r.Admission = &admission })
 	_, _ = s.attempts.Advance(ctx, record.ID, attempt.Running, "delegate", nil)
 	runCtx, stopRun := context.WithCancel(ctx)
@@ -821,7 +822,11 @@ func (s *Service) Fleet(ctx context.Context, _ string, caller string, requires [
 		if model == "" {
 			model = "model unknown"
 		}
-		fmt.Fprintf(&b, "- %s on %s (%s, %s) — %s\n  %s\n", c.Agent.ID, nodewire.Place(c.Node), c.Harness, model, state, ability.Compact(c.Snapshot, c.Harness, 10))
+		about := ""
+		if c.Agent.About != "" {
+			about = "\n  good for: " + c.Agent.About
+		}
+		fmt.Fprintf(&b, "- %s on %s (%s, %s) — %s%s\n  %s\n", c.Agent.ID, nodewire.Place(c.Node), c.Harness, model, state, about, ability.Compact(c.Snapshot, c.Harness, 10))
 	}
 	return b.String(), nil
 }

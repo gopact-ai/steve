@@ -27,6 +27,9 @@ type Observation struct {
 	// alternatives it offered, by display name.
 	Current   string   `json:"current,omitempty"`
 	Available []string `json:"available,omitempty"`
+	// Selectors are every option the harness exposed, so an agent can
+	// pin reasoning effort or mode as well as the model.
+	Selectors []Selector `json:"selectors,omitempty"`
 	// Version is the adapter's own name and version, as it introduced
 	// itself over ACP.
 	Version string `json:"version,omitempty"`
@@ -34,6 +37,16 @@ type Observation struct {
 	// "probe" (asked on purpose).
 	Source string    `json:"source"`
 	At     time.Time `json:"at"`
+}
+
+// Selector is one option a harness exposes, as last seen.
+type Selector struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Category string   `json:"category,omitempty"`
+	Current  string   `json:"current,omitempty"`
+	Choices  []string `json:"choices,omitempty"`
+	Values   []string `json:"values,omitempty"`
 }
 
 // Book is the set of observations, kept in a durable document so a restart

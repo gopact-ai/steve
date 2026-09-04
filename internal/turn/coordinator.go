@@ -604,30 +604,10 @@ func (c *Coordinator) open(ctx context.Context, saved state.Session, selected ag
 	// resumed one keeps whatever the user last chose with /model. The agent
 	// is the authority on what it offers, so a preference it cannot honour
 	// is logged and skipped rather than failing the turn.
-	if saved.UpstreamID == "" && selected.Model != "" {
-		c.applyModelPreference(ctx, selected, runner)
+	if saved.UpstreamID == "" && (selected.Model != "" || len(selected.Options) > 0) {
+		harness.ApplyPreferences(ctx, runner, selected.ID, selected.Model, selected.Options)
 	}
 	return runner, nil
-}
-
-func (c *Coordinator) applyModelPreference(ctx context.Context, selected agent.Agent, runner harness.Runner) {
-	configurable, ok := runner.(harness.Configurable)
-	if !ok {
-		return
-	}
-	optionID, choices := configurable.ModelChoices()
-	if optionID == "" || len(choices) == 0 {
-		log.Printf("turn: agent %q prefers model %q but exposes no model selector", selected.ID, selected.Model)
-		return
-	}
-	picked, err := matchModel(choices, selected.Model)
-	if err != nil {
-		log.Printf("turn: agent %q prefers model %q: %v", selected.ID, selected.Model, err)
-		return
-	}
-	if err := configurable.SetModel(ctx, optionID, picked.Value); err != nil {
-		log.Printf("turn: agent %q set preferred model %q: %v", selected.ID, selected.Model, err)
-	}
 }
 
 func (c *Coordinator) reset(ctx context.Context, conversationID string, selected agent.Agent) (Result, error) {

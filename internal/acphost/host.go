@@ -1007,5 +1007,6 @@ func (h *Host) Settings(sid acp.SessionID) view.Settings {
 	h.mu.Unlock()
 	out := state.settings()
 	out.Adapter = adapter
+	out.Options = optionsView(h.Options(sid))
 	return out
 }

@@ -80,6 +80,7 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (plan.StepRe
 	if err != nil {
 		return plan.StepResult{}, fmt.Errorf("open session on %s: %w", at, err)
 	}
+	harness.ApplyPreferences(ctx, session, candidate.Agent.ID, candidate.Agent.Model, candidate.Agent.Options)
 	defer func() {
 		// A step's session is finished with; closing it releases the agent
 		// process's session state on whichever machine it lives.

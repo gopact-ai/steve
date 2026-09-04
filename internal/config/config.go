@@ -225,8 +225,11 @@ type Agent struct {
 	// Node places this agent on a machine; empty runs it on the hub.
 	Node string `json:"node,omitempty"`
 	// Model is the preferred model. The node's advert decides what is
-	// really on offer there.
-	Model string `json:"model,omitempty"`
+	// really on offer there. Options pins other selectors by option id
+	// (reasoning effort, thinking, mode); About says what the agent is for.
+	Model   string            `json:"model,omitempty"`
+	Options map[string]string `json:"options,omitempty"`
+	About   string            `json:"about,omitempty"`
 	// Requires are capabilities the node must advertise.
 	Requires []string `json:"requires,omitempty"`
 	// LegacyWorkspace is the pre-project per-agent directory. It is read
@@ -518,7 +521,7 @@ func (c *Config) AgentCatalog() (*agent.Catalog, error) {
 	configs := make(map[string]agent.Config, len(c.Agents))
 	for id, item := range c.Agents {
 		configs[id] = agent.Config{
-			Harness: item.Harness, Node: item.Node, Model: item.Model, Requires: item.Requires,
+			Harness: item.Harness, Node: item.Node, Model: item.Model, Options: item.Options, About: item.About, Requires: item.Requires,
 			Aliases:      item.Aliases,
 			SystemPrompt: item.SystemPrompt, Skills: item.Skills, MCPServers: item.MCPServers, Default: item.Default,
 		}

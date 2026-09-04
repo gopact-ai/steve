@@ -26,7 +26,9 @@ export interface Agent {
     id: string; node?: string; harness: string; model?: string; models?: string[]; eligible: boolean; why?: string;
     requires?: string[]; level?: string; slots?: number; region?: string; repair?: string; activities?: Activity[]; busy?: number; snapshot?: AbilitySnapshot;
     preferred?: string; observed?: string; conditions?: Condition[]; mcp_servers?: string[]; default?: boolean;
+    options?: Record<string, string>; selectors?: Selector[]; about?: string;
 }
+export interface Selector { id: string; name: string; category?: string; current?: string; choices?: string[]; values?: string[] }
 export interface Tokens { input?: number; output?: number; cached_read?: number; cached_write?: number; total?: number; context?: number }
 export interface AttemptRow { day: string; agent: string; node?: string; model?: string; outcome?: string; started: string; seconds: number; tokens: Tokens; reported: boolean }
 export interface Task {

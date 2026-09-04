@@ -22,6 +22,12 @@ type Config struct {
 	// Model pins which model the agent starts on. The node's advert is the
 	// authority on what is actually offered there; this is the preference.
 	Model string
+	// Options pins other selectors the harness exposes, by option id:
+	// reasoning effort, thinking, mode. Applied at session open like Model.
+	Options map[string]string
+	// About says what this agent is for, in the operator's words; the
+	// planner and other agents read it when choosing who does what.
+	About string
 	// Requires are the capabilities a node must advertise to run this
 	// agent — "gpu", "prod-cred", "internal-net".
 	Requires     []string
