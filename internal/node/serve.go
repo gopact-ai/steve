@@ -25,6 +25,8 @@ import (
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
+	"github.com/gopact-ai/steve/internal/mcpprobe"
+	"github.com/gopact-ai/steve/internal/mcpscan"
 	"github.com/gopact-ai/steve/internal/skills"
 )
 
@@ -285,6 +287,8 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 			go s.configure(stream)
 		case nodewire.StreamInspect:
 			go s.inspect(ctx, stream)
+		case nodewire.StreamMCPProbe:
+			go s.mcpProbe(ctx, stream)
 		default:
 			go s.runAgent(ctx, stream)
 		}
@@ -483,8 +487,66 @@ func (s *Server) advert() nodewire.Advert {
 	adv.StateDir = s.conf().StateDir
 	adv.Skills = s.currentSkills()
 	adv.OwnSkills = OwnSkills(5 * time.Minute)
+	adv.OwnMCP = OwnMCP(5 * time.Minute)
 	adv.Health = CheckHealth(s.conf().WorkspaceRoot, s.conf().StateDir)
 	return adv
+}
+
+// ownMCP is this machine's scan of its coding agents' own MCP servers,
+// shapes only; the advert carries it.
+var ownMCP mcpscan.Local
+
+// OwnMCP is the machine's own MCP servers, rescanned when older than maxAge.
+func OwnMCP(maxAge time.Duration) []nodewire.OwnMCP {
+	found := ownMCP.Get(maxAge)
+	out := make([]nodewire.OwnMCP, 0, len(found))
+	for _, f := range found {
+		out = append(out, nodewire.OwnMCP{Name: f.Name, Source: f.Source, Scope: f.Scope, Type: f.Type, Command: f.Command, Args: f.Args, URL: f.URL, EnvKeys: f.EnvKeys, HeaderKeys: f.HeaderKeys})
+	}
+	return out
+}
+
+// probeMu lets one probe run at a time on a machine: a probe starts a
+// server, and two at once would compete for the same credentials and
+// ports.
+var probeMu sync.Mutex
+
+// mcpProbe serves StreamMCPProbe: it binds the named server the way a
+// session would — through the broker, so credentials and headers are
+// the broker's business — asks it for its tools, and releases it.
+func (s *Server) mcpProbe(ctx context.Context, stream *nodewire.Stream) {
+	defer stream.Close()
+	name := strings.TrimSpace(stream.Request().Command)
+	reply := func(r nodewire.MCPProbeReply) { _ = json.NewEncoder(stream).Encode(r) }
+	if name == "" {
+		reply(nodewire.MCPProbeReply{Error: "a server name is required"})
+		return
+	}
+	if _, ok := s.conf().MCPServers[name]; !ok {
+		reply(nodewire.MCPProbeReply{Error: fmt.Sprintf("no MCP server %q on this machine", name)})
+		return
+	}
+	probeMu.Lock()
+	defer probeMu.Unlock()
+	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	attempt := "probe:" + fmt.Sprint(time.Now().UnixNano())
+	binding, err := s.broker.Bind(ctx, name, attempt, "probe")
+	if err != nil {
+		reply(nodewire.MCPProbeReply{Error: "bind: " + err.Error()})
+		return
+	}
+	defer func() { _, _ = s.broker.Release(context.Background(), attempt) }()
+	result, err := mcpprobe.Probe(ctx, mcpprobe.Server{Type: binding.Transport, Command: binding.Command, Args: binding.Args, URL: binding.URL})
+	if err != nil {
+		reply(nodewire.MCPProbeReply{Error: err.Error()})
+		return
+	}
+	out := nodewire.MCPProbeReply{ServerName: result.ServerName, ServerVersion: result.ServerVersion, Protocol: result.Protocol, Digest: result.Digest, ElapsedMS: result.Elapsed.Milliseconds(), Tools: []nodewire.MCPTool{}}
+	for _, t := range result.Tools {
+		out.Tools = append(out.Tools, nodewire.MCPTool{Name: t.Name, Description: t.Description, InputSchema: t.InputSchema})
+	}
+	reply(out)
 }
 
 // ownSkills is this machine's scan of its AI tools' own skills; the

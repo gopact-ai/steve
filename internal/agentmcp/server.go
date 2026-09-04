@@ -456,10 +456,27 @@ func initializeResult(params json.RawMessage) map[string]any {
 	}
 }
 
-func (s *Server) toolList() []map[string]any {
-	s.mu.Lock()
-	delegating := s.delegator != nil
-	s.mu.Unlock()
+// PlatformTool is one of the platform's own tools, for a page.
+type PlatformTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// PlatformTools lists the tools the platform's session server offers:
+// the Feishu set always, delegation when a delegator is wired.
+func PlatformTools(delegating bool) []PlatformTool {
+	var out []PlatformTool
+	for _, t := range toolList(delegating) {
+		name, _ := t["name"].(string)
+		desc, _ := t["description"].(string)
+		out = append(out, PlatformTool{Name: name, Description: desc})
+	}
+	return out
+}
+
+func (s *Server) toolList() []map[string]any { return toolList(s.delegator != nil) }
+
+func toolList(delegating bool) []map[string]any {
 	tools := []map[string]any{
 		{
 			"name": "feishu_send",

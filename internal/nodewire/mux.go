@@ -73,6 +73,10 @@ const (
 	// the directory itself if it is one, else its immediate children.
 	// The command is the path; the reply is an InspectReply.
 	StreamInspect = "inspect"
+	// StreamMCPProbe asks the node what tools one of its MCP servers
+	// offers: the command is the server's name; the reply is an
+	// MCPProbeReply. The node starts the server, asks, and stops it.
+	StreamMCPProbe = "mcp_probe"
 )
 
 // ExitPrefix leads the close reason of a finished exec stream, followed by

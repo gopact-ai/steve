@@ -9,10 +9,14 @@ package mcpscan
 
 import (
 	"encoding/json"
+	"net/url"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
+	"sync"
+	"time"
 )
 
 // Found is one server as a coding agent has it configured.
@@ -63,13 +67,35 @@ func Lookup(home, source, name string) (Full, bool) {
 	return Full{}, false
 }
 
+// CodexConfig and ClaudeConfig are where the two tools keep their
+// configuration for the user this process runs as: CODEX_HOME and
+// CLAUDE_CONFIG_DIR move them, else they sit under home. A harness run
+// by another user or with another environment keeps its own; the scan
+// says which user it looked as.
+func CodexConfig(home string) string {
+	if dir := os.Getenv("CODEX_HOME"); dir != "" {
+		return filepath.Join(dir, "config.toml")
+	}
+	return filepath.Join(home, ".codex", "config.toml")
+}
+
+func ClaudeConfig(home string) string {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, ".claude.json")
+	}
+	return filepath.Join(home, ".claude.json")
+}
+
 func scanFull(home string) []Full {
 	if home == "" {
 		return nil
 	}
 	var out []Full
-	out = append(out, scanCodex(filepath.Join(home, ".codex", "config.toml"))...)
-	out = append(out, scanClaude(filepath.Join(home, ".claude.json"))...)
+	out = append(out, scanCodex(CodexConfig(home))...)
+	out = append(out, scanClaude(ClaudeConfig(home))...)
+	for i := range out {
+		out[i].Found = masked(out[i].Found)
+	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Source != out[j].Source {
 			return out[i].Source < out[j].Source
@@ -390,6 +416,51 @@ func splitTop(v string) []string {
 		out = append(out, s)
 	}
 	return out
+}
+
+var secretArg = regexp.MustCompile(`(?i)^(--?[\w-]*(token|secret|password|passwd|key|auth|credential)[\w-]*)=(.*)$`)
+
+// masked is the shape that may leave the machine: a URL without its
+// userinfo or query, and arguments that look like they carry a secret
+// with the value blanked.
+func masked(f Found) Found {
+	if u, err := url.Parse(f.URL); err == nil && f.URL != "" {
+		u.User = nil
+		u.RawQuery = ""
+		u.Fragment = ""
+		f.URL = u.String()
+	}
+	if len(f.Args) > 0 {
+		args := make([]string, len(f.Args))
+		for i, a := range f.Args {
+			if m := secretArg.FindStringSubmatch(a); m != nil {
+				args[i] = m[1] + "=…"
+			} else {
+				args[i] = a
+			}
+		}
+		f.Args = args
+	}
+	return f
+}
+
+// Local is a cached scan of this machine's own MCP servers: what the
+// advert carries, redone when older than the time given.
+type Local struct {
+	mu   sync.Mutex
+	at   time.Time
+	list []Found
+}
+
+// Get is the last scan, redone when older than maxAge.
+func (l *Local) Get(maxAge time.Duration) []Found {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if time.Since(l.at) > maxAge {
+		home, _ := os.UserHomeDir()
+		l.list, l.at = ScanLocal(home), time.Now()
+	}
+	return append([]Found{}, l.list...)
 }
 
 func keys(m map[string]string) []string {

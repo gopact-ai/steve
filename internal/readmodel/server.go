@@ -77,6 +77,12 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("POST /console/skills/sources", s.guard(s.consoleAddSkillSource))
 	mux.HandleFunc("POST /console/skills/sources/update", s.guard(s.consoleUpdateSkillSources))
 	mux.HandleFunc("DELETE /console/skills/sources/{slug}", s.guard(s.consoleRemoveSkillSource))
+	mux.HandleFunc("GET /console/mcp", s.guard(s.consoleMCP))
+	mux.HandleFunc("POST /console/mcp/probe", s.guard(s.consoleProbeMCP))
+	mux.HandleFunc("POST /console/mcp/adopt", s.guard(s.consoleAdoptMCP))
+	mux.HandleFunc("DELETE /console/mcp", s.guard(s.consoleRemoveMCP))
+	mux.HandleFunc("GET /console/mcp/registry", s.guard(s.consoleMCPRegistry))
+	mux.HandleFunc("POST /console/mcp/install", s.guard(s.consoleInstallMCP))
 	mux.HandleFunc("GET /console/home", s.guard(s.consoleHome))
 	mux.HandleFunc("PUT /console/home/{name}", s.guard(s.consoleSetHomeFile))
 	mux.HandleFunc("POST /console/projects/{id}/workspaces", s.guard(s.consoleAddWorkspace))
@@ -380,6 +386,17 @@ type Admin interface {
 	MachineSkills(ctx context.Context) []MachineSkills
 	RefreshMachineSkills(ctx context.Context) []MachineSkills
 	ImportSkill(ctx context.Context, node, path string) (string, error)
+	// MCP is the MCP page; ProbeMCP asks a machine what tools one of its
+	// servers offers; AdoptMCP copies a coding agent's own server into a
+	// machine's settings on that machine; RemoveMCP drops one;
+	// SearchMCPRegistry asks the registry; InstallMCP puts an entry on
+	// a machine.
+	MCP(ctx context.Context) (MCPView, error)
+	ProbeMCP(ctx context.Context, node, name string) (MCPProbeView, error)
+	AdoptMCP(ctx context.Context, node, source, name string) error
+	RemoveMCP(ctx context.Context, node, name string) error
+	SearchMCPRegistry(ctx context.Context, q string) ([]MCPRegistryEntry, error)
+	InstallMCP(ctx context.Context, req InstallMCPRequest) error
 	// Home is Steve's own three files — who it is, who the owner is,
 	// what it remembers; SetHomeFile rewrites one.
 	Home(ctx context.Context) (HomeView, error)
@@ -456,6 +473,135 @@ type FoundSkill struct {
 	Description string `json:"description,omitempty"`
 	// Loaded says the hub already has a skill of this name.
 	Loaded bool `json:"loaded,omitempty"`
+}
+
+// MCPView is the MCP page: every deployment on every machine, the
+// platform's own session servers, and what each machine's coding
+// agents configured themselves.
+type MCPView struct {
+	Deployments []MCPDeployment `json:"deployments"`
+	Platform    []MCPPlatform   `json:"platform"`
+	Machines    []MCPMachine    `json:"machines"`
+}
+
+// MCPDeployment is one server on one machine: the shape (values of env
+// and headers stay on the machine), who attaches, whether the command
+// resolves, and the last probe.
+type MCPDeployment struct {
+	Node       string   `json:"node"`
+	Name       string   `json:"name"`
+	Type       string   `json:"type"`
+	Command    string   `json:"command,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	URL        string   `json:"url,omitempty"`
+	EnvKeys    []string `json:"env_keys,omitempty"`
+	HeaderKeys []string `json:"header_keys,omitempty"`
+	Agents     []string `json:"agents"`
+	// Resolvable is what the machine last said about the command being
+	// on its PATH (nil when it has not said).
+	Resolvable *bool  `json:"resolvable,omitempty"`
+	Provenance string `json:"provenance,omitempty"`
+	// SameNameElsewhere flags a name another machine also has: two
+	// deployments, one name — the same service only if the owner says.
+	SameNameElsewhere bool          `json:"same_name_elsewhere,omitempty"`
+	Probe             *MCPProbeView `json:"probe,omitempty"`
+}
+
+// MCPProbeView is the last probe of a deployment as the hub remembers
+// it. Stale says the machine's configuration changed since.
+type MCPProbeView struct {
+	At            time.Time         `json:"at"`
+	OK            bool              `json:"ok"`
+	Error         string            `json:"error,omitempty"`
+	Stale         bool              `json:"stale,omitempty"`
+	Tools         []nodewire.MCPTool `json:"tools"`
+	Digest        string            `json:"digest,omitempty"`
+	ServerName    string            `json:"server_name,omitempty"`
+	ServerVersion string            `json:"server_version,omitempty"`
+	Protocol      string            `json:"protocol,omitempty"`
+}
+
+// MCPPlatform is a server the hub makes per session.
+type MCPPlatform struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description"`
+	Tools       []PlatformTool `json:"tools"`
+}
+
+// PlatformTool is one of its tools.
+type PlatformTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// MCPMachine is what one machine's coding agents configured themselves.
+type MCPMachine struct {
+	Name        string   `json:"name"`
+	Hub         bool     `json:"hub,omitempty"`
+	Up          bool     `json:"up"`
+	Unsupported bool     `json:"unsupported,omitempty"`
+	Own         []MCPOwn `json:"own"`
+}
+
+// MCPOwn is one of those; Adopted says the machine's settings already
+// have a server of this name.
+type MCPOwn struct {
+	Name       string   `json:"name"`
+	Source     string   `json:"source"`
+	Scope      string   `json:"scope,omitempty"`
+	Type       string   `json:"type"`
+	Command    string   `json:"command,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	URL        string   `json:"url,omitempty"`
+	EnvKeys    []string `json:"env_keys,omitempty"`
+	HeaderKeys []string `json:"header_keys,omitempty"`
+	Adopted    bool     `json:"adopted,omitempty"`
+}
+
+// MCPRegistryEntry is one registry entry as the page shows it.
+type MCPRegistryEntry struct {
+	Name        string               `json:"name"`
+	Description string               `json:"description"`
+	Version     string               `json:"version,omitempty"`
+	Repository  string               `json:"repository,omitempty"`
+	Packages    []MCPRegistryPackage `json:"packages"`
+	Remotes     []MCPRegistryRemote  `json:"remotes"`
+}
+
+type MCPRegistryPackage struct {
+	RegistryType string           `json:"registry_type"`
+	Identifier   string           `json:"identifier"`
+	Version      string           `json:"version,omitempty"`
+	RuntimeHint  string           `json:"runtime_hint,omitempty"`
+	Transport    string           `json:"transport,omitempty"`
+	Needs        string           `json:"needs,omitempty"`
+	Env          []MCPRegistryEnv `json:"env"`
+}
+
+type MCPRegistryRemote struct {
+	Type    string           `json:"type"`
+	URL     string           `json:"url"`
+	Headers []MCPRegistryEnv `json:"headers"`
+}
+
+type MCPRegistryEnv struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	Required    bool   `json:"required,omitempty"`
+	Secret      bool   `json:"secret,omitempty"`
+	Default     string `json:"default,omitempty"`
+}
+
+// InstallMCPRequest is the page installing a registry entry: which
+// entry, which of its packages or remotes, onto which machine, under
+// what name, with the values the entry asked for.
+type InstallMCPRequest struct {
+	Node    string            `json:"node"`
+	Name    string            `json:"name"`
+	Entry   string            `json:"entry"`
+	Package *int              `json:"package,omitempty"`
+	Remote  *int              `json:"remote,omitempty"`
+	Values  map[string]string `json:"values"`
 }
 
 // SkillDoc is one skill's SKILL.md.
@@ -855,6 +1001,93 @@ func (s *Server) consoleRemoveSkillSource(w http.ResponseWriter, r *http.Request
 			status = http.StatusConflict
 		}
 		http.Error(w, err.Error(), status)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleMCP(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	view, err := s.admin.MCP(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(view)
+}
+
+func (s *Server) consoleProbeMCP(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	var req struct{ Node, Name string }
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	probe, err := s.admin.ProbeMCP(r.Context(), req.Node, req.Name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": probe.OK, "probe": probe})
+}
+
+func (s *Server) consoleAdoptMCP(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	var req struct{ Node, Source, Name string }
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<12)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.AdoptMCP(r.Context(), req.Node, req.Source, req.Name); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleRemoveMCP(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	if err := s.admin.RemoveMCP(r.Context(), r.URL.Query().Get("node"), r.URL.Query().Get("name")); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+func (s *Server) consoleMCPRegistry(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	entries, err := s.admin.SearchMCPRegistry(r.Context(), r.URL.Query().Get("q"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadGateway)
+		return
+	}
+	if entries == nil {
+		entries = []MCPRegistryEntry{}
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"entries": entries})
+}
+
+func (s *Server) consoleInstallMCP(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	var req InstallMCPRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.InstallMCP(r.Context(), req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})

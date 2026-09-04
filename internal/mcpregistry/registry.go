@@ -68,7 +68,9 @@ func Search(ctx context.Context, q string, limit int) ([]Entry, error) {
 	if q = strings.TrimSpace(q); q != "" {
 		u += "&search=" + url.QueryEscape(q)
 	}
-	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	// The registry answers in seconds from some networks and in tens of
+	// seconds from others; a page can wait that long once.
+	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {

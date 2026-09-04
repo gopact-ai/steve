@@ -105,6 +105,10 @@ type Advert struct {
 	// can see them from the hub and load one. A machine that predates
 	// the field sends none.
 	OwnSkills []OwnSkill `json:"own_skills,omitempty"`
+	// OwnMCP are the MCP servers the machine's coding agents have of
+	// their own, outside Steve — shape only: values of environment
+	// variables and headers never leave the machine.
+	OwnMCP []OwnMCP `json:"own_mcp,omitempty"`
 	// Capabilities are free-form facts a step can require: "gpu",
 	// "prod-cred", "internal-net".
 	Capabilities  []string `json:"capabilities,omitempty"`
@@ -256,4 +260,17 @@ type OwnSkill struct {
 	Path        string `json:"path"`
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
+}
+
+// OwnMCP is one MCP server a coding agent on the machine has configured.
+type OwnMCP struct {
+	Name       string   `json:"name"`
+	Source     string   `json:"source"`
+	Scope      string   `json:"scope,omitempty"`
+	Type       string   `json:"type"`
+	Command    string   `json:"command,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	URL        string   `json:"url,omitempty"`
+	EnvKeys    []string `json:"env_keys,omitempty"`
+	HeaderKeys []string `json:"header_keys,omitempty"`
 }

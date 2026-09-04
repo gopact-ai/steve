@@ -1,4 +1,4 @@
-import type { HomeView, MachineSkills, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
+import type { HomeView, MachineSkills, MCPRegistryEntry, MCPView, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
 
 // The token guards everything: it rides as a bearer header on requests and
 // as a query parameter on the event stream, which cannot carry headers.
@@ -169,4 +169,21 @@ export async function fetchMachineSkills(): Promise<{ machines: MachineSkills[] 
 export async function refreshMachineSkills(): Promise<{ machines: MachineSkills[] }> { return json(await fetch(`./console/skills/machines/refresh${q}`, { method: "POST", headers })); }
 export async function importSkill(node: string, path: string): Promise<{ ok: boolean; name: string }> {
     return json(await fetch(`./console/skills/import${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ node, path }) }));
+}
+
+export async function fetchMCP(): Promise<MCPView> { return json(await fetch(`./console/mcp${q}`, { headers })); }
+export async function probeMCP(node: string, name: string): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/mcp/probe${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ node, name }) }));
+}
+export async function adoptMCP(node: string, source: string, name: string): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/mcp/adopt${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ node, source, name }) }));
+}
+export async function removeMCP(node: string, name: string): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/mcp${q}${q ? "&" : "?"}node=${encodeURIComponent(node)}&name=${encodeURIComponent(name)}`, { method: "DELETE", headers }));
+}
+export async function searchMCPRegistry(query: string): Promise<{ entries: MCPRegistryEntry[] }> {
+    return json(await fetch(`./console/mcp/registry${q}${q ? "&" : "?"}q=${encodeURIComponent(query)}`, { headers }));
+}
+export async function installMCP(req: { node: string; name: string; entry: string; package?: number; remote?: number; values: Record<string, string> }): Promise<{ ok: boolean }> {
+    return json(await fetch(`./console/mcp/install${q}`, { method: "POST", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(req) }));
 }

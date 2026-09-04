@@ -1,6 +1,7 @@
 package nodewire
 
 import (
+	"encoding/json"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
@@ -27,6 +28,24 @@ type Repo struct {
 type InspectReply struct {
 	Repos []Repo `json:"repos"`
 	Error string `json:"error,omitempty"`
+}
+
+// MCPTool is one tool an MCP server offers, as the probe saw it.
+type MCPTool struct {
+	Name        string          `json:"name"`
+	Description string          `json:"description,omitempty"`
+	InputSchema json.RawMessage `json:"input_schema,omitempty"`
+}
+
+// MCPProbeReply answers StreamMCPProbe.
+type MCPProbeReply struct {
+	ServerName    string    `json:"server_name,omitempty"`
+	ServerVersion string    `json:"server_version,omitempty"`
+	Protocol      string    `json:"protocol,omitempty"`
+	Tools         []MCPTool `json:"tools"`
+	Digest        string    `json:"digest,omitempty"`
+	ElapsedMS     int64     `json:"elapsed_ms,omitempty"`
+	Error         string    `json:"error,omitempty"`
 }
 
 // Settings is what a machine offers, as its operator writes it: the AI
@@ -119,11 +138,17 @@ const (
 	FeatureConfig = "node_config.v1"
 	// FeatureInspect says the node answers StreamInspect.
 	FeatureInspect = "inspect.v1"
+	// FeatureMCPProbe says the node answers StreamMCPProbe and reports
+	// its coding agents' own MCP servers in its advert.
+	FeatureMCPProbe = "mcp_probe.v1"
+	// FeatureOwnSkills says the node reports its coding agents' own
+	// skills in its advert, so an empty list means none, not "too old".
+	FeatureOwnSkills = "own_skills.v1"
 )
 
 // Features is what this build supports.
 func Features() []string {
-	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureInspect}
+	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureInspect, FeatureMCPProbe, FeatureOwnSkills}
 }
 
 // HasFeature says whether a list names a feature.

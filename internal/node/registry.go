@@ -10,6 +10,7 @@
 package node
 
 import (
+	"strings"
 	"bytes"
 	"context"
 	cryptorand "crypto/rand"
@@ -398,6 +399,36 @@ func (r *Registry) Inspect(ctx context.Context, name, path string) ([]nodewire.R
 		return nil, errors.New(reply.Error)
 	}
 	return reply.Repos, nil
+}
+
+// MCPProbe asks a node what tools one of its MCP servers offers.
+func (r *Registry) MCPProbe(ctx context.Context, name, server string) (nodewire.MCPProbeReply, error) {
+	c, err := r.connect(ctx, name)
+	if err != nil {
+		return nodewire.MCPProbeReply{}, err
+	}
+	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureMCPProbe) {
+		return nodewire.MCPProbeReply{}, fmt.Errorf("node %q runs an older steve-node that cannot probe MCP servers", name)
+	}
+	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamMCPProbe, Command: server})
+	if err != nil {
+		return nodewire.MCPProbeReply{}, fmt.Errorf("node %q: probe: %w", name, err)
+	}
+	defer stream.Close()
+	var reply nodewire.MCPProbeReply
+	if err := json.NewDecoder(stream).Decode(&reply); err != nil {
+		return nodewire.MCPProbeReply{}, fmt.Errorf("node %q: probe: %w", name, err)
+	}
+	return reply, nil
+}
+
+// AdoptMCP tells a node to copy one of its coding agents' own MCP
+// servers into its settings; the values never pass through here.
+func (r *Registry) AdoptMCP(ctx context.Context, name, source, server string) (nodewire.Settings, error) {
+	if strings.ContainsAny(source+server, " \t\n") {
+		return nodewire.Settings{}, fmt.Errorf("bad source or server name")
+	}
+	return r.configStream(ctx, name, "adopt "+source+" "+server, nil)
 }
 
 // Settings reads what a node offers, as its operator wrote it.

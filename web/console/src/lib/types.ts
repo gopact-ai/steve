@@ -130,3 +130,17 @@ export interface MachineSkills { name: string; hub?: boolean; up: boolean; skill
 // Steve's home: the three files and how much of them reaches the agent.
 export interface HomeFile { name: string; text: string; bytes: number; budget: number; template?: boolean; missing?: boolean }
 export interface HomeView { path: string; files: HomeFile[]; total_budget: number; owner_bytes: number; guest_bytes: number; warnings: string[] }
+
+// MCP: deployments on machines, the platform's own session servers, and
+// what machines' coding agents configured themselves.
+export interface MCPTool { name: string; description?: string; input_schema?: unknown }
+export interface MCPProbe { at: string; ok: boolean; error?: string; stale?: boolean; tools: MCPTool[]; digest?: string; server_name?: string; server_version?: string; protocol?: string }
+export interface MCPDeployment { node: string; name: string; type: string; command?: string; args?: string[]; url?: string; env_keys?: string[]; header_keys?: string[]; agents: string[]; resolvable?: boolean; provenance?: string; same_name_elsewhere?: boolean; probe?: MCPProbe }
+export interface MCPPlatform { name: string; description: string; tools: { name: string; description: string }[] }
+export interface MCPOwn { name: string; source: string; scope?: string; type: string; command?: string; args?: string[]; url?: string; env_keys?: string[]; header_keys?: string[]; adopted?: boolean }
+export interface MCPMachine { name: string; hub?: boolean; up: boolean; unsupported?: boolean; own: MCPOwn[] }
+export interface MCPView { deployments: MCPDeployment[]; platform: MCPPlatform[]; machines: MCPMachine[] }
+export interface MCPRegistryEnv { name: string; description?: string; required?: boolean; secret?: boolean; default?: string }
+export interface MCPRegistryPackage { registry_type: string; identifier: string; version?: string; runtime_hint?: string; transport?: string; needs?: string; env: MCPRegistryEnv[] }
+export interface MCPRegistryRemote { type: string; url: string; headers: MCPRegistryEnv[] }
+export interface MCPRegistryEntry { name: string; description: string; version?: string; repository?: string; packages: MCPRegistryPackage[]; remotes: MCPRegistryRemote[] }

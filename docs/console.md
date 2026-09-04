@@ -300,67 +300,59 @@ HumanRequest { id, type, source_operation_id, project_id, task_id, summary, choi
 - **内置套件改成引导而不是规矩（用户指出 skill 是软限制，强控流程该用代码）**：删掉"硬规则"一节和"不要…"式条目，换成"平台替你做的事"（投递、单写者、子任务身份、写入范围由工具权限管）与"怎么做更顺"（怎么写委派目标、什么时候一张卡有用、什么值得记）。凡是必须成立的事，由代码保证；技能只负责引导。
 - **机器技能改为申报 + 缓存（用户要求缓存、异步上报刷新）**：不再在页面打开时用 exec 去每台机器上跑脚本。每台机器（含 hub 自己）用 Go 扫本机 AI 工具目录（`skills.ScanLocal`，按物理路径去重，5 分钟内复用上次结果），把结果放进申报 `Advert.OwnSkills`；hub 的注册表本来就缓存每台机器最近一次申报、每分钟催一次（`RefreshEvery`），所以页面读的是缓存、秒开，最多一分钟旧。"让机器现在重扫"走 `POST /console/skills/machines/refresh`：hub 并行向每台机器要一次新申报（20 秒上限）并重扫自己。加载仍走 exec 流的 tar。旧版本 node 不带这个字段，页面显示"没有"直到升级。
 
-## 18. MCP 页与市场（2026-09-04，方案）
+## 18. MCP 页与市场（2026-09-04）
 
 用户问：MCP 呢？并指出不同的 coding agent 各有自己的市场。三条决定：先做 MCP 页再做市场；从注册表装 MCP 时选机器、默认 hub；Claude 插件第一版取 skills 与 .mcp.json，但插件的其它部件要按"steve 自己也是一个 agent"来设计映射，不是丢掉。
 
-### 18.1 MCP 页
+初稿经 codex（gpt-5.6-sol）对照代码评审 32 条（原文在会话 scratchpad `mcp-codex-1.md`），本节是采纳后的版本。改得最大的几处：MCP 的领域模型分三层（服务 / 部署 / 引用），不再"同名即同一服务"；平台会话级的 MCP 单列，不进机器探测；探测走 broker 的 Bind → Release，不另起进程，且只手动、不周期；工具清单不进能力快照，只是 hub 的观测投影；secret 的承诺缩到能兑现的范围并列出现有编辑路径的缺口；注册表安装按包变体逐项映射、固定版本、拦内网地址、装前显示完整命令；市场拆成目录 / 制品 / 安装 / 激活四层；插件 agent 是独立的角色模板，hooks 在事件框架前一律算不兼容。
 
-现状：MCP 服务器是每台机器 node.json（hub 是 config.json）里的一段（名字 → stdio 的命令 / 参数 / env，或 http / sse 的地址 / headers）；机器把它们当能力 `mcp:<name>` 申报（有配置即 existence，起过即 observed）；Agent 按名字引用，开会话时接它所在机器上的同名服务器，stdio 经 broker 起、http 经本机回环代理注入 headers。缺：没有一页把所有机器的服务器放在一起；不知道每个服务器暴露哪些工具（能力清单 §9 欠的 tool-set digest）；各机器上 coding agent 自己配的 MCP hub 看不见；不能从注册表装。
+### 18.1 MCP 页（已做）
 
-| 对象 | 是什么 | 权威 | 新 |
-|---|---|---|---|
-| 声明 | 一台机器上名为 X 的服务器怎么起 | 那台机器的 node.json（hub：config.json）；经 `node_config.v1` 改 | — |
-| 引用 | Agent 开会话要接哪些名字 | agent 目录（config.json） | — |
-| 能力 | `mcp:<name>` 与证据 | 机器申报的快照 | — |
-| 绑定 | 一次 attempt 里实际起的进程 / 代理 | 机器上的 broker，随 attempt 释放 | — |
-| **工具清单** | 服务器 `tools/list` 的结果：名字、说明、输入 schema 的摘要（digest） | hub 缓存，按 (机器, 名字)，带探测时间与错误 | 新 |
-| **机器自有 MCP** | coding agent 自己配置里的服务器 | 机器申报 `Advert.OwnMCP`（同 OwnSkills 机制） | 新 |
-| 注册表条目 | 官方 MCP Registry 里的一条 | 外部，hub 只读 | 新 |
+| 层 | 是什么 | 权威 |
+|---|---|---|
+| 服务 | 逻辑上的一个 MCP 服务及其来历（注册表条目、纳入自哪个 coding agent、手写） | 目前只有来历字符串，随部署记录；正式的服务 id 等市场阶段一起做 |
+| 部署 | 某台机器上名为 X 的一份配置：类型、命令 / 地址、env 与 headers 的**键名**、命令能否解析、最近一次探测 | 那台机器的 node.json（hub：config.json）；hub 读它的 `Settings`（机器不可达时退到申报快照里的 `mcp:` 能力） |
+| 引用 | Agent 按名字接它所在机器上的部署 | agent 目录 |
+| 平台会话级 | hub 为每个会话现场生成的 `feishu`（进度卡 + 委派工具） | 代码；页面单列，工具清单直接从实现列出，不装不改 |
+| 机器自有 | coding agent 自己配置里的服务器 | 机器申报 `Advert.OwnMCP`，特性 `mcp_probe.v1` 说明"这台机器会报"，旧版本显示"版本不支持"而不是"没有" |
+| 探测结果 | 某部署最近一次 `tools/list`：工具、输入 schema、摘要、server 名 / 版本、错误 | hub 内存缓存，键 `<机器>/<名字>` 并记探测时的形状摘要；形状变了标"旧"；失败保留上次成功的清单并标 stale |
 
 规则：
 
-- **同名即同一服务**：跨机器按名字对齐（这是现有语义：Agent 用它所在机器上的同名服务器）。页面一行一个名字，展开看每台机器的配置。
-- **secret 不出机器**：申报里的自有 MCP 只报 env / headers 的**键名**；"纳入 steve"由机器本地把自己文件里的配置抄进 node.json，值不经过 hub；注册表安装时页面填的 secret 只经 config 流发给目标机器一次（node.json 0600）；页面任何地方不回显值，只显示键名。
-- **工具清单由机器自己探测**：stdio 服务器只能在它所在的机器上起，所以探测在机器上做，走新流 `mcp_probe.v1`（hub 自己的在 hub 本地做）。探测 = 最小 MCP 客户端：`initialize` → `notifications/initialized` → `tools/list`，支持 stdio 与 streamable-http（含 SSE 响应）；20 秒上限；不调用任何工具；进程用完即杀。结果进 hub 缓存，digest = 工具名 + 输入 schema 规范化后的哈希。探测时机：机器连上、配置变更、页面点"探测"、每小时一轮；失败记原因不清空上次结果。digest 进机器快照的 `mcp:<name>` 属性，为将来"要求某个工具存在"的放置留口。
-- **机器自有 MCP 的来源**（第一版）：Codex `~/.codex/config.toml` 的 `[mcp_servers.<name>]`（command / args / env，或 url）；Claude Code `~/.claude.json` 顶层 `mcpServers` 与各 `projects.*.mcpServers`（标出属于哪个项目目录）。项目内的 `.mcp.json` 与 Kimi / Grok 的格式未核实，先不扫。与 steve 里同名的标"已纳入"。
-- **注册表**：`GET https://registry.modelcontextprotocol.io/v0/servers?search=<q>&limit=<n>`。条目映射：`packages[].registryType` npm → `npx -y <identifier>`（机器需有 `tool:npx`），pypi → `uvx <identifier>`（`tool:uvx`），oci → `docker run -i --rm <identifier>`（`tool:docker`）；`remotes[]` → http / sse 地址。`environmentVariables[]` 生成表单：`isRequired` 必填、`isSecret` 密码框、`default` 预填。装到选定机器（默认 hub）：hub 写 config.json 并热更新 assembler，node 经 config 流写 node.json；然后立刻探测。机器缺运行时的，按能力快照提前说明而不是装了再失败。
+- **同名不代表同一服务**：一行一个部署；同名部署标"同名"，是否同一服务由用户判断。平台名字 `feishu`、`steve*` 保留，纳入与安装不得使用。
+- **探测**：只在用户点"探测"时做，一台机器同一时刻一个；node 上经 broker `Bind(name, "probe:<id>", "probe")` 拿到会话会拿到的同一份启动方式（stdio 经 launcher，http 经回环代理注入 headers），跑最小客户端（`initialize` → `notifications/initialized` → `tools/list`，支持 stdio / streamable-http / 旧式 sse，翻页，20 秒上限，不调用工具），然后 `Release`。hub 自己的部署 hub 本地直接起（hub 没有 broker，这是既有的双轨，见缺口）。页面写明"探测会真的启动一次服务器，可能有副作用"。
+- **工具摘要**：`mcp-tools-digest.v1` = 按名排序的 (name, inputSchema 规范化 JSON) 哈希，16 位；**不进能力快照**（评审指出会搅动 admission 摘要且放置匹配不了 attrs），只在观测投影里。
+- **secret**：页面任何地方只显示键名。纳入由机器自己完成（node 收到 `adopt <source> <name>` 后在本机查自己的文件、写自己的 node.json；hub 对 hub 自己同理），值不经过 hub。注册表安装时页面填的值只发给目标机器一次。**缺口**：现有的机器"编辑配置"路径（`Settings` get / `ConfigReply`）仍回传明文 env / headers 到页面，hub–node 之间是带 token 的裸 TCP；改成"键名 + keep/replace/delete"与 mTLS 是下一项。
+- **机器自有 MCP**：Codex `config.toml` 的 `[mcp_servers.*]`（command / args / env / env_vars / url / bearer_token_env_var / http_headers，含多行数组与子表、带引号的名字）与 Claude Code `~/.claude.json`（顶层与各 project 的 `mcpServers`）；尊重 `CODEX_HOME` / `CLAUDE_CONFIG_DIR`；URL 去掉 userinfo 与 query，形似密钥的参数值遮掉。项目级的只展示不纳入。
+- **注册表**：`GET /v0/servers?search=`；用户选一个具体的包或远端；npm → `npx -y <id>@<version>`，pypi → `uvx <id>@<version>`，oci → `docker run -i --rm -e VAR… <image>`，nuget → `dnx`；`runtimeArguments` / `packageArguments` 逐项进 argv（保留 named 参数的名与值）；`environmentVariables` 生成表单（必填 / 密码框 / 默认值）。目标机器没有所需运行时（`tool:npx` 等）直接拒绝。远端地址解析后指向本机、私网、链路本地、云 metadata 的一律拒绝。装前页面显示完整命令与来源仓库。
+- **删除**：hub 先查 agent 目录，那台机器上有 Agent 引用就拒绝；然后改那台机器的配置。
 
-页面（`#/mcp`，导航"环境"组）：
+页面（`#/mcp`）：已装的服务器表（名字 / 机器 / 类型 / 命令或地址 / 谁在用 / 工具数 / 状态：已配置 → 命令找不到 → 探测通过 / 失败）、抽屉（形状、键名、引用、来历、工具清单可展开 schema、摘要、探测、删除）、平台会话级、机器上 coding agent 自己配的（纳入）、从注册表安装。接口：`GET /console/mcp`、`POST /console/mcp/probe`、`POST /console/mcp/adopt`、`DELETE /console/mcp?node=&name=`、`GET /console/mcp/registry?q=`、`POST /console/mcp/install`。node 侧：`Advert.OwnMCP`、流 `mcp_probe`、配置流动词 `adopt`。
 
-- 表：名字、类型、在哪些机器上有（芯片）、哪些 Agent 用、工具数（未探测 / N / 失败）、状态。
-- 抽屉：每台机器上的配置摘要（命令 / 地址，env 与 headers 只列键名）、工具清单（名字 + 说明，展开看输入 schema）、探测记录、用它的 Agent、"探测"、"编辑"（跳资源页那台机器的配置编辑器）、"删除"（从那台机器的配置里删，有 Agent 引用时先提示）。
-- "机器上已有的 MCP"：按机器列出自有配置，"纳入 steve"（同名已有则说明）。
-- "从注册表安装"：搜索框、结果列表（名字、说明、包类型、远端）、选中后：选机器、填 env、安装。
+评审指出但本次没动的既有问题：`Coverage[MCP]` 默认 complete、stdio 只查 PATH 就算"存在"；attempt 级 BIND/RELEASE 与跨回合复用的 ACP 会话生命周期不一致；node.json 改写没有 revision CAS；hub 自己的 MCP 不走 broker。来历目前只在内存，重启后丢。
 
-接口：`GET /console/mcp`；`POST /console/mcp/probe {node?, name?}`（空 = 全部）；`POST /console/mcp/adopt {node, name}`；`DELETE /console/mcp/{name}?node=`；`GET /console/mcp/registry?q=`；`POST /console/mcp/install {node, name, setting, env}`。node 侧新增 `mcp_probe.v1` 流与 `Advert.OwnMCP`；旧版本 node 不报也不能探测，页面写明。
+### 18.2 市场（第二阶段，设计已按评审改）
 
-### 18.2 市场（第二阶段，先定设计）
+事实：Codex 的市场是 `openai/skills` 目录（system / curated / experimental，`$skill-installer`；仓库已标记弃用、转向 OpenAI Plugins）；Claude Code 是 git 仓库里的 `.claude-plugin/marketplace.json`，插件打包 skills / commands / agents / hooks / `.mcp.json`（官方 `anthropics/claude-plugins-official`）；通用的有 `anthropics/skills`、skills.sh；MCP 有官方注册表（18.1 已接）。
 
-事实：Codex 的市场是 `openai/skills` 目录（system / curated / experimental 三层，`$skill-installer` 装；仓库已标记弃用、转向 OpenAI Plugins = 技能 + 连接器；SKILL.md 旁可带 `openai.yaml` 写 Codex 专属元数据含 MCP 依赖）；Claude Code 的市场是一个 git 仓库里的 `.claude-plugin/marketplace.json`，插件打包 skills / commands / agents / hooks / `.mcp.json`（官方 `anthropics/claude-plugins-official`）；通用的有 `anthropics/skills`（已支持）、skills.sh；MCP 有官方注册表（18.1 已接）。
+**四层，而不是给现有 git 来源加枚举**：`CatalogSource`（怎么列出条目：git 技能仓库、Claude marketplace.json、Codex 三层目录、MCP 注册表）→ `Artifact`（一条条目在某个 commit / 版本的内容与内容摘要）→ `Installation`（装到 hub 的那一份，带锁：目录地址 + 目录 commit + 条目名 + 来源种类 + 声明的 ref + 解析后的 commit / 精确版本与 integrity + 子目录 + 内容摘要）→ `Activation`（对谁生效：全局 / 项目 / Agent）。现有 `skills.Source` 是 git 技能仓库这一种 resolver。
 
-**市场是"来源"的一种类型**（§17 的来源已经是 git 仓库）：`skills-repo`（现有）、`claude-marketplace`（读 marketplace.json，列插件，按 source 拉取）、`codex-catalog`（读 openai/skills 的三层目录）、`mcp-registry`（在 MCP 页）。内置一份官方市场清单，页面上可浏览、搜索、装到 hub；装完的技能仍逐个启用。
+**插件部件映射**（steve 自己是一个 agent，有自己的编制）：
 
-**插件部件怎么映射到 steve**——steve 不是 Claude Code 的壳，它自己是一个 agent，有自己的编制：
-
-| 插件部件 | 在 Claude Code 里 | 在 steve 里 | 阶段 |
-|---|---|---|---|
-| `skills/` | 技能 | 技能，跨 harness 通用，逐个启用 | 一 |
-| `.mcp.json`、`openai.yaml` 的 MCP 依赖 | 会话 MCP | MCP 页"待纳入"的服务器：装到选定机器 | 一 |
-| `commands/` | 斜杠命令（已并入 skills） | 当技能 | 一 |
-| `agents/` | 子 agent：名字 + 系统提示 + 工具限制 + 模型偏好 | steve Agent 目录里的**角色模板**：steve 的 Agent 已有 SystemPrompt / Model / Options / About / MCPServers / Skills，插件 agent 可以"实例化"为一个 steve Agent（选机器 + AI 工具），成为 fleet 里能被 `/use`、被委派的对象。这就是"我们也是一个 agent"的落点：插件里的 agent 是 steve 编制里的角色，不是某个 harness 的私有部件 | 二 |
-| `hooks/` | PreToolUse / PostToolUse 等事件钩子 | steve 的钩子点（回合前后、attempt 开始结束、落地前）；第一版只识别并展示"这个插件带 N 个钩子，steve 还不执行"，钩子框架是代码级的事 | 三 |
-
-命名空间：技能名冲突沿用先见者胜（用户目录 > 内置 > 来源，来源按安装顺序）；插件级安装记录来源 `plugin@marketplace`，更新与移除随来源。
+| 部件 | 在 steve 里 | 阶段 |
+|---|---|---|
+| `skills/` | 技能；启用记录绑定内容摘要；同名冲突要用户选，不再默认先见者胜 | 一 |
+| `commands/` | 转成技能，标"转换后的指导技能"，不宣称兼容 Claude 的斜杠命令 | 一 |
+| `.mcp.json`、`openai.yaml` 的 MCP 依赖 | 生成 MCP 页的**安装提案**（目标机器、命令、所需 secret），不自动装 | 一 |
+| `agents/` | 独立的 `RoleTemplate`：提示词、模型约束、技能 / MCP 依赖、来源锁、兼容矩阵。steve Agent（机器 + AI 工具 + 模型）可**引用**模板；只有用户选了机器和 AI 工具才生成持久 Agent，或委派时开临时角色会话。逐字段兼容矩阵：可精确映射 / 软映射（系统提示是拼进首轮 prompt 的软指导；工具限制要各 harness 适配器映射到原生沙箱，映射不了的标"不支持强制工具策略"）/ 不支持（阻止"完整安装"或要求接受降级） | 二 |
+| `hooks/` | 在 steve 有版本化事件总线之前一律"不兼容"：不计入已安装能力，放兼容性报告，醒目写"未加载、未执行、不提供保护"；插件声明 hook 必需的默认阻止安装 | 三 |
 
 ### 18.3 顺序
 
-1. MCP 页：探测流与 hub 缓存 → 机器自有 MCP 上报与纳入 → 注册表搜索与安装 → 页面。
-2. 市场：来源类型化 + 内置官方清单（claude-plugins-official、openai/skills、anthropics/skills）→ 插件的 skills / .mcp.json / commands。
-3. 插件 agents 实例化为 steve Agent；4. 钩子框架。
+1. MCP 页（已做）→ 2. 编辑配置路径的 secret 改为键名 + keep/replace/delete；来历持久化 → 3. 市场四层与内置官方目录（skills / commands / MCP 提案）→ 4. RoleTemplate → 5. 事件总线与 hooks。
 
 ### 18.4 不做
 
 - 扫项目内 `.mcp.json`、Kimi / Grok 的 MCP 配置（格式未核实）。
-- 调用 MCP 工具做健康检查（只 `tools/list`）。
-- OAuth 类的 MCP 远端认证流程。
+- 调用 MCP 工具做健康检查；周期性自动探测。
+- OAuth 类的远端认证。

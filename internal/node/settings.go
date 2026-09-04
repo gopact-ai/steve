@@ -1,6 +1,7 @@
 package node
 
 import (
+	"github.com/gopact-ai/steve/internal/mcpscan"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -186,6 +187,47 @@ func (s *Server) configure(stream *nodewire.Stream) {
 		}
 		reply(s.applySettings(set))
 	default:
+		// "adopt <source> <name>": copy one of the coding agents' own
+		// MCP servers into this machine's settings. The values come from
+		// the file on this machine and go into node.json here; nothing
+		// but the shape has ever left.
+		fields := strings.Fields(verb)
+		if len(fields) == 3 && fields[0] == "adopt" {
+			reply(s.adoptMCP(fields[1], fields[2]))
+			return
+		}
 		reply(fmt.Errorf("unknown config verb %q", verb))
 	}
+}
+
+// reservedMCP are names the platform gives its own session servers.
+func reservedMCP(name string) bool {
+	return name == "feishu" || strings.HasPrefix(name, "steve")
+}
+
+func (s *Server) adoptMCP(source, name string) error {
+	if reservedMCP(name) {
+		return fmt.Errorf("%q is a name the platform uses; adopt it under another name", name)
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+	full, ok := mcpscan.Lookup(home, source, name)
+	if !ok {
+		return fmt.Errorf("no %s server %q in this user's configuration", source, name)
+	}
+	set := s.settings()
+	if _, exists := set.MCPServers[name]; exists {
+		return fmt.Errorf("this machine already has an MCP server named %q; remove it first or adopt under another name", name)
+	}
+	if set.MCPServers == nil {
+		set.MCPServers = map[string]nodewire.MCPSetting{}
+	}
+	set.MCPServers[name] = nodewire.MCPSetting{Type: full.Type, Command: full.Command, Args: full.Args, Env: full.Env, URL: full.URL, Headers: full.Headers}
+	if err := s.applySettings(set); err != nil {
+		return err
+	}
+	ownMCP.Get(0)
+	return nil
 }
