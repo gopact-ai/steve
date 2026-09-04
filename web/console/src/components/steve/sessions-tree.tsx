@@ -17,13 +17,16 @@ export type ConversationPatch = { title?: string; archived?: boolean };
 // whose agent has no workspace of the project on its machine carries a
 // mark instead. Steve's home sits apart at the bottom; a thread whose
 // project is not known any more goes under 未归属; what was put away is
-// folded under 已归档.
+// folded under 已归档, and stays there while open.
 export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onUpdate: (id: string, patch: ConversationPatch) => void }) {
     const [folded, setFolded] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem("steve.folded") || "{}"); } catch { return {}; } });
     const toggle = (id: string) => setFolded((f) => { const next = { ...f, [id]: !f[id] }; try { localStorage.setItem("steve.folded", JSON.stringify(next)); } catch { /* ignore */ } return next; });
     const [renaming, setRenaming] = useState<string | null>(null);
-    const archived = list.filter((c) => c.archived && c.id !== current);
-    const live = list.filter((c) => !c.archived || c.id === current);
+    // An archived thread stays under 已归档 even while it is open: moving
+    // it back under its project would look like it had been unarchived.
+    const archived = list.filter((c) => c.archived);
+    const live = list.filter((c) => !c.archived);
+    const archivedOpen = archived.some((c) => c.id === current);
     const byProject = new Map<string, Conversation[]>();
     for (const c of live) {
         const key = c.project || "";
@@ -92,7 +95,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate 
                     </>
                 )}
                 {archived.length > 0 && (
-                    <details className="group/archived mt-3">
+                    <details className="group/archived mt-3" open={archivedOpen || undefined}>
                         <summary className="flex cursor-pointer list-none items-center gap-1 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-quaternary hover:text-tertiary">
                             <Archive className="size-3" />
                             <span>已归档 · {archived.length}</span>
@@ -127,6 +130,7 @@ function Thread({ c, current, onPick, many, renaming, onRename, onRenamed, onArc
                         <span className="truncate text-sm text-primary">{c.title || "新会话"}</span>
                     </span>
                     <span className="truncate text-[11px] text-tertiary">
+                        {c.archived && <span className="text-quaternary">已归档 · </span>}
                         {c.agent || "默认 Agent"}
                         {many && c.place ? <span className="text-quaternary"> · {placeLabel(c.place)}</span> : null}
                         {c.last_at ? ` · ${ago(c.last_at)}` : " · 未开始"}

@@ -213,6 +213,12 @@ export function ConsolePage() {
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 <header className="flex items-center gap-3 border-b border-secondary bg-primary px-6 py-2.5">
                     <div className="min-w-0 flex-1 truncate text-sm font-semibold text-primary" title={title}>{title}</div>
+                    {current?.archived && (
+                        <span className="flex items-center gap-1.5">
+                            <Badge type="pill-color" size="sm" color="gray">已归档</Badge>
+                            <button type="button" className="text-xs text-tertiary hover:text-primary" onClick={() => void updateConversation(current.id, { archived: false }).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}>取消归档</button>
+                        </span>
+                    )}
                     {context?.project && <Badge type="pill-color" size="sm" color="gray">{context.project.id} · {context.project.node}</Badge>}
                     {context?.agent && <Badge type="pill-color" size="sm" color={context.agent.ready ? "brand" : "error"}>{context.agent.id}{context.agent.model ? " · " + context.agent.model : ""}</Badge>}
                     <span className="text-xs text-tertiary">{status || (live || busy ? "进行中…" : "")}</span>
