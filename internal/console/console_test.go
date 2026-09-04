@@ -232,3 +232,38 @@ func (slowStreamer) Handle(context.Context, turn.Request) (turn.Result, error) {
 	time.Sleep(80 * time.Millisecond)
 	return turn.Result{Title: "修复", Text: "done"}, nil
 }
+
+// waiter is a handler whose turn takes a while and reports whether the
+// context it was given was canceled under it.
+type waiter struct{ canceled chan bool }
+
+func (w waiter) Handle(ctx context.Context, _ turn.Request) (turn.Result, error) {
+	select {
+	case <-ctx.Done():
+		w.canceled <- true
+		return turn.Result{}, ctx.Err()
+	case <-time.After(150 * time.Millisecond):
+		w.canceled <- false
+		return turn.Result{Text: "done anyway"}, nil
+	}
+}
+
+func TestConsoleTurnOutlivesTheRequest(t *testing.T) {
+	w := waiter{canceled: make(chan bool, 1)}
+	s := New(w, "ou_owner", readmodel.New(readmodel.Sources{}))
+	ctx, cancel := context.WithCancel(context.Background())
+	go func() {
+		time.Sleep(30 * time.Millisecond)
+		cancel() // the browser tab closed, the proxy gave up
+	}()
+	reply, err := s.Send(ctx, "main", "a long piece of work")
+	if err != nil {
+		t.Fatalf("send: %v", err)
+	}
+	if <-w.canceled {
+		t.Fatal("the request's cancellation reached the agent's turn")
+	}
+	if reply.Text != "done anyway" {
+		t.Fatalf("reply = %q", reply.Text)
+	}
+}

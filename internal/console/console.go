@@ -447,6 +447,12 @@ func (s *Service) SendCommand(ctx context.Context, conversation, input, commandI
 		s.mu.Unlock()
 	}()
 
+	// The turn outlives the request that started it: a browser tab that
+	// closes, a proxy that gives up, a client whose timeout is shorter
+	// than the agent's work must not cancel the agent mid-turn. The reply
+	// is recorded either way and read back by the next poll; stopping is
+	// what /cancel is for.
+	ctx = context.WithoutCancel(ctx)
 	work := newProcess()
 	stop := s.follow(ctx, conversation, work)
 	result, err := s.handler.Handle(ctx, turn.Request{
