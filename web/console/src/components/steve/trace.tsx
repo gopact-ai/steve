@@ -24,10 +24,9 @@ export function applyLive(cur: Live | null, ev: Event): Live | null {
         case "console.progress":
             if (ev.exchange_id && (!cur || ev.exchange_id !== cur.exchangeID)) return cur;
             return { ...(cur ?? { since: ev.at, exchangeID: ev.exchange_id, steps: {}, order: [] }), turn: ev.progress };
-        case "step.progress":
-        case "delegate.progress": {
-            // A child that outlives its parent's turn reports into no
-            // turn: without one open, its progress is not a turn of its own.
+        case "step.progress": {
+            // Delegations are folded separately by task ID, independent
+            // of this turn's lifetime. Only plan steps belong here.
             if (!cur) return null;
             const base = cur;
             const id = ev.step_id || "?";
@@ -118,10 +117,9 @@ function ThinkingTail({ text }: { text: string }) {
 
 // Trace is one agent's progress: its checklist, its thinking summary,
 // its tool calls, and (for a plain turn) the answer forming.
-export function Trace({ p, showAnswer }: { p: Progress; showAnswer?: boolean }) {
+export function Trace({ p, showAnswer, live, thinkingOpen = true }: { p: Progress; showAnswer?: boolean; live?: boolean; thinkingOpen?: boolean }) {
     return (
         <div className="flex min-w-0 flex-col gap-2">
-            {(p.agent || p.model) && <div className="text-xs text-quaternary">{[p.agent, p.node, p.model].filter(Boolean).join(" · ")}</div>}
             {p.plan?.length ? (
                 <ul className="flex flex-col gap-0.5 text-xs">
                     {p.plan.map((line, i) => (
@@ -132,8 +130,9 @@ export function Trace({ p, showAnswer }: { p: Progress; showAnswer?: boolean }) 
                     ))}
                 </ul>
             ) : null}
-            {p.reasoning && <ThinkingFold text={p.reasoning} open />}
+            {p.reasoning && <ThinkingFold text={p.reasoning} open={thinkingOpen} live={live} />}
             {p.tools?.length ? <ToolCalls tools={p.tools} /> : null}
+            {(p.agent || p.node || p.model) && <div className="break-words text-xs text-quaternary">{[[p.agent, p.node].filter(Boolean).join(" @ "), p.model].filter(Boolean).join(" · ")}</div>}
             {showAnswer && p.answer && <Md text={p.answer} />}
         </div>
     );
@@ -144,7 +143,7 @@ export function ProcessBody({ process }: { process: Process }) {
     const steps: StepProcess[] = process.steps || [];
     return (
         <div className="flex flex-col gap-3">
-            {steps.map((s) => (
+            {steps.map((s) => s.kind === "delegate" ? <DelegationCard key={s.id} id={s.id} info={s} progress={s} /> : (
                 <div key={s.id} className="flex flex-col gap-1.5">
                     <div className="text-xs font-medium text-primary">{s.id} <span className="font-normal text-tertiary">{[s.agent, s.node].filter(Boolean).join(" @ ")}</span></div>
                     <Trace p={{ reasoning: s.reasoning, tools: s.tools }} />

@@ -102,22 +102,23 @@ func New(cfg Config) *Host {
 
 // collector accumulates streamed session updates for one in-flight prompt.
 type collector struct {
-	mu         sync.Mutex
-	text       strings.Builder
-	thought    strings.Builder
-	activity   []string
-	tools      []view.Tool
-	toolIndex  map[string]int
-	usage      view.Usage
-	plan       []view.Step
-	progress   func(view.Progress)
-	settings   func() view.Settings
-	generation uint64
-	overflow   bool
-	thoughtCap bool
-	ask        permission.AskFunc
-	askUser    AskUserFunc
-	ctx        context.Context
+	mu           sync.Mutex
+	text         strings.Builder
+	thought      string
+	thoughtHead  string
+	thoughtBytes int
+	activity     []string
+	tools        []view.Tool
+	toolIndex    map[string]int
+	usage        view.Usage
+	plan         []view.Step
+	progress     func(view.Progress)
+	settings     func() view.Settings
+	generation   uint64
+	overflow     bool
+	ask          permission.AskFunc
+	askUser      AskUserFunc
+	ctx          context.Context
 }
 
 // maxCollectBytes caps the aggregated assistant text so a runaway agent
@@ -385,7 +386,7 @@ func toolStatus(status *acp.ToolCallStatus, create bool) view.ToolStatus {
 func (c *collector) snapshot() (view.Progress, func(view.Progress)) {
 	p := view.Progress{
 		Answer:    c.text.String(),
-		Reasoning: c.thought.String(),
+		Reasoning: c.reasoning(),
 		Tools:     copyTools(c.tools),
 		Usage:     c.usage,
 		Plan:      append([]view.Step(nil), c.plan...),
@@ -439,25 +440,42 @@ func (c *collector) writeText(chunk string) {
 	c.text.WriteString(chunk)
 }
 
-const maxThoughtBytes = 8 << 10
+const maxThoughtBytes = 64 << 10
 
 func (c *collector) writeThought(chunk string) {
-	if c.thoughtCap || chunk == "" {
+	if chunk == "" {
 		return
 	}
-	room := maxThoughtBytes - c.thought.Len()
-	if room <= 0 {
-		c.thoughtCap = true
+	c.thoughtBytes += len(chunk)
+	c.thought += chunk
+	if c.thoughtBytes <= maxThoughtBytes {
 		return
 	}
-	if len(chunk) > room {
-		chunk = chunk[:room]
-		for len(chunk) > 0 && !utf8.ValidString(chunk) {
-			chunk = chunk[:len(chunk)-1]
+	// Preserve the opening context and keep moving the tail as chunks
+	// arrive. Reserve space for the marker and never split a UTF-8 rune.
+	if c.thoughtHead == "" {
+		end := maxThoughtBytes / 2
+		for end > 0 && !utf8.RuneStart(c.thought[end]) {
+			end--
 		}
-		c.thoughtCap = true
+		c.thoughtHead = strings.Clone(c.thought[:end])
 	}
-	c.thought.WriteString(chunk)
+	start := len(c.thought) - (maxThoughtBytes - len(c.thoughtHead) - 64)
+	if start <= 0 {
+		return
+	}
+	for start < len(c.thought) && !utf8.RuneStart(c.thought[start]) {
+		start++
+	}
+	c.thought = strings.Clone(c.thought[start:])
+}
+
+func (c *collector) reasoning() string {
+	if c.thoughtHead == "" {
+		return c.thought
+	}
+	skipped := c.thoughtBytes - len(c.thoughtHead) - len(c.thought)
+	return fmt.Sprintf("%s\n[… 省略 %d 字节 …]\n%s", c.thoughtHead, skipped, c.thought)
 }
 
 func (c *collector) result() (string, []string) {

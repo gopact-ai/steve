@@ -251,6 +251,10 @@ func (s *Service) startNextLocked(conversation string) error {
 
 func (s *Service) finish(e *queuedExchange, reply readmodel.Reply, err error) {
 	s.mu.Lock()
+	if work := s.processes[e.ID]; work != nil {
+		reply.Process = work.summary()
+		delete(s.processes, e.ID)
+	}
 	reply.At, reply.Kind, reply.Conversation, reply.ExchangeID = time.Now().UTC(), "reply", e.Conversation, e.ID
 	if err != nil {
 		reply.Error = err.Error()

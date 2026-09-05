@@ -123,11 +123,11 @@ export interface QuoteRef { conversation: string; reply_id: string; title?: stri
 export interface Choice { Value: string; Label: string; Detail?: string }
 export interface SelectorOption { ID: string; Name: string; Category?: string; Current?: string; Choices: Choice[] }
 export interface Selectors { model?: string; models: Choice[]; options: SelectorOption[]; preferred?: Record<string, string> }
-export interface StepProcess extends StepInfo { id: string; agent?: string; node?: string; reasoning?: string; tools?: ToolCall[] }
+export interface StepProcess extends StepInfo, Progress { id: string }
 export interface Process { reasoning?: string; tools?: ToolCall[]; steps?: StepProcess[] }
 export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
-    state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress; step?: StepInfo; reply_id?: string; exchange_id?: string;
+    state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress; step?: StepInfo & Partial<StepProcess>; reply_id?: string; exchange_id?: string;
     // n is the page's own arrival counter, so a reader can keep a cursor
     // over a buffer that is trimmed from the front.
     n?: number;

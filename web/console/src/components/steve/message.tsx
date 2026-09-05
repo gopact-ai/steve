@@ -1,3 +1,4 @@
+import { useLayoutEffect, useRef } from "react";
 import { ChevronDown } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { when } from "@/lib/api";
@@ -49,7 +50,7 @@ export function InlineProcess({ process }: { process: Process }) {
         <div className="flex min-w-0 flex-col gap-0.5">
             {process.reasoning && <ThinkingFold text={process.reasoning} />}
             {steps.map((s) => s.kind === "delegate"
-                ? <DelegationCard key={s.id} id={s.id} info={s} progress={{ agent: s.agent, node: s.node }} tools={s.tools} reasoning={s.reasoning} />
+                ? <DelegationCard key={s.id} id={s.id} info={s} progress={s} />
                 : (s.tools?.length ? <ToolCalls key={s.id} tools={s.tools} title={`${s.id} · ${headingOf(s.tools)}`} defaultOpen={false} /> : null))}
             {process.tools?.length ? <ToolCalls tools={process.tools} defaultOpen={steps.length === 0} /> : null}
         </div>
@@ -58,15 +59,30 @@ export function InlineProcess({ process }: { process: Process }) {
 
 // ThinkingFold is the agent's one-line-per-step summary of what it was
 // thinking, folded; it is a summary, not the thinking.
-export function ThinkingFold({ text, open }: { text: string; open?: boolean }) {
+export function ThinkingFold({ text, open, live }: { text: string; open?: boolean; live?: boolean }) {
+    const scroll = useRef<HTMLDivElement>(null);
+    const manuallyScrolled = useRef(false);
+    const autoTop = useRef(0);
+    const followTail = () => {
+        const el = scroll.current;
+        if (live && el && !manuallyScrolled.current && el.clientHeight) {
+            el.scrollTop = el.scrollHeight;
+            autoTop.current = el.scrollTop;
+        }
+    };
+    useLayoutEffect(followTail, [text, live]);
     return (
-        <details open={open} className="group/think min-w-0">
+        <details open={open} className="group/think min-w-0" onToggle={followTail}>
             <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-xs text-tertiary hover:text-primary" title="AI 工具在每一步之前给出的一句话概要；它不暴露完整的思考过程。">
                 <span>思考摘要</span>
                 <ChevronDown className="size-3.5 shrink-0 transition group-open/think:rotate-180" />
             </summary>
-            <div className="ml-2 border-l border-secondary pl-3">
-                <Md size="xs" text={text} className="max-h-60 overflow-y-auto text-tertiary" />
+            <div ref={scroll} tabIndex={0} className="ml-2 max-h-60 overflow-y-auto border-l border-secondary pl-3 [overflow-anchor:none]"
+                onWheel={() => { manuallyScrolled.current = true; }}
+                onTouchMove={() => { manuallyScrolled.current = true; }}
+                onKeyDown={(e) => { if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(e.key)) manuallyScrolled.current = true; }}
+                onScroll={(e) => { if (Math.abs(e.currentTarget.scrollTop - autoTop.current) > 1) manuallyScrolled.current = true; }}>
+                <Md size="xs" text={text} className="text-tertiary" />
             </div>
         </details>
     );

@@ -331,6 +331,8 @@ func TestStartAndAwaitOutliveTheRequest(t *testing.T) {
 	w := newWorld(t)
 	w.running(t, "codex")
 	w.service.InlineWait = 10 * time.Millisecond
+	observed := make(chan Child, 8)
+	w.service.SetObserver(func(c Child, _ view.Progress) { observed <- c })
 	release := make(chan struct{})
 	w.sessions.reply = func(string) (string, error) {
 		<-release
@@ -341,6 +343,14 @@ func TestStartAndAwaitOutliveTheRequest(t *testing.T) {
 	// way an MCP client timing out looks from here.
 	reqCtx, cancelReq := context.WithCancel(t.Context())
 	started, err := w.service.Start(reqCtx, "chat", "codex", agentmcp.DelegateRequest{Goal: "slow thing", Requires: []string{"gpu"}})
+	select {
+	case c := <-observed:
+		if c.Task != started.TaskID || c.Conversation != "chat" || c.State != "running" || c.Goal != "slow thing" {
+			t.Fatalf("initial child snapshot = %+v", c)
+		}
+	default:
+		t.Fatal("Start returned before registering the child with its parent reply")
+	}
 	cancelReq()
 	if err != nil {
 		t.Fatal(err)
