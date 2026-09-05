@@ -682,7 +682,7 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 
 | # | 状态 | 在哪 |
 |---|---|---|
-| 1 | 门禁脚本、`make e2e-fleet`、CONTRIBUTING 已写好；首轮真机就抓到了下面的预算 bug；预算修复部署后再跑一轮，跑通即合入 | PR #6（codex） |
+| 1 | ✅ `e2e/fleet`（标准库 Go 客户端）+ `make e2e-fleet` + CONTRIBUTING；首轮真机就抓到了下面的预算 bug，修复部署后 `FLEET PASS elapsed=1m54s task=#57`（claude 委派 node-b 的 shipper 建文件，卡片 / 改动索引 / 用量 / 主目录文件五处一致） | PR #6（codex） |
 | 2 | ✅ `artifact.Store.SweepWorktrees` + hub 的 `sweepWorktrees`（启动时清本机、节点上线时清该节点）、`sweepLandings`（每 30 秒 `LandPending`，锁被占就跳过）。上线当场清掉了 node-a、node-b 各一个前几轮留下的工作树 | PR #5 |
 | 3 | ✅ 交换持久化到 console 文档，`Exchange{ID, State, ReplyID}`；入队 / 删除 / 编辑 / 插队走 `/console/queue` API；重启时正在跑的交换记为失败、排队的按序续跑 | PR #8（codex） |
 | 4 | ✅ `steve_remember` 的 `idempotency_key`（24 小时、同作用域、跨进程）；`artifact.Limits`（2 万文件 / 2 GB / 单文件 200 MB），本地与节点脚本同一套检查，超出返回 `TooLarge`，回合后快照失败的原因进 `changes.note` | PR #7（codex） |
@@ -698,4 +698,4 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 
 真机验证（hub d6f2580）：在页面上让 claude 前台跑 50 秒的循环，30 秒时杀掉 hub 重启——日志依次是 `expired attempt of the previous process … hub restarted`、`console: resuming task #55`，页面上先是旧交换的"console restarted before this exchange completed"，然后 "⟳ 网关重启，继续任务 #55" 一行，1 分钟后 agent 的回复和"任务 #55 跑了 1m0s"的通知落在同一条交换上。
 
-还留着的：CI 的 gofmt 检查在 master 上是红的（Go 新版格式规则，PR #6 里有一笔机械修复）；重启时 ACP 子进程一并死掉，agent 靠 session/load 重放历史续跑，长回合里 agent 自己起的后台命令会丢；`Exchange.Prompt` 目前只有续跑在用。
+还留着的：重启时 ACP 子进程一并死掉，agent 靠 session/load 重放历史续跑，长回合里 agent 自己起的后台命令会丢；`Exchange.Prompt` 目前只有续跑在用。
