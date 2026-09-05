@@ -943,30 +943,17 @@ func TestReverseMCPTunnelReachesConnectionsAlreadyUp(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Wiring the dialer starts the reverse channel in a goroutine, so the
-	// node answers the documented 503 with Retry-After until it is up.
-	// Retry the way a caller is told to; what is under test is that the
-	// channel arrives on a connection that was already open, not that it
-	// arrives on the first attempt.
-	client := &http.Client{Timeout: 10 * time.Second}
-	t.Cleanup(client.CloseIdleConnections)
-	deadline := time.Now().Add(10 * time.Second)
-	for {
-		req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint, strings.NewReader(`{}`))
-		resp, err := client.Do(req)
-		if err != nil {
-			t.Fatalf("the tunnel on a connection dialed before the dialer was wired: %v", err)
-		}
-		body, _ := io.ReadAll(resp.Body)
-		resp.Body.Close()
-		if resp.StatusCode != http.StatusServiceUnavailable {
-			if string(body) != `{"late":true}` {
-				t.Fatalf("response = %d %q", resp.StatusCode, body)
-			}
-			return
-		}
-		if time.Now().After(deadline) {
-			t.Fatalf("the tunnel never reached the hub: %s", body)
-		}
-		time.Sleep(20 * time.Millisecond)
+	// node answers the documented 503 until it is up. What is under test is
+	// that the channel arrives on a connection that was already open, not
+	// that it arrives on the first attempt.
+	waitTunnel(t, endpoint)
+	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint, strings.NewReader(`{}`))
+	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("the tunnel on a connection dialed before the dialer was wired: %v", err)
+	}
+	defer resp.Body.Close()
+	if body, _ := io.ReadAll(resp.Body); string(body) != `{"late":true}` {
+		t.Fatalf("response = %d %q", resp.StatusCode, body)
 	}
 }
