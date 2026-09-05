@@ -89,6 +89,8 @@ type world struct {
 	sessions *fakeSessions
 	gate     *agentmcp.Server
 	service  *Service
+	attempts *attempt.Service
+	home     string // the project's main directory
 }
 
 func newWorld(t *testing.T) *world {
@@ -121,13 +123,13 @@ func newWorld(t *testing.T) *world {
 		t.Fatal(err)
 	}
 	sessions := &fakeSessions{}
-	art, att := stores(t)
+	art, att, home := stores(t)
 	service := New(tasks, r, sessions, capability.NewAssembler(nil), art, "hub")
 	service.SetLedger(att, art)
 	service.SetGate(gate)
 	service.SetEndpoints(fakeEndpoints{})
 	gate.SetDelegator(service)
-	return &world{tasks: tasks, sessions: sessions, gate: gate, service: service}
+	return &world{tasks: tasks, sessions: sessions, gate: gate, service: service, attempts: att, home: home}
 }
 
 // running opens a task for the caller, the way a chat turn would.
@@ -388,7 +390,7 @@ func TestStartAndAwaitOutliveTheRequest(t *testing.T) {
 
 // stores gives a test a project "p" on the hub, attempts, and artifacts
 // whose node side runs on this machine.
-func stores(t *testing.T) (*artifact.Store, *attempt.Service) {
+func stores(t *testing.T) (*artifact.Store, *attempt.Service, string) {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
@@ -396,10 +398,11 @@ func stores(t *testing.T) (*artifact.Store, *attempt.Service) {
 	}
 	t.Cleanup(func() { book.Close() })
 	projects := project.Open(book)
-	if err := projects.Declare(context.Background(), []project.Project{{ID: "p", Home: project.Home{Path: t.TempDir()}}}); err != nil {
+	home := t.TempDir()
+	if err := projects.Declare(context.Background(), []project.Project{{ID: "p", Home: project.Home{Path: home}}}); err != nil {
 		t.Fatal(err)
 	}
-	return artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()}), attempt.New(book)
+	return artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()}), attempt.New(book), home
 }
 
 // A child is cut for silence, not for taking long: one that keeps

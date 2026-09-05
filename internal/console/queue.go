@@ -60,14 +60,14 @@ func copyExchange(e Exchange) Exchange {
 // Enqueue returns as soon as the submission is durable. The first line in
 // an idle conversation starts here; no browser is needed to drain the rest.
 func (s *Service) Enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef) (Exchange, error) {
-	_, exchange, err := s.enqueue(ctx, conversation, input, "", quotes, false)
+	_, exchange, err := s.enqueue(ctx, conversation, input, "", quotes, false, "")
 	return exchange, err
 }
 
 // enqueue accepts one line. prompt, when set, is what the agent gets
 // instead of the input; front puts the line ahead of everything still
 // waiting, behind what already ran or runs.
-func (s *Service) enqueue(ctx context.Context, conversation, input, prompt string, quotes []QuoteRef, front bool) (*queuedExchange, Exchange, error) {
+func (s *Service) enqueue(ctx context.Context, conversation, input, prompt string, quotes []QuoteRef, front bool, key string) (*queuedExchange, Exchange, error) {
 	if s.owner == "" {
 		return nil, Exchange{}, errors.New("the console needs feishu.owner_open_id: it acts as the owner")
 	}
@@ -80,8 +80,15 @@ func (s *Service) enqueue(ctx context.Context, conversation, input, prompt strin
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if key != "" {
+		for _, other := range s.exchanges[conversation] {
+			if other.Key == key {
+				return other, copyExchange(other.Exchange), nil
+			}
+		}
+	}
 	e := &queuedExchange{
-		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt,
+		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
 			Quotes: append([]QuoteRef(nil), quotes...), State: "queued", EnqueuedAt: time.Now().UTC()},
 		ctx: context.WithoutCancel(ctx), done: make(chan struct{}),
 	}

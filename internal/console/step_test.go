@@ -19,7 +19,7 @@ func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
 	if err := s.Persist(doc); err != nil {
 		t.Fatal(err)
 	}
-	first, _, err := s.enqueue(t.Context(), "main", "delegate", "", nil, false)
+	first, _, err := s.enqueue(t.Context(), "main", "delegate", "", nil, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -43,7 +43,7 @@ func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
 	// Late progress while idle updates the existing reply immediately.
 	step.Reasoning += "父回合已经结束"
 	s.UpdateStep("console:main", "59", step)
-	second, _, err := s.enqueue(t.Context(), "main", "a different turn", "", nil, false)
+	second, _, err := s.enqueue(t.Context(), "main", "a different turn", "", nil, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -118,7 +118,7 @@ func TestChildFinishesBetweenHandlerReturnAndReplySave(t *testing.T) {
 		return turn.Result{Text: "parent finished", Attempt: "parent-attempt"}
 	}), "owner", nil)
 	s.SetInspector(inspector)
-	e, _, err := s.enqueue(t.Context(), "main", "delegate", "", nil, false)
+	e, _, err := s.enqueue(t.Context(), "main", "delegate", "", nil, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -139,14 +139,14 @@ func TestChildFinishesBetweenHandlerReturnAndReplySave(t *testing.T) {
 func TestReplacementTurnKeepsSeparateChildrenWhileOldTurnFinishes(t *testing.T) {
 	h := &queueHandler{started: make(chan *queueCall, 4)}
 	s := New(h, "owner", nil)
-	first, _, err := s.enqueue(t.Context(), "main", "first", "", nil, false)
+	first, _, err := s.enqueue(t.Context(), "main", "first", "", nil, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	oldCall := nextCall(t, h)
 	step := readmodel.FromStepProgress("#59", readmodel.Progress{}, readmodel.StepInfo{Kind: "delegate", State: "running"})
 	s.UpdateStep("main", "59", step)
-	next, _, err := s.enqueue(t.Context(), "main", "!replacement", "", nil, false)
+	next, _, err := s.enqueue(t.Context(), "main", "!replacement", "", nil, false, "")
 	if err != nil {
 		t.Fatal(err)
 	}

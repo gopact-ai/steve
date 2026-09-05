@@ -84,6 +84,10 @@ type Service struct {
 	commands     map[string]outcome
 	commandOrder []string
 	inflight     map[string]bool
+	// anchor tells the agents' messaging server which line a turn runs
+	// under, so an agent's feishu_send lands on the page as a milestone
+	// instead of being refused for having no conversation.
+	anchor func(conversation, chatID, messageID string)
 	// running counts lines in flight per conversation, for the sidebar.
 	running   map[string]int
 	exchanges map[string][]*queuedExchange
@@ -191,6 +195,9 @@ func (s *Service) SendCommandWith(ctx context.Context, conversation, input, comm
 
 // SetInspector wires where a reply's changes come from.
 func (s *Service) SetInspector(i Inspector) { s.inspector = i }
+
+// SetAnchorer wires the messaging server's anchor registration.
+func (s *Service) SetAnchorer(fn func(conversation, chatID, messageID string)) { s.anchor = fn }
 
 // Persist loads the durable transcript and records what a restart cut
 // short; Drain then starts what waits. Call both after wiring the
@@ -535,7 +542,7 @@ func (s *Service) sendCommand(ctx context.Context, conversation, input, commandI
 			s.mu.Unlock()
 		}()
 	}
-	exchange, _, err := s.enqueue(ctx, conversation, input, "", quotes, false)
+	exchange, _, err := s.enqueue(ctx, conversation, input, "", quotes, false, "")
 	if err != nil {
 		return readmodel.Reply{}, err
 	}
@@ -574,6 +581,9 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply rea
 	}
 	s.processes[exchange.ID] = work
 	s.mu.Unlock()
+	if s.anchor != nil {
+		s.anchor(conversation, ChatID, AnchorMark+exchange.ID)
+	}
 	stop := s.follow(ctx, conversation, work)
 	result, err := s.handler.Handle(ctx, turn.Request{
 		ConversationID: conversation, ChatID: ChatID, MessageID: AnchorMark + exchange.ID, Input: prompt, Queue: !isInterrupt(input),
@@ -791,12 +801,29 @@ func (s *Service) Notice(n turn.TaskNotice) {
 	s.record(readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Title: "task #" + n.TaskID, Text: n.Text, Kind: "notice"})
 }
 
-// Milestone is what an agent's feishu_send becomes on the console.
+// Milestone is what an agent's feishu_send becomes on the console: a
+// line in the conversation whose turn the anchor names.
 func (s *Service) Milestone(anchor, text string) string {
-	conversation := Prefix + "main"
+	conversation := s.conversationOfAnchor(anchor)
 	id := fmt.Sprintf("%s%d", AnchorMark, time.Now().UnixNano())
 	s.record(readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Text: text, Kind: "milestone"})
 	return id
+}
+
+// conversationOfAnchor finds the conversation whose exchange the anchor
+// names; main when the anchor is not one of ours.
+func (s *Service) conversationOfAnchor(anchor string) string {
+	id := strings.TrimPrefix(anchor, AnchorMark)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for conversation, list := range s.exchanges {
+		for _, e := range list {
+			if e.ID == id {
+				return conversation
+			}
+		}
+	}
+	return Prefix + "main"
 }
 
 // newReplyID names a line: time-ordered, unique enough for a transcript.
@@ -854,6 +881,18 @@ func (s *Service) Resume(ctx context.Context, conversation, taskID, member, noti
 		return fmt.Errorf("revive session for task #%s: %w", taskID, err)
 	}
 	log.Printf("console: resuming task #%s conversation=%s member=%s", taskID, conversation, member)
-	_, _, err := s.enqueue(ctx, conversation, notice, "@"+member+" "+prompt, nil, true)
+	_, _, err := s.enqueue(ctx, conversation, notice, "@"+member+" "+prompt, nil, true, "")
+	return err
+}
+
+// Continue puts a message from the platform into a conversation, ahead
+// of what waits: a delegated child's result reaching its parent. The
+// notice is the visible line, the prompt is what the member is given.
+// The key makes it happen once, however many times it is asked.
+func (s *Service) Continue(ctx context.Context, conversation, key, member, notice, prompt string) error {
+	if member == "" {
+		return fmt.Errorf("continue %s: no member to address", conversation)
+	}
+	_, _, err := s.enqueue(ctx, conversation, notice, "@"+member+" "+prompt, nil, true, key)
 	return err
 }

@@ -802,6 +802,8 @@ func serve(args []string) error {
 	// conversation for /new after each deploy.
 	portPath := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "agentmcp.port")
 	gate, err := agentmcp.New(readPort(portPath))
+	// redeliverPending is the delegation service's start-up pass, once it exists.
+	var redeliverPending func(context.Context)
 	if err != nil {
 		// The send primitive is an enhancement; a box that cannot bind a
 		// loopback port still serves ordinary turns.
@@ -842,6 +844,18 @@ func serve(args []string) error {
 			}
 		})
 		gate.SetDelegator(delegation)
+		// A child's result goes back into its parent's conversation as a
+		// message — the page's queue or the chat — instead of the parent
+		// polling for it; a turn's end delivers what ended meanwhile.
+		delegation.SetDeliverer(func(ctx context.Context, d delegate.Delivery) error {
+			if d.ChatID == console.ChatID || console.IsConsole(d.Conversation) {
+				return cons.Continue(ctx, d.Conversation, d.Key, d.Member, d.Notice(), d.Prompt())
+			}
+			return gw.Deliver(gateway.Revival{TaskID: d.ParentTask, Member: d.Member, ConversationID: d.Conversation,
+				ChatID: d.ChatID, MessageID: d.Anchor, Requester: d.Requester, ChatType: d.ChatType}, d.Notice(), d.Prompt())
+		})
+		coordinator.SetAfterTurn(func(taskID string) { delegation.Flush(context.Background(), taskID) })
+		redeliverPending = delegation.RedeliverPending
 		// Remote agents call a loopback port on their own machine; the node
 		// forwards it back here over the connection it already holds, so the
 		// messaging server never has to leave 127.0.0.1.
@@ -887,6 +901,7 @@ func serve(args []string) error {
 	channel.SetJournal(book.Journal())
 	if gate != nil {
 		gate.BindChannel(console.Sender{Feishu: channel, Console: cons})
+		cons.SetAnchorer(gate.Anchor)
 	}
 
 	// /tasks resume re-enters through the same path a crash recovery does:
@@ -997,6 +1012,11 @@ func serve(args []string) error {
 	}
 	if err := cons.Drain(); err != nil {
 		return err
+	}
+	// Children that ended before the last process died, whose parents
+	// were never told.
+	if redeliverPending != nil {
+		go redeliverPending(ctx)
 	}
 	go func() {
 		if err := dashboard.Serve(); err != nil {

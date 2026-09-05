@@ -1113,3 +1113,42 @@ func TestGatewayReviveContinuesInterruptedTask(t *testing.T) {
 		t.Fatal("resume turn never reached the processor")
 	}
 }
+
+// A delegated child's result reaches the chat as a notice at the task's
+// anchor and a prompt addressed to the task's member.
+func TestDeliverPostsTheNoticeAndAddressesTheMember(t *testing.T) {
+	p := &blockingProcessor{release: make(chan struct{})}
+	close(p.release)
+	g := New(p)
+	c := &recordingChannel{events: make(chan string, 16)}
+	g.BindChannel(c)
+	anchor := Revival{TaskID: "58", Member: "claude", ConversationID: "conv", ChatID: "oc_chat", MessageID: "om_anchor", Requester: "ou_user", ChatType: "p2p"}
+	if err := g.Deliver(anchor, "⤵ 子任务 #59 完成", "[steve] child done"); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(waitDeadline)
+	for {
+		if texts := p.texts(); len(texts) > 0 {
+			if texts[0] != "@claude [steve] child done" {
+				t.Fatalf("member was given %q", texts[0])
+			}
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the member was never prompted")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	noticed := false
+	for len(c.events) > 0 {
+		if ev := <-c.events; ev == "reply-text:om_anchor:⤵ 子任务 #59 完成" {
+			noticed = true
+		}
+	}
+	if !noticed {
+		t.Fatal("no notice was posted at the anchor")
+	}
+	if err := g.Deliver(Revival{TaskID: "58", Member: "claude"}, "n", "p"); err == nil {
+		t.Fatal("a delivery without an anchor was accepted")
+	}
+}

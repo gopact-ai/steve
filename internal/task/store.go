@@ -424,6 +424,15 @@ func (t *Task) clone() *Task {
 	copied := *t
 	copied.Attempts = append([]Attempt(nil), t.Attempts...)
 	copied.Interim = append([]string(nil), t.Interim...)
+	if t.Result != nil {
+		r := *t.Result
+		r.Refs = append([]string(nil), t.Result.Refs...)
+		copied.Result = &r
+	}
+	if t.Delivery != nil {
+		d := *t.Delivery
+		copied.Delivery = &d
+	}
 	return &copied
 }
 

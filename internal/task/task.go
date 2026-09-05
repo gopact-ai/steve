@@ -169,9 +169,13 @@ type Task struct {
 	// Interim are the messages the agent sent during it. Both are recorded
 	// so a crashed turn's leftovers can be recalled on resume instead of
 	// haunting the chat as forever-running cards.
-	OpenCard  string    `json:"open_card,omitempty"`
-	Interim   []string  `json:"interim,omitempty"`
-	Parent    string    `json:"parent,omitempty"`
+	OpenCard string   `json:"open_card,omitempty"`
+	Interim  []string `json:"interim,omitempty"`
+	Parent   string   `json:"parent,omitempty"`
+	// Result and Delivery belong to a delegated child: how it ended, and
+	// whether its parent's conversation has been told.
+	Result    *Result   `json:"result,omitempty"`
+	Delivery  *Delivery `json:"delivery,omitempty"`
 	State     State     `json:"state"`
 	Budget    Budget    `json:"budget,omitzero"`
 	Attempts  []Attempt `json:"attempts,omitempty"`

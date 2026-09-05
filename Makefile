@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: build console test e2e e2e-fleet
+.PHONY: build console test e2e e2e-fleet e2e-autonomous
 
 # The console is a React app built into internal/readmodel/web/dist and
 # embedded into the binary; rebuild it after touching web/console.
@@ -20,3 +20,9 @@ e2e:
 # Uses an already-running hub. HUB / TOKEN override config.e2e.json.
 e2e-fleet:
 	@bash -lc '$(GO) run ./e2e/fleet'
+
+# The coordinator is told only the goal: it must look the fleet up, split
+# the work, place it by capability and report. Needs kvtool in the
+# project's main directory and a remote node advertising build.
+e2e-autonomous:
+	@bash -lc '$(GO) run ./e2e/fleet -scenario autonomous'
