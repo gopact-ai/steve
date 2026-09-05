@@ -3,6 +3,49 @@ package protocol
 
 import "strings"
 
+// Channel names an implementation that carries conversations. The hub
+// routes by this; it does not know what any of them mean.
+const (
+	ChannelConsole = "console"
+	ChannelFeishu  = "feishu"
+)
+
+// Actor is who is speaking, in terms the hub understands. A channel
+// translates its own notion of a person — a Feishu open_id, a console
+// session — into this. Nothing above the channel knows what an open_id is.
+type Actor struct {
+	// ID identifies the person within their channel. Above the channel it
+	// is opaque: compared, stored and handed back, never parsed.
+	ID string `json:"id,omitempty"`
+	// Owner is the person this hub belongs to. The channel decides it,
+	// because only the channel knows how its identities compare; the hub
+	// does not re-derive it from ID.
+	Owner bool `json:"owner,omitempty"`
+	// Direct says the actor and Steve are the only ones present. It is
+	// what "a private message" means once the platform is factored out,
+	// and together with Owner it is the whole of the home-mode question.
+	Direct bool `json:"direct,omitempty"`
+}
+
+// Anchor is where a conversation happens and where its replies go. It is
+// the whole of what the hub keeps about addressing: a channel's own ids for
+// chats, cards, threads and topics stay inside that channel.
+type Anchor struct {
+	// Channel owns the three fields below.
+	Channel string `json:"channel,omitempty"`
+	// Conversation is the thread this belongs to, and the key a session
+	// hangs off. A channel with no threads uses whatever it calls a room.
+	Conversation string `json:"conversation,omitempty"`
+	// Message is what a reply attaches to. A channel that cannot attach
+	// leaves it empty and posts anew.
+	Message string `json:"message,omitempty"`
+	// Actor is who asked, as that channel's id.
+	Actor string `json:"actor,omitempty"`
+}
+
+// Zero reports an anchor that names nowhere.
+func (a Anchor) Zero() bool { return a == Anchor{} }
+
 type ChatType string
 
 const (

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/protocol"
 )
 
 // Store persists tasks with the same durable-replace discipline as the session
@@ -83,9 +84,39 @@ func openWith(doc ledger.Doc) (*Store, error) {
 	if loaded.NextID < 1 {
 		loaded.NextID = 1
 	}
+	for _, t := range loaded.Tasks {
+		migrateAnchor(t)
+	}
 	s.data = loaded
 	return s, nil
 }
+
+// migrateAnchor fills the neutral anchor of a task written before there was
+// one. Everything it needs is already on the record, with two wrinkles: the
+// field called Channel holds the conversation, not the channel, and the
+// channel itself was never written down because there was only ever one that
+// was not the console.
+func migrateAnchor(t *Task) {
+	if t == nil || !t.Anchor.Zero() {
+		return
+	}
+	t.Anchor = protocol.Anchor{
+		Channel:      protocol.ChannelFeishu,
+		Conversation: t.Channel,
+		Message:      t.AnchorMessage,
+		Actor:        t.Requester,
+	}
+	if t.ChatID == console {
+		t.Anchor.Channel = protocol.ChannelConsole
+	}
+	if t.Anchor.Conversation == "" {
+		t.Anchor.Conversation = t.ChatID
+	}
+}
+
+// console is the chat id the console used before it had a channel name of
+// its own. It is here to read old records, not to be written.
+const console = "console"
 
 // Create assigns the id and returns the stored copy. Goal is trimmed to keep
 // listings readable; the full prompt lives in the archive, not here.

@@ -3,7 +3,11 @@
 // gateway restarts, and it carries the budget that stops a runaway loop.
 package task
 
-import "time"
+import (
+	"time"
+
+	"github.com/gopact-ai/steve/internal/protocol"
+)
 
 type State string
 
@@ -160,6 +164,11 @@ type Task struct {
 	ProjectID string `json:"project_id,omitempty"`
 	// Workspace is the directory the task's attempts were given.
 	Workspace string `json:"workspace,omitempty"`
+	// Anchor is where the task's turns reply: enough to reach the right
+	// conversation in whichever channel opened it, after a restart. It
+	// supersedes Requester, ChatID and AnchorMessage, which stay until
+	// every reader has moved off them.
+	Anchor protocol.Anchor `json:"anchor,omitzero"`
 	// Where the task's turns anchor in the chat: enough to reply into the
 	// right conversation (and topic) after a gateway restart.
 	ChatID        string `json:"chat_id,omitempty"`

@@ -1,10 +1,13 @@
 package task
 
 import (
+	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/protocol"
 )
 
 func newStore(t *testing.T) (*Store, *time.Time) {
@@ -458,5 +461,64 @@ func TestCloseIdleEndsQuietChatTasks(t *testing.T) {
 		if got, _ := s.Get(id); got.State != StateRunning {
 			t.Fatalf("task %s = %s, want running", id, got.State)
 		}
+	}
+}
+
+// A record written before the neutral anchor existed still has to say where
+// it replies. Everything needed is on the record; the channel is the one
+// thing that was never written down, because there was only ever one.
+func TestOpenGivesOldRecordsAnAnchor(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tasks.json")
+	raw := `{"next_id":3,"tasks":{
+		"1":{"id":"1","goal":"a","state":"running","requester":"ou_person","channel":"oc_thread","chat_id":"oc_chat","anchor_message":"om_msg","chat_type":"group"},
+		"2":{"id":"2","goal":"b","state":"running","requester":"owner","channel":"c-7","chat_id":"console","anchor_message":"anchor:9"}}}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	feishu, ok := store.Get("1")
+	if !ok {
+		t.Fatal("task 1 missing")
+	}
+	want := protocol.Anchor{
+		Channel: protocol.ChannelFeishu, Conversation: "oc_thread",
+		Message: "om_msg", Actor: "ou_person",
+	}
+	if feishu.Anchor != want {
+		t.Fatalf("anchor = %#v, want %#v", feishu.Anchor, want)
+	}
+	console, ok := store.Get("2")
+	if !ok {
+		t.Fatal("task 2 missing")
+	}
+	if console.Anchor.Channel != protocol.ChannelConsole {
+		t.Fatalf("the console's own tasks came back as %q", console.Anchor.Channel)
+	}
+	if console.Anchor.Conversation != "c-7" || console.Anchor.Message != "anchor:9" {
+		t.Fatalf("anchor = %#v", console.Anchor)
+	}
+}
+
+// An anchor already on the record is left alone: migration runs on every
+// open, and it must not overwrite what a newer write put there.
+func TestOpenKeepsAnAnchorItAlreadyHas(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "tasks.json")
+	raw := `{"next_id":2,"tasks":{"1":{"id":"1","goal":"a","state":"running",
+		"requester":"stale","channel":"stale","chat_id":"stale","anchor_message":"stale",
+		"anchor":{"channel":"console","conversation":"c-1","message":"m-1","actor":"owner"}}}}`
+	if err := os.WriteFile(path, []byte(raw), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, _ := store.Get("1")
+	want := protocol.Anchor{Channel: "console", Conversation: "c-1", Message: "m-1", Actor: "owner"}
+	if got.Anchor != want {
+		t.Fatalf("anchor = %#v, want %#v", got.Anchor, want)
 	}
 }
