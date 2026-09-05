@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 )
 
 func TestSnapshotFlattensAnAgentsNestedRepo(t *testing.T) {
@@ -43,15 +45,11 @@ func TestSnapshotFlattensAnAgentsNestedRepo(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(sub, ".git")); !os.IsNotExist(err) {
 		t.Fatal("the nested repository is still there")
 	}
-	script := Script{}.Snapshot("/objects.git", "/wt", "", "m", true)
-	if !strings.Contains(script, "find . -name .git -prune ! -path './.git' -exec rm -rf {} +") {
-		t.Fatalf("the node script does not flatten nested repositories:\n%s", script)
-	}
 }
 
 // A parent tree that already carries a gitlink — an earlier snapshot made
 // before nested repositories were flattened — must not hide the files an
-// agent writes under that path now, locally or through the node script.
+// agent writes under that path now, locally or through the typed node operation.
 func TestSnapshotDropsAnInheritedGitlink(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
@@ -95,26 +93,23 @@ func TestSnapshotDropsAnInheritedGitlink(t *testing.T) {
 	if listing, _ := repo.git(ctx, nil, "ls-tree", "-r", "--name-only", sha); !strings.Contains(listing, "hostline/main.go") {
 		t.Fatalf("local snapshot hid the files under the gitlink:\n%s", listing)
 	}
-	// Through the node's script, run by a real shell.
+	// Through the same typed implementation that a node runs.
 	work2 := t.TempDir()
 	write(work2)
-	script := Script{}.Snapshot(repo.Dir, work2, parent, "files", false)
-	out, err := exec.Command("sh", "-c", script).CombinedOutput()
-	if err != nil {
-		t.Fatalf("script: %v\n%s\n%s", err, out, script)
+	result, err := (LocalNodes{}).Artifact(ctx, "node", ops.Request{
+		Op: ops.Snapshot, Repo: repo.Dir, WorkTree: work2, Parent: parent, Message: "files",
+	})
+	if err != nil || !result.Changed {
+		t.Fatalf("typed snapshot: changed=%v, %v", result.Changed, err)
 	}
-	got := strings.TrimSpace(string(out))
-	if got == parent {
-		t.Fatalf("script saw no change:\n%s", script)
-	}
-	if listing, _ := repo.git(ctx, nil, "ls-tree", "-r", "--name-only", got); !strings.Contains(listing, "hostline/main.go") {
-		t.Fatalf("script snapshot hid the files under the gitlink:\n%s", listing)
+	if listing, _ := repo.git(ctx, nil, "ls-tree", "-r", "--name-only", result.Commit); !strings.Contains(listing, "hostline/main.go") {
+		t.Fatalf("typed snapshot hid the files under the gitlink:\n%s", listing)
 	}
 }
 
 // A user's directory is never modified: a nested repository in it keeps
 // its .git and is simply not part of the snapshot, locally and through
-// the node script.
+// the typed node operation.
 func TestSnapshotLeavesAUsersNestedRepoAlone(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("no git")
@@ -124,7 +119,8 @@ func TestSnapshotLeavesAUsersNestedRepoAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, viaScript := range []bool{false, true} {
+	var referenceTree string
+	for _, viaTyped := range []bool{false, true} {
 		work := t.TempDir()
 		if err := os.WriteFile(filepath.Join(work, "notes.md"), []byte("hi\n"), 0o644); err != nil {
 			t.Fatal(err)
@@ -140,12 +136,20 @@ func TestSnapshotLeavesAUsersNestedRepoAlone(t *testing.T) {
 			t.Fatal(err)
 		}
 		var sha string
-		if viaScript {
-			out, err := exec.Command("sh", "-c", Script{}.Snapshot(repo.Dir, work, "", "m", false)).CombinedOutput()
-			if err != nil {
-				t.Fatalf("script: %v\n%s", err, out)
+		if viaTyped {
+			// Canonical directories may themselves be symlinks. The typed
+			// walk must follow this root as the old remote cd did.
+			link := filepath.Join(t.TempDir(), "workspace")
+			if err := os.Symlink(work, link); err != nil {
+				t.Fatal(err)
 			}
-			sha = strings.TrimSpace(string(out))
+			result, err := (LocalNodes{}).Artifact(ctx, "node", ops.Request{
+				Op: ops.Snapshot, Repo: repo.Dir, WorkTree: link, Message: "m",
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			sha = result.Commit
 		} else {
 			sha, _, err = repo.Snapshot(ctx, work, "", "m", false)
 			if err != nil {
@@ -153,11 +157,19 @@ func TestSnapshotLeavesAUsersNestedRepoAlone(t *testing.T) {
 			}
 		}
 		if _, err := os.Stat(filepath.Join(sub, ".git")); err != nil {
-			t.Fatalf("script=%v: the user's nested repository lost its .git: %v", viaScript, err)
+			t.Fatalf("typed=%v: the user's nested repository lost its .git: %v", viaTyped, err)
 		}
 		listing, _ := repo.git(ctx, nil, "ls-tree", "-r", "--name-only", sha)
 		if !strings.Contains(listing, "notes.md") || strings.Contains(listing, "vendored") {
-			t.Fatalf("script=%v: tree = %q; want notes.md and no vendored entry", viaScript, listing)
+			t.Fatalf("typed=%v: tree = %q; want notes.md and no vendored entry", viaTyped, listing)
 		}
+		tree, err := repo.git(ctx, nil, "rev-parse", sha+"^{tree}")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if viaTyped && tree != referenceTree {
+			t.Fatalf("typed tree %s differs from direct git tree %s", tree, referenceTree)
+		}
+		referenceTree = tree
 	}
 }

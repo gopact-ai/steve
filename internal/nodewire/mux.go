@@ -42,6 +42,10 @@ const (
 	// exists for verification: a step's check has to run where the step's
 	// work is, and taking the agent's word for it is not verification.
 	StreamExec = "exec"
+	// StreamArtifact exchanges an ArtifactRequest and ArtifactReply as JSON.
+	StreamArtifact = "artifact"
+	// StreamFiles exchanges a FileRequest and FileReply for platform file work.
+	StreamFiles = "files"
 	// StreamAdvert asks the node to check itself again and send a fresh
 	// advert, so a harness repaired after the handshake shows up without
 	// dropping the connection and every session on it.

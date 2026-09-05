@@ -145,11 +145,13 @@ const (
 	// FeatureOwnSkills says the node reports its coding agents' own
 	// skills in its advert, so an empty list means none, not "too old".
 	FeatureOwnSkills = "own_skills.v1"
+	FeatureArtifact  = "artifact_ops.v1"
+	FeatureFiles     = "file_ops.v1"
 )
 
 // Features is what this build supports.
 func Features() []string {
-	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureInspect, FeatureMCPProbe, FeatureOwnSkills, FeatureJournal}
+	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureInspect, FeatureMCPProbe, FeatureOwnSkills, FeatureJournal, FeatureArtifact, FeatureFiles}
 }
 
 // HasFeature says whether a list names a feature.

@@ -4,11 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -130,19 +128,14 @@ func (s *Store) pathState(ctx context.Context, p project.Project, land Landing, 
 	if err != nil {
 		return "", err
 	}
-	script := fmt.Sprintf(
-		"cd %s && cur=$( [ -e %s ] && git --git-dir=%s hash-object -- %s || echo missing ); "+
-			"new=$(git --git-dir=%s rev-parse -q --verify %s 2>/dev/null || echo missing); "+
-			"old=$(git --git-dir=%s rev-parse -q --verify %s 2>/dev/null || echo missing); "+
-			"if [ \"$cur\" = \"$new\" ]; then echo merged; elif [ \"$cur\" = \"$old\" ]; then echo old; else echo other; fi",
-		quote(p.Home.Path), quote(path), quote(bare), quote(path),
-		quote(bare), quote(land.Merged+":"+path),
-		quote(bare), quote(land.Now+":"+path))
-	out, err := s.run(ctx, p.Home.Node, script)
+	result, err := s.operation(ctx, p.Home.Node, ops.Request{
+		Op: ops.PathState, Repo: bare, WorkTree: p.Home.Path,
+		From: land.Now, Commit: land.Merged, Path: path,
+	})
 	if err != nil {
 		return "", fmt.Errorf("inspect %s: %w", path, err)
 	}
-	return lastLine(out), nil
+	return result.State, nil
 }
 
 // writeFromTree brings one canonical path to its content in tree, deleting
@@ -152,10 +145,9 @@ func (s *Store) writeFromTree(ctx context.Context, p project.Project, tree, path
 	if err != nil {
 		return err
 	}
-	script := fmt.Sprintf(
-		"cd %s && if git --git-dir=%s rev-parse -q --verify %s >/dev/null 2>&1; then mkdir -p %s && git --git-dir=%s show %s > %s; else rm -f %s; fi",
-		quote(p.Home.Path), quote(bare), quote(tree+":"+path), quote(filepath.Dir(path)), quote(bare), quote(tree+":"+path), quote(path), quote(path))
-	_, err = s.run(ctx, p.Home.Node, script)
+	_, err = s.operation(ctx, p.Home.Node, ops.Request{
+		Op: ops.WritePath, Repo: bare, WorkTree: p.Home.Path, Commit: tree, Path: path,
+	})
 	return err
 }
 
@@ -170,18 +162,4 @@ func (s *Store) bareFor(ctx context.Context, p project.Project) (string, error) 
 		return "", err
 	}
 	return nodeBare(state, p.ID), nil
-}
-
-// run executes a shell script where the project lives: here, or on a node.
-func (s *Store) run(ctx context.Context, node, script string) (string, error) {
-	if node != "" {
-		return s.nodes.Exec(ctx, node, "", script)
-	}
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", script)
-	cmd.Env = append(os.Environ(), "LC_ALL=C")
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("%w: %s", err, strings.TrimSpace(string(out)))
-	}
-	return string(out), nil
 }

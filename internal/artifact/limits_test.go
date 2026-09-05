@@ -10,36 +10,29 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
-func snapshotWithScript(t *testing.T, repo *Repo, work, parent string, flatten bool) (string, bool, error) {
+func snapshotWithOperation(t *testing.T, repo *Repo, work, parent string, flatten bool) (string, bool, error) {
 	t.Helper()
-	out, err := exec.CommandContext(t.Context(), "sh", "-c", Script{Limits: repo.Limits}.Snapshot(repo.Dir, work, parent, "test", flatten)).CombinedOutput()
-	if err != nil {
-		if tooLarge, ok := snapshotTooLarge(string(out), err); ok {
-			var exit *exec.ExitError
-			if !errors.As(err, &exit) || exit.ExitCode() != snapshotTooLargeExit {
-				t.Fatalf("limit failure must have exit %d: %v, %s", snapshotTooLargeExit, err, out)
-			}
-			return "", false, tooLarge
-		}
-		return "", false, fmt.Errorf("%w: %s", err, out)
-	}
-	sha := lastLine(string(out))
-	return sha, sha != parent, nil
+	result, err := (LocalNodes{}).Artifact(t.Context(), "node", ops.Request{
+		Op: ops.Snapshot, Repo: repo.Dir, WorkTree: work, Parent: parent,
+		Message: "test", Flatten: flatten, Limits: ops.Limits(repo.Limits),
+	})
+	return result.Commit, result.Changed, err
 }
 
-func testSnapshot(t *testing.T, repo *Repo, work, parent string, flatten, script bool) (string, bool, error) {
+func testSnapshot(t *testing.T, repo *Repo, work, parent string, flatten, typed bool) (string, bool, error) {
 	t.Helper()
-	if script {
-		return snapshotWithScript(t, repo, work, parent, flatten)
+	if typed {
+		return snapshotWithOperation(t, repo, work, parent, flatten)
 	}
 	return repo.Snapshot(t.Context(), work, parent, "test", flatten)
 }
 
 func TestSnapshotLimits(t *testing.T) {
-	for _, script := range []bool{false, true} {
+	for _, typed := range []bool{false, true} {
 		for _, flatten := range []bool{false, true} {
 			for _, tc := range []struct {
 				name   string
@@ -50,7 +43,7 @@ func TestSnapshotLimits(t *testing.T) {
 				{"bytes", Limits{MaxBytes: 8}, TooLarge{"bytes", 9, 8}},
 				{"file_bytes", Limits{MaxFileBytes: 3}, TooLarge{"file_bytes", 4, 3}},
 			} {
-				t.Run(fmt.Sprintf("script=%v/flatten=%v/%s", script, flatten, tc.name), func(t *testing.T) {
+				t.Run(fmt.Sprintf("typed=%v/flatten=%v/%s", typed, flatten, tc.name), func(t *testing.T) {
 					repo, err := Open(t.Context(), filepath.Join(t.TempDir(), "objects.git"))
 					if err != nil {
 						t.Fatal(err)
@@ -60,7 +53,7 @@ func TestSnapshotLimits(t *testing.T) {
 					write(t, work, "a file", "aa")
 					write(t, work, "b\nfile", "bbb")
 					write(t, work, "-file", "cccc")
-					sha, changed, err := testSnapshot(t, repo, work, "", flatten, script)
+					sha, changed, err := testSnapshot(t, repo, work, "", flatten, typed)
 					var got TooLarge
 					if !errors.As(err, &got) || got != tc.want || sha != "" || changed {
 						t.Fatalf("snapshot: %q, %v, %v; want %+v", sha, changed, err, tc.want)
@@ -73,7 +66,7 @@ func TestSnapshotLimits(t *testing.T) {
 					}
 					// Equality is allowed, in all three dimensions.
 					repo.Limits = Limits{MaxFiles: 3, MaxBytes: 9, MaxFileBytes: 4}
-					if _, changed, err := testSnapshot(t, repo, work, "", flatten, script); err != nil || !changed {
+					if _, changed, err := testSnapshot(t, repo, work, "", flatten, typed); err != nil || !changed {
 						t.Fatalf("snapshot at the limit: changed=%v, %v", changed, err)
 					}
 				})
@@ -83,8 +76,8 @@ func TestSnapshotLimits(t *testing.T) {
 }
 
 func TestSnapshotLimitsRespectExclusions(t *testing.T) {
-	for _, script := range []bool{false, true} {
-		t.Run(fmt.Sprintf("script=%v", script), func(t *testing.T) {
+	for _, typed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("typed=%v", typed), func(t *testing.T) {
 			repo, err := Open(t.Context(), filepath.Join(t.TempDir(), "objects.git"))
 			if err != nil {
 				t.Fatal(err)
@@ -95,14 +88,14 @@ func TestSnapshotLimitsRespectExclusions(t *testing.T) {
 			write(t, work, "kept", "ok")
 			write(t, work, "ignored/large", strings.Repeat("x", 200))
 			// A worktree's .git is a file, and must not hide siblings from
-			// the directory walk or make the script inspect git metadata.
+			// the directory walk or make the operation inspect git metadata.
 			write(t, work, ".git", "gitdir: "+repo.Dir+"\n")
 			nested := filepath.Join(work, "nested[1]\nrepo")
 			write(t, nested, "large", strings.Repeat("x", 200))
 			if out, err := exec.Command("git", "-C", nested, "init", "-q").CombinedOutput(); err != nil {
 				t.Fatalf("nested git init: %v, %s", err, out)
 			}
-			sha, _, err := testSnapshot(t, repo, work, "", false, script)
+			sha, _, err := testSnapshot(t, repo, work, "", false, typed)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -114,7 +107,7 @@ func TestSnapshotLimitsRespectExclusions(t *testing.T) {
 			}
 			// Platform worktrees include flattened files, so a nested
 			// repository cannot be used to evade their snapshot budgets.
-			if _, _, err := testSnapshot(t, repo, work, "", true, script); err == nil {
+			if _, _, err := testSnapshot(t, repo, work, "", true, typed); err == nil {
 				t.Fatal("flattened files bypassed the limit")
 			}
 		})
@@ -122,8 +115,8 @@ func TestSnapshotLimitsRespectExclusions(t *testing.T) {
 }
 
 func TestSnapshotLimitsTrackedAndDeletedFiles(t *testing.T) {
-	for _, script := range []bool{false, true} {
-		t.Run(fmt.Sprintf("script=%v", script), func(t *testing.T) {
+	for _, typed := range []bool{false, true} {
+		t.Run(fmt.Sprintf("typed=%v", typed), func(t *testing.T) {
 			repo, err := Open(t.Context(), filepath.Join(t.TempDir(), "objects.git"))
 			if err != nil {
 				t.Fatal(err)
@@ -131,7 +124,7 @@ func TestSnapshotLimitsTrackedAndDeletedFiles(t *testing.T) {
 			work := t.TempDir()
 			write(t, work, "tracked", "original")
 			write(t, work, "deleted", "original")
-			parent, _, err := testSnapshot(t, repo, work, "", false, script)
+			parent, _, err := testSnapshot(t, repo, work, "", false, typed)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -141,7 +134,7 @@ func TestSnapshotLimitsTrackedAndDeletedFiles(t *testing.T) {
 				t.Fatal(err)
 			}
 			repo.Limits = Limits{MaxFiles: 2, MaxFileBytes: 10}
-			_, _, err = testSnapshot(t, repo, work, parent, false, script)
+			_, _, err = testSnapshot(t, repo, work, parent, false, typed)
 			var got TooLarge
 			if !errors.As(err, &got) || got != (TooLarge{"file_bytes", 20, 10}) {
 				t.Fatalf("tracked file was ignored, or deleted file counted: %v", err)

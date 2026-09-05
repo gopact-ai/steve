@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -228,19 +229,19 @@ func (s *Store) mergeOnNode(ctx context.Context, p project.Project, base, ours, 
 		return ours, nil, nil
 	}
 	bare := nodeBare(state, p.ID)
-	script := Script{}.Merge(bare, ours, theirs, "land "+short(theirs)+" into "+p.ID)
-	if s.LegacyMerge || !gitAtLeast(version, 2, 38) {
-		script = Script{}.MergeLegacy(bare, base, ours, theirs, "land "+short(theirs)+" into "+p.ID)
-	}
-	out, err := s.nodes.Exec(ctx, p.Home.Node, "", script)
+	result, err := s.nodes.Artifact(ctx, p.Home.Node, ops.Request{
+		Op: ops.Merge, Repo: bare, Base: base, Ours: ours, Theirs: theirs,
+		Message:     "land " + short(theirs) + " into " + p.ID,
+		LegacyMerge: s.LegacyMerge || !ops.GitAtLeast(version, 2, 38),
+	})
 	if err != nil {
-		lines := strings.Split(strings.TrimSpace(out), "\n")
-		if len(lines) > 1 && strings.TrimSpace(lines[0]) == "CONFLICT" {
-			return "", lines[1:], nil
+		var conflict MergeConflict
+		if errors.As(err, &conflict) {
+			return "", conflict.Paths, nil
 		}
 		return "", nil, fmt.Errorf("merge on %s: %w", p.Home.Node, err)
 	}
-	return lastLine(out), nil, nil
+	return result.Commit, nil, nil
 }
 
 func (s *Store) changedOnNode(ctx context.Context, p project.Project, from, to string) ([]string, error) {
@@ -248,28 +249,8 @@ func (s *Store) changedOnNode(ctx context.Context, p project.Project, from, to s
 	if err != nil {
 		return nil, err
 	}
-	out, err := s.nodes.Exec(ctx, p.Home.Node, "", fmt.Sprintf("git --git-dir=%s diff-tree -r --name-only --no-commit-id %s %s", quote(nodeBare(state, p.ID)), quote(from), quote(to)))
-	if err != nil {
-		return nil, err
-	}
-	var paths []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
-		if line != "" {
-			paths = append(paths, line)
-		}
-	}
-	return paths, nil
-}
-
-func gitAtLeast(version string, major, minor int) bool {
-	fields := strings.Split(strings.TrimSpace(strings.TrimPrefix(version, "git version ")), ".")
-	if len(fields) < 2 {
-		return false
-	}
-	var a, b int
-	fmt.Sscanf(fields[0], "%d", &a)
-	fmt.Sscanf(fields[1], "%d", &b)
-	return a > major || (a == major && b >= minor)
+	result, err := s.nodes.Artifact(ctx, p.Home.Node, ops.Request{Op: ops.Changed, Repo: nodeBare(state, p.ID), From: from, Commit: to})
+	return result.Paths, err
 }
 
 // applyOnNode writes the merged tree into a canonical workspace that lives
@@ -286,7 +267,7 @@ func (s *Store) applyOnNode(ctx context.Context, p project.Project, from, merged
 			return err
 		}
 	}
-	_, err = s.nodes.Exec(ctx, p.Home.Node, "", Script{}.Apply(bare, from, merged, p.Home.Path))
+	_, err = s.nodes.Artifact(ctx, p.Home.Node, ops.Request{Op: ops.Apply, Repo: bare, From: from, Commit: merged, WorkTree: p.Home.Path})
 	return err
 }
 

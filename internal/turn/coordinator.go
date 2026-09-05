@@ -160,7 +160,7 @@ type Coordinator struct {
 	plans       *plan.Store
 	fleet       *roster.Roster
 	refresher   Refresher
-	commands    Commands
+	files       MachineFiles
 	probeOne    func(ctx context.Context, node, harness string) error
 	probeAll    func(ctx context.Context) []models.Result
 	projects    *project.Store

@@ -2,7 +2,6 @@ package artifact
 
 import (
 	"context"
-	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -10,13 +9,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
-// localNode plays a node on this machine: commands run in a shell, blobs
-// land in its own state directory. It exercises exactly the scripts a real
-// node receives.
+// localNode runs the same typed operations as a node, with local blobs.
 type localNode struct {
 	root, state string
 	level       string
@@ -30,16 +28,8 @@ func (n *localNode) Generation(context.Context, string) (int64, error) {
 	return n.gen, nil
 }
 
-func (n *localNode) Exec(ctx context.Context, node, dir, command string) (string, error) {
-	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	out, err := cmd.CombinedOutput()
-	if err != nil {
-		return string(out), fmt.Errorf("%w: %s", err, out)
-	}
-	return string(out), nil
+func (n *localNode) Artifact(ctx context.Context, _ string, req ops.Request) (ops.Result, error) {
+	return RunOperation(ctx, req)
 }
 
 func (n *localNode) PutBlob(_ context.Context, node, name string, content io.Reader, size int64) error {

@@ -123,7 +123,9 @@ type Advert struct {
 	Skills string `json:"skills,omitempty"`
 	// Git is the node's git version, empty when git is not on its PATH.
 	// A node without git cannot hold a workspace that is not its own.
-	Git string `json:"git,omitempty"`
+	Git        string `json:"git,omitempty"`
+	GitMinimum string `json:"git_minimum,omitempty"`
+	GitWarning string `json:"git_warning,omitempty"`
 	// MCPPort is the node's loopback port for this hub's messaging server.
 	// The node listens there and tunnels back, so an agent on this machine
 	// still only ever talks to 127.0.0.1 — the security property survives

@@ -11,6 +11,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -278,10 +279,12 @@ func (s *Store) fetchDirect(ctx context.Context, p project.Project, source, targ
 	}
 	name := "direct-" + short(sha) + "-" + fmt.Sprint(s.now().UnixNano()) + ".bundle"
 	sourceBlob := filepath.Join(sourceState, "blobs", name)
-	if _, err := s.nodes.Exec(ctx, source, "", "mkdir -p "+quote(filepath.Dir(sourceBlob))+" && "+Script{}.Bundle(nodeBare(sourceState, p.ID), sourceBlob, sha, nil)); err != nil {
+	if _, err := s.nodes.Artifact(ctx, source, ops.Request{Op: ops.Bundle, Repo: nodeBare(sourceState, p.ID), Path: sourceBlob, Commit: sha}); err != nil {
 		return fmt.Errorf("bundle on %s: %w", source, err)
 	}
-	defer func() { _, _ = s.nodes.Exec(ctx, source, "", "rm -f "+quote(sourceBlob)) }()
+	defer func() {
+		_, _ = s.nodes.Artifact(ctx, source, ops.Request{Op: ops.Remove, Path: sourceBlob})
+	}()
 	var raw [16]byte
 	_, _ = rand.Read(raw[:])
 	token := hex.EncodeToString(raw[:])
@@ -296,8 +299,10 @@ func (s *Store) fetchDirect(ctx context.Context, p project.Project, source, targ
 		return fmt.Errorf("fetch on %s from %s: %w", target, source, err)
 	}
 	targetBlob := filepath.Join(targetState, "blobs", name)
-	defer func() { _, _ = s.nodes.Exec(ctx, target, "", "rm -f "+quote(targetBlob)) }()
-	if _, err := s.nodes.Exec(ctx, target, "", Script{}.Unbundle(targetBare, targetBlob)); err != nil {
+	defer func() {
+		_, _ = s.nodes.Artifact(ctx, target, ops.Request{Op: ops.Remove, Path: targetBlob})
+	}()
+	if _, err := s.nodes.Artifact(ctx, target, ops.Request{Op: ops.Unbundle, Repo: targetBare, Path: targetBlob}); err != nil {
 		return fmt.Errorf("unbundle on %s: %w", target, err)
 	}
 	return nil

@@ -14,6 +14,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"log"
 	"os"
@@ -36,9 +37,6 @@ var openMu sync.Mutex
 
 // Open opens or creates the bare repository at dir.
 func Open(ctx context.Context, dir string) (*Repo, error) {
-	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err == nil {
-		return &Repo{Dir: dir}, nil
-	}
 	openMu.Lock()
 	defer openMu.Unlock()
 	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err == nil {
@@ -52,8 +50,12 @@ func Open(ctx context.Context, dir string) (*Repo, error) {
 	}
 	r := &Repo{Dir: dir}
 	// Snapshots must not depend on who runs the hub.
-	_, _ = r.git(ctx, nil, "config", "user.name", "steve")
-	_, _ = r.git(ctx, nil, "config", "user.email", "steve@localhost")
+	if _, err := r.git(ctx, nil, "config", "user.name", "steve"); err != nil {
+		return nil, err
+	}
+	if _, err := r.git(ctx, nil, "config", "user.email", "steve@localhost"); err != nil {
+		return nil, err
+	}
 	return r, nil
 }
 
@@ -69,6 +71,12 @@ var shaPattern = regexp.MustCompile(`^[0-9a-f]{40,64}$`)
 // noise to remove. A user's directory is never modified: a nested
 // repository there is left alone and simply not part of the snapshot.
 func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, flatten bool) (sha string, changed bool, err error) {
+	// A shell's cd followed a symlink at the workspace root. Resolve that
+	// root for Go's walk too, while leaving symlinks inside it untouched.
+	workTree, err = filepath.EvalSymlinks(workTree)
+	if err != nil {
+		return "", false, err
+	}
 	index, cleanup, err := r.tempIndex()
 	if err != nil {
 		return "", false, err
@@ -91,7 +99,11 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, f
 	}
 	add := []string{"add", "-A", "--", "."}
 	if flatten {
-		if flattened := flattenNestedRepos(workTree); len(flattened) > 0 {
+		flattened, err := flattenNestedRepos(ctx, workTree)
+		if err != nil {
+			return "", false, err
+		}
+		if len(flattened) > 0 {
 			log.Printf("artifact: %s: flattened nested git repositories at %s", workTree, strings.Join(flattened, ", "))
 		}
 	} else {
@@ -154,12 +166,12 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, f
 // a bundle can carry.
 // gitlinks lists the submodule entries in the index.
 func (r *Repo) gitlinks(ctx context.Context, env []string) ([]string, error) {
-	out, err := r.git(ctx, env, "ls-files", "--stage")
+	out, err := r.git(ctx, env, "ls-files", "--stage", "-z")
 	if err != nil {
 		return nil, fmt.Errorf("list index: %w", err)
 	}
 	var links []string
-	for _, line := range strings.Split(out, "\n") {
+	for _, line := range strings.Split(out, "\x00") {
 		if !strings.HasPrefix(line, "160000 ") {
 			continue
 		}
@@ -201,10 +213,16 @@ func nestedRepos(workTree string) ([]string, error) {
 // directory did not make a submodule: git would record the directory as
 // a bare link and the files it wrote would never reach the project. The
 // files are what was asked for; the repository around them is not.
-func flattenNestedRepos(workTree string) []string {
+func flattenNestedRepos(ctx context.Context, workTree string) ([]string, error) {
 	var found []string
-	_ = filepath.WalkDir(workTree, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || path == workTree {
+	err := filepath.WalkDir(workTree, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if path == workTree {
 			return nil
 		}
 		if d.Name() != ".git" {
@@ -218,13 +236,15 @@ func flattenNestedRepos(workTree string) []string {
 		}
 		rel, _ := filepath.Rel(workTree, filepath.Dir(path))
 		found = append(found, rel)
-		_ = os.RemoveAll(path)
+		if err := os.RemoveAll(path); err != nil {
+			return err
+		}
 		if d.IsDir() {
 			return filepath.SkipDir
 		}
 		return nil
 	})
-	return found
+	return found, err
 }
 
 func (r *Repo) pin(ctx context.Context, sha string) error {
@@ -244,6 +264,8 @@ func (r *Repo) Checkout(ctx context.Context, sha, dir string) error {
 	}
 	if entries, err := os.ReadDir(dir); err == nil && len(entries) > 0 {
 		return fmt.Errorf("artifact: %s is not empty", dir)
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
@@ -294,15 +316,15 @@ func (r *Repo) Changed(ctx context.Context, from, to string) ([]string, error) {
 	var out string
 	var err error
 	if from == "" {
-		out, err = r.git(ctx, nil, "ls-tree", "-r", "--name-only", to)
+		out, err = r.git(ctx, nil, "ls-tree", "-r", "--name-only", "-z", to)
 	} else {
-		out, err = r.git(ctx, nil, "diff-tree", "-r", "--name-only", "--no-commit-id", from, to)
+		out, err = r.git(ctx, nil, "diff-tree", "-r", "--name-only", "--no-commit-id", "-z", from, to)
 	}
 	if err != nil {
 		return nil, err
 	}
 	var paths []string
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for _, line := range strings.Split(out, "\x00") {
 		if line != "" {
 			paths = append(paths, line)
 		}
@@ -322,13 +344,12 @@ func (r *Repo) Merge(ctx context.Context, base, ours, theirs, message string) (s
 	// Both sides descend from base — snapshots always name their parent —
 	// so git finds that base itself; naming it needs git 2.40, and the
 	// nodes are not all there yet.
-	out, err := r.git(ctx, nil, "merge-tree", "--write-tree", "--name-only", ours, theirs)
-	lines := strings.Split(strings.TrimSpace(out), "\n")
+	out, err := r.git(ctx, nil, "merge-tree", "--write-tree", "--name-only", "-z", ours, theirs)
+	lines := strings.Split(out, "\x00")
 	if err != nil {
-		var exit *exec.ExitError
+		var exit *GitError
 		if errors.As(err, &exit) && exit.ExitCode() == 1 && len(lines) > 1 {
-			// Output is the tree, the conflicted paths, a blank line, then
-			// messages; only the paths are the answer.
+			// Git's -z format is tree, paths, empty field, then messages.
 			var paths []string
 			for _, line := range lines[1:] {
 				if line == "" {
@@ -336,7 +357,9 @@ func (r *Repo) Merge(ctx context.Context, base, ours, theirs, message string) (s
 				}
 				paths = append(paths, line)
 			}
-			return "", paths, nil
+			if len(paths) > 0 {
+				return "", paths, nil
+			}
 		}
 		return "", nil, err
 	}
@@ -418,7 +441,12 @@ func (r *Repo) git(ctx context.Context, env []string, args ...string) (string, e
 }
 
 func git(ctx context.Context, gitDir string, env []string, args ...string) (string, error) {
+	return gitInput(ctx, gitDir, env, nil, args...)
+}
+
+func gitInput(ctx context.Context, gitDir string, env []string, input io.Reader, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Stdin = input
 	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C")
 	if gitDir != "" {
 		cmd.Env = append(cmd.Env, "GIT_DIR="+gitDir)
@@ -434,7 +462,19 @@ func git(ctx context.Context, gitDir string, env []string, args ...string) (stri
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
 	if err := cmd.Run(); err != nil {
-		return stdout.String(), fmt.Errorf("git %s: %w: %s", args[0], err, strings.TrimSpace(stderr.String()))
+		if ctx.Err() != nil {
+			return stdout.String(), ctx.Err()
+		}
+		code := -1
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			code = exit.ExitCode()
+		}
+		detail := strings.TrimSpace(stderr.String())
+		if detail == "" {
+			detail = err.Error()
+		}
+		return stdout.String(), &GitError{Command: args[0], Code: code, Stderr: detail, cause: err}
 	}
 	return stdout.String(), nil
 }
@@ -444,99 +484,4 @@ func short(sha string) string {
 		return sha[:12]
 	}
 	return sha
-}
-
-// Script renders the same operations as shell for a node that has git but
-// no Steve code for it: the hub is the authority and the node executes.
-// Every argument is quoted; nothing from a user reaches this unquoted.
-type Script struct{ Limits Limits }
-
-func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
-
-// InitScript creates the bare repository if absent.
-func (Script) Init(dir string) string {
-	// mkdir of the lock directory is atomic: the loser waits for HEAD.
-	return fmt.Sprintf("test -f %s/HEAD || { mkdir -p %s; if mkdir %s.lock 2>/dev/null; then git init --bare --quiet %s && git --git-dir=%s config user.name steve && git --git-dir=%s config user.email steve@localhost; rc=$?; rmdir %s.lock; exit $rc; else for i in $(seq 1 100); do test -f %s/HEAD && exit 0; sleep 0.1; done; exit 1; fi; }",
-		quote(dir), quote(filepath.Dir(dir)), quote(dir), quote(dir), quote(dir), quote(dir), quote(dir), quote(dir))
-}
-
-// Unbundle fetches a bundle's tips into the bare repository.
-func (Script) Unbundle(dir, bundle string) string {
-	return fmt.Sprintf("cd %s && for ref in $(git bundle list-heads %s | cut -d' ' -f2); do git --git-dir=%s fetch --quiet %s \"$ref:$ref\" || exit 1; done",
-		quote(filepath.Dir(dir)), quote(bundle), quote(dir), quote(bundle))
-}
-
-// Checkout materialises a commit into an empty directory.
-func (Script) Checkout(dir, sha, target string) string {
-	return fmt.Sprintf("mkdir -p %s && [ -z \"$(ls -A %s)\" ] && GIT_DIR=%s GIT_WORK_TREE=%s GIT_INDEX_FILE=%s.index git read-tree --reset -u %s && rm -f %s.index",
-		quote(target), quote(target), quote(dir), quote(target), quote(target), quote(sha), quote(target))
-}
-
-// Snapshot commits a directory's contents on top of parent and prints the
-// commit id, or the parent's id when nothing changed.
-func (s Script) Snapshot(dir, workTree, parent, message string, flatten bool) string {
-	// dropLinks removes every gitlink from the index: a nested repository
-	// is not this snapshot's to carry, whether it came from the parent
-	// tree or from the directory.
-	const dropLinks = "{ links=$(git ls-files --stage | awk -F'\t' '$1 ~ /^160000 / {print $2}'); [ -z \"$links\" ] || printf '%s\\n' \"$links\" | xargs -d '\\n' git update-index --force-remove --; }"
-	parentArg := ""
-	readParent := "true"
-	if parent != "" {
-		parentArg = " -p " + quote(parent)
-		readParent = "git read-tree " + quote(parent) + " && " + dropLinks
-	}
-	compare := "false"
-	if parent != "" {
-		compare = fmt.Sprintf("[ \"$tree\" = \"$(git rev-parse %s^{tree})\" ]", quote(parent))
-	}
-	// Only the platform's own worktree is flattened: a .git below its top
-	// level is an agent's git init, not a submodule. A user's directory is
-	// never touched; its nested repositories are left out instead.
-	prune := "true"
-	// Everything under the top level, minus each nested repository's
-	// directory, as NUL-separated pathspecs: left alone and left out.
-	add := "{ printf '.\\0'; find . -name .git -prune ! -path './.git' -printf ':(exclude,literal)%h\\0'; } | git add -A --pathspec-from-file=- --pathspec-file-nul"
-	if flatten {
-		prune = "find . -name .git -prune ! -path './.git' -exec rm -rf {} +"
-		add = "git add -A -- ."
-	}
-	return fmt.Sprintf("export GIT_DIR=%s GIT_WORK_TREE=%s GIT_INDEX_FILE=%s.index; cd \"$GIT_WORK_TREE\" || exit 1; trap 'rm -f \"$GIT_INDEX_FILE\" \"$GIT_INDEX_FILE.candidates\" \"$GIT_INDEX_FILE.files\" \"$GIT_INDEX_FILE.sizes\"' EXIT; rm -f \"$GIT_INDEX_FILE\" && %s && %s && { %s; } && %s && %s && tree=$(git write-tree) && rm -f \"$GIT_INDEX_FILE\" && if %s; then echo %s; else sha=$(git commit-tree \"$tree\" -m %s%s) && git update-ref \"refs/steve/artifacts/$sha\" \"$sha\" && echo \"$sha\"; fi",
-		quote(dir), quote(workTree), quote(workTree), prune, readParent, s.checkLimits(flatten), add, dropLinks, compare, quote(parent), quote(message), parentArg)
-}
-
-// Merge three-way merges two commits at the node and prints the merged
-// commit, or "CONFLICT" followed by the conflicting paths with exit 1.
-func (Script) Merge(dir, ours, theirs, message string) string {
-	return fmt.Sprintf("export GIT_DIR=%s; out=$(git merge-tree --write-tree --name-only %s %s); rc=$?; if [ $rc -eq 1 ]; then echo CONFLICT; echo \"$out\" | sed -n '2,/^$/p' | sed '/^$/d'; exit 1; fi; [ $rc -eq 0 ] || exit $rc; tree=$(echo \"$out\" | head -1); sha=$(git commit-tree \"$tree\" -m %s -p %s -p %s) && git update-ref \"refs/steve/artifacts/$sha\" \"$sha\" && echo \"$sha\"",
-		quote(dir), quote(ours), quote(theirs), quote(message), quote(ours), quote(theirs))
-}
-
-// MergeLegacy three-way merges on a git too old for merge-tree
-// --write-tree: a throwaway index and work tree, read-tree -m with
-// git-merge-one-file for what read-tree leaves, then write-tree. Same
-// contract as Merge.
-func (Script) MergeLegacy(dir, base, ours, theirs, message string) string {
-	return fmt.Sprintf("export GIT_DIR=%s; tmp=$(mktemp -d) && export GIT_WORK_TREE=\"$tmp\" GIT_INDEX_FILE=\"$tmp.index\"; cd \"$tmp\" && "+
-		"git read-tree -m -u --aggressive %s %s %s >/dev/null 2>&1; git merge-index git-merge-one-file -a >/dev/null 2>&1; "+
-		"if [ -n \"$(git ls-files --unmerged)\" ]; then echo CONFLICT; git ls-files --unmerged | awk '{print $4}' | sort -u; rm -rf \"$tmp\" \"$tmp.index\"; exit 1; fi; "+
-		"tree=$(git write-tree) && sha=$(git commit-tree \"$tree\" -m %s -p %s -p %s) && git update-ref \"refs/steve/artifacts/$sha\" \"$sha\"; rc=$?; rm -rf \"$tmp\" \"$tmp.index\"; [ $rc -eq 0 ] && echo \"$sha\"",
-		quote(dir), quote(base), quote(ours), quote(theirs), quote(message), quote(ours), quote(theirs))
-}
-
-// Apply brings a directory from one tree to another, as Repo.Apply does.
-func (Script) Apply(dir, from, to, target string) string {
-	return fmt.Sprintf("export GIT_DIR=%s GIT_WORK_TREE=%s GIT_INDEX_FILE=%s.land-index; cd \"$GIT_WORK_TREE\" && rm -f \"$GIT_INDEX_FILE\" && git read-tree %s && git update-index --refresh -q --ignore-missing; git read-tree -m -u %s %s; rc=$?; rm -f \"$GIT_INDEX_FILE\"; exit $rc",
-		quote(dir), quote(target), quote(target), quote(from), quote(from), quote(to))
-}
-
-// Bundle writes a commit's closure, minus have, to path.
-func (Script) Bundle(dir, path, sha string, have []string) string {
-	var exclude strings.Builder
-	for _, h := range have {
-		if h != "" {
-			exclude.WriteString(" ^" + quote(h))
-		}
-	}
-	return fmt.Sprintf("git --git-dir=%s update-ref %s %s && git --git-dir=%s bundle create %s %s%s",
-		quote(dir), quote(RefFor(sha)), quote(sha), quote(dir), quote(path), quote(RefFor(sha)), exclude.String())
 }
