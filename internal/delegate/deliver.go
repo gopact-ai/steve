@@ -163,7 +163,7 @@ func (s *Service) Flush(ctx context.Context, parentID string) {
 	for _, c := range waiting {
 		elapsed := c.UpdatedAt.Sub(c.CreatedAt)
 		dc := Delivered{Task: c.ID, Agent: c.Member, Node: c.Node, State: string(c.State), Elapsed: elapsed, Goal: c.Goal,
-			Answer: c.Result.Answer, Refs: c.Result.Refs, Attempt: c.Result.Attempt}
+			Answer: c.Result.Answer, Refs: withoutLandingTalk(c.Result.Refs), Attempt: c.Result.Attempt}
 		if c.State == task.StateDone {
 			dc.State = "done"
 		} else {
@@ -252,4 +252,17 @@ func (s *Service) RedeliverPending(ctx context.Context) {
 	for parentID := range s.tasks.Undelivered() {
 		s.flushIfIdle(ctx, parentID)
 	}
+}
+
+// withoutLandingTalk drops the refs that said, at the child's end, where
+// its files were about to go: the delivery says where they are now.
+func withoutLandingTalk(refs []string) []string {
+	var out []string
+	for _, r := range refs {
+		if strings.HasPrefix(r, "queued to land") || strings.HasPrefix(r, "not landed yet") || strings.HasPrefix(r, "landed into your working directory") {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
 }

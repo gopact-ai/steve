@@ -258,8 +258,8 @@ func TestDeliverySaysWhereTheChildsFilesAre(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(w.home, "notes.md")); err != nil {
 		t.Fatalf("the child's file did not reach the main directory: %v", err)
 	}
-	if !strings.Contains(got[0].Prompt(), "已落地") {
-		t.Fatalf("prompt does not say where the files are: %q", got[0].Prompt())
+	if p := got[0].Prompt(); !strings.Contains(p, "已落地") || strings.Contains(p, "queued to land") {
+		t.Fatalf("prompt must say where the files are now, not where they were going: %q", p)
 	}
 	_ = parent
 }

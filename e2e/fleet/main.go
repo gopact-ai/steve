@@ -25,6 +25,7 @@ const totalTimeout = 10 * time.Minute
 
 type options struct {
 	hub, token, project, agent, targetNode, targetAgent string
+	scenario                                            string
 	timeout                                             time.Duration
 }
 
@@ -39,7 +40,11 @@ func main() {
 	}
 	g := newGate(opts, os.Stdout)
 	ctx, cancel := context.WithTimeout(context.Background(), opts.timeout)
-	err = g.run(ctx)
+	if opts.scenario == "autonomous" {
+		err = g.runAutonomous(ctx)
+	} else {
+		err = g.run(ctx)
+	}
 	if err != nil {
 		g.diagnostics(ctx)
 	}
@@ -64,15 +69,33 @@ func parseOptions(args []string, out io.Writer) (options, error) {
 	f.StringVar(&o.agent, "agent", env("AGENT", "claude"), "coordinating agent on the hub")
 	f.StringVar(&o.targetNode, "target-node", env("TARGET_NODE", "node-b"), "remote node")
 	f.StringVar(&o.targetAgent, "target-agent", env("TARGET_AGENT", "shipper"), "agent on the remote node")
-	f.DurationVar(&o.timeout, "timeout", totalTimeout, "total client deadline (at most 10m)")
+	f.StringVar(&o.scenario, "scenario", env("SCENARIO", "delegate"), "delegate (one named delegation) or autonomous (the agent splits and places the work itself)")
+	f.DurationVar(&o.timeout, "timeout", totalTimeout, "total client deadline (at most 10m; 20m for autonomous, its default)")
 	if err := f.Parse(args); err != nil {
 		return o, err
+	}
+	limit := totalTimeout
+	switch o.scenario {
+	case "delegate":
+	case "autonomous":
+		limit = autonomousTimeout
+	default:
+		return o, fmt.Errorf("-scenario must be delegate or autonomous, not %q", o.scenario)
+	}
+	timeoutSet := false
+	f.Visit(func(fl *flag.Flag) {
+		if fl.Name == "timeout" {
+			timeoutSet = true
+		}
+	})
+	if !timeoutSet {
+		o.timeout = limit
 	}
 	if f.NArg() != 0 {
 		return o, errors.New("unexpected positional arguments; use -help")
 	}
-	if o.timeout <= 0 || o.timeout > totalTimeout {
-		return o, errors.New("-timeout must be greater than zero and at most 10m")
+	if o.timeout <= 0 || o.timeout > limit {
+		return o, fmt.Errorf("-timeout must be greater than zero and at most %s", limit)
 	}
 	for name, value := range map[string]string{"project": o.project, "agent": o.agent, "target-node": o.targetNode, "target-agent": o.targetAgent} {
 		if value == "" || strings.ContainsAny(value, " \t\r\n") {
