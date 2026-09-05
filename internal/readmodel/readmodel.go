@@ -656,6 +656,14 @@ type Progress struct {
 	Answer    string     `json:"answer,omitempty"`
 	Tools     []ToolCall `json:"tools,omitempty"`
 	Plan      []PlanLine `json:"plan,omitempty"`
+	Timeline  []Span     `json:"timeline,omitempty"`
+}
+
+type Span struct {
+	Kind string    `json:"kind"`
+	Text string    `json:"text,omitempty"`
+	Tool string    `json:"tool,omitempty"`
+	At   time.Time `json:"at"`
 }
 
 type ToolCall struct {
@@ -687,17 +695,25 @@ func FromProgress(p view.Progress) Progress {
 		Agent: p.Agent, Node: p.Settings.Node, Model: p.Settings.Model,
 		Reasoning: p.Reasoning, Answer: tailText(p.Answer, answerKept),
 	}
-	out.Tools = toolCalls(p.Tools, 0)
+	limit := toolsKept
+	if len(p.Timeline) > 0 {
+		// Every timeline reference needs a corresponding tool detail.
+		limit = 0
+	}
+	out.Tools = toolCalls(p.Tools, 0, limit)
+	for _, s := range p.Timeline {
+		out.Timeline = append(out.Timeline, Span{Kind: s.Kind, Text: s.Text, Tool: s.Tool, At: s.At})
+	}
 	for _, s := range p.Plan {
 		out.Plan = append(out.Plan, PlanLine{Text: s.Text, Status: string(s.Status)})
 	}
 	return out
 }
 
-func toolCalls(tools []view.Tool, depth int) []ToolCall {
+func toolCalls(tools []view.Tool, depth, limit int) []ToolCall {
 	var out []ToolCall
 	for _, t := range tools {
-		if len(out) >= toolsKept {
+		if limit > 0 && len(out) >= limit {
 			break
 		}
 		out = append(out, ToolCall{
@@ -705,7 +721,7 @@ func toolCalls(tools []view.Tool, depth int) []ToolCall {
 			Input: headText(t.Input, toolTextKept), Output: headText(t.Output, toolTextKept),
 		})
 		if depth < 2 {
-			out = append(out, toolCalls(t.Children, depth+1)...)
+			out = append(out, toolCalls(t.Children, depth+1, limit)...)
 		}
 	}
 	return out
@@ -731,6 +747,7 @@ func headText(s string, n int) string {
 type Process struct {
 	Reasoning string        `json:"reasoning,omitempty"`
 	Tools     []ToolCall    `json:"tools,omitempty"`
+	Timeline  []Span        `json:"timeline,omitempty"`
 	Steps     []StepProcess `json:"steps,omitempty"`
 }
 
@@ -742,6 +759,7 @@ type StepProcess struct {
 	Reasoning string     `json:"reasoning,omitempty"`
 	Tools     []ToolCall `json:"tools,omitempty"`
 	Plan      []PlanLine `json:"plan,omitempty"`
+	Timeline  []Span     `json:"timeline,omitempty"`
 	// The rest is what a delegated child adds: what it was asked, how it
 	// ended, what it said. A plan step leaves them empty.
 	StepInfo
@@ -753,7 +771,7 @@ func FromStepProgress(id string, p Progress, info StepInfo) StepProcess {
 		info.Answer = p.Answer
 	}
 	return StepProcess{ID: id, Agent: p.Agent, Node: p.Node, Model: p.Model,
-		Reasoning: p.Reasoning, Tools: p.Tools, Plan: p.Plan, StepInfo: info}
+		Reasoning: p.Reasoning, Tools: p.Tools, Plan: p.Plan, Timeline: p.Timeline, StepInfo: info}
 }
 
 // StepInfo is what a step.progress event says about the step itself,

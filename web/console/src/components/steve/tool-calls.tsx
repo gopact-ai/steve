@@ -1,6 +1,7 @@
 import { CheckCircle, ChevronDown, Loading01, XCircle } from "@untitledui/icons";
 import type { ToolCall } from "@/lib/types";
 import { formatToolText, type Shown } from "@/lib/tooltext";
+import { toolFailed } from "@/lib/activity";
 import { CodeBlock } from "./markdown";
 
 // ToolCalls is a group of tool calls as the transcript shows them, the
@@ -11,15 +12,6 @@ import { CodeBlock } from "./markdown";
 const verbs: Record<string, string> = { execute: "运行", read: "读取", edit: "修改", write: "写入", delete: "删除", move: "移动", search: "搜索", fetch: "抓取", think: "思考", other: "调用" };
 
 interface Row { t: ToolCall; verb: string; text: string; shell: boolean; input: Shown | null; output: Shown | null; failed: boolean }
-
-// domainFailed reads a platform tool's answer for a failure the call
-// itself did not have: steve_await returns fine while the child it
-// awaited failed. Such a row shows as failed and never folds away.
-function domainFailed(t: ToolCall): boolean {
-    if (t.status === "failed") return true;
-    const out = t.output || "";
-    return /steve_(await|delegate)/.test(t.name || "") && /\\?"state\\?"\s*:\s*\\?"(failed|cancelled)/.test(out);
-}
 
 // unwrapShell shows `bash -lc "ls -la"` as `ls -la`: the wrapper is the
 // adapter's, the command is the agent's.
@@ -36,7 +28,7 @@ function describe(t: ToolCall): Row {
     const output = formatToolText(t.output);
     const shell = input?.lang === "shell";
     const text = shell ? unwrapShell(input!.body).split("\n")[0] : (t.name || t.detail || t.kind || "");
-    return { t, verb: shell ? "运行" : (verbs[t.kind || ""] ?? (t.kind || "调用")), text, shell, input, output, failed: domainFailed(t) };
+    return { t, verb: shell ? "运行" : (verbs[t.kind || ""] ?? (t.kind || "调用")), text, shell, input, output, failed: toolFailed(t) };
 }
 
 // headingOf says what a group did, in the words a person would use.

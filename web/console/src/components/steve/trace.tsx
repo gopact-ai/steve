@@ -1,8 +1,10 @@
 import { DelegationCard } from "./delegation";
 import { useEffect, useState } from "react";
-import { CheckCircle, Loading01 } from "@untitledui/icons";
+import { CheckCircle, Loading01, ChevronDown, File02, Edit05, Terminal, Users01, Server01, SearchLg, Globe01, Tool02 } from "@untitledui/icons";
+import { useFollowTail } from "@/hooks/use-follow-tail";
+import { activity, type ActivityKind } from "@/lib/activity";
 import { when } from "@/lib/api";
-import type { Event, Injected, Plan, Process, Progress, Step, StepProcess, StepInfo } from "@/lib/types";
+import type { Event, Injected, Plan, Process, Progress, Span, Step, StepProcess, StepInfo, ToolCall } from "@/lib/types";
 import { CodeBlock, Md } from "./markdown";
 import { Chips, KeyValue, Panel } from "./page";
 import { ThinkingFold } from "./message";
@@ -69,8 +71,15 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
                 </div>
                 {steps.map((s) => group(s.id))}
                 {extra.map(group)}
-                {latest?.reasoning && <ThinkingTail text={latest.reasoning} />}
-                {live.turn?.tools?.length ? <ToolCalls tools={live.turn.tools} /> : null}
+                {live.turn?.timeline?.length ? (
+                    <details open className="text-xs text-tertiary">
+                        <summary className="cursor-pointer">过程</summary>
+                        <Trace p={live.turn} live />
+                    </details>
+                ) : <>
+                    {latest?.reasoning && <ThinkingTail text={latest.reasoning} />}
+                    {live.turn?.tools?.length ? <ToolCalls tools={live.turn.tools} /> : null}
+                </>}
                 {live.turn?.answer && <Md text={live.turn.answer} />}
             </div>
         );
@@ -87,7 +96,7 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
                                     <span className="font-medium text-primary">{s.id}</span>
                                     <span className="text-xs text-tertiary">{s.agent || "—"}{s.node ? ` @ ${s.node}` : ""}</span>
                                 </div>
-                                {live.steps[s.id] && <Trace p={live.steps[s.id]} />}
+                                {live.steps[s.id] && <Trace p={live.steps[s.id]} live />}
                             </div>
                         ))}
                     </div>
@@ -97,10 +106,10 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
                     : (
                         <div key={id} className="flex flex-col gap-1.5">
                             <div className="text-sm font-medium text-primary">{id}</div>
-                            <Trace p={live.steps[id]} />
+                            <Trace p={live.steps[id]} live />
                         </div>
                     ))}
-                {live.turn && <Trace p={live.turn} showAnswer />}
+                {live.turn && <Trace p={live.turn} showAnswer live />}
                 {!live.turn && !live.order.length && steps.length === 0 && <span className="text-sm text-tertiary">正在放置…</span>}
             </div>
         </Panel>
@@ -117,7 +126,7 @@ function ThinkingTail({ text }: { text: string }) {
 
 // Trace is one agent's progress: its checklist, its thinking summary,
 // its tool calls, and (for a plain turn) the answer forming.
-export function Trace({ p, showAnswer, live, thinkingOpen = true }: { p: Progress; showAnswer?: boolean; live?: boolean; thinkingOpen?: boolean }) {
+export function Trace({ p, showAnswer, live, thinkingOpen = true, omitText }: { p: Progress; showAnswer?: boolean; live?: boolean; thinkingOpen?: boolean; omitText?: number }) {
     return (
         <div className="flex min-w-0 flex-col gap-2">
             {p.plan?.length ? (
@@ -130,12 +139,60 @@ export function Trace({ p, showAnswer, live, thinkingOpen = true }: { p: Progres
                     ))}
                 </ul>
             ) : null}
-            {p.reasoning && <ThinkingFold text={p.reasoning} open={thinkingOpen} live={live} />}
-            {p.tools?.length ? <ToolCalls tools={p.tools} /> : null}
+            {p.timeline?.length ? <Timeline p={p} live={live} omitText={omitText} /> : <>
+                {p.reasoning && <ThinkingFold text={p.reasoning} open={thinkingOpen} live={live} />}
+                {p.tools?.length ? <ToolCalls tools={p.tools} /> : null}
+            </>}
             {(p.agent || p.node || p.model) && <div className="break-words text-xs text-quaternary">{[[p.agent, p.node].filter(Boolean).join(" @ "), p.model].filter(Boolean).join(" · ")}</div>}
             {showAnswer && p.answer && <Md text={p.answer} />}
         </div>
     );
+}
+
+const activityIcons: Record<ActivityKind, typeof File02> = { read: File02, edit: Edit05, run: Terminal, delegate: Users01, platform: Server01, search: SearchLg, fetch: Globe01, other: Tool02 };
+
+function Activity({ tools }: { tools: ToolCall[] }) {
+    const summary = activity(tools);
+    return (
+        <details data-span-kind="tool" className="group/activity min-w-0">
+            <summary className={`flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-xs ${summary.failed ? "text-error-primary" : "text-tertiary hover:text-primary"}`}>
+                {summary.kinds.map((kind) => { const Icon = activityIcons[kind]; return <Icon key={kind} className="size-3.5 shrink-0" />; })}
+                <span className="min-w-0 truncate" title={summary.text}>{summary.text}</span>
+                {summary.failed && <span className="shrink-0">（有失败）</span>}
+                {summary.running && <Loading01 className="size-3 shrink-0 animate-spin" />}
+                <ChevronDown className="size-3.5 shrink-0 transition group-open/activity:rotate-180" />
+            </summary>
+            <div className="ml-2 border-l border-secondary pl-3"><ToolCalls tools={tools} /></div>
+        </details>
+    );
+}
+
+function ThoughtSpan({ text, live }: { text: string; live?: boolean }) {
+    const { followTail: _, ...scroll } = useFollowTail(text, live);
+    return <div {...scroll} data-span-kind="thought" tabIndex={0} aria-label="思考摘要" title={text}
+        className="max-h-5 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-tertiary [overflow-anchor:none]">{text}</div>;
+}
+
+function Timeline({ p, live, omitText }: { p: Progress; live?: boolean; omitText?: number }) {
+    const entries: { index: number; span: Span; tools?: ToolCall[] }[] = [];
+    const tools = new Map((p.tools || []).map((tool) => [tool.id, tool]));
+    let previousKind = "";
+    for (const [index, span] of (p.timeline || []).entries()) {
+        if (span.kind === "tool") {
+            const tool = tools.get(span.tool);
+            if (tool) {
+                const prev = entries[entries.length - 1];
+                if (previousKind === "tool" && prev?.tools) prev.tools.push(tool);
+                else entries.push({ index, span, tools: [tool] });
+            }
+        } else if (span.text && index !== omitText) entries.push({ index, span });
+        previousKind = span.kind;
+    }
+    return <div data-timeline className="flex min-w-0 flex-col gap-2">{entries.map(({ index, span, tools }) => tools
+        ? <Activity key={index} tools={tools} />
+        : span.kind === "thought"
+            ? <ThoughtSpan key={index} text={span.text || ""} live={live && index === (p.timeline?.length || 0) - 1} />
+            : <div key={index} data-span-kind="text"><Md text={span.text || ""} /></div>)}</div>;
 }
 
 // ProcessBody is a reply's trace: each step's, then the turn's own.
@@ -146,10 +203,10 @@ export function ProcessBody({ process }: { process: Process }) {
             {steps.map((s) => s.kind === "delegate" ? <DelegationCard key={s.id} id={s.id} info={s} progress={s} /> : (
                 <div key={s.id} className="flex flex-col gap-1.5">
                     <div className="text-xs font-medium text-primary">{s.id} <span className="font-normal text-tertiary">{[s.agent, s.node].filter(Boolean).join(" @ ")}</span></div>
-                    <Trace p={{ reasoning: s.reasoning, tools: s.tools }} />
+                    <Trace p={{ reasoning: s.reasoning, tools: s.tools, timeline: s.timeline }} />
                 </div>
             ))}
-            {(process.reasoning || process.tools?.length) ? <Trace p={{ reasoning: process.reasoning, tools: process.tools }} /> : null}
+            {(process.reasoning || process.tools?.length || process.timeline?.length) ? <Trace p={process} /> : null}
         </div>
     );
 }

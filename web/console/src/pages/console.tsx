@@ -21,13 +21,16 @@ import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, 
 // the line in flight and the composer's text, and lays out the three
 // columns from components/steve. Nothing here draws.
 export function ConsolePage() {
-    const { snap, consoleEvents, refresh, live: connection } = useFleet();
+    const { snap, consoleEvents, refresh, live: connection, hubUpdated } = useFleet();
     const { intent } = useIntent();
     const [conversation, setConversation] = useState(() => sessionStorage.getItem("steve.conversation") || "console:main");
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [entries, setEntries] = useState<Reply[]>([]);
     const [enabled, setEnabled] = useState(true);
     const [text, setText] = useState("");
+    useEffect(() => {
+        if (hubUpdated && text === "") window.location.reload();
+    }, [hubUpdated, text]);
     const [sending, setSending] = useState(false);
     const submitting = useRef(false);
     const [status, setStatus] = useState("");
@@ -318,6 +321,9 @@ export function ConsolePage() {
             {pickedTask && <TaskDrawer t={pickedTask} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === pickedTask.id)} onClose={() => setPickedTask(null)} width={RAIL_WIDTH} />}
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                {hubUpdated && <div role="status" className="border-b border-secondary bg-warning-primary px-6 py-2 text-sm text-secondary">
+                    hub 已更新，<button type="button" className="underline" onClick={() => window.location.reload()}>刷新页面</button>
+                </div>}
                 <header className="flex items-center gap-3 border-b border-secondary bg-primary px-6 py-2.5">
                     <div className="min-w-0 flex-1 truncate text-sm font-semibold text-primary" title={title}>{title}</div>
                     {current?.archived && (

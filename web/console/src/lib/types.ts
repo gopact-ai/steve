@@ -99,8 +99,10 @@ export interface Suggestion { label: string; args?: string; detail?: string; ins
 export interface HistoryEntry { at: string; seq?: number; kind: string; subject?: string; text: string; actor?: string; operation?: string; from?: string; to?: string }
 export interface ToolCall { id?: string; kind?: string; name?: string; detail?: string; status: string; input?: string; output?: string }
 export interface PlanLine { text: string; status: string }
+export interface Span { kind: "text" | "thought" | "tool"; text?: string; tool?: string; at: string }
 export interface Progress {
     agent?: string; node?: string; model?: string; reasoning?: string; answer?: string; tools?: ToolCall[]; plan?: PlanLine[];
+    timeline?: Span[];
 }
 export interface StepInfo { kind?: string; goal?: string; state?: string; since?: string; elapsed?: string; answer?: string; refs?: string[]; attempt?: string; files?: number }
 export interface ChangeSummary { attempt: string; project?: string; base?: string; artifact?: string; files: number; note?: string }
@@ -124,7 +126,7 @@ export interface Choice { Value: string; Label: string; Detail?: string }
 export interface SelectorOption { ID: string; Name: string; Category?: string; Current?: string; Choices: Choice[] }
 export interface Selectors { model?: string; models: Choice[]; options: SelectorOption[]; preferred?: Record<string, string> }
 export interface StepProcess extends StepInfo, Progress { id: string }
-export interface Process { reasoning?: string; tools?: ToolCall[]; steps?: StepProcess[] }
+export interface Process { reasoning?: string; tools?: ToolCall[]; timeline?: Span[]; steps?: StepProcess[] }
 export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
     state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress; step?: StepInfo & Partial<StepProcess>; reply_id?: string; exchange_id?: string;
