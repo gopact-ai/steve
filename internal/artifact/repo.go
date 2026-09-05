@@ -26,7 +26,8 @@ import (
 
 // Repo is one project's bare shadow repository.
 type Repo struct {
-	Dir string
+	Dir    string
+	Limits Limits
 }
 
 // openMu serialises repository creation: two attempts materialising the
@@ -93,13 +94,22 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, f
 		if flattened := flattenNestedRepos(workTree); len(flattened) > 0 {
 			log.Printf("artifact: %s: flattened nested git repositories at %s", workTree, strings.Join(flattened, ", "))
 		}
-	} else if nested := nestedRepos(workTree); len(nested) > 0 {
+	} else {
+		nested, err := nestedRepos(workTree)
+		if err != nil {
+			return "", false, err
+		}
 		// Left alone and left out: git would otherwise record them as
 		// links, or refuse one that has no commit yet.
-		log.Printf("artifact: %s: nested git repositories left out of the snapshot: %s", workTree, strings.Join(nested, ", "))
-		for _, dir := range nested {
-			add = append(add, ":(exclude)"+dir)
+		if len(nested) > 0 {
+			log.Printf("artifact: %s: nested git repositories left out of the snapshot: %s", workTree, strings.Join(nested, ", "))
 		}
+		for _, dir := range nested {
+			add = append(add, ":(exclude,literal)"+filepath.ToSlash(dir))
+		}
+	}
+	if err := r.checkLimits(ctx, workTree, env, add[3:]); err != nil {
+		return "", false, err
 	}
 	if _, err := r.git(ctx, env, add...); err != nil {
 		return "", false, fmt.Errorf("stage %s: %w", workTree, err)
@@ -162,20 +172,28 @@ func (r *Repo) gitlinks(ctx context.Context, env []string) ([]string, error) {
 
 // nestedRepos lists the directories below the top level that hold a
 // .git, relative to workTree, without touching them.
-func nestedRepos(workTree string) []string {
+func nestedRepos(workTree string) ([]string, error) {
 	var found []string
-	_ = filepath.WalkDir(workTree, func(path string, d fs.DirEntry, err error) error {
-		if err != nil || path == workTree || d.Name() != ".git" {
+	err := filepath.WalkDir(workTree, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if path == workTree || !d.IsDir() {
 			return nil
 		}
-		if filepath.Dir(path) == workTree {
+		if d.Name() == ".git" {
 			return filepath.SkipDir
 		}
-		rel, _ := filepath.Rel(workTree, filepath.Dir(path))
+		if _, err := os.Lstat(filepath.Join(path, ".git")); os.IsNotExist(err) {
+			return nil
+		} else if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(workTree, path)
 		found = append(found, rel)
 		return filepath.SkipDir
 	})
-	return found
+	return found, err
 }
 
 // flattenNestedRepos removes any .git below the top level of workTree
@@ -193,12 +211,18 @@ func flattenNestedRepos(workTree string) []string {
 			return nil
 		}
 		if filepath.Dir(path) == workTree {
-			return filepath.SkipDir // the worktree's own, if any: git ignores it
+			if d.IsDir() {
+				return filepath.SkipDir // the worktree's own, if any: git ignores it
+			}
+			return nil
 		}
 		rel, _ := filepath.Rel(workTree, filepath.Dir(path))
 		found = append(found, rel)
 		_ = os.RemoveAll(path)
-		return filepath.SkipDir
+		if d.IsDir() {
+			return filepath.SkipDir
+		}
+		return nil
 	})
 	return found
 }
@@ -425,7 +449,7 @@ func short(sha string) string {
 // Script renders the same operations as shell for a node that has git but
 // no Steve code for it: the hub is the authority and the node executes.
 // Every argument is quoted; nothing from a user reaches this unquoted.
-type Script struct{}
+type Script struct{ Limits Limits }
 
 func quote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
@@ -450,7 +474,7 @@ func (Script) Checkout(dir, sha, target string) string {
 
 // Snapshot commits a directory's contents on top of parent and prints the
 // commit id, or the parent's id when nothing changed.
-func (Script) Snapshot(dir, workTree, parent, message string, flatten bool) string {
+func (s Script) Snapshot(dir, workTree, parent, message string, flatten bool) string {
 	// dropLinks removes every gitlink from the index: a nested repository
 	// is not this snapshot's to carry, whether it came from the parent
 	// tree or from the directory.
@@ -471,13 +495,13 @@ func (Script) Snapshot(dir, workTree, parent, message string, flatten bool) stri
 	prune := "true"
 	// Everything under the top level, minus each nested repository's
 	// directory, as NUL-separated pathspecs: left alone and left out.
-	add := "{ printf '.\\0'; find . -mindepth 2 -name .git -prune -printf ':(exclude)%h\\0'; } | git add -A --pathspec-from-file=- --pathspec-file-nul"
+	add := "{ printf '.\\0'; find . -name .git -prune ! -path './.git' -printf ':(exclude,literal)%h\\0'; } | git add -A --pathspec-from-file=- --pathspec-file-nul"
 	if flatten {
-		prune = "find . -mindepth 2 -name .git -prune -exec rm -rf {} +"
+		prune = "find . -name .git -prune ! -path './.git' -exec rm -rf {} +"
 		add = "git add -A -- ."
 	}
-	return fmt.Sprintf("export GIT_DIR=%s GIT_WORK_TREE=%s GIT_INDEX_FILE=%s.index; cd \"$GIT_WORK_TREE\" && rm -f \"$GIT_INDEX_FILE\"; %s ; %s && %s && %s && tree=$(git write-tree) && rm -f \"$GIT_INDEX_FILE\" && if %s; then echo %s; else sha=$(git commit-tree \"$tree\" -m %s%s) && git update-ref \"refs/steve/artifacts/$sha\" \"$sha\" && echo \"$sha\"; fi",
-		quote(dir), quote(workTree), quote(workTree), prune, readParent, add, dropLinks, compare, quote(parent), quote(message), parentArg)
+	return fmt.Sprintf("export GIT_DIR=%s GIT_WORK_TREE=%s GIT_INDEX_FILE=%s.index; cd \"$GIT_WORK_TREE\" || exit 1; trap 'rm -f \"$GIT_INDEX_FILE\" \"$GIT_INDEX_FILE.candidates\" \"$GIT_INDEX_FILE.files\" \"$GIT_INDEX_FILE.sizes\"' EXIT; rm -f \"$GIT_INDEX_FILE\" && %s && %s && { %s; } && %s && %s && tree=$(git write-tree) && rm -f \"$GIT_INDEX_FILE\" && if %s; then echo %s; else sha=$(git commit-tree \"$tree\" -m %s%s) && git update-ref \"refs/steve/artifacts/$sha\" \"$sha\" && echo \"$sha\"; fi",
+		quote(dir), quote(workTree), quote(workTree), prune, readParent, s.checkLimits(flatten), add, dropLinks, compare, quote(parent), quote(message), parentArg)
 }
 
 // Merge three-way merges two commits at the node and prints the merged

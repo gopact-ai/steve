@@ -44,7 +44,7 @@ func TestSnapshotFlattensAnAgentsNestedRepo(t *testing.T) {
 		t.Fatal("the nested repository is still there")
 	}
 	script := Script{}.Snapshot("/objects.git", "/wt", "", "m", true)
-	if !strings.Contains(script, "find . -mindepth 2 -name .git -prune -exec rm -rf {} +") {
+	if !strings.Contains(script, "find . -name .git -prune ! -path './.git' -exec rm -rf {} +") {
 		t.Fatalf("the node script does not flatten nested repositories:\n%s", script)
 	}
 }

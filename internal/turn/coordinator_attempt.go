@@ -128,6 +128,7 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 				after, changed, serr := c.snapshot(ctx, p, record.Workspace, record.Base, id, "after turn "+record.TurnID)
 				if serr != nil {
 					log.Printf("turn: attempt %s after-snapshot: %v", id, serr)
+					outcome.CaptureError = serr.Error()
 				} else if changed {
 					outcome.Artifact = after.ID
 					name := "steve/" + record.TaskID + "/turn/" + record.TurnID

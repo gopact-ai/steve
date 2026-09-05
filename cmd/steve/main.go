@@ -2138,7 +2138,9 @@ func (f fleetTools) AddNode(ctx context.Context, name, addr, level, hubURL strin
 	return text, nil
 }
 
-func (f fleetTools) RemoveNode(ctx context.Context, name string) error { return f.admin.RemoveNode(ctx, name) }
+func (f fleetTools) RemoveNode(ctx context.Context, name string) error {
+	return f.admin.RemoveNode(ctx, name)
+}
 
 func (f fleetTools) RefreshNode(ctx context.Context, name string) (string, error) {
 	key := f.admin.nodeKey(name)
@@ -2954,6 +2956,10 @@ func (a *fleetAdmin) Changes(ctx context.Context, attemptID string) (*readmodel.
 		return nil, err
 	}
 	summary := &readmodel.ChangeSummary{Attempt: attemptID, Project: record.Project, Base: base, Artifact: after}
+	if record.Result != nil && record.Result.CaptureError != "" {
+		summary.Note = "改动没有记录：" + record.Result.CaptureError
+		return summary, nil
+	}
 	if after == "" || after == base {
 		return summary, nil // nothing changed: the fold says so
 	}
