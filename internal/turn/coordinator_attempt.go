@@ -111,6 +111,13 @@ func (c *Coordinator) advanceAttempt(ctx context.Context, id string, to attempt.
 func (c *Coordinator) closeAttempt(parent context.Context, id string, result Result, turnErr error, spent *turnSpend) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Minute)
 	defer cancel()
+	// Last of all — after the attempt is closed and the queued landings
+	// are done — whoever waits for this turn's end is told.
+	if c.afterTurn != nil {
+		if record, err := c.attempts.Get(ctx, id); err == nil && record.TaskID != "" {
+			defer c.afterTurn(record.TaskID)
+		}
+	}
 	usage := spent.attemptUsage()
 	if c.fleet != nil {
 		if record, err := c.attempts.Get(ctx, id); err == nil && record.Admission != nil && len(record.Admission.Bound) > 0 {

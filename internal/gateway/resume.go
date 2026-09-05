@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"strings"
 	"time"
@@ -80,6 +81,39 @@ func (g *Gateway) Revive(revivals []Revival, revive func(conversationID, member 
 	for _, r := range revivals {
 		g.ResumeTask(r, revive)
 	}
+}
+
+// Deliver puts a message from the platform into a task's chat: a
+// delegated child's result reaching its parent. The notice is posted as
+// a reply at the task's anchor and becomes the anchor of the turn the
+// prompt starts, the way a resume does.
+func (g *Gateway) Deliver(r Revival, notice, prompt string) error {
+	tr, ok := g.ch.(textReplier)
+	if !ok {
+		return fmt.Errorf("channel cannot post notices")
+	}
+	if r.ConversationID == "" || r.MessageID == "" || r.Member == "" {
+		return fmt.Errorf("task #%s: incomplete anchor", r.TaskID)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	noticeID, err := tr.ReplyText(ctx, r.MessageID, notice)
+	cancel()
+	if err != nil {
+		return err
+	}
+	if noticeID == "" {
+		return fmt.Errorf("task #%s: notice posted without an id", r.TaskID)
+	}
+	g.HandleMessage(feishu.InboundMessage{
+		ConversationID: r.ConversationID,
+		ChatID:         r.ChatID,
+		MessageID:      noticeID,
+		SenderOpenID:   r.Requester,
+		ChatType:       protocol.ParseChatType(r.ChatType),
+		Mentioned:      true,
+		Text:           "@" + r.Member + " " + prompt,
+	})
+	return nil
 }
 
 // ResumeTask picks one task back up. The notice is not decoration: it is the
