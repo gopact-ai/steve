@@ -118,6 +118,15 @@ type Settings struct {
 
 func (s Settings) Empty() bool { return s.Harness == "" && s.Model == "" && s.Mode == "" }
 
+// Span places narration, thought summaries and tool starts in arrival order.
+// Tools are references: their changing status and output remain in Tools.
+type Span struct {
+	Kind string
+	Text string
+	Tool string
+	At   time.Time
+}
+
 type Progress struct {
 	// Agent is the agent id the turn runs as — scheduling context stamped
 	// by whoever placed the turn, since a session knows only its
@@ -129,6 +138,7 @@ type Progress struct {
 	Usage     Usage
 	Settings  Settings
 	Plan      []Step
+	Timeline  []Span
 }
 
 type Approval struct {

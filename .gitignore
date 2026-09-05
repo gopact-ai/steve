@@ -7,3 +7,4 @@ __pycache__/
 /steve-node
 /acptest
 web/console/node_modules/
+e2e/childcard/screenshots/

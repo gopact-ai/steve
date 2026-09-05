@@ -20,6 +20,11 @@ export function DelegationCard({ id, info, progress, live, open }: {
     const running = state === "running";
     const who = [progress?.agent, progress?.node].filter(Boolean).join(" @ ");
     const goal = (info.goal || "").trim().split("\n")[0];
+    const timeline = progress?.timeline;
+    // While running, narration stays in place. Only a completed child's
+    // last text span is lifted into its answer, without duplicating it.
+    const finalText = timeline?.findLastIndex((s) => s.kind === "text") ?? -1;
+    const answer = timeline?.length && running ? "" : finalText >= 0 ? timeline![finalText].text : info.answer || progress?.answer;
     return (
         <details data-task-id={id} open={open || running || state === "failed"} className={`group/child my-1 min-w-0 rounded-lg border ${running ? "border-brand bg-brand-primary_alt/40" : state === "failed" ? "border-error" : "border-secondary"}`}>
             <summary className="flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs hover:bg-secondary/60">
@@ -35,11 +40,11 @@ export function DelegationCard({ id, info, progress, live, open }: {
             </summary>
             <div className="flex min-w-0 flex-col gap-2 border-t border-secondary px-3 py-2">
                 {info.goal && <div className="whitespace-pre-wrap text-xs text-tertiary">{info.goal}</div>}
-                {progress && <Trace p={progress} live={running} thinkingOpen={running} />}
-                {(info.answer || progress?.answer) && (
+                {progress && <Trace p={progress} live={running} thinkingOpen={running} omitText={!running ? finalText : undefined} />}
+                {answer && (
                     <div className="rounded-md bg-secondary/50 px-3 py-2">
                         <div className="mb-1 text-[11px] text-quaternary">它说</div>
-                        <Md size="xs" text={info.answer || progress?.answer || ""} className="max-h-72 overflow-y-auto text-secondary" />
+                        <Md size="xs" text={answer} className="max-h-72 overflow-y-auto text-secondary" />
                     </div>
                 )}
                 {info.attempt && info.files ? <ChangesFold summary={{ attempt: info.attempt, files: info.files }} /> : null}

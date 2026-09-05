@@ -10,6 +10,7 @@ interface FleetState {
     events: Event[];
     consoleEvents: Event[];
     refresh: () => void;
+    hubUpdated: boolean;
 }
 
 const FleetContext = createContext<FleetState | null>(null);
@@ -22,10 +23,17 @@ export function FleetProvider({ children }: { children: ReactNode }) {
     const [events, setEvents] = useState<Event[]>([]);
     const [consoleEvents, setConsoleEvents] = useState<Event[]>([]);
     const pending = useRef<number | null>(null);
+    const firstVersion = useRef<string | null>(null);
+    const [hubUpdated, setHubUpdated] = useState(false);
 
     const load = useCallback(async () => {
         try {
-            setSnap(await fetchState());
+            const snapshot = await fetchState();
+            if (snapshot.hub.version) {
+                firstVersion.current ??= snapshot.hub.version;
+                if (snapshot.hub.version !== firstVersion.current) setHubUpdated(true);
+            }
+            setSnap(snapshot);
             setLive((s) => (s === "unauthorized" ? "connecting" : s));
         } catch (e) {
             if (/401|unauthorized/i.test(String(e))) setLive("unauthorized");
@@ -64,7 +72,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
         return () => { window.clearInterval(floor); source?.close(); if (retry) window.clearTimeout(retry); };
     }, [load, refresh]);
 
-    const value = useMemo(() => ({ snap, live, events, consoleEvents, refresh }), [snap, live, events, consoleEvents, refresh]);
+    const value = useMemo(() => ({ snap, live, events, consoleEvents, refresh, hubUpdated }), [snap, live, events, consoleEvents, refresh, hubUpdated]);
     return <FleetContext.Provider value={value}>{children}</FleetContext.Provider>;
 }
 

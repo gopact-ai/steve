@@ -110,6 +110,8 @@ type collector struct {
 	activity     []string
 	tools        []view.Tool
 	toolIndex    map[string]int
+	timeline     []collectedSpan
+	toolSpans    map[string]bool
 	usage        view.Usage
 	plan         []view.Step
 	progress     func(view.Progress)
@@ -264,6 +266,15 @@ func (c *collector) upsertTool(u acp.SessionUpdate) {
 			c.activity = append(c.activity, fmt.Sprintf("⚙ %s", title))
 		}
 	}
+	// Status updates can arrive after later narration. Only the first
+	// creation places a tool on the timeline; updates never move it.
+	if u.SessionUpdate == acp.SessionUpdateTypeToolCall && !c.toolSpans[id] {
+		if c.toolSpans == nil {
+			c.toolSpans = map[string]bool{}
+		}
+		c.toolSpans[id] = true
+		c.timeline = append(c.timeline, collectedSpan{Span: view.Span{Kind: "tool", Tool: id, At: time.Now().UTC()}})
+	}
 }
 
 func applyToolIO(tool *view.Tool, u acp.SessionUpdate) {
@@ -390,6 +401,7 @@ func (c *collector) snapshot() (view.Progress, func(view.Progress)) {
 		Tools:     copyTools(c.tools),
 		Usage:     c.usage,
 		Plan:      append([]view.Step(nil), c.plan...),
+		Timeline:  c.timelineSnapshot(),
 	}
 	if c.settings != nil {
 		p.Settings = c.settings()
@@ -434,10 +446,12 @@ func (c *collector) writeText(chunk string) {
 		}
 		c.text.WriteString(body)
 		c.text.WriteString(truncationMarker)
+		c.appendTextSpan(body + truncationMarker)
 		c.overflow = true
 		return
 	}
 	c.text.WriteString(chunk)
+	c.appendTextSpan(chunk)
 }
 
 const maxThoughtBytes = 64 << 10
@@ -446,6 +460,7 @@ func (c *collector) writeThought(chunk string) {
 	if chunk == "" {
 		return
 	}
+	c.appendThoughtSpan(len(chunk))
 	c.thoughtBytes += len(chunk)
 	c.thought += chunk
 	if c.thoughtBytes <= maxThoughtBytes {

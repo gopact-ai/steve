@@ -3,12 +3,14 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
@@ -91,6 +93,35 @@ func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
 	got := restored.Replies("main")[1].Process.Steps
 	if len(got) != 2 || got[0].State != "done" || got[0].Reasoning != step.Reasoning || got[0].Model != step.Model || got[0].Plan[0].Status != "completed" || got[0].Files != 2 || got[0].Refs[0] != "artifact:release" || got[1].State != "running" {
 		t.Fatalf("restart lost the final child snapshot: %+v", got)
+	}
+}
+
+func TestParentAndLateChildTimelinesSurviveRestart(t *testing.T) {
+	doc := &memDoc{}
+	parentTimeline := []view.Span{{Kind: "text", Text: "parent narration", At: time.Now().UTC()}}
+	child := readmodel.FromStepProgress("#72", readmodel.Progress{Timeline: []readmodel.Span{{Kind: "thought", Text: "child thinking", At: time.Now().UTC()}}}, readmodel.StepInfo{Kind: "delegate", State: "running"})
+	var s *Service
+	s = New(stepHandler(func(req turn.Request) turn.Result {
+		req.OnProgress(view.Progress{Timeline: parentTimeline})
+		s.UpdateStep(req.ConversationID, "72", child)
+		return turn.Result{Text: "The reply remains the complete answer."}
+	}), "owner", nil)
+	if err := s.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Send(t.Context(), "main", "delegate"); err != nil {
+		t.Fatal(err)
+	}
+	child.State = "done"
+	child.Timeline = append(child.Timeline, readmodel.Span{Kind: "text", Text: "child final", At: time.Now().UTC()})
+	s.UpdateStep("main", "72", child)
+	restored := New(nil, "owner", nil)
+	if err := restored.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	reply := restored.Replies("main")[1]
+	if reply.Text != "The reply remains the complete answer." || reply.Process == nil || len(reply.Process.Timeline) != 1 || reply.Process.Timeline[0].Text != "parent narration" || !reflect.DeepEqual(reply.Process.Steps[0].Timeline, child.Timeline) {
+		t.Fatalf("restart lost parent or late child timeline: %+v", reply)
 	}
 }
 

@@ -771,11 +771,11 @@ func (s *Service) UpdateStep(conversation, taskID string, step readmodel.StepPro
 func (w *process) summary() *readmodel.Process {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	out := &readmodel.Process{Reasoning: w.last.Reasoning, Tools: w.last.Tools}
+	out := &readmodel.Process{Reasoning: w.last.Reasoning, Tools: w.last.Tools, Timeline: w.last.Timeline}
 	for _, id := range w.order {
 		out.Steps = append(out.Steps, w.steps[id])
 	}
-	if out.Reasoning == "" && len(out.Tools) == 0 && len(out.Steps) == 0 {
+	if out.Reasoning == "" && len(out.Tools) == 0 && len(out.Steps) == 0 && len(out.Timeline) == 0 {
 		return nil
 	}
 	return out
