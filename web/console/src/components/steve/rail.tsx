@@ -8,6 +8,10 @@ import { label, zh } from "@/lib/labels";
 import type { ConversationContext, Plan, Reply, Task } from "@/lib/types";
 import { CallGraph } from "./call-graph";
 import { TaskDrawer } from "./task-drawer";
+
+// RAIL_WIDTH is the console's right column; a drawer opened from it is
+// the same width, so the side of the page does not jump.
+export const RAIL_WIDTH = 380;
 import { Chips, KeyValue, Panel } from "./page";
 import { InjectedPanel, ProcessBody, Working, type Live } from "./trace";
 import { Mono, Nothing } from "./ui";
@@ -90,7 +94,7 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots }: { cont
                     ) : <Nothing icon={GitBranch01} title="还没有任务">这条会话的任务、它拆出的步骤、以及 Agent 之间的委派会画在这里。</Nothing>
                 )}
             </div>
-            {picked && <TaskDrawer t={picked} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === picked.id)} onClose={() => setPicked(null)} />}
+            {picked && <TaskDrawer t={picked} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === picked.id)} onClose={() => setPicked(null)} width={RAIL_WIDTH} />}
         </aside>
     );
 }

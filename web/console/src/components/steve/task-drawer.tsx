@@ -13,14 +13,14 @@ import { StateBadge, taskState } from "./ui";
 // the call graph, the attempts and what they cost.
 // Drawer is a task's detail: the result first, then the tree, the plan,
 // the attempts and what they cost.
-export function TaskDrawer({ t, tasks, plan, onClose }: { t: Task; tasks: Task[]; plan?: Plan; onClose: () => void }) {
+export function TaskDrawer({ t, tasks, plan, onClose, width }: { t: Task; tasks: Task[]; plan?: Plan; onClose: () => void; width?: number }) {
     const { snap } = useFleet();
     const { act } = useIntent();
     const children = tasks.filter((c) => c.parent === t.id);
     const landings = snap.landings.filter((l) => l.project === t.project_id).slice(0, 5);
     const holds = ["running", "blocked", "review", "paused", "draft", "failed"].includes(t.lifecycle);
     return (
-        <Drawer title={<><span className="text-sm font-semibold text-primary">#{t.id}</span><StateBadge state={taskState(t)} /><span className="text-xs text-tertiary">{label(zh.status, t.lane)}</span></>} subtitle={<><div className="mt-1 text-sm text-primary">{t.goal}</div>
+        <Drawer width={width} title={<><span className="text-sm font-semibold text-primary">#{t.id}</span><StateBadge state={taskState(t)} /><span className="text-xs text-tertiary">{label(zh.status, t.lane)}</span></>} subtitle={<><div className="mt-1 text-sm text-primary">{t.goal}</div>
                     <div className="mt-1 text-xs text-tertiary">{t.member} @ {t.node || snap.hub.node} · 项目 {t.project_id || "—"} · {label(zh.origin, t.origin || "chat")} · 会话 {t.channel}</div></>} onClose={onClose}>
                 <DrawerSection title="结果">
                     <div className="flex flex-col gap-1 text-sm">

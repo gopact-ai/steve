@@ -576,5 +576,5 @@ agent 得能自己维护 fleet，不只是人从页面操作。平台 MCP 再加
 ### 23.3 顺序
 
 1. ✅ `Repo.Changes` / `FileDiff` + `Store.Changes` / `FileDiff`（按 attempt，`/console/attempts/{id}/changes` 与 `/diff?path=`，有界、no-store、sealed 远端拒绝）；`turn.Result.Attempt`；console 记录回复时经 `Inspector` 取 `changes`；`delegate.Child.Attempt` → 子任务卡的 `attempt` / `files`；前端 `ChangesFold`（文件列表 A/M/D、+/−、按文件展开 diff）。真机验收（2026-09-04 22:26，claude 自己改 CHANGELOG.md 并委派 node-b 的 shipper 改 CONTRIBUTING.md）：回复显示"改动了 2 个文件 · 本轮净改动，含已落地的子任务"，展开 CHANGELOG.md 看到 `+0.1.1：补文档`；子任务卡显示"改动了 1 个文件"。等待占位：核实 3 秒截图已有"正在放置… · 3s"与右侧"进行中"面板，此前看不到是事件游标在 400 条后失效（§22 已修），未另加代码。同批修掉：hub 启动时先拨节点后建 gate，反向 MCP 通道从未在启动连接上服务（节点回环端口接了不答，子任务拿不到平台工具）——`SetMCPDialer` 对已在线连接补起服务；hub 本机子任务卡带上机器名。
-   补（2026-09-05）：聊天正文字号统一为 14 px（`.prose.md` 显式 `text-sm`，此前继承 16 px，比用户气泡大）；关系页的任务 / 委派行可点开任务抽屉（`TaskDrawer` 从看板页抽成共享组件）。
+   补（2026-09-05）：左侧菜单栏可收成图标栏（56 px）、会话栏可收成细条（40 px），状态记在 localStorage；关系页点开的任务抽屉与右侧栏同宽（380 px），页面右边不再跳。聊天正文字号统一为 14 px（`.prose.md` 显式 `text-sm`，此前继承 16 px，比用户气泡大）；关系页的任务 / 委派行可点开任务抽屉（`TaskDrawer` 从看板页抽成共享组件）。
 2. 附件：上传到 blob、消息里引用、agent 侧作为图片/文件送入；agent 交回的非文本产物在卡片里可下载。

@@ -31,6 +31,8 @@ export function ConsolePage() {
     const [pick, setPick] = useState(0);
     const [selectedReply, setSelectedReply] = useState<Reply | null>(null);
     const [tab, setTab] = useState<RailTab>("context");
+    const [sessionsCollapsed, setSessionsCollapsedState] = useState<boolean>(() => { try { return localStorage.getItem("steve.sessions.collapsed") === "1"; } catch { return false; } });
+    const setSessionsCollapsed = (v: boolean) => { setSessionsCollapsedState(v); try { localStorage.setItem("steve.sessions.collapsed", v ? "1" : "0"); } catch { /* ignore */ } };
     const [verbs, setVerbs] = useState<Verb[]>([]);
     useEffect(() => { void fetchVerbs().then((d) => setVerbs(d.verbs || [])).catch(() => undefined); }, []);
     const box = useRef<HTMLTextAreaElement>(null);
@@ -210,7 +212,8 @@ export function ConsolePage() {
     return (
         <div className="flex h-full min-h-0">
             <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={(id) => setConversation(id)} onNew={newSession}
-                onUpdate={(id, patch) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))} />
+                onUpdate={(id, patch) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}
+                collapsed={sessionsCollapsed} onToggle={() => setSessionsCollapsed(!sessionsCollapsed)} />
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 <header className="flex items-center gap-3 border-b border-secondary bg-primary px-6 py-2.5">

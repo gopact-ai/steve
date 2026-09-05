@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
-import { Activity, BookOpen01, ClipboardCheck, Folder, Inbox01, Moon01, Dataflow03, PuzzlePiece01, Server01, Sun, Terminal } from "@untitledui/icons";
+import { Activity, BookOpen01, ClipboardCheck, Folder, Inbox01, Moon01, Dataflow03, PuzzlePiece01, Server01, Sun, Terminal, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
 import { NavItemBase } from "@/components/application/app-navigation/base-components/nav-item";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { FleetProvider, IntentProvider, useFleet } from "@/lib/fleet";
@@ -31,6 +31,8 @@ function Shell() {
     const location = useLocation();
     const navigate = useNavigate();
     const { theme, setTheme } = useTheme();
+    const [navCollapsed, setNavCollapsedState] = useState<boolean>(() => { try { return localStorage.getItem("steve.nav.collapsed") === "1"; } catch { return false; } });
+    const setNavCollapsed = (v: boolean) => { setNavCollapsedState(v); try { localStorage.setItem("steve.nav.collapsed", v ? "1" : "0"); } catch { /* ignore */ } };
     const [clock, setClock] = useState(new Date());
     useEffect(() => { const t = window.setInterval(() => setClock(new Date()), 1000); return () => window.clearInterval(t); }, []);
 
@@ -55,49 +57,76 @@ function Shell() {
         ] },
     ];
     const dark = theme === "dark" || (theme === "system" && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
+    const compact = (item: { href: string; label: string; icon: typeof Terminal; badge?: number | string; hot?: boolean }) => (
+        <a key={item.href} href={"#" + item.href} title={item.label} aria-label={item.label} onClick={(e) => { e.preventDefault(); navigate(item.href); }}
+            className={`relative flex size-9 items-center justify-center rounded-md transition ${location.pathname === item.href ? "bg-active text-fg-brand-primary" : "text-fg-quaternary hover:bg-primary_hover hover:text-fg-quaternary_hover"}`}>
+            <item.icon className="size-5" />
+            {item.badge !== undefined && <span className={`absolute right-0.5 top-0.5 size-2 rounded-full ${item.hot ? "bg-warning-solid" : "bg-quaternary"}`} />}
+        </a>
+    );
     return (
         <div className="flex h-screen bg-secondary text-primary">
-            <aside className="flex w-64 shrink-0 flex-col border-r border-secondary bg-primary">
-                <div className="flex items-center gap-3 px-5 pt-5 pb-3">
-                    <div className="flex size-8 items-center justify-center rounded-lg bg-brand-solid text-white"><Terminal className="size-4" /></div>
-                    <div>
-                        <div className="text-md font-semibold text-primary">steve</div>
-                        <div className="text-xs text-tertiary">{snap.hub.node ? `${snap.hub.node} · hub` : "控制台"}</div>
-                    </div>
-                </div>
-                <nav className="flex flex-1 flex-col gap-4 px-4">
-                    {groups.map((g) => (
-                        <div key={g.title} className="flex flex-col gap-0.5">
-                            <div className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-quaternary">{g.title}</div>
-                            {g.items.map((item) => (
-                                <NavItemBase key={item.href} type="link" href={"#" + item.href} icon={item.icon} current={location.pathname === item.href}
-                                    badge={item.badge !== undefined ? <span className={`rounded-full px-2 py-0.5 text-xs ${item.hot ? "bg-warning-primary text-warning-primary" : "bg-secondary text-tertiary"}`}>{item.badge}</span> : undefined}
-                                    onClick={(e) => { e.preventDefault(); navigate(item.href); }}>
-                                    {item.label}
-                                </NavItemBase>
-                            ))}
+            <aside className={`flex shrink-0 flex-col border-r border-secondary bg-primary transition-[width] ${navCollapsed ? "w-14" : "w-64"}`}>
+                <div className={`flex items-center gap-3 pt-5 pb-3 ${navCollapsed ? "justify-center px-0" : "px-5"}`}>
+                    <div className="flex size-8 shrink-0 items-center justify-center rounded-lg bg-brand-solid text-white" title={snap.hub.node ? `${snap.hub.node} · hub` : "控制台"}><Terminal className="size-4" /></div>
+                    {!navCollapsed && (
+                        <div className="min-w-0">
+                            <div className="text-md font-semibold text-primary">steve</div>
+                            <div className="truncate text-xs text-tertiary">{snap.hub.node ? `${snap.hub.node} · hub` : "控制台"}</div>
                         </div>
-                    ))}
-                    <div className="mt-auto flex flex-col gap-0.5 pb-2">
-                        <NavItemBase type="link" href="#/history" icon={BookOpen01} current={location.pathname === "/history"} onClick={(e) => { e.preventDefault(); navigate("/history"); }}>历史与审计</NavItemBase>
-                    </div>
-                </nav>
-                <div className="border-t border-secondary px-5 py-3 text-xs text-tertiary">
-                    <div className="flex items-center justify-between">
-                        <span className="flex items-center gap-1.5">
-                            <span className={`size-2 rounded-full ${live === "live" ? "bg-success-solid" : "bg-warning-solid"}`} />
-                            {live === "live" ? "实时" : "重连中"}
-                        </span>
-                        <span>{clock.toLocaleTimeString()}</span>
-                    </div>
-                    <div className="mt-1 flex items-center gap-1.5"><Activity className="size-3" />{running} 在跑 · {snap.tasks.length} 任务 · {snap.plans.length} 计划</div>
-                    <div className="mt-1 flex items-center justify-between">
-                        <span title={snap.sources.map((s) => `${s.name}: ${s.wired ? (s.error || "ok") : "未接线"}`).join("\n")}>
-                            {broken ? <span className="text-error-primary">{broken} 个数据源读取失败</span> : `hub ${snap.hub.version || ""}`}
-                        </span>
+                    )}
+                </div>
+                {navCollapsed ? (
+                    <nav className="flex flex-1 flex-col items-center gap-1 px-2">
+                        {groups.flatMap((g) => g.items).map(compact)}
+                        <div className="mt-auto flex flex-col items-center gap-1 pb-2">
+                            {compact({ href: "/history", label: "历史与审计", icon: BookOpen01 })}
+                            <button type="button" onClick={() => setNavCollapsed(false)} title="展开菜单" aria-label="展开菜单" className="flex size-9 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary_hover hover:text-fg-quaternary_hover"><ChevronRightDouble className="size-4" /></button>
+                        </div>
+                    </nav>
+                ) : (
+                    <nav className="flex flex-1 flex-col gap-4 px-4">
+                        {groups.map((g) => (
+                            <div key={g.title} className="flex flex-col gap-0.5">
+                                <div className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-quaternary">{g.title}</div>
+                                {g.items.map((item) => (
+                                    <NavItemBase key={item.href} type="link" href={"#" + item.href} icon={item.icon} current={location.pathname === item.href}
+                                        badge={item.badge !== undefined ? <span className={`rounded-full px-2 py-0.5 text-xs ${item.hot ? "bg-warning-primary text-warning-primary" : "bg-secondary text-tertiary"}`}>{item.badge}</span> : undefined}
+                                        onClick={(e) => { e.preventDefault(); navigate(item.href); }}>
+                                        {item.label}
+                                    </NavItemBase>
+                                ))}
+                            </div>
+                        ))}
+                        <div className="mt-auto flex flex-col gap-0.5 pb-2">
+                            <NavItemBase type="link" href="#/history" icon={BookOpen01} current={location.pathname === "/history"} onClick={(e) => { e.preventDefault(); navigate("/history"); }}>历史与审计</NavItemBase>
+                            <button type="button" onClick={() => setNavCollapsed(true)} className="flex items-center gap-2 rounded-md px-3 py-1.5 text-xs text-quaternary hover:bg-primary_hover hover:text-primary" title="收起菜单"><ChevronLeftDouble className="size-4" />收起</button>
+                        </div>
+                    </nav>
+                )}
+                {navCollapsed ? (
+                    <div className="flex flex-col items-center gap-2 border-t border-secondary py-3">
+                        <span className={`size-2 rounded-full ${live === "live" ? "bg-success-solid" : "bg-warning-solid"}`} title={live === "live" ? "实时" : "重连中"} />
                         <ButtonUtility size="xs" color="tertiary" tooltip={dark ? "浅色" : "深色"} icon={dark ? Sun : Moon01} onClick={() => setTheme(dark ? "light" : "dark")} />
                     </div>
-                </div>
+                ) : (
+                    <div className="border-t border-secondary px-5 py-3 text-xs text-tertiary">
+                        <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-1.5">
+                                <span className={`size-2 rounded-full ${live === "live" ? "bg-success-solid" : "bg-warning-solid"}`} />
+                                {live === "live" ? "实时" : "重连中"}
+                            </span>
+                            <span>{clock.toLocaleTimeString()}</span>
+                        </div>
+                        <div className="mt-1 flex items-center gap-1.5"><Activity className="size-3" />{running} 在跑 · {snap.tasks.length} 任务 · {snap.plans.length} 计划</div>
+                        <div className="mt-1 flex items-center justify-between">
+                            <span title={snap.sources.map((s) => `${s.name}: ${s.wired ? (s.error || "ok") : "未接线"}`).join("\n")}>
+                                {broken ? <span className="text-error-primary">{broken} 个数据源读取失败</span> : `hub ${snap.hub.version || ""}`}
+                            </span>
+                            <ButtonUtility size="xs" color="tertiary" tooltip={dark ? "浅色" : "深色"} icon={dark ? Sun : Moon01} onClick={() => setTheme(dark ? "light" : "dark")} />
+                        </div>
+                    </div>
+                )}
             </aside>
             <main className="min-w-0 flex-1 overflow-auto">
                 <Routes>
