@@ -722,9 +722,13 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 
 续接走会话自己的通道：控制台是一条插到排队消息**前面**的交换（复用 §27.1 的 `Resume` 机制，`Exchange.Prompt` 与 `Input` 分离，不需要 revive）；飞书是在锚点回一条通知、再以通知为锚点 `HandleMessage`（复用 `ResumeTask` 的路径）。`steve_await` 保留给"这一回合就要结果"的父 agent，说明改成"通常不必调用"。
 
+**续接里说的落地状态必须是真的。** 父回合结束后子结果只能 `Defer`（主目录锁不在任何回合手里），`closeAttempt` 的 `LandPending` 可能早跑过了、失败路径根本不跑。所以投递前先对该项目 `LandPending` 一次（锁空闲才落，被占就不落），然后按每个子任务报真实状态：`已落地`、`排队中（主目录正被 X 占用）`、`冲突：…`。续接触发的父回合自己会持锁，回合结束再落一次，和今天一样。
+
+**投递要能重放、不重复。** 子结果目前只在内存里留 30 分钟，`fromStore` 恢复不出回答与 refs。改为：子任务结束时把回答 / refs / attempt 写进任务记录（`task.Meta` 的 `Result`），投递状态也记在那里（`Delivery{State: pending | delivered, Key, At}`，`Key = deliver:<childTask>`），标 pending 在前、入队在后、入队成功再标 delivered。控制台队列的 `enqueue` 加 `Key`：同 key 已在排队 / 在跑 / 最近完成过的交换不再入队；飞书路径以 `Delivery.State` 去重。hub 启动时扫一遍：`Origin` 是 `delegate:` 且已结束、`Delivery.State != delivered`、父任务还开着的子任务，逐个投递。续接交换开始执行时再看一眼父任务状态，已关闭就把这条交换记为跳过。
+
 **接缝。** `delegate.Service`：子任务条目加 `collected`（Await / 内联等待返回终态时置位）；`SetDeliverer(func(Delivery))`，`Delivery{Conversation, ParentTask, Member, ChatID, Anchor, Children []Child}`；`Flush(parentTask)` 把"已结束未收走"的子任务合成一次投递并标记已投递。触发点两处：子任务进入终态时（`drive` 的结尾）若父任务此刻没有在跑的 attempt 就 `Flush`；`Coordinator.closeAttempt` 末尾对本回合的任务 `Flush`。投递实现两份：`console.Service.Continue(conversation, taskID, member, notice, prompt)`（`enqueue(front=true)`）与 `gateway.Deliver(Revival 形状 + Prompt)`；`cmd/steve` 按会话是不是控制台分派，和 Notifier / Resumer 同一处。父任务"等子任务"在读模型里可见：`TaskDetail.children` 已有，会话列表的"在跑"标记保持。
 
-**验证。** 单测：父回合结束时合并投递、在跑时暂存、await 收走后不重复、父任务关闭不投递；kvtool 场景重跑：根回合的工具调用从 21 次降到个位数，续接两条（shipper、builder 各一），最终汇报内容不变。
+**验证。** 单测：父回合结束时合并投递、在跑时暂存、await 收走后不重复、父任务关闭不投递、"父先结束、子后完成"时先落地再投递、落地冲突的措辞、同 key 不重复入队、重启后补投。kvtool 场景重跑：根回合的工具调用从 21 次降到个位数，续接两条（shipper、builder 各一），最终汇报内容不变。
 
 ### 28.2 子 agent 的过程与父 agent 同一套
 
@@ -732,28 +736,32 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 
 **终态。** 一个 agent 的过程只有一种画法。`DelegationCard` 的正文 = 目标 + `Trace{plan, reasoning, tools, model}` + 它说 + 改动 + refs；进行中 `ThinkingFold` 展开且滚到尾部，结束后折叠但全文都在。回复的过程折叠里的步骤（`ProcessBody`）也用同一个卡片，不再另画一份。类型上 `StepProcess` 的过程字段与 `Progress` 同名同义，前端以 `Progress` 传递。
 
-**接缝。** 前端 `delegation.tsx` 改为组合 `Trace`；`trace.tsx` 的 `ProcessBody` 用 `DelegationCard`；`lastParagraph` 只留给会话列表的一行摘要。服务端不动，只补一处：`delegate.progress` 事件带 `Model`（`view.Progress.Settings` 里有）。
+**子任务活得比父回合久。** 28.1 之后这是常态，而现在 `runExchange` 一返回 `follow` 就停，`applyLive` 没有在跑的回合时把子进度丢掉、有新回合时又归错。所以子任务的过程按**子任务**保存，不按回合：`console.Service.UpdateStep(conversation, taskID, StepProcess)` 找到含这一步的那条回复，替换其 `process.steps[i]`、存盘、发 `console.step` 事件；页面上的子卡按任务 id 收 `delegate.progress`，不管当前有没有回合在跑；刷新后从回复里读到的就是最新快照。`StepProcess` 补 `Plan`、`Model`。
 
-**验证。** 截图：进行中的子卡有可滚动的完整思考；完成后展开能看到全部思考与全部工具调用；父回复的"过程"折叠里子步骤与卡片一致。
+**思考不能悄悄截断到 8 KiB。** `acphost.writeThought` 的 `maxThoughtBytes` 提到 64 KiB，超出时保留头尾并插一行 `[… 省略 N 字节 …]`，页面照实显示。
+
+**接缝。** 前端 `delegation.tsx` 改为组合 `Trace`；`trace.tsx` 的 `ProcessBody` 用 `DelegationCard`；`lastParagraph` 只留给会话列表的一行摘要；`console.tsx` 的子卡以任务 id 为 key、跨回合更新。服务端：`UpdateStep`、`delegate.progress` 带 `Model` 与 `Plan`、思考上限。
+
+**验证。** 截图：进行中的子卡有可滚动的完整思考；完成后展开能看到全部思考与全部工具调用；父回复的"过程"折叠里子步骤与卡片一致；父回合先结束、子任务后完成时卡片仍更新，刷新页面后不丢；同时有新回合在跑时子卡不串。
 
 ### 28.3 节点与 hub 断线：会话不随连接死，节点记日志，重连补账
 
 **现状。** 节点上 `runAgent` 把 harness 的 stdio 直接接在流上：hub 连接一断，mux 关闭，流关闭，`proc.Kill()`——子任务立刻没了；hub 侧 acphost 收到 "connection closed"，attempt 记失败，工作树留到十分钟后被清扫。中间那段 harness 已经做了的事，谁都不知道。反向 MCP 通道同时断掉，子 agent 在这期间调 `steve_*` 工具只会得到错误。
 
-**终态：可续接的会话流。** 会话归节点所有，流只是 hub 对会话的一个视图。
+**终态：可续接的进程流。** 续接的单位是节点上的一个 harness 进程（`harness/manager.go` 按 node+harness 共享一个 Host，一条流上跑多个 ACP session，attempt 是更上层的事）。进程归节点所有，流只是 hub 对它的一个视图；attempt ↔ session 的映射留在 hub 侧不变。
 
 | 层 | 改动 |
 |---|---|
-| 协议 | `OpenRequest{Kind: acp}` 加 `Attempt`、`Resume bool`、`After uint64`。`After` 是 hub 已收到的最后一行的序号 |
-| 节点 | 会话表按 attempt 记：harness 进程、序号计数、日志文件。harness 每写一行 stdout（ACP 是逐行 JSON-RPC），节点先追加到 `<state>/sessions/<attempt>/out.jsonl`（`seq\tline`，写后 fsync，100 ms 合并）再发给流；hub→harness 的行也记进 `in.jsonl` 备查。流断而会话未完：进程**不杀**，继续跑，输出只进日志；`SessionGrace`（默认与 `MaxSilence` 相同，10 分钟）内没有 hub 来续接才杀，日志保留一小时供 `steve-node sessions` 查看。日志按 64 MB 轮转，序号连续 |
-| hub | `remoteProcess` 变成"可续接的读写端"：流报错且节点在名册里是"断开"而非"释放"时，不向 acphost 报 EOF，而是等注册表重拨成功（`RedialEvery`）后以 `Resume, After` 重开流；节点先回放 `After` 之后的日志行，再接上实况。断开期间 hub 往 harness 写的行（权限答复、取消）在 hub 侧有界缓冲，续接后按序补发。超过 `SessionGrace` 才把 EOF 交给 acphost，行为退化成今天 |
-| 计时 | 子任务的静默时钟（`idle.WithTimeout`）在节点断开期间**不走**：注册表的 down / up 事件对该节点上所有在跑 attempt 的 touch 函数分别 pause / resume（`idle` 加 `Pause()`/`Resume()`） |
-| 反向 MCP | 断开期间节点的 broker 对 `steve_*` 调用返回可重试的 "hub unreachable, retry in 30s"（agent 看得懂的文本），不做排队；写类效果（`steve_remember`、`feishu_send`）的排队是下一片 |
+| 协议 | `OpenRequest{Kind: acp}` 加 `Stream string`（hub 生成的进程流 id）、`Resume bool`、`AfterOut uint64`（hub 已收到的最后一条输出的序号）、`AfterIn uint64`（hub 已发出的最后一条输入的序号）。流上的字节按**完整行**计数：ACP 是逐行 JSON-RPC，两边都只在收到换行后才算一条，半行在断线时丢弃、续接后由发送方重发。节点对 `Resume` 先回一条 `ResumeAck{HaveIn}`：hub 只补发序号大于 `HaveIn` 的输入，已执行的不重复 |
+| 节点 | 进程表按 `Stream` 记：harness 进程、两个序号计数、日志、当前 attached 的流。harness 每写一行 stdout，节点先追加到 `<state>/streams/<id>/out.jsonl`（`seq\tline`，100 ms 合并 fsync）再发给流；hub→harness 的每行先记 `in.jsonl`（序号）再喂给进程。流断而进程未退出：**不杀**，输出只进日志；`SessionGrace`（默认 10 分钟）内没有 hub 续接才杀。同一时刻只允许一条 attached 流：新的 attach 让旧流以 `superseded` 关闭。进程退出时把 `exit <code>` 作为终态记录写进日志，续接时一并回放，成为流的关闭原因；hub 明确释放（StreamRelease、干净断开）才是"杀"。日志按 64 MB 轮转、每个流最多保留 256 MB（最老的段先丢，`AfterOut` 落在丢掉的段里就回 `too old`，hub 按今天的方式报 EOF）；磁盘写失败时进程照跑、流标为不可续接；单行超过 8 MiB 同样标不可续接。进程结束后日志保留一小时供 `steve-node streams` 查看 |
+| hub | `remoteProcess` 变成"可续接的读写端"：流报错且注册表里该节点是"断开"而非"释放"时，不向 acphost 报 EOF，而是等重拨成功（`RedialEvery`）后以 `Resume` 重开流，先收回放再收实况（回放与实况之间由节点保证原子切换：回放期间新输出先进日志，回放完再转发）。断开期间 hub 往进程写的行在 hub 侧缓冲，总量 1 MiB，超出即报错。已答过的 ACP 请求 id（权限、elicitation）hub 记一份，回放里再见到不重复答。超过 `SessionGrace` 才把 EOF 交给 acphost，行为退化成今天。注册表的 down / up 事件带连接代次，旧连接迟到的 down 不作数 |
+| 计时 | 该节点上所有在跑 attempt 的静默时钟（`idle.WithTimeout`）在断开期间**不走**：`idle` 加 `Pause()`/`Resume()`，暂停保留剩余时长；硬预算（`MaxElapsed`）不暂停 |
+| 反向 MCP | 节点的 loopback MCP 监听在断线期间**保持**（端口在会话指纹里，不能变）；hub 不可达时节点自己回 HTTP 503 + JSON-RPC 错误 `hub unreachable, retry later`，agent 看到的是可重试的工具错误。不做排队：写类工具"已执行但响应丢了"不能盲目重放，这一片只保证不挂死。权限请求（`session/request_permission`）走 out.jsonl 回放，hub 续接后照常答 |
 | 不覆盖 | hub 进程重启（hub 侧 acphost 状态丢失）不在本条；它需要 hub 也持久化会话客户端状态，另立条目 |
 
-**接缝。** `internal/nodewire`：`OpenRequest` 三个字段；`internal/node/serve.go`：`runAgent` 拆成 `sessions` 表 + `attach(stream, after)`；新包 `internal/node/journal`（追加、按序回放、轮转、fsync 策略，纯本地、可单测）；`internal/node/transport.go`：`remoteProcess` 的续接读写端；`internal/node/registry.go`：down / up 事件；`internal/idle`：pause / resume。故障注入：steve-node 环境变量 `STEVE_NODE_FAULT=drop-hub-after:20s`，第一个会话开始 20 秒后主动关掉与 hub 的 socket 一次，供真机验证。
+**接缝。** `internal/nodewire`：`OpenRequest` 四个字段与 `ResumeAck`；`internal/node/serve.go`：`runAgent` 拆成进程表 + `attach(stream, req)`，MCP 监听不再随连接关；新包 `internal/node/journal`（按行追加、双向序号、按序回放、轮转与保留、fsync 策略，纯本地、可单测）；`internal/node/transport.go`：`remoteProcess` 的续接读写端（按行计数、缓冲、已答 id 集合）；`internal/node/registry.go`：带代次的 down / up 事件；`internal/idle`：pause / resume。已知不管：mux 的流 id 用 `uint32 += 2`，不回绕检查，长连接开到 2^31 条流之前不会撞。故障注入：steve-node 环境变量 `STEVE_NODE_FAULT=drop-hub-after:20s`，第一条 ACP 流开始 20 秒后主动关掉与 hub 的 socket 一次，供真机验证。
 
-**验证。** 单测：journal 追加 / 回放 / 轮转；nodewire 用内存管道做"断—续—回放 N 行—实况"往返；`remoteProcess` 在节点 down 期间不报 EOF、超过 grace 才报。真机：node-b 上开 `drop-hub-after:20s`，委派一个三分钟的子任务，hub.log 出现 `node-b disconnected` → `node-b up` → `reattached att-… after 12s, replayed 37 lines`，子任务照常 done 并落地；父任务的静默时钟没有因为这 12 秒扣分。
+**验证。** 单测：journal 追加 / 回放 / 轮转 / 保留窗口 / too old；nodewire 用内存管道做"开流 → 写 N 行 → 断 → 续接 AfterOut=k → 收到 k+1..N → 实况继续"、"输入已执行但确认丢了 → 续接后不重复"、"回放中再断"、"两次 attach 只留新的"、"进程退出后续接拿到 exit"；`remoteProcess` 在节点 down 期间不报 EOF、超过 grace 才报；同一 harness 上两个任务并发、其中一个取消，另一个不受影响；idle 的 pause 保留剩余时长。真机：node-b 上开 `drop-hub-after:20s`，委派一个三分钟的子任务，hub.log 出现 `node-b disconnected` → `node-b up` → `reattached stream … after 12s, replayed 37 lines`，子任务照常 done 并落地；父任务的静默时钟没有因为这 12 秒扣分；断线期间子 agent 调 `steve_context` 得到可重试错误而不是挂死。
 
 ### 28.4 自主拆解的验收用例
 
@@ -763,13 +771,15 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 
 > 把 `kvtool` 做成可发布的样子：在**有 build 能力的机器**上编译 linux/amd64 二进制到 `kvtool/dist/` 并生成 `SHA256SUMS`；给 `kvtool/README.md` 补安装与校验步骤；写 `kvtool/RELEASE.md`。先查一下集群里有哪些机器和能力，自己拆解、委派给合适的 agent，能并行的并行，最后汇总谁在哪做了什么。
 
+每次跑用独立的目标目录 `kvtool/release-<时间戳>/`（prompt 里给出），旧产物骗不过断言。28.1 落地后一个任务横跨多条交换（首回复 + 续接），用例按**任务**聚合：从首回复拿根任务 id，之后轮询 `/console/tasks/{id}` 与该会话的回复直到父任务没有在跑的子任务且最后一条回复不是续接。
+
 断言（任一失败即非零退出，附相关 id）：
-1. 根回复的 `process.tools` 里有 `steve_fleet`（先查名册）；
-2. `process.steps` 里 ≥ 2 个 `kind=delegate, state=done` 的子任务，且**至少一个不在 hub 所在机器**；
-3. 产出 `SHA256SUMS` 的那个子任务所在机器，在 `/state.nodes` 里申报了 `build` 能力（按能力放置，不管 prompt 里 agent 是点名还是 `requires`）；
-4. 主目录里 `kvtool/dist/SHA256SUMS`、`kvtool/RELEASE.md` 存在，README 含"校验"字样，`sha256sum -c` 通过；
+1. 根任务的工具调用里有 `steve_fleet`，且发生在第一次 `steve_delegate` **之前**（先查名册再委派）；
+2. ≥ 2 个 `kind=delegate, state=done` 的子任务，**至少一个不在 hub 所在机器**，且至少两个子任务的执行区间**重叠**（真并行）；
+3. 产出 `SHA256SUMS` 的子任务所在机器在 `/state.nodes` 里申报了 `build` 能力，且该文件出现在**那个子任务** attempt 的改动索引里（产物来自谁，不看谁说）；
+4. 主目录里 `release-<ts>/SHA256SUMS`、`release-<ts>/RELEASE.md` 存在，README 含"校验"字样，`sha256sum -c` 通过，`file` 说二进制是 ELF x86-64；
 5. 每个子任务的 attempt 用量 `reported=true`；
-6. 记录（不断言）根回合的 `steve_await` 次数——28.1 落地后应为个位数。
+6. 根任务所有回合的 `steve_await` 总次数 ≤ 子任务数 × 2（28.1 落地后父 agent 不该守着等）。
 
 总超时 20 分钟（builder 的 codex reasoning=max 一个人就要 10–15 分钟）。
 
@@ -780,3 +790,16 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 | 28.1 双工 + 28.4 用例 | 我 |
 | 28.2 子卡复用 Trace | codex（`steve-childcard`） |
 | 28.3 第一片：journal 包 + 节点会话表 + hub 续接 + 故障注入 + 内存管道测试 | codex（`steve-journal`） |
+
+### 28.6 评审记录（codex，8 条，全部采纳）
+
+| # | 评审意见 | 处理 |
+|---|---|---|
+| 1 | 28.3 按 attempt 续接不成立：Host 按 node+harness 共享，一条流上多个 session | 续接单位改为进程流（`Stream` id），attempt 映射留在 hub；验收加"同 harness 两任务并发、一任务取消" |
+| 2 | 28.1 不能承诺"已落地"：父回合结束后只能 Defer | 投递前先 `LandPending`，报真实状态（已落地 / 排队 / 冲突） |
+| 3 | `collected` 布尔不够：结果只在内存、无稳定投递 id、重启丢 | 结果与投递状态写进任务记录，`Key` 去重，启动时补投，执行前复查父任务 |
+| 4 | 28.2 子进度在父回合结束后被丢或归错回合；StepProcess 缺 Plan / Model | 按子任务保存快照（`UpdateStep`）、页面按任务 id 更新；补 Plan / Model；思考上限 8 KiB → 64 KiB |
+| 5 | 28.3 缺双向序号 / 确认 / 排他 / 退出回放，半行断线 | 按完整行计数、`AfterOut` / `AfterIn` / `ResumeAck{HaveIn}`、新 attach 取代旧的、`exit` 记录回放、detach 与 kill 分开 |
+| 6 | 断线即关 MCP 监听；转发器无法回工具错误；权限请求怎么办 | 监听常驻、节点回 503 + JSON-RPC 错误；权限请求随 out.jsonl 回放，hub 记已答 id |
+| 7 | 资源与时钟边界：流 id 回绕、单流堵塞、日志总量、too old、磁盘满、超长行、hub 缓冲、迟到的 down、硬预算 | 保留 256 MB / too old / 不可续接标记 / 1 MiB 缓冲 / 带代次的事件 / 硬预算不暂停；流 id 回绕记为已知不管 |
+| 8 | 截图与自主验收偏弱 | 28.2 验收加长思考与折叠；28.4 加 fleet 先后、区间重叠、产物归属、ELF 架构、独立目录、await 上限，按任务跨交换聚合 |
