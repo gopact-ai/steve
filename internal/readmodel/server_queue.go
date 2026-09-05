@@ -16,7 +16,10 @@ type Exchange struct {
 	Input        string `json:"input"`
 	// Prompt is what the agent is given when it differs from Input: a
 	// continuation after a restart shows the notice and says "go on".
-	Prompt     string     `json:"prompt,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	// Key names an exchange the platform put in on its own — a child's
+	// result delivered to its parent — so a retry cannot add it twice.
+	Key        string     `json:"key,omitempty"`
 	Quotes     []QuoteRef `json:"quotes,omitempty"`
 	State      string     `json:"state"` // queued | running | done | failed
 	EnqueuedAt time.Time  `json:"enqueued_at"`

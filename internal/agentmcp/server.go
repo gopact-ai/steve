@@ -103,6 +103,8 @@ type DelegateResult struct {
 	Outcome string   `json:"outcome,omitempty"`
 	Answer  string   `json:"answer,omitempty"`
 	Refs    []string `json:"refs,omitempty"`
+	// Note tells the caller what happens next while the child runs.
+	Note string `json:"note,omitempty"`
 }
 
 // AwaitRequest asks for a child's result, waiting up to WaitSeconds.
@@ -576,7 +578,8 @@ func toolList(delegating, informing, fleeting, remembering bool) []map[string]an
 			"name": "steve_delegate",
 			"description": "Hand one bounded piece of work to another agent, possibly on another machine. " +
 				"Name the agent, or say what capability the work needs (gpu, internal-net, prod-cred) and Steve picks who can. " +
-				"Returns as soon as the child is placed: read `state`. If it is `running`, call steve_await with the task_id until it is `done` or `failed`. " +
+				"Returns as soon as the child is placed: read `state`. If it is `running`, you do not have to wait: when the child ends, Steve sends its result into this conversation as a new message, and you continue from there — so end your turn when nothing else is left. " +
+				"Call steve_await only when you must have the result within this turn. " +
 				"The child gets its own budget carved from yours, its own session, and only what you pass here — never your transcript. " +
 				"Use for work that needs a machine or credential you do not have; not for splitting work you could do yourself.",
 			"inputSchema": map[string]any{
@@ -609,8 +612,8 @@ func toolList(delegating, informing, fleeting, remembering bool) []map[string]an
 			},
 		}, map[string]any{
 			"name": "steve_await",
-			"description": "Wait for a delegated child task and return its result. Waits up to wait_seconds (max 50) and returns " +
-				"`state: running` if it is not finished yet — call again. Only the caller's own children can be awaited.",
+			"description": "Wait for a delegated child task and return its result. Usually unnecessary: a child's result is delivered into this conversation as a message when it ends. " +
+				"Use it only when you need the result within this turn. Waits up to wait_seconds (max 50) and returns `state: running` if it is not finished yet. Only the caller's own children can be awaited.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{

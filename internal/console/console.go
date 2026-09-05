@@ -532,7 +532,7 @@ func (s *Service) sendCommand(ctx context.Context, conversation, input, commandI
 			s.mu.Unlock()
 		}()
 	}
-	exchange, _, err := s.enqueue(ctx, conversation, input, "", quotes, false)
+	exchange, _, err := s.enqueue(ctx, conversation, input, "", quotes, false, "")
 	if err != nil {
 		return readmodel.Reply{}, err
 	}
@@ -793,6 +793,18 @@ func (s *Service) Resume(ctx context.Context, conversation, taskID, member, noti
 		return fmt.Errorf("revive session for task #%s: %w", taskID, err)
 	}
 	log.Printf("console: resuming task #%s conversation=%s member=%s", taskID, conversation, member)
-	_, _, err := s.enqueue(ctx, conversation, notice, "@"+member+" "+prompt, nil, true)
+	_, _, err := s.enqueue(ctx, conversation, notice, "@"+member+" "+prompt, nil, true, "")
+	return err
+}
+
+// Continue puts a message from the platform into a conversation, ahead
+// of what waits: a delegated child's result reaching its parent. The
+// notice is the visible line, the prompt is what the member is given.
+// The key makes it happen once, however many times it is asked.
+func (s *Service) Continue(ctx context.Context, conversation, key, member, notice, prompt string) error {
+	if member == "" {
+		return fmt.Errorf("continue %s: no member to address", conversation)
+	}
+	_, _, err := s.enqueue(ctx, conversation, notice, "@"+member+" "+prompt, nil, true, key)
 	return err
 }

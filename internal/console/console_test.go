@@ -340,3 +340,48 @@ func TestNoticeLandsInTheTasksOwnThread(t *testing.T) {
 		t.Fatalf("main = %+v", got)
 	}
 }
+
+func TestContinueHappensOnceForAKey(t *testing.T) {
+	h := &queueHandler{started: make(chan *queueCall, 8)}
+	s := New(h, "ou_owner", readmodel.New(readmodel.Sources{}))
+	first := enqueueForTest(t, s, "main", "first")
+	running := nextCall(t, h)
+	later := enqueueForTest(t, s, "main", "later")
+	for range 3 {
+		if err := s.Continue(context.Background(), "main", "deliver:59", "claude", "⤵ 子任务 #59 完成", "[steve] child done"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	list := s.Queue("main")
+	if len(list) != 3 || list[0].ID != first.ID || list[1].Key != "deliver:59" || list[1].Prompt != "@claude [steve] child done" || list[2].ID != later.ID {
+		t.Fatalf("queue = %+v", list)
+	}
+	running.finish <- nil
+	call := nextCall(t, h)
+	if call.req.Input != "@claude [steve] child done" {
+		t.Fatalf("continuation = %q", call.req.Input)
+	}
+	call.finish <- nil
+	// The same key after it ran is still one exchange, not a second.
+	if err := s.Continue(context.Background(), "main", "deliver:59", "claude", "again", "again"); err != nil {
+		t.Fatal(err)
+	}
+	next := nextCall(t, h)
+	if next.req.Input != "later" {
+		t.Fatalf("after the continuation came %q", next.req.Input)
+	}
+	next.finish <- nil
+	awaitExchange(t, s, later.ID)
+	keyed := 0
+	for _, e := range s.Queue("main") {
+		if e.Key == "deliver:59" {
+			keyed++
+		}
+	}
+	if keyed != 1 {
+		t.Fatalf("%d exchanges carry the key", keyed)
+	}
+	if err := s.Continue(context.Background(), "main", "deliver:60", "", "n", "p"); err == nil {
+		t.Fatal("a continuation without a member was accepted")
+	}
+}

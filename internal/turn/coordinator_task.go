@@ -217,6 +217,11 @@ type TaskNotice struct {
 	Text         string
 }
 
+// SetAfterTurn wires what runs once a turn's attempt is closed and its
+// queued landings are done: the delegation service delivering the
+// results of children that ended while the turn ran.
+func (c *Coordinator) SetAfterTurn(fn func(taskID string)) { c.afterTurn = fn }
+
 // SetNotifier wires those pushes to the channel. Nil simply means Steve keeps
 // its news to the cards.
 func (c *Coordinator) SetNotifier(fn func(TaskNotice)) { c.notifier = fn }

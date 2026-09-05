@@ -86,6 +86,12 @@ type Service struct {
 	// client's timeout.
 	InlineWait time.Duration
 
+	// deliver carries a finished child's result into its parent's
+	// conversation; deliverMu serialises deliveries per process so a
+	// turn ending and a child ending at once send one message, not two.
+	deliver   func(context.Context, Delivery) error
+	deliverMu sync.Mutex
+
 	mu      sync.Mutex
 	pending map[string]*child
 	bases   map[string]string
@@ -192,7 +198,11 @@ func (s *Service) Start(ctx context.Context, conversationID, agentID string, req
 	// work that is half done on another machine.
 	go s.drive(context.WithoutCancel(ctx), conversationID, agentID, parent, spawned, candidate, req, entry)
 
-	return s.wait(ctx, entry, s.InlineWait)
+	first, err := s.wait(ctx, entry, s.InlineWait)
+	if err == nil && first.State == "running" && s.deliver != nil {
+		first.Note = "Still running. You need not wait: when it ends, Steve sends its result into this conversation as a new message. End your turn if nothing else is left."
+	}
+	return first, err
 }
 
 // Await returns a child's result, waiting up to the request's bound. Only
@@ -251,6 +261,7 @@ func (s *Service) Delegate(ctx context.Context, conversationID, agentID string, 
 // settle turns a finished result into the sync form's return: the child's
 // failure is the caller's error.
 func (s *Service) settle(result agentmcp.DelegateResult) (agentmcp.DelegateResult, error) {
+	s.collect(result.TaskID, result)
 	if result.State == "failed" {
 		s.mu.Lock()
 		entry := s.pending[result.TaskID]
@@ -272,7 +283,11 @@ func (s *Service) wait(ctx context.Context, entry *child, wait time.Duration) (a
 	case <-ctx.Done():
 		// The caller went away; the child does not. Report what we know.
 	}
-	return s.snapshot(entry), nil
+	out := s.snapshot(entry)
+	if ctx.Err() == nil {
+		s.collect(out.TaskID, out)
+	}
+	return out, nil
 }
 
 func (s *Service) snapshot(entry *child) agentmcp.DelegateResult {
@@ -285,6 +300,16 @@ func (s *Service) snapshot(entry *child) agentmcp.DelegateResult {
 
 func (s *Service) fromStore(taskID string) (agentmcp.DelegateResult, error) {
 	stored, ok := s.tasks.Get(taskID)
+	if ok && stored.Result != nil {
+		out := agentmcp.DelegateResult{TaskID: stored.ID, Agent: stored.Member, Node: stored.Node, State: "done",
+			Elapsed: stored.UpdatedAt.Sub(stored.CreatedAt).Round(time.Second).String(),
+			Outcome: stored.Result.Outcome, Answer: stored.Result.Answer, Refs: append([]string(nil), stored.Result.Refs...)}
+		if stored.State != task.StateDone {
+			out.State = "failed"
+		}
+		s.collect(taskID, out)
+		return out, nil
+	}
 	if !ok {
 		return agentmcp.DelegateResult{}, fmt.Errorf("no task %s", taskID)
 	}
@@ -344,6 +369,9 @@ func (s *Service) drive(ctx context.Context, conversationID, agentID string, par
 	}
 	result.TaskID, result.Agent, result.Node = spawned.ID, candidate.Agent.ID, candidate.Node
 
+	if err := s.tasks.SetResult(spawned.ID, task.Result{Outcome: result.Outcome, Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}); err != nil {
+		log.Printf("delegate: record result of task #%s: %v", spawned.ID, err)
+	}
 	s.mu.Lock()
 	entry.result, entry.err = result, runErr
 	s.mu.Unlock()
@@ -351,6 +379,11 @@ func (s *Service) drive(ctx context.Context, conversationID, agentID string, par
 	log.Printf("delegate: task #%s %s on %s", spawned.ID, result.State, nodeLabel(candidate.Node))
 	s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node,
 		Goal: req.Goal, State: result.State, Since: since, Elapsed: time.Since(since), Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}, last)
+
+	// The parent is told now if no turn of it is running; a running turn
+	// is told when it ends. An awaiter that already read the result in
+	// this turn marked it collected, and nothing more is sent.
+	s.flushIfIdle(ctx, parent.ID)
 
 	// Keep the result around for a late awaiter, then let it go.
 	time.AfterFunc(keepFinished, func() {
@@ -615,7 +648,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		if err := s.artifacts.Defer(ctx, parent.ProjectID, published.ID, "task #"+child.ID); err != nil {
 			log.Printf("delegate: queue landing of %s: %v", published.ID, err)
 		}
-		result.Refs = append(result.Refs, "queued to land when this turn ends")
+		result.Refs = append(result.Refs, "queued to land; Steve lands it and tells you when it has")
 	}
 	s.finish(child.ID, task.OutcomeOK)
 	return result, nil

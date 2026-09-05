@@ -175,6 +175,7 @@ type Coordinator struct {
 	text           i18n.Catalog
 	resumer        func(TaskResume)
 	notifier       func(TaskNotice)
+	afterTurn      func(taskID string)
 	// offlineAfter is how long a turn runs before its completion also earns
 	// a plain-text ping; zero keeps Steve quiet.
 	offlineAfter time.Duration
