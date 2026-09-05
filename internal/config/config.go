@@ -2,19 +2,23 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/adapter"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -256,6 +260,11 @@ type Agent struct {
 }
 
 type Harness struct {
+	// Adapter names an ACP adapter from the built-in catalog, which Steve
+	// fetches at a pinned version and verifies before running. Give this
+	// or Command, not both: an explicit command is a machine's own build,
+	// and Steve does not second-guess it.
+	Adapter    string   `json:"adapter,omitempty"`
 	Command    string   `json:"command"`
 	Args       []string `json:"args"`
 	ProcessDir string   `json:"process_dir"`
@@ -324,10 +333,10 @@ func StarterFeishu(feishu Feishu) *Config {
 		},
 		Harnesses: map[string]Harness{
 			harness.Codex: {
-				Command: "npx", Args: []string{"-y", "@agentclientprotocol/codex-acp"}, Permission: PermissionRead,
+				Adapter: "codex-acp", Permission: PermissionRead,
 			},
 			harness.ClaudeCode: {
-				Command: "npx", Args: []string{"-y", "@agentclientprotocol/claude-agent-acp"}, Permission: PermissionRead,
+				Adapter: "claude-agent-acp", Permission: PermissionRead,
 			},
 			harness.Grok: {
 				Command: "grok", Args: []string{"agent", "--no-leader", "stdio"}, Permission: PermissionRead,
@@ -487,6 +496,19 @@ func Load(path string) (*Config, error) {
 		if item.Permission == "" {
 			item.Permission = PermissionRead
 		}
+		switch {
+		case item.Adapter != "" && item.Command != "":
+			return nil, fmt.Errorf("harness %q sets both adapter and command; pick one", id)
+		case item.Adapter == "" && item.Command == "":
+			return nil, fmt.Errorf("harness %q needs an adapter or a command", id)
+		case item.Adapter != "":
+			if _, known := adapter.Catalog[item.Adapter]; !known {
+				return nil, fmt.Errorf("harness %q: adapter %q is not one of %s", id, item.Adapter, strings.Join(adapter.Names(), ", "))
+			}
+			if len(item.Args) > 0 {
+				return nil, fmt.Errorf("harness %q: an adapter takes no args", id)
+			}
+		}
 		item.ProcessDir = absolute(item.ProcessDir)
 		cfg.Harnesses[id] = item
 	}
@@ -506,7 +528,11 @@ func Load(path string) (*Config, error) {
 	if _, err := cfg.AgentCatalog(); err != nil {
 		return nil, err
 	}
-	if _, err := cfg.HarnessManager(); err != nil {
+	// Not HarnessManager: a harness that names an adapter has no command
+	// until the adapter is fetched, and loading a file must not depend on
+	// the network. Loading checks the configuration; the manager checks
+	// that it can be run.
+	if err := cfg.validateHarnesses(); err != nil {
 		return nil, err
 	}
 	for id, item := range cfg.Agents {
@@ -540,6 +566,50 @@ func (c *Config) AgentCatalog() (*agent.Catalog, error) {
 		}
 	}
 	return agent.NewCatalog(configs)
+}
+
+func (c *Config) validateHarnesses() error {
+	if len(c.Harnesses) == 0 {
+		return fmt.Errorf("at least one harness is required")
+	}
+	for id, item := range c.Harnesses {
+		if id == "" {
+			return fmt.Errorf("a harness needs a name")
+		}
+		if _, err := permission.New(item.Permission); err != nil {
+			return fmt.Errorf("harness %q: %w", id, err)
+		}
+	}
+	return nil
+}
+
+// PrepareAdapters fetches and verifies every adapter the configuration
+// names, filling in the command that starts it. It runs before the harness
+// manager is built, so a machine either has the pinned adapter or refuses
+// to start with a reason — there is no version to discover later.
+func (c *Config) PrepareAdapters(ctx context.Context) error {
+	install := &adapter.Installer{Dir: c.AdapterDir()}
+	for id, item := range c.Harnesses {
+		if item.Adapter == "" {
+			continue
+		}
+		got, err := install.Ensure(ctx, item.Adapter)
+		if err != nil {
+			return fmt.Errorf("harness %q: %w", id, err)
+		}
+		if !got.Cached {
+			log.Printf("adapter: installed %s@%s for harness %s", got.Package, got.Version, id)
+		}
+		item.Command = got.Command
+		c.Harnesses[id] = item
+	}
+	return nil
+}
+
+// AdapterDir is where fetched adapters live: beside the ledger, because
+// they are part of this deployment's state, not of anyone's home.
+func (c *Config) AdapterDir() string {
+	return filepath.Join(filepath.Dir(absolute(c.Gateway.StatePath)), "adapters")
 }
 
 func (c *Config) HarnessManager() (*harness.Manager, error) {

@@ -14,7 +14,7 @@ Steve 提供三条结构性承诺：
 
 **当前启动需要配置飞书，纯控制台启动在 [架构文档](docs/architecture.md)的路线图 §9 B3。** 使用控制台还必须填写 `feishu.owner_open_id`，控制台以该 owner 身份执行。飞书可以不作为日常交互入口，但当前程序仍会建立飞书连接。
 
-准备 Go 1.27+、Git，以及至少一个已安装并完成认证的 ACP 适配器。使用 codex-acp / claude-agent-acp 时还需要其 Node.js 运行环境；安装示例见 [运维文档](docs/operations.md#部署-hub)。
+准备 Go 1.27+、Git、Node.js 与 npm，以及一个已完成认证的 coding agent。内置清单里的适配器（codex-acp、claude-agent-acp）由 steve 按钉死的版本自己取，不用预装；它们是 npm 包，所以 Node.js 运行环境仍是前置条件。自己编译的适配器写 `command` 直接用，见 [运维文档](docs/operations.md#部署-hub)。
 
 1. 在仓库根目录构建并生成配置：
 
@@ -25,7 +25,7 @@ Steve 提供三条结构性承诺：
 
    setup 可录入已有飞书应用，也可走官方设备流创建（直接创建可用 `./steve setup -create-app`）；确认该应用下自己的 `open_id` 为 owner。
 
-2. 编辑生成的 `config.json`。保留 setup 写入的 `feishu` 和 `projects`，将 `agents` / `harnesses` 精简到实际已安装的工具。下面是仅使用 codex 的两个顶层字段，路径需换成本机路径：
+2. 编辑生成的 `config.json`。保留 setup 写入的 `feishu` 和 `projects`，将 `agents` / `harnesses` 精简到实际要用的工具。下面是仅使用 codex 的两个顶层字段：
 
    ```json
    {
@@ -33,16 +33,12 @@ Steve 提供三条结构性承诺：
        "codex": { "harness": "codex", "default": true }
      },
      "harnesses": {
-       "codex": {
-         "command": "/home/me/.local/bin/codex-acp",
-         "args": [],
-         "permission": "read"
-       }
+       "codex": { "adapter": "codex-acp", "permission": "read" }
      }
    }
    ```
 
-   **setup 当前仍生成 `npx` 启动项，启动前要替换为预装适配器的绝对路径并清空原参数。** `command` 不经过 shell 展开，不能写 `~/...`。完整的 [config.example.json](config.example.json) 是多机配置参考，使用前需替换占位值并删掉不用的项目、agent 和服务。
+   `adapter` 是内置清单里的名字，steve 按钉死的版本自己取、校验后再运行，不用你预装，也不会哪天悄悄换个版本。想用自己编译的适配器就写 `command`（绝对路径，不经过 shell 展开，不能写 `~/...`），两者只能给一个。完整的 [config.example.json](config.example.json) 是多机配置参考，使用前需替换占位值并删掉不用的项目、agent 和服务。
 
 3. 体检后启动 hub：
 

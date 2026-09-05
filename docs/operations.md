@@ -70,8 +70,9 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 
 | 键 | 类型 | 默认 | 作用 | 示例 |
 |---|---|---|---|---|
-| `command` | string | 必填 | 预装适配器的可执行文件；hub 直接启动，不做 shell 展开 | `"/home/me/.local/bin/codex-acp"` |
-| `args` | string[] | `[]` | 直接传给命令的参数 | `[]`；kimi 为 `["acp"]` |
+| `adapter` | string | `""` | 内置清单里的适配器名（`codex-acp`、`claude-agent-acp`）。steve 按钉死的版本取到缓存、校验后运行；与 `command` 二选一，不能并存，也不接受 `args` | `"codex-acp"` |
+| `command` | string | 与 `adapter` 二选一，必须给一个 | 自己预装的适配器可执行文件；hub 直接启动，不做 shell 展开 | `"/home/me/.local/bin/codex-acp"` |
+| `args` | string[] | `[]` | 直接传给命令的参数；`adapter` 不接受 | `[]`；kimi 为 `["acp"]` |
 | `process_dir` | string | `""`（hub 进程当前目录） | harness 进程启动目录；会话工作目录另由项目决定 | `"/home/me/steve-runtime"` |
 | `env` | string[] | `[]`（继承进程环境，再加入默认的隔离 home 设置） | 追加或覆盖进程环境，格式 `KEY=value` | `["PATH=/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin"]` |
 | `permission` | string | `"read"` | ACP 工具权限策略，见下表 | `"write"` |
@@ -168,8 +169,9 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 | `token` | string | 必填，即使配置了 `hubs` | 通用 hub 认证 token；若也列在 `hubs`，名称同样受约束 | `"replace-me-with-a-long-random-secret"` |
 | `hubs` | object<string, string> | `{}` | hub 名称 → token；表中的 token 必须匹配该名字，不会自动禁用未列入表的顶层 token | `{"hub-a":"replace-me-with-a-long-random-secret"}` |
 | `harnesses` | object<string, HarnessSpec> | 必填，至少一项 | 该机器可启动的 ACP 工具 | `{"codex":{"command":"/home/me/.local/bin/codex-acp"}}` |
-| `harnesses.<name>.command` | string | `""`（不能启动） | 本机预装可执行文件 | `"/home/me/.local/bin/codex-acp"` |
-| `harnesses.<name>.args` | string[] | `[]` | 命令参数 | `[]` |
+| `harnesses.<name>.adapter` | string | `""` | 内置清单里的适配器名；node 自己取到 `state_dir/adapters` 并校验后运行。与 `command` 二选一 | `"codex-acp"` |
+| `harnesses.<name>.command` | string | 与 `adapter` 二选一 | 本机自己预装的可执行文件 | `"/home/me/.local/bin/codex-acp"` |
+| `harnesses.<name>.args` | string[] | `[]` | 命令参数；`adapter` 不接受 | `[]` |
 | `harnesses.<name>.env` | string[] | `[]`（继承 node 环境，再加入默认的隔离 home 设置） | harness 环境覆盖 | `["PATH=/home/me/.local/bin:/usr/local/bin:/usr/bin:/bin"]` |
 | `harnesses.<name>.process_dir` | string | `workspace_root`；后者为空时用进程当前目录 | harness 启动目录，与会话工作目录不同 | `"/home/me/steve-runtime"` |
 | `harnesses.<name>.models` | string[] | `[]` | 该工具在本机提供的模型声明；真实可用模型仍以会话报告为准 | `["<model-id-from-this-harness>"]` |
@@ -188,7 +190,7 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 | `mcp_broker.socket` | string | `""`（不启用独立 broker） | 本机 Unix socket；填写绝对路径 | `"/home/me/.steve-mcp/mcp.sock"` |
 | `mcp_broker.token` | string | `""` | broker 控制 token，应与 mcp.json 相同 | `"replace-me-with-a-separate-broker-token"` |
 | `workspace_root` | string | `""` | 物化工作树的根目录，以及未指定目录的命令/进程的后备目录 | `"/home/me/steve-work"` |
-| `state_dir` | string | `"~/.steve-node"` | 隔离 home、进程日志、技能包、节点归属与 broker 状态 | `"/home/me/.steve-node"` |
+| `state_dir` | string | `"~/.steve-node"` | 隔离 home、进程日志、技能包、取来的适配器（`adapters/`）、节点归属与 broker 状态 | `"/home/me/.steve-node"` |
 
 `Source`、`SessionGrace`、`FaultDropAfter` 的 JSON 标签是 `-`，不能写进 node.json。`Source` 来自 `-config`；后两项的命令行环境入口如下：
 
@@ -214,13 +216,17 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 
 ## 部署 hub
 
-以下命令用于新部署。适配器先安装并以部署用户完成认证；启动过程中不依赖在线下载。示例用户是 `me`，目录按实际环境替换：
+以下命令用于新部署。示例用户是 `me`，目录按实际环境替换。
+
+内置清单里的适配器（`codex-acp`、`claude-agent-acp`）不用预装：harness 写 `"adapter": "codex-acp"`，hub 首次启动时取到 `state_path` 父目录下的 `adapters/`，按编译进二进制的摘要校验后运行。首次取用需要能访问 npm registry 和本机的 `npm`；之后命中缓存就不再联网。摘要对不上、清单里没有这个名字、或者装不上，都是启动失败并说明原因——不会退回去随便跑一个版本。
+
+自己编译或另有来源的适配器改写 `command`（绝对路径）并把 `args` 填 `[]`，两者只能给一个。这种情况下自行安装：
 
 ```bash
-npm install -g --prefix /home/me/.local @agentclientprotocol/codex-acp @agentclientprotocol/claude-agent-acp
+npm install -g --prefix /home/me/.local @agentclientprotocol/codex-acp
 ```
 
-harness 的 `command` 分别填写 `/home/me/.local/bin/codex-acp` 和 `/home/me/.local/bin/claude-agent-acp`，`args` 填 `[]`。只使用一个工具时只保留对应 agent/harness。安装后先用部署用户的登录环境确认工具认证与代理设置，再按 [README](../README.md#从控制台开始) 执行 `make build` → `steve setup` → 修改命令路径 → `steve doctor` → `steve run` → `steve dash`。
+只使用一个工具时只保留对应 agent/harness。工具本身的认证与代理是部署用户 profile 里的东西，先在登录 shell 里确认，再按 [README](../README.md#从控制台开始) 执行 `make build` → `steve setup` → `steve doctor` → `steve run` → `steve dash`。
 
 `make build` 使用 `CGO_ENABLED=0` 构建 `steve` 和 `steve-node`；控制台静态文件已嵌入 Go 源码目录，普通后端构建不需要重新构建前端。修改前端时先执行 `make console`，再构建二进制。
 
