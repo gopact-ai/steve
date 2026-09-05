@@ -810,9 +810,37 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 |---|---|---|
 | 28.1 双工 | ✅ `delegate.Service.SetDeliverer / Flush / RedeliverPending`，结果与投递状态在任务记录上（`task.Result` / `task.Delivery`），`Coordinator.SetAfterTurn` 在回合收尾投递；控制台 `Continue`（`Exchange.Key` 去重）、飞书 `Deliver`；投递前先 `LandPending`，refs 里的"将要落到哪"换成"现在在哪"。工具说明改为"不必等"，`steve_delegate` 返回带 `note`。真机：父回合 39 秒结束（只调了 `steve_context`、`steve_delegate`），子任务 1 分钟完成后 `⤵ 子任务 #62 完成 · shipper@node-b · 1m1s` 入列，4 秒后父 agent 的续接回复到，文件已在主目录 | PR #14 |
 | 28.2 子卡复用 Trace | ✅ codex：`DelegationCard` 正文 = `Trace`，进行中思考展开跟尾、手动滚动后不再跟；完成后折叠但全文保留；`ProcessBody` 用同一张卡；`console.Service.UpdateStep` + `console.step` 事件按子任务跨回合更新，刷新后从回复里读回；`StepProcess` 带 Plan / Model；思考上限 8 KiB → 64 KiB，头尾保留、中间标省略字节数。附 Playwright 截图与 `e2e/childcard/check.mjs` | PR #15（codex） |
-| 28.3 可续接进程流 | ⏳ codex 在做（`fix/journal`）：journal 包、节点进程表、hub 续接读写端、idle pause / resume、故障注入 | — |
+| 28.3 可续接进程流 | ✅ codex：`process_journal.v1` 特性协商；`internal/node/journal`（双向序号、64 MiB 段、256 MiB 保留、too old、`exit` 记录）；节点进程表（不随流死、`superseded`、回放与实况原子切换、grace 后才杀）；hub 侧 `remoteProcess` 续接（`ResumeAck{HaveIn}`、1 MiB 输入缓冲、已答 id 去重）；idle pause / resume 带连接代次；loopback MCP 常驻、断线回 503；`STEVE_NODE_FAULT=drop-hub-after:20s`。真机（node-b 开故障注入，委派 shipper 跑 3 分钟并中途调 `steve_context`）：`node-b disconnected (connection 1)` → 1.465 秒后 `reattached stream cd3f8c76… (after output 63, accepted input 3)`，节点侧 `replayed 0 lines`；子任务照常完成、`steve_context` 成功、文件落地、续接送回 | PR #16（codex） |
 | 28.4 自主拆解门禁 | ✅ `e2e/fleet -scenario autonomous` / `make e2e-autonomous`。第一轮协调者自己写了文档、只委派编译（这符合工具说明"能自己做的别委派"）——prompt 改成"文档交给另一个 agent"；第二轮：`steve_fleet` 先于 `steve_delegate`，builder@node-a 编译、grok@hub 写文档并行，SHA256SUMS 出自 build 机器的 attempt，`sha256sum -c` 过、ELF x86-64；六条里只有用量一条红：grok 这个 harness 不上报用量（平台如实记 `reported=false`），门禁改为"至少一个子任务上报，未上报按 harness 记 WARN"；第三轮 `AUTONOMOUS PASS elapsed=6m1.8s`，两个子任务都上报了用量，`awaits=0`（父 agent 一次 `steve_await` 都没调，对比 §27.1 之前 kvtool demo 的 21 次工具调用） | PR #14 |
 
 顺手修的：控制台会话从不向 messaging server 注册锚点，agent 在控制台里 `feishu_send` 一律被拒（"no active conversation to deliver to"）；现在每条交换开始前注册 `web-<exchange>` 锚点，里程碑落到锚点所在的会话而不是固定 main（PR #14）。
 
 发现：grok harness 不上报用量；`steve_delegate` 的说明里"不要为自己能做的事委派"会让协调者把小活留给自己，用例要并行就得在 prompt 里说清"交给另一个 agent"。
+
+### 28.8 过程时间线：思考、工具、叙述按发生顺序画（2026-09-05 下午）
+
+**现状。** 28.2 把子卡和父回复统一成 `Trace`，但 `Trace` 的输入是 `Progress{Reasoning, Tools, Answer}`——一段累积的思考、一个工具列表、一段答案，三者之间**没有时序**。页面只能先画全部思考再画全部工具：回合的逻辑（想了这个 → 于是跑了那两条命令 → 看到结果又想了那个）被抹平了。用户拿 Codex app 对照：agent 的叙述段落按时间穿插，段落之间的工具活动折成一行摘要（"Read files, ran commands"、"Edited x.md +8 -8"、"Messaged an agent"），点开才是明细。
+
+**终态。** 过程是一条**时间线**，不是三个桶。
+
+```go
+// view / readmodel
+type Span struct {
+    Kind string   // text | thought | tool
+    Text string   // text / thought：这一段的内容（同类连续 chunk 合并成一段）
+    Tool string   // tool：工具调用 id，明细仍在 Tools[] 里按 id 更新
+    At   time.Time
+}
+type Progress struct { …; Timeline []Span }
+```
+
+- acphost 的 `collector` 按到达顺序维护 `timeline`：`agent_message_chunk` 延长最后一段 text（否则开新段），`agent_thought_chunk` 同理开 thought 段，工具调用**创建**时追加一个 tool span（状态更新只改 `Tools[]`，不加 span）。`Reasoning` / `Answer` / `Tools` 照旧维护，老回复、老客户端不受影响。
+- 读模型的 `Progress` / `StepProcess` 带 `timeline`；控制台的 `process` 快照与 `UpdateStep` 原样携带。
+- 页面 `Trace` 有 `timeline` 就按时间线画：text 段是普通段落（Markdown）；thought 段是灰色小字的一行摘要（进行中的最后一段跟尾）；**连续的 tool span 合成一行活动摘要**，按类别聚合措辞（"读了 3 个文件、跑了 2 条命令"、"改了 README.md"、"委派了一个子任务"、"问了平台一次"），带类别图标，失败的标红；点开这一行展开这组工具的 `ToolCalls` 明细。没有 timeline 的老回复照现在的画法。
+- 回复正文（最终答案）仍是整段 `Answer`，不从时间线里拼；时间线只出现在过程折叠与子卡里。子卡的"它说"改成时间线最后一段 text（就是它的最终答案），中途的叙述留在时间线里。
+
+**接缝。** `internal/view.Progress.Timeline`、`acphost/host.go` 的 collector（`writeText` / `writeThought` / 工具创建处）、`readmodel.Progress` 与 `FromProgress`、`console` 无改动（整体携带）、前端 `trace.tsx`（`Trace` 按 timeline 分组渲染 + 活动摘要文案）、`delegation.tsx`（"它说"取最后一段）。工具类别到措辞的映射放在前端 `lib/activity.ts`，按 `ToolCall.Kind` 与名字前缀（read / edit / run / mcp.steve.* / delegate）。
+
+**验证。** 单测：collector 的时间线合并规则（连续 chunk 合并、工具穿插切段、思考与文本交错）；前端渲染测试或截图：父回复的过程折叠与子卡都按"叙述 → 活动摘要 → 叙述"的顺序，活动摘要点开是明细；老回复（无 timeline）不变。
+
+**顺手的保护。** 页面记住首次拿到的 `hub.version`，之后 `/state` 里版本变了、且输入框为空，就自动 `location.reload()`：部署后残留的旧标签页会把新事件种类（如 `console.step`）当成转写行每秒刷一条——这次就是这么被看见的。
