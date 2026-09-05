@@ -2,16 +2,16 @@ import { useState, type KeyboardEvent, type RefObject } from "react";
 import { ArrowUp, ChevronDown, CornerDownRight, DotsHorizontal, Edit05, Folder, MessageChatSquare, Plus, Square, Trash01 } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
-import type { ConversationContext, Project, QuoteRef, Selectors, Suggestion, Verb } from "@/lib/types";
+import type { ConversationContext, Exchange, Project, QuoteRef, Selectors, Suggestion, Verb } from "@/lib/types";
 import { placeLabel } from "@/lib/workspaces";
 
 // Composer is the console's input, in the proportions of a chat app's:
 // a textarea that grows, a row of small round controls under it — the
 // verbs, the project, the agent — and a send / stop button. The
-// completion popover sits above it. It holds no state of its own.
+// completion popover sits above it. Queue edits stay drafts until saved.
 // Queued is a line typed while a turn runs: it waits above the box until
 // the turn ends, unless the person steers it in now or takes it back.
-export interface Queued { id: string; text: string }
+export type Queued = Exchange;
 
 export interface ComposerProps {
     // Selectors are fetched when the model chip opens — that may open a
@@ -22,7 +22,7 @@ export interface ComposerProps {
     onDropQuote?: (q: QuoteRef) => void;
     queue?: Queued[];
     onSteer?: (q: Queued) => void;
-    onEditQueued?: (q: Queued) => void;
+    onEditQueued?: (q: Queued, input: string) => Promise<void>;
     onDropQueued?: (q: Queued) => void;
     onSideChat?: (q: Queued) => void;
     queueing?: boolean;
@@ -72,22 +72,7 @@ export function Composer(p: ComposerProps) {
             {p.queue && p.queue.length > 0 && (
                 <ul className="mb-1 flex flex-col gap-1">
                     {p.queue.map((q) => (
-                        <li key={q.id} className="flex items-center gap-2 rounded-xl bg-secondary/70 px-3 py-1.5 text-sm ring-1 ring-secondary">
-                            <CornerDownRight className="size-3.5 shrink-0 text-fg-quaternary" />
-                            <span className="min-w-0 flex-1 truncate text-primary" title={q.text}>{q.text}</span>
-                            <button type="button" onClick={() => p.onSteer?.(q)} className="flex shrink-0 items-center gap-1 rounded-md px-1.5 py-0.5 text-xs text-tertiary hover:bg-primary hover:text-primary" title="打断当前回合，现在就发（相当于开头加 !）">插队</button>
-                            <button type="button" onClick={() => p.onDropQueued?.(q)} className="flex size-6 shrink-0 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary hover:text-fg-quaternary_hover" aria-label="删除" title="删除"><Trash01 className="size-3.5" /></button>
-                            <Dropdown.Root>
-                                <AriaButton aria-label="更多" className="flex size-6 shrink-0 items-center justify-center rounded-md text-fg-quaternary outline-none hover:bg-primary hover:text-fg-quaternary_hover"><DotsHorizontal className="size-3.5" /></AriaButton>
-                                <Dropdown.Popover placement="top end" className="w-44">
-                                    <Dropdown.Menu onAction={(k) => { if (k === "edit") p.onEditQueued?.(q); else if (k === "side") p.onSideChat?.(q); else if (k === "off") p.onToggleQueueing?.(); }}>
-                                        <Dropdown.Item id="edit" label="编辑" icon={Edit05} />
-                                        <Dropdown.Item id="side" label="在新线程里问" icon={MessageChatSquare} />
-                                        <Dropdown.Item id="off" label={p.queueing === false ? "打开排队" : "关闭排队"} />
-                                    </Dropdown.Menu>
-                                </Dropdown.Popover>
-                            </Dropdown.Root>
-                        </li>
+                        <QueuedLine key={q.id} q={q} p={p} />
                     ))}
                 </ul>
             )}
@@ -108,6 +93,7 @@ export function Composer(p: ComposerProps) {
                     aria-label="Message"
                     value={p.value}
                     rows={1}
+                    disabled={p.busy && p.queueing === false}
                     placeholder={p.busy ? (p.queueing === false ? "正在进行…" : "先排着，当前回合结束后发出；开头加 ! 立即打断") : "想做什么"}
                     onChange={(e) => p.onChange(e.target.value)}
                     onKeyDown={p.onKey}
@@ -148,6 +134,9 @@ export function Composer(p: ComposerProps) {
                         </Dropdown.Popover>
                     </Dropdown.Root>
                     <span className="flex-1" />
+                    <button type="button" onClick={p.onToggleQueueing} aria-pressed={p.queueing !== false} className={`${chip} text-quaternary`} title={p.queueing === false ? "打开排队" : "关闭排队"}>
+                        {p.queueing === false ? "排队已关闭" : "排队已打开"}
+                    </button>
                     <Dropdown.Root>
                         <AriaButton aria-label="Agent" className={`${chip} text-secondary`}>
                             <span>{p.agent?.id || "Agent"}</span>
@@ -189,6 +178,54 @@ export function Composer(p: ComposerProps) {
     );
 }
 
+
+// Editing never removes a durable entry. Another tab may start or delete
+// it meanwhile; the API reports that conflict without resubmitting it.
+function QueuedLine({ q, p }: { q: Queued; p: ComposerProps }) {
+    const [editing, setEditing] = useState(false);
+    const [draft, setDraft] = useState(q.input);
+    const [saving, setSaving] = useState(false);
+    const [error, setError] = useState("");
+    const save = async () => {
+        if (!draft.trim() || saving || !p.onEditQueued) return;
+        setSaving(true);
+        try { await p.onEditQueued(q, draft.trim()); setEditing(false); setError(""); }
+        catch (e) { setError(String(e).replace(/^Error: /, "")); }
+        finally { setSaving(false); }
+    };
+    return (
+        <li className="flex flex-col gap-1 rounded-xl bg-secondary/70 px-3 py-1.5 text-sm ring-1 ring-secondary">
+            <div className="flex items-center gap-2">
+                <CornerDownRight className="size-3.5 shrink-0 text-fg-quaternary" />
+                {editing ? <>
+                    <textarea aria-label="编辑排队消息" value={draft} onChange={(e) => setDraft(e.target.value)} disabled={saving} className="min-w-0 flex-1 rounded bg-primary px-2 py-1 text-primary" />
+                    <button type="button" disabled={saving || !draft.trim()} onClick={() => void save()} className="text-xs text-tertiary">保存</button>
+                    <button type="button" disabled={saving} onClick={() => { setEditing(false); setError(""); }} className="text-xs text-tertiary">取消</button>
+                </> : <>
+                    <span className="min-w-0 flex-1 truncate text-primary" title={q.input}>{q.input}</span>
+                    {!!q.quotes?.length && <span className="text-xs text-quaternary">{q.quotes.length} 条引用</span>}
+                    <button type="button" onClick={() => p.onSteer?.(q)} className="shrink-0 rounded-md px-1.5 py-0.5 text-xs text-tertiary hover:bg-primary hover:text-primary" title="打断当前回合，现在就发（相当于开头加 !）">插队</button>
+                    <button type="button" onClick={() => p.onDropQueued?.(q)} className="flex size-6 shrink-0 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary" aria-label="删除" title="删除"><Trash01 className="size-3.5" /></button>
+                    <Dropdown.Root>
+                        <AriaButton aria-label="更多" className="flex size-6 shrink-0 items-center justify-center rounded-md text-fg-quaternary outline-none hover:bg-primary"><DotsHorizontal className="size-3.5" /></AriaButton>
+                        <Dropdown.Popover placement="top end" className="w-44">
+                            <Dropdown.Menu onAction={(k) => {
+                                if (k === "edit") { setDraft(q.input); setEditing(true); }
+                                else if (k === "side") p.onSideChat?.(q);
+                                else if (k === "off") p.onToggleQueueing?.();
+                            }}>
+                                <Dropdown.Item id="edit" label="编辑" icon={Edit05} />
+                                <Dropdown.Item id="side" label="在新线程里问" icon={MessageChatSquare} />
+                                <Dropdown.Item id="off" label={p.queueing === false ? "打开排队" : "关闭排队"} />
+                            </Dropdown.Menu>
+                        </Dropdown.Popover>
+                    </Dropdown.Root>
+                </>}
+            </div>
+            {error && <span className="text-xs text-error-primary">{error}</span>}
+        </li>
+    );
+}
 
 // PreferenceChips are the model and, when the harness offers one, the
 // reasoning level of the current agent in this thread. The choices come

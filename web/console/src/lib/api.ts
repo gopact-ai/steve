@@ -1,4 +1,4 @@
-import type { AttemptView, ChangeIndex, QuoteRef, Selectors, FileDiff, FileView, HomeView, Task, TaskDetail, TaskMetaPatch, TreeView, MachineSkills, MCPRegistryEntry, MCPView, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
+import type { Exchange, AttemptView, ChangeIndex, QuoteRef, Selectors, FileDiff, FileView, HomeView, Task, TaskDetail, TaskMetaPatch, TreeView, MachineSkills, MCPRegistryEntry, MCPView, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
 
 // The token guards everything: it rides as a bearer header on requests and
 // as a query parameter on the event stream, which cannot carry headers.
@@ -79,6 +79,31 @@ export async function send(conversation: string, input: string, quotes?: QuoteRe
     const data = (await res.json().catch(() => ({}))) as { reply?: Reply; error?: string };
     if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
     return data.reply as Reply;
+}
+
+export async function fetchQueue(conversation: string): Promise<{ queue: Exchange[] }> {
+    return json(await fetch(`./console/queue${q}${q ? "&" : "?"}conversation=${encodeURIComponent(conversation)}`, { headers }));
+}
+
+export async function enqueue(conversation: string, input: string, quotes?: QuoteRef[]): Promise<Exchange> {
+    return json(await fetch(`./console/queue${q}`, {
+        method: "POST", headers: { ...headers, "Content-Type": "application/json" },
+        body: JSON.stringify({ conversation, input, quotes: quotes?.map(({ conversation, reply_id }) => ({ conversation, reply_id })) }),
+    }));
+}
+
+export async function deleteQueued(id: string): Promise<void> {
+    await json(await fetch(`./console/queue/${encodeURIComponent(id)}${q}`, { method: "DELETE", headers }));
+}
+
+export async function editQueued(id: string, input: string): Promise<Exchange> {
+    return json(await fetch(`./console/queue/${encodeURIComponent(id)}${q}`, {
+        method: "PATCH", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ input }),
+    }));
+}
+
+export async function steerQueued(id: string): Promise<Exchange> {
+    return json(await fetch(`./console/queue/${encodeURIComponent(id)}/steer${q}`, { method: "POST", headers }));
 }
 
 export const eventsURL = () => `./events${q}`;

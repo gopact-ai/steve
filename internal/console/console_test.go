@@ -3,13 +3,14 @@ package console
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/view"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 type echo struct{ seen []turn.Request }
@@ -58,10 +59,13 @@ func TestConsoleActsAsTheOwnerAndKeepsTheExchange(t *testing.T) {
 	if replies[len(replies)-1].Kind != "notice" || replies[len(replies)-2].Kind != "milestone" {
 		t.Fatalf("tail = %+v", replies[len(replies)-2:])
 	}
-	// Six events were published, console-kinded.
+	// Transcript events remain console-kinded; queue invalidations are separate.
 	seen := 0
 	for seen < 6 {
 		ev := <-events
+		if ev.Kind == "console.queue" {
+			continue
+		}
 		if !strings.HasPrefix(ev.Kind, "console.") {
 			t.Fatalf("unexpected event %+v", ev)
 		}
@@ -100,12 +104,19 @@ func (r *recorder) DeleteMessage(context.Context, string) error     { return nil
 
 // memDoc is a durable document that lives for one test.
 type memDoc struct {
+	mu    sync.Mutex
 	raw   []byte
 	saved bool
 }
 
-func (d *memDoc) Load() ([]byte, bool, error) { return d.raw, d.saved, nil }
+func (d *memDoc) Load() ([]byte, bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]byte(nil), d.raw...), d.saved, nil
+}
 func (d *memDoc) Save(raw []byte) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.raw, d.saved = append([]byte(nil), raw...), true
 	return nil
 }
@@ -265,5 +276,55 @@ func TestConsoleTurnOutlivesTheRequest(t *testing.T) {
 	}
 	if reply.Text != "done anyway" {
 		t.Fatalf("reply = %q", reply.Text)
+	}
+}
+
+func TestConsoleResumesATaskAheadOfWhatWaits(t *testing.T) {
+	h := &queueHandler{started: make(chan *queueCall, 8)}
+	s := New(h, "ou_owner", readmodel.New(readmodel.Sources{}))
+	first := enqueueForTest(t, s, "main", "first")
+	running := nextCall(t, h)
+	later := enqueueForTest(t, s, "main", "later")
+	var revived []string
+	revive := func(conversation, member string) error {
+		revived = append(revived, conversation+"/"+member)
+		return nil
+	}
+	if err := s.Resume(context.Background(), "main", "53", "claude", "⟳ restart #53", "continue: ship it", revive); err != nil {
+		t.Fatal(err)
+	}
+	if len(revived) != 1 || revived[0] != "console:main/claude" {
+		t.Fatalf("revived = %v", revived)
+	}
+	// Behind the line that runs, ahead of the one that waits; the page
+	// shows the notice, the agent gets the continuation.
+	list := s.Queue("main")
+	if len(list) != 3 || list[0].ID != first.ID || list[1].Input != "⟳ restart #53" || list[1].Prompt != "@claude continue: ship it" || list[2].ID != later.ID {
+		t.Fatalf("queue = %+v", list)
+	}
+	running.finish <- nil
+	call := nextCall(t, h)
+	if call.req.Input != "@claude continue: ship it" || call.req.ConversationID != "console:main" {
+		t.Fatalf("continuation = %+v", call.req)
+	}
+	call.finish <- nil
+	next := nextCall(t, h)
+	if next.req.Input != "later" {
+		t.Fatalf("after the continuation came %q", next.req.Input)
+	}
+	next.finish <- nil
+	awaitExchange(t, s, later.ID)
+	var sent []string
+	for _, r := range s.Replies("main") {
+		if r.Kind == "sent" {
+			sent = append(sent, r.Input)
+		}
+	}
+	if strings.Join(sent, "|") != "first|⟳ restart #53|later" {
+		t.Fatalf("sent lines = %v", sent)
+	}
+	// Without a member there is nobody to continue; the session is left alone.
+	if err := s.Resume(context.Background(), "main", "54", "", "n", "p", revive); err == nil || len(revived) != 1 {
+		t.Fatalf("err = %v revived = %v", err, revived)
 	}
 }

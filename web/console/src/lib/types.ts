@@ -114,6 +114,11 @@ export interface FileView { attempt: string; commit: string; path: string; text:
 export interface TaskDetail { task: Task; plan?: Plan; children: Task[]; attempts: AttemptView[] }
 // QuoteRef points at a line of some thread to carry along with a message;
 // the server reads the text, the page only keeps a preview.
+export interface Exchange {
+    id: string; conversation: string; input: string; quotes?: QuoteRef[];
+    state: "queued" | "running" | "done" | "failed";
+    enqueued_at: string; started_at?: string; reply_id?: string;
+}
 export interface QuoteRef { conversation: string; reply_id: string; title?: string; excerpt?: string }
 export interface Choice { Value: string; Label: string; Detail?: string }
 export interface SelectorOption { ID: string; Name: string; Category?: string; Current?: string; Choices: Choice[] }
@@ -122,7 +127,7 @@ export interface StepProcess extends StepInfo { id: string; agent?: string; node
 export interface Process { reasoning?: string; tools?: ToolCall[]; steps?: StepProcess[] }
 export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
-    state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress; step?: StepInfo; reply_id?: string;
+    state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress; step?: StepInfo; reply_id?: string; exchange_id?: string;
     // n is the page's own arrival counter, so a reader can keep a cursor
     // over a buffer that is trimmed from the front.
     n?: number;
@@ -133,7 +138,7 @@ export interface Injected {
     session?: string; new_session: boolean; instructions_sent: boolean; instructions?: string; instructions_bytes: number; mcp_servers?: string[]; fingerprint?: string; prompt?: string;
 }
 export interface Reply {
-    id?: string; at: string; conversation: string; input?: string; title?: string; text: string; error?: string; kind: string; process?: Process; injected?: Injected;
+    id?: string; exchange_id?: string; at: string; conversation: string; input?: string; title?: string; text: string; error?: string; kind: string; process?: Process; injected?: Injected;
     changes?: ChangeSummary;
 }
 export interface Snapshot {

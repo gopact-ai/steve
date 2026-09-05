@@ -25,11 +25,11 @@ func TestRememberRecallForget(t *testing.T) {
 	svc, m := newTestService(t)
 	ctx := context.Background()
 	who := Actor{Conversation: "c1", Agent: "codex", By: "agent"}
-	r, err := svc.Remember(ctx, Global, "偏好", "默认用简体中文回答。", who)
+	r, err := svc.Remember(ctx, Global, "偏好", "默认用简体中文回答。", "", who)
 	if err != nil || r.ID == "" || !r.New {
 		t.Fatalf("remember: %+v %v", r, err)
 	}
-	if again, _ := svc.Remember(ctx, Global, "偏好", "默认用简体中文回答", who); again.ID != r.ID || again.New {
+	if again, _ := svc.Remember(ctx, Global, "偏好", "默认用简体中文回答", "", who); again.ID != r.ID || again.New {
 		t.Fatalf("same fact got a second id: %+v", again)
 	}
 	text, _ := svc.Snapshot(ctx, Global)
@@ -40,7 +40,7 @@ func TestRememberRecallForget(t *testing.T) {
 	if !strings.Contains(string(raw), "<!-- m:"+r.ID+" -->") {
 		t.Fatalf("id not kept in file: %s", raw)
 	}
-	if _, err := svc.Remember(ctx, Global, "people", "老王负责发布。", who); err != nil {
+	if _, err := svc.Remember(ctx, Global, "people", "老王负责发布。", "", who); err != nil {
 		t.Fatal(err)
 	}
 	hits, from, _ := svc.Recall(ctx, Global, "谁负责发布", 5)
@@ -49,7 +49,7 @@ func TestRememberRecallForget(t *testing.T) {
 	}
 	// A project's memory is its own file with its own headings.
 	p := ProjectScope("steve")
-	pr, err := svc.Remember(ctx, p, "pitfall", "测试要用真模型，mock 交不了差。", who)
+	pr, err := svc.Remember(ctx, p, "pitfall", "测试要用真模型，mock 交不了差。", "", who)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestOwnerEditsKeepWorking(t *testing.T) {
 		t.Fatalf("snapshot = %q", text)
 	}
 	// The page saves the plain text back; Steve's ids survive the round trip.
-	if _, err := svc.Remember(ctx, p, "坑", "别用 pkill -f。", Actor{By: "agent"}); err != nil {
+	if _, err := svc.Remember(ctx, p, "坑", "别用 pkill -f。", "", Actor{By: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	before, _ := svc.List(ctx, p)
@@ -119,7 +119,7 @@ func TestOwnerEditsKeepWorking(t *testing.T) {
 		t.Fatal(err)
 	}
 	// A new section the file lacks is added at the end.
-	if _, err := svc.Remember(ctx, p, "决策", "用 SQLite 不用 Postgres。", Actor{By: "agent"}); err != nil {
+	if _, err := svc.Remember(ctx, p, "决策", "用 SQLite 不用 Postgres。", "", Actor{By: "agent"}); err != nil {
 		t.Fatal(err)
 	}
 	text, _ = svc.Snapshot(ctx, p)
@@ -159,7 +159,7 @@ func TestConcurrentRemembersAllLand(t *testing.T) {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
-			if _, err := svc.Remember(ctx, Global, "项目", "事实 "+strings.Repeat("x", i+1), Actor{By: "agent"}); err != nil {
+			if _, err := svc.Remember(ctx, Global, "项目", "事实 "+strings.Repeat("x", i+1), "", Actor{By: "agent"}); err != nil {
 				t.Error(err)
 			}
 		}(i)

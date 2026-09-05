@@ -583,14 +583,16 @@ func serve(args []string) error {
 	memories := memory.NewService(memory.NewMarkdown(cfg.Gateway.HomePath, memoryDir), filepath.Join(memoryDir, "audit.jsonl"))
 	coordinator.SetMemory(memories)
 	// Attempts: every execution is leased and fenced. Anything left live by
-	// a previous process is expired now, before a single turn runs.
+	// a previous process is expired now, before a single turn runs — lease
+	// or no lease: nothing here drives it any more, and a task resumed
+	// below must not be refused by its own ghost holding the project.
 	attempts := attempt.New(book)
-	expired, err := attempts.Sweep(context.Background())
+	expired, err := attempts.ExpireAll(context.Background(), "hub restarted")
 	if err != nil {
-		return fmt.Errorf("sweep attempts: %w", err)
+		return fmt.Errorf("expire attempts of the previous process: %w", err)
 	}
 	for _, r := range expired {
-		log.Printf("steve: expired stale attempt %s", attempt.Describe(r))
+		log.Printf("steve: expired attempt of the previous process: %s", attempt.Describe(r))
 	}
 	go sweepAttempts(context.Background(), attempts)
 	coordinator.SetAttempts(attempts)
@@ -745,9 +747,6 @@ func serve(args []string) error {
 	// The console: the owner acting from the page, through this same
 	// coordinator. Notices anchored on the console stay on the page.
 	cons := console.New(coordinator, cfg.Feishu.OwnerOpenID, view)
-	if err := cons.Persist(book.Document("console")); err != nil {
-		return err
-	}
 	cons.SetTitler(&conversationTitler{manager: manager, catalog: catalog, projects: projects, home: cfg.Gateway.HomePath})
 	dashboard.SetConsole(cons)
 	// A copy may only sit where the project's level admits; the store
@@ -765,13 +764,7 @@ func serve(args []string) error {
 	cons.SetInspector(admin)
 	tasks.SetObserver(func(id string) { view.TaskChanged(id) })
 	defer dashboard.Close()
-	go func() {
-		if err := dashboard.Serve(); err != nil {
-			log.Printf("steve: read model: %v", err)
-		}
-	}()
 	supervisor.Runs().Observe(view)
-	log.Printf("steve: dashboard on %s  (steve top -url %s)", dashboard.URL(), dashboard.URL())
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -906,6 +899,13 @@ func serve(args []string) error {
 		})
 	})
 	coordinator.SetResumer(func(r turn.TaskResume) {
+		if r.ChatID == console.ChatID || console.IsConsole(r.ConversationID) {
+			if err := cons.Resume(context.Background(), r.ConversationID, r.TaskID, r.Member,
+				catalogText.T(i18n.TaskResumeNotice, r.TaskID), catalogText.T(i18n.TaskResumeManual, r.Goal), coordinator.ReviveSession); err != nil {
+				log.Printf("console: resume task #%s: %v", r.TaskID, err)
+			}
+			return
+		}
 		go gw.ResumeTask(gateway.Revival{
 			TaskID: r.TaskID, Goal: r.Goal, Member: r.Member,
 			ConversationID: r.ConversationID, ChatID: r.ChatID,
@@ -919,6 +919,7 @@ func serve(args []string) error {
 	// the resumed turn renders a card like any other turn.
 	var revivals []gateway.Revival
 	var dropped []gateway.Notice
+	var pageResumes []task.Task
 	coordinator.ResumePlans(context.Background())
 	for _, interrupted := range tasks.Interrupted() {
 		if _, err := tasks.Finish(interrupted.ID, task.OutcomeInterrupted, task.Tokens{}, 0); err != nil {
@@ -929,6 +930,20 @@ func serve(args []string) error {
 		// would overrule the user who set it down.
 		if interrupted.State == task.StatePaused {
 			log.Printf("steve: task #%s is paused; leaving it set aside", interrupted.ID)
+			continue
+		}
+		if console.IsConsole(interrupted.Channel) || interrupted.ChatID == console.ChatID {
+			// A task the page was running continues on the page, once its
+			// queue is loaded: the gateway cannot reply at a web anchor,
+			// and a follow-up that waited must not run ahead of the
+			// continuation.
+			if time.Since(interrupted.UpdatedAt) > staleTask {
+				log.Printf("steve: task #%s interrupted long ago; leaving it stopped", interrupted.ID)
+				cons.Notice(turn.TaskNotice{TaskID: interrupted.ID, ChatID: interrupted.ChatID, MessageID: interrupted.AnchorMessage, Requester: interrupted.Requester,
+					Text: catalogText.T(i18n.TaskDropped, interrupted.ID, time.Since(interrupted.UpdatedAt).Round(time.Hour))})
+				continue
+			}
+			pageResumes = append(pageResumes, interrupted)
 			continue
 		}
 		if interrupted.AnchorMessage == "" {
@@ -964,6 +979,26 @@ func serve(args []string) error {
 	for _, notice := range dropped {
 		go gw.Notify(notice)
 	}
+
+	// Restored queues may run immediately, so wire their dependencies first.
+	if err := cons.Persist(book.Document("console")); err != nil {
+		return err
+	}
+	for _, t := range pageResumes {
+		if err := cons.Resume(context.Background(), t.Channel, t.ID, t.Member,
+			catalogText.T(i18n.ResumeNotice, t.ID), catalogText.T(i18n.ResumePrompt, t.Goal), coordinator.ReviveSession); err != nil {
+			log.Printf("console: resume task #%s: %v", t.ID, err)
+		}
+	}
+	if err := cons.Drain(); err != nil {
+		return err
+	}
+	go func() {
+		if err := dashboard.Serve(); err != nil {
+			log.Printf("steve: read model: %v", err)
+		}
+	}()
+	log.Printf("steve: dashboard on %s  (steve top -url %s)", dashboard.URL(), dashboard.URL())
 
 	go runSchedules(ctx, schedules, gw, coordinator)
 
@@ -2965,6 +3000,10 @@ func (a *fleetAdmin) Changes(ctx context.Context, attemptID string) (*readmodel.
 		return nil, err
 	}
 	summary := &readmodel.ChangeSummary{Attempt: attemptID, Project: record.Project, Base: base, Artifact: after}
+	if record.Result != nil && record.Result.CaptureError != "" {
+		summary.Note = "改动没有记录：" + record.Result.CaptureError
+		return summary, nil
+	}
 	if after == "" || after == base {
 		return summary, nil // nothing changed: the fold says so
 	}

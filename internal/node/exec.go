@@ -21,6 +21,10 @@ type ExitError struct {
 	Output string
 }
 
+// ExitCode lets callers recognize a script's status through wrapped errors,
+// using the same interface as a local exec.ExitError.
+func (e ExitError) ExitCode() int { return e.Code }
+
 func (e ExitError) Error() string {
 	out := strings.TrimSpace(e.Output)
 	if len(out) > 400 {

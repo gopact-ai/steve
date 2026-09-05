@@ -64,8 +64,9 @@ type Titler interface {
 // transcript is the durable shape: every conversation's lines, and what
 // is known about each beyond them.
 type transcript struct {
-	Replies map[string][]readmodel.Reply `json:"replies"`
-	Meta    map[string]Meta              `json:"meta,omitempty"`
+	Replies   map[string][]readmodel.Reply `json:"replies"`
+	Meta      map[string]Meta              `json:"meta,omitempty"`
+	Exchanges map[string][]*queuedExchange `json:"exchanges,omitempty"`
 }
 
 type Service struct {
@@ -84,7 +85,8 @@ type Service struct {
 	commandOrder []string
 	inflight     map[string]bool
 	// running counts lines in flight per conversation, for the sidebar.
-	running map[string]int
+	running   map[string]int
+	exchanges map[string][]*queuedExchange
 	// doc keeps the transcript across restarts. A console whose history
 	// vanishes with the process would make every restart look like the
 	// owner had never said anything.
@@ -92,7 +94,7 @@ type Service struct {
 }
 
 func New(handler Handler, owner string, model *readmodel.Model) *Service {
-	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]readmodel.Reply{}, meta: map[string]Meta{}}
+	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]readmodel.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}}
 }
 
 // SetTitler gives the service a way to name conversations. Without one,
@@ -181,24 +183,15 @@ func orUnknown(in *readmodel.Injected) string {
 // goes ahead of the line in the prompt the agent sees, while the
 // transcript keeps the line as typed.
 func (s *Service) SendCommandWith(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (readmodel.Reply, error) {
-	if !strings.HasPrefix(conversation, Prefix) {
-		conversation = Prefix + conversation
-	}
-	block, err := s.quoteBlock(ctx, conversation, quotes)
-	if err != nil {
-		return readmodel.Reply{}, err
-	}
-	if block == "" {
-		return s.SendCommand(ctx, conversation, input, commandID)
-	}
-	return s.sendCommand(ctx, conversation, input, block+input, commandID)
+	return s.sendCommand(ctx, conversation, input, commandID, quotes)
 }
 
 // SetInspector wires where a reply's changes come from.
 func (s *Service) SetInspector(i Inspector) { s.inspector = i }
 
-// Persist keeps the transcript in a durable document and loads what an
-// earlier process left there.
+// Persist loads the durable transcript and records what a restart cut
+// short; Drain then starts what waits. Call both after wiring the
+// handler, inspector and other turn dependencies.
 func (s *Service) Persist(doc ledger.Doc) error {
 	raw, ok, err := doc.Load()
 	if err != nil {
@@ -219,26 +212,33 @@ func (s *Service) Persist(doc ledger.Doc) error {
 		for conversation, list := range saved.Replies {
 			s.replies[conversation] = append(list, s.replies[conversation]...)
 		}
+		for conversation, list := range saved.Exchanges {
+			s.exchanges[conversation] = list
+		}
 		for conversation, m := range saved.Meta {
 			s.meta[conversation] = m
 		}
 	}
 	s.doc = doc
-	return nil
+	return s.restoreQueueLocked()
 }
 
 // save writes the transcript; the caller holds the lock. The whole thing
 // is small (keep lines per conversation), so one durable replace is
 // simpler than a log to compact.
-func (s *Service) save() {
+func (s *Service) save() error {
 	if s.doc == nil {
-		return
+		return nil
 	}
-	if raw, err := json.Marshal(transcript{Replies: s.replies, Meta: s.meta}); err == nil {
-		if err := s.doc.Save(raw); err != nil {
-			log.Printf("console: save transcript: %v", err)
-		}
+	raw, err := json.Marshal(transcript{Replies: s.replies, Meta: s.meta, Exchanges: s.exchanges})
+	if err == nil {
+		err = s.doc.Save(raw)
 	}
+	if err != nil {
+		log.Printf("console: save transcript: %v", err)
+		return fmt.Errorf("console: save transcript: %w", err)
+	}
+	return nil
 }
 
 // Update takes what the owner said about a conversation: a name of their
@@ -292,7 +292,7 @@ func (s *Service) firstExchange(conversation string) (prompt, reply string, ok b
 			continue
 		}
 		for _, next := range list[i+1:] {
-			if next.Kind == "reply" && next.Error == "" && strings.TrimSpace(next.Text) != "" {
+			if next.Kind == "reply" && (r.ExchangeID == "" || next.ExchangeID == r.ExchangeID) && next.Error == "" && strings.TrimSpace(next.Text) != "" {
 				return r.Input, next.Text, true
 			}
 		}
@@ -497,12 +497,11 @@ func (s *Service) Send(ctx context.Context, conversation, input string) (readmod
 // double click, a second tab — the same command id gets the first
 // answer back and nothing runs twice.
 func (s *Service) SendCommand(ctx context.Context, conversation, input, commandID string) (readmodel.Reply, error) {
-	return s.sendCommand(ctx, conversation, input, input, commandID)
+	return s.sendCommand(ctx, conversation, input, commandID, nil)
 }
 
-// sendCommand runs one line: input is what the transcript keeps, prompt
-// is what the agent is given — the same, unless quotes were carried.
-func (s *Service) sendCommand(ctx context.Context, conversation, input, prompt, commandID string) (reply readmodel.Reply, err error) {
+// sendCommand keeps the synchronous API while the service owns execution.
+func (s *Service) sendCommand(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (reply readmodel.Reply, err error) {
 	if commandID != "" {
 		s.mu.Lock()
 		if done, ok := s.commands[commandID]; ok {
@@ -533,38 +532,44 @@ func (s *Service) sendCommand(ctx context.Context, conversation, input, prompt, 
 			s.mu.Unlock()
 		}()
 	}
-	if s.owner == "" {
-		return readmodel.Reply{}, fmt.Errorf("the console needs feishu.owner_open_id: it acts as the owner")
+	exchange, _, err := s.enqueue(ctx, conversation, input, "", quotes, false)
+	if err != nil {
+		return readmodel.Reply{}, err
 	}
-	if !strings.HasPrefix(conversation, Prefix) {
-		conversation = Prefix + conversation
-	}
-	id := fmt.Sprintf("%s%d", AnchorMark, time.Now().UnixNano())
-	s.record(readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Input: input, Kind: "sent"})
-	s.mu.Lock()
-	if s.running == nil {
-		s.running = map[string]int{}
-	}
-	s.running[conversation]++
-	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		s.running[conversation]--
-		s.mu.Unlock()
-	}()
+	// Closing the page must not cancel either the queued work or its wait.
+	<-exchange.done
+	return exchange.outcome.reply, exchange.outcome.err
+}
 
-	// The turn outlives the request that started it: a browser tab that
-	// closes, a proxy that gives up, a client whose timeout is shorter
-	// than the agent's work must not cancel the agent mid-turn. The reply
-	// is recorded either way and read back by the next poll; stopping is
-	// what /cancel is for.
-	ctx = context.WithoutCancel(ctx)
+// runExchange only invokes the handler; queue completion records its answer
+// and terminal state together so a restart cannot replay a finished turn.
+func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply readmodel.Reply, err error) {
+	if s.owner == "" {
+		return readmodel.Reply{}, errors.New("the console needs feishu.owner_open_id: it acts as the owner")
+	}
+	conversation, input := exchange.Conversation, exchange.Input
+	block, err := s.quoteBlock(ctx, conversation, exchange.Quotes)
+	if err != nil {
+		return readmodel.Reply{Text: err.Error(), Error: err.Error()}, err
+	}
+	text := input
+	if exchange.Prompt != "" {
+		text = exchange.Prompt
+	}
+	prompt := block + text
+	if prefix, rest := interruptInput(text); prefix != "" {
+		// Quotes must not hide the interrupt prefix from the coordinator.
+		prompt = prefix + block + rest
+	}
+	if err := ctx.Err(); err != nil {
+		return readmodel.Reply{Text: err.Error(), Error: err.Error()}, err
+	}
 	work := newProcess()
 	stop := s.follow(ctx, conversation, work)
 	result, err := s.handler.Handle(ctx, turn.Request{
-		ConversationID: conversation, ChatID: ChatID, MessageID: id, Input: prompt,
+		ConversationID: conversation, ChatID: ChatID, MessageID: AnchorMark + exchange.ID, Input: prompt, Queue: !isInterrupt(input),
 		SenderOpenID: s.owner, ChatType: protocol.ChatP2P, Mentioned: true,
-		OnProgress: s.progress(conversation, work),
+		OnProgress: s.progress(conversation, exchange.ID, work),
 	})
 	stop()
 	reply = readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary()}
@@ -586,7 +591,6 @@ func (s *Service) sendCommand(ctx context.Context, conversation, input, prompt, 
 			reply.Text = err.Error()
 		}
 	}
-	s.record(reply)
 	// The first real exchange names the conversation, unless it has a
 	// name already: the agent summarises what the owner wants, the way a
 	// chat app names a thread. Verbs name nothing.
@@ -603,7 +607,7 @@ func (s *Service) sendCommand(ctx context.Context, conversation, input, prompt, 
 
 // progress is the turn's own stream, published no more often than a page
 // can usefully repaint, and kept as the reply's process.
-func (s *Service) progress(conversation string, work *process) func(view.Progress) {
+func (s *Service) progress(conversation, exchangeID string, work *process) func(view.Progress) {
 	var mu sync.Mutex
 	var last time.Time
 	return func(p view.Progress) {
@@ -619,7 +623,7 @@ func (s *Service) progress(conversation string, work *process) func(view.Progres
 		}
 		mu.Unlock()
 		if due {
-			s.model.Publish(readmodel.Event{Kind: "console.progress", Conversation: conversation, Progress: &cut})
+			s.model.Publish(readmodel.Event{Kind: "console.progress", Conversation: conversation, ExchangeID: exchangeID, Progress: &cut})
 		}
 	}
 }
@@ -738,23 +742,54 @@ func newReplyID() string {
 	return fmt.Sprintf("r%x%x", time.Now().UnixNano()/1000, raw)
 }
 
-func (s *Service) record(r readmodel.Reply) {
+func (s *Service) record(r readmodel.Reply) readmodel.Reply {
+	s.mu.Lock()
+	r = s.recordLocked(r)
+	s.save()
+	s.publishReply(r)
+	s.mu.Unlock()
+	return r
+}
+
+// recordLocked appends without saving so an exchange transition and its
+// line can be committed in the same document replace.
+func (s *Service) recordLocked(r readmodel.Reply) readmodel.Reply {
 	if r.ID == "" {
 		r.ID = newReplyID()
 	}
-	s.mu.Lock()
 	list := append(s.replies[r.Conversation], r)
 	if len(list) > keep {
 		list = list[len(list)-keep:]
 	}
 	s.replies[r.Conversation] = list
-	s.save()
-	s.mu.Unlock()
+	return r
+}
+
+func (s *Service) publishReply(r readmodel.Reply) {
 	if s.model != nil {
 		text := r.Text
 		if r.Kind == "sent" {
 			text = r.Input
 		}
-		s.model.Publish(readmodel.Event{At: r.At, Kind: "console." + r.Kind, Conversation: r.Conversation, Text: text, Title: r.Title, ReplyID: r.ID})
+		s.model.Publish(readmodel.Event{At: r.At, Kind: "console." + r.Kind, Conversation: r.Conversation, Text: text, Title: r.Title, ReplyID: r.ID, ExchangeID: r.ExchangeID})
 	}
+}
+
+// Resume picks a console task back up — after a restart that cut its
+// turn short, or on /tasks resume. Chat does this by replying at the
+// task's anchor; the page has no anchor to reply to, so the notice is a
+// line of its own and the continuation is an exchange put ahead of
+// whatever else waits, addressed to the task's member, answered like any
+// other line.
+func (s *Service) Resume(ctx context.Context, conversation, taskID, member, notice, prompt string, revive func(conversationID, member string) error) error {
+	conversation = conversationID(conversation)
+	if member == "" {
+		return fmt.Errorf("task #%s not resumable: no member", taskID)
+	}
+	if err := revive(conversation, member); err != nil {
+		return fmt.Errorf("revive session for task #%s: %w", taskID, err)
+	}
+	log.Printf("console: resuming task #%s conversation=%s member=%s", taskID, conversation, member)
+	_, _, err := s.enqueue(ctx, conversation, notice, "@"+member+" "+prompt, nil, true)
+	return err
 }
