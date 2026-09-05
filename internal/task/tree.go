@@ -70,17 +70,26 @@ func (s *Store) Spawn(parentID string, child Task) (Task, error) {
 		child.Requester = parent.Requester
 	}
 	// The child's ceiling is what the parent has left, never more. A
-	// smaller explicit ceiling is allowed: a caller may ration.
-	turnsLeft := parent.Budget.MaxTurns - parent.Budget.Turns
-	if child.Budget.MaxTurns <= 0 || child.Budget.MaxTurns > turnsLeft {
-		child.Budget.MaxTurns = turnsLeft
+	// smaller explicit ceiling is allowed: a caller may ration. A parent
+	// without a ceiling (zero: unlimited) passes none on — its children
+	// run as long as it does, unless the caller rations.
+	if parent.Budget.MaxTurns > 0 {
+		turnsLeft := parent.Budget.MaxTurns - parent.Budget.Turns
+		if turnsLeft <= 0 {
+			return Task{}, fmt.Errorf("parent task %s has no turns left to delegate", parentID)
+		}
+		if child.Budget.MaxTurns <= 0 || child.Budget.MaxTurns > turnsLeft {
+			child.Budget.MaxTurns = turnsLeft
+		}
 	}
-	timeLeft := parent.Budget.MaxElapsed - parent.Budget.Elapsed
-	if child.Budget.MaxElapsed <= 0 || child.Budget.MaxElapsed > timeLeft {
-		child.Budget.MaxElapsed = timeLeft
-	}
-	if child.Budget.MaxTurns <= 0 || child.Budget.MaxElapsed <= 0 {
-		return Task{}, fmt.Errorf("parent task %s has no budget left to delegate", parentID)
+	if parent.Budget.MaxElapsed > 0 {
+		timeLeft := parent.Budget.MaxElapsed - parent.Budget.Elapsed
+		if timeLeft <= 0 {
+			return Task{}, fmt.Errorf("parent task %s has no time left to delegate", parentID)
+		}
+		if child.Budget.MaxElapsed <= 0 || child.Budget.MaxElapsed > timeLeft {
+			child.Budget.MaxElapsed = timeLeft
+		}
 	}
 
 	next := s.clone()
