@@ -151,12 +151,15 @@ type Service struct {
 	retriever Retriever
 	auditPath string
 	mu        sync.Mutex
+	requests  sync.Mutex
+	keys      map[requestKey]requestReceipt
+	now       func() time.Time
 }
 
 // NewService makes one over the store; audit lines go to auditPath
 // ("" for none).
 func NewService(store Store, auditPath string) *Service {
-	return &Service{store: store, auditPath: auditPath}
+	return &Service{store: store, auditPath: auditPath, now: time.Now}
 }
 
 // SetRetriever attaches an index.
@@ -214,9 +217,24 @@ func (s *Service) Replace(ctx context.Context, scope Scope, text string, who Act
 	return err
 }
 
-func (s *Service) Remember(ctx context.Context, scope Scope, section, text string, who Actor) (Receipt, error) {
+// Remember replays a successful request in this scope for 24 hours when
+// idempotencyKey is set, even if the retried text or the memory has changed.
+func (s *Service) Remember(ctx context.Context, scope Scope, section, text, idempotencyKey string, who Actor) (Receipt, error) {
+	if idempotencyKey != "" {
+		return s.rememberOnce(scope, idempotencyKey, func() (Receipt, error) {
+			return s.remember(ctx, scope, section, text, idempotencyKey, who)
+		})
+	}
+	return s.remember(ctx, scope, section, text, "", who)
+}
+
+func (s *Service) remember(ctx context.Context, scope Scope, section, text, key string, who Actor) (Receipt, error) {
 	r, err := s.store.Remember(ctx, scope, section, text)
-	s.audit(auditLine{Op: "remember", Scope: scope, Actor: who, ID: r.ID, Section: section, Bytes: len([]byte(text)), New: r.New, Err: errText(err)})
+	line := auditLine{Op: "remember", Scope: scope, Actor: who, ID: r.ID, Section: section, Bytes: len([]byte(text)), New: r.New, Err: errText(err), IdempotencyKey: key}
+	if err == nil && key != "" {
+		line.Receipt = &r
+	}
+	s.audit(line)
 	if err == nil && r.New && s.retriever != nil {
 		if ierr := s.retriever.Index(ctx, Item{ID: r.ID, Scope: scope, Section: section, Text: text}); ierr != nil {
 			s.audit(auditLine{Op: "index", Scope: scope, Actor: who, ID: r.ID, Err: ierr.Error()})
@@ -251,15 +269,17 @@ func (s *Service) Forget(ctx context.Context, scope Scope, id string, who Actor)
 }
 
 type auditLine struct {
-	At      string `json:"at"`
-	Op      string `json:"op"`
-	Scope   Scope  `json:"scope"`
-	Actor   Actor  `json:"actor"`
-	ID      string `json:"id,omitempty"`
-	Section string `json:"section,omitempty"`
-	Bytes   int    `json:"bytes,omitempty"`
-	New     bool   `json:"new,omitempty"`
-	Err     string `json:"err,omitempty"`
+	At             string   `json:"at"`
+	Op             string   `json:"op"`
+	Scope          Scope    `json:"scope"`
+	Actor          Actor    `json:"actor"`
+	ID             string   `json:"id,omitempty"`
+	Section        string   `json:"section,omitempty"`
+	Bytes          int      `json:"bytes,omitempty"`
+	New            bool     `json:"new,omitempty"`
+	Err            string   `json:"err,omitempty"`
+	IdempotencyKey string   `json:"idempotency_key,omitempty"`
+	Receipt        *Receipt `json:"receipt,omitempty"`
 }
 
 // audit appends one line; the fact's text is not in it, only its size.

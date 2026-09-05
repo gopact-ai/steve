@@ -14,7 +14,7 @@ import (
 // coordinator resolves the conversation's mode and project, refuses
 // what it must, and writes through the memory service.
 type Memorizer interface {
-	Remember(ctx context.Context, conversationID, agentID, delegatedBy, scope, section, text string) (memory.Receipt, memory.Scope, error)
+	Remember(ctx context.Context, conversationID, agentID, delegatedBy, scope, section, text, idempotencyKey string) (memory.Receipt, memory.Scope, error)
 	Recall(ctx context.Context, conversationID, agentID, scope, query string, limit int) ([]memory.Hit, string, error)
 	Forget(ctx context.Context, conversationID, agentID, delegatedBy, scope, id string) (memory.Item, error)
 }
@@ -41,11 +41,14 @@ func (s *Server) steveRemember(ctx context.Context, bind binding, raw json.RawMe
 	if err != nil {
 		return "", err
 	}
-	var args struct{ Scope, Section, Text string }
+	var args struct {
+		Scope, Section, Text string
+		IdempotencyKey       string `json:"idempotency_key"`
+	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return "", errors.New("bad steve_remember arguments")
 	}
-	r, scope, err := m.Remember(ctx, bind.conversationID, bind.agentID, bind.delegatedBy, args.Scope, args.Section, args.Text)
+	r, scope, err := m.Remember(ctx, bind.conversationID, bind.agentID, bind.delegatedBy, args.Scope, args.Section, args.Text, args.IdempotencyKey)
 	if err != nil {
 		return "", err
 	}
@@ -129,9 +132,10 @@ func memoryTools() []map[string]any {
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"scope":   scope,
-					"section": map[string]any{"type": "string", "description": "global: 偏好 | 项目 | 人. project: 约定 | 决策 | 坑. English names work too; unknown ones go under the first."},
-					"text":    map[string]any{"type": "string", "description": "One sentence, under 500 characters, in the user's language."},
+					"scope":           scope,
+					"section":         map[string]any{"type": "string", "description": "global: 偏好 | 项目 | 人. project: 约定 | 决策 | 坑. English names work too; unknown ones go under the first."},
+					"text":            map[string]any{"type": "string", "description": "One sentence, under 500 characters, in the user's language."},
+					"idempotency_key": map[string]any{"type": "string", "description": "Optional: reuse the same key when retrying the same intent. Replays the original receipt within the same scope for 24 hours."},
 				},
 				"required": []string{"scope", "text"},
 			},

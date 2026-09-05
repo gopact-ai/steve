@@ -82,12 +82,12 @@ func (c *Coordinator) memoryScope(ctx context.Context, conversationID, delegated
 }
 
 // Remember answers steve_remember.
-func (c *Coordinator) Remember(ctx context.Context, conversationID, agentID, delegatedBy, rawScope, section, text string) (memory.Receipt, memory.Scope, error) {
+func (c *Coordinator) Remember(ctx context.Context, conversationID, agentID, delegatedBy, rawScope, section, text, idempotencyKey string) (memory.Receipt, memory.Scope, error) {
 	svc, scope, err := c.memoryScope(ctx, conversationID, delegatedBy, rawScope, true)
 	if err != nil {
 		return memory.Receipt{}, memory.Scope{}, err
 	}
-	r, err := svc.Remember(ctx, scope, section, text, memory.Actor{Conversation: conversationID, Agent: agentID, By: "agent"})
+	r, err := svc.Remember(ctx, scope, section, text, idempotencyKey, memory.Actor{Conversation: conversationID, Agent: agentID, By: "agent"})
 	return r, scope, err
 }
 

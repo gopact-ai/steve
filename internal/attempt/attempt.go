@@ -137,6 +137,8 @@ type Result struct {
 	Summary  string   `json:"summary,omitempty"`
 	Artifact string   `json:"artifact,omitempty"`
 	Refs     []string `json:"refs,omitempty"`
+	// CaptureError keeps a successful turn's missing snapshot visible.
+	CaptureError string `json:"capture_error,omitempty"`
 }
 
 // Usage is an attempt's spend. Reported false means the harness said
