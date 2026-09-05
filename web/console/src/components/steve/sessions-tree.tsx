@@ -3,7 +3,7 @@ import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05,
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import type { Conversation, Project, Task } from "@/lib/types";
-import { StateBadge, taskState } from "./ui";
+import { taskState } from "./ui";
 import { kindWord, placeLabel } from "@/lib/workspaces";
 
 // ConversationPatch is what a row can change about its conversation.
@@ -170,37 +170,59 @@ function Thread({ c, current, onPick, many, renaming, onRename, onRenamed, onArc
                     </Dropdown.Popover>
                 </Dropdown.Root>
             )}
-            {work.length > 0 && (
-                <ul className="mb-1 ml-3 flex flex-col gap-0.5 border-l border-secondary pl-2">
-                    {work.map((t) => (
-                        <li key={t.id} className="flex flex-col gap-0.5">
-                            <TaskLine t={t} onTask={onTask} />
-                            {(childrenOf?.(t.id) || []).map((k) => (
-                                <div key={k.id} className="ml-3 border-l border-secondary pl-2"><TaskLine t={k} onTask={onTask} child /></div>
-                            ))}
-                        </li>
-                    ))}
-                </ul>
-            )}
+            {work.length > 0 && <WorkFold threadID={c.id} work={work} childrenOf={childrenOf} onTask={onTask} />}
         </li>
     );
 }
 
-// TaskLine is one piece of work under a thread: who has it, where it
-// stands, what it is; a child is the same line, indented, marked as
-// handed on.
-function TaskLine({ t, onTask, child }: { t: Task; onTask?: (t: Task) => void; child?: boolean }) {
-    if (t.archived_at) return null;
-    const running = t.execution === "running";
+// WorkFold is a thread's work behind one line: how much there is and
+// how it stands — running, waiting, failed — folded by default so the
+// tree stays a list of threads; open, it is the tasks with their
+// delegations indented, one line each.
+function WorkFold({ threadID, work, childrenOf, onTask }: { threadID: string; work: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
+    const key = "steve.work.open." + threadID;
+    const [open, setOpen] = useState<boolean>(() => { try { return localStorage.getItem(key) === "1"; } catch { return false; } });
+    const toggle = () => { setOpen((v) => { try { localStorage.setItem(key, v ? "0" : "1"); } catch { /* ignore */ } return !v; }); };
+    const all = work.flatMap((t) => [t, ...(childrenOf?.(t.id) || [])]);
+    const running = all.filter((t) => t.execution === "running").length;
+    const failed = all.filter((t) => taskState(t) === "failed").length;
+    const waiting = all.reduce((n, t) => n + (t.attention || 0), 0);
+    const kids = all.length - work.length;
     return (
-        <button type="button" onClick={onTask ? () => onTask(t) : undefined} className={`flex w-full flex-col gap-0.5 rounded-md px-1.5 py-1 text-left ${onTask ? "hover:bg-primary/50" : ""}`} title={t.goal}>
-            <span className="flex min-w-0 items-center gap-1.5 text-[11px]">
-                {running && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
-                <span className="shrink-0 font-mono text-quaternary">#{t.id}</span>
-                <span className="min-w-0 truncate text-secondary">{child ? "委派 → " : ""}{t.member || "steve"}{t.node ? ` @ ${t.node}` : ""}</span>
-                <span className="ml-auto shrink-0">{taskState(t) === "done" ? <CheckCircle className="size-3.5 text-fg-success-primary" aria-label="已完成" /> : <StateBadge state={taskState(t)} />}</span>
-            </span>
-            <span className="truncate text-[11px] text-tertiary">{t.title || t.goal}</span>
+        <div className="ml-3 border-l border-secondary pl-2">
+            <button type="button" onClick={toggle} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-[11px] text-quaternary hover:bg-primary/50 hover:text-tertiary">
+                <ChevronDown className={`size-3 shrink-0 transition ${open ? "" : "-rotate-90"}`} />
+                <span>{work.length} 个任务{kids ? ` · ${kids} 次委派` : ""}</span>
+                {running > 0 && <span className="flex items-center gap-1 text-fg-brand-primary"><Loading01 className="size-3 animate-spin" />{running} 在跑</span>}
+                {waiting > 0 && <span className="text-warning-primary">{waiting} 待你处理</span>}
+                {failed > 0 && <span className="text-error-primary">{failed} 失败</span>}
+            </button>
+            {open && (
+                <ul className="mb-1 flex flex-col">
+                    {work.map((t) => (
+                        <li key={t.id}>
+                            <TaskLine t={t} onTask={onTask} />
+                            {(childrenOf?.(t.id) || []).map((k) => <TaskLine key={k.id} t={k} onTask={onTask} child />)}
+                        </li>
+                    ))}
+                </ul>
+            )}
+        </div>
+    );
+}
+
+// TaskLine is one piece of work on one line: number, who, where it
+// stands; the goal is the tooltip. A delegation is the same line,
+// indented, marked as handed on.
+function TaskLine({ t, onTask, child }: { t: Task; onTask?: (t: Task) => void; child?: boolean }) {
+    const running = t.execution === "running";
+    const state = taskState(t);
+    return (
+        <button type="button" onClick={onTask ? () => onTask(t) : undefined} className={`flex w-full items-center gap-1.5 rounded-md py-0.5 pr-1.5 text-left text-[11px] ${child ? "pl-5" : "pl-1.5"} ${onTask ? "hover:bg-primary/50" : ""}`} title={t.title || t.goal}>
+            {running ? <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" /> : state === "done" ? <CheckCircle className="size-3 shrink-0 text-fg-success-primary" /> : state === "failed" ? <span className="size-2 shrink-0 rounded-full bg-error-solid" /> : <span className="size-2 shrink-0 rounded-full bg-quaternary" />}
+            <span className="shrink-0 font-mono text-quaternary">#{t.id}</span>
+            <span className="min-w-0 shrink-0 truncate text-tertiary">{child ? "→ " : ""}{t.member || "steve"}{t.node ? `@${t.node}` : ""}</span>
+            <span className="min-w-0 truncate text-secondary">{t.title || t.goal}</span>
         </button>
     );
 }

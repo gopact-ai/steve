@@ -24,8 +24,11 @@ export function fmtTokens(n?: number): string {
 // counts when reported, the context size when that is all the adapter
 // said, "未上报" when nothing was.
 export function spend(t?: { total?: number; context?: number }): string {
-    if (t?.total) return fmtTokens(t.total) + " tok";
-    if (t?.context) return "上下文 " + fmtTokens(t.context);
+    // AI tools report context occupancy over ACP (usage_update carries
+    // used/size), not per-turn token counts; when only that is known,
+    // say so instead of "未上报".
+    if (t?.total) return `${fmtTokens(t.total)} tok`;
+    if (t?.context) return `上下文 ${fmtTokens(t.context)}`;
     return "未上报";
 }
 

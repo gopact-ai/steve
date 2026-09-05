@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
-import { Activity, BookOpen01, Folder, Inbox01, Moon01, Dataflow03, PuzzlePiece01, Server01, Sun, Terminal, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
+import { Activity, BookOpen01, ClipboardCheck, Folder, Inbox01, Moon01, Dataflow03, PuzzlePiece01, Server01, Sun, Terminal, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
 import { NavItemBase } from "@/components/application/app-navigation/base-components/nav-item";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { FleetProvider, IntentProvider, useFleet } from "@/lib/fleet";
@@ -42,6 +42,7 @@ function Shell() {
     const groups: { title: string; items: { href: string; label: string; icon: typeof Terminal; badge?: number | string; hot?: boolean }[] }[] = [
         { title: "工作", items: [
             { href: "/console", label: "工作台", icon: Terminal },
+            { href: "/console?view=board", label: "任务", icon: ClipboardCheck, badge: running || undefined },
         ] },
         { title: "环境", items: [
             { href: "/projects", label: "项目", icon: Folder, badge: snap.projects.length || undefined },
@@ -57,7 +58,7 @@ function Shell() {
     const dark = theme === "dark" || (theme === "system" && window.matchMedia?.("(prefers-color-scheme: dark)").matches);
     const compact = (item: { href: string; label: string; icon: typeof Terminal; badge?: number | string; hot?: boolean }) => (
         <a key={item.href} href={"#" + item.href} title={item.label} aria-label={item.label} onClick={(e) => { e.preventDefault(); navigate(item.href); }}
-            className={`relative flex size-9 items-center justify-center rounded-md transition ${location.pathname === item.href ? "bg-active text-fg-brand-primary" : "text-fg-quaternary hover:bg-primary_hover hover:text-fg-quaternary_hover"}`}>
+            className={`relative flex size-9 items-center justify-center rounded-md transition ${(location.pathname + location.search === item.href || (item.href === "/console" && location.pathname === "/console" && !location.search)) ? "bg-active text-fg-brand-primary" : "text-fg-quaternary hover:bg-primary_hover hover:text-fg-quaternary_hover"}`}>
             <item.icon className="size-5" />
             {item.badge !== undefined && <span className={`absolute right-0.5 top-0.5 size-2 rounded-full ${item.hot ? "bg-warning-solid" : "bg-quaternary"}`} />}
         </a>
@@ -88,7 +89,7 @@ function Shell() {
                             <div key={g.title} className="flex flex-col gap-0.5">
                                 <div className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-quaternary">{g.title}</div>
                                 {g.items.map((item) => (
-                                    <NavItemBase key={item.href} type="link" href={"#" + item.href} icon={item.icon} current={location.pathname === item.href}
+                                    <NavItemBase key={item.href} type="link" href={"#" + item.href} icon={item.icon} current={location.pathname + location.search === item.href || (item.href === "/console" && location.pathname === "/console" && !location.search)}
                                         badge={item.badge !== undefined ? <span className={`rounded-full px-2 py-0.5 text-xs ${item.hot ? "bg-warning-primary text-warning-primary" : "bg-secondary text-tertiary"}`}>{item.badge}</span> : undefined}
                                         onClick={(e) => { e.preventDefault(); navigate(item.href); }}>
                                         {item.label}
