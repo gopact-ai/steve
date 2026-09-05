@@ -591,6 +591,28 @@ func (s *Service) Sweep(ctx context.Context) ([]Record, error) {
 	return expired, nil
 }
 
+// ExpireAll expires every live attempt, lease or no lease: the process
+// that drove them is gone, and a lease it renewed a moment before dying
+// proves nothing. A hub calls this once at start-up, before any turn,
+// so that a resumed task is not refused by its own ghost.
+func (s *Service) ExpireAll(ctx context.Context, cause string) ([]Record, error) {
+	live, err := s.Live(ctx)
+	if err != nil {
+		return nil, err
+	}
+	var expired []Record
+	for _, r := range live {
+		if err := s.expire(ctx, r, "restart", cause); err != nil {
+			continue
+		}
+		_, _ = s.l.InvalidateHeldBy(ctx, r.ID)
+		r.State = Expired
+		r.Error = cause
+		expired = append(expired, r)
+	}
+	return expired, nil
+}
+
 // expire is the unfenced edge into expired: the attempt's leases are, by
 // definition, not something it can prove any more.
 func (s *Service) expire(ctx context.Context, r Record, actor, cause string) error {

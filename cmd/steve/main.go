@@ -583,14 +583,16 @@ func serve(args []string) error {
 	memories := memory.NewService(memory.NewMarkdown(cfg.Gateway.HomePath, memoryDir), filepath.Join(memoryDir, "audit.jsonl"))
 	coordinator.SetMemory(memories)
 	// Attempts: every execution is leased and fenced. Anything left live by
-	// a previous process is expired now, before a single turn runs.
+	// a previous process is expired now, before a single turn runs — lease
+	// or no lease: nothing here drives it any more, and a task resumed
+	// below must not be refused by its own ghost holding the project.
 	attempts := attempt.New(book)
-	expired, err := attempts.Sweep(context.Background())
+	expired, err := attempts.ExpireAll(context.Background(), "hub restarted")
 	if err != nil {
-		return fmt.Errorf("sweep attempts: %w", err)
+		return fmt.Errorf("expire attempts of the previous process: %w", err)
 	}
 	for _, r := range expired {
-		log.Printf("steve: expired stale attempt %s", attempt.Describe(r))
+		log.Printf("steve: expired attempt of the previous process: %s", attempt.Describe(r))
 	}
 	go sweepAttempts(context.Background(), attempts)
 	coordinator.SetAttempts(attempts)
