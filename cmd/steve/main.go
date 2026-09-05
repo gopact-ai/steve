@@ -2828,7 +2828,58 @@ func (a *fleetAdmin) TaskAttempts(ctx context.Context, taskID string) ([]readmod
 		out = append(out, v)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	// How many files each changed, for the newest few: one diff-tree each.
+	for i := range out {
+		if i >= 20 || a.artifacts == nil || out[i].Artifact == "" || out[i].Artifact == out[i].Base {
+			continue
+		}
+		if changes, _, err := a.artifacts.Changes(ctx, records[0].Project, out[i].Base, out[i].Artifact); err == nil {
+			out[i].Files = len(changes)
+		}
+	}
 	return out, nil
+}
+
+// attemptSnapshot is the snapshot an attempt is browsed at: its result
+// when it has one, else what it started from.
+func (a *fleetAdmin) attemptSnapshot(ctx context.Context, attemptID string) (attempt.Record, string, string, error) {
+	record, base, after, err := a.changeSnapshots(ctx, attemptID)
+	if err != nil {
+		return attempt.Record{}, "", "", err
+	}
+	if after != "" {
+		return record, after, "result", nil
+	}
+	if base == "" {
+		return attempt.Record{}, "", "", errors.New("this attempt has no snapshot to browse")
+	}
+	return record, base, "base", nil
+}
+
+// AttemptTree lists a directory of an attempt's snapshot.
+func (a *fleetAdmin) AttemptTree(ctx context.Context, attemptID, dir string) (readmodel.TreeView, error) {
+	record, commit, which, err := a.attemptSnapshot(ctx, attemptID)
+	if err != nil {
+		return readmodel.TreeView{}, err
+	}
+	entries, truncated, err := a.artifacts.Tree(ctx, record.Project, commit, dir)
+	if err != nil {
+		return readmodel.TreeView{}, err
+	}
+	return readmodel.TreeView{Attempt: attemptID, Commit: commit, Which: which, Dir: strings.Trim(dir, "/"), Entries: entries, Truncated: truncated}, nil
+}
+
+// AttemptFile reads one file of an attempt's snapshot.
+func (a *fleetAdmin) AttemptFile(ctx context.Context, attemptID, path string) (readmodel.FileView, error) {
+	record, commit, _, err := a.attemptSnapshot(ctx, attemptID)
+	if err != nil {
+		return readmodel.FileView{}, err
+	}
+	text, size, binary, truncated, err := a.artifacts.File(ctx, record.Project, commit, path)
+	if err != nil {
+		return readmodel.FileView{}, err
+	}
+	return readmodel.FileView{Attempt: attemptID, Commit: commit, Path: path, Text: text, Size: size, Binary: binary, Truncated: truncated}, nil
 }
 
 // changeSnapshots is the before and after of an attempt, when it captured

@@ -632,6 +632,6 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 
 1. ✅ 修 7（切项目关闭该会话持有的任务；回合不接续别的项目的任务，有测试）；回复持久 `ReplyID`（事件带 `reply_id`）；`/console/tasks/{id}`（任务 + 计划 + 子任务 + 账本 attempt）与 `/attempts`；任务存储写后发 `task.changed`。真机核实：`/console/tasks/49` 给出 attempt 的 base / artifact，一轮里看到三条 `task.changed`。（7c05b89）
 2. 左栏线程树带"值得看的任务"（在跑 / 待处理 / 有子任务 / 有计划 / 定时；子任务缩进一层，点开任务抽屉）✅；列表 / 看板切换、任务页并入 ✅（`/tasks` 重定向到 `/console?view=board`）；选中子任务 / 步骤时中栏显示其过程（未做）；`TaskMeta`（标题、优先级、标签、归档）（未做）。
-3. 右栏"变更"（任务所有 attempt）与"文件"（所选 attempt 的快照，逐层有界）。
+3. ✅ 右栏"变更"（线程下所有任务与子任务的 attempt，最新在前，每个一条改动折叠）与"文件"（所选 attempt 的结束快照，没有结果就是开始快照；逐层 `ls-tree -z -l`、单文件 `cat-file` 限 200 KB、二进制只给大小、链接与嵌套仓库标出；`/console/attempts/{id}/tree|file`）。真机截图核对：变更 tab 列出 #51 / #48 / #50 / #49 各自的改动，文件 tab 打开 fleetline/main.go。
 4. 引用块。
 5. 偏好（模型、档位）与会话轮换。

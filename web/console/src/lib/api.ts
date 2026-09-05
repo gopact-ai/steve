@@ -1,4 +1,4 @@
-import type { ChangeIndex, FileDiff, HomeView, TaskDetail, MachineSkills, MCPRegistryEntry, MCPView, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
+import type { AttemptView, ChangeIndex, FileDiff, FileView, HomeView, TaskDetail, TreeView, MachineSkills, MCPRegistryEntry, MCPView, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
 
 // The token guards everything: it rides as a bearer header on requests and
 // as a query parameter on the event stream, which cannot carry headers.
@@ -153,6 +153,17 @@ export async function removeSkillPath(path: string): Promise<{ ok: boolean }> {
 export async function fetchHome(): Promise<HomeView> { return json(await fetch(`./console/home${q}`, { headers })); }
 export async function fetchTask(id: string): Promise<TaskDetail> {
     return json(await fetch(`./console/tasks/${encodeURIComponent(id)}${q}`, { headers }));
+}
+export async function fetchTaskAttempts(id: string): Promise<AttemptView[]> {
+    return json(await fetch(`./console/tasks/${encodeURIComponent(id)}/attempts${q}`, { headers }));
+}
+export async function fetchAttemptTree(attempt: string, dir: string): Promise<TreeView> {
+    const sep = q ? "&" : "?";
+    return json(await fetch(`./console/attempts/${encodeURIComponent(attempt)}/tree${q}${sep}path=${encodeURIComponent(dir)}`, { headers }));
+}
+export async function fetchAttemptFile(attempt: string, path: string): Promise<FileView> {
+    const sep = q ? "&" : "?";
+    return json(await fetch(`./console/attempts/${encodeURIComponent(attempt)}/file${q}${sep}path=${encodeURIComponent(path)}`, { headers }));
 }
 export async function fetchAttemptChanges(attempt: string): Promise<ChangeIndex> {
     return json(await fetch(`./console/attempts/${encodeURIComponent(attempt)}/changes${q}`, { headers }));

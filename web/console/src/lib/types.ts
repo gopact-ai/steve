@@ -105,7 +105,10 @@ export interface ChangeSummary { attempt: string; project?: string; base?: strin
 export interface Change { path: string; status: string; added: number; deleted: number; binary?: boolean }
 export interface ChangeIndex { attempt: string; project?: string; base?: string; artifact?: string; changes: Change[]; truncated?: boolean; note?: string }
 export interface FileDiff { path: string; diff: string; truncated?: boolean }
-export interface AttemptView { id: string; kind: string; state: string; agent?: string; node?: string; harness?: string; workspace?: string; base?: string; artifact?: string; summary?: string; error?: string; started_at: string; ended_at?: string }
+export interface AttemptView { id: string; kind: string; state: string; agent?: string; node?: string; harness?: string; workspace?: string; base?: string; artifact?: string; summary?: string; error?: string; started_at: string; ended_at?: string; files?: number }
+export interface TreeEntry { name: string; path: string; kind: "file" | "dir" | "link" | "repo"; size?: number; mode?: string }
+export interface TreeView { attempt: string; commit: string; which: "result" | "base"; dir: string; entries: TreeEntry[]; truncated?: boolean }
+export interface FileView { attempt: string; commit: string; path: string; text: string; size: number; binary?: boolean; truncated?: boolean }
 export interface TaskDetail { task: Task; plan?: Plan; children: Task[]; attempts: AttemptView[] }
 export interface StepProcess extends StepInfo { id: string; agent?: string; node?: string; reasoning?: string; tools?: ToolCall[] }
 export interface Process { reasoning?: string; tools?: ToolCall[]; steps?: StepProcess[] }

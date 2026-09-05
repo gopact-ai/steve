@@ -8,6 +8,7 @@ import { label, zh } from "@/lib/labels";
 import type { ConversationContext, Plan, Reply, Task } from "@/lib/types";
 import { CallGraph } from "./call-graph";
 import { TaskDrawer } from "./task-drawer";
+import { ChangesTab, FilesTab } from "./work-tabs";
 
 // RAIL_WIDTH is the console's right column; a drawer opened from it is
 // the same width, so the side of the page does not jump.
@@ -16,7 +17,7 @@ import { Chips, KeyValue, Panel } from "./page";
 import { InjectedPanel, ProcessBody, Working, type Live } from "./trace";
 import { Mono, Nothing } from "./ui";
 
-export type RailTab = "context" | "trace" | "graph";
+export type RailTab = "context" | "trace" | "graph" | "changes" | "files";
 
 // Rail is the console's right column: the session's facts, the trace of
 // the line in flight or the one picked, and the call graph of who is
@@ -33,7 +34,7 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots }: { cont
         <aside className="hidden min-h-0 flex-col border-l border-secondary bg-secondary xl:flex">
             <div className="border-b border-secondary bg-primary px-4 py-2">
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as RailTab)}>
-                    <TabList type="button-border" size="sm" items={[{ id: "context", label: "会话" }, { id: "trace", label: live ? "过程（进行中）" : "过程" }, { id: "graph", label: roots.length ? `关系 (${roots.length})` : "关系" }]}>{(item) => <Tab {...item} />}</TabList>
+                    <TabList type="button-border" size="sm" items={[{ id: "context", label: "会话" }, { id: "trace", label: live ? "过程（进行中）" : "过程" }, { id: "graph", label: roots.length ? `关系 (${roots.length})` : "关系" }, { id: "changes", label: "变更" }, { id: "files", label: "文件" }]}>{(item) => <Tab {...item} />}</TabList>
                 </Tabs>
             </div>
             <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
@@ -86,6 +87,8 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots }: { cont
                         </>
                     ) : <Nothing icon={MessageChatSquare} title="还没有过程">发一条消息，这里会显示给 agent 的上下文、它的推理、工具调用和步骤。</Nothing>
                 )}
+                {tab === "changes" && <ChangesTab roots={roots} all={snap.tasks} />}
+                {tab === "files" && <FilesTab roots={roots} all={snap.tasks} />}
                 {tab === "graph" && (
                     roots.length ? (
                         <Panel title="谁在为这条会话干活" badge={<span className="text-xs text-tertiary">任务 → 步骤 / 委派</span>}>

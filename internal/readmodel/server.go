@@ -90,6 +90,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("PUT /console/memory/{project}", s.guard(s.consoleSetProjectMemory))
 	mux.HandleFunc("GET /console/tasks/{task}", s.guard(s.consoleTask))
 	mux.HandleFunc("GET /console/tasks/{task}/attempts", s.guard(s.consoleTaskAttempts))
+	mux.HandleFunc("GET /console/attempts/{attempt}/tree", s.guard(s.consoleAttemptTree))
+	mux.HandleFunc("GET /console/attempts/{attempt}/file", s.guard(s.consoleAttemptFile))
 	mux.HandleFunc("GET /console/attempts/{attempt}/changes", s.guard(s.consoleAttemptChanges))
 	mux.HandleFunc("GET /console/attempts/{attempt}/diff", s.guard(s.consoleAttemptDiff))
 	mux.HandleFunc("POST /console/projects/{id}/workspaces", s.guard(s.consoleAddWorkspace))
@@ -418,6 +420,10 @@ type Admin interface {
 	AttemptDiff(ctx context.Context, attempt, path string) (FileDiff, error)
 	// TaskAttempts are a task's attempts from the ledger, newest first.
 	TaskAttempts(ctx context.Context, task string) ([]AttemptView, error)
+	// AttemptTree lists a directory of an attempt's snapshot; AttemptFile
+	// reads one file of it. Both bounded, both owner-only.
+	AttemptTree(ctx context.Context, attempt, dir string) (TreeView, error)
+	AttemptFile(ctx context.Context, attempt, path string) (FileView, error)
 }
 
 // SkillsView is the skills page: where skills are looked for, every
@@ -660,6 +666,29 @@ type AttemptView struct {
 	Error     string    `json:"error,omitempty"`
 	StartedAt time.Time `json:"started_at"`
 	EndedAt   time.Time `json:"ended_at,omitempty"`
+	// Files is how many paths the attempt's snapshots differ in.
+	Files int `json:"files,omitempty"`
+}
+
+// TreeView is one directory of an attempt's snapshot.
+type TreeView struct {
+	Attempt   string           `json:"attempt"`
+	Commit    string           `json:"commit"`
+	Which     string           `json:"which"` // result | base
+	Dir       string           `json:"dir"`
+	Entries   []artifact.Entry `json:"entries"`
+	Truncated bool             `json:"truncated,omitempty"`
+}
+
+// FileView is one file of an attempt's snapshot.
+type FileView struct {
+	Attempt   string `json:"attempt"`
+	Commit    string `json:"commit"`
+	Path      string `json:"path"`
+	Text      string `json:"text"`
+	Size      int64  `json:"size"`
+	Binary    bool   `json:"binary,omitempty"`
+	Truncated bool   `json:"truncated,omitempty"`
 }
 
 // TaskDetail is one task joined for the page: the task, its plan, its
@@ -1280,6 +1309,35 @@ func (s *Server) consoleTaskAttempts(w http.ResponseWriter, r *http.Request) {
 		attempts = []AttemptView{}
 	}
 	_ = json.NewEncoder(w).Encode(attempts)
+}
+
+func (s *Server) consoleAttemptTree(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	tree, err := s.admin.AttemptTree(r.Context(), r.PathValue("attempt"), r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if tree.Entries == nil {
+		tree.Entries = []artifact.Entry{}
+	}
+	_ = json.NewEncoder(w).Encode(tree)
+}
+
+func (s *Server) consoleAttemptFile(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	file, err := s.admin.AttemptFile(r.Context(), r.PathValue("attempt"), r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(file)
 }
 
 func (s *Server) consoleAttemptChanges(w http.ResponseWriter, r *http.Request) {

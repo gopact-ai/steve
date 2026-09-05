@@ -99,32 +99,42 @@ func (r *Repo) FileDiff(ctx context.Context, from, to, path string) (string, boo
 	}
 	ctx, cancel := context.WithTimeout(ctx, diffTimeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "git", "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", from, to, "--", path)
-	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C", "GIT_DIR="+r.Dir)
+	raw, truncated, err := runBounded(ctx, r.Dir, MaxDiffBytes, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", from, to, "--", path)
+	if err != nil {
+		return "", false, err
+	}
+	return string(raw), truncated, nil
+}
+
+// runBounded runs git with the repository as GIT_DIR and returns at most
+// max bytes of stdout; past the limit the process is killed, so a huge
+// output costs the limit, not the output.
+func runBounded(ctx context.Context, gitDir string, max int, args ...string) ([]byte, bool, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Env = append(os.Environ(), "GIT_TERMINAL_PROMPT=0", "LC_ALL=C", "GIT_DIR="+gitDir)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
-		return "", false, err
+		return nil, false, err
 	}
 	if err := cmd.Start(); err != nil {
-		return "", false, err
+		return nil, false, err
 	}
-	limited := io.LimitReader(bufio.NewReader(stdout), MaxDiffBytes+1)
-	raw, readErr := io.ReadAll(limited)
-	truncated := len(raw) > MaxDiffBytes
+	raw, readErr := io.ReadAll(io.LimitReader(bufio.NewReader(stdout), int64(max)+1))
+	truncated := len(raw) > max
 	if truncated {
-		raw = raw[:MaxDiffBytes]
+		raw = raw[:max]
 		_ = cmd.Process.Kill()
 	}
 	waitErr := cmd.Wait()
 	if readErr != nil {
-		return "", false, readErr
+		return nil, false, readErr
 	}
 	if waitErr != nil && !truncated {
-		return "", false, fmt.Errorf("git diff: %w: %s", waitErr, strings.TrimSpace(stderr.String()))
+		return nil, false, fmt.Errorf("git %s: %w: %s", args[0], waitErr, strings.TrimSpace(stderr.String()))
 	}
-	return string(raw), truncated, nil
+	return raw, truncated, nil
 }
 
 // ---------------------------------------------------------------- store
