@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { GitBranch01, MessageChatSquare } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
@@ -7,6 +7,7 @@ import { useFleet } from "@/lib/fleet";
 import { label, zh } from "@/lib/labels";
 import type { ConversationContext, Plan, Reply, Task } from "@/lib/types";
 import { CallGraph } from "./call-graph";
+import { TaskDrawer } from "./task-drawer";
 import { Chips, KeyValue, Panel } from "./page";
 import { InjectedPanel, ProcessBody, Working, type Live } from "./trace";
 import { Mono, Nothing } from "./ui";
@@ -17,6 +18,7 @@ export type RailTab = "context" | "trace" | "graph";
 // the line in flight or the one picked, and the call graph of who is
 // working for this session.
 export function Rail({ context, live, plans, reply, tab, setTab, roots }: { context: ConversationContext | null; live: Live | null; plans: Plan[]; reply: Reply | null; tab: RailTab; setTab: (t: RailTab) => void; roots: Task[] }) {
+    const [picked, setPicked] = useState<Task | null>(null);
     const { snap } = useFleet();
     // The trace tab takes over while something runs, and returns to
     // context when the user asks.
@@ -83,11 +85,12 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots }: { cont
                 {tab === "graph" && (
                     roots.length ? (
                         <Panel title="谁在为这条会话干活" badge={<span className="text-xs text-tertiary">任务 → 步骤 / 委派</span>}>
-                            <CallGraph roots={roots} tasks={snap.tasks} plans={snap.plans} liveSteps={live?.order} />
+                            <CallGraph roots={roots} tasks={snap.tasks} plans={snap.plans} liveSteps={live?.order} onSelect={setPicked} />
                         </Panel>
                     ) : <Nothing icon={GitBranch01} title="还没有任务">这条会话的任务、它拆出的步骤、以及 Agent 之间的委派会画在这里。</Nothing>
                 )}
             </div>
+            {picked && <TaskDrawer t={picked} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === picked.id)} onClose={() => setPicked(null)} />}
         </aside>
     );
 }

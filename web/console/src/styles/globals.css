@@ -71,6 +71,10 @@ input[type="search"]::-webkit-search-cancel-button {
 /* Transcript markdown: the scaffold's prose maps <pre> onto the page
    background, which makes a code block invisible on a white bubble. */
 .prose.md:not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    /* Chat body text is one size — the same as what the person typed;
+       the xs variant (thoughts, child cards) sets its own. */
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
     --tw-prose-body: var(--color-text-secondary);
     --tw-prose-links: var(--color-text-brand-secondary);
     --tw-prose-code: var(--color-text-primary);

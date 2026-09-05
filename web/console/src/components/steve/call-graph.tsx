@@ -7,16 +7,16 @@ import { Mono, StateBadge, taskState } from "@/components/steve/ui";
 // to other agents — recursively, since a delegate may delegate. It is the
 // whole debugging story for work that crossed agents or machines, drawn
 // once and used by the console rail and the task drawer alike.
-export function CallGraph({ roots, tasks, plans, liveSteps }: { roots: Task[]; tasks: Task[]; plans: Plan[]; liveSteps?: string[] }) {
+export function CallGraph({ roots, tasks, plans, liveSteps, onSelect }: { roots: Task[]; tasks: Task[]; plans: Plan[]; liveSteps?: string[]; onSelect?: (t: Task) => void }) {
     if (!roots.length) return null;
     return (
         <div className="flex flex-col gap-3">
-            {roots.map((t) => <TaskNode key={t.id} t={t} tasks={tasks} plans={plans} depth={0} liveSteps={liveSteps} seen={new Set()} />)}
+            {roots.map((t) => <TaskNode key={t.id} t={t} tasks={tasks} plans={plans} depth={0} liveSteps={liveSteps} seen={new Set()} onSelect={onSelect} />)}
         </div>
     );
 }
 
-function TaskNode({ t, tasks, plans, depth, liveSteps, seen }: { t: Task; tasks: Task[]; plans: Plan[]; depth: number; liveSteps?: string[]; seen: Set<string> }) {
+function TaskNode({ t, tasks, plans, depth, liveSteps, seen, onSelect }: { t: Task; tasks: Task[]; plans: Plan[]; depth: number; liveSteps?: string[]; seen: Set<string>; onSelect?: (t: Task) => void }) {
     if (seen.has(t.id) || depth > 6) return null;
     seen.add(t.id);
     const plan = plans.find((p) => p.task_id === t.id);
@@ -24,7 +24,7 @@ function TaskNode({ t, tasks, plans, depth, liveSteps, seen }: { t: Task; tasks:
     const running = t.execution === "running" || t.lifecycle === "running";
     return (
         <div className="flex flex-col gap-1.5">
-            <div className="flex min-w-0 flex-col gap-0.5">
+            <div className={`flex min-w-0 flex-col gap-0.5 rounded-md ${onSelect ? "-mx-1.5 cursor-pointer px-1.5 py-0.5 hover:bg-secondary" : ""}`} onClick={onSelect ? () => onSelect(t) : undefined} role={onSelect ? "button" : undefined} title={onSelect ? "看详情" : undefined}>
                 <div className="flex min-w-0 items-center gap-2 text-sm">
                     <Who agent={t.member || "steve"} node={t.member ? t.node : undefined} running={running} />
                     <span className="text-xs text-tertiary">{kindOf(t)}</span>
@@ -51,7 +51,7 @@ function TaskNode({ t, tasks, plans, depth, liveSteps, seen }: { t: Task; tasks:
                     {children.map((c) => (
                         <li key={c.id} className="flex min-w-0 flex-col gap-1">
                             <div className="text-[11px] text-quaternary">{t.member || "steve"} 委派 →</div>
-                            <TaskNode t={c} tasks={tasks} plans={plans} depth={depth + 1} liveSteps={liveSteps} seen={seen} />
+                            <TaskNode t={c} tasks={tasks} plans={plans} depth={depth + 1} liveSteps={liveSteps} seen={seen} onSelect={onSelect} />
                         </li>
                     ))}
                 </ul>
