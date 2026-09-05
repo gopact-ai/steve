@@ -46,15 +46,33 @@ func startNode(t *testing.T, cfg ServerConfig) *Server {
 	}
 	server := NewServer(cfg)
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	ready := make(chan struct{})
-	go func() {
-		close(ready)
-		if err := server.Serve(ctx); err != nil {
-			t.Errorf("node serve: %v", err)
+	done := make(chan error, 1)
+	go func() { done <- server.Serve(ctx) }()
+	t.Cleanup(func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Errorf("node serve: %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Error("node did not stop serving")
 		}
-	}()
-	<-ready
+		// Registry.Close runs first. Its disconnected handler can still be
+		// writing hub.json after Serve returns; TempDir must not remove the
+		// state directory until release has finished that write.
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			server.hubMu.Lock()
+			live := server.hubLive
+			server.hubMu.Unlock()
+			if live == 0 {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Error("node did not finish releasing its hub")
+	})
 	// Serve binds before accepting; poll briefly rather than sleep blindly.
 	for range 100 {
 		if addr := server.Addr(); !strings.HasSuffix(addr, ":0") {
