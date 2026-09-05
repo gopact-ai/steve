@@ -11,14 +11,17 @@ import (
 // Exchange names one submission throughout its queue, sent line and answer.
 // Reply IDs still name individual transcript lines, including quoted lines.
 type Exchange struct {
-	ID           string     `json:"id"`
-	Conversation string     `json:"conversation"`
-	Input        string     `json:"input"`
-	Quotes       []QuoteRef `json:"quotes,omitempty"`
-	State        string     `json:"state"` // queued | running | done | failed
-	EnqueuedAt   time.Time  `json:"enqueued_at"`
-	StartedAt    time.Time  `json:"started_at,omitzero"`
-	ReplyID      string     `json:"reply_id,omitempty"`
+	ID           string `json:"id"`
+	Conversation string `json:"conversation"`
+	Input        string `json:"input"`
+	// Prompt is what the agent is given when it differs from Input: a
+	// continuation after a restart shows the notice and says "go on".
+	Prompt     string     `json:"prompt,omitempty"`
+	Quotes     []QuoteRef `json:"quotes,omitempty"`
+	State      string     `json:"state"` // queued | running | done | failed
+	EnqueuedAt time.Time  `json:"enqueued_at"`
+	StartedAt  time.Time  `json:"started_at,omitzero"`
+	ReplyID    string     `json:"reply_id,omitempty"`
 }
 
 var (

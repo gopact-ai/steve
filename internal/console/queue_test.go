@@ -376,6 +376,9 @@ func TestQueueRestoresWaitingWorkWithoutReplayingRunningTurn(t *testing.T) {
 	if err := restored.Persist(&memDoc{raw: raw, saved: true}); err != nil {
 		t.Fatal(err)
 	}
+	if err := restored.Drain(); err != nil {
+		t.Fatal(err)
+	}
 	call := nextCall(t, h)
 	if call.req.Input != "saved edit" {
 		t.Fatalf("replayed wrong work: %q", call.req.Input)
@@ -403,6 +406,9 @@ func TestRestoredQueueStillRequiresAnOwner(t *testing.T) {
 	s := New(h, "", nil)
 	doc := &memDoc{saved: true, raw: []byte(`{"replies":{},"exchanges":{"console:main":[{"id":"e1","conversation":"console:main","input":"hello","state":"queued"}]}}`)}
 	if err := s.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Drain(); err != nil {
 		t.Fatal(err)
 	}
 	if e := awaitExchange(t, s, "e1"); e.State != "failed" || len(h.seen) != 0 {
