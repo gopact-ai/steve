@@ -160,7 +160,7 @@ func (c *Coordinator) decideCmd(ctx context.Context, req Request, cmd protocol.C
 		return Result{Title: title, Text: c.text.T(i18n.DisclosureDenied, id)}, nil
 	}
 	if c.notifier != nil {
-		c.notifier(TaskNotice{TaskID: h.task, ChatID: h.req.ChatID, MessageID: h.req.MessageID, Requester: h.req.SenderOpenID, Text: h.text})
+		c.notifier(TaskNotice{TaskID: h.task, ChatID: h.req.ChatID, MessageID: h.req.MessageID, Requester: h.req.SenderOpenID, Conversation: h.req.ConversationID, Text: h.text})
 	}
 	return Result{Title: title, Text: c.text.T(i18n.DisclosureApproved, id)}, nil
 }

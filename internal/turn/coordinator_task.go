@@ -211,7 +211,10 @@ type TaskNotice struct {
 	ChatID    string
 	MessageID string
 	Requester string
-	Text      string
+	// Conversation is the thread the task lives in: on the console, the
+	// notice belongs there, not to whichever thread is open.
+	Conversation string
+	Text         string
 }
 
 // SetNotifier wires those pushes to the channel. Nil simply means Steve keeps
@@ -260,7 +263,7 @@ func (c *Coordinator) offlineReminder(req Request, id string, started time.Time,
 		return
 	}
 	c.notifier(TaskNotice{
-		TaskID: id, ChatID: req.ChatID, MessageID: req.MessageID, Requester: req.SenderOpenID,
+		TaskID: id, ChatID: req.ChatID, MessageID: req.MessageID, Requester: req.SenderOpenID, Conversation: req.ConversationID,
 		Text: c.text.T(i18n.TaskOfflineDone, id, elapsed.Round(time.Minute)),
 	})
 }
