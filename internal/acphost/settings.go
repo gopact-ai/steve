@@ -84,7 +84,7 @@ func (s *sessionState) settings() view.Settings {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return view.Settings{Model: s.modelLabel(), Mode: s.modeLabel()}
+	return view.Settings{Model: s.modelLabel(), Models: s.modelNames(), Mode: s.modeLabel()}
 }
 
 // modelLabel resolves the model selector to the name a human would recognise.
@@ -103,6 +103,37 @@ func (s *sessionState) modelLabel() string {
 		return name
 	}
 	return value
+}
+
+// modelNames lists every model the selector offers, by display name, in
+// the order the agent gave them. This is what the fleet's model column is
+// made of once a harness has been seen running.
+func (s *sessionState) modelNames() []string {
+	opt, ok := findOption(s.options, acp.SessionConfigOptionCategoryModel)
+	if !ok {
+		return nil
+	}
+	var names []string
+	add := func(choice acp.SessionConfigSelectOption) {
+		if choice.Name != "" {
+			names = append(names, choice.Name)
+		} else {
+			names = append(names, string(choice.Value))
+		}
+	}
+	if opt.Options.Ungrouped != nil {
+		for _, choice := range *opt.Options.Ungrouped {
+			add(choice)
+		}
+	}
+	if opt.Options.Groups != nil {
+		for _, group := range *opt.Options.Groups {
+			for _, choice := range group.Options {
+				add(choice)
+			}
+		}
+	}
+	return names
 }
 
 func (s *sessionState) modeLabel() string {
@@ -236,6 +267,37 @@ func (h *Host) ModelChoices(sid acp.SessionID) (acp.SessionConfigID, []view.Choi
 		}
 	}
 	return opt.ID, out
+}
+
+// optionsView renders every select-type option the agent exposes.
+func optionsView(options []acp.SessionConfigOption) []view.Option {
+	var out []view.Option
+	for _, opt := range options {
+		if opt.Type != "" && opt.Type != acp.SessionConfigOptionTypeSelect {
+			continue
+		}
+		o := view.Option{ID: string(opt.ID), Name: opt.Name}
+		if opt.Category != nil {
+			o.Category = string(*opt.Category)
+		}
+		if value, ok := selectValue(opt); ok {
+			o.Current = value
+		}
+		if opt.Options.Ungrouped != nil {
+			for _, choice := range *opt.Options.Ungrouped {
+				o.Choices = append(o.Choices, view.Choice{Value: string(choice.Value), Label: choice.Name})
+			}
+		}
+		if opt.Options.Groups != nil {
+			for _, group := range *opt.Options.Groups {
+				for _, choice := range group.Options {
+					o.Choices = append(o.Choices, view.Choice{Value: string(choice.Value), Label: group.Name + " · " + choice.Name})
+				}
+			}
+		}
+		out = append(out, o)
+	}
+	return out
 }
 
 // SetOption changes one of the agent's selectors. The agent confirms with a

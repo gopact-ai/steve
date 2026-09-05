@@ -32,13 +32,13 @@ func TestManagerStartsHarnessesLazily(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	if _, err := manager.OpenSession(ctx, "one", "", t.TempDir(), nil); err != nil {
+	if _, err := manager.OpenSession(ctx, Placement{Harness: "one"}, "", t.TempDir(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(manager.hosts) != 1 {
 		t.Fatalf("started hosts = %d, want 1", len(manager.hosts))
 	}
-	if _, err := manager.OpenSession(ctx, "two", "", t.TempDir(), nil); err != nil {
+	if _, err := manager.OpenSession(ctx, Placement{Harness: "two"}, "", t.TempDir(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(manager.hosts) != 2 {
@@ -59,12 +59,12 @@ func TestManagerStopRejectsNewSessionAndHostRestart(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	runner, err := manager.OpenSession(ctx, "one", "", t.TempDir(), nil)
+	runner, err := manager.OpenSession(ctx, Placement{Harness: "one"}, "", t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	manager.Stop()
-	if _, err := manager.OpenSession(ctx, "one", "", t.TempDir(), nil); err == nil {
+	if _, err := manager.OpenSession(ctx, Placement{Harness: "one"}, "", t.TempDir(), nil); err == nil {
 		t.Fatal("open after stop succeeded")
 	}
 	if _, _, err := runner.Prompt(ctx, "after stop", nil); !errors.Is(err, acphost.ErrClosed) {
@@ -86,7 +86,7 @@ func TestManagerRestartClosesHostsAndAllowsNewSession(t *testing.T) {
 	t.Cleanup(manager.Stop)
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	runner, err := manager.OpenSession(ctx, "one", "", t.TempDir(), nil)
+	runner, err := manager.OpenSession(ctx, Placement{Harness: "one"}, "", t.TempDir(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,7 +96,7 @@ func TestManagerRestartClosesHostsAndAllowsNewSession(t *testing.T) {
 	if _, _, err := runner.Prompt(ctx, "after restart", nil); !errors.Is(err, acphost.ErrClosed) {
 		t.Fatalf("old runner after restart = %v, want ErrClosed", err)
 	}
-	if _, err := manager.OpenSession(ctx, "one", "", t.TempDir(), nil); err != nil {
+	if _, err := manager.OpenSession(ctx, Placement{Harness: "one"}, "", t.TempDir(), nil); err != nil {
 		t.Fatal(err)
 	}
 	if len(manager.hosts) != 1 {
@@ -117,7 +117,7 @@ func TestManagerCreatesWorkspace(t *testing.T) {
 	}
 	t.Cleanup(manager.Stop)
 	workspace := filepath.Join(t.TempDir(), "missing", "workspace")
-	if _, err := manager.OpenSession(t.Context(), "one", "", workspace, nil); err != nil {
+	if _, err := manager.OpenSession(t.Context(), Placement{Harness: "one"}, "", workspace, nil); err != nil {
 		t.Fatal(err)
 	}
 	if info, err := os.Stat(workspace); err != nil || !info.IsDir() {

@@ -8,19 +8,29 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 type Session struct {
-	ConversationID      string `json:"conversation_id"`
-	AgentID             string `json:"agent_id"`
-	HarnessID           string `json:"harness_id"`
-	UpstreamID          string `json:"upstream_id,omitempty"`
-	Workspace           string `json:"workspace"`
+	ConversationID string `json:"conversation_id"`
+	AgentID        string `json:"agent_id"`
+	HarnessID      string `json:"harness_id"`
+	// NodeID is the machine the session's agent process runs on. Empty
+	// means the hub itself. A restored session must reconnect to the same
+	// node: the agent's workspace and its conversation live there.
+	NodeID     string `json:"node_id,omitempty"`
+	UpstreamID string `json:"upstream_id,omitempty"`
+	Workspace  string `json:"workspace"`
+	// ProjectID and ProjectVersion record the conversation's project
+	// binding this session was opened under. A session is bound to one
+	// binding: when the conversation moves to another project, or the same
+	// project is re-bound, the session is stale and a new one is opened.
+	ProjectID           string `json:"project_id,omitempty"`
+	ProjectVersion      int64  `json:"project_version,omitempty"`
 	CapabilityHash      string `json:"capability_hash"`
 	InstructionsApplied bool   `json:"instructions_applied,omitempty"`
 	Tainted             bool   `json:"tainted,omitempty"`
@@ -38,6 +48,11 @@ type Conversation struct {
 	// out of reach: the agent session is closed, not deleted, so an archived
 	// record is enough to load it again.
 	Archived []Archived `json:"archived,omitempty"`
+	// Preferences are what the owner chose for each agent in this
+	// conversation — the model, a reasoning level, any selector the
+	// harness exposes — by option id, "model" for the model. They outlive
+	// sessions: a fresh session is opened with them.
+	Preferences map[string]map[string]string `json:"preferences,omitempty"`
 }
 
 type Archived struct {
@@ -63,19 +78,33 @@ type data struct {
 }
 
 type Store struct {
-	path string
+	doc  ledger.Doc
 	mu   sync.Mutex
 	data data
 }
 
+// Open keeps the store in one JSON file; the gateway opens the ledger.
 func Open(path string) (*Store, error) {
-	s := &Store{path: path, data: data{Conversations: map[string]Conversation{}}}
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return s, nil
+	return openWith(&ledger.FileDocument{Path: path})
+}
+
+// OpenLedger keeps the store in the ledger, importing a legacy file once.
+func OpenLedger(l *ledger.Ledger, legacy string) (*Store, error) {
+	doc := l.Document("state")
+	if _, err := doc.Import(legacy); err != nil {
+		return nil, err
 	}
+	return openWith(doc)
+}
+
+func openWith(doc ledger.Doc) (*Store, error) {
+	s := &Store{doc: doc, data: data{Conversations: map[string]Conversation{}}}
+	raw, ok, err := doc.Load()
 	if err != nil {
 		return nil, fmt.Errorf("read state: %w", err)
+	}
+	if !ok {
+		return s, nil
 	}
 	decoder := json.NewDecoder(bytes.NewReader(raw))
 	decoder.DisallowUnknownFields()
@@ -99,21 +128,8 @@ func (s *Store) Conversation(id string) Conversation {
 }
 
 func (s *Store) Check() error {
-	dir := filepath.Dir(s.path)
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return fmt.Errorf("create state directory: %w", err)
-	}
-	temp, err := os.CreateTemp(dir, ".state-check-*")
-	if err != nil {
-		return fmt.Errorf("check state directory: %w", err)
-	}
-	name := temp.Name()
-	if err := temp.Close(); err != nil {
-		_ = os.Remove(name)
-		return fmt.Errorf("close state check file: %w", err)
-	}
-	if err := os.Remove(name); err != nil {
-		return fmt.Errorf("remove state check file: %w", err)
+	if err := s.doc.Check(); err != nil {
+		return fmt.Errorf("state: %w", err)
 	}
 	return nil
 }
@@ -126,6 +142,52 @@ func (s *Store) SetActiveAgent(conversationID, agentID string) error {
 	conversation.ActiveAgent = agentID
 	if conversation.Sessions == nil {
 		conversation.Sessions = map[string]Session{}
+	}
+	next.Conversations[conversationID] = conversation
+	return s.replaceLocked(next)
+}
+
+// Preferences are the owner's choices for an agent in a conversation.
+func (s *Store) Preferences(conversationID, agentID string) map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]string{}
+	if c, ok := s.data.Conversations[conversationID]; ok {
+		for k, v := range c.Preferences[agentID] {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// SetPreferences merges a patch into an agent's preferences for a
+// conversation; an empty value drops the key.
+func (s *Store) SetPreferences(conversationID, agentID string, patch map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := cloneData(s.data)
+	conversation := next.Conversations[conversationID]
+	if conversation.Sessions == nil {
+		conversation.Sessions = map[string]Session{}
+	}
+	if conversation.Preferences == nil {
+		conversation.Preferences = map[string]map[string]string{}
+	}
+	prefs := map[string]string{}
+	for k, v := range conversation.Preferences[agentID] {
+		prefs[k] = v
+	}
+	for k, v := range patch {
+		if v == "" {
+			delete(prefs, k)
+		} else {
+			prefs[k] = v
+		}
+	}
+	if len(prefs) == 0 {
+		delete(conversation.Preferences, agentID)
+	} else {
+		conversation.Preferences[agentID] = prefs
 	}
 	next.Conversations[conversationID] = conversation
 	return s.replaceLocked(next)
@@ -244,9 +306,11 @@ func (s *Store) ApprovedSenders() []string {
 	return approved
 }
 
+// refreshPairingLocked re-reads pairing from the document: `steve pair`
+// runs in another process and approves senders while the gateway is up.
 func (s *Store) refreshPairingLocked() {
-	raw, err := os.ReadFile(s.path)
-	if err != nil {
+	raw, ok, err := s.doc.Load()
+	if err != nil || !ok {
 		return
 	}
 	var disk data
@@ -430,53 +494,15 @@ func (s *Store) DeleteSession(conversationID, agentID string) error {
 }
 
 func (s *Store) replaceLocked(next data) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return fmt.Errorf("create state directory: %w", err)
-	}
 	raw, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode state: %w", err)
 	}
-	temp, err := os.CreateTemp(filepath.Dir(s.path), ".state-*")
-	if err != nil {
-		return fmt.Errorf("create state file: %w", err)
-	}
-	tempName := temp.Name()
-	defer os.Remove(tempName)
-	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
-		return fmt.Errorf("secure state file: %w", err)
-	}
-	if _, err := temp.Write(raw); err != nil {
-		temp.Close()
-		return fmt.Errorf("write state: %w", err)
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return fmt.Errorf("sync state: %w", err)
-	}
-	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close state: %w", err)
-	}
-	if err := os.Rename(tempName, s.path); err != nil {
-		return fmt.Errorf("replace state: %w", err)
-	}
-	if err := syncDir(filepath.Dir(s.path)); err != nil {
-		return fmt.Errorf("sync state directory: %w", err)
+	if err := s.doc.Save(raw); err != nil {
+		return fmt.Errorf("save state: %w", err)
 	}
 	s.data = next
 	return nil
-}
-
-// syncDir flushes a directory entry after a rename so the replacement
-// survives a crash (rename alone is not guaranteed durable on all filesystems).
-func syncDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
 }
 
 func cloneData(source data) data {
@@ -500,6 +526,16 @@ func cloneData(source data) data {
 func cloneConversation(conversation Conversation) Conversation {
 	clone := conversation
 	clone.Archived = append([]Archived(nil), conversation.Archived...)
+	if conversation.Preferences != nil {
+		clone.Preferences = make(map[string]map[string]string, len(conversation.Preferences))
+		for agent, prefs := range conversation.Preferences {
+			copied := make(map[string]string, len(prefs))
+			for k, v := range prefs {
+				copied[k] = v
+			}
+			clone.Preferences[agent] = copied
+		}
+	}
 	clone.Sessions = make(map[string]Session, len(conversation.Sessions))
 	for id, session := range conversation.Sessions {
 		clone.Sessions[id] = session

@@ -94,6 +94,11 @@ func TestSettingsFromRealAdapters(t *testing.T) {
 			if got.Mode != tc.mode {
 				t.Errorf("mode = %q, want %q", got.Mode, tc.mode)
 			}
+			// The offered models come along, so a fleet view can show
+			// what this harness could run without a config saying so.
+			if len(got.Models) < 2 {
+				t.Errorf("models = %v, want the adapter's list", got.Models)
+			}
 			if got.Harness != "" {
 				t.Errorf("harness = %q, want empty: the host does not know it", got.Harness)
 			}

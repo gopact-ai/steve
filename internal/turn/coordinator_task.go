@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/onboard"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
@@ -24,7 +25,7 @@ const goalLimit = 120
 // turn to it. It returns an empty id when task tracking is disabled, and a
 // UserError when the budget is spent — that error is the brake, so it has to
 // reach the user rather than be swallowed.
-func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string) (string, error) {
+func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string, binding project.Binding, workspace string) (string, error) {
 	if c.tasks == nil {
 		return "", nil
 	}
@@ -35,6 +36,16 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		return "", nil
 	}
 	tracked, ok := c.tasks.Active(req.ConversationID, selected.ID, req.Origin)
+	if ok && tracked.ProjectID != "" && binding.ProjectID != "" && tracked.ProjectID != binding.ProjectID {
+		// The binding moved under a task that was never closed (an older
+		// switch, a crash between the two): the task stays with its
+		// project, and this turn opens its own.
+		log.Printf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, binding.ProjectID)
+		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
+			log.Printf("turn: close task %s: %v", tracked.ID, err)
+		}
+		ok = false
+	}
 	if !ok {
 		created, err := c.tasks.Create(task.Task{
 			Goal:      goal(prompt),
@@ -43,7 +54,8 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 			Member:    selected.ID,
 			Node:      c.node,
 			Origin:    req.Origin,
-			Workspace: selected.Workspace,
+			ProjectID: binding.ProjectID,
+			Workspace: workspace,
 		})
 		if err != nil {
 			// Losing the task record must not cost the user their turn.
@@ -70,13 +82,13 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 	return tracked.ID, nil
 }
 
-// finishTask closes the attempt. Tokens stay zero for now: usage rides on the
-// ACP prompt response, which the runner does not surface yet.
-func (c *Coordinator) finishTask(id string, turnErr error) {
+// finishTask closes the attempt with what the turn cost and the model it
+// ran on, as the progress stream reported them.
+func (c *Coordinator) finishTask(id string, turnErr error, tokens task.Tokens, model string) {
 	if c.tasks == nil || id == "" {
 		return
 	}
-	if _, err := c.tasks.Finish(id, outcome(turnErr), task.Tokens{}, 0); err != nil {
+	if _, err := c.tasks.FinishAs(id, outcome(turnErr), tokens, 0, model); err != nil {
 		log.Printf("turn: finish task %s: %v", id, err)
 	}
 }
@@ -124,6 +136,22 @@ func goal(prompt string) string {
 // budgetStop names the limit that stopped the task and shows where the work
 // got to. A brake that only says "no" leaves the user guessing whether an hour
 // of work survived; the digest is the difference between a stop and a loss.
+// budgetTurns and budgetElapsed say where a task stands against its
+// budget, or just where it stands when it has none.
+func budgetTurns(b task.Budget) string {
+	if b.MaxTurns <= 0 {
+		return fmt.Sprintf("%d", b.Turns)
+	}
+	return fmt.Sprintf("%d/%d", b.Turns, b.MaxTurns)
+}
+
+func budgetElapsed(b task.Budget) string {
+	if b.MaxElapsed <= 0 {
+		return b.Elapsed.Round(time.Second).String()
+	}
+	return fmt.Sprintf("%s/%s", b.Elapsed.Round(time.Second), b.MaxElapsed.Round(time.Minute))
+}
+
 func (c *Coordinator) budgetStop(tracked task.Task) (string, bool) {
 	limit, spent := tracked.Budget.Exhausted()
 	if !spent {
@@ -149,9 +177,8 @@ func (c *Coordinator) taskFields(conversationID, agentID string) []view.Field {
 	}
 	return []view.Field{
 		{Label: "Task", Value: "#" + tracked.ID, IsMetric: true},
-		{Label: "Turns", Value: fmt.Sprintf("%d/%d", tracked.Budget.Turns, tracked.Budget.MaxTurns), IsMetric: true},
-		{Label: "Elapsed", Value: fmt.Sprintf("%s/%s",
-			tracked.Budget.Elapsed.Round(time.Second), tracked.Budget.MaxElapsed.Round(time.Minute)), IsMetric: true},
+		{Label: "Turns", Value: budgetTurns(tracked.Budget), IsMetric: true},
+		{Label: "Elapsed", Value: budgetElapsed(tracked.Budget), IsMetric: true},
 		{Label: "Goal", Value: tracked.Goal, Wide: true},
 	}
 }
@@ -427,10 +454,9 @@ func (c *Coordinator) taskPickUp(title string, tracked task.Task) Result {
 // shows the interruptions and cancellations, not only the turns that worked.
 func (c *Coordinator) taskDetail(tracked task.Task) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "**#%s** %s · %s · %d/%d turns · %s/%s",
+	fmt.Fprintf(&b, "**#%s** %s · %s · %s turns · %s",
 		tracked.ID, statusMark(tracked.State), tracked.Member,
-		tracked.Budget.Turns, tracked.Budget.MaxTurns,
-		tracked.Budget.Elapsed.Round(time.Second), tracked.Budget.MaxElapsed.Round(time.Minute))
+		budgetTurns(tracked.Budget), budgetElapsed(tracked.Budget))
 	if tracked.Goal != "" {
 		fmt.Fprintf(&b, "\n%s", tracked.Goal)
 	}
@@ -480,9 +506,9 @@ func (c *Coordinator) tasksList(req Request, title string) Result {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		fmt.Fprintf(&b, "**#%s** %s · %s · %d/%d turns · %s",
+		fmt.Fprintf(&b, "**#%s** %s · %s · %s turns · %s",
 			tracked.ID, statusMark(tracked.State), tracked.Member,
-			tracked.Budget.Turns, tracked.Budget.MaxTurns,
+			budgetTurns(tracked.Budget),
 			tracked.Budget.Elapsed.Round(time.Second))
 		if tracked.Goal != "" {
 			fmt.Fprintf(&b, "\n%s", tracked.Goal)

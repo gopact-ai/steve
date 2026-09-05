@@ -36,11 +36,9 @@ func TestBootstrapCreatesFiles(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(user), "ou_owner") {
-		t.Fatalf("USER.md missing owner: %s", user)
-	}
-	if strings.Contains(string(user), templateOwnerID) {
-		t.Fatal("USER.md still has placeholder")
+	// The channel identity is config's, not the profile's.
+	if strings.Contains(string(user), "ou_owner") || strings.Contains(string(user), "open_id") {
+		t.Fatalf("USER.md carries the channel id: %s", user)
 	}
 }
 
@@ -60,7 +58,7 @@ func TestBootstrapLocaleEnglish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(user), "Name:") || !strings.Contains(string(user), "ou_owner") {
+	if !strings.Contains(string(user), "Name:") || strings.Contains(string(user), "ou_owner") {
 		t.Fatalf("english user missing: %s", user)
 	}
 	snap, err := LoadWithLocale(dir, ModeOwner, LocaleEN)

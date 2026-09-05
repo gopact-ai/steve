@@ -1,0 +1,134 @@
+@import "tailwindcss";
+@import "./theme.css";
+@import "./typography.css";
+
+@plugin "@tailwindcss/typography";
+@plugin "tailwindcss-react-aria-components";
+@plugin "tailwindcss-animate";
+
+@custom-variant dark (&:where(.dark-mode, .dark-mode *));
+@custom-variant label (& [data-label]);
+@custom-variant focus-input-within (&:has(input:focus));
+
+@utility scrollbar-hide {
+    /* For Webkit-based browsers (Chrome, Safari and Opera) */
+    &::-webkit-scrollbar {
+        display: none;
+        -webkit-appearance: none;
+    }
+
+    /* For IE, Edge and Firefox */
+    -ms-overflow-style: none; /* IE and Edge */
+    scrollbar-width: none; /* Firefox */
+}
+
+@utility transition-inherit-all {
+    transition-property: inherit;
+    transition-duration: inherit;
+    transition-timing-function: inherit;
+}
+
+html,
+body {
+    font-family: var(--font-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    -webkit-font-variant-ligatures: contextual;
+    font-variant-ligatures: contextual;
+    -webkit-font-kerning: normal;
+    font-kerning: normal;
+}
+
+/* Hide the default expand arrow on Safari.  */
+details summary::-webkit-details-marker {
+    display: none;
+}
+
+/* Hide default arrows from number inputs. */
+/* Chrome, Safari, Edge, Opera */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+/* Firefox */
+input[type="number"] {
+    -moz-appearance: textfield;
+}
+
+/* Hide the default clear button (X) from search inputs. */
+input[type="search"]::-webkit-search-cancel-button {
+    -webkit-appearance: none;
+}
+
+/* Hide the default outline on chart elements. */
+.recharts-surface,
+.recharts-surface g,
+.recharts-surface path {
+    outline: none;
+}
+
+/* Transcript markdown: the scaffold's prose maps <pre> onto the page
+   background, which makes a code block invisible on a white bubble. */
+.prose.md:not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    /* Chat body text is one size — the same as what the person typed;
+       the xs variant (thoughts, child cards) sets its own. */
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    --tw-prose-body: var(--color-text-secondary);
+    --tw-prose-links: var(--color-text-brand-secondary);
+    --tw-prose-code: var(--color-text-primary);
+    --tw-prose-pre-code: var(--color-text-primary);
+    --tw-prose-pre-bg: var(--color-bg-secondary);
+    --tw-prose-bullets: var(--color-fg-quaternary);
+    --tw-prose-counters: var(--color-text-tertiary);
+}
+.prose.md :where(p, ul, ol, pre, blockquote, table):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    margin-top: 0.5em;
+    margin-bottom: 0.5em;
+}
+.prose.md :where(pre):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    border: 1px solid var(--color-border-secondary);
+    border-radius: 0.5rem;
+    font-size: 0.8125rem;
+}
+.prose.md :where(:not(pre) > code):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    background: var(--color-bg-secondary);
+    border: 1px solid var(--color-border-secondary);
+    border-radius: 0.25rem;
+    padding: 0.05em 0.35em;
+    font-weight: 500;
+}
+.prose.md :where(:not(pre) > code)::before,
+.prose.md :where(:not(pre) > code)::after {
+    content: none;
+}
+
+/* Scrollbars follow the theme: thin, quiet, and dark where the page is
+   dark. The browser's own would otherwise be the brightest thing on it. */
+:root { color-scheme: light; }
+.dark-mode { color-scheme: dark; }
+* { scrollbar-width: thin; scrollbar-color: var(--color-border-primary) transparent; }
+*::-webkit-scrollbar { width: 8px; height: 8px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--color-border-primary); border-radius: 9999px; border: 2px solid transparent; background-clip: padding-box; }
+*::-webkit-scrollbar-thumb:hover { background: var(--color-border-secondary); border: 2px solid transparent; background-clip: padding-box; }
+
+/* A quote inside a chat message is a quote, not a pull quote: normal
+   size, upright, muted, a bar on the left, no typographic quote marks. */
+.prose.md :where(blockquote):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    margin-top: calc(var(--spacing) * 2);
+    margin-bottom: calc(var(--spacing) * 2);
+    padding-inline-start: calc(var(--spacing) * 3);
+    border-left-width: 2px;
+    color: var(--color-text-tertiary, inherit);
+}
+.prose.md :where(blockquote p):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    font-size: inherit;
+    line-height: inherit;
+    font-weight: inherit;
+    font-style: normal;
+}
+.prose.md :where(blockquote p:first-of-type::before, blockquote p:last-of-type::after):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    content: none;
+}

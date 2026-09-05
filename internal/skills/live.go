@@ -1,6 +1,7 @@
 package skills
 
 import (
+	"context"
 	"fmt"
 	"sync"
 )
@@ -15,12 +16,27 @@ type Live struct {
 	mu sync.Mutex
 }
 
+// Setup opens the map, makes sure the user's own skills directory is
+// there, and brings the shipped skills up to date: written fresh under
+// the state directory, listed last, on by default the first time each
+// is seen.
 func Setup(stateDir string) (*Map, error) {
 	m, err := Open(DefaultPath(stateDir))
 	if err != nil {
 		return nil, err
 	}
 	if err := m.Ensure(DefaultSearchPath(stateDir)); err != nil {
+		return nil, err
+	}
+	root, err := InstallBuiltins(stateDir)
+	if err != nil {
+		return nil, err
+	}
+	names, err := BuiltinNames()
+	if err != nil {
+		return nil, err
+	}
+	if err := m.EnsureBuiltins(root, names); err != nil {
 		return nil, err
 	}
 	return m, nil
@@ -43,6 +59,36 @@ func (l *Live) AddPath(path string) error {
 
 func (l *Live) RemovePath(path string) error {
 	return l.mutate(func() error { return l.Map.RemovePath(path) })
+}
+
+// AddSource installs a git source. Nothing is enabled by it, so nothing
+// restarts.
+func (l *Live) AddSource(ctx context.Context, spec string) (Source, error) {
+	if l == nil || l.Map == nil {
+		return Source{}, fmt.Errorf("skills map is not configured")
+	}
+	return l.Map.AddSource(ctx, spec)
+}
+
+// UpdateSources fetches every source again. The text of an enabled
+// skill may have changed, so what the machines hold is repacked and the
+// AI tools restart, whether or not the enabled set moved.
+func (l *Live) UpdateSources(ctx context.Context) ([]Source, error) {
+	if l == nil || l.Map == nil {
+		return nil, fmt.Errorf("skills map is not configured")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	out, err := l.Map.UpdateSources(ctx)
+	if err != nil {
+		return out, err
+	}
+	return out, l.applyLocked()
+}
+
+// RemoveSource forgets a source; skills enabled from it go with it.
+func (l *Live) RemoveSource(slug string) error {
+	return l.mutate(func() error { return l.Map.RemoveSource(slug) })
 }
 
 func (l *Live) Apply() error {

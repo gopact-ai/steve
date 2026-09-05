@@ -31,7 +31,7 @@ func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 	taskPath := filepath.Join(stateDir, "tasks.json")
 	configs := map[string]harness.Config{"codex": {Command: bin, Permission: "auto"}}
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
-		"codex": {Harness: "codex", Workspace: t.TempDir(), Default: true},
+		"codex": {Harness: "codex", Default: true},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +41,9 @@ func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Each boot is a gateway process; the ledger and its projects persist
+	// across them like the state and task files do.
+	var previous *Coordinator
 	boot := func() (*Coordinator, *harness.Manager, *task.Store) {
 		manager, err := harness.NewManager(configs)
 		if err != nil {
@@ -50,7 +53,13 @@ func TestTaskSurvivesAGatewayRestartE2E(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		coordinator := New(catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
+		var coordinator *Coordinator
+		if previous == nil {
+			coordinator = newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
+		} else {
+			coordinator = restartCoordinator(t, previous, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
+		}
+		previous = coordinator
 		coordinator.SetTasks(tasks, "e2e-node")
 		return coordinator, manager, tasks
 	}

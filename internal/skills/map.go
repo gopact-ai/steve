@@ -16,6 +16,13 @@ import (
 type fileData struct {
 	SearchPaths []string `json:"search_paths"`
 	Enabled     []string `json:"enabled"`
+	// BuiltinRoot is the directory the shipped skills are written to;
+	// Builtins are the shipped skills that have been turned on once —
+	// a user who turns one off is not overruled at the next boot.
+	BuiltinRoot string   `json:"builtin_root,omitempty"`
+	Builtins    []string `json:"builtins,omitempty"`
+	// Sources are the git repositories skills were installed from.
+	Sources []Source `json:"sources,omitempty"`
 }
 
 type Ref struct {
@@ -31,6 +38,10 @@ type Map struct {
 func DefaultPath(stateDir string) string {
 	return filepath.Join(stateDir, "skills.json")
 }
+
+// UserDir is the owner's own skills directory beside the map: where a
+// skill loaded from a machine lands.
+func (m *Map) UserDir() string { return DefaultSearchPath(filepath.Dir(m.path)) }
 
 func DefaultSearchPath(stateDir string) string {
 	return filepath.Join(stateDir, "skills")
@@ -59,6 +70,74 @@ func (m *Map) Ensure(defaultSearch string) error {
 		}
 	}
 	return m.writeLocked(data)
+}
+
+// EnsureBuiltins lists the shipped skills' directory last among the
+// search paths and turns on every shipped skill seen for the first time.
+func (m *Map) EnsureBuiltins(root string, names []string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, err := m.readLocked()
+	if err != nil {
+		return err
+	}
+	if data.BuiltinRoot != "" && data.BuiltinRoot != root {
+		next := data.SearchPaths[:0]
+		for _, item := range data.SearchPaths {
+			if item != data.BuiltinRoot {
+				next = append(next, item)
+			}
+		}
+		data.SearchPaths = next
+	}
+	data.BuiltinRoot = root
+	if !contains(data.SearchPaths, root) {
+		data.SearchPaths = append(data.SearchPaths, root)
+	}
+	// A shipped skill that no longer ships, and that nothing else
+	// provides, leaves the enabled set on its own: a hub must not refuse
+	// to start over a skill its last version had.
+	kept := data.Builtins[:0]
+	for _, name := range data.Builtins {
+		if contains(names, name) {
+			kept = append(kept, name)
+			continue
+		}
+		if _, err := m.resolveLocked(data, name); err != nil {
+			enabled := data.Enabled[:0]
+			for _, e := range data.Enabled {
+				if e != name {
+					enabled = append(enabled, e)
+				}
+			}
+			data.Enabled = enabled
+			continue
+		}
+		kept = append(kept, name)
+	}
+	data.Builtins = kept
+	for _, name := range names {
+		if contains(data.Builtins, name) {
+			continue
+		}
+		data.Builtins = append(data.Builtins, name)
+		if !contains(data.Enabled, name) {
+			data.Enabled = append(data.Enabled, name)
+		}
+	}
+	return m.writeLocked(data)
+}
+
+// BuiltinRootPath is the shipped skills' directory, or "" before any
+// shipped.
+func (m *Map) BuiltinRootPath() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	data, err := m.readLocked()
+	if err != nil {
+		return ""
+	}
+	return data.BuiltinRoot
 }
 
 func (m *Map) Enable(name string) error {
@@ -145,6 +224,9 @@ func (m *Map) RemovePath(path string) error {
 	if err != nil {
 		return err
 	}
+	if data.BuiltinRoot != "" && (path == data.BuiltinRoot || resolved == data.BuiltinRoot) {
+		return fmt.Errorf("%s holds the skills that ship with steve; turn them off one by one instead", path)
+	}
 	next := make([]string, 0, len(data.SearchPaths))
 	for _, item := range data.SearchPaths {
 		if item != path && item != resolved {
@@ -209,6 +291,15 @@ func (m *Map) Available() ([]Ref, error) {
 				continue
 			}
 			seen[entry.Name()] = struct{}{}
+			// A link (an installed source lists its skills through
+			// links) resolves to the directory itself, so a bundle walks
+			// the files and a harness sees a real directory. A plain
+			// directory keeps its path as listed, links above it and all.
+			if entry.Type()&os.ModeSymlink != 0 {
+				if real, err := filepath.EvalSymlinks(path); err == nil {
+					path = real
+				}
+			}
 			out = append(out, Ref{Name: entry.Name(), Path: path})
 		}
 	}

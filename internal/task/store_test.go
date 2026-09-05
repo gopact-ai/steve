@@ -262,7 +262,8 @@ func TestActivePrefersNewest(t *testing.T) {
 }
 
 func TestInterruptedListsOpenAttemptsAndAnchors(t *testing.T) {
-	store, err := Open(filepath.Join(t.TempDir(), "tasks.json"))
+	path := filepath.Join(t.TempDir(), "tasks.json")
+	store, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,7 +291,7 @@ func TestInterruptedListsOpenAttemptsAndAnchors(t *testing.T) {
 		t.Fatalf("closed attempt still interrupted: %+v", got)
 	}
 	// The record survives a reopen — that is the whole point.
-	reopened, err := Open(store.path)
+	reopened, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -425,5 +426,37 @@ func TestListingOrdersIdsNumerically(t *testing.T) {
 	want := []string{"12", "11", "10", "9", "8", "7", "6", "5", "4", "3", "2", "1"}
 	if !slices.Equal(listed, want) {
 		t.Fatalf("List order = %v; want %v", listed, want)
+	}
+}
+
+// A chat task nobody has spoken to for a day is closed; one with a live
+// attempt, one spoken to recently, and one a schedule or delegation
+// opened are left alone.
+func TestCloseIdleEndsQuietChatTasks(t *testing.T) {
+	s, clock := newStore(t)
+	now := *clock
+	*clock = now.Add(-30 * time.Hour)
+	old, _ := s.Create(Task{Goal: "old chat", Channel: "c1", Member: "codex"})
+	busy, _ := s.Create(Task{Goal: "busy chat", Channel: "c2", Member: "codex"})
+	sched, _ := s.Create(Task{Goal: "cron", Channel: "c3", Member: "codex", Origin: "schedule"})
+	for _, id := range []string{old.ID, busy.ID, sched.ID} {
+		if _, err := s.Begin(id, "codex", "", ""); err != nil {
+			t.Fatal(err)
+		}
+	}
+	*clock = now.Add(-time.Hour)
+	fresh, _ := s.Create(Task{Goal: "fresh chat", Channel: "c4", Member: "codex"})
+	if _, err := s.Begin(fresh.ID, "codex", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	*clock = now
+	closed := s.CloseIdle(24*time.Hour, func(id string) bool { return id == busy.ID })
+	if len(closed) != 1 || closed[0].ID != old.ID {
+		t.Fatalf("closed = %+v", closed)
+	}
+	for _, id := range []string{busy.ID, sched.ID, fresh.ID} {
+		if got, _ := s.Get(id); got.State != StateRunning {
+			t.Fatalf("task %s = %s, want running", id, got.State)
+		}
 	}
 }

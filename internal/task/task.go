@@ -88,9 +88,12 @@ func (t Tokens) Add(other Tokens) Tokens {
 	}
 }
 
+// A budget is a guard rail someone chose, not a default: a goal may
+// honestly run for weeks. Zero means no limit; task_max_turns and
+// task_max_elapsed in the configuration set one.
 const (
-	DefaultMaxTurns   = 24
-	DefaultMaxElapsed = 45 * time.Minute
+	DefaultMaxTurns   = 0
+	DefaultMaxElapsed = 0
 )
 
 // Budget counts what Steve observes itself. Turns and elapsed time are the
@@ -127,6 +130,16 @@ type Attempt struct {
 	EndedAt   time.Time `json:"ended_at,omitzero"`
 	Outcome   Outcome   `json:"outcome,omitempty"`
 	Tokens    Tokens    `json:"tokens,omitzero"`
+	// Model is what the attempt ran on, as the harness reported it, so
+	// usage can be read per model.
+	Model string `json:"model,omitempty"`
+}
+
+// FromUsage converts a turn's reported usage into the store's shape.
+func FromUsage(input, output, cachedRead, cachedWrite uint64) Tokens {
+	t := Tokens{Input: int64(input), Output: int64(output), CachedRead: int64(cachedRead), CachedWrite: int64(cachedWrite)}
+	t.Total = t.Input + t.Output
+	return t
 }
 
 func (a Attempt) Open() bool { return a.EndedAt.IsZero() }
@@ -141,7 +154,11 @@ type Task struct {
 	// Origin records what opened the task when it was not a person typing:
 	// a schedule's id, say. It is how unattended work can be recognised and
 	// rotated without touching a task the user has since taken over.
-	Origin    string `json:"origin,omitempty"`
+	Origin string `json:"origin,omitempty"`
+	// ProjectID is fixed when the task is created and never changes: a
+	// task belongs to one project even if the conversation moves on.
+	ProjectID string `json:"project_id,omitempty"`
+	// Workspace is the directory the task's attempts were given.
 	Workspace string `json:"workspace,omitempty"`
 	// Where the task's turns anchor in the chat: enough to reply into the
 	// right conversation (and topic) after a gateway restart.

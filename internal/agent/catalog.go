@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"unicode"
 	"unicode/utf8"
 
@@ -11,9 +13,25 @@ import (
 )
 
 type Config struct {
-	Harness      string
+	Harness string
+	// Node is the machine this agent runs on; empty is the hub itself.
+	// An agent is (node, harness, model): the harness binary and the model
+	// endpoints it can reach are properties of a machine, so the same
+	// harness id on two hosts is two different agents.
+	Node string
+	// Model pins which model the agent starts on. The node's advert is the
+	// authority on what is actually offered there; this is the preference.
+	Model string
+	// Options pins other selectors the harness exposes, by option id:
+	// reasoning effort, thinking, mode. Applied at session open like Model.
+	Options map[string]string
+	// About says what this agent is for, in the operator's words; the
+	// planner and other agents read it when choosing who does what.
+	About string
+	// Requires are the capabilities a node must advertise to run this
+	// agent — "gpu", "prod-cred", "internal-net".
+	Requires     []string
 	Aliases      []string
-	Workspace    string
 	SystemPrompt string
 	Skills       []string
 	MCPServers   []string
@@ -25,71 +43,156 @@ type Agent struct {
 	Config
 }
 
+// Catalog is the agents by id and alias. Its contents are built once and
+// replaced whole: readers take the current set without locking, and an
+// Add builds a new set from every config so the same rules apply to an
+// agent added from the page as to one from the file.
 type Catalog struct {
+	d       atomic.Pointer[catalogData]
+	mu      sync.Mutex
+	configs map[string]Config
+}
+
+type catalogData struct {
 	agents         map[string]Agent
 	aliases        map[string]string
 	longestAliases []string
 	defaultAgent   Agent
 }
 
+func (c *Catalog) snap() *catalogData { return c.d.Load() }
+
+// Set replaces one agent's configuration, or adds it. What is not in cfg
+// is gone: the caller passes the whole thing.
+func (c *Catalog) Set(id string, cfg Config) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	all := make(map[string]Config, len(c.configs)+1)
+	for k, v := range c.configs {
+		all[k] = v
+	}
+	all[id] = cfg
+	fresh, err := NewCatalog(all)
+	if err != nil {
+		return err
+	}
+	c.configs = all
+	c.d.Store(fresh.snap())
+	return nil
+}
+
+// Remove forgets an agent. The default agent stays: a catalog needs one.
+func (c *Catalog) Remove(id string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	cfg, ok := c.configs[id]
+	if !ok {
+		return fmt.Errorf("no agent %q", id)
+	}
+	if cfg.Default {
+		return fmt.Errorf("%s is the default agent; make another the default first", id)
+	}
+	all := make(map[string]Config, len(c.configs))
+	for k, v := range c.configs {
+		if k != id {
+			all[k] = v
+		}
+	}
+	fresh, err := NewCatalog(all)
+	if err != nil {
+		return err
+	}
+	c.configs = all
+	c.d.Store(fresh.snap())
+	return nil
+}
+
+// Add puts one more agent in the catalog, or fails with why it cannot:
+// a duplicate id or alias, a missing harness. The file the hub was loaded
+// from is the caller's to update.
+func (c *Catalog) Add(id string, cfg Config) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	all := make(map[string]Config, len(c.configs)+1)
+	for k, v := range c.configs {
+		all[k] = v
+	}
+	if _, exists := all[id]; exists {
+		return fmt.Errorf("agent %q already exists", id)
+	}
+	all[id] = cfg
+	fresh, err := NewCatalog(all)
+	if err != nil {
+		return err
+	}
+	c.configs = all
+	c.d.Store(fresh.snap())
+	return nil
+}
+
 func NewCatalog(configs map[string]Config) (*Catalog, error) {
 	if len(configs) == 0 {
 		return nil, fmt.Errorf("at least one agent is required")
 	}
-	c := &Catalog{agents: make(map[string]Agent, len(configs)), aliases: map[string]string{}}
+	d := &catalogData{agents: make(map[string]Agent, len(configs)), aliases: map[string]string{}}
 	for configuredID, cfg := range configs {
 		id := normalize(configuredID)
 		if id == "" || cfg.Harness == "" {
 			return nil, fmt.Errorf("agent id and harness are required")
 		}
-		if _, exists := c.agents[id]; exists {
+		if _, exists := d.agents[id]; exists {
 			return nil, fmt.Errorf("duplicate agent id %q", id)
 		}
 		agent := Agent{ID: id, Config: cfg}
-		c.agents[id] = agent
+		d.agents[id] = agent
 		for _, alias := range append([]string{id}, cfg.Aliases...) {
 			alias = normalize(alias)
 			if alias == "" {
 				return nil, fmt.Errorf("agent %q has an empty alias", id)
 			}
-			if owner, exists := c.aliases[alias]; exists && owner != id {
+			if owner, exists := d.aliases[alias]; exists && owner != id {
 				return nil, fmt.Errorf("agent alias %q is used by %q and %q", alias, owner, id)
 			}
-			c.aliases[alias] = id
+			d.aliases[alias] = id
 		}
 		if cfg.Default {
-			if c.defaultAgent.ID != "" {
+			if d.defaultAgent.ID != "" {
 				return nil, fmt.Errorf("multiple default agents")
 			}
-			c.defaultAgent = agent
+			d.defaultAgent = agent
 		}
 	}
-	if c.defaultAgent.ID == "" {
+	if d.defaultAgent.ID == "" {
 		return nil, fmt.Errorf("one default agent is required")
 	}
-	c.longestAliases = make([]string, 0, len(c.aliases))
-	for alias := range c.aliases {
-		c.longestAliases = append(c.longestAliases, alias)
+	d.longestAliases = make([]string, 0, len(d.aliases))
+	for alias := range d.aliases {
+		d.longestAliases = append(d.longestAliases, alias)
 	}
-	sort.Slice(c.longestAliases, func(i, j int) bool {
-		return len(c.longestAliases[i]) > len(c.longestAliases[j])
+	sort.Slice(d.longestAliases, func(i, j int) bool {
+		return len(d.longestAliases[i]) > len(d.longestAliases[j])
 	})
+	c := &Catalog{configs: make(map[string]Config, len(configs))}
+	for k, v := range configs {
+		c.configs[k] = v
+	}
+	c.d.Store(d)
 	return c, nil
 }
 
 func (c *Catalog) Resolve(name string) (Agent, bool) {
-	id, ok := c.aliases[normalize(name)]
+	id, ok := c.snap().aliases[normalize(name)]
 	if !ok {
 		return Agent{}, false
 	}
-	return c.agents[id], true
+	return c.snap().agents[id], true
 }
 
-func (c *Catalog) Default() Agent { return c.defaultAgent }
+func (c *Catalog) Default() Agent { return c.snap().defaultAgent }
 
 func (c *Catalog) List() []Agent {
-	agents := make([]Agent, 0, len(c.agents))
-	for _, item := range c.agents {
+	agents := make([]Agent, 0, len(c.snap().agents))
+	for _, item := range c.snap().agents {
 		agents = append(agents, item)
 	}
 	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
@@ -135,9 +238,9 @@ func (c *Catalog) Select(input string) (Selection, bool) {
 func (c *Catalog) resolvePrefix(rest string) (Agent, string, bool) {
 	rest = strings.TrimSpace(rest)
 	normalized := normalize(rest)
-	for _, alias := range c.longestAliases {
+	for _, alias := range c.snap().longestAliases {
 		if strings.HasPrefix(normalized, alias) {
-			agent := c.agents[c.aliases[alias]]
+			agent := c.snap().agents[c.snap().aliases[alias]]
 			return agent, strings.TrimSpace(rest[len(alias):]), true
 		}
 	}

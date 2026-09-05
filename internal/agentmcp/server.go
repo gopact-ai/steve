@@ -26,7 +26,7 @@ import (
 
 // ServerName is the MCP server name agents see; tool calls arrive as
 // feishu_send / feishu_recall under it.
-const ServerName = "feishu"
+const ServerName = "steve"
 
 const (
 	maxSendsPerTurn = 8
@@ -41,14 +41,23 @@ const (
 // Instructions teaches the agent when to reach for the tools. It is injected
 // once per session alongside the rest of the capability instructions, and it
 // is part of the capability fingerprint, so keep it stable.
-const Instructions = `## Feishu messaging (feishu_send / feishu_update / feishu_recall)
+const Instructions = `## Steve (steve_context / steve_projects / steve_help)
+- Call steve_context first: it says who you are, where you are working, your budget, and what you have. steve_help(topic) has the way things are done here; steve_projects says where every project is.
+
+## Feishu messaging (feishu_send / feishu_update / feishu_recall)
 The "feishu" MCP server posts and maintains interim messages in the current Feishu conversation while you work.
 - feishu_send posts a milestone: a phase conclusion, a produced artifact, a decision worth surfacing early. Most turns need zero interim messages; never narrate step by step.
 - Prefer ONE evolving progress card per task: feishu_update(message_id, content) rewrites a markdown card you sent earlier this turn. Update it as phases complete instead of sending a new card each time.
 - On multi-stage work pass progress like "2/3" (stage/total) to feishu_send and feishu_update so the card badge shows which stage of how many.
 - Your final answer is delivered automatically by the platform when the turn ends. Do NOT send it with these tools, and do not duplicate it there.
 - Do not @-mention anyone. Mentions are reserved for the platform's own final answer card.
-- feishu_recall deletes a message you sent earlier in this same turn (pass its message_id) if it turned out wrong or obsolete.`
+- feishu_recall deletes a message you sent earlier in this same turn (pass its message_id) if it turned out wrong or obsolete.
+
+## Delegation (steve_delegate / steve_await, when offered)
+- steve_delegate hands ONE bounded goal to another agent — possibly on another machine. Use it when the work needs a machine, credential or environment you do not have.
+- It returns quickly with a task_id and a state. While state is running, call steve_await(task_id) — it waits up to 50 seconds per call — until state is done or failed. Then report the task_id, agent, node and outcome it gives you; do not invent them.
+- Pass refs (a commit, a branch, a blob digest), never pasted content. The child starts a fresh session with only what you give it.
+- The child spends your task's budget. Delegate what you cannot do yourself, not what you would rather not.`
 
 // Sender is the slice of the Feishu channel the tools need. Replies attach
 // to the turn's inbound message, which is what keeps a milestone inside the
@@ -61,10 +70,59 @@ type Sender interface {
 }
 
 // binding is what a bearer token means: this agent, in this conversation,
-// and nowhere else.
+// and nowhere else. A delegated child carries its task and who delegated it,
+// so its token is its own — it cannot pose as the parent — and its cards say
+// on whose behalf they were sent.
 type binding struct {
 	conversationID string
 	agentID        string
+	taskID         string
+	delegatedBy    string
+}
+
+// DelegateRequest is what an agent asks for with steve_delegate.
+type DelegateRequest struct {
+	Agent    string   `json:"agent,omitempty"`
+	Requires []string `json:"requires,omitempty"`
+	Goal     string   `json:"goal"`
+	Refs     []string `json:"refs,omitempty"`
+	Expect   string   `json:"expect,omitempty"`
+}
+
+// DelegateResult is what comes back: where the work went, whether it is
+// still running, and when it is done the answer, the refs it produced, and
+// how it ended. Never the child's transcript — that stays with the child.
+type DelegateResult struct {
+	TaskID string `json:"task_id"`
+	Agent  string `json:"agent"`
+	Node   string `json:"node,omitempty"`
+	// State is running, done or failed. A delegation can outlive any one
+	// tool call, so the caller reads State and awaits when it is running.
+	State   string   `json:"state"`
+	Elapsed string   `json:"elapsed,omitempty"`
+	Outcome string   `json:"outcome,omitempty"`
+	Answer  string   `json:"answer,omitempty"`
+	Refs    []string `json:"refs,omitempty"`
+}
+
+// AwaitRequest asks for a child's result, waiting up to WaitSeconds.
+type AwaitRequest struct {
+	TaskID      string `json:"task_id"`
+	WaitSeconds int    `json:"wait_seconds,omitempty"`
+}
+
+// Delegator opens a child task for the calling agent's running task and
+// drives it. Start returns as soon as the child is placed and running (or
+// sooner done); Await waits for it. The split exists because a child can
+// take minutes and a tool call cannot: a client that times out a request
+// must not take the child down with it. The gateway wires one; without it
+// the tools are not offered at all rather than offered and refused.
+type Delegator interface {
+	Start(ctx context.Context, conversationID, agentID string, req DelegateRequest) (DelegateResult, error)
+	Await(ctx context.Context, conversationID, agentID string, req AwaitRequest) (DelegateResult, error)
+	// Fleet says who else there is and what each can do, so an agent
+	// deciding to delegate can name a requirement that exists.
+	Fleet(ctx context.Context, conversationID, agentID string, requires []string) (string, error)
 }
 
 // anchor is where a conversation's sends currently land. The epoch advances
@@ -96,17 +154,22 @@ type sentState struct {
 }
 
 type Server struct {
+	intents  Intents
 	listener net.Listener
 	srv      *http.Server
 
-	mu      sync.Mutex
-	sender  Sender
-	journal func(conversationID, agentID, messageID string)
-	tokens  map[string]binding
-	byBind  map[binding]string
-	anchors map[string]*anchor
-	sent    map[binding]*sentState
-	styles  map[string]string
+	mu        sync.Mutex
+	sender    Sender
+	delegator Delegator
+	informer  Informer
+	fleeter   Fleeter
+	memorizer Memorizer
+	journal   func(conversationID, agentID, messageID string)
+	tokens    map[string]binding
+	byBind    map[binding]string
+	anchors   map[string]*anchor
+	sent      map[binding]*sentState
+	styles    map[string]string
 }
 
 // New binds the loopback listener immediately so the URL is known before any
@@ -165,6 +228,10 @@ func (s *Server) URL() string {
 
 // Port reports the bound port, for the caller to persist and hand back to
 // New on the next start.
+// Addr is the loopback listener itself, for a forwarder that has to reach
+// this server without going through a URL.
+func (s *Server) Addr() string { return s.listener.Addr().String() }
+
 func (s *Server) Port() int {
 	addr, ok := s.listener.Addr().(*net.TCPAddr)
 	if !ok {
@@ -201,6 +268,50 @@ func (s *Server) Anchor(conversationID, chatID, messageID string) {
 // SetJournal registers a callback for every message an agent sends, so the
 // platform can persist what would otherwise be in-memory only — and clean
 // it up if the turn dies with the process.
+// SetDelegator enables steve_delegate.
+func (s *Server) SetDelegator(d Delegator) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.delegator = d
+}
+
+// Delegated mints the capability for a child task: its own token, bound to
+// the child, so nothing it sends can be mistaken for the parent's, and its
+// milestone cards carry the attribution.
+func (s *Server) Delegated(conversationID, agentID, taskID, delegatedBy, token, endpoint string) []capability.Extra {
+	if s == nil || token == "" || conversationID == "" {
+		return nil
+	}
+	if endpoint == "" {
+		endpoint = s.URL()
+	}
+	b := binding{conversationID: conversationID, agentID: agentID, taskID: taskID, delegatedBy: delegatedBy}
+	s.mu.Lock()
+	s.tokens[token] = b
+	s.byBind[b] = token
+	s.mu.Unlock()
+	return []capability.Extra{{
+		Name: ServerName,
+		Server: capability.MCPServer{
+			Type:    "http",
+			URL:     endpoint,
+			Headers: map[string]string{"Authorization": "Bearer " + token},
+		},
+		Instructions: Instructions,
+	}}
+}
+
+// Revoke forgets a token once the work it authorised is over. A child task
+// ends; its token must not outlive it.
+func (s *Server) Revoke(token string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if b, ok := s.tokens[token]; ok {
+		delete(s.byBind, b)
+		delete(s.tokens, token)
+	}
+}
+
 func (s *Server) SetJournal(journal func(conversationID, agentID, messageID string)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -248,9 +359,18 @@ func (s *Server) Interim(conversationID string) bool {
 // capability to inject into that session's MCP config. A rebind with a new
 // token revokes the old one, so a cleared session's credentials do not
 // linger.
-func (s *Server) Extras(conversationID, agentID, token string) []capability.Extra {
+// Extras injects the messaging capability for one session. endpoint is the
+// URL *the agent* should call: empty for an agent on the hub, and the node's
+// own loopback port for a remote one, which the node forwards back here over
+// the connection it already has. Either way the agent only ever talks to
+// 127.0.0.1 on its own machine, so "loopback only, one bearer token per
+// session" survives the move to another host.
+func (s *Server) Extras(conversationID, agentID, token, endpoint string) []capability.Extra {
 	if s == nil || token == "" || conversationID == "" {
 		return nil
+	}
+	if endpoint == "" {
+		endpoint = s.URL()
 	}
 	b := binding{conversationID: conversationID, agentID: agentID}
 	s.mu.Lock()
@@ -264,7 +384,7 @@ func (s *Server) Extras(conversationID, agentID, token string) []capability.Extr
 		Name: ServerName,
 		Server: capability.MCPServer{
 			Type:    "http",
-			URL:     s.URL(),
+			URL:     endpoint,
 			Headers: map[string]string{"Authorization": "Bearer " + token},
 		},
 		Instructions: Instructions,
@@ -317,7 +437,7 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	case "ping":
 		writeRPCResult(w, req.ID, struct{}{})
 	case "tools/list":
-		writeRPCResult(w, req.ID, map[string]any{"tools": toolList()})
+		writeRPCResult(w, req.ID, map[string]any{"tools": s.toolList()})
 	case "tools/call":
 		writeRPCResult(w, req.ID, s.callTool(r.Context(), bind, req.Params))
 	default:
@@ -342,8 +462,33 @@ func initializeResult(params json.RawMessage) map[string]any {
 	}
 }
 
-func toolList() []map[string]any {
-	return []map[string]any{
+// PlatformTool is one of the platform's own tools, for a page.
+type PlatformTool struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// PlatformTools lists the tools the platform's session server offers:
+// the Feishu set always, delegation when a delegator is wired.
+func PlatformTools(delegating bool) []PlatformTool {
+	var out []PlatformTool
+	for _, t := range toolList(delegating, true, true, true) {
+		name, _ := t["name"].(string)
+		desc, _ := t["description"].(string)
+		out = append(out, PlatformTool{Name: name, Description: desc})
+	}
+	return out
+}
+
+func (s *Server) toolList() []map[string]any {
+	s.mu.Lock()
+	informing, fleeting, remembering := s.informer != nil, s.fleeter != nil, s.memorizer != nil
+	s.mu.Unlock()
+	return toolList(s.delegator != nil, informing, fleeting, remembering)
+}
+
+func toolList(delegating, informing, fleeting, remembering bool) []map[string]any {
+	tools := []map[string]any{
 		{
 			"name": "feishu_send",
 			"description": "Post an interim milestone message into the current Feishu conversation. " +
@@ -397,6 +542,21 @@ func toolList() []map[string]any {
 			},
 		},
 		{
+			"name": "steve_fleet",
+			"description": "List the other agents in the fleet with the machine each runs on and what that machine can do " +
+				"(harnesses, models, MCP servers, tools, hardware, networks, credentials), in the selector form " +
+				"steve_delegate's requires accepts (tool:docker, mcp:github, hardware:gpu, model:claude*, network:internal). " +
+				"Call this before delegating by capability, so the requirement names something that exists. " +
+				"Pass requires to see who meets a requirement and what the others lack.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+				"requires": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Optional selectors, same form as steve_delegate's requires; every agent is judged against them.",
+				},
+			}},
+		},
+		{
 			"name":        "feishu_recall",
 			"description": "Recall (delete) a message this agent sent earlier in the current turn via feishu_send.",
 			"inputSchema": map[string]any{
@@ -411,6 +571,66 @@ func toolList() []map[string]any {
 			},
 		},
 	}
+	if delegating {
+		tools = append(tools, map[string]any{
+			"name": "steve_delegate",
+			"description": "Hand one bounded piece of work to another agent, possibly on another machine. " +
+				"Name the agent, or say what capability the work needs (gpu, internal-net, prod-cred) and Steve picks who can. " +
+				"Returns as soon as the child is placed: read `state`. If it is `running`, call steve_await with the task_id until it is `done` or `failed`. " +
+				"The child gets its own budget carved from yours, its own session, and only what you pass here — never your transcript. " +
+				"Use for work that needs a machine or credential you do not have; not for splitting work you could do yourself.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"goal": map[string]any{
+						"type":        "string",
+						"description": "One bounded goal, stated so someone with none of your context could act on it.",
+					},
+					"agent": map[string]any{
+						"type":        "string",
+						"description": "A specific agent id. Leave empty to place by capability.",
+					},
+					"requires": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "Capabilities the machine must have, e.g. [\"gpu\"]. Used when agent is empty.",
+					},
+					"refs": map[string]any{
+						"type":        "array",
+						"items":       map[string]any{"type": "string"},
+						"description": "Pointers the child needs: \"git <commit-or-branch>\", \"blob <digest>\". Pass refs, not content.",
+					},
+					"expect": map[string]any{
+						"type":        "string",
+						"description": "What a good result looks like, in one line. Becomes the child's acceptance line.",
+					},
+				},
+				"required": []string{"goal"},
+			},
+		}, map[string]any{
+			"name": "steve_await",
+			"description": "Wait for a delegated child task and return its result. Waits up to wait_seconds (max 50) and returns " +
+				"`state: running` if it is not finished yet — call again. Only the caller's own children can be awaited.",
+			"inputSchema": map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"task_id":      map[string]any{"type": "string", "description": "The task_id steve_delegate returned."},
+					"wait_seconds": map[string]any{"type": "integer", "description": "How long to wait this call, 1–50. Default 30."},
+				},
+				"required": []string{"task_id"},
+			},
+		})
+	}
+	if informing {
+		tools = append(tools, informTools()...)
+	}
+	if fleeting {
+		tools = append(tools, fleetTools()...)
+	}
+	if remembering {
+		tools = append(tools, memoryTools()...)
+	}
+	return tools
 }
 
 func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMessage) map[string]any {
@@ -425,11 +645,37 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 	var err error
 	switch call.Name {
 	case "feishu_send":
-		out, err = s.send(ctx, bind, call.Arguments)
+		out, err = s.effect(ctx, bind, call.Name, call.Arguments, func() (string, error) { return s.send(ctx, bind, call.Arguments) })
 	case "feishu_update":
-		out, err = s.update(ctx, bind, call.Arguments)
+		out, err = s.effect(ctx, bind, call.Name, call.Arguments, func() (string, error) { return s.update(ctx, bind, call.Arguments) })
 	case "feishu_recall":
-		out, err = s.recall(ctx, bind, call.Arguments)
+		out, err = s.effect(ctx, bind, call.Name, call.Arguments, func() (string, error) { return s.recall(ctx, bind, call.Arguments) })
+	case "steve_fleet":
+		out, err = s.fleet(ctx, bind, call.Arguments)
+	case "steve_delegate":
+		out, err = s.delegate(ctx, bind, call.Arguments)
+	case "steve_await":
+		out, err = s.await(ctx, bind, call.Arguments)
+	case "steve_context":
+		out, err = s.steveContext(ctx, bind)
+	case "steve_projects":
+		out, err = s.steveProjects(ctx, bind)
+	case "steve_help":
+		out, err = s.steveHelp(call.Arguments)
+	case "steve_nodes":
+		out, err = s.steveNodes(ctx, bind)
+	case "steve_node_add":
+		out, err = s.steveNodeAdd(ctx, bind, call.Arguments)
+	case "steve_node_remove":
+		out, err = s.steveNodeRemove(ctx, bind, call.Arguments)
+	case "steve_node_refresh":
+		out, err = s.steveNodeRefresh(ctx, bind, call.Arguments)
+	case "steve_remember":
+		out, err = s.steveRemember(ctx, bind, call.Arguments)
+	case "steve_recall":
+		out, err = s.steveRecall(ctx, bind, call.Arguments)
+	case "steve_forget":
+		out, err = s.steveForget(ctx, bind, call.Arguments)
 	default:
 		err = fmt.Errorf("unknown tool %q", call.Name)
 	}
@@ -446,6 +692,26 @@ func toolError(text string) map[string]any {
 		"content": []map[string]any{{"type": "text", "text": text}},
 		"isError": true,
 	}
+}
+
+// fleet answers "who is there and what can they do" from the roster, in
+// the same selector vocabulary steve_delegate's requires uses.
+func (s *Server) fleet(ctx context.Context, bind binding, rawArgs json.RawMessage) (string, error) {
+	s.mu.Lock()
+	delegator := s.delegator
+	s.mu.Unlock()
+	if delegator == nil {
+		return "", errors.New("delegation is not enabled on this gateway")
+	}
+	var args struct {
+		Requires []string `json:"requires"`
+	}
+	if len(rawArgs) > 0 {
+		if err := json.Unmarshal(rawArgs, &args); err != nil {
+			return "", fmt.Errorf("steve_fleet: %w", err)
+		}
+	}
+	return delegator.Fleet(ctx, bind.conversationID, bind.agentID, args.Requires)
 }
 
 func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage) (string, error) {
@@ -502,6 +768,9 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 	seq := st.count
 	progress := sanitizeProgress(args.Progress)
 	tail := milestoneTail(s.styles[bind.conversationID], bind.agentID, seq, progress)
+	if bind.delegatedBy != "" {
+		tail = bind.agentID + " · 受 " + bind.delegatedBy + " 委派 · " + strings.TrimPrefix(tail, s.styles[bind.conversationID]+" · ")
+	}
 	anchorID := a.messageID
 	epoch := a.epoch
 	s.mu.Unlock()
@@ -521,7 +790,7 @@ func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage
 			st.count--
 		}
 		s.mu.Unlock()
-		return "", fmt.Errorf("send failed: %v", err)
+		return "", fmt.Errorf("send failed: %w", err)
 	}
 	if st.epoch == epoch && id != "" {
 		st.ids[id] = sentMsg{format: format, seq: seq, progress: progress}
@@ -541,8 +810,67 @@ func sanitizeProgress(raw string) string {
 	return truncateRunes(compact, 16)
 }
 
+// delegate hands work to another agent and blocks until it is done. The
+// result is a typed summary — answer, refs, outcome — not the child's
+// transcript: what the child saw stays inspectable on the child's task, and
+// what comes back is bounded.
+func (s *Server) delegate(ctx context.Context, bind binding, raw json.RawMessage) (string, error) {
+	s.mu.Lock()
+	d := s.delegator
+	s.mu.Unlock()
+	if d == nil {
+		return "", fmt.Errorf("delegation is not enabled on this gateway")
+	}
+	var req DelegateRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return "", fmt.Errorf("bad steve_delegate arguments: %w", err)
+	}
+	if strings.TrimSpace(req.Goal) == "" {
+		return "", fmt.Errorf("steve_delegate needs a goal")
+	}
+	result, err := d.Start(ctx, bind.conversationID, bind.agentID, req)
+	if err != nil {
+		return "", err
+	}
+	out, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
+// await returns a child's result, waiting a bounded time for it. Bounded so
+// the tool call returns before any client's timeout; the caller calls again
+// while State is still running.
+func (s *Server) await(ctx context.Context, bind binding, raw json.RawMessage) (string, error) {
+	s.mu.Lock()
+	d := s.delegator
+	s.mu.Unlock()
+	if d == nil {
+		return "", fmt.Errorf("delegation is not enabled on this gateway")
+	}
+	var req AwaitRequest
+	if err := json.Unmarshal(raw, &req); err != nil {
+		return "", fmt.Errorf("bad steve_await arguments: %w", err)
+	}
+	if strings.TrimSpace(req.TaskID) == "" {
+		return "", fmt.Errorf("steve_await needs the task_id steve_delegate returned")
+	}
+	result, err := d.Await(ctx, bind.conversationID, bind.agentID, req)
+	if err != nil {
+		return "", err
+	}
+	out, err := json.MarshalIndent(result, "", "  ")
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 // milestoneTail builds the interim card's footer: the same identity line
-// the final card wears, plus which stage this is.
+// the final card wears, plus which stage this is. A delegated child's tail
+// names who delegated it, so a card from another machine is not mistaken
+// for the parent's own progress.
 func milestoneTail(style, agentID string, seq int, progress string) string {
 	base := style
 	if base == "" {
@@ -604,7 +932,7 @@ func (s *Server) update(ctx context.Context, bind binding, rawArgs json.RawMessa
 	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
 	if err := sender.PatchCard(callCtx, args.MessageID, milestoneCard(content, tail)); err != nil {
-		return "", fmt.Errorf("update failed: %v", err)
+		return "", fmt.Errorf("update failed: %w", err)
 	}
 	return "updated " + args.MessageID, nil
 }
@@ -631,7 +959,7 @@ func (s *Server) recall(ctx context.Context, bind binding, rawArgs json.RawMessa
 	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
 	if err := sender.DeleteMessage(callCtx, args.MessageID); err != nil {
-		return "", fmt.Errorf("recall failed: %v", err)
+		return "", fmt.Errorf("recall failed: %w", err)
 	}
 	s.mu.Lock()
 	delete(st.ids, args.MessageID)
@@ -655,4 +983,43 @@ func writeJSON(w http.ResponseWriter, v any) {
 	if err := json.NewEncoder(w).Encode(v); err != nil {
 		log.Printf("agentmcp: write response: %v", err)
 	}
+}
+
+// Intents is the side-effect ledger: every agent-made call is claimed by
+// the attempt, journaled as dispatched before it leaves, and confirmed or
+// marked unknown after. A call an earlier attempt made and never heard
+// back about blocks the same call until a person resolves it.
+type Intents interface {
+	Claim(ctx context.Context, taskID, tool string, args []byte) (string, error)
+	Dispatched(ctx context.Context, id string) error
+	Confirmed(ctx context.Context, id string, receipt any) error
+	Failed(ctx context.Context, id string, cause error) error
+	Lost(ctx context.Context, id string, cause error) error
+}
+
+// SetIntents wires the side-effect ledger.
+func (s *Server) SetIntents(i Intents) { s.intents = i }
+
+// effect runs one side-effecting tool under the intent protocol.
+func (s *Server) effect(ctx context.Context, bind binding, tool string, args json.RawMessage, call func() (string, error)) (string, error) {
+	if s.intents == nil {
+		return call()
+	}
+	id, err := s.intents.Claim(ctx, bind.taskID, tool, args)
+	if err != nil {
+		return "", err
+	}
+	if err := s.intents.Dispatched(ctx, id); err != nil {
+		return "", fmt.Errorf("record intent: %w", err)
+	}
+	out, err := call()
+	switch {
+	case err == nil:
+		_ = s.intents.Confirmed(ctx, id, map[string]string{"message_id": out})
+	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded):
+		_ = s.intents.Lost(ctx, id, err)
+	default:
+		_ = s.intents.Failed(ctx, id, err)
+	}
+	return out, err
 }

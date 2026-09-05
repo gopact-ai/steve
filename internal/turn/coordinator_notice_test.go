@@ -5,8 +5,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"github.com/gopact-ai/steve/internal/task"
 )
 
 func noticeCoordinator(t *testing.T, runner *fakeRunner, after time.Duration) (*Coordinator, chan TaskNotice) {
@@ -96,8 +94,9 @@ func TestOfflineReminderStaysQuietForShortAndFailedTurns(t *testing.T) {
 // user unable to tell a stop from a loss.
 func TestBudgetStopSaysWhereItGotTo(t *testing.T) {
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	tasks.SetBudget(3, time.Hour) // a budget is opt-in now; this test is about the brake
 
-	for i := 0; i <= task.DefaultMaxTurns; i++ {
+	for i := 0; i <= 3; i++ {
 		_, err := handle(coordinator, t.Context(), "again")
 		if err == nil {
 			continue

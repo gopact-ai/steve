@@ -10,8 +10,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +45,11 @@ const (
 )
 
 type Config struct {
+	// Transport starts the agent process. Leaving it nil builds a local one
+	// from the fields below, which is what a hub running an agent on its own
+	// machine wants; a remote node supplies its own.
+	Transport Transport
+
 	Command    string
 	Args       []string
 	ProcessDir string
@@ -65,7 +68,7 @@ type Host struct {
 	cfg Config
 
 	mu           sync.Mutex
-	cmd          *exec.Cmd
+	proc         Process
 	conn         *acp.Conn
 	caller       *acp.AgentCaller
 	stdin        io.WriteCloser
@@ -78,11 +81,18 @@ type Host struct {
 	opening      map[acp.SessionID]uint64
 	active       map[acp.SessionID]uint64
 	generation   uint64
+	// adapter is the ACP agent's name and version as it introduced itself.
+	adapter string
 }
 
 func New(cfg Config) *Host {
 	if cfg.Permission == nil {
 		cfg.Permission, _ = permission.New("deny")
+	}
+	if cfg.Transport == nil {
+		cfg.Transport = LocalTransport{
+			Command: cfg.Command, Args: cfg.Args, ProcessDir: cfg.ProcessDir, Env: cfg.Env,
+		}
 	}
 	return &Host{
 		cfg: cfg, collectors: map[acp.SessionID]*collector{}, sessions: map[acp.SessionID]*sessionState{},
@@ -507,40 +517,22 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	if h.alive {
 		return nil
 	}
-	processDir := h.cfg.ProcessDir
-	if processDir == "" {
-		processDir = "."
-	}
-	if err := os.MkdirAll(processDir, 0o755); err != nil {
-		return fmt.Errorf("create agent workdir: %w", err)
-	}
-	cmd := exec.Command(h.cfg.Command, h.cfg.Args...)
-	setProcessGroup(cmd)
-	cmd.Dir = processDir
-	cmd.Env = mergeEnv(os.Environ(), h.cfg.Env)
-	cmd.Stderr = os.Stderr
-	stdin, err := cmd.StdinPipe()
+	proc, err := h.cfg.Transport.Start(ctx)
 	if err != nil {
-		return fmt.Errorf("stdin pipe: %w", err)
+		return err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return fmt.Errorf("stdout pipe: %w", err)
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("start agent %q: %w", h.cfg.Command, err)
-	}
+	stdin := proc.Stdin()
 	generation := h.generation + 1
-	conn, err := acp.NewClient(stdout, stdin, func(caller *acp.AgentCaller) acp.ClientHandler {
+	conn, err := acp.NewClient(proc.Stdout(), stdin, func(caller *acp.AgentCaller) acp.ClientHandler {
 		h.caller = caller
 		return &clientHandler{h: h, generation: generation}
 	})
 	if err != nil {
-		killProcessGroup(cmd)
+		proc.Kill()
 		return fmt.Errorf("acp client: %w", err)
 	}
 	exited := make(chan struct{})
-	h.cmd = cmd
+	h.proc = proc
 	h.conn = conn
 	h.stdin = stdin
 	h.alive = true
@@ -560,10 +552,10 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	go func() {
 		<-conn.Done()
 		connErr := conn.Err()
-		_ = cmd.Wait()
+		_ = proc.Wait()
 		close(exited)
 		h.mu.Lock()
-		if h.cmd == cmd {
+		if h.proc == proc {
 			h.alive = false
 			h.collectors = map[acp.SessionID]*collector{}
 			h.sessions = map[acp.SessionID]*sessionState{}
@@ -599,7 +591,9 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	if resp.AgentInfo != nil {
 		name = fmt.Sprintf("%s %s", resp.AgentInfo.Name, resp.AgentInfo.Version)
 	}
+	// The lock is already held here: this runs inside ensureStarted.
 	h.capabilities = resp.AgentCapabilities
+	h.adapter = name
 	log.Printf("acphost: connected to agent %s (protocol v%d)", name, resp.ProtocolVersion)
 	return nil
 }
@@ -947,7 +941,7 @@ func (h *Host) shutdownLocked() {
 		return
 	}
 	h.alive = false
-	conn, stdin, exited, cmd := h.conn, h.stdin, h.exited, h.cmd
+	conn, stdin, exited, proc := h.conn, h.stdin, h.exited, h.proc
 	if conn != nil {
 		_ = conn.Close()
 	}
@@ -961,7 +955,7 @@ func (h *Host) shutdownLocked() {
 	select {
 	case <-exited:
 	case <-time.After(5 * time.Second):
-		killProcessGroup(cmd)
+		proc.Kill()
 		select {
 		case <-exited:
 		case <-time.After(5 * time.Second):
@@ -1009,6 +1003,10 @@ func (h *Host) sessionSettings(sid acp.SessionID) func() view.Settings {
 func (h *Host) Settings(sid acp.SessionID) view.Settings {
 	h.mu.Lock()
 	state := h.sessions[sid]
+	adapter := h.adapter
 	h.mu.Unlock()
-	return state.settings()
+	out := state.settings()
+	out.Adapter = adapter
+	out.Options = optionsView(h.Options(sid))
+	return out
 }

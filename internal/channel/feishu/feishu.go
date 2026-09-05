@@ -4,6 +4,8 @@ package feishu
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +24,7 @@ import (
 	larkim "github.com/larksuite/oapi-sdk-go/v3/service/im/v1"
 	larkws "github.com/larksuite/oapi-sdk-go/v3/ws"
 
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 )
 
@@ -95,6 +99,35 @@ type Channel struct {
 	api    *lark.Client
 	ws     longConn
 	access Access
+	// journal records every outbound message as an effect: started before
+	// the API call, confirmed with the message id after. It is the only
+	// egress this version has, and the only one recovery has to reconcile.
+	journal *ledger.Journal
+}
+
+// SetJournal wires the effects journal.
+func (c *Channel) SetJournal(j *ledger.Journal) { c.journal = j }
+
+// effect journals the start of an outbound call and returns the closer
+// that confirms it with the receipt. Without a journal both are no-ops.
+func (c *Channel) effect(kind, target string, payload []byte) (ledger.EffectID, func(receipt any)) {
+	id := ledger.EffectID{Operation: "feishu", Kind: kind, InstanceKey: effectKey(target, payload)}
+	if c.journal == nil {
+		return id, func(any) {}
+	}
+	if _, err := c.journal.Started(id, "", map[string]any{"target": target, "bytes": len(payload)}); err != nil {
+		log.Printf("feishu: journal %s: %v", id, err)
+	}
+	return id, func(receipt any) {
+		if _, err := c.journal.Confirmed(id, receipt); err != nil {
+			log.Printf("feishu: journal confirm %s: %v", id, err)
+		}
+	}
+}
+
+func effectKey(target string, payload []byte) string {
+	sum := sha256.Sum256(append([]byte(target+"\x00"), payload...))
+	return hex.EncodeToString(sum[:8]) + "/" + strconv.FormatInt(time.Now().UnixNano(), 36)
 }
 
 var mentionToken = regexp.MustCompile("@_(user_\\d+|all)[\\s\u200b]*")
@@ -379,6 +412,7 @@ func (c *Channel) send(ctx context.Context, idType, receiveID, text string) (Sen
 			Content(string(content)).
 			Build()).
 		Build()
+	_, confirm := c.effect("send", receiveID, content)
 	resp, err := c.api.Im.V1.Message.Create(ctx, req)
 	if err != nil {
 		return Sent{}, fmt.Errorf("feishu send: %w", err)
@@ -393,6 +427,7 @@ func (c *Channel) send(ctx context.Context, idType, receiveID, text string) (Sen
 	if sent.ChatID == "" {
 		return Sent{}, fmt.Errorf("feishu send: empty chat id")
 	}
+	confirm(sent)
 	return sent, nil
 }
 
@@ -408,6 +443,7 @@ func (c *Channel) ReplyCard(ctx context.Context, messageID string, payload []byt
 			Content(string(payload)).
 			Build()).
 		Build()
+	_, confirm := c.effect("reply-card", messageID, payload)
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("feishu card reply: %w", err)
@@ -418,6 +454,7 @@ func (c *Channel) ReplyCard(ctx context.Context, messageID string, payload []byt
 	if resp.Data == nil || deref(resp.Data.MessageId) == "" {
 		return "", fmt.Errorf("feishu card reply: empty message id")
 	}
+	confirm(map[string]string{"message_id": deref(resp.Data.MessageId)})
 	return deref(resp.Data.MessageId), nil
 }
 
@@ -495,6 +532,7 @@ func (c *Channel) ReplyText(ctx context.Context, messageID, text string) (string
 			Content(string(content)).
 			Build()).
 		Build()
+	_, confirm := c.effect("reply", messageID, content)
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
 		return "", fmt.Errorf("feishu reply: %w", err)
@@ -503,8 +541,10 @@ func (c *Channel) ReplyText(ctx context.Context, messageID, text string) (string
 		return "", fmt.Errorf("feishu reply: code=%d msg=%s", resp.Code, resp.Msg)
 	}
 	if resp.Data == nil {
+		confirm(nil)
 		return "", nil
 	}
+	confirm(map[string]string{"message_id": deref(resp.Data.MessageId)})
 	return deref(resp.Data.MessageId), nil
 }
 
@@ -525,6 +565,7 @@ func (c *Channel) ReplyThread(ctx context.Context, messageID, text string) (stri
 			ReplyInThread(true).
 			Build()).
 		Build()
+	_, confirm := c.effect("reply-thread", messageID, content)
 	resp, err := c.api.Im.V1.Message.Reply(ctx, req)
 	if err != nil {
 		return "", "", fmt.Errorf("feishu thread reply: %w", err)
@@ -535,6 +576,7 @@ func (c *Channel) ReplyThread(ctx context.Context, messageID, text string) (stri
 	if resp.Data == nil {
 		return "", "", fmt.Errorf("feishu thread reply: empty response")
 	}
+	confirm(map[string]string{"message_id": deref(resp.Data.MessageId), "thread_id": deref(resp.Data.ThreadId)})
 	return deref(resp.Data.MessageId), deref(resp.Data.ThreadId), nil
 }
 

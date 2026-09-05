@@ -85,13 +85,32 @@ type Field struct {
 // progress snapshot instead of being read once when the session opens.
 type Settings struct {
 	Harness string
+	// Adapter is the ACP agent's own name and version, from initialize.
+	Adapter string
 	Model   string
-	Mode    string
+	// Models are the alternatives the agent offered for this session, by
+	// the names a person would pick from. Empty when the harness does not
+	// expose a model selector.
+	Models []string
+	Mode   string
+	// Options are every selector the agent exposes for this session —
+	// model, reasoning effort, mode, whatever it has — with the choice in
+	// force and the choices on offer. Steve pins any of them per agent.
+	Options []Option
+	// Node is the machine the agent ran on; empty means the hub itself.
+	// Placement belongs on the card's tail rather than in the chat's
+	// addressing, so where an agent lives can change without every message
+	// having to say so.
+	Node string
 }
 
 func (s Settings) Empty() bool { return s.Harness == "" && s.Model == "" && s.Mode == "" }
 
 type Progress struct {
+	// Agent is the agent id the turn runs as — scheduling context stamped
+	// by whoever placed the turn, since a session knows only its
+	// placement, not which agent it is for.
+	Agent     string
 	Answer    string
 	Reasoning string
 	Tools     []Tool
@@ -149,6 +168,17 @@ type Choice struct {
 	Value  string
 	Label  string
 	Detail string
+}
+
+// Option is one selector an agent exposes: its id and name, the category
+// it declares ("model", "mode", or its own), what it is set to now, and
+// what it could be set to.
+type Option struct {
+	ID       string
+	Name     string
+	Category string
+	Current  string
+	Choices  []Choice
 }
 
 // Answer carries the chosen Choice.Value. An empty Value means the user

@@ -187,7 +187,7 @@ func TestRunOverwritesExistingConfigAndKeepsAgents(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	path := filepath.Join(t.TempDir(), "config.json")
 	old := config.Starter("old-app", "old-secret", "ou_old")
-	old.Agents["extra"] = config.Agent{Aliases: []string{"extra"}, Harness: "codex", Workspace: "/tmp/extra"}
+	old.Agents["extra"] = config.Agent{Aliases: []string{"extra"}, Harness: "codex"}
 	if err := config.Save(path, old); err != nil {
 		t.Fatal(err)
 	}

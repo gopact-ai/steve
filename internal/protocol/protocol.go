@@ -39,6 +39,27 @@ const (
 	CommandEvery     Command = "/every"
 	CommandAt        Command = "/at"
 	CommandSchedules Command = "/schedules"
+	// CommandPlan is multi-step work: Steve decomposes it, places each step
+	// on a machine that can do it, and reports the tree.
+	CommandPlan  Command = "/plan"
+	CommandPlans Command = "/plans"
+	// CommandFleet shows which machines and agents are available right now,
+	// from live adverts rather than from config.
+	CommandFleet Command = "/fleet"
+	// CommandRepair has a healthy agent on the same machine fix a broken
+	// harness there; the fix counts only when a command proves it.
+	CommandRepair Command = "/repair"
+	// CommandProject shows or switches the conversation's project: the
+	// directory work happens in is the project's, never the agent's.
+	CommandProject Command = "/project"
+	// CommandGrant gives a principal a role in a project; CommandApprove
+	// and CommandDeny are the owner's word on a pending disclosure;
+	// CommandEffects lists and resolves side effects whose outcome is
+	// unknown.
+	CommandGrant   Command = "/grant"
+	CommandApprove Command = "/approve"
+	CommandDeny    Command = "/deny"
+	CommandEffects Command = "/effects"
 )
 
 func ParseCommand(input string) (Command, string) {
@@ -47,8 +68,28 @@ func ParseCommand(input string) (Command, string) {
 		return CommandUnknown, ""
 	}
 	switch Command(input) {
-	case CommandNew, CommandClear, CommandStatus, CommandCancel, CommandSkills, CommandTasks, CommandModel, CommandHistory, CommandSchedules:
+	case CommandNew, CommandClear, CommandStatus, CommandCancel, CommandSkills, CommandTasks, CommandModel, CommandHistory, CommandSchedules, CommandPlans, CommandFleet, CommandProject, CommandGrant, CommandEffects, CommandRepair:
 		return Command(input), ""
+	}
+	if rest, ok := prefixed(input, string(CommandPlans)); ok {
+		return CommandPlans, rest
+	}
+	if rest, ok := prefixed(input, string(CommandPlan)); ok {
+		return CommandPlan, rest
+	}
+	if rest, ok := prefixed(input, string(CommandFleet)); ok {
+		return CommandFleet, rest
+	}
+	if rest, ok := prefixed(input, string(CommandRepair)); ok {
+		return CommandRepair, rest
+	}
+	if rest, ok := prefixed(input, string(CommandProject)); ok {
+		return CommandProject, rest
+	}
+	for _, cmd := range []Command{CommandGrant, CommandApprove, CommandDeny, CommandEffects} {
+		if rest, ok := prefixed(input, string(cmd)); ok {
+			return cmd, rest
+		}
 	}
 	if rest, ok := prefixed(input, string(CommandSkills)); ok {
 		return CommandSkills, rest

@@ -3,12 +3,12 @@ package task
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"path/filepath"
 	"sort"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 // Store persists tasks with the same durable-replace discipline as the session
@@ -16,7 +16,7 @@ import (
 // data that would outgrow a single file — transcripts and tree snapshots — is
 // meant to land in a sharded archive on disk, not in here.
 type Store struct {
-	path string
+	doc  ledger.Doc
 	mu   sync.Mutex
 	data data
 	now  func() time.Time
@@ -24,26 +24,50 @@ type Store struct {
 	// a deployment decision, not a code change.
 	maxTurns   int
 	maxElapsed time.Duration
+	// observe is told each task id a write changed, after the write
+	// landed; it runs off the store's lock.
+	observe func(id string)
+}
+
+// SetObserver installs where task changes are announced; nil discards.
+func (s *Store) SetObserver(observe func(id string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observe = observe
 }
 
 type data struct {
 	NextID int              `json:"next_id"`
 	Tasks  map[string]*Task `json:"tasks"`
+	Meta   map[string]Meta  `json:"meta,omitempty"`
 }
 
+// Open keeps the store in one JSON file. It is what tests use and what a
+// pre-ledger deployment wrote; the gateway itself opens the ledger.
 func Open(path string) (*Store, error) {
+	return openWith(&ledger.FileDocument{Path: path})
+}
+
+// OpenLedger keeps the store in the ledger. legacy names the JSON file an
+// earlier deployment used; it is imported once and retired.
+func OpenLedger(l *ledger.Ledger, legacy string) (*Store, error) {
+	doc := l.Document("tasks")
+	if _, err := doc.Import(legacy); err != nil {
+		return nil, err
+	}
+	return openWith(doc)
+}
+
+func openWith(doc ledger.Doc) (*Store, error) {
 	s := &Store{
-		path: path, data: data{NextID: 1, Tasks: map[string]*Task{}}, now: time.Now,
+		doc: doc, data: data{NextID: 1, Tasks: map[string]*Task{}, Meta: map[string]Meta{}}, now: time.Now,
 		maxTurns: DefaultMaxTurns, maxElapsed: DefaultMaxElapsed,
 	}
-	raw, err := os.ReadFile(path)
-	if os.IsNotExist(err) {
-		return s, nil
-	}
+	raw, ok, err := doc.Load()
 	if err != nil {
 		return nil, fmt.Errorf("read tasks: %w", err)
 	}
-	if len(raw) == 0 {
+	if !ok || len(raw) == 0 {
 		return s, nil
 	}
 	var loaded data
@@ -52,6 +76,9 @@ func Open(path string) (*Store, error) {
 	}
 	if loaded.Tasks == nil {
 		loaded.Tasks = map[string]*Task{}
+	}
+	if loaded.Meta == nil {
+		loaded.Meta = map[string]Meta{}
 	}
 	if loaded.NextID < 1 {
 		loaded.NextID = 1
@@ -179,6 +206,30 @@ func (s *Store) List(channel string) []Task {
 	return out
 }
 
+// CloseIdle ends chat tasks nobody has touched for longer than age: a
+// thread that stopped being spoken to has finished, and a task that
+// keeps counting as running for it misleads every list. Only tasks a
+// person opened by talking (no origin) are closed, only when nothing is
+// live on them, and only past the age. The closed tasks are returned.
+func (s *Store) CloseIdle(age time.Duration, live func(id string) bool) []Task {
+	cutoff := s.now().Add(-age)
+	var closed []Task
+	for _, t := range s.List("") {
+		if t.State != StateRunning || t.Origin != "" || !t.UpdatedAt.Before(cutoff) {
+			continue
+		}
+		if live != nil && live(t.ID) {
+			continue
+		}
+		done, err := s.Advance(t.ID, StateDone)
+		if err != nil {
+			continue
+		}
+		closed = append(closed, done)
+	}
+	return closed
+}
+
 // SetBudget raises the default budgets new tasks are created with.
 // Non-positive values keep the current default.
 func (s *Store) SetBudget(maxTurns int, maxElapsed time.Duration) {
@@ -304,6 +355,11 @@ func (s *Store) Begin(id, member, node, session string) (Task, error) {
 // Finish closes the open attempt and folds its cost into the budget. The task
 // state is left to the caller: a finished turn is not a finished task.
 func (s *Store) Finish(id string, outcome Outcome, tokens Tokens, toolCalls int) (Task, error) {
+	return s.FinishAs(id, outcome, tokens, toolCalls, "")
+}
+
+// FinishAs is Finish with the model the attempt ran on.
+func (s *Store) FinishAs(id string, outcome Outcome, tokens Tokens, toolCalls int, model string) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.clone()
@@ -322,6 +378,7 @@ func (s *Store) Finish(id string, outcome Outcome, tokens Tokens, toolCalls int)
 	attempt.EndedAt = now
 	attempt.Outcome = outcome
 	attempt.Tokens = tokens
+	attempt.Model = model
 	stored.Budget.Elapsed += now.Sub(attempt.StartedAt)
 	stored.Budget.ToolCalls += toolCalls
 	stored.Budget.Tokens = stored.Budget.Tokens.Add(tokens)
@@ -371,59 +428,45 @@ func (t *Task) clone() *Task {
 }
 
 func (s *Store) clone() data {
-	next := data{NextID: s.data.NextID, Tasks: make(map[string]*Task, len(s.data.Tasks))}
+	next := data{NextID: s.data.NextID, Tasks: make(map[string]*Task, len(s.data.Tasks)), Meta: make(map[string]Meta, len(s.data.Meta))}
 	for id, stored := range s.data.Tasks {
 		next.Tasks[id] = stored.clone()
+	}
+	for id, meta := range s.data.Meta {
+		next.Meta[id] = meta.clone()
 	}
 	return next
 }
 
 func (s *Store) replaceLocked(next data) error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return fmt.Errorf("create task directory: %w", err)
-	}
 	raw, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode tasks: %w", err)
 	}
-	temp, err := os.CreateTemp(filepath.Dir(s.path), ".tasks-*")
-	if err != nil {
-		return fmt.Errorf("create task file: %w", err)
+	if err := s.doc.Save(raw); err != nil {
+		return fmt.Errorf("save tasks: %w", err)
 	}
-	tempName := temp.Name()
-	defer os.Remove(tempName)
-	if err := temp.Chmod(0o600); err != nil {
-		temp.Close()
-		return fmt.Errorf("secure task file: %w", err)
-	}
-	if _, err := temp.Write(raw); err != nil {
-		temp.Close()
-		return fmt.Errorf("write tasks: %w", err)
-	}
-	if err := temp.Sync(); err != nil {
-		temp.Close()
-		return fmt.Errorf("sync tasks: %w", err)
-	}
-	if err := temp.Close(); err != nil {
-		return fmt.Errorf("close tasks: %w", err)
-	}
-	if err := os.Rename(tempName, s.path); err != nil {
-		return fmt.Errorf("replace tasks: %w", err)
-	}
-	if err := syncDir(filepath.Dir(s.path)); err != nil {
-		return fmt.Errorf("sync task directory: %w", err)
+	if s.observe != nil {
+		var changed []string
+		for id, t := range next.Tasks {
+			if prev, ok := s.data.Tasks[id]; !ok || prev.State != t.State || !prev.UpdatedAt.Equal(t.UpdatedAt) || !s.data.Meta[id].equal(next.Meta[id]) {
+				changed = append(changed, id)
+			}
+		}
+		for id := range s.data.Tasks {
+			if _, ok := next.Tasks[id]; !ok {
+				changed = append(changed, id)
+			}
+		}
+		if len(changed) > 0 {
+			observe := s.observe
+			go func() {
+				for _, id := range changed {
+					observe(id)
+				}
+			}()
+		}
 	}
 	s.data = next
 	return nil
-}
-
-// syncDir flushes a directory entry after a rename so the replacement survives
-// a crash (rename alone is not guaranteed durable on all filesystems).
-func syncDir(dir string) error {
-	f, err := os.Open(dir)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	return f.Sync()
 }

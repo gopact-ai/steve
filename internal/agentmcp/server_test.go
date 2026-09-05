@@ -18,6 +18,7 @@ type fakeSender struct {
 	patches []string // "messageID:payload"
 	deleted []string
 	fail    bool
+	timeout bool
 	next    int
 }
 
@@ -29,6 +30,9 @@ func (f *fakeSender) id() string {
 func (f *fakeSender) ReplyCard(_ context.Context, messageID string, payload []byte) (string, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.timeout {
+		return "", context.DeadlineExceeded
+	}
 	if f.fail {
 		return "", fmt.Errorf("boom")
 	}
@@ -150,7 +154,7 @@ func callTool(t *testing.T, url, token, name string, args map[string]any) (strin
 }
 
 func register(s *Server, conversation, agent, token, anchorMessage string) {
-	s.Extras(conversation, agent, token)
+	s.Extras(conversation, agent, token, "")
 	s.Anchor(conversation, conversation, anchorMessage)
 }
 
@@ -257,7 +261,7 @@ func TestSendStripsAtMarkup(t *testing.T) {
 
 func TestSendWithoutAnchorFails(t *testing.T) {
 	s, sender := startServer(t)
-	s.Extras("oc_a", "codex", "tok-a")
+	s.Extras("oc_a", "codex", "tok-a", "")
 	text, isError := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "hello"})
 	if !isError || !strings.Contains(text, "no active conversation") {
 		t.Fatalf("anchorless send not refused: %q", text)
@@ -332,7 +336,7 @@ func TestRecallStopsAtTurnBoundary(t *testing.T) {
 func TestTokenRotationRevokesOldToken(t *testing.T) {
 	s, _ := startServer(t)
 	register(s, "oc_a", "codex", "tok-old", "om_a")
-	s.Extras("oc_a", "codex", "tok-new")
+	s.Extras("oc_a", "codex", "tok-new", "")
 	if out := rpc(t, s.URL(), "tok-old", "tools/list", nil); out.status != http.StatusUnauthorized {
 		t.Fatalf("old token still works: %d", out.status)
 	}

@@ -70,14 +70,17 @@ func (c *Coordinator) openForCommand(ctx context.Context, req Request, selected 
 		return nil, err
 	}
 	saved := c.store.Conversation(req.ConversationID).Sessions[selected.ID]
-	workspace := c.sessionWorkspace(req, selected, saved)
-	runner, err := c.open(ctx, saved, selected, workspace, capabilities.MCPServers)
+	_, workspace, err := c.resolveWorkspace(ctx, req, selected)
+	if err != nil {
+		return nil, err
+	}
+	runner, err := c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
 	if err != nil && saved.UpstreamID != "" {
 		// Same fallback as a prompt: a session the agent no longer holds is
 		// replaced rather than reported as a failure.
 		saved.UpstreamID = ""
 		saved.InstructionsApplied = false
-		runner, err = c.open(ctx, saved, selected, workspace, capabilities.MCPServers)
+		runner, err = c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
 	}
 	return runner, err
 }

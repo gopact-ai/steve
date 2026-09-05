@@ -1,0 +1,184 @@
+// Command steve-node runs agents on one machine on behalf of a Steve hub.
+//
+// It is deliberately thin: it holds no memory, no task state and no identity.
+// The hub assembles every session's context and owns the task tree; the node
+// starts processes and shuttles bytes. That is what makes a node replaceable
+// — losing one costs the sessions it was running, nothing more.
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"log"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strings"
+	"syscall"
+
+	"github.com/gopact-ai/steve/internal/node"
+)
+
+func main() {
+	log.SetFlags(log.LstdFlags)
+	if err := run(os.Args[1:]); err != nil {
+		fmt.Fprintf(os.Stderr, "steve-node: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func run(args []string) error {
+	if len(args) > 0 && args[0] == node.LaunchVerb {
+		return launch(args[1:])
+	}
+	if len(args) > 0 && args[0] == "adopt" {
+		return adopt(args[1:])
+	}
+	if len(args) > 0 && args[0] == "mcp-broker" {
+		return broker(args[1:])
+	}
+	flags := flag.NewFlagSet("steve-node", flag.ContinueOnError)
+	configPath := flags.String("config", "node.json", "path to the node config file")
+	listen := flags.String("listen", "", "override the configured listen address")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	cfg, err := load(*configPath)
+	if err != nil {
+		return err
+	}
+	cfg.Source = absolute(*configPath)
+	if *listen != "" {
+		cfg.Listen = *listen
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return node.NewServer(cfg).Serve(ctx)
+}
+
+// broker runs the MCP broker as its own process: "steve-node mcp-broker
+// -config mcp.json". Run it as its own user with mcp.json readable by that
+// user alone, and point node.json's mcp_broker at its socket and token.
+func broker(args []string) error {
+	flags := flag.NewFlagSet("steve-node mcp-broker", flag.ContinueOnError)
+	configPath := flags.String("config", "mcp.json", "path to the broker config file")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(*configPath)
+	if err != nil {
+		return fmt.Errorf("read config: %w", err)
+	}
+	var cfg node.BrokerConfig
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return fmt.Errorf("parse config: %w", err)
+	}
+	if cfg.Socket == "" || cfg.Token == "" {
+		return fmt.Errorf("mcp-broker: socket and token are required")
+	}
+	cfg.Socket = absolute(cfg.Socket)
+	cfg.PortFile = absolute(cfg.PortFile)
+	cfg.WorkspaceRoot = absolute(cfg.WorkspaceRoot)
+	if info, err := os.Stat(*configPath); err == nil && info.Mode().Perm()&0o077 != 0 {
+		log.Printf("steve-node: %s is readable by others (mode %o); the secrets in it are not only yours", *configPath, info.Mode().Perm())
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return node.NewBroker(cfg).Serve(ctx)
+}
+
+// adopt hands this node to a named hub: "steve-node adopt -config node.json <hub>".
+func adopt(args []string) error {
+	flags := flag.NewFlagSet("steve-node adopt", flag.ContinueOnError)
+	configPath := flags.String("config", "node.json", "path to the node config file")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return fmt.Errorf("usage: steve-node adopt [-config node.json] <hub>")
+	}
+	cfg, err := load(*configPath)
+	if err != nil {
+		return err
+	}
+	if err := node.Adopt(cfg.StateDir, flags.Arg(0)); err != nil {
+		return err
+	}
+	fmt.Printf("%s now belongs to hub %q\n", cfg.Name, flags.Arg(0))
+	return nil
+}
+
+// launch is the MCP launcher an agent runs: it carries a binding id and a
+// socket, never a secret, and pipes the agent to the server the node's
+// broker starts for that binding.
+func launch(args []string) error {
+	flags := flag.NewFlagSet("steve-node mcp-launch", flag.ContinueOnError)
+	socket := flags.String("socket", "", "the node's MCP broker socket")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return fmt.Errorf("usage: steve-node %s -socket <path> <binding>", node.LaunchVerb)
+	}
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	return node.LaunchBinding(ctx, *socket, flags.Arg(0), os.Stdin, os.Stdout)
+}
+
+func load(path string) (node.ServerConfig, error) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return node.ServerConfig{}, fmt.Errorf("read config: %w", err)
+	}
+	var cfg node.ServerConfig
+	decoder := json.NewDecoder(strings.NewReader(string(raw)))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return node.ServerConfig{}, fmt.Errorf("parse config: %w", err)
+	}
+	if strings.TrimSpace(cfg.Name) == "" {
+		return node.ServerConfig{}, fmt.Errorf("name is required — it is what the hub records on every attempt")
+	}
+	// The token is the node's own authentication of the hub, deliberately
+	// separate from whatever the network layer does: two independent
+	// defences should not share one failure.
+	if strings.TrimSpace(cfg.Token) == "" {
+		return node.ServerConfig{}, fmt.Errorf("token is required")
+	}
+	if len(cfg.Harnesses) == 0 {
+		return node.ServerConfig{}, fmt.Errorf("at least one harness is required")
+	}
+	if cfg.Listen == "" {
+		cfg.Listen = "0.0.0.0:7701"
+	}
+	cfg.WorkspaceRoot = absolute(cfg.WorkspaceRoot)
+	cfg.StateDir = absolute(cfg.StateDir)
+	if cfg.StateDir == "" {
+		cfg.StateDir = absolute("~/.steve-node")
+	}
+	for id, spec := range cfg.Harnesses {
+		spec.ProcessDir = absolute(spec.ProcessDir)
+		cfg.Harnesses[id] = spec
+	}
+	return cfg, nil
+}
+
+func absolute(path string) string {
+	if path == "" {
+		return ""
+	}
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
+		}
+	}
+	result, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return result
+}

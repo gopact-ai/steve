@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
@@ -37,9 +38,21 @@ type skillFingerprinter interface {
 }
 
 type Assembler struct {
+	mu      sync.RWMutex
 	servers map[string]MCPServer
 	home    home.Loader
 	skills  skillFingerprinter
+}
+
+// SetServers replaces the MCP servers the hub machine can start.
+func (a *Assembler) SetServers(servers map[string]MCPServer) {
+	copied := make(map[string]MCPServer, len(servers))
+	for k, v := range servers {
+		copied[k] = v
+	}
+	a.mu.Lock()
+	a.servers = copied
+	a.mu.Unlock()
 }
 
 func NewAssembler(servers map[string]MCPServer) *Assembler {
@@ -69,6 +82,9 @@ type Extra struct {
 	Name         string
 	Server       MCPServer
 	Instructions string
+	// Memory is remembered text to append after the home's memory: it
+	// reaches the agent but, like the home's memory, not the fingerprint.
+	Memory string
 }
 
 func (a *Assembler) AssembleMode(selected agent.Agent, mode home.Mode) (Capabilities, error) {
@@ -105,16 +121,33 @@ func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras [
 	}
 	identity := strings.Join(parts, "\n\n")
 	instructions := identity
+	memories := []string{}
 	if snap.Memory != "" {
+		memories = append(memories, snap.Memory)
+	}
+	for _, extra := range extras {
+		if strings.TrimSpace(extra.Memory) != "" {
+			memories = append(memories, extra.Memory)
+		}
+	}
+	for _, m := range memories {
 		if instructions != "" {
-			instructions += "\n\n" + snap.Memory
+			instructions += "\n\n" + m
 		} else {
-			instructions = snap.Memory
+			instructions = m
 		}
 	}
 	servers := make([]acp.MCPServer, 0, len(selected.MCPServers))
 	for _, name := range selected.MCPServers {
+		// An agent on another machine uses that machine's MCP servers:
+		// they are bound there at admission and joined to the session by
+		// the caller. Nothing about them is known, or checked, here.
+		if selected.Node != "" {
+			continue
+		}
+		a.mu.RLock()
 		cfg, ok := a.servers[name]
+		a.mu.RUnlock()
 		if !ok {
 			return Capabilities{}, fmt.Errorf("unknown MCP server %q", name)
 		}
@@ -125,6 +158,10 @@ func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras [
 		servers = append(servers, server)
 	}
 	for _, extra := range extras {
+		if extra.Server.Type == "" {
+			// Instructions or memory only: nothing to connect.
+			continue
+		}
 		server, err := makeMCPServer(extra.Name, extra.Server)
 		if err != nil {
 			return Capabilities{}, err

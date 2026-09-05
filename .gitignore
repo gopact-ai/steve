@@ -3,3 +3,7 @@ config.e2e.json
 /steve
 .env
 __pycache__/
+/mockagent
+/steve-node
+/acptest
+web/console/node_modules/

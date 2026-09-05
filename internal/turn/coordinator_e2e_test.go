@@ -21,8 +21,8 @@ func TestCoordinatorDynamicHarnessResumeE2E(t *testing.T) {
 		t.Fatalf("build mockagent: %v\n%s", err, output)
 	}
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
-		"codex":  {Harness: "codex", Workspace: t.TempDir(), Default: true},
-		"claude": {Harness: "claude", Workspace: t.TempDir()},
+		"codex":  {Harness: "codex", Default: true},
+		"claude": {Harness: "claude"},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -39,7 +39,7 @@ func TestCoordinatorDynamicHarnessResumeE2E(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	coordinator := New(catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
 	result, err := handle(coordinator, context.Background(), "hello")
 	if err != nil || result.Text != "echo: hello" {
 		t.Fatalf("codex turn = %#v, %v", result, err)
@@ -55,7 +55,7 @@ func TestCoordinatorDynamicHarnessResumeE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(manager.Stop)
-	coordinator = New(catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
+	coordinator = restartCoordinator(t, coordinator, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
 	result, err = handle(coordinator, context.Background(), "after restart")
 	if err != nil || result.Text != "echo: after restart" {
 		t.Fatalf("resumed turn = %#v, %v", result, err)

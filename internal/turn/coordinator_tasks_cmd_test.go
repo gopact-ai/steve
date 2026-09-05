@@ -133,6 +133,7 @@ func TestCancelIsTerminalAndSurvivesRestartUnrevived(t *testing.T) {
 // attempts it survived, not just the ones that worked.
 func TestTaskDetailShowsTheAttemptTrail(t *testing.T) {
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	tasks.SetBudget(24, time.Hour)
 	if _, err := handle(coordinator, t.Context(), "port the parser"); err != nil {
 		t.Fatalf("first turn: %v", err)
 	}
