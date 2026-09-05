@@ -2,36 +2,30 @@
   "name": "host-3",
   "listen": "0.0.0.0:7701",
   "token": "replace-me-with-a-long-random-secret",
-  "workspace_root": "~/steve-workspace",
-  "state_dir": "~/.steve-node",
+  "workspace_root": "/home/me/steve-work",
+  "state_dir": "/home/me/.steve-node",
   "capabilities": [
-    "gpu",
+    "build",
     "internal-net"
   ],
   "harnesses": {
     "codex": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@agentclientprotocol/codex-acp"
-      ],
+      "command": "/home/me/.local/bin/codex-acp",
+      "args": [],
       "models": [
-        "gpt-5"
+        "<model-id-from-this-harness>"
       ],
       "env": [
         "PATH=/home/me/.local/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
       ],
-      "slots": 4
+      "slots": 4,
+      "process_dir": "/home/me/steve-runtime"
     },
     "claude-code": {
-      "command": "npx",
-      "args": [
-        "-y",
-        "@agentclientprotocol/claude-agent-acp"
-      ],
+      "command": "/home/me/.local/bin/claude-agent-acp",
+      "args": [],
       "models": [
-        "opus-5",
-        "sonnet-5"
+        "<model-id-from-this-harness>"
       ]
     }
   },
@@ -39,20 +33,16 @@
     "docker",
     "gh"
   ],
-  "mcp_servers": {
-    "github": {
-      "type": "stdio",
-      "command": "github-mcp-server",
-      "args": [
-        "stdio"
-      ],
-      "env": {
-        "GITHUB_TOKEN": "…"
-      }
-    }
-  },
+  "mcp_servers": {},
   "declares": [
     "network:internal",
     "credential:prod"
-  ]
+  ],
+  "hubs": {
+    "hub-a": "replace-me-with-a-long-random-secret"
+  },
+  "mcp_broker": {
+    "socket": "/home/me/.steve-mcp/mcp.sock",
+    "token": "replace-me-with-a-separate-broker-token"
+  }
 }
