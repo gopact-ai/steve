@@ -48,7 +48,8 @@ func TestSourcesInstallUpdateAndRemove(t *testing.T) {
 	run("init", "-q", "-b", "main")
 	_ = os.MkdirAll(filepath.Join(repo, "skills", "alpha"), 0o755)
 	_ = os.WriteFile(filepath.Join(repo, "skills", "alpha", "SKILL.md"), []byte("---\nname: alpha\ndescription: first\n---\n# alpha\n"), 0o644)
-	run("add", "."); run("commit", "-q", "-m", "one")
+	run("add", ".")
+	run("commit", "-q", "-m", "one")
 
 	stateDir := t.TempDir()
 	m, err := Setup(stateDir)
@@ -84,7 +85,8 @@ func TestSourcesInstallUpdateAndRemove(t *testing.T) {
 	// Upstream grows a skill; update sees it.
 	_ = os.MkdirAll(filepath.Join(repo, "skills", "beta"), 0o755)
 	_ = os.WriteFile(filepath.Join(repo, "skills", "beta", "SKILL.md"), []byte("# beta\n\nsecond\n"), 0o644)
-	run("add", "."); run("commit", "-q", "-m", "two")
+	run("add", ".")
+	run("commit", "-q", "-m", "two")
 	updated, err := m.UpdateSources(context.Background())
 	if err != nil || len(updated) != 1 || updated[0].Error != "" || len(updated[0].Skills) != 2 {
 		t.Fatalf("update = %+v err=%v", updated, err)

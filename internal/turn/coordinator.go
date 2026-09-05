@@ -22,8 +22,8 @@ import (
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/idle"
-	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/intent"
+	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -153,7 +153,7 @@ type Coordinator struct {
 	// that has no request to read it from.
 	modes map[string]home.Mode
 	// memory is what Steve remembers, by scope; nil until wired.
-	memory *memory.Service
+	memory      *memory.Service
 	schedules   *schedule.Store
 	supervisor  Supervisor
 	plans       *plan.Store

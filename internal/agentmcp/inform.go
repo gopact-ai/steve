@@ -164,17 +164,17 @@ func (s *Server) steveHelp(raw json.RawMessage) (string, error) {
 func informTools() []map[string]any {
 	return []map[string]any{
 		{
-			"name": "steve_context",
+			"name":        "steve_context",
 			"description": "Where you stand right now in Steve: which agent you are and on which machine, the project and the workspace directory you are in (the home, a copy, or a worktree — and why none, if none), your task's remaining budget, whether this is the owner's private chat or a group, and which MCP servers and skills you have. Call it first in a session, and again when unsure where you are. It changes nothing.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
-			"name": "steve_projects",
+			"name":        "steve_projects",
 			"description": "Every project Steve knows, where each one is (its home machine and copies), and which of them you can work in from your machine. When the conversation's project is not on your machine it says the ways out: an agent on the right machine, a copy on yours, or another project. It changes nothing.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
-			"name": "steve_help",
+			"name":        "steve_help",
 			"description": "How things are done in Steve, by topic: overview, delegate, projects, plans, memory, feishu. Without a topic it lists them. Read the topic before delegating, before working in a plan step, before remembering something for the user, before sending a progress card.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
 				"topic": map[string]any{"type": "string", "description": "One of: overview, delegate, projects, plans, memory, feishu."},
@@ -275,12 +275,12 @@ func (s *Server) steveNodeRefresh(ctx context.Context, bind binding, raw json.Ra
 func fleetTools() []map[string]any {
 	return []map[string]any{
 		{
-			"name": "steve_nodes",
+			"name":        "steve_nodes",
 			"description": "Every machine in the fleet and how it is right now: up or down and since when, version, data level, health (free disk, load, worktrees), the AI tools on it and whether each can start, MCP servers, skills of its own, and the agents placed on it. Read this before placing work, delegating by capability, or judging whether a machine is in trouble. steve_fleet lists agents; this lists machines. It changes nothing.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{
-			"name": "steve_node_add",
+			"name":        "steve_node_add",
 			"description": "Add a machine to the fleet: the hub records it with a fresh token and returns the one-line bootstrap command to run on that machine, which installs steve-node and connects it. Owner-only, in private. Confirm the name, address and data level with the owner first.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
 				"name":    map[string]any{"type": "string", "description": "Machine name: lowercase letters, digits, dot, underscore, dash, e.g. node-c."},
@@ -290,14 +290,14 @@ func fleetTools() []map[string]any {
 			}, "required": []string{"name", "addr"}},
 		},
 		{
-			"name": "steve_node_remove",
+			"name":        "steve_node_remove",
 			"description": "Forget a machine: the hub stops dialing and listing it. Refused while an agent is placed on it or a project has its home or a copy there — move those first. Owner-only, in private. Nothing on the machine itself is touched.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
 				"name": map[string]any{"type": "string"},
 			}, "required": []string{"name"}},
 		},
 		{
-			"name": "steve_node_refresh",
+			"name":        "steve_node_refresh",
 			"description": "Ask a machine to look at itself again now — its AI tools, health, skills, MCP servers — and return what it says. Use it when a machine was just repaired or seems stale. It changes nothing on the machine.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
 				"name": map[string]any{"type": "string"},

@@ -21,10 +21,10 @@ import (
 
 // Found is one server as a coding agent has it configured.
 type Found struct {
-	Name   string `json:"name"`
-	Source string `json:"source"`          // codex | claude-code
-	Scope  string `json:"scope,omitempty"` // "" for the user's own config; a project directory for a project's
-	Type   string `json:"type"`            // stdio | http | sse
+	Name    string   `json:"name"`
+	Source  string   `json:"source"`          // codex | claude-code
+	Scope   string   `json:"scope,omitempty"` // "" for the user's own config; a project directory for a project's
+	Type    string   `json:"type"`            // stdio | http | sse
 	Command string   `json:"command,omitempty"`
 	Args    []string `json:"args,omitempty"`
 	URL     string   `json:"url,omitempty"`
