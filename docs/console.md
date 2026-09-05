@@ -701,3 +701,82 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 真机验证（hub d6f2580）：在页面上让 claude 前台跑 50 秒的循环，30 秒时杀掉 hub 重启——日志依次是 `expired attempt of the previous process … hub restarted`、`console: resuming task #55`，页面上先是旧交换的"console restarted before this exchange completed"，然后 "⟳ 网关重启，继续任务 #55" 一行，1 分钟后 agent 的回复和"任务 #55 跑了 1m0s"的通知落在同一条交换上。
 
 还留着的：重启时 ACP 子进程一并死掉，agent 靠 session/load 重放历史续跑，长回合里 agent 自己起的后台命令会丢；`Exchange.Prompt` 目前只有续跑在用。
+
+## 28. 委派的双工、子 agent 的过程、节点断线的补账、自主拆解的验收（2026-09-05）
+
+用户在 kvtool 双机 demo（§27.1 之后）上提了四条。前三条是平台改动，第四条是验收用例。
+
+### 28.1 父 agent 不再轮询：子任务完成由 hub 送回会话
+
+**现状。** `steve_delegate` 在子任务放置后就返回（`InlineWait` 20 s），工具说明让父 agent "call `steve_await` until done"；一次 `steve_await` 最多等 50 s（`MaxAwait`，为了落在任何 MCP 客户端的超时之内）。于是 15 分钟的根回合里父 agent 调了 21 次工具，其中十几次是 await，根回合 cached_read 1.2M tokens——每次 await 返回都让模型把整段上下文再读一遍，还要生成一句"继续等"。
+
+**终态。** 委派是"交出去、回合可以结束"；结果由 hub **送回会话**，而不是父 agent守着要。
+
+| 时刻 | 发生什么 |
+|---|---|
+| 子任务放置 | `steve_delegate` 返回 `state: running`，说明里写明"不必等，完成时 Steve 会把结果作为新消息发进这个会话；没别的事就结束本回合" |
+| 子任务结束时父回合**没在跑** | hub 立刻把一条**续接**送进父会话：页面上一行 `⤵ 子任务 #59 完成 · builder@node-a · 14m19s`，agent 收到的是 `@member [steve: 子任务 #59 已完成，用时 …] 回答：…；refs：…；改动 N 个文件（已落地）。继续你的任务；还在跑的子任务完成后会再通知你。` |
+| 子任务结束时父回合**在跑** | 先记着；父回合一结束，把所有"已结束、未被收走"的子任务**合成一条**续接送进去 |
+| 父 agent 在回合内用 `steve_await` 拿到了终态 | 标记为已收走，不再送 |
+| 父任务已关闭（done / paused / cancelled） | 结果照旧落地，只发通知，不续接 |
+
+续接走会话自己的通道：控制台是一条插到排队消息**前面**的交换（复用 §27.1 的 `Resume` 机制，`Exchange.Prompt` 与 `Input` 分离，不需要 revive）；飞书是在锚点回一条通知、再以通知为锚点 `HandleMessage`（复用 `ResumeTask` 的路径）。`steve_await` 保留给"这一回合就要结果"的父 agent，说明改成"通常不必调用"。
+
+**接缝。** `delegate.Service`：子任务条目加 `collected`（Await / 内联等待返回终态时置位）；`SetDeliverer(func(Delivery))`，`Delivery{Conversation, ParentTask, Member, ChatID, Anchor, Children []Child}`；`Flush(parentTask)` 把"已结束未收走"的子任务合成一次投递并标记已投递。触发点两处：子任务进入终态时（`drive` 的结尾）若父任务此刻没有在跑的 attempt 就 `Flush`；`Coordinator.closeAttempt` 末尾对本回合的任务 `Flush`。投递实现两份：`console.Service.Continue(conversation, taskID, member, notice, prompt)`（`enqueue(front=true)`）与 `gateway.Deliver(Revival 形状 + Prompt)`；`cmd/steve` 按会话是不是控制台分派，和 Notifier / Resumer 同一处。父任务"等子任务"在读模型里可见：`TaskDetail.children` 已有，会话列表的"在跑"标记保持。
+
+**验证。** 单测：父回合结束时合并投递、在跑时暂存、await 收走后不重复、父任务关闭不投递；kvtool 场景重跑：根回合的工具调用从 21 次降到个位数，续接两条（shipper、builder 各一），最终汇报内容不变。
+
+### 28.2 子 agent 的过程与父 agent 同一套
+
+**现状。** 服务端对子任务的过程并没有丢：acphost 的 `collector.thought` 在一次 prompt 内累积（上限 `maxThoughtBytes`），`delegate.progress` 每次带的都是累积后的全文，`process.step()` 覆盖的是"更完整的快照"。丢在页面上：`DelegationCard` 进行中只画 `lastParagraph(thought)` 三行，结束后**根本不画思考**，只画"它说"。父 agent 的回复折叠用的是 `Trace`（计划行、`ThinkingFold` 全文、`ToolCalls`、答案）。
+
+**终态。** 一个 agent 的过程只有一种画法。`DelegationCard` 的正文 = 目标 + `Trace{plan, reasoning, tools, model}` + 它说 + 改动 + refs；进行中 `ThinkingFold` 展开且滚到尾部，结束后折叠但全文都在。回复的过程折叠里的步骤（`ProcessBody`）也用同一个卡片，不再另画一份。类型上 `StepProcess` 的过程字段与 `Progress` 同名同义，前端以 `Progress` 传递。
+
+**接缝。** 前端 `delegation.tsx` 改为组合 `Trace`；`trace.tsx` 的 `ProcessBody` 用 `DelegationCard`；`lastParagraph` 只留给会话列表的一行摘要。服务端不动，只补一处：`delegate.progress` 事件带 `Model`（`view.Progress.Settings` 里有）。
+
+**验证。** 截图：进行中的子卡有可滚动的完整思考；完成后展开能看到全部思考与全部工具调用；父回复的"过程"折叠里子步骤与卡片一致。
+
+### 28.3 节点与 hub 断线：会话不随连接死，节点记日志，重连补账
+
+**现状。** 节点上 `runAgent` 把 harness 的 stdio 直接接在流上：hub 连接一断，mux 关闭，流关闭，`proc.Kill()`——子任务立刻没了；hub 侧 acphost 收到 "connection closed"，attempt 记失败，工作树留到十分钟后被清扫。中间那段 harness 已经做了的事，谁都不知道。反向 MCP 通道同时断掉，子 agent 在这期间调 `steve_*` 工具只会得到错误。
+
+**终态：可续接的会话流。** 会话归节点所有，流只是 hub 对会话的一个视图。
+
+| 层 | 改动 |
+|---|---|
+| 协议 | `OpenRequest{Kind: acp}` 加 `Attempt`、`Resume bool`、`After uint64`。`After` 是 hub 已收到的最后一行的序号 |
+| 节点 | 会话表按 attempt 记：harness 进程、序号计数、日志文件。harness 每写一行 stdout（ACP 是逐行 JSON-RPC），节点先追加到 `<state>/sessions/<attempt>/out.jsonl`（`seq\tline`，写后 fsync，100 ms 合并）再发给流；hub→harness 的行也记进 `in.jsonl` 备查。流断而会话未完：进程**不杀**，继续跑，输出只进日志；`SessionGrace`（默认与 `MaxSilence` 相同，10 分钟）内没有 hub 来续接才杀，日志保留一小时供 `steve-node sessions` 查看。日志按 64 MB 轮转，序号连续 |
+| hub | `remoteProcess` 变成"可续接的读写端"：流报错且节点在名册里是"断开"而非"释放"时，不向 acphost 报 EOF，而是等注册表重拨成功（`RedialEvery`）后以 `Resume, After` 重开流；节点先回放 `After` 之后的日志行，再接上实况。断开期间 hub 往 harness 写的行（权限答复、取消）在 hub 侧有界缓冲，续接后按序补发。超过 `SessionGrace` 才把 EOF 交给 acphost，行为退化成今天 |
+| 计时 | 子任务的静默时钟（`idle.WithTimeout`）在节点断开期间**不走**：注册表的 down / up 事件对该节点上所有在跑 attempt 的 touch 函数分别 pause / resume（`idle` 加 `Pause()`/`Resume()`） |
+| 反向 MCP | 断开期间节点的 broker 对 `steve_*` 调用返回可重试的 "hub unreachable, retry in 30s"（agent 看得懂的文本），不做排队；写类效果（`steve_remember`、`feishu_send`）的排队是下一片 |
+| 不覆盖 | hub 进程重启（hub 侧 acphost 状态丢失）不在本条；它需要 hub 也持久化会话客户端状态，另立条目 |
+
+**接缝。** `internal/nodewire`：`OpenRequest` 三个字段；`internal/node/serve.go`：`runAgent` 拆成 `sessions` 表 + `attach(stream, after)`；新包 `internal/node/journal`（追加、按序回放、轮转、fsync 策略，纯本地、可单测）；`internal/node/transport.go`：`remoteProcess` 的续接读写端；`internal/node/registry.go`：down / up 事件；`internal/idle`：pause / resume。故障注入：steve-node 环境变量 `STEVE_NODE_FAULT=drop-hub-after:20s`，第一个会话开始 20 秒后主动关掉与 hub 的 socket 一次，供真机验证。
+
+**验证。** 单测：journal 追加 / 回放 / 轮转；nodewire 用内存管道做"断—续—回放 N 行—实况"往返；`remoteProcess` 在节点 down 期间不报 EOF、超过 grace 才报。真机：node-b 上开 `drop-hub-after:20s`，委派一个三分钟的子任务，hub.log 出现 `node-b disconnected` → `node-b up` → `reattached att-… after 12s, replayed 37 lines`，子任务照常 done 并落地；父任务的静默时钟没有因为这 12 秒扣分。
+
+### 28.4 自主拆解的验收用例
+
+**现状。** §27.1 的门禁和 kvtool demo 都是 prompt 里点名"node-a 的 builder、node-b 的 shipper"。没验过的是：只给目标，agent 自己查名册、拆任务、按能力挑人、汇总。
+
+**用例。** `e2e/fleet -scenario autonomous`（复用门禁的 HTTP 客户端与断言骨架，`make e2e-autonomous`）：新会话绑 scratch + claude，发一段只说目标的话：
+
+> 把 `kvtool` 做成可发布的样子：在**有 build 能力的机器**上编译 linux/amd64 二进制到 `kvtool/dist/` 并生成 `SHA256SUMS`；给 `kvtool/README.md` 补安装与校验步骤；写 `kvtool/RELEASE.md`。先查一下集群里有哪些机器和能力，自己拆解、委派给合适的 agent，能并行的并行，最后汇总谁在哪做了什么。
+
+断言（任一失败即非零退出，附相关 id）：
+1. 根回复的 `process.tools` 里有 `steve_fleet`（先查名册）；
+2. `process.steps` 里 ≥ 2 个 `kind=delegate, state=done` 的子任务，且**至少一个不在 hub 所在机器**；
+3. 产出 `SHA256SUMS` 的那个子任务所在机器，在 `/state.nodes` 里申报了 `build` 能力（按能力放置，不管 prompt 里 agent 是点名还是 `requires`）；
+4. 主目录里 `kvtool/dist/SHA256SUMS`、`kvtool/RELEASE.md` 存在，README 含"校验"字样，`sha256sum -c` 通过；
+5. 每个子任务的 attempt 用量 `reported=true`；
+6. 记录（不断言）根回合的 `steve_await` 次数——28.1 落地后应为个位数。
+
+总超时 20 分钟（builder 的 codex reasoning=max 一个人就要 10–15 分钟）。
+
+### 28.5 分工
+
+| 条 | 谁 |
+|---|---|
+| 28.1 双工 + 28.4 用例 | 我 |
+| 28.2 子卡复用 Trace | codex（`steve-childcard`） |
+| 28.3 第一片：journal 包 + 节点会话表 + hub 续接 + 故障注入 + 内存管道测试 | codex（`steve-journal`） |
