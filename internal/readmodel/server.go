@@ -6,9 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/artifact"
-	"github.com/gopact-ai/steve/internal/view"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"io"
 	"log"
 	"net"
@@ -16,6 +13,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 // ServerConfig is where the read model is served and who may read it.
@@ -59,6 +60,11 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /state", s.guard(s.state))
 	mux.HandleFunc("GET /events", s.guard(s.events))
 	mux.HandleFunc("POST /console/send", s.guard(s.consoleSend))
+	mux.HandleFunc("POST /console/queue", s.guard(s.consoleEnqueue))
+	mux.HandleFunc("GET /console/queue", s.guard(s.consoleQueue))
+	mux.HandleFunc("DELETE /console/queue/{id}", s.guard(s.consoleDeleteQueued))
+	mux.HandleFunc("PATCH /console/queue/{id}", s.guard(s.consoleEditQueued))
+	mux.HandleFunc("POST /console/queue/{id}/steer", s.guard(s.consoleSteer))
 	mux.HandleFunc("GET /console/replies", s.guard(s.consoleReplies))
 	mux.HandleFunc("GET /console/conversations", s.guard(s.consoleConversations))
 	mux.HandleFunc("PUT /console/conversations/{id}", s.guard(s.consoleUpdateConversation))
@@ -240,6 +246,11 @@ type Console interface {
 	SendCommand(ctx context.Context, conversation, input, commandID string) (Reply, error)
 	// SendCommandWith carries quotes of other lines along with the input.
 	SendCommandWith(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (Reply, error)
+	Enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef) (Exchange, error)
+	Queue(conversation string) []Exchange
+	DeleteQueued(id string) error
+	EditQueued(id, input string) (Exchange, error)
+	Steer(ctx context.Context, id string) (Exchange, error)
 	Replies(conversation string) []Reply
 	// Conversations names every console conversation with a transcript;
 	// Summaries describes each one for a sidebar.
@@ -808,6 +819,7 @@ type Reply struct {
 	// ID names the line for good: a quote of it, a comment on it, a
 	// process fetched for it later all point here rather than at a time.
 	ID           string    `json:"id,omitempty"`
+	ExchangeID   string    `json:"exchange_id,omitempty"`
 	At           time.Time `json:"at"`
 	Conversation string    `json:"conversation"`
 	Input        string    `json:"input,omitempty"`

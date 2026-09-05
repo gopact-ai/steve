@@ -12,22 +12,23 @@ import { RAIL_WIDTH } from "@/components/steve/rail";
 import { BoardPage } from "./board";
 import { Working, applyLive, type Live } from "@/components/steve/trace";
 import { Nothing } from "@/components/steve/ui";
-import { fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, fetchSelectors, setPreferences } from "@/lib/api";
+import { enqueue, fetchQueue, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, fetchSelectors, setPreferences } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
-import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, StepProcess, QuoteRef } from "@/lib/types";
+import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, StepProcess, QuoteRef, Exchange } from "@/lib/types";
 
 // ConsolePage is composition: it owns the conversation, the transcript,
 // the line in flight and the composer's text, and lays out the three
 // columns from components/steve. Nothing here draws.
 export function ConsolePage() {
-    const { snap, consoleEvents, refresh } = useFleet();
+    const { snap, consoleEvents, refresh, live: connection } = useFleet();
     const { intent } = useIntent();
     const [conversation, setConversation] = useState(() => sessionStorage.getItem("steve.conversation") || "console:main");
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [entries, setEntries] = useState<Reply[]>([]);
     const [enabled, setEnabled] = useState(true);
     const [text, setText] = useState("");
-    const [busy, setBusy] = useState(false);
+    const [sending, setSending] = useState(false);
+    const submitting = useRef(false);
     const [status, setStatus] = useState("");
     const [live, setLive] = useState<Live | null>(null);
     const [context, setContext] = useState<ConversationContext | null>(null);
@@ -46,9 +47,14 @@ export function ConsolePage() {
         }
         return undefined;
     };
-    // Lines typed while a turn runs wait here and go out one by one as
-    // turns end; steering sends one now with the interrupt prefix.
-    const [queue, setQueue] = useState<Queued[]>([]);
+    // The server owns execution; every tab projects the same durable queue.
+    const [exchanges, setExchanges] = useState<Exchange[]>([]);
+    const queue = exchanges.filter((e) => e.conversation === conversation && e.state === "queued");
+    const busy = sending || !!live || exchanges.some((e) => e.conversation === conversation && e.state === "running");
+    const activeConversation = useRef(conversation);
+    activeConversation.current = conversation;
+    const queueRequest = useRef(0);
+    const transcriptRequest = useRef(0);
     // Quotes ride with the next message wherever it is sent from; they
     // survive switching threads on purpose — that is how a line from one
     // thread reaches another.
@@ -86,26 +92,57 @@ export function ConsolePage() {
     }, [location.search]);
 
     const loadContext = useCallback(() => {
-        void fetchContext(conversation).then((data) => setContext(data.context ?? null)).catch(() => undefined);
+        void fetchContext(conversation).then((data) => { if (activeConversation.current === conversation) setContext(data.context ?? null); }).catch(() => undefined);
     }, [conversation]);
     const loadConversations = useCallback(() => {
         void fetchConversations().then((data) => setConversations(data.conversations || [])).catch(() => undefined);
     }, []);
 
+    const loadQueue = useCallback(async () => {
+        if (activeConversation.current !== conversation) return;
+        const request = ++queueRequest.current;
+        try {
+            const data = await fetchQueue(conversation);
+            if (activeConversation.current !== conversation || request !== queueRequest.current) return;
+            setExchanges(data.queue || []);
+            const running = [...(data.queue || [])].filter((e) => e.state === "running").sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""))[0];
+            setLive((cur) => running ? (cur?.exchangeID === running.id ? cur : { since: running.started_at || running.enqueued_at, exchangeID: running.id, steps: {}, order: [] }) : null);
+        } catch (e) {
+            if (activeConversation.current === conversation) setStatus(String(e).replace(/^Error: /, ""));
+        }
+    }, [conversation]);
+    const loadReplies = useCallback(async () => {
+        if (activeConversation.current !== conversation) return;
+        const request = ++transcriptRequest.current;
+        try {
+            const data = await fetchReplies(conversation);
+            if (activeConversation.current !== conversation || request !== transcriptRequest.current) return;
+            setEnabled(data.enabled);
+            setEntries(data.replies || []);
+        } catch (e) {
+            if (activeConversation.current === conversation) setStatus(String(e));
+        }
+    }, [conversation]);
+
     useEffect(() => {
-        void (async () => {
-            try {
-                const data = await fetchReplies(conversation);
-                setEnabled(data.enabled);
-                setEntries(data.replies || []);
-            } catch (e) { setStatus(String(e)); }
-        })();
+        setEntries([]);
+        setExchanges([]);
+        void loadReplies();
+        void loadQueue();
         loadContext();
         loadConversations();
         setSelectedReply(null);
         setLive(null);
         setChild(null);
-    }, [conversation, loadContext, loadConversations]);
+    }, [conversation, loadContext, loadConversations, loadQueue, loadReplies]);
+
+    // Recover after reconnecting or missing an SSE event, including a turn
+    // completed while this tab was asleep. Fetches never submit work.
+    useEffect(() => {
+        if (connection === "live") { void loadQueue(); void loadReplies(); loadConversations(); }
+        const timer = window.setInterval(() => { void loadQueue(); void loadReplies(); loadConversations(); }, 10000);
+        return () => window.clearInterval(timer);
+    }, [connection, loadQueue, loadReplies, loadConversations]);
 
     // The context depends on the fleet: an agent coming up changes who can work here.
     useEffect(() => { loadContext(); }, [snap.at, loadContext]);
@@ -115,32 +152,27 @@ export function ConsolePage() {
         // arrival number of the last event handled, not an index.
         const fresh = consoleEvents.filter((ev) => (ev.n ?? 0) > seen.current);
         if (fresh.length) seen.current = fresh[fresh.length - 1].n ?? seen.current;
-        if (fresh.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.meta")) loadConversations();
+        if (fresh.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.meta" || ev.kind === "console.queue")) loadConversations();
         const mine = fresh.filter((ev) => ev.conversation === conversation);
         if (!mine.length) return;
         setLive((cur) => mine.reduce(applyLive, cur));
-        const lines = mine.filter((ev) => ev.kind.startsWith("console.") && ev.kind !== "console.progress");
+        if (mine.some((ev) => ev.kind === "console.queue")) void loadQueue();
+        if (mine.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply")) void loadReplies();
+        if (mine.some((ev) => ev.kind === "console.reply")) { loadContext(); refresh(); }
+        const lines = mine.filter((ev) => ["console.sent", "console.reply", "console.notice", "console.milestone"].includes(ev.kind));
         if (!lines.length) return;
         setEntries((list) => {
             const next = [...list];
             for (const ev of lines) {
                 const kind = ev.kind.slice("console.".length);
-                const r: Reply = { at: ev.at, conversation, kind, title: ev.title, text: kind === "sent" ? "" : ev.text || "", input: kind === "sent" ? ev.text : undefined };
-                if (!next.some((x) => x.at === r.at && x.kind === r.kind && (x.text === r.text || x.input === r.input))) next.push(r);
+                const r: Reply = { id: ev.reply_id, exchange_id: ev.exchange_id, at: ev.at, conversation, kind, title: ev.title, text: kind === "sent" ? "" : ev.text || "", input: kind === "sent" ? ev.text : undefined };
+                const index = next.findIndex((x) => r.id ? x.id === r.id : r.exchange_id ? x.exchange_id === r.exchange_id && x.kind === r.kind : x.at === r.at && x.kind === r.kind);
+                if (index < 0) next.push(r);
+                else next[index] = { ...next[index], ...r };
             }
             return next.slice(-200);
         });
-    }, [consoleEvents, conversation, loadConversations]);
-
-    // A reply carries its process; the stream's copy of the reply does
-    // not, so pull the stored one once the line has landed.
-    useEffect(() => {
-        if (live || !entries.length) return;
-        const last = entries[entries.length - 1];
-        if (last.kind !== "reply" || last.process) return;
-        void fetchReplies(conversation).then((data) => setEntries(data.replies || [])).catch(() => undefined);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [live]);
+    }, [consoleEvents, conversation, loadConversations, loadQueue, loadReplies, loadContext, refresh]);
 
     useEffect(() => { bottom.current?.scrollIntoView({ block: "end" }); }, [entries, live]);
 
@@ -165,49 +197,57 @@ export function ConsolePage() {
         setConversation(id);
         setEntries([]);
         setText("");
-        setQueue([]);
+        setExchanges([]);
         if (project) window.setTimeout(() => { void send(id, `/project use ${project}`).catch(() => undefined).finally(() => { loadContext(); loadConversations(); }); }, 50);
         window.setTimeout(() => box.current?.focus(), 0);
         return id;
     }
 
-    // When a turn ends, the next queued line goes out by itself.
-    useEffect(() => {
-        if (busy || live || !queue.length || !queueing) return;
-        const [next, ...rest] = queue;
-        setQueue(rest);
-        void submit(next.text);
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [busy, live]);
-
-    function steer(q: Queued) {
-        setQueue((list) => list.filter((x) => x.id !== q.id));
-        void submit(q.text.startsWith("!") ? q.text : "!" + q.text, true);
+    async function queueAction(action: () => Promise<unknown>) {
+        try {
+            await action();
+            setStatus("");
+        } catch (e) {
+            if (activeConversation.current === conversation) setStatus(String(e).replace(/^Error: /, ""));
+        } finally { await loadQueue(); }
     }
 
-    async function submit(line?: string, force?: boolean) {
-        const input = (line ?? text).trim();
-        if (!input) return;
-        if (busy && !force) {
-            if (!queueing) return;
-            setQueue((list) => [...list, { id: Date.now().toString(36), text: input }]);
+    function steer(q: Queued) { void queueAction(() => steerQueued(q.id)); }
+
+    async function sideChat(q: Queued) {
+        const id = "console:" + Date.now().toString(36);
+        await queueAction(async () => {
+            // Finish binding before submitting: a timer can race a slow hub.
+            if (context?.project?.id) await send(id, `/project use ${context.project.id}`);
+            await deleteQueued(q.id);
+            try { await enqueue(id, q.input, q.quotes); }
+            catch (e) { setText(q.input); setQuotes(q.quotes || []); setConversation(id); throw e; }
+            setConversation(id);
             setText("");
-            return;
-        }
-        setText("");
-        setBusy(true);
+        });
+    }
+
+    async function submit(line?: string) {
+        const input = (line ?? text).trim();
+        if (!input || submitting.current) return;
+        if (busy && !queueing) { setStatus("当前回合进行中，排队已关闭"); return; }
+        submitting.current = true;
+        setSending(true);
         setStatus("");
+        const carried = quotes;
         try {
-            const carried = quotes;
-            setQuotes([]);
-            const reply = await send(conversation, input, carried.length ? carried : undefined);
-            if (reply?.process) setEntries((list) => list.map((x) => (x.at === reply.at && x.kind === "reply" ? reply : x)));
+            await enqueue(conversation, input, carried.length ? carried : undefined);
+            if (activeConversation.current === conversation) {
+                if (line === undefined) setText((current) => current.trim() === input ? "" : current);
+                setQuotes((list) => list.filter((q) => !carried.includes(q)));
+                setSelectedReply(null);
+            }
         } catch (e) {
-            setStatus(String(e).replace(/^Error: /, ""));
+            if (activeConversation.current === conversation) setStatus(String(e).replace(/^Error: /, ""));
         } finally {
-            setBusy(false);
-            setLive(null);
-            setSelectedReply(null);
+            submitting.current = false;
+            setSending(false);
+            await loadQueue();
             refresh();
             loadContext();
             loadConversations();
@@ -306,7 +346,7 @@ export function ConsolePage() {
                                 </div>
                             )}
                             <div className="mx-auto flex max-w-4xl flex-col gap-5">
-                                {entries.map((r, i) => r.kind === "sent" ? <UserMessage key={i} text={r.input || ""} /> : <AssistantMessage key={i} r={r} selected={shownProcess === r} onSelect={(r.process || r.injected) ? () => { setSelectedReply(r); setTab("trace"); } : undefined}
+                                {entries.map((r, i) => r.kind === "sent" ? <UserMessage key={r.id || i} text={r.input || ""} /> : <AssistantMessage key={r.id || i} r={r} selected={shownProcess === r} onSelect={(r.process || r.injected) ? () => { setSelectedReply(r); setTab("trace"); } : undefined}
                                     onQuote={r.id ? () => setQuotes((list) => list.some((x) => x.reply_id === r.id) ? list : [...list, { conversation, reply_id: r.id!, title: current?.title || conversation, excerpt: (r.text || "").replace(/\s+/g, " ").slice(0, 80) }]) : undefined} />)}
                                 {live && <Working live={live} plans={runningPlans} compact />}
                                 <div ref={bottom} />
@@ -318,9 +358,9 @@ export function ConsolePage() {
                                 busy={busy} boxRef={box} onKey={onKey}
                                 quotes={quotes} onDropQuote={(x) => setQuotes((list) => list.filter((y) => y.reply_id !== x.reply_id))}
                                 queue={queue} queueing={queueing} onToggleQueueing={() => setQueueing(!queueing)}
-                                onSteer={steer} onDropQueued={(q) => setQueue((list) => list.filter((x) => x.id !== q.id))}
-                                onEditQueued={(q) => { setQueue((list) => list.filter((x) => x.id !== q.id)); setText(q.text); box.current?.focus(); }}
-                                onSideChat={(q) => { setQueue((list) => list.filter((x) => x.id !== q.id)); const id = newSession(context?.project?.id); window.setTimeout(() => { void send(id, q.text).catch(() => undefined); }, 400); }}
+                                onSteer={steer} onDropQueued={(q) => void queueAction(() => deleteQueued(q.id))}
+                                onEditQueued={async (q, input) => { try { await editQueued(q.id, input); } finally { await loadQueue(); } }}
+                                onSideChat={(q) => void sideChat(q)}
                                 suggestions={suggestions} pick={pick} onApply={apply}
                                 verbs={verbs} onVerb={(cmd) => { setText(cmd + " "); box.current?.focus(); }}
                                 projects={snap.projects} project={context?.project} onProject={(id) => void submit(`/project use ${id}`)}
