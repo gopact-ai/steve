@@ -34,4 +34,3 @@ require (
 	modernc.org/memory v1.11.0 // indirect
 )
 
-// Use the prompt usage extension until gopact-ai/acp#5 is merged and tagged.
