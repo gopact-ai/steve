@@ -489,6 +489,36 @@ func (s *Server) toolList() []map[string]any {
 	return toolList(s.delegator != nil, informing, fleeting, remembering)
 }
 
+// titles are the short labels the console shows for the platform's own
+// tools, kept beside the tools themselves: adding a tool means adding
+// its label here, and the page never names a tool on its own.
+var titles = map[string]string{
+	"steve_context": "看当前上下文", "steve_help": "查平台用法", "steve_projects": "查项目", "steve_fleet": "查名册",
+	"steve_delegate": "委派子任务", "steve_await": "等子任务",
+	"steve_remember": "记一条记忆", "steve_recall": "查记忆", "steve_forget": "忘一条记忆",
+	"feishu_send": "发进度消息", "feishu_update": "改进度消息", "feishu_recall": "撤回消息",
+	"steve_nodes": "查机器", "steve_node_add": "登记机器", "steve_node_refresh": "刷新机器", "steve_node_remove": "移除机器",
+}
+
+// ToolTitles is every tool the platform can offer, with its label: the
+// read model uses it to recognise the platform's own calls under any
+// harness's naming. A tool without a label is still recognised, by name.
+func ToolTitles() map[string]string {
+	out := map[string]string{}
+	for _, t := range toolList(true, true, true, true) {
+		name, _ := t["name"].(string)
+		if name == "" {
+			continue
+		}
+		if title, ok := titles[name]; ok {
+			out[name] = title
+		} else {
+			out[name] = strings.ReplaceAll(strings.TrimPrefix(name, "steve_"), "_", " ")
+		}
+	}
+	return out
+}
+
 func toolList(delegating, informing, fleeting, remembering bool) []map[string]any {
 	tools := []map[string]any{
 		{

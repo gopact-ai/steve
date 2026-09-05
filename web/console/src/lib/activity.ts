@@ -7,7 +7,9 @@ export type ActivityKind = "read" | "edit" | "run" | "delegate" | "platform" | "
 export function activityKind(t: ToolCall): ActivityKind {
     const name = (t.name || "").toLowerCase();
     if (/steve_delegate\b|^delegate\b/.test(name)) return "delegate";
-    if (/^(?:mcp[._]+steve[._]+|steve_)/.test(name)) return "platform";
+    // The read model marks the platform's own tools; the name test is
+    // only for replies recorded before it did.
+    if (t.kind === "platform" || /^(?:mcp[._]+steve[._]+|steve_)/.test(name)) return "platform";
     const kind = (t.kind || "").toLowerCase();
     const groups: Record<string, ActivityKind> = { read: "read", edit: "edit", write: "edit", delete: "edit", move: "edit", execute: "run", run: "run", delegate: "delegate", search: "search", fetch: "fetch" };
     if (groups[kind]) return groups[kind];
@@ -41,7 +43,11 @@ const phrases: Record<ActivityKind, (tools: ToolCall[]) => string> = {
     edit: (tools) => tools.length === 1 && fileName(tools[0]) ? `改了 ${fileName(tools[0])}` : `改了 ${tools.length} 个文件`,
     run: (tools) => `跑了 ${tools.length} 条命令`,
     delegate: (tools) => tools.length === 1 ? "委派了一个子任务" : `委派了 ${tools.length} 个子任务`,
-    platform: (tools) => tools.length === 1 ? "问了平台一次" : `问了平台 ${tools.length} 次`,
+    platform: (tools) => {
+        const labels = [...new Set(tools.map((t) => t.kind === "platform" ? t.detail : "").filter(Boolean))];
+        const what = labels.length ? `（${labels.slice(0, 3).join("、")}${labels.length > 3 ? "…" : ""}）` : "";
+        return (tools.length === 1 ? "问了平台一次" : `问了平台 ${tools.length} 次`) + what;
+    },
     search: (tools) => `搜索了 ${tools.length} 次`,
     fetch: (tools) => `抓取了 ${tools.length} 次`,
     other: (tools) => `调用了 ${tools.length} 次工具`,

@@ -202,8 +202,11 @@ function Timeline({ p, live, omitText }: { p: Progress; live?: boolean; omitText
 }
 
 // ProcessBody is a reply's trace: each step's, then the turn's own.
-export function ProcessBody({ process }: { process: Process }) {
+// omitFinalText leaves the turn's last narration out: in the transcript
+// it is the reply itself, printed right under the fold.
+export function ProcessBody({ process, omitFinalText }: { process: Process; omitFinalText?: boolean }) {
     const steps: StepProcess[] = process.steps || [];
+    const finalText = omitFinalText ? (process.timeline || []).map((s) => s.kind).lastIndexOf("text") : -1;
     return (
         <div className="flex flex-col gap-3">
             {steps.map((s) => s.kind === "delegate" ? <DelegationCard key={s.id} id={s.id} info={s} progress={s} /> : (
@@ -212,7 +215,7 @@ export function ProcessBody({ process }: { process: Process }) {
                     <Trace p={{ reasoning: s.reasoning, tools: s.tools, timeline: s.timeline }} />
                 </div>
             ))}
-            {(process.reasoning || process.tools?.length || process.timeline?.length) ? <Trace p={process} /> : null}
+            {(process.reasoning || process.tools?.length || process.timeline?.length) ? <Trace p={process} omitText={finalText >= 0 ? finalText : undefined} /> : null}
         </div>
     );
 }
