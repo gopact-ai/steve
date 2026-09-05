@@ -899,6 +899,13 @@ func serve(args []string) error {
 		})
 	})
 	coordinator.SetResumer(func(r turn.TaskResume) {
+		if r.ChatID == console.ChatID || console.IsConsole(r.ConversationID) {
+			if err := cons.Resume(context.Background(), r.ConversationID, r.TaskID, r.Member,
+				catalogText.T(i18n.TaskResumeNotice, r.TaskID), catalogText.T(i18n.TaskResumeManual, r.Goal), coordinator.ReviveSession); err != nil {
+				log.Printf("console: resume task #%s: %v", r.TaskID, err)
+			}
+			return
+		}
 		go gw.ResumeTask(gateway.Revival{
 			TaskID: r.TaskID, Goal: r.Goal, Member: r.Member,
 			ConversationID: r.ConversationID, ChatID: r.ChatID,
@@ -912,6 +919,7 @@ func serve(args []string) error {
 	// the resumed turn renders a card like any other turn.
 	var revivals []gateway.Revival
 	var dropped []gateway.Notice
+	var pageResumes []task.Task
 	coordinator.ResumePlans(context.Background())
 	for _, interrupted := range tasks.Interrupted() {
 		if _, err := tasks.Finish(interrupted.ID, task.OutcomeInterrupted, task.Tokens{}, 0); err != nil {
@@ -924,13 +932,18 @@ func serve(args []string) error {
 			log.Printf("steve: task #%s is paused; leaving it set aside", interrupted.ID)
 			continue
 		}
-		if console.IsConsole(interrupted.Channel) {
-			// The console records the interrupted exchange and resumes its
-			// durable FIFO. A Feishu revival would bypass that queue and use
-			// a web anchor as a chat message; only clear the session taint.
-			if err := coordinator.ReviveSession(interrupted.Channel, interrupted.Member); err != nil {
-				return fmt.Errorf("revive console session for task #%s: %w", interrupted.ID, err)
+		if console.IsConsole(interrupted.Channel) || interrupted.ChatID == console.ChatID {
+			// A task the page was running continues on the page, once its
+			// queue is loaded: the gateway cannot reply at a web anchor,
+			// and a follow-up that waited must not run ahead of the
+			// continuation.
+			if time.Since(interrupted.UpdatedAt) > staleTask {
+				log.Printf("steve: task #%s interrupted long ago; leaving it stopped", interrupted.ID)
+				cons.Notice(turn.TaskNotice{TaskID: interrupted.ID, ChatID: interrupted.ChatID, MessageID: interrupted.AnchorMessage, Requester: interrupted.Requester,
+					Text: catalogText.T(i18n.TaskDropped, interrupted.ID, time.Since(interrupted.UpdatedAt).Round(time.Hour))})
+				continue
 			}
+			pageResumes = append(pageResumes, interrupted)
 			continue
 		}
 		if interrupted.AnchorMessage == "" {
@@ -969,6 +982,15 @@ func serve(args []string) error {
 
 	// Restored queues may run immediately, so wire their dependencies first.
 	if err := cons.Persist(book.Document("console")); err != nil {
+		return err
+	}
+	for _, t := range pageResumes {
+		if err := cons.Resume(context.Background(), t.Channel, t.ID, t.Member,
+			catalogText.T(i18n.ResumeNotice, t.ID), catalogText.T(i18n.ResumePrompt, t.Goal), coordinator.ReviveSession); err != nil {
+			log.Printf("console: resume task #%s: %v", t.ID, err)
+		}
+	}
+	if err := cons.Drain(); err != nil {
 		return err
 	}
 	go func() {

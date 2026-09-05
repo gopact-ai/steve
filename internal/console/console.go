@@ -189,8 +189,9 @@ func (s *Service) SendCommandWith(ctx context.Context, conversation, input, comm
 // SetInspector wires where a reply's changes come from.
 func (s *Service) SetInspector(i Inspector) { s.inspector = i }
 
-// Persist loads the durable transcript and starts any waiting exchanges.
-// Call it after wiring the handler, inspector and other turn dependencies.
+// Persist loads the durable transcript and records what a restart cut
+// short; Drain then starts what waits. Call both after wiring the
+// handler, inspector and other turn dependencies.
 func (s *Service) Persist(doc ledger.Doc) error {
 	raw, ok, err := doc.Load()
 	if err != nil {
@@ -531,7 +532,7 @@ func (s *Service) sendCommand(ctx context.Context, conversation, input, commandI
 			s.mu.Unlock()
 		}()
 	}
-	exchange, _, err := s.enqueue(ctx, conversation, input, quotes)
+	exchange, _, err := s.enqueue(ctx, conversation, input, "", quotes, false)
 	if err != nil {
 		return readmodel.Reply{}, err
 	}
@@ -551,8 +552,12 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply rea
 	if err != nil {
 		return readmodel.Reply{Text: err.Error(), Error: err.Error()}, err
 	}
-	prompt := block + input
-	if prefix, rest := interruptInput(input); prefix != "" {
+	text := input
+	if exchange.Prompt != "" {
+		text = exchange.Prompt
+	}
+	prompt := block + text
+	if prefix, rest := interruptInput(text); prefix != "" {
 		// Quotes must not hide the interrupt prefix from the coordinator.
 		prompt = prefix + block + rest
 	}
@@ -768,4 +773,23 @@ func (s *Service) publishReply(r readmodel.Reply) {
 		}
 		s.model.Publish(readmodel.Event{At: r.At, Kind: "console." + r.Kind, Conversation: r.Conversation, Text: text, Title: r.Title, ReplyID: r.ID, ExchangeID: r.ExchangeID})
 	}
+}
+
+// Resume picks a console task back up — after a restart that cut its
+// turn short, or on /tasks resume. Chat does this by replying at the
+// task's anchor; the page has no anchor to reply to, so the notice is a
+// line of its own and the continuation is an exchange put ahead of
+// whatever else waits, addressed to the task's member, answered like any
+// other line.
+func (s *Service) Resume(ctx context.Context, conversation, taskID, member, notice, prompt string, revive func(conversationID, member string) error) error {
+	conversation = conversationID(conversation)
+	if member == "" {
+		return fmt.Errorf("task #%s not resumable: no member", taskID)
+	}
+	if err := revive(conversation, member); err != nil {
+		return fmt.Errorf("revive session for task #%s: %w", taskID, err)
+	}
+	log.Printf("console: resuming task #%s conversation=%s member=%s", taskID, conversation, member)
+	_, _, err := s.enqueue(ctx, conversation, notice, "@"+member+" "+prompt, nil, true)
+	return err
 }

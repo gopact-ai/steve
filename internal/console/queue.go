@@ -60,11 +60,14 @@ func copyExchange(e Exchange) Exchange {
 // Enqueue returns as soon as the submission is durable. The first line in
 // an idle conversation starts here; no browser is needed to drain the rest.
 func (s *Service) Enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef) (Exchange, error) {
-	_, exchange, err := s.enqueue(ctx, conversation, input, quotes)
+	_, exchange, err := s.enqueue(ctx, conversation, input, "", quotes, false)
 	return exchange, err
 }
 
-func (s *Service) enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef) (*queuedExchange, Exchange, error) {
+// enqueue accepts one line. prompt, when set, is what the agent gets
+// instead of the input; front puts the line ahead of everything still
+// waiting, behind what already ran or runs.
+func (s *Service) enqueue(ctx context.Context, conversation, input, prompt string, quotes []QuoteRef, front bool) (*queuedExchange, Exchange, error) {
 	if s.owner == "" {
 		return nil, Exchange{}, errors.New("the console needs feishu.owner_open_id: it acts as the owner")
 	}
@@ -78,11 +81,24 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	e := &queuedExchange{
-		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input,
+		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt,
 			Quotes: append([]QuoteRef(nil), quotes...), State: "queued", EnqueuedAt: time.Now().UTC()},
 		ctx: context.WithoutCancel(ctx), done: make(chan struct{}),
 	}
-	s.exchanges[conversation] = append(s.exchanges[conversation], e)
+	list := s.exchanges[conversation]
+	at := len(list)
+	if front {
+		for i, other := range list {
+			if other.State == "queued" {
+				at = i
+				break
+			}
+		}
+	}
+	list = append(list, nil)
+	copy(list[at+1:], list[at:])
+	list[at] = e
+	s.exchanges[conversation] = list
 	var err error
 	if immediate(input) {
 		err = s.startLocked(e)
@@ -95,8 +111,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		}
 	}
 	if err != nil {
-		list := s.exchanges[conversation]
-		s.exchanges[conversation] = list[:len(list)-1]
+		s.exchanges[conversation] = append(list[:at:at], list[at+1:]...)
 		return nil, Exchange{}, err
 	}
 	return e, copyExchange(e.Exchange), nil
@@ -317,9 +332,14 @@ func (s *Service) restoreQueueLocked() error {
 		}
 		s.trimExchangesLocked(conversation)
 	}
-	if err := s.save(); err != nil {
-		return err
-	}
+	return s.save()
+}
+
+// Drain starts every conversation's next waiting exchange. It is its own
+// step so that what a restart must continue can be put in line first.
+func (s *Service) Drain() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	for conversation := range s.exchanges {
 		if err := s.startNextLocked(conversation); err != nil {
 			return err

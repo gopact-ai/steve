@@ -278,3 +278,53 @@ func TestConsoleTurnOutlivesTheRequest(t *testing.T) {
 		t.Fatalf("reply = %q", reply.Text)
 	}
 }
+
+func TestConsoleResumesATaskAheadOfWhatWaits(t *testing.T) {
+	h := &queueHandler{started: make(chan *queueCall, 8)}
+	s := New(h, "ou_owner", readmodel.New(readmodel.Sources{}))
+	first := enqueueForTest(t, s, "main", "first")
+	running := nextCall(t, h)
+	later := enqueueForTest(t, s, "main", "later")
+	var revived []string
+	revive := func(conversation, member string) error {
+		revived = append(revived, conversation+"/"+member)
+		return nil
+	}
+	if err := s.Resume(context.Background(), "main", "53", "claude", "⟳ restart #53", "continue: ship it", revive); err != nil {
+		t.Fatal(err)
+	}
+	if len(revived) != 1 || revived[0] != "console:main/claude" {
+		t.Fatalf("revived = %v", revived)
+	}
+	// Behind the line that runs, ahead of the one that waits; the page
+	// shows the notice, the agent gets the continuation.
+	list := s.Queue("main")
+	if len(list) != 3 || list[0].ID != first.ID || list[1].Input != "⟳ restart #53" || list[1].Prompt != "@claude continue: ship it" || list[2].ID != later.ID {
+		t.Fatalf("queue = %+v", list)
+	}
+	running.finish <- nil
+	call := nextCall(t, h)
+	if call.req.Input != "@claude continue: ship it" || call.req.ConversationID != "console:main" {
+		t.Fatalf("continuation = %+v", call.req)
+	}
+	call.finish <- nil
+	next := nextCall(t, h)
+	if next.req.Input != "later" {
+		t.Fatalf("after the continuation came %q", next.req.Input)
+	}
+	next.finish <- nil
+	awaitExchange(t, s, later.ID)
+	var sent []string
+	for _, r := range s.Replies("main") {
+		if r.Kind == "sent" {
+			sent = append(sent, r.Input)
+		}
+	}
+	if strings.Join(sent, "|") != "first|⟳ restart #53|later" {
+		t.Fatalf("sent lines = %v", sent)
+	}
+	// Without a member there is nobody to continue; the session is left alone.
+	if err := s.Resume(context.Background(), "main", "54", "", "n", "p", revive); err == nil || len(revived) != 1 {
+		t.Fatalf("err = %v revived = %v", err, revived)
+	}
+}
