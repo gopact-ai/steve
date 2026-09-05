@@ -724,6 +724,9 @@ func (s *Service) Replies(conversation string) []readmodel.Reply {
 // plan's outcome, an approved disclosure — and shows it on the page.
 func (s *Service) Notice(n turn.TaskNotice) {
 	conversation := Prefix + "main"
+	if IsConsole(n.Conversation) {
+		conversation = n.Conversation
+	}
 	s.record(readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Title: "task #" + n.TaskID, Text: n.Text, Kind: "notice"})
 }
 

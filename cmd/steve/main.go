@@ -939,7 +939,7 @@ func serve(args []string) error {
 			// continuation.
 			if time.Since(interrupted.UpdatedAt) > staleTask {
 				log.Printf("steve: task #%s interrupted long ago; leaving it stopped", interrupted.ID)
-				cons.Notice(turn.TaskNotice{TaskID: interrupted.ID, ChatID: interrupted.ChatID, MessageID: interrupted.AnchorMessage, Requester: interrupted.Requester,
+				cons.Notice(turn.TaskNotice{TaskID: interrupted.ID, ChatID: interrupted.ChatID, MessageID: interrupted.AnchorMessage, Requester: interrupted.Requester, Conversation: interrupted.Channel,
 					Text: catalogText.T(i18n.TaskDropped, interrupted.ID, time.Since(interrupted.UpdatedAt).Round(time.Hour))})
 				continue
 			}

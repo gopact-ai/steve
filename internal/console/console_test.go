@@ -328,3 +328,15 @@ func TestConsoleResumesATaskAheadOfWhatWaits(t *testing.T) {
 		t.Fatalf("err = %v revived = %v", err, revived)
 	}
 }
+
+func TestNoticeLandsInTheTasksOwnThread(t *testing.T) {
+	s := New(&echo{}, "ou_owner", readmodel.New(readmodel.Sources{}))
+	s.Notice(turn.TaskNotice{TaskID: "56", ChatID: ChatID, Conversation: "console:e2e-fleet-1", Text: "done"})
+	s.Notice(turn.TaskNotice{TaskID: "57", ChatID: ChatID, Text: "no thread known"})
+	if got := s.Replies("e2e-fleet-1"); len(got) != 1 || got[0].Kind != "notice" || got[0].Title != "task #56" {
+		t.Fatalf("thread of the task = %+v", got)
+	}
+	if got := s.Replies("main"); len(got) != 1 || got[0].Title != "task #57" {
+		t.Fatalf("main = %+v", got)
+	}
+}
