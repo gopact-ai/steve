@@ -188,3 +188,41 @@ func ids(tasks []Task) []string {
 	}
 	return out
 }
+
+// A parent without a ceiling — the default since budgets became opt-in —
+// delegates freely: its children run as long as it does. Zero minus what
+// it spent must never read as "nothing left".
+func TestUnlimitedParentDelegatesWithoutACeiling(t *testing.T) {
+	s, err := Open(filepath.Join(t.TempDir(), "tasks.json")) // the defaults: no ceiling
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := s.Create(Task{Goal: "root", Channel: "c", Member: "a"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if root.Budget.MaxTurns != 0 || root.Budget.MaxElapsed != 0 {
+		t.Fatalf("root budget = %+v, want none", root.Budget)
+	}
+	if _, err := s.Begin(root.ID, "a", "hub", ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Finish(root.ID, OutcomeOK, Tokens{}, 60); err != nil {
+		t.Fatal(err)
+	}
+	child, err := s.Spawn(root.ID, Task{Goal: "child", Member: "b"})
+	if err != nil {
+		t.Fatalf("an unlimited parent could not delegate: %v", err)
+	}
+	if child.Budget.MaxTurns != 0 || child.Budget.MaxElapsed != 0 {
+		t.Fatalf("child budget = %+v, want none, like the parent's", child.Budget)
+	}
+	// A caller may still ration a child.
+	rationed, err := s.Spawn(root.ID, Task{Goal: "small", Member: "c", Budget: Budget{MaxTurns: 2, MaxElapsed: time.Minute}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rationed.Budget.MaxTurns != 2 || rationed.Budget.MaxElapsed != time.Minute {
+		t.Fatalf("rationed child budget = %+v", rationed.Budget)
+	}
+}
