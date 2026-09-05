@@ -64,12 +64,24 @@ type Step struct {
 }
 
 type Usage struct {
+	TotalTokens      uint64
 	InputTokens      uint64
 	OutputTokens     uint64
 	CacheReadTokens  uint64
 	CacheWriteTokens uint64
-	ContextTokens    uint64
-	ContextWindow    uint64
+	// ThoughtTokens is kept separately because agents can already include
+	// reasoning in OutputTokens; adding it would double-count that spend.
+	ThoughtTokens uint64
+	ContextTokens uint64
+	ContextWindow uint64
+	// Cost is the latest session total, not this turn's incremental spend.
+	// Keeping its currency avoids assuming every provider bills in USD.
+	Cost *Cost
+}
+
+type Cost struct {
+	Amount   float64
+	Currency string
 }
 
 type Field struct {

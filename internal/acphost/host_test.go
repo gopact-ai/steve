@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -101,6 +102,73 @@ func TestPromptRoundTrip(t *testing.T) {
 	}
 	if out != "echo: hello world" {
 		t.Fatalf("unexpected output: %q", out)
+	}
+}
+
+func TestPromptResponseUsageReachesProgress(t *testing.T) {
+	h := newTestHost(t, "deny")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	sid, generation, err := h.OpenSession(ctx, "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := view.Usage{
+		TotalTokens: 300, InputTokens: 100, OutputTokens: 110, ThoughtTokens: 30,
+		CacheReadTokens: 40, CacheWriteTokens: 50, ContextTokens: 1600, ContextWindow: 128000,
+		Cost: &view.Cost{Amount: 0.125, Currency: "USD"},
+	}
+	for _, prompt := range []string{"reportusage", "reportusage cancelme", "legacy response"} {
+		t.Run(prompt, func(t *testing.T) {
+			var mu sync.Mutex
+			var got view.Progress
+			out, _, err := h.PromptTurn(ctx, sid, generation, prompt, nil, nil, nil, func(p view.Progress) {
+				mu.Lock()
+				got = p
+				mu.Unlock()
+			})
+			if strings.Contains(prompt, "cancelme") {
+				if !errors.Is(err, ErrTurnCanceled) {
+					t.Fatalf("PromptTurn error = %v, want cancelled turn", err)
+				}
+			} else if err != nil {
+				t.Fatal(err)
+			}
+			mu.Lock()
+			defer mu.Unlock()
+			if got.Answer != out || out != "echo: "+prompt {
+				t.Fatalf("final progress answer = %q, returned %q", got.Answer, out)
+			}
+			expected := want
+			if prompt == "legacy response" {
+				expected = view.Usage{}
+			}
+			if !reflect.DeepEqual(got.Usage, expected) {
+				t.Fatalf("final progress usage = %#v, want %#v", got.Usage, expected)
+			}
+		})
+	}
+}
+
+func TestCollectorKeepsSessionCostWhenOmitted(t *testing.T) {
+	var got view.Progress
+	col := &collector{progress: func(p view.Progress) { got = p }}
+	update := acp.UsageUpdateSessionUpdate(100, 1000)
+	update.Cost = &acp.Cost{Amount: 0.5, Currency: "EUR"}
+	col.handle(update)
+	// An omitted cost is not a reported zero, and later provider mutations
+	// must not change a snapshot that has already reached a consumer.
+	update.Cost.Amount = 99
+	col.handle(acp.UsageUpdateSessionUpdate(200, 1000))
+	col.promptUsage(&acp.Usage{TotalTokens: 3, InputTokens: 1, OutputTokens: 2})
+	if got.Usage.Cost == nil || *got.Usage.Cost != (view.Cost{Amount: 0.5, Currency: "EUR"}) {
+		t.Fatalf("session cost = %#v", got.Usage.Cost)
+	}
+	if got.Usage.ContextTokens != 200 || got.Usage.ContextWindow != 1000 || got.Usage.InputTokens != 1 || got.Usage.OutputTokens != 2 {
+		t.Fatalf("combined usage = %#v", got.Usage)
+	}
+	if got.Usage.ThoughtTokens != 0 || got.Usage.CacheReadTokens != 0 || got.Usage.CacheWriteTokens != 0 {
+		t.Fatalf("unreported optional counters = %#v", got.Usage)
 	}
 }
 
