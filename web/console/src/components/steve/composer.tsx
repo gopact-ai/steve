@@ -134,7 +134,7 @@ export function Composer(p: ComposerProps) {
                         </Dropdown.Popover>
                     </Dropdown.Root>
                     <span className="flex-1" />
-                    <button type="button" onClick={p.onToggleQueueing} aria-pressed={p.queueing !== false} className={`${chip} text-quaternary`} title={p.queueing === false ? "打开排队" : "关闭排队"}>
+                    <button type="button" onClick={p.onToggleQueueing} aria-pressed={p.queueing !== false} className={`${chip} shrink-0 whitespace-nowrap text-quaternary`} title={p.queueing === false ? "打开排队" : "关闭排队"}>
                         {p.queueing === false ? "排队已关闭" : "排队已打开"}
                     </button>
                     <Dropdown.Root>
