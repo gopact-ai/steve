@@ -69,6 +69,11 @@ func (s *Store) Spawn(parentID string, child Task) (Task, error) {
 	if child.Requester == "" {
 		child.Requester = parent.Requester
 	}
+	// A child answers where its parent does: the delivery goes back into
+	// the conversation that asked, whichever channel that is.
+	if child.Anchor.Zero() {
+		child.Anchor = parent.Anchor
+	}
 	// The child's ceiling is what the parent has left, never more. A
 	// smaller explicit ceiling is allowed: a caller may ration. A parent
 	// without a ceiling (zero: unlimited) passes none on — its children

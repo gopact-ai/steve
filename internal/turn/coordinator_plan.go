@@ -126,14 +126,14 @@ func (c *Coordinator) openPlanTask(req Request, goal, projectID string) (task.Ta
 		return task.Task{}, fmt.Errorf("%s", c.text.T(i18n.PlanDisabled))
 	}
 	created, err := c.tasks.Create(task.Task{
-		Goal: goal, Requester: req.SenderOpenID, Channel: req.ConversationID,
+		Goal: goal, Anchor: req.Anchor, Requester: req.SenderOpenID, Channel: req.ConversationID,
 		Node: c.node, Origin: "plan", ProjectID: projectID,
 	})
 	if err != nil {
 		return task.Task{}, fmt.Errorf("%s", c.text.T(i18n.PlanFailed, err))
 	}
 	if req.MessageID != "" {
-		if err := c.tasks.SetAnchor(created.ID, req.ChatID, req.MessageID, string(req.ChatType), req.CardID); err != nil {
+		if err := c.tasks.SetAnchor(created.ID, req.Anchor, req.ChatID, string(req.ChatType), req.CardID); err != nil {
 			log.Printf("turn: anchor plan task %s: %v", created.ID, err)
 		}
 	}

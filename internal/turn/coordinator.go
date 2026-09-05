@@ -42,9 +42,14 @@ import (
 type Request struct {
 	ConversationID string
 	Input          string
-	SenderOpenID   string
-	ChatType       protocol.ChatType
-	Mentioned      bool
+	// Actor and Anchor are the channel-neutral form of who is speaking and
+	// where the answer goes. A channel fills them; the fields below them
+	// are the Feishu-shaped originals, kept until every reader has moved.
+	Actor        protocol.Actor
+	Anchor       protocol.Anchor
+	SenderOpenID string
+	ChatType     protocol.ChatType
+	Mentioned    bool
 	// MessageID and ChatID anchor the turn in the channel, so an
 	// interrupted task can be resumed and delivered after a restart.
 	MessageID string
@@ -281,6 +286,38 @@ func injectionMode(chatType protocol.ChatType, sender, owner string) home.Mode {
 	return home.ModeGuest
 }
 
+// normalize fills the neutral identity and anchor from whatever the caller
+// supplied. A channel that sets them wins; one that still speaks in Feishu
+// terms is translated here, in the one place that knows both vocabularies,
+// rather than in every reader.
+func (c *Coordinator) normalize(req Request) Request {
+	if req.Actor.ID == "" {
+		req.Actor.ID = req.SenderOpenID
+	}
+	if !req.Actor.Owner {
+		req.Actor.Owner = c.ownerOpenID != "" && req.Actor.ID == c.ownerOpenID
+	}
+	if !req.Actor.Direct {
+		req.Actor.Direct = req.ChatType == protocol.ChatP2P
+	}
+	if req.Anchor.Conversation == "" {
+		req.Anchor.Conversation = req.ConversationID
+	}
+	if req.Anchor.Message == "" {
+		req.Anchor.Message = req.MessageID
+	}
+	if req.Anchor.Actor == "" {
+		req.Anchor.Actor = req.Actor.ID
+	}
+	if req.Anchor.Channel == "" {
+		req.Anchor.Channel = protocol.ChannelFeishu
+		if req.ChatID == protocol.LegacyConsoleChat {
+			req.Anchor.Channel = protocol.ChannelConsole
+		}
+	}
+	return req
+}
+
 func (c *Coordinator) listenPrefix(req Request) string {
 	if req.ChatType != protocol.ChatGroup || req.Mentioned {
 		return ""
@@ -296,6 +333,7 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 	// Every arriving message is evidence that someone is present. The
 	// offline reminder reads exactly this: nothing arrived while the turn
 	// ran, so the person who asked is no longer watching.
+	req = c.normalize(req)
 	c.noteActivity(req.ConversationID)
 	c.rememberMode(req)
 	selected, prompt, switchOnly, err := c.selectAgent(req.ConversationID, req.Input)

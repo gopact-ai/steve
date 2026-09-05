@@ -10,6 +10,11 @@ const (
 	ChannelFeishu  = "feishu"
 )
 
+// LegacyConsoleChat is the chat id the console put on requests and records
+// before channels had names of their own. It is here to recognise what was
+// written then, not to be written now.
+const LegacyConsoleChat = "console"
+
 // Actor is who is speaking, in terms the hub understands. A channel
 // translates its own notion of a person — a Feishu open_id, a console
 // session — into this. Nothing above the channel knows what an open_id is.

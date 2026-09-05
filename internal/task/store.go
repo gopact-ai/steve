@@ -106,17 +106,13 @@ func migrateAnchor(t *Task) {
 		Message:      t.AnchorMessage,
 		Actor:        t.Requester,
 	}
-	if t.ChatID == console {
+	if t.ChatID == protocol.LegacyConsoleChat {
 		t.Anchor.Channel = protocol.ChannelConsole
 	}
 	if t.Anchor.Conversation == "" {
 		t.Anchor.Conversation = t.ChatID
 	}
 }
-
-// console is the chat id the console used before it had a channel name of
-// its own. It is here to read old records, not to be written.
-const console = "console"
 
 // Create assigns the id and returns the stored copy. Goal is trimmed to keep
 // listings readable; the full prompt lives in the archive, not here.
@@ -274,9 +270,15 @@ func (s *Store) SetBudget(maxTurns int, maxElapsed time.Duration) {
 	}
 }
 
-// SetAnchor records where the task's latest turn is anchored in the chat,
-// so a restarted gateway can deliver into the right conversation.
-func (s *Store) SetAnchor(id, chatID, messageID, chatType, cardID string) error {
+// SetAnchor records where the task's latest turn is anchored, so a restarted
+// hub can deliver into the right conversation. The neutral anchor is what
+// delivery will read; chatID and chatType are the Feishu-shaped originals,
+// still written until every reader has moved off them.
+func (s *Store) SetAnchor(id string, anchor protocol.Anchor, chatID, chatType, cardID string) error {
+	return s.setAnchor(id, anchor, chatID, anchor.Message, chatType, cardID)
+}
+
+func (s *Store) setAnchor(id string, anchor protocol.Anchor, chatID, messageID, chatType, cardID string) error {
 	if messageID == "" {
 		return nil
 	}
@@ -287,6 +289,7 @@ func (s *Store) SetAnchor(id, chatID, messageID, chatType, cardID string) error 
 	if !ok {
 		return fmt.Errorf("task %s not found", id)
 	}
+	stored.Anchor = anchor
 	stored.ChatID = chatID
 	stored.AnchorMessage = messageID
 	stored.ChatType = chatType

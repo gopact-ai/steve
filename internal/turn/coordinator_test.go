@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -700,5 +701,47 @@ func TestAgentRunsOnItsConfiguredNode(t *testing.T) {
 	}
 	if got := manager.placed[1]; got.Node != "" {
 		t.Fatalf("local placement = %+v, want no node", got)
+	}
+}
+
+// A channel that still speaks in Feishu terms is translated once, at the
+// door, rather than in every reader. A channel that fills the neutral
+// fields itself is left alone.
+func TestNormalizeTranslatesLegacyIdentityOnce(t *testing.T) {
+	c := &Coordinator{ownerOpenID: "ou_owner"}
+	got := c.normalize(Request{
+		ConversationID: "oc_thread", SenderOpenID: "ou_owner",
+		ChatType: protocol.ChatP2P, MessageID: "om_1", ChatID: "oc_chat",
+	})
+	if !got.Actor.Owner || !got.Actor.Direct || got.Actor.ID != "ou_owner" {
+		t.Fatalf("actor = %#v", got.Actor)
+	}
+	want := protocol.Anchor{
+		Channel: protocol.ChannelFeishu, Conversation: "oc_thread",
+		Message: "om_1", Actor: "ou_owner",
+	}
+	if got.Anchor != want {
+		t.Fatalf("anchor = %#v, want %#v", got.Anchor, want)
+	}
+
+	guest := c.normalize(Request{
+		ConversationID: "oc_group", SenderOpenID: "ou_other",
+		ChatType: protocol.ChatGroup, MessageID: "om_2", ChatID: "oc_group",
+	})
+	if guest.Actor.Owner || guest.Actor.Direct {
+		t.Fatalf("a group message from someone else came back as the owner alone: %#v", guest.Actor)
+	}
+
+	console := c.normalize(Request{
+		ConversationID: "c-7", ChatID: protocol.LegacyConsoleChat, MessageID: "anchor:9",
+	})
+	if console.Anchor.Channel != protocol.ChannelConsole {
+		t.Fatalf("the console came back as %q", console.Anchor.Channel)
+	}
+
+	own := protocol.Anchor{Channel: "elsewhere", Conversation: "x", Message: "m", Actor: "a"}
+	kept := c.normalize(Request{ConversationID: "ignored", MessageID: "ignored", Anchor: own})
+	if kept.Anchor != own {
+		t.Fatalf("a channel's own anchor was overwritten: %#v", kept.Anchor)
 	}
 }
