@@ -167,10 +167,16 @@ function Activity({ tools }: { tools: ToolCall[] }) {
     );
 }
 
+// A thought summary is one line of the agent's own markdown — codex
+// writes them as **bold headings** — so it is rendered, not shown raw,
+// and trimmed: a chunk that starts with blank lines must not paint them.
 function ThoughtSpan({ text, live }: { text: string; live?: boolean }) {
-    const { followTail: _, ...scroll } = useFollowTail(text, live);
-    return <div {...scroll} data-span-kind="thought" tabIndex={0} aria-label="思考摘要" title={text}
-        className="max-h-5 overflow-y-auto whitespace-pre-wrap break-words text-xs leading-5 text-tertiary [overflow-anchor:none]">{text}</div>;
+    const shown = text.trim();
+    const { followTail: _, ...scroll } = useFollowTail(shown, live);
+    return <div {...scroll} data-span-kind="thought" tabIndex={0} aria-label="思考摘要" title={shown}
+        className="max-h-5 overflow-y-auto break-words text-xs leading-5 text-tertiary [overflow-anchor:none] [&_p]:m-0 [&_p]:leading-5">
+        <Md size="xs" text={shown} className="text-tertiary" />
+    </div>;
 }
 
 function Timeline({ p, live, omitText }: { p: Progress; live?: boolean; omitText?: number }) {
@@ -185,7 +191,7 @@ function Timeline({ p, live, omitText }: { p: Progress; live?: boolean; omitText
                 if (previousKind === "tool" && prev?.tools) prev.tools.push(tool);
                 else entries.push({ index, span, tools: [tool] });
             }
-        } else if (span.text && index !== omitText) entries.push({ index, span });
+        } else if (span.text?.trim() && index !== omitText) entries.push({ index, span: { ...span, text: span.text.trim() } });
         previousKind = span.kind;
     }
     return <div data-timeline className="flex min-w-0 flex-col gap-2">{entries.map(({ index, span, tools }) => tools
