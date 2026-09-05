@@ -10,8 +10,8 @@ github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3 h1:LMLX+LgTNWpfvCBdFe
 github.com/google/pprof v0.0.0-20260802141513-ef3492d7dac3/go.mod h1:jl5iWTm0/hd5PjEYEOuwAJ57L/CibdZfrqZ5XA5GrCk=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
-github.com/gopact-ai/acp v0.1.0 h1:72+Y8OsK8RoCnYhrvF4cGNpBHlJBgafD6a7x6qVTLNY=
-github.com/gopact-ai/acp v0.1.0/go.mod h1:wdFge2qtd1KtnEDMfwTtoldGWWoXLphOzxotahT/fhU=
+github.com/gopact-ai/acp v0.2.0 h1:9209AIQgiaXwNCucTEO02iyb1DYn2x9y2pEw2nPTRjM=
+github.com/gopact-ai/acp v0.2.0/go.mod h1:wdFge2qtd1KtnEDMfwTtoldGWWoXLphOzxotahT/fhU=
 github.com/gopact-ai/gopact v0.3.2 h1:iw715IkLuH099ZnnuM9asxYOX2SIIXIRW/2uhpYBLAg=
 github.com/gopact-ai/gopact v0.3.2/go.mod h1:tYghuTjvOSdDB/eM94nD5sJ9ctDMtI+/xZvulO5EszE=
 github.com/gopact-ai/gopact-ext/stores v0.2.1-0.20260901080022-8fc158112202 h1:G/KPLM4u661xW8qQGcMw+OFOafGIwnPzqbvfYOBqoXE=

@@ -3,7 +3,7 @@ module github.com/gopact-ai/steve
 go 1.27
 
 require (
-	github.com/gopact-ai/acp v0.1.0
+	github.com/gopact-ai/acp v0.2.0
 	github.com/gopact-ai/gopact v0.3.2
 	github.com/gopact-ai/gopact-ext/stores v0.2.1-0.20260901080022-8fc158112202
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.10
@@ -35,4 +35,3 @@ require (
 )
 
 // Use the prompt usage extension until gopact-ai/acp#5 is merged and tagged.
-replace github.com/gopact-ai/acp => /data00/home/pengxiang.lpx/dev/github/acp
