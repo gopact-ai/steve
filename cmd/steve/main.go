@@ -815,6 +815,7 @@ func serve(args []string) error {
 		}
 		coordinator.SetAgentGate(gate)
 		coordinator.SetNodeEndpoints(nodes)
+		coordinator.RegisterIdle = nodes.RegisterIdle
 		// Delegation is the one way an agent reaches another: a child task
 		// in the tree, funded from the caller's remainder, with its own
 		// token. It is offered only when the messaging server exists,
@@ -824,6 +825,7 @@ func serve(args []string) error {
 		delegation.SetGate(gate)
 		delegation.SetEndpoints(nodes)
 		delegation.MaxSilence = time.Duration(cfg.Gateway.PromptTimeout)
+		delegation.RegisterIdle = nodes.RegisterIdle
 		delegation.SetObserver(func(c delegate.Child, p steveview.Progress) {
 			where := c.Node
 			if where == "" {

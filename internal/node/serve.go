@@ -22,7 +22,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/mcpprobe"
 	"github.com/gopact-ai/steve/internal/mcpscan"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -73,9 +72,11 @@ type ServerConfig struct {
 	// MCPBroker names a broker running as its own process; when set,
 	// MCPServers here must be empty — the servers, and their secrets,
 	// are the broker's.
-	MCPBroker     *BrokerRef `json:"mcp_broker,omitempty"`
-	WorkspaceRoot string     `json:"workspace_root,omitempty"`
-	StateDir      string     `json:"state_dir,omitempty"`
+	MCPBroker      *BrokerRef    `json:"mcp_broker,omitempty"`
+	WorkspaceRoot  string        `json:"workspace_root,omitempty"`
+	StateDir       string        `json:"state_dir,omitempty"`
+	SessionGrace   time.Duration `json:"-"`
+	FaultDropAfter time.Duration `json:"-"`
 }
 
 // BrokerRef is how the node reaches an external broker.
@@ -146,13 +147,19 @@ type Server struct {
 	grantsMu sync.Mutex
 	grants   map[string]peerGrant
 
-	mu       sync.Mutex
-	mcpPort  int
-	listener net.Listener
+	mu          sync.Mutex
+	mcpPort     int
+	listener    net.Listener
+	mcpListener net.Listener
+	hubMux      *nodewire.Mux
+	processMu   sync.Mutex
+	processes   map[string]*agentProcess
+	processWG   sync.WaitGroup
+	faultOnce   sync.Once
 }
 
 func NewServer(cfg ServerConfig) *Server {
-	s := &Server{mcpPort: rememberedPort(cfg), generation: time.Now().Unix(), launch: NewLaunchProbe()}
+	s := &Server{mcpPort: rememberedPort(cfg), generation: time.Now().Unix(), launch: NewLaunchProbe(), processes: map[string]*agentProcess{}}
 	s.cfg.Store(&cfg)
 	return s
 }
@@ -162,6 +169,8 @@ func (s *Server) conf() ServerConfig { return *s.cfg.Load() }
 
 // Serve blocks until ctx ends or the listener fails.
 func (s *Server) Serve(ctx context.Context) error {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	s.ctx = ctx
 	listener, err := net.Listen("tcp", s.conf().Listen)
 	if err != nil {
@@ -170,6 +179,16 @@ func (s *Server) Serve(ctx context.Context) error {
 	s.mu.Lock()
 	s.listener = listener
 	s.mu.Unlock()
+	var handlers sync.WaitGroup
+	defer func() {
+		cancel()
+		_ = listener.Close()
+		s.closeMCP()
+		handlers.Wait()
+		s.stopProcesses("")
+		s.processWG.Wait()
+	}()
+	go s.pruneStreams(ctx)
 	log.Printf("steve-node: %s listening on %s", s.conf().Name, listener.Addr())
 	go func() {
 		<-ctx.Done()
@@ -198,7 +217,8 @@ func (s *Server) Serve(ctx context.Context) error {
 			}
 			return fmt.Errorf("accept: %w", err)
 		}
-		go s.handle(ctx, socket)
+		handlers.Add(1)
+		go func() { defer handlers.Done(); s.handle(ctx, socket) }()
 	}
 }
 
@@ -214,6 +234,9 @@ func (s *Server) Addr() string {
 
 func (s *Server) handle(ctx context.Context, socket net.Conn) {
 	defer socket.Close()
+	stop := context.AfterFunc(ctx, func() { _ = socket.Close() })
+	defer stop()
+	_ = socket.SetDeadline(time.Now().Add(nodewire.HandshakeTimeout))
 	// The reverse listener is bound before the advert so its port can be
 	// reported in the same breath: the hub bakes that URL into the session
 	// fingerprint, so it has to be known before any session opens.
@@ -224,9 +247,16 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 	advert := s.advert()
 	if mcp != nil {
 		advert.MCPPort = mcp.Addr().(*net.TCPAddr).Port
-		defer mcp.Close()
 	}
 	claimed := false
+	clean := false
+	claimedHub := ""
+	defer func() {
+		// Claim may have succeeded even when writing the advert failed.
+		if claimed {
+			s.release(claimedHub, clean)
+		}
+	}()
 	hello, err := nodewire.AcceptClaim(socket, s.validToken, func(h nodewire.Hello) error {
 		if _, peer := s.grantedName(h.Token); peer {
 			return nil
@@ -238,15 +268,14 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 			return err
 		}
 		claimed = true
+		claimedHub = h.Hub
 		return nil
 	}, advert)
 	if err != nil {
 		log.Printf("steve-node: handshake from %s: %v", socket.RemoteAddr(), err)
 		return
 	}
-	if claimed {
-		defer s.release(hello.Hub)
-	}
+	_ = socket.SetDeadline(time.Time{})
 	if name, ok := s.grantedName(hello.Token); ok {
 		// A peer, not the hub: it may take the one blob it was granted and
 		// nothing else, and the grant is spent by the connection.
@@ -257,9 +286,27 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 
 	mux := nodewire.NewMux(socket, false)
 	defer mux.Close()
-	if mcp != nil {
-		go s.forwardMCP(mux, mcp)
-	}
+	s.mu.Lock()
+	s.hubMux = mux
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		clean = mux.Graceful() && s.hubMux == mux
+		if s.hubMux == mux {
+			s.hubMux = nil
+		}
+		s.mu.Unlock()
+		if clean {
+			s.stopProcesses(hello.Hub)
+		}
+	}()
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = mux.Close()
+		case <-mux.Done():
+		}
+	}()
 	for {
 		stream, err := mux.Accept(ctx)
 		if err != nil {
@@ -290,7 +337,11 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 		case nodewire.StreamMCPProbe:
 			go s.mcpProbe(ctx, stream)
 		default:
-			go s.runAgent(ctx, stream)
+			if stream.Request().Kind == nodewire.StreamACP {
+				s.injectDrop(ctx, mux)
+			}
+			s.processWG.Add(1)
+			go func() { defer s.processWG.Done(); s.runAgent(ctx, stream) }()
 		}
 	}
 }
@@ -325,49 +376,6 @@ func (s *Server) runCommand(ctx context.Context, stream *nodewire.Stream) {
 	}
 	log.Printf("steve-node: verify %q in %s -> exit %d", req.Command, dir, code)
 	_ = stream.CloseWithReason(fmt.Sprintf("%s%d", nodewire.ExitPrefix, code))
-}
-
-// runAgent starts the requested harness locally and shuttles its stdio over
-// the stream. Everything ACP needs is in those bytes.
-func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
-	defer stream.Close()
-	req := stream.Request()
-	if req.Kind != nodewire.StreamACP {
-		return
-	}
-	spec, ok := s.conf().Harnesses[req.Harness]
-	if !ok {
-		log.Printf("steve-node: hub asked for unknown harness %q", req.Harness)
-		return
-	}
-	proc, err := acphost.LocalTransport{
-		Command: spec.Command, Args: spec.Args,
-		ProcessDir: s.processDir(spec), Env: steveruntime.ApplyEnv(spec.Env, req.Harness, s.conf().StateDir),
-	}.Start(ctx)
-	if err != nil {
-		log.Printf("steve-node: start %s: %v", req.Harness, err)
-		return
-	}
-	log.Printf("steve-node: session started on %s", req.Harness)
-
-	var once sync.Once
-	stop := func() { once.Do(func() { proc.Kill() }) }
-	defer func() {
-		stop()
-		_ = proc.Wait()
-		log.Printf("steve-node: session on %s ended", req.Harness)
-	}()
-
-	toAgent := make(chan struct{})
-	go func() {
-		defer close(toAgent)
-		_, _ = io.Copy(proc.Stdin(), stream)
-		// The hub hanging up must reach the agent as EOF, or it lingers.
-		_ = proc.Stdin().Close()
-	}()
-	_, _ = io.Copy(stream, proc.Stdout())
-	stop()
-	<-toAgent
 }
 
 func (s *Server) processDir(spec HarnessSpec) string {
@@ -413,13 +421,13 @@ func (s *Server) claim(hub string) error {
 	return nil
 }
 
-func (s *Server) release(hub string) {
+func (s *Server) release(hub string, clean bool) {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
 	if s.hubName == hub && s.hubLive > 0 {
 		s.hubLive--
 		if s.hubLive == 0 {
-			s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC(), Released: true})
+			s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC(), Released: clean})
 		}
 	}
 }
@@ -483,6 +491,7 @@ func (s *Server) advert() nodewire.Advert {
 	adv := Advertise(s.conf().Name, s.conf().Harnesses, s.conf().Capabilities)
 	adv.Snapshot = s.snapshot()
 	adv.Features = nodewire.Features()
+	adv.SessionGraceMS = s.sessionGrace().Milliseconds()
 	adv.WorkspaceRoot = s.conf().WorkspaceRoot
 	adv.StateDir = s.conf().StateDir
 	adv.Skills = s.currentSkills()
@@ -968,57 +977,6 @@ func (s *Server) sendAdvert(stream *nodewire.Stream) {
 	s.touchOwner()
 	if err := json.NewEncoder(stream).Encode(s.advert()); err != nil {
 		log.Printf("steve-node: send advert: %v", err)
-	}
-}
-
-// listenMCP binds the loopback port a local agent will call. The port is
-// remembered across restarts for the same reason the hub remembers its own:
-// it lives inside every session's capability fingerprint, and a new port
-// would ask every live conversation for /new after a node restart.
-func (s *Server) listenMCP() (net.Listener, error) {
-	s.mu.Lock()
-	preferred := s.mcpPort
-	s.mu.Unlock()
-	if preferred > 0 {
-		if listener, err := net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(preferred)); err == nil {
-			return listener, nil
-		}
-	}
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return nil, err
-	}
-	port := listener.Addr().(*net.TCPAddr).Port
-	s.mu.Lock()
-	s.mcpPort = port
-	s.mu.Unlock()
-	s.rememberPort(port)
-	return listener, nil
-}
-
-// forwardMCP tunnels each local MCP connection to the hub over the same
-// multiplexed link the sessions use.
-func (s *Server) forwardMCP(mux *nodewire.Mux, listener net.Listener) {
-	for {
-		local, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		go func(local net.Conn) {
-			defer local.Close()
-			stream, err := mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamMCP})
-			if err != nil {
-				return
-			}
-			defer stream.Close()
-			done := make(chan struct{})
-			go func() {
-				_, _ = io.Copy(stream, local)
-				close(done)
-			}()
-			_, _ = io.Copy(local, stream)
-			<-done
-		}(local)
 	}
 }
 

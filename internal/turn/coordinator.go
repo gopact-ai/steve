@@ -136,19 +136,20 @@ type Result struct {
 }
 
 type Coordinator struct {
-	catalog     *agent.Catalog
-	store       *state.Store
-	assembler   *capability.Assembler
-	runtime     runtime
-	timeout     time.Duration
-	ownerOpenID string
-	home        home.Loader
-	homePath    string
-	scanHome    string
-	skills      *skills.Live
-	gate        AgentGate
-	endpoints   NodeEndpoints
-	tasks       *task.Store
+	catalog      *agent.Catalog
+	store        *state.Store
+	assembler    *capability.Assembler
+	runtime      runtime
+	timeout      time.Duration
+	ownerOpenID  string
+	home         home.Loader
+	homePath     string
+	scanHome     string
+	skills       *skills.Live
+	gate         AgentGate
+	endpoints    NodeEndpoints
+	RegisterIdle idle.Registrar
+	tasks        *task.Store
 	// modes is how each conversation last reached Steve, for a tool call
 	// that has no request to read it from.
 	modes map[string]home.Mode
@@ -417,6 +418,9 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	// while they are still answering.
 	ctx, expire, touch := idle.WithTimeout(turnCtx, c.timeout)
 	defer expire()
+	if c.RegisterIdle != nil {
+		defer c.RegisterIdle(selected.Node, ctx)()
+	}
 	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
 		return Result{}, context.Canceled
 	}

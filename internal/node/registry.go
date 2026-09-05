@@ -51,8 +51,9 @@ type Config struct {
 // Status is a node as the registry currently knows it — the roster's raw
 // material and what `/status` and `steve doctor` report.
 type Status struct {
-	Name string
-	Addr string
+	Name       string
+	Addr       string
+	Generation int64
 	// Level is the data level the hub assigned this node.
 	Level string
 	// Region is whose leases the node\'s resources carry.
@@ -72,10 +73,15 @@ type Registry struct {
 	// the hub's loopback agentmcp listener. Nil disables the reverse channel.
 	mcpDial func(ctx context.Context) (net.Conn, error)
 
-	mu    sync.Mutex
-	confs map[string]Config
-	live  map[string]*conn
-	last  map[string]*Status
+	eventMu   sync.Mutex
+	closed    bool
+	dialing   map[string]chan struct{}
+	changed   map[string]chan struct{}
+	idleHooks map[string]map[*idleHook]struct{}
+	mu        sync.Mutex
+	confs     map[string]Config
+	live      map[string]*conn
+	last      map[string]*Status
 	// hubLvl is the hub machine's own data level.
 	hubLvl string
 	// gens counts connections per node: the node's generation.
@@ -156,15 +162,6 @@ func (r *Registry) SetObserver(observe func(Status)) {
 	r.observe = observe
 }
 
-func (r *Registry) observed(status Status) {
-	r.mu.Lock()
-	observe := r.observe
-	r.mu.Unlock()
-	if observe != nil {
-		observe(status)
-	}
-}
-
 // Generation is how many times the node has connected: it moves on every
 // reconnect, so a replica recorded under an older generation is suspect.
 func (r *Registry) Generation(_ context.Context, name string) (int64, error) {
@@ -209,6 +206,8 @@ func NewRegistry(hub string, configs map[string]Config) *Registry {
 	return &Registry{
 		hub: hub, confs: confs,
 		live: map[string]*conn{}, last: map[string]*Status{},
+		dialing: map[string]chan struct{}{}, changed: map[string]chan struct{}{},
+		idleHooks: map[string]map[*idleHook]struct{}{},
 	}
 }
 
@@ -257,6 +256,10 @@ func (r *Registry) Remove(name string) {
 	delete(r.confs, name)
 	delete(r.live, name)
 	delete(r.last, name)
+	if c != nil {
+		c.released.Store(true)
+	}
+	r.signalLocked(name)
 	r.mu.Unlock()
 	if c != nil {
 		c.close()
@@ -683,12 +686,17 @@ func (r *Registry) Start(ctx context.Context) {
 	}()
 }
 
-// Close drops every connection. Sessions on them fail as if the nodes went
-// offline, which is exactly what has happened.
+// Close explicitly releases every connection. This is shutdown, not an
+// outage: transports must not redial it or keep its processes alive.
 func (r *Registry) Close() {
 	r.mu.Lock()
+	r.closed = true
+	for name := range r.confs {
+		r.signalLocked(name)
+	}
 	live := make([]*conn, 0, len(r.live))
 	for _, c := range r.live {
+		c.released.Store(true)
 		live = append(live, c)
 	}
 	r.live = map[string]*conn{}
@@ -701,61 +709,76 @@ func (r *Registry) Close() {
 // connect returns a live connection, dialing if needed. Concurrent callers
 // for the same node share one dial.
 func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
-	r.mu.Lock()
-	cfg, known := r.confs[name]
-	if !known {
+	for {
+		r.mu.Lock()
+		cfg, known := r.confs[name]
+		if !known || r.closed {
+			r.mu.Unlock()
+			return nil, fmt.Errorf("node %q released", name)
+		}
+		if c := r.live[name]; c != nil && c.alive() {
+			r.mu.Unlock()
+			return c, nil
+		}
+		if wait := r.dialing[name]; wait != nil {
+			r.mu.Unlock()
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-wait:
+				continue
+			}
+		}
+		wait := make(chan struct{})
+		r.dialing[name] = wait
+		mcpDial, previous := r.mcpDial, r.live[name]
 		r.mu.Unlock()
-		return nil, fmt.Errorf("unknown node %q", name)
-	}
-	if c := r.live[name]; c != nil && c.alive() {
+		if previous != nil {
+			r.down(previous)
+		}
+		c, err := dial(ctx, name, r.hub, cfg, mcpDial)
+		if err != nil {
+			r.remember(&Status{Name: name, Addr: cfg.Addr, LastError: err.Error()})
+		} else {
+			adv := c.getAdvert()
+			r.accept(name, &adv)
+			c.setAdvert(adv)
+			r.noteDrift(name, adv)
+			r.eventMu.Lock()
+			r.mu.Lock()
+			if current, ok := r.confs[name]; !ok || current != cfg || r.closed {
+				err = fmt.Errorf("node %q released while dialing", name)
+				r.mu.Unlock()
+				_ = c.mux.Close()
+			} else {
+				if r.gens == nil {
+					r.gens = map[string]int64{}
+				}
+				r.gens[name]++
+				c.generation = r.gens[name]
+				r.live[name] = c
+				up := Status{Name: name, Addr: cfg.Addr, Generation: c.generation, Level: levelOr(cfg.Level), Region: cfg.Region, Up: true, Since: time.Now(), Advert: adv}
+				r.last[name] = &up
+				r.signalLocked(name)
+				r.clocksLocked(name, true)
+				observe := r.observe
+				r.mu.Unlock()
+				if observe != nil {
+					observe(up)
+				}
+			}
+			r.eventMu.Unlock()
+		}
+		r.mu.Lock()
+		delete(r.dialing, name)
+		close(wait)
 		r.mu.Unlock()
+		if err != nil {
+			return nil, fmt.Errorf("node %q at %s: %w", name, cfg.Addr, err)
+		}
+		go func() { <-c.mux.Done(); r.down(c) }()
 		return c, nil
 	}
-	delete(r.live, name)
-	mcpDial := r.mcpDial
-	r.mu.Unlock()
-
-	c, err := dial(ctx, name, r.hub, cfg, mcpDial)
-	if err != nil {
-		r.remember(&Status{Name: name, Addr: cfg.Addr, LastError: err.Error()})
-		return nil, fmt.Errorf("node %q at %s: %w", name, cfg.Addr, err)
-	}
-
-	r.mu.Lock()
-	// Another goroutine may have won the race; keep whichever landed first
-	// so a node never ends up with two connections.
-	if existing := r.live[name]; existing != nil && existing.alive() {
-		r.mu.Unlock()
-		c.close()
-		return existing, nil
-	}
-	r.live[name] = c
-	// Every fresh connection is a new generation of the node: whatever was
-	// held there before is not known to have survived until checked.
-	if r.gens == nil {
-		r.gens = map[string]int64{}
-	}
-	r.gens[name]++
-	r.mu.Unlock()
-
-	adv := c.getAdvert()
-	r.accept(name, &adv)
-	c.setAdvert(adv)
-	up := Status{Name: name, Addr: cfg.Addr, Level: levelOr(cfg.Level), Region: cfg.Region, Up: true, Since: time.Now(), Advert: adv}
-	r.noteDrift(name, up.Advert)
-	r.remember(&up)
-	r.observed(up)
-	go func() {
-		<-c.mux.Done()
-		log.Printf("node: %s disconnected", name)
-		r.mu.Lock()
-		if r.live[name] == c {
-			delete(r.live, name)
-		}
-		r.mu.Unlock()
-		r.observed(Status{Name: name, Addr: cfg.Addr, Level: levelOr(cfg.Level), Region: cfg.Region, Up: false, LastError: "disconnected", Advert: c.getAdvert()})
-	}()
-	return c, nil
 }
 
 func (r *Registry) remember(status *Status) {

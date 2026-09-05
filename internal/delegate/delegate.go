@@ -74,7 +74,8 @@ type Service struct {
 	// not a cap: a child that builds and tests for twenty minutes while
 	// reporting is left alone, one that hung is not. The child's own
 	// budget (MaxElapsed) stays the hard limit.
-	MaxSilence time.Duration
+	MaxSilence   time.Duration
+	RegisterIdle idle.Registrar
 	// observe, when set, is told what each child is doing and how it
 	// ended; the console shows it under the parent's delegate call.
 	observe func(Child, view.Progress)
@@ -501,8 +502,13 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	touch := func() {}
 	if s.MaxSilence > 0 {
 		var stop func()
-		ctx, stop, touch = idle.WithTimeout(ctx, s.MaxSilence)
+		var clock idle.Context
+		clock, stop, touch = idle.WithTimeout(ctx, s.MaxSilence)
+		ctx = clock
 		defer stop()
+		if s.RegisterIdle != nil {
+			defer s.RegisterIdle(candidate.Node, clock)()
+		}
 	}
 
 	at := harness.Placement{Node: candidate.Node, Harness: candidate.Harness}

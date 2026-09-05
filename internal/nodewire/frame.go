@@ -19,10 +19,12 @@ import (
 type Kind uint8
 
 const (
-	KindOpen  Kind = 1 // start a stream; payload is a JSON OpenRequest
-	KindData  Kind = 2 // stream bytes
-	KindClose Kind = 3 // stream ended; payload is an optional reason
-	KindPing  Kind = 4 // liveness; stream id is unused
+	KindOpen     Kind = 1 // start a stream; payload is a JSON OpenRequest
+	KindData     Kind = 2 // stream bytes
+	KindClose    Kind = 3 // stream ended; payload is an optional reason
+	KindPing     Kind = 4 // liveness; stream id is unused
+	KindInputAck Kind = 5 // journal.v1: accepted input cursor, big-endian uint64
+	KindGoodbye  Kind = 6 // journal.v1: explicit hub release; stream id is unused
 )
 
 // MaxPayload bounds one frame so a peer cannot make the other side allocate

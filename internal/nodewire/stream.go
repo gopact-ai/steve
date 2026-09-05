@@ -1,6 +1,8 @@
 package nodewire
 
 import (
+	"bytes"
+	"encoding/binary"
 	"errors"
 	"io"
 	"sync"
@@ -14,25 +16,27 @@ type Stream struct {
 	id  uint32
 	req OpenRequest
 
-	// frames is never closed: the receive loop and the shutdown path both
-	// touch this stream, and a closed queue would make one of them panic.
-	// done is the single end-of-stream signal instead.
-	frames chan []byte
-	done   chan struct{}
+	// Buffer bytes rather than frames: replaying many short ACP lines must
+	// not overflow merely because the reader lost a scheduling timeslice.
+	buffer    bytes.Buffer
+	available chan struct{}
+	done      chan struct{}
 
 	finishOnce sync.Once
 	closeOnce  sync.Once
 
 	mu      sync.Mutex
-	pending []byte
 	readErr error
+	haveIn  uint64
+	acked   chan struct{}
 }
 
 func newStream(m *Mux, id uint32, req OpenRequest) *Stream {
 	return &Stream{
 		mux: m, id: id, req: req,
-		frames: make(chan []byte, streamBuffer),
-		done:   make(chan struct{}),
+		available: make(chan struct{}, 1),
+		done:      make(chan struct{}),
+		acked:     make(chan struct{}, 1),
 	}
 }
 
@@ -43,45 +47,43 @@ func (s *Stream) Request() OpenRequest { return s.req }
 // or the connection dropped. A remote agent's Wait blocks on this.
 func (s *Stream) Done() <-chan struct{} { return s.done }
 
-func (s *Stream) Read(p []byte) (int, error) {
-	s.mu.Lock()
-	if len(s.pending) > 0 {
-		n := copy(p, s.pending)
-		s.pending = s.pending[n:]
-		s.mu.Unlock()
-		return n, nil
-	}
-	s.mu.Unlock()
+// Err reports the close cause, including ErrMuxClosed for connection loss.
+func (s *Stream) Err() error { return s.err() }
 
-	select {
-	case chunk := <-s.frames:
-		return s.consume(p, chunk), nil
-	case <-s.done:
-		// Bytes that arrived before the close are still owed to the reader;
-		// only report the error once the queue is drained.
+const streamBufferBytes = 16 << 20
+
+func (s *Stream) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	for {
+		s.mu.Lock()
+		if s.buffer.Len() > 0 {
+			n, _ := s.buffer.Read(p)
+			s.mu.Unlock()
+			return n, nil
+		}
+		err := s.readErr
+		s.mu.Unlock()
+		if err != nil {
+			return 0, err
+		}
 		select {
-		case chunk := <-s.frames:
-			return s.consume(p, chunk), nil
-		default:
-			return 0, s.err()
+		case <-s.available:
+		case <-s.done:
 		}
 	}
-}
-
-func (s *Stream) consume(p, chunk []byte) int {
-	n := copy(p, chunk)
-	if n < len(chunk) {
-		s.mu.Lock()
-		s.pending = chunk[n:]
-		s.mu.Unlock()
-	}
-	return n
 }
 
 // Write splits oversized writes so a caller never has to know the frame cap.
 func (s *Stream) Write(p []byte) (int, error) {
 	written := 0
 	for len(p) > 0 {
+		select {
+		case <-s.done:
+			return written, s.err()
+		default:
+		}
 		chunk := p
 		if len(chunk) > MaxPayload {
 			chunk = chunk[:MaxPayload]
@@ -109,9 +111,9 @@ func (s *Stream) Close() error { return s.CloseWithReason("") }
 func (s *Stream) CloseWithReason(reason string) error {
 	var err error
 	s.closeOnce.Do(func() {
+		s.finish(ErrStreamClosed)
 		err = s.mux.write(Frame{Stream: s.id, Kind: KindClose, Payload: []byte(reason)})
 		s.mux.drop(s.id)
-		s.finish(ErrStreamClosed)
 	})
 	if errors.Is(err, ErrMuxClosed) {
 		// The connection went away first; the stream is closed either way.
@@ -124,11 +126,51 @@ func (s *Stream) deliver(payload []byte) {
 	if len(payload) == 0 {
 		return
 	}
-	select {
-	case s.frames <- payload:
-	case <-s.done:
-	case <-s.mux.done:
+	s.mu.Lock()
+	if s.readErr != nil {
+		s.mu.Unlock()
+		return
 	}
+	if s.buffer.Len()+len(payload) <= streamBufferBytes {
+		_, _ = s.buffer.Write(payload)
+		s.mu.Unlock()
+		select {
+		case s.available <- struct{}{}:
+		default:
+		}
+		return
+	}
+	s.mu.Unlock()
+	// A stalled stream must not prevent another stream from receiving
+	// cancellation or the connection from detecting a dropped socket.
+	s.remoteClosed("slow consumer")
+	s.mux.drop(s.id)
+	go func() { _ = s.CloseWithReason("slow consumer") }()
+}
+
+// AckInput is a sideband cursor: it never enters the ACP byte stream.
+func (s *Stream) AckInput(seq uint64) error {
+	var payload [8]byte
+	binary.BigEndian.PutUint64(payload[:], seq)
+	return s.mux.write(Frame{Stream: s.id, Kind: KindInputAck, Payload: payload[:]})
+}
+
+func (s *Stream) inputAck(seq uint64) {
+	s.mu.Lock()
+	if seq > s.haveIn {
+		s.haveIn = seq
+	}
+	s.mu.Unlock()
+	select {
+	case s.acked <- struct{}{}:
+	default:
+	}
+}
+
+func (s *Stream) InputAck() (uint64, <-chan struct{}) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.haveIn, s.acked
 }
 
 func (s *Stream) remoteClosed(reason string) {

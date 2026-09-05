@@ -123,6 +123,7 @@ type AdmitReply struct {
 // lists the feature it needs, and treats a node without one as older,
 // never as broken.
 const (
+	FeatureJournal   = "process_journal.v1"
 	FeatureManifest  = "manifest.v1"
 	FeatureAdmission = "execution_admission.v1"
 	// FeatureSkills says the node takes skill bundles: a content-addressed
@@ -148,7 +149,7 @@ const (
 
 // Features is what this build supports.
 func Features() []string {
-	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureInspect, FeatureMCPProbe, FeatureOwnSkills}
+	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureInspect, FeatureMCPProbe, FeatureOwnSkills, FeatureJournal}
 }
 
 // HasFeature says whether a list names a feature.

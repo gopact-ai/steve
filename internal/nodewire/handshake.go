@@ -100,6 +100,8 @@ type Advert struct {
 	// sender supports.
 	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
 	Features []string          `json:"features,omitempty"`
+	// SessionGraceMS is the node's process reconnect window, in milliseconds.
+	SessionGraceMS int64 `json:"session_grace_ms,omitempty"`
 	// OwnSkills are the skills the machine's AI tools have of their own,
 	// outside Steve — under ~/.codex/skills and the like — so the owner
 	// can see them from the hub and load one. A machine that predates
