@@ -24,6 +24,16 @@ type Store struct {
 	// a deployment decision, not a code change.
 	maxTurns   int
 	maxElapsed time.Duration
+	// observe is told each task id a write changed, after the write
+	// landed; it runs off the store's lock.
+	observe func(id string)
+}
+
+// SetObserver installs where task changes are announced; nil discards.
+func (s *Store) SetObserver(observe func(id string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observe = observe
 }
 
 type data struct {
@@ -428,6 +438,27 @@ func (s *Store) replaceLocked(next data) error {
 	}
 	if err := s.doc.Save(raw); err != nil {
 		return fmt.Errorf("save tasks: %w", err)
+	}
+	if s.observe != nil {
+		var changed []string
+		for id, t := range next.Tasks {
+			if prev, ok := s.data.Tasks[id]; !ok || prev.State != t.State || !prev.UpdatedAt.Equal(t.UpdatedAt) {
+				changed = append(changed, id)
+			}
+		}
+		for id := range s.data.Tasks {
+			if _, ok := next.Tasks[id]; !ok {
+				changed = append(changed, id)
+			}
+		}
+		if len(changed) > 0 {
+			observe := s.observe
+			go func() {
+				for _, id := range changed {
+					observe(id)
+				}
+			}()
+		}
 	}
 	s.data = next
 	return nil

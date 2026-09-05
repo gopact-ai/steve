@@ -7,6 +7,7 @@ package console
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -634,7 +635,17 @@ func (s *Service) Milestone(anchor, text string) string {
 	return id
 }
 
+// newReplyID names a line: time-ordered, unique enough for a transcript.
+func newReplyID() string {
+	var raw [4]byte
+	_, _ = rand.Read(raw[:])
+	return fmt.Sprintf("r%x%x", time.Now().UnixNano()/1000, raw)
+}
+
 func (s *Service) record(r readmodel.Reply) {
+	if r.ID == "" {
+		r.ID = newReplyID()
+	}
 	s.mu.Lock()
 	list := append(s.replies[r.Conversation], r)
 	if len(list) > keep {
@@ -648,6 +659,6 @@ func (s *Service) record(r readmodel.Reply) {
 		if r.Kind == "sent" {
 			text = r.Input
 		}
-		s.model.Publish(readmodel.Event{At: r.At, Kind: "console." + r.Kind, Conversation: r.Conversation, Text: text, Title: r.Title})
+		s.model.Publish(readmodel.Event{At: r.At, Kind: "console." + r.Kind, Conversation: r.Conversation, Text: text, Title: r.Title, ReplyID: r.ID})
 	}
 }

@@ -125,6 +125,11 @@ func (c *Coordinator) projectCmd(ctx context.Context, req Request, rest string) 
 		if err := c.store.ArchiveSession(req.ConversationID, agentID, now); err != nil {
 			log.Printf("turn: archive %s session on project switch: %v", agentID, err)
 		}
+		// A task belongs to the project it was opened in; the next turn
+		// here runs in another. What this conversation still held is
+		// closed, so it is not silently continued under a different
+		// directory and a different data level.
+		c.closeTask(req.ConversationID, agentID)
 	}
 	log.Printf("turn: conversation %s bound to project %s (v%d) by %s", req.ConversationID, p.ID, binding.Version, req.SenderOpenID)
 	return Result{Title: title, Text: c.text.T(i18n.ProjectSwitched, p.ID, homeLabel(p))}, nil

@@ -441,10 +441,12 @@ type Event struct {
 	Progress *Progress `json:"progress,omitempty"`
 	// Step is what a step.progress event knows about the step itself; a
 	// delegated child carries its goal, state and answer here.
-	Step   *StepInfo `json:"step,omitempty"`
-	Title  string    `json:"title,omitempty"`
-	Rev    int       `json:"rev,omitempty"`
-	Detail string    `json:"detail,omitempty"`
+	Step *StepInfo `json:"step,omitempty"`
+	// ReplyID names the console line a console.* event is about.
+	ReplyID string `json:"reply_id,omitempty"`
+	Title   string `json:"title,omitempty"`
+	Rev     int    `json:"rev,omitempty"`
+	Detail  string `json:"detail,omitempty"`
 }
 
 const recentKept = 200
@@ -851,6 +853,13 @@ type throttled struct {
 
 // progressEvery bounds how often one step's token stream repaints a page.
 const progressEvery = 400 * time.Millisecond
+
+// TaskChanged tells the pages a task moved: a light notice with the id
+// and the conversation it belongs to, so a page invalidates rather than
+// recomputes everything.
+func (m *Model) TaskChanged(taskID string) {
+	m.Publish(Event{Kind: "task.changed", TaskID: taskID, Conversation: m.conversationOf(taskID)})
+}
 
 // conversationOf is the channel a task was asked in, "" when unknown.
 func (m *Model) conversationOf(taskID string) string {

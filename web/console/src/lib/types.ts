@@ -105,11 +105,13 @@ export interface ChangeSummary { attempt: string; project?: string; base?: strin
 export interface Change { path: string; status: string; added: number; deleted: number; binary?: boolean }
 export interface ChangeIndex { attempt: string; project?: string; base?: string; artifact?: string; changes: Change[]; truncated?: boolean; note?: string }
 export interface FileDiff { path: string; diff: string; truncated?: boolean }
+export interface AttemptView { id: string; kind: string; state: string; agent?: string; node?: string; harness?: string; workspace?: string; base?: string; artifact?: string; summary?: string; error?: string; started_at: string; ended_at?: string }
+export interface TaskDetail { task: Task; plan?: Plan; children: Task[]; attempts: AttemptView[] }
 export interface StepProcess extends StepInfo { id: string; agent?: string; node?: string; reasoning?: string; tools?: ToolCall[] }
 export interface Process { reasoning?: string; tools?: ToolCall[]; steps?: StepProcess[] }
 export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
-    state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress; step?: StepInfo;
+    state?: string; conversation?: string; text?: string; title?: string; detail?: string; progress?: Progress; step?: StepInfo; reply_id?: string;
     // n is the page's own arrival counter, so a reader can keep a cursor
     // over a buffer that is trimmed from the front.
     n?: number;
@@ -120,7 +122,7 @@ export interface Injected {
     session?: string; new_session: boolean; instructions_sent: boolean; instructions?: string; instructions_bytes: number; mcp_servers?: string[]; fingerprint?: string; prompt?: string;
 }
 export interface Reply {
-    at: string; conversation: string; input?: string; title?: string; text: string; error?: string; kind: string; process?: Process; injected?: Injected;
+    id?: string; at: string; conversation: string; input?: string; title?: string; text: string; error?: string; kind: string; process?: Process; injected?: Injected;
     changes?: ChangeSummary;
 }
 export interface Snapshot {

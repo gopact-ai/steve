@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/state"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 // TestProjectVerbShowsBindsAndArchives: /project reports the binding, and
@@ -164,3 +165,51 @@ func TestChatTurnIsAnAttemptUnderTheCanonicalLock(t *testing.T) {
 }
 
 var errBoom = fmt.Errorf("boom")
+
+// A task belongs to the project it was opened in. Switching the
+// conversation's project closes what it held, and a turn never continues
+// a task under a different project than the one it is bound to.
+func TestProjectSwitchClosesTheConversationsTasks(t *testing.T) {
+	catalog, _ := agent.NewCatalog(map[string]agent.Config{
+		"codex": {Harness: "codex", Default: true},
+		"other": {Harness: "codex", Aliases: []string{"other"}},
+	})
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": {reply: "ok"}}}
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
+	tasks, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	coordinator.SetTasks(tasks, "laptop")
+
+	if _, err := handle(coordinator, t.Context(), "hello"); err != nil {
+		t.Fatal(err)
+	}
+	before := tasks.List("chat")
+	if len(before) != 1 || before[0].ProjectID != "codex" {
+		t.Fatalf("tasks after first turn = %+v", before)
+	}
+	if _, err := handle(coordinator, t.Context(), "/project use other"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := tasks.Get(before[0].ID); got.State.Holds() {
+		t.Fatalf("the old project's task is still held after the switch: %s", got.State)
+	}
+	if _, err := handle(coordinator, t.Context(), "again"); err != nil {
+		t.Fatal(err)
+	}
+	after := tasks.List("chat")
+	if len(after) != 2 {
+		t.Fatalf("tasks after the switch = %+v", after)
+	}
+	var fresh task.Task
+	for _, x := range after {
+		if x.ID != before[0].ID {
+			fresh = x
+		}
+	}
+	if fresh.ProjectID != "other" {
+		t.Fatalf("the new turn's task is on project %q, want other", fresh.ProjectID)
+	}
+}

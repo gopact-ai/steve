@@ -88,6 +88,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/home", s.guard(s.consoleHome))
 	mux.HandleFunc("PUT /console/home/{name}", s.guard(s.consoleSetHomeFile))
 	mux.HandleFunc("PUT /console/memory/{project}", s.guard(s.consoleSetProjectMemory))
+	mux.HandleFunc("GET /console/tasks/{task}", s.guard(s.consoleTask))
+	mux.HandleFunc("GET /console/tasks/{task}/attempts", s.guard(s.consoleTaskAttempts))
 	mux.HandleFunc("GET /console/attempts/{attempt}/changes", s.guard(s.consoleAttemptChanges))
 	mux.HandleFunc("GET /console/attempts/{attempt}/diff", s.guard(s.consoleAttemptDiff))
 	mux.HandleFunc("POST /console/projects/{id}/workspaces", s.guard(s.consoleAddWorkspace))
@@ -414,6 +416,8 @@ type Admin interface {
 	// them. Owner-only, like the rest of the console.
 	AttemptChanges(ctx context.Context, attempt string) (ChangeIndex, error)
 	AttemptDiff(ctx context.Context, attempt, path string) (FileDiff, error)
+	// TaskAttempts are a task's attempts from the ledger, newest first.
+	TaskAttempts(ctx context.Context, task string) ([]AttemptView, error)
 }
 
 // SkillsView is the skills page: where skills are looked for, every
@@ -640,6 +644,33 @@ type HomeView struct {
 	Audit string `json:"audit,omitempty"`
 }
 
+// AttemptView is one attempt of a task as the page lists it: what ran
+// where, on which snapshots, and how it ended.
+type AttemptView struct {
+	ID        string    `json:"id"`
+	Kind      string    `json:"kind"`
+	State     string    `json:"state"`
+	Agent     string    `json:"agent,omitempty"`
+	Node      string    `json:"node,omitempty"`
+	Harness   string    `json:"harness,omitempty"`
+	Workspace string    `json:"workspace,omitempty"`
+	Base      string    `json:"base,omitempty"`
+	Artifact  string    `json:"artifact,omitempty"`
+	Summary   string    `json:"summary,omitempty"`
+	Error     string    `json:"error,omitempty"`
+	StartedAt time.Time `json:"started_at"`
+	EndedAt   time.Time `json:"ended_at,omitempty"`
+}
+
+// TaskDetail is one task joined for the page: the task, its plan, its
+// children and its attempts from the ledger.
+type TaskDetail struct {
+	Task     Task          `json:"task"`
+	Plan     *Plan         `json:"plan,omitempty"`
+	Children []Task        `json:"children"`
+	Attempts []AttemptView `json:"attempts"`
+}
+
 // ChangeSummary is what a turn changed, as the reply keeps it: the
 // attempt to ask for the index, and the count. Paths and diffs are
 // read on demand, never stored with the reply.
@@ -717,6 +748,9 @@ type ConversationPatch struct {
 }
 
 type Reply struct {
+	// ID names the line for good: a quote of it, a comment on it, a
+	// process fetched for it later all point here rather than at a time.
+	ID           string    `json:"id,omitempty"`
 	At           time.Time `json:"at"`
 	Conversation string    `json:"conversation"`
 	Input        string    `json:"input,omitempty"`
@@ -1191,6 +1225,61 @@ func (s *Server) consoleSetHomeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+}
+
+// consoleTask joins one task for the page: the read model's task, plan
+// and children, and the ledger's attempts through the admin.
+func (s *Server) consoleTask(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	id := r.PathValue("task")
+	snap := s.model.Snapshot(r.Context())
+	var found *Task
+	for i := range snap.Tasks {
+		if snap.Tasks[i].ID == id {
+			found = &snap.Tasks[i]
+			break
+		}
+	}
+	if found == nil {
+		http.Error(w, "no task "+id, http.StatusNotFound)
+		return
+	}
+	detail := TaskDetail{Task: *found, Children: []Task{}, Attempts: []AttemptView{}}
+	for _, t := range snap.Tasks {
+		if t.Parent == id {
+			detail.Children = append(detail.Children, t)
+		}
+	}
+	for i := range snap.Plans {
+		if snap.Plans[i].TaskID == id {
+			p := snap.Plans[i]
+			detail.Plan = &p
+			break
+		}
+	}
+	if attempts, err := s.admin.TaskAttempts(r.Context(), id); err == nil && attempts != nil {
+		detail.Attempts = attempts
+	}
+	_ = json.NewEncoder(w).Encode(detail)
+}
+
+func (s *Server) consoleTaskAttempts(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	attempts, err := s.admin.TaskAttempts(r.Context(), r.PathValue("task"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if attempts == nil {
+		attempts = []AttemptView{}
+	}
+	_ = json.NewEncoder(w).Encode(attempts)
 }
 
 func (s *Server) consoleAttemptChanges(w http.ResponseWriter, r *http.Request) {

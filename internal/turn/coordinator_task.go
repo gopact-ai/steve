@@ -36,6 +36,16 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		return "", nil
 	}
 	tracked, ok := c.tasks.Active(req.ConversationID, selected.ID, req.Origin)
+	if ok && tracked.ProjectID != "" && binding.ProjectID != "" && tracked.ProjectID != binding.ProjectID {
+		// The binding moved under a task that was never closed (an older
+		// switch, a crash between the two): the task stays with its
+		// project, and this turn opens its own.
+		log.Printf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, binding.ProjectID)
+		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
+			log.Printf("turn: close task %s: %v", tracked.ID, err)
+		}
+		ok = false
+	}
 	if !ok {
 		created, err := c.tasks.Create(task.Task{
 			Goal:      goal(prompt),

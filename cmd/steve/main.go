@@ -758,6 +758,7 @@ func serve(args []string) error {
 		skills: live, shipper: hubSkills, coordinator: coordinator, homePath: cfg.Gateway.HomePath, memory: memories, artifacts: artifacts}
 	dashboard.SetAdmin(admin)
 	cons.SetInspector(admin)
+	tasks.SetObserver(func(id string) { view.TaskChanged(id) })
 	defer dashboard.Close()
 	go func() {
 		if err := dashboard.Serve(); err != nil {
@@ -2806,6 +2807,28 @@ func (a *fleetAdmin) Home(_ context.Context) (readmodel.HomeView, error) {
 		}
 	}
 	return view, nil
+}
+
+// TaskAttempts are a task's attempts from the ledger, newest first.
+func (a *fleetAdmin) TaskAttempts(ctx context.Context, taskID string) ([]readmodel.AttemptView, error) {
+	if a.attempts == nil {
+		return nil, errors.New("attempts are not wired")
+	}
+	records, err := a.attempts.ForTask(ctx, taskID)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]readmodel.AttemptView, 0, len(records))
+	for _, r := range records {
+		v := readmodel.AttemptView{ID: r.ID, Kind: string(r.Kind), State: string(r.State), Agent: r.Agent, Node: r.Node, Harness: r.Harness,
+			Workspace: r.Workspace.Path, Base: r.Base, Error: r.Error, StartedAt: r.StartedAt, EndedAt: r.EndedAt}
+		if r.Result != nil {
+			v.Artifact, v.Summary = r.Result.Artifact, r.Result.Summary
+		}
+		out = append(out, v)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].StartedAt.After(out[j].StartedAt) })
+	return out, nil
 }
 
 // changeSnapshots is the before and after of an attempt, when it captured

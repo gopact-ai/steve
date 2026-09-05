@@ -1,4 +1,4 @@
-import type { ChangeIndex, FileDiff, HomeView, MachineSkills, MCPRegistryEntry, MCPView, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
+import type { ChangeIndex, FileDiff, HomeView, TaskDetail, MachineSkills, MCPRegistryEntry, MCPView, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
 
 // The token guards everything: it rides as a bearer header on requests and
 // as a query parameter on the event stream, which cannot carry headers.
@@ -151,6 +151,9 @@ export async function removeSkillPath(path: string): Promise<{ ok: boolean }> {
     return json(await fetch(`./console/skills/paths${q}${q ? "&" : "?"}path=${encodeURIComponent(path)}`, { method: "DELETE", headers }));
 }
 export async function fetchHome(): Promise<HomeView> { return json(await fetch(`./console/home${q}`, { headers })); }
+export async function fetchTask(id: string): Promise<TaskDetail> {
+    return json(await fetch(`./console/tasks/${encodeURIComponent(id)}${q}`, { headers }));
+}
 export async function fetchAttemptChanges(attempt: string): Promise<ChangeIndex> {
     return json(await fetch(`./console/attempts/${encodeURIComponent(attempt)}/changes${q}`, { headers }));
 }
