@@ -6,11 +6,14 @@ import { Composer } from "@/components/steve/composer";
 import { AssistantMessage, UserMessage } from "@/components/steve/message";
 import { Rail, type RailTab } from "@/components/steve/rail";
 import { SessionsTree } from "@/components/steve/sessions-tree";
+import { TaskDrawer } from "@/components/steve/task-drawer";
+import { RAIL_WIDTH } from "@/components/steve/rail";
+import { BoardPage } from "./board";
 import { Working, applyLive, type Live } from "@/components/steve/trace";
 import { Nothing } from "@/components/steve/ui";
 import { fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
-import type { Conversation, ConversationContext, Reply, Suggestion, Verb } from "@/lib/types";
+import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task } from "@/lib/types";
 
 // ConsolePage is composition: it owns the conversation, the transcript,
 // the line in flight and the composer's text, and lays out the three
@@ -31,6 +34,7 @@ export function ConsolePage() {
     const [pick, setPick] = useState(0);
     const [selectedReply, setSelectedReply] = useState<Reply | null>(null);
     const [tab, setTab] = useState<RailTab>("context");
+    const [pickedTask, setPickedTask] = useState<Task | null>(null);
     const [sessionsCollapsed, setSessionsCollapsedState] = useState<boolean>(() => { try { return localStorage.getItem("steve.sessions.collapsed") === "1"; } catch { return false; } });
     const setSessionsCollapsed = (v: boolean) => { setSessionsCollapsedState(v); try { localStorage.setItem("steve.sessions.collapsed", v ? "1" : "0"); } catch { /* ignore */ } };
     const [verbs, setVerbs] = useState<Verb[]>([]);
@@ -45,6 +49,7 @@ export function ConsolePage() {
     // "/console?new=1&project=x" — from the projects page: a fresh thread
     // bound to that project, then the address is cleaned up.
     const location = useLocation();
+    const view = new URLSearchParams(location.search).get("view") === "board" ? "board" : "chat";
     const navigate = useNavigate();
     const opened = useRef(false);
     useEffect(() => {
@@ -213,7 +218,9 @@ export function ConsolePage() {
         <div className="flex h-full min-h-0">
             <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={(id) => setConversation(id)} onNew={newSession}
                 onUpdate={(id, patch) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}
-                collapsed={sessionsCollapsed} onToggle={() => setSessionsCollapsed(!sessionsCollapsed)} />
+                collapsed={sessionsCollapsed} onToggle={() => setSessionsCollapsed(!sessionsCollapsed)}
+                tasks={snap.tasks} onTask={setPickedTask} />
+            {pickedTask && <TaskDrawer t={pickedTask} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === pickedTask.id)} onClose={() => setPickedTask(null)} width={RAIL_WIDTH} />}
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
                 <header className="flex items-center gap-3 border-b border-secondary bg-primary px-6 py-2.5">
@@ -227,8 +234,13 @@ export function ConsolePage() {
                     {context?.project && <Badge type="pill-color" size="sm" color="gray">{context.project.id} · {context.project.node}</Badge>}
                     {context?.agent && <Badge type="pill-color" size="sm" color={context.agent.ready ? "brand" : "error"}>{context.agent.id}{context.agent.model ? " · " + context.agent.model : ""}</Badge>}
                     <span className="text-xs text-tertiary">{status || (live || busy ? "进行中…" : "")}</span>
+                    <span className="ml-1 flex shrink-0 items-center rounded-lg bg-secondary p-0.5 text-xs">
+                        <button type="button" onClick={() => navigate("/console")} className={`rounded-md px-2 py-0.5 ${view === "chat" ? "bg-primary text-primary shadow-xs" : "text-tertiary hover:text-primary"}`}>列表</button>
+                        <button type="button" onClick={() => navigate("/console?view=board")} className={`rounded-md px-2 py-0.5 ${view === "board" ? "bg-primary text-primary shadow-xs" : "text-tertiary hover:text-primary"}`}>看板</button>
+                    </span>
                 </header>
 
+                {view === "board" ? <div className="min-h-0 flex-1 overflow-hidden"><BoardPage /></div> : (
                 <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px]">
                     <div className="flex min-h-0 flex-col">
                         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-8 py-6">
@@ -259,6 +271,7 @@ export function ConsolePage() {
                     </div>
                     <Rail context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} />
                 </div>
+                )}
             </div>
         </div>
     );

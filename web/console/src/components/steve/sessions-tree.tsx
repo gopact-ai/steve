@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { AlertCircle, Archive, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, Plus, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
+import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, Plus, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
-import type { Conversation, Project } from "@/lib/types";
+import type { Conversation, Project, Task } from "@/lib/types";
+import { StateBadge, taskState } from "./ui";
 import { kindWord, placeLabel } from "@/lib/workspaces";
 
 // ConversationPatch is what a row can change about its conversation.
@@ -18,7 +19,14 @@ export type ConversationPatch = { title?: string; archived?: boolean };
 // mark instead. Steve's home sits apart at the bottom; a thread whose
 // project is not known any more goes under 未归属; what was put away is
 // folded under 已归档, and stays there while open.
-export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate, collapsed, onToggle }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onUpdate: (id: string, patch: ConversationPatch) => void; collapsed?: boolean; onToggle?: () => void }) {
+// notable says a task is worth a line of its own under its thread: it
+// is running, waits on the owner, was handed on, was planned, or fires
+// on a schedule. A one-turn chat task is the thread itself.
+function notable(t: Task, all: Task[]): boolean {
+    return t.execution === "running" || (t.attention || 0) > 0 || !!t.plan_id || (t.origin || "").startsWith("schedule") || all.some((c) => c.parent === t.id);
+}
+
+export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate, collapsed, onToggle, tasks = [], onTask }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onUpdate: (id: string, patch: ConversationPatch) => void; collapsed?: boolean; onToggle?: () => void; tasks?: Task[]; onTask?: (t: Task) => void }) {
     const [folded, setFolded] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem("steve.folded") || "{}"); } catch { return {}; } });
     const toggle = (id: string) => setFolded((f) => { const next = { ...f, [id]: !f[id] }; try { localStorage.setItem("steve.folded", JSON.stringify(next)); } catch { /* ignore */ } return next; });
     const [renaming, setRenaming] = useState<string | null>(null);
@@ -36,10 +44,12 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
     const work = projects.filter((p) => !p.home).sort((a, b) => (a.default ? -1 : b.default ? 1 : a.id.localeCompare(b.id)));
     const known = new Set(projects.map((p) => p.id));
     const orphans = [...byProject.entries()].filter(([k]) => !known.has(k)).flatMap(([, v]) => v);
+    const workOf = (c: Conversation) => tasks.filter((t) => t.channel === c.id && !t.parent && notable(t, tasks));
     const row = (c: Conversation, many?: boolean) => (
         <Thread key={c.id} c={c} current={c.id === current} onPick={onPick} many={many}
             renaming={renaming === c.id} onRename={() => setRenaming(c.id)} onRenamed={(title) => { setRenaming(null); if (title !== null) onUpdate(c.id, { title }); }}
-            onArchive={(archived) => onUpdate(c.id, { archived })} />
+            onArchive={(archived) => onUpdate(c.id, { archived })}
+            work={workOf(c)} childrenOf={(id) => tasks.filter((t) => t.parent === id)} onTask={onTask} />
     );
     const node = (p: Project, title: string, hint?: string) => {
         const threads = byProject.get(p.id) || [];
@@ -126,7 +136,7 @@ function TreeHeading({ children }: { children: string }) {
 // Thread is one conversation: its name, its agent, when it last spoke,
 // and — when the project is in more than one place, or the agent has
 // nowhere to work — where it runs. Its menu renames or puts it away.
-function Thread({ c, current, onPick, many, renaming, onRename, onRenamed, onArchive }: { c: Conversation; current: boolean; onPick: (id: string) => void; many?: boolean; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void }) {
+function Thread({ c, current, onPick, many, renaming, onRename, onRenamed, onArchive, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; onPick: (id: string) => void; many?: boolean; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
     const nowhere = !!c.project && !!c.agent && !c.place;
     return (
         <li className="group/thread relative">
@@ -160,7 +170,37 @@ function Thread({ c, current, onPick, many, renaming, onRename, onRenamed, onArc
                     </Dropdown.Popover>
                 </Dropdown.Root>
             )}
+            {work.length > 0 && (
+                <ul className="mb-1 ml-3 flex flex-col gap-0.5 border-l border-secondary pl-2">
+                    {work.map((t) => (
+                        <li key={t.id} className="flex flex-col gap-0.5">
+                            <TaskLine t={t} onTask={onTask} />
+                            {(childrenOf?.(t.id) || []).map((k) => (
+                                <div key={k.id} className="ml-3 border-l border-secondary pl-2"><TaskLine t={k} onTask={onTask} child /></div>
+                            ))}
+                        </li>
+                    ))}
+                </ul>
+            )}
         </li>
+    );
+}
+
+// TaskLine is one piece of work under a thread: who has it, where it
+// stands, what it is; a child is the same line, indented, marked as
+// handed on.
+function TaskLine({ t, onTask, child }: { t: Task; onTask?: (t: Task) => void; child?: boolean }) {
+    const running = t.execution === "running";
+    return (
+        <button type="button" onClick={onTask ? () => onTask(t) : undefined} className={`flex w-full flex-col gap-0.5 rounded-md px-1.5 py-1 text-left ${onTask ? "hover:bg-primary/50" : ""}`} title={t.goal}>
+            <span className="flex min-w-0 items-center gap-1.5 text-[11px]">
+                {running && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
+                <span className="shrink-0 font-mono text-quaternary">#{t.id}</span>
+                <span className="min-w-0 truncate text-secondary">{child ? "委派 → " : ""}{t.member || "steve"}{t.node ? ` @ ${t.node}` : ""}</span>
+                <span className="ml-auto shrink-0">{taskState(t) === "done" ? <CheckCircle className="size-3.5 text-fg-success-primary" aria-label="已完成" /> : <StateBadge state={taskState(t)} />}</span>
+            </span>
+            <span className="truncate text-[11px] text-tertiary">{t.goal}</span>
+        </button>
     );
 }
 

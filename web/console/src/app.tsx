@@ -1,11 +1,10 @@
 import { useEffect, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
-import { Activity, BookOpen01, ClipboardCheck, Folder, Inbox01, Moon01, Dataflow03, PuzzlePiece01, Server01, Sun, Terminal, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
+import { Activity, BookOpen01, Folder, Inbox01, Moon01, Dataflow03, PuzzlePiece01, Server01, Sun, Terminal, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
 import { NavItemBase } from "@/components/application/app-navigation/base-components/nav-item";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { FleetProvider, IntentProvider, useFleet } from "@/lib/fleet";
 import { useTheme } from "@/providers/theme-provider";
-import { BoardPage } from "@/pages/board";
 import { ConsolePage } from "@/pages/console";
 import { FleetPage } from "@/pages/fleet";
 import { HistoryPage } from "@/pages/history";
@@ -43,7 +42,6 @@ function Shell() {
     const groups: { title: string; items: { href: string; label: string; icon: typeof Terminal; badge?: number | string; hot?: boolean }[] }[] = [
         { title: "工作", items: [
             { href: "/console", label: "工作台", icon: Terminal },
-            { href: "/tasks", label: "任务", icon: ClipboardCheck, badge: running || undefined },
         ] },
         { title: "环境", items: [
             { href: "/projects", label: "项目", icon: Folder, badge: snap.projects.length || undefined },
@@ -132,7 +130,7 @@ function Shell() {
                 <Routes>
                     <Route path="/" element={<Navigate to="/console" replace />} />
                     <Route path="/console" element={<ConsolePage />} />
-                    <Route path="/tasks" element={<BoardPage />} />
+                    <Route path="/tasks" element={<Navigate to="/console?view=board" replace />} />
                     <Route path="/plans" element={<Navigate to="/tasks" replace />} />
                     <Route path="/projects" element={<ProjectsPage />} />
                     <Route path="/fleet" element={<FleetPage />} />
