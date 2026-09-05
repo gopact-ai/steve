@@ -6,6 +6,7 @@ import (
 	"log"
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
@@ -15,8 +16,10 @@ import (
 // conn is one live node: the multiplexed connection plus what the node said
 // it can run when it answered.
 type conn struct {
-	name string
-	mux  *nodewire.Mux
+	name       string
+	mux        *nodewire.Mux
+	generation int64
+	released   atomic.Bool
 
 	advMu  sync.RWMutex
 	advert nodewire.Advert
@@ -65,7 +68,7 @@ func dial(ctx context.Context, name, hub string, cfg Config, mcpDial func(contex
 	// The handshake is the one exchange with a hard deadline: past it the
 	// connection is long-lived and its streams carry their own timeouts.
 	_ = socket.SetDeadline(time.Now().Add(nodewire.HandshakeTimeout))
-	advert, err := nodewire.Dial(socket, nodewire.Hello{Token: cfg.Token, Hub: hub})
+	advert, err := nodewire.Dial(socket, nodewire.Hello{Token: cfg.Token, Hub: hub, Features: nodewire.Features()})
 	if err != nil {
 		socket.Close()
 		return nil, err
@@ -89,7 +92,14 @@ func (c *conn) alive() bool {
 }
 
 func (c *conn) close() {
-	c.closeOnce.Do(func() { _ = c.mux.Close() })
+	c.closeOnce.Do(func() {
+		c.released.Store(true)
+		if nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureJournal) {
+			_ = c.mux.CloseGracefully()
+		} else {
+			_ = c.mux.Close()
+		}
+	})
 }
 
 // serveReverse forwards the node's MCP streams to the hub's loopback
@@ -118,6 +128,7 @@ func (c *conn) serveReverse(mcpDial func(context.Context) (net.Conn, error)) {
 				return
 			}
 			defer upstream.Close()
+			go func() { <-stream.Done(); _ = upstream.Close() }()
 			done := make(chan struct{})
 			go func() {
 				_, _ = io.Copy(upstream, stream)
@@ -128,6 +139,8 @@ func (c *conn) serveReverse(mcpDial func(context.Context) (net.Conn, error)) {
 				close(done)
 			}()
 			_, _ = io.Copy(stream, upstream)
+			_ = stream.Close()
+			_ = upstream.Close()
 			<-done
 		}(stream)
 	}

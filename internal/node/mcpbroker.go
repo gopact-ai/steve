@@ -579,6 +579,12 @@ func (r remoteBroker) Release(ctx context.Context, attempt string) (int, error) 
 
 // releaseAttempt serves StreamRelease.
 func (s *Server) releaseAttempt(stream *nodewire.Stream) {
+	// Process release is explicit; an attempt only releases its own MCP
+	// bindings because other ACP sessions may share the harness process.
+	if stream.Request().Stream != "" {
+		s.releaseProcess(stream)
+		return
+	}
 	defer stream.Close()
 	attempt := strings.TrimSpace(stream.Request().Command)
 	if attempt == "" || s.broker == nil {

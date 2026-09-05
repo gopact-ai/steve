@@ -2,11 +2,13 @@ package nodewire
 
 import (
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"sync"
+	"time"
 )
 
 // OpenRequest says what a new stream is for. Both ends can open streams: the
@@ -16,6 +18,12 @@ import (
 type OpenRequest struct {
 	Kind    string `json:"kind"`
 	Harness string `json:"harness,omitempty"`
+	// Stream identifies a harness process, which may host many ACP sessions.
+	// Cursors count complete newline-terminated lines, never frames or bytes.
+	Stream   string `json:"stream,omitempty"`
+	Resume   bool   `json:"resume,omitempty"`
+	AfterOut uint64 `json:"after_out,omitempty"`
+	AfterIn  uint64 `json:"after_in,omitempty"`
 	// Command and Dir describe a StreamExec: a shell command the node runs
 	// in a directory, whose output flows back on the stream and whose exit
 	// status is the close reason.
@@ -24,7 +32,7 @@ type OpenRequest struct {
 }
 
 const (
-	// StreamACP carries one agent's stdio for the life of a session.
+	// StreamACP carries a harness process's stdio, potentially many sessions.
 	StreamACP = "acp"
 	// StreamMCP is the reverse channel to the hub's agentmcp server. It runs
 	// on this same connection so the agent still only ever talks to a
@@ -61,7 +69,8 @@ const (
 	StreamSkills = "skills"
 	// StreamRelease tells the node an attempt is over: the bindings it
 	// minted for it are dropped and the servers behind them stopped. The
-	// command is the attempt id.
+	// command is the attempt id. With FeatureJournal, a nonempty Stream
+	// instead releases that entire process, independently of attempt bindings.
 	StreamRelease = "release"
 	// StreamConfig reads or rewrites what a node offers — its AI tools,
 	// the commands it checks for, its MCP servers, its declarations — so
@@ -88,11 +97,8 @@ var (
 	ErrStreamClosed = errors.New("nodewire: stream closed")
 )
 
-// streamBuffer is how many frames may queue for a stream nobody is reading.
-// Past it the receive loop blocks, which stalls the whole connection — the
-// deliberate tradeoff of one connection per node. ACP traffic is small
-// request/response JSON, so the queue exists for scheduling jitter, not for
-// buffering a firehose.
+// streamBuffer bounds pending stream opens. Data queues are bounded in bytes
+// separately, so frame sizes do not affect the amount a stream may buffer.
 const streamBuffer = 64
 
 // Mux multiplexes independent streams over one connection. Stream ids are
@@ -108,6 +114,7 @@ type Mux struct {
 	nextID   uint32
 	closed   bool
 	closeErr error
+	graceful bool
 
 	incoming chan *Stream
 	done     chan struct{}
@@ -182,6 +189,20 @@ func (m *Mux) Close() error {
 	return m.conn.Close()
 }
 
+// CloseGracefully releases the node's processes. Only negotiated journal
+// peers send Goodbye: a bare socket EOF cannot distinguish intent from loss.
+func (m *Mux) CloseGracefully() error {
+	err := m.write(Frame{Kind: KindGoodbye})
+	_ = m.Close()
+	return err
+}
+
+func (m *Mux) Graceful() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.graceful
+}
+
 // Done closes when the connection drops, so a node registry can notice a
 // node going away without polling.
 func (m *Mux) Done() <-chan struct{} { return m.done }
@@ -197,8 +218,17 @@ func (m *Mux) err() error {
 
 func (m *Mux) write(f Frame) error {
 	m.writeMu.Lock()
-	defer m.writeMu.Unlock()
-	return WriteFrame(m.conn, f)
+	// A half-open TCP connection must eventually wake the reconnect path.
+	if c, ok := m.conn.(interface{ SetWriteDeadline(time.Time) error }); ok {
+		_ = c.SetWriteDeadline(time.Now().Add(15 * time.Second))
+	}
+	err := WriteFrame(m.conn, f)
+	m.writeMu.Unlock()
+	if err != nil {
+		m.shutdown(err)
+		_ = m.conn.Close()
+	}
+	return err
 }
 
 func (m *Mux) receive() {
@@ -225,6 +255,17 @@ func (m *Mux) receive() {
 				s.remoteClosed(string(f.Payload))
 			}
 			m.drop(f.Stream)
+		case KindInputAck:
+			if s := m.lookup(f.Stream); s != nil && len(f.Payload) == 8 {
+				s.inputAck(binary.BigEndian.Uint64(f.Payload))
+			}
+		case KindGoodbye:
+			m.mu.Lock()
+			m.graceful = true
+			m.mu.Unlock()
+			m.shutdown(ErrMuxClosed)
+			_ = m.conn.Close()
+			return
 		}
 	}
 }
@@ -277,6 +318,7 @@ func (m *Mux) shutdown(cause error) {
 	close(m.done)
 	m.mu.Unlock()
 	for _, s := range streams {
-		s.remoteClosed(cause.Error())
+		s.finish(fmt.Errorf("%w: %v", ErrMuxClosed, cause))
 	}
+	_ = m.conn.Close()
 }

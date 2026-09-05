@@ -1,9 +1,7 @@
 // Command steve-node runs agents on one machine on behalf of a Steve hub.
 //
-// It is deliberately thin: it holds no memory, no task state and no identity.
-// The hub assembles every session's context and owns the task tree; the node
-// starts processes and shuttles bytes. That is what makes a node replaceable
-// — losing one costs the sessions it was running, nothing more.
+// The hub owns tasks and ACP sessions. The node owns harness processes and
+// bounded journals so a lost hub socket need not end those processes.
 package main
 
 import (
@@ -17,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/node"
 )
@@ -52,6 +51,22 @@ func run(args []string) error {
 	cfg.Source = absolute(*configPath)
 	if *listen != "" {
 		cfg.Listen = *listen
+	}
+	if value := os.Getenv("STEVE_NODE_SESSION_GRACE"); value != "" {
+		cfg.SessionGrace, err = time.ParseDuration(value)
+		if err != nil || cfg.SessionGrace <= 0 {
+			return fmt.Errorf("STEVE_NODE_SESSION_GRACE must be a positive duration")
+		}
+	}
+	if value := os.Getenv("STEVE_NODE_FAULT"); value != "" {
+		delay, ok := strings.CutPrefix(value, "drop-hub-after:")
+		if !ok {
+			return fmt.Errorf("unknown STEVE_NODE_FAULT %q", value)
+		}
+		cfg.FaultDropAfter, err = time.ParseDuration(delay)
+		if err != nil || cfg.FaultDropAfter <= 0 {
+			return fmt.Errorf("drop-hub-after requires a positive duration")
+		}
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()

@@ -16,17 +16,36 @@ import (
 // context.DeadlineExceeded, like a deadline's.
 type idleContext struct {
 	context.Context
-	done  chan struct{}
-	mu    sync.Mutex
-	err   error
-	timer *time.Timer
-	d     time.Duration
+	done      chan struct{}
+	mu        sync.Mutex
+	err       error
+	timer     *time.Timer
+	d         time.Duration
+	remaining time.Duration
+	due       time.Time
+	paused    bool
+	epoch     uint64
+}
+
+// Clock can suspend silence accounting without suspending a parent's hard
+// deadline. Registrar is the wiring seam; users need not import node.
+type Clock interface {
+	Pause()
+	Resume()
+}
+type Registrar func(node string, clock Clock) (unregister func())
+
+type Context interface {
+	context.Context
+	Clock
 }
 
 // WithTimeout wraps parent; touch resets the clock, stop ends it.
-func WithTimeout(parent context.Context, d time.Duration) (ctx context.Context, stop func(), touch func()) {
+func WithTimeout(parent context.Context, d time.Duration) (ctx Context, stop func(), touch func()) {
 	c := &idleContext{Context: parent, done: make(chan struct{}), d: d}
-	c.timer = time.AfterFunc(d, func() { c.finish(context.DeadlineExceeded) })
+	c.mu.Lock()
+	c.arm(d)
+	c.mu.Unlock()
 	go func() {
 		select {
 		case <-parent.Done():
@@ -52,13 +71,61 @@ func (c *idleContext) touch() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.err == nil {
-		c.timer.Reset(c.d)
+		if c.paused {
+			c.remaining = c.d
+		} else {
+			c.arm(c.d)
+		}
 	}
+}
+
+// arm invalidates callbacks already waiting for the lock. Timer.Stop alone
+// cannot keep an old expiry callback from racing with Pause or touch.
+func (c *idleContext) arm(d time.Duration) {
+	c.epoch++
+	epoch := c.epoch
+	if c.timer != nil {
+		c.timer.Stop()
+	}
+	c.due = time.Now().Add(d)
+	c.timer = time.AfterFunc(d, func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if c.err == nil && !c.paused && c.epoch == epoch {
+			c.finishLocked(context.DeadlineExceeded)
+		}
+	})
+}
+
+func (c *idleContext) Pause() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil || c.paused {
+		return
+	}
+	c.remaining = max(0, time.Until(c.due))
+	c.paused = true
+	c.epoch++
+	c.timer.Stop()
+}
+
+func (c *idleContext) Resume() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.err != nil || !c.paused {
+		return
+	}
+	c.paused = false
+	c.arm(c.remaining)
 }
 
 func (c *idleContext) finish(err error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.finishLocked(err)
+}
+
+func (c *idleContext) finishLocked(err error) {
 	if c.err != nil {
 		return
 	}
