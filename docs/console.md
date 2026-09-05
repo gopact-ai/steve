@@ -677,3 +677,25 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 | 5 | steve 仓库没有合入规则（私有仓库无 ruleset），和 acp 不一致 | GitHub 的分支规则要 Pro；先在 CONTRIBUTING 写清：PR、CI 绿、真机门禁、merge commit；acp 那边保持 squash + 线性 | 文档（并入 1） |
 
 §19.4 的 InvocationBinding 与短期写 token、评审多次提的统一 Execution 投影，工作量属于下一阶段，这轮不做。
+
+### 27.1 落地记录
+
+| # | 状态 | 在哪 |
+|---|---|---|
+| 1 | 门禁脚本、`make e2e-fleet`、CONTRIBUTING 已写好；首轮真机就抓到了下面的预算 bug；预算修复部署后再跑一轮，跑通即合入 | PR #6（codex） |
+| 2 | ✅ `artifact.Store.SweepWorktrees` + hub 的 `sweepWorktrees`（启动时清本机、节点上线时清该节点）、`sweepLandings`（每 30 秒 `LandPending`，锁被占就跳过）。上线当场清掉了 node-a、node-b 各一个前几轮留下的工作树 | PR #5 |
+| 3 | ✅ 交换持久化到 console 文档，`Exchange{ID, State, ReplyID}`；入队 / 删除 / 编辑 / 插队走 `/console/queue` API；重启时正在跑的交换记为失败、排队的按序续跑 | PR #8（codex） |
+| 4 | ✅ `steve_remember` 的 `idempotency_key`（24 小时、同作用域、跨进程）；`artifact.Limits`（2 万文件 / 2 GB / 单文件 200 MB），本地与节点脚本同一套检查，超出返回 `TooLarge`，回合后快照失败的原因进 `changes.note` | PR #7（codex） |
+| 5 | ✅ 并入 CONTRIBUTING：PR、CI 绿、涉及委派 / 落地 / 超时 / 快照 / 节点通道必跑门禁并贴输出；steve merge commit，acp squash + 线性 | PR #6 |
+
+验证第 2 条时顺手撞出来、当天修掉的三个：
+
+| 问题 | 现象 | 修法 | 在哪 |
+|---|---|---|---|
+| 重启后的幽灵 attempt | hub 在租约期内重启，旧 attempt 仍"活着"并持有项目锁；续跑的任务被自己的幽灵拒绝："项目 home 正在被 claude（任务 #55）修改" | 启动时 `attempts.ExpireAll("hub restarted")`：不看租约、全部过期并切断租约；`Sweep` 只管租约到期的，留给周期清扫 | PR #9 |
+| 控制台任务重启后续不上 | 中断的任务一律走飞书通道回复锚点续跑，控制台的锚点是 `web-…`，飞书拒收，任务就此停住 | `console.Service.Resume`：先 `ReviveSession`，再把一条"继续"交换**插到队列里排着的消息前面**——页面上显示的是"⟳ 网关重启，继续任务 #N"，agent 收到的是 `@member` + 续跑提示（`Exchange.Prompt` 与 `Input` 分离）；`Persist` 只装载，`Drain` 在续跑入列之后再放行队列；`/tasks resume` 对控制台任务同路 | PR #10 |
+| 无上限的父任务不能委派 | 预算改成可选（0 = 无上限）后，`Spawn` 仍用"父上限 − 已花"算子任务上限，0 减任何数都是负，所有根任务的委派都被拒："task 54 has no budget left to delegate"。跨机器委派从 996295a 起在 master 上一直是坏的，门禁第一次跑就抓到了 | 父任务没有上限就不往下传上限；有上限的照旧封顶、花完拒绝 | PR #11 |
+
+真机验证（hub d6f2580）：在页面上让 claude 前台跑 50 秒的循环，30 秒时杀掉 hub 重启——日志依次是 `expired attempt of the previous process … hub restarted`、`console: resuming task #55`，页面上先是旧交换的"console restarted before this exchange completed"，然后 "⟳ 网关重启，继续任务 #55" 一行，1 分钟后 agent 的回复和"任务 #55 跑了 1m0s"的通知落在同一条交换上。
+
+还留着的：CI 的 gofmt 检查在 master 上是红的（Go 新版格式规则，PR #6 里有一笔机械修复）；重启时 ACP 子进程一并死掉，agent 靠 session/load 重放历史续跑，长回合里 agent 自己起的后台命令会丢；`Exchange.Prompt` 目前只有续跑在用。
