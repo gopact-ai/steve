@@ -23,10 +23,10 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
-	"github.com/gopact-ai/steve/internal/nodewire"
-	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 	"github.com/gopact-ai/steve/internal/mcpprobe"
 	"github.com/gopact-ai/steve/internal/mcpscan"
+	"github.com/gopact-ai/steve/internal/nodewire"
+	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 	"github.com/gopact-ai/steve/internal/skills"
 )
 

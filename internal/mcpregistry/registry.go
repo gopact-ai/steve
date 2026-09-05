@@ -129,14 +129,16 @@ type rawServer struct {
 		URL string `json:"url"`
 	} `json:"repository"`
 	Packages []struct {
-		RegistryType string   `json:"registryType"`
-		Identifier   string   `json:"identifier"`
-		Version      string   `json:"version"`
-		RuntimeHint  string   `json:"runtimeHint"`
-		Transport    struct{ Type string `json:"type"` } `json:"transport"`
-		RuntimeArgs  []rawArg `json:"runtimeArguments"`
-		PackageArgs  []rawArg `json:"packageArguments"`
-		Env          []rawEnv `json:"environmentVariables"`
+		RegistryType string `json:"registryType"`
+		Identifier   string `json:"identifier"`
+		Version      string `json:"version"`
+		RuntimeHint  string `json:"runtimeHint"`
+		Transport    struct {
+			Type string `json:"type"`
+		} `json:"transport"`
+		RuntimeArgs []rawArg `json:"runtimeArguments"`
+		PackageArgs []rawArg `json:"packageArguments"`
+		Env         []rawEnv `json:"environmentVariables"`
 	} `json:"packages"`
 	Remotes []struct {
 		Type    string   `json:"type"`

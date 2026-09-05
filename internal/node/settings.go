@@ -1,10 +1,10 @@
 package node
 
 import (
-	"github.com/gopact-ai/steve/internal/mcpscan"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/mcpscan"
 	"log"
 	"os"
 	"path/filepath"

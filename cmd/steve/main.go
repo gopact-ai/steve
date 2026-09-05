@@ -2147,7 +2147,9 @@ func (f fleetTools) AddNode(ctx context.Context, name, addr, level, hubURL strin
 	return text, nil
 }
 
-func (f fleetTools) RemoveNode(ctx context.Context, name string) error { return f.admin.RemoveNode(ctx, name) }
+func (f fleetTools) RemoveNode(ctx context.Context, name string) error {
+	return f.admin.RemoveNode(ctx, name)
+}
 
 func (f fleetTools) RefreshNode(ctx context.Context, name string) (string, error) {
 	key := f.admin.nodeKey(name)
