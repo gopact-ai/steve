@@ -2,18 +2,19 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { MessageChatSquare } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
-import { Composer } from "@/components/steve/composer";
+import { Composer, type Queued } from "@/components/steve/composer";
 import { AssistantMessage, UserMessage } from "@/components/steve/message";
 import { Rail, type RailTab } from "@/components/steve/rail";
 import { SessionsTree } from "@/components/steve/sessions-tree";
 import { TaskDrawer } from "@/components/steve/task-drawer";
+import { DelegationCard } from "@/components/steve/delegation";
 import { RAIL_WIDTH } from "@/components/steve/rail";
 import { BoardPage } from "./board";
 import { Working, applyLive, type Live } from "@/components/steve/trace";
 import { Nothing } from "@/components/steve/ui";
-import { fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation } from "@/lib/api";
+import { fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, fetchSelectors, setPreferences } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
-import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task } from "@/lib/types";
+import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, StepProcess, QuoteRef } from "@/lib/types";
 
 // ConsolePage is composition: it owns the conversation, the transcript,
 // the line in flight and the composer's text, and lays out the three
@@ -35,6 +36,25 @@ export function ConsolePage() {
     const [selectedReply, setSelectedReply] = useState<Reply | null>(null);
     const [tab, setTab] = useState<RailTab>("context");
     const [pickedTask, setPickedTask] = useState<Task | null>(null);
+    // A delegated child picked from the tree takes the middle column:
+    // its card, open, from the reply that carried it.
+    const [child, setChild] = useState<Task | null>(null);
+    const stepOf = (taskID: string): StepProcess | undefined => {
+        for (let i = entries.length - 1; i >= 0; i--) {
+            const found = entries[i].process?.steps?.find((st) => st.id === "#" + taskID);
+            if (found) return found;
+        }
+        return undefined;
+    };
+    // Lines typed while a turn runs wait here and go out one by one as
+    // turns end; steering sends one now with the interrupt prefix.
+    const [queue, setQueue] = useState<Queued[]>([]);
+    // Quotes ride with the next message wherever it is sent from; they
+    // survive switching threads on purpose — that is how a line from one
+    // thread reaches another.
+    const [quotes, setQuotes] = useState<QuoteRef[]>([]);
+    const [queueing, setQueueingState] = useState<boolean>(() => { try { return localStorage.getItem("steve.queueing") !== "0"; } catch { return true; } });
+    const setQueueing = (v: boolean) => { setQueueingState(v); try { localStorage.setItem("steve.queueing", v ? "1" : "0"); } catch { /* ignore */ } };
     const [sessionsCollapsed, setSessionsCollapsedState] = useState<boolean>(() => { try { return localStorage.getItem("steve.sessions.collapsed") === "1"; } catch { return false; } });
     const setSessionsCollapsed = (v: boolean) => { setSessionsCollapsedState(v); try { localStorage.setItem("steve.sessions.collapsed", v ? "1" : "0"); } catch { /* ignore */ } };
     const [verbs, setVerbs] = useState<Verb[]>([]);
@@ -84,6 +104,7 @@ export function ConsolePage() {
         loadConversations();
         setSelectedReply(null);
         setLive(null);
+        setChild(null);
     }, [conversation, loadContext, loadConversations]);
 
     // The context depends on the fleet: an agent coming up changes who can work here.
@@ -139,23 +160,47 @@ export function ConsolePage() {
         el.style.height = Math.min(el.scrollHeight, 200) + "px";
     }, [text]);
 
-    function newSession(project?: string) {
+    function newSession(project?: string): string {
         const id = "console:" + Date.now().toString(36);
         setConversation(id);
         setEntries([]);
         setText("");
+        setQueue([]);
         if (project) window.setTimeout(() => { void send(id, `/project use ${project}`).catch(() => undefined).finally(() => { loadContext(); loadConversations(); }); }, 50);
         window.setTimeout(() => box.current?.focus(), 0);
+        return id;
     }
 
-    async function submit(line?: string) {
+    // When a turn ends, the next queued line goes out by itself.
+    useEffect(() => {
+        if (busy || live || !queue.length || !queueing) return;
+        const [next, ...rest] = queue;
+        setQueue(rest);
+        void submit(next.text);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [busy, live]);
+
+    function steer(q: Queued) {
+        setQueue((list) => list.filter((x) => x.id !== q.id));
+        void submit(q.text.startsWith("!") ? q.text : "!" + q.text, true);
+    }
+
+    async function submit(line?: string, force?: boolean) {
         const input = (line ?? text).trim();
-        if (!input || busy) return;
+        if (!input) return;
+        if (busy && !force) {
+            if (!queueing) return;
+            setQueue((list) => [...list, { id: Date.now().toString(36), text: input }]);
+            setText("");
+            return;
+        }
         setText("");
         setBusy(true);
         setStatus("");
         try {
-            const reply = await send(conversation, input);
+            const carried = quotes;
+            setQuotes([]);
+            const reply = await send(conversation, input, carried.length ? carried : undefined);
             if (reply?.process) setEntries((list) => list.map((x) => (x.at === reply.at && x.kind === "reply" ? reply : x)));
         } catch (e) {
             setStatus(String(e).replace(/^Error: /, ""));
@@ -219,7 +264,7 @@ export function ConsolePage() {
             <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={(id) => setConversation(id)} onNew={newSession}
                 onUpdate={(id, patch) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}
                 collapsed={sessionsCollapsed} onToggle={() => setSessionsCollapsed(!sessionsCollapsed)}
-                tasks={snap.tasks} onTask={setPickedTask} />
+                tasks={snap.tasks} onTask={(t) => { if (t.parent && stepOf(t.id)) { setChild(t); setPickedTask(null); } else setPickedTask(t); }} />
             {pickedTask && <TaskDrawer t={pickedTask} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === pickedTask.id)} onClose={() => setPickedTask(null)} width={RAIL_WIDTH} />}
 
             <div className="flex min-h-0 min-w-0 flex-1 flex-col">
@@ -240,7 +285,15 @@ export function ConsolePage() {
                     </span>
                 </header>
 
-                {view === "board" ? <div className="min-h-0 flex-1 overflow-hidden"><BoardPage /></div> : (
+                {view === "board" ? <div className="min-h-0 flex-1 overflow-hidden"><BoardPage /></div> : child && stepOf(child.id) ? (
+                <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
+                    <div className="mx-auto flex max-w-3xl flex-col gap-3">
+                        <button type="button" onClick={() => setChild(null)} className="self-start text-xs text-tertiary hover:text-primary">← 回到对话</button>
+                        {(() => { const st = stepOf(child.id)!; return <DelegationCard id={st.id} info={{ ...st, state: st.state || "done" }} progress={{ agent: st.agent, node: st.node, reasoning: st.reasoning, tools: st.tools }} tools={st.tools} reasoning={st.reasoning} open />; })()}
+                        <div className="text-xs text-quaternary">这是父回合记录下的这次委派；任务本身的预算、回合与关系在右栏"关系"里点它可看。</div>
+                    </div>
+                </div>
+                ) : (
                 <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px]">
                     <div className="flex min-h-0 flex-col">
                         <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-8 py-6">
@@ -253,7 +306,8 @@ export function ConsolePage() {
                                 </div>
                             )}
                             <div className="mx-auto flex max-w-4xl flex-col gap-5">
-                                {entries.map((r, i) => r.kind === "sent" ? <UserMessage key={i} text={r.input || ""} /> : <AssistantMessage key={i} r={r} selected={shownProcess === r} onSelect={(r.process || r.injected) ? () => { setSelectedReply(r); setTab("trace"); } : undefined} />)}
+                                {entries.map((r, i) => r.kind === "sent" ? <UserMessage key={i} text={r.input || ""} /> : <AssistantMessage key={i} r={r} selected={shownProcess === r} onSelect={(r.process || r.injected) ? () => { setSelectedReply(r); setTab("trace"); } : undefined}
+                                    onQuote={r.id ? () => setQuotes((list) => list.some((x) => x.reply_id === r.id) ? list : [...list, { conversation, reply_id: r.id!, title: current?.title || conversation, excerpt: (r.text || "").replace(/\s+/g, " ").slice(0, 80) }]) : undefined} />)}
                                 {live && <Working live={live} plans={runningPlans} compact />}
                                 <div ref={bottom} />
                             </div>
@@ -262,10 +316,17 @@ export function ConsolePage() {
                             <Composer
                                 value={text} onChange={setText} onSubmit={() => void submit()} onStop={() => void send(conversation, "/cancel").catch(() => undefined)}
                                 busy={busy} boxRef={box} onKey={onKey}
+                                quotes={quotes} onDropQuote={(x) => setQuotes((list) => list.filter((y) => y.reply_id !== x.reply_id))}
+                                queue={queue} queueing={queueing} onToggleQueueing={() => setQueueing(!queueing)}
+                                onSteer={steer} onDropQueued={(q) => setQueue((list) => list.filter((x) => x.id !== q.id))}
+                                onEditQueued={(q) => { setQueue((list) => list.filter((x) => x.id !== q.id)); setText(q.text); box.current?.focus(); }}
+                                onSideChat={(q) => { setQueue((list) => list.filter((x) => x.id !== q.id)); const id = newSession(context?.project?.id); window.setTimeout(() => { void send(id, q.text).catch(() => undefined); }, 400); }}
                                 suggestions={suggestions} pick={pick} onApply={apply}
                                 verbs={verbs} onVerb={(cmd) => { setText(cmd + " "); box.current?.focus(); }}
                                 projects={snap.projects} project={context?.project} onProject={(id) => void submit(`/project use ${id}`)}
                                 agents={context?.agents ?? []} agent={context?.agent} onAgent={(id) => void submit(`/use ${id}`)}
+                                onSelectors={context?.agent ? () => fetchSelectors(conversation, context.agent!.id) : undefined}
+                                onPrefer={(patch) => { if (!context?.agent) return; void setPreferences(conversation, context.agent.id, patch).then((r) => { setStatus(r.note || "已记住"); loadContext(); }).catch((e) => setStatus(String(e).replace(/^Error: /, ""))); }}
                             />
                         </div>
                     </div>

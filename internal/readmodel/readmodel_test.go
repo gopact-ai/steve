@@ -56,6 +56,7 @@ func fixture(t *testing.T) *Model {
 	if err != nil {
 		t.Fatal(err)
 	}
+	tasks.SetBudget(24, time.Hour) // a budget is opt-in; the snapshot must still carry one when set
 	parent, err := tasks.Create(task.Task{Goal: "ship it", Channel: "chat", Member: "local"})
 	if err != nil {
 		t.Fatal(err)

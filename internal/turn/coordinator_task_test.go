@@ -79,10 +79,11 @@ func TestFailedTurnStillRecordsTheAttempt(t *testing.T) {
 
 func TestBudgetStopsTheTaskAndNamesTheLimit(t *testing.T) {
 	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	tasks.SetBudget(3, time.Hour) // a budget is opt-in now; this test is about the brake
 
 	// Drive turns until the default cap trips. The brake lives in the task
 	// store, so every caller gets it without having to remember to check.
-	for i := 0; i <= task.DefaultMaxTurns; i++ {
+	for i := 0; i <= 3; i++ {
 		_, err := handle(coordinator, t.Context(), "again")
 		if err == nil {
 			continue
@@ -98,8 +99,8 @@ func TestBudgetStopsTheTaskAndNamesTheLimit(t *testing.T) {
 		if !strings.Contains(userErr.Text, "轮") {
 			t.Fatalf("message should name the turn limit: %q", userErr.Text)
 		}
-		if tracked.Budget.Turns != task.DefaultMaxTurns {
-			t.Fatalf("turns = %d; want the cap %d", tracked.Budget.Turns, task.DefaultMaxTurns)
+		if tracked.Budget.Turns != 3 {
+			t.Fatalf("turns = %d; want the cap %d", tracked.Budget.Turns, 3)
 		}
 		return
 	}
@@ -219,7 +220,8 @@ func TestTaskTrackingIsOptional(t *testing.T) {
 }
 
 func TestTasksCommandListsWhatTheConversationDid(t *testing.T) {
-	coordinator, _ := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	tasks.SetBudget(3, time.Hour)
 
 	empty, err := handle(coordinator, t.Context(), "/tasks")
 	if err != nil {
@@ -236,19 +238,20 @@ func TestTasksCommandListsWhatTheConversationDid(t *testing.T) {
 	if err != nil {
 		t.Fatalf("listing: %v", err)
 	}
-	for _, want := range []string{"#1", "wire the node link", "codex", "1/" + strconv.Itoa(task.DefaultMaxTurns)} {
+	for _, want := range []string{"#1", "wire the node link", "codex", "1/" + strconv.Itoa(3)} {
 		if !strings.Contains(listed.Text, want) {
 			t.Fatalf("listing %q missing %q", listed.Text, want)
 		}
 	}
 	// The listing itself must not charge a turn.
-	if !strings.Contains(listed.Text, "1/"+strconv.Itoa(task.DefaultMaxTurns)) {
+	if !strings.Contains(listed.Text, "1/"+strconv.Itoa(3)) {
 		t.Fatalf("listing spent a turn: %q", listed.Text)
 	}
 }
 
 func TestStatusShowsTheLiveBudget(t *testing.T) {
-	coordinator, _ := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	coordinator, tasks := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	tasks.SetBudget(24, time.Hour)
 	if _, err := handle(coordinator, t.Context(), "some goal"); err != nil {
 		t.Fatalf("turn: %v", err)
 	}
@@ -263,7 +266,7 @@ func TestStatusShowsTheLiveBudget(t *testing.T) {
 	if labels["Task"] != "#1" {
 		t.Fatalf("status fields = %+v; want Task #1", result.Fields)
 	}
-	if labels["Turns"] != "1/"+strconv.Itoa(task.DefaultMaxTurns) {
+	if labels["Turns"] != "1/"+strconv.Itoa(24) {
 		t.Fatalf("Turns = %q", labels["Turns"])
 	}
 	if labels["Goal"] != "some goal" {

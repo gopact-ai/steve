@@ -33,10 +33,12 @@ export interface Tokens { input?: number; output?: number; cached_read?: number;
 export interface AttemptRow { day: string; agent: string; node?: string; model?: string; outcome?: string; started: string; seconds: number; tokens: Tokens; reported: boolean }
 export interface Task {
     id: string; goal: string; state: string; lifecycle: string; execution: string; attention: number; lane: string;
+    title?: string; priority?: "high" | "normal" | "low" | ""; labels?: string[]; archived_at?: string;
     member?: string; node?: string; channel?: string; project_id?: string; origin?: string; requester?: string; parent?: string; children?: string[];
     turns: number; max_turns: number; elapsed?: string; max_elapsed?: string; updated_at?: string; plan_id?: string;
     tokens?: Tokens; seconds?: number; model?: string; attempt_rows?: AttemptRow[];
 }
+export interface TaskMetaPatch { title?: string; priority?: Task["priority"]; labels?: string[]; archived?: boolean }
 export interface StepContext { goal: string; ancestry?: string[]; refs?: string[]; findings?: string[]; facts?: string[]; bytes?: number }
 export interface StepUsage { day: string; model?: string; tokens: Tokens; seconds: number }
 export interface Step {
@@ -110,6 +112,12 @@ export interface TreeEntry { name: string; path: string; kind: "file" | "dir" | 
 export interface TreeView { attempt: string; commit: string; which: "result" | "base"; dir: string; entries: TreeEntry[]; truncated?: boolean }
 export interface FileView { attempt: string; commit: string; path: string; text: string; size: number; binary?: boolean; truncated?: boolean }
 export interface TaskDetail { task: Task; plan?: Plan; children: Task[]; attempts: AttemptView[] }
+// QuoteRef points at a line of some thread to carry along with a message;
+// the server reads the text, the page only keeps a preview.
+export interface QuoteRef { conversation: string; reply_id: string; title?: string; excerpt?: string }
+export interface Choice { Value: string; Label: string; Detail?: string }
+export interface SelectorOption { ID: string; Name: string; Category?: string; Current?: string; Choices: Choice[] }
+export interface Selectors { model?: string; models: Choice[]; options: SelectorOption[]; preferred?: Record<string, string> }
 export interface StepProcess extends StepInfo { id: string; agent?: string; node?: string; reasoning?: string; tools?: ToolCall[] }
 export interface Process { reasoning?: string; tools?: ToolCall[]; steps?: StepProcess[] }
 export interface Event {

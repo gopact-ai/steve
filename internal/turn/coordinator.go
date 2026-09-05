@@ -653,8 +653,12 @@ func (c *Coordinator) open(ctx context.Context, saved state.Session, selected ag
 	// resumed one keeps whatever the user last chose with /model. The agent
 	// is the authority on what it offers, so a preference it cannot honour
 	// is logged and skipped rather than failing the turn.
-	if saved.UpstreamID == "" && (selected.Model != "" || len(selected.Options) > 0) {
-		harness.ApplyPreferences(ctx, runner, selected.ID, selected.Model, selected.Options)
+	if saved.UpstreamID == "" {
+		// The owner's choices for this conversation sit over the agent's
+		// configured defaults.
+		if model, options := c.preferred(saved.ConversationID, selected); model != "" || len(options) > 0 {
+			harness.ApplyPreferences(ctx, runner, selected.ID, model, options)
+		}
 	}
 	return runner, nil
 }

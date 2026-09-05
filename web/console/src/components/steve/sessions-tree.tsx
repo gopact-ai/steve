@@ -190,6 +190,7 @@ function Thread({ c, current, onPick, many, renaming, onRename, onRenamed, onArc
 // stands, what it is; a child is the same line, indented, marked as
 // handed on.
 function TaskLine({ t, onTask, child }: { t: Task; onTask?: (t: Task) => void; child?: boolean }) {
+    if (t.archived_at) return null;
     const running = t.execution === "running";
     return (
         <button type="button" onClick={onTask ? () => onTask(t) : undefined} className={`flex w-full flex-col gap-0.5 rounded-md px-1.5 py-1 text-left ${onTask ? "hover:bg-primary/50" : ""}`} title={t.goal}>
@@ -199,7 +200,7 @@ function TaskLine({ t, onTask, child }: { t: Task; onTask?: (t: Task) => void; c
                 <span className="min-w-0 truncate text-secondary">{child ? "委派 → " : ""}{t.member || "steve"}{t.node ? ` @ ${t.node}` : ""}</span>
                 <span className="ml-auto shrink-0">{taskState(t) === "done" ? <CheckCircle className="size-3.5 text-fg-success-primary" aria-label="已完成" /> : <StateBadge state={taskState(t)} />}</span>
             </span>
-            <span className="truncate text-[11px] text-tertiary">{t.goal}</span>
+            <span className="truncate text-[11px] text-tertiary">{t.title || t.goal}</span>
         </button>
     );
 }

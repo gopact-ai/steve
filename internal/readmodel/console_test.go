@@ -28,6 +28,10 @@ func (f *fakeConsole) Verbs() []Verb { return []Verb{{Command: "/plan", Summary:
 func (f *fakeConsole) SendCommand(ctx context.Context, conversation, input, _ string) (Reply, error) {
 	return f.Send(ctx, conversation, input)
 }
+
+func (f *fakeConsole) SendCommandWith(ctx context.Context, conversation, input, _ string, _ []QuoteRef) (Reply, error) {
+	return f.Send(ctx, conversation, input)
+}
 func (f *fakeConsole) Suggest(context.Context, string, string) []Suggestion { return nil }
 
 // The console endpoints sit behind the same token as the snapshot and are

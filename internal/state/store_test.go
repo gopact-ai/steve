@@ -193,3 +193,28 @@ func TestStoreRelocateOverwritesDestination(t *testing.T) {
 		t.Fatal("source conversation still present")
 	}
 }
+
+func TestPreferencesPersistPerAgent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPreferences("chat", "codex", map[string]string{"model": "gpt-6", "reasoning": "high"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPreferences("chat", "codex", map[string]string{"reasoning": ""}); err != nil {
+		t.Fatal(err)
+	}
+	again, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := again.Preferences("chat", "codex")
+	if got["model"] != "gpt-6" || got["reasoning"] != "" || len(got) != 1 {
+		t.Fatalf("preferences after reopen = %v", got)
+	}
+	if other := again.Preferences("chat", "claude"); len(other) != 0 {
+		t.Fatalf("another agent's preferences = %v", other)
+	}
+}

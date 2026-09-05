@@ -1,4 +1,4 @@
-import type { AttemptView, ChangeIndex, FileDiff, FileView, HomeView, TaskDetail, TreeView, MachineSkills, MCPRegistryEntry, MCPView, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
+import type { AttemptView, ChangeIndex, QuoteRef, Selectors, FileDiff, FileView, HomeView, Task, TaskDetail, TaskMetaPatch, TreeView, MachineSkills, MCPRegistryEntry, MCPView, SkillDoc, SkillSource, SkillsView, Conversation, ConversationContext, HistoryEntry, Reply, Snapshot, Suggestion, Usage, Verb } from "./types";
 
 // The token guards everything: it rides as a bearer header on requests and
 // as a query parameter on the event stream, which cannot carry headers.
@@ -70,11 +70,11 @@ function commandID(): string {
     try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(16).slice(2)}`; }
 }
 
-export async function send(conversation: string, input: string): Promise<Reply> {
+export async function send(conversation: string, input: string, quotes?: QuoteRef[]): Promise<Reply> {
     const res = await fetch(`./console/send${q}`, {
         method: "POST",
         headers: { ...headers, "Content-Type": "application/json" },
-        body: JSON.stringify({ conversation, input, command_id: commandID() }),
+        body: JSON.stringify({ conversation, input, command_id: commandID(), quotes: quotes?.map((x) => ({ conversation: x.conversation, reply_id: x.reply_id })) }),
     });
     const data = (await res.json().catch(() => ({}))) as { reply?: Reply; error?: string };
     if (!res.ok) throw new Error(data.error || `${res.status} ${res.statusText}`);
@@ -151,8 +151,18 @@ export async function removeSkillPath(path: string): Promise<{ ok: boolean }> {
     return json(await fetch(`./console/skills/paths${q}${q ? "&" : "?"}path=${encodeURIComponent(path)}`, { method: "DELETE", headers }));
 }
 export async function fetchHome(): Promise<HomeView> { return json(await fetch(`./console/home${q}`, { headers })); }
+export async function fetchSelectors(conversation: string, agent: string): Promise<Selectors> {
+    const sep = q ? "&" : "?";
+    return json(await fetch(`./console/selectors${q}${sep}conversation=${encodeURIComponent(conversation)}&agent=${encodeURIComponent(agent)}`, { headers }));
+}
+export async function setPreferences(conversation: string, agent: string, patch: Record<string, string>): Promise<{ ok: boolean; note?: string }> {
+    return json(await fetch(`./console/preferences${q}`, { method: "PUT", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify({ conversation, agent, patch }) }));
+}
 export async function fetchTask(id: string): Promise<TaskDetail> {
     return json(await fetch(`./console/tasks/${encodeURIComponent(id)}${q}`, { headers }));
+}
+export async function patchTaskMeta(id: string, patch: TaskMetaPatch): Promise<Task> {
+    return json(await fetch(`./console/tasks/${encodeURIComponent(id)}/meta${q}`, { method: "PATCH", headers: { ...headers, "Content-Type": "application/json" }, body: JSON.stringify(patch) }));
 }
 export async function fetchTaskAttempts(id: string): Promise<AttemptView[]> {
     return json(await fetch(`./console/tasks/${encodeURIComponent(id)}/attempts${q}`, { headers }));

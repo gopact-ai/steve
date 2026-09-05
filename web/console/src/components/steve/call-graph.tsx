@@ -65,7 +65,7 @@ function TaskNode({ t, tasks, plans, depth, liveSteps, seen, onSelect }: { t: Ta
 function chat(t: Task): boolean { return !t.origin || t.origin === "chat"; }
 
 function kindOf(t: Task): string {
-    if (chat(t)) return `聊天线程 · ${t.turns}/${t.max_turns} 回合`;
+    if (chat(t)) return `聊天线程 · ${t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns} 回合`;
     if (t.origin === "delegate") return "委派";
     if (t.origin === "schedule") return "定时";
     return t.origin || "任务";

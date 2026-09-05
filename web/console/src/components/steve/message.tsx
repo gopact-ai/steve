@@ -19,7 +19,7 @@ export function UserMessage({ text }: { text: string }) {
 // AssistantMessage is one line from Steve, laid out the way Codex lays
 // out a turn: first what the agent did (its thinking summary and tool
 // calls, folding), then what it said, then a small meta line.
-export function AssistantMessage({ r, selected, onSelect }: { r: Reply; selected?: boolean; onSelect?: () => void }) {
+export function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply; selected?: boolean; onSelect?: () => void; onQuote?: () => void }) {
     const tone = r.error ? "error" : r.kind === "milestone" ? "success" : r.kind === "notice" ? "warning" : "gray";
     return (
         <div className={`flex min-w-0 flex-col gap-2 rounded-xl px-2 py-1 ${selected ? "bg-secondary/60" : ""}`}>
@@ -32,6 +32,7 @@ export function AssistantMessage({ r, selected, onSelect }: { r: Reply; selected
                 {r.kind !== "reply" && <Badge type="pill-color" size="sm" color={tone}>{r.kind}</Badge>}
                 {r.error && <Badge type="pill-color" size="sm" color="error">error</Badge>}
                 {onSelect && <button type="button" onClick={onSelect} className="hover:text-primary">细节</button>}
+                {onQuote && r.id && r.text && <button type="button" onClick={onQuote} className="hover:text-primary" title="把这条回复作为资料带给下一条消息">引用</button>}
             </div>
         </div>
     );

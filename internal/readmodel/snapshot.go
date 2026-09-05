@@ -67,6 +67,14 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	}
 	if m.src.Tasks != nil {
 		snap.Tasks = tasks(m.src.Tasks.List(""), planByTask)
+		for i := range snap.Tasks {
+			t := &snap.Tasks[i]
+			meta := m.src.Tasks.MetaOf(t.ID)
+			t.Title, t.Priority, t.Labels = meta.Title, meta.Priority, meta.Labels
+			if meta.ArchivedAt != nil {
+				t.ArchivedAt = meta.ArchivedAt.Format(time.RFC3339)
+			}
+		}
 	}
 	snap.Sources = []SourceHealth{
 		{Name: "nodes", Wired: m.src.Nodes != nil}, {Name: "roster", Wired: m.src.Roster != nil},

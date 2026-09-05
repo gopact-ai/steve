@@ -5,12 +5,14 @@ import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { ProgressBarBase } from "@/components/base/progress-indicators/progress-indicators";
+import { Toggle } from "@/components/base/toggle/toggle";
 import { relative, when } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { fmtSeconds, fmtTokens, label, spend, zh } from "@/lib/labels";
 import type { Plan, Task } from "@/lib/types";
 import { PageHeader } from "@/components/steve/page";
 import { TaskDrawer } from "@/components/steve/task-drawer";
+import { TaskMetaMenu, TaskTitleEditor, useTaskMeta } from "@/components/steve/task-meta-menu";
 import { Mono, Nothing, StateBadge, Where, taskState } from "@/components/steve/ui";
 
 type TabKey = "active" | "all" | "scheduled" | "usage";
@@ -28,8 +30,10 @@ export function BoardPage() {
     const { fill } = useIntent();
     const [tab, setTab] = useState<TabKey>("active");
     const [selected, setSelected] = useState<string | null>(null);
+    const [showArchived, setShowArchived] = useState(false);
     const byID = useMemo(() => new Map(snap.tasks.map((t) => [t.id, t])), [snap.tasks]);
-    const roots = snap.tasks.filter((t) => !t.parent || !byID.has(t.parent));
+    const visibleTasks = snap.tasks.filter((t) => showArchived || !t.archived_at);
+    const roots = visibleTasks.filter((t) => !t.parent || !byID.has(t.parent));
     const running = roots.filter((t) => t.lane === "running").length;
     const needsYou = roots.filter((t) => t.lane === "needs_you").length;
     const today = new Date().toISOString().slice(0, 10);
@@ -42,6 +46,7 @@ export function BoardPage() {
             <PageHeader title="任务"
                 description={<>任务是一段有目标和预算的工作线程；一条消息是其中一个回合。<Mono>/new</Mono> 开新任务，<Mono>/plan</Mono> 拆步骤跨机器，agent 也会自己派子任务。</>}
                 actions={<>
+                    <Toggle size="sm" label="显示已归档" isSelected={showArchived} onChange={setShowArchived} />
                     <Stat label="执行中" value={running} tone={running ? "blue" : "gray"} />
                     <Stat label="等你处理" value={needsYou} tone={needsYou ? "warning" : "gray"} />
                     <Stat label="今日用量" value={todayUsage ? `${spend(todayUsage.tokens)} · ${fmtSeconds(todayUsage.seconds)}` : "—"} tone="gray" />
@@ -75,7 +80,7 @@ export function BoardPage() {
                         )}
                     </div>
                 )}
-                {tab === "all" && <AllTasks tasks={snap.tasks} onOpen={setSelected} />}
+                {tab === "all" && <AllTasks tasks={visibleTasks} onOpen={setSelected} />}
                 {tab === "scheduled" && <Scheduled />}
                 {tab === "usage" && <UsagePanel />}
             </div>
@@ -95,36 +100,47 @@ function Stat({ label: name, value, tone }: { label: string; value: number | str
 
 function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () => void; selected: boolean }) {
     const { snap } = useFleet();
+    const meta = useTaskMeta(t);
     const pct = t.max_turns ? Math.min(100, Math.round((100 * t.turns) / t.max_turns)) : 0;
     const now = snap.agents.flatMap((a) => a.activities || []).find((a) => a.task_id === t.id);
     const steps = plan?.steps || [];
     const done = steps.filter((s) => s.state === "done").length;
     return (
-        <button type="button" onClick={onOpen} className={`flex w-full flex-col gap-2 rounded-xl bg-primary p-3 text-left shadow-xs ring-1 ring-inset transition hover:ring-brand ${selected ? "ring-brand" : "ring-secondary"}`}>
-            <div className="flex items-center gap-2">
-                <span className="text-xs font-medium text-tertiary">#{t.id}</span>
-                <StateBadge state={taskState(t)} />
-                {t.attention ? <Badge type="pill-color" size="sm" color="warning">{t.attention} 项待处理</Badge> : null}
-                <span className="ml-auto text-[11px] text-quaternary">{label(zh.origin, t.origin || "chat")}</span>
-            </div>
-            <div className="line-clamp-2 text-sm text-primary">{t.goal}</div>
-            <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-tertiary">
-                <span>{t.member || "—"}</span><span>@</span><Where node={t.node} />
-                {t.project_id && <span>· {t.project_id}</span>}
-            </div>
-            {now && (
-                <div className="truncate text-xs text-secondary" title={now.detail}>
-                    正在：{now.tool ? `${now.tool} ${now.detail || ""}` : now.step_id ? `步骤 ${now.step_id}` : "执行中"} · {relative(now.since)}
+        <div className={`relative rounded-xl bg-primary p-3 text-left shadow-xs ring-1 ring-inset transition hover:ring-brand ${selected ? "ring-brand" : "ring-secondary"} ${t.priority === "low" ? "opacity-70" : ""}`}>
+            <button type="button" onClick={onOpen} aria-label={`打开任务 #${t.id} ${t.title || t.goal}`} className="absolute inset-0 rounded-xl outline-focus-ring focus-visible:outline-2 focus-visible:outline-offset-2" />
+            <div className="pointer-events-none relative flex flex-col gap-2">
+                <div className="flex items-start justify-between gap-2">
+                    <div className="flex min-w-0 flex-wrap items-center gap-2">
+                        <span className="text-xs font-medium text-tertiary">#{t.id}</span>
+                        <StateBadge state={taskState(t)} />
+                        {t.priority === "high" && <Badge type="pill-color" size="sm" color="warning">高</Badge>}
+                        {t.archived_at && <Badge type="pill-color" size="sm" color="gray">已归档</Badge>}
+                        {t.attention ? <Badge type="pill-color" size="sm" color="warning">{t.attention} 项待处理</Badge> : null}
+                        <span className="text-[11px] text-quaternary">{label(zh.origin, t.origin || "chat")}</span>
+                    </div>
+                    <div className="pointer-events-auto shrink-0"><TaskMetaMenu t={t} pending={meta.pending || meta.renaming} onRename={meta.rename} onPatch={(patch) => void meta.save(patch)} /></div>
                 </div>
-            )}
-            {steps.length > 0 && <div className="text-xs text-tertiary">计划 {done}/{steps.length} 步</div>}
-            <div className="flex items-center gap-2 text-[11px] text-quaternary">
-                <span className="w-16">{t.turns}/{t.max_turns} 回合</span>
-                <ProgressBarBase value={pct} className="flex-1" progressClassName={pct > 80 ? "bg-warning-solid" : undefined} />
-                <span>{t.elapsed}</span>
-                <span>{spend(t.tokens)}</span>
+                {meta.renaming ? <div className="pointer-events-auto"><TaskTitleEditor t={t} pending={meta.pending} onDone={meta.finishTitle} /></div> : <div className={`line-clamp-2 text-sm ${t.priority === "low" ? "text-tertiary" : "text-primary"}`}>{t.title || t.goal}</div>}
+                {meta.error && <div role="alert" className="text-xs text-error-primary">{meta.error}</div>}
+                {!!t.labels?.length && <div className="flex flex-wrap gap-1">{t.labels.map((name, i) => <Badge key={`${name}-${i}`} type="pill-color" size="sm" color="gray">{name}</Badge>)}</div>}
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-tertiary">
+                    <span>{t.member || "—"}</span><span>@</span><Where node={t.node} />
+                    {t.project_id && <span>· {t.project_id}</span>}
+                </div>
+                {now && (
+                    <div className="truncate text-xs text-secondary" title={now.detail}>
+                        正在：{now.tool ? `${now.tool} ${now.detail || ""}` : now.step_id ? `步骤 ${now.step_id}` : "执行中"} · {relative(now.since)}
+                    </div>
+                )}
+                {steps.length > 0 && <div className="text-xs text-tertiary">计划 {done}/{steps.length} 步</div>}
+                <div className="flex items-center gap-2 text-[11px] text-quaternary">
+                    <span className="w-16">{t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns} 回合</span>
+                    <ProgressBarBase value={pct} className="flex-1" progressClassName={pct > 80 ? "bg-warning-solid" : undefined} />
+                    <span>{t.elapsed}</span>
+                    <span>{spend(t.tokens)}</span>
+                </div>
             </div>
-        </button>
+        </div>
     );
 }
 
@@ -155,10 +171,10 @@ function AllTasks({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => vo
                                 <Table.Cell><span style={{ paddingLeft: t.depth * 16 }} className="font-medium text-primary">{t.depth ? "└ " : ""}#{t.id}</span></Table.Cell>
                                 <Table.Cell><span className="text-tertiary">{label(zh.status, t.lane)}</span></Table.Cell>
                                 <Table.Cell><StateBadge state={taskState(t)} /></Table.Cell>
-                                <Table.Cell><span className="line-clamp-2 max-w-sm text-primary">{t.goal}</span></Table.Cell>
+                                <Table.Cell><span className="line-clamp-2 max-w-sm text-primary">{t.title || t.goal}</span></Table.Cell>
                                 <Table.Cell>{t.member || "—"} <Where node={t.node} /></Table.Cell>
                                 <Table.Cell><span className="text-tertiary">{t.project_id || "—"}</span></Table.Cell>
-                                <Table.Cell><span className="font-mono text-xs text-tertiary">{t.turns}/{t.max_turns}</span></Table.Cell>
+                                <Table.Cell><span className="font-mono text-xs text-tertiary">{t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns}</span></Table.Cell>
                                 <Table.Cell><span className="text-xs text-tertiary">{spend(t.tokens)} · {fmtSeconds(t.seconds)}</span></Table.Cell>
                                 <Table.Cell><span className="text-xs text-tertiary">{t.updated_at ? relative(t.updated_at) : ""}</span></Table.Cell>
                             </Table.Row>
@@ -253,4 +269,3 @@ function UsagePanel() {
         </div>
     );
 }
-

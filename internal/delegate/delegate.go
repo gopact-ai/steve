@@ -110,6 +110,15 @@ const (
 	keepFinished = 30 * time.Minute
 )
 
+// deadlineText is when the child must be done, or nothing when its
+// budget has no end.
+func deadlineText(child task.Task, now time.Time) string {
+	if child.Budget.MaxElapsed <= 0 {
+		return ""
+	}
+	return child.Deadline(now).Format("15:04")
+}
+
 // worktreeContract tells a delegated agent what its directory is: a
 // worktree Steve snapshots when the task ends. A git init or commit
 // inside it does not record anything; it only hides the files.
@@ -437,13 +446,20 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		Bearings:  ctxpack.Bearings(child.Workspace, refs),
 		Facts:     candidate.Capabilities,
 		TurnsLeft: child.Budget.MaxTurns,
-		Deadline:  child.Deadline(now).Format("15:04"),
+		Deadline:  deadlineText(child, now),
 	})
 	if err != nil {
 		return result, err
 	}
 
-	ctx, cancel := context.WithTimeout(ctx, child.Budget.MaxElapsed)
+	// The child's own budget is its hard limit, when it has one; without
+	// one only silence (MaxSilence) or its parent's end stops it.
+	var cancel context.CancelFunc
+	if child.Budget.MaxElapsed > 0 {
+		ctx, cancel = context.WithTimeout(ctx, child.Budget.MaxElapsed)
+	} else {
+		ctx, cancel = context.WithCancel(ctx)
+	}
 	defer cancel()
 	touch := func() {}
 	if s.MaxSilence > 0 {

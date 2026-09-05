@@ -6,6 +6,7 @@ import { fmtSeconds, fmtTokens, label, spend, zh } from "@/lib/labels";
 import type { Plan, Task } from "@/lib/types";
 import { CallGraph } from "./call-graph";
 import { Drawer, DrawerSection } from "./drawer";
+import { TaskMetaMenu, TaskTitleEditor, useTaskMeta } from "./task-meta-menu";
 import { StateBadge, taskState } from "./ui";
 
 // TaskDrawer is one task's detail wherever a task is clicked — the
@@ -13,20 +14,37 @@ import { StateBadge, taskState } from "./ui";
 // the call graph, the attempts and what they cost.
 // Drawer is a task's detail: the result first, then the tree, the plan,
 // the attempts and what they cost.
-export function TaskDrawer({ t, tasks, plan, onClose, width }: { t: Task; tasks: Task[]; plan?: Plan; onClose: () => void; width?: number }) {
+type TaskDrawerProps = { t: Task; tasks: Task[]; plan?: Plan; onClose: () => void; width?: number };
+
+export function TaskDrawer(props: TaskDrawerProps) {
+    return <TaskDrawerContent key={props.t.id} {...props} />;
+}
+
+function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDrawerProps) {
     const { snap } = useFleet();
     const { act } = useIntent();
+    const t = snap.tasks.find((task) => task.id === selected.id) || selected;
+    const meta = useTaskMeta(t);
     const children = tasks.filter((c) => c.parent === t.id);
     const landings = snap.landings.filter((l) => l.project === t.project_id).slice(0, 5);
     const holds = ["running", "blocked", "review", "paused", "draft", "failed"].includes(t.lifecycle);
     return (
-        <Drawer width={width} title={<><span className="text-sm font-semibold text-primary">#{t.id}</span><StateBadge state={taskState(t)} /><span className="text-xs text-tertiary">{label(zh.status, t.lane)}</span></>} subtitle={<><div className="mt-1 text-sm text-primary">{t.goal}</div>
+        <Drawer width={width} title={<>
+                <span className="text-sm font-semibold text-primary">#{t.id}</span>
+                {meta.renaming ? <TaskTitleEditor t={t} pending={meta.pending} onDone={meta.finishTitle} /> : <span className="min-w-0 break-words text-sm font-semibold text-primary">{t.title || t.goal}</span>}
+                <StateBadge state={taskState(t)} /><span className="text-xs text-tertiary">{label(zh.status, t.lane)}</span>
+                {t.priority === "high" && <Badge type="pill-color" size="sm" color="warning">高</Badge>}
+                {t.archived_at && <Badge type="pill-color" size="sm" color="gray">已归档</Badge>}
+            </>}
+            actions={<TaskMetaMenu t={t} pending={meta.pending || meta.renaming} onRename={meta.rename} onPatch={(patch) => void meta.save(patch)} />}
+            subtitle={<>
+                    {meta.error && <div role="alert" className="mt-1 text-xs text-error-primary">{meta.error}</div>}
                     <div className="mt-1 text-xs text-tertiary">{t.member} @ {t.node || snap.hub.node} · 项目 {t.project_id || "—"} · {label(zh.origin, t.origin || "chat")} · 会话 {t.channel}</div></>} onClose={onClose}>
                 <DrawerSection title="结果">
                     <div className="flex flex-col gap-1 text-sm">
                         <Row k="执行" v={t.execution === "running" ? "有 attempt 在跑" : "空闲"} />
                         <Row k="待你处理" v={t.attention ? `${t.attention} 项，见待处理页` : "无"} />
-                        <Row k="预算" v={`${t.turns}/${t.max_turns} 回合 · ${t.elapsed || "0s"} / ${t.max_elapsed || "—"}`} />
+                        <Row k="预算" v={`${t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns} 回合 · ${t.elapsed || "0s"}${t.max_elapsed && t.max_elapsed !== "0s" ? ` / ${t.max_elapsed}` : ""}`} />
                         <Row k="用量" v={`${spend(t.tokens)} · ${fmtSeconds(t.seconds)}`} />
                         {landings.length > 0 && <Row k="最近合并" v={landings.map((l) => `${label(zh.taskState, l.state) === l.state ? l.state : l.state} ${short(l.artifact)} ${when(l.at)}`).join(" · ")} />}
                     </div>

@@ -39,6 +39,7 @@ func (s *Store) SetObserver(observe func(id string)) {
 type data struct {
 	NextID int              `json:"next_id"`
 	Tasks  map[string]*Task `json:"tasks"`
+	Meta   map[string]Meta  `json:"meta,omitempty"`
 }
 
 // Open keeps the store in one JSON file. It is what tests use and what a
@@ -59,7 +60,7 @@ func OpenLedger(l *ledger.Ledger, legacy string) (*Store, error) {
 
 func openWith(doc ledger.Doc) (*Store, error) {
 	s := &Store{
-		doc: doc, data: data{NextID: 1, Tasks: map[string]*Task{}}, now: time.Now,
+		doc: doc, data: data{NextID: 1, Tasks: map[string]*Task{}, Meta: map[string]Meta{}}, now: time.Now,
 		maxTurns: DefaultMaxTurns, maxElapsed: DefaultMaxElapsed,
 	}
 	raw, ok, err := doc.Load()
@@ -75,6 +76,9 @@ func openWith(doc ledger.Doc) (*Store, error) {
 	}
 	if loaded.Tasks == nil {
 		loaded.Tasks = map[string]*Task{}
+	}
+	if loaded.Meta == nil {
+		loaded.Meta = map[string]Meta{}
 	}
 	if loaded.NextID < 1 {
 		loaded.NextID = 1
@@ -424,9 +428,12 @@ func (t *Task) clone() *Task {
 }
 
 func (s *Store) clone() data {
-	next := data{NextID: s.data.NextID, Tasks: make(map[string]*Task, len(s.data.Tasks))}
+	next := data{NextID: s.data.NextID, Tasks: make(map[string]*Task, len(s.data.Tasks)), Meta: make(map[string]Meta, len(s.data.Meta))}
 	for id, stored := range s.data.Tasks {
 		next.Tasks[id] = stored.clone()
+	}
+	for id, meta := range s.data.Meta {
+		next.Meta[id] = meta.clone()
 	}
 	return next
 }
@@ -442,7 +449,7 @@ func (s *Store) replaceLocked(next data) error {
 	if s.observe != nil {
 		var changed []string
 		for id, t := range next.Tasks {
-			if prev, ok := s.data.Tasks[id]; !ok || prev.State != t.State || !prev.UpdatedAt.Equal(t.UpdatedAt) {
+			if prev, ok := s.data.Tasks[id]; !ok || prev.State != t.State || !prev.UpdatedAt.Equal(t.UpdatedAt) || !s.data.Meta[id].equal(next.Meta[id]) {
 				changed = append(changed, id)
 			}
 		}

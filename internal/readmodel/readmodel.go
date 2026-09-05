@@ -262,12 +262,16 @@ type Agent struct {
 }
 
 type Task struct {
-	ID     string `json:"id"`
-	Goal   string `json:"goal"`
-	State  string `json:"state"`
-	Member string `json:"member,omitempty"`
-	NodeID string `json:"node,omitempty"`
-	Parent string `json:"parent,omitempty"`
+	ID         string   `json:"id"`
+	Goal       string   `json:"goal"`
+	Title      string   `json:"title,omitempty"`
+	Priority   string   `json:"priority,omitempty"`
+	Labels     []string `json:"labels,omitempty"`
+	ArchivedAt string   `json:"archived_at,omitempty"`
+	State      string   `json:"state"`
+	Member     string   `json:"member,omitempty"`
+	NodeID     string   `json:"node,omitempty"`
+	Parent     string   `json:"parent,omitempty"`
 	// Children makes the tree explicit so a renderer does not have to build
 	// it — the tree is the whole debugging story for delegated work.
 	Children  []string  `json:"children,omitempty"`

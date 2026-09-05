@@ -88,9 +88,12 @@ func (t Tokens) Add(other Tokens) Tokens {
 	}
 }
 
+// A budget is a guard rail someone chose, not a default: a goal may
+// honestly run for weeks. Zero means no limit; task_max_turns and
+// task_max_elapsed in the configuration set one.
 const (
-	DefaultMaxTurns   = 24
-	DefaultMaxElapsed = 45 * time.Minute
+	DefaultMaxTurns   = 0
+	DefaultMaxElapsed = 0
 )
 
 // Budget counts what Steve observes itself. Turns and elapsed time are the

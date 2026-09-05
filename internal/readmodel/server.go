@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/view"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"io"
 	"log"
@@ -88,7 +89,10 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/home", s.guard(s.consoleHome))
 	mux.HandleFunc("PUT /console/home/{name}", s.guard(s.consoleSetHomeFile))
 	mux.HandleFunc("PUT /console/memory/{project}", s.guard(s.consoleSetProjectMemory))
+	mux.HandleFunc("GET /console/selectors", s.guard(s.consoleSelectors))
+	mux.HandleFunc("PUT /console/preferences", s.guard(s.consoleSetPreferences))
 	mux.HandleFunc("GET /console/tasks/{task}", s.guard(s.consoleTask))
+	mux.HandleFunc("PATCH /console/tasks/{task}/meta", s.guard(s.consoleTaskMeta))
 	mux.HandleFunc("GET /console/tasks/{task}/attempts", s.guard(s.consoleTaskAttempts))
 	mux.HandleFunc("GET /console/attempts/{attempt}/tree", s.guard(s.consoleAttemptTree))
 	mux.HandleFunc("GET /console/attempts/{attempt}/file", s.guard(s.consoleAttemptFile))
@@ -214,10 +218,28 @@ func loopback(addr string) bool {
 // the owner into a conversation and read what came back. The token that
 // guards the read model is the owner's credential here; without a
 // console wired, the endpoints answer that acting is off.
+// QuoteRef points at one stored line of a thread to carry with a message.
+type QuoteRef struct {
+	Conversation string `json:"conversation"`
+	ReplyID      string `json:"reply_id"`
+}
+
+// Selectors are what an agent's harness offers to choose from, and
+// what is set: the model, and every other selector by option id.
+type Selectors struct {
+	Model   string        `json:"model,omitempty"`
+	Models  []view.Choice `json:"models,omitempty"`
+	Options []view.Option `json:"options,omitempty"`
+	// Preferred is what the owner chose for this agent in this thread.
+	Preferred map[string]string `json:"preferred,omitempty"`
+}
+
 type Console interface {
 	Send(ctx context.Context, conversation, input string) (Reply, error)
 	// SendCommand is Send with an idempotency key from the page.
 	SendCommand(ctx context.Context, conversation, input, commandID string) (Reply, error)
+	// SendCommandWith carries quotes of other lines along with the input.
+	SendCommandWith(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (Reply, error)
 	Replies(conversation string) []Reply
 	// Conversations names every console conversation with a transcript;
 	// Summaries describes each one for a sidebar.
@@ -420,6 +442,12 @@ type Admin interface {
 	AttemptDiff(ctx context.Context, attempt, path string) (FileDiff, error)
 	// TaskAttempts are a task's attempts from the ledger, newest first.
 	TaskAttempts(ctx context.Context, task string) ([]AttemptView, error)
+	// Selectors reads what an agent offers in a thread (opening a session
+	// when none is live); SetPreferences records choices and rolls the
+	// session over so the next turn honours them.
+	Selectors(ctx context.Context, conversation, agent string) (Selectors, error)
+	SetPreferences(ctx context.Context, conversation, agent string, patch map[string]string) error
+	SetTaskMeta(ctx context.Context, task string, patch TaskMetaPatch) (Task, error)
 	// AttemptTree lists a directory of an attempt's snapshot; AttemptFile
 	// reads one file of it. Both bounded, both owner-only.
 	AttemptTree(ctx context.Context, attempt, dir string) (TreeView, error)
@@ -1256,6 +1284,45 @@ func (s *Server) consoleSetHomeFile(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 }
 
+func (s *Server) consoleSelectors(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	sel, err := s.admin.Selectors(r.Context(), r.URL.Query().Get("conversation"), r.URL.Query().Get("agent"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if sel.Models == nil {
+		sel.Models = []view.Choice{}
+	}
+	if sel.Options == nil {
+		sel.Options = []view.Option{}
+	}
+	_ = json.NewEncoder(w).Encode(sel)
+}
+
+func (s *Server) consoleSetPreferences(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	var req struct {
+		Conversation string            `json:"conversation"`
+		Agent        string            `json:"agent"`
+		Patch        map[string]string `json:"patch"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.SetPreferences(r.Context(), req.Conversation, req.Agent, req.Patch); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "note": "下一轮以新会话开始"})
+}
+
 // consoleTask joins one task for the page: the read model's task, plan
 // and children, and the ledger's attempts through the admin.
 func (s *Server) consoleTask(w http.ResponseWriter, r *http.Request) {
@@ -1467,9 +1534,10 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Conversation string `json:"conversation"`
-		Input        string `json:"input"`
-		CommandID    string `json:"command_id"`
+		Conversation string     `json:"conversation"`
+		Input        string     `json:"input"`
+		CommandID    string     `json:"command_id"`
+		Quotes       []QuoteRef `json:"quotes,omitempty"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1482,7 +1550,13 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 	if req.Conversation == "" {
 		req.Conversation = "console:main"
 	}
-	reply, err := s.console.SendCommand(r.Context(), req.Conversation, req.Input, req.CommandID)
+	var reply Reply
+	var err error
+	if len(req.Quotes) > 0 {
+		reply, err = s.console.SendCommandWith(r.Context(), req.Conversation, req.Input, req.CommandID, req.Quotes)
+	} else {
+		reply, err = s.console.SendCommand(r.Context(), req.Conversation, req.Input, req.CommandID)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil && strings.Contains(err.Error(), "already running") {
 		w.WriteHeader(http.StatusConflict)

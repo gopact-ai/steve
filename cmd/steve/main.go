@@ -754,7 +754,7 @@ func serve(args []string) error {
 		}
 		return project.Level(level)
 	}
-	admin := &fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos, attempts: attempts,
+	admin := &fleetAdmin{cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos, attempts: attempts, tasks: tasks, view: view,
 		skills: live, shipper: hubSkills, coordinator: coordinator, homePath: cfg.Gateway.HomePath, memory: memories, artifacts: artifacts}
 	dashboard.SetAdmin(admin)
 	cons.SetInspector(admin)
@@ -1190,6 +1190,8 @@ type fleetAdmin struct {
 	repos    *repoCache
 	// attempts is where a copy's lock is taken before it is forgotten.
 	attempts *attempt.Service
+	tasks    *task.Store
+	view     *readmodel.Model
 	// artifacts is the project snapshots, for a turn's changes.
 	artifacts *artifact.Store
 	// skills is the live map of what agents are handed, shipper what each
@@ -2807,6 +2809,52 @@ func (a *fleetAdmin) Home(_ context.Context) (readmodel.HomeView, error) {
 		}
 	}
 	return view, nil
+}
+
+func (a *fleetAdmin) SetTaskMeta(ctx context.Context, taskID string, patch readmodel.TaskMetaPatch) (readmodel.Task, error) {
+	if a.tasks == nil || a.view == nil {
+		return readmodel.Task{}, errors.New("tasks are not wired")
+	}
+	if _, err := a.tasks.SetMeta(taskID, task.MetaPatch{
+		Title: patch.Title, Priority: patch.Priority, Labels: patch.Labels, Archived: patch.Archived,
+	}); err != nil {
+		return readmodel.Task{}, err
+	}
+	for _, t := range a.view.Snapshot(ctx).Tasks {
+		if t.ID == taskID {
+			return t, nil
+		}
+	}
+	return readmodel.Task{}, fmt.Errorf("task %s not found", taskID)
+}
+
+// ProjectOf is the project a conversation works in, for the console's
+// quote boundary.
+func (a *fleetAdmin) ProjectOf(ctx context.Context, conversation string) string {
+	if a.coordinator == nil {
+		return ""
+	}
+	return a.coordinator.ProjectOf(ctx, conversation)
+}
+
+// Selectors are what an agent offers in a thread, with what is chosen.
+func (a *fleetAdmin) Selectors(ctx context.Context, conversation, agent string) (readmodel.Selectors, error) {
+	if a.coordinator == nil {
+		return readmodel.Selectors{}, errors.New("coordinator is not wired")
+	}
+	sel, err := a.coordinator.Selectors(ctx, conversation, agent)
+	if err != nil {
+		return readmodel.Selectors{}, err
+	}
+	return readmodel.Selectors{Model: sel.Model, Models: sel.Models, Options: sel.Options, Preferred: a.coordinator.Preferences(conversation, agent)}, nil
+}
+
+// SetPreferences records the owner's choices for an agent in a thread.
+func (a *fleetAdmin) SetPreferences(ctx context.Context, conversation, agent string, patch map[string]string) error {
+	if a.coordinator == nil {
+		return errors.New("coordinator is not wired")
+	}
+	return a.coordinator.SetPreferences(ctx, conversation, agent, patch)
 }
 
 // TaskAttempts are a task's attempts from the ledger, newest first.

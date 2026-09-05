@@ -14,8 +14,8 @@ import { ToolCalls } from "./tool-calls";
 const tones: Record<string, "brand" | "success" | "error" | "gray"> = { running: "brand", done: "success", failed: "error" };
 const labels: Record<string, string> = { running: "进行中", done: "完成", failed: "失败" };
 
-export function DelegationCard({ id, info, progress, tools, reasoning, live }: {
-    id: string; info: StepInfo; progress?: Progress; tools?: ToolCall[]; reasoning?: string; live?: boolean;
+export function DelegationCard({ id, info, progress, tools, reasoning, live, open }: {
+    id: string; info: StepInfo; progress?: Progress; tools?: ToolCall[]; reasoning?: string; live?: boolean; open?: boolean;
 }) {
     const state = info.state || (live ? "running" : "done");
     const running = state === "running";
@@ -24,7 +24,7 @@ export function DelegationCard({ id, info, progress, tools, reasoning, live }: {
     const thought = reasoning ?? progress?.reasoning ?? "";
     const goal = (info.goal || "").trim().split("\n")[0];
     return (
-        <details open={running || state === "failed"} className={`group/child my-1 min-w-0 rounded-lg border ${running ? "border-brand bg-brand-primary_alt/40" : state === "failed" ? "border-error" : "border-secondary"}`}>
+        <details open={open || running || state === "failed"} className={`group/child my-1 min-w-0 rounded-lg border ${running ? "border-brand bg-brand-primary_alt/40" : state === "failed" ? "border-error" : "border-secondary"}`}>
             <summary className="flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs hover:bg-secondary/60">
                 {running ? <Loading01 className="size-3.5 shrink-0 animate-spin text-fg-brand-primary" /> : null}
                 <span className="shrink-0 font-medium text-primary">委派 {id}</span>

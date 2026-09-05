@@ -48,6 +48,11 @@ type Conversation struct {
 	// out of reach: the agent session is closed, not deleted, so an archived
 	// record is enough to load it again.
 	Archived []Archived `json:"archived,omitempty"`
+	// Preferences are what the owner chose for each agent in this
+	// conversation — the model, a reasoning level, any selector the
+	// harness exposes — by option id, "model" for the model. They outlive
+	// sessions: a fresh session is opened with them.
+	Preferences map[string]map[string]string `json:"preferences,omitempty"`
 }
 
 type Archived struct {
@@ -137,6 +142,52 @@ func (s *Store) SetActiveAgent(conversationID, agentID string) error {
 	conversation.ActiveAgent = agentID
 	if conversation.Sessions == nil {
 		conversation.Sessions = map[string]Session{}
+	}
+	next.Conversations[conversationID] = conversation
+	return s.replaceLocked(next)
+}
+
+// Preferences are the owner's choices for an agent in a conversation.
+func (s *Store) Preferences(conversationID, agentID string) map[string]string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]string{}
+	if c, ok := s.data.Conversations[conversationID]; ok {
+		for k, v := range c.Preferences[agentID] {
+			out[k] = v
+		}
+	}
+	return out
+}
+
+// SetPreferences merges a patch into an agent's preferences for a
+// conversation; an empty value drops the key.
+func (s *Store) SetPreferences(conversationID, agentID string, patch map[string]string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := cloneData(s.data)
+	conversation := next.Conversations[conversationID]
+	if conversation.Sessions == nil {
+		conversation.Sessions = map[string]Session{}
+	}
+	if conversation.Preferences == nil {
+		conversation.Preferences = map[string]map[string]string{}
+	}
+	prefs := map[string]string{}
+	for k, v := range conversation.Preferences[agentID] {
+		prefs[k] = v
+	}
+	for k, v := range patch {
+		if v == "" {
+			delete(prefs, k)
+		} else {
+			prefs[k] = v
+		}
+	}
+	if len(prefs) == 0 {
+		delete(conversation.Preferences, agentID)
+	} else {
+		conversation.Preferences[agentID] = prefs
 	}
 	next.Conversations[conversationID] = conversation
 	return s.replaceLocked(next)
@@ -475,6 +526,16 @@ func cloneData(source data) data {
 func cloneConversation(conversation Conversation) Conversation {
 	clone := conversation
 	clone.Archived = append([]Archived(nil), conversation.Archived...)
+	if conversation.Preferences != nil {
+		clone.Preferences = make(map[string]map[string]string, len(conversation.Preferences))
+		for agent, prefs := range conversation.Preferences {
+			copied := make(map[string]string, len(prefs))
+			for k, v := range prefs {
+				copied[k] = v
+			}
+			clone.Preferences[agent] = copied
+		}
+	}
 	clone.Sessions = make(map[string]Session, len(conversation.Sessions))
 	for id, session := range conversation.Sessions {
 		clone.Sessions[id] = session
