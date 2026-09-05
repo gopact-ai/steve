@@ -334,3 +334,32 @@ func TestAttemptLeasesAreIssuedByTheMachinesRegion(t *testing.T) {
 		t.Fatalf("live = %d", len(live))
 	}
 }
+
+func TestExpireAllFreesWhatTheDeadProcessHeld(t *testing.T) {
+	s, _ := newService(t)
+	ctx := context.Background()
+	held, err := s.Open(ctx, Spec{TaskID: "1", Kind: KindChat, Project: "p", Agent: "claude", Harness: "claude", Workspace: canonical("p"), Scope: ScopeUnrestricted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The lease is fresh, so the periodic sweep leaves it: only the
+	// process's own death says it is over.
+	if expired, err := s.Sweep(ctx); err != nil || len(expired) != 0 {
+		t.Fatalf("sweep = %v, %v", expired, err)
+	}
+	expired, err := s.ExpireAll(ctx, "hub restarted")
+	if err != nil || len(expired) != 1 || expired[0].ID != held.ID || expired[0].State != Expired {
+		t.Fatalf("expire all = %+v, %v", expired, err)
+	}
+	if live, _ := s.Live(ctx); len(live) != 0 {
+		t.Fatalf("still live: %+v", live)
+	}
+	// The same task opens again on the same workspace: nothing holds it.
+	again, err := s.Open(ctx, Spec{TaskID: "1", Kind: KindChat, Project: "p", Agent: "claude", Harness: "claude", Workspace: canonical("p"), Scope: ScopeUnrestricted})
+	if err != nil || again.ID == held.ID {
+		t.Fatalf("reopen = %+v, %v", again, err)
+	}
+	if got, _ := s.Get(ctx, held.ID); got.State != Expired || got.Error != "hub restarted" {
+		t.Fatalf("old attempt = %+v", got)
+	}
+}

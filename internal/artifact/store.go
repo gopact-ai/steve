@@ -70,6 +70,7 @@ type Nodes interface {
 // durable place — and materialises workspaces anywhere.
 type Store struct {
 	Dir      string
+	Limits   Limits
 	ledger   *ledger.Ledger
 	projects *project.Store
 	nodes    Nodes
@@ -124,7 +125,11 @@ func metadataOnly(p project.Project) bool {
 
 // Repo opens the project's shadow repository on the hub.
 func (s *Store) Repo(ctx context.Context, projectID string) (*Repo, error) {
-	return Open(ctx, filepath.Join(s.Dir, "objects", projectID+".git"))
+	r, err := Open(ctx, filepath.Join(s.Dir, "objects", projectID+".git"))
+	if err == nil {
+		r.Limits = s.Limits
+	}
+	return r, err
 }
 
 // Manifest reads an artifact's record.
@@ -294,8 +299,11 @@ func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Proje
 			return "", false, err
 		}
 	}
-	out, err := s.nodes.Exec(ctx, node, "", Script{}.Snapshot(bare, dir, parent, message, flatten))
+	out, err := s.nodes.Exec(ctx, node, "", Script{Limits: s.Limits}.Snapshot(bare, dir, parent, message, flatten))
 	if err != nil {
+		if tooLarge, ok := snapshotTooLarge(out, err); ok {
+			return "", false, tooLarge
+		}
 		return "", false, fmt.Errorf("snapshot %s on %s: %w", dir, node, err)
 	}
 	sha := lastLine(out)

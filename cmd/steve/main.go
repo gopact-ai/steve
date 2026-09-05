@@ -583,14 +583,16 @@ func serve(args []string) error {
 	memories := memory.NewService(memory.NewMarkdown(cfg.Gateway.HomePath, memoryDir), filepath.Join(memoryDir, "audit.jsonl"))
 	coordinator.SetMemory(memories)
 	// Attempts: every execution is leased and fenced. Anything left live by
-	// a previous process is expired now, before a single turn runs.
+	// a previous process is expired now, before a single turn runs — lease
+	// or no lease: nothing here drives it any more, and a task resumed
+	// below must not be refused by its own ghost holding the project.
 	attempts := attempt.New(book)
-	expired, err := attempts.Sweep(context.Background())
+	expired, err := attempts.ExpireAll(context.Background(), "hub restarted")
 	if err != nil {
-		return fmt.Errorf("sweep attempts: %w", err)
+		return fmt.Errorf("expire attempts of the previous process: %w", err)
 	}
 	for _, r := range expired {
-		log.Printf("steve: expired stale attempt %s", attempt.Describe(r))
+		log.Printf("steve: expired attempt of the previous process: %s", attempt.Describe(r))
 	}
 	go sweepAttempts(context.Background(), attempts)
 	coordinator.SetAttempts(attempts)
@@ -724,6 +726,11 @@ func serve(args []string) error {
 		if s.Up {
 			view.Observe("node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion))
 			go hubSkills.ship(context.Background(), s.Name)
+			// A machine that comes back may hold worktrees of attempts that
+			// died with the connection; nothing else ever returns for them.
+			if root := s.Advert.WorkspaceRoot; root != "" {
+				go sweepWorktrees(context.Background(), artifacts, attempts, view, s.Name, root)
+			}
 			return
 		}
 		view.Observe("node.down", s.Name, fmt.Sprintf("%s disconnected: %s", s.Name, s.LastError))
@@ -766,6 +773,10 @@ func serve(args []string) error {
 	// just started would report every node as down and refuse every
 	// placement — describing its own ignorance rather than the fleet.
 	nodes.Start(ctx)
+	// What earlier processes and dropped connections left behind: the
+	// hub's own orphaned worktrees now, queued landings from here on.
+	go sweepWorktrees(ctx, artifacts, attempts, view, "", "")
+	go sweepLandings(ctx, projects, artifacts, view)
 	go repos.run(ctx)
 	go sweepIdleTasks(ctx, tasks, attempts, view)
 	// Discover models for whatever nobody has run yet. It is discovery,
@@ -2967,6 +2978,10 @@ func (a *fleetAdmin) Changes(ctx context.Context, attemptID string) (*readmodel.
 		return nil, err
 	}
 	summary := &readmodel.ChangeSummary{Attempt: attemptID, Project: record.Project, Base: base, Artifact: after}
+	if record.Result != nil && record.Result.CaptureError != "" {
+		summary.Note = "改动没有记录：" + record.Result.CaptureError
+		return summary, nil
+	}
 	if after == "" || after == base {
 		return summary, nil // nothing changed: the fold says so
 	}
