@@ -144,6 +144,9 @@ func (c *collector) handle(u acp.SessionUpdate) {
 	case acp.SessionUpdateTypeUsageUpdate:
 		c.usage.ContextTokens = u.Used
 		c.usage.ContextWindow = u.Size
+		if u.Cost != nil {
+			c.usage.Cost = &view.Cost{Amount: u.Cost.Amount, Currency: u.Cost.Currency}
+		}
 	case acp.SessionUpdateTypePlan:
 		c.plan = planSteps(u.Entries)
 	case acp.SessionUpdateTypeUserMessageChunk:
@@ -168,6 +171,33 @@ func (c *collector) handle(u acp.SessionUpdate) {
 		c.mu.Unlock()
 		noteUnhandled(u.SessionUpdate)
 		return
+	}
+	p, fn := c.snapshot()
+	c.mu.Unlock()
+	if fn != nil {
+		fn(p)
+	}
+}
+
+// promptUsage publishes the counters that arrive only with the prompt response.
+// Downstream ledgers consume progress, so retaining them without a final snapshot
+// would still leave completed (and cancelled) attempts marked as unreported.
+func (c *collector) promptUsage(usage *acp.Usage) {
+	if usage == nil {
+		return
+	}
+	c.mu.Lock()
+	c.usage.TotalTokens = usage.TotalTokens
+	c.usage.InputTokens = usage.InputTokens
+	c.usage.OutputTokens = usage.OutputTokens
+	if usage.ThoughtTokens != nil {
+		c.usage.ThoughtTokens = *usage.ThoughtTokens
+	}
+	if usage.CachedReadTokens != nil {
+		c.usage.CacheReadTokens = *usage.CachedReadTokens
+	}
+	if usage.CachedWriteTokens != nil {
+		c.usage.CacheWriteTokens = *usage.CachedWriteTokens
 	}
 	p, fn := c.snapshot()
 	c.mu.Unlock()
@@ -805,6 +835,7 @@ func (h *Host) PromptTurn(
 	if err != nil {
 		return out, activity, fmt.Errorf("session/prompt: %w", err)
 	}
+	col.promptUsage(resp.Usage)
 	if resp.StopReason == acp.StopReasonCanceled {
 		return out, activity, fmt.Errorf("%w: %w", ErrTurnCanceled, context.Canceled)
 	}

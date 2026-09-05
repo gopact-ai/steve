@@ -33,3 +33,6 @@ require (
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
+
+// Use the prompt usage extension until gopact-ai/acp#5 is merged and tagged.
+replace github.com/gopact-ai/acp => /data00/home/pengxiang.lpx/dev/github/acp

@@ -271,10 +271,24 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: chunk}); err != nil {
 		return nil, err
 	}
-	if strings.Contains(input, "cancelme") {
-		return &acp.PromptResponse{StopReason: acp.StopReasonCanceled}, nil
+	resp := &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}
+	if strings.Contains(input, "reportusage") {
+		// Keep context/cost on the notification and tokens on the response
+		// so tests exercise the two independent channels real adapters use.
+		update := acp.UsageUpdateSessionUpdate(1600, 128000)
+		update.Cost = &acp.Cost{Amount: 0.125, Currency: "USD"}
+		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: update}); err != nil {
+			return nil, err
+		}
+		resp.Usage = &acp.Usage{
+			TotalTokens: 300, InputTokens: 100, OutputTokens: 110,
+			ThoughtTokens: ptr(uint64(30)), CachedReadTokens: ptr(uint64(40)), CachedWriteTokens: ptr(uint64(50)),
+		}
 	}
-	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+	if strings.Contains(input, "cancelme") {
+		resp.StopReason = acp.StopReasonCanceled
+	}
+	return resp, nil
 }
 
 // SetSessionConfigOption accepts any listed model and answers with the
