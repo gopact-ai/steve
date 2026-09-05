@@ -813,6 +813,8 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 | 28.3 可续接进程流 | ✅ codex：`process_journal.v1` 特性协商；`internal/node/journal`（双向序号、64 MiB 段、256 MiB 保留、too old、`exit` 记录）；节点进程表（不随流死、`superseded`、回放与实况原子切换、grace 后才杀）；hub 侧 `remoteProcess` 续接（`ResumeAck{HaveIn}`、1 MiB 输入缓冲、已答 id 去重）；idle pause / resume 带连接代次；loopback MCP 常驻、断线回 503；`STEVE_NODE_FAULT=drop-hub-after:20s`。真机（node-b 开故障注入，委派 shipper 跑 3 分钟并中途调 `steve_context`）：`node-b disconnected (connection 1)` → 1.465 秒后 `reattached stream cd3f8c76… (after output 63, accepted input 3)`，节点侧 `replayed 0 lines`；子任务照常完成、`steve_context` 成功、文件落地、续接送回 | PR #16（codex） |
 | 28.4 自主拆解门禁 | ✅ `e2e/fleet -scenario autonomous` / `make e2e-autonomous`。第一轮协调者自己写了文档、只委派编译（这符合工具说明"能自己做的别委派"）——prompt 改成"文档交给另一个 agent"；第二轮：`steve_fleet` 先于 `steve_delegate`，builder@node-a 编译、grok@hub 写文档并行，SHA256SUMS 出自 build 机器的 attempt，`sha256sum -c` 过、ELF x86-64；六条里只有用量一条红：grok 这个 harness 不上报用量（平台如实记 `reported=false`），门禁改为"至少一个子任务上报，未上报按 harness 记 WARN"；第三轮 `AUTONOMOUS PASS elapsed=6m1.8s`，两个子任务都上报了用量，`awaits=0`（父 agent 一次 `steve_await` 都没调，对比 §27.1 之前 kvtool demo 的 21 次工具调用） | PR #14 |
 
+| 28.8 过程时间线 | ✅ codex：`view.Progress.Timeline` / `readmodel.Span`；collector 按到达顺序记叙述 / 思考 / 工具 span（工具只在创建时入线）；前端 `Trace` 按时间线画，连续工具合成带类别图标的活动摘要行（`lib/activity.ts`），子卡"它说"取最后一段叙述；老回复不变；页面记住 `hub.version`，变了且无草稿就自动重载（有草稿显示"hub 已更新，刷新页面"）；截图 PNG 撤出仓库并 gitignore | PR #17（codex） |
+
 顺手修的：控制台会话从不向 messaging server 注册锚点，agent 在控制台里 `feishu_send` 一律被拒（"no active conversation to deliver to"）；现在每条交换开始前注册 `web-<exchange>` 锚点，里程碑落到锚点所在的会话而不是固定 main（PR #14）。
 
 发现：grok harness 不上报用量；`steve_delegate` 的说明里"不要为自己能做的事委派"会让协调者把小活留给自己，用例要并行就得在 prompt 里说清"交给另一个 agent"。
