@@ -49,5 +49,35 @@ client deadline, including the synchronous `/console/send` request. `-timeout`
 can shorten it. A client timeout does not cancel server-side work; inspect the
 printed conversation/task IDs and use the console's `/cancel` if needed.
 
-Background and the regressions this covers: [console §21](docs/console.md#21-跨机器协作-e2e2026-09-04)
-and [§27](docs/console.md#27-稳定性治理2026-09-05).
+## Autonomous fleet gate
+
+```sh
+bash -lc 'make e2e-autonomous'
+```
+
+This uses the same running hub, owner token, local connection config, `PROJECT`
+and `AGENT` as `e2e-fleet`. The project must contain `kvtool/main.go` in its main
+directory on the hub, and an online remote node must advertise the `build` tag.
+Provide agents that can compile and write documentation; the coordinator chooses
+them from the fleet instead of being given a target agent. The hub needs
+`sha256sum` and `file` for the local artifact checks.
+
+The coordinator must look up the fleet before delegating, create at least two
+successful child tasks with overlapping execution, place the build on a remote
+machine advertising `build`, and let Steve deliver the results back. The gate
+checks attempts, change indexes, landed release files and checksums, usage, and
+that the parent did not repeatedly poll `steve_await`. It leaves the conversation,
+release directory and README changes as evidence.
+
+The default and maximum client deadline is **twenty minutes**; `-timeout` can
+shorten it. Run flags directly with `go run ./e2e/fleet -scenario autonomous`.
+As with the ten-minute fleet gate, a client timeout does not cancel server-side
+work. Include the full output through `AUTONOMOUS PASS` and the conversation,
+task and attempt IDs when reporting this gate.
+
+CI runs only `gofmt`, `go vet ./...` and `go test -race ./...`; it does not run
+either live fleet gate. Configuration, deployment and troubleshooting are in
+[operations](docs/operations.md).
+
+Historical background and the regressions these gates cover: [console §21](docs/history/console.md#21-跨机器协作-e2e2026-09-04)
+and [§27](docs/history/console.md#27-稳定性治理2026-09-05).

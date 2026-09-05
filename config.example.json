@@ -1,47 +1,87 @@
 {
   "projects": {
     "steve": {
-      "home": { "path": "~/dev/steve" },
+      "home": {
+        "path": "/home/me/dev/steve"
+      },
       "level": "internal",
-      "repo": "inplace"
+      "repo": "inplace",
+      "skills": [
+        "/home/me/steve-skills/review"
+      ],
+      "workspaces": [
+        {
+          "node": "host-3",
+          "path": "/home/me/steve-work/steve"
+        }
+      ],
+      "durable_places": [
+        ""
+      ],
+      "external_remote": "git@github.com:example/steve.git"
     },
     "lab": {
-      "home": { "node": "host-3", "path": "/srv/steve-work/lab" },
+      "home": {
+        "node": "host-3",
+        "path": "/srv/steve-work/lab"
+      },
       "level": "restricted",
-      "grants": { "ou_xxxxxxxxxxxxx": "write" },
+      "grants": {
+        "ou_xxxxxxxxxxxxx": "write"
+      },
       "default_role": "none"
     }
   },
   "agents": {
     "codex": {
-      "aliases": ["codex"],
+      "aliases": [
+        "codex"
+      ],
       "harness": "codex",
       "skills": [],
       "mcp_servers": [],
-      "default": true
+      "default": true,
+      "model": "<model-id-from-fleet>",
+      "options": {
+        "<option-id-from-fleet>": "<option-value-from-fleet>"
+      },
+      "about": "阅读代码、实现修改并验证结果",
+      "system_prompt": "记录验证结果和仍未解决的问题。"
     },
     "claude": {
-      "aliases": ["claude"],
+      "aliases": [
+        "claude"
+      ],
       "harness": "claude-code",
       "skills": [],
       "mcp_servers": []
     },
     "builder": {
-      "aliases": ["builder"],
+      "aliases": [
+        "builder"
+      ],
       "harness": "codex",
       "node": "host-3",
-      "requires": ["gpu"],
+      "requires": [
+        "hardware:gpu"
+      ],
       "skills": [],
       "mcp_servers": []
     },
     "grok": {
-      "aliases": ["grok", "grok-build"],
+      "aliases": [
+        "grok",
+        "grok-build"
+      ],
       "harness": "grok",
       "skills": [],
       "mcp_servers": []
     },
     "kimi": {
-      "aliases": ["kimi", "kimi-code"],
+      "aliases": [
+        "kimi",
+        "kimi-code"
+      ],
       "harness": "kimi",
       "skills": [],
       "mcp_servers": []
@@ -49,28 +89,56 @@
   },
   "harnesses": {
     "codex": {
-      "command": "npx",
-      "args": ["-y", "@agentclientprotocol/codex-acp"],
+      "command": "/home/me/.local/bin/codex-acp",
+      "args": [],
       "permission": "read",
-      "slots": 4
+      "slots": 4,
+      "process_dir": "/home/me/steve-runtime",
+      "env": [
+        "PATH=/home/me/.local/bin:/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin"
+      ]
     },
     "claude-code": {
-      "command": "npx",
-      "args": ["-y", "@agentclientprotocol/claude-agent-acp"],
+      "command": "/home/me/.local/bin/claude-agent-acp",
+      "args": [],
       "permission": "read"
     },
     "grok": {
-      "command": "grok",
-      "args": ["agent", "--no-leader", "stdio"],
+      "command": "/home/me/.local/bin/grok",
+      "args": [
+        "agent",
+        "--no-leader",
+        "stdio"
+      ],
       "permission": "read"
     },
     "kimi": {
-      "command": "kimi",
-      "args": ["acp"],
+      "command": "/home/me/.local/bin/kimi",
+      "args": [
+        "acp"
+      ],
       "permission": "read"
     }
   },
-  "mcp_servers": {},
+  "mcp_servers": {
+    "filesystem": {
+      "type": "stdio",
+      "command": "/home/me/.local/bin/mcp-server-filesystem",
+      "args": [
+        "/home/me/dev/steve"
+      ],
+      "env": {
+        "LANG": "C.UTF-8"
+      }
+    },
+    "docs": {
+      "type": "http",
+      "url": "https://mcp.example.com/mcp",
+      "headers": {
+        "Authorization": "Bearer replace-me-with-the-mcp-token"
+      }
+    }
+  },
   "feishu": {
     "app_id": "cli_xxxxxxxxxxxxx",
     "app_secret": "xxxxxxxxxxxxxxxx",
@@ -82,23 +150,50 @@
     "allow_unmentioned": false
   },
   "nodes": {
-    "host-3": { "addr": "10.0.0.3:7701", "token": "replace-me", "dial_timeout": "10s", "level": "restricted", "region": "west", "peer_addr": "10.0.0.3:7701" }
+    "host-3": {
+      "addr": "10.0.0.3:7701",
+      "token": "replace-me-with-a-long-random-secret",
+      "dial_timeout": "10s",
+      "level": "restricted",
+      "region": "west",
+      "peer_addr": "10.0.0.3:7701"
+    }
   },
   "gateway": {
     "default_project": "steve",
     "level": "restricted",
     "region": "east",
-    "regions": { "west": { "url": "http://10.0.0.9:7720", "token": "replace-me" } },
+    "regions": {
+      "west": {
+        "url": "http://10.0.0.9:7720",
+        "token": "replace-me"
+      }
+    },
     "issuer_addr": "0.0.0.0:7720",
     "issuer_token": "replace-me",
     "direct_transfer": true,
     "planner": "claude",
-    "capabilities": ["basic"],
+    "capabilities": [
+      "basic"
+    ],
     "read_model_addr": "127.0.0.1:7710",
     "prompt_timeout": "10m",
-    "state_path": "~/.steve/state.json",
-    "task_max_turns": 24,
-    "task_max_elapsed": "45m",
-    "offline_reminder_after": "15m"
+    "state_path": "/home/me/.steve/state.json",
+    "task_max_turns": 0,
+    "task_max_elapsed": "0s",
+    "offline_reminder_after": "15m",
+    "node_binary": "/home/me/steve-bin/steve-node",
+    "home_path": "/home/me/.steve/home",
+    "tools": [
+      "git",
+      "go",
+      "gh"
+    ],
+    "declares": [
+      "network:internal"
+    ],
+    "read_model_token": "replace-me-with-a-long-random-console-token",
+    "debug_addr": "127.0.0.1:7711",
+    "debug_chat_id": "oc_xxxxxxxxxxxxx"
   }
 }
