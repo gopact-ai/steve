@@ -896,6 +896,7 @@ func serve(args []string) error {
 	channel.SetJournal(book.Journal())
 	if gate != nil {
 		gate.BindChannel(console.Sender{Feishu: channel, Console: cons})
+		cons.SetAnchorer(gate.Anchor)
 	}
 
 	// /tasks resume re-enters through the same path a crash recovery does:

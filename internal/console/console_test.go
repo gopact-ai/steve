@@ -385,3 +385,27 @@ func TestContinueHappensOnceForAKey(t *testing.T) {
 		t.Fatal("a continuation without a member was accepted")
 	}
 }
+
+func TestAConsoleTurnIsAnchoredSoMilestonesLandInItsThread(t *testing.T) {
+	h := &queueHandler{started: make(chan *queueCall, 8)}
+	s := New(h, "ou_owner", readmodel.New(readmodel.Sources{}))
+	var anchored []string
+	s.SetAnchorer(func(conversation, chatID, messageID string) {
+		anchored = append(anchored, conversation+"|"+chatID+"|"+messageID)
+	})
+	e := enqueueForTest(t, s, "side", "do it")
+	call := nextCall(t, h)
+	if len(anchored) != 1 || anchored[0] != "console:side|"+ChatID+"|"+AnchorMark+e.ID {
+		t.Fatalf("anchored = %v", anchored)
+	}
+	// An agent's progress message during the turn lands in this thread.
+	s.Milestone(AnchorMark+e.ID, "halfway")
+	if got := s.Replies("side"); len(got) != 2 || got[1].Kind != "milestone" || got[1].Text != "halfway" {
+		t.Fatalf("side thread = %+v", got)
+	}
+	if got := s.Replies("main"); len(got) != 0 {
+		t.Fatalf("main got the milestone: %+v", got)
+	}
+	call.finish <- nil
+	awaitExchange(t, s, e.ID)
+}

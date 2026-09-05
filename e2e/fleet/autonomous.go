@@ -124,9 +124,9 @@ func (g *gate) runAutonomous(ctx context.Context) error {
 	if _, err := g.send(ctx, "agent", "/use "+g.agent); err != nil {
 		return err
 	}
-	prompt := fmt.Sprintf("把 kvtool 做成可发布的样子：在有 build 能力的机器上编译 linux/amd64 二进制到 kvtool/%s/ 并在同一目录生成 SHA256SUMS（用 sha256sum 生成，条目里的文件名不带路径）；"+
-		"给 kvtool/README.md 补一节「安装与校验」（含 sha256sum -c 的步骤）；写 kvtool/%s/RELEASE.md（版本说明）。"+
-		"先用 steve_fleet 查一下集群里有哪些机器和能力，自己拆解任务、委派给合适的 agent：编译必须委派到申报了 build 能力的机器，不要在 hub 上编译；能并行的并行。"+
+	prompt := fmt.Sprintf("把 kvtool 做成可发布的样子，你只负责协调，两件事都不要自己动手：(1) 在有 build 能力的机器上编译 linux/amd64 二进制到 kvtool/%s/ 并在同一目录生成 SHA256SUMS（用 sha256sum 生成，条目里的文件名不带路径）；"+
+		"(2) 文档：给 kvtool/README.md 补一节「安装与校验」（含 sha256sum -c 的步骤），并写 kvtool/%s/RELEASE.md（版本说明）——交给另一个 agent 去写，不要和编译的是同一个。"+
+		"先用 steve_fleet 查一下集群里有哪些机器和能力，自己拆解任务、按能力挑合适的 agent 委派：编译必须委派到申报了 build 能力的机器，不要在 hub 上编译；两件事并行。"+
 		"子任务完成后 Steve 会把结果送回这个会话，不必用 steve_await 等。都齐了之后汇总谁在哪台机器做了什么。", release, release)
 	if _, err := g.send(ctx, "goal", prompt); err != nil {
 		return err
