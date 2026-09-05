@@ -800,6 +800,9 @@ func serve(args []string) error {
 	// The messaging server's URL is baked into session fingerprints, so the
 	// port is remembered across restarts: losing it would ask every live
 	// conversation for /new after each deploy.
+	// The page recognises the platform's own tool calls by the messaging
+	// server's name and catalogue, whatever a harness calls them.
+	readmodel.SetPlatformTools(agentmcp.ServerName, agentmcp.ToolTitles())
 	portPath := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "agentmcp.port")
 	gate, err := agentmcp.New(readPort(portPath))
 	// redeliverPending is the delegation service's start-up pass, once it exists.

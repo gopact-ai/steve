@@ -710,16 +710,70 @@ func FromProgress(p view.Progress) Progress {
 	return out
 }
 
+// The platform's own tools are recognised whatever a harness calls them
+// — claude-code says mcp__steve__steve_fleet, codex mcp.steve.steve_fleet
+// — and shown by their label, as kind "platform". The catalogue comes
+// from the messaging server itself, so a new tool needs no page change.
+var platform struct {
+	mu     sync.RWMutex
+	server string
+	titles map[string]string
+}
+
+// SetPlatformTools installs the messaging server's name and tool labels.
+func SetPlatformTools(server string, titles map[string]string) {
+	platform.mu.Lock()
+	defer platform.mu.Unlock()
+	platform.server = strings.ToLower(server)
+	platform.titles = map[string]string{}
+	for name, title := range titles {
+		platform.titles[strings.ToLower(name)] = title
+	}
+}
+
+// platformTool says whether a harness's tool name is one of the
+// platform's, and what to call it.
+func platformTool(raw string) (name, title string, ok bool) {
+	platform.mu.RLock()
+	defer platform.mu.RUnlock()
+	if platform.server == "" || len(platform.titles) == 0 {
+		return "", "", false
+	}
+	lower := strings.ToLower(strings.TrimSpace(raw))
+	if title, found := platform.titles[lower]; found {
+		return lower, title, true
+	}
+	// Split on every separator a harness uses between server and tool,
+	// but never on a single underscore: that is inside the tool's name.
+	parts := strings.FieldsFunc(strings.ReplaceAll(lower, "__", "\x00"), func(r rune) bool {
+		return r == '\x00' || r == '.' || r == '/' || r == ':'
+	})
+	for i, p := range parts {
+		if p != platform.server || i+1 >= len(parts) {
+			continue
+		}
+		tail := strings.Join(parts[i+1:], "_")
+		if title, found := platform.titles[tail]; found {
+			return tail, title, true
+		}
+	}
+	return "", "", false
+}
+
 func toolCalls(tools []view.Tool, depth, limit int) []ToolCall {
 	var out []ToolCall
 	for _, t := range tools {
 		if limit > 0 && len(out) >= limit {
 			break
 		}
-		out = append(out, ToolCall{
+		call := ToolCall{
 			ID: t.ID, Kind: t.Kind, Name: t.Name, Detail: t.Detail, Status: string(t.Status),
 			Input: headText(t.Input, toolTextKept), Output: headText(t.Output, toolTextKept),
-		})
+		}
+		if name, title, ok := platformTool(t.Name); ok {
+			call.Kind, call.Name, call.Detail = "platform", name, title
+		}
+		out = append(out, call)
 		if depth < 2 {
 			out = append(out, toolCalls(t.Children, depth+1, limit)...)
 		}

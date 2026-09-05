@@ -4,6 +4,7 @@ import type { Progress, StepInfo } from "@/lib/types";
 import { ChangesFold } from "./changes";
 import { Md } from "./markdown";
 import { Trace } from "./trace";
+import { useFollowTail } from "@/hooks/use-follow-tail";
 
 // DelegationCard is one delegated child as the transcript shows it: a
 // folding line — who is on it and where, its state, how long — and
@@ -18,6 +19,9 @@ export function DelegationCard({ id, info, progress, live, open }: {
 }) {
     const state = info.state || (live ? "running" : "done");
     const running = state === "running";
+    // The body is a window, not a well: a long child scrolls inside it,
+    // following its tail while it runs until the reader scrolls.
+    const { followTail: _follow, ...bodyScroll } = useFollowTail(`${progress?.timeline?.length ?? 0}:${progress?.tools?.length ?? 0}:${(progress?.reasoning || "").length}`, running);
     const who = [progress?.agent, progress?.node].filter(Boolean).join(" @ ");
     const goal = (info.goal || "").trim().split("\n")[0];
     const timeline = progress?.timeline;
@@ -38,7 +42,7 @@ export function DelegationCard({ id, info, progress, live, open }: {
                     <ChevronDown className="size-3.5 transition group-open/child:rotate-180" />
                 </span>
             </summary>
-            <div className="flex min-w-0 flex-col gap-2 border-t border-secondary px-3 py-2">
+            <div {...bodyScroll} tabIndex={0} className="flex max-h-[60vh] min-w-0 flex-col gap-2 overflow-y-auto border-t border-secondary px-3 py-2 [overflow-anchor:none]">
                 {info.goal && <div className="whitespace-pre-wrap text-xs text-tertiary">{info.goal}</div>}
                 {progress && <Trace p={progress} live={running} thinkingOpen={running} omitText={!running ? finalText : undefined} />}
                 {answer && (

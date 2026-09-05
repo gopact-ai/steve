@@ -50,7 +50,7 @@ export function InlineProcess({ process }: { process: Process }) {
             <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-tertiary hover:text-primary">
                 过程 <ChevronDown className="size-3.5 transition group-open/process:rotate-180" />
             </summary>
-            <div className="mt-2"><ProcessBody process={process} /></div>
+            <div className="mt-2"><ProcessBody process={process} omitFinalText /></div>
         </details>
     );
     const calls = (process.tools?.length || 0) + steps.reduce((n, s) => n + (s.tools?.length || 0), 0);

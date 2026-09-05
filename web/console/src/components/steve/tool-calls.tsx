@@ -9,7 +9,7 @@ import { CodeBlock } from "./markdown";
 // under it one row per call — a verb and the command or file — that
 // opens to the input and the output.
 
-const verbs: Record<string, string> = { execute: "运行", read: "读取", edit: "修改", write: "写入", delete: "删除", move: "移动", search: "搜索", fetch: "抓取", think: "思考", other: "调用" };
+const verbs: Record<string, string> = { execute: "运行", read: "读取", edit: "修改", write: "写入", delete: "删除", move: "移动", search: "搜索", fetch: "抓取", think: "思考", platform: "平台", other: "调用" };
 
 interface Row { t: ToolCall; verb: string; text: string; shell: boolean; input: Shown | null; output: Shown | null; failed: boolean }
 
@@ -27,7 +27,7 @@ function describe(t: ToolCall): Row {
     const input = formatToolText(t.input);
     const output = formatToolText(t.output);
     const shell = input?.lang === "shell";
-    const text = shell ? unwrapShell(input!.body).split("\n")[0] : (t.name || t.detail || t.kind || "");
+    const text = shell ? unwrapShell(input!.body).split("\n")[0] : t.kind === "platform" ? (t.detail || t.name || "") : (t.name || t.detail || t.kind || "");
     return { t, verb: shell ? "运行" : (verbs[t.kind || ""] ?? (t.kind || "调用")), text, shell, input, output, failed: toolFailed(t) };
 }
 
