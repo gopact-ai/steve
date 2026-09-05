@@ -724,6 +724,11 @@ func serve(args []string) error {
 		if s.Up {
 			view.Observe("node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion))
 			go hubSkills.ship(context.Background(), s.Name)
+			// A machine that comes back may hold worktrees of attempts that
+			// died with the connection; nothing else ever returns for them.
+			if root := s.Advert.WorkspaceRoot; root != "" {
+				go sweepWorktrees(context.Background(), artifacts, attempts, view, s.Name, root)
+			}
 			return
 		}
 		view.Observe("node.down", s.Name, fmt.Sprintf("%s disconnected: %s", s.Name, s.LastError))
@@ -775,6 +780,10 @@ func serve(args []string) error {
 	// just started would report every node as down and refuse every
 	// placement — describing its own ignorance rather than the fleet.
 	nodes.Start(ctx)
+	// What earlier processes and dropped connections left behind: the
+	// hub's own orphaned worktrees now, queued landings from here on.
+	go sweepWorktrees(ctx, artifacts, attempts, view, "", "")
+	go sweepLandings(ctx, projects, artifacts, view)
 	go repos.run(ctx)
 	go sweepIdleTasks(ctx, tasks, attempts, view)
 	// Discover models for whatever nobody has run yet. It is discovery,
