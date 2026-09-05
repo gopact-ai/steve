@@ -148,9 +148,18 @@ func TestCoordinatorAbortsStuckTurnOnTimeout(t *testing.T) {
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
-	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 50*time.Millisecond)
+	// The idle clock starts before the workspace resolves and the session
+	// opens, so a budget short enough to run out during that setup never
+	// reaches the prompt and aborts nothing. On a loaded machine under
+	// -race that setup takes hundreds of milliseconds; give it room. The
+	// runner blocks until the deadline fires inside Prompt, so this is the
+	// timeout expiring on a stuck turn, not on a slow start.
+	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 2*time.Second)
 	if _, err := handle(coordinator, t.Context(), "stuck"); err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected deadline exceeded, got %v", err)
+	}
+	if got := runner.seen(); len(got) != 1 {
+		t.Fatalf("the turn timed out before reaching the agent: prompts = %v", got)
 	}
 	if runner.aborts.Load() == 0 {
 		t.Fatal("stuck turn did not abort the process")

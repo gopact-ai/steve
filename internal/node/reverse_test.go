@@ -43,6 +43,7 @@ func TestMCPListenerStaysPutAndReturnsRetryableErrorDuringOutage(t *testing.T) {
 	}
 	client := &http.Client{Timeout: 2 * time.Second}
 	t.Cleanup(client.CloseIdleConnections)
+	waitTunnel(t, endpoint)
 	result := make(chan *http.Response, 1)
 	failure := make(chan error, 1)
 	go func() {
@@ -53,7 +54,20 @@ func TestMCPListenerStaysPutAndReturnsRetryableErrorDuringOutage(t *testing.T) {
 			result <- resp
 		}
 	}()
-	<-requestStarted
+	// Bound the wait. This was a plain receive, so a request that never
+	// reached upstream left the test blocked until the package's ten-minute
+	// alarm — one flake wedging the whole run.
+	select {
+	case <-requestStarted:
+	case err := <-failure:
+		t.Fatalf("the request never reached upstream: %v", err)
+	case resp := <-result:
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("the request never reached upstream: %d %s", resp.StatusCode, body)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the request never reached upstream")
+	}
 	_ = c.mux.Close()
 	select {
 	case resp := <-result:
@@ -157,5 +171,33 @@ func TestLegacyHubAndNodeKeepOriginalStreams(t *testing.T) {
 	// as above. No ResumeAck or sideband acknowledgement enters its stream.
 	if legacy.stream.Request().Kind != nodewire.StreamACP {
 		t.Fatal("wrong kind")
+	}
+}
+
+// waitTunnel blocks until the node's reverse channel is serving. Wiring the
+// MCP dialer starts it in a goroutine (conn.go), so until it is up the node
+// answers the documented 503 with Retry-After — correct behaviour, and not
+// something a test that needs the tunnel should race against. Nothing tells
+// a caller when the channel is ready, so polling is what a caller can do,
+// and it is what these tests do.
+func waitTunnel(t *testing.T, endpoint string) {
+	t.Helper()
+	client := &http.Client{Timeout: 10 * time.Second}
+	defer client.CloseIdleConnections()
+	deadline := time.Now().Add(30 * time.Second)
+	for {
+		resp, err := client.Post(endpoint, "application/json", strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatalf("reverse channel: %v", err)
+		}
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the reverse channel never came up: %s", body)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }

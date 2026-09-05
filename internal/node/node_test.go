@@ -942,6 +942,11 @@ func TestReverseMCPTunnelReachesConnectionsAlreadyUp(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Wiring the dialer starts the reverse channel in a goroutine, so the
+	// node answers the documented 503 until it is up. What is under test is
+	// that the channel arrives on a connection that was already open, not
+	// that it arrives on the first attempt.
+	waitTunnel(t, endpoint)
 	req, _ := http.NewRequestWithContext(t.Context(), http.MethodPost, endpoint, strings.NewReader(`{}`))
 	resp, err := (&http.Client{Timeout: 10 * time.Second}).Do(req)
 	if err != nil {
@@ -949,6 +954,6 @@ func TestReverseMCPTunnelReachesConnectionsAlreadyUp(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	if body, _ := io.ReadAll(resp.Body); string(body) != `{"late":true}` {
-		t.Fatalf("response = %q", body)
+		t.Fatalf("response = %d %q", resp.StatusCode, body)
 	}
 }
