@@ -696,6 +696,8 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 | 控制台任务重启后续不上 | 中断的任务一律走飞书通道回复锚点续跑，控制台的锚点是 `web-…`，飞书拒收，任务就此停住 | `console.Service.Resume`：先 `ReviveSession`，再把一条"继续"交换**插到队列里排着的消息前面**——页面上显示的是"⟳ 网关重启，继续任务 #N"，agent 收到的是 `@member` + 续跑提示（`Exchange.Prompt` 与 `Input` 分离）；`Persist` 只装载，`Drain` 在续跑入列之后再放行队列；`/tasks resume` 对控制台任务同路 | PR #10 |
 | 无上限的父任务不能委派 | 预算改成可选（0 = 无上限）后，`Spawn` 仍用"父上限 − 已花"算子任务上限，0 减任何数都是负，所有根任务的委派都被拒："task 54 has no budget left to delegate"。跨机器委派从 996295a 起在 master 上一直是坏的，门禁第一次跑就抓到了 | 父任务没有上限就不往下传上限；有上限的照旧封顶、花完拒绝 | PR #11 |
 
+另两处顺手修的：#8 新加的"排队已打开"chip 在 1440 宽下逐字换行（PR #12）；任务通知（跑了多久、结果送到哪）一律落到 main 会话，现在 `TaskNotice.Conversation` 带着任务自己的会话，落到那里（PR #13）。
+
 真机验证（hub d6f2580）：在页面上让 claude 前台跑 50 秒的循环，30 秒时杀掉 hub 重启——日志依次是 `expired attempt of the previous process … hub restarted`、`console: resuming task #55`，页面上先是旧交换的"console restarted before this exchange completed"，然后 "⟳ 网关重启，继续任务 #55" 一行，1 分钟后 agent 的回复和"任务 #55 跑了 1m0s"的通知落在同一条交换上。
 
 还留着的：重启时 ACP 子进程一并死掉，agent 靠 session/load 重放历史续跑，长回合里 agent 自己起的后台命令会丢；`Exchange.Prompt` 目前只有续跑在用。
