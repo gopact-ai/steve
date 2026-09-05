@@ -170,11 +170,13 @@ function Activity({ tools }: { tools: ToolCall[] }) {
 // A thought summary is one line of the agent's own markdown — codex
 // writes them as **bold headings** — so it is rendered, not shown raw,
 // and trimmed: a chunk that starts with blank lines must not paint them.
+// A finished thought is a line of small text that wraps if it must; only
+// a running one is a window that follows its tail.
 function ThoughtSpan({ text, live }: { text: string; live?: boolean }) {
     const shown = text.trim();
     const { followTail: _, ...scroll } = useFollowTail(shown, live);
-    return <div {...scroll} data-span-kind="thought" tabIndex={0} aria-label="思考摘要" title={shown}
-        className="max-h-5 overflow-y-auto break-words text-xs leading-5 text-tertiary [overflow-anchor:none] [&_p]:m-0 [&_p]:leading-5">
+    return <div {...(live ? scroll : {})} data-span-kind="thought" tabIndex={live ? 0 : undefined} aria-label="思考摘要" title={shown}
+        className={`break-words text-xs text-tertiary [&_p]:my-0 [&_p]:leading-5 ${live ? "max-h-16 overflow-y-auto [overflow-anchor:none]" : ""}`}>
         <Md size="xs" text={shown} className="text-tertiary" />
     </div>;
 }
