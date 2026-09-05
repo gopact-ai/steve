@@ -815,6 +815,8 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 
 | 28.8 过程时间线 | ✅ codex：`view.Progress.Timeline` / `readmodel.Span`；collector 按到达顺序记叙述 / 思考 / 工具 span（工具只在创建时入线）；前端 `Trace` 按时间线画，连续工具合成带类别图标的活动摘要行（`lib/activity.ts`），子卡"它说"取最后一段叙述；老回复不变；页面记住 `hub.version`，变了且无草稿就自动重载（有草稿显示"hub 已更新，刷新页面"）；截图 PNG 撤出仓库并 gitignore | PR #17（codex） |
 
+时间线上线后当场看出的三处（PR #18、#19）：思考段是 codex 的 `**标题**` 且 chunk 开头带换行，原来按纯文本 `pre-wrap` 画——现在 trim 后按 Markdown 渲染、空段跳过；转写里的过程折叠把回合最后一段叙述（就是回复本身）又画了一遍——省掉；委派卡无限长——正文限高 60vh、内部滚动、进行中跟尾。还有平台自己的工具在页面上是 harness 的原始名（`mcp__steve__steve_fleet`）——读模型按 messaging server 的名字与工具目录（`agentmcp.ToolTitles()`，标签放在工具定义旁边）把各种前缀归一化成 `kind=platform` + 标签，页面只认 kind："平台 · 查名册"，活动摘要"问了平台 2 次（查名册、看当前上下文）"；新增工具不用改页面。
+
 顺手修的：控制台会话从不向 messaging server 注册锚点，agent 在控制台里 `feishu_send` 一律被拒（"no active conversation to deliver to"）；现在每条交换开始前注册 `web-<exchange>` 锚点，里程碑落到锚点所在的会话而不是固定 main（PR #14）。
 
 发现：grok harness 不上报用量；`steve_delegate` 的说明里"不要为自己能做的事委派"会让协调者把小活留给自己，用例要并行就得在 prompt 里说清"交给另一个 agent"。
