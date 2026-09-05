@@ -829,7 +829,7 @@ func serve(args []string) error {
 			if where == "" {
 				where = nodeName() // the hub itself, named like any machine
 			}
-			info := readmodel.StepInfo{Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
+			info := readmodel.StepInfo{Kind: "delegate", Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
 				Elapsed: c.Elapsed.Round(time.Second).String(), Answer: c.Answer, Refs: c.Refs}
 			if c.State != "running" && c.Attempt != "" {
 				if changes, err := admin.Changes(context.Background(), c.Attempt); err == nil && changes != nil {
@@ -837,6 +837,11 @@ func serve(args []string) error {
 				}
 			}
 			view.DelegateProgress(c.Task, c.Agent, where, info, p)
+			if console.IsConsole(c.Conversation) {
+				progress := readmodel.FromProgress(p)
+				progress.Agent, progress.Node = c.Agent, where
+				cons.UpdateStep(c.Conversation, c.Task, readmodel.FromStepProgress("#"+c.Task, progress, info))
+			}
 		})
 		gate.SetDelegator(delegation)
 		// A child's result goes back into its parent's conversation as a

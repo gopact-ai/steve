@@ -443,9 +443,8 @@ type Event struct {
 	// Progress is what an agent is doing right now: console.progress for
 	// a chat turn, step.progress for a plan step.
 	Progress *Progress `json:"progress,omitempty"`
-	// Step is what a step.progress event knows about the step itself; a
-	// delegated child carries its goal, state and answer here.
-	Step *StepInfo `json:"step,omitempty"`
+	// Step is the child's snapshot; console.step also names its owning reply.
+	Step *StepProcess `json:"step,omitempty"`
 	// ReplyID names the console line a console.* event is about.
 	ReplyID    string `json:"reply_id,omitempty"`
 	ExchangeID string `json:"exchange_id,omitempty"`
@@ -647,7 +646,7 @@ type Workspace struct {
 }
 
 // Progress is one agent's turn as it happens, small enough to stream:
-// reasoning and answer tails, the tool calls with their status, the
+// reasoning, an answer tail, the tool calls with their status, the
 // agent's own checklist. It is view.Progress cut down for a wire.
 type Progress struct {
 	Agent     string     `json:"agent,omitempty"`
@@ -674,21 +673,19 @@ type PlanLine struct {
 	Status string `json:"status"`
 }
 
-// Caps keep a streamed progress and a stored process small: the tail of
-// reasoning is what a person reads, and a tool's full output belongs in
-// the workspace, not in the transcript.
+// Answers and tool output are previews. Reasoning is already bounded by
+// the collector and must retain its head, tail and explicit omission marker.
 const (
-	reasoningKept = 4000
-	answerKept    = 8000
-	toolTextKept  = 3000
-	toolsKept     = 60
+	answerKept   = 8000
+	toolTextKept = 3000
+	toolsKept    = 60
 )
 
 // FromProgress cuts a turn's progress down to what is worth sending.
 func FromProgress(p view.Progress) Progress {
 	out := Progress{
 		Agent: p.Agent, Node: p.Settings.Node, Model: p.Settings.Model,
-		Reasoning: tailText(p.Reasoning, reasoningKept), Answer: tailText(p.Answer, answerKept),
+		Reasoning: p.Reasoning, Answer: tailText(p.Answer, answerKept),
 	}
 	out.Tools = toolCalls(p.Tools, 0)
 	for _, s := range p.Plan {
@@ -741,19 +738,22 @@ type StepProcess struct {
 	ID        string     `json:"id"`
 	Agent     string     `json:"agent,omitempty"`
 	Node      string     `json:"node,omitempty"`
+	Model     string     `json:"model,omitempty"`
 	Reasoning string     `json:"reasoning,omitempty"`
 	Tools     []ToolCall `json:"tools,omitempty"`
+	Plan      []PlanLine `json:"plan,omitempty"`
 	// The rest is what a delegated child adds: what it was asked, how it
 	// ended, what it said. A plan step leaves them empty.
-	Kind    string   `json:"kind,omitempty"`
-	Goal    string   `json:"goal,omitempty"`
-	State   string   `json:"state,omitempty"`
-	Since   string   `json:"since,omitempty"`
-	Elapsed string   `json:"elapsed,omitempty"`
-	Answer  string   `json:"answer,omitempty"`
-	Refs    []string `json:"refs,omitempty"`
-	Attempt string   `json:"attempt,omitempty"`
-	Files   int      `json:"files,omitempty"`
+	StepInfo
+}
+
+// FromStepProgress uses the same projection for live events and durable steps.
+func FromStepProgress(id string, p Progress, info StepInfo) StepProcess {
+	if info.Answer == "" {
+		info.Answer = p.Answer
+	}
+	return StepProcess{ID: id, Agent: p.Agent, Node: p.Node, Model: p.Model,
+		Reasoning: p.Reasoning, Tools: p.Tools, Plan: p.Plan, StepInfo: info}
 }
 
 // StepInfo is what a step.progress event says about the step itself,
@@ -810,9 +810,10 @@ func (m *Model) DelegateProgress(childTaskID, agent, node string, info StepInfo,
 		progress.Node = node
 	}
 	info.Kind = "delegate"
+	step := FromStepProgress(stepID, progress, info)
 	m.Publish(Event{
 		Kind: "delegate.progress", TaskID: childTaskID, StepID: stepID,
-		Conversation: m.conversationOf(childTaskID), Progress: &progress, Step: &info,
+		Conversation: m.conversationOf(childTaskID), Progress: &progress, Step: &step,
 	})
 }
 

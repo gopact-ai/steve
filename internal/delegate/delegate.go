@@ -192,6 +192,10 @@ func (s *Service) Start(ctx context.Context, conversationID, agentID string, req
 	s.mu.Lock()
 	s.pending[spawned.ID] = entry
 	s.mu.Unlock()
+	// Register the child before Start can return: opening its session may
+	// take longer than the parent's remaining turn, even without progress.
+	s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID,
+		Agent: candidate.Agent.ID, Node: candidate.Node, Goal: req.Goal, State: "running", Since: entry.started}, view.Progress{})
 
 	// Detached on purpose: the request that asked for this may be gone
 	// long before the child is, and a client hanging up must not cancel
@@ -340,7 +344,7 @@ func (s *Service) descends(taskID, ancestorID string) bool {
 // or is not still waiting.
 func (s *Service) drive(ctx context.Context, conversationID, agentID string, parent, spawned task.Task,
 	candidate roster.Candidate, req agentmcp.DelegateRequest, entry *child) {
-	since := time.Now()
+	since := entry.started
 	var last view.Progress
 	result, runErr := s.run(ctx, conversationID, agentID, parent, spawned, candidate, req, func(p view.Progress) {
 		last = p

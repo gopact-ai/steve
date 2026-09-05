@@ -91,6 +91,9 @@ type Service struct {
 	// running counts lines in flight per conversation, for the sidebar.
 	running   map[string]int
 	exchanges map[string][]*queuedExchange
+	// Processes stay attached until finish records the reply, closing the
+	// gap between the handler returning and the last child snapshot arriving.
+	processes map[string]*process
 	// doc keeps the transcript across restarts. A console whose history
 	// vanishes with the process would make every restart look like the
 	// owner had never said anything.
@@ -572,6 +575,12 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply rea
 		return readmodel.Reply{Text: err.Error(), Error: err.Error()}, err
 	}
 	work := newProcess()
+	s.mu.Lock()
+	if s.processes == nil {
+		s.processes = map[string]*process{}
+	}
+	s.processes[exchange.ID] = work
+	s.mu.Unlock()
 	if s.anchor != nil {
 		s.anchor(conversation, ChatID, AnchorMark+exchange.ID)
 	}
@@ -651,9 +660,10 @@ func toolsChanged(work *process, next readmodel.Progress) bool {
 	return false
 }
 
-// follow collects the steps' progress for a plan run on this conversation
-// while the line runs. The read model stamps step.progress with the
-// conversation, so this is the same stream the page watches.
+// follow collects plan progress. Delegations go through UpdateStep so a
+// child cannot be collected by an unrelated later turn in the same conversation.
+// The read model stamps step.progress with the conversation, so this is
+// the same stream the page watches.
 func (s *Service) follow(ctx context.Context, conversation string, work *process) func() {
 	if s.model == nil {
 		return func() {}
@@ -663,8 +673,8 @@ func (s *Service) follow(ctx context.Context, conversation string, work *process
 	go func() {
 		defer close(done)
 		for ev := range events {
-			if (ev.Kind == "step.progress" || ev.Kind == "delegate.progress") && ev.Conversation == conversation && ev.Progress != nil {
-				work.step(ev.StepID, *ev.Progress, ev.Step)
+			if ev.Kind == "step.progress" && ev.Conversation == conversation && ev.Progress != nil {
+				work.step(readmodel.FromStepProgress(ev.StepID, *ev.Progress, readmodel.StepInfo{}))
 			}
 		}
 	}()
@@ -691,18 +701,69 @@ func (w *process) turn(p readmodel.Progress) {
 	w.last = p
 }
 
-func (w *process) step(id string, p readmodel.Progress, info *readmodel.StepInfo) {
+func (w *process) step(step readmodel.StepProcess) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	if _, seen := w.steps[id]; !seen {
-		w.order = append(w.order, id)
+	if _, seen := w.steps[step.ID]; !seen {
+		w.order = append(w.order, step.ID)
 	}
-	step := readmodel.StepProcess{ID: id, Agent: p.Agent, Node: p.Node, Reasoning: p.Reasoning, Tools: p.Tools}
-	if info != nil {
-		step.Kind, step.Goal, step.State, step.Since, step.Elapsed, step.Answer, step.Refs = info.Kind, info.Goal, info.State, info.Since, info.Elapsed, info.Answer, info.Refs
-		step.Attempt, step.Files = info.Attempt, info.Files
+	w.steps[step.ID] = step
+}
+
+// UpdateStep keeps a child's snapshot with the reply that launched it,
+// even after that turn ends or another turn starts in the conversation.
+func (s *Service) UpdateStep(conversation, taskID string, step readmodel.StepProcess) {
+	conversation = conversationID(conversation)
+	step.ID = "#" + taskID
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for i, reply := range s.replies[conversation] {
+		if reply.Process == nil {
+			continue
+		}
+		for j, old := range reply.Process.Steps {
+			if old.ID != step.ID {
+				continue
+			}
+			// Readers may still be encoding the previous reply outside our
+			// lock. Replace its process instead of mutating shared slices.
+			updated := *reply.Process
+			updated.Steps = append([]readmodel.StepProcess(nil), updated.Steps...)
+			updated.Steps[j] = step
+			s.replies[conversation][i].Process = &updated
+			if s.save() == nil && s.model != nil {
+				s.model.Publish(readmodel.Event{Kind: "console.step", Conversation: conversation,
+					TaskID: taskID, StepID: step.ID, ReplyID: reply.ID, Step: &step})
+			}
+			return
+		}
 	}
-	w.steps[id] = step
+	// An interrupted turn may still be finishing. Keep its known children
+	// there; new children belong to the newest turn, including a replacement
+	// started with "!". A concurrent /cancel command cannot launch a child.
+	var current *queuedExchange
+	for _, exchange := range s.exchanges[conversation] {
+		work := s.processes[exchange.ID]
+		if exchange.State != "running" || work == nil {
+			continue
+		}
+		work.mu.Lock()
+		_, known := work.steps[step.ID]
+		work.mu.Unlock()
+		if known {
+			work.step(step)
+			return
+		}
+		if immediate(exchange.Input) && !isInterrupt(exchange.Input) {
+			continue
+		}
+		if current == nil || exchange.StartedAt.After(current.StartedAt) {
+			current = exchange
+		}
+	}
+	if current != nil {
+		s.processes[current.ID].step(step)
+	}
 }
 
 // summary is the process as the reply keeps it, or nil when nothing was

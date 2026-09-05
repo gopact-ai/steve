@@ -14,6 +14,7 @@ import { Working, applyLive, type Live } from "@/components/steve/trace";
 import { Nothing } from "@/components/steve/ui";
 import { enqueue, fetchQueue, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, fetchSelectors, setPreferences } from "@/lib/api";
 import { useFleet, useIntent } from "@/lib/fleet";
+import { applyDelegation, restoreDelegations, withDelegations, type Delegations } from "@/lib/delegations";
 import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, StepProcess, QuoteRef, Exchange } from "@/lib/types";
 
 // ConsolePage is composition: it owns the conversation, the transcript,
@@ -31,6 +32,8 @@ export function ConsolePage() {
     const submitting = useRef(false);
     const [status, setStatus] = useState("");
     const [live, setLive] = useState<Live | null>(null);
+    const [delegations, setDelegations] = useState<Delegations>({});
+    const transcript = entries.map((r) => withDelegations(r, delegations));
     const [context, setContext] = useState<ConversationContext | null>(null);
     const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
     const [pick, setPick] = useState(0);
@@ -41,6 +44,7 @@ export function ConsolePage() {
     // its card, open, from the reply that carried it.
     const [child, setChild] = useState<Task | null>(null);
     const stepOf = (taskID: string): StepProcess | undefined => {
+        if (delegations["#" + taskID]) return delegations["#" + taskID].step;
         for (let i = entries.length - 1; i >= 0; i--) {
             const found = entries[i].process?.steps?.find((st) => st.id === "#" + taskID);
             if (found) return found;
@@ -114,11 +118,13 @@ export function ConsolePage() {
     const loadReplies = useCallback(async () => {
         if (activeConversation.current !== conversation) return;
         const request = ++transcriptRequest.current;
+        const cursor = seen.current;
         try {
             const data = await fetchReplies(conversation);
             if (activeConversation.current !== conversation || request !== transcriptRequest.current) return;
             setEnabled(data.enabled);
             setEntries(data.replies || []);
+            setDelegations((cur) => restoreDelegations(cur, data.replies || [], cursor));
         } catch (e) {
             if (activeConversation.current === conversation) setStatus(String(e));
         }
@@ -126,6 +132,7 @@ export function ConsolePage() {
 
     useEffect(() => {
         setEntries([]);
+        setDelegations({});
         setExchanges([]);
         void loadReplies();
         void loadQueue();
@@ -156,6 +163,7 @@ export function ConsolePage() {
         const mine = fresh.filter((ev) => ev.conversation === conversation);
         if (!mine.length) return;
         setLive((cur) => mine.reduce(applyLive, cur));
+        setDelegations((cur) => mine.reduce(applyDelegation, cur));
         if (mine.some((ev) => ev.kind === "console.queue")) void loadQueue();
         if (mine.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply")) void loadReplies();
         if (mine.some((ev) => ev.kind === "console.reply")) { loadContext(); refresh(); }
@@ -294,7 +302,9 @@ export function ConsolePage() {
     }
 
     const lastWithProcess = [...entries].reverse().find((r) => r.kind === "reply" && (r.process || r.injected));
-    const shownProcess = selectedReply ?? lastWithProcess ?? null;
+    const shownProcess = (selectedReply ? transcript.find((r) => r.id === selectedReply.id) : undefined) ?? (lastWithProcess ? withDelegations(lastWithProcess, delegations) : null);
+    const recordedSteps = new Set(entries.flatMap((r) => r.process?.steps?.map((s) => s.id) || []));
+    const unrecordedChildren = Object.values(delegations).map(({ step }) => step).filter((s) => !recordedSteps.has(s.id));
     const current = conversations.find((c) => c.id === conversation);
     const title = current?.title || (entries.find((r) => r.kind === "sent")?.input?.split("\n")[0]) || "新会话";
     const listed = conversations.some((c) => c.id === conversation) ? conversations : [{ id: conversation, title: "新会话", last_at: "", count: 0, running: false, project: context?.project?.id, agent: context?.agent?.id }, ...conversations];
@@ -329,8 +339,8 @@ export function ConsolePage() {
                 <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">
                     <div className="mx-auto flex max-w-3xl flex-col gap-3">
                         <button type="button" onClick={() => setChild(null)} className="self-start text-xs text-tertiary hover:text-primary">← 回到对话</button>
-                        {(() => { const st = stepOf(child.id)!; return <DelegationCard id={st.id} info={{ ...st, state: st.state || "done" }} progress={{ agent: st.agent, node: st.node, reasoning: st.reasoning, tools: st.tools }} tools={st.tools} reasoning={st.reasoning} open />; })()}
-                        <div className="text-xs text-quaternary">这是父回合记录下的这次委派；任务本身的预算、回合与关系在右栏"关系"里点它可看。</div>
+                        {(() => { const st = stepOf(child.id)!; return <DelegationCard key={st.id} id={st.id} info={st} progress={st} open />; })()}
+                        <div className="text-xs text-quaternary">这是这次委派的最新过程；任务本身的预算、回合与关系在右栏"关系"里点它可看。</div>
                     </div>
                 </div>
                 ) : (
@@ -346,8 +356,9 @@ export function ConsolePage() {
                                 </div>
                             )}
                             <div className="mx-auto flex max-w-4xl flex-col gap-5">
-                                {entries.map((r, i) => r.kind === "sent" ? <UserMessage key={r.id || i} text={r.input || ""} /> : <AssistantMessage key={r.id || i} r={r} selected={shownProcess === r} onSelect={(r.process || r.injected) ? () => { setSelectedReply(r); setTab("trace"); } : undefined}
+                                {transcript.map((r, i) => r.kind === "sent" ? <UserMessage key={r.id || i} text={r.input || ""} /> : <AssistantMessage key={r.id || i} r={r} selected={shownProcess?.id === r.id} onSelect={(r.process || r.injected) ? () => { setSelectedReply(r); setTab("trace"); } : undefined}
                                     onQuote={r.id ? () => setQuotes((list) => list.some((x) => x.reply_id === r.id) ? list : [...list, { conversation, reply_id: r.id!, title: current?.title || conversation, excerpt: (r.text || "").replace(/\s+/g, " ").slice(0, 80) }]) : undefined} />)}
+                                {unrecordedChildren.map((s) => <DelegationCard key={s.id} id={s.id} info={s} progress={s} />)}
                                 {live && <Working live={live} plans={runningPlans} compact />}
                                 <div ref={bottom} />
                             </div>
