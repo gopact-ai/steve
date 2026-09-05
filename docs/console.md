@@ -663,3 +663,17 @@ Agent 会话（AgentSession）按 (线程, agent) 独立管理，与任务生命
 **落地了的**：控制台组件化与 Codex 式 transcript（§13）；项目 / 工作区模型与副本放置（§14）；会话标题与归档（§15）；技能页、档案页、内置技能与来源、机器技能缓存（§16–17）；MCP 页与市场、平台自己的 MCP 与钩子（§18–19，含 fleet 工具）；记忆子系统：权威 markdown + 检索器接口、全局 / 项目两层、工具与审计（§20）；跨机器协作 e2e 三轮跑通，修掉七个平台问题（§21）；子 agent 在对话里实时可见、工具列表折叠（§22）；改动与产物：attempt 级索引与 diff、文件浏览（§23）；工作台：线程 1:N 任务、看板并入、变更 / 文件 tab、任务元数据、引用块、偏好与会话轮换（§24）；长程任务：默认不限预算、发送框排队与插队（§25）。
 
 **留着的**（各节末尾有明细）：统一的 Execution 投影与持久回复 / 交换 id（§22.2.1、§23.2.1、§24.2.1）；服务端持久队列（§25.2）；MCP 检索器与 `internal/mcpclient`（§20.3）；InvocationBinding 与短期写 token、事件总线与钩子（§19.4）；附件（§23.3）；孤儿子任务的落地与断线残留工作树（§21.4）；每回合 token 用量——协议与适配器都有，是我们的 acp 库没解 `PromptResponse.usage`（§25.1.1），已作为独立任务交给 codex。
+
+## 27. 稳定性治理（2026-09-05）
+
+用户要做项目治理、把稳定性搞好。先修已经发现的问题，能并发的并发：
+
+| # | 问题 | 修法 | 谁 |
+|---|---|---|---|
+| 1 | 每次真机跑都撞出平台 bug，没有常态化回归 | `e2e/fleet/` 一键脚本：绑定 scratch、委派 node-b 改一行文件、断言落地 / 卡片 / 改动索引 / 用量已上报；`make e2e-fleet`；合入前必跑写进 CONTRIBUTING | codex（worktree `steve-gate`） |
+| 2 | 父回合死后子任务结果排队没人落地；节点断线留下工作树没人清 | hub 后台清扫：有排队落地的项目在主目录锁空闲时 `LandPending`；节点上线后清掉没有活 attempt 的 `worktrees/wt-*` | 我（`fix/orphans`） |
+| 3 | 发送框队列只在页面本地，刷新即丢；回复 / 交换没有贯穿的 id | 队列持久化到 console 文档，带 `ExchangeID`：入队 / 删除 / 插队走 API，页面只是投影；`console.sent` / `reply` 事件带同一个 id | codex（worktree `steve-queue`） |
+| 4 | 写入保障薄：记忆写入没有请求级幂等键；快照对大工作树没有上限 | `steve_remember` 加 `idempotency_key`，审计记 key→结果、重放返回同一回执；快照限制文件数 / 单文件字节 / 总字节，超出拒绝并说明 | codex（worktree `steve-guard`） |
+| 5 | steve 仓库没有合入规则（私有仓库无 ruleset），和 acp 不一致 | GitHub 的分支规则要 Pro；先在 CONTRIBUTING 写清：PR、CI 绿、真机门禁、merge commit；acp 那边保持 squash + 线性 | 文档（并入 1） |
+
+§19.4 的 InvocationBinding 与短期写 token、评审多次提的统一 Execution 投影，工作量属于下一阶段，这轮不做。
