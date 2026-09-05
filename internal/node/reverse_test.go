@@ -53,7 +53,21 @@ func TestMCPListenerStaysPutAndReturnsRetryableErrorDuringOutage(t *testing.T) {
 			result <- resp
 		}
 	}()
-	<-requestStarted
+	// The reverse channel is served by a goroutine the dialer starts, so a
+	// request can be answered 503 before it is up and never reach upstream.
+	// Bound the wait: that is a failure to report in seconds, not a test
+	// that hangs until the package's ten-minute alarm.
+	select {
+	case <-requestStarted:
+	case err := <-failure:
+		t.Fatalf("the request never reached upstream: %v", err)
+	case resp := <-result:
+		body, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		t.Fatalf("the request never reached upstream: %d %s", resp.StatusCode, body)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the request never reached upstream")
+	}
 	_ = c.mux.Close()
 	select {
 	case resp := <-result:
