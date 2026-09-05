@@ -11,19 +11,19 @@ import { Mono, StateBadge } from "./ui";
 
 // Live is what the current line is doing: the turn's own progress, and
 // each plan step's, until the reply lands.
-export interface Live { since: string; turn?: Progress; steps: Record<string, Progress>; order: string[]; info?: Record<string, StepInfo> }
+export interface Live { since: string; exchangeID?: string; turn?: Progress; steps: Record<string, Progress>; order: string[]; info?: Record<string, StepInfo> }
 
 // applyLive folds one event into the live view: a sent line opens it, a
 // reply closes it, progress fills it in.
 export function applyLive(cur: Live | null, ev: Event): Live | null {
     switch (ev.kind) {
         case "console.sent":
-            return { since: ev.at, steps: {}, order: [] };
+            return { since: ev.at, exchangeID: ev.exchange_id, steps: {}, order: [] };
         case "console.reply":
-        case "console.notice":
-            return null;
+            return ev.exchange_id && cur?.exchangeID && ev.exchange_id !== cur.exchangeID ? cur : null;
         case "console.progress":
-            return { ...(cur ?? { since: ev.at, steps: {}, order: [] }), turn: ev.progress };
+            if (ev.exchange_id && (!cur || ev.exchange_id !== cur.exchangeID)) return cur;
+            return { ...(cur ?? { since: ev.at, exchangeID: ev.exchange_id, steps: {}, order: [] }), turn: ev.progress };
         case "step.progress":
         case "delegate.progress": {
             // A child that outlives its parent's turn reports into no

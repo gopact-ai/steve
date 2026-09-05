@@ -447,10 +447,11 @@ type Event struct {
 	// delegated child carries its goal, state and answer here.
 	Step *StepInfo `json:"step,omitempty"`
 	// ReplyID names the console line a console.* event is about.
-	ReplyID string `json:"reply_id,omitempty"`
-	Title   string `json:"title,omitempty"`
-	Rev     int    `json:"rev,omitempty"`
-	Detail  string `json:"detail,omitempty"`
+	ReplyID    string `json:"reply_id,omitempty"`
+	ExchangeID string `json:"exchange_id,omitempty"`
+	Title      string `json:"title,omitempty"`
+	Rev        int    `json:"rev,omitempty"`
+	Detail     string `json:"detail,omitempty"`
 }
 
 const recentKept = 200

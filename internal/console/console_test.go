@@ -3,13 +3,14 @@ package console
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/view"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 type echo struct{ seen []turn.Request }
@@ -58,10 +59,13 @@ func TestConsoleActsAsTheOwnerAndKeepsTheExchange(t *testing.T) {
 	if replies[len(replies)-1].Kind != "notice" || replies[len(replies)-2].Kind != "milestone" {
 		t.Fatalf("tail = %+v", replies[len(replies)-2:])
 	}
-	// Six events were published, console-kinded.
+	// Transcript events remain console-kinded; queue invalidations are separate.
 	seen := 0
 	for seen < 6 {
 		ev := <-events
+		if ev.Kind == "console.queue" {
+			continue
+		}
 		if !strings.HasPrefix(ev.Kind, "console.") {
 			t.Fatalf("unexpected event %+v", ev)
 		}
@@ -100,12 +104,19 @@ func (r *recorder) DeleteMessage(context.Context, string) error     { return nil
 
 // memDoc is a durable document that lives for one test.
 type memDoc struct {
+	mu    sync.Mutex
 	raw   []byte
 	saved bool
 }
 
-func (d *memDoc) Load() ([]byte, bool, error) { return d.raw, d.saved, nil }
+func (d *memDoc) Load() ([]byte, bool, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return append([]byte(nil), d.raw...), d.saved, nil
+}
 func (d *memDoc) Save(raw []byte) error {
+	d.mu.Lock()
+	defer d.mu.Unlock()
 	d.raw, d.saved = append([]byte(nil), raw...), true
 	return nil
 }

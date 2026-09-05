@@ -747,9 +747,6 @@ func serve(args []string) error {
 	// The console: the owner acting from the page, through this same
 	// coordinator. Notices anchored on the console stay on the page.
 	cons := console.New(coordinator, cfg.Feishu.OwnerOpenID, view)
-	if err := cons.Persist(book.Document("console")); err != nil {
-		return err
-	}
 	cons.SetTitler(&conversationTitler{manager: manager, catalog: catalog, projects: projects, home: cfg.Gateway.HomePath})
 	dashboard.SetConsole(cons)
 	// A copy may only sit where the project's level admits; the store
@@ -767,13 +764,7 @@ func serve(args []string) error {
 	cons.SetInspector(admin)
 	tasks.SetObserver(func(id string) { view.TaskChanged(id) })
 	defer dashboard.Close()
-	go func() {
-		if err := dashboard.Serve(); err != nil {
-			log.Printf("steve: read model: %v", err)
-		}
-	}()
 	supervisor.Runs().Observe(view)
-	log.Printf("steve: dashboard on %s  (steve top -url %s)", dashboard.URL(), dashboard.URL())
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -933,6 +924,15 @@ func serve(args []string) error {
 			log.Printf("steve: task #%s is paused; leaving it set aside", interrupted.ID)
 			continue
 		}
+		if console.IsConsole(interrupted.Channel) {
+			// The console records the interrupted exchange and resumes its
+			// durable FIFO. A Feishu revival would bypass that queue and use
+			// a web anchor as a chat message; only clear the session taint.
+			if err := coordinator.ReviveSession(interrupted.Channel, interrupted.Member); err != nil {
+				return fmt.Errorf("revive console session for task #%s: %w", interrupted.ID, err)
+			}
+			continue
+		}
 		if interrupted.AnchorMessage == "" {
 			// Nothing to reply to, so nothing can be said: the task is
 			// only recoverable through the listing.
@@ -966,6 +966,17 @@ func serve(args []string) error {
 	for _, notice := range dropped {
 		go gw.Notify(notice)
 	}
+
+	// Restored queues may run immediately, so wire their dependencies first.
+	if err := cons.Persist(book.Document("console")); err != nil {
+		return err
+	}
+	go func() {
+		if err := dashboard.Serve(); err != nil {
+			log.Printf("steve: read model: %v", err)
+		}
+	}()
+	log.Printf("steve: dashboard on %s  (steve top -url %s)", dashboard.URL(), dashboard.URL())
 
 	go runSchedules(ctx, schedules, gw, coordinator)
 

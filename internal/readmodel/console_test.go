@@ -4,15 +4,19 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
 )
 
-type fakeConsole struct{ replies []Reply }
+type fakeConsole struct {
+	replies   []Reply
+	exchanges []Exchange
+}
 
 func (f *fakeConsole) Send(_ context.Context, conversation, input string) (Reply, error) {
-	r := Reply{Conversation: conversation, Text: "did " + input, Kind: "reply"}
+	r := Reply{ID: "reply-id", ExchangeID: "exchange-id", Conversation: conversation, Text: "did " + input, Kind: "reply"}
 	f.replies = append(f.replies, r)
 	return r, nil
 }
@@ -31,6 +35,55 @@ func (f *fakeConsole) SendCommand(ctx context.Context, conversation, input, _ st
 
 func (f *fakeConsole) SendCommandWith(ctx context.Context, conversation, input, _ string, _ []QuoteRef) (Reply, error) {
 	return f.Send(ctx, conversation, input)
+}
+func (f *fakeConsole) Enqueue(_ context.Context, conversation, input string, quotes []QuoteRef) (Exchange, error) {
+	e := Exchange{ID: fmt.Sprint(len(f.exchanges) + 1), Conversation: conversation, Input: input, Quotes: quotes, State: "queued"}
+	f.exchanges = append(f.exchanges, e)
+	return e, nil
+}
+func (f *fakeConsole) Queue(conversation string) []Exchange {
+	var list []Exchange
+	for _, e := range f.exchanges {
+		if e.Conversation == conversation {
+			list = append(list, e)
+		}
+	}
+	return list
+}
+func (f *fakeConsole) queued(id string) (int, error) {
+	for i, e := range f.exchanges {
+		if e.ID == id {
+			if e.State != "queued" {
+				return 0, ErrExchangeNotQueued
+			}
+			return i, nil
+		}
+	}
+	return 0, ErrExchangeNotFound
+}
+func (f *fakeConsole) DeleteQueued(id string) error {
+	i, err := f.queued(id)
+	if err == nil {
+		f.exchanges = append(f.exchanges[:i], f.exchanges[i+1:]...)
+	}
+	return err
+}
+func (f *fakeConsole) EditQueued(id, input string) (Exchange, error) {
+	i, err := f.queued(id)
+	if err != nil {
+		return Exchange{}, err
+	}
+	f.exchanges[i].Input = input
+	return f.exchanges[i], nil
+}
+func (f *fakeConsole) Steer(_ context.Context, id string) (Exchange, error) {
+	i, err := f.queued(id)
+	if err != nil {
+		return Exchange{}, err
+	}
+	f.exchanges[i].Input = "!" + f.exchanges[i].Input
+	f.exchanges[i].State = "running"
+	return f.exchanges[i], nil
 }
 func (f *fakeConsole) Suggest(context.Context, string, string) []Suggestion { return nil }
 
@@ -75,7 +128,7 @@ func TestConsoleEndpointsAreGuardedAndOptional(t *testing.T) {
 	}
 	server.SetConsole(&fakeConsole{})
 	code, body := post("t0k", `{"conversation":"console:main","input":"/fleet"}`)
-	if code != http.StatusOK || !strings.Contains(body, "did /fleet") {
+	if code != http.StatusOK || (!strings.Contains(body, "did /fleet") || !strings.Contains(body, `"exchange_id":"exchange-id"`)) {
 		t.Fatalf("send = %d %s", code, body)
 	}
 	if code, _ := post("t0k", `{"input":"   "}`); code != http.StatusBadRequest {
