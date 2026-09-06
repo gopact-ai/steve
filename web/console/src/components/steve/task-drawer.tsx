@@ -62,10 +62,10 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                         <ol className="flex flex-col divide-y divide-secondary rounded-lg ring-1 ring-secondary">
                             {plan.steps.map((s) => (
                                 <li key={s.id} className="flex flex-col gap-1 px-3 py-2">
-                                    <div className="flex items-center gap-2"><StateBadge state={s.state} /><span className="font-medium text-primary">{s.id}</span><span className="text-xs text-tertiary">{s.agent || "—"}{s.node ? ` @ ${s.node}` : ""}</span>{s.verify && <span className="ml-auto text-[11px] text-quaternary">验证：{s.verify}</span>}</div>
+                                    <div className="flex items-center gap-2"><StateBadge state={s.state} /><span className="font-medium text-primary">{s.id}</span><span className="text-xs text-tertiary">{s.agent || "—"}{s.node ? ` @ ${s.node}` : ""}</span>{s.verify && <span className="ml-auto u-meta text-quaternary">验证：{s.verify}</span>}</div>
                                     <div className="line-clamp-3 text-xs text-secondary">{s.goal}</div>
                                     {s.error && <div className="text-xs text-error-primary">{s.error}</div>}
-                                    {s.usage && <div className="text-[11px] text-quaternary">{s.usage.model} · {fmtTokens(s.usage.tokens.total)} tok · {fmtSeconds(s.usage.seconds)}</div>}
+                                    {s.usage && <div className="u-meta text-quaternary">{s.usage.model} · {fmtTokens(s.usage.tokens.total)} tok · {fmtSeconds(s.usage.seconds)}</div>}
                                 </li>
                             ))}
                         </ol>

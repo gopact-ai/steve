@@ -89,7 +89,7 @@ function FoldedRows({ rows }: { rows: Row[] }) {
                     {running ? <Loading01 className="size-3.5 shrink-0 animate-spin text-fg-brand-primary" /> : failed ? <XCircle className="size-3.5 shrink-0 text-fg-error-primary" /> : <CheckCircle className="size-3.5 shrink-0 text-fg-success-primary" />}
                     <span className="shrink-0 text-tertiary">{first.verb}</span>
                     <span className="min-w-0 truncate font-mono text-secondary" title={first.text}>{first.text}</span>
-                    <span className="shrink-0 rounded-full bg-secondary px-1.5 text-[11px] text-tertiary">×{rows.length}</span>
+                    <span className="shrink-0 rounded-full bg-secondary px-1.5 u-meta">×{rows.length}</span>
                     <ChevronDown className="ml-auto size-3 shrink-0 text-quaternary transition group-open/fold:rotate-180" />
                 </summary>
                 <ul className="ml-3 flex flex-col border-l border-secondary pl-2">

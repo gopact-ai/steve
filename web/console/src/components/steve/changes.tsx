@@ -60,7 +60,7 @@ function ChangeRow({ attempt, c }: { attempt: string; c: Change }) {
                     <span className={`w-7 shrink-0 font-mono ${statusTone[c.status] ?? "text-tertiary"}`} title={statusWord[c.status] ?? c.status}>{c.status}</span>
                     <span className="min-w-0 truncate font-mono text-secondary" title={c.path}>{c.path}</span>
                     {c.binary ? <span className="shrink-0 text-quaternary">二进制</span> : (
-                        <span className="shrink-0 font-mono text-[11px] text-quaternary"><span className="text-fg-success-primary">+{c.added}</span> <span className="text-fg-error-primary">−{c.deleted}</span></span>
+                        <span className="shrink-0 font-mono u-meta text-quaternary"><span className="text-fg-success-primary">+{c.added}</span> <span className="text-fg-error-primary">−{c.deleted}</span></span>
                     )}
                     {!c.binary && <ChevronDown className="ml-auto size-3 shrink-0 text-quaternary transition group-open/file:rotate-180" />}
                 </summary>

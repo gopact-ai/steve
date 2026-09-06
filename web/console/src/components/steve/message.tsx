@@ -29,7 +29,7 @@ export function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply;
             {r.process && <InlineProcess process={r.process} />}
             {r.changes && <ChangesFold summary={r.changes} label="本轮净改动，含已落地的子任务" />}
             {r.text && <Md text={r.text} className={r.error ? "text-error-primary" : ""} />}
-            <div className="flex items-center gap-2 text-[11px] text-quaternary">
+            <div className="flex items-center gap-2 u-meta text-quaternary">
                 <span>{when(r.at)}</span>
                 {r.kind !== "reply" && <Badge type="pill-color" size="sm" color={tone}>{r.kind}</Badge>}
                 {r.error && <Badge type="pill-color" size="sm" color="error">error</Badge>}

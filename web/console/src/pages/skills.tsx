@@ -112,7 +112,7 @@ export function SkillsPage() {
                                             {src.head && <Mono className="text-quaternary">{src.head}</Mono>}
                                             {src.error && <Badge type="pill-color" size="sm" color="error">更新失败</Badge>}
                                         </div>
-                                        <div className="truncate font-mono text-[11px] text-quaternary" title={src.url}>{src.url}{src.ref ? ` @ ${src.ref}` : ""}{src.subdir ? ` · ${src.subdir}` : ""}</div>
+                                        <div className="truncate font-mono u-meta text-quaternary" title={src.url}>{src.url}{src.ref ? ` @ ${src.ref}` : ""}{src.subdir ? ` · ${src.subdir}` : ""}</div>
                                         <div className="mt-1 text-xs text-tertiary">{src.skills.length} 个技能{src.fetched_at ? ` · 拉取于 ${when(src.fetched_at)}` : ""} · 打开的会进上表</div>
                                         <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
                                             {src.skills.map((n) => (
@@ -169,7 +169,7 @@ export function SkillsPage() {
                             {(view?.search_paths ?? []).filter((p) => !view?.sources.some((src) => src.root === p)).map((p) => (
                                 <li key={p} className="flex items-center gap-2 py-1.5">
                                     <Mono className="min-w-0 flex-1 truncate text-primary">{p}</Mono>
-                                    {p === view?.builtin_root ? <span className="text-[11px] text-quaternary" title="随 steve 发布的技能：官方的 skill-creator。每次启动重写，不能移除，可以逐个关掉。">内置 · 随 steve 更新</span>
+                                    {p === view?.builtin_root ? <span className="u-meta text-quaternary" title="随 steve 发布的技能：官方的 skill-creator。每次启动重写，不能移除，可以逐个关掉。">内置 · 随 steve 更新</span>
                                         : <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip="不再在这里找" isDisabled={busy !== ""} onClick={() => void run("rm:" + p, () => removeSkillPath(p))} />}
                                 </li>
                             ))}

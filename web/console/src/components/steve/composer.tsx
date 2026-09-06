@@ -66,7 +66,7 @@ export function Composer(p: ComposerProps) {
                             </li>
                         ))}
                     </ul>
-                    <div className="border-t border-secondary px-3 py-1 text-[11px] text-quaternary">↑↓ 选择 · Tab 填入 · Enter 发送 · Esc 收起</div>
+                    <div className="border-t border-secondary px-3 py-1 u-meta text-quaternary">↑↓ 选择 · Tab 填入 · Enter 发送 · Esc 收起</div>
                 </div>
             )}
             {p.queue && p.queue.length > 0 && (
@@ -107,7 +107,7 @@ export function Composer(p: ComposerProps) {
                         <Dropdown.Popover placement="top start" className="w-80">
                             <Dropdown.Menu onAction={(k) => p.onVerb(String(k))}>
                                 <Dropdown.Section>
-                                    <Dropdown.SectionHeader className="px-2 py-1 text-[11px] text-quaternary">动词 · 选一个填进输入框</Dropdown.SectionHeader>
+                                    <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">动词 · 选一个填进输入框</Dropdown.SectionHeader>
                                     {p.verbs.map((v) => (
                                         <Dropdown.Item key={v.command} id={v.command} textValue={v.command}>
                                             <div className="flex min-w-0 flex-col">
@@ -249,7 +249,7 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
                     {error ? <div className="px-3 py-2 text-xs text-error-primary">{error}</div> : !sel ? <div className="px-3 py-2 text-xs text-quaternary">读取可选项…（没有会话时会先开一个）</div> : (
                         <Dropdown.Menu onAction={(k) => onPrefer?.({ model: String(k) })}>
                             <Dropdown.Section>
-                                <Dropdown.SectionHeader className="px-2 py-1 text-[11px] text-quaternary">模型 · 当前 {sel.model || "未知"}{sel.preferred?.model ? ` · 偏好 ${sel.preferred.model}` : ""}</Dropdown.SectionHeader>
+                                <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">模型 · 当前 {sel.model || "未知"}{sel.preferred?.model ? ` · 偏好 ${sel.preferred.model}` : ""}</Dropdown.SectionHeader>
                                 {sel.models.length === 0 && <Dropdown.Item id="__none" label="这个 AI 工具没有暴露模型选择" isDisabled />}
                                 {sel.models.map((c) => <Dropdown.Item key={c.Value} id={c.Value} label={c.Detail ? `${c.Label || c.Value} · ${c.Detail}` : (c.Label || c.Value)} />)}
                             </Dropdown.Section>
@@ -266,7 +266,7 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
                     <Dropdown.Popover placement="top start" className="w-60">
                         <Dropdown.Menu onAction={(k) => onPrefer?.({ [reasoning.ID]: String(k) })}>
                             <Dropdown.Section>
-                                <Dropdown.SectionHeader className="px-2 py-1 text-[11px] text-quaternary">{reasoning.Name} · 当前 {reasoning.Current || "未知"}</Dropdown.SectionHeader>
+                                <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">{reasoning.Name} · 当前 {reasoning.Current || "未知"}</Dropdown.SectionHeader>
                                 {reasoning.Choices.map((c) => <Dropdown.Item key={c.Value} id={c.Value} label={c.Detail ? `${c.Label || c.Value} · ${c.Detail}` : (c.Label || c.Value)} />)}
                             </Dropdown.Section>
                         </Dropdown.Menu>

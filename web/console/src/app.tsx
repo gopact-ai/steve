@@ -87,7 +87,7 @@ function Shell() {
                     <nav className="flex flex-1 flex-col gap-4 px-4">
                         {groups.map((g) => (
                             <div key={g.title} className="flex flex-col gap-0.5">
-                                <div className="px-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-quaternary">{g.title}</div>
+                                <div className="px-3 pb-1 u-label">{g.title}</div>
                                 {g.items.map((item) => (
                                     <NavItemBase key={item.href} type="link" href={"#" + item.href} icon={item.icon} current={location.pathname + location.search === item.href || (item.href === "/console" && location.pathname === "/console" && !location.search)}
                                         badge={item.badge !== undefined ? <span className={`rounded-full px-2 py-0.5 text-xs ${item.hot ? "bg-warning-primary text-warning-primary" : "bg-secondary text-tertiary"}`}>{item.badge}</span> : undefined}

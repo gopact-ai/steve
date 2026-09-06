@@ -22,6 +22,33 @@ export type ConversationPatch = { title?: string; archived?: boolean };
 // notable says a task is worth a line of its own under its thread: it
 // is running, waits on the owner, was handed on, was planned, or fires
 // on a schedule. A one-turn chat task is the thread itself.
+// usual is what these threads have in common: the agent that answers
+// most of them and the place most of them run in. A project can have
+// workspaces on three machines and still run everything in the main
+// directory, and one agent can answer every thread; saying so on every
+// row costs a title's worth of space to tell the reader nothing.
+//
+// So a row says nothing about its agent or its place while it matches
+// the usual one, and the list states its own norm by leaving it out. The
+// exception is then visible because it is the only row that speaks.
+function usual(threads: Conversation[]): { agent: string; place: string } {
+    const common = (pick: (c: Conversation) => string) => {
+        const counts = new Map<string, number>();
+        for (const c of threads) {
+            const key = pick(c);
+            if (key) counts.set(key, (counts.get(key) || 0) + 1);
+        }
+        let best = "";
+        let most = 0;
+        for (const [key, n] of counts) if (n > most) [best, most] = [key, n];
+        return best;
+    };
+    return {
+        agent: common((c) => c.agent || ""),
+        place: common((c) => (c.place ? placeLabel(c.place) : "")),
+    };
+}
+
 function notable(t: Task, all: Task[]): boolean {
     return t.execution === "running" || (t.attention || 0) > 0 || !!t.plan_id || (t.origin || "").startsWith("schedule") || all.some((c) => c.parent === t.id);
 }
@@ -45,8 +72,8 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
     const known = new Set(projects.map((p) => p.id));
     const orphans = [...byProject.entries()].filter(([k]) => !known.has(k)).flatMap(([, v]) => v);
     const workOf = (c: Conversation) => tasks.filter((t) => t.channel === c.id && !t.parent && notable(t, tasks));
-    const row = (c: Conversation, many?: boolean) => (
-        <Thread key={c.id} c={c} current={c.id === current} onPick={onPick} many={many}
+    const row = (c: Conversation, norm?: { agent: string; place: string }) => (
+        <Thread key={c.id} c={c} current={c.id === current} onPick={onPick} norm={norm}
             renaming={renaming === c.id} onRename={() => setRenaming(c.id)} onRenamed={(title) => { setRenaming(null); if (title !== null) onUpdate(c.id, { title }); }}
             onArchive={(archived) => onUpdate(c.id, { archived })}
             work={workOf(c)} childrenOf={(id) => tasks.filter((t) => t.parent === id)} onTask={onTask} />
@@ -64,8 +91,8 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
                     </button>
                     <Folder className="size-4 shrink-0 text-fg-quaternary" />
                     <button type="button" onClick={() => toggle(p.id)} className="flex min-w-0 flex-1 flex-col text-left" title={hint || places}>
-                        <span className="truncate text-sm text-primary">{title}</span>
-                        <span className="truncate text-[11px] text-quaternary">{places}</span>
+                        <span className="truncate u-title">{title}</span>
+                        <span className="truncate u-meta text-quaternary">{places}</span>
                     </button>
                     {threads.some((c) => c.running) && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
                     <button type="button" onClick={() => onNew(p.id)} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary opacity-0 transition hover:bg-primary/60 hover:text-fg-quaternary_hover group-hover:opacity-100" aria-label={`在 ${p.id} 下新会话`} title={`在 ${p.id} 下新会话`}>
@@ -74,8 +101,8 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
                 </div>
                 {open && (
                     <ul className="ml-4 flex flex-col gap-0.5 border-l border-secondary pl-2">
-                        {threads.length === 0 && <li className="px-2 py-1 text-[11px] text-quaternary">还没有会话</li>}
-                        {threads.map((c) => row(c, p.workspaces.length > 1))}
+                        {threads.length === 0 && <li className="px-2 py-1 u-meta text-quaternary">还没有会话</li>}
+                        {threads.map((c) => row(c, usual(threads)))}
                     </ul>
                 )}
             </li>
@@ -116,7 +143,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
                 )}
                 {archived.length > 0 && (
                     <details className="group/archived mt-3" open={archivedOpen || undefined}>
-                        <summary className="flex cursor-pointer list-none items-center gap-1 px-2 py-1 text-[11px] font-medium uppercase tracking-wide text-quaternary hover:text-tertiary">
+                        <summary className="flex cursor-pointer list-none items-center gap-1 px-2 py-1 u-label hover:text-tertiary">
                             <Archive className="size-3" />
                             <span>已归档 · {archived.length}</span>
                             <ChevronDown className="size-3 transition group-open/archived:rotate-180" />
@@ -130,31 +157,36 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
 }
 
 function TreeHeading({ children }: { children: string }) {
-    return <div className="px-2 pt-3 pb-1 text-[11px] font-medium uppercase tracking-wide text-quaternary first:pt-2">{children}</div>;
+    return <div className="px-2 pt-3 pb-1 u-label first:pt-2">{children}</div>;
 }
 
 // Thread is one conversation: its name, its agent, when it last spoke,
 // and — when the project is in more than one place, or the agent has
 // nowhere to work — where it runs. Its menu renames or puts it away.
-function Thread({ c, current, onPick, many, renaming, onRename, onRenamed, onArchive, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; onPick: (id: string) => void; many?: boolean; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
+function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArchive, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; onPick: (id: string) => void; norm?: { agent: string; place: string }; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
     const nowhere = !!c.project && !!c.agent && !c.place;
+    // The second line earns its place only when it says something this
+    // row does not share with its neighbours. Usually nothing does, and
+    // then the row is one line: a title and when it last moved.
+    const place = c.place ? placeLabel(c.place) : "";
+    const qualifiers = [
+        c.archived ? "已归档" : "",
+        norm && c.agent && c.agent !== norm.agent ? c.agent : "",
+        norm && place && place !== norm.place ? place : "",
+    ].filter(Boolean);
     return (
         <li className="group/thread relative">
             {renaming ? (
                 <RenameBox initial={c.title} onDone={onRenamed} />
             ) : (
                 <button type="button" onClick={() => onPick(c.id)} className={`flex w-full flex-col gap-0.5 rounded-lg py-1.5 pl-2 pr-7 text-left transition ${current ? "bg-primary" : "hover:bg-primary/50"}`} title={nowhere ? "它的 Agent 所在机器上没有这个项目的工作区" : c.place ? placeLabel(c.place) : undefined}>
-                    <span className="flex items-center gap-1.5">
-                        {c.running && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
-                        {nowhere && <AlertCircle className="size-3 shrink-0 text-fg-error-primary" />}
-                        <span className="truncate text-sm text-primary">{c.title || "新会话"}</span>
+                    <span className="flex w-full items-baseline gap-2">
+                        {c.running && <Loading01 className="size-3 shrink-0 self-center animate-spin text-fg-brand-primary" />}
+                        {nowhere && <AlertCircle className="size-3 shrink-0 self-center text-fg-error-primary" />}
+                        <span className="min-w-0 flex-1 truncate u-title">{c.title || "新会话"}</span>
+                        <span className="shrink-0 u-meta text-quaternary">{c.last_at ? ago(c.last_at) : "未开始"}</span>
                     </span>
-                    <span className="truncate text-[11px] text-tertiary">
-                        {c.archived && <span className="text-quaternary">已归档 · </span>}
-                        {c.agent || "默认 Agent"}
-                        {many && c.place ? <span className="text-quaternary"> · {placeLabel(c.place)}</span> : null}
-                        {c.last_at ? ` · ${ago(c.last_at)}` : " · 未开始"}
-                    </span>
+                    {qualifiers.length > 0 && <span className="truncate u-meta">{qualifiers.join(" · ")}</span>}
                 </button>
             )}
             {!renaming && (
@@ -190,12 +222,16 @@ function WorkFold({ threadID, work, childrenOf, onTask }: { threadID: string; wo
     const kids = all.length - work.length;
     return (
         <div className="ml-3 border-l border-secondary pl-2">
-            <button type="button" onClick={toggle} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left text-[11px] text-quaternary hover:bg-primary/50 hover:text-tertiary">
+            <button type="button" onClick={toggle} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left u-meta text-quaternary hover:bg-primary/50 hover:text-tertiary">
                 <ChevronDown className={`size-3 shrink-0 transition ${open ? "" : "-rotate-90"}`} />
-                <span>{work.length} 个任务{kids ? ` · ${kids} 次委派` : ""}</span>
+                {/* When something is happening, that is the line. The
+                    counts are what the fold already implies — it exists
+                    because there is work — and they read as noise beside
+                    "2 失败". They come back when nothing is going on. */}
                 {running > 0 && <span className="flex items-center gap-1 text-fg-brand-primary"><Loading01 className="size-3 animate-spin" />{running} 在跑</span>}
                 {waiting > 0 && <span className="text-warning-primary">{waiting} 待你处理</span>}
                 {failed > 0 && <span className="text-error-primary">{failed} 失败</span>}
+                {running + waiting + failed === 0 && <span>{work.length} 个任务{kids ? ` · ${kids} 次委派` : ""}</span>}
             </button>
             {open && (
                 <ul className="mb-1 flex flex-col">
@@ -218,7 +254,7 @@ function TaskLine({ t, onTask, child }: { t: Task; onTask?: (t: Task) => void; c
     const running = t.execution === "running";
     const state = taskState(t);
     return (
-        <button type="button" onClick={onTask ? () => onTask(t) : undefined} className={`flex w-full items-center gap-1.5 rounded-md py-0.5 pr-1.5 text-left text-[11px] ${child ? "pl-5" : "pl-1.5"} ${onTask ? "hover:bg-primary/50" : ""}`} title={t.title || t.goal}>
+        <button type="button" onClick={onTask ? () => onTask(t) : undefined} className={`flex w-full items-center gap-1.5 rounded-md py-0.5 pr-1.5 text-left u-meta ${child ? "pl-5" : "pl-1.5"} ${onTask ? "hover:bg-primary/50" : ""}`} title={t.title || t.goal}>
             {running ? <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" /> : state === "done" ? <CheckCircle className="size-3 shrink-0 text-fg-success-primary" /> : state === "failed" ? <span className="size-2 shrink-0 rounded-full bg-error-solid" /> : <span className="size-2 shrink-0 rounded-full bg-quaternary" />}
             <span className="shrink-0 font-mono text-quaternary">#{t.id}</span>
             <span className="min-w-0 shrink-0 truncate text-tertiary">{child ? "→ " : ""}{t.member || "steve"}{t.node ? `@${t.node}` : ""}</span>

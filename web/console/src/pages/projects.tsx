@@ -71,8 +71,8 @@ export function ProjectsPage() {
                                                 {p.workspaces.map((w) => (
                                                     <div key={w.id} className="flex items-baseline gap-1.5" title={w.path}>
                                                         <span className="text-xs text-primary">{kindWord(w.kind)} · {w.node}</span>
-                                                        {w.state && w.state !== "ready" && <span className={`text-[11px] ${w.state === "failed" ? "text-error-primary" : "text-tertiary"}`}>{stateWords[w.state] || w.state}</span>}
-                                                        <span className="truncate font-mono text-[11px] text-quaternary">{w.path}</span>
+                                                        {w.state && w.state !== "ready" && <span className={`u-meta ${w.state === "failed" ? "text-error-primary" : "text-tertiary"}`}>{stateWords[w.state] || w.state}</span>}
+                                                        <span className="truncate font-mono u-meta text-quaternary">{w.path}</span>
                                                     </div>
                                                 ))}
                                             </div>
@@ -120,7 +120,7 @@ function WorkspaceCard({ w, project, onChanged }: { w: Workspace; project: strin
                 <Badge type="pill-color" size="sm" color={w.kind === "canonical" ? "brand" : "gray"}>{kindWord(w.kind)}</Badge>
                 <span className="text-sm font-medium text-primary">{w.node}</span>
                 <Mono className="truncate text-tertiary" >{w.path}</Mono>
-                {w.state === "provisioning" && <span className="flex items-center gap-1 text-[11px] text-tertiary"><Loading01 className="size-3 animate-spin text-fg-brand-primary" />正在克隆</span>}
+                {w.state === "provisioning" && <span className="flex items-center gap-1 u-meta"><Loading01 className="size-3 animate-spin text-fg-brand-primary" />正在克隆</span>}
                 {w.state === "failed" && <Badge type="pill-color" size="sm" color="error">克隆失败</Badge>}
                 {w.busy && <Badge type="pill-color" size="sm" color="warning">有回合在跑</Badge>}
                 {w.kind === "copy" && (
@@ -136,7 +136,7 @@ function WorkspaceCard({ w, project, onChanged }: { w: Workspace; project: strin
             </div>
             {error && <div className="text-xs text-error-primary">{error}</div>}
             {w.state === "failed" && w.error && <CodeBlock code={w.error} label="克隆输出" muted maxHeight={160} />}
-            {w.source && <div className="truncate text-[11px] text-quaternary" title={w.source}>来自 {w.source}</div>}
+            {w.source && <div className="truncate u-meta text-quaternary" title={w.source}>来自 {w.source}</div>}
             {!w.repos ? <div className="text-xs text-quaternary">还没看过这个目录。</div> : missing ? <div className="text-xs text-error-primary">这台机器上没有这个目录。</div> : !w.repos.length ? <div className="text-xs text-quaternary">目录里没有 git 仓库；Agent 仍能在里面干活，只是没有版本记录。</div> : (
                 <ul className="flex flex-col divide-y divide-secondary">
                     {w.repos.map((r) => (
@@ -149,7 +149,7 @@ function WorkspaceCard({ w, project, onChanged }: { w: Workspace; project: strin
                                 {r.agents_md && <Badge type="pill-color" size="sm" color="success">AGENTS.md</Badge>}
                             </div>
                             {r.subject && <div className="truncate text-xs text-secondary" title={r.subject}><Mono className="text-quaternary">{r.head}</Mono> {r.subject}{r.at ? <span className="text-quaternary"> · {when(r.at)}</span> : null}</div>}
-                            {r.remote && <div className="truncate font-mono text-[11px] text-quaternary" title={r.remote}>{r.remote}</div>}
+                            {r.remote && <div className="truncate font-mono u-meta text-quaternary" title={r.remote}>{r.remote}</div>}
                         </li>
                     ))}
                 </ul>
@@ -197,7 +197,7 @@ function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () =
                     <ul className="flex flex-col gap-3">
                         {p.workspaces.map((w) => <WorkspaceCard key={w.id} w={w} project={p.id} onChanged={refresh} />)}
                     </ul>
-                    <p className="mt-2 text-[11px] text-quaternary">主目录只有一个，合并落回那里。副本每台机器至多一个：那台机器上的 Agent 在副本里干活，副本不自动落回主目录，靠 git 与它同步。</p>
+                    <p className="mt-2 u-meta text-quaternary">主目录只有一个，合并落回那里。副本每台机器至多一个：那台机器上的 Agent 在副本里干活，副本不自动落回主目录，靠 git 与它同步。</p>
                 </DrawerSection>
                 <KeyValue dense rows={[
                     { k: "怎么改", v: repoWords[p.repo] || p.repo, hint: "直接改主目录：只有项目主机上的 Agent 能接手，一次只有一个写者。隔离副本：计划可以在别的机器上物化副本，完成后合并回来。" },
