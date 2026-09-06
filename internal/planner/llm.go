@@ -5,10 +5,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/ability"
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -41,8 +41,8 @@ type LLM struct {
 }
 
 const (
-	defaultPlanTimeout  = 3 * time.Minute
-	defaultPlanAttempts = 2
+	DefaultTimeout  = 3 * time.Minute
+	DefaultAttempts = 2
 )
 
 func (l LLM) Name() string { return "llm:" + l.Agent }
@@ -53,11 +53,11 @@ func (l LLM) Plan(ctx context.Context, req Request) (plan.Plan, error) {
 	}
 	timeout := l.Timeout
 	if timeout <= 0 {
-		timeout = defaultPlanTimeout
+		timeout = DefaultTimeout
 	}
 	attempts := l.Attempts
 	if attempts <= 0 {
-		attempts = defaultPlanAttempts
+		attempts = DefaultAttempts
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

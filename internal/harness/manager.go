@@ -267,6 +267,7 @@ var ErrStopUnconfirmed = acphost.ErrStopUnconfirmed
 type Media struct {
 	MIME string
 	Data []byte
+	URI  string // nonempty for an embedded resource; empty for an image
 }
 
 type Runner interface {
@@ -433,7 +434,7 @@ func (s *Session) PromptTurn(
 		if len(item.Data) == 0 {
 			continue
 		}
-		images = append(images, acphost.Image{MIME: item.MIME, Data: item.Data})
+		images = append(images, acphost.Image{MIME: item.MIME, Data: item.Data, URI: item.URI})
 	}
 	return s.host.PromptTurn(ctx, s.id, s.generation, text, images, ask, askUser, s.stamp(progress))
 }

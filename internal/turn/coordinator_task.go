@@ -318,6 +318,17 @@ func parseTaskArgs(rest string) (taskVerb, string, bool) {
 }
 
 func isTaskID(s string) bool {
+	if prefix, tail, ok := strings.Cut(s, "~"); ok {
+		if len(prefix) != 13 || prefix[0] != 'h' {
+			return false
+		}
+		for _, r := range prefix[1:] {
+			if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+				return false
+			}
+		}
+		s = tail
+	}
 	if s == "" {
 		return false
 	}

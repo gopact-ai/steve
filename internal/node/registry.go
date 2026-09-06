@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/ability"
 	"log"
 	"math/rand/v2"
 	"net"
@@ -26,6 +25,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/skills"
 )
@@ -491,6 +491,9 @@ func (r *Registry) configStream(ctx context.Context, name, verb string, set *nod
 	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureConfig) {
 		return nodewire.Settings{}, fmt.Errorf("node %q runs an older steve-node that cannot be configured from here; edit its node.json", name)
 	}
+	if set != nil && !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureConfigRevision) {
+		return nodewire.Settings{}, nodewire.ErrSettingsRevisionUnsupported
+	}
 	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamConfig, Command: verb})
 	if err != nil {
 		return nodewire.Settings{}, fmt.Errorf("node %q: config: %w", name, err)
@@ -506,6 +509,9 @@ func (r *Registry) configStream(ctx context.Context, name, verb string, set *nod
 		return nodewire.Settings{}, fmt.Errorf("node %q: config: %w", name, err)
 	}
 	if reply.Error != "" {
+		if reply.ErrorCode == nodewire.SettingsRevisionConflictCode {
+			return reply.Settings, fmt.Errorf("%w: %s", nodewire.ErrSettingsRevisionConflict, reply.Error)
+		}
 		return reply.Settings, errors.New(reply.Error)
 	}
 	return reply.Settings, nil

@@ -103,6 +103,11 @@ func validateIDs(field string, ids []string) error {
 const DefaultOfflineReminder = 15 * time.Minute
 
 type Gateway struct {
+	HubID string             `json:"hub_id,omitempty"`
+	Peers map[string]HubPeer `json:"peers,omitempty"`
+	// Locale and OwnerID are console-level defaults, independent of an IM.
+	Locale  string `json:"locale,omitempty"`
+	OwnerID string `json:"owner_id,omitempty"`
 	// DefaultChannel fills only a missing channel on an authorized message anchor.
 	DefaultChannel string `json:"default_channel,omitempty"`
 	// NodeBinary is a steve-node executable the hub can hand to a machine
@@ -164,6 +169,12 @@ type Gateway struct {
 	DefaultProject string `json:"default_project,omitempty"`
 }
 
+type HubPeer struct {
+	Name  string `json:"name,omitempty"`
+	URL   string `json:"url"`
+	Token string `json:"token"`
+}
+
 // ReservedHomeProject is the project the gateway declares for its own home
 // directory; a config may not claim the name.
 const ReservedHomeProject = "home"
@@ -204,6 +215,7 @@ type ProjectHome struct {
 }
 
 type Config struct {
+	Policies   Policies             `json:"policies,omitempty"`
 	Agents     map[string]Agent     `json:"agents"`
 	Projects   map[string]Project   `json:"projects,omitempty"`
 	Harnesses  map[string]Harness   `json:"harnesses"`
@@ -466,8 +478,19 @@ func Load(path string) (*Config, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, fmt.Errorf("parse config: expected one JSON object")
 	}
+	cfg.Policies = cfg.Policies.WithDefaults()
+	if err := cfg.Policies.Validate(); err != nil {
+		return nil, err
+	}
+	if cfg.Gateway.Locale != "" && cfg.Gateway.Locale != "zh" && cfg.Gateway.Locale != "en" {
+		return nil, fmt.Errorf("gateway.locale must be zh or en")
+	}
+	cfg.Gateway.OwnerID = strings.TrimSpace(cfg.Gateway.OwnerID)
 	if cfg.Gateway.DefaultChannel == "" {
-		cfg.Gateway.DefaultChannel = "feishu"
+		cfg.Gateway.DefaultChannel = "console"
+		if cfg.Feishu.AppID != "" || cfg.Feishu.AppSecret != "" {
+			cfg.Gateway.DefaultChannel = "feishu"
+		}
 	}
 	cfg.Feishu.applyDefaults()
 	cfg.Feishu.OwnerOpenID = strings.TrimSpace(cfg.Feishu.OwnerOpenID)

@@ -183,6 +183,13 @@ func (s *Supervisor) OpenRuns(ctx context.Context) ([]RunRecord, error) {
 		if err := json.Unmarshal(op.Data, &rec); err != nil {
 			return out, err
 		}
+		if s.deps.Artifacts != nil {
+			if _, _, err := s.deps.Artifacts.Project(ctx, rec.ProjectID); errors.Is(err, project.ErrNotOwner) {
+				continue
+			} else if err != nil {
+				return out, err
+			}
+		}
 		rec.Phase = op.State
 		out = append(out, rec)
 	}

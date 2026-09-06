@@ -7,6 +7,8 @@ package console
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,8 +18,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -61,9 +65,10 @@ type Titler interface {
 // transcript is the durable shape: every conversation's lines, and what
 // is known about each beyond them.
 type transcript struct {
-	Replies   map[string][]consoleapi.Reply `json:"replies"`
-	Meta      map[string]Meta               `json:"meta,omitempty"`
-	Exchanges map[string][]*queuedExchange  `json:"exchanges,omitempty"`
+	Replies   map[string][]consoleapi.Reply         `json:"replies"`
+	Meta      map[string]Meta                       `json:"meta,omitempty"`
+	Exchanges map[string][]*queuedExchange          `json:"exchanges,omitempty"`
+	Questions map[string]consoleapi.PendingQuestion `json:"questions,omitempty"`
 }
 
 // Events is the conversation's view of the shared change stream. The console
@@ -96,11 +101,20 @@ type Service struct {
 	// doc keeps the transcript across restarts. A console whose history
 	// vanishes with the process would make every restart look like the
 	// owner had never said anything.
-	doc ledger.Doc
+	doc                ledger.Doc
+	questions          map[string]consoleapi.PendingQuestion
+	questionWaiters    map[string]chan struct{}
+	questionTimeout    time.Duration
+	defaultLocale      string
+	closing            bool
+	workers            sync.WaitGroup
+	drained            chan struct{}
+	materials          MaterialResolver
+	authorizeMaterials func(context.Context, string, string, string) error
 }
 
 func New(handler Handler, owner string, model Events) *Service {
-	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}}
+	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute}
 }
 
 // SetTitler gives the service a way to name conversations. Without one,
@@ -227,6 +241,13 @@ func (s *Service) Persist(doc ledger.Doc) error {
 		for conversation, m := range saved.Meta {
 			s.meta[conversation] = m
 		}
+		for id, question := range saved.Questions {
+			if question.State == "pending" {
+				question.State = "interrupted"
+				question.UpdatedAt = time.Now().UTC()
+			}
+			s.questions[id] = question
+		}
 	}
 	s.doc = doc
 	return s.restoreQueueLocked()
@@ -239,7 +260,7 @@ func (s *Service) save() error {
 	if s.doc == nil {
 		return nil
 	}
-	raw, err := json.Marshal(transcript{Replies: s.replies, Meta: s.meta, Exchanges: s.exchanges})
+	raw, err := json.Marshal(transcript{Replies: s.replies, Meta: s.meta, Exchanges: s.exchanges, Questions: s.questions})
 	if err == nil {
 		err = s.doc.Save(raw)
 	}
@@ -534,6 +555,10 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		requester = exchange.Requester
 	}
 	conversation, input := exchange.Conversation, exchange.Input
+	mediaText, media, err := s.executionMaterials(ctx, exchange, requester)
+	if err != nil {
+		return consoleapi.Reply{}, err
+	}
 	block, err := s.quoteBlock(ctx, conversation, exchange.Quotes)
 	if err != nil {
 		return consoleapi.Reply{Text: err.Error(), Error: err.Error()}, err
@@ -542,6 +567,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 	if exchange.Prompt != "" {
 		text = exchange.Prompt
 	}
+	block += mediaText
 	prompt := block + text
 	address, parsed := s.parseInput(text)
 	if parsed.Control() {
@@ -571,15 +597,30 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		s.anchor(conversation, ChatID, AnchorMark+exchange.ID)
 	}
 	stop := s.follow(ctx, conversation, work)
+	var identityMu sync.Mutex
+	identity := consoleapi.PendingQuestion{Conversation: conversation, ExchangeID: exchange.ID, Project: exchange.ExpectedProject, Locale: exchange.Locale}
+	questionBase := func() consoleapi.PendingQuestion { identityMu.Lock(); defer identityMu.Unlock(); return identity }
 	result, err := s.handler.Handle(ctx, turn.Request{
 		Channel:        "console",
 		ConversationID: conversation, ChatID: ChatID, MessageID: AnchorMark + exchange.ID, Input: prompt, Queue: !isInterrupt(input),
 		SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true,
 		Origin: exchange.Origin, ExpectedProject: exchange.ExpectedProject,
+		Locale: exchange.Locale, Images: media,
+		OnTurnReady: func(taskID, attemptID string) {
+			identityMu.Lock()
+			identity.TaskID, identity.AttemptID = taskID, attemptID
+			identityMu.Unlock()
+		},
+		OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
+			return s.askPermission(ctx, questionBase(), ask)
+		},
+		OnAskUser: func(ctx context.Context, q view.Question) (view.Answer, error) {
+			return s.askUser(ctx, questionBase(), q)
+		},
 		OnProgress: s.progress(conversation, exchange.ID, work),
 	})
 	stop()
-	reply = consoleapi.Reply{At: time.Now().UTC(), Conversation: conversation, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary()}
+	reply = consoleapi.Reply{At: time.Now().UTC(), Conversation: conversation, ProjectID: exchange.ExpectedProject, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary(), Refs: exchange.Refs, Materials: exchange.Materials}
 	if result.Attempt != "" && s.inspector != nil {
 		if changes, cerr := s.inspector.Changes(ctx, result.Attempt); cerr != nil {
 			log.Printf("console: changes of attempt %s: %v", result.Attempt, cerr)
@@ -777,7 +818,13 @@ func (s *Service) Replies(conversation string) []consoleapi.Reply {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]consoleapi.Reply{}, s.replies[conversation]...)
+	out := append([]consoleapi.Reply{}, s.replies[conversation]...)
+	for i := range out {
+		out[i].Revision = replyRevision(out[i])
+		out[i].Refs = copyRefs(out[i].Refs)
+		out[i].Materials = copyMaterials(out[i].Materials)
+	}
+	return out
 }
 
 // Notice takes a task notice whose anchor is the console — a resumed
@@ -787,7 +834,11 @@ func (s *Service) Notice(n turn.TaskNotice) {
 	if IsConsole(n.Conversation) {
 		conversation = n.Conversation
 	}
-	s.record(consoleapi.Reply{At: time.Now().UTC(), Conversation: conversation, Title: "task #" + n.TaskID, Text: n.Text, Kind: "notice"})
+	exchangeID := ""
+	if strings.HasPrefix(n.MessageID, AnchorMark) {
+		exchangeID = strings.TrimPrefix(n.MessageID, AnchorMark)
+	}
+	s.record(consoleapi.Reply{At: time.Now().UTC(), Conversation: conversation, ExchangeID: exchangeID, Title: "task #" + n.TaskID, Text: n.Text, Kind: "notice"})
 }
 
 // newReplyID names a line: time-ordered, unique enough for a transcript.
@@ -809,15 +860,30 @@ func (s *Service) record(r consoleapi.Reply) consoleapi.Reply {
 // recordLocked appends without saving so an exchange transition and its
 // line can be committed in the same document replace.
 func (s *Service) recordLocked(r consoleapi.Reply) consoleapi.Reply {
+	if r.ProjectID == "" && r.ExchangeID != "" {
+		for _, e := range s.exchanges[r.Conversation] {
+			if e.ID == r.ExchangeID {
+				r.ProjectID = e.ExpectedProject
+				break
+			}
+		}
+	}
 	if r.ID == "" {
 		r.ID = newReplyID()
 	}
+	r.Revision = replyRevision(r)
 	list := append(s.replies[r.Conversation], r)
 	if len(list) > keep {
 		list = list[len(list)-keep:]
 	}
 	s.replies[r.Conversation] = list
 	return r
+}
+
+func replyRevision(r consoleapi.Reply) string {
+	raw, _ := json.Marshal(struct{ Text, Format, Project string }{r.Text, r.Format, r.ProjectID})
+	digest := sha256.Sum256(raw)
+	return hex.EncodeToString(digest[:])
 }
 
 func (s *Service) publishReply(r consoleapi.Reply) {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact"
+	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -607,6 +608,8 @@ type Reply struct {
 	ExchangeID   string    `json:"exchange_id,omitempty"`
 	At           time.Time `json:"at"`
 	Conversation string    `json:"conversation"`
+	ProjectID    string    `json:"project_id,omitempty"`
+	Revision     string    `json:"revision,omitempty"`
 	Input        string    `json:"input,omitempty"`
 	Title        string    `json:"title,omitempty"`
 	Text         string    `json:"text"`
@@ -618,7 +621,9 @@ type Reply struct {
 	Process  *Process  `json:"process,omitempty"`
 	Injected *Injected `json:"injected,omitempty"`
 	// Changes is what the turn changed, when an attempt captured it.
-	Changes *ChangeSummary `json:"changes,omitempty"`
+	Changes   *ChangeSummary    `json:"changes,omitempty"`
+	Refs      []material.Ref    `json:"refs,omitempty"`
+	Materials []material.Frozen `json:"materials,omitempty"`
 }
 
 // Injected is what a turn gave the agent, as the console keeps it.
@@ -654,12 +659,15 @@ type Exchange struct {
 	ExpectedProject string `json:"expected_project,omitempty"`
 	// Key is the durable submission identity within this conversation.
 	// Client command IDs and platform deliveries have separate namespaces.
-	Key        string     `json:"key,omitempty"`
-	Quotes     []QuoteRef `json:"quotes,omitempty"`
-	State      string     `json:"state"` // queued | running | done | failed | cancelled
-	EnqueuedAt time.Time  `json:"enqueued_at"`
-	StartedAt  time.Time  `json:"started_at,omitzero"`
-	ReplyID    string     `json:"reply_id,omitempty"`
+	Key        string            `json:"key,omitempty"`
+	Quotes     []QuoteRef        `json:"quotes,omitempty"`
+	Refs       []material.Ref    `json:"refs,omitempty"`
+	Materials  []material.Frozen `json:"materials,omitempty"`
+	Locale     string            `json:"locale,omitempty"`
+	State      string            `json:"state"` // queued | running | done | failed | cancelled
+	EnqueuedAt time.Time         `json:"enqueued_at"`
+	StartedAt  time.Time         `json:"started_at,omitzero"`
+	ReplyID    string            `json:"reply_id,omitempty"`
 }
 
 var (

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/view"
@@ -59,8 +60,20 @@ func (ch *clientHandler) CreateElicitation(ctx context.Context, req *acp.CreateE
 		resp := acp.DeclineCreateElicitationResponse()
 		return &resp, nil
 	}
+	if isMCPToolApproval(req) {
+		question.Kind = "permission"
+	}
+	question.SessionID, question.Generation = string(req.SessionID), ch.generation
 	answer, err := ask(ctx, question)
 	if err != nil || !answer.Chosen() {
+		if err == nil && answer.Decision == "decline" {
+			resp := acp.DeclineCreateElicitationResponse()
+			return &resp, nil
+		}
+		resp := acp.CancelCreateElicitationResponse()
+		return &resp, nil
+	}
+	if !slices.ContainsFunc(question.Choices, func(choice view.Choice) bool { return choice.Value == answer.Value }) {
 		resp := acp.CancelCreateElicitationResponse()
 		return &resp, nil
 	}
@@ -144,6 +157,13 @@ func persistChoice(req *acp.CreateElicitationRequest) (acp.ElicitationContentVal
 // elicitQuestion reduces a requested schema to the one choice Steve can ask,
 // returning the property key the answer must come back under.
 func elicitQuestion(req *acp.CreateElicitationRequest) (string, view.Question, error) {
+	if req.RequestedSchema.Required != nil {
+		for _, name := range *req.RequestedSchema.Required {
+			if _, ok := req.RequestedSchema.Properties[name]; !ok {
+				return "", view.Question{}, errUnsupportedForm
+			}
+		}
+	}
 	var key string
 	var chosen acp.ElicitationPropertySchema
 	for name, property := range req.RequestedSchema.Properties {
@@ -151,7 +171,7 @@ func elicitQuestion(req *acp.CreateElicitationRequest) (string, view.Question, e
 		if len(choices) == 0 {
 			// A free-text companion field is optional by construction, so
 			// ignoring it still leaves a form we can answer honestly.
-			if isOptionalText(property) {
+			if isOptionalText(property) && (req.RequestedSchema.Required == nil || !slices.Contains(*req.RequestedSchema.Required, name)) {
 				continue
 			}
 			return "", view.Question{}, errUnsupportedForm
@@ -170,6 +190,7 @@ func elicitQuestion(req *acp.CreateElicitationRequest) (string, view.Question, e
 		title = *chosen.Title
 	}
 	return key, view.Question{
+		Kind: "question", Required: req.RequestedSchema.Required != nil && slices.Contains(*req.RequestedSchema.Required, key),
 		Message: req.Message,
 		Title:   title,
 		Choices: propertyChoices(chosen),

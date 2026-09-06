@@ -16,6 +16,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/view"
@@ -40,11 +41,14 @@ type ServerConfig struct {
 
 // Server exposes the snapshot, the change stream and the dashboard.
 type Server struct {
-	console  consoleapi.Console
-	admin    consoleapi.Admin
-	model    Model
-	token    string
-	listener net.Listener
+	settings     consoleapi.SettingsService
+	console      consoleapi.Console
+	admin        consoleapi.Admin
+	model        Model
+	token        string
+	listener     net.Listener
+	httpServer   *http.Server
+	stopRequests context.CancelFunc
 }
 
 // NewServer binds immediately so the caller knows the URL before serving.
@@ -60,18 +64,27 @@ func NewServer(model Model, cfg ServerConfig) (*Server, error) {
 	if err != nil {
 		return nil, fmt.Errorf("listen on %s: %w", addr, err)
 	}
-	return &Server{model: model, token: cfg.Token, listener: listener}, nil
+	requestContext, stopRequests := context.WithCancel(context.Background())
+	server := &http.Server{ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return requestContext }}
+	return &Server{model: model, token: cfg.Token, listener: listener, httpServer: server, stopRequests: stopRequests}, nil
 }
 
 func (s *Server) URL() string { return "http://" + s.listener.Addr().String() }
 
 func (s *Server) Serve() error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /console/settings", s.guard(s.consoleSettings))
+	mux.HandleFunc("PUT /console/settings", s.guard(s.consoleSettings))
+	mux.HandleFunc("PATCH /console/settings", s.guard(s.consoleSettings))
 	mux.HandleFunc("GET /state", s.guard(s.state))
 	mux.HandleFunc("GET /events", s.guard(s.events))
 	mux.HandleFunc("POST /console/send", s.guard(s.consoleSend))
 	mux.HandleFunc("POST /console/queue", s.guard(s.consoleEnqueue))
 	mux.HandleFunc("GET /console/queue", s.guard(s.consoleQueue))
+	mux.HandleFunc("GET /console/questions", s.guard(s.consoleQuestions))
+	mux.HandleFunc("GET /console/versions", s.guard(s.consoleVersions))
+	mux.HandleFunc("POST /console/questions/{id}/answer", s.guard(s.consoleAnswer))
+	s.materialRoutes(mux)
 	mux.HandleFunc("DELETE /console/queue/{id}", s.guard(s.consoleDeleteQueued))
 	mux.HandleFunc("PATCH /console/queue/{id}", s.guard(s.consoleEditQueued))
 	mux.HandleFunc("POST /console/queue/{id}/steer", s.guard(s.consoleSteer))
@@ -129,14 +142,49 @@ func (s *Server) Serve() error {
 	// with; it is served open. Everything that carries data stays guarded.
 	mux.HandleFunc("GET /assets/", s.page)
 	mux.HandleFunc("GET /", s.guard(s.page))
-	server := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	server := s.httpServer
+	server.Handler = mux
 	if err := server.Serve(s.listener); err != nil && err != http.ErrServerClosed {
 		return err
 	}
 	return nil
 }
 
-func (s *Server) Close() error { return s.listener.Close() }
+func (s *Server) Close() error {
+	if s.stopRequests != nil {
+		s.stopRequests()
+	}
+	var err error
+	if s.httpServer != nil {
+		err = s.httpServer.Close()
+	}
+	if s.listener != nil {
+		closed := s.listener.Close()
+		if closed != nil && !errors.Is(closed, net.ErrClosed) {
+			err = errors.Join(err, closed)
+		}
+	}
+	return err
+}
+
+// Shutdown cancels streaming request contexts, closes admission, and waits for
+// HTTP handlers. Accepted console work has a separate Service.Shutdown barrier.
+func (s *Server) Shutdown(ctx context.Context) error {
+	if s.stopRequests != nil {
+		s.stopRequests()
+	}
+	if s.httpServer == nil {
+		return s.Close()
+	}
+	err := s.httpServer.Shutdown(ctx)
+	if s.listener != nil {
+		closed := s.listener.Close()
+		if closed != nil && !errors.Is(closed, net.ErrClosed) {
+			err = errors.Join(err, closed)
+		}
+	}
+	return err
+}
 
 // guard checks the token when one is configured. Loopback-only deployments
 // leave it empty and rely on the bind address, which is the same posture the
@@ -147,7 +195,7 @@ func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
-		next(w, r)
+		next(w, r.WithContext(i18n.WithLocale(r.Context(), i18n.LocaleFromHeader(r.Header.Get("Accept-Language")))))
 	}
 }
 
@@ -861,6 +909,10 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 		out, err = s.admin.NodeSettings(r.Context(), name)
 	}
 	if err != nil {
+		if errors.Is(err, nodewire.ErrSettingsRevisionConflict) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
@@ -920,17 +972,12 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "the console is not enabled on this gateway", http.StatusNotImplemented)
 		return
 	}
-	var req struct {
-		Conversation string                `json:"conversation"`
-		Input        string                `json:"input"`
-		CommandID    string                `json:"command_id"`
-		Quotes       []consoleapi.QuoteRef `json:"quotes,omitempty"`
-	}
+	var req consoleapi.Submission
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if strings.TrimSpace(req.Input) == "" {
+	if strings.TrimSpace(req.Input) == "" && len(req.Refs) == 0 {
 		http.Error(w, "input is required", http.StatusBadRequest)
 		return
 	}
@@ -939,7 +986,12 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 	}
 	var reply consoleapi.Reply
 	var err error
-	if len(req.Quotes) > 0 {
+	if extended, ok := s.console.(consoleapi.Submissions); ok {
+		reply, err = extended.SendSubmission(r.Context(), req)
+	} else if len(req.Refs) > 0 {
+		http.Error(w, "material submission is not supported", http.StatusNotImplemented)
+		return
+	} else if len(req.Quotes) > 0 {
 		reply, err = s.console.SendCommandWith(r.Context(), req.Conversation, req.Input, req.CommandID, req.Quotes)
 	} else {
 		reply, err = s.console.SendCommand(r.Context(), req.Conversation, req.Input, req.CommandID)
@@ -948,6 +1000,11 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 	if errors.Is(err, consoleapi.ErrCommandConflict) {
 		w.WriteHeader(http.StatusConflict)
 		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+		return
+	}
+	if errors.Is(err, consoleapi.ErrConsoleClosing) {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
 		return
 	}
 	if err != nil {
@@ -1011,11 +1068,17 @@ func (s *Server) consoleSuggest(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"suggestions": items})
 }
 
-func (s *Server) consoleVerbs(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) consoleVerbs(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	verbs := []consoleapi.Verb{}
 	if s.console != nil {
-		verbs = append(verbs, s.console.Verbs()...)
+		if localized, ok := s.console.(interface {
+			VerbsFor(context.Context) []consoleapi.Verb
+		}); ok {
+			verbs = append(verbs, localized.VerbsFor(r.Context())...)
+		} else {
+			verbs = append(verbs, s.console.Verbs()...)
+		}
 	}
 	_ = json.NewEncoder(w).Encode(map[string]any{"verbs": verbs})
 }

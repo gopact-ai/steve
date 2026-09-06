@@ -67,7 +67,7 @@ func (s MessageSender) Send(ctx context.Context, address channel.Address, messag
 	before := c.replies[address.Conversation]
 	r := consoleapi.Reply{ID: newReplyID(), ExchangeID: exchangeID, At: time.Now().UTC(), Conversation: address.Conversation,
 		Text: message.Content, Format: message.Format, Title: message.Attribution, Kind: "milestone"}
-	c.recordLocked(r)
+	r = c.recordLocked(r)
 	if err := c.save(); err != nil {
 		c.replies[address.Conversation] = before
 		return "", err
@@ -93,6 +93,7 @@ func (s MessageSender) Update(ctx context.Context, address channel.Address, mess
 		}
 		updated := r
 		updated.Text, updated.Format, updated.Title = message.Content, message.Format, message.Attribution
+		updated.Revision = replyRevision(updated)
 		c.replies[address.Conversation][i] = updated
 		if err := c.save(); err != nil {
 			c.replies[address.Conversation][i] = r

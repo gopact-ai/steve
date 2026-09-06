@@ -50,7 +50,7 @@ func NewAgentRunner(sessions Sessions, caps Capabilities, r *roster.Roster) *Age
 	return &AgentRunner{sessions: sessions, caps: caps, roster: r}
 }
 
-const defaultStepTimeout = 15 * time.Minute
+const DefaultStepTimeout = 15 * time.Minute
 
 func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan.StepResult, runErr error) {
 	candidate, ok := a.find(ctx, req.Agent)
@@ -71,7 +71,7 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 
 	timeout := a.Timeout
 	if timeout <= 0 {
-		timeout = defaultStepTimeout
+		timeout = DefaultStepTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

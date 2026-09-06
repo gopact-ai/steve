@@ -24,6 +24,7 @@ import (
 type Image struct {
 	MIME string
 	Data []byte
+	URI  string
 }
 
 var ErrResumeUnsupported = errors.New("agent does not support session resume")
@@ -155,6 +156,7 @@ type collector struct {
 	ask          permission.AskFunc
 	askUser      AskUserFunc
 	ctx          context.Context
+	cancelAsk    context.CancelFunc
 }
 
 // maxCollectBytes caps the aggregated assistant text so a runaway agent
@@ -574,6 +576,7 @@ func (ch *clientHandler) RequestPermission(ctx context.Context, req *acp.Request
 
 	if broker.NeedsAsk(kind) && ask != nil {
 		outcome, err := ask(ctx, permission.Ask{
+			SessionID: string(req.SessionID), Generation: ch.generation, ToolCallID: string(req.ToolCall.ToolCallID),
 			ToolName: title,
 			Kind:     kind,
 			Reason:   permissionReason(req.ToolCall),
@@ -840,18 +843,30 @@ func (h *Host) PromptTurn(
 	}
 	caller := h.caller
 	caps := h.capabilities
+	for _, media := range images {
+		if len(media.Data) == 0 {
+			continue
+		}
+		if caps == nil || caps.PromptCapabilities == nil || (media.URI == "" && !caps.PromptCapabilities.Image) || (media.URI != "" && !caps.PromptCapabilities.EmbeddedContext) {
+			h.mu.Unlock()
+			return "", nil, fmt.Errorf("agent does not support the attached media type %s", media.MIME)
+		}
+	}
+	askCtx, cancelAsk := context.WithCancel(ctx)
 	col := &collector{
 		progress:   progress,
 		settings:   h.sessionSettings(sid),
 		generation: generation,
 		ask:        ask,
 		askUser:    askUser,
-		ctx:        ctx,
+		ctx:        askCtx,
+		cancelAsk:  cancelAsk,
 	}
 	h.collectors[sid] = col
 	h.active[sid] = generation
 	h.mu.Unlock()
 	defer func() {
+		cancelAsk()
 		h.mu.Lock()
 		if h.collectors[sid] == col {
 			delete(h.collectors, sid)
@@ -932,6 +947,9 @@ func (h *Host) PromptTurn(
 func (h *Host) Cancel(ctx context.Context, sid acp.SessionID, generation uint64) error {
 	h.mu.Lock()
 	caller, alive := h.caller, h.alive && h.generation == generation
+	if col := h.collectors[sid]; alive && col != nil && col.generation == generation && col.cancelAsk != nil {
+		col.cancelAsk()
+	}
 	h.mu.Unlock()
 	if !alive || caller == nil {
 		return nil
@@ -1000,10 +1018,6 @@ func promptBlocks(text string, images []Image, caps *acp.AgentCapabilities) []ac
 	if len(images) == 0 {
 		return blocks
 	}
-	if caps == nil || caps.PromptCapabilities == nil || !caps.PromptCapabilities.Image {
-		blocks[0] = acp.TextContentBlock(text + "\n\n[steve: images omitted; agent has no image prompt capability]")
-		return blocks
-	}
 	for _, img := range images {
 		if len(img.Data) == 0 {
 			continue
@@ -1011,6 +1025,18 @@ func promptBlocks(text string, images []Image, caps *acp.AgentCapabilities) []ac
 		mime := img.MIME
 		if mime == "" {
 			mime = "image/png"
+		}
+		if img.URI != "" {
+			if caps != nil && caps.PromptCapabilities != nil && caps.PromptCapabilities.EmbeddedContext {
+				resource := acp.BlobEmbeddedResourceContents(base64.StdEncoding.EncodeToString(img.Data), img.URI)
+				resource.MIMEType = &mime
+				blocks = append(blocks, acp.ResourceContentBlock(resource))
+			}
+			continue
+		}
+		if caps == nil || caps.PromptCapabilities == nil || !caps.PromptCapabilities.Image {
+			blocks[0] = acp.TextContentBlock(text + "\n\n[steve: images omitted; agent has no image prompt capability]")
+			continue
 		}
 		blocks = append(blocks, acp.ImageContentBlock(base64.StdEncoding.EncodeToString(img.Data), mime))
 	}

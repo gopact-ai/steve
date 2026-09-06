@@ -1,8 +1,9 @@
 package turn
 
 import (
-	"github.com/gopact-ai/steve/internal/agent"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/agent"
 )
 
 func TestCoordinatorClassifiesEverySupportedAgentSelector(t *testing.T) {
@@ -10,7 +11,7 @@ func TestCoordinatorClassifiesEverySupportedAgentSelector(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	c := &Coordinator{catalog: catalog}
+	c := &Coordinator{coordinatorState: &coordinatorState{catalog: catalog}}
 	for _, input := range []string{"@codex/cancel", "@codex!/cancel", "@my helper /tasks pause 12", "/use codex/cancel"} {
 		address, parsed := c.ParseInput(input)
 		if address != "@worker" || !(parsed.Control() || parsed.Interrupt) {

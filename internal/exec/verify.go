@@ -4,13 +4,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
 )
 
@@ -37,12 +37,12 @@ func NewVerifiers(commands Commands, executor AgentVerifier) *Verifiers {
 	return &Verifiers{commands: commands, executor: executor}
 }
 
-const defaultVerifyTimeout = 10 * time.Minute
+const DefaultVerifyTimeout = 10 * time.Minute
 
 func (v *Verifiers) Verify(ctx context.Context, req StepRequest, check plan.Verify, result plan.StepResult) error {
 	timeout := v.Timeout
 	if timeout <= 0 {
-		timeout = defaultVerifyTimeout
+		timeout = DefaultVerifyTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()

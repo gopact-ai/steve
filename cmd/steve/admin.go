@@ -12,7 +12,10 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/console"
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -29,6 +32,11 @@ import (
 // them so a restart keeps them. A new machine gets a token of its own
 // and one command to run.
 type fleetAdmin struct {
+	releases      consoleapi.ReleaseProvider
+	owner         string
+	materialLevel project.Level
+	materials     *material.Store
+	console       *console.Service
 	lifetime      context.Context
 	mu            sync.Mutex
 	cfg           *config.Config

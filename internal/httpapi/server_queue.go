@@ -22,6 +22,8 @@ func queueResponse(w http.ResponseWriter, value any, err error) {
 	if err != nil {
 		status := http.StatusBadRequest
 		switch {
+		case errors.Is(err, consoleapi.ErrConsoleClosing):
+			status = http.StatusServiceUnavailable
 		case errors.Is(err, consoleapi.ErrExchangeNotFound):
 			status = http.StatusNotFound
 		case errors.Is(err, consoleapi.ErrExchangeNotQueued), errors.Is(err, consoleapi.ErrCommandConflict):
@@ -38,24 +40,28 @@ func (s *Server) consoleEnqueue(w http.ResponseWriter, r *http.Request) {
 	if !s.queueEnabled(w) {
 		return
 	}
-	var req struct {
-		Conversation string                `json:"conversation"`
-		Input        string                `json:"input"`
-		CommandID    string                `json:"command_id"`
-		Quotes       []consoleapi.QuoteRef `json:"quotes,omitempty"`
-	}
+	var req consoleapi.Submission
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		queueResponse(w, nil, err)
 		return
 	}
-	if strings.TrimSpace(req.Input) == "" {
+	if strings.TrimSpace(req.Input) == "" && len(req.Refs) == 0 {
 		queueResponse(w, nil, errors.New("input is required"))
 		return
 	}
 	if req.Conversation == "" {
 		req.Conversation = "console:main"
 	}
-	exchange, err := s.console.EnqueueCommand(r.Context(), req.Conversation, req.Input, req.CommandID, req.Quotes)
+	var exchange consoleapi.Exchange
+	var err error
+	if extended, ok := s.console.(consoleapi.Submissions); ok {
+		exchange, err = extended.Submit(r.Context(), req)
+	} else if len(req.Refs) > 0 {
+		http.Error(w, "material submission is not supported", http.StatusNotImplemented)
+		return
+	} else {
+		exchange, err = s.console.EnqueueCommand(r.Context(), req.Conversation, req.Input, req.CommandID, req.Quotes)
+	}
 	queueResponse(w, exchange, err)
 }
 
@@ -74,7 +80,12 @@ func (s *Server) consoleQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	// Clients must confirm support before submitting or retrying a command ID;
 	// older hubs accepted the field but did not preserve its identity.
-	queueResponse(w, map[string]any{"queue": list, "submission_keys": true}, nil)
+	response := map[string]any{"queue": list, "submission_keys": true}
+	if capabilities, ok := s.console.(interface{ SubmissionCapabilities() (bool, bool) }); ok {
+		materialRefs, interactiveRequests := capabilities.SubmissionCapabilities()
+		response["material_refs"], response["interactive_requests"] = materialRefs, interactiveRequests
+	}
+	queueResponse(w, response, nil)
 }
 
 func (s *Server) consoleDeleteQueued(w http.ResponseWriter, r *http.Request) {

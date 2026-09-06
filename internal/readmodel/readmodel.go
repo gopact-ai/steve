@@ -418,6 +418,9 @@ type PlanSource interface {
 
 // Model serves snapshots and a change stream.
 type Model struct {
+	interactions interface {
+		Questions(string) []consoleapi.PendingQuestion
+	}
 	src Sources
 
 	mu   sync.Mutex
@@ -529,25 +532,37 @@ func (t Tokens) add(o Tokens) Tokens {
 // every closed attempt on record. Tokens and wall time only —
 // money needs a price table this system does not have.
 type Usage struct {
-	ByDay    []UsageRow             `json:"by_day"`
-	ByAgent  []UsageRow             `json:"by_agent"`
-	ByModel  []UsageRow             `json:"by_model"`
-	Total    UsageRow               `json:"total"`
-	Timezone string                 `json:"timezone"`
-	Periods  map[string]UsagePeriod `json:"periods"`
+	ByDay      []UsageRow             `json:"by_day"`
+	ByAgent    []UsageRow             `json:"by_agent"`
+	ByModel    []UsageRow             `json:"by_model"`
+	Total      UsageRow               `json:"total"`
+	Timezone   string                 `json:"timezone"`
+	Periods    map[string]UsagePeriod `json:"periods"`
+	ByHarness  []UsageRow             `json:"by_harness"`
+	ByTrigger  []UsageRow             `json:"by_trigger"`
+	ByProject  []UsageRow             `json:"by_project"`
+	Tasks      TaskDurationStats      `json:"tasks"`
+	ByTask     []TaskUsageRow         `json:"by_task"`
+	Throughput Throughput             `json:"throughput"`
 }
 
 // UsagePeriod counts attempts by their start time in the hub's calendar.
 // To is the snapshot time; the last bucket can be incomplete. Series keys
 // are RFC3339 bucket starts with their local UTC offset, including during DST.
 type UsagePeriod struct {
-	From     time.Time  `json:"from"`
-	To       time.Time  `json:"to"`
-	Interval string     `json:"interval"`
-	Series   []UsageRow `json:"series"`
-	ByAgent  []UsageRow `json:"by_agent"`
-	ByModel  []UsageRow `json:"by_model"`
-	Total    UsageRow   `json:"total"`
+	From       time.Time         `json:"from"`
+	To         time.Time         `json:"to"`
+	Interval   string            `json:"interval"`
+	Series     []UsageRow        `json:"series"`
+	ByAgent    []UsageRow        `json:"by_agent"`
+	ByModel    []UsageRow        `json:"by_model"`
+	Total      UsageRow          `json:"total"`
+	ByHarness  []UsageRow        `json:"by_harness"`
+	ByTrigger  []UsageRow        `json:"by_trigger"`
+	ByProject  []UsageRow        `json:"by_project"`
+	Tasks      TaskDurationStats `json:"tasks"`
+	ByTask     []TaskUsageRow    `json:"by_task"`
+	Throughput Throughput        `json:"throughput"`
 }
 
 type UsageRow struct {
@@ -556,7 +571,44 @@ type UsageRow struct {
 	Seconds  int64  `json:"seconds"`
 	Attempts int    `json:"attempts"`
 	// Unreported counts attempts whose harness said nothing about tokens.
-	Unreported int `json:"unreported,omitempty"`
+	Unreported int                `json:"unreported,omitempty"`
+	Tasks      *TaskDurationStats `json:"tasks,omitempty"`
+	TPM        float64            `json:"tpm,omitempty"`
+}
+
+// TaskDurationStats measures root task trees using the union of observed
+// closed-execution intervals. Different root tasks remain separate samples.
+type TaskDurationStats struct {
+	Count          int     `json:"count"`
+	Measured       int     `json:"measured"`
+	MinSeconds     float64 `json:"min_seconds"`
+	MaxSeconds     float64 `json:"max_seconds"`
+	AverageSeconds float64 `json:"average_seconds"`
+	TotalSeconds   float64 `json:"total_seconds"`
+}
+
+type TaskUsageRow struct {
+	UsageRow
+	TaskID         string  `json:"task_id"`
+	Title          string  `json:"title"`
+	Trigger        string  `json:"trigger"`
+	Project        string  `json:"project"`
+	Agent          string  `json:"agent"`
+	Harness        string  `json:"harness"`
+	Model          string  `json:"model"`
+	ElapsedSeconds float64 `json:"elapsed_seconds"`
+}
+
+// Throughput uniformly allocates reported input/output over closed execution
+// intervals. It estimates workload throughput, never token generation speed.
+type Throughput struct {
+	WindowTPM        float64 `json:"window_tpm"`
+	ActiveTPM        float64 `json:"active_tpm"`
+	PeakTPM          float64 `json:"peak_tpm"`
+	Estimated        bool    `json:"estimated"`
+	MeasuredTokens   float64 `json:"measured_tokens"`
+	UnmeasuredTokens float64 `json:"unmeasured_tokens"`
+	ActiveSeconds    float64 `json:"active_seconds"`
 }
 
 // HumanRequest is one thing only a person can settle, projected from the
@@ -564,18 +616,19 @@ type UsageRow struct {
 // outcome. The operation stays the authority; this is how the inbox
 // shows it, with the choices that are actually available.
 type HumanRequest struct {
-	AttemptID  string    `json:"attempt_id,omitempty"`
-	Node       string    `json:"node,omitempty"`
-	Workspace  string    `json:"workspace,omitempty"`
-	ID         string    `json:"id"`
-	Type       string    `json:"type"`
-	Source     string    `json:"source"`
-	ProjectID  string    `json:"project_id,omitempty"`
-	TaskID     string    `json:"task_id,omitempty"`
-	Summary    string    `json:"summary"`
-	Choices    []Choice  `json:"choices"`
-	CreatedAt  time.Time `json:"created_at"`
-	Resolvable bool      `json:"resolvable"`
+	Conversation string    `json:"conversation,omitempty"`
+	AttemptID    string    `json:"attempt_id,omitempty"`
+	Node         string    `json:"node,omitempty"`
+	Workspace    string    `json:"workspace,omitempty"`
+	ID           string    `json:"id"`
+	Type         string    `json:"type"`
+	Source       string    `json:"source"`
+	ProjectID    string    `json:"project_id,omitempty"`
+	TaskID       string    `json:"task_id,omitempty"`
+	Summary      string    `json:"summary"`
+	Choices      []Choice  `json:"choices"`
+	CreatedAt    time.Time `json:"created_at"`
+	Resolvable   bool      `json:"resolvable"`
 }
 
 // Choice is one answer to a request, as the command that gives it.

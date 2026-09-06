@@ -37,7 +37,7 @@ func (r *Repo) Tree(ctx context.Context, commit, dir string) ([]Entry, bool, err
 	if dir != "" {
 		spec = commit + ":" + dir
 	}
-	ctx, cancel := context.WithTimeout(ctx, diffTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.Review.defaults().Timeout)
 	defer cancel()
 	out, err := r.git(ctx, nil, "ls-tree", "-z", "-l", spec)
 	if err != nil {
@@ -55,7 +55,7 @@ func (r *Repo) Tree(ctx context.Context, commit, dir string) ([]Entry, bool, err
 		if len(fields) < 4 {
 			continue
 		}
-		if len(entries) >= MaxEntries {
+		if len(entries) >= r.Review.defaults().MaxEntries {
 			truncated = true
 			break
 		}
@@ -91,7 +91,7 @@ func (r *Repo) File(ctx context.Context, commit, path string) (text string, size
 	if path == "" {
 		return "", 0, false, false, errors.New("a path is required")
 	}
-	ctx, cancel := context.WithTimeout(ctx, diffTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.Review.defaults().Timeout)
 	defer cancel()
 	spec := commit + ":" + path
 	kind, err := r.git(ctx, nil, "cat-file", "-t", spec)
@@ -106,13 +106,13 @@ func (r *Repo) File(ctx context.Context, commit, path string) (text string, size
 		return "", 0, false, false, err
 	}
 	size, _ = strconv.ParseInt(strings.TrimSpace(sizeText), 10, 64)
-	raw, err := r.gitBytes(ctx, MaxFileBytes+1, "cat-file", "-p", spec)
+	raw, err := r.gitBytes(ctx, r.Review.defaults().MaxFileBytes+1, "cat-file", "-p", spec)
 	if err != nil {
 		return "", size, false, false, err
 	}
-	truncated = int64(len(raw)) > MaxFileBytes || size > MaxFileBytes
-	if len(raw) > MaxFileBytes {
-		raw = raw[:MaxFileBytes]
+	truncated = int64(len(raw)) > int64(r.Review.defaults().MaxFileBytes) || size > int64(r.Review.defaults().MaxFileBytes)
+	if len(raw) > r.Review.defaults().MaxFileBytes {
+		raw = raw[:r.Review.defaults().MaxFileBytes]
 	}
 	if truncated && len(raw) > 0 {
 		start := len(raw) - 1

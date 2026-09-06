@@ -188,10 +188,14 @@ type Turn struct {
 // Steve can actually put in front of a person as a card, and anything outside
 // it is declined rather than half-rendered.
 type Question struct {
-	RequestID string
-	Message   string
-	Title     string
-	Choices   []Choice
+	RequestID  string
+	SessionID  string
+	Generation uint64
+	Kind       string
+	Required   bool
+	Message    string
+	Title      string
+	Choices    []Choice
 }
 
 type Choice struct {
@@ -214,7 +218,8 @@ type Option struct {
 // Answer carries the chosen Choice.Value. An empty Value means the user
 // declined or never answered.
 type Answer struct {
-	Value string
+	Value    string
+	Decision string
 }
 
 func (a Answer) Chosen() bool { return a.Value != "" }

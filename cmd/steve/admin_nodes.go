@@ -6,9 +6,11 @@ import (
 	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net"
+	"path/filepath"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/capability"
@@ -17,7 +19,9 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/runtime"
 )
 
 // NodeSettings reads what a machine offers: the hub's own from its
@@ -44,6 +48,10 @@ func (a *fleetAdmin) SetNodeSettings(ctx context.Context, name string, set nodew
 // setNodeSettingsLocked is SetNodeSettings for the hub with a.mu held.
 func (a *fleetAdmin) setNodeSettingsLocked(ctx context.Context, name string, set nodewire.Settings) (nodewire.Settings, error) {
 	_ = ctx
+	if set.Revision == "" || set.Revision != a.hubSettings().Revision {
+		return nodewire.Settings{}, nodewire.ErrSettingsRevisionConflict
+	}
+	set = nodewire.CloneSettings(set)
 	if len(set.Harnesses) == 0 {
 		return nodewire.Settings{}, fmt.Errorf("hub 至少要有一个 AI 工具")
 	}
@@ -52,16 +60,47 @@ func (a *fleetAdmin) setNodeSettingsLocked(ctx context.Context, name string, set
 		if !nameShape.MatchString(strings.ToLower(id)) || strings.TrimSpace(h.Command) == "" {
 			return nodewire.Settings{}, fmt.Errorf("AI 工具 %q 需要一个合法的名字和启动命令", id)
 		}
-		item := config.Harness{Command: h.Command, Args: h.Args, ProcessDir: h.ProcessDir, Env: h.Env}
 		configMu.RLock()
-		if old, ok := a.cfg.Harnesses[id]; ok {
-			item.Permission = old.Permission
-		}
+		item := a.cfg.Harnesses[id]
 		configMu.RUnlock()
+		if h.Adapter != nil && *h.Adapter != item.Adapter {
+			return nodewire.Settings{}, fmt.Errorf("更换 %s 的 adapter 需要通过配置文件重启生效", id)
+		}
+		if item.Adapter != "" && h.Command != item.Command {
+			return nodewire.Settings{}, fmt.Errorf("%s 使用固定 adapter，不能直接更换生成的启动命令", id)
+		}
+		item.Command, item.Args, item.ProcessDir = h.Command, h.Args, h.ProcessDir
+		if h.Env != nil {
+			item.Env = h.Env
+		}
+		if h.Slots != nil {
+			if *h.Slots < 0 {
+				return nodewire.Settings{}, fmt.Errorf("%s slots must be nonnegative", id)
+			}
+			item.Slots = *h.Slots
+		}
+		if h.Permission != nil {
+			item.Permission = *h.Permission
+		}
+		if item.Permission == "" {
+			item.Permission = config.PermissionRead
+		}
+		if _, err := permission.New(item.Permission); err != nil {
+			return nodewire.Settings{}, err
+		}
 		harnesses[id] = item
 	}
 	servers := make(map[string]config.MCPServer, len(set.MCPServers))
 	for id, m := range set.MCPServers {
+		configMu.RLock()
+		old := a.cfg.MCPServers[id]
+		configMu.RUnlock()
+		if m.Env == nil {
+			m.Env = old.Env
+		}
+		if m.Headers == nil {
+			m.Headers = old.Headers
+		}
 		if !nameShape.MatchString(strings.ToLower(id)) {
 			return nodewire.Settings{}, fmt.Errorf("MCP 服务器 %q 的名字不合法", id)
 		}
@@ -111,12 +150,16 @@ func (a *fleetAdmin) setNodeSettingsLocked(ctx context.Context, name string, set
 	if saveErr != nil && !config.Committed(saveErr) {
 		a.cfg.Harnesses, a.cfg.MCPServers, a.cfg.Gateway = old.Harnesses, old.MCPServers, old.Gateway
 		configMu.Unlock()
+		if errors.Is(saveErr, config.ErrFileChanged) {
+			return nodewire.Settings{}, errors.Join(nodewire.ErrSettingsRevisionConflict, saveErr)
+		}
 		return nodewire.Settings{}, saveErr
 	}
+	stateDir := filepath.Dir(a.cfg.Gateway.StatePath)
 	configMu.Unlock()
 	// The running pieces follow the file.
 	for id, h := range harnesses {
-		if err := a.manager.Set(id, harness.Config{Command: h.Command, Args: h.Args, ProcessDir: h.ProcessDir, Env: h.Env, Permission: h.Permission}); err != nil {
+		if err := a.manager.Set(id, harness.Config{Command: h.Command, Args: h.Args, ProcessDir: h.ProcessDir, Env: runtime.ApplyEnv(h.Env, id, stateDir), Permission: h.Permission}); err != nil {
 			log.Printf("steve: harness %s: %v", id, err)
 		}
 	}
@@ -131,6 +174,10 @@ func (a *fleetAdmin) setNodeSettingsLocked(ctx context.Context, name string, set
 	}
 	a.assembler.SetServers(caps)
 	a.fleet.SetHubCapabilities(set.Capabilities)
+	configMu.RLock()
+	slots := a.cfg.HubSlots()
+	configMu.RUnlock()
+	a.fleet.SetHubSlots(slots)
 	hubLaunch.Wake()
 	log.Printf("steve: hub settings applied from the page: %d harnesses, %d tools, %d mcp, %d declares, %d tags",
 		len(harnesses), len(set.Tools), len(servers), len(set.Declares), len(set.Capabilities))
@@ -143,12 +190,13 @@ func (a *fleetAdmin) hubSettings() nodewire.Settings {
 	out := nodewire.Settings{Harnesses: map[string]nodewire.HarnessSetting{}, Tools: append([]string{}, a.cfg.Gateway.Tools...),
 		MCPServers: map[string]nodewire.MCPSetting{}, Declares: append([]string{}, a.cfg.Gateway.Declares...), Capabilities: append([]string{}, a.cfg.Gateway.Capabilities...)}
 	for id, h := range a.cfg.Harnesses {
-		out.Harnesses[id] = nodewire.HarnessSetting{Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir}
+		out.Harnesses[id] = nodewire.HarnessSetting{Adapter: &h.Adapter, Slots: &h.Slots, Permission: &h.Permission, Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir}
 	}
 	for id, m := range a.cfg.MCPServers {
 		out.MCPServers[id] = nodewire.MCPSetting{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
 	}
-	return out
+	out.Revision = nodewire.SettingsRevision(out)
+	return nodewire.CloneSettings(out)
 }
 
 func (a *fleetAdmin) AddNode(_ context.Context, req consoleapi.AddNodeRequest) (consoleapi.AddNodeResult, error) {

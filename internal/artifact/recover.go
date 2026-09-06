@@ -34,6 +34,11 @@ func (s *Store) RecoverLandings(ctx context.Context) ([]Landing, error) {
 		if err := json.Unmarshal(op.Data, &land); err != nil {
 			continue
 		}
+		if _, _, err := s.projects.Get(ctx, land.Project); errors.Is(err, project.ErrNotOwner) {
+			continue
+		} else if err != nil {
+			return out, err
+		}
 		land.State = op.State
 		if land.Recoverable {
 			if err := s.ledger.Invalidate(ctx, "landing-driver:"+land.ID); err != nil {

@@ -8,7 +8,9 @@ require (
 	github.com/gopact-ai/gopact-ext/stores v0.2.1-0.20260901080022-8fc158112202
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.10
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+	golang.org/x/sys v0.47.0
 	golang.org/x/term v0.45.0
+	golang.org/x/text v0.39.0
 	modernc.org/sqlite v1.57.0
 )
 
@@ -26,11 +28,8 @@ require (
 	github.com/ncruces/go-strftime v1.0.0 // indirect
 	github.com/remyoudompheng/bigfft v0.0.0-20230129092748-24d4a6f8daec // indirect
 	github.com/valyala/fastjson v1.6.10 // indirect
-	golang.org/x/sys v0.47.0 // indirect
-	golang.org/x/text v0.39.0 // indirect
 	gorm.io/gorm v1.31.2 // indirect
 	modernc.org/libc v1.74.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
-

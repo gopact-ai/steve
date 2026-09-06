@@ -28,9 +28,8 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/nodewire"
-
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 // Level is the data level the hub assigns a project. Levels order
@@ -422,6 +421,7 @@ type Store struct {
 	l           *ledger.Ledger
 	now         func() time.Time
 	declaration atomic.Pointer[string]
+	hubID       atomic.Pointer[string]
 	guards      []DeclarationGuard
 	// Levels answers a machine's data level, when the store is given a way
 	// to know; a copy may only sit where the project's level admits.
@@ -447,6 +447,9 @@ func Open(l *ledger.Ledger, guards ...DeclarationGuard) *Store {
 }
 
 func (s *Store) guardDeclaration(tx *ledger.Tx, desired map[string]Project) error {
+	if err := s.guardOwners(tx, desired); err != nil {
+		return err
+	}
 	if err := validateCloneOwnership(tx, desired); err != nil {
 		return err
 	}
@@ -583,6 +586,9 @@ func (s *Store) Retire(ctx context.Context, id string) error {
 
 // Get reads one project.
 func (s *Store) Get(ctx context.Context, id string) (Project, bool, error) {
+	if err := s.checkOwner(ctx, id); err != nil {
+		return Project{}, false, err
+	}
 	if err := s.checkDeclaration(ctx); err != nil {
 		return Project{}, false, err
 	}
@@ -602,7 +608,7 @@ func (s *Store) List(ctx context.Context) ([]Project, error) {
 	}
 	out := make([]Project, 0, len(raw))
 	for id := range raw {
-		p, ok, err := s.Get(ctx, id)
+		p, ok, err := s.Lookup(ctx, id)
 		if err != nil {
 			return nil, err
 		}
@@ -921,10 +927,11 @@ type DisclosureRequest struct {
 }
 
 const (
-	DisclosureProposed = "proposed"
-	DisclosureApproved = "approved"
-	DisclosureDenied   = "denied"
-	kindDisclosureOp   = "disclosure-request"
+	DisclosureProposed    = "proposed"
+	DisclosureApproved    = "approved"
+	DisclosureDenied      = "denied"
+	DisclosureInterrupted = "interrupted"
+	kindDisclosureOp      = "disclosure-request"
 )
 
 // ProposeDisclosure opens the operation; the content waits elsewhere.

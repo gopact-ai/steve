@@ -114,6 +114,7 @@ func broker(args []string) error {
 func adopt(args []string) error {
 	flags := flag.NewFlagSet("steve-node adopt", flag.ContinueOnError)
 	configPath := flags.String("config", "node.json", "path to the node config file")
+	evidence := flags.String("evidence", "", "operator verified physical termination of unresolved old processes")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -124,7 +125,7 @@ func adopt(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := node.Adopt(cfg.StateDir, flags.Arg(0)); err != nil {
+	if err := node.AdoptWithEvidence(cfg.StateDir, flags.Arg(0), "operator", *evidence); err != nil {
 		return err
 	}
 	fmt.Printf("%s now belongs to hub %q\n", cfg.Name, flags.Arg(0))

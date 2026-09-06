@@ -3,10 +3,13 @@ package console
 import (
 	"context"
 	"errors"
+	"maps"
 	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
 )
@@ -19,12 +22,13 @@ type queuedExchange struct {
 	Exchange
 	// Submission identity survives edits/steering. A keyed exchange's result
 	// outlives the bounded transcript projection so restart retries can reply.
-	PayloadHash string            `json:"payload_hash,omitempty"`
-	Receipt     *consoleapi.Reply `json:"receipt,omitempty"`
-	ctx         context.Context
-	cancel      context.CancelFunc
-	done        chan struct{}
-	outcome     outcome
+	PayloadHash  string            `json:"payload_hash,omitempty"`
+	QuoteAliases map[string]string `json:"quote_aliases,omitempty"`
+	Receipt      *consoleapi.Reply `json:"receipt,omitempty"`
+	ctx          context.Context
+	cancel       context.CancelFunc
+	done         chan struct{}
+	outcome      outcome
 }
 
 func conversationID(conversation string) string {
@@ -66,6 +70,8 @@ func (s *Service) immediate(input string) bool {
 
 func copyExchange(e Exchange) Exchange {
 	e.Quotes = append([]QuoteRef(nil), e.Quotes...)
+	e.Refs = copyRefs(e.Refs)
+	e.Materials = copyMaterials(e.Materials)
 	return e
 }
 
@@ -89,6 +95,8 @@ type enqueueOptions struct {
 	Prompt, Key                        string
 	Front                              bool
 	Origin, Requester, ExpectedProject string
+	Refs                               []material.Ref
+	Locale                             string
 }
 
 func (s *Service) enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef, options enqueueOptions) (*queuedExchange, Exchange, error) {
@@ -98,6 +106,50 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	}
 	conversation = conversationID(conversation)
 	input, prompt, quotes, hash := submission(input, prompt, quotes)
+	s.mu.Lock()
+	if s.closing {
+		s.mu.Unlock()
+		return nil, Exchange{}, consoleapi.ErrConsoleClosing
+	}
+	var previous *queuedExchange
+	if key != "" {
+		for _, item := range s.exchanges[conversation] {
+			if item.Key == key {
+				previous = item
+				break
+			}
+		}
+	}
+	var aliases map[string]string
+	if previous != nil {
+		aliases = maps.Clone(previous.QuoteAliases)
+	}
+	if options.Locale == "" {
+		if previous != nil {
+			options.Locale = previous.Locale
+		} else {
+			options.Locale = string(i18n.ContextLocale(ctx))
+			if options.Locale == "" {
+				options.Locale = s.defaultLocale
+			}
+		}
+	}
+	s.mu.Unlock()
+	if len(aliases) > 0 {
+		original := append([]QuoteRef(nil), quotes...)
+		for i := range original {
+			if id := aliases[original[i].Conversation]; id != "" {
+				original[i].Conversation = id
+			}
+		}
+		_, _, _, hash = submission(input, prompt, original)
+	}
+	if options.Locale != "" && options.Locale != "zh" && options.Locale != "en" {
+		return nil, Exchange{}, errors.New("unsupported locale")
+	}
+	if len(options.Refs) > 0 || options.Locale != "" {
+		hash = extendedSubmissionHash(hash, options.Refs, options.Locale)
+	}
 	s.mu.Lock()
 	existing, err := s.submittedLocked(conversation, key, hash)
 	s.mu.Unlock()
@@ -109,14 +161,29 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		defer s.mu.Unlock()
 		return existing, copyExchange(existing.Exchange), nil
 	}
-	if strings.TrimSpace(input) == "" {
+	if strings.TrimSpace(input) == "" && len(options.Refs) == 0 {
 		return nil, Exchange{}, errors.New("input is required")
 	}
 	if _, err := s.quoteBlock(ctx, conversation, quotes); err != nil {
 		return nil, Exchange{}, err
 	}
+	frozen, project, err := s.freezeMaterials(ctx, conversation, options.Refs)
+	if err != nil {
+		return nil, Exchange{}, err
+	}
+	if len(options.Refs) > 0 {
+		if _, parsed := s.parseInput(input); parsed.Control() {
+			return nil, Exchange{}, errors.New("materials cannot be attached to a control command")
+		}
+	}
+	if options.ExpectedProject == "" {
+		options.ExpectedProject = project
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.closing {
+		return nil, Exchange{}, consoleapi.ErrConsoleClosing
+	}
 	if other, err := s.submittedLocked(conversation, key, hash); other != nil || err != nil {
 		if err != nil {
 			return nil, Exchange{}, err
@@ -126,6 +193,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	e := &queuedExchange{
 		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
 			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject,
+			Refs: copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
 			Quotes: append([]QuoteRef(nil), quotes...), State: "queued", EnqueuedAt: time.Now().UTC()},
 		PayloadHash: hash, ctx: context.WithoutCancel(ctx), done: make(chan struct{}),
 	}
@@ -276,11 +344,14 @@ func (s *Service) Steer(_ context.Context, id string) (Exchange, error) {
 // startLocked reserves the conversation before launching a goroutine. Even
 // concurrent submissions cannot both observe an idle queue and start it.
 func (s *Service) startLocked(e *queuedExchange) error {
+	if s.closing {
+		return consoleapi.ErrConsoleClosing
+	}
 	conversation := e.Conversation
 	previous := s.replies[conversation]
 	e.State, e.StartedAt = "running", time.Now().UTC()
 	s.running[conversation]++
-	sent := s.recordLocked(consoleapi.Reply{At: e.StartedAt, Conversation: conversation, ExchangeID: e.ID, Input: e.Input, Kind: "sent"})
+	sent := s.recordLocked(consoleapi.Reply{At: e.StartedAt, Conversation: conversation, ProjectID: e.ExpectedProject, ExchangeID: e.ID, Input: e.Input, Kind: "sent", Refs: copyRefs(e.Refs), Materials: copyMaterials(e.Materials)})
 	if err := s.save(); err != nil {
 		e.State, e.StartedAt = "queued", time.Time{}
 		s.running[conversation]--
@@ -301,7 +372,9 @@ func (s *Service) startLocked(e *queuedExchange) error {
 	s.publishReply(sent)
 	s.publishQueue(conversation)
 	exchange := copyExchange(e.Exchange)
+	s.workers.Add(1)
 	go func() {
+		defer s.workers.Done()
 		defer cancel()
 		reply, err := s.runExchange(ctx, exchange)
 		s.finish(e, reply, err)
@@ -310,6 +383,9 @@ func (s *Service) startLocked(e *queuedExchange) error {
 }
 
 func (s *Service) startNextLocked(conversation string) error {
+	if s.closing {
+		return nil
+	}
 	if s.running[conversation] != 0 {
 		return nil
 	}
@@ -323,11 +399,23 @@ func (s *Service) startNextLocked(conversation string) error {
 
 func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	s.mu.Lock()
+	var interrupted []consoleapi.PendingQuestion
+	for id, q := range s.questions {
+		if q.ExchangeID == e.ID && q.State == "pending" {
+			q.State = "interrupted"
+			q.UpdatedAt = time.Now().UTC()
+			s.questions[id] = q
+			interrupted = append(interrupted, q)
+		}
+	}
 	if work := s.processes[e.ID]; work != nil {
 		reply.Process = work.summary()
 		delete(s.processes, e.ID)
 	}
 	reply.At, reply.Kind, reply.Conversation, reply.ExchangeID = time.Now().UTC(), "reply", e.Conversation, e.ID
+	if reply.ProjectID == "" {
+		reply.ProjectID = e.ExpectedProject
+	}
 	if err != nil {
 		reply.Error = err.Error()
 		if reply.Text == "" {
@@ -352,6 +440,13 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 		s.mu.Lock()
 	}
 	s.running[e.Conversation]--
+	for _, q := range interrupted {
+		if waiter := s.questionWaiters[q.ID]; waiter != nil {
+			close(waiter)
+			delete(s.questionWaiters, q.ID)
+		}
+		s.publishQuestion(q)
+	}
 	s.publishReply(reply)
 	s.publishQueue(e.Conversation)
 	e.ctx, e.cancel = nil, nil

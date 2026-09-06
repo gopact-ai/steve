@@ -9,11 +9,10 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/nodewire"
-	"github.com/gopact-ai/steve/internal/project"
-
 	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
+	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -184,8 +183,9 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 		m.markLedgerSource(&snap, "usage", err)
 	}
 	normalizeFacts(&snap.Facts)
-	snap.Usage = usage(closed, snap.At)
+	snap.Usage = usage(closed, snap.At, snap.Tasks)
 	snap.Inbox = inbox(snap.Facts, snap.Attempts)
+	snap.Inbox = append(snap.Inbox, m.pendingInteractions()...)
 	// Activities: live attempts are the truth about "busy"; the latest
 	// progress says what the attempt is doing, when it was seen at all.
 	m.mu.Lock()

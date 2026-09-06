@@ -42,9 +42,11 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/httpapi"
+	"github.com/gopact-ai/steve/internal/hubid"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
@@ -157,6 +159,8 @@ func run(args []string) error {
 			return dash(os.Args[2:])
 		case "ledger":
 			return ledgerCmd(args[1:])
+		case "migrate":
+			return migrateCmd(args[1:])
 		case "say":
 			return say(args[1:])
 		case "run":
@@ -234,17 +238,19 @@ func doctor(args []string) error {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), *timeout)
 	defer cancel()
-	identity, err := feishu.Probe(ctx, cfg.Feishu.AppID, cfg.Feishu.AppSecret, cfg.Feishu.Domain)
-	if err != nil {
-		return err
+	if cfg.FeishuEnabled() {
+		identity, err := feishu.Probe(ctx, cfg.Feishu.AppID, cfg.Feishu.AppSecret, cfg.Feishu.Domain)
+		if err != nil {
+			return err
+		}
+		log.Printf("steve: feishu bot %s %s", identity.Name, identity.OpenID)
 	}
-	log.Printf("steve: feishu bot %s %s", identity.Name, identity.OpenID)
 
 	// Nodes are probed before agents: availability is a real dial, not a
 	// line in the config, and an agent placed on an unreachable node should
 	// fail with that fact rather than with a mystery session error.
 	nodewire.SetSelf(nodeName())
-	nodes := node.NewRegistry(nodeName(), cfg.NodeConfigs())
+	nodes := node.NewRegistry(cfg.Gateway.HubID, cfg.NodeConfigs())
 	defer nodes.Close()
 	manager.SetTransports(nodes)
 
@@ -252,6 +258,7 @@ func doctor(args []string) error {
 	// at every boot. Steve's own home directory is a project too — the one
 	// the owner's DM works in — so nothing special-cases it downstream.
 	projects := project.Open(book, artifact.CheckDeclarationsTx, attempt.CheckDeclarationsTx)
+	projects.SetHubID(cfg.Gateway.HubID)
 	declared, _, err := config.ProjectDeclarations(cfg)
 	if err != nil {
 		return err
@@ -296,7 +303,7 @@ func doctor(args []string) error {
 		if _, err := assembler.AssembleMode(selected, home.ModeGuest); err != nil {
 			return fmt.Errorf("agent %q guest home: %w", selected.ID, err)
 		}
-		if cfg.Feishu.OwnerOpenID != "" {
+		if cfg.EffectiveOwnerID() != "" {
 			if _, err := assembler.AssembleMode(selected, home.ModeOwner); err != nil {
 				return fmt.Errorf("agent %q owner home: %w", selected.ID, err)
 			}
@@ -462,14 +469,14 @@ func serve(args []string) error {
 		if _, err := assembler.AssembleMode(selected, home.ModeGuest); err != nil {
 			return fmt.Errorf("agent %q guest home: %w", selected.ID, err)
 		}
-		if cfg.Feishu.OwnerOpenID != "" {
+		if cfg.EffectiveOwnerID() != "" {
 			if _, err := assembler.AssembleMode(selected, home.ModeOwner); err != nil {
 				return fmt.Errorf("agent %q owner home: %w", selected.ID, err)
 			}
 		}
 	}
 	nodewire.SetSelf(nodeName())
-	nodes := node.NewRegistry(nodeName(), cfg.NodeConfigs())
+	nodes := node.NewRegistry(cfg.Gateway.HubID, cfg.NodeConfigs())
 	defer nodes.Close()
 	manager.SetTransports(nodes)
 
@@ -477,6 +484,7 @@ func serve(args []string) error {
 	// at every boot. Steve's own home directory is a project too — the one
 	// the owner's DM works in — so nothing special-cases it downstream.
 	projects := project.Open(book, artifact.CheckDeclarationsTx, attempt.CheckDeclarationsTx)
+	projects.SetHubID(cfg.Gateway.HubID)
 	if err := (config.ProjectController{Store: projects}).Reconcile(context.Background(), cfg); err != nil {
 		return fmt.Errorf("reconcile configured projects: %w", err)
 	}
@@ -557,8 +565,8 @@ func serve(args []string) error {
 	coordinator := turn.New(
 		catalog, store, assembler, manager, time.Duration(cfg.Gateway.PromptTimeout),
 	)
-	catalogText := i18n.New(i18n.FromDomain(cfg.Feishu.Domain))
-	coordinator.SetIdentity(cfg.Feishu.OwnerOpenID, home.Dir{Path: cfg.Gateway.HomePath})
+	catalogText := i18n.New(i18n.FromLang(cfg.EffectiveLocale()))
+	coordinator.SetIdentity(cfg.EffectiveOwnerID(), home.Dir{Path: cfg.Gateway.HomePath})
 	coordinator.SetSkills(live)
 	coordinator.SetProjects(projects, cfg.Gateway.DefaultProject, homeProjectID)
 	// Memory: the home's MEMORY.md for the owner, one file per project,
@@ -574,6 +582,8 @@ func serve(args []string) error {
 	// repository on the hub, materialised wherever a step runs.
 	artifacts := artifact.New(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "artifacts"), book, projects, nodes)
 	artifacts.Direct = cfg.Gateway.DirectTransfer
+	artifacts.Limits = artifact.Limits{MaxFiles: cfg.Policies.Snapshot.MaxFiles, MaxBytes: cfg.Policies.Snapshot.MaxBytes, MaxFileBytes: cfg.Policies.Snapshot.MaxFileBytes}
+	artifacts.Review = artifact.ReviewLimits{MaxChanges: cfg.Policies.Review.MaxChanges, MaxDiffBytes: cfg.Policies.Review.MaxDiffBytes, MaxFileBytes: cfg.Policies.Review.MaxFileBytes, MaxEntries: cfg.Policies.Review.MaxEntries, Timeout: time.Duration(cfg.Policies.Review.Timeout)}
 	coordinator.SetArtifacts(artifacts)
 	// Side effects agents ask for are intents: claimed, journaled, and
 	// blocked across attempts until a person resolves an unknown outcome.
@@ -623,6 +633,7 @@ func serve(args []string) error {
 	// planned it — placement against the live roster, the budget, the
 	// verification rule, the recovery limit.
 	stepRunner := exec.NewAgentRunner(manager, capabilitiesFor(assembler), fleet)
+	stepRunner.Timeout = time.Duration(cfg.Policies.Execution.StepTimeout)
 	// Workflow checkpoints are durable so a plan outlives the process that
 	// started it; the ledger records which runs are open.
 	workflowsDB := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "workflows.db")
@@ -634,24 +645,18 @@ func serve(args []string) error {
 		return fmt.Errorf("open workflow checkpoints: %w", err)
 	}
 	defer checkpoints.Close()
-	defer func() {
-		stop()
-		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-		defer cancel()
-		if err := executions.Shutdown(cleanup); err != nil {
-			log.Printf("steve: execution shutdown incomplete; startup will reconcile remaining writers: %v", err)
-		}
-		manager.Stop()
-	}()
+
 	auxiliary := agentexec.New(manager, fleet, artifacts, attempts, executions, taskBudget{tasks: tasks})
 	auxiliary.SetCapabilities(capabilitiesFor(assembler))
+	verifiers := exec.NewVerifiers(nodes, auxiliary)
+	verifiers.Timeout = time.Duration(cfg.Policies.Execution.VerifyTimeout)
 	supervisor := exec.NewSupervisor(
 		choosePlanner(cfg, catalog, auxiliary),
 		exec.Deps{
 			Roster: fleet, Runner: stepRunner, Budget: taskBudget{tasks: tasks},
 			// Verification runs where the work is: a command on the step's
 			// node, or a second agent asked to check the first one's.
-			Verifier:   exec.NewVerifiers(nodes, auxiliary),
+			Verifier:   verifiers,
 			Workspaces: artifacts,
 			Attempts:   attempts,
 			Artifacts:  artifacts,
@@ -734,9 +739,11 @@ func serve(args []string) error {
 	if err != nil {
 		return err
 	}
+	defer dashboard.Close()
 	// The console: the owner acting from the page, through this same
 	// coordinator. Notices anchored on the console stay on the page.
-	cons := console.New(coordinator, cfg.Feishu.OwnerOpenID, view)
+	cons := console.New(coordinator, cfg.EffectiveOwnerID(), view)
+	view.SetInteractions(cons)
 	cons.SetTitler(&conversationTitler{manager: manager, catalog: catalog, projects: projects, home: cfg.Gateway.HomePath})
 	dashboard.SetConsole(cons)
 	// A copy may only sit where the project's level admits; the store
@@ -752,11 +759,37 @@ func serve(args []string) error {
 		skills: live, shipper: hubSkills, coordinator: coordinator, homePath: cfg.Gateway.HomePath, memory: memories, artifacts: artifacts}
 	dashboard.SetAdmin(admin)
 	cons.SetInspector(admin)
+	materials, err := material.Open(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "materials"), book)
+	if err != nil {
+		return fmt.Errorf("open materials: %w", err)
+	}
+	defer materials.Close()
+	defer func() {
+		stop()
+		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		httpDone := make(chan error, 1)
+		go func() { httpDone <- dashboard.Shutdown(cleanup) }()
+		if err := cons.Shutdown(cleanup); err != nil {
+			log.Printf("steve: console shutdown incomplete: %v", err)
+		}
+		if err := executions.Shutdown(cleanup); err != nil {
+			log.Printf("steve: execution shutdown incomplete; startup will reconcile remaining writers: %v", err)
+		}
+		if err := <-httpDone; err != nil {
+			log.Printf("steve: HTTP shutdown incomplete: %v", err)
+		}
+		manager.Stop()
+	}()
+	admin.materials, admin.console, admin.owner = materials, cons, cfg.EffectiveOwnerID()
+	admin.materialLevel = cfg.HubLevel()
+	cons.SetMaterials(materials, admin.authorizeMaterials)
+	cons.SetDefaultLocale(cfg.EffectiveLocale())
+	dashboard.SetSettings(newHubSettingsService(admin, cfg))
 	if err := admin.ResumeProjectCopies(context.Background()); err != nil {
 		return fmt.Errorf("resume configured copies: %w", err)
 	}
 	tasks.SetObserver(func(id string) { view.TaskChanged(id) })
-	defer dashboard.Close()
 	supervisor.Runs().Observe(view)
 
 	// Dial the fleet now and keep redialing what is down. Without this the
@@ -885,22 +918,27 @@ func serve(args []string) error {
 		gate.SetFleeter(fleetTools{admin: admin, view: view})
 		gate.SetMemorizer(coordinator)
 	}
-	channel, err := feishu.New(ctx, feishu.Options{
-		AppID:            cfg.Feishu.AppID,
-		AppSecret:        cfg.Feishu.AppSecret,
-		Domain:           cfg.Feishu.Domain,
-		Access:           feishu.AccessFrom(cfg.Feishu),
-		AllowUnmentioned: cfg.Feishu.AllowUnmentioned,
-		OnCardAction:     gw.HandleCardAction,
-	}, gw.HandleMessage)
-	if err != nil {
-		return err
+	var channel *feishu.Channel
+	if cfg.FeishuEnabled() {
+		channel, err = feishu.New(ctx, feishu.Options{
+			AppID:            cfg.Feishu.AppID,
+			AppSecret:        cfg.Feishu.AppSecret,
+			Domain:           cfg.Feishu.Domain,
+			Access:           feishu.AccessFrom(cfg.Feishu),
+			AllowUnmentioned: cfg.Feishu.AllowUnmentioned,
+			OnCardAction:     gw.HandleCardAction,
+		}, gw.HandleMessage)
+		if err != nil {
+			return err
+		}
+		gw.BindChannel(channel)
+		channel.SetJournal(book.Journal())
 	}
-	gw.BindChannel(channel)
-	channel.SetJournal(book.Journal())
 	if gate != nil {
 		gate.SetDefaultChannel(cfg.Gateway.DefaultChannel)
-		gate.BindChannel("feishu", feishu.Messenger{API: channel})
+		if channel != nil {
+			gate.BindChannel("feishu", feishu.Messenger{API: channel})
+		}
 		gate.BindChannel("console", console.MessageSender{Console: cons})
 		cons.SetAnchorer(func(conversation, _ string, message string) {
 			gate.Anchor(conversation, messagechannel.Address{Channel: "console", Conversation: conversation, Message: message})
@@ -1034,7 +1072,7 @@ func serve(args []string) error {
 
 	go runScheduleDispatcher(ctx, schedules, cons, gw, coordinator)
 
-	if addr := cfg.Gateway.DebugAddr; addr != "" {
+	if addr := cfg.Gateway.DebugAddr; addr != "" && channel != nil {
 		go func() {
 			if err := debugapi.Serve(ctx, addr, gw, debugapi.Defaults{
 				ChatID:       cfg.Gateway.DebugChatID,
@@ -1046,6 +1084,11 @@ func serve(args []string) error {
 		}()
 	}
 
+	if channel == nil {
+		log.Printf("steve: console-only hub ready")
+		<-ctx.Done()
+		return nil
+	}
 	go func() {
 		onboardCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.Gateway.PromptTimeout))
 		defer cancel()
@@ -1090,7 +1133,7 @@ func load(path string) (*config.Config, *agent.Catalog, *harness.Manager, *skill
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	if err := cfg.Feishu.Validate(); err != nil {
+	if err := cfg.ValidateChannels(); err != nil {
 		return nil, nil, nil, nil, err
 	}
 	catalog, err := cfg.AgentCatalog()
@@ -1098,6 +1141,11 @@ func load(path string) (*config.Config, *agent.Catalog, *harness.Manager, *skill
 		return nil, nil, nil, nil, err
 	}
 	stateDir := filepath.Dir(cfg.Gateway.StatePath)
+	identity, err := hubid.Resolve(stateDir, cfg.Gateway.HubID)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	cfg.Gateway.HubID = identity
 	if err := runtime.Prepare(stateDir); err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -1109,14 +1157,10 @@ func load(path string) (*config.Config, *agent.Catalog, *harness.Manager, *skill
 	if err := live.Apply(); err != nil {
 		return nil, nil, nil, nil, err
 	}
-	for id, item := range cfg.Harnesses {
-		item.Env = runtime.ApplyEnv(item.Env, id, stateDir)
-		cfg.Harnesses[id] = item
-	}
 	if err := cfg.PrepareAdapters(context.Background()); err != nil {
 		return nil, nil, nil, nil, err
 	}
-	manager, err := cfg.HarnessManager()
+	manager, err := harnessRuntimeConfig(cfg).HarnessManager()
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -1126,10 +1170,10 @@ func load(path string) (*config.Config, *agent.Catalog, *harness.Manager, *skill
 
 func wireHome(cfg *config.Config, live *skills.Live) (*capability.Assembler, error) {
 	locale := home.LocaleZH
-	if i18n.FromDomain(cfg.Feishu.Domain) == i18n.LocaleEN {
+	if i18n.FromLang(cfg.EffectiveLocale()) == i18n.LocaleEN {
 		locale = home.LocaleEN
 	}
-	if err := home.BootstrapLocale(cfg.Gateway.HomePath, cfg.Feishu.OwnerOpenID, locale); err != nil {
+	if err := home.BootstrapLocale(cfg.Gateway.HomePath, cfg.EffectiveOwnerID(), locale); err != nil {
 		return nil, err
 	}
 	assembler := cfg.CapabilityAssembler().SetHome(home.Dir{Path: cfg.Gateway.HomePath, Locale: locale})
@@ -1140,7 +1184,7 @@ func wireHome(cfg *config.Config, live *skills.Live) (*capability.Assembler, err
 }
 
 func warnHome(cfg *config.Config) {
-	if cfg.Feishu.OwnerOpenID == "" {
+	if cfg.FeishuEnabled() && cfg.Feishu.OwnerOpenID == "" {
 		log.Printf("steve: feishu.owner_open_id is unset; DMs use guest home")
 	}
 }
@@ -1510,7 +1554,7 @@ func choosePlanner(cfg *config.Config, catalog *agent.Catalog, executor *agentex
 	}
 	log.Printf("steve: /plan decomposes with %s", selected.ID)
 	return planner.LLM{
-		Agent: selected.ID, Executor: executor,
+		Agent: selected.ID, Executor: executor, Timeout: time.Duration(cfg.Policies.Planning.Timeout), Attempts: cfg.Policies.Planning.Attempts,
 	}
 }
 

@@ -15,6 +15,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,8 +47,9 @@ func (a *agent) Initialize(_ context.Context, _ *acp.InitializeRequest) (*acp.In
 		ProtocolVersion: acp.ProtocolVersionV1,
 		AgentInfo:       &acp.Implementation{Name: "mockagent", Version: "0.1.0"},
 		AgentCapabilities: &acp.AgentCapabilities{
-			LoadSession:     true,
-			MCPCapabilities: &acp.MCPCapabilities{HTTP: true},
+			PromptCapabilities: &acp.PromptCapabilities{Image: os.Getenv("MOCKAGENT_NO_MEDIA") == "", EmbeddedContext: os.Getenv("MOCKAGENT_NO_MEDIA") == ""},
+			LoadSession:        true,
+			MCPCapabilities:    &acp.MCPCapabilities{HTTP: true},
 			SessionCapabilities: &acp.SessionCapabilities{
 				List:   &acp.SessionListCapabilities{},
 				Delete: &acp.SessionDeleteCapabilities{},
@@ -104,6 +107,31 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		}
 	}
 	input := text.String()
+	for _, block := range req.Prompt {
+		encoded, mime, kind := "", "", ""
+		if block.Type == acp.ContentBlockTypeImage {
+			encoded, kind = block.Data, "image"
+			if block.MIMEType != nil {
+				mime = *block.MIMEType
+			}
+		}
+		if block.Type == acp.ContentBlockTypeResource && block.Resource.Blob != nil {
+			encoded, kind = *block.Resource.Blob, "resource"
+			if block.Resource.MIMEType != nil {
+				mime = *block.Resource.MIMEType
+			}
+		}
+		if kind != "" {
+			data, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				return nil, err
+			}
+			marker := fmt.Sprintf("[media: %s %s %d %x] ", kind, mime, len(data), sha256.Sum256(data))
+			if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(marker))}); err != nil {
+				return nil, err
+			}
+		}
+	}
 	if strings.Contains(input, "ignore-cancel") {
 		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("still running"))}); err != nil {
 			return nil, err
@@ -149,7 +177,8 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		title := "Colour"
 		red, blue := "You prefer red.", "You prefer blue."
 		schema := acp.ElicitationSchema{
-			Type: acp.ElicitationSchemaTypeObject,
+			Type:     acp.ElicitationSchemaTypeObject,
+			Required: &[]string{"question_0"},
 			Properties: map[string]acp.ElicitationPropertySchema{
 				"question_0": {
 					Type: acp.ElicitationPropertySchemaTypeString, Title: &title,
@@ -162,6 +191,9 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 				// choices; a client that cannot render it may skip it.
 				"question_0_custom": {Type: acp.ElicitationPropertySchemaTypeString},
 			},
+		}
+		if strings.Contains(input, "askme-required-text") {
+			schema.Required = &[]string{"question_0", "question_0_custom"}
 		}
 		req := acp.SessionFormCreateElicitationRequest("Which colour do you prefer?", schema, req.SessionID)
 		resp, err := a.client.CreateElicitation(ctx, &req)

@@ -81,6 +81,30 @@ func TestElicitationDeclinedByUserCancels(t *testing.T) {
 	}
 }
 
+func TestElicitationRejectsInvalidValuesAndRequiredCompanion(t *testing.T) {
+	h := newTestHost(t, "deny")
+	for _, test := range []struct {
+		prompt string
+		answer view.Answer
+		want   string
+		asks   int
+	}{
+		{"askme", view.Answer{Value: "forged"}, "[answer: cancel]", 1},
+		{"askme", view.Answer{Decision: "decline"}, "[answer: decline]", 1},
+		{"askme-required-text", view.Answer{Value: "Blue"}, "[answer: decline]", 0},
+	} {
+		sid, generation, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()})
+		if err != nil {
+			t.Fatal(err)
+		}
+		asked := 0
+		out, _, err := h.PromptTurn(t.Context(), sid, generation, test.prompt, nil, nil, func(context.Context, view.Question) (view.Answer, error) { asked++; return test.answer, nil }, nil)
+		if err != nil || !strings.Contains(out, test.want) || asked != test.asks {
+			t.Fatalf("%s: output=%s asked=%d err=%v", test.prompt, out, asked, err)
+		}
+	}
+}
+
 // codex asks "may I call this MCP tool" through the same elicitation
 // channel as real user questions. The permission broker must answer it, the
 // way it would answer session/request_permission — a human is only pulled

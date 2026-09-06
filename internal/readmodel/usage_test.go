@@ -1,6 +1,7 @@
 package readmodel
 
 import (
+	"math"
 	"path/filepath"
 	"testing"
 	"time"
@@ -13,6 +14,180 @@ import (
 func usageRecord(start time.Time, agent, model string, reported bool, input, output int64) attempt.Record {
 	return attempt.Record{Spec: attempt.Spec{Agent: agent}, State: attempt.Bound, StartedAt: start, EndedAt: start.Add(time.Minute),
 		Usage: &attempt.Usage{Model: model, Reported: reported, Input: input, Output: output}}
+}
+
+func TestUsageTaskTreesUseIntervalUnionsAndKeepAllDimensions(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	day := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	tasks := []Task{
+		{ID: "root", Title: "Scheduled work", Origin: "schedule:42", ProjectID: "p"},
+		{ID: "child", Parent: "root"}, {ID: "grandchild", Parent: "child"},
+		{ID: "other", Goal: "Chat work", ProjectID: "q"},
+		{ID: "orphan", Parent: "missing"}, {ID: "cycle-a", Parent: "cycle-b"}, {ID: "cycle-b", Parent: "cycle-a"},
+	}
+	record := func(taskID, agent, harness, projectID string, startMinutes, endMinutes int, tokens int64) attempt.Record {
+		r := usageRecord(day.Add(time.Duration(startMinutes)*time.Minute), agent, "model", true, tokens, 0)
+		r.TaskID, r.Harness, r.Project = taskID, harness, projectID
+		r.EndedAt = day.Add(time.Duration(endMinutes) * time.Minute)
+		return r
+	}
+	missing := record("orphan", "a", "h2", "", 510, 510, 40)
+	missing.EndedAt = time.Time{}
+	records := []attempt.Record{
+		record("root", "a", "h1", "p", 480, 490, 600),
+		record("child", "b", "h2", "p", 485, 495, 600),
+		record("grandchild", "b", "h2", "p", 487, 488, 60),
+		record("child", "b", "h2", "p", 540, 545, 300),
+		record("other", "a", "h1", "q", 500, 502, 120), missing,
+		record("unknown-task", "a", "h1", "", 600, 601, 60),
+		record("", "a", "h1", "service", 600, 601, 30),
+		record("cycle-a", "a", "h1", "", 660, 661, 60),
+	}
+	p := usage(records, now, tasks).Periods["1d"]
+	want := TaskDurationStats{Count: 5, Measured: 4, MinSeconds: 60, MaxSeconds: 1200, AverageSeconds: 360, TotalSeconds: 1440}
+	if p.Tasks != want {
+		t.Fatalf("root duration statistics=%+v want=%+v", p.Tasks, want)
+	}
+	var root TaskUsageRow
+	for _, row := range p.ByTask {
+		if row.TaskID == "root" {
+			root = row
+		}
+		if row.TaskID == "orphan" || row.TaskID == "unknown-task" || row.TaskID == "cycle-a" {
+			if row.Trigger != "" || row.Title != "" {
+				t.Fatalf("missing root metadata fabricated: %+v", row)
+			}
+		}
+	}
+	if root.Attempts != 4 || root.Seconds != 1200 || root.ElapsedSeconds != 1200 || root.Tokens.Total != 1560 || root.Title != "Scheduled work" || root.Trigger != "schedule" || root.Agent != "a · b" || root.Harness != "h1 · h2" {
+		t.Fatalf("root row=%+v", root)
+	}
+	for _, groups := range [][]UsageRow{p.ByAgent, p.ByModel, p.ByHarness, p.ByTrigger, p.ByProject} {
+		assertUsageSum(t, p.Total, groups)
+	}
+	if got := usageGroupRow(t, p.ByHarness, "h2"); got.Tasks == nil || got.Tasks.Count != 2 || got.Tasks.Measured != 1 || got.Tasks.TotalSeconds != 900 {
+		t.Fatalf("harness duration used full unrelated root work: %+v", got)
+	}
+	if got := usageGroupRow(t, p.ByTrigger, "schedule"); got.Attempts != 4 || got.Tasks.Count != 1 || got.Tasks.TotalSeconds != 1200 {
+		t.Fatalf("child work lost root trigger: %+v", got)
+	}
+	if p.Total.Tokens.Total != 1870 || p.Throughput.UnmeasuredTokens != 40 {
+		t.Fatalf("totals=%+v throughput=%+v", p.Total, p.Throughput)
+	}
+	closeTo(t, p.Throughput.ActiveTPM, 1830.0/24)
+	closeTo(t, p.Throughput.WindowTPM, 1830.0/720)
+	closeTo(t, p.Throughput.PeakTPM, 180)
+}
+
+func TestUsageThroughputUniformlyAllocatesAcrossPartialMinutesAndBuckets(t *testing.T) {
+	day := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	a := usageRecord(day.Add(30*time.Second), "a", "model", true, 120, 0)
+	a.EndedAt = day.Add(150 * time.Second)
+	b := usageRecord(day.Add(time.Minute), "b", "model", true, 60, 0)
+	b.EndedAt = day.Add(2 * time.Minute)
+	p := usage([]attempt.Record{a, b}, day.Add(3*time.Minute), nil).Periods["1d"]
+	closeTo(t, p.Throughput.WindowTPM, 60)
+	closeTo(t, p.Throughput.ActiveTPM, 90)
+	closeTo(t, p.Throughput.PeakTPM, 120)
+	if !p.Throughput.Estimated || p.Throughput.MeasuredTokens != 180 || p.Tasks.Count != 0 {
+		t.Fatalf("throughput claimed exact generation speed or invented tasks: %+v", p)
+	}
+	a.StartedAt, a.EndedAt = day.Add(30*time.Minute), day.Add(150*time.Minute)
+	p = usage([]attempt.Record{a}, day.Add(150*time.Minute), nil).Periods["1d"]
+	for i, want := range []float64{.5, 1, 1} {
+		closeTo(t, p.Series[i].TPM, want)
+	}
+	closeTo(t, p.Throughput.WindowTPM, .8)
+	closeTo(t, p.Throughput.ActiveTPM, 1)
+	closeTo(t, p.Throughput.PeakTPM, 1)
+	closeTo(t, p.Series[0].TPM*60+p.Series[1].TPM*60+p.Series[2].TPM*30, 120)
+}
+
+func TestUsageUnreportedTokensAreZeroButCoverageAndContextRemain(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	r := usageRecord(now.Add(-time.Minute), "a", "model", false, 120, 30)
+	r.Usage.CachedRead, r.Usage.CachedWrite, r.Usage.Context = 100, 20, 500
+	r.TaskID = "missing"
+	p := usage([]attempt.Record{r}, now, nil).Periods["1d"]
+	if p.Total.Tokens != (Tokens{Context: 500}) || p.Total.Unreported != 1 || p.Throughput.WindowTPM != 0 || p.Throughput.PeakTPM != 0 || p.Tasks.Measured != 1 || p.Tasks.TotalSeconds != 60 {
+		t.Fatalf("missing token report fabricated spend or lost duration: %+v", p)
+	}
+	for _, row := range p.Series {
+		if row.Tokens.Total != 0 || row.TPM != 0 {
+			t.Fatalf("missing report became a plotted token value: %+v", row)
+		}
+	}
+}
+
+func TestUsageRangesKeepTaskAndThroughputCohortsConsistent(t *testing.T) {
+	day := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	a := usageRecord(day.Add(-30*time.Minute), "a", "m", true, 120, 0)
+	a.EndedAt = day.Add(30 * time.Minute)
+	a.TaskID = "root"
+	b := usageRecord(day.Add(30*time.Minute), "a", "m", true, 120, 0)
+	b.EndedAt = day.Add(90 * time.Minute)
+	b.TaskID = "child"
+	u := usage([]attempt.Record{a, b}, day.Add(2*time.Hour), []Task{{ID: "root", Origin: "plan"}, {ID: "child", Parent: "root"}})
+	for _, tc := range []struct {
+		key     string
+		tokens  int64
+		seconds float64
+	}{{"1d", 120, 3600}, {"7d", 240, 7200}, {"30d", 240, 7200}} {
+		p := u.Periods[tc.key]
+		if p.Total.Tokens.Total != tc.tokens || p.Tasks.Count != 1 || p.Tasks.TotalSeconds != tc.seconds || len(p.ByTask) != 1 || p.ByTask[0].Tokens.Total != tc.tokens {
+			t.Fatalf("%s mixes task or token cohorts: %+v", tc.key, p)
+		}
+		closeTo(t, p.Throughput.MeasuredTokens, float64(tc.tokens))
+		closeTo(t, p.Throughput.ActiveTPM, 2)
+	}
+}
+
+func TestUsageThroughputDoesNotAllocateMinuteSizedHistory(t *testing.T) {
+	start := time.Date(2000, 1, 1, 0, 0, 0, 0, time.UTC)
+	end := time.Date(2030, 1, 1, 0, 0, 0, 0, time.UTC)
+	curve := makeUsageCurve([]rateSpan{{usageSpan: usageSpan{start: start, end: end}, rate: 1}})
+	if len(curve.points) != 2 {
+		t.Fatalf("timeline expanded per minute: %d", len(curve.points))
+	}
+	closeTo(t, curve.peak, 60)
+	closeTo(t, curve.at(end), end.Sub(start).Seconds())
+}
+
+func TestUsageZeroDurationIsMeasuredWithoutInventingThroughput(t *testing.T) {
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	zero := usageRecord(now.Add(-time.Minute), "a", "m", true, 100, 0)
+	zero.TaskID = "zero"
+	zero.EndedAt = zero.StartedAt
+	zero.Project = "known-project"
+	missing := zero
+	missing.TaskID = "missing"
+	missing.EndedAt = time.Time{}
+	p := usage([]attempt.Record{zero, missing}, now, nil).Periods["1d"]
+	if p.Tasks.Count != 2 || p.Tasks.Measured != 1 || p.Tasks.TotalSeconds != 0 || p.Tasks.AverageSeconds != 0 || p.Throughput.WindowTPM != 0 || p.Throughput.ActiveTPM != 0 || p.Throughput.PeakTPM != 0 || p.Throughput.UnmeasuredTokens != 200 {
+		t.Fatalf("zero/missing duration conflated or divided by zero: %+v", p)
+	}
+	for _, row := range p.ByTask {
+		if row.Project != "known-project" {
+			t.Fatalf("known execution project lost with missing task metadata: %+v", row)
+		}
+	}
+}
+
+func usageGroupRow(t *testing.T, rows []UsageRow, key string) UsageRow {
+	t.Helper()
+	for _, row := range rows {
+		if row.Key == key {
+			return row
+		}
+	}
+	t.Fatalf("missing group %q", key)
+	return UsageRow{}
+}
+func closeTo(t *testing.T, got, want float64) {
+	t.Helper()
+	if math.Abs(got-want) > 1e-8*math.Max(1, math.Abs(want)) {
+		t.Fatalf("got %g, want %g", got, want)
+	}
 }
 
 func TestUsagePeriodsShareCalendarWindowsAndTotals(t *testing.T) {
@@ -34,7 +209,7 @@ func TestUsagePeriodsShareCalendarWindowsAndTotals(t *testing.T) {
 	for _, start := range starts {
 		records = append(records, usageRecord(start, "agent", "model", true, 1, 2))
 	}
-	u := usage(records, now)
+	u := usage(records, now, nil)
 	if u.Timezone != "hub" || u.Total.Attempts != len(starts) {
 		t.Fatalf("cumulative usage = %+v", u)
 	}
@@ -75,7 +250,7 @@ func TestUsageKeepsUnreportedAndUnknownDimensions(t *testing.T) {
 	missing.Usage = nil
 	zero := usageRecord(start, "same", "same", true, 0, 0)
 	zero.EndedAt = start.Add(-time.Second) // malformed duration must not reduce totals
-	u := usage([]attempt.Record{reported, contextOnly, missing, zero}, now)
+	u := usage([]attempt.Record{reported, contextOnly, missing, zero}, now, nil)
 	want := UsageRow{Key: "total", Attempts: 4, Unreported: 2, Seconds: 180,
 		Tokens: Tokens{Input: 10, Output: 5, Total: 15, CachedRead: 100, CachedWrite: 200, Context: 700}}
 	if u.Total != want {
@@ -115,7 +290,7 @@ func TestUsageHourlyBucketsFollowDST(t *testing.T) {
 			for at := start; at.Before(now); at = at.Add(time.Hour) {
 				records = append(records, usageRecord(at, "agent", "model", true, 1, 0))
 			}
-			u := usage(records, now)
+			u := usage(records, now, nil)
 			p := u.Periods["1d"]
 			if len(p.Series) != tc.hours || p.Total.Attempts != tc.hours {
 				t.Fatalf("%s has %d buckets and %d attempts, want %d", tc.name, len(p.Series), p.Total.Attempts, tc.hours)

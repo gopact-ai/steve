@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/ability"
 	"io"
 	"log"
 	"net"
@@ -22,6 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/mcpprobe"
 	"github.com/gopact-ai/steve/internal/mcpscan"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -127,6 +128,8 @@ type Observe struct {
 
 // Server accepts hub connections and runs agents on this machine.
 type Server struct {
+	settingsMu           sync.Mutex
+	settingsFileRevision string
 	// cfg is replaced whole when the hub changes the node's settings;
 	// readers take the current one without locking.
 	cfg atomic.Pointer[ServerConfig]
@@ -175,6 +178,7 @@ type Server struct {
 func NewServer(cfg ServerConfig) *Server {
 	s := &Server{mcpPort: rememberedPort(cfg), generation: time.Now().Unix(), launch: NewLaunchProbe(), processes: map[string]*agentProcess{}}
 	s.cfg.Store(&cfg)
+	s.settingsFileRevision, _ = nodeSettingsFileRevision(cfg.Source)
 	return s
 }
 
@@ -183,6 +187,13 @@ func (s *Server) conf() ServerConfig { return *s.cfg.Load() }
 
 // Serve blocks until ctx ends or the listener fails.
 func (s *Server) Serve(ctx context.Context) error {
+	if s.conf().StateDir != "" {
+		unlock, err := steveruntime.AcquireLock(filepath.Join(s.conf().StateDir, "instance-control"))
+		if err != nil {
+			return fmt.Errorf("node instance is already running: %w", err)
+		}
+		defer unlock()
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s.ctx = ctx
@@ -429,28 +440,37 @@ func (s *Server) claim(hub string) error {
 	// hub pointed at the same machine cannot take it over during a blip.
 	// A hub that disconnected cleanly has handed the node back.
 	if s.hubLive == 0 {
-		owner := s.owner()
-		if owner.Hub != "" && owner.Hub != hub && !owner.Released && time.Since(owner.LastSeen) < OwnerGrace {
-			return fmt.Errorf("this node belongs to hub %q, last seen %s ago; it is free %s after that hub goes silent, or now with `steve-node adopt %s`",
-				owner.Hub, time.Since(owner.LastSeen).Round(time.Second), OwnerGrace, hub)
+		owner, err := s.readOwner()
+		if err != nil {
+			return err
+		}
+		if owner.Hub != "" && owner.Hub != hub && !owner.Released {
+			return fmt.Errorf("this node belongs to hub %q; timeout does not transfer ownership: stop this instance and explicitly adopt %q", owner.Hub, hub)
 		}
 		if owner.Hub != hub && owner.Hub != "" {
 			log.Printf("steve-node: hub changed from %q to %q", owner.Hub, hub)
 		}
 	}
+	if err := s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC()}); err != nil {
+		return err
+	}
 	s.hubName = hub
 	s.hubLive++
-	s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC()})
 	return nil
 }
 
 func (s *Server) release(hub string, clean bool) {
+	if clean {
+		clean = s.processesStopped(hub)
+	}
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
 	if s.hubName == hub && s.hubLive > 0 {
 		s.hubLive--
 		if s.hubLive == 0 {
-			s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC(), Released: clean})
+			if err := s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC(), Released: clean}); err != nil {
+				log.Printf("node: persist owner release: %v", err)
+			}
 		}
 	}
 }
@@ -468,19 +488,51 @@ type hubOwner struct {
 
 func (s *Server) ownerPath() string { return filepath.Join(s.conf().StateDir, "hub.json") }
 
-func (s *Server) owner() hubOwner {
+func (s *Server) owner() hubOwner { o, _ := s.readOwner(); return o }
+func (s *Server) readOwner() (hubOwner, error) {
 	var o hubOwner
-	if b, err := os.ReadFile(s.ownerPath()); err == nil {
-		_ = json.Unmarshal(b, &o)
+	if s.conf().StateDir == "" {
+		return o, nil
 	}
-	return o
+	raw, err := os.ReadFile(s.ownerPath())
+	if os.IsNotExist(err) {
+		return o, nil
+	}
+	if err != nil {
+		return o, err
+	}
+	if err := json.Unmarshal(raw, &o); err != nil {
+		return o, fmt.Errorf("node ownership record unreadable: %w", err)
+	}
+	return o, nil
 }
 
-func (s *Server) writeOwner(o hubOwner) {
-	b, _ := json.Marshal(o)
-	if err := os.MkdirAll(s.conf().StateDir, 0o700); err == nil {
-		_ = os.WriteFile(s.ownerPath(), b, 0o600)
+func (s *Server) writeOwner(o hubOwner) error {
+	if s.conf().StateDir == "" {
+		return nil
 	}
+	raw, err := json.Marshal(o)
+	if err != nil {
+		return err
+	}
+	return (&ledger.FileDocument{Path: s.ownerPath()}).Save(raw)
+}
+
+func (s *Server) processesStopped(hub string) bool {
+	s.processMu.Lock()
+	defer s.processMu.Unlock()
+	for _, p := range s.processes {
+		if p.owner != hub {
+			continue
+		}
+		p.mu.Lock()
+		ended := p.exit != ""
+		p.mu.Unlock()
+		if !ended {
+			return false
+		}
+	}
+	return true
 }
 
 // touchOwner marks the serving hub as seen now; the hub's minute refresh
@@ -489,21 +541,66 @@ func (s *Server) touchOwner() {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
 	if s.hubLive > 0 {
-		s.writeOwner(hubOwner{Hub: s.hubName, LastSeen: time.Now().UTC()})
+		if err := s.writeOwner(hubOwner{Hub: s.hubName, LastSeen: time.Now().UTC()}); err != nil {
+			log.Printf("node: persist owner heartbeat: %v", err)
+		}
 	}
 }
 
 // Adopt hands the node to a hub explicitly: the next handshake from it is
 // accepted whatever the previous owner's grace says.
-func Adopt(stateDir, hub string) error {
-	if hub == "" {
-		return errors.New("adopt: hub name is required")
+func Adopt(stateDir, hub string) error { return AdoptWithEvidence(stateDir, hub, "operator", "") }
+
+// AdoptWithEvidence requires the instance stopped. Unfinished stream journals
+// additionally require the operator's explicit physical-stop verification.
+// This records that statement; it does not pretend to verify another process.
+func AdoptWithEvidence(stateDir, hub, actor, evidence string) error {
+	if hub == "" || stateDir == "" {
+		return errors.New("adopt requires node state directory and hub identity")
+	}
+	unlock, err := steveruntime.AcquireLock(filepath.Join(stateDir, "instance-control"))
+	if err != nil {
+		return fmt.Errorf("stop the node instance before adoption: %w", err)
+	}
+	defer unlock()
+	streams, err := os.ReadDir(filepath.Join(stateDir, "streams"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var unknown []string
+	for _, stream := range streams {
+		if !stream.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(stateDir, "streams", stream.Name(), "ended")); err != nil {
+			unknown = append(unknown, stream.Name())
+		}
+	}
+	if len(unknown) > 0 && strings.TrimSpace(evidence) == "" {
+		return fmt.Errorf("process streams %v have no verified exit; --evidence must record operator verification after physically stopping them", unknown)
 	}
 	s := &Server{}
-	c := ServerConfig{StateDir: stateDir}
-	s.cfg.Store(&c)
-	s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC(), Released: true})
-	return nil
+	s.cfg.Store(&ServerConfig{StateDir: stateDir})
+	previous, err := s.readOwner()
+	if err != nil {
+		return err
+	}
+	if previous.Hub != "" && previous.Hub != hub && !previous.Released && strings.TrimSpace(evidence) == "" {
+		return errors.New("previous owner did not cleanly release; explicit physical stop evidence is required")
+	}
+	record := struct {
+		From, To, Actor, Evidence string
+		At                        time.Time
+		UnknownStreams            []string
+	}{previous.Hub, hub, actor, evidence, time.Now().UTC(), unknown}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	if err := (&ledger.FileDocument{Path: filepath.Join(stateDir, "last-adoption.json")}).Save(raw); err != nil {
+		return err
+	}
+	return s.writeOwner(hubOwner{Hub: hub, LastSeen: record.At, Released: true})
 }
 
 // advert reports what this machine can honestly do. Harnesses whose command

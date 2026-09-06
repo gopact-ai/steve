@@ -72,6 +72,7 @@ type Nodes interface {
 // Store holds every project's shadow repository on the hub — the default
 // durable place — and materialises workspaces anywhere.
 type Store struct {
+	Review           ReviewLimits
 	landingDriverTTL time.Duration
 	executions       *execution.Registry
 	Dir              string

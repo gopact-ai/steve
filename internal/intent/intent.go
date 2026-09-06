@@ -35,16 +35,17 @@ const (
 )
 
 type Intent struct {
-	ID          string          `json:"id"`
-	TaskID      string          `json:"task_id"`
-	AttemptID   string          `json:"attempt_id"`
-	Tool        string          `json:"tool"`
-	Fingerprint string          `json:"fingerprint"`
-	State       State           `json:"state"`
-	Receipt     json.RawMessage `json:"receipt,omitempty"`
-	Error       string          `json:"error,omitempty"`
-	Resolution  string          `json:"resolution,omitempty"`
-	At          time.Time       `json:"at"`
+	RequiresReconciliation bool            `json:"requires_reconciliation,omitempty"`
+	ID                     string          `json:"id"`
+	TaskID                 string          `json:"task_id"`
+	AttemptID              string          `json:"attempt_id"`
+	Tool                   string          `json:"tool"`
+	Fingerprint            string          `json:"fingerprint"`
+	State                  State           `json:"state"`
+	Receipt                json.RawMessage `json:"receipt,omitempty"`
+	Error                  string          `json:"error,omitempty"`
+	Resolution             string          `json:"resolution,omitempty"`
+	At                     time.Time       `json:"at"`
 }
 
 // Blocked is a claim refused because the same task's identical call is
@@ -89,7 +90,7 @@ func (s *Service) Claim(ctx context.Context, taskID, attemptID, tool string, arg
 			return Intent{}, err
 		}
 		for _, prev := range all {
-			if prev.Fingerprint == fp && (prev.State == Unknown || prev.State == Dispatched) {
+			if (prev.RequiresReconciliation || prev.Fingerprint == fp) && (prev.State == Unknown || prev.State == Dispatched) {
 				prev, err = s.recoverDispatch(ctx, prev)
 				if err != nil {
 					return Intent{}, err

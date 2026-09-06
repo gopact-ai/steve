@@ -30,9 +30,9 @@ type Change struct {
 // Limits on what a review may cost: an index is at most this many
 // entries, a file's diff at most this many bytes, and git gets this long.
 const (
-	MaxChanges   = 500
-	MaxDiffBytes = 200 * 1024
-	diffTimeout  = 30 * time.Second
+	MaxChanges           = 500
+	MaxDiffBytes         = 200 * 1024
+	DefaultReviewTimeout = 30 * time.Second
 )
 
 // Changes indexes what differs from one snapshot to the next: status
@@ -42,7 +42,7 @@ func (r *Repo) Changes(ctx context.Context, from, to string) ([]Change, bool, er
 	if from == "" {
 		from = EmptyTree
 	}
-	ctx, cancel := context.WithTimeout(ctx, diffTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.Review.defaults().Timeout)
 	defer cancel()
 	status, err := r.git(ctx, nil, "diff-tree", "-r", "-z", "--no-renames", "--name-status", from, to)
 	if err != nil {
@@ -76,7 +76,7 @@ func (r *Repo) Changes(ctx context.Context, from, to string) ([]Change, bool, er
 		if st == "" || path == "" {
 			continue
 		}
-		if len(out) >= MaxChanges {
+		if len(out) >= r.Review.defaults().MaxChanges {
 			truncated = true
 			break
 		}
@@ -97,9 +97,9 @@ func (r *Repo) FileDiff(ctx context.Context, from, to, path string) (string, boo
 	if path == "" || strings.HasPrefix(path, "-") {
 		return "", false, errors.New("a path is required")
 	}
-	ctx, cancel := context.WithTimeout(ctx, diffTimeout)
+	ctx, cancel := context.WithTimeout(ctx, r.Review.defaults().Timeout)
 	defer cancel()
-	raw, truncated, err := runBounded(ctx, r.Dir, MaxDiffBytes, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", from, to, "--", path)
+	raw, truncated, err := runBounded(ctx, r.Dir, r.Review.defaults().MaxDiffBytes, "diff", "--no-ext-diff", "--no-textconv", "--no-renames", "--no-color", from, to, "--", path)
 	if err != nil {
 		return "", false, err
 	}
@@ -196,5 +196,9 @@ func (s *Store) reviewRepo(ctx context.Context, projectID, from, to string) (*Re
 	if to == "" {
 		return nil, errors.New("no after-snapshot: nothing changed, or the change was not captured")
 	}
-	return s.Repo(ctx, projectID)
+	r, err := s.Repo(ctx, projectID)
+	if err == nil {
+		r.Review = s.Review.defaults()
+	}
+	return r, err
 }

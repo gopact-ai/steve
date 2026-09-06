@@ -41,6 +41,7 @@ import (
 )
 
 type Request struct {
+	Locale         string
 	Channel        string
 	ConversationID string
 	Input          string
@@ -57,6 +58,8 @@ type Request struct {
 	Images     []harness.Media
 	OnProgress func(view.Progress)
 	OnAskUser  acphost.AskUserFunc
+	// OnTurnReady binds human requests to the admitted task and attempt.
+	OnTurnReady func(taskID, attemptID string)
 	// Origin marks a prompt Steve sent on the user's behalf rather than one
 	// they typed — a schedule firing, say. It rides onto the task so
 	// unattended work stays recognisable after the fact.
@@ -140,6 +143,13 @@ type Result struct {
 }
 
 type Coordinator struct {
+	*coordinatorState
+	text i18n.Catalog
+}
+
+// coordinatorState owns shared execution state. Request-local views only
+// replace the immutable text catalog; mutexes and runtime state are never copied.
+type coordinatorState struct {
 	executions   *execution.Registry
 	catalog      *agent.Catalog
 	store        *state.Store
@@ -178,7 +188,6 @@ type Coordinator struct {
 	defaultProject string
 	homeProject    string
 	node           string
-	text           i18n.Catalog
 	resumer        func(TaskResume)
 	notifier       func(TaskNotice)
 	afterTurn      func(taskID string)
@@ -205,10 +214,12 @@ type turnEntry struct {
 
 func New(catalog *agent.Catalog, store *state.Store, assembler *capability.Assembler, runtime runtime, timeout time.Duration) *Coordinator {
 	return &Coordinator{
-		catalog: catalog, store: store, assembler: assembler, runtime: runtime, timeout: timeout,
-		text:   i18n.New(i18n.LocaleZH),
-		active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
-		cancelPending: map[string]time.Time{},
+		text: i18n.New(i18n.LocaleZH),
+		coordinatorState: &coordinatorState{
+			catalog: catalog, store: store, assembler: assembler, runtime: runtime, timeout: timeout,
+			active: map[string]harness.Runner{}, cancels: map[string]*turnEntry{},
+			cancelPending: map[string]time.Time{},
+		},
 	}
 }
 
@@ -301,6 +312,15 @@ func (c *Coordinator) listenPrefix(req Request) string {
 }
 
 func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
+	c = c.localized(i18n.ContextLocale(ctx))
+	if req.Locale != "" {
+		c = c.localized(i18n.FromLang(req.Locale))
+	}
+	ctx = i18n.WithLocale(ctx, c.text.Locale())
+	return c.handle(ctx, req)
+}
+
+func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 	// Every arriving message is evidence that someone is present. The
 	// offline reminder reads exactly this: nothing arrived while the turn
 	// ran, so the person who asked is no longer watching.
@@ -509,6 +529,9 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if runningScope != nil {
 		runningScope.SetAttempt(att.ID)
 	}
+	if req.OnTurnReady != nil {
+		req.OnTurnReady(tracked, att.ID)
+	}
 	servers := append(append([]acp.MCPServer(nil), capabilities.MCPServers...), bound...)
 	beat, stopBeat := context.WithCancel(ctx)
 	defer stopBeat()
@@ -581,7 +604,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if prefix := c.listenPrefix(req); prefix != "" {
 		user = prefix + user
 	}
-	building := c.buildingProfile(req)
+	building := binding.ProjectID == c.homeProject && c.buildingProfile(req)
 	if building {
 		user = onboard.Continue(c.text.Locale(), c.homePath, c.excerpts(prompt)) + "\n\n" + user
 	}

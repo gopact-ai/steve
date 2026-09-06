@@ -11,6 +11,8 @@ import (
 
 var ErrFileChanged = errors.New("configuration file changed outside this process; restart before applying management changes")
 
+func (c *Config) FileRevision() string { return c.sourceFingerprint }
+
 func fingerprint(raw []byte) string {
 	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
