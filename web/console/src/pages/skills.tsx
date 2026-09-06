@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { Download01, Plus, PuzzlePiece01, RefreshCw01, Server01, Trash01 } from "@untitledui/icons";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown, Download01, Folder, Plus, PuzzlePiece01, RefreshCw01, Server01, Trash01 } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
@@ -30,15 +30,18 @@ export function SkillsPage() {
     const [newPath, setNewPath] = useState("");
     const [spec, setSpec] = useState("");
     const [machines, setMachines] = useState<MachineSkills[] | null>(null);
-    const load = useCallback(() => { void fetchSkills().then((v) => { setView(v); setError(""); }).catch((e) => setError(fail(e))); }, []);
+    const pending = useRef(false);
+    const load = useCallback(async () => { try { setView(await fetchSkills()); setError(""); } catch (e) { setError(fail(e)); } }, []);
     const loadMachines = useCallback(() => { void fetchMachineSkills().then((v) => setMachines(v.machines)).catch((e) => setError(fail(e))); }, []);
     const [rescanning, setRescanning] = useState(false);
     const rescan = () => { setRescanning(true); void refreshMachineSkills().then((v) => setMachines(v.machines)).catch((e) => setError(fail(e))).finally(() => setRescanning(false)); };
     useEffect(() => { load(); }, [load, snap.at]);
     useEffect(() => { loadMachines(); }, [loadMachines]);
     async function run(key: string, op: () => Promise<unknown>) {
+        if (pending.current) return;
+        pending.current = true;
         setBusy(key); setError("");
-        try { await op(); load(); } catch (e) { setError(fail(e)); } finally { setBusy(""); }
+        try { await op(); await load(); } catch (e) { setError(fail(e)); } finally { pending.current = false; setBusy(""); }
     }
     // The table is what the hub hands out or could: shipped skills, the
     // owner's own, and what has been turned on from a source. A source's
@@ -46,7 +49,7 @@ export function SkillsPage() {
     const all = view?.skills ?? [];
     const skills = all.filter((s) => s.builtin || !s.source || s.enabled);
     const on = all.filter((s) => s.enabled).length;
-    const enabledOf = (name: string) => all.find((s) => s.name === name)?.enabled ?? false;
+    const skillsByName = new Map(all.map((skill) => [skill.name, skill]));
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title="技能"
@@ -96,35 +99,40 @@ export function SkillsPage() {
                 </TableCard.Root>
                 <Panel title="安装来源" description="从 Git 仓库安装，再选择需要启用的技能。"
                     aside={(view?.sources.length ?? 0) > 0 ? <Button size="sm" color="secondary" iconLeading={RefreshCw01} isLoading={busy === "update"} isDisabled={busy !== ""} onClick={() => void run("update", updateSkillSources)}>全部更新</Button> : undefined}>
-                    <div className="flex min-w-0 flex-wrap items-end gap-2">
-                        <Input size="sm" label="仓库" placeholder="anthropics/skills 或 GitHub 链接…" value={spec} onChange={setSpec} className="min-w-48 flex-1" hint="支持仓库和子目录链接。私有仓库使用 SSH 地址与 hub 的密钥。" />
-                        <Button size="sm" color="primary" iconLeading={Download01} isDisabled={!spec.trim() || busy !== ""} isLoading={busy === "install"} onClick={() => void run("install", async () => { await addSkillSource(spec.trim()); setSpec(""); })}>安装</Button>
-                    </div>
+                    <form className="skill-source-install" onSubmit={(event) => { event.preventDefault(); if (spec.trim()) void run("install", async () => { await addSkillSource(spec.trim()); setSpec(""); }); }}>
+                        <Input size="sm" label="仓库地址" aria-describedby="skill-source-hint" placeholder="anthropics/skills 或 GitHub 链接…" value={spec} onChange={setSpec} isDisabled={busy === "install"} />
+                        <Button type="submit" size="sm" color="primary" iconLeading={Download01} isDisabled={!spec.trim() || busy !== ""} isLoading={busy === "install"}>安装</Button>
+                        <p id="skill-source-hint" className="skill-source-hint">支持仓库和子目录链接。私有仓库使用 SSH 地址与 hub 的密钥。</p>
+                    </form>
                     {(view?.sources.length ?? 0) > 0 && (
-                        <ul className="flex flex-col divide-y divide-secondary">
-                            {view!.sources.map((src) => (
-                                <li key={src.slug} className="flex items-start gap-3 py-2">
-                                    <div className="min-w-0 flex-1">
-                                        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
-                                            <span className="font-medium text-primary">{src.slug}</span>
-                                            {src.head && <Mono className="text-quaternary">{src.head}</Mono>}
-                                            {src.error && <Badge type="pill-color" size="sm" color="error">更新失败</Badge>}
-                                        </div>
-                                        <div className="truncate font-mono u-meta text-quaternary" title={src.url}>{src.url}{src.ref ? ` @ ${src.ref}` : ""}{src.subdir ? ` · ${src.subdir}` : ""}</div>
-                                        <div className="mt-1 text-xs text-tertiary">{src.skills.length} 个技能{src.fetched_at ? ` · 拉取于 ${when(src.fetched_at)}` : ""}</div>
-                                        <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
-                                            {src.skills.map((n) => (
-                                                <li key={n} className="flex items-center gap-1.5 text-xs">
-                                                    <Toggle size="sm" aria-label={`启用 ${n}`} isSelected={enabledOf(n)} isDisabled={busy !== ""} onChange={(v) => void run(n, () => setSkill(n, v))} />
-                                                    <Mono className={enabledOf(n) ? "text-primary" : "text-tertiary"}>{n}</Mono>
-                                                </li>
-                                            ))}
+                        <ul className="skill-source-list">
+                            {view!.sources.map((src) => {
+                                const repository = src.url.match(/github\.com[/:]([^\s?#]+?)(?:\.git)?$/)?.[1] || src.slug;
+                                const enabled = src.skills.filter((name) => skillsByName.get(name)?.enabled).length;
+                                return <li key={src.slug} className="skill-source-card">
+                                    <header className="skill-source-header">
+                                        <Folder aria-hidden="true" className="size-5 shrink-0 text-fg-tertiary" />
+                                        <div className="min-w-0 flex-1"><h3 className="text-sm font-semibold break-words text-primary">{repository}</h3><p className="mt-1 text-xs text-tertiary">{enabled} / {src.skills.length} 个已启用{src.fetched_at ? ` · 更新于 ${when(src.fetched_at)}` : ""}</p></div>
+                                        {src.error && <Badge type="pill-color" size="sm" color="error">更新失败</Badge>}
+                                        <ButtonUtility size="sm" color="tertiary" icon={Trash01} tooltip="移除来源并停用其技能" aria-label={`移除来源 ${repository}`} isDisabled={busy !== ""} onClick={() => void run("rmsrc:" + src.slug, () => removeSkillSource(src.slug))} />
+                                    </header>
+                                    {src.error && <p role="alert" className="px-4 pb-3 text-sm text-error-primary">{src.error}</p>}
+                                    <details className="skill-source-skills group/source">
+                                        <summary className="skill-source-summary"><span>管理技能</span><span className="ml-auto text-tertiary">{src.skills.length} 个</span><ChevronDown aria-hidden="true" className="size-4 text-fg-tertiary group-open/source:rotate-180" /></summary>
+                                        <ul className="skill-source-grid">
+                                            {src.skills.map((name) => {
+                                                const skill = skillsByName.get(name);
+                                                return <li key={name} className="skill-source-row">
+                                                    <button type="button" className="skill-source-name" aria-label={`查看 ${name} 文档`} onClick={() => void fetchSkill(name).then(setOpened).catch((e) => setError(fail(e)))}><span className="block truncate text-sm font-medium text-primary" title={name}>{name}</span>{skill?.description && <span className="mt-1 line-clamp-1 text-xs text-tertiary" title={skill.description}>{skill.description}</span>}</button>
+                                                    <Toggle size="sm" aria-label={`启用 ${name}`} className="min-h-11 shrink-0 items-center" isSelected={skill?.enabled ?? false} isDisabled={busy !== ""} onChange={(value) => void run(name, () => setSkill(name, value))} />
+                                                </li>;
+                                            })}
+                                            {src.skills.length === 0 && <li className="p-4 text-sm text-tertiary">此来源没有可用技能。</li>}
                                         </ul>
-                                        {src.error && <div className="mt-1 text-xs text-error-primary">{src.error}</div>}
-                                    </div>
-                                    <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip="移除来源并停用其技能" isDisabled={busy !== ""} onClick={() => void run("rmsrc:" + src.slug, () => removeSkillSource(src.slug))} />
-                                </li>
-                            ))}
+                                    </details>
+                                    <details className="skill-source-info"><summary>来源信息</summary><div className="pt-2 pb-3"><KeyValue dense rows={[{ k: "仓库", v: <Mono className="break-all">{src.url}</Mono> }, ...(src.ref ? [{ k: "分支 / 标签", v: src.ref }] : []), ...(src.subdir ? [{ k: "子目录", v: src.subdir }] : []), ...(src.head ? [{ k: "版本", v: <Mono className="break-all">{src.head}</Mono> }] : [])]} /></div></details>
+                                </li>;
+                            })}
                         </ul>
                     )}
                 </Panel>
@@ -173,9 +181,10 @@ export function SkillsPage() {
                             ))}
                             {view && view.search_paths.length === 0 && <li className="py-1.5 text-xs text-quaternary">没有搜索目录。</li>}
                         </ul>
-                        <div className="flex min-w-0 flex-wrap items-end gap-2">
-                            <Input size="sm" label="添加目录" placeholder="/home/me/skills" value={newPath} onChange={setNewPath} className="min-w-48 flex-1" hint="hub 上已存在的目录。" />
+                        <div className="skill-source-install">
+                            <Input size="sm" label="添加目录" aria-describedby="skill-path-hint" placeholder="/home/me/skills" value={newPath} onChange={setNewPath} isDisabled={busy === "add"} />
                             <Button size="sm" color="secondary" iconLeading={Plus} isDisabled={!newPath.trim() || busy !== ""} isLoading={busy === "add"} onClick={() => void run("add", async () => { await addSkillPath(newPath.trim()); setNewPath(""); })}>添加</Button>
+                            <p id="skill-path-hint" className="skill-source-hint">hub 上已存在的目录。</p>
                         </div>
                     </Panel>
                     <Panel title="同步状态" badge={view?.fingerprint ? <Mono className="text-quaternary">{view.fingerprint.slice(0, 12)}</Mono> : undefined}>

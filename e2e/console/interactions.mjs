@@ -872,6 +872,55 @@ checks["review-mobile-origin"] = async (f) => {
     await noHorizontalOverflow(f.page);
 };
 
+checks["skill-source-controls"] = async (f) => {
+    const names = ["alpha", "long-skill-name-".repeat(8)];
+    const skills = names.map((name) => ({ name, path: `/test/skills/${name}`, root: "/test/skills", source: "example-skills", description: "A useful skill with a concise description.", enabled: false, agents: [], projects: [] }));
+    const source = { slug: "example-skills", url: "https://github.com/example/skills.git", root: "/test/skills", head: "0123456", skills: names };
+    let hold = null, rejectInstall = false;
+    await f.page.route(/\/console\/skills(?:\/|$)/, async (route) => {
+        const req = route.request(), pathname = new URL(req.url()).pathname;
+        if (req.method() !== "GET") {
+            const input = req.postDataJSON(); f.calls.push({ path: pathname, ...input });
+            if (hold) await hold;
+            if (pathname.endsWith("/sources") && rejectInstall) return route.fulfill({ status: 400, body: "Invalid source" });
+            if (req.method() === "PUT") skills.find((skill) => pathname.endsWith(encodeURIComponent(skill.name))).enabled = input.enabled;
+            return route.fulfill({ json: { ok: true } });
+        }
+        if (pathname.endsWith("/machines")) return route.fulfill({ json: { machines: [] } });
+        if (pathname === "/console/skills") return route.fulfill({ json: { skills, sources: [source], search_paths: [], nodes: [] } });
+        return route.fulfill({ json: { name: "alpha", path: "/test/skills/alpha", content: "# Alpha\n\nSkill documentation." } });
+    });
+    await f.page.getByRole("link", { name: "技能", exact: true }).click();
+    const input = f.page.getByRole("textbox", { name: "仓库地址", exact: true });
+    const install = f.page.getByRole("button", { name: "安装", exact: true });
+    await input.fill("example/new-skills");
+    const pending = gate(); hold = pending.promise; f.releases.push(pending.release);
+    await install.dblclick();
+    await eventually(() => f.calls.length === 1, "Installation should submit once");
+    assert.equal(await input.isEnabled(), false, "A pending install must not clear a newer repository entry");
+    pending.release();
+    await eventually(() => input.isEnabled(), "Installation form must recover");
+    assert.equal(await input.inputValue(), "");
+    assert.equal(f.calls.length, 1, "Repeated installation click must not repeat the request");
+    hold = null; rejectInstall = true;
+    await input.fill("bad/source"); await input.press("Enter");
+    await f.page.getByRole("alert").filter({ hasText: "Invalid source" }).waitFor();
+    assert.equal(await input.inputValue(), "bad/source", "Failed install must preserve its address for correction");
+    const card = f.page.locator(".skill-source-card");
+    await card.getByText("管理技能", { exact: true }).click();
+    await card.locator("label").filter({ has: f.page.getByRole("switch", { name: "启用 alpha", exact: true }) }).click();
+    await card.getByText(/1 \/ 2 个已启用/).waitFor();
+    await card.getByRole("button", { name: "查看 alpha 文档", exact: true }).click();
+    await f.page.getByRole("dialog").getByText("Skill documentation.", { exact: true }).waitFor();
+    await f.page.getByRole("button", { name: "关闭", exact: true }).click();
+    for (const width of [1600, 390]) {
+        await f.page.setViewportSize({ width, height: 900 });
+        const a = await input.boundingBox(), b = await install.boundingBox();
+        assert.ok(Math.abs(a.y - b.y) <= 1 && Math.abs(a.y + a.height - b.y - b.height) <= 1, "Install button must align with the input, excluding its label and hint");
+        await noHorizontalOverflow(f.page);
+    }
+};
+
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);
 let failed = 0;
 try {
