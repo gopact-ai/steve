@@ -11,6 +11,12 @@ changes that affect those paths.
 Use a **merge commit** for PRs in **steve**. The **acp** repository uses **squash
 merges and linear history**, enforced by its ruleset; keep that policy there.
 
+## Workbench UI
+
+Project-local design and frontend review skills are listed in
+[.agents/skills](.agents/skills/README.md). Follow the
+[workbench instructions](web/console/AGENTS.md) when changing the console UI.
+
 ## Live fleet gate
 
 Run from the repository root on the hub machine, with an existing hub and remote
