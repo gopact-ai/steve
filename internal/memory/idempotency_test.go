@@ -60,7 +60,7 @@ func TestRememberIdempotency(t *testing.T) {
 }
 
 func TestRememberIdempotencyScopeAndExpiry(t *testing.T) {
-	svc, _ := newTestService(t)
+	svc, m := newTestService(t)
 	ctx := t.Context()
 	now := time.Now().UTC()
 	svc.now = func() time.Time { return now }
@@ -81,7 +81,11 @@ func TestRememberIdempotencyScopeAndExpiry(t *testing.T) {
 	if r, err := svc.Remember(ctx, Global, "", "after expiry", "shared-key", who); err != nil || seen[r.ID] || !r.New {
 		t.Fatalf("expired key did not allow a new intent: %+v, %v", r, err)
 	}
-	keys, err := loadReceipts(filepath.Join(filepath.Dir(svc.AuditPath()), "idempotency.jsonl"), now)
+	files, err := m.requestFiles(Global)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, err := loadReceipts(files.receipts, now)
 	if err != nil || len(keys) != 1 {
 		t.Fatalf("expired receipts were not pruned: %+v, %v", keys, err)
 	}

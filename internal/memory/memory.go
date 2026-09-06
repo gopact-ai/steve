@@ -114,12 +114,14 @@ type Receipt struct {
 
 // Store is an authoritative keeper of scopes. Snapshot is the whole of a
 // scope as the injection wants it; Replace is a whole-file edit from the
-// profile page; the rest are one fact at a time.
+// profile page; the rest are one fact at a time. RememberOnce owns the
+// recoverable fact/receipt boundary and reports whether it replayed a request.
 type Store interface {
 	Snapshot(ctx context.Context, scope Scope) (text string, bytes int, err error)
 	Replace(ctx context.Context, scope Scope, text string) error
 	List(ctx context.Context, scope Scope) ([]Item, error)
 	Remember(ctx context.Context, scope Scope, section, text string) (Receipt, error)
+	RememberOnce(ctx context.Context, scope Scope, section, text, key string, now time.Time) (Receipt, bool, error)
 	Recall(ctx context.Context, scope Scope, query string, limit int) ([]Hit, error)
 	Forget(ctx context.Context, scope Scope, id string) (Item, error)
 }
@@ -151,8 +153,6 @@ type Service struct {
 	retriever Retriever
 	auditPath string
 	mu        sync.Mutex
-	requests  sync.Mutex
-	keys      map[requestKey]requestReceipt
 	now       func() time.Time
 }
 
@@ -221,15 +221,22 @@ func (s *Service) Replace(ctx context.Context, scope Scope, text string, who Act
 // idempotencyKey is set, even if the retried text or the memory has changed.
 func (s *Service) Remember(ctx context.Context, scope Scope, section, text, idempotencyKey string, who Actor) (Receipt, error) {
 	if idempotencyKey != "" {
-		return s.rememberOnce(scope, idempotencyKey, func() (Receipt, error) {
-			return s.remember(ctx, scope, section, text, idempotencyKey, who)
-		})
+		r, replayed, err := s.store.RememberOnce(ctx, scope, section, text, idempotencyKey, s.now())
+		if !replayed {
+			s.recordRemember(ctx, scope, section, text, idempotencyKey, who, r, err)
+		}
+		return r, err
 	}
 	return s.remember(ctx, scope, section, text, "", who)
 }
 
 func (s *Service) remember(ctx context.Context, scope Scope, section, text, key string, who Actor) (Receipt, error) {
 	r, err := s.store.Remember(ctx, scope, section, text)
+	s.recordRemember(ctx, scope, section, text, key, who, r, err)
+	return r, err
+}
+
+func (s *Service) recordRemember(ctx context.Context, scope Scope, section, text, key string, who Actor, r Receipt, err error) {
 	line := auditLine{Op: "remember", Scope: scope, Actor: who, ID: r.ID, Section: section, Bytes: len([]byte(text)), New: r.New, Err: errText(err), IdempotencyKey: key}
 	if err == nil && key != "" {
 		line.Receipt = &r
@@ -240,7 +247,6 @@ func (s *Service) remember(ctx context.Context, scope Scope, section, text, key 
 			s.audit(auditLine{Op: "index", Scope: scope, Actor: who, ID: r.ID, Err: ierr.Error()})
 		}
 	}
-	return r, err
 }
 
 // Recall asks the retriever when there is one and it answers; the
@@ -316,7 +322,8 @@ func errText(err error) string {
 // MEMORY.md, a project's is <dir>/projects/<id>.md. Each fact is a
 // bullet; a bullet Steve wrote carries its id in a trailing comment, a
 // bullet the owner typed gets a content hash until Steve rewrites it.
-// Every change takes the scope's lock, reads, edits, fsyncs and renames.
+// Every change takes the scope's lock and recovers any pending keyed write
+// before editing. Facts, pending writes and receipts use durable replacements.
 type Markdown struct {
 	HomePath string
 	Dir      string
@@ -379,46 +386,47 @@ func (m *Markdown) read(scope Scope) (string, error) {
 }
 
 func (m *Markdown) write(scope Scope, text string) error {
-	if scope.Kind == KindGlobal {
-		return home.Write(m.HomePath, home.FileMemory, text)
+	path, err := m.writeTarget(scope)
+	if err != nil {
+		return err
 	}
+	if n := len([]byte(text)); n > Budget(scope) {
+		return fmt.Errorf("memory would be %d bytes; only %d reach the agent — shorten it", n, Budget(scope))
+	}
+	return atomicMemoryFile(path, []byte(text))
+}
+
+// Keep global MEMORY.md inside the resolved home, including an existing
+// in-home symlink, while using the same durable writer as project memory.
+func (m *Markdown) writeTarget(scope Scope) (string, error) {
 	path, err := m.Path(scope)
+	if err != nil || scope.Kind != KindGlobal {
+		return path, err
+	}
+	root, err := filepath.EvalSymlinks(m.HomePath)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if n := len([]byte(text)); n > BudgetProject {
-		return fmt.Errorf("project memory would be %d bytes; only %d reach the agent — shorten it", n, BudgetProject)
+	target := filepath.Join(root, home.FileMemory)
+	info, err := os.Lstat(target)
+	if os.IsNotExist(err) {
+		return target, nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), ".memory.*")
 	if err != nil {
-		return err
+		return "", err
 	}
-	if _, err := tmp.WriteString(text); err != nil {
-		tmp.Close()
-		_ = os.Remove(tmp.Name())
-		return err
+	if info.Mode()&os.ModeSymlink == 0 {
+		return target, nil
 	}
-	if err := tmp.Sync(); err != nil {
-		tmp.Close()
-		_ = os.Remove(tmp.Name())
-		return err
+	resolved, err := filepath.EvalSymlinks(target)
+	if err != nil {
+		return "", err
 	}
-	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmp.Name())
-		return err
+	rel, err := filepath.Rel(root, resolved)
+	if err != nil || rel == "." || filepath.IsAbs(rel) || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", home.ErrEscape
 	}
-	_ = os.Chmod(tmp.Name(), 0o600)
-	if err := os.Rename(tmp.Name(), path); err != nil {
-		return err
-	}
-	if d, err := os.Open(filepath.Dir(path)); err == nil {
-		_ = d.Sync()
-		d.Close()
-	}
-	return nil
+	return resolved, nil
 }
 
 // Snapshot is the file without the id comments; an untouched template
@@ -450,6 +458,9 @@ func (m *Markdown) Replace(_ context.Context, scope Scope, text string) error {
 		return err
 	}
 	defer unlock()
+	if err := m.recoverRemember(scope, time.Now()); err != nil {
+		return err
+	}
 	old, err := m.read(scope)
 	if err != nil {
 		return err
@@ -497,41 +508,57 @@ func (m *Markdown) List(_ context.Context, scope Scope) ([]Item, error) {
 // Remember adds one bullet under a section, creating the file when there
 // is none. The same fact twice is one fact.
 func (m *Markdown) Remember(_ context.Context, scope Scope, section, text string) (Receipt, error) {
-	text = strings.TrimSpace(spaces.ReplaceAllString(text, " "))
-	if text == "" {
-		return Receipt{}, errors.New("nothing to remember")
-	}
-	if len([]rune(text)) > MaxFact {
-		return Receipt{}, fmt.Errorf("a memory is a short fact; keep it under %d characters", MaxFact)
-	}
-	if strings.Contains(text, "<!--") {
-		return Receipt{}, errors.New("a memory cannot contain a comment marker")
-	}
-	section = normalizeSection(scope, section)
 	unlock, err := m.lock(scope)
 	if err != nil {
 		return Receipt{}, err
 	}
 	defer unlock()
+	if err := m.recoverRemember(scope, time.Now()); err != nil {
+		return Receipt{}, err
+	}
 	body, err := m.read(scope)
 	if err != nil {
 		return Receipt{}, err
 	}
+	after, r, err := prepareRemember(scope, section, text, body)
+	if err != nil {
+		return Receipt{}, err
+	}
+	if r.New {
+		if err := m.write(scope, after); err != nil {
+			return Receipt{}, err
+		}
+	}
+	return r, nil
+}
+
+func prepareRemember(scope Scope, section, text, body string) (string, Receipt, error) {
+	text = strings.TrimSpace(spaces.ReplaceAllString(text, " "))
+	if text == "" {
+		return "", Receipt{}, errors.New("nothing to remember")
+	}
+	if len([]rune(text)) > MaxFact {
+		return "", Receipt{}, fmt.Errorf("a memory is a short fact; keep it under %d characters", MaxFact)
+	}
+	if strings.Contains(text, "<!--") {
+		return "", Receipt{}, errors.New("a memory cannot contain a comment marker")
+	}
+	section = normalizeSection(scope, section)
 	if strings.TrimSpace(body) == "" || (scope.Kind == KindGlobal && home.IsTemplate(body) && !hasFacts(body)) {
 		body = Template(scope)
 	}
 	key := hashOf(text)
 	for _, it := range parse(scope, body) {
 		if hashOf(it.Text) == key {
-			return Receipt{ID: it.ID, New: false, Bytes: len([]byte(stripIDs(body))), Budget: Budget(scope)}, nil
+			return body, Receipt{ID: it.ID, New: false, Bytes: len([]byte(stripIDs(body))), Budget: Budget(scope)}, nil
 		}
 	}
 	id := newID()
 	body = insertBullet(body, section, "- "+text+" "+idComment(id))
-	if err := m.write(scope, body); err != nil {
-		return Receipt{}, err
+	if len([]byte(body)) > Budget(scope) {
+		return "", Receipt{}, fmt.Errorf("memory would be %d bytes; only %d reach the agent — shorten it", len([]byte(body)), Budget(scope))
 	}
-	return Receipt{ID: id, New: true, Bytes: len([]byte(stripIDs(body))), Budget: Budget(scope)}, nil
+	return body, Receipt{ID: id, New: true, Bytes: len([]byte(stripIDs(body))), Budget: Budget(scope)}, nil
 }
 
 // Recall scores every fact by how many of the query's words it holds.
@@ -573,6 +600,9 @@ func (m *Markdown) Forget(_ context.Context, scope Scope, id string) (Item, erro
 		return Item{}, err
 	}
 	defer unlock()
+	if err := m.recoverRemember(scope, time.Now()); err != nil {
+		return Item{}, err
+	}
 	body, err := m.read(scope)
 	if err != nil {
 		return Item{}, err
