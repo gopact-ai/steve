@@ -1,0 +1,43 @@
+.usage-dashboard { display: flex; min-width: 0; flex-direction: column; gap: 22px; padding-block: 8px 20px; }
+.usage-heading { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.usage-ranges button { min-width: 48px; min-height: 34px; }
+.usage-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 24px; padding: 8px 0 0; }
+.usage-metric { min-width: 0; border-right: 1px solid var(--color-border-secondary); }
+.usage-metric:last-child { border: 0; }
+.usage-metric h3 { color: var(--color-text-tertiary); font-size: 12px; font-weight: 500; }
+.usage-metric > strong { display: block; margin-top: 10px; font-size: 30px; line-height: 1.2; font-weight: 600; letter-spacing: -.8px; font-variant-numeric: tabular-nums; color: var(--color-text-primary); }
+.usage-metric p { margin-top: 8px; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.6; }
+.usage-token-details { display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--color-text-tertiary); font-size: 12px; }
+.usage-token-details b { margin-left: 6px; color: var(--color-text-secondary); font-weight: 500; font-variant-numeric: tabular-nums; }
+.usage-chart-panel { border: 1px solid var(--color-border-secondary); border-radius: 12px; background: var(--color-bg-primary); min-width: 0; }
+.usage-chart-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px 0; }
+.usage-chart-value { display: flex; align-items: center; gap: 8px; padding: 18px 24px 4px; font-size: 12px; color: var(--color-text-secondary); }
+.usage-chart-value strong { font-size: 16px; margin-left: 4px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.usage-line-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--color-bg-brand-solid); }
+.usage-chart { position: relative; width: 100%; height: 278px; min-width: 0; padding: 4px 12px 8px; }
+.usage-chart .recharts-surface:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; border-radius: 6px; }
+.usage-chart-empty { position: absolute; inset: 35% 24px auto 72px; padding: 10px; text-align: center; color: var(--color-text-tertiary); background: var(--color-bg-primary); font-size: 13px; pointer-events: none; }
+.usage-chart-note { border-top: 1px solid var(--color-border-secondary); padding: 14px 24px; font-size: 12px; line-height: 1.7; color: var(--color-text-tertiary); }
+.usage-tooltip { min-width: 180px; max-width: 280px; padding: 12px 14px; border: 1px solid var(--color-border-primary); border-radius: 8px; background: var(--color-bg-primary); box-shadow: 0 4px 16px rgb(0 0 0 / .1); color: var(--color-text-secondary); font-size: 12px; line-height: 1.8; }
+.usage-tooltip strong { margin-left: 10px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.usage-breakdowns { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 22px; }
+.usage-breakdown { min-width: 0; border: 1px solid var(--color-border-secondary); }
+.usage-dimension-name { display: block; min-width: 0; max-width: 220px; overflow-wrap: anywhere; font-size: 13px; color: var(--color-text-primary); }
+.usage-period-details { border: 1px solid var(--color-border-secondary); border-radius: 10px; overflow: hidden; }
+.usage-period-details > summary { display: flex; align-items: center; gap: 8px; min-height: 44px; padding: 12px 18px; list-style: none; font-size: 13px; color: var(--color-text-secondary); }
+.usage-period-details > summary::-webkit-details-marker { display: none; }
+.usage-period-details table { width: 100%; border-collapse: collapse; font-size: 12px; white-space: nowrap; }
+.usage-period-details th, .usage-period-details td { text-align: left; padding: 12px 18px; border-top: 1px solid var(--color-border-secondary); font-variant-numeric: tabular-nums; font-weight: 400; }
+.usage-period-details thead { color: var(--color-text-tertiary); background: var(--color-bg-secondary); }
+.usage-data-state { display: flex; align-items: center; justify-content: center; min-height: 260px; padding: 32px; border: 1px solid var(--color-border-secondary); border-radius: 12px; color: var(--color-text-tertiary); font-size: 14px; }
+@media (max-width: 767px) {
+    .usage-heading { align-items: flex-start; flex-wrap: wrap; }
+    .usage-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 16px; }
+    .usage-metric:nth-child(2) { border: 0; }
+    .usage-metric > strong { font-size: 26px; }
+    .usage-chart-header { padding: 16px 16px 0; }
+    .usage-chart { height: 240px; padding-inline: 0; }
+    .usage-chart-value, .usage-chart-note { padding-inline: 16px; }
+    .usage-breakdowns { grid-template-columns: minmax(0, 1fr); }
+    .usage-token-details { gap: 8px 16px; }
+}

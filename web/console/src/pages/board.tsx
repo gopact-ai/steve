@@ -1,4 +1,5 @@
-import { useMemo, useState } from "react";
+import { lazy, Suspense, useMemo, useState } from "react";
+import { useSearchParams } from "react-router";
 import { ClipboardCheck, Clock } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
@@ -16,6 +17,7 @@ import { TaskMetaMenu, TaskTitleEditor, useTaskMeta } from "@/components/steve/t
 import { Nothing, StateBadge, Where, taskState } from "@/components/steve/ui";
 
 type TabKey = "active" | "all" | "scheduled" | "usage";
+const UsageDashboard = lazy(() => import("./usage-dashboard"));
 const lanes: { key: string; title: string; hint: string }[] = [
     { key: "pending", title: "待继续", hint: "等待下一条指令或排队执行" },
     { key: "running", title: "执行中", hint: "正在执行任务" },
@@ -28,7 +30,10 @@ const lanes: { key: string; title: string; hint: string }[] = [
 export function BoardPage() {
     const { snap } = useFleet();
     const { fill } = useIntent();
-    const [tab, setTab] = useState<TabKey>("active");
+    const [params, setParams] = useSearchParams();
+    const selectedTab = params.get("tab");
+    const tab: TabKey = selectedTab === "all" || selectedTab === "scheduled" || selectedTab === "usage" ? selectedTab : "active";
+    const setTab = (value: TabKey) => { const next = new URLSearchParams(params); next.set("tab", value); setParams(next, { replace: true }); };
     const [selected, setSelected] = useState<string | null>(null);
     const [showArchived, setShowArchived] = useState(false);
     const byID = useMemo(() => new Map(snap.tasks.map((t) => [t.id, t])), [snap.tasks]);
@@ -37,29 +42,31 @@ export function BoardPage() {
     const running = roots.filter((t) => t.lane === "running").length;
     const needsYou = roots.filter((t) => t.lane === "needs_you").length;
     const today = new Date().toISOString().slice(0, 10);
-    const todayUsage = snap.usage.by_day.find((r) => r.key === today);
+    const todayUsage = snap.usage.periods?.["1d"]?.total ?? snap.usage.by_day.find((r) => r.key === today);
+    const usageUnavailable = snap.sources.some((source) => source.name === "ledger" && (!source.wired || source.error));
+    const todayTokens = todayUsage && todayUsage.attempts > 0 && (todayUsage.unreported || 0) >= todayUsage.attempts ? "未上报" : `${fmtTokens(todayUsage?.tokens.total || 0)} tok`;
     const setAside = roots.filter((t) => t.lane === "set_aside");
     const current = selected ? byID.get(selected) : undefined;
 
     return (
         <div className="workbench-page flex h-full min-w-0 flex-col">
             <PageHeader title="任务"
-                description="查看进度、处理阻塞，以及安排接下来的工作。"
-                actions={<>
+                description={tab === "usage" ? "按时间范围查看执行与 Token 用量。" : "查看进度、处理阻塞，以及安排接下来的工作。"}
+                actions={tab !== "usage" ? <>
                     <Toggle size="sm" label="显示已归档" isSelected={showArchived} onChange={setShowArchived} />
                     <Button size="sm" color="primary" onClick={() => fill("/plan")}>新建计划</Button>
-                </>}>
+                </> : undefined}>
                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as TabKey)}>
                     <TabList type="button-border" size="sm" items={[{ id: "active", label: "进行中" }, { id: "all", label: "全部" }, { id: "scheduled", label: "已安排", badge: snap.schedules.length || undefined }, { id: "usage", label: "用量" }]}>
                         {(item) => <Tab {...item} />}
                     </TabList>
                 </Tabs>
-                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                {tab !== "usage" && <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
                     <Stat label="执行中" value={running} tone={running ? "blue" : "gray"} />
                     <Stat label="待处理" value={needsYou} tone={needsYou ? "warning" : "gray"} />
-                    <Stat label="今日" value={todayUsage ? `${spend(todayUsage.tokens)} · ${fmtSeconds(todayUsage.seconds)}` : "—"} tone="gray" />
-                </div>
+                    <Stat label="今日" value={todayUsage && !usageUnavailable ? `${todayTokens} · ${fmtSeconds(todayUsage.seconds)}` : "—"} tone="gray" />
+                </div>}
                 </div>
             </PageHeader>
             <div className="workbench-page-body min-h-0 min-w-0 flex-1 overflow-auto px-4 py-5 sm:px-6 lg:px-8">
@@ -86,7 +93,7 @@ export function BoardPage() {
                 )}
                 {tab === "all" && <AllTasks tasks={visibleTasks} onOpen={setSelected} />}
                 {tab === "scheduled" && <Scheduled />}
-                {tab === "usage" && <UsagePanel />}
+                {tab === "usage" && <Suspense fallback={<p role="status" className="p-5 text-sm text-tertiary">载入用量概览…</p>}><UsageDashboard /></Suspense>}
             </div>
             {current && <TaskDrawer t={current} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === current.id)} onClose={() => setSelected(null)} />}
         </div>
@@ -221,56 +228,5 @@ function Scheduled() {
                 </Table>
             )}
         </TableCard.Root>
-    );
-}
-
-function UsagePanel() {
-    const { snap } = useFleet();
-    const u = snap.usage;
-    const tables: { title: string; rows: typeof u.by_day; hint: string }[] = [
-        { title: "按天", rows: [...u.by_day].reverse(), hint: "按 hub 本地日切分" },
-        { title: "按 Agent", rows: u.by_agent, hint: "" },
-        { title: "按模型", rows: u.by_model, hint: "以会话报告的实际模型为准" },
-    ];
-    return (
-        <div className="flex flex-col gap-6">
-            <div className="workbench-panel rounded-lg bg-primary px-5 py-4 ring-1 ring-secondary">
-                <div className="text-sm text-tertiary">累计用量</div>
-                <div className="mt-1 flex flex-wrap items-baseline gap-x-6 gap-y-2 tabular-nums">
-                    <span className="text-2xl font-semibold text-primary">{fmtTokens(u.total.tokens.total)} <span className="text-sm font-normal text-tertiary">tokens</span></span>
-                    <span className="text-lg text-secondary">{fmtSeconds(u.total.seconds)}</span>
-                    <span className="text-sm text-tertiary">{u.total.attempts} 次执行{u.total.unreported ? ` · ${u.total.unreported} 次未上报 token` : ""}</span>
-                </div>
-                <div className="mt-2 text-xs text-tertiary">输入 {fmtTokens(u.total.tokens.input)} · 输出 {fmtTokens(u.total.tokens.output)} · 缓存 {fmtTokens(u.total.tokens.cached_read)} · 上下文 {fmtTokens(u.total.tokens.context)}</div>
-                <div className="mt-1 text-xs text-quaternary">含成功和失败的执行，仅统计提供方上报数据。ACP 仅上报上下文占用。</div>
-            </div>
-            <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-3 xl:grid-rows-[auto_1fr] xl:gap-y-0">
-                {tables.map((tbl) => (
-                    <TableCard.Root key={tbl.title} size="sm" className="workbench-table min-w-0 xl:row-span-2 xl:grid xl:grid-rows-subgrid">
-                        <TableCard.Header title={tbl.title} description={tbl.hint || undefined} />
-                        {tbl.rows.length === 0 ? <Nothing icon={ClipboardCheck} title="还没有记录" /> : (
-                            <Table aria-label={tbl.title} size="sm">
-                                <Table.Header>
-                                    <Table.Head id="key" label={tbl.title.slice(1)} isRowHeader />
-                                    <Table.Head id="tokens" label="tokens" />
-                                    <Table.Head id="time" label="耗时" />
-                                    <Table.Head id="n" label="次数" />
-                                </Table.Header>
-                                <Table.Body items={tbl.rows}>
-                                    {(r) => (
-                                        <Table.Row id={r.key}>
-                                            <Table.Cell><span className="text-primary">{r.key || "（未知）"}</span></Table.Cell>
-                                            <Table.Cell><span className="font-mono text-xs">{spend(r.tokens)}</span></Table.Cell>
-                                            <Table.Cell><span className="text-xs text-tertiary">{fmtSeconds(r.seconds)}</span></Table.Cell>
-                                            <Table.Cell><span className="text-xs text-tertiary">{r.attempts}{r.unreported ? ` (${r.unreported} 未上报)` : ""}</span></Table.Cell>
-                                        </Table.Row>
-                                    )}
-                                </Table.Body>
-                            </Table>
-                        )}
-                    </TableCard.Root>
-                ))}
-            </div>
-        </div>
     );
 }

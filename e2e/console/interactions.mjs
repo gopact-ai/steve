@@ -7,6 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { preview } from "../childcard/preview.mjs";
+import { usageFixture, usageState } from "./usage-fixture.mjs";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
 const output = process.env.OUTPUT_DIR || path.join(os.tmpdir(), "steve-console-interactions");
@@ -1025,6 +1026,71 @@ checks["skill-source-controls"] = async (f) => {
         }, "Install button must align with the input after responsive layout settles");
         await noHorizontalOverflow(f.page);
     }
+};
+
+checks["usage-dashboard-ranges"] = async (f) => {
+    const usage = usageFixture();
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.goto(`${app.url}/#/console?view=board&tab=usage`);
+    await f.page.reload();
+    await f.page.getByRole("heading", { name: "用量概览", exact: true }).waitFor();
+    const cards = f.page.getByRole("region", { name: "区间用量汇总", exact: true });
+    for (const range of ["7d", "1d", "30d"]) {
+        await f.page.getByRole("button", { name: range, exact: true }).click();
+        await eventually(async () => await f.page.getByRole("button", { name: range, exact: true }).getAttribute("aria-pressed") === "true", `Range ${range} should become active`);
+        await f.page.getByRole("grid", { name: "按 Agent", exact: true }).getByText(`agent-${range}`, { exact: true }).waitFor();
+        assert.ok((await cards.innerText()).includes(String(usage.periods[range].total.attempts)), "Range metrics must use that period's totals");
+        assert.equal(await f.page.locator('a[href="#/console?view=board"]').getAttribute("aria-current"), "page");
+        await f.page.locator(".recharts-line-curve").waitFor();
+    }
+    await f.page.getByRole("button", { name: "执行次数", exact: true }).click();
+    await f.page.getByRole("group", { name: "执行次数趋势图", exact: true }).waitFor();
+    await f.page.getByRole("button", { name: "耗时", exact: true }).click();
+    await f.page.getByRole("group", { name: "耗时趋势图", exact: true }).waitFor();
+    await f.page.locator(".usage-period-details > summary").click();
+    assert.equal(await f.page.getByRole("table", { name: "分时用量数据", exact: true }).locator("tbody tr").count(), 30);
+    await f.page.reload();
+    await f.page.getByRole("button", { name: "30d", exact: true }).waitFor();
+    assert.equal(await f.page.getByRole("button", { name: "30d", exact: true }).getAttribute("aria-pressed"), "true", "Selected range survives refresh");
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await noHorizontalOverflow(f.page);
+    assert.equal(f.calls.length, 0, "Changing usage range must never submit work");
+};
+
+checks["usage-dashboard-unreported"] = async (f) => {
+    const usage = usageFixture();
+    const period = usage.periods["1d"];
+    period.series = [{ key: period.from, tokens: { context: 65000 }, seconds: 120, attempts: 2, unreported: 2 }];
+    period.total = { ...period.series[0], key: "total" }; period.by_agent = []; period.by_model = [];
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.goto(`${app.url}/#/console?view=board&tab=usage&range=1d`); await f.page.reload();
+    await f.page.getByText("此时段未上报 token，可切换查看执行次数或耗时", { exact: true }).waitFor();
+    assert.equal(await f.page.getByRole("region", { name: "区间用量汇总", exact: true }).getByText("未上报", { exact: true }).count(), 1, "Missing spend must not render as zero tokens");
+    await f.page.getByRole("button", { name: "执行次数", exact: true }).click();
+    assert.equal(await f.page.getByText("此时段未上报 token，可切换查看执行次数或耗时", { exact: true }).count(), 0, "Execution data remains available without token reports");
+    await f.page.locator(".recharts-line-dot").waitFor();
+};
+
+checks["usage-dashboard-gaps"] = async (f) => {
+    const usage = usageFixture();
+    const period = usage.periods["1d"];
+    period.series = [
+        { key: "2026-11-01T01:00:00-04:00", tokens: {}, seconds: 120, attempts: 1, unreported: 1 },
+        { key: "2026-11-01T01:00:00-05:00", tokens: { input: 100, output: 20, total: 120 }, seconds: 120, attempts: 1 },
+        { key: "2026-11-01T02:00:00-05:00", tokens: {}, seconds: 120, attempts: 1, unreported: 1 },
+    ];
+    period.total = { key: "total", tokens: { input: 100, output: 20, total: 120 }, seconds: 360, attempts: 3, unreported: 2 };
+    period.by_agent = []; period.by_model = [];
+    await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
+    await f.page.goto(`${app.url}/#/console?view=board&tab=usage&range=1d`); await f.page.reload();
+    await f.page.locator(".recharts-line-dot").waitFor();
+    assert.equal(await f.page.locator(".recharts-line-dot").count(), 1, "An isolated reported point must remain visible between missing reports");
+    await f.page.locator(".usage-period-details > summary").click();
+    const detail = f.page.getByRole("table", { name: "分时用量数据", exact: true });
+    await detail.getByText("2026-11-01 01:00 UTC-04:00", { exact: true }).waitFor();
+    await detail.getByText("2026-11-01 01:00 UTC-05:00", { exact: true }).waitFor();
+    await f.page.locator(".recharts-surface").press("ArrowRight");
+    assert.notEqual(await f.page.locator(".recharts-surface").evaluate((el) => getComputedStyle(el).outlineStyle), "none", "Keyboard chart navigation needs visible focus");
 };
 
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);

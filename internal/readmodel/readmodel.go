@@ -517,13 +517,28 @@ func (t Tokens) add(o Tokens) Tokens {
 }
 
 // Usage is what the fleet has spent: per day, per agent, per model, from
-// every closed attempt and step on record. Tokens and wall time only —
+// every closed attempt on record. Tokens and wall time only —
 // money needs a price table this system does not have.
 type Usage struct {
-	ByDay   []UsageRow `json:"by_day"`
-	ByAgent []UsageRow `json:"by_agent"`
-	ByModel []UsageRow `json:"by_model"`
-	Total   UsageRow   `json:"total"`
+	ByDay    []UsageRow             `json:"by_day"`
+	ByAgent  []UsageRow             `json:"by_agent"`
+	ByModel  []UsageRow             `json:"by_model"`
+	Total    UsageRow               `json:"total"`
+	Timezone string                 `json:"timezone"`
+	Periods  map[string]UsagePeriod `json:"periods"`
+}
+
+// UsagePeriod counts attempts by their start time in the hub's calendar.
+// To is the snapshot time; the last bucket can be incomplete. Series keys
+// are RFC3339 bucket starts with their local UTC offset, including during DST.
+type UsagePeriod struct {
+	From     time.Time  `json:"from"`
+	To       time.Time  `json:"to"`
+	Interval string     `json:"interval"`
+	Series   []UsageRow `json:"series"`
+	ByAgent  []UsageRow `json:"by_agent"`
+	ByModel  []UsageRow `json:"by_model"`
+	Total    UsageRow   `json:"total"`
 }
 
 type UsageRow struct {

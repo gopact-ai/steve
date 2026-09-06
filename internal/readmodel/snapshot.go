@@ -149,6 +149,7 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	}
 	snap.Attempts, snap.Landings = []Attempt{}, []Landing{}
 	snap.Facts = Facts{Reservations: []Reservation{}, Attestations: []Attestation{}, Replicas: []Replica{}, Disclosures: []Disclosure{}, Effects: []Effect{}, Grants: []Grant{}}
+	var closed []attempt.Record
 	if m.src.Ledger != nil {
 		if liveAttempts != nil {
 			snap.Attempts = liveAttempts
@@ -157,12 +158,13 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 			snap.Landings = recent
 		}
 		snap.Facts = m.src.Ledger.Facts(ctx)
-		closed, err := m.src.Ledger.ClosedAttempts(ctx)
+		var err error
+		closed, err = m.src.Ledger.ClosedAttempts(ctx)
 		if err != nil {
 			m.markSource(&snap, "ledger", err)
 		}
-		snap.Usage = usage(closed, snap.Tasks)
 	}
+	snap.Usage = usage(closed, snap.At)
 	snap.Inbox = inbox(snap.Facts)
 	// Activities: live attempts are the truth about "busy"; the latest
 	// progress says what the attempt is doing, when it was seen at all.
@@ -328,60 +330,6 @@ func (m *Model) recentActivity(agent string) (Activity, bool) {
 }
 
 const activityFresh = 2 * time.Minute
-
-// usage folds every closed attempt into the totals the Usage view shows.
-// The ledger's attempt records are the authority; the task list only
-// supplies the day-of-start for attempts whose record lacks one.
-func usage(closed []attempt.Record, tasks []Task) Usage {
-	byDay, byAgent, byModel := map[string]*UsageRow{}, map[string]*UsageRow{}, map[string]*UsageRow{}
-	total := UsageRow{Key: "total"}
-	add := func(day, agent, model string, tokens Tokens, seconds int64) {
-		for key, table := range map[string]map[string]*UsageRow{day: byDay, agent: byAgent, model: byModel} {
-			if key == "" {
-				continue
-			}
-			row := table[key]
-			if row == nil {
-				row = &UsageRow{Key: key}
-				table[key] = row
-			}
-			row.Tokens = row.Tokens.add(tokens)
-			row.Seconds += seconds
-			row.Attempts++
-		}
-		total.Tokens = total.Tokens.add(tokens)
-		total.Seconds += seconds
-		total.Attempts++
-	}
-	_ = tasks
-	for _, r := range closed {
-		var tokens Tokens
-		model := ""
-		if u := r.Usage; u != nil {
-			tokens = Tokens{Input: u.Input, Output: u.Output, CachedRead: u.CachedRead, CachedWrite: u.CachedWrite, Total: u.Input + u.Output, Context: u.Context}
-			model = u.Model
-			if !u.Reported {
-				total.Unreported++
-			}
-		} else {
-			total.Unreported++
-		}
-		var seconds int64
-		if !r.EndedAt.IsZero() && !r.StartedAt.IsZero() {
-			seconds = int64(r.EndedAt.Sub(r.StartedAt).Seconds())
-		}
-		add(r.StartedAt.Local().Format("2006-01-02"), r.Agent, model, tokens, seconds)
-	}
-	flatten := func(table map[string]*UsageRow) []UsageRow {
-		out := make([]UsageRow, 0, len(table))
-		for _, row := range table {
-			out = append(out, *row)
-		}
-		sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
-		return out
-	}
-	return Usage{ByDay: flatten(byDay), ByAgent: flatten(byAgent), ByModel: flatten(byModel), Total: total}
-}
 
 // nodeOf is place's inverse: the hub's name back to the model's "".
 func nodeOf(placed, hub string) string {

@@ -73,7 +73,9 @@ export interface HumanRequest {
 export interface Schedule { id: string; conversation: string; agent?: string; prompt: string; spec: string; next_at: string; last_at?: string; runs: number }
 export interface SourceHealth { name: string; wired: boolean; error?: string }
 export interface UsageRow { key: string; tokens: Tokens; seconds: number; attempts: number; unreported?: number }
-export interface Usage { by_day: UsageRow[]; by_agent: UsageRow[]; by_model: UsageRow[]; total: UsageRow }
+export type UsageRange = "1d" | "7d" | "30d";
+export interface UsagePeriod { from: string; to: string; interval: "hour" | "day"; series: UsageRow[]; by_agent: UsageRow[]; by_model: UsageRow[]; total: UsageRow }
+export interface Usage { by_day: UsageRow[]; by_agent: UsageRow[]; by_model: UsageRow[]; total: UsageRow; timezone?: string; periods?: Partial<Record<UsageRange, UsagePeriod>> }
 export interface Repo { path: string; branch?: string; head?: string; subject?: string; at?: string; dirty: boolean; remote?: string; agents_md: boolean; missing?: boolean }
 export interface Project {
     id: string; node: string; path: string; level: string; repo: string; default_role?: string; agents: string[];
