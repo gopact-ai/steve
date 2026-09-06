@@ -48,7 +48,6 @@ function Shell() {
         ] },
     ];
     const selected = location.pathname + location.search;
-    const pageName = groups.flatMap((g) => g.items).find((item) => item.href === selected)?.label || (location.pathname === "/history" ? "历史记录" : "Steve");
     const connection = live === "live" ? (broken ? "部分数据不可用" : "已连接") : live === "unauthorized" ? "需要认证" : "正在连接";
     const navigation = (small: boolean) => <>
         <div className="app-brand">
@@ -71,6 +70,7 @@ function Shell() {
             </div>
         </nav>
         <div className="app-sidebar-footer">
+            {small && <span role="status" className="app-compact-status" aria-label={connection} title={`${connection} · ${up}/${snap.nodes.length} 台设备在线`}><span className={`connection-dot ${live === "live" && !broken ? "connected" : ""}`} /></span>}
             {!small && <div className="app-connection" title={`hub ${snap.hub.version || ""} · ${up}/${snap.nodes.length} 台设备在线`}>
                 <span className={`connection-dot ${live === "live" && !broken ? "connected" : ""}`} />
                 <span>{connection}</span><span className="app-device-count">{up} 台在线</span>
@@ -92,7 +92,7 @@ function Shell() {
     return <div className="workbench-shell">
         <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到内容</a>
         {tablet && <aside className={`app-sidebar ${compact ? "is-compact" : ""}`}>{navigation(compact)}</aside>}
-        {!tablet && <div className="app-mobile-bar"><button type="button" className="workbench-icon-button" aria-label="导航菜单" onClick={() => setMobileNav(true)}><Menu01 aria-hidden="true" /></button><strong>{pageName}</strong><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
+        {!tablet && <div className="app-mobile-bar"><button type="button" className="workbench-icon-button" aria-label="导航菜单" onClick={() => setMobileNav(true)}><Menu01 aria-hidden="true" /></button><strong>Steve</strong><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
         {mobileNav && !tablet && <Sheet label="导航菜单" side="left" width={260} onClose={() => setMobileNav(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label="关闭导航菜单" onClick={() => setMobileNav(false)}><X aria-hidden="true" /></button><div className="app-sidebar is-mobile">{navigation(false)}</div></Sheet>}
         <main id="main-content" tabIndex={-1} className="app-main">
             <Routes>

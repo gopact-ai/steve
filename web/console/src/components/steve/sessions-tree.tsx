@@ -84,6 +84,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
     );
     const node = (p: Project, title: string, hint?: string) => {
         const threads = byProject.get(p.id) || [];
+        const norm = usual(threads);
         const open = !!query || !folded[p.id];
         if (query && !threads.length) return null;
         const holdsCurrent = threads.some((c) => c.id === current);
@@ -106,7 +107,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
                 {open && (
                     <ul className="ml-4 flex flex-col gap-0.5 border-l border-secondary pl-2">
                         {threads.length === 0 && <li className="px-2 py-1 u-meta text-quaternary">还没有会话</li>}
-                        {threads.map((c) => row(c, usual(threads)))}
+                        {threads.map((c) => row(c, norm))}
                     </ul>
                 )}
             </li>

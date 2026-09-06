@@ -238,7 +238,7 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
     const [sel, setSel] = useState<Selectors | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
-    const open = () => { if (sel || busy) return; setBusy(true); setError(""); load().then(setSel).catch((e) => setError(String(e).replace(/^Error: /, ""))).finally(() => setBusy(false)); };
+    const open = () => { if (busy) return; setError(""); if (sel) return; setBusy(true); load().then(setSel).catch((e) => setError(String(e).replace(/^Error: /, ""))).finally(() => setBusy(false)); };
     const prefer = async (patch: Record<string, string>) => {
         if (busy || !onPrefer) return;
         setBusy(true); setError("");
@@ -256,7 +256,7 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
                     <ChevronDown className="size-3" />
                 </AriaButton>
                 <Dropdown.Popover placement="top start" className="w-72">
-                    {error ? <div className="px-3 py-2 text-xs text-error-primary">{error}</div> : !sel ? <div className="px-3 py-2 text-xs text-quaternary">读取可选项…（没有会话时会先开一个）</div> : (
+                    {error && !sel ? <div className="px-3 py-2 text-xs text-error-primary">{error}</div> : !sel ? <div className="px-3 py-2 text-xs text-quaternary">读取可选项…</div> : (
                         <Dropdown.Menu onAction={(k) => void prefer({ model: String(k) })}>
                             <Dropdown.Section>
                                 <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">模型 · 当前 {sel.model || "未知"}{sel.preferred?.model ? ` · 偏好 ${sel.preferred.model}` : ""}</Dropdown.SectionHeader>

@@ -15,6 +15,7 @@ import { Nothing } from "@/components/steve/ui";
 import { enqueue, fetchQueue, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, fetchSelectors, setPreferences } from "@/lib/api";
 import { Sheet } from "@/components/steve/drawer";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
+import { placeLabel } from "@/lib/workspaces";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { applyDelegation, restoreDelegations, withDelegations, type Delegations } from "@/lib/delegations";
 import { beginSubmission, finishSubmission, restoreSubmission, updateDraft, useDraft, useQuotes, useSubmission } from "@/lib/drafts";
@@ -251,6 +252,7 @@ export function ConsolePage() {
 
     async function newSession(project = context?.project?.id) {
         if (creatingRequest.current) return;
+        setMobileSessions(false);
         creatingRequest.current = true;
         setCreating(true);
         setStatus("");
@@ -393,11 +395,11 @@ export function ConsolePage() {
     const sessions = (collapsed = sessionsCollapsed) => <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={selectConversation} onNew={(project) => void newSession(project)} creating={creating}
                 onUpdate={(id, patch) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}
                 collapsed={collapsed} onToggle={() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(false)}
-                tasks={snap.tasks} onTask={(t) => { if (t.parent && stepOf(t.id)) { setChild(t); setPickedTask(null); } else setPickedTask(t); }} />;
+                tasks={snap.tasks} onTask={(t) => { setMobileSessions(false); if (t.parent && stepOf(t.id)) { setChild(t); setPickedTask(null); } else setPickedTask(t); }} />;
     const inspector = <Rail key={conversation} context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} onClose={() => setInspectorOpen(false)} />;
     return (
         <div className="console-workbench">
-            {desktopSessions && sessions()}
+            {view === "chat" && desktopSessions && sessions()}
             {mobileSessions && !desktopSessions && <Sheet label="会话列表" side="left" width={300} onClose={() => setMobileSessions(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label="关闭会话列表" onClick={() => setMobileSessions(false)}><X aria-hidden="true" /></button>{sessions(false)}</Sheet>}
             {pickedTask && <TaskDrawer t={pickedTask} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === pickedTask.id)} onClose={() => setPickedTask(null)} width={RAIL_WIDTH} />}
 
@@ -405,11 +407,11 @@ export function ConsolePage() {
                 {hubUpdated && <div role="status" className="border-b border-secondary bg-warning-primary px-6 py-2 text-sm text-secondary">
                     hub 已更新，<button type="button" className="underline" onClick={() => window.location.reload()}>刷新页面</button>
                 </div>}
-                <header className="console-toolbar">
+                {view === "chat" && <header className="console-toolbar">
                     <button type="button" className="workbench-icon-button" aria-label="会话列表" title="会话列表" onClick={() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(true)}><LayoutLeft aria-hidden="true" /></button>
                     <div className="console-heading">
                     <h1 title={title}>{title}</h1>
-                    {context?.project && <div className="console-location">{context.project.id} · {context.project.node}</div>}
+                    {context?.project && <div className="console-location" title={context.agent?.place ? placeLabel(context.agent.place) : context.project.path}>{context.project.id} · {context.agent?.place ? placeLabel(context.agent.place) : context.project.node}</div>}
                     </div>
                     {current?.archived && (
                         <span className="flex items-center gap-1.5">
@@ -419,11 +421,11 @@ export function ConsolePage() {
                     )}
                     <span role="status" className="console-status">{status || (creating ? "正在创建会话…" : stopping[conversation] ? "正在停止…" : submission?.active ? "正在发送…" : live || busy ? "进行中…" : "")}</span>
                     <span className="workbench-segmented" role="group" aria-label="工作视图">
-                        <button type="button" onClick={() => navigate("/console")} aria-pressed={view === "chat"}>会话</button>
-                        <button type="button" onClick={() => navigate("/console?view=board")} aria-pressed={view === "board"}>看板</button>
+                        <button type="button" onClick={() => navigate("/console")} aria-pressed>会话</button>
+                        <button type="button" onClick={() => navigate("/console?view=board")} aria-pressed={false}>看板</button>
                     </span>
                     {view === "chat" && <button type="button" className="workbench-icon-button inspector-toggle" aria-label={inspectorOpen ? "隐藏详情" : "显示详情"} aria-pressed={inspectorOpen} title={inspectorOpen ? "隐藏详情" : "显示详情"} onClick={() => setInspectorOpen(!inspectorOpen)}><LayoutRight aria-hidden="true" /></button>}
-                </header>
+                </header>}
 
                 {view === "board" ? <div className="min-h-0 flex-1 overflow-hidden"><BoardPage /></div> : child && stepOf(child.id) ? (
                 <div className="min-h-0 flex-1 overflow-y-auto px-8 py-6">

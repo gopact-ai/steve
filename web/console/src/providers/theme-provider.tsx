@@ -61,6 +61,7 @@ export const ThemeProvider = ({ children, defaultTheme = "system", storageKey = 
                 root.classList.toggle(darkModeClass, theme === "dark");
                 localStorage.setItem(storageKey, theme);
             }
+            document.querySelector('meta[name="theme-color"]')?.setAttribute("content", root.classList.contains(darkModeClass) ? "#232428" : "#f5f5f7");
         };
 
         applyTheme();

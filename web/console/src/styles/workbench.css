@@ -103,6 +103,7 @@ button:enabled, summary { cursor: pointer; }
 .connection-dot.connected { background: #34a853; }
 .app-device-count { margin-left: auto; color: var(--color-text-quaternary); }
 .app-sidebar-tools { display: flex; align-items: center; gap: 6px; }
+.app-compact-status { display: grid; place-items: center; height: 20px; margin-bottom: 6px; }
 .app-version { color: var(--color-text-quaternary); font-size: 10px; }
 .app-collapse { margin-left: auto; }
 .workbench-icon-button { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; flex-shrink: 0; padding: 0; border-radius: 7px; border: 0; color: var(--color-fg-secondary); background: transparent; transition: background-color 120ms, color 120ms; }

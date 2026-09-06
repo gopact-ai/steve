@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -228,9 +229,11 @@ func TestServerServesStateEventsAndPage(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer page.Body.Close()
-	body := make([]byte, 4096)
-	n, _ := page.Body.Read(body)
-	if !strings.Contains(string(body[:n]), "steve") {
+	body, err := io.ReadAll(page.Body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.ToLower(string(body)), "steve") {
 		t.Fatal("dashboard did not render")
 	}
 

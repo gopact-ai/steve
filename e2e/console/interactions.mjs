@@ -72,6 +72,11 @@ async function fixture({ history = false, running = false } = {}) {
         if (pathname === "/console/queue") return route.fulfill({ json: { queue: queue.filter((q) => q.conversation === conversation) } });
         if (pathname === "/console/context") return route.fulfill({ json: { enabled: true, context: { conversation, agents: [], project: { ...project(current?.project || "home"), bound: !!current } } } });
         if (pathname === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations: conversations.map((c) => ({ ...c, count: replies[c.id]?.length || 0, running: running && c.id === A, last_at: at })) } });
+        if (pathname.startsWith("/console/conversations/") && req.method() === "PUT") {
+            const changed = conversations.find((c) => c.id === decodeURIComponent(pathname.slice("/console/conversations/".length)));
+            if (changed) Object.assign(changed, input);
+            return route.fulfill({ json: { ok: true } });
+        }
         if (pathname === "/console/verbs" || pathname === "/console/suggest") return route.fulfill({ json: { verbs: [], suggestions: [] } });
         f.errors.push(`Unhandled API: ${req.method()} ${pathname}`);
         return route.fulfill({ status: 500, json: { error: "Unmocked API" } });
@@ -348,6 +353,52 @@ const checks = {
         await f.page.locator('a[href="#/console"]').click();
         assert.equal(await f.box.inputValue(), "Plan carefully drafted after fill", "An already-consumed fill intent must not overwrite the persisted draft");
     },
+    async "conversation-rename-once"(f) {
+        const edit = async (title) => {
+            await f.page.getByRole("button", { name: new RegExp(`^${title}`) }).locator("..").getByRole("button", { name: "更多", exact: true }).click();
+            await f.page.getByRole("menuitem", { name: "重命名", exact: true }).click();
+            return f.page.getByRole("textbox", { name: "会话名称", exact: true });
+        };
+        const name = await edit("Conversation A");
+        await name.fill("Renamed with Enter");
+        await name.press("Enter");
+        await f.box.click();
+        await f.page.locator("main header").getByText("Renamed with Enter", { exact: true }).waitFor();
+        const writes = () => f.calls.filter((c) => c.method === "PUT" && c.path.startsWith("/console/conversations/"));
+        assert.equal(writes().length, 1, "Enter followed by blur must rename only once");
+        const blurred = await edit("Renamed with Enter");
+        await blurred.fill("Renamed with blur");
+        await f.box.click();
+        await f.page.locator("main header").getByText("Renamed with blur", { exact: true }).waitFor();
+        assert.equal(writes().length, 2, "A blur-only edit must issue exactly one additional rename");
+    },
+    async "preferences-save-retry"(f) {
+        let model = "model-one", reject = false;
+        await f.page.route("**/console/context?*", (route) => route.fulfill({ json: { enabled: true, context: { conversation: A, project: { ...project("scratch"), bound: true }, agents: [], agent: { id: "test-agent", node: "test-node", harness: "test", model, ready: true, usable: true } } } }));
+        await f.page.route("**/console/selectors?*", (route) => route.fulfill({ json: { model, preferred: { model }, models: [{ Value: "model-one", Label: "Model One" }, { Value: "model-two", Label: "Model Two" }], options: [] } }));
+        await f.page.route("**/console/preferences", (route) => {
+            const input = route.request().postDataJSON();
+            f.calls.push({ method: "PUT", path: "/console/preferences", ...input });
+            if (reject) return route.fulfill({ status: 503, body: "Preferences unavailable" });
+            model = input.patch.model;
+            return route.fulfill({ json: { ok: true, note: "下一轮以新会话开始" } });
+        });
+        await f.page.reload();
+        const chip = f.page.getByRole("button", { name: "模型", exact: true });
+        const choose = async (name) => { await chip.click(); await f.page.getByRole("menuitem", { name, exact: true }).click(); };
+        await choose("Model Two");
+        await eventually(async () => await chip.innerText() === "model-two", "Successful preference save must update the model chip");
+        reject = true;
+        await choose("Model One");
+        await f.page.getByText("Preferences unavailable", { exact: true }).first().waitFor();
+        assert.equal(await chip.innerText(), "model-two", "A rejected save must retain the last successful model");
+        reject = false;
+        await choose("Model One");
+        await eventually(async () => await chip.innerText() === "model-one", "Reopening after an error must allow a successful retry");
+        const writes = f.calls.filter((c) => c.path === "/console/preferences");
+        assert.equal(writes.length, 3);
+        assert.ok(writes.every((c) => c.conversation === A && c.agent === "test-agent"), "Preference changes must target the current conversation and agent");
+    },
 };
 
 async function noHorizontalOverflow(page) {
@@ -413,6 +464,74 @@ checks["design-mobile-sessions"] = async (f) => {
     await f.page.getByRole("button", { name: /^(关闭会话列表|关闭会话导航)$/ }).click();
     await visibleControl(f.box, "Message after dismissing conversation navigation");
     await noHorizontalOverflow(f.page);
+};
+
+checks["design-mobile-current-session"] = async (f) => {
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await f.box.fill("Current mobile conversation draft");
+    await f.page.getByRole("button", { name: "会话列表", exact: true }).click();
+    const sheet = f.page.getByRole("dialog", { name: "会话列表", exact: true });
+    await sheet.getByRole("button", { name: /^Conversation A/ }).click();
+    await eventually(async () => await sheet.count() === 0, "Selecting the current conversation must dismiss the mobile navigation sheet");
+    await visibleControl(f.box, "Message after reselecting the current conversation");
+    assert.equal(await f.box.inputValue(), "Current mobile conversation draft");
+};
+
+checks["design-mobile-child"] = async (f) => {
+    const tasks = [task("11", A, "scratch"), { ...task("33", A, "scratch"), parent: "11" }];
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/console/replies?*", (route) => route.fulfill({ json: { enabled: true, replies: [{ id: "parent-reply", kind: "reply", conversation: A, at, text: "Parent reply", process: { steps: [{ id: "#33", kind: "delegate", goal: "Delegated work", state: "done", answer: "Child answer" }] } }] } }));
+    await f.page.reload();
+    await f.box.waitFor();
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await f.box.fill("Draft before viewing a child");
+    await f.page.getByRole("button", { name: "会话列表", exact: true }).click();
+    const sheet = f.page.getByRole("dialog", { name: "会话列表", exact: true });
+    await sheet.getByRole("button", { name: /^2 在跑$/ }).click();
+    await sheet.getByRole("button", { name: /#33.*Task 33/ }).click();
+    await eventually(async () => await sheet.count() === 0, "Opening a child task must dismiss mobile conversation navigation");
+    await f.page.getByText("Child answer", { exact: true }).waitFor();
+    await f.page.getByRole("button", { name: /回到对话/ }).click();
+    await visibleControl(f.box, "Message after returning from a child task");
+    assert.equal(await f.box.inputValue(), "Draft before viewing a child");
+};
+
+checks["design-connection-compact"] = async (f) => {
+    await f.page.setViewportSize({ width: 1024, height: 900 });
+    const connected = f.page.getByRole("status", { name: /^(已连接|实时)$/ });
+    await connected.waitFor();
+    assert.ok(await connected.isVisible(), "Compact navigation must show the connected state");
+    await f.page.evaluate(() => window.sources.forEach((source) => source.onerror?.()));
+    const reconnecting = f.page.getByRole("status", { name: /^(正在连接|重连中)$/ });
+    await reconnecting.waitFor();
+    const rect = await reconnecting.boundingBox();
+    assert.ok(rect && rect.width > 0 && rect.height > 0 && rect.x >= 0 && rect.x + rect.width <= 1024 && rect.y + rect.height <= 900, "Connection changes must remain visible inside compact navigation");
+};
+
+checks["design-mobile-new-failure"] = async (f) => {
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await f.box.fill("Draft kept after mobile creation fails");
+    f.failBinding = true;
+    await f.page.getByRole("button", { name: "会话列表", exact: true }).click();
+    await f.page.getByRole("dialog", { name: "会话列表", exact: true }).getByRole("button", { name: "新会话", exact: true }).click();
+    await eventually(() => f.calls.some((call) => call.input === "/project use scratch"), "Mobile project binding must begin");
+    await f.page.getByRole("status").filter({ hasText: "Project binding unavailable" }).waitFor();
+    await visibleControl(f.box, "Message after mobile creation failure");
+    assert.equal(await f.box.inputValue(), "Draft kept after mobile creation fails");
+    await f.page.locator("main header").getByText("Conversation A", { exact: true }).waitFor();
+};
+
+checks["design-active-workspace"] = async (f) => {
+    await f.page.route("**/console/context?*", (route) => route.fulfill({ json: { enabled: true, context: { conversation: A, agents: [], project: { ...project("scratch"), bound: true }, agent: { id: "test-agent", node: "worker-west", harness: "test", model: "model-one", ready: true, usable: true, place: { node: "worker-west", kind: "copy", workspace: "scratch@worker-west" } } } } }));
+    await f.page.reload();
+    await f.box.waitFor();
+    await f.page.locator("main header").getByText(/scratch.*worker-west/).waitFor();
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    const detail = inspector(f.page);
+    await detail.getByText("当前工作区", { exact: true }).waitFor();
+    await detail.getByText("副本 · worker-west", { exact: true }).waitFor();
+    await detail.getByText("项目主机", { exact: true }).waitFor();
+    assert.equal(await detail.getByText("test-node", { exact: true }).count(), 1, "Inspector must distinguish the project's host from the selected agent's workspace");
 };
 
 checks["design-inspector-toggle"] = async (f) => {

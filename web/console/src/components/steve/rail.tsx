@@ -5,6 +5,7 @@ import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { when } from "@/lib/api";
 import { useFleet } from "@/lib/fleet";
 import { label, zh } from "@/lib/labels";
+import { placeLabel } from "@/lib/workspaces";
 import type { ConversationContext, Plan, Reply, Task } from "@/lib/types";
 import { CallGraph } from "./call-graph";
 import { TaskDrawer } from "./task-drawer";
@@ -47,6 +48,7 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots, onClose 
                                     { k: "名字", v: <span className="font-medium">{context.project.id}</span> },
                                     { k: "项目主机", v: <Mono>{context.project.node}</Mono> },
                                     { k: "主目录", v: <Mono className="text-secondary">{context.project.path}</Mono> },
+                                    { k: "当前工作区", v: context.agent?.place ? placeLabel(context.agent.place) : "尚未选择" },
                                     { k: "工作方式", v: label(zh.repo, context.project.repo), hint: "直接修改主目录：只有项目主机上的 Agent 能接。隔离副本：计划在别的机器上物化副本，完成后合并。" },
                                     { k: "数据等级", v: context.project.level },
                                 ]} />
