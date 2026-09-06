@@ -850,9 +850,15 @@ async function reviewFixture(f) {
         { path: "logo.png", status: "M", added: 0, deleted: 0, binary: true },
         { path: "script.sh", status: "M", added: 0, deleted: 0 },
     ];
-    const state = { reads: [], hold: null, holdIndex: null, failDiff: false, failIndex: false };
+    const state = { reads: [], hold: null, holdIndex: null, holdFile: null, failDiff: false, failIndex: false };
     await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, (route) => route.fulfill({ json: [{ id: "review-attempt", kind: "turn", state: "done", agent: "test-agent", node: "test-node", base: "before", artifact: "after", started_at: at, files: 5 }, { id: "review-other", kind: "turn", state: "done", agent: "other-agent", node: "test-node", base: "older-before", artifact: "older-after", started_at: "2026-09-05T10:00:00Z", files: 1 }] }));
-    await f.page.route(/\/console\/attempts\/review-other\//, (route) => route.fulfill({ json: route.request().url().endsWith("/changes") ? { attempt: "review-other", changes: [{ path: "other.txt", status: "A", added: 1, deleted: 0 }] } : { path: "other.txt", diff: "@@ -0,0 +1 @@\n+Other execution content\n" } }));
+    await f.page.route(/\/console\/attempts\/review-other\//, (route) => {
+        const url = new URL(route.request().url());
+        const body = url.pathname.endsWith("/changes") ? { attempt: "review-other", base: "older-before", artifact: "older-after", changes: [{ path: "other.txt", status: "A", added: 1, deleted: 0 }] }
+            : url.pathname.endsWith("/tree") ? { attempt: "review-other", commit: "older-after", which: "result", dir: "", entries: [{ path: "other.txt", name: "other.txt", kind: "file" }] }
+                : { path: "other.txt", diff: "@@ -0,0 +1 @@\n+Other execution content\n" };
+        return route.fulfill({ json: body });
+    });
     await f.page.route(/\/console\/attempts\/review-attempt\//, async (route) => {
         const url = new URL(route.request().url());
         assert.equal(route.request().method(), "GET");
@@ -863,7 +869,12 @@ async function reviewFixture(f) {
             if (state.failIndex) return route.fulfill({ status: 400, body: "Index unavailable" });
             return route.fulfill({ json: { attempt: "review-attempt", project: "scratch", base: "before", artifact: "after", changes } });
         }
-        if (url.pathname.endsWith("/tree")) return route.fulfill({ json: { attempt: "review-attempt", commit: "after", which: "result", dir: "", entries: [{ name: "new.txt", path: "new.txt", kind: "file", size: 10 }] } });
+        if (url.pathname.endsWith("/tree")) return route.fulfill({ json: { attempt: "review-attempt", commit: "after", which: "result", dir: file, entries: file === "src" ? [{ name: "main.ts", path: "src/main.ts", kind: "file", size: 48 }, { name: "helper.ts", path: "src/helper.ts", kind: "file", size: 22 }] : [{ name: "src", path: "src", kind: "dir" }, { name: "README.md", path: "README.md", kind: "file", size: 36 }, { name: "empty.txt", path: "empty.txt", kind: "file", size: 0 }, { name: "new.txt", path: "new.txt", kind: "file", size: 10 }, { name: "linked", path: "linked", kind: "link" }, { name: "vendor", path: "vendor", kind: "repo" }, { name: "large.txt", path: "large.txt", kind: "file", size: 40000 }] } });
+        if (url.pathname.endsWith("/file")) {
+            if (state.holdFile && file === "README.md") await state.holdFile;
+            const text = file === "README.md" ? "# Project\n\nUnchanged project guide." : file === "src/main.ts" ? "const shared = true;\nconst after = 2;\n" : file === "empty.txt" ? "" : file === "large.txt" ? Array.from({ length: 1501 }, (_, i) => `line ${i + 1}`).join("\n") : file === "linked" ? "README.md" : "export const helper = 1;";
+            return route.fulfill({ json: { attempt: "review-attempt", path: file, commit: "after", text, size: text.length } });
+        }
         if (state.hold && file === "src/main.ts") await state.hold;
         if (state.failDiff) return route.fulfill({ status: 400, body: "Diff unavailable" });
         assert.notEqual(file, "logo.png", "Binary files must not request text diffs");
@@ -874,16 +885,16 @@ async function reviewFixture(f) {
         return route.fulfill({ json: { path: file, diff, truncated: file === "new.txt" } });
     });
     await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
-    await f.page.getByRole("tab", { name: "变更", exact: true }).click();
-    await f.page.getByRole("button", { name: "进入 Review", exact: true }).first().click();
-    await f.page.getByRole("dialog", { name: "代码 Review", exact: true }).waitFor();
+    await f.page.getByRole("tab", { name: "代码", exact: true }).click();
+    await f.page.getByRole("button", { name: "查看变更", exact: true }).first().click();
+    await f.page.getByRole("dialog", { name: "代码工作区", exact: true }).waitFor();
     return state;
 }
 
 checks["review-navigation"] = async (f) => {
     await f.box.fill("Draft retained while reviewing");
     const state = await reviewFixture(f);
-    const review = f.page.getByRole("dialog", { name: "代码 Review", exact: true });
+    const review = f.page.getByRole("dialog", { name: "代码工作区", exact: true });
     await review.getByRole("table", { name: "修改前与修改后的代码", exact: true }).waitFor();
     await review.getByRole("button", { name: "统一", exact: true }).click();
     await review.getByRole("table", { name: "代码变更", exact: true }).waitFor();
@@ -903,7 +914,7 @@ checks["review-navigation"] = async (f) => {
     await review.getByText(/此文件的差异已截断/).waitFor();
     await review.getByText("Added content", { exact: true }).waitFor();
     await f.page.setViewportSize({ width: 390, height: 844 });
-    await review.getByRole("button", { name: /选择变更文件/ }).waitFor();
+    await review.getByRole("button", { name: "文件导航", exact: true }).waitFor();
     await noHorizontalOverflow(f.page);
     await review.getByRole("button", { name: "返回", exact: true }).click();
     await f.page.getByRole("button", { name: "关闭详情", exact: true }).click();
@@ -913,7 +924,7 @@ checks["review-navigation"] = async (f) => {
 
 checks["review-late-response"] = async (f) => {
     const state = await reviewFixture(f);
-    const review = f.page.getByRole("dialog", { name: "代码 Review", exact: true });
+    const review = f.page.getByRole("dialog", { name: "代码工作区", exact: true });
     await review.getByRole("table").waitFor();
     state.failDiff = true;
     await review.getByRole("button", { name: "removed.txt", exact: true }).click();
@@ -923,35 +934,34 @@ checks["review-late-response"] = async (f) => {
     await review.getByText("Removed content", { exact: true }).waitFor();
     await review.getByRole("button", { name: "返回", exact: true }).click();
     const pending = gate(); state.hold = pending.promise; f.releases.push(pending.release);
-    await f.page.getByRole("button", { name: "进入 Review", exact: true }).first().click();
+    await f.page.getByRole("button", { name: "查看变更", exact: true }).first().click();
     await review.getByRole("button", { name: "new.txt", exact: true }).click();
     await review.getByText("Added content", { exact: true }).waitFor();
     pending.release(); await delay(100);
     assert.equal(await review.getByText("const after = 2;", { exact: true }).count(), 0, "Late response must not replace the newly selected file");
     await review.press("Escape");
     await review.waitFor({ state: "hidden" });
-    await f.page.getByRole("tab", { name: "文件", exact: true }).click();
-    await f.page.getByText("已变更", { exact: true }).waitFor();
-    await f.page.getByRole("button", { name: /new.txt.*已变更/ }).click();
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).first().click();
+    await review.getByRole("navigation", { name: "项目文件" }).getByRole("button", { name: "new.txt", exact: true }).click();
+    await review.getByRole("button", { name: "Diff", exact: true }).click();
     await review.getByRole("heading", { name: "new.txt", exact: true }).waitFor();
     await review.getByText("Added content", { exact: true }).waitFor();
 };
 
 checks["review-slow-scope"] = async (f) => {
     const state = await reviewFixture(f);
-    const review = f.page.getByRole("dialog", { name: "代码 Review", exact: true });
+    const review = f.page.getByRole("dialog", { name: "代码工作区", exact: true });
     await review.getByRole("table").waitFor();
     await review.getByRole("button", { name: "返回", exact: true }).click();
     const pending = gate(); state.holdIndex = pending.promise; f.releases.push(pending.release);
-    await f.page.getByRole("tab", { name: "文件", exact: true }).click();
-    await f.page.getByRole("button", { name: /^new.txt/ }).click();
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).first().click();
+    await review.getByRole("navigation", { name: "项目文件" }).getByRole("button", { name: "README.md", exact: true }).click();
+    await review.getByText("Unchanged project guide.", { exact: true }).waitFor();
+    assert.ok(state.reads.some((r) => r.endpoint === "file"), "Source browsing must remain independent of a slow changes index");
     pending.release();
-    await review.getByRole("heading", { name: "new.txt", exact: true }).waitFor();
-    assert.equal(state.reads.some((r) => r.endpoint === "file"), false, "A slow changes index must not route changed files to plain snapshot content");
     await review.getByRole("button", { name: "返回", exact: true }).click();
-    await f.page.getByRole("tab", { name: "变更", exact: true }).click();
     state.holdIndex = null; state.failIndex = true;
-    await f.page.getByRole("button", { name: "进入 Review", exact: true }).first().click();
+    await f.page.getByRole("button", { name: "查看变更", exact: true }).first().click();
     await review.getByRole("alert").filter({ hasText: "Index unavailable" }).waitFor();
     state.failIndex = false;
     await review.getByRole("button", { name: "重试", exact: true }).click();
@@ -966,15 +976,168 @@ checks["review-slow-scope"] = async (f) => {
 checks["review-mobile-origin"] = async (f) => {
     await f.page.setViewportSize({ width: 1280, height: 900 });
     await reviewFixture(f);
-    const review = f.page.getByRole("dialog", { name: "代码 Review", exact: true });
+    const review = f.page.getByRole("dialog", { name: "代码工作区", exact: true });
     await review.getByRole("table").waitFor();
     await f.page.setViewportSize({ width: 390, height: 844 });
-    await review.getByRole("button", { name: /选择变更文件/ }).waitFor();
+    await review.getByRole("button", { name: "文件导航", exact: true }).waitFor();
     await review.getByRole("button", { name: "返回", exact: true }).click();
     await f.page.getByRole("dialog", { name: "详情", exact: true }).waitFor();
     await f.page.getByRole("button", { name: "关闭详情", exact: true }).click();
     await f.box.waitFor();
     await noHorizontalOverflow(f.page);
+};
+
+checks["code-workspace-files"] = async (f) => {
+    const state = await reviewFixture(f);
+    const workspace = f.page.getByRole("dialog", { name: "代码工作区" });
+    await workspace.getByRole("button", { name: "全部文件", exact: true }).click();
+    const tree = workspace.getByRole("navigation", { name: "项目文件" });
+    await tree.getByRole("button", { name: "README.md", exact: true }).click();
+    await workspace.getByText("Unchanged project guide.", { exact: true }).waitFor();
+    await tree.getByRole("button", { name: "src/main.ts", exact: true }).click();
+    await workspace.getByRole("region", { name: "源码 src/main.ts", exact: true }).waitFor();
+    assert.ok(await workspace.locator(".hljs-keyword").count(), "Source uses syntax highlighting");
+    await workspace.getByRole("button", { name: "Diff", exact: true }).click();
+    await workspace.getByRole("table").waitFor();
+    await workspace.getByRole("button", { name: "阅读 README.md", exact: true }).click();
+    await workspace.getByText("Unchanged project guide.", { exact: true }).waitFor();
+    assert.equal(state.reads.filter((read) => read.endpoint === "file" && read.file === "README.md").length, 1, "File tabs reuse the loaded source");
+    await workspace.getByRole("button", { name: "关闭 README.md", exact: true }).click();
+    await tree.getByRole("button", { name: "empty.txt", exact: true }).click();
+    await workspace.getByText("空文件", { exact: true }).waitFor();
+    await tree.getByRole("button", { name: "linked", exact: true }).click();
+    await workspace.getByText("符号链接 · 仅显示目标，不跟随链接", { exact: true }).waitFor();
+    assert.equal(await tree.getByRole("button", { name: "vendor", exact: true }).isEnabled(), false);
+    await tree.getByRole("button", { name: "large.txt", exact: true }).click();
+    await workspace.getByRole("button", { name: "继续加载 501 行", exact: true }).waitFor();
+    assert.equal(await workspace.locator(".source-line").count(), 1000);
+    await workspace.getByRole("button", { name: "继续加载 501 行", exact: true }).click();
+    assert.equal(await workspace.locator(".source-line").count(), 1501);
+    await workspace.getByRole("button", { name: "自动换行", exact: true }).click();
+    assert.equal(await workspace.getByRole("button", { name: "自动换行", exact: true }).getAttribute("aria-pressed"), "true");
+    await workspace.locator(".source-scroll").evaluate((element) => { element.scrollTop = 2200; });
+    await workspace.getByRole("button", { name: "阅读 src/main.ts", exact: true }).click();
+    await workspace.getByRole("button", { name: "阅读 large.txt", exact: true }).click();
+    await workspace.getByRole("region", { name: "源码 large.txt", exact: true }).waitFor();
+    assert.equal(await workspace.locator(".source-line").count(), 1501, "Tabs retain the expanded source range");
+    assert.equal(await workspace.getByRole("button", { name: "自动换行", exact: true }).getAttribute("aria-pressed"), "true");
+    assert.ok(await workspace.locator(".source-scroll").evaluate((element) => element.scrollTop > 2100), "Tabs retain the source reading position");
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await workspace.getByRole("button", { name: "文件导航", exact: true }).click();
+    await tree.getByRole("button", { name: "README.md", exact: true }).click();
+    await workspace.getByText("Unchanged project guide.", { exact: true }).waitFor();
+    await noHorizontalOverflow(f.page);
+    assert.equal(f.calls.length, 0, "Read-only workspace must not submit work");
+};
+
+checks["code-snapshot-states"] = async (f) => {
+    const state = { commit: "snapshot", failIndex: false, fileReads: 0 };
+    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, (route) => route.fulfill({ json: [
+        { id: "unchanged", kind: "turn", state: "done", base: "snapshot", artifact: "snapshot", started_at: at },
+        { id: "base-only", kind: "turn", state: "running", agent: "base-agent", base: "start", started_at: "2026-09-05T10:00:00Z" },
+    ] }));
+    await f.page.route(/\/console\/attempts\/(unchanged|base-only)\//, (route) => {
+        const url = new URL(route.request().url()), base = url.pathname.includes("base-only"), commit = base ? "start" : state.commit;
+        assert.equal(route.request().method(), "GET");
+        if (url.pathname.endsWith("/changes")) return state.failIndex ? route.fulfill({ status: 503, body: "Index offline" }) : route.fulfill({ json: { attempt: base ? "base-only" : "unchanged", base: commit, artifact: base ? undefined : commit, changes: [] } });
+        if (url.pathname.endsWith("/tree")) return route.fulfill({ json: { attempt: base ? "base-only" : "unchanged", commit, which: base ? "base" : "result", dir: "", entries: [{ name: "plain.ts", path: "plain.ts", kind: "file" }] } });
+        if (url.pathname.endsWith("/file")) { state.fileReads++; return route.fulfill({ json: { attempt: base ? "base-only" : "unchanged", commit, path: "plain.ts", text: `// ${commit}\nconst plain = true;\n`, size: 40 } }); }
+        assert.fail("An unchanged file must not fetch a diff");
+    });
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    await f.page.getByRole("tab", { name: "代码", exact: true }).click();
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).first().click();
+    const workspace = f.page.getByRole("dialog", { name: "代码工作区" });
+    await workspace.getByRole("button", { name: "plain.ts", exact: true }).click();
+    await workspace.getByText("// snapshot", { exact: true }).waitFor();
+    await workspace.getByRole("button", { name: /选择执行/ }).click();
+    await f.page.getByRole("option", { name: /base-agent/ }).click();
+    await workspace.getByRole("button", { name: "plain.ts", exact: true }).click();
+    await workspace.getByText("// start", { exact: true }).waitFor();
+    assert.ok((await workspace.locator(".review-source").innerText()).includes("开始快照"));
+    await workspace.getByRole("button", { name: "返回", exact: true }).click();
+    state.failIndex = true;
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).first().click();
+    await workspace.getByRole("button", { name: "plain.ts", exact: true }).click();
+    await workspace.getByText("// snapshot", { exact: true }).waitFor();
+    await workspace.getByText("变更状态未统计", { exact: true }).waitFor();
+    await workspace.getByRole("button", { name: "仅变更", exact: true }).click();
+    await workspace.getByRole("alert").filter({ hasText: "Index offline" }).waitFor();
+    state.failIndex = false;
+    await workspace.getByRole("button", { name: "重试", exact: true }).click();
+    await workspace.getByText("无变更", { exact: true }).waitFor();
+    await workspace.getByRole("button", { name: "返回", exact: true }).click();
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).first().click();
+    await workspace.getByRole("button", { name: "plain.ts", exact: true }).waitFor();
+    state.commit = "updated";
+    await workspace.getByRole("button", { name: "plain.ts", exact: true }).click();
+    await workspace.getByRole("button", { name: "重新载入快照", exact: true }).waitFor();
+    assert.equal(await workspace.getByText("// updated", { exact: true }).count(), 0, "A new snapshot must not appear inside the old tree");
+    await workspace.getByRole("button", { name: "重新载入快照", exact: true }).click();
+    await workspace.getByRole("button", { name: "plain.ts", exact: true }).click();
+    await workspace.getByText("// updated", { exact: true }).waitFor();
+    assert.equal(f.calls.length, 0);
+};
+
+checks["code-late-source"] = async (f) => {
+    const state = await reviewFixture(f);
+    const workspace = f.page.getByRole("dialog", { name: "代码工作区" });
+    const pending = gate(); state.holdFile = pending.promise; f.releases.push(pending.release);
+    await workspace.getByRole("button", { name: "全部文件", exact: true }).click();
+    const tree = workspace.getByRole("navigation", { name: "项目文件" });
+    await tree.getByRole("button", { name: "README.md", exact: true }).click();
+    await tree.getByRole("button", { name: "empty.txt", exact: true }).click();
+    await workspace.getByText("空文件", { exact: true }).waitFor();
+    pending.release(); await delay(100);
+    assert.equal(await workspace.getByText("Unchanged project guide.", { exact: true }).count(), 0, "Late source must not replace the active file");
+    assert.equal(f.calls.length, 0);
+};
+
+checks["code-source-feedback"] = async (f) => {
+    await reviewFixture(f);
+    const workspace = f.page.getByRole("dialog", { name: "代码工作区" });
+    const sample = "<script>window.untrusted = true</script>\r\nconst value = '<img src=x>';\r\n";
+    const value = { text: sample, size: sample.length, truncated: true, binary: false };
+    await f.page.route(/\/console\/attempts\/review-attempt\/file\?/, (route) => route.fulfill({ json: { attempt: "review-attempt", commit: "after", path: new URL(route.request().url()).searchParams.get("path"), ...value } }));
+    await f.page.evaluate(() => {
+        window.copiedSource = ""; window.clipboardRejects = true;
+        Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText: async (text) => { if (window.clipboardRejects) throw new Error("denied"); window.copiedSource = text; } } });
+    });
+    await workspace.getByRole("button", { name: "全部文件", exact: true }).click();
+    const tree = workspace.getByRole("navigation", { name: "项目文件" });
+    await tree.getByRole("button", { name: "README.md", exact: true }).click();
+    await workspace.getByText("文件较大，仅取回部分内容。当前浏览与复制均不包含未取回的部分。", { exact: true }).waitFor();
+    assert.equal(await workspace.locator(".source-text script,.source-text img").count(), 0, "Untrusted source must never become executable markup");
+    assert.equal(await f.page.evaluate(() => window.untrusted), undefined);
+    await workspace.getByRole("button", { name: "复制", exact: true }).click();
+    await workspace.getByText("复制失败，请允许剪贴板权限，或选中文本手动复制。", { exact: true }).waitFor();
+    await f.page.evaluate(() => { window.clipboardRejects = false; });
+    await workspace.getByRole("button", { name: "复制", exact: true }).click();
+    await workspace.getByRole("button", { name: "已复制", exact: true }).waitFor();
+    assert.equal(await f.page.evaluate(() => window.copiedSource), sample, "Copy retains source line endings and characters");
+    value.binary = true; value.text = ""; value.truncated = false;
+    await tree.getByRole("button", { name: "new.txt", exact: true }).click();
+    await workspace.getByText("无法显示为源码。", { exact: true }).waitFor();
+    assert.equal(await workspace.getByRole("button", { name: "复制", exact: true }).count(), 0);
+    assert.equal(f.calls.length, 0);
+};
+
+checks["code-nested-repository"] = async (f) => {
+    await reviewFixture(f);
+    const workspace = f.page.getByRole("dialog", { name: "代码工作区" });
+    await workspace.getByRole("button", { name: "返回", exact: true }).click();
+    let sourceRequests = 0;
+    await f.page.route(/\/console\/attempts\/review-attempt\//, (route) => {
+        const url = new URL(route.request().url());
+        if (url.pathname.endsWith("/changes")) return route.fulfill({ json: { attempt: "review-attempt", base: "before", artifact: "after", changes: [{ path: "vendor", status: "M", added: 1, deleted: 1 }] } });
+        if (url.pathname.endsWith("/tree")) return route.fulfill({ json: { attempt: "review-attempt", commit: "after", which: "result", entries: [{ path: "vendor", name: "vendor", kind: "repo" }] } });
+        if (url.pathname.endsWith("/file")) { sourceRequests++; return route.fulfill({ status: 400, body: "not a file" }); }
+        return route.fulfill({ json: { path: "vendor", diff: "diff --git a/vendor b/vendor\nindex 111..222 160000\n--- a/vendor\n+++ b/vendor\n@@ -1 +1 @@\n-Subproject commit 111\n+Subproject commit 222\n" } });
+    });
+    await f.page.getByRole("button", { name: "查看变更", exact: true }).first().click();
+    await workspace.getByText(/^嵌套仓库 · 仅显示提交变化/).waitFor();
+    assert.equal(await workspace.getByRole("button", { name: "源码", exact: true }).isEnabled(), false);
+    assert.equal(sourceRequests, 0, "A gitlink must not be read as a source file");
 };
 
 checks["skill-source-controls"] = async (f) => {

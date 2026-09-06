@@ -15,6 +15,9 @@ Steve 自己的组件，建在 Untitled UI（`components/base`、`components/app
 | `composer.tsx` | `Composer` | 输入框、自适应选项区与固定的发送/停止操作 |
 | `sessions-tree.tsx` | `SessionsTree` | 可搜索的项目 → 会话列表；窄屏侧栏 |
 | `rail.tsx` | `Rail` | 按需显示的详情；宽屏停靠，窄屏面板 |
+| `work-tabs.tsx` | `CodeTab` | 会话执行快照与统一代码入口 |
+| `review-workspace.tsx` | `ReviewWorkspace` | 只读文件树、文件标签、源码与 Diff 切换 |
+| `source-view.tsx` | `SourceView` | 带语法高亮与行号的只读源码阅读 |
 | `call-graph.tsx` | `CallGraph` | 关系页签、看板抽屉 |
 | `settings-editor.tsx` | `SettingsEditor` `ListEditor` | 机器抽屉里的配置编辑 |
 
@@ -23,5 +26,5 @@ Steve 自己的组件，建在 Untitled UI（`components/base`、`components/app
 - 表单控件一律用 Untitled UI 的 `Input` `Select` `TextArea` `Dropdown` `Button`，不写原生 `<select>` / `<input>`。
 - 文字、表面和布局使用 `styles/workbench.css` 的统一规则；正文 `text-sm`，辅助 `text-xs`；颜色只用语义 token（`text-primary/secondary/tertiary/quaternary`）。
 - 折叠一律用 `<details>` + 旋转的 `ChevronDown`，摘要行是 `text-xs`。
-- 代码与输出一律经 `CodeBlock`：有语言标签、有复制按钮、超高滚动；页面里不再手写 `<pre>`。
+- 对话内代码与输出经 `CodeBlock`；代码工作区的完整源码经 `SourceView`，差异经 `DiffView`。均由专门组件处理阅读布局。
 - 组件不发请求（`SettingsEditor` 例外，它就是一张表单）；数据由页面取好再传进来。
