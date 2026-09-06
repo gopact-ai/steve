@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, Plus, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
+import { Input } from "@/components/base/input/input";
 import type { Conversation, Project, Task } from "@/lib/types";
 import { taskState } from "./ui";
 import { kindWord, placeLabel } from "@/lib/workspaces";
@@ -56,11 +57,14 @@ function notable(t: Task, all: Task[]): boolean {
 export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate, collapsed, onToggle, creating, tasks = [], onTask }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onUpdate: (id: string, patch: ConversationPatch) => void; collapsed?: boolean; onToggle?: () => void; creating?: boolean; tasks?: Task[]; onTask?: (t: Task) => void }) {
     const [folded, setFolded] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem("steve.folded") || "{}"); } catch { return {}; } });
     const toggle = (id: string) => setFolded((f) => { const next = { ...f, [id]: !f[id] }; try { localStorage.setItem("steve.folded", JSON.stringify(next)); } catch { /* ignore */ } return next; });
+    const [search, setSearch] = useState("");
+    const query = search.trim().toLocaleLowerCase();
+    const matches = (c: Conversation) => !query || `${c.title} ${c.project || ""} ${c.agent || ""}`.toLocaleLowerCase().includes(query);
     const [renaming, setRenaming] = useState<string | null>(null);
     // An archived thread stays under 已归档 even while it is open: moving
     // it back under its project would look like it had been unarchived.
-    const archived = list.filter((c) => c.archived);
-    const live = list.filter((c) => !c.archived);
+    const archived = list.filter((c) => c.archived && matches(c));
+    const live = list.filter((c) => !c.archived && matches(c));
     const archivedOpen = archived.some((c) => c.id === current);
     const byProject = new Map<string, Conversation[]>();
     for (const c of live) {
@@ -80,22 +84,22 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
     );
     const node = (p: Project, title: string, hint?: string) => {
         const threads = byProject.get(p.id) || [];
-        const open = !folded[p.id];
+        const open = !!query || !folded[p.id];
+        if (query && !threads.length) return null;
         const holdsCurrent = threads.some((c) => c.id === current);
         const places = p.workspaces.map((w) => `${kindWord(w.kind)} ${w.node}`).join(" · ");
         return (
             <li key={p.id} className="flex flex-col">
-                <div className={`group flex items-center gap-1 rounded-lg px-1.5 py-1 ${holdsCurrent && !open ? "bg-primary/60" : ""}`}>
-                    <button type="button" onClick={() => toggle(p.id)} className="flex size-5 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-primary/60" aria-label={open ? "折叠" : "展开"}>
+                <div className={`conversation-project group ${holdsCurrent && !open ? "is-current" : ""}`}>
+                    <button type="button" onClick={() => toggle(p.id)} className="flex size-5 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-primary/60" aria-expanded={open} aria-label={open ? "折叠" : "展开"}>
                         <ChevronDown className={`size-3.5 transition ${open ? "" : "-rotate-90"}`} />
                     </button>
                     <Folder className="size-4 shrink-0 text-fg-quaternary" />
                     <button type="button" onClick={() => toggle(p.id)} className="flex min-w-0 flex-1 flex-col text-left" title={hint || places}>
                         <span className="truncate u-title">{title}</span>
-                        <span className="truncate u-meta text-quaternary">{places}</span>
                     </button>
                     {threads.some((c) => c.running) && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
-                    <button type="button" disabled={creating} onClick={() => onNew(p.id)} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary opacity-0 transition hover:bg-primary/60 hover:text-fg-quaternary_hover group-hover:opacity-100" aria-label={`在 ${p.id} 下新会话`} title={`在 ${p.id} 下新会话`}>
+                    <button type="button" disabled={creating} onClick={() => onNew(p.id)} className="workbench-icon-button conversation-project-new" aria-label={`在 ${p.id} 下新会话`} title={`在 ${p.id} 下新会话`}>
                         <Plus className="size-3.5" />
                     </button>
                 </div>
@@ -110,7 +114,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
     };
     if (collapsed) {
         return (
-            <aside className="hidden w-10 shrink-0 flex-col items-center gap-1 border-r border-secondary bg-secondary pt-3 lg:flex">
+            <aside className="conversation-sidebar is-collapsed">
                 <button type="button" onClick={onToggle} className="flex size-8 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title="展开会话栏" aria-label="展开会话栏"><ChevronRightDouble className="size-4" /></button>
                 <button type="button" disabled={creating} onClick={() => onNew()} className="flex size-8 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title="新会话" aria-label="新会话"><Edit05 className="size-4" /></button>
                 {list.some((c) => c.running) && <Loading01 className="mt-1 size-3 animate-spin text-fg-brand-primary" />}
@@ -118,17 +122,19 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
         );
     }
     return (
-        <aside className="hidden w-72 shrink-0 flex-col border-r border-secondary bg-secondary lg:flex">
-            <div className="flex items-center gap-1 px-2 pt-3 pb-1">
-                <button type="button" disabled={creating} onClick={() => onNew()} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-primary transition hover:bg-primary/70" title="在当前项目下开一条新会话">
+        <aside className="conversation-sidebar">
+            <div className="conversation-sidebar-toolbar">
+                <button type="button" disabled={creating} onClick={() => onNew()} className="conversation-new" title="在当前项目下开一条新会话">
                     <Edit05 className="size-4 text-fg-quaternary" />
                     <span>新会话</span>
                 </button>
                 {onToggle && <button type="button" onClick={onToggle} className="flex size-7 shrink-0 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title="收起会话栏" aria-label="收起会话栏"><ChevronLeftDouble className="size-4" /></button>}
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
+            <div className="conversation-search"><Input size="sm" aria-label="搜索会话" placeholder="搜索会话…" value={search} onChange={setSearch} /></div>
+            <div className="conversation-tree">
                 <TreeHeading>项目</TreeHeading>
-                <ul className="flex flex-col gap-0.5">{work.map((p) => node(p, p.id + (p.default ? " · 默认" : "")))}</ul>
+                {query && !live.length && !archived.length && <p className="px-3 py-4 text-sm text-tertiary">没有找到会话</p>}
+                <ul className="flex flex-col gap-0.5">{work.map((p) => node(p, p.id))}</ul>
                 {orphans.length > 0 && (
                     <>
                         <TreeHeading>未归属</TreeHeading>
@@ -157,7 +163,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
 }
 
 function TreeHeading({ children }: { children: string }) {
-    return <div className="px-2 pt-3 pb-1 u-label first:pt-2">{children}</div>;
+    return <div className="conversation-section-label">{children}</div>;
 }
 
 // Thread is one conversation: its name, its agent, when it last spoke,
@@ -179,19 +185,19 @@ function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArc
             {renaming ? (
                 <RenameBox initial={c.title} onDone={onRenamed} />
             ) : (
-                <button type="button" onClick={() => onPick(c.id)} className={`flex w-full flex-col gap-0.5 rounded-lg py-1.5 pl-2 pr-7 text-left transition ${current ? "bg-primary" : "hover:bg-primary/50"}`} title={nowhere ? "它的 Agent 所在机器上没有这个项目的工作区" : c.place ? placeLabel(c.place) : undefined}>
+                <button type="button" onClick={() => onPick(c.id)} aria-current={current ? "page" : undefined} className={`conversation-row ${current ? "is-selected" : ""}`} title={nowhere ? "它的 Agent 所在机器上没有这个项目的工作区" : c.place ? placeLabel(c.place) : undefined}>
                     <span className="flex w-full items-baseline gap-2">
                         {c.running && <Loading01 className="size-3 shrink-0 self-center animate-spin text-fg-brand-primary" />}
                         {nowhere && <AlertCircle className="size-3 shrink-0 self-center text-fg-error-primary" />}
                         <span className="min-w-0 flex-1 truncate u-title">{c.title || "新会话"}</span>
-                        <span className="shrink-0 u-meta text-quaternary">{c.last_at ? ago(c.last_at) : "未开始"}</span>
+                        <span className="conversation-time">{c.last_at ? ago(c.last_at) : "未开始"}</span>
                     </span>
                     {qualifiers.length > 0 && <span className="truncate u-meta">{qualifiers.join(" · ")}</span>}
                 </button>
             )}
             {!renaming && (
                 <Dropdown.Root>
-                    <AriaButton aria-label="更多" className={`absolute right-1 top-1.5 flex size-5 items-center justify-center rounded text-fg-quaternary outline-none transition hover:bg-primary hover:text-fg-quaternary_hover group-hover/thread:opacity-100 ${current ? "" : "opacity-0"}`}>
+                    <AriaButton aria-label="更多" className="workbench-icon-button conversation-more">
                         <DotsHorizontal className="size-3.5" />
                     </AriaButton>
                     <Dropdown.Popover placement="bottom end" className="w-44">
@@ -268,11 +274,13 @@ function TaskLine({ t, onTask, child }: { t: Task; onTask?: (t: Task) => void; c
 function RenameBox({ initial, onDone }: { initial: string; onDone: (title: string | null) => void }) {
     const [value, setValue] = useState(initial);
     const ref = useRef<HTMLInputElement>(null);
+    const finished = useRef(false);
+    const finish = (value: string | null) => { if (!finished.current) { finished.current = true; onDone(value); } };
     useEffect(() => { ref.current?.focus(); ref.current?.select(); }, []);
     return (
         <input ref={ref} value={value} onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") onDone(value.trim()); else if (e.key === "Escape") onDone(null); }}
-            onBlur={() => onDone(value.trim() === initial ? null : value.trim())}
+            onKeyDown={(e) => { if (e.nativeEvent.isComposing) return; if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(e.key === "Escape" ? null : value.trim()); } }}
+            onBlur={() => finish(value.trim() === initial ? null : value.trim())}
             aria-label="会话名称" placeholder="留空则交给 Agent 起名"
             className="w-full rounded-lg bg-primary px-2 py-1.5 text-sm text-primary outline-none ring-1 ring-brand placeholder:text-placeholder" />
     );

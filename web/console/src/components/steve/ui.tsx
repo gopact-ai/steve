@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { Badge } from "@/components/base/badges/badges";
 import type { BadgeColors } from "@/components/base/badges/badge-types";
-import { EmptyState } from "@/components/application/empty-state/empty-state";
 import type { FC } from "react";
 import { useFleet } from "@/lib/fleet";
 
@@ -48,16 +47,12 @@ export const Mono = ({ children, className }: { children: ReactNode; className?:
     <code className={`font-mono text-xs text-secondary ${className ?? ""}`}>{children}</code>
 );
 
-export const Nothing = ({ icon, title, children }: { icon: FC<{ className?: string }>; title: string; children?: ReactNode }) => (
-    <EmptyState size="sm" className="overflow-hidden py-10">
-        <EmptyState.Header>
-            <EmptyState.FeaturedIcon icon={icon} color="gray" theme="modern" />
-        </EmptyState.Header>
-        <EmptyState.Content>
-            <EmptyState.Title>{title}</EmptyState.Title>
-            {children ? <EmptyState.Description>{children}</EmptyState.Description> : null}
-        </EmptyState.Content>
-    </EmptyState>
+export const Nothing = ({ icon: Icon, title, children }: { icon: FC<{ className?: string }>; title: string; children?: ReactNode }) => (
+    <div className="workbench-empty flex min-w-0 flex-col items-center gap-2 px-6 py-10 text-center">
+        <span aria-hidden="true" className="mb-1 text-fg-quaternary"><Icon className="size-6" /></span>
+        <p className="text-sm font-medium text-secondary">{title}</p>
+        {children ? <div className="max-w-sm text-xs leading-relaxed text-tertiary">{children}</div> : null}
+    </div>
 );
 
 export const Tags = ({ items }: { items?: string[] }) =>
@@ -72,10 +67,10 @@ export const Tags = ({ items }: { items?: string[] }) =>
     );
 
 export const Section = ({ title, description, aside, children }: { title: string; description?: string; aside?: ReactNode; children: ReactNode }) => (
-    <section className="flex flex-col gap-4">
-        <div className="flex items-end justify-between gap-4">
-            <div>
-                <h2 className="text-lg font-semibold text-primary">{title}</h2>
+    <section className="flex min-w-0 flex-col gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+            <div className="min-w-0">
+                <h2 className="text-base font-semibold text-primary">{title}</h2>
                 {description && <p className="text-sm text-tertiary">{description}</p>}
             </div>
             {aside}
@@ -91,4 +86,3 @@ export function taskState(t: { lifecycle: string; execution?: string }): string 
     if (t.lifecycle === "running") return t.execution === "running" ? "running" : "idle";
     return t.lifecycle;
 }
-

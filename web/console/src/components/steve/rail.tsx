@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { GitBranch01, MessageChatSquare } from "@untitledui/icons";
+import { GitBranch01, MessageChatSquare, X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { when } from "@/lib/api";
@@ -12,7 +12,7 @@ import { ChangesTab, FilesTab } from "./work-tabs";
 
 // RAIL_WIDTH is the console's right column; a drawer opened from it is
 // the same width, so the side of the page does not jump.
-export const RAIL_WIDTH = 380;
+export const RAIL_WIDTH = 360;
 import { Chips, KeyValue, Panel } from "./page";
 import { InjectedPanel, ProcessBody, Working, type Live } from "./trace";
 import { Mono, Nothing } from "./ui";
@@ -22,22 +22,23 @@ export type RailTab = "context" | "trace" | "graph" | "changes" | "files";
 // Rail is the console's right column: the session's facts, the trace of
 // the line in flight or the one picked, and the call graph of who is
 // working for this session.
-export function Rail({ context, live, plans, reply, tab, setTab, roots }: { context: ConversationContext | null; live: Live | null; plans: Plan[]; reply: Reply | null; tab: RailTab; setTab: (t: RailTab) => void; roots: Task[] }) {
+export function Rail({ context, live, plans, reply, tab, setTab, roots, onClose }: { context: ConversationContext | null; live: Live | null; plans: Plan[]; reply: Reply | null; tab: RailTab; setTab: (t: RailTab) => void; roots: Task[]; onClose: () => void }) {
     const [picked, setPicked] = useState<Task | null>(null);
     const { snap } = useFleet();
     // The trace tab takes over while something runs, and returns to
     // context when the user asks.
-    useEffect(() => { if (live) setTab("trace"); }, [live, setTab]);
+    useEffect(() => { if (live?.exchangeID) setTab("trace"); }, [live?.exchangeID, setTab]);
     const usable = context?.agents.filter((a) => a.usable) ?? [];
     const elsewhere = context?.agents.filter((a) => !a.usable) ?? [];
     return (
-        <aside className="hidden min-h-0 flex-col border-l border-secondary bg-secondary xl:flex">
-            <div className="border-b border-secondary bg-primary px-4 py-2">
+        <aside className="workbench-inspector" aria-label="详情">
+            <div className="inspector-heading"><strong>详情</strong><button type="button" className="workbench-icon-button" aria-label="关闭详情" onClick={onClose}><X aria-hidden="true" /></button></div>
+            <div className="inspector-tabs">
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as RailTab)}>
-                    <TabList type="button-border" size="sm" items={[{ id: "context", label: "会话" }, { id: "trace", label: live ? "过程（进行中）" : "过程" }, { id: "graph", label: roots.length ? `关系 (${roots.length})` : "关系" }, { id: "changes", label: "变更" }, { id: "files", label: "文件" }]}>{(item) => <Tab {...item} />}</TabList>
+                    <TabList type="button-border" size="sm" items={[{ id: "context", label: "会话" }, { id: "trace", label: "过程" }, { id: "graph", label: "关系" }, { id: "changes", label: "变更" }, { id: "files", label: "文件" }]}>{(item) => <Tab {...item} />}</TabList>
                 </Tabs>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+            <div className="inspector-body">
                 {tab === "context" && context && (
                     <>
                         <Panel title="项目" badge={context.project && !context.project.bound ? <Badge type="pill-color" size="sm" color="gray">默认，未绑定</Badge> : undefined}>
@@ -50,7 +51,7 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots }: { cont
                                     { k: "数据等级", v: context.project.level },
                                 ]} />
                             ) : <span className="text-sm text-quaternary">没有项目</span>}
-                            <p className="text-xs text-quaternary">切换项目只影响本会话：已有任务不迁移，当前 Agent 的会话归档并新开，有回合在跑时不能切。</p>
+
                         </Panel>
                         <Panel title="当前 Agent">
                             {context.agent ? (
@@ -63,9 +64,9 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots }: { cont
                                 ]} />
                             ) : <span className="text-sm text-quaternary">没有当前 Agent</span>}
                         </Panel>
-                        <Panel title="谁能接本会话">
+                        <Panel title="可用 Agent">
                             <div className="flex flex-col gap-2 text-sm">
-                                <Chips items={usable.map((a) => ({ id: a.id, title: `${a.node} · ${a.harness}` }))} empty={<span className="text-error-primary">没有 — 换一个 Agent 所在机器上的项目</span>} />
+                                <Chips items={usable.map((a) => ({ id: a.id, title: `${a.node} · ${a.harness}` }))} empty={<span className="text-error-primary">当前项目没有可用 Agent</span>} />
                                 {elsewhere.length > 0 && (
                                     <ul className="flex flex-col gap-1 text-xs text-tertiary">
                                         {elsewhere.map((a) => <li key={a.id}><Mono className="text-quaternary">{a.id}</Mono> <span>{a.because || a.why}</span></li>)}
@@ -85,7 +86,7 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots }: { cont
                                 </Panel>
                             )}
                         </>
-                    ) : <Nothing icon={MessageChatSquare} title="还没有过程">发一条消息，这里会显示给 agent 的上下文、它的推理、工具调用和步骤。</Nothing>
+                    ) : <Nothing icon={MessageChatSquare} title="暂无执行记录">发送消息后，在这里查看进度和工具调用。</Nothing>
                 )}
                 {tab === "changes" && <ChangesTab roots={roots} all={snap.tasks} />}
                 {tab === "files" && <FilesTab roots={roots} all={snap.tasks} />}
@@ -94,7 +95,7 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots }: { cont
                         <Panel title="谁在为这条会话干活" badge={<span className="text-xs text-tertiary">任务 → 步骤 / 委派</span>}>
                             <CallGraph roots={roots} tasks={snap.tasks} plans={snap.plans} liveSteps={live?.order} onSelect={setPicked} />
                         </Panel>
-                    ) : <Nothing icon={GitBranch01} title="还没有任务">这条会话的任务、它拆出的步骤、以及 Agent 之间的委派会画在这里。</Nothing>
+                    ) : <Nothing icon={GitBranch01} title="暂无关联任务">创建任务后，在这里查看委派关系。</Nothing>
                 )}
             </div>
             {picked && <TaskDrawer t={picked} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === picked.id)} onClose={() => setPicked(null)} width={RAIL_WIDTH} />}

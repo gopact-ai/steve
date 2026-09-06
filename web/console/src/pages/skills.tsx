@@ -48,36 +48,34 @@ export function SkillsPage() {
     const on = all.filter((s) => s.enabled).length;
     const enabledOf = (name: string) => all.find((s) => s.name === name)?.enabled ?? false;
     return (
-        <div className="flex flex-col">
+        <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title="技能"
-                description={<>一个技能是<b>一个目录里的一份 SKILL.md</b>：把一种做法写下来给 Agent 看。hub 在下面的目录里找技能；这里打开的技能会打成一个包发给每台机器，交给每个 Agent。改动会重启 AI 工具，所以有回合在跑时不能改；已开着的会话下一轮会提示 /new。</>} />
+                description={`${on} 个已启用 · 安装和管理 Agent 技能，同步至所有机器。`} />
             <PageBody>
-                {error && <div className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error}</div>}
-                <TableCard.Root size="sm">
-                    <TableCard.Header title="技能" badge={`${on} 已启用`} description="启用 = 交给所有 Agent。内置的随 steve 发布，默认打开：官方的 skill-creator。「steve 怎么协作」不是技能而是 steve 自己的 MCP 工具（steve_context、steve_projects、steve_help），见 MCP 页。从互联网来源启用的会列在这里，来源里没启用的只在下面的来源里看。「固定在」是某个 Agent 或项目按目录另外要的技能，不受这里的开关影响。" />
+                {error && <div role="alert" className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error}</div>}
+                <p className="text-xs text-tertiary">变更会重启 AI 工具，执行期间不可修改。单独绑定的技能不受开关影响。</p>
+                <TableCard.Root size="sm" className="workbench-table min-w-0">
                     {!view ? <div className="px-5 py-6 text-sm text-tertiary">读取中…</div> : skills.length === 0 ? (
-                        <Nothing icon={PuzzlePiece01} title="还没有技能">连内置的都没有，说明 hub 还没启动完或状态目录写不进去。用户技能放在下面的目录里：一个带 SKILL.md 的文件夹就是一个。</Nothing>
+                        <Nothing icon={PuzzlePiece01} title="还没有技能">安装技能来源，或添加包含 SKILL.md 的本地目录。</Nothing>
                     ) : (
-                        <Table aria-label="Skills" size="sm">
+                        <Table aria-label="Skills" size="sm" className="min-w-176 table-fixed">
                             <Table.Header>
-                                <Table.Head id="name" label="技能" isRowHeader />
-                                <Table.Head id="about" label="说明" />
-                                <Table.Head id="root" label="来源目录" />
-                                <Table.Head id="pinned" label="固定在" />
-                                <Table.Head id="on" label="启用" />
-                                <Table.Head id="doc" label="" />
+                                <Table.Head id="name" label="技能" className="w-[24%]" isRowHeader />
+                                <Table.Head id="about" label="说明" className="w-[34%]" />
+                                <Table.Head id="pinned" label="单独绑定" className="w-[22%]" />
+                                <Table.Head id="on" label="启用" className="w-[8%]" />
+                                <Table.Head id="doc" label="" className="w-[12%]" />
                             </Table.Header>
                             <Table.Body items={skills.map((s) => ({ ...s, key: s.name }))}>
                                 {(s: SkillView & { key: string }) => (
                                     <Table.Row id={s.name}>
                                         <Table.Cell>
-                                            <div className="flex flex-col">
-                                                <span className="flex items-center gap-1.5"><span className="font-medium text-primary">{s.name}</span>{s.builtin && <Badge type="modern" size="sm" color="gray">内置</Badge>}</span>
-                                                {s.title && s.title !== s.name && <span className="text-xs text-tertiary">{s.title}</span>}
+                                            <div className="flex min-w-0 flex-col gap-1" title={`${s.name}\n${s.source || s.root}`}>
+                                                <span className="flex min-w-0 items-center gap-1.5"><span className="truncate font-medium text-primary">{s.name}</span>{s.builtin && <Badge type="modern" size="sm" color="gray">内置</Badge>}</span>
+                                                <span className="truncate text-xs text-tertiary">{s.title && s.title !== s.name ? s.title : s.source || s.root}</span>
                                             </div>
                                         </Table.Cell>
                                         <Table.Cell><span className="line-clamp-2 max-w-md text-xs text-secondary" title={s.description}>{s.description || <span className="text-quaternary">SKILL.md 没写说明</span>}</span></Table.Cell>
-                                        <Table.Cell>{s.source ? <span className="flex items-center gap-1.5 text-xs"><Download01 className="size-3.5 text-fg-quaternary" /><Mono className="text-tertiary">{s.source}</Mono></span> : <Mono className="text-tertiary">{s.root}</Mono>}</Table.Cell>
                                         <Table.Cell>
                                             {s.agents.length + s.projects.length === 0 ? <span className="text-xs text-quaternary">—</span> : (
                                                 <div className="flex flex-col gap-1">
@@ -89,17 +87,17 @@ export function SkillsPage() {
                                         <Table.Cell>
                                             <Toggle size="sm" aria-label={`启用 ${s.name}`} isSelected={s.enabled} isDisabled={busy !== ""} onChange={(v) => void run(s.name, () => setSkill(s.name, v))} />
                                         </Table.Cell>
-                                        <Table.Cell><Button size="sm" color="link-gray" onClick={() => void fetchSkill(s.name).then(setOpened).catch((e) => setError(fail(e)))}>看 SKILL.md</Button></Table.Cell>
+                                        <Table.Cell><Button size="sm" color="link-gray" onClick={() => void fetchSkill(s.name).then(setOpened).catch((e) => setError(fail(e)))}>查看文档</Button></Table.Cell>
                                     </Table.Row>
                                 )}
                             </Table.Body>
                         </Table>
                     )}
                 </TableCard.Root>
-                <Panel title="从互联网安装" badge={<span className="text-xs text-tertiary">一个 git 仓库就是一个来源：hub 浅克隆它，里面带 SKILL.md 的目录就成为技能，在上表里逐个启用</span>}
+                <Panel title="安装来源" description="从 Git 仓库安装，再选择需要启用的技能。"
                     aside={(view?.sources.length ?? 0) > 0 ? <Button size="sm" color="secondary" iconLeading={RefreshCw01} isLoading={busy === "update"} isDisabled={busy !== ""} onClick={() => void run("update", updateSkillSources)}>全部更新</Button> : undefined}>
-                    <div className="flex items-end gap-2">
-                        <Input size="sm" label="仓库" placeholder="anthropics/skills，或 https://github.com/anthropics/skills/tree/main/skills/pdf" value={spec} onChange={setSpec} className="flex-1" hint="GitHub 链接、owner/repo、或指到子目录的 tree 链接；也接受任何 git 地址。要认证的私有仓库用 ssh 地址，hub 用自己的密钥。" />
+                    <div className="flex min-w-0 flex-wrap items-end gap-2">
+                        <Input size="sm" label="仓库" placeholder="anthropics/skills 或 GitHub 链接…" value={spec} onChange={setSpec} className="min-w-48 flex-1" hint="支持仓库和子目录链接。私有仓库使用 SSH 地址与 hub 的密钥。" />
                         <Button size="sm" color="primary" iconLeading={Download01} isDisabled={!spec.trim() || busy !== ""} isLoading={busy === "install"} onClick={() => void run("install", async () => { await addSkillSource(spec.trim()); setSpec(""); })}>安装</Button>
                     </div>
                     {(view?.sources.length ?? 0) > 0 && (
@@ -107,13 +105,13 @@ export function SkillsPage() {
                             {view!.sources.map((src) => (
                                 <li key={src.slug} className="flex items-start gap-3 py-2">
                                     <div className="min-w-0 flex-1">
-                                        <div className="flex items-center gap-2 text-sm">
+                                        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
                                             <span className="font-medium text-primary">{src.slug}</span>
                                             {src.head && <Mono className="text-quaternary">{src.head}</Mono>}
                                             {src.error && <Badge type="pill-color" size="sm" color="error">更新失败</Badge>}
                                         </div>
                                         <div className="truncate font-mono u-meta text-quaternary" title={src.url}>{src.url}{src.ref ? ` @ ${src.ref}` : ""}{src.subdir ? ` · ${src.subdir}` : ""}</div>
-                                        <div className="mt-1 text-xs text-tertiary">{src.skills.length} 个技能{src.fetched_at ? ` · 拉取于 ${when(src.fetched_at)}` : ""} · 打开的会进上表</div>
+                                        <div className="mt-1 text-xs text-tertiary">{src.skills.length} 个技能{src.fetched_at ? ` · 拉取于 ${when(src.fetched_at)}` : ""}</div>
                                         <ul className="mt-1.5 flex flex-wrap gap-x-4 gap-y-1">
                                             {src.skills.map((n) => (
                                                 <li key={n} className="flex items-center gap-1.5 text-xs">
@@ -124,36 +122,36 @@ export function SkillsPage() {
                                         </ul>
                                         {src.error && <div className="mt-1 text-xs text-error-primary">{src.error}</div>}
                                     </div>
-                                    <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip="忘掉这个来源；从它启用的技能一起关掉" isDisabled={busy !== ""} onClick={() => void run("rmsrc:" + src.slug, () => removeSkillSource(src.slug))} />
+                                    <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip="移除来源并停用其技能" isDisabled={busy !== ""} onClick={() => void run("rmsrc:" + src.slug, () => removeSkillSource(src.slug))} />
                                 </li>
                             ))}
                         </ul>
                     )}
                 </Panel>
-                <Panel title="机器上已有的技能" badge={<span className="text-xs text-tertiary">各机器 AI 工具自己目录里的技能（~/.codex/skills、~/.claude/skills …），随机器的申报上报，hub 每分钟刷新；加载到 hub 后成为一个普通技能，再决定要不要启用</span>}
-                    aside={<Button size="sm" color="link-gray" iconLeading={RefreshCw01} isLoading={rescanning} onClick={rescan}>让机器现在重扫</Button>}>
+                <Panel title="机器上的技能" description="从机器的本地技能目录导入，之后可在此启用。每分钟自动刷新。"
+                    aside={<Button size="sm" color="link-gray" iconLeading={RefreshCw01} isLoading={rescanning} onClick={rescan}>重新扫描</Button>}>
                     {!machines ? <div className="text-xs text-tertiary">读取中…</div> : (
                         <ul className="flex flex-col gap-3">
                             {machines.map((m) => (
                                 <li key={m.name} className="flex flex-col gap-1">
-                                    <div className="flex items-center gap-2 text-sm">
+                                    <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
                                         <Server01 className="size-3.5 text-fg-quaternary" />
                                         <span className="font-medium text-primary">{m.name}</span>
                                         {m.hub && <Badge type="pill-color" size="sm" color="brand">hub</Badge>}
-                                        {!m.up && <Badge type="pill-color" size="sm" color="gray">没问到</Badge>}
+                                        {!m.up && <Badge type="pill-color" size="sm" color="gray">未连接</Badge>}
                                         {m.error && <span className="truncate text-xs text-error-primary" title={m.error}>{m.error}</span>}
                                         {m.up && m.skills.length === 0 && <span className="text-xs text-quaternary">没有</span>}
                                     </div>
                                     {m.skills.length > 0 && (
                                         <ul className="ml-5 flex flex-col divide-y divide-secondary">
                                             {m.skills.map((f) => (
-                                                <li key={f.path} className="flex items-center gap-3 py-1.5">
+                                                <li key={f.path} className="flex min-w-0 flex-wrap items-center gap-3 py-2">
                                                     <div className="min-w-0 flex-1">
-                                                        <div className="flex items-center gap-2 text-sm"><span className="font-medium text-primary">{f.name}</span><Mono className="truncate text-quaternary" >{f.path}</Mono></div>
+                                                        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm"><span className="font-medium text-primary">{f.name}</span><Mono className="truncate text-quaternary" >{f.path}</Mono></div>
                                                         {f.description && <div className="line-clamp-1 text-xs text-tertiary" title={f.description}>{f.description}</div>}
                                                     </div>
-                                                    {f.loaded ? <span className="text-xs text-quaternary">hub 上已有同名技能</span>
-                                                        : <Button size="sm" color="secondary" iconLeading={Download01} isDisabled={busy !== ""} isLoading={busy === "import:" + m.name + f.path} onClick={() => void run("import:" + m.name + f.path, async () => { await importSkill(m.name, f.path); loadMachines(); })}>加载到 hub</Button>}
+                                                    {f.loaded ? <span className="text-xs text-quaternary">已导入同名技能</span>
+                                                        : <Button size="sm" color="secondary" iconLeading={Download01} isDisabled={busy !== ""} isLoading={busy === "import:" + m.name + f.path} onClick={() => void run("import:" + m.name + f.path, async () => { await importSkill(m.name, f.path); loadMachines(); })}>导入</Button>}
                                                 </li>
                                             ))}
                                         </ul>
@@ -163,8 +161,8 @@ export function SkillsPage() {
                         </ul>
                     )}
                 </Panel>
-                <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-                    <Panel title="搜索目录" badge={<span className="text-xs text-tertiary">hub 上的目录；每个子文件夹带 SKILL.md 就是一个技能</span>}>
+                <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-2">
+                    <Panel title="本地目录" description="扫描 hub 上各目录中的 SKILL.md。">
                         <ul className="flex flex-col divide-y divide-secondary">
                             {(view?.search_paths ?? []).filter((p) => !view?.sources.some((src) => src.root === p)).map((p) => (
                                 <li key={p} className="flex items-center gap-2 py-1.5">
@@ -175,22 +173,22 @@ export function SkillsPage() {
                             ))}
                             {view && view.search_paths.length === 0 && <li className="py-1.5 text-xs text-quaternary">没有搜索目录。</li>}
                         </ul>
-                        <div className="flex items-end gap-2">
-                            <Input size="sm" label="添加目录" placeholder="/home/me/skills" value={newPath} onChange={setNewPath} className="flex-1" hint="hub 上已存在的目录。" />
+                        <div className="flex min-w-0 flex-wrap items-end gap-2">
+                            <Input size="sm" label="添加目录" placeholder="/home/me/skills" value={newPath} onChange={setNewPath} className="min-w-48 flex-1" hint="hub 上已存在的目录。" />
                             <Button size="sm" color="secondary" iconLeading={Plus} isDisabled={!newPath.trim() || busy !== ""} isLoading={busy === "add"} onClick={() => void run("add", async () => { await addSkillPath(newPath.trim()); setNewPath(""); })}>添加</Button>
                         </div>
                     </Panel>
-                    <Panel title="机器上的技能包" badge={view?.fingerprint ? <Mono className="text-quaternary">{view.fingerprint.slice(0, 12)}</Mono> : undefined}>
+                    <Panel title="同步状态" badge={view?.fingerprint ? <Mono className="text-quaternary">{view.fingerprint.slice(0, 12)}</Mono> : undefined}>
                         <ul className="flex flex-col gap-1.5 text-sm">
-                            <li className="flex items-center gap-2"><span className="text-primary">{snap.hub.node}</span><Badge type="pill-color" size="sm" color="brand">hub</Badge><span className="text-xs text-tertiary">技能就在这里</span></li>
+                            <li className="flex items-center gap-2"><span className="text-primary">{snap.hub.node}</span><Badge type="pill-color" size="sm" color="brand">hub</Badge><span className="text-xs text-tertiary">来源</span></li>
                             {(view?.nodes ?? []).map((n) => (
                                 <li key={n.name} className="flex items-center gap-2">
                                     <span className="text-primary">{n.name}</span>
-                                    {!n.up ? <Badge type="pill-color" size="sm" color="gray">离线</Badge> : !n.takes ? <Badge type="pill-color" size="sm" color="warning">这台机器的 steve-node 不接收技能包</Badge> : n.synced ? <Badge type="pill-color" size="sm" color="success">已同步</Badge> : <Badge type="pill-color" size="sm" color="warning">未同步</Badge>}
+                                    {!n.up ? <Badge type="pill-color" size="sm" color="gray">离线</Badge> : !n.takes ? <Badge type="pill-color" size="sm" color="warning">不支持同步</Badge> : n.synced ? <Badge type="pill-color" size="sm" color="success">已同步</Badge> : <Badge type="pill-color" size="sm" color="warning">未同步</Badge>}
                                 </li>
                             ))}
                         </ul>
-                        <p className="text-xs text-quaternary">机器连上时和技能变化时 hub 都会把包发过去；"未同步"通常几秒内自己好，一直不好就看历史里 node.skills 的记录。</p>
+                        <p className="text-xs text-quaternary">连接或技能变更后自动同步。持续未同步时，可在历史中查看 node.skills 记录。</p>
                     </Panel>
                 </div>
                 {opened && (

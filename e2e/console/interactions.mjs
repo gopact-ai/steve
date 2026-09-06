@@ -36,6 +36,10 @@ async function fixture({ history = false, running = false } = {}) {
     const queue = running ? [{ id: "running-a", conversation: A, state: "running", input: "Running task", started_at: at, enqueued_at: at }] : [];
     const emit = (event) => page.evaluate((event) => window.emit(event), { at, conversation: A, ...event });
     f.emit = emit;
+    f.startRunning = async () => {
+        queue.push({ id: "design-running", conversation: A, state: "running", input: "Running layout check", started_at: at, enqueued_at: at });
+        await emit({ kind: "console.queue" });
+    };
     f.hold = (kind) => { const g = gate(); f[kind] = g.promise; f.releases.push(g.release); return g.release; };
     await page.route("**/*", async (route) => {
         const req = route.request(), url = new URL(req.url()), pathname = url.pathname;
@@ -82,7 +86,7 @@ async function fixture({ history = false, running = false } = {}) {
         window.emit = (ev) => { for (const source of window.sources) source.onmessage?.({ data: JSON.stringify(ev) }); };
     }, A);
     await page.goto(`${app.url}/#/console`);
-    await page.getByRole("button", { name: /^Conversation A/ }).waitFor();
+    await page.locator("main header").getByText("Conversation A", { exact: true }).waitFor();
     await page.locator("main header").getByText("scratch · test-node", { exact: true }).waitFor();
     f.box = page.getByRole("textbox", { name: "Message", exact: true });
     f.queued = () => f.calls.filter((c) => c.path === "/console/queue" && c.method === "POST");
@@ -286,7 +290,7 @@ const checks = {
         f.hold("cancel");
         await f.page.getByRole("button", { name: "停止", exact: true }).click();
         await f.box.fill("New instruction during cancellation");
-        assert.equal(await f.page.getByRole("button", { name: "排队", exact: true }).isDisabled(), true, "Send must be disabled while cancellation is pending");
+        assert.equal(await f.page.locator('button[aria-label="排队"]').isDisabled(), true, "Send must be disabled while cancellation is pending");
         await f.box.press("Enter");
         await delay(150);
         assert.equal(f.queued().length, 0, "Enter must obey the same pending-cancel guard as the send button");
@@ -336,7 +340,7 @@ const checks = {
     },
     async "intent-remount-draft"(f) {
         await f.page.getByRole("button", { name: "看板", exact: true }).click();
-        await f.page.getByRole("button", { name: "新计划", exact: true }).click();
+        await f.page.getByRole("button", { name: /^(新计划|新建计划)$/ }).click();
         await eventually(async () => (await f.box.inputValue()).startsWith("/plan"), "New plan must fill the composer");
         await f.box.fill("Plan carefully drafted after fill");
         await f.page.locator('a[href="#/projects"]').click();
@@ -344,6 +348,98 @@ const checks = {
         await f.page.locator('a[href="#/console"]').click();
         assert.equal(await f.box.inputValue(), "Plan carefully drafted after fill", "An already-consumed fill intent must not overwrite the persisted draft");
     },
+};
+
+async function noHorizontalOverflow(page) {
+    const size = await page.evaluate(() => ({ document: document.documentElement.scrollWidth, viewport: window.innerWidth }));
+    assert.ok(size.document <= size.viewport + 1, `Document overflows horizontally: ${JSON.stringify(size)}`);
+}
+
+async function visibleControl(locator, label) {
+    assert.ok(await locator.isVisible(), `${label} must be visible`);
+    const rect = await locator.boundingBox();
+    const viewport = locator.page().viewportSize();
+    assert.ok(rect && rect.width > 20 && rect.height > 20 && rect.x >= -1 && rect.y >= -1 && rect.x + rect.width <= viewport.width + 1 && rect.y + rect.height <= viewport.height + 1, `${label} must fit in the viewport: ${JSON.stringify(rect)}`);
+    assert.ok(await locator.evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        const top = document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2);
+        return top === element || element.contains(top);
+    }), `${label} must not be covered by navigation or inspector`);
+    return rect;
+}
+
+const inspector = (page) => page.getByRole("complementary").filter({ has: page.getByRole("tab", { name: "会话", exact: true }) });
+async function composerGeometry(f) {
+    await noHorizontalOverflow(f.page);
+    const message = await visibleControl(f.box, "Message");
+    const send = await visibleControl(f.page.locator('button[aria-label="发送"], button[aria-label="排队"]'), "Send");
+    const stop = f.page.getByRole("button", { name: "停止", exact: true });
+    if (await stop.isVisible()) await visibleControl(stop, "Stop");
+    assert.ok(send.x >= message.x - 12 && send.x + send.width <= message.x + message.width + 12, `Send must remain in the composer column: ${JSON.stringify({ message, send })}`);
+    const detail = inspector(f.page);
+    if (await detail.isVisible()) {
+        const panel = await detail.boundingBox();
+        assert.ok(message.x + message.width <= panel.x + 1 || message.x >= panel.x + panel.width - 1, "Message must not extend into a docked inspector");
+        assert.ok(send.x + send.width <= panel.x + 1 || send.x >= panel.x + panel.width - 1, "Send must not extend into a docked inspector");
+    }
+}
+
+for (const width of [1280, 1024, 390]) {
+    checks[`design-layout-${width}`] = async (f) => {
+        await f.page.setViewportSize({ width, height: 900 });
+        await f.box.fill("A draft that keeps the composer actions visible");
+        await composerGeometry(f);
+        await f.startRunning();
+        await f.page.getByRole("button", { name: "停止", exact: true }).waitFor();
+        await composerGeometry(f);
+        await f.page.screenshot({ path: path.join(output, `design-layout-${width}.png`) });
+    };
+}
+
+checks["design-mobile-sessions"] = async (f) => {
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await f.box.fill("Mobile draft A");
+    const open = f.page.getByRole("button", { name: /^(会话列表|打开会话列表)$/ });
+    await visibleControl(open, "Open conversation navigation");
+    await open.click();
+    await visibleControl(f.page.getByRole("button", { name: /^Conversation B/ }), "Conversation B");
+    await f.pick("B");
+    await visibleControl(f.box, "Message after selecting B");
+    assert.equal(await f.box.inputValue(), "", "Mobile selection must switch to B's own draft");
+    await open.click();
+    await f.pick("A");
+    assert.equal(await f.box.inputValue(), "Mobile draft A");
+    await open.click();
+    await f.page.getByRole("button", { name: /^(关闭会话列表|关闭会话导航)$/ }).click();
+    await visibleControl(f.box, "Message after dismissing conversation navigation");
+    await noHorizontalOverflow(f.page);
+};
+
+checks["design-inspector-toggle"] = async (f) => {
+    const panel = inspector(f.page);
+    const show = f.page.getByRole("button", { name: /^(显示详情|打开详情)$/ });
+    const hide = f.page.getByRole("button", { name: /^(隐藏详情|关闭详情)$/ });
+    if (await panel.isVisible()) await hide.first().click();
+    await visibleControl(show, "Show inspector");
+    await f.box.fill("Draft while inspecting");
+    await show.click();
+    await panel.waitFor();
+    await composerGeometry(f);
+    await hide.first().click();
+    assert.equal(await panel.isVisible(), false, "Inspector must be explicitly dismissible");
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    const before = await visibleControl(f.box, "Mobile message before inspector");
+    const underlyingMessage = await f.box.elementHandle();
+    await show.click();
+    await panel.waitFor();
+    await noHorizontalOverflow(f.page);
+    const during = await underlyingMessage.boundingBox();
+    assert.ok(Math.abs(during.width - before.width) <= 1, "Narrow-screen inspector must overlay instead of shrinking the conversation");
+    const close = f.page.getByRole("button", { name: /^(关闭详情|隐藏详情)$/ });
+    await visibleControl(close.last(), "Close mobile inspector");
+    await close.last().click();
+    await visibleControl(f.box, "Mobile message after inspector closes");
+    assert.equal(await f.box.inputValue(), "Draft while inspecting");
 };
 
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);

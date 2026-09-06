@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, type SetStateAction } from "react";
 import { useLocation, useNavigate } from "react-router";
-import { MessageChatSquare } from "@untitledui/icons";
+import { LayoutLeft, LayoutRight, MessageChatSquare, X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { Composer, type Queued } from "@/components/steve/composer";
 import { AssistantMessage, UserMessage } from "@/components/steve/message";
@@ -13,6 +13,8 @@ import { BoardPage } from "./board";
 import { Working, applyLive, type Live } from "@/components/steve/trace";
 import { Nothing } from "@/components/steve/ui";
 import { enqueue, fetchQueue, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, fetchSelectors, setPreferences } from "@/lib/api";
+import { Sheet } from "@/components/steve/drawer";
+import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { applyDelegation, restoreDelegations, withDelegations, type Delegations } from "@/lib/delegations";
 import { beginSubmission, finishSubmission, restoreSubmission, updateDraft, useDraft, useQuotes, useSubmission } from "@/lib/drafts";
@@ -27,6 +29,7 @@ export function ConsolePage() {
     const [conversation, setConversation] = useState(() => sessionStorage.getItem("steve.conversation") || "console:main");
     const [conversations, setConversations] = useState<Conversation[]>([]);
     const [entries, setEntries] = useState<Reply[]>([]);
+    const [loadingReplies, setLoadingReplies] = useState(true);
     const [enabled, setEnabled] = useState(true);
     const text = useDraft(conversation);
     function writeDraft(id: string, value: SetStateAction<string>) {
@@ -50,6 +53,10 @@ export function ConsolePage() {
     const [pick, setPick] = useState(0);
     const [selectedReply, setSelectedReply] = useState<Reply | null>(null);
     const [tab, setTab] = useState<RailTab>("context");
+    const desktopSessions = useBreakpoint("lg");
+    const dockInspector = useBreakpoint("2xl");
+    const [mobileSessions, setMobileSessions] = useState(false);
+    const [inspectorOpen, setInspectorOpen] = useState(false);
     const [pickedTask, setPickedTask] = useState<Task | null>(null);
     // A delegated child picked from the tree takes the middle column:
     // its card, open, from the reply that carried it.
@@ -141,9 +148,10 @@ export function ConsolePage() {
             if (activeConversation.current !== conversation || request !== transcriptRequest.current) return;
             setEnabled(data.enabled);
             setEntries(data.replies || []);
+            setLoadingReplies(false);
             setDelegations((cur) => restoreDelegations(cur, data.replies || [], cursor));
         } catch (e) {
-            if (activeConversation.current === conversation) setStatus(String(e));
+            if (activeConversation.current === conversation) { setStatus(String(e)); setLoadingReplies(false); }
         }
     }, [conversation]);
 
@@ -224,11 +232,13 @@ export function ConsolePage() {
     }, [text]);
 
     function selectConversation(id: string, nextContext: ConversationContext | null = null) {
+        setMobileSessions(false);
         if (id === activeConversation.current) return;
         activeConversation.current = id;
         followTranscript.current = true;
         setConversation(id);
         setEntries([]);
+        setLoadingReplies(true);
         setExchanges([]);
         setContext(nextContext);
         setLive(null);
@@ -380,33 +390,39 @@ export function ConsolePage() {
     const title = current?.title || (entries.find((r) => r.kind === "sent")?.input?.split("\n")[0]) || "新会话";
     const listed = conversations.some((c) => c.id === conversation) ? conversations : [{ id: conversation, title: "新会话", last_at: "", count: 0, running: false, project: context?.project?.id, agent: context?.agent?.id }, ...conversations];
 
-    return (
-        <div className="flex h-full min-h-0">
-            <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={selectConversation} onNew={(project) => void newSession(project)} creating={creating}
+    const sessions = (collapsed = sessionsCollapsed) => <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={selectConversation} onNew={(project) => void newSession(project)} creating={creating}
                 onUpdate={(id, patch) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}
-                collapsed={sessionsCollapsed} onToggle={() => setSessionsCollapsed(!sessionsCollapsed)}
-                tasks={snap.tasks} onTask={(t) => { if (t.parent && stepOf(t.id)) { setChild(t); setPickedTask(null); } else setPickedTask(t); }} />
+                collapsed={collapsed} onToggle={() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(false)}
+                tasks={snap.tasks} onTask={(t) => { if (t.parent && stepOf(t.id)) { setChild(t); setPickedTask(null); } else setPickedTask(t); }} />;
+    const inspector = <Rail key={conversation} context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} onClose={() => setInspectorOpen(false)} />;
+    return (
+        <div className="console-workbench">
+            {desktopSessions && sessions()}
+            {mobileSessions && !desktopSessions && <Sheet label="会话列表" side="left" width={300} onClose={() => setMobileSessions(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label="关闭会话列表" onClick={() => setMobileSessions(false)}><X aria-hidden="true" /></button>{sessions(false)}</Sheet>}
             {pickedTask && <TaskDrawer t={pickedTask} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === pickedTask.id)} onClose={() => setPickedTask(null)} width={RAIL_WIDTH} />}
 
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+            <div className="console-main">
                 {hubUpdated && <div role="status" className="border-b border-secondary bg-warning-primary px-6 py-2 text-sm text-secondary">
                     hub 已更新，<button type="button" className="underline" onClick={() => window.location.reload()}>刷新页面</button>
                 </div>}
-                <header className="flex items-center gap-3 border-b border-secondary bg-primary px-6 py-2.5">
-                    <div className="min-w-0 flex-1 truncate text-sm font-semibold text-primary" title={title}>{title}</div>
+                <header className="console-toolbar">
+                    <button type="button" className="workbench-icon-button" aria-label="会话列表" title="会话列表" onClick={() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(true)}><LayoutLeft aria-hidden="true" /></button>
+                    <div className="console-heading">
+                    <h1 title={title}>{title}</h1>
+                    {context?.project && <div className="console-location">{context.project.id} · {context.project.node}</div>}
+                    </div>
                     {current?.archived && (
                         <span className="flex items-center gap-1.5">
                             <Badge type="pill-color" size="sm" color="gray">已归档</Badge>
                             <button type="button" className="text-xs text-tertiary hover:text-primary" onClick={() => void updateConversation(current.id, { archived: false }).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}>取消归档</button>
                         </span>
                     )}
-                    {context?.project && <Badge type="pill-color" size="sm" color="gray">{context.project.id} · {context.project.node}</Badge>}
-                    {context?.agent && <Badge type="pill-color" size="sm" color={context.agent.ready ? "brand" : "error"}>{context.agent.id}{context.agent.model ? " · " + context.agent.model : ""}</Badge>}
-                    <span role="status" className="text-xs text-tertiary">{status || (creating ? "正在创建会话…" : stopping[conversation] ? "正在停止…" : submission?.active ? "正在发送…" : live || busy ? "进行中…" : "")}</span>
-                    <span className="ml-1 flex shrink-0 items-center rounded-lg bg-secondary p-0.5 text-xs">
-                        <button type="button" onClick={() => navigate("/console")} className={`rounded-md px-2 py-0.5 ${view === "chat" ? "bg-primary text-primary shadow-xs" : "text-tertiary hover:text-primary"}`}>列表</button>
-                        <button type="button" onClick={() => navigate("/console?view=board")} className={`rounded-md px-2 py-0.5 ${view === "board" ? "bg-primary text-primary shadow-xs" : "text-tertiary hover:text-primary"}`}>看板</button>
+                    <span role="status" className="console-status">{status || (creating ? "正在创建会话…" : stopping[conversation] ? "正在停止…" : submission?.active ? "正在发送…" : live || busy ? "进行中…" : "")}</span>
+                    <span className="workbench-segmented" role="group" aria-label="工作视图">
+                        <button type="button" onClick={() => navigate("/console")} aria-pressed={view === "chat"}>会话</button>
+                        <button type="button" onClick={() => navigate("/console?view=board")} aria-pressed={view === "board"}>看板</button>
                     </span>
+                    {view === "chat" && <button type="button" className="workbench-icon-button inspector-toggle" aria-label={inspectorOpen ? "隐藏详情" : "显示详情"} aria-pressed={inspectorOpen} title={inspectorOpen ? "隐藏详情" : "显示详情"} onClick={() => setInspectorOpen(!inspectorOpen)}><LayoutRight aria-hidden="true" /></button>}
                 </header>
 
                 {view === "board" ? <div className="min-h-0 flex-1 overflow-hidden"><BoardPage /></div> : child && stepOf(child.id) ? (
@@ -418,25 +434,25 @@ export function ConsolePage() {
                     </div>
                 </div>
                 ) : (
-                <div className="grid min-h-0 flex-1 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_380px]">
-                    <div className="flex min-h-0 flex-col">
-                        <div ref={transcriptBox} onScroll={(e) => { const el = e.currentTarget; followTranscript.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48; }} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden px-8 py-6">
+                <div className={`console-content ${inspectorOpen && dockInspector ? "with-inspector" : ""}`}>
+                    <div className="conversation-content">
+                        <div ref={transcriptBox} onScroll={(e) => { const el = e.currentTarget; followTranscript.current = el.scrollHeight - el.clientHeight - el.scrollTop < 48; }} className="transcript-scroll min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
                             {!enabled && <Nothing icon={MessageChatSquare} title="控制台未启用">配置 feishu.owner_open_id：控制台以 owner 身份行事。</Nothing>}
                             {enabled && entries.length === 0 && !live && (
                                 <div className="mx-auto max-w-3xl">
-                                    <Nothing icon={MessageChatSquare} title="新会话">
-                                        {context?.project ? <>会在 <b>{context.project.id}</b>（{context.project.node}）上由 <b>{context.agent?.id || "默认 Agent"}</b> 来做。想换，用输入框下面的两个选择。</> : "说你想做的事。输入 / 看动词，@ 指派一次。"}
+                                    <Nothing icon={MessageChatSquare} title={loadingReplies ? "正在载入会话…" : "新会话"}>
+                                        {loadingReplies ? "正在获取消息记录。" : context?.project ? <>在 <b>{context.project.id}</b> 开始工作。描述目标，或输入 / 选择操作。</> : "描述你想完成的事，Steve 会帮你推进。"}
                                     </Nothing>
                                 </div>
                             )}
-                            <div className="mx-auto flex max-w-4xl flex-col gap-5">
-                                {transcript.map((r, i) => r.kind === "sent" ? <UserMessage key={r.id || i} text={r.input || ""} /> : <AssistantMessage key={r.id || i} r={r} selected={shownProcess?.id === r.id} onSelect={(r.process || r.injected) ? () => { setSelectedReply(r); setTab("trace"); } : undefined}
+                            <div className="transcript-messages">
+                                {transcript.map((r, i) => r.kind === "sent" ? <UserMessage key={r.id || i} text={r.input || ""} /> : <AssistantMessage key={r.id || i} r={r} selected={shownProcess?.id === r.id} onSelect={(r.process || r.injected) ? () => { setSelectedReply(r); setTab("trace"); setInspectorOpen(true); } : undefined}
                                     onQuote={r.id ? () => setQuotes((list) => list.some((x) => x.reply_id === r.id) ? list : [...list, { conversation, reply_id: r.id!, title: current?.title || conversation, excerpt: (r.text || "").replace(/\s+/g, " ").slice(0, 80) }]) : undefined} />)}
                                 {unrecordedChildren.map((s) => <DelegationCard key={s.id} id={s.id} info={s} progress={s} />)}
                                 {live && <Working live={live} plans={runningPlans} compact />}
                             </div>
                         </div>
-                        <div className="bg-primary px-8 pb-5 pt-2">
+                        <div className="composer-dock">
                             {submission && !submission.active && <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
                                 <p>发送结果尚未确认，请先查看会话记录，避免重复执行。</p>
                                 <p className="my-1 whitespace-pre-wrap break-words">{submission.input}</p>
@@ -455,12 +471,14 @@ export function ConsolePage() {
                                 verbs={verbs} onVerb={(cmd) => { setText(cmd + " "); box.current?.focus(); }}
                                 projects={snap.projects} project={context?.project} onProject={(id) => void submit(`/project use ${id}`)}
                                 agents={context?.agents ?? []} agent={context?.agent} onAgent={(id) => void submit(`/use ${id}`)}
+                                preferenceKey={`${conversation}:${context?.agent?.id || ""}`}
                                 onSelectors={context?.agent ? () => fetchSelectors(conversation, context.agent!.id) : undefined}
-                                onPrefer={(patch) => { if (!context?.agent) return; void setPreferences(conversation, context.agent.id, patch).then((r) => { setStatus(r.note || "已记住"); loadContext(); }).catch((e) => setStatus(String(e).replace(/^Error: /, ""))); }}
+                                onPrefer={async (patch) => { if (!context?.agent) return; const r = await setPreferences(conversation, context.agent.id, patch); if (activeConversation.current === conversation) { setStatus(r.note || "偏好已保存"); loadContext(); } }}
                             />
                         </div>
                     </div>
-                    <Rail context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} />
+                    {inspectorOpen && dockInspector && inspector}
+                {inspectorOpen && !dockInspector && <Sheet label="详情" width={360} onClose={() => setInspectorOpen(false)}>{inspector}</Sheet>}
                 </div>
                 )}
             </div>

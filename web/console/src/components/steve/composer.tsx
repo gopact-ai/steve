@@ -3,7 +3,6 @@ import { ArrowUp, ChevronDown, CornerDownRight, DotsHorizontal, Edit05, Folder, 
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import type { ConversationContext, Exchange, Project, QuoteRef, Selectors, Suggestion, Verb } from "@/lib/types";
-import { placeLabel } from "@/lib/workspaces";
 
 // Composer is the console's input, in the proportions of a chat app's:
 // a textarea that grows, a row of small round controls under it — the
@@ -17,7 +16,8 @@ export interface ComposerProps {
     // Selectors are fetched when the model chip opens — that may open a
     // session — and a choice is a preference for this thread's agent.
     onSelectors?: () => Promise<Selectors>;
-    onPrefer?: (patch: Record<string, string>) => void;
+    onPrefer?: (patch: Record<string, string>) => Promise<void>;
+    preferenceKey?: string;
     quotes?: QuoteRef[];
     onDropQuote?: (q: QuoteRef) => void;
     queue?: Queued[];
@@ -50,11 +50,11 @@ export interface ComposerProps {
     onAgent: (id: string) => void;
 }
 
-const chip = "flex h-7 items-center gap-1.5 rounded-full px-2 text-xs outline-none transition hover:bg-secondary";
+const chip = "composer-chip";
 
 export function Composer(p: ComposerProps) {
     return (
-        <div className="relative mx-auto max-w-3xl">
+        <div className="composer">
             {p.suggestions.length > 0 && (
                 <div className="absolute bottom-full left-0 z-10 mb-2 w-full max-w-2xl overflow-hidden rounded-xl bg-primary shadow-lg ring-1 ring-secondary">
                     <ul className="max-h-72 overflow-y-auto py-1">
@@ -79,7 +79,7 @@ export function Composer(p: ComposerProps) {
                     ))}
                 </ul>
             )}
-            <div className="flex flex-col rounded-2xl bg-primary shadow-xs ring-1 ring-secondary transition focus-within:ring-brand">
+            <div className="composer-input">
                 {p.quotes && p.quotes.length > 0 && (
                     <ul className="flex flex-wrap gap-1.5 px-3 pt-3">
                         {p.quotes.map((x) => (
@@ -97,14 +97,14 @@ export function Composer(p: ComposerProps) {
                     value={p.value}
                     rows={1}
                     disabled={p.disabled || (p.busy && p.queueing === false)}
-                    placeholder={p.disabled ? "正在准备会话…" : p.busy ? (p.queueing === false ? "正在进行…" : "先排着，当前回合结束后发出；开头加 ! 立即打断") : "想做什么"}
+                    placeholder={p.disabled ? "正在准备会话…" : p.busy ? (p.queueing === false ? "正在处理…" : "补充指令，当前回合结束后发送…") : "给 Steve 一条指令…"}
                     onChange={(e) => p.onChange(e.target.value)}
                     onKeyDown={p.onKey}
-                    className="max-h-[200px] w-full resize-none bg-transparent px-4 pb-1 pt-3 text-sm text-primary outline-none placeholder:text-placeholder"
+                    className="composer-textarea"
                 />
-                <div className="flex items-center gap-0.5 px-2 pb-2">
+                <div className="composer-controls"><div className="composer-options">
                     <Dropdown.Root>
-                        <AriaButton aria-label="动词" className="flex size-7 items-center justify-center rounded-full text-fg-quaternary outline-none transition hover:bg-secondary hover:text-fg-quaternary_hover">
+                        <AriaButton aria-label="动词" className="workbench-icon-button">
                             <Plus className="size-4" />
                         </AriaButton>
                         <Dropdown.Popover placement="top start" className="w-80">
@@ -127,7 +127,6 @@ export function Composer(p: ComposerProps) {
                         <AriaButton isDisabled={p.disabled || p.pending} aria-label="项目" className={`${chip} text-tertiary hover:text-secondary`}>
                             <Folder className="size-3.5" />
                             <span>{p.project?.id || "项目"}</span>
-                            {p.project && (p.agent?.place ? <span className="text-quaternary">{placeLabel(p.agent.place)}</span> : p.agent ? <span className="text-error-primary">{p.agent.node} 上没有工作区</span> : <span className="text-quaternary">{p.project.node}</span>)}
                             <ChevronDown className="size-3 text-fg-quaternary" />
                         </AriaButton>
                         <Dropdown.Popover placement="top start" className="w-80">
@@ -136,9 +135,8 @@ export function Composer(p: ComposerProps) {
                             </Dropdown.Menu>
                         </Dropdown.Popover>
                     </Dropdown.Root>
-                    <span className="flex-1" />
                     <button type="button" onClick={p.onToggleQueueing} aria-pressed={p.queueing !== false} className={`${chip} shrink-0 whitespace-nowrap text-quaternary`} title={p.queueing === false ? "打开排队" : "关闭排队"}>
-                        {p.queueing === false ? "排队已关闭" : "排队已打开"}
+                        <CornerDownRight className="size-3.5" aria-hidden="true" /><span>{p.queueing === false ? "不排队" : "排队"}</span>
                     </button>
                     <Dropdown.Root>
                         <AriaButton isDisabled={p.disabled || p.pending} aria-label="Agent" className={`${chip} text-secondary`}>
@@ -158,25 +156,26 @@ export function Composer(p: ComposerProps) {
                             </Dropdown.Menu>
                         </Dropdown.Popover>
                     </Dropdown.Root>
-                    {p.agent && p.onSelectors && <PreferenceChips key={p.agent.id} agent={p.agent} load={p.onSelectors} onPrefer={p.onPrefer} />}
+                    {p.agent && p.onSelectors && <PreferenceChips key={p.preferenceKey || p.agent.id} agent={p.agent} load={p.onSelectors} onPrefer={p.onPrefer} />}
+                    </div><div className="composer-actions">
                     {p.busy && (
                         <button type="button" aria-label={p.stopping ? "正在停止" : "停止"} title={p.stopping ? "正在停止…" : "停止（/cancel）"} disabled={p.stopping} onClick={p.onStop}
-                            className="ml-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-fg-secondary ring-1 ring-secondary transition hover:bg-tertiary disabled:opacity-50">
+                            className="composer-action is-stop">
                             <Square className="size-3.5" />
                         </button>
                     )}
                     {p.busy ? p.value.trim() && p.queueing !== false && (
                         <button type="button" aria-label="排队" title={p.pending ? "正在发送…" : "排到当前回合之后（Enter）"} disabled={p.disabled || p.pending || p.stopping} onClick={p.onSubmit}
-                            className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-primary transition hover:bg-tertiary disabled:opacity-50">
+                            className="composer-action">
                             <CornerDownRight className="size-4" />
                         </button>
                     ) : (
                         <button type="button" aria-label="发送" title={p.pending ? "正在发送…" : "发送（Enter）"} disabled={p.disabled || p.pending || !p.value.trim()} onClick={p.onSubmit}
-                            className="ml-1 flex size-8 items-center justify-center rounded-full bg-brand-solid text-white transition hover:bg-brand-solid_hover disabled:bg-disabled disabled:text-fg-disabled">
+                            className="composer-action is-send">
                             <ArrowUp className="size-4" />
                         </button>
                     )}
-                </div>
+                </div></div>
             </div>
         </div>
     );
@@ -235,23 +234,30 @@ function QueuedLine({ q, p }: { q: Queued; p: ComposerProps }) {
 // reasoning level of the current agent in this thread. The choices come
 // from the harness itself when the chip opens; picking one is remembered
 // for this thread and takes effect from the next turn, in a fresh session.
-function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<ConversationContext["agent"]>; load: () => Promise<Selectors>; onPrefer?: (patch: Record<string, string>) => void }) {
+function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<ConversationContext["agent"]>; load: () => Promise<Selectors>; onPrefer?: (patch: Record<string, string>) => Promise<void> }) {
     const [sel, setSel] = useState<Selectors | null>(null);
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const open = () => { if (sel || busy) return; setBusy(true); setError(""); load().then(setSel).catch((e) => setError(String(e).replace(/^Error: /, ""))).finally(() => setBusy(false)); };
+    const prefer = async (patch: Record<string, string>) => {
+        if (busy || !onPrefer) return;
+        setBusy(true); setError("");
+        try { await onPrefer(patch); setSel(await load()); }
+        catch (e) { setError(String(e).replace(/^Error: /, "")); }
+        finally { setBusy(false); }
+    };
     const reasoning = sel?.options.find((o) => /reason|effort|think/i.test(o.ID + " " + (o.Category || "") + " " + o.Name));
     const modelLabel = sel?.preferred?.model || agent.model || "模型";
     return (
         <>
             <Dropdown.Root onOpenChange={(isOpen) => { if (isOpen) open(); }}>
-                <AriaButton aria-label="模型：这条线程里给这个 Agent 用的模型；改了下一轮以新会话开始" className={`${chip} text-quaternary`}>
+                <AriaButton isDisabled={busy} aria-label="模型" className={`${chip} text-quaternary`}>
                     <span className="max-w-40 truncate">{modelLabel}</span>
                     <ChevronDown className="size-3" />
                 </AriaButton>
                 <Dropdown.Popover placement="top start" className="w-72">
                     {error ? <div className="px-3 py-2 text-xs text-error-primary">{error}</div> : !sel ? <div className="px-3 py-2 text-xs text-quaternary">读取可选项…（没有会话时会先开一个）</div> : (
-                        <Dropdown.Menu onAction={(k) => onPrefer?.({ model: String(k) })}>
+                        <Dropdown.Menu onAction={(k) => void prefer({ model: String(k) })}>
                             <Dropdown.Section>
                                 <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">模型 · 当前 {sel.model || "未知"}{sel.preferred?.model ? ` · 偏好 ${sel.preferred.model}` : ""}</Dropdown.SectionHeader>
                                 {sel.models.length === 0 && <Dropdown.Item id="__none" label="这个 AI 工具没有暴露模型选择" isDisabled />}
@@ -261,14 +267,15 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
                     )}
                 </Dropdown.Popover>
             </Dropdown.Root>
+            {error && <span role="alert" className="text-xs text-error-primary">{error}</span>}
             {reasoning && (
                 <Dropdown.Root>
-                    <AriaButton aria-label={`${reasoning.Name}：改了下一轮以新会话开始`} className={`${chip} text-quaternary`}>
+                    <AriaButton isDisabled={busy} aria-label={reasoning.Name} className={`${chip} text-quaternary`}>
                         <span className="max-w-32 truncate">{sel?.preferred?.[reasoning.ID] || reasoning.Current || reasoning.Name}</span>
                         <ChevronDown className="size-3" />
                     </AriaButton>
                     <Dropdown.Popover placement="top start" className="w-60">
-                        <Dropdown.Menu onAction={(k) => onPrefer?.({ [reasoning.ID]: String(k) })}>
+                        <Dropdown.Menu onAction={(k) => void prefer({ [reasoning.ID]: String(k) })}>
                             <Dropdown.Section>
                                 <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">{reasoning.Name} · 当前 {reasoning.Current || "未知"}</Dropdown.SectionHeader>
                                 {reasoning.Choices.map((c) => <Dropdown.Item key={c.Value} id={c.Value} label={c.Detail ? `${c.Label || c.Value} · ${c.Detail}` : (c.Label || c.Value)} />)}

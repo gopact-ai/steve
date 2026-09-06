@@ -1,6 +1,5 @@
 import { ChevronDown } from "@untitledui/icons";
 import { useFollowTail } from "@/hooks/use-follow-tail";
-import { Badge } from "@/components/base/badges/badges";
 import { when } from "@/lib/api";
 import type { Process, Reply, StepProcess } from "@/lib/types";
 import { ChangesFold } from "./changes";
@@ -12,8 +11,8 @@ import { ProcessBody } from "./trace";
 // UserMessage is what the person typed: a bubble on the right.
 export function UserMessage({ text }: { text: string }) {
     return (
-        <div className="flex justify-end">
-            <div className="max-w-[75%] rounded-2xl bg-secondary px-4 py-2.5 text-sm text-primary whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{text}</div>
+        <div className="message-user">
+            <div className="message-user-body">{text}</div>
         </div>
     );
 }
@@ -22,17 +21,16 @@ export function UserMessage({ text }: { text: string }) {
 // out a turn: first what the agent did (its thinking summary and tool
 // calls, folding), then what it said, then a small meta line.
 export function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply; selected?: boolean; onSelect?: () => void; onQuote?: () => void }) {
-    const tone = r.error ? "error" : r.kind === "milestone" ? "success" : r.kind === "notice" ? "warning" : "gray";
+    const state = r.error ? (/cancelled|canceled|context canceled/i.test(r.error) ? "已停止" : "未完成") : r.kind === "notice" ? "任务通知" : r.kind === "milestone" ? "进度更新" : "";
     return (
-        <div className={`flex min-w-0 flex-col gap-2 rounded-xl px-2 py-1 ${selected ? "bg-secondary/60" : ""}`}>
+        <div className={`message-assistant ${selected ? "is-selected" : ""}`}>
             {r.title && <div className="text-sm font-semibold text-primary">{r.title}</div>}
             {r.process && <InlineProcess process={r.process} />}
             {r.changes && <ChangesFold summary={r.changes} label="本轮净改动，含已落地的子任务" />}
-            {r.text && <Md text={r.text} className={r.error ? "text-error-primary" : ""} />}
-            <div className="flex items-center gap-2 u-meta text-quaternary">
+            {r.text && <Md text={state === "已停止" && r.text === r.error ? "已停止本次执行。" : r.text} className={r.error && state !== "已停止" ? "text-error-primary" : ""} />}
+            <div className="message-meta">
                 <span>{when(r.at)}</span>
-                {r.kind !== "reply" && <Badge type="pill-color" size="sm" color={tone}>{r.kind}</Badge>}
-                {r.error && <Badge type="pill-color" size="sm" color="error">error</Badge>}
+                {state && <span className={r.error && state !== "已停止" ? "text-error-primary" : ""}>{state}</span>}
                 {onSelect && <button type="button" onClick={onSelect} className="hover:text-primary">细节</button>}
                 {onQuote && r.id && r.text && <button type="button" onClick={onQuote} className="hover:text-primary" title="把这条回复作为资料带给下一条消息">引用</button>}
             </div>

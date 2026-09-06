@@ -15,24 +15,24 @@ export function InboxPage() {
     const { act } = useIntent();
     const groups = ["disclosure", "effect", "question", "pairing"].map((type) => ({ type, items: snap.inbox.filter((r) => r.type === type && r.resolvable) })).filter((g) => g.items.length);
     return (
-        <div className="flex flex-col">
-            <PageHeader title="待处理" description="只有你能定的事：允许 sealed 项目的内容发出去，对账结果未知的对外动作。回答 agent 提问与飞书接入申请的通道尚未接入控制台，这里暂不显示。" />
+        <div className="workbench-page flex min-w-0 flex-col">
+            <PageHeader title="待处理" description="确认数据披露请求，以及核对结果未知的外部操作。" />
             <PageBody>
-            {groups.length === 0 && <div className="rounded-xl bg-primary shadow-xs ring-1 ring-secondary"><Nothing icon={Inbox01} title="没有要你处理的">有事时侧栏角标会亮。</Nothing></div>}
+            {groups.length === 0 && <div className="workbench-panel rounded-lg bg-primary ring-1 ring-secondary"><Nothing icon={Inbox01} title="暂无待处理请求">新请求会显示在这里。</Nothing></div>}
             {groups.map((g) => (
-                <section key={g.type} className="rounded-xl bg-primary shadow-xs ring-1 ring-secondary">
+                <section key={g.type} className="workbench-panel min-w-0 rounded-lg bg-primary ring-1 ring-secondary">
                     <div className="flex items-center gap-2 border-b border-secondary px-5 py-3">
                         <span className="text-sm font-semibold text-primary">{label(zh.requestType, g.type)}</span>
                         <Badge type="pill-color" size="sm" color="warning">{g.items.length}</Badge>
                     </div>
                     <ul className="divide-y divide-secondary">
                         {g.items.map((r) => (
-                            <li key={r.id} className="flex items-start gap-4 px-5 py-3">
+                            <li key={r.id} className="flex min-w-0 flex-col items-start gap-3 px-4 py-4 sm:flex-row">
                                 <div className="min-w-0 flex-1">
-                                    <div className="text-sm text-primary">{r.summary}</div>
-                                    <div className="mt-0.5 text-xs text-tertiary">{when(r.created_at)}{r.project_id ? ` · 项目 ${r.project_id}` : ""}{r.task_id ? ` · 任务 #${r.task_id}` : ""} · <span className="font-mono">{r.id}</span></div>
+                                    <div className="break-words text-sm font-medium text-primary">{r.summary}</div>
+                                    <div className="mt-1 break-all text-xs text-tertiary">{when(r.created_at)}{r.project_id ? ` · 项目 ${r.project_id}` : ""}{r.task_id ? ` · 任务 #${r.task_id}` : ""} · <span className="font-mono">{r.id}</span></div>
                                 </div>
-                                <div className="flex shrink-0 gap-2">
+                                <div className="flex shrink-0 flex-wrap gap-2">
                                     {r.choices.map((c) => (
                                         <Button key={c.command} size="sm" color={c.danger ? "secondary-destructive" : "secondary"} onClick={() => { if (!c.danger || window.confirm(`${c.label}？\n\n${c.command}`)) act(c.command); }}>{c.label}</Button>
                                     ))}
@@ -42,6 +42,7 @@ export function InboxPage() {
                     </ul>
                 </section>
             ))}
+            <p className="text-xs text-tertiary">Agent 提问与飞书接入申请，请在对应会话中处理。</p>
             </PageBody>
         </div>
     );

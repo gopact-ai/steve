@@ -13,13 +13,13 @@ import type { Plan, Task } from "@/lib/types";
 import { PageHeader } from "@/components/steve/page";
 import { TaskDrawer } from "@/components/steve/task-drawer";
 import { TaskMetaMenu, TaskTitleEditor, useTaskMeta } from "@/components/steve/task-meta-menu";
-import { Mono, Nothing, StateBadge, Where, taskState } from "@/components/steve/ui";
+import { Nothing, StateBadge, Where, taskState } from "@/components/steve/ui";
 
 type TabKey = "active" | "all" | "scheduled" | "usage";
 const lanes: { key: string; title: string; hint: string }[] = [
-    { key: "pending", title: "待继续", hint: "开着，但此刻没有在跑：等你的下一句，或等轮到它" },
-    { key: "running", title: "执行中", hint: "此刻有 attempt 在跑" },
-    { key: "needs_you", title: "等你处理", hint: "有待你拍板的事，或失败了要你决定继续还是取消" },
+    { key: "pending", title: "待继续", hint: "等待下一条指令或排队执行" },
+    { key: "running", title: "执行中", hint: "正在执行任务" },
+    { key: "needs_you", title: "待处理", hint: "等待确认，或执行失败后需要处理" },
     { key: "ended", title: "已结束", hint: "完成或取消" },
 ];
 
@@ -42,41 +42,45 @@ export function BoardPage() {
     const current = selected ? byID.get(selected) : undefined;
 
     return (
-        <div className="flex h-full flex-col">
+        <div className="workbench-page flex h-full min-w-0 flex-col">
             <PageHeader title="任务"
-                description={<>任务是一段有目标和预算的工作线程；一条消息是其中一个回合。<Mono>/new</Mono> 开新任务，<Mono>/plan</Mono> 拆步骤跨机器，agent 也会自己派子任务。</>}
+                description="查看进度、处理阻塞，以及安排接下来的工作。"
                 actions={<>
                     <Toggle size="sm" label="显示已归档" isSelected={showArchived} onChange={setShowArchived} />
-                    <Stat label="执行中" value={running} tone={running ? "blue" : "gray"} />
-                    <Stat label="等你处理" value={needsYou} tone={needsYou ? "warning" : "gray"} />
-                    <Stat label="今日用量" value={todayUsage ? `${spend(todayUsage.tokens)} · ${fmtSeconds(todayUsage.seconds)}` : "—"} tone="gray" />
-                    <Button size="md" color="secondary" onClick={() => fill("/plan")}>新计划</Button>
+                    <Button size="sm" color="primary" onClick={() => fill("/plan")}>新建计划</Button>
                 </>}>
+                <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as TabKey)}>
                     <TabList type="button-border" size="sm" items={[{ id: "active", label: "进行中" }, { id: "all", label: "全部" }, { id: "scheduled", label: "已安排", badge: snap.schedules.length || undefined }, { id: "usage", label: "用量" }]}>
                         {(item) => <Tab {...item} />}
                     </TabList>
                 </Tabs>
+                <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <Stat label="执行中" value={running} tone={running ? "blue" : "gray"} />
+                    <Stat label="待处理" value={needsYou} tone={needsYou ? "warning" : "gray"} />
+                    <Stat label="今日" value={todayUsage ? `${spend(todayUsage.tokens)} · ${fmtSeconds(todayUsage.seconds)}` : "—"} tone="gray" />
+                </div>
+                </div>
             </PageHeader>
-            <div className="min-h-0 flex-1 overflow-auto px-8 py-6">
+            <div className="workbench-page-body min-h-0 min-w-0 flex-1 overflow-auto px-4 py-5 sm:px-6 lg:px-8">
                 {tab === "active" && (
-                    <div className="grid grid-cols-4 gap-4">
+                    <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
                         {lanes.map((lane) => {
                             const items = roots.filter((t) => t.lane === lane.key || (lane.key === "ended" && t.lane === "set_aside" && false)).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
                             const shown = lane.key === "ended" ? items.slice(0, 8) : items;
                             return (
-                                <div key={lane.key} className="flex min-w-0 flex-col gap-2">
-                                    <div className="flex items-center gap-2 px-1" title={lane.hint}>
+                                <div key={lane.key} className="workbench-task-lane flex min-w-0 flex-col gap-2">
+                                    <div className="mb-1 flex items-center gap-2 px-1" title={lane.hint}>
                                         <span className="text-sm font-semibold text-primary">{lane.title}</span>
                                         <span className="text-xs text-quaternary">{items.length}</span>
                                     </div>
                                     {shown.map((t) => <Card key={t.id} t={t} plan={snap.plans.find((p) => p.task_id === t.id)} onOpen={() => setSelected(t.id)} selected={selected === t.id} />)}
-                                    {shown.length === 0 && <div className="rounded-xl border border-dashed border-secondary px-3 py-6 text-center text-xs text-quaternary">空</div>}
+                                    {shown.length === 0 && <div className="rounded-lg bg-secondary/50 px-3 py-8 text-center text-xs text-tertiary">暂无任务</div>}
                                 </div>
                             );
                         })}
                         {setAside.length > 0 && (
-                            <div className="col-span-4 text-xs text-tertiary">已暂停（你搁置的）：{setAside.map((t) => <button key={t.id} type="button" className="mx-1 underline" onClick={() => setSelected(t.id)}>#{t.id}</button>)}</div>
+                            <div className="col-span-full text-xs text-tertiary">已暂停：{setAside.map((t) => <button key={t.id} type="button" className="mx-1 rounded px-1 underline outline-focus-ring focus-visible:outline-2" onClick={() => setSelected(t.id)}>#{t.id}</button>)}</div>
                         )}
                     </div>
                 )}
@@ -91,9 +95,9 @@ export function BoardPage() {
 
 function Stat({ label: name, value, tone }: { label: string; value: number | string; tone: "blue" | "warning" | "gray" }) {
     return (
-        <div className="flex items-center gap-2 whitespace-nowrap">
+        <div className="flex items-center gap-1.5 whitespace-nowrap text-xs tabular-nums">
             <span className="text-xs text-tertiary">{name}</span>
-            <Badge type="pill-color" size="md" color={tone}>{value}</Badge>
+            <span className={`font-medium ${tone === "warning" ? "text-warning-primary" : tone === "blue" ? "text-brand-secondary" : "text-secondary"}`}>{value}</span>
         </div>
     );
 }
@@ -106,8 +110,8 @@ function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () 
     const steps = plan?.steps || [];
     const done = steps.filter((s) => s.state === "done").length;
     return (
-        <div className={`relative rounded-xl bg-primary p-3 text-left shadow-xs ring-1 ring-inset transition hover:ring-brand ${selected ? "ring-brand" : "ring-secondary"} ${t.priority === "low" ? "opacity-70" : ""}`}>
-            <button type="button" onClick={onOpen} aria-label={`打开任务 #${t.id} ${t.title || t.goal}`} className="absolute inset-0 rounded-xl outline-focus-ring focus-visible:outline-2 focus-visible:outline-offset-2" />
+        <div className={`workbench-task-card relative rounded-lg bg-primary p-3 text-left ring-1 ring-inset transition-colors hover:bg-primary_hover ${selected ? "ring-brand" : "ring-secondary"} ${t.priority === "low" ? "opacity-70" : ""}`}>
+            <button type="button" onClick={onOpen} aria-label={`打开任务 #${t.id} ${t.title || t.goal}`} className="absolute inset-0 rounded-lg outline-focus-ring focus-visible:outline-2 focus-visible:outline-offset-2" />
             <div className="pointer-events-none relative flex flex-col gap-2">
                 <div className="flex items-start justify-between gap-2">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
@@ -150,8 +154,8 @@ function AllTasks({ tasks, onOpen }: { tasks: Task[]; onOpen: (id: string) => vo
     const walk = (t: Task, depth: number) => { rows.push({ ...t, depth }); tasks.filter((c) => c.parent === t.id).forEach((c) => walk(c, depth + 1)); };
     tasks.filter((t) => !t.parent || !byID.has(t.parent)).forEach((t) => walk(t, 0));
     return (
-        <TableCard.Root size="sm">
-            <TableCard.Header title="全部任务" badge={`${tasks.length}`} description="含子任务；点一行看详情。" />
+        <TableCard.Root size="sm" className="workbench-table min-w-0">
+            <TableCard.Header title="全部任务" badge={`${tasks.length}`} />
             {rows.length === 0 ? <Nothing icon={ClipboardCheck} title="还没有任务" /> : (
                 <Table aria-label="全部任务" size="sm">
                     <Table.Header>
@@ -190,8 +194,8 @@ function Scheduled() {
     const { snap } = useFleet();
     const { act } = useIntent();
     return (
-        <TableCard.Root size="sm">
-            <TableCard.Header title="已安排" badge={`${snap.schedules.length}`} description="定时会自己开始的工作：/every 反复做，/at 做一次。到点时在它所在的会话里以新任务开始。" />
+        <TableCard.Root size="sm" className="workbench-table min-w-0">
+            <TableCard.Header title="已安排" badge={`${snap.schedules.length}`} description="到点后，在原会话中开始新任务。" />
             {snap.schedules.length === 0 ? <Nothing icon={Clock} title="没有安排">在工作台里用 <code>/every 9:00 …</code> 或 <code>/at 18:30 …</code> 安排。</Nothing> : (
                 <Table aria-label="已安排" size="sm">
                     <Table.Header>
@@ -230,18 +234,19 @@ function UsagePanel() {
     ];
     return (
         <div className="flex flex-col gap-6">
-            <div className="rounded-xl bg-primary px-5 py-4 shadow-xs ring-1 ring-secondary">
-                <div className="text-sm text-tertiary">合计（账本里每一次已结束的 attempt，成功与失败都算）</div>
-                <div className="mt-1 flex items-baseline gap-6">
+            <div className="workbench-panel rounded-lg bg-primary px-5 py-4 ring-1 ring-secondary">
+                <div className="text-sm text-tertiary">累计用量</div>
+                <div className="mt-1 flex flex-wrap items-baseline gap-x-6 gap-y-2 tabular-nums">
                     <span className="text-2xl font-semibold text-primary">{fmtTokens(u.total.tokens.total)} <span className="text-sm font-normal text-tertiary">tokens</span></span>
                     <span className="text-lg text-secondary">{fmtSeconds(u.total.seconds)}</span>
-                    <span className="text-sm text-tertiary">{u.total.attempts} 次 attempt{u.total.unreported ? ` · ${u.total.unreported} 次未上报 token` : ""}</span>
+                    <span className="text-sm text-tertiary">{u.total.attempts} 次执行{u.total.unreported ? ` · ${u.total.unreported} 次未上报 token` : ""}</span>
                 </div>
-                <div className="mt-1 text-xs text-quaternary">只显示提供方实际报告的数据；不折算金额。输入 {fmtTokens(u.total.tokens.input)} · 输出 {fmtTokens(u.total.tokens.output)} · 缓存读 {fmtTokens(u.total.tokens.cached_read)} · 上下文合计 {fmtTokens(u.total.tokens.context)}（ACP 适配器目前只报上下文占用，不报输入/输出）</div>
+                <div className="mt-2 text-xs text-tertiary">输入 {fmtTokens(u.total.tokens.input)} · 输出 {fmtTokens(u.total.tokens.output)} · 缓存 {fmtTokens(u.total.tokens.cached_read)} · 上下文 {fmtTokens(u.total.tokens.context)}</div>
+                <div className="mt-1 text-xs text-quaternary">含成功和失败的执行，仅统计提供方上报数据。ACP 仅上报上下文占用。</div>
             </div>
-            <div className="grid grid-cols-3 gap-6">
+            <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-3">
                 {tables.map((tbl) => (
-                    <TableCard.Root key={tbl.title} size="sm">
+                    <TableCard.Root key={tbl.title} size="sm" className="workbench-table min-w-0">
                         <TableCard.Header title={tbl.title} description={tbl.hint || undefined} />
                         {tbl.rows.length === 0 ? <Nothing icon={ClipboardCheck} title="还没有记录" /> : (
                             <Table aria-label={tbl.title} size="sm">

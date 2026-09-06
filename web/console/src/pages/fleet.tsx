@@ -77,14 +77,14 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
                 {!editing ? (
                     <>
                         <KeyValue dense rows={[
-                            { k: "适合做什么", v: a.about ? <span className="text-secondary">{a.about}</span> : <span className="text-quaternary">还没写。写了以后，规划器和其它 Agent 派活时会照它选人。</span> },
+                            { k: "用途", v: a.about ? <span className="text-secondary">{a.about}</span> : <span className="text-quaternary">未设置用途说明</span> },
                             { k: "机器", v: <Where node={a.node} /> },
                             { k: "AI 工具", v: a.harness },
                             { k: "模型偏好", v: a.preferred || <span className="text-quaternary">未固定，用 AI 工具的默认</span>, hint: "配置里固定的模型；开会话时 Steve 会把它设给 AI 工具。" },
                             { k: "上次实际", v: a.observed || <span className="text-quaternary">还没开过会话</span>, hint: "上次会话打开时 AI 工具报告的模型。" },
                             { k: "可选模型", v: a.models?.length ? <span className="text-secondary">{a.models.length} 个</span> : <span className="text-quaternary">未知</span> },
                             ...extras.map((sel) => ({ k: sel.name || sel.id, v: a.options?.[sel.id] ? <span className="text-primary">{a.options[sel.id]}</span> : <span className="text-quaternary">未固定{sel.current ? `，上次 ${sel.current}` : ""}</span>, hint: "AI 工具暴露的会话选项；固定后每次开会话都设成它。" })),
-                            { k: "能接的项目", v: `数据等级 ${canTake}`, hint: "由它所在机器的数据等级决定：机器等级不低于项目等级才能碰项目的文件。" },
+                            { k: "能接的项目", v: `数据等级 ${canTake}`, hint: "由它所在机器的数据等级决定：机器等级不能低于项目的数据等级。" },
                             { k: "MCP 服务器", v: a.mcp_servers?.length ? <Chips items={a.mcp_servers.map((m) => ({ id: m }))} /> : <span className="text-quaternary">无</span>, hint: "会话打开时接上的 MCP 服务器；远端 Agent 用它所在机器上的同名服务器。" },
                             { k: "运行条件", v: <Conditions a={a} />, hint: "它所在的机器必须提供这些；任一不满足它就不可用。" },
                         ]} />
@@ -94,15 +94,15 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
                                 <div className="mt-1 flex flex-wrap gap-1">{a.models.map((m) => <Mono key={m} className="text-secondary">{m}</Mono>)}</div>
                             </details>
                         ) : null}
-                        <DrawerSection title="此刻">
+                        <DrawerSection title="当前活动">
                             {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="text-xs text-secondary">#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since)}{x.detail ? ` · ${x.detail}` : ""}</div>) : <div className="text-xs text-quaternary">空闲</div>}
                         </DrawerSection>
                         <section className="rounded-lg bg-secondary/40 p-3">
-                            <div className="flex items-center gap-3">
-                                <div className="flex-1 text-xs text-tertiary">删除只是让 hub 忘掉这个 Agent 的配置；它跑过的任务记录保留。</div>
-                                {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>算了</Button><Button size="sm" color="primary-destructive" onClick={() => void remove()}>确认删除</Button></>) : <Button size="sm" color="secondary-destructive" isDisabled={!!a.default} onClick={() => setRemoving(true)}>删除 Agent</Button>}
+                            <div className="flex min-w-0 flex-wrap items-center gap-3">
+                                <div className="flex-1 text-xs text-tertiary">删除 Agent 配置，保留历史任务记录。</div>
+                                {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>取消</Button><Button size="sm" color="primary-destructive" onClick={() => void remove()}>确认删除</Button></>) : <Button size="sm" color="secondary-destructive" isDisabled={!!a.default} onClick={() => setRemoving(true)}>删除 Agent</Button>}
                             </div>
-                            {error && <div className="mt-2 text-xs text-error-primary">{error}</div>}
+                            {error && <div role="alert" className="mt-2 text-xs text-error-primary">{error}</div>}
                         </section>
                     </>
                 ) : (
@@ -124,7 +124,7 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
                             </Select>
                         ))}
                         {extras.length === 0 && <div className="text-xs text-quaternary">思考强度等其它选项要等这个 AI 工具开过一次会话、报告了它有哪些选项后才能固定。</div>}
-                        <TextArea label="适合做什么" rows={3} placeholder="一句话说清它擅长什么、该派给它什么活。规划器和其它 Agent 派活时会读这句。" value={spec.about || ""} onChange={(v) => setSpec({ ...spec, about: v })} />
+                        <TextArea label="用途" rows={3} placeholder="说明擅长的工作，便于任务分配…" value={spec.about || ""} onChange={(v) => setSpec({ ...spec, about: v })} />
                         <div className="flex flex-col gap-1.5">
                             <div className="text-xs font-medium text-secondary">运行条件</div>
                             <div className="text-xs text-tertiary">它所在的机器必须提供的：kind:id 选择器，如 tool:docker、hardware:gpu、mcp:github；裸词是标签。</div>
@@ -135,7 +135,7 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
                             <div className="text-xs text-tertiary">按名字；hub 上的 Agent 用 hub 配置的，远端 Agent 用它所在机器上配置的。</div>
                             <ListEditor items={spec.mcp_servers} placeholder="github" onChange={(mcp_servers) => setSpec({ ...spec, mcp_servers })} />
                         </div>
-                        {error && <div className="text-sm text-error-primary">{error}</div>}
+                        {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
                         <div className="flex justify-end gap-2">
                             <Button size="sm" color="secondary" onClick={() => setEditing(false)}>取消</Button>
                             <Button size="sm" color="primary" isLoading={busy} onClick={() => void save()}>保存</Button>
@@ -176,12 +176,12 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
     return (
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
             <Modal className="max-w-xl">
-                <Dialog>
+                <Dialog aria-label={mode === "machine" ? "添加机器" : "添加 Agent"}>
                     <div className="flex w-full flex-col gap-4 rounded-2xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
                         <div className="flex items-start gap-3">
                             <div className="min-w-0 flex-1">
                                 <div className="text-base font-semibold text-primary">添加{mode === "machine" ? "机器" : " Agent"}</div>
-                                <div className="mt-0.5 text-xs text-tertiary">{mode === "machine" ? "hub 会立刻登记并写进自己的配置，然后给你一条到那台机器上执行的命令。" : "Agent 是一个命名的执行配置：在哪台机器上用哪个 AI 工具。加入后马上可用。"}</div>
+                                <div className="mt-0.5 text-xs text-tertiary">{mode === "machine" ? "登记机器后，按提示在目标机器执行接入命令。" : "选择机器和 AI 工具，创建一个可指派的 Agent。"}</div>
                             </div>
                             <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label="关闭" />
                         </div>
@@ -193,7 +193,7 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
                         {mode === "machine" && !result && (
                             <div className="grid grid-cols-1 gap-4">
                                 <Input size="sm" label="名称" placeholder="node-c" value={name} onChange={setName} autoFocus hint="小写字母、数字、点、下划线、连字符" />
-                                <Input size="sm" label="hub 拨号地址" placeholder="10.0.0.5:7701" value={addr} onChange={setAddr} hint="hub 从这里连过去；那台机器上 steve-node 监听同一个端口" />
+                                <Input size="sm" label="连接地址" placeholder="10.0.0.5:7701" value={addr} onChange={setAddr} hint="hub 可访问的地址与 steve-node 监听端口" />
                                 <Select size="sm" label="数据等级" hint={levelHint} selectedKey={level} onSelectionChange={(k) => k && setLevel(String(k))} items={["public", "internal", "restricted", "sealed"].map((l) => ({ id: l, label: `${levelWords[l]}（${l}）` }))}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
@@ -211,7 +211,7 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
                         )}
                         {mode === "agent" && !done && (
                             <div className="grid grid-cols-1 gap-4">
-                                <Input size="sm" label="名字" placeholder="reviewer" value={agent} onChange={setAgent} autoFocus hint="聊天里用 @名字 指派它" />
+                                <Input size="sm" label="名称" placeholder="reviewer" value={agent} onChange={setAgent} autoFocus hint="聊天里用 @名字 指派它" />
                                 <Select size="sm" label="AI 工具" hint="要在 hub 的 harnesses 里配置过" selectedKey={harness} onSelectionChange={(k) => k && setHarness(String(k))} items={harnesses.map((h) => ({ id: h, label: h }))}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
@@ -221,7 +221,7 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
                             </div>
                         )}
                         {mode === "agent" && done && <div className="text-sm text-primary">{done}</div>}
-                        {error && <div className="text-sm text-error-primary">{error}</div>}
+                        {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
                         <div className="flex justify-end gap-2">
                             <Button size="sm" color="secondary" onClick={onClose}>{result || done ? "完成" : "取消"}</Button>
                             {!result && !done && <Button size="sm" color="primary" isLoading={busy} isDisabled={mode === "machine" ? !name.trim() || !addr.trim() : !agent.trim()} onClick={() => void submit()}>{mode === "machine" ? "登记机器" : "加入 Agent"}</Button>}
@@ -243,7 +243,7 @@ const kindWords: Record<string, string> = { harness: "AI 工具", model: "模型
 // or gated out of placement.
 function state(c: Capability, snap: AbilitySnapshot): { word: string; cls: string } {
     const declaredOnly = !(c.evidence || []).some((e) => e.kind !== "declared");
-    if (c.availability === "unavailable") return { word: "已配置但不可用", cls: "text-quaternary line-through decoration-error-primary" };
+    if (c.availability === "unavailable") return { word: "已配置但不可用", cls: "bg-error-primary text-error-primary" };
     if (c.availability === "unknown") return { word: "未知（未能核实）", cls: "text-quaternary ring-1 ring-secondary ring-inset" };
     if (declaredOnly) return { word: "声明，未核实", cls: "text-tertiary ring-1 ring-secondary ring-inset" };
     if (["mcp", "skill", "a2a"].includes(c.kind)) return { word: "已观测，暂不参与放置", cls: "bg-secondary text-tertiary" };
@@ -297,18 +297,18 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
                 {editing ? (
                     <SettingsEditor node={n.name} onClose={() => setEditing(false)} onSaved={onChanged} />
                 ) : (
-                    <DrawerSection title="能做什么">
+                    <DrawerSection title="能力清单">
                         <Abilities snapshot={n.snapshot} />
                     </DrawerSection>
                 )}
                 {n.role !== "hub" && (
                     <section className="rounded-lg bg-secondary/40 p-3">
-                        <div className="flex items-center gap-3">
-                            <div className="flex-1 text-xs text-tertiary">移除只是让 hub 忘掉这台机器：不再拨号、不再列出；机器上的进程不动。上面还有 Agent、或有项目的主目录 / 副本时会先拒绝。</div>
-                            {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>算了</Button><Button size="sm" color="primary-destructive" onClick={() => void remove()}>确认移除</Button></>)
+                        <div className="flex min-w-0 flex-wrap items-center gap-3">
+                            <div className="flex-1 text-xs text-tertiary">移除连接配置，保留机器上的进程。请先移除关联的 Agent 和工作区。</div>
+                            {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>取消</Button><Button size="sm" color="primary-destructive" onClick={() => void remove()}>确认移除</Button></>)
                                 : <Button size="sm" color="secondary-destructive" onClick={() => setRemoving(true)}>移除机器</Button>}
                         </div>
-                        {removeError && <div className="mt-2 text-xs text-error-primary">{removeError}</div>}
+                        {removeError && <div role="alert" className="mt-2 text-xs text-error-primary">{removeError}</div>}
                     </section>
                 )}
         </Drawer>
@@ -320,7 +320,7 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
 // is one block at the end, since it was never checked.
 function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
     const list = snapshot?.offers || [];
-    if (!snapshot || !list.length) return <span className="text-sm text-quaternary">旧版本，未申报清单</span>;
+    if (!snapshot || !list.length) return <span className="text-sm text-quaternary">未收到能力清单</span>;
     const blocks: { title: string; kinds: string[]; hint?: string }[] = [
         { title: "AI 工具", kinds: ["harness"] },
         { title: "命令", kinds: ["tool"] },
@@ -364,40 +364,40 @@ export function FleetPage() {
     const [openedAgent, setOpenedAgent] = useState<string | null>(null);
     const hubHarnesses = Array.from(new Set(snap.agents.map((a) => a.harness).filter(Boolean))) as string[];
     return (
-        <div className="flex flex-col">
-            <PageHeader title="资源" description="我有哪些机器、AI 工具和 Agent，是否健康，怎么加。机器上的一切以它自己的申报为准。"
-                actions={<Button size="md" color="secondary" iconLeading={Plus} onClick={() => setAdding(true)}>添加机器 / Agent</Button>} />
+        <div className="workbench-page flex min-w-0 flex-col">
+            <PageHeader title="资源" description="查看机器状态、Agent 配置与运行中的任务。"
+                actions={<Button size="sm" color="primary" iconLeading={Plus} onClick={() => setAdding(true)}>添加机器 / Agent</Button>} />
             <PageBody>
             {adding && <AddMachine hub={snap.hub.node} harnesses={hubHarnesses.length ? hubHarnesses : ["codex", "claude-code", "grok", "kimi"]} nodes={snap.nodes.filter((n) => n.role !== "hub").map((n) => n.name)} onClose={() => setAdding(false)} onDone={() => refresh()} />}
-            <TableCard.Root size="sm">
-                <TableCard.Header title="机器" badge={`${up}/${snap.nodes.length} 在线`} description="每台跑着 steve 的机器，hub 也在内。点一行看它能做什么；计划步骤和 agent 派活按 kind:id 选择器匹配每台机器自己的申报。" />
+            <TableCard.Root size="sm" className="workbench-table min-w-0">
+                <TableCard.Header title="机器" badge={`${up}/${snap.nodes.length} 在线`} />
                 {snap.nodes.length === 0 ? <Nothing icon={Server01} title="还没有机器">hub 还没报名字，也没有配置远程机器。</Nothing> : (
-                    <Table aria-label="Nodes" size="sm" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
+                    <Table aria-label="Nodes" size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
                         <Table.Header>
-                            <Table.Head id="node" label="名称" isRowHeader />
-                            <Table.Head id="host" label="主机 / IP" />
-                            <Table.Head id="version" label="版本" />
-                            <Table.Head id="os" label="系统" />
-                            <Table.Head id="level" label="数据等级" />
-                            <Table.Head id="health" label="健康" />
-                            <Table.Head id="state" label="状态" />
+                            <Table.Head id="node" label="名称" className="w-[19%]" isRowHeader />
+                            <Table.Head id="host" label="主机 / IP" className="w-[21%]" />
+                            <Table.Head id="version" label="版本" className="w-[12%]" />
+                            <Table.Head id="os" label="系统" className="w-[12%]" />
+                            <Table.Head id="level" label="数据等级" className="w-[10%]" />
+                            <Table.Head id="health" label="健康" className="w-[16%]" />
+                            <Table.Head id="state" label="状态" className="w-[10%]" />
                         </Table.Header>
                         <Table.Body items={snap.nodes.map((n) => ({ ...n, id: n.name }))}>
                             {(n) => (
                                 <Table.Row id={n.name} className="cursor-pointer">
                                     <Table.Cell>
-                                        <div className="flex items-center gap-2">
-                                            <span className="font-medium text-primary">{n.name}</span>
-                                            <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role === "hub" ? "hub" : "worker"}</Badge>
+                                        <div className="flex min-w-0 flex-col gap-1">
+                                            <span className="truncate font-medium text-primary" title={n.name}>{n.name}</span>
+                                            <span className="text-xs text-tertiary">{n.role === "hub" ? "hub" : "worker"}</span>
                                         </div>
                                     </Table.Cell>
                                     <Table.Cell>
                                         <div className="flex flex-col">
-                                            <span className="text-primary">{n.host && n.host !== n.name ? n.host : (n.ips || [])[0] || "—"}</span>
+                                            <span className="truncate text-primary" title={[n.host, ...(n.ips || [])].filter(Boolean).join("\n")}>{n.host && n.host !== n.name ? n.host : (n.ips || [])[0] || "—"}</span>
                                             {n.host && n.host !== n.name && (n.ips || []).length > 0 && <span className="font-mono text-xs text-tertiary" title={(n.ips || []).join("\n")}>{(n.ips || [])[0]}{(n.ips || []).length > 1 ? ` +${(n.ips || []).length - 1}` : ""}</span>}
                                         </div>
                                     </Table.Cell>
-                                    <Table.Cell><span className="font-mono text-xs text-tertiary">{n.version || "—"}</span></Table.Cell>
+                                    <Table.Cell><span className="block truncate font-mono text-xs text-tertiary" title={n.version}>{n.version || "—"}</span></Table.Cell>
                                     <Table.Cell><span className="text-xs text-tertiary">{n.os ? `${n.os} / ${n.arch}` : "—"}</span></Table.Cell>
                                     <Table.Cell><span title={levelHint}>{levelWords[n.level || "internal"] || n.level}</span></Table.Cell>
                                     <Table.Cell>
@@ -414,47 +414,38 @@ export function FleetPage() {
             </TableCard.Root>
             {opened && snap.nodes.find((n) => n.name === opened) && <MachineDrawer n={snap.nodes.find((n) => n.name === opened)!} onClose={() => setOpened(null)} onChanged={() => refresh()} />}
 
-            <TableCard.Root size="sm">
-                <TableCard.Header title="Agent" badge={`${snap.agents.length}`} description="Agent 是一个有名字的执行配置：在哪台机器上用哪个 AI 工具，可以固定一个模型。可用 = 此刻能开工；不可用会写明原因和谁能修。点一行看详情、改配置。" />
-                <Table aria-label="Agents" size="sm" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpenedAgent(id ? String(id) : null); }}>
+            <TableCard.Root size="sm" className="workbench-table min-w-0">
+                <TableCard.Header title="Agent" badge={`${snap.agents.length}`} />
+                <Table aria-label="Agents" size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpenedAgent(id ? String(id) : null); }}>
                     <Table.Header>
-                        <Table.Head id="agent" label="Agent" isRowHeader />
-                        <Table.Head id="state" label="状态" />
-                        <Table.Head id="now" label="此刻" />
-                        <Table.Head id="where" label="机器 · AI 工具" />
-                        <Table.Head id="model" label="模型" />
-                        <Table.Head id="requires" label="运行条件" />
-                        <Table.Head id="why" label="" />
+                        <Table.Head id="agent" label="Agent" className="w-[20%]" isRowHeader />
+                        <Table.Head id="state" label="状态" className="w-[16%]" />
+                        <Table.Head id="now" label="当前活动" className="w-[21%]" />
+                        <Table.Head id="where" label="运行环境" className="w-[20%]" />
+                        <Table.Head id="model" label="模型" className="w-[23%]" />
                     </Table.Header>
                     <Table.Body items={snap.agents}>
                         {(a) => (
                             <Table.Row id={a.id} className="cursor-pointer">
                                 <Table.Cell>
                                     <div className="flex flex-col">
-                                        <div className="flex items-center gap-2">
-                                            <span className="font-medium text-primary">{a.id}</span>
+                                        <div className="flex min-w-0 items-center gap-2">
+                                            <span className="truncate font-medium text-primary" title={a.id}>{a.id}</span>
                                             {a.default && <Badge type="pill-color" size="sm" color="brand">默认</Badge>}
                                         </div>
                                         {a.about && <span className="line-clamp-1 max-w-64 text-xs text-tertiary" title={a.about}>{a.about}</span>}
                                     </div>
                                 </Table.Cell>
-                                <Table.Cell><StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />{a.busy ? <span className="ml-1 text-xs text-tertiary">忙 {a.busy}{a.slots ? `/${a.slots}` : ""}</span> : null}</Table.Cell>
+                                <Table.Cell><div className="flex min-w-0 flex-col gap-1"><div><StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />{a.busy ? <span className="ml-1 text-xs text-tertiary">{a.busy}{a.slots ? `/${a.slots}` : ""}</span> : null}</div>{a.why && <span className="truncate text-xs text-error-primary" title={a.why}>{a.why}</span>}{a.repair && <Button size="sm" color="link-color" onClick={(e: React.MouseEvent) => { e.stopPropagation(); act(`/repair ${a.id}`); }}>让 {a.repair} 修复</Button>}</div></Table.Cell>
                                 <Table.Cell>
                                     {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="truncate text-xs text-secondary" title={x.detail}>#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since)}</div>) : <span className="text-xs text-quaternary">空闲</span>}
                                 </Table.Cell>
-                                <Table.Cell><div className="flex items-center gap-1.5"><Where node={a.node} /><span className="text-quaternary">·</span><span>{a.harness}</span></div></Table.Cell>
+                                <Table.Cell><div className="flex min-w-0 flex-col gap-1"><span className="truncate text-xs text-secondary" title={a.node || snap.hub.node}>{a.node || snap.hub.node}</span><span className="truncate text-xs text-tertiary">{a.harness}</span></div></Table.Cell>
                                 <Table.Cell>
                                     <div className="flex flex-col">
-                                        {a.preferred ? <span className="text-primary" title="配置里固定的模型，开会话时设给 AI 工具">{a.preferred}</span> : <span className="text-quaternary" title="没有固定：AI 工具用它自己的默认模型">未固定</span>}
-                                        {a.observed && <span className="text-xs text-tertiary" title="上次会话里 AI 工具实际报告的模型">上次 {a.observed}</span>}
-                                        {a.options && Object.keys(a.options).length > 0 && <span className="text-xs text-tertiary">{Object.entries(a.options).map(([k, v]) => `${selectorName(a, k)} ${v}`).join(" · ")}</span>}
-                                    </div>
-                                </Table.Cell>
-                                <Table.Cell><Conditions a={a} /></Table.Cell>
-                                <Table.Cell>
-                                    <div className="flex items-center gap-3">
-                                        <span className="text-error-primary">{a.why || ""}</span>
-                                        {a.repair ? <Button size="sm" color="secondary" onClick={(e: React.MouseEvent) => { e.stopPropagation(); act(`/repair ${a.id}`); }}>让 {a.repair} 修</Button> : null}
+                                        {a.preferred ? <span className="truncate text-primary" title={`固定模型：${a.preferred}`}>{a.preferred}</span> : <span className="text-quaternary" title="没有固定：AI 工具用它自己的默认模型">未固定</span>}
+                                        {a.observed && <span className="truncate text-xs text-tertiary" title={`上次实际模型：${a.observed}`}>上次 {a.observed}</span>}
+                                        {a.options && Object.keys(a.options).length > 0 && <span className="truncate text-xs text-tertiary" title={Object.entries(a.options).map(([k, v]) => `${selectorName(a, k)} ${v}`).join(" · ")}>{Object.entries(a.options).map(([k, v]) => `${selectorName(a, k)} ${v}`).join(" · ")}</span>}
                                     </div>
                                 </Table.Cell>
                             </Table.Row>
@@ -465,21 +456,21 @@ export function FleetPage() {
             </TableCard.Root>
             {openedAgent && snap.agents.find((a) => a.id === openedAgent) && <AgentDrawer a={snap.agents.find((a) => a.id === openedAgent)!} onClose={() => setOpenedAgent(null)} onChanged={() => refresh()} />}
 
-            <TableCard.Root size="sm">
-                <TableCard.Header title="正在执行的 attempt" badge={`${snap.attempts.length}`} description="每一次执行都持有租约；租约丢失即取消。" />
-                {snap.attempts.length === 0 ? <Nothing icon={Zap} title="没有在跑的" /> : (
+            <TableCard.Root size="sm" className="workbench-table min-w-0">
+                <TableCard.Header title="运行中的执行" badge={`${snap.attempts.length}`} description="每一次执行都持有租约；租约丢失即取消。" />
+                {snap.attempts.length === 0 ? <Nothing icon={Zap} title="当前没有执行" /> : (
                     <Table aria-label="Attempts" size="sm">
                         <Table.Header>
-                            <Table.Head id="id" label="Attempt" isRowHeader />
-                            <Table.Head id="kind" label="Kind" />
-                            <Table.Head id="state" label="State" />
+                            <Table.Head id="id" label="执行 ID" isRowHeader />
+                            <Table.Head id="kind" label="类型" />
+                            <Table.Head id="state" label="状态" />
                             <Table.Head id="agent" label="Agent" />
-                            <Table.Head id="where" label="Where" />
-                            <Table.Head id="project" label="Project" />
-                            <Table.Head id="scope" label="Scope" />
-                            <Table.Head id="leases" label="Leases" />
+                            <Table.Head id="where" label="机器" />
+                            <Table.Head id="project" label="项目" />
+                            <Table.Head id="scope" label="范围" />
+                            <Table.Head id="leases" label="租约" />
                             <Table.Head id="admission" label="准入" />
-                            <Table.Head id="since" label="Since" />
+                            <Table.Head id="since" label="开始时间" />
                         </Table.Header>
                         <Table.Body items={snap.attempts}>
                             {(a) => (
