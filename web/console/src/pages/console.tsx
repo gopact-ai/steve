@@ -6,6 +6,7 @@ import { Composer, type Queued } from "@/components/steve/composer";
 import { AssistantMessage, UserMessage } from "@/components/steve/message";
 import { Rail, type RailTab } from "@/components/steve/rail";
 import { ResizableInspector } from "@/components/steve/resizable-inspector";
+import { useReviewActive } from "@/components/steve/review-context";
 import { SessionsTree } from "@/components/steve/sessions-tree";
 import { TaskDrawer } from "@/components/steve/task-drawer";
 import { DelegationCard } from "@/components/steve/delegation";
@@ -56,8 +57,13 @@ export function ConsolePage() {
     const [selectedReply, setSelectedReply] = useState<Reply | null>(null);
     const [tab, setTab] = useState<RailTab>("context");
     const desktopSessions = useBreakpoint("lg");
-    const dockInspector = useBreakpoint("2xl");
-    const resizeInspector = useBreakpoint("sm");
+    const canDockInspector = useBreakpoint("2xl");
+    const canResizeInspector = useBreakpoint("sm");
+    const reviewing = useReviewActive();
+    const inspectorLayout = useRef({ dock: canDockInspector, resize: canResizeInspector });
+    // Opening a new modal behind Review would steal its focus/top layer.
+    if (!reviewing) inspectorLayout.current = { dock: canDockInspector, resize: canResizeInspector };
+    const { dock: dockInspector, resize: resizeInspector } = inspectorLayout.current;
     const [mobileSessions, setMobileSessions] = useState(false);
     const [inspectorOpen, setInspectorOpen] = useState(false);
     const [pickedTask, setPickedTask] = useState<Task | null>(null);

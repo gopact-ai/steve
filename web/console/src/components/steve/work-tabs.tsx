@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRight, File02, Folder, Link01, Loading01 } from "@untitledui/icons";
-import { fetchAttemptFile, fetchAttemptTree, fetchTaskAttempts, when } from "@/lib/api";
-import type { AttemptView, FileView, Task, TreeView } from "@/lib/types";
+import { fetchAttemptChanges, fetchAttemptFile, fetchAttemptTree, fetchTaskAttempts, when } from "@/lib/api";
+import type { AttemptView, ChangeIndex, FileView, Task, TreeView } from "@/lib/types";
+import { Button } from "@/components/base/buttons/button";
+import { useReview } from "./review-context";
 import { ChangesFold } from "./changes";
 import { CodeBlock } from "./markdown";
 import { Panel } from "./page";
@@ -28,15 +30,19 @@ function useAttempts(roots: Task[], all: Task[]) {
     const key = ids.join(",") + "|" + all.filter((t) => ids.includes(t.id)).map((t) => t.updated_at || "").join(",");
     const [attempts, setAttempts] = useState<(AttemptView & { task: string })[]>([]);
     const [error, setError] = useState("");
+    const [loading, setLoading] = useState(true);
+    const [retry, setRetry] = useState(0);
     useEffect(() => {
         let gone = false;
-        void Promise.all(ids.map((id) => fetchTaskAttempts(id).then((list) => list.map((a) => ({ ...a, task: id }))).catch(() => [] as (AttemptView & { task: string })[])))
+        setLoading(true); setError("");
+        void Promise.all(ids.map((id) => fetchTaskAttempts(id).then((list) => list.map((a) => ({ ...a, task: id })))))
             .then((lists) => { if (gone) return; setAttempts(lists.flat().sort((a, b) => b.started_at.localeCompare(a.started_at))); setError(""); })
-            .catch((e) => { if (!gone) setError(fail(e)); });
+            .catch((e) => { if (!gone) setError(fail(e)); })
+            .finally(() => { if (!gone) setLoading(false); });
         return () => { gone = true; };
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [key]);
-    return { attempts, error, tasks: ids };
+    }, [key, retry]);
+    return { attempts, error, loading, retry: () => setRetry((n) => n + 1), tasks: ids };
 }
 
 function attemptLabel(a: AttemptView & { task: string }, tasks: Task[]): string {
@@ -46,10 +52,13 @@ function attemptLabel(a: AttemptView & { task: string }, tasks: Task[]): string 
 }
 
 export function ChangesTab({ roots, all }: { roots: Task[]; all: Task[] }) {
-    const { attempts, error } = useAttempts(roots, all);
-    if (error) return <div className="text-sm text-error-primary">{error}</div>;
+    const { attempts, error, loading, retry } = useAttempts(roots, all);
+    const review = useReview();
+    if (error) return <div role="alert" className="text-sm text-error-primary">{error}<Button size="sm" color="secondary" onClick={retry}>重试</Button></div>;
+    if (loading && !attempts.length) return <p role="status" className="text-sm text-tertiary">读取执行记录…</p>;
     const withChanges = attempts.filter((a) => a.artifact && a.artifact !== a.base);
-    if (!withChanges.length) return <Nothing icon={File02} title="还没有改动">这条线程的回合和委派都没有改文件，或者还没有结束。</Nothing>;
+    if (!withChanges.length) return <Nothing icon={File02} title="暂无可审阅的变更">这条会话尚未留下有差异的结束快照。</Nothing>;
+    const choices = withChanges.map((a) => ({ id: a.id, label: attemptLabel(a, all) }));
     return (
         <Panel title="变更" badge={<span className="text-xs text-tertiary">每次执行的前后快照之差，最新在前</span>}>
             <ul className="flex flex-col divide-y divide-secondary">
@@ -60,6 +69,7 @@ export function ChangesTab({ roots, all }: { roots: Task[]; all: Task[] }) {
                             <span className="truncate text-secondary">{attemptLabel(a, all)}</span>
                             <Mono className="ml-auto shrink-0 text-quaternary">{a.artifact?.slice(0, 8)}</Mono>
                         </div>
+                        <Button size="sm" color="secondary" className="self-start" onClick={() => review({ attempt: a.id, label: attemptLabel(a, all), attempts: choices })}>进入 Review</Button>
                         <ChangesFold summary={{ attempt: a.id, files: a.files || 0, note: a.files ? undefined : "无法统计" }} label={a.kind === "delegate" ? "子任务的改动" : "本轮净改动"} />
                     </li>
                 ))}
@@ -69,7 +79,8 @@ export function ChangesTab({ roots, all }: { roots: Task[]; all: Task[] }) {
 }
 
 export function FilesTab({ roots, all }: { roots: Task[]; all: Task[] }) {
-    const { attempts, error } = useAttempts(roots, all);
+    const { attempts, error, loading, retry } = useAttempts(roots, all);
+    const review = useReview();
     const browsable = attempts.filter((a) => a.artifact || a.base);
     const [picked, setPicked] = useState<string>("");
     const current = browsable.find((a) => a.id === picked) ?? browsable[0];
@@ -78,24 +89,50 @@ export function FilesTab({ roots, all }: { roots: Task[]; all: Task[] }) {
     const [file, setFile] = useState<FileView | null>(null);
     const [busy, setBusy] = useState(false);
     const [problem, setProblem] = useState("");
+    const [changes, setChanges] = useState<ChangeIndex | null>(null);
+    const request = useRef(0);
+    const active = useRef(current?.id);
+    active.current = current?.id;
     const load = useCallback((attempt: string, d: string) => {
-        setBusy(true); setProblem(""); setFile(null);
-        void fetchAttemptTree(attempt, d).then((t) => { setTree(t); setDir(d); }).catch((e) => setProblem(fail(e))).finally(() => setBusy(false));
+        const version = ++request.current;
+        const valid = () => version === request.current && active.current === attempt;
+        setBusy(true); setProblem(""); setFile(null); setTree(null);
+        void fetchAttemptTree(attempt, d).then((t) => { if (valid()) { setTree(t); setDir(d); } }).catch((e) => { if (valid()) setProblem(fail(e)); }).finally(() => { if (valid()) setBusy(false); });
     }, []);
     useEffect(() => { if (current) load(current.id, ""); }, [current?.id, load]); // eslint-disable-line react-hooks/exhaustive-deps
-    if (error) return <div className="text-sm text-error-primary">{error}</div>;
+    useEffect(() => {
+        let gone = false;
+        setChanges(null);
+        if (current?.artifact && current.artifact !== current.base) void fetchAttemptChanges(current.id).then((value) => { if (!gone) setChanges(value); }).catch(() => undefined);
+        return () => { gone = true; };
+    }, [current?.id, current?.artifact, current?.base]);
+    if (error) return <div role="alert" className="text-sm text-error-primary">{error}<Button size="sm" color="secondary" onClick={retry}>重试</Button></div>;
+    if (loading && !attempts.length) return <p role="status" className="text-sm text-tertiary">读取执行记录…</p>;
     if (!current) return <Nothing icon={Folder} title="还没有快照">这条线程还没有一次执行留下快照。</Nothing>;
     const crumbs = dir ? dir.split("/") : [];
-    const open = (path: string) => {
+    const open = async (path: string) => {
+        const version = ++request.current;
         setBusy(true); setProblem("");
-        void fetchAttemptFile(current.id, path).then(setFile).catch((e) => setProblem(fail(e))).finally(() => setBusy(false));
+        const valid = () => version === request.current && active.current === current.id;
+        try {
+            if (current.artifact && current.artifact !== current.base) {
+                const index = changes?.attempt === current.id ? changes : await fetchAttemptChanges(current.id);
+                if (!valid()) return;
+                setChanges(index);
+                if (index.changes.some((change) => change.path === path)) { review({ attempt: current.id, path, label: attemptLabel(current, all), index }); return; }
+            }
+            const value = await fetchAttemptFile(current.id, path);
+            if (valid()) setFile(value);
+        } catch (e) { if (valid()) setProblem(fail(e)); }
+        finally { if (valid()) setBusy(false); }
     };
     return (
         <Panel title="文件" badge={<span className="text-xs text-tertiary">{tree?.which === "base" ? "开始时的快照" : "结束时的快照"}，不是此刻的磁盘</span>}>
             <div className="flex min-w-0 flex-col gap-2">
-                <select value={current.id} onChange={(e) => { setPicked(e.target.value); setDir(""); setFile(null); }} className="w-full rounded-md border border-secondary bg-primary px-2 py-1 text-xs text-primary">
+                <select aria-label="选择文件快照" value={current.id} onChange={(e) => { setPicked(e.target.value); setDir(""); setFile(null); }} className="w-full rounded-md border border-secondary bg-primary px-2 py-1 text-xs text-primary">
                     {browsable.map((a) => <option key={a.id} value={a.id}>{attemptLabel(a, all)}{a.files ? ` · 改了 ${a.files} 个文件` : ""}</option>)}
                 </select>
+                {current.artifact && current.artifact !== current.base && <Button size="sm" color="secondary" onClick={() => review({ attempt: current.id, label: attemptLabel(current, all), index: changes ?? undefined, attempts: browsable.filter((a) => a.artifact && a.artifact !== a.base).map((a) => ({ id: a.id, label: attemptLabel(a, all) })) })}>Review 变更</Button>}
                 <div className="flex min-w-0 flex-wrap items-center gap-1 text-xs">
                     <button type="button" onClick={() => load(current.id, "")} className="text-tertiary hover:text-primary">/</button>
                     {crumbs.map((c, i) => (
@@ -120,7 +157,8 @@ export function FilesTab({ roots, all }: { roots: Task[]; all: Task[] }) {
                                 <button type="button" onClick={() => e.kind === "dir" ? load(current.id, e.path) : e.kind === "file" ? open(e.path) : undefined}
                                     className={`flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left text-xs ${e.kind === "dir" || e.kind === "file" ? "hover:bg-secondary" : ""}`}>
                                     {e.kind === "dir" ? <Folder className="size-3.5 text-fg-quaternary" /> : e.kind === "link" ? <Link01 className="size-3.5 text-fg-quaternary" /> : <File02 className="size-3.5 text-fg-quaternary" />}
-                                    <span className="min-w-0 truncate font-mono text-secondary">{e.name}{e.kind === "dir" ? "/" : ""}</span>
+                                    <span className="min-w-0 truncate font-mono text-secondary" title={e.path}>{e.name}{e.kind === "dir" ? "/" : ""}</span>
+                                    {changes?.changes.some((c) => c.path === e.path) && <span className="shrink-0 text-fg-brand-primary">已变更</span>}
                                     <span className="ml-auto shrink-0 text-quaternary">{e.kind === "file" ? kb(e.size || 0) : e.kind === "repo" ? "嵌套仓库" : e.kind === "link" ? "链接" : ""}</span>
                                 </button>
                             </li>

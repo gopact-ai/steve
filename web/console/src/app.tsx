@@ -15,10 +15,11 @@ import { ProjectsPage } from "@/pages/projects";
 import { SkillsPage } from "@/pages/skills";
 import { MCPPage } from "@/pages/mcp";
 import { HomePage } from "@/pages/home";
+import { ReviewProvider } from "@/components/steve/review-context";
 
 export function App() {
     const navigate = useNavigate();
-    return <FleetProvider><IntentProvider onNavigate={() => navigate("/console")}><Shell /></IntentProvider></FleetProvider>;
+    return <FleetProvider><IntentProvider onNavigate={() => navigate("/console")}><ReviewProvider><Shell /></ReviewProvider></IntentProvider></FleetProvider>;
 }
 
 function Shell() {
