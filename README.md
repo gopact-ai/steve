@@ -12,56 +12,48 @@ Steve 提供三条结构性承诺：
 
 ## 从控制台开始
 
-**当前启动需要配置飞书，当前通道边界见 [架构文档](docs/architecture.md)。** 使用控制台还必须填写 `feishu.owner_open_id`，控制台以该 owner 身份执行。飞书可以不作为日常交互入口，但当前程序仍会建立飞书连接。
+控制台可以独立运行，无需飞书应用。独立部署配置 `gateway.owner_id`；需要飞书/Lark 时，再配置成对的应用凭据及该通道的 owner。两种启动方式共享项目、任务和账本。
 
-准备 Go 1.27+、Git、Node.js 与 npm，以及一个已完成认证的 coding agent。内置清单里的适配器（codex-acp、claude-agent-acp）由 steve 按钉死的版本自己取，不用预装；它们是 npm 包，所以 Node.js 运行环境仍是前置条件。自己编译的适配器写 `command` 直接用，见 [运维文档](docs/operations.md#部署-hub)。
+准备 Go 1.27+、Git、Node.js 与 npm，以及一个已完成认证的 coding agent。内置适配器 `codex-acp`、`claude-agent-acp` 由 Steve 按固定版本下载和校验；首次取用需要 npm registry，之后使用本机缓存。
 
-1. 在仓库根目录构建并生成配置：
+1. 在仓库根目录构建并复制最小配置：
 
    ```bash
    make build
-   ./steve setup
+   cp config.console.example.json config.json
+   chmod 600 config.json
    ```
 
-   setup 可录入已有飞书应用，也可走官方设备流创建（直接创建可用 `./steve setup -create-app`）；确认该应用下自己的 `open_id` 为 owner。
+2. 编辑 `config.json`：把 `projects.workspace.home.path` 改成已有项目目录，`gateway.owner_id` 改成部署使用的稳定 owner 标识。默认只使用 codex，权限策略为 `read`。需要其他工具时调整 `agents` / `harnesses`；自备适配器可使用绝对路径 `command`，与 `adapter` 二选一。
 
-2. 编辑生成的 `config.json`。保留 setup 写入的 `feishu` 和 `projects`，将 `agents` / `harnesses` 精简到实际要用的工具。下面是仅使用 codex 的两个顶层字段：
+   [config.console.example.json](config.console.example.json) 是不带飞书的最小配置；[config.example.json](config.example.json) 展示多机、区域、MCP 和可选飞书配置，使用前需要替换占位值并删除不用的部分。
 
-   ```json
-   {
-     "agents": {
-       "codex": { "harness": "codex", "default": true }
-     },
-     "harnesses": {
-       "codex": { "adapter": "codex-acp", "permission": "read" }
-     }
-   }
-   ```
-
-   `adapter` 是内置清单里的名字，steve 按钉死的版本自己取、校验后再运行，不用你预装，也不会哪天悄悄换个版本。想用自己编译的适配器就写 `command`（绝对路径，不经过 shell 展开，不能写 `~/...`），两者只能给一个。完整的 [config.example.json](config.example.json) 是多机配置参考，使用前需替换占位值并删掉不用的项目、agent 和服务。
-
-3. 体检后启动 hub：
+3. 体检后启动 Hub：
 
    ```bash
-   ./steve doctor
-   ./steve run
+   ./steve doctor -config config.json
+   ./steve run -config config.json
    ```
 
-   doctor 会验证飞书凭据、home，并探测配置的机器与 agent 会话；它会启动工具进程。首次绑定 owner 后，run 还会通过飞书私聊进行 home 初始化。
+   doctor 会准备运行目录并启动已配置工具进行探测，不是线上只读健康检查。只有配置了飞书凭据时才验证并连接飞书；独立控制台会在本地准备身份和记忆文件。
 
-4. 保持 run 所在终端运行，在另一终端执行：
+4. 保持 run 运行，在另一终端打开控制台：
 
    ```bash
    ./steve dash
    ```
 
-   打开打印的地址（默认 `http://127.0.0.1:7710`）。在工作台先发 `/project use workspace`（setup 默认项目名），再发 `@codex 列出这个项目的文件并说明用途`。`read` 策略适合这一步；需要写文件时先按 [权限说明](docs/operations.md#harnessesname)选择策略。
+   默认地址是 `http://127.0.0.1:7710`。在工作台发送 `/project use workspace`，再发送 `@codex 列出这个项目的文件并说明用途`。工具需要超出 `read` 策略的权限时，可以在本轮权限请求中明确批准或拒绝，详见 [权限说明](docs/operations.md#harnessesname)。
 
-控制台提供工作台、任务、项目、资源、技能、MCP、档案、待处理、历史与审计九个入口；任务入口打开工作台的看板视图。输入框支持 `/` 和 `@` 补全；进行中的消息可以排队，过程、工具调用、回复与改动留在对应交换下。默认绑定 loopback；远程访问和 token 配置见 [运维文档](docs/operations.md#控制台与凭据)。
+需要飞书/Lark 时，可用 `./steve setup` 录入已有应用，或用 `./steve setup -create-app` 走官方设备流；确认应用下自己的 `open_id`。配置完成后，飞书与控制台可同时使用。远程访问、地址与 token 参数见 [控制台与凭据](docs/operations.md#控制台与凭据)。
 
-用量页提供 **1d / 7d / 30d** 趋势：1d 为 Hub 当天的小时统计，7d / 30d 为含今天的最近日历天。指标、折线图与 Agent / 模型明细使用同一范围，按已结束执行的开始时间归类；未上报 token 与零消耗分别显示。
+控制台包括工作台、任务、项目、资源、技能、MCP、档案、待处理、历史与审计，以及控制台配置。任务入口打开看板。偏好设置支持简体中文、English 或跟随浏览器；切换语言保留草稿、文件标签和阅读状态，不改写用户输入、Agent 回复或历史正文。
 
-会话详情的「代码」入口统一浏览文件和变更：全部文件树、源码高亮与行号、文件标签，以及源码 / Diff 切换。工作区只读，内容来自所选执行的开始或结束快照；没有文件变更的快照也可阅读。
+工作台支持 `/`、`@` 补全、排队、工具权限请求与 Agent 提问。问题的答复直接送回等待中的本轮，不作为新任务排队；断网后重试使用同一答复标识。材料可来自会话、快照文本或上传文件，支持文本选段、源码/Diff 行范围、图片矩形选区和按项目保存的标记；发送时引用的材料被固定，不会随后读取变化中的文件。见 [材料、标记与问答](docs/operations.md#材料标记与问答)。
+
+用量页提供 **1d / 7d / 30d** 趋势：1d 按 Hub 当天小时统计，7d / 30d 为含今天的最近日历天。未上报 token 的图表点按 **0** 绘制并保持连线，上报覆盖率仍单独展示。输入、输出、缓存读取/写入、TPM、任务耗时，以及 Agent / 模型 / harness / 触发方式 / 项目明细使用同一范围，任务明细可继续展开。
+
+会话详情的「代码」入口统一浏览文件和变更，提供文件树、源码高亮与行号、文件标签、源码 / Diff 切换。内容来自所选执行的开始或结束快照，工作区只读。控制台配置页按字段编辑预算、超时和资源限额，区分已保存值与当前运行值；这些设置需手动重启 Hub 生效。版本区显示 Hub、节点、协议与项目归属，不自动安装或迁移。
 
 ## 核心概念
 
@@ -86,7 +78,7 @@ Steve 提供三条结构性承诺：
 
 目标机器需要 Git、已认证的 harness 和适配目标 OS/CPU 架构的 `steve-node`。hub 可通过 `gateway.node_binary` 提供用 `CGO_ENABLED=0` 构建的二进制，也可手工 `scp`；完整步骤见 [node 部署](docs/operations.md#部署-node)。引导命令中的 hub 地址必须从 node 可达。引导只复制 hub harness 的 `command` / `args`，不复制认证、环境或其他 harness 配置，也不更新已存在的可执行二进制。node 和 `nodectl` 等自备启动脚本都应从登录 shell 启动。
 
-协商了 **`process_journal.v1`** 的连接中断后，node 保留进程，hub 根据进程流的输入确认和输出序号续接；默认宽限 **10 分钟**。旧节点、超过宽限、日志不可回放或 node 进程已丢失时仍会失败。hub 进程重启走任务恢复：先过期旧 attempt，再恢复符合条件的任务，不能等同于原进程流续接。
+协商了 **`process_journal.v1`** 的连接中断后，node 保留进程，hub 根据进程流的输入确认和输出序号续接；默认宽限 **10 分钟**。旧节点、超过宽限、日志不可回放或 node 进程已丢失时仍会失败。Hub 重启先隔离缺少停止证据的执行，再回收已确认静止的 attempt 并恢复符合条件的任务；这不等同于续接原进程流。
 
 ## 委派双工
 

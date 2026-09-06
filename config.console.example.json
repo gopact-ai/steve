@@ -1,0 +1,23 @@
+{
+  "projects": {
+    "workspace": {
+      "home": { "path": "/home/me/work" },
+      "level": "internal",
+      "repo": "inplace"
+    }
+  },
+  "agents": {
+    "codex": { "harness": "codex", "default": true }
+  },
+  "harnesses": {
+    "codex": { "adapter": "codex-acp", "permission": "read" }
+  },
+  "gateway": {
+    "owner_id": "local-owner",
+    "locale": "zh",
+    "default_channel": "console",
+    "default_project": "workspace",
+    "read_model_addr": "127.0.0.1:7710",
+    "state_path": "~/.steve/state.json"
+  }
+}
