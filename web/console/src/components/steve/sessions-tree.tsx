@@ -53,7 +53,7 @@ function notable(t: Task, all: Task[]): boolean {
     return t.execution === "running" || (t.attention || 0) > 0 || !!t.plan_id || (t.origin || "").startsWith("schedule") || all.some((c) => c.parent === t.id);
 }
 
-export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate, collapsed, onToggle, tasks = [], onTask }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onUpdate: (id: string, patch: ConversationPatch) => void; collapsed?: boolean; onToggle?: () => void; tasks?: Task[]; onTask?: (t: Task) => void }) {
+export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate, collapsed, onToggle, creating, tasks = [], onTask }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onUpdate: (id: string, patch: ConversationPatch) => void; collapsed?: boolean; onToggle?: () => void; creating?: boolean; tasks?: Task[]; onTask?: (t: Task) => void }) {
     const [folded, setFolded] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem("steve.folded") || "{}"); } catch { return {}; } });
     const toggle = (id: string) => setFolded((f) => { const next = { ...f, [id]: !f[id] }; try { localStorage.setItem("steve.folded", JSON.stringify(next)); } catch { /* ignore */ } return next; });
     const [renaming, setRenaming] = useState<string | null>(null);
@@ -95,7 +95,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
                         <span className="truncate u-meta text-quaternary">{places}</span>
                     </button>
                     {threads.some((c) => c.running) && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
-                    <button type="button" onClick={() => onNew(p.id)} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary opacity-0 transition hover:bg-primary/60 hover:text-fg-quaternary_hover group-hover:opacity-100" aria-label={`在 ${p.id} 下新会话`} title={`在 ${p.id} 下新会话`}>
+                    <button type="button" disabled={creating} onClick={() => onNew(p.id)} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary opacity-0 transition hover:bg-primary/60 hover:text-fg-quaternary_hover group-hover:opacity-100" aria-label={`在 ${p.id} 下新会话`} title={`在 ${p.id} 下新会话`}>
                         <Plus className="size-3.5" />
                     </button>
                 </div>
@@ -112,7 +112,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
         return (
             <aside className="hidden w-10 shrink-0 flex-col items-center gap-1 border-r border-secondary bg-secondary pt-3 lg:flex">
                 <button type="button" onClick={onToggle} className="flex size-8 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title="展开会话栏" aria-label="展开会话栏"><ChevronRightDouble className="size-4" /></button>
-                <button type="button" onClick={() => onNew()} className="flex size-8 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title="新会话" aria-label="新会话"><Edit05 className="size-4" /></button>
+                <button type="button" disabled={creating} onClick={() => onNew()} className="flex size-8 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title="新会话" aria-label="新会话"><Edit05 className="size-4" /></button>
                 {list.some((c) => c.running) && <Loading01 className="mt-1 size-3 animate-spin text-fg-brand-primary" />}
             </aside>
         );
@@ -120,7 +120,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
     return (
         <aside className="hidden w-72 shrink-0 flex-col border-r border-secondary bg-secondary lg:flex">
             <div className="flex items-center gap-1 px-2 pt-3 pb-1">
-                <button type="button" onClick={() => onNew()} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-primary transition hover:bg-primary/70" title="在当前项目下开一条新会话">
+                <button type="button" disabled={creating} onClick={() => onNew()} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-primary transition hover:bg-primary/70" title="在当前项目下开一条新会话">
                     <Edit05 className="size-4 text-fg-quaternary" />
                     <span>新会话</span>
                 </button>
