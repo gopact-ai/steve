@@ -1,5 +1,7 @@
 // Pure request lifecycle checks; browser scenarios below use only mocked APIs.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import ts from "../../web/console/node_modules/typescript/lib/typescript.js";
 import { createResourceRead } from "../../web/console/src/lib/resource-read.ts";
 
 const gate = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
@@ -29,6 +31,45 @@ async function resourceChecks() {
     console.log("PASS resource coalescing, generation, progress and failure");
 }
 await resourceChecks();
+
+async function submissionSupportChecks() {
+    // Compile the real API module with only its HTTP boundary replaced. Every
+    // request is held locally; this check cannot contact a running service.
+    const requests = [], posts = [];
+    globalThis.__supportRequest = (path, options = {}) => {
+        if (options.method === "POST") { posts.push(path); return Promise.resolve({ id: "exchange", conversation: "console:test", key: "client:test" }); }
+        const request = gate(); requests.push({ ...request, path }); return request.promise;
+    };
+    try {
+        const source = readFileSync(new URL("../../web/console/src/lib/api/console.ts", import.meta.url), "utf8").replace('import { request, UnsentRequestError } from "../http";', 'const request = globalThis.__supportRequest; class UnsentRequestError extends Error {}');
+        const code = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ES2022 } }).outputText;
+        const api = await import(`data:text/javascript;base64,${Buffer.from(code).toString("base64")}`);
+        for (const outcome of ["unsupported", "failed"]) {
+            const offset = requests.length;
+            const old = api.fetchQueue("console:old");
+            const sending = api.enqueue("console:test", "Run once", [], "test");
+            const rejected = assert.rejects(sending, /Hub|指令尚未发送/, "A stale supported poll must not replace this write's failed preflight");
+            if (outcome === "unsupported") requests[offset + 1].resolve({ queue: [], submission_keys: false });
+            else requests[offset + 1].reject(new Error("Preflight unavailable"));
+            // Resolve both in the same microtask batch, newest response first.
+            requests[offset].resolve({ queue: [], submission_keys: true });
+            await Promise.all([old, rejected]);
+            assert.equal(posts.length, 0, "Rejected or failed capability checks must emit zero POSTs");
+            assert.equal(api.getSubmissionSupport().state, outcome === "unsupported" ? "unsupported" : "unknown", "Older polls must not overwrite the newest completed capability result");
+        }
+        const offset = requests.length;
+        const sending = api.enqueue("console:test", "Run once", [], "test");
+        const rejected = assert.rejects(sending, /Hub/, "Even a newer supported poll cannot authorize a rejected preflight");
+        const newer = api.fetchQueue("console:newer");
+        requests[offset].resolve({ queue: [], submission_keys: false });
+        requests[offset + 1].resolve({ queue: [], submission_keys: true });
+        await Promise.all([newer, rejected]);
+        assert.equal(posts.length, 0, "Each write must use its own capability response");
+        assert.equal(api.getSubmissionSupport().state, "supported", "Display state may follow the newer poll independently");
+        console.log("PASS submission capability preflight identity and stale-response ordering");
+    } finally { delete globalThis.__supportRequest; }
+}
+await submissionSupportChecks();
 
 const { settingsDraft, parseSettings } = await import("../../web/console/src/lib/settings-draft.ts");
 const original = { harnesses: { sample: { command: "sample", args: ["hello world", "", "--flag", "--flag"] } }, mcp_servers: { sample: { type: "stdio", env: { FOO: "bar", SPACED: " value " }, headers: { Accept: "text/plain", Spaced: " value " } } }, tools: [], declares: [], capabilities: [] };

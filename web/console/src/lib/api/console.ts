@@ -15,6 +15,7 @@ export const fetchVerbs = (signal?: AbortSignal) => request<{ verbs: Verb[] }>("
 export interface SubmissionSupport { state: "unknown" | "supported" | "unsupported"; checking: boolean; error: string }
 let submissionSupport: SubmissionSupport = { state: "unknown", checking: false, error: "" };
 let supportCheck: Promise<SubmissionSupport> | null = null;
+let supportGeneration = 0;
 const supportListeners = new Set<() => void>();
 export const getSubmissionSupport = () => submissionSupport;
 export function subscribeSubmissionSupport(listener: () => void) { supportListeners.add(listener); return () => { supportListeners.delete(listener); }; }
@@ -25,19 +26,25 @@ function publishSupport(patch: Partial<SubmissionSupport>) {
     for (const listener of supportListeners) listener();
 }
 export async function fetchQueue(conversation: string, signal?: AbortSignal): Promise<{ queue: Exchange[]; submission_keys?: boolean }> {
+    const generation = ++supportGeneration;
     try {
         const data = await request<{ queue: Exchange[]; submission_keys?: boolean }>(`/console/queue?${channelQuery(conversation)}`, { signal, cache: "no-store" });
-        publishSupport({ state: data.submission_keys === true ? "supported" : "unsupported", error: "" });
+        if (generation === supportGeneration) publishSupport({ state: data.submission_keys === true ? "supported" : "unsupported", error: "" });
         return data;
     } catch (error) {
-        if (!signal?.aborted) publishSupport({ state: "unknown", error: error instanceof Error ? error.message : String(error) });
+        if (generation === supportGeneration && !signal?.aborted) publishSupport({ state: "unknown", error: error instanceof Error ? error.message : String(error) });
         throw error;
     }
 }
 export function checkSubmissionSupport(): Promise<SubmissionSupport> {
     if (supportCheck) return supportCheck;
     publishSupport({ checking: true });
-    supportCheck = fetchQueue("console:main").then(() => submissionSupport, () => submissionSupport).finally(() => { supportCheck = null; publishSupport({ checking: false }); });
+    // A write depends on its own preflight response, never another poll's
+    // mutable display state, even when their completions share a microtask batch.
+    supportCheck = fetchQueue("console:main").then(
+        (data): SubmissionSupport => ({ state: data.submission_keys === true ? "supported" : "unsupported", checking: false, error: "" }),
+        (error): SubmissionSupport => ({ state: "unknown", checking: false, error: error instanceof Error ? error.message : String(error) }),
+    ).finally(() => { supportCheck = null; publishSupport({ checking: false }); });
     return supportCheck;
 }
 export async function requireSubmissionSupport(): Promise<void> {
