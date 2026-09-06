@@ -1,4 +1,7 @@
 import { useState } from "react";
+import { useI18n } from "@/providers/locale-provider";
+import type { Translator } from "@/lib/i18n";
+import { levelName } from "@/lib/workspaces";
 import { CheckCircle, Edit05, Plus, Server01, Users01, X, XCircle, Zap } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
@@ -9,7 +12,7 @@ import { TextArea } from "@/components/base/textarea/textarea";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { removeNode } from "@/lib/api/fleet";
-import { relative, when } from "@/lib/format";
+import { number, relative, when } from "@/lib/format";
 import { addAgent, addNode, removeAgent, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
 import { useFleet, useIntent } from "@/lib/fleet";
 import type { AbilitySnapshot, Agent, Attempt, Capability, Condition, Node as NodeT } from "@/lib/types";
@@ -24,12 +27,13 @@ import { Mono, Nothing, StateBadge, Where } from "@/components/steve/ui";
 // Conditions shows an agent's requirements as its machine meets them:
 // every ✓ is why it may run there, any ✗ is why it may not.
 function Conditions({ a }: { a: Agent }) {
-    if (!a.requires?.length) return <span className="text-xs text-quaternary">无</span>;
+    const { t: tr } = useI18n();
+    if (!a.requires?.length) return <span className="text-xs text-quaternary">{tr("fleet.none")}</span>;
     const judged: Condition[] = a.conditions?.length ? a.conditions : a.requires.map((r) => ({ atom: r, met: a.eligible }));
     return (
         <div className="flex flex-wrap gap-1">
             {judged.map((c) => (
-                <span key={c.atom} title={c.met ? "机器满足" : `机器不满足${c.code ? "：" + c.code : ""}${c.detail ? " · " + c.detail : ""}`}
+                <span key={c.atom} title={c.met ? tr("fleet.conditionMet") : tr("fleet.conditionUnmet", { reason: c.code ? ": " + c.code : "", detail: c.detail ? " · " + c.detail : "" })}
                     className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs ${c.met ? "bg-secondary text-primary" : "bg-error-primary text-error-primary ring-1 ring-error ring-inset"}`}>
                     {c.met ? <CheckCircle className="size-3 text-fg-success-primary" /> : <XCircle className="size-3 text-fg-error-primary" />}{c.atom}
                 </span>
@@ -49,6 +53,7 @@ function selectorName(a: Agent, id: string): string {
 // MCP servers it uses. Saved changes reach the running catalog at once
 // and the config file with it.
 function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void; onChanged: () => void }) {
+    const { t: tr, locale } = useI18n();
     const { snap } = useFleet();
     const { fill } = useIntent();
     const [editing, setEditing] = useState(false);
@@ -59,7 +64,7 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
     const extras = (a.selectors || []).filter((sel) => sel.category !== "model" && (sel.choices || []).length > 0);
     const harnesses = Array.from(new Set([...snap.agents.map((x) => x.harness), a.harness])).filter(Boolean).sort();
     const nodes = snap.nodes.filter((n) => n.role !== "hub").map((n) => n.name);
-    const canTake = levelOrder.slice(0, levelOrder.indexOf(a.level || "internal") + 1).map((l) => levelWords[l]).join("、");
+    const canTake = levelOrder.slice(0, levelOrder.indexOf(a.level || "internal") + 1).map((l) => levelName(l, locale)).join("、");
     async function save() {
         setBusy(true); setError("");
         try { await updateAgent(a.id, spec); onChanged(); setEditing(false); } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
@@ -68,78 +73,78 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
         setError("");
         try { await removeAgent(a.id); onChanged(); onClose(); } catch (e) { setError(String(e).replace(/^Error: /, "")); setRemoving(false); }
     }
-    const modelItems = [{ id: "__none", label: "不固定（用 AI 工具的默认）" }, ...(a.models || []).map((m) => ({ id: m, label: m }))];
+    const modelItems = [{ id: "__none", label: tr("fleet.toolDefault") }, ...(a.models || []).map((m) => ({ id: m, label: m }))];
     if (spec.model && !(a.models || []).includes(spec.model)) modelItems.push({ id: spec.model, label: spec.model });
     return (
         <Drawer title={<><span className="text-base font-semibold text-primary">{a.id}</span>
-                        {a.default && <Badge type="pill-color" size="sm" color="brand">默认</Badge>}
-                        <StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} /></>} subtitle={<>{a.why && <div className="mt-1 text-xs text-error-primary">{a.why}</div>}</>} actions={<><Button size="sm" color="secondary" onClick={() => fill("@" + a.id + " ")}>@ 指派</Button>
-                {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} onClick={() => setEditing(true)}>编辑</Button>}</>} onClose={onClose}>
+                        {a.default && <Badge type="pill-color" size="sm" color="brand">{tr("common.default")}</Badge>}
+                        <StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} /></>} subtitle={<>{a.why && <div className="mt-1 text-xs text-error-primary">{a.why}</div>}</>} actions={<><Button size="sm" color="secondary" onClick={() => fill("@" + a.id + " ")}>{tr("fleet.assign")}</Button>
+                {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} onClick={() => setEditing(true)}>{tr("common.edit")}</Button>}</>} onClose={onClose}>
                 {!editing ? (
                     <>
                         <KeyValue dense rows={[
-                            { k: "用途", v: a.about ? <span className="text-secondary">{a.about}</span> : <span className="text-quaternary">未设置用途说明</span> },
-                            { k: "机器", v: <Where node={a.node} /> },
-                            { k: "AI 工具", v: a.harness },
-                            { k: "模型偏好", v: a.preferred || <span className="text-quaternary">未固定，用 AI 工具的默认</span>, hint: "配置里固定的模型；开会话时 Steve 会把它设给 AI 工具。" },
-                            { k: "上次实际", v: a.observed || <span className="text-quaternary">还没开过会话</span>, hint: "上次会话打开时 AI 工具报告的模型。" },
-                            { k: "可选模型", v: a.models?.length ? <span className="text-secondary">{a.models.length} 个</span> : <span className="text-quaternary">未知</span> },
-                            ...extras.map((sel) => ({ k: sel.name || sel.id, v: a.options?.[sel.id] ? <span className="text-primary">{a.options[sel.id]}</span> : <span className="text-quaternary">未固定{sel.current ? `，上次 ${sel.current}` : ""}</span>, hint: "AI 工具暴露的会话选项；固定后每次开会话都设成它。" })),
-                            { k: "能接的项目", v: `数据等级 ${canTake}`, hint: "由它所在机器的数据等级决定：机器等级不能低于项目的数据等级。" },
-                            { k: "MCP 服务器", v: a.mcp_servers?.length ? <Chips items={a.mcp_servers.map((m) => ({ id: m }))} /> : <span className="text-quaternary">无</span>, hint: "会话打开时接上的 MCP 服务器；远端 Agent 用它所在机器上的同名服务器。" },
-                            { k: "运行条件", v: <Conditions a={a} />, hint: "它所在的机器必须提供这些；任一不满足它就不可用。" },
+                            { k: tr("fleet.purpose"), v: a.about ? <span className="text-secondary">{a.about}</span> : <span className="text-quaternary">{tr("fleet.noPurpose")}</span> },
+                            { k: tr("fleet.machine"), v: <Where node={a.node} /> },
+                            { k: tr("fleet.aiTool"), v: a.harness },
+                            { k: tr("fleet.preferredModel"), v: a.preferred || <span className="text-quaternary">{tr("fleet.defaultModel")}</span>, hint: tr("fleet.modelHint") },
+                            { k: tr("fleet.lastModel"), v: a.observed || <span className="text-quaternary">{tr("fleet.noSessions")}</span>, hint: tr("fleet.observedModelHint") },
+                            { k: tr("fleet.availableModels"), v: a.models?.length ? <span className="text-secondary">{a.models.length} {tr("fleet.items")}</span> : <span className="text-quaternary">{tr("common.unknown")}</span> },
+                            ...extras.map((sel) => ({ k: sel.name || sel.id, v: a.options?.[sel.id] ? <span className="text-primary">{a.options[sel.id]}</span> : <span className="text-quaternary">{tr("fleet.unpinned")}{sel.current ? tr("fleet.previousOption", { value: sel.current }) : ""}</span>, hint: tr("fleet.optionHint") })),
+                            { k: tr("fleet.eligibleProjects"), v: tr("fleet.projectLevels", { levels: canTake }), hint: tr("fleet.classificationHint") },
+                            { k: tr("fleet.mcpServers"), v: a.mcp_servers?.length ? <Chips items={a.mcp_servers.map((m) => ({ id: m }))} /> : <span className="text-quaternary">{tr("fleet.none")}</span>, hint: tr("fleet.mcpHint") },
+                            { k: tr("fleet.requirements"), v: <Conditions a={a} />, hint: tr("fleet.requirementsHint") },
                         ]} />
                         {a.models?.length ? (
                             <details className="text-xs">
-                                <summary className="cursor-pointer text-tertiary">可选模型列表</summary>
+                                <summary className="cursor-pointer text-tertiary">{tr("fleet.modelList")}</summary>
                                 <div className="mt-1 flex flex-wrap gap-1">{a.models.map((m) => <Mono key={m} className="text-secondary">{m}</Mono>)}</div>
                             </details>
                         ) : null}
-                        <DrawerSection title="当前活动">
-                            {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="text-xs text-secondary">#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since)}{x.detail ? ` · ${x.detail}` : ""}</div>) : <div className="text-xs text-quaternary">{a.activity_known === false ? "活动状态未知" : "空闲"}</div>}
+                        <DrawerSection title={tr("fleet.activity")}>
+                            {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="text-xs text-secondary">#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since, locale)}{x.detail ? ` · ${x.detail}` : ""}</div>) : <div className="text-xs text-quaternary">{a.activity_known === false ? tr("fleet.activityUnknown") : tr("fleet.idle")}</div>}
                         </DrawerSection>
                         <section className="rounded-lg bg-secondary/40 p-3">
                             <div className="flex min-w-0 flex-wrap items-center gap-3">
-                                <div className="flex-1 text-xs text-tertiary">删除 Agent 配置，保留历史任务记录。</div>
-                                {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>取消</Button><Button size="sm" color="primary-destructive" onClick={() => void remove()}>确认删除</Button></>) : <Button size="sm" color="secondary-destructive" isDisabled={!!a.default} onClick={() => setRemoving(true)}>删除 Agent</Button>}
+                                <div className="flex-1 text-xs text-tertiary">{tr("fleet.deleteAgentHint")}</div>
+                                {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>{tr("common.cancel")}</Button><Button size="sm" color="primary-destructive" onClick={() => void remove()}>{tr("fleet.confirmDelete")}</Button></>) : <Button size="sm" color="secondary-destructive" isDisabled={!!a.default} onClick={() => setRemoving(true)}>{tr("fleet.deleteAgent")}</Button>}
                             </div>
                             {error && <div role="alert" className="mt-2 text-xs text-error-primary">{error}</div>}
                         </section>
                     </>
                 ) : (
                     <div className="flex flex-col gap-4">
-                        <Select size="sm" label="机器" hint="它在哪台机器上跑" selectedKey={spec.node || "__hub"} onSelectionChange={(k) => setSpec({ ...spec, node: !k || String(k) === "__hub" ? "" : String(k) })} items={[{ id: "__hub", label: `${snap.hub.node}（hub）` }, ...nodes.map((n) => ({ id: n, label: n }))]}>
+                        <Select size="sm" label={tr("fleet.machine")} hint={tr("fleet.machineHint")} selectedKey={spec.node || "__hub"} onSelectionChange={(k) => setSpec({ ...spec, node: !k || String(k) === "__hub" ? "" : String(k) })} items={[{ id: "__hub", label: `${snap.hub.node}（hub）` }, ...nodes.map((n) => ({ id: n, label: n }))]}>
                             {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                         </Select>
-                        <Select size="sm" label="AI 工具" hint="要在 hub 的 harnesses 里配置过" selectedKey={spec.harness} onSelectionChange={(k) => k && setSpec({ ...spec, harness: String(k) })} items={harnesses.map((h) => ({ id: h, label: h }))}>
+                        <Select size="sm" label={tr("fleet.aiTool")} hint={tr("fleet.harnessHint")} selectedKey={spec.harness} onSelectionChange={(k) => k && setSpec({ ...spec, harness: String(k) })} items={harnesses.map((h) => ({ id: h, label: h }))}>
                             {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                         </Select>
-                        <Select size="sm" label="模型" hint="固定后每次开会话都设成它；列表来自 AI 工具上次报告的可选模型" selectedKey={spec.model || "__none"} onSelectionChange={(k) => setSpec({ ...spec, model: !k || String(k) === "__none" ? "" : String(k) })} items={modelItems}>
+                        <Select size="sm" label={tr("fleet.model")} hint={tr("fleet.pinModelHint")} selectedKey={spec.model || "__none"} onSelectionChange={(k) => setSpec({ ...spec, model: !k || String(k) === "__none" ? "" : String(k) })} items={modelItems}>
                             {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                         </Select>
                         {extras.map((sel) => (
-                            <Select key={sel.id} size="sm" label={sel.name || sel.id} hint={`AI 工具的会话选项${sel.current ? `，上次是 ${sel.current}` : ""}；固定后每次开会话都设成它`} selectedKey={spec.options?.[sel.id] || "__none"}
+                            <Select key={sel.id} size="sm" label={sel.name || sel.id} hint={tr("fleet.sessionOptionHint", { previous: sel.current ? tr("fleet.previousWas", { value: sel.current }) : "" })} selectedKey={spec.options?.[sel.id] || "__none"}
                                 onSelectionChange={(k) => { const next = { ...(spec.options || {}) }; if (!k || String(k) === "__none") delete next[sel.id]; else next[sel.id] = String(k); setSpec({ ...spec, options: next }); }}
-                                items={[{ id: "__none", label: "不固定（用 AI 工具的默认）" }, ...(sel.choices || []).map((c) => ({ id: c, label: c }))]}>
+                                items={[{ id: "__none", label: tr("fleet.toolDefault") }, ...(sel.choices || []).map((c) => ({ id: c, label: c }))]}>
                                 {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                             </Select>
                         ))}
-                        {extras.length === 0 && <div className="text-xs text-quaternary">思考强度等其它选项要等这个 AI 工具开过一次会话、报告了它有哪些选项后才能固定。</div>}
-                        <TextArea label="用途" rows={3} placeholder="说明擅长的工作，便于任务分配…" value={spec.about || ""} onChange={(v) => setSpec({ ...spec, about: v })} />
+                        {extras.length === 0 && <div className="text-xs text-quaternary">{tr("fleet.noOptionsHint")}</div>}
+                        <TextArea label={tr("fleet.purpose")} rows={3} placeholder={tr("fleet.purposePlaceholder")} value={spec.about || ""} onChange={(v) => setSpec({ ...spec, about: v })} />
                         <div className="flex flex-col gap-1.5">
-                            <div className="text-xs font-medium text-secondary">运行条件</div>
-                            <div className="text-xs text-tertiary">它所在的机器必须提供的：kind:id 选择器，如 tool:docker、hardware:gpu、mcp:github；裸词是标签。</div>
+                            <div className="text-xs font-medium text-secondary">{tr("fleet.requirements")}</div>
+                            <div className="text-xs text-tertiary">{tr("fleet.requirementsSyntax")}</div>
                             <ListEditor items={spec.requires} placeholder="tool:docker" onChange={(requires) => setSpec({ ...spec, requires })} />
                         </div>
                         <div className="flex flex-col gap-1.5">
-                            <div className="text-xs font-medium text-secondary">MCP 服务器</div>
-                            <div className="text-xs text-tertiary">按名字；hub 上的 Agent 用 hub 配置的，远端 Agent 用它所在机器上配置的。</div>
+                            <div className="text-xs font-medium text-secondary">{tr("fleet.mcpServers")}</div>
+                            <div className="text-xs text-tertiary">{tr("fleet.serverNamesHint")}</div>
                             <ListEditor items={spec.mcp_servers} placeholder="github" onChange={(mcp_servers) => setSpec({ ...spec, mcp_servers })} />
                         </div>
                         {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
                         <div className="flex justify-end gap-2">
-                            <Button size="sm" color="secondary" onClick={() => setEditing(false)}>取消</Button>
-                            <Button size="sm" color="primary" isLoading={busy} onClick={() => void save()}>保存</Button>
+                            <Button size="sm" color="secondary" onClick={() => setEditing(false)}>{tr("common.cancel")}</Button>
+                            <Button size="sm" color="primary" isLoading={busy} onClick={() => void save()}>{tr("common.save")}</Button>
                         </div>
                     </div>
                 )}
@@ -151,6 +156,7 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
 // and writes its own config; what comes back is the one command to run
 // on that machine. An agent can be added the same way.
 function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; harnesses: string[]; nodes: string[]; onClose: () => void; onDone: () => void }) {
+    const { t: tr, locale } = useI18n();
     const [mode, setMode] = useState<"machine" | "agent">("machine");
     const [name, setName] = useState("");
     const [addr, setAddr] = useState("");
@@ -161,7 +167,7 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const [result, setResult] = useState<AddNodeResult | null>(null);
-    const [done, setDone] = useState("");
+    const [done, setDone] = useState(false);
     async function submit() {
         setBusy(true); setError("");
         try {
@@ -169,7 +175,7 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
                 setResult(await addNode({ name: name.trim(), addr: addr.trim(), level }));
             } else {
                 await addAgent({ id: agent.trim(), harness, node: node || undefined });
-                setDone(`Agent ${agent.trim()} 已加入：${harness} @ ${node || hub}。`);
+                setDone(true);
             }
             onDone();
         } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
@@ -177,55 +183,55 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
     return (
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
             <Modal className="max-w-xl">
-                <Dialog aria-label={mode === "machine" ? "添加机器" : "添加 Agent"}>
+                <Dialog aria-label={mode === "machine" ? tr("fleet.addMachine") : tr("fleet.addAgent")}>
                     <div className="flex w-full flex-col gap-4 rounded-2xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
                         <div className="flex items-start gap-3">
                             <div className="min-w-0 flex-1">
-                                <div className="text-base font-semibold text-primary">添加{mode === "machine" ? "机器" : " Agent"}</div>
-                                <div className="mt-0.5 text-xs text-tertiary">{mode === "machine" ? "登记机器后，按提示在目标机器执行接入命令。" : "选择机器和 AI 工具，创建一个可指派的 Agent。"}</div>
+                                <div className="text-base font-semibold text-primary">{tr(mode === "machine" ? "fleet.addMachine" : "fleet.addAgent")}</div>
+                                <div className="mt-0.5 text-xs text-tertiary">{mode === "machine" ? tr("fleet.addMachineHint") : tr("fleet.addAgentHint")}</div>
                             </div>
-                            <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label="关闭" />
+                            <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label={tr("common.close")} />
                         </div>
                         {!result && !done && (
                             <Tabs selectedKey={mode} onSelectionChange={(k) => setMode(k as "machine" | "agent")}>
-                                <TabList type="button-border" size="sm" items={[{ id: "machine", label: "机器" }, { id: "agent", label: "Agent" }]}>{(item) => <Tab {...item} />}</TabList>
+                                <TabList type="button-border" size="sm" items={[{ id: "machine", label: tr("fleet.machine") }, { id: "agent", label: "Agent" }]}>{(item) => <Tab {...item} />}</TabList>
                             </Tabs>
                         )}
                         {mode === "machine" && !result && (
                             <div className="grid grid-cols-1 gap-4">
-                                <Input size="sm" label="名称" placeholder="node-c" value={name} onChange={setName} autoFocus hint="小写字母、数字、点、下划线、连字符" />
-                                <Input size="sm" label="连接地址" placeholder="10.0.0.5:7701" value={addr} onChange={setAddr} hint="hub 可访问的地址与 steve-node 监听端口" />
-                                <Select size="sm" label="数据等级" hint={levelHint} selectedKey={level} onSelectionChange={(k) => k && setLevel(String(k))} items={["public", "internal", "restricted", "sealed"].map((l) => ({ id: l, label: `${levelWords[l]}（${l}）` }))}>
+                                <Input size="sm" label={tr("fleet.name")} placeholder="node-c" value={name} onChange={setName} autoFocus hint={tr("fleet.nameHint")} />
+                                <Input size="sm" label={tr("fleet.address")} placeholder="10.0.0.5:7701" value={addr} onChange={setAddr} hint={tr("fleet.addressHint")} />
+                                <Select size="sm" label={tr("fleet.classification")} hint={tr("fleet.levelHint")} selectedKey={level} onSelectionChange={(k) => k && setLevel(String(k))} items={["public", "internal", "restricted", "sealed"].map((l) => ({ id: l, label: `${levelName(l, locale)}（${l}）` }))}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
                             </div>
                         )}
                         {mode === "machine" && result && (
                             <div className="flex flex-col gap-2">
-                                <div className="text-sm text-primary">机器 <b>{result.name}</b> 已登记。在那台机器上执行这一条命令：</div>
+                                <div className="text-sm text-primary">{tr("fleet.machineRegistered", { machine: result.name })}</div>
                                 <pre className="overflow-auto rounded-lg bg-secondary p-3 font-mono text-xs text-secondary">{result.command}</pre>
                                 <div className="flex gap-2">
-                                    <Button size="sm" color="secondary" onClick={() => void navigator.clipboard?.writeText(result.command)}>复制命令</Button>
+                                    <Button size="sm" color="secondary" onClick={() => void navigator.clipboard?.writeText(result.command)}>{tr("fleet.copyCommand")}</Button>
                                 </div>
-                                <p className="text-xs text-tertiary">它会写好 node.json、启动 steve-node；机器连上来后会出现在下面的列表里。{result.note ? " " + result.note : ""}</p>
+                                <p className="text-xs text-tertiary">{tr("fleet.bootstrapHint")}{result.note ? " " + result.note : ""}</p>
                             </div>
                         )}
                         {mode === "agent" && !done && (
                             <div className="grid grid-cols-1 gap-4">
-                                <Input size="sm" label="名称" placeholder="reviewer" value={agent} onChange={setAgent} autoFocus hint="聊天里用 @名字 指派它" />
-                                <Select size="sm" label="AI 工具" hint="要在 hub 的 harnesses 里配置过" selectedKey={harness} onSelectionChange={(k) => k && setHarness(String(k))} items={harnesses.map((h) => ({ id: h, label: h }))}>
+                                <Input size="sm" label={tr("fleet.name")} placeholder="reviewer" value={agent} onChange={setAgent} autoFocus hint={tr("fleet.agentNameHint")} />
+                                <Select size="sm" label={tr("fleet.aiTool")} hint={tr("fleet.harnessHint")} selectedKey={harness} onSelectionChange={(k) => k && setHarness(String(k))} items={harnesses.map((h) => ({ id: h, label: h }))}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
-                                <Select size="sm" label="机器" hint="它在哪台机器上跑；hub 自己也可以" selectedKey={node || "__hub"} onSelectionChange={(k) => setNode(!k || String(k) === "__hub" ? "" : String(k))} items={[{ id: "__hub", label: `${hub}（hub）` }, ...nodes.map((n) => ({ id: n, label: n }))]}>
+                                <Select size="sm" label={tr("fleet.machine")} hint={tr("fleet.chooseMachineHint")} selectedKey={node || "__hub"} onSelectionChange={(k) => setNode(!k || String(k) === "__hub" ? "" : String(k))} items={[{ id: "__hub", label: `${hub}（hub）` }, ...nodes.map((n) => ({ id: n, label: n }))]}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
                             </div>
                         )}
-                        {mode === "agent" && done && <div className="text-sm text-primary">{done}</div>}
+                        {mode === "agent" && done && <div className="text-sm text-primary">{tr("fleet.agentAdded", { agent: agent.trim(), harness, node: node || hub })}</div>}
                         {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
                         <div className="flex justify-end gap-2">
-                            <Button size="sm" color="secondary" onClick={onClose}>{result || done ? "完成" : "取消"}</Button>
-                            {!result && !done && <Button size="sm" color="primary" isLoading={busy} isDisabled={mode === "machine" ? !name.trim() || !addr.trim() : !agent.trim()} onClick={() => void submit()}>{mode === "machine" ? "登记机器" : "加入 Agent"}</Button>}
+                            <Button size="sm" color="secondary" onClick={onClose}>{result || done ? tr("fleet.done") : tr("common.cancel")}</Button>
+                            {!result && !done && <Button size="sm" color="primary" isLoading={busy} isDisabled={mode === "machine" ? !name.trim() || !addr.trim() : !agent.trim()} onClick={() => void submit()}>{mode === "machine" ? tr("fleet.registerMachine") : tr("fleet.registerAgent")}</Button>}
                         </div>
                     </div>
                 </Dialog>
@@ -234,7 +240,6 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
     );
 }
 
-const kindWords: Record<string, string> = { harness: "AI 工具", model: "模型", mcp: "MCP", skill: "技能", tool: "命令", hardware: "硬件", network: "网络", credential: "凭据", a2a: "A2A", tag: "标签" };
 
 // Abilities shows a machine's manifest grouped by kind: what it observed
 // it can do, what it was declared to have, and what it was configured for
@@ -242,14 +247,14 @@ const kindWords: Record<string, string> = { harness: "AI 工具", model: "模型
 // state names one of the six ways a capability can stand: observed and
 // available, declared only, unavailable, unknown (not covered), stale,
 // or gated out of placement.
-function state(c: Capability, snap: AbilitySnapshot): { word: string; cls: string } {
+function state(c: Capability, snap: AbilitySnapshot, tr: Translator): { word: string; cls: string } {
     const declaredOnly = !(c.evidence || []).some((e) => e.kind !== "declared");
-    if (c.availability === "unavailable") return { word: "已配置但不可用", cls: "bg-error-primary text-error-primary" };
-    if (c.availability === "unknown") return { word: "未知（未能核实）", cls: "text-quaternary ring-1 ring-secondary ring-inset" };
-    if (declaredOnly) return { word: "声明，未核实", cls: "text-tertiary ring-1 ring-secondary ring-inset" };
-    if (["mcp", "skill", "a2a"].includes(c.kind)) return { word: "已观测，暂不参与放置", cls: "bg-secondary text-tertiary" };
-    if (snap.coverage?.[c.kind] && snap.coverage[c.kind] !== "complete") return { word: "已观测（该类未查全）", cls: "bg-secondary text-primary" };
-    return { word: "可用于新会话", cls: "bg-secondary text-primary" };
+    if (c.availability === "unavailable") return { word: tr("fleet.configuredUnavailable"), cls: "bg-error-primary text-error-primary" };
+    if (c.availability === "unknown") return { word: tr("fleet.unknownUnverified"), cls: "text-quaternary ring-1 ring-secondary ring-inset" };
+    if (declaredOnly) return { word: tr("fleet.declaredUnverified"), cls: "text-tertiary ring-1 ring-secondary ring-inset" };
+    if (["mcp", "skill", "a2a"].includes(c.kind)) return { word: tr("fleet.observedNoPlacement"), cls: "bg-secondary text-tertiary" };
+    if (snap.coverage?.[c.kind] && snap.coverage[c.kind] !== "complete") return { word: tr("fleet.observedPartial"), cls: "bg-secondary text-primary" };
+    return { word: tr("fleet.availableForSessions"), cls: "bg-secondary text-primary" };
 }
 
 // merge folds the per-harness copies of a scoped capability (a skill or
@@ -265,13 +270,12 @@ function merge(items: Capability[]): { c: Capability; scopes: string[] }[] {
     return [...out.values()];
 }
 
-const levelWords: Record<string, string> = { public: "公开", internal: "内部", restricted: "受限", sealed: "密封" };
-const levelHint = "这台机器最多能处理哪一等级的项目数据：公开 < 内部 < 受限 < 密封。项目等级高于机器等级的活不会放到这里。";
 
 // MachineRow is one line per machine: who it is, where, which build and
 // system, what it may handle, how much room it has, whether it is here.
 // What it offers is a click away, in the drawer, where there is room.
 function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => void; onChanged: () => void }) {
+    const { t: tr, locale } = useI18n();
     const h = n.health;
     const [editing, setEditing] = useState(false);
     const [removing, setRemoving] = useState(false);
@@ -283,31 +287,31 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
     return (
         <Drawer title={<><span className="text-base font-semibold text-primary">{n.name}</span>
                         <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role === "hub" ? "hub" : "worker"}</Badge>
-                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{!n.up && n.last_error && <div className="mt-1 text-xs text-error-primary">{n.last_error}</div>}</>} actions={<>{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>编辑配置</Button>}</>} onClose={onClose}>
+                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{!n.up && n.last_error && <div className="mt-1 text-xs text-error-primary">{n.last_error}</div>}</>} actions={<>{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>{tr("fleet.editConfiguration")}</Button>}</>} onClose={onClose}>
                 <KeyValue dense rows={[
-                    { k: "主机名", v: n.host || "—" },
+                    { k: tr("fleet.hostname"), v: n.host || "—" },
                     { k: "IP", v: (n.ips || []).length ? <div className="flex flex-col">{(n.ips || []).map((ip) => <Mono key={ip}>{ip}</Mono>)}</div> : "—" },
-                    { k: "hub 拨号", v: n.addr ? <Mono>{n.addr}</Mono> : <span className="text-quaternary">hub 自己，不拨号</span> },
-                    { k: "版本", v: <Mono>{n.version || "—"}</Mono> },
-                    { k: "系统", v: n.os ? `${n.os} / ${n.arch}` : "—" },
-                    { k: "数据等级", v: `${levelWords[n.level || "internal"] || n.level}（${n.level || "internal"}）`, hint: levelHint },
-                    ...(n.region ? [{ k: "租约区域", v: n.region, hint: "多 hub 部署时，这台机器的租约由哪个区域签发" }] : []),
-                    { k: "健康", v: h && h.disk_total > 0 ? `${(h.disk_free / (1 << 30)).toFixed(0)} GB 空闲 · 负载 ${h.load1.toFixed(1)} · ${h.worktrees} 个工作树` : "未申报" },
-                    { k: "连接", v: n.since ? when(n.since) : "—" },
+                    { k: tr("fleet.hubAddress"), v: n.addr ? <Mono>{n.addr}</Mono> : <span className="text-quaternary">{tr("fleet.localHub")}</span> },
+                    { k: tr("fleet.version"), v: <Mono>{n.version || "—"}</Mono> },
+                    { k: tr("fleet.system"), v: n.os ? `${n.os} / ${n.arch}` : "—" },
+                    { k: tr("fleet.classification"), v: `${levelName(n.level || "internal", locale)}（${n.level || "internal"}）`, hint: tr("fleet.levelHint") },
+                    ...(n.region ? [{ k: tr("fleet.leaseRegion"), v: n.region, hint: tr("fleet.leaseRegionHint") }] : []),
+                    { k: tr("fleet.health"), v: h && h.disk_total > 0 ? tr("fleet.healthSummary", { disk: number(h.disk_free / (1 << 30), locale, { maximumFractionDigits: 0 }), load: number(h.load1, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), worktrees: h.worktrees }) : tr("fleet.unreported") },
+                    { k: tr("fleet.connection"), v: n.since ? when(n.since, locale) : "—" },
                 ]} />
                 {editing ? (
                     <SettingsEditor node={n.name} onClose={() => setEditing(false)} onSaved={onChanged} />
                 ) : (
-                    <DrawerSection title="能力清单">
+                    <DrawerSection title={tr("fleet.capabilities")}>
                         <Abilities snapshot={n.snapshot} />
                     </DrawerSection>
                 )}
                 {n.role !== "hub" && (
                     <section className="rounded-lg bg-secondary/40 p-3">
                         <div className="flex min-w-0 flex-wrap items-center gap-3">
-                            <div className="flex-1 text-xs text-tertiary">移除连接配置，保留机器上的进程。请先移除关联的 Agent 和工作区。</div>
-                            {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>取消</Button><Button size="sm" color="primary-destructive" onClick={() => void remove()}>确认移除</Button></>)
-                                : <Button size="sm" color="secondary-destructive" onClick={() => setRemoving(true)}>移除机器</Button>}
+                            <div className="flex-1 text-xs text-tertiary">{tr("fleet.removeHint")}</div>
+                            {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>{tr("common.cancel")}</Button><Button size="sm" color="primary-destructive" onClick={() => void remove()}>{tr("fleet.confirmRemove")}</Button></>)
+                                : <Button size="sm" color="secondary-destructive" onClick={() => setRemoving(true)}>{tr("fleet.removeMachine")}</Button>}
                         </div>
                         {removeError && <div role="alert" className="mt-2 text-xs text-error-primary">{removeError}</div>}
                     </section>
@@ -320,26 +324,28 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
 // kinds come first; what was only declared (networks, credentials, tags)
 // is one block at the end, since it was never checked.
 function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
+    const { t: tr } = useI18n();
+    const kindWords: Record<string, string> = { harness: tr("fleet.aiTool"), model: tr("fleet.model"), mcp: "MCP", skill: tr("fleet.skills"), tool: tr("fleet.commands"), hardware: tr("fleet.hardware"), network: tr("fleet.network"), credential: tr("fleet.credentials"), a2a: "A2A", tag: tr("fleet.labels") };
     const list = snapshot?.offers || [];
-    if (!snapshot || !list.length) return <span className="text-sm text-quaternary">未收到能力清单</span>;
+    if (!snapshot || !list.length) return <span className="text-sm text-quaternary">{tr("fleet.noManifest")}</span>;
     const blocks: { title: string; kinds: string[]; hint?: string }[] = [
-        { title: "AI 工具", kinds: ["harness"] },
-        { title: "命令", kinds: ["tool"] },
-        { title: "硬件", kinds: ["hardware"] },
-        { title: "MCP", kinds: ["mcp"], hint: "这台机器能为会话启动的 MCP 服务器" },
-        { title: "技能", kinds: ["skill"], hint: "hub 下发并已在每个 AI 工具 home 里物化的技能" },
-        { title: "声明", kinds: ["network", "credential", "tag"], hint: "只能由运维声明、没人核实过的：网络、凭据、标签" },
+        { title: tr("fleet.aiTool"), kinds: ["harness"] },
+        { title: tr("fleet.commands"), kinds: ["tool"] },
+        { title: tr("fleet.hardware"), kinds: ["hardware"] },
+        { title: "MCP", kinds: ["mcp"], hint: tr("fleet.machineMcpHint") },
+        { title: tr("fleet.skills"), kinds: ["skill"], hint: tr("fleet.machineSkillsHint") },
+        { title: tr("fleet.declared"), kinds: ["network", "credential", "tag"], hint: tr("fleet.declaredHint") },
     ];
     const shown = blocks.map((b) => ({ ...b, items: list.filter((c) => b.kinds.includes(c.kind)) })).filter((b) => b.items.length);
     return (
         <div className="grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-3">
             {shown.map((b) => (
-                <div key={b.title} className="flex min-w-0 flex-col gap-1.5">
-                    <div className="u-label" title={b.hint ?? (snapshot.coverage?.[b.kinds[0]] ? `覆盖：${snapshot.coverage[b.kinds[0]]}` : undefined)}>{b.title}</div>
+                <div key={b.kinds.join(":")} className="flex min-w-0 flex-col gap-1.5">
+                    <div className="u-label" title={b.hint ?? (snapshot.coverage?.[b.kinds[0]] ? tr("fleet.coverage", { value: snapshot.coverage[b.kinds[0]] }) : undefined)}>{b.title}</div>
                     <div className="flex flex-wrap gap-1 text-xs">
                         {merge(b.items).map(({ c, scopes }) => {
-                            const st = state(c, snapshot);
-                            const where = scopes.filter(Boolean).length ? ` · 适用 ${scopes.filter(Boolean).join(", ")}` : "";
+                            const st = state(c, snapshot, tr);
+                            const where = scopes.filter(Boolean).length ? tr("fleet.appliesTo", { scopes: scopes.filter(Boolean).join(", ") }) : "";
                             const shownID = c.kind === "hardware" && c.attrs?.count ? `${c.id}×${c.attrs.count}` : c.id;
                             return (
                                 <span key={c.id} title={`${c.kind}:${c.id}${where}${c.version ? " · " + c.version.value.slice(0, 12) : ""} · ${st.word}${c.detail ? " · " + c.detail : ""}`}
@@ -351,12 +357,13 @@ function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
                     </div>
                 </div>
             ))}
-            {snapshot.source === "legacy" && <span className="col-span-full u-meta text-quaternary">旧版本 node：只知道 AI 工具与标签，其它类别未知。</span>}
+            {snapshot.source === "legacy" && <span className="col-span-full u-meta text-quaternary">{tr("fleet.legacyHint")}</span>}
         </div>
     );
 }
 
 export function FleetPage() {
+    const { t: tr, locale } = useI18n();
     const { snap, refresh } = useFleet();
     const { act } = useIntent();
     const up = snap.nodes.filter((n) => n.up).length;
@@ -366,22 +373,22 @@ export function FleetPage() {
     const hubHarnesses = Array.from(new Set(snap.agents.map((a) => a.harness).filter(Boolean))) as string[];
     return (
         <div className="workbench-page flex min-w-0 flex-col">
-            <PageHeader title="资源" description="查看机器状态、Agent 配置与运行中的任务。"
-                actions={<Button size="sm" color="primary" iconLeading={Plus} onClick={() => setAdding(true)}>添加机器 / Agent</Button>} />
+            <PageHeader title={tr("fleet.title")} description={tr("fleet.description")}
+                actions={<Button size="sm" color="primary" iconLeading={Plus} onClick={() => setAdding(true)}>{tr("fleet.addResource")}</Button>} />
             <PageBody>
             {adding && <AddMachine hub={snap.hub.node} harnesses={hubHarnesses.length ? hubHarnesses : ["codex", "claude-code", "grok", "kimi"]} nodes={snap.nodes.filter((n) => n.role !== "hub").map((n) => n.name)} onClose={() => setAdding(false)} onDone={() => refresh()} />}
             <TableCard.Root size="sm" className="workbench-table min-w-0">
-                <TableCard.Header title="机器" badge={`${up}/${snap.nodes.length} 在线`} />
-                {snap.nodes.length === 0 ? <Nothing icon={Server01} title="还没有机器">hub 还没报名字，也没有配置远程机器。</Nothing> : (
-                    <Table aria-label="Nodes" size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
+                <TableCard.Header title={tr("fleet.machine")} badge={tr("fleet.online", { online: up, total: snap.nodes.length })} />
+                {snap.nodes.length === 0 ? <Nothing icon={Server01} title={tr("fleet.noMachines")}>{tr("fleet.noMachinesHint")}</Nothing> : (
+                    <Table aria-label={tr("fleet.machine")} size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
                         <Table.Header>
-                            <Table.Head id="node" label="名称" className="w-[19%]" isRowHeader />
-                            <Table.Head id="host" label="主机 / IP" className="w-[21%]" />
-                            <Table.Head id="version" label="版本" className="w-[12%]" />
-                            <Table.Head id="os" label="系统" className="w-[12%]" />
-                            <Table.Head id="level" label="数据等级" className="w-[10%]" />
-                            <Table.Head id="health" label="健康" className="w-[16%]" />
-                            <Table.Head id="state" label="状态" className="w-[10%]" />
+                            <Table.Head id="node" label={tr("fleet.name")} className="w-[19%]" isRowHeader />
+                            <Table.Head id="host" label={tr("fleet.hostIp")} className="w-[21%]" />
+                            <Table.Head id="version" label={tr("fleet.version")} className="w-[12%]" />
+                            <Table.Head id="os" label={tr("fleet.system")} className="w-[12%]" />
+                            <Table.Head id="level" label={tr("fleet.classification")} className="w-[10%]" />
+                            <Table.Head id="health" label={tr("fleet.health")} className="w-[16%]" />
+                            <Table.Head id="state" label={tr("fleet.status")} className="w-[10%]" />
                         </Table.Header>
                         <Table.Body items={snap.nodes.map((n) => ({ ...n, id: n.name }))}>
                             {(n) => (
@@ -400,11 +407,11 @@ export function FleetPage() {
                                     </Table.Cell>
                                     <Table.Cell><span className="block truncate font-mono text-xs text-tertiary" title={n.version}>{n.version || "—"}</span></Table.Cell>
                                     <Table.Cell><span className="text-xs text-tertiary">{n.os ? `${n.os} / ${n.arch}` : "—"}</span></Table.Cell>
-                                    <Table.Cell><span title={levelHint}>{levelWords[n.level || "internal"] || n.level}</span></Table.Cell>
+                                    <Table.Cell><span title={tr("fleet.levelHint")}>{levelName(n.level || "internal", locale)}</span></Table.Cell>
                                     <Table.Cell>
                                         {n.health && n.health.disk_total > 0 ? (
-                                            <span className={`text-xs ${n.health.disk_free < 1 << 30 ? "text-error-primary" : "text-tertiary"}`} title="磁盘空闲 · 1 分钟负载">{(n.health.disk_free / (1 << 30)).toFixed(0)} GB 空闲 · 负载 {n.health.load1.toFixed(1)}</span>
-                                        ) : <span className="text-xs text-quaternary">未申报</span>}
+                                            <span className={`text-xs ${n.health.disk_free < 1 << 30 ? "text-error-primary" : "text-tertiary"}`} title={tr("fleet.diskLoadHint")}>{number(n.health.disk_free / (1 << 30), locale, { maximumFractionDigits: 0 })} {tr("fleet.diskLoad")}{number(n.health.load1, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 })}</span>
+                                        ) : <span className="text-xs text-quaternary">{tr("fleet.unreported")}</span>}
                                     </Table.Cell>
                                     <Table.Cell><StateBadge state={n.up ? "up" : "down"} /></Table.Cell>
                                 </Table.Row>
@@ -417,13 +424,13 @@ export function FleetPage() {
 
             <TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title="Agent" badge={`${snap.agents.length}`} />
-                <Table aria-label="Agents" size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpenedAgent(id ? String(id) : null); }}>
+                <Table aria-label="Agent" size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpenedAgent(id ? String(id) : null); }}>
                     <Table.Header>
                         <Table.Head id="agent" label="Agent" className="w-[20%]" isRowHeader />
-                        <Table.Head id="state" label="状态" className="w-[16%]" />
-                        <Table.Head id="now" label="当前活动" className="w-[21%]" />
-                        <Table.Head id="where" label="运行环境" className="w-[20%]" />
-                        <Table.Head id="model" label="模型" className="w-[23%]" />
+                        <Table.Head id="state" label={tr("fleet.status")} className="w-[16%]" />
+                        <Table.Head id="now" label={tr("fleet.activity")} className="w-[21%]" />
+                        <Table.Head id="where" label={tr("fleet.environment")} className="w-[20%]" />
+                        <Table.Head id="model" label={tr("fleet.model")} className="w-[23%]" />
                     </Table.Header>
                     <Table.Body items={snap.agents}>
                         {(a) => (
@@ -432,20 +439,20 @@ export function FleetPage() {
                                     <div className="flex flex-col">
                                         <div className="flex min-w-0 items-center gap-2">
                                             <span className="truncate font-medium text-primary" title={a.id}>{a.id}</span>
-                                            {a.default && <Badge type="pill-color" size="sm" color="brand">默认</Badge>}
+                                            {a.default && <Badge type="pill-color" size="sm" color="brand">{tr("common.default")}</Badge>}
                                         </div>
                                         {a.about && <span className="line-clamp-1 max-w-64 text-xs text-tertiary" title={a.about}>{a.about}</span>}
                                     </div>
                                 </Table.Cell>
-                                <Table.Cell><div className="flex min-w-0 flex-col gap-1"><div><StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />{a.busy ? <span className="ml-1 text-xs text-tertiary">{a.busy}{a.slots ? `/${a.slots}` : ""}</span> : null}</div>{a.why && <span className="truncate text-xs text-error-primary" title={a.why}>{a.why}</span>}{a.repair && <Button size="sm" color="link-color" onClick={(e: React.MouseEvent) => { e.stopPropagation(); act(`/repair ${a.id}`); }}>让 {a.repair} 修复</Button>}</div></Table.Cell>
+                                <Table.Cell><div className="flex min-w-0 flex-col gap-1"><div><StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />{a.busy ? <span className="ml-1 text-xs text-tertiary">{a.busy}{a.slots ? `/${a.slots}` : ""}</span> : null}</div>{a.why && <span className="truncate text-xs text-error-primary" title={a.why}>{a.why}</span>}{a.repair && <Button size="sm" color="link-color" onClick={(e: React.MouseEvent) => { e.stopPropagation(); act(`/repair ${a.id}`); }}>{tr("fleet.repairAgent", { agent: a.repair })}</Button>}</div></Table.Cell>
                                 <Table.Cell>
-                                    {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="truncate text-xs text-secondary" title={x.detail}>#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since)}</div>) : <span className="text-xs text-quaternary">{a.activity_known === false ? "活动状态未知" : "空闲"}</span>}
+                                    {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="truncate text-xs text-secondary" title={x.detail}>#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since, locale)}</div>) : <span className="text-xs text-quaternary">{a.activity_known === false ? tr("fleet.activityUnknown") : tr("fleet.idle")}</span>}
                                 </Table.Cell>
                                 <Table.Cell><div className="flex min-w-0 flex-col gap-1"><span className="truncate text-xs text-secondary" title={a.node || snap.hub.node}>{a.node || snap.hub.node}</span><span className="truncate text-xs text-tertiary">{a.harness}</span></div></Table.Cell>
                                 <Table.Cell>
                                     <div className="flex flex-col">
-                                        {a.preferred ? <span className="truncate text-primary" title={`固定模型：${a.preferred}`}>{a.preferred}</span> : <span className="text-quaternary" title="没有固定：AI 工具用它自己的默认模型">未固定</span>}
-                                        {a.observed && <span className="truncate text-xs text-tertiary" title={`上次实际模型：${a.observed}`}>上次 {a.observed}</span>}
+                                        {a.preferred ? <span className="truncate text-primary" title={tr("fleet.fixedModel", { model: a.preferred })}>{a.preferred}</span> : <span className="text-quaternary" title={tr("fleet.unPinnedHint")}>{tr("fleet.unpinned")}</span>}
+                                        {a.observed && <span className="truncate text-xs text-tertiary" title={tr("fleet.observedModel", { model: a.observed })}>{tr("fleet.last")}{a.observed}</span>}
                                         {a.options && Object.keys(a.options).length > 0 && <span className="truncate text-xs text-tertiary" title={Object.entries(a.options).map(([k, v]) => `${selectorName(a, k)} ${v}`).join(" · ")}>{Object.entries(a.options).map(([k, v]) => `${selectorName(a, k)} ${v}`).join(" · ")}</span>}
                                     </div>
                                 </Table.Cell>
@@ -453,39 +460,39 @@ export function FleetPage() {
                         )}
                     </Table.Body>
                 </Table>
-                {snap.agents.length === 0 && <Nothing icon={Users01} title="没有配置 Agent" />}
+                {snap.agents.length === 0 && <Nothing icon={Users01} title={tr("fleet.noAgents")} />}
             </TableCard.Root>
             {openedAgent && snap.agents.find((a) => a.id === openedAgent) && <AgentDrawer a={snap.agents.find((a) => a.id === openedAgent)!} onClose={() => setOpenedAgent(null)} onChanged={() => refresh()} />}
 
             <TableCard.Root size="sm" className="workbench-table min-w-0">
-                <TableCard.Header title="运行中的执行" badge={`${snap.attempts.length}`} description="每一次执行都持有租约；租约丢失即取消。" />
-                {snap.attempts.length === 0 ? <Nothing icon={Zap} title="当前没有执行" /> : (
-                    <Table aria-label="Attempts" size="sm">
+                <TableCard.Header title={tr("fleet.runningExecutions")} badge={`${snap.attempts.length}`} description={tr("fleet.leaseHint")} />
+                {snap.attempts.length === 0 ? <Nothing icon={Zap} title={tr("fleet.noExecutions")} /> : (
+                    <Table aria-label={tr("fleet.runningExecutions")} size="sm">
                         <Table.Header>
-                            <Table.Head id="id" label="执行 ID" isRowHeader />
-                            <Table.Head id="kind" label="类型" />
-                            <Table.Head id="state" label="状态" />
+                            <Table.Head id="id" label={tr("fleet.executionId")} isRowHeader />
+                            <Table.Head id="kind" label={tr("fleet.type")} />
+                            <Table.Head id="state" label={tr("fleet.status")} />
                             <Table.Head id="agent" label="Agent" />
-                            <Table.Head id="where" label="机器" />
-                            <Table.Head id="project" label="项目" />
-                            <Table.Head id="scope" label="范围" />
-                            <Table.Head id="leases" label="租约" />
-                            <Table.Head id="admission" label="准入" />
-                            <Table.Head id="since" label="开始时间" />
+                            <Table.Head id="where" label={tr("fleet.machine")} />
+                            <Table.Head id="project" label={tr("nav.projects")} />
+                            <Table.Head id="scope" label={tr("fleet.scope")} />
+                            <Table.Head id="leases" label={tr("fleet.leases")} />
+                            <Table.Head id="admission" label={tr("fleet.admission")} />
+                            <Table.Head id="since" label={tr("fleet.started")} />
                         </Table.Header>
                         <Table.Body items={snap.attempts}>
                             {(a) => (
                                 <Table.Row id={a.id}>
                                     <Table.Cell><Mono>{a.id}</Mono></Table.Cell>
                                     <Table.Cell>{a.kind}</Table.Cell>
-                                    <Table.Cell><div className="flex flex-col gap-1" title={a.error}><StateBadge state={a.unsettled ? "quarantined" : a.state} />{a.unsettled && <span className="text-xs text-warning-primary">原进程退出未确认</span>}</div></Table.Cell>
+                                    <Table.Cell><div className="flex flex-col gap-1" title={a.error}><StateBadge state={a.unsettled ? "quarantined" : a.state} />{a.unsettled && <span className="text-xs text-warning-primary">{tr("fleet.exitUnconfirmed")}</span>}</div></Table.Cell>
                                     <Table.Cell>{a.agent || "—"}</Table.Cell>
                                     <Table.Cell><Where node={a.node} /></Table.Cell>
                                     <Table.Cell>{a.project}</Table.Cell>
                                     <Table.Cell><Badge type="modern" size="sm" color="gray">{a.scope}</Badge></Table.Cell>
                                     <Table.Cell><div className="flex flex-wrap gap-1">{(a.leases || []).map((l) => <Mono key={l}>{l}</Mono>)}</div></Table.Cell>
                                     <Table.Cell><AdmissionBadge a={a} /></Table.Cell>
-                                    <Table.Cell><span className="text-tertiary">{relative(a.started_at)}</span></Table.Cell>
+                                    <Table.Cell><span className="text-tertiary">{relative(a.started_at, locale)}</span></Table.Cell>
                                 </Table.Row>
                             )}
                         </Table.Body>
@@ -501,10 +508,11 @@ export function FleetPage() {
 // on which revision: the node itself, the hub, the hub's cached snapshot,
 // or nobody (an older node).
 function AdmissionBadge({ a }: { a: Attempt }) {
+    const { t: tr } = useI18n();
     const adm = a.admission;
     const req = (a.requires || []).join(" ");
-    if (!adm) return <span className="text-tertiary">{req ? `要求 ${req} · 未留证` : "—"}</span>;
-    const who = ({ node: "机器终审", hub: "hub 判定", cached: "缓存快照", legacy: "旧版 node，未复核" } as Record<string, string>)[adm.source] || adm.source;
+    if (!adm) return <span className="text-tertiary">{req ? tr("fleet.unrecordedRequirements", { requirements: req }) : "—"}</span>;
+    const who = ({ node: tr("fleet.nodeDecision"), hub: tr("fleet.hubDecision"), cached: tr("fleet.cachedDecision"), legacy: tr("fleet.legacyDecision") } as Record<string, string>)[adm.source] || adm.source;
     const color = adm.verdict === 1 ? "success" : adm.verdict === 0 ? "error" : "warning";
     const rev = adm.generation ? ` @${adm.generation}/${adm.sequence}` : "";
     return (

@@ -1,3 +1,5 @@
+import { useI18n } from "@/providers/locale-provider";
+import type { Translator } from "@/lib/i18n";
 import { useEffect, useState } from "react";
 import { Download01, Dataflow03, RefreshCw01, SearchSm, Server01, Trash01 } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
@@ -17,26 +19,9 @@ import { useResourceRead } from "@/hooks/use-resource-read";
 import type { MCPDeployment, MCPRegistryEntry, MCPView } from "@/lib/types";
 
 const fail = (e: unknown) => String(e).replace(/^Error: /, "");
-const typeWords: Record<string, string> = { stdio: "本机进程", http: "HTTP", sse: "SSE（旧式）" };
+function typeWord(type: string, tr: Translator): string { return type === "stdio" ? tr("mcp.stdio") : type === "sse" ? tr("mcp.sse") : type === "http" ? "HTTP" : type; }
 
-const steveToolSummaries: Record<string, string> = {
-    channel_send: "向当前会话的 channel 发送阶段进展",
-    channel_update: "更新本轮已发送的进度消息",
-    channel_recall: "撤回本轮已发送的消息",
-    steve_fleet: "查看 Agent 及其可用能力",
-    steve_delegate: "把一项工作委派给其他 Agent",
-    steve_await: "等待子任务并获取结果",
-    steve_context: "查看当前会话、Agent 与工作目录",
-    steve_projects: "查看项目位置与可用副本",
-    steve_help: "阅读 Steve 的使用说明",
-    steve_nodes: "查看机器状态与可用资源",
-    steve_node_add: "添加机器并生成接入命令",
-    steve_node_remove: "从工作空间移除机器",
-    steve_node_refresh: "重新发现机器上的工具与能力",
-    steve_remember: "保存偏好、约定等长期记忆",
-    steve_recall: "查找已保存的记忆",
-    steve_forget: "删除一条已保存的记忆",
-};
+
 
 // MCPPage: an MCP server is a deployment on one machine — a command to
 // start or an address to reach, its secrets in that machine's own file.
@@ -45,6 +30,25 @@ const steveToolSummaries: Record<string, string> = {
 // says so. The platform's own session servers are listed apart: they
 // exist per session and are neither installed nor edited.
 export function MCPPage() {
+    const { t: tr } = useI18n();
+const steveToolSummaries: Record<string, string> = {
+    channel_send: tr("mcp.channelSend"),
+    channel_update: tr("mcp.channelUpdate"),
+    channel_recall: tr("mcp.channelRecall"),
+    steve_fleet: tr("mcp.fleetTool"),
+    steve_delegate: tr("mcp.delegateTool"),
+    steve_await: tr("mcp.awaitTool"),
+    steve_context: tr("mcp.contextTool"),
+    steve_projects: tr("mcp.projectsTool"),
+    steve_help: tr("mcp.helpTool"),
+    steve_nodes: tr("mcp.nodesTool"),
+    steve_node_add: tr("mcp.nodeAddTool"),
+    steve_node_remove: tr("mcp.nodeRemoveTool"),
+    steve_node_refresh: tr("mcp.nodeRefreshTool"),
+    steve_remember: tr("mcp.rememberTool"),
+    steve_recall: tr("mcp.recallTool"),
+    steve_forget: tr("mcp.forgetTool"),
+};
     const { snap } = useFleet();
     const [view, setView] = useState<MCPView | null>(null);
     const [error, setError] = useState("");
@@ -62,33 +66,33 @@ export function MCPPage() {
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title="MCP"
-                description="连接 Agent 使用的工具服务，按机器管理部署与配置。" />
+                description={tr("mcp.description")} />
             <PageBody>
                 {(error || readError) && <div role="alert" className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error || readError}</div>}
                 <TableCard.Root size="sm" className="workbench-table min-w-0">
-                    <TableCard.Header title="已安装" badge={`${deployments.length}`} description="选择服务查看工具与连接状态；命令和密钥在机器配置中编辑。" />
-                    {!view ? <div className="px-5 py-6 text-sm text-tertiary">读取中…</div> : deployments.length === 0 ? (
-                        <Nothing icon={Dataflow03} title="还没有装 MCP 服务器">导入机器上已有的服务，或从注册表安装。</Nothing>
+                    <TableCard.Header title={tr("mcp.installed")} badge={`${deployments.length}`} description={tr("mcp.installedHint")} />
+                    {!view ? <div className="px-5 py-6 text-sm text-tertiary">{tr("mcp.loading")}</div> : deployments.length === 0 ? (
+                        <Nothing icon={Dataflow03} title={tr("mcp.empty")}>{tr("mcp.emptyHint")}</Nothing>
                     ) : (
                         <Table aria-label="MCP" size="sm" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
                             <Table.Header>
-                                <Table.Head id="name" label="名称" isRowHeader />
-                                <Table.Head id="node" label="机器" />
-                                <Table.Head id="type" label="类型" />
-                                <Table.Head id="what" label="命令 / 地址" />
-                                <Table.Head id="agents" label="使用者" />
-                                <Table.Head id="tools" label="工具" />
-                                <Table.Head id="state" label="状态" />
+                                <Table.Head id="name" label={tr("mcp.name")} isRowHeader />
+                                <Table.Head id="node" label={tr("mcp.machine")} />
+                                <Table.Head id="type" label={tr("mcp.type")} />
+                                <Table.Head id="what" label={tr("mcp.endpoint")} />
+                                <Table.Head id="agents" label={tr("mcp.users")} />
+                                <Table.Head id="tools" label={tr("mcp.tools")} />
+                                <Table.Head id="state" label={tr("mcp.status")} />
                             </Table.Header>
                             <Table.Body items={deployments.map((d) => ({ ...d, key: d.node + "/" + d.name }))}>
                                 {(d) => (
                                     <Table.Row id={d.node + "/" + d.name} className="cursor-pointer">
-                                        <Table.Cell><span className="font-medium text-primary">{d.name}</span>{d.same_name_elsewhere && <span className="ml-1 u-meta text-quaternary" title="别的机器上也有这个名字；是不是同一个服务只有你知道">同名</span>}</Table.Cell>
+                                        <Table.Cell><span className="font-medium text-primary">{d.name}</span>{d.same_name_elsewhere && <span className="ml-1 u-meta text-quaternary" title={tr("mcp.sameNameHint")}>{tr("mcp.sameName")}</span>}</Table.Cell>
                                         <Table.Cell><Mono>{d.node}</Mono></Table.Cell>
-                                        <Table.Cell><span className="text-xs text-secondary">{typeWords[d.type] || d.type}</span></Table.Cell>
+                                        <Table.Cell><span className="text-xs text-secondary">{typeWord(d.type, tr)}</span></Table.Cell>
                                         <Table.Cell><Mono className="block max-w-xs truncate text-tertiary" >{d.command || d.url || "—"}</Mono></Table.Cell>
-                                        <Table.Cell><Chips items={d.agents.map((a) => ({ id: a }))} empty={<span className="text-xs text-quaternary">未使用</span>} /></Table.Cell>
-                                        <Table.Cell><span className="text-xs text-secondary">{d.probe ? (d.probe.error ? <span className="text-error-primary">探测失败</span> : `${d.probe.tools.length} 个${d.probe.stale ? " · 旧" : ""}`) : <span className="text-quaternary">未探测</span>}</span></Table.Cell>
+                                        <Table.Cell><Chips items={d.agents.map((a) => ({ id: a }))} empty={<span className="text-xs text-quaternary">{tr("mcp.unused")}</span>} /></Table.Cell>
+                                        <Table.Cell><span className="text-xs text-secondary">{d.probe ? (d.probe.error ? <span className="text-error-primary">{tr("mcp.probeFailed")}</span> : tr("mcp.probeCount", { count: d.probe.tools.length, stale: d.probe.stale ? tr("mcp.staleSuffix") : "" })) : <span className="text-quaternary">{tr("mcp.notProbed")}</span>}</span></Table.Cell>
                                         <Table.Cell><State d={d} /></Table.Cell>
                                     </Table.Row>
                                 )}
@@ -98,12 +102,12 @@ export function MCPPage() {
                 </TableCard.Root>
 
                 {view && view.platform.length > 0 && (
-                    <Panel title="内置服务" description="由 Steve 为每个会话创建，无需安装。选择工具查看完整说明。">
+                    <Panel title={tr("mcp.builtin")} description={tr("mcp.builtinHint")}>
                         <ul className="flex min-w-0 flex-col gap-6">
                             {view.platform.map((p) => (
                                 <li key={p.name} className="flex min-w-0 flex-col gap-4">
                                     <div className="flex min-w-0 flex-col gap-2">
-                                        <div className="flex flex-wrap items-baseline gap-3"><h3 className="text-base font-semibold text-primary">{p.name}</h3><span className="text-sm text-tertiary">{p.tools.length} 个工具</span></div>
+                                        <div className="flex flex-wrap items-baseline gap-3"><h3 className="text-base font-semibold text-primary">{p.name}</h3><span className="text-sm text-tertiary">{tr("mcp.toolCount", { count: p.tools.length })}</span></div>
                                         <p className="max-w-3xl text-sm leading-6 text-secondary">{p.description}</p>
                                     </div>
                                     <MCPToolList tools={p.tools} summaries={p.name === "steve" ? steveToolSummaries : undefined} />
@@ -113,8 +117,8 @@ export function MCPPage() {
                     </Panel>
                 )}
 
-                <Panel title="从机器导入" description="查看本机 AI 工具已配置的 MCP 服务。导入时密钥保留在原机器。">
-                    {!view ? null : view.machines.length === 0 ? <div className="text-xs text-quaternary">没有机器。</div> : (
+                <Panel title={tr("mcp.importMachine")} description={tr("mcp.importHint")}>
+                    {!view ? null : view.machines.length === 0 ? <div className="text-xs text-quaternary">{tr("mcp.noMachines")}</div> : (
                         <ul className="flex flex-col gap-3">
                             {view.machines.map((m) => (
                                 <li key={m.name} className="flex flex-col gap-1">
@@ -122,19 +126,19 @@ export function MCPPage() {
                                         <Server01 className="size-3.5 text-fg-quaternary" />
                                         <span className="font-medium text-primary">{m.name}</span>
                                         {m.hub && <Badge type="pill-color" size="sm" color="brand">hub</Badge>}
-                                        {m.unsupported ? <Badge type="pill-color" size="sm" color="warning">需更新 node</Badge> : m.own.length === 0 ? <span className="text-xs text-quaternary">没有</span> : null}
+                                        {m.unsupported ? <Badge type="pill-color" size="sm" color="warning">{tr("mcp.nodeUpgrade")}</Badge> : m.own.length === 0 ? <span className="text-xs text-quaternary">{tr("mcp.none")}</span> : null}
                                     </div>
                                     {m.own.length > 0 && (
                                         <ul className="ml-5 flex flex-col divide-y divide-secondary">
                                             {m.own.map((o) => (
                                                 <li key={o.source + "/" + o.name + o.scope} className="flex min-w-0 flex-wrap items-center gap-3 py-2">
                                                     <div className="min-w-0 flex-1">
-                                                        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm"><span className="font-medium text-primary">{o.name}</span><Badge type="modern" size="sm" color="gray">{o.source}</Badge>{o.scope && <span className="truncate u-meta text-quaternary" title={o.scope}>项目 {o.scope}</span>}</div>
+                                                        <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm"><span className="font-medium text-primary">{o.name}</span><Badge type="modern" size="sm" color="gray">{o.source}</Badge>{o.scope && <span className="truncate u-meta text-quaternary" title={o.scope}>{tr("nav.projects")}{o.scope}</span>}</div>
                                                         <div className="truncate font-mono u-meta">{o.type}: {o.command ? [o.command, ...(o.args || [])].join(" ") : o.url}{o.env_keys?.length ? ` · env ${o.env_keys.join(", ")}` : ""}{o.header_keys?.length ? ` · headers ${o.header_keys.join(", ")}` : ""}</div>
                                                     </div>
-                                                    {o.adopted ? <span className="text-xs text-quaternary">已导入</span>
-                                                        : o.scope ? <span className="text-xs text-quaternary" title="项目级配置仅支持查看">项目级配置</span>
-                                                            : <Button size="sm" color="secondary" iconLeading={Download01} isDisabled={busy !== ""} isLoading={busy === "adopt:" + m.name + o.name} onClick={() => void run("adopt:" + m.name + o.name, () => adoptMCP(m.name, o.source, o.name))}>导入</Button>}
+                                                    {o.adopted ? <span className="text-xs text-quaternary">{tr("mcp.imported")}</span>
+                                                        : o.scope ? <span className="text-xs text-quaternary" title={tr("mcp.projectReadOnly")}>{tr("mcp.projectConfiguration")}</span>
+                                                            : <Button size="sm" color="secondary" iconLeading={Download01} isDisabled={busy !== ""} isLoading={busy === "adopt:" + m.name + o.name} onClick={() => void run("adopt:" + m.name + o.name, () => adoptMCP(m.name, o.source, o.name))}>{tr("mcp.import")}</Button>}
                                                 </li>
                                             ))}
                                         </ul>
@@ -154,41 +158,43 @@ export function MCPPage() {
 }
 
 function State({ d }: { d: MCPDeployment }) {
-    if (d.probe && !d.probe.error) return <Badge type="pill-color" size="sm" color="success">探测通过</Badge>;
-    if (d.probe?.error) return <Badge type="pill-color" size="sm" color="error">探测失败</Badge>;
-    if (d.resolvable === false) return <Badge type="pill-color" size="sm" color="warning">命令找不到</Badge>;
-    return <Badge type="pill-color" size="sm" color="gray">已配置</Badge>;
+    const { t: tr } = useI18n();
+    if (d.probe && !d.probe.error) return <Badge type="pill-color" size="sm" color="success">{tr("mcp.probePassed")}</Badge>;
+    if (d.probe?.error) return <Badge type="pill-color" size="sm" color="error">{tr("mcp.probeFailed")}</Badge>;
+    if (d.resolvable === false) return <Badge type="pill-color" size="sm" color="warning">{tr("mcp.commandMissing")}</Badge>;
+    return <Badge type="pill-color" size="sm" color="gray">{tr("mcp.configured")}</Badge>;
 }
 
 // DeploymentDrawer is one deployment: the shape, the tools the last
 // probe found, who attaches, and the probe and remove actions.
 function DeploymentDrawer({ d, onClose, busy, onProbe, onRemove }: { d: MCPDeployment; onClose: () => void; busy: string; onProbe: () => void; onRemove: () => void }) {
+    const { t: tr, locale } = useI18n();
     const [removing, setRemoving] = useState(false);
     return (
-        <Drawer width={640} title={<><span className="text-base font-semibold text-primary">{d.name}</span><Badge type="modern" size="sm" color="gray">{typeWords[d.type] || d.type}</Badge><State d={d} /></>}
-            subtitle={<><div className="mt-0.5 text-xs text-tertiary">在 {d.node} 上</div></>}
-            actions={<><Button size="sm" color="secondary" iconLeading={RefreshCw01} isLoading={busy === "probe:" + d.node + d.name} isDisabled={busy !== ""} onClick={onProbe}>探测</Button></>} onClose={onClose}>
+        <Drawer width={640} title={<><span className="text-base font-semibold text-primary">{d.name}</span><Badge type="modern" size="sm" color="gray">{typeWord(d.type, tr)}</Badge><State d={d} /></>}
+            subtitle={<><div className="mt-0.5 text-xs text-tertiary">{tr("mcp.onMachine", { node: d.node })}</div></>}
+            actions={<><Button size="sm" color="secondary" iconLeading={RefreshCw01} isLoading={busy === "probe:" + d.node + d.name} isDisabled={busy !== ""} onClick={onProbe}>{tr("mcp.probe")}</Button></>} onClose={onClose}>
             <KeyValue dense rows={[
-                { k: "命令 / 地址", v: <Mono className="break-all">{d.command ? [d.command, ...(d.args || [])].join(" ") : d.url || "—"}</Mono> },
-                { k: "env", v: d.env_keys?.length ? <Chips items={d.env_keys.map((k) => ({ id: k }))} tone="muted" /> : <span className="text-quaternary">无</span>, hint: "只显示键名；值在那台机器的配置文件里。" },
-                { k: "headers", v: d.header_keys?.length ? <Chips items={d.header_keys.map((k) => ({ id: k }))} tone="muted" /> : <span className="text-quaternary">无</span> },
-                { k: "使用者", v: <Chips items={d.agents.map((a) => ({ id: a }))} empty={<span className="text-quaternary">没有 Agent 引用它</span>} /> },
-                { k: "来源", v: d.provenance || <span className="text-quaternary">手写配置</span> },
+                { k: tr("mcp.endpoint"), v: <Mono className="break-all">{d.command ? [d.command, ...(d.args || [])].join(" ") : d.url || "—"}</Mono> },
+                { k: "env", v: d.env_keys?.length ? <Chips items={d.env_keys.map((k) => ({ id: k }))} tone="muted" /> : <span className="text-quaternary">{tr("mcp.noValue")}</span>, hint: tr("mcp.keyHint") },
+                { k: "headers", v: d.header_keys?.length ? <Chips items={d.header_keys.map((k) => ({ id: k }))} tone="muted" /> : <span className="text-quaternary">{tr("mcp.noValue")}</span> },
+                { k: tr("mcp.users"), v: <Chips items={d.agents.map((a) => ({ id: a }))} empty={<span className="text-quaternary">{tr("mcp.noAgents")}</span>} /> },
+                { k: tr("mcp.source"), v: d.provenance || <span className="text-quaternary">{tr("mcp.manual")}</span> },
             ]} />
-            <p className="text-xs text-tertiary">探测会启动本机服务或连接远端，可能产生服务启动时的副作用；仅读取工具列表，不调用工具。</p>
-            <DrawerSection title="工具" aside={d.probe ? <span className="u-meta text-quaternary">探测于 {when(d.probe.at)}{d.probe.stale ? " · 配置后来变了，结果可能过时" : ""}{d.probe.server_name ? ` · ${d.probe.server_name} ${d.probe.server_version || ""}` : ""}</span> : undefined}>
-                {!d.probe ? <div className="text-xs text-quaternary">尚未探测，点击「探测」读取工具列表。</div>
-                    : d.probe.error ? <CodeBlock code={d.probe.error} label="探测失败" muted maxHeight={160} />
-                        : d.probe.tools.length === 0 ? <div className="text-xs text-quaternary">此服务未提供工具。</div> : (
+            <p className="text-xs text-tertiary">{tr("mcp.probeHint")}</p>
+            <DrawerSection title={tr("mcp.tools")} aside={d.probe ? <span className="u-meta text-quaternary">{tr("mcp.probedAt")}{when(d.probe.at, locale)}{d.probe.stale ? tr("mcp.configStaleSuffix") : ""}{d.probe.server_name ? ` · ${d.probe.server_name} ${d.probe.server_version || ""}` : ""}</span> : undefined}>
+                {!d.probe ? <div className="text-xs text-quaternary">{tr("mcp.notProbedHint")}</div>
+                    : d.probe.error ? <CodeBlock code={d.probe.error} label={tr("mcp.probeFailed")} muted maxHeight={160} />
+                        : d.probe.tools.length === 0 ? <div className="text-xs text-quaternary">{tr("mcp.noTools")}</div> : (
                             <MCPToolList tools={d.probe.tools} />
                         )}
-                {d.probe && !d.probe.error && <div className="mt-1 u-meta text-quaternary">工具集摘要 <Mono>{d.probe.digest}</Mono>（名字 + 输入 schema；变了就说明服务器换了工具）</div>}
+                {d.probe && !d.probe.error && <div className="mt-1 u-meta text-quaternary">{tr("mcp.digest")}<Mono>{d.probe.digest}</Mono>{tr("mcp.digestHint")}</div>}
             </DrawerSection>
             <section className="rounded-lg bg-secondary/40 p-3">
                 <div className="flex min-w-0 flex-wrap items-center gap-3">
-                    <div className="flex-1 text-xs text-tertiary">从 {d.node} 移除服务配置。请先解除 Agent 引用。</div>
-                    {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>取消</Button><Button size="sm" color="primary-destructive" isLoading={busy === "rm:" + d.node + d.name} onClick={onRemove}>确认删除</Button></>)
-                        : <Button size="sm" color="secondary-destructive" iconLeading={Trash01} isDisabled={d.agents.length > 0 || busy !== ""} onClick={() => setRemoving(true)}>删除</Button>}
+                    <div className="flex-1 text-xs text-tertiary">{tr("mcp.removeHint", { node: d.node })}</div>
+                    {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>{tr("common.cancel")}</Button><Button size="sm" color="primary-destructive" isLoading={busy === "rm:" + d.node + d.name} onClick={onRemove}>{tr("mcp.confirmDelete")}</Button></>)
+                        : <Button size="sm" color="secondary-destructive" iconLeading={Trash01} isDisabled={d.agents.length > 0 || busy !== ""} onClick={() => setRemoving(true)}>{tr("common.delete")}</Button>}
                 </div>
             </section>
         </Drawer>
@@ -199,6 +205,7 @@ function DeploymentDrawer({ d, onClose, busy, onProbe, onRemove }: { d: MCPDeplo
 // onto a chosen machine: the owner picks the package or remote, fills
 // in what it needs, sees the exact command, and confirms.
 function RegistryPanel({ onInstalled }: { onInstalled: () => void }) {
+    const { t: tr } = useI18n();
     const { snap } = useFleet();
     const [q, setQ] = useState("");
     const [results, setResults] = useState<MCPRegistryEntry[] | null>(null);
@@ -234,13 +241,13 @@ function RegistryPanel({ onInstalled }: { onInstalled: () => void }) {
         } catch (e) { setError(fail(e)); } finally { setInstalling(false); }
     }
     return (
-        <Panel title="从注册表安装" description="搜索 MCP Registry。安装前请核对发布者、仓库和执行命令。">
+        <Panel title={tr("mcp.registry")} description={tr("mcp.registryHint")}>
             <div className="flex min-w-0 flex-wrap items-end gap-2">
-                <Input size="sm" label="搜索" placeholder="filesystem、github、postgres…" value={q} onChange={setQ} className="min-w-48 flex-1" onKeyDown={(e) => { if (e.key === "Enter") search(); }} />
-                <Button size="sm" color="secondary" iconLeading={SearchSm} isLoading={searching} onClick={search}>搜索</Button>
+                <Input size="sm" label={tr("mcp.search")} placeholder="filesystem、github、postgres…" value={q} onChange={setQ} className="min-w-48 flex-1" onKeyDown={(e) => { if (e.key === "Enter") search(); }} />
+                <Button size="sm" color="secondary" iconLeading={SearchSm} isLoading={searching} onClick={search}>{tr("mcp.search")}</Button>
             </div>
             {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
-            {results && results.length === 0 && <div className="text-xs text-quaternary">没有匹配的服务。</div>}
+            {results && results.length === 0 && <div className="text-xs text-quaternary">{tr("mcp.noMatches")}</div>}
             {results && results.length > 0 && !picked && (
                 <ul className="flex flex-col divide-y divide-secondary">
                     {results.map((e) => (
@@ -248,36 +255,36 @@ function RegistryPanel({ onInstalled }: { onInstalled: () => void }) {
                             <div className="min-w-0 flex-1">
                                 <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm"><span className="font-medium text-primary">{e.name}</span>{e.version && <Mono className="text-quaternary">{e.version}</Mono>}</div>
                                 <div className="line-clamp-2 text-xs text-tertiary">{e.description}</div>
-                                <div className="mt-0.5 flex flex-wrap gap-1 u-meta text-quaternary">{e.packages.map((p, i) => <span key={i}>{p.registry_type}{p.needs ? ` · 要 ${p.needs}` : ""}</span>)}{e.remotes.map((r, i) => <span key={"r" + i}>远端 {r.type}</span>)}{e.repository && <a className="underline" href={e.repository} target="_blank" rel="noreferrer">仓库</a>}</div>
+                                <div className="mt-0.5 flex flex-wrap gap-1 u-meta text-quaternary">{e.packages.map((p, i) => <span key={i}>{p.registry_type}{p.needs ? tr("mcp.requires", { runtime: p.needs }) : ""}</span>)}{e.remotes.map((r, i) => <span key={"r" + i}>{tr("mcp.remote")}{r.type}</span>)}{e.repository && <a className="underline" href={e.repository} target="_blank" rel="noreferrer">{tr("mcp.repository")}</a>}</div>
                             </div>
-                            <Button size="sm" color="secondary" onClick={() => pick(e)} isDisabled={e.packages.length + e.remotes.length === 0}>安装…</Button>
+                            <Button size="sm" color="secondary" onClick={() => pick(e)} isDisabled={e.packages.length + e.remotes.length === 0}>{tr("mcp.installChoice")}</Button>
                         </li>
                     ))}
                 </ul>
             )}
             {picked && (
                 <div className="flex flex-col gap-3 rounded-lg bg-secondary/40 p-3">
-                    <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm"><span className="font-medium text-primary">{picked.name}</span><Button size="sm" color="link-gray" onClick={() => setPicked(null)}>重新选择</Button></div>
+                    <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm"><span className="font-medium text-primary">{picked.name}</span><Button size="sm" color="link-gray" onClick={() => setPicked(null)}>{tr("mcp.chooseAgain")}</Button></div>
                     <div className="grid grid-cols-1 gap-3 md:grid-cols-3">
-                        <Select size="sm" label="运行方式" selectedKey={variant} onSelectionChange={(k) => k && setVariant(String(k))}
-                            items={[...picked.packages.map((p, i) => ({ id: "pkg:" + i, label: `${p.registry_type} ${p.identifier}${p.version ? "@" + p.version : ""}` })), ...picked.remotes.map((r, i) => ({ id: "remote:" + i, label: `远端 ${r.type} ${r.url}` }))]}>
+                        <Select size="sm" label={tr("mcp.runtime")} selectedKey={variant} onSelectionChange={(k) => k && setVariant(String(k))}
+                            items={[...picked.packages.map((p, i) => ({ id: "pkg:" + i, label: `${p.registry_type} ${p.identifier}${p.version ? "@" + p.version : ""}` })), ...picked.remotes.map((r, i) => ({ id: "remote:" + i, label: tr("mcp.remoteLabel", { type: r.type, url: r.url }) }))]}>
                             {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                         </Select>
-                        <Select size="sm" label="目标机器" selectedKey={node} onSelectionChange={(k) => k && setNode(String(k))} items={machines}>
+                        <Select size="sm" label={tr("mcp.targetMachine")} selectedKey={node} onSelectionChange={(k) => k && setNode(String(k))} items={machines}>
                             {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                         </Select>
-                        <Input size="sm" label="服务名称" value={name} onChange={setName} hint="Agent 按这个名字接它" />
+                        <Input size="sm" label={tr("mcp.serviceName")} value={name} onChange={setName} hint={tr("mcp.serviceNameHint")} />
                     </div>
                     {needs.length > 0 && (
                         <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
-                            {needs.map((v) => <Input key={v.name} size="sm" type={v.secret ? "password" : "text"} label={v.name + (v.required ? "" : "（可选）")} hint={v.description} placeholder={v.default} value={values[v.name] ?? ""} onChange={(s) => setValues({ ...values, [v.name]: s })} />)}
+                            {needs.map((v) => <Input key={v.name} size="sm" type={v.secret ? "password" : "text"} label={v.name + (v.required ? "" : tr("mcp.optional"))} hint={v.description} placeholder={v.default} value={values[v.name] ?? ""} onChange={(s) => setValues({ ...values, [v.name]: s })} />)}
                         </div>
                     )}
-                    {chosenPkg && chosenPkg.needs && <div className="text-xs text-tertiary">这台机器要有 <Mono>{chosenPkg.needs}</Mono>；没有会在安装时被拒。{chosenPkg.needs === "npx" ? " npx 会从 npm 下载并执行这个包。" : chosenPkg.needs === "docker" ? " 会拉取并运行这个镜像。" : ""}</div>}
-                    {chosenRemote && <div className="text-xs text-tertiary">会向 <Mono>{chosenRemote.url}</Mono> 发请求，headers 里的值只发给这台机器。指向内网或本机的地址默认不允许。</div>}
+                    {chosenPkg && chosenPkg.needs && <div className="text-xs text-tertiary">{tr("mcp.requirePrefix")}<Mono>{chosenPkg.needs}</Mono>{tr("mcp.requireHint")}{chosenPkg.needs === "npx" ? tr("mcp.npxHint") : chosenPkg.needs === "docker" ? tr("mcp.dockerHint") : ""}</div>}
+                    {chosenRemote && <div className="text-xs text-tertiary">{tr("mcp.requestsPrefix")}<Mono>{chosenRemote.url}</Mono> {tr("mcp.remoteHint")}</div>}
                     <div className="flex justify-end gap-2">
-                        <Button size="sm" color="secondary" onClick={() => setPicked(null)}>取消</Button>
-                        <Button size="sm" color="primary" iconLeading={Download01} isLoading={installing} isDisabled={!name.trim() || !variant || missing.length > 0} onClick={() => void install()}>安装到 {node}</Button>
+                        <Button size="sm" color="secondary" onClick={() => setPicked(null)}>{tr("common.cancel")}</Button>
+                        <Button size="sm" color="primary" iconLeading={Download01} isLoading={installing} isDisabled={!name.trim() || !variant || missing.length > 0} onClick={() => void install()}>{tr("mcp.installTo", { node })}</Button>
                     </div>
                 </div>
             )}

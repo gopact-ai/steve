@@ -1,3 +1,5 @@
+import type { Locale } from "./i18n";
+
 const fromURL = new URLSearchParams(window.location.search).get("token") || "";
 let storedToken = "";
 try {
@@ -5,6 +7,8 @@ try {
     storedToken = sessionStorage.getItem("steve.token") || "";
 } catch { /* URL authentication still works when storage is unavailable. */ }
 export const token = fromURL || storedToken;
+let requestLocale: Locale = "en";
+export function setRequestLocale(locale: Locale) { requestLocale = locale; }
 
 export class HTTPError extends Error {
     constructor(message: string, readonly status: number) { super(message); }
@@ -13,6 +17,7 @@ export class HTTPError extends Error {
 export async function request<T>(path: string, { body, ...init }: Omit<RequestInit, "body"> & { body?: unknown } = {}): Promise<T> {
     const headers = new Headers(init.headers);
     if (token) headers.set("Authorization", `Bearer ${token}`);
+    if (!headers.has("Accept-Language")) headers.set("Accept-Language", requestLocale === "zh" ? "zh-CN" : "en");
     if (body !== undefined) headers.set("Content-Type", "application/json");
     const response = await fetch(`.${path}`, { ...init, headers, body: body === undefined ? undefined : JSON.stringify(body) });
     if (!response.ok) {

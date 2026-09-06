@@ -6,6 +6,9 @@ import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { Sheet } from "@/components/steve/drawer";
 import { FleetProvider, IntentProvider, useFleet } from "@/lib/fleet";
 import { useTheme } from "@/providers/theme-provider";
+import { useI18n } from "@/providers/locale-provider";
+import type { LocalePreference } from "@/lib/i18n";
+import { number } from "@/lib/format";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { ConsolePage } from "@/pages/console";
 import { FleetPage } from "@/pages/fleet";
@@ -15,17 +18,20 @@ import { ProjectsPage } from "@/pages/projects";
 import { SkillsPage } from "@/pages/skills";
 import { MCPPage } from "@/pages/mcp";
 import { HomePage } from "@/pages/home";
+import { SettingsPage } from "@/pages/settings";
+import { MaterialProvider } from "@/providers/material-provider";
 import { ReviewProvider } from "@/components/steve/review-context";
 
 export function App() {
     const navigate = useNavigate();
-    return <FleetProvider><IntentProvider onNavigate={() => navigate("/console")}><ReviewProvider><Shell /></ReviewProvider></IntentProvider></FleetProvider>;
+    return <FleetProvider><IntentProvider onNavigate={() => navigate("/console")}><MaterialProvider><ReviewProvider><Shell /></ReviewProvider></MaterialProvider></IntentProvider></FleetProvider>;
 }
 
 function Shell() {
     const { snap, live } = useFleet();
     const location = useLocation();
     const { theme, setTheme } = useTheme();
+    const { locale, preference, setLocale, t } = useI18n();
     const desktop = useBreakpoint("xl");
     const tablet = useBreakpoint("sm");
     const [navCollapsed, setNavCollapsed] = useState(() => { try { return localStorage.getItem("steve.nav.collapsed") === "1"; } catch { return false; } });
@@ -35,66 +41,71 @@ function Shell() {
     const up = snap.nodes.filter((n) => n.up).length;
     const broken = snap.sources.filter((s) => s.wired && s.error).length;
     const groups = [
-        { title: "工作", items: [
-            { href: "/console", label: "工作台", icon: Terminal, badge: 0 },
-            { href: "/console?view=board", label: "任务", icon: ClipboardCheck, badge: running },
-            { href: "/inbox", label: "待处理", icon: Inbox01, badge: snap.inbox.length },
+        { id: "work", title: t("nav.work"), items: [
+            { href: "/console", label: t("nav.console"), icon: Terminal, badge: 0 },
+            { href: "/console?view=board", label: t("nav.tasks"), icon: ClipboardCheck, badge: running },
+            { href: "/inbox", label: t("nav.inbox"), icon: Inbox01, badge: snap.inbox.length },
         ] },
-        { title: "管理", items: [
-            { href: "/projects", label: "项目", icon: Folder, badge: 0 },
-            { href: "/fleet", label: "资源", icon: Server01, badge: 0 },
-            { href: "/skills", label: "技能", icon: PuzzlePiece01, badge: 0 },
-            { href: "/mcp", label: "MCP", icon: Dataflow03, badge: 0 },
-            { href: "/home", label: "档案", icon: BookOpen01, badge: 0 },
+        { id: "manage", title: t("nav.manage"), items: [
+            { href: "/projects", label: t("nav.projects"), icon: Folder, badge: 0 },
+            { href: "/fleet", label: t("nav.fleet"), icon: Server01, badge: 0 },
+            { href: "/skills", label: t("nav.skills"), icon: PuzzlePiece01, badge: 0 },
+            { href: "/mcp", label: t("nav.mcp"), icon: Dataflow03, badge: 0 },
+            { href: "/home", label: t("nav.home"), icon: BookOpen01, badge: 0 },
+            { href: "/settings", label: t("settingsPage.title"), icon: Settings01, badge: 0 },
         ] },
     ];
     const selected = location.pathname + location.search;
-    const connection = live === "live" ? (broken ? "部分数据不可用" : "已连接") : live === "unauthorized" ? "需要认证" : "正在连接";
+    const connection = t(live === "live" ? (broken ? "connection.partial" : "connection.live") : live === "unauthorized" ? "connection.unauthorized" : "connection.connecting");
+    const devices = t("connection.devices", { online: number(up, locale), total: number(snap.nodes.length, locale) });
     const navigation = (small: boolean) => <>
         <div className="app-brand">
             <span className="app-mark" aria-hidden="true"><Terminal /></span>
-            {!small && <span><strong>Steve</strong><small>工作空间</small></span>}
+            {!small && <span><strong>Steve</strong><small>{t("app.workspace")}</small></span>}
         </div>
-        <nav aria-label="主导航" className="app-navigation">
-            {groups.map((group) => <div key={group.title} className="app-nav-group">
+        <nav aria-label={t("nav.main")} className="app-navigation">
+            {groups.map((group) => <div key={group.id} className="app-nav-group">
                 {!small && <span className="app-nav-label">{group.title}</span>}
                 {group.items.map((item) => <a key={item.href} href={"#" + item.href} aria-label={small ? item.label : undefined}
                     aria-current={(item.href === "/home" ? location.pathname === "/home" : item.href === "/console?view=board" ? location.pathname === "/console" && new URLSearchParams(location.search).get("view") === "board" : selected === item.href) ? "page" : undefined} title={small ? item.label : undefined}
                     className="app-nav-item" onClick={() => setMobileNav(false)}>
                     <item.icon aria-hidden="true" />
                     {!small && <span>{item.label}</span>}
-                    {!!item.badge && <span className={small ? "app-nav-dot" : "app-nav-count"}>{small ? null : item.badge}</span>}
+                    {!!item.badge && <span className={small ? "app-nav-dot" : "app-nav-count"}>{small ? null : number(item.badge, locale)}</span>}
                 </a>)}
             </div>)}
             <div className="app-nav-bottom">
-                <a href="#/history" aria-label={small ? "历史与审计" : undefined} title={small ? "历史与审计" : undefined} aria-current={location.pathname === "/history" ? "page" : undefined} className="app-nav-item" onClick={() => setMobileNav(false)}><BookOpen01 aria-hidden="true" />{!small && <span>历史与审计</span>}</a>
+                <a href="#/history" aria-label={small ? t("nav.history") : undefined} title={small ? t("nav.history") : undefined} aria-current={location.pathname === "/history" ? "page" : undefined} className="app-nav-item" onClick={() => setMobileNav(false)}><BookOpen01 aria-hidden="true" />{!small && <span>{t("nav.history")}</span>}</a>
             </div>
         </nav>
         <div className="app-sidebar-footer">
-            {small && <span role="status" className="app-compact-status" aria-label={connection} title={`${connection} · ${up}/${snap.nodes.length} 台设备在线`}><span className={`connection-dot ${live === "live" && !broken ? "connected" : ""}`} /></span>}
-            {!small && <div className="app-connection" title={`hub ${snap.hub.version || ""} · ${up}/${snap.nodes.length} 台设备在线`}>
+            {small && <span role="status" className="app-compact-status" aria-label={connection} title={`${connection} · ${devices}`}><span className={`connection-dot ${live === "live" && !broken ? "connected" : ""}`} /></span>}
+            {!small && <div className="app-connection" title={`hub ${snap.hub.version || ""} · ${devices}`}>
                 <span className={`connection-dot ${live === "live" && !broken ? "connected" : ""}`} />
-                <span>{connection}</span><span className="app-device-count">{up} 台在线</span>
+                <span>{connection}</span><span className="app-device-count">{t("connection.online", { count: number(up, locale) })}</span>
             </div>}
             <div className="app-sidebar-tools">
                 <Dropdown.Root>
-                    <AriaButton className="workbench-icon-button" aria-label="外观"><Settings01 aria-hidden="true" /></AriaButton>
-                    <Dropdown.Popover placement="top start" className="w-48"><Dropdown.Menu aria-label="外观" onAction={(key) => setTheme(key as "light" | "dark" | "system")}>
-                        <Dropdown.Section><Dropdown.SectionHeader className="px-3 py-1 text-xs text-tertiary">外观</Dropdown.SectionHeader>
-                            {([['system', '跟随系统'], ['light', '浅色'], ['dark', '深色']] as const).map(([key, label]) => <Dropdown.Item key={key} id={key} label={label} icon={theme === key ? Check : undefined} />)}
+                    <AriaButton className="workbench-icon-button" aria-label={t("settings.preferences")}><Settings01 aria-hidden="true" /></AriaButton>
+                    <Dropdown.Popover placement="top start" className="w-56"><Dropdown.Menu aria-label={t("settings.preferences")} onAction={(key) => { const [kind, value] = String(key).split(":"); if (kind === "theme") setTheme(value as "light" | "dark" | "system"); else if (kind === "locale") setLocale(value as LocalePreference); }}>
+                        <Dropdown.Section><Dropdown.SectionHeader className="px-3 py-1 text-xs text-tertiary">{t("settings.appearance")}</Dropdown.SectionHeader>
+                            {(['system', 'light', 'dark'] as const).map((key) => <Dropdown.Item key={key} id={`theme:${key}`} label={t(`settings.${key}`)} icon={theme === key ? Check : undefined} />)}
+                        </Dropdown.Section>
+                        <Dropdown.Section><Dropdown.SectionHeader className="px-3 py-1 text-xs text-tertiary">{t("settings.language")}</Dropdown.SectionHeader>
+                            {([["system", t("settings.system")], ["zh", "简体中文"], ["en", "English"]] as const).map(([key, label]) => <Dropdown.Item key={key} id={`locale:${key}`} label={label} icon={preference === key ? Check : undefined} />)}
                         </Dropdown.Section>
                     </Dropdown.Menu></Dropdown.Popover>
                 </Dropdown.Root>
                 {!small && <span className="app-version" title={snap.hub.node}>hub {snap.hub.version || "—"}</span>}
-                {desktop && <button type="button" className="workbench-icon-button app-collapse" aria-label={small ? "展开菜单" : "收起菜单"} title={small ? "展开菜单" : "收起菜单"} onClick={() => { const next = !navCollapsed; setNavCollapsed(next); try { localStorage.setItem("steve.nav.collapsed", next ? "1" : "0"); } catch { /* Preference is optional. */ } }}><ChevronLeftDouble className={small ? "rotate-180" : ""} aria-hidden="true" /></button>}
+                {desktop && <button type="button" className="workbench-icon-button app-collapse" aria-label={small ? t("nav.expand") : t("nav.collapse")} title={small ? t("nav.expand") : t("nav.collapse")} onClick={() => { const next = !navCollapsed; setNavCollapsed(next); try { localStorage.setItem("steve.nav.collapsed", next ? "1" : "0"); } catch { /* Preference is optional. */ } }}><ChevronLeftDouble className={small ? "rotate-180" : ""} aria-hidden="true" /></button>}
             </div>
         </div>
     </>;
     return <div className="workbench-shell">
-        <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>跳到内容</a>
+        <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>{t("nav.skip")}</a>
         {tablet && <aside className={`app-sidebar ${compact ? "is-compact" : ""}`}>{navigation(compact)}</aside>}
-        {!tablet && <div className="app-mobile-bar"><button type="button" className="workbench-icon-button" aria-label="导航菜单" onClick={() => setMobileNav(true)}><Menu01 aria-hidden="true" /></button><strong>Steve</strong><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
-        {mobileNav && !tablet && <Sheet label="导航菜单" side="left" width={260} onClose={() => setMobileNav(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label="关闭导航菜单" onClick={() => setMobileNav(false)}><X aria-hidden="true" /></button><div className="app-sidebar is-mobile">{navigation(false)}</div></Sheet>}
+        {!tablet && <div className="app-mobile-bar"><button type="button" className="workbench-icon-button" aria-label={t("nav.menu")} onClick={() => setMobileNav(true)}><Menu01 aria-hidden="true" /></button><strong>Steve</strong><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
+        {mobileNav && !tablet && <Sheet label={t("nav.menu")} side="left" width={260} onClose={() => setMobileNav(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("nav.close")} onClick={() => setMobileNav(false)}><X aria-hidden="true" /></button><div className="app-sidebar is-mobile">{navigation(false)}</div></Sheet>}
         <main id="main-content" tabIndex={-1} className="app-main">
             <Routes>
                 <Route path="/" element={<Navigate to="/console" replace />} />
@@ -106,6 +117,7 @@ function Shell() {
                 <Route path="/skills" element={<SkillsPage />} />
                 <Route path="/mcp" element={<MCPPage />} />
                 <Route path="/home" element={<HomePage />} />
+                <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/inbox" element={<InboxPage />} />
                 <Route path="/ledger" element={<Navigate to="/inbox" replace />} />
                 <Route path="/history" element={<HistoryPage />} />

@@ -68,13 +68,17 @@ export interface Facts {
 }
 export interface Choice { label: string; command: string; danger?: boolean }
 export interface HumanRequest {
+    conversation?: string;
     id: string; type: string; source: string; project_id?: string; task_id?: string; attempt_id?: string; node?: string; workspace?: string; summary: string; choices: Choice[]; created_at: string; resolvable: boolean;
 }
 export interface Schedule { id: string; conversation: string; agent?: string; prompt: string; spec: string; next_at: string; last_at?: string; runs: number; state?: string; error?: string; pending_key?: string }
 export interface SourceHealth { name: string; wired: boolean; error?: string }
-export interface UsageRow { key: string; tokens: Tokens; seconds: number; attempts: number; unreported?: number }
+export interface TaskDurationStats { count: number; measured: number; min_seconds: number; max_seconds: number; average_seconds: number; total_seconds: number }
+export interface UsageRow { key: string; tokens: Tokens; seconds: number; attempts: number; unreported?: number; tasks?: TaskDurationStats; tpm?: number }
+export interface TaskUsageRow extends UsageRow { task_id: string; title?: string; trigger?: string; project?: string; agent?: string; harness?: string; model?: string }
+export interface UsageThroughput { window_tpm: number; active_tpm: number; peak_tpm: number; estimated: boolean; active_seconds?: number; measured_tokens?: number; unmeasured_tokens?: number }
 export type UsageRange = "1d" | "7d" | "30d";
-export interface UsagePeriod { from: string; to: string; interval: "hour" | "day"; series: UsageRow[]; by_agent: UsageRow[]; by_model: UsageRow[]; total: UsageRow }
+export interface UsagePeriod { from: string; to: string; interval: "hour" | "day"; series: UsageRow[]; by_agent: UsageRow[]; by_model: UsageRow[]; by_harness?: UsageRow[]; by_trigger?: UsageRow[]; by_project?: UsageRow[]; tasks?: TaskDurationStats; by_task?: TaskUsageRow[]; throughput?: UsageThroughput; total: UsageRow }
 export interface Usage { by_day: UsageRow[]; by_agent: UsageRow[]; by_model: UsageRow[]; total: UsageRow; timezone?: string; periods?: Partial<Record<UsageRange, UsagePeriod>> }
 export interface Repo { path: string; branch?: string; head?: string; subject?: string; at?: string; dirty: boolean; remote?: string; agents_md: boolean; missing?: boolean }
 export interface Project {
@@ -119,7 +123,7 @@ export interface TaskDetail { task: Task; plan?: Plan; children: Task[]; attempt
 // QuoteRef points at a line of some thread to carry along with a message;
 // the server reads the text, the page only keeps a preview.
 export interface Exchange {
-    id: string; conversation: string; input: string; quotes?: QuoteRef[]; key?: string;
+    id: string; conversation: string; input: string; quotes?: QuoteRef[]; refs?: MaterialRef[]; materials?: FrozenMaterial[]; locale?: string; key?: string;
     state: "queued" | "running" | "done" | "failed" | "cancelled";
     enqueued_at: string; started_at?: string; reply_id?: string;
 }
@@ -143,7 +147,7 @@ export interface Injected {
 }
 export interface Reply {
     id?: string; exchange_id?: string; at: string; conversation: string; input?: string; title?: string; text: string; format?: "markdown" | "text"; error?: string; kind: string; process?: Process; injected?: Injected;
-    changes?: ChangeSummary;
+    changes?: ChangeSummary; project_id?: string; revision?: string; refs?: MaterialRef[]; materials?: FrozenMaterial[];
 }
 export interface Snapshot {
     at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[]; projects: Project[];
@@ -176,3 +180,13 @@ export interface MCPRegistryEnv { name: string; description?: string; required?:
 export interface MCPRegistryPackage { registry_type: string; identifier: string; version?: string; runtime_hint?: string; transport?: string; needs?: string; env: MCPRegistryEnv[] }
 export interface MCPRegistryRemote { type: string; url: string; headers: MCPRegistryEnv[] }
 export interface MCPRegistryEntry { name: string; description: string; version?: string; repository?: string; packages: MCPRegistryPackage[]; remotes: MCPRegistryRemote[] }
+
+export interface MaterialSource { kind: "reply" | "snapshot-file" | "upload" | "attachment"; conversation?: string; reply_id?: string; revision?: string; attempt?: string; commit?: string; path?: string }
+export interface MaterialSelector { kind: "lines" | "quote" | "rect"; start?: number; end?: number; quote?: string; rect?: { x: number; y: number; width: number; height: number } }
+export interface MaterialRef { id: string; selector?: MaterialSelector }
+export interface Material { id: string; project: string; kind: "text" | "image" | "binary"; title: string; mime: string; size: number; digest: string; source: MaterialSource; width?: number; height?: number; created_at: string }
+export interface DraftMaterial extends MaterialRef { title: string; project: string; kind: Material["kind"]; mime: string; size: number }
+export interface MaterialAnnotation { id: string; project: string; ref: MaterialRef; body: string; author: string; revision: number; created_at: string; updated_at: string; deleted?: boolean }
+export interface FrozenMaterial { ref: MaterialRef; material: Material; text?: string; media?: { mime: string; digest: string } }
+export interface PendingQuestion { id: string; conversation: string; exchange_id: string; project?: string; task_id?: string; attempt_id?: string; kind: "permission" | "question"; title?: string; message: string; options: { id: string; label: string; description?: string; kind?: string }[]; required: boolean; locale?: string; created_at: string; deadline: string; updated_at: string; state: "pending" | "answered" | "declined" | "cancelled" | "expired" | "interrupted"; answer?: QuestionAnswer }
+export interface QuestionAnswer { command_id: string; choice?: string; decision: "accept" | "decline" | "cancel" }

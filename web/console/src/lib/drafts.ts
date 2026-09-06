@@ -1,12 +1,15 @@
 import { useSyncExternalStore, type SetStateAction } from "react";
-import type { Exchange, QuoteRef } from "./types";
+import { refKey, wireRef } from "./material-ref.ts";
+import type { Exchange, QuoteRef, DraftMaterial, MaterialRef } from "./types";
 
-export interface Submission { id?: string; input: string; quotes: QuoteRef[]; active: boolean; fromDraft: boolean; error?: string; rejected?: boolean; conflict?: boolean; uncertain?: boolean }
-interface DraftState { drafts: Record<string, string>; submissions: Record<string, Submission>; quotes: QuoteRef[] }
+export interface Submission { id?: string; input: string; quotes: QuoteRef[]; refs?: DraftMaterial[]; locale?: string; active: boolean; fromDraft: boolean; error?: string; rejected?: boolean; conflict?: boolean; uncertain?: boolean }
+interface DraftState { drafts: Record<string, string>; submissions: Record<string, Submission>; quotes: QuoteRef[]; materials: Record<string, DraftMaterial[]> }
 interface StopState { id: string; active: boolean; uncertain?: boolean; error?: string; message?: string }
 const storageKey = "steve.console.drafts";
 const listeners = new Set<() => void>();
 const validQuotes = (value: unknown): QuoteRef[] => Array.isArray(value) ? value.filter((q) => q && typeof q.conversation === "string" && typeof q.reply_id === "string") : [];
+const validMaterials = (value: unknown): DraftMaterial[] => Array.isArray(value) ? value.filter((item) => item && typeof item.id === "string" && typeof item.project === "string" && typeof item.title === "string" && ["text", "image", "binary"].includes(item.kind) && typeof item.mime === "string" && Number.isFinite(item.size)) : [];
+const emptyMaterials: DraftMaterial[] = [];
 const sameQuote = (a: QuoteRef, b: QuoteRef) => a.conversation === b.conversation && a.reply_id === b.reply_id;
 const notify = () => { for (const listener of listeners) listener(); };
 const commandID = () => { try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(16).slice(2)}`; } };
@@ -18,11 +21,12 @@ function load(): DraftState {
             drafts: Object.fromEntries(Object.entries(saved?.drafts || {}).filter(([, text]) => typeof text === "string")) as Record<string, string>,
             submissions: Object.fromEntries(Object.entries(saved?.submissions || {}).flatMap(([id, value]) => {
                 const pending = value as Submission | null;
-                return pending && typeof pending.input === "string" ? [[id, { ...pending, id: typeof pending.id === "string" && pending.id ? pending.id : undefined, quotes: validQuotes(pending.quotes), fromDraft: pending.fromDraft !== false, uncertain: !pending.rejected && !pending.conflict, active: false }]] : [];
+                return pending && typeof pending.input === "string" ? [[id, { ...pending, id: typeof pending.id === "string" && pending.id ? pending.id : undefined, quotes: validQuotes(pending.quotes), refs: validMaterials(pending.refs), locale: typeof pending.locale === "string" ? pending.locale : undefined, fromDraft: pending.fromDraft !== false, uncertain: !pending.rejected && !pending.conflict, active: false }]] : [];
             })),
             quotes: validQuotes(saved?.quotes),
+            materials: Object.fromEntries(Object.entries(saved?.materials || {}).map(([id, refs]) => [id, validMaterials(refs)])),
         };
-    } catch { return { drafts: {}, submissions: {}, quotes: [] }; }
+    } catch { return { drafts: {}, submissions: {}, quotes: [], materials: {} }; }
 }
 
 // A submission and the consumed draft/quotes are saved in one write before I/O.
@@ -48,13 +52,14 @@ export function useQuotes(): [QuoteRef[], (value: SetStateAction<QuoteRef[]>) =>
     return [useSyncExternalStore(subscribe, () => state.quotes), (value) => save({ ...state, quotes: typeof value === "function" ? value(state.quotes) : value })];
 }
 export function useSubmission(id: string): Submission | null { return useSyncExternalStore(subscribe, () => state.submissions[id] || null); }
-export function beginSubmission(id: string, input: string, quotes: QuoteRef[], fromDraft = true): Submission | null {
+export function beginSubmission(id: string, input: string, quotes: QuoteRef[], fromDraft = true, locale?: string): Submission | null {
     if (state.submissions[id]) return null;
-    const pending: Submission = { id: commandID(), input, quotes, fromDraft, active: true };
+    const pending: Submission = { id: commandID(), input, quotes, refs: fromDraft ? state.materials[id] || [] : [], locale, fromDraft, active: true };
+    const materials = { ...state.materials }; if (fromDraft) delete materials[id];
     const drafts = { ...state.drafts };
     if (fromDraft) delete drafts[id];
     const remaining = state.quotes.filter((quote) => !quotes.some((carried) => sameQuote(quote, carried)));
-    if (!save({ ...state, drafts, quotes: remaining, submissions: { ...state.submissions, [id]: pending } }, true)) throw new Error("Cannot retain pending submission");
+    if (!save({ ...state, drafts, materials, quotes: remaining, submissions: { ...state.submissions, [id]: pending } }, true)) throw new Error("Cannot retain pending submission");
     return pending;
 }
 export function retrySubmission(id: string): Submission | null {
@@ -86,7 +91,9 @@ export function reconcileSubmission(id: string, queue: Exchange[]): boolean {
     const normalized = (text: string) => text.replace(/\r\n/g, "\n").trim();
     const receipt = queue.find((exchange) => exchange.conversation === id && exchange.key === `client:${pending.id}`);
     if (!receipt || normalized(receipt.input) !== normalized(pending.input) || (receipt.quotes?.length || 0) !== pending.quotes.length
-        || pending.quotes.some((quote, index) => !sameQuote(quote, receipt.quotes![index]))) return false;
+        || pending.quotes.some((quote, index) => !sameQuote(quote, receipt.quotes![index]))
+        || (pending.refs || []).length !== (receipt.refs || []).length || (pending.refs || []).some((ref, index) => refKey(ref) !== refKey(receipt.refs![index]))
+        || (pending.locale && receipt.locale !== pending.locale)) return false;
     finishSubmission(id, pending.id);
     return true;
 }
@@ -101,7 +108,8 @@ export function restoreSubmission(id: string): boolean {
     const submissions = { ...state.submissions };
     delete submissions[id];
     const quotes = [...pending.quotes, ...state.quotes.filter((quote) => !pending.quotes.some((carried) => sameQuote(quote, carried)))];
-    return save({ ...state, drafts, submissions, quotes }, true);
+    const refs = [...(pending.refs || []), ...(state.materials[id] || []).filter((ref) => !(pending.refs || []).some((old) => refKey(old) === refKey(ref)))];
+    return save({ ...state, drafts, submissions, quotes, materials: { ...state.materials, [id]: refs } }, true);
 }
 
 // Stop requests outlive a route instance. A transport failure retains the same
@@ -126,3 +134,14 @@ export function clearStopNotice(conversation: string) {
     if (isStopPending(conversation)) return;
     const next = { ...stops }; delete next[conversation]; stops = next; notify();
 }
+
+export function useMaterials(id: string): DraftMaterial[] { return useSyncExternalStore(subscribe, () => state.materials[id] || emptyMaterials); }
+export function addDraftMaterial(conversation: string, ref: DraftMaterial): boolean {
+    const previous = state.materials[conversation] || [];
+    if (previous.some((item) => refKey(item) === refKey(ref))) return true;
+    return save({ ...state, materials: { ...state.materials, [conversation]: [...previous, ref] } }, true);
+}
+export function removeDraftMaterial(conversation: string, ref: MaterialRef): boolean {
+    return save({ ...state, materials: { ...state.materials, [conversation]: (state.materials[conversation] || []).filter((item) => refKey(item) !== refKey(ref)) } }, true);
+}
+export const submissionRefs = (submission: Submission) => submission.refs?.map(wireRef);

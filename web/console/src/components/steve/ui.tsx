@@ -3,6 +3,8 @@ import { Badge } from "@/components/base/badges/badges";
 import type { BadgeColors } from "@/components/base/badges/badge-types";
 import type { FC } from "react";
 import { useFleet } from "@/lib/fleet";
+import { useI18n } from "@/providers/locale-provider";
+import type { MessageKey } from "@/lib/i18n";
 
 // One vocabulary of colours for every state the ledger speaks.
 export function colorOf(state: string): BadgeColors {
@@ -21,21 +23,60 @@ export function colorOf(state: string): BadgeColors {
     }
 }
 
-const stateWords: Record<string, string> = {
-    draft: "草稿", running: "进行中", unknown: "状态未知", blocked: "受阻", review: "待审", done: "已完成", failed: "失败", paused: "已暂停", cancelled: "已取消",
-    pending: "待执行", dispatching: "投递中", accepted: "已接收", ready: "可执行", verifying: "验证中", "awaiting-human": "等你回答", skipped: "跳过",
-    up: "在线", down: "离线", ready_agent: "可用", blocked_agent: "不可用", idle: "空闲",
-    bound: "已绑定", committed: "已提交", verified: "已验证", pass: "通过", fail: "未通过", succeeded: "成功",
-    leased: "已租", prepared: "已准备", applying: "应用中", transferring: "传输中", present: "在", lost: "丢失", expired: "过期",
-    "merge-conflicted": "合并冲突", "apply-conflicted": "应用冲突", "commit-conflicted": "提交冲突", "bind-conflict": "绑定冲突", "outcome-unknown": "结果未知",
-    merged: "已合并", locked: "已锁", quarantined: "隔离", proposed: "待定", "recovery-pending": "待恢复",
-};
+const stateWords = {
+    "draft": "status.draft",
+    "running": "status.inProgress",
+    "unknown": "status.unknown",
+    "blocked": "status.blocked",
+    "review": "status.review",
+    "done": "status.done",
+    "failed": "status.failed",
+    "paused": "status.paused",
+    "cancelled": "status.cancelled",
+    "pending": "status.pending",
+    "dispatching": "status.dispatching",
+    "accepted": "status.accepted",
+    "ready": "status.ready",
+    "verifying": "status.verifying",
+    "awaiting-human": "status.awaitingHuman",
+    "skipped": "status.skipped",
+    "up": "status.up",
+    "down": "status.down",
+    "ready_agent": "status.available",
+    "blocked_agent": "status.unavailable",
+    "idle": "status.idle",
+    "bound": "status.bound",
+    "committed": "status.committed",
+    "verified": "status.verified",
+    "pass": "status.pass",
+    "fail": "status.fail",
+    "succeeded": "status.succeeded",
+    "leased": "status.leased",
+    "prepared": "status.prepared",
+    "applying": "status.applying",
+    "transferring": "status.transferring",
+    "present": "status.present",
+    "lost": "status.lost",
+    "expired": "status.expired",
+    "merge-conflicted": "status.mergeConflict",
+    "apply-conflicted": "status.applyConflict",
+    "commit-conflicted": "status.commitConflict",
+    "bind-conflict": "status.bindConflict",
+    "outcome-unknown": "status.outcomeUnknown",
+    "merged": "status.merged",
+    "locked": "status.locked",
+    "quarantined": "status.quarantined",
+    "proposed": "status.proposed",
+    "recovery-pending": "status.recoveryPending"
+} as const satisfies Record<string, MessageKey>;
 
 // StateBadge shows a state in the page's words; the internal word is the
 // tooltip, for anyone reading logs alongside.
-export const StateBadge = ({ state, size = "sm" }: { state: string; size?: "sm" | "md" }) => (
-    <span title={state}><Badge type="pill-color" size={size} color={colorOf(state)}>{stateWords[state] ?? state}</Badge></span>
-);
+export const StateBadge = ({ state, size = "sm" }: { state: string; size?: "sm" | "md" }) => {
+    const { t } = useI18n();
+    const key = stateWords[state as keyof typeof stateWords];
+    return <span title={state}><Badge type="pill-color" size={size} color={colorOf(state)}>{key ? t(key) : state}</Badge></span>;
+};
 
 // The model's empty node is the hub's own machine; name it, never the role.
 export const Where = ({ node }: { node?: string }) => {

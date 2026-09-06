@@ -72,7 +72,7 @@ async function submissionSupportChecks() {
 await submissionSupportChecks();
 
 const { settingsDraft, parseSettings } = await import("../../web/console/src/lib/settings-draft.ts");
-const original = { harnesses: { sample: { command: "sample", args: ["hello world", "", "--flag", "--flag"] } }, mcp_servers: { sample: { type: "stdio", env: { FOO: "bar", SPACED: " value " }, headers: { Accept: "text/plain", Spaced: " value " } } }, tools: [], declares: [], capabilities: [] };
+const original = { revision: "settings-fixture-1", harnesses: { sample: { command: "sample", args: ["hello world", "", "--flag", "--flag"] } }, mcp_servers: { sample: { type: "stdio", env: { FOO: "bar", SPACED: " value " }, headers: { Accept: "text/plain", Spaced: " value " } } }, tools: [], declares: [], capabilities: [] };
 const draft = settingsDraft(original);
 assert.deepEqual(parseSettings(draft), original, "Arguments including whitespace, empty values and duplicates must round-trip");
 draft.mcp_servers[0].value.envText = "F";
@@ -144,7 +144,7 @@ if (process.env.PURE_ONLY !== "1") {
     }
     async function fixture() {
         const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: "block" });
-        const page = await context.newPage(); page.setDefaultTimeout(3500);
+        const page = await context.newPage(); await page.addInitScript(() => localStorage.setItem("steve.ui.locale", "zh")); page.setDefaultTimeout(3500);
         const f = { page, context, queue: [], posts: [], stopCalls: [], submissionKeys: true, queueReadError: 0, queueGate: null, inbox: [], stopReset: false, resetAfterAccept: false, hideQueue: false, reject: 0, stopGate: null, releases: [], errors: [], historyReads: 0, contextReads: [], held: null, agent: "first-agent", writes: [], settings: { ...original, mcp_servers: { sample: { type: "stdio", command: "sample", env: {}, headers: {} } } } };
         page.on("pageerror", (error) => f.errors.push(String(error)));
         await page.clock.install();
@@ -169,7 +169,7 @@ if (process.env.PURE_ONLY !== "1") {
                     const input = req.postDataJSON(); f.posts.push(input);
                     if (f.reject) return route.fulfill({ status: f.reject, json: { error: f.reject === 409 ? "Command conflict" : "Submission rejected" } });
                     let entry = f.queue.find((entry) => entry.conversation === input.conversation && entry.key === `client:${input.command_id}`);
-                    if (!entry) { entry = { id: `exchange-${f.queue.length + 1}`, conversation: input.conversation, input: input.input, key: `client:${input.command_id}`, state: "queued", enqueued_at: at }; f.queue.push(entry); }
+                    if (!entry) { entry = { id: `exchange-${f.queue.length + 1}`, conversation: input.conversation, input: input.input, quotes: input.quotes || [], refs: input.refs || [], locale: input.locale, key: `client:${input.command_id}`, state: "queued", enqueued_at: at }; f.queue.push(entry); }
                     if (f.resetAfterAccept) { f.resetAfterAccept = false; return route.abort("connectionreset"); }
                     return route.fulfill({ json: entry });
                 }
@@ -225,7 +225,7 @@ if (process.env.PURE_ONLY !== "1") {
             assert.equal(f.posts.length + f.stopCalls.length + f.writes.length, 0, "Reading quarantine must not perform a write");
         },
         async "uncertain-retry-rejection"(f) {
-            const box = f.page.getByRole("textbox", { name: "Message", exact: true });
+            const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             f.hideQueue = true; f.resetAfterAccept = true;
             await box.fill("One durable operation"); await box.press("Enter");
             const retry = f.page.getByRole("button", { name: "重试这次发送", exact: true });
@@ -284,7 +284,7 @@ if (process.env.PURE_ONLY !== "1") {
         async "old-hub-read-only"(f) {
             f.submissionKeys = false;
             await f.page.reload();
-            const box = f.page.getByRole("textbox", { name: "Message", exact: true });
+            const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             await box.waitFor();
             await f.page.getByText("Hub 需更新后才能发送指令。当前仍可查看会话和执行记录。", { exact: true }).waitFor();
             assert.equal(await box.isDisabled(), true, "An old hub must remain read-only");
@@ -304,7 +304,7 @@ if (process.env.PURE_ONLY !== "1") {
         async "capability-failure-retry"(f) {
             f.queueReadError = 503;
             await f.page.reload();
-            const box = f.page.getByRole("textbox", { name: "Message", exact: true });
+            const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             await box.waitFor();
             await f.page.getByText("无法确认 Hub 是否支持安全提交，当前仅供查看。", { exact: true }).waitFor();
             assert.equal(await box.isDisabled(), true);
@@ -314,7 +314,7 @@ if (process.env.PURE_ONLY !== "1") {
             assert.equal(f.posts.length + f.stopCalls.length, 0, "Capability retry is a read");
         },
         async "uncertain-submission"(f) {
-            const box = f.page.getByRole("textbox", { name: "Message", exact: true });
+            const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             f.resetAfterAccept = true; f.hideQueue = true;
             await box.fill("Perform once"); await box.press("Enter");
             await f.page.getByRole("button", { name: "重试这次发送", exact: true }).waitFor();
@@ -331,10 +331,15 @@ if (process.env.PURE_ONLY !== "1") {
         },
         async "submission-reload-reconciliation"(f) {
             f.resetAfterAccept = true; f.hideQueue = true;
-            const box = f.page.getByRole("textbox", { name: "Message", exact: true });
+            const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             await box.fill("Accepted before reload"); await box.press("Enter");
             await f.page.getByRole("button", { name: "重试这次发送", exact: true }).waitFor();
             await box.fill("Draft survives reconciliation");
+            const pending = await f.page.evaluate(() => JSON.parse(sessionStorage.getItem("steve.console.drafts")).submissions["console:architecture-a"]);
+            assert.equal(pending.locale, "zh", "Submission captures the selected locale before HTTP");
+            assert.equal(f.queue[0].locale, pending.locale, "The durable queue receipt preserves locale for reload reconciliation");
+            assert.deepEqual(f.queue[0].refs, pending.refs || [], "The durable queue receipt preserves material reference identity");
+            assert.deepEqual(f.queue[0].quotes, pending.quotes, "The durable queue receipt preserves reply quote identity");
             f.hideQueue = false; await f.page.reload();
             await box.waitFor();
             await eventually(async () => await f.page.getByRole("button", { name: "重试这次发送", exact: true }).count() === 0, "Reload reconciles the original operation against durable queue keys");
@@ -342,7 +347,7 @@ if (process.env.PURE_ONLY !== "1") {
             assert.equal(await box.inputValue(), "Draft survives reconciliation");
         },
         async "submission-rejection-conflict"(f) {
-            const box = f.page.getByRole("textbox", { name: "Message", exact: true });
+            const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             f.reject = 400;
             await box.fill("Rejected work"); await box.press("Enter");
             await eventually(async () => await box.inputValue() === "Rejected work", "Explicit rejection restores the draft");
@@ -390,7 +395,7 @@ if (process.env.PURE_ONLY !== "1") {
         },
         async "configuration-input"(f) {
             await f.page.locator('a[href="#/fleet"]').click();
-            await f.page.locator('[aria-label="Nodes"]').getByRole("row").filter({ hasText: "test-node" }).click();
+            await f.page.locator('[aria-label="机器"]').getByRole("row").filter({ hasText: "test-node" }).click();
             await f.page.getByRole("button", { name: "编辑配置", exact: true }).click();
             const env = f.page.getByRole("textbox", { name: "环境变量", exact: true });
             await env.pressSequentially("FOO=bar");
@@ -416,8 +421,11 @@ if (process.env.PURE_ONLY !== "1") {
             await eventually(() => f.historyReads > before, "The 301st event must still refresh history");
         },
     };
+    const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(cases);
+    for (const name of selected) assert.ok(cases[name], `Unknown architecture CHECK: ${name}`);
     try {
-        for (const [name, check] of Object.entries(cases)) {
+        for (const name of selected) {
+            const check = cases[name];
             const f = await fixture();
             try { await check(f); assert.deepEqual(f.errors, []); console.log(`PASS ${name}`); }
             finally { f.held?.resolve(); for (const release of f.releases) release(); await f.context.close(); }

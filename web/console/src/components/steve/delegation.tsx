@@ -1,3 +1,4 @@
+import { useI18n } from "@/providers/locale-provider";
 import { ChevronDown, Loading01 } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import type { Progress, StepInfo } from "@/lib/types";
@@ -12,12 +13,14 @@ import { useFollowTail } from "@/hooks/use-follow-tail";
 // behind. Folding a finished child never removes its reasoning.
 
 const tones: Record<string, "brand" | "success" | "error" | "gray"> = { running: "brand", done: "success", failed: "error" };
-const labels: Record<string, string> = { running: "进行中", done: "完成", failed: "失败" };
+const labels = { running: "status.inProgress", done: "status.done", failed: "status.failed" } as const;
 
 export function DelegationCard({ id, info, progress, live, open }: {
     id: string; info: StepInfo; progress?: Progress; live?: boolean; open?: boolean;
 }) {
+    const { t } = useI18n();
     const state = info.state || (live ? "running" : "done");
+    const label = labels[state as keyof typeof labels];
     const running = state === "running";
     // The body is a window, not a well: a long child scrolls inside it,
     // following its tail while it runs until the reader scrolls.
@@ -33,9 +36,9 @@ export function DelegationCard({ id, info, progress, live, open }: {
         <details data-task-id={id} open={open || running || state === "failed"} className={`group/child my-1 min-w-0 rounded-lg border ${running ? "border-brand bg-brand-primary_alt/40" : state === "failed" ? "border-error" : "border-secondary"}`}>
             <summary className="flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs hover:bg-secondary/60">
                 {running ? <Loading01 className="size-3.5 shrink-0 animate-spin text-fg-brand-primary" /> : null}
-                <span className="shrink-0 font-medium text-primary">委派 {id}</span>
+                <span className="shrink-0 font-medium text-primary">{t("consoleChrome.delegation", { id })}</span>
                 {who && <span className="min-w-0 truncate font-mono text-secondary" title={who}>{who}</span>}
-                <Badge type="pill-color" size="sm" color={tones[state] ?? "gray"}>{labels[state] ?? state}</Badge>
+                <Badge type="pill-color" size="sm" color={tones[state] ?? "gray"}>{label ? t(label) : state}</Badge>
                 {goal && <span className="min-w-0 truncate text-tertiary group-open/child:hidden" title={info.goal}>{goal}</span>}
                 <span className="ml-auto flex shrink-0 items-center gap-2 text-quaternary">
                     {info.elapsed && <span>{info.elapsed}</span>}
@@ -47,7 +50,7 @@ export function DelegationCard({ id, info, progress, live, open }: {
                 {progress && <Trace p={progress} live={running} thinkingOpen={running} omitText={!running ? finalText : undefined} />}
                 {answer && (
                     <div className="rounded-md bg-secondary/50 px-3 py-2">
-                        <div className="mb-1 u-meta text-quaternary">它说</div>
+                        <div className="mb-1 u-meta text-quaternary">{t("consoleChrome.answer")}</div>
                         <Md size="xs" text={answer} className="max-h-72 overflow-y-auto text-secondary" />
                     </div>
                 )}

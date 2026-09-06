@@ -19,10 +19,32 @@ export function usageFixture() {
     const periods = Object.fromEntries(["1d", "7d", "30d"].map((range) => {
         const series = range === "1d" ? hours : days.slice(range === "7d" ? -7 : -30);
         const sum = total(series);
-        return [range, { from: series[0].key, to: at, interval: range === "1d" ? "hour" : "day", series, total: sum, by_agent: [{ ...sum, key: `agent-${range}` }], by_model: [{ ...sum, key: "Demo Model" }] }];
+        const stats = { count: Math.max(1, Math.floor(sum.attempts / 2)), measured: Math.max(1, Math.floor(sum.attempts / 2)), min_seconds: 90, max_seconds: 420, average_seconds: 180, total_seconds: Math.max(1, Math.floor(sum.attempts / 2)) * 180 };
+        for (const item of series) { item.tasks = { ...stats, count: item.attempts, measured: item.attempts }; item.tpm = item.tokens.total / 60; }
+        const withStats = (key, scale = 1) => ({ ...sum, key, tasks: stats, tpm: 1200 * scale, tokens: Object.fromEntries(Object.entries(sum.tokens).map(([key, value]) => [key, Math.round(value * scale)])) });
+        return [range, { tasks: stats, throughput: { window_tpm: 312, active_tpm: 1200, peak_tpm: 2400, active_seconds: sum.tokens.total / 20, measured_tokens: sum.tokens.total, unmeasured_tokens: 0, estimated: true }, by_harness: [withStats('codex-acp'), withStats('claude-code', .5)], by_trigger: [withStats('chat'), withStats('schedule', .25)], by_project: [withStats('scratch')], by_task: [{ ...withStats('task-a'), task_id: 'task-a', title: 'Synthetic scheduled task', trigger: 'schedule', project: 'scratch', seconds: 420 }], from: series[0].key, to: at, interval: range === "1d" ? "hour" : "day", series, total: sum, by_agent: [withStats(`agent-${range}`)], by_model: [withStats("Demo Model")] }];
     }));
     return { timezone: "Asia/Shanghai", periods, total: periods["30d"].total, by_day: [], by_agent: [], by_model: [] };
 }
 export function usageState(usage = usageFixture()) {
     return { at: "2026-09-06T14:25:00+08:00", hub: { node: "dashboard-preview", started: "2026-09-01T00:00:00Z", version: "sample" }, nodes: [], agents: [], tasks: [], projects: [], plans: [], schedules: [], attempts: [], landings: [], sources: [{ name: "ledger", wired: true }], usage };
+}
+
+export function usageDurationFixture(mode) {
+    const usage = usageFixture();
+    const period = usage.periods["1d"];
+    const stats = (measured, seconds) => ({ count: 1, measured, min_seconds: seconds, max_seconds: seconds, average_seconds: seconds, total_seconds: seconds });
+    const taskRow = (id, measured, seconds, tokens) => ({ key: id, task_id: id, title: id, trigger: "chat", project: "scratch", tokens: { ...zeroTokens(), input: tokens, total: tokens }, attempts: 1, seconds, tasks: stats(measured, seconds) });
+    const items = mode === "partial" ? [taskRow("measured", 1, 60, 200), taskRow("unknown", 0, 0, 100)] : [taskRow(mode, mode === "missing" ? 0 : 1, mode === "unreported" ? 60 : 0, mode === "unreported" ? 0 : 100)];
+    if (mode === "unreported") items[0].unreported = 1;
+    const duration = mode === "partial" || mode === "unreported" ? 60 : 0;
+    const measured = items.filter((item) => item.tasks.measured).length;
+    period.tasks = { ...stats(measured, duration), count: items.length };
+    period.by_task = items;
+    period.total = total(items);
+    period.series = [{ ...period.total, key: period.from, tasks: period.tasks, ...(duration ? { tpm: mode === "unreported" ? 0 : 200 / 865 } : {}) }];
+    const group = { ...period.total, key: "duration-agent", tasks: period.tasks, ...(duration ? { tpm: mode === "unreported" ? 0 : 200 } : {}) };
+    period.by_agent = [group]; period.by_model = []; period.by_harness = []; period.by_trigger = []; period.by_project = [];
+    period.throughput = { active_seconds: duration, measured_tokens: mode === "partial" ? 200 : 0, unmeasured_tokens: mode === "unreported" ? 0 : 100, active_tpm: mode === "partial" ? 200 : 0, window_tpm: mode === "partial" ? 200 / 865 : 0, peak_tpm: mode === "partial" ? 200 : 0, estimated: true };
+    return usage;
 }

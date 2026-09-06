@@ -1,3 +1,4 @@
+import { useI18n } from "@/providers/locale-provider";
 import { CheckCircle, Loading01, ChevronDown, File02, Edit05, Terminal, Users01, Server01, SearchLg, Globe01, Tool02 } from "@untitledui/icons";
 import { useFollowTail } from "@/hooks/use-follow-tail";
 import { activity, type ActivityKind } from "@/lib/activity";
@@ -34,13 +35,14 @@ export function Trace({ p, showAnswer, live, thinkingOpen = true, omitText }: { 
 const activityIcons: Record<ActivityKind, typeof File02> = { read: File02, edit: Edit05, run: Terminal, delegate: Users01, platform: Server01, search: SearchLg, fetch: Globe01, other: Tool02 };
 
 function Activity({ tools }: { tools: ToolCall[] }) {
-    const summary = activity(tools);
+    const { t, locale } = useI18n();
+    const summary = activity(tools, locale);
     return (
         <details data-span-kind="tool" className="group/activity min-w-0">
             <summary className={`flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-xs ${summary.failed ? "text-error-primary" : "text-tertiary hover:text-primary"}`}>
                 {summary.kinds.map((kind) => { const Icon = activityIcons[kind]; return <Icon key={kind} className="size-3.5 shrink-0" />; })}
                 <span className="min-w-0 truncate" title={summary.text}>{summary.text}</span>
-                {summary.failed && <span className="shrink-0">（有失败）</span>}
+                {summary.failed && <span className="shrink-0">{t("consoleChrome.hasFailure")}</span>}
                 {summary.running && <Loading01 className="size-3 shrink-0 animate-spin" />}
                 <ChevronDown className="size-3.5 shrink-0 transition group-open/activity:rotate-180" />
             </summary>
@@ -55,9 +57,10 @@ function Activity({ tools }: { tools: ToolCall[] }) {
 // A finished thought is a line of small text that wraps if it must; only
 // a running one is a window that follows its tail.
 function ThoughtSpan({ text, live }: { text: string; live?: boolean }) {
+    const { t } = useI18n();
     const shown = text.trim();
     const { followTail: _, ...scroll } = useFollowTail(shown, live);
-    return <div {...(live ? scroll : {})} data-span-kind="thought" tabIndex={live ? 0 : undefined} aria-label="思考摘要" title={shown}
+    return <div {...(live ? scroll : {})} data-span-kind="thought" tabIndex={live ? 0 : undefined} aria-label={t("consoleChrome.thinking")} title={shown}
         className={`break-words text-xs text-tertiary [&_p]:my-0 [&_p]:leading-5 ${live ? "max-h-16 overflow-y-auto [overflow-anchor:none]" : ""}`}>
         <Md size="xs" text={shown} className="text-tertiary" />
     </div>;

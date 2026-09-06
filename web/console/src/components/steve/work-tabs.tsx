@@ -1,6 +1,9 @@
+import { useI18n } from "@/providers/locale-provider";
+import { when, number } from "@/lib/format";
+import type { Locale, Translator } from "@/lib/i18n";
 import { useEffect, useMemo, useState } from "react";
 import { Code02, File02 } from "@untitledui/icons";
-import { fetchTaskAttempts, when } from "@/lib/api";
+import { fetchTaskAttempts } from "@/lib/api";
 import type { AttemptView, Task } from "@/lib/types";
 import { Button } from "@/components/base/buttons/button";
 import { useReview } from "./review-context";
@@ -39,25 +42,26 @@ function useAttempts(roots: Task[], all: Task[]) {
     return { attempts, error, loading, retry: () => setRetry((n) => n + 1), tasks: ids };
 }
 
-function attemptLabel(a: AttemptView & { task: string }, tasks: Task[]): string {
+function attemptLabel(a: AttemptView & { task: string }, tasks: Task[], tr: Translator, locale: Locale): string {
     const t = tasks.find((x) => x.id === a.task);
     const who = [a.agent, a.node].filter(Boolean).join(" @ ");
-    return `#${a.task}${t?.parent ? " 委派" : ""} · ${who || a.kind} · ${when(a.started_at)}`;
+    return `#${a.task}${t?.parent ? tr("consoleChrome.delegatedSuffix") : ""} · ${who || a.kind} · ${when(a.started_at, locale)}`;
 }
 
 export function CodeTab({ roots, all }: { roots: Task[]; all: Task[] }) {
+    const { t, locale } = useI18n();
     const { attempts, error, loading, retry } = useAttempts(roots, all);
     const open = useReview();
     const browsable = attempts.filter((attempt) => attempt.artifact || attempt.base);
-    const choices = browsable.map((attempt) => ({ id: attempt.id, label: attemptLabel(attempt, all), base: attempt.base, artifact: attempt.artifact }));
-    if (error) return <div role="alert" className="text-sm text-error-primary">{error}<Button size="sm" color="secondary" onClick={retry}>重试</Button></div>;
-    if (loading && !attempts.length) return <p role="status" className="text-sm text-tertiary">读取执行记录…</p>;
-    if (!browsable.length) return <Nothing icon={File02} title="还没有代码快照">执行留下快照后，可以在这里阅读文件和审阅变更。</Nothing>;
-    return <section className="code-snapshots" aria-label="代码快照">
-        <div className="mb-4"><h2 className="text-sm font-semibold text-primary">代码工作区</h2><p className="mt-1 text-xs leading-relaxed text-tertiary">阅读全部文件，也可切换查看变更。内容来自执行快照。</p></div>
+    const choices = browsable.map((attempt) => ({ id: attempt.id, label: attemptLabel(attempt, all, t, locale), base: attempt.base, artifact: attempt.artifact }));
+    if (error) return <div role="alert" className="text-sm text-error-primary">{error}<Button size="sm" color="secondary" onClick={retry}>{t("common.retry")}</Button></div>;
+    if (loading && !attempts.length) return <p role="status" className="text-sm text-tertiary">{t("consoleChrome.loadingExecutions")}</p>;
+    if (!browsable.length) return <Nothing icon={File02} title={t("consoleChrome.noSnapshots")}>{t("consoleChrome.noSnapshotsHint")}</Nothing>;
+    return <section className="code-snapshots" aria-label={t("consoleChrome.snapshots")}>
+        <div className="mb-4"><h2 className="text-sm font-semibold text-primary">{t("consoleChrome.codeWorkspace")}</h2><p className="mt-1 text-xs leading-relaxed text-tertiary">{t("consoleChrome.codeHint")}</p></div>
         <ul className="flex flex-col divide-y divide-secondary">{browsable.map((attempt, i) => <li key={attempt.id} className="flex min-w-0 flex-col gap-3 py-4 first:pt-0">
-            <div className="flex min-w-0 items-start gap-2"><Code02 aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-fg-tertiary" /><div className="min-w-0"><p className="text-xs leading-5 text-secondary [overflow-wrap:anywhere]">{attemptLabel(attempt, all)}</p><p className="mt-1 text-xs text-tertiary">{i === 0 ? "最新 · " : ""}{attempt.artifact ? "结束快照" : "开始快照"}{attempt.artifact === attempt.base ? " · 无文件变更" : attempt.files ? ` · ${attempt.files} 个变更` : ""}</p></div></div>
-            <div className="flex flex-wrap gap-2"><Button size="sm" color={i === 0 ? "primary" : "secondary"} onClick={() => open({ attempt: attempt.id, label: attemptLabel(attempt, all), attempts: choices, scope: "files" })}>浏览文件</Button>{attempt.artifact && attempt.artifact !== attempt.base && <Button size="sm" color="secondary" onClick={() => open({ attempt: attempt.id, label: attemptLabel(attempt, all), attempts: choices, scope: "changes" })}>查看变更</Button>}</div>
+            <div className="flex min-w-0 items-start gap-2"><Code02 aria-hidden="true" className="mt-0.5 size-4 shrink-0 text-fg-tertiary" /><div className="min-w-0"><p className="text-xs leading-5 text-secondary [overflow-wrap:anywhere]">{attemptLabel(attempt, all, t, locale)}</p><p className="mt-1 text-xs text-tertiary">{i === 0 ? `${t("consoleChrome.latest")} · ` : ""}{attempt.artifact ? t("consoleChrome.endSnapshot") : t("consoleChrome.startSnapshot")}{attempt.artifact === attempt.base ? ` · ${t("consoleChrome.noFileChanges")}` : attempt.files ? ` · ${t("consoleChrome.changeCount", { count: number(attempt.files, locale) })}` : ""}</p></div></div>
+            <div className="flex flex-wrap gap-2"><Button size="sm" color={i === 0 ? "primary" : "secondary"} onClick={() => open({ attempt: attempt.id, label: attemptLabel(attempt, all, t, locale), attempts: choices, scope: "files" })}>{t("consoleChrome.browseFiles")}</Button>{attempt.artifact && attempt.artifact !== attempt.base && <Button size="sm" color="secondary" onClick={() => open({ attempt: attempt.id, label: attemptLabel(attempt, all, t, locale), attempts: choices, scope: "changes" })}>{t("consoleChrome.viewChanges")}</Button>}</div>
         </li>)}</ul>
     </section>;
 }

@@ -1,9 +1,12 @@
+import { useRef, useState } from "react";
+import { useNavigate } from "react-router";
+import { useI18n } from "@/providers/locale-provider";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { send } from "@/lib/api/console";
 import { short, when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
-import { fmtSeconds, fmtTokens, label, spend, zh } from "@/lib/labels";
+import { fmtSeconds, fmtTokens, label, spend, labelsFor } from "@/lib/labels";
 import type { Plan, Task } from "@/lib/types";
 import { CallGraph } from "./call-graph";
 import { Drawer, DrawerSection } from "./drawer";
@@ -22,6 +25,7 @@ export function TaskDrawer(props: TaskDrawerProps) {
 }
 
 function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDrawerProps) {
+    const { t: tr, locale } = useI18n();
     const { snap, refresh } = useFleet();
     const navigate = useNavigate();
     const [pending, setPending] = useState(false);
@@ -48,62 +52,62 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
         <Drawer width={width} title={<>
                 <span className="text-sm font-semibold text-primary">#{t.id}</span>
                 {meta.renaming ? <TaskTitleEditor t={t} pending={meta.pending} onDone={meta.finishTitle} /> : <span className="min-w-0 break-words text-sm font-semibold text-primary">{t.title || t.goal}</span>}
-                <StateBadge state={taskState(t)} /><span className="text-xs text-tertiary">{label(zh.status, t.lane)}</span>
-                {t.priority === "high" && <Badge type="pill-color" size="sm" color="warning">高</Badge>}
-                {t.archived_at && <Badge type="pill-color" size="sm" color="gray">已归档</Badge>}
+                <StateBadge state={taskState(t)} /><span className="text-xs text-tertiary">{label(labelsFor(locale).status, t.lane)}</span>
+                {t.priority === "high" && <Badge type="pill-color" size="sm" color="warning">{tr("tasks.high")}</Badge>}
+                {t.archived_at && <Badge type="pill-color" size="sm" color="gray">{tr("tasks.archived")}</Badge>}
             </>}
             actions={<TaskMetaMenu t={t} pending={meta.pending || meta.renaming} onRename={meta.rename} onPatch={(patch) => void meta.save(patch)} />}
             subtitle={<>
                     {meta.error && <div role="alert" className="mt-1 text-xs text-error-primary">{meta.error}</div>}
                     {error && <div role="alert" className="mt-1 text-xs text-error-primary">{error}</div>}
                     {result && <div role="status" className="mt-1 text-xs text-secondary">{result}</div>}
-                    <div className="mt-1 text-xs text-tertiary">{t.member} @ {t.node || snap.hub.node} · 项目 {t.project_id || "—"} · {label(zh.origin, t.origin || "chat")} · 会话 {t.channel}</div></>} onClose={onClose}>
-                <DrawerSection title="结果">
+                    <div className="mt-1 text-xs text-tertiary">{t.member} @ {t.node || snap.hub.node} {tr("tasks.projectPrefix")}{t.project_id || "—"} · {label(labelsFor(locale).origin, t.origin || "chat")} {tr("tasks.conversationPrefix")}{t.channel}</div></>} onClose={onClose}>
+                <DrawerSection title={tr("tasks.result")}>
                     <div className="flex flex-col gap-1 text-sm">
-                        <Row k="执行" v={t.execution === "running" ? "有 attempt 在跑" : t.execution === "unknown" ? "状态未知" : "空闲"} />
-                        <Row k="待你处理" v={t.attention ? `${t.attention} 项，见待处理页` : "无"} />
-                        <Row k="预算" v={`${t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns} 回合 · ${t.elapsed || "0s"}${t.max_elapsed && t.max_elapsed !== "0s" ? ` / ${t.max_elapsed}` : ""}`} />
-                        <Row k="用量" v={`${spend(t.tokens)} · ${fmtSeconds(t.seconds)}`} />
-                        {landings.length > 0 && <Row k="最近合并" v={landings.map((l) => `${label(zh.taskState, l.state) === l.state ? l.state : l.state} ${short(l.artifact)} ${when(l.at)}`).join(" · ")} />}
+                        <Row k={tr("tasks.execution")} v={t.execution === "running" ? tr("tasks.running") : t.execution === "unknown" ? tr("tasks.unknown") : tr("tasks.idle")} />
+                        <Row k={tr("tasks.attention")} v={t.attention ? tr("tasks.attentionCount", { count: t.attention }) : tr("tasks.none")} />
+                        <Row k={tr("tasks.budget")} v={tr("tasks.budgetSummary", { turns: t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns, elapsed: t.elapsed || "0s", limit: t.max_elapsed && t.max_elapsed !== "0s" ? ` / ${t.max_elapsed}` : "" })} />
+                        <Row k={tr("tasks.usage")} v={`${spend(t.tokens, locale)} · ${fmtSeconds(t.seconds, locale)}`} />
+                        {landings.length > 0 && <Row k={tr("tasks.recentMerges")} v={landings.map((l) => `${label(labelsFor(locale).taskState, l.state) === l.state ? l.state : l.state} ${short(l.artifact)} ${when(l.at, locale)}`).join(" · ")} />}
                     </div>
                     <div className="mt-3 flex gap-2">
-                        {holds && !["paused", "failed"].includes(t.lifecycle) && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks pause ${t.id}`)}>暂停</Button>}
-                        {t.lifecycle === "paused" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>继续</Button>}
-                        {t.lifecycle === "failed" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>重试</Button>}
-                        {holds && <Button size="sm" color="secondary-destructive" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks cancel ${t.id}`)}>取消</Button>}
-                        <Button size="sm" color="link-gray" isDisabled={!consoleTask} onClick={() => { onClose(); navigate(`/console?conversation=${encodeURIComponent(t.channel!)}`); }}>在工作台里看</Button>
+                        {holds && !["paused", "failed"].includes(t.lifecycle) && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks pause ${t.id}`)}>{tr("tasks.pause")}</Button>}
+                        {t.lifecycle === "paused" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>{tr("tasks.resume")}</Button>}
+                        {t.lifecycle === "failed" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>{tr("common.retry")}</Button>}
+                        {holds && <Button size="sm" color="secondary-destructive" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks cancel ${t.id}`)}>{tr("common.cancel")}</Button>}
+                        <Button size="sm" color="link-gray" isDisabled={!consoleTask} onClick={() => { onClose(); navigate(`/console?conversation=${encodeURIComponent(t.channel!)}`); }}>{tr("tasks.viewInWorkbench")}</Button>
                     </div>
-                    {!consoleTask && <p className="mt-2 text-xs text-tertiary">请在任务所属的聊天渠道继续操作。</p>}
+                    {!consoleTask && <p className="mt-2 text-xs text-tertiary">{tr("tasks.channelHint")}</p>}
                 </DrawerSection>
                 {plan && (
-                    <DrawerSection title={<>计划 {plan.id} · 第 {plan.rev} 版 · {plan.by}</>}>
-                        {plan.because && <p className="mb-2 line-clamp-3 text-xs text-tertiary" title={plan.because}>为什么改：{plan.because}</p>}
+                    <DrawerSection title={<>{tr("tasks.planRevision", { plan: plan.id, revision: plan.rev, by: plan.by })}</>}>
+                        {plan.because && <p className="mb-2 line-clamp-3 text-xs text-tertiary" title={plan.because}>{tr("tasks.revisionReason")}{plan.because}</p>}
                         <ol className="flex flex-col divide-y divide-secondary rounded-lg ring-1 ring-secondary">
                             {plan.steps.map((s) => (
                                 <li key={s.id} className="flex flex-col gap-1 px-3 py-2">
-                                    <div className="flex items-center gap-2"><StateBadge state={s.state} /><span className="font-medium text-primary">{s.id}</span><span className="text-xs text-tertiary">{s.agent || "—"}{s.node ? ` @ ${s.node}` : ""}</span>{s.verify && <span className="ml-auto u-meta text-quaternary">验证：{s.verify}</span>}</div>
+                                    <div className="flex items-center gap-2"><StateBadge state={s.state} /><span className="font-medium text-primary">{s.id}</span><span className="text-xs text-tertiary">{s.agent || "—"}{s.node ? ` @ ${s.node}` : ""}</span>{s.verify && <span className="ml-auto u-meta text-quaternary">{tr("tasks.verification")}{s.verify}</span>}</div>
                                     <div className="line-clamp-3 text-xs text-secondary">{s.goal}</div>
                                     {s.error && <div className="text-xs text-error-primary">{s.error}</div>}
-                                    {s.usage && <div className="u-meta text-quaternary">{s.usage.model} · {fmtTokens(s.usage.tokens.total)} tok · {fmtSeconds(s.usage.seconds)}</div>}
+                                    {s.usage && <div className="u-meta text-quaternary">{s.usage.model} · {fmtTokens(s.usage.tokens.total, locale)} tok · {fmtSeconds(s.usage.seconds, locale)}</div>}
                                 </li>
                             ))}
                         </ol>
                     </DrawerSection>
                 )}
                 {(children.length > 0 || plan) && (
-                    <DrawerSection title="调用关系 · 谁把活给了谁">
+                    <DrawerSection title={tr("tasks.callGraph")}>
                         <CallGraph roots={[t]} tasks={tasks} plans={snap.plans} />
                     </DrawerSection>
                 )}
-                <DrawerSection title="回合">
-                    {(t.attempt_rows || []).length === 0 ? <div className="text-xs text-quaternary">还没有回合</div> : (
+                <DrawerSection title={tr("tasks.turns")}>
+                    {(t.attempt_rows || []).length === 0 ? <div className="text-xs text-quaternary">{tr("tasks.noTurns")}</div> : (
                         <ul className="flex flex-col divide-y divide-secondary rounded-lg ring-1 ring-secondary text-xs">
                             {(t.attempt_rows || []).map((a, i) => (
                                 <li key={i} className="flex items-center gap-2 px-3 py-1.5">
-                                    <span className="text-tertiary">{when(a.started)}</span>
+                                    <span className="text-tertiary">{when(a.started, locale)}</span>
                                     <span className="text-primary">{a.agent}</span>
                                     <span className="text-quaternary">{a.model || ""}</span>
-                                    <span className="ml-auto text-tertiary">{fmtSeconds(a.seconds)} · {spend(a.tokens)}</span>
+                                    <span className="ml-auto text-tertiary">{fmtSeconds(a.seconds, locale)} · {spend(a.tokens, locale)}</span>
                                     {a.outcome && <Badge type="pill-color" size="sm" color={a.outcome === "ok" ? "success" : "error"}>{a.outcome}</Badge>}
                                 </li>
                             ))}
@@ -117,5 +121,3 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
 function Row({ k, v }: { k: string; v: string }) {
     return <div className="flex gap-3"><span className="w-20 shrink-0 text-tertiary">{k}</span><span className="text-primary">{v}</span></div>;
 }
-import { useRef, useState } from "react";
-import { useNavigate } from "react-router";

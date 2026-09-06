@@ -1,10 +1,16 @@
-import { Fragment, useMemo, useState } from "react";
+import { Fragment, useMemo, useState, type ReactNode } from "react";
 import { parseUnifiedDiff, splitDiffLines, splitDiffMetadata, type DiffLine, type UnifiedDiff } from "@/lib/unified-diff";
 import "@/styles/review-diff.css";
+import { useI18n } from "@/providers/locale-provider";
+import { MaterialActions, type CaptureSpec } from "./material-actions";
 
 const PAGE_LINES = 1000;
 
-export function DiffView({ diff, layout }: { diff: string; layout: "unified" | "split" }) {
+export function DiffView({ diff, layout, before, after }: { diff: string; layout: "unified" | "split"; before?: CaptureSpec; after?: CaptureSpec }) {
+    const { t } = useI18n();
+    const [selection, setSelection] = useState<{ side: "before" | "after"; start: number; end: number } | null>(null);
+    const range = selection ? { kind: "lines" as const, start: Math.min(selection.start, selection.end), end: Math.max(selection.start, selection.end) } : undefined;
+    const numberCell = (line: number | undefined, side: "before" | "after"): ReactNode => line === undefined ? null : <button type="button" aria-label={`${side === "before" ? t("materials.before") : t("materials.after")} · ${t("materials.selectLine", { line })}`} aria-pressed={selection?.side === side && !!range && line >= range.start && line <= range.end} className="rounded px-1 aria-pressed:bg-brand-primary aria-pressed:text-brand-secondary" onClick={(event) => setSelection((old) => ({ side, start: event.shiftKey && old?.side === side ? old.start : line, end: line }))}>{line}</button>;
     const patch = useMemo(() => parseUnifiedDiff(diff), [diff]);
     const metadata = useMemo(() => splitDiffMetadata(patch.metadata), [patch]);
     const [expanded, setExpanded] = useState<{ patch: UnifiedDiff; limit: number } | null>(null);
@@ -18,59 +24,61 @@ export function DiffView({ diff, layout }: { diff: string; layout: "unified" | "
         return [{ ...hunk, lines }];
     });
     if (!patch.hunks.length) {
-        return <div className="review-diff review-diff-raw">{diff ? <pre aria-label="文件变更信息">{diff}</pre> : <p>没有文本差异。</p>}</div>;
+        return <div className="review-diff review-diff-raw">{diff ? <pre aria-label={t("console.fileChanges")} >{diff}</pre> : <p>{t("console.noTextDiff")}</p>}</div>;
     }
     return (
         <div className={`review-diff review-diff-${layout}`}>
+            {selection && range && <div className="sticky top-0 z-10 flex flex-wrap items-center gap-3 border-b border-secondary bg-primary p-2 text-xs"><span>{selection.side === "before" ? t("materials.before") : t("materials.after")} · {t("materials.selection", { start: range.start, end: range.end })}</span><MaterialActions capture={selection.side === "before" ? before : after} selector={range} /><button type="button" className="underline" onClick={() => setSelection(null)}>{t("materials.clearSelection")}</button></div>}
             {(metadata.changes.length > 0 || metadata.headers.length > 0) && <div className="review-diff-metadata">
-                {metadata.changes.length > 0 && <pre aria-label="文件属性变更">{metadata.changes.join("\n")}</pre>}
-                {metadata.headers.length > 0 && <details><summary>补丁信息</summary><pre>{metadata.headers.join("\n")}</pre></details>}
+                {metadata.changes.length > 0 && <pre aria-label={t("console.fileProperties")} >{metadata.changes.join("\n")}</pre>}
+                {metadata.headers.length > 0 && <details><summary>{t("console.patchInfo")}</summary><pre>{metadata.headers.join("\n")}</pre></details>}
             </div>}
-            <div className="review-diff-scroll" tabIndex={0} role="region" aria-label={layout === "split" ? "并排代码差异，可横向滚动" : "统一代码差异，可横向滚动"}>
-                <table className="review-diff-table" aria-label={layout === "split" ? "修改前与修改后的代码" : "代码变更"}>
+            <div className="review-diff-scroll" tabIndex={0} role="region" aria-label={layout === "split" ? t("console.splitScroll") : t("console.unifiedScroll")}>
+                <table className="review-diff-table" aria-label={layout === "split" ? t("console.compareCode") : t("console.codeChanges")}>
                     <thead>
-                        {layout === "split" ? <tr><th colSpan={3} scope="colgroup">修改前</th><th colSpan={3} scope="colgroup">修改后</th></tr> : <tr><th scope="col">旧</th><th scope="col">新</th><th aria-label="变更类型" scope="col" /><th scope="col">代码</th></tr>}
+                        {layout === "split" ? <tr><th colSpan={3} scope="colgroup">{t("console.before")}</th><th colSpan={3} scope="colgroup">{t("console.after")}</th></tr> : <tr><th scope="col">{t("console.old")}</th><th scope="col">{t("console.new")}</th><th aria-label={t("console.changeType")}  scope="col" /><th scope="col">{t("console.code")}</th></tr>}
                     </thead>
                     {visible.map((hunk, i) => (
                         <tbody key={i}>
                             <tr className="review-diff-hunk"><th colSpan={layout === "split" ? 6 : 4} scope="rowgroup"><span>{hunk.header}</span></th></tr>
                             {layout === "unified" ? hunk.lines.map((line, j) => (
                                 <tr key={j} className={`review-diff-line review-diff-${line.kind}`}>
-                                    <td className="review-diff-number">{line.oldLine}</td>
-                                    <td className="review-diff-number">{line.newLine}</td>
+                                    <td className="review-diff-number">{numberCell(line.oldLine, "before")}</td>
+                                    <td className="review-diff-number">{numberCell(line.newLine, "after")}</td>
                                     <LineContent line={line} />
                                 </tr>
                             )) : splitDiffLines(hunk.lines).map((row, j) => (
                                 <tr key={j} className="review-diff-line">
-                                    <SplitCells line={row.before} side="before" />
-                                    <SplitCells line={row.after} side="after" />
+                                    <SplitCells line={row.before} side="before" numberCell={numberCell} />
+                                    <SplitCells line={row.after} side="after" numberCell={numberCell} />
                                 </tr>
                             ))}
                         </tbody>
                     ))}
                 </table>
             </div>
-            {total > limit && <div className="review-diff-more" aria-live="polite"><span>已显示 {Math.min(limit, total).toLocaleString()} / {total.toLocaleString()} 行</span><button type="button" onClick={() => setExpanded({ patch, limit: limit + PAGE_LINES })}>继续显示 {Math.min(PAGE_LINES, total - limit).toLocaleString()} 行</button></div>}
+            {total > limit && <div className="review-diff-more" aria-live="polite"><span>{t("console.shownLines", { shown: Math.min(limit, total), total })}</span><button type="button" onClick={() => setExpanded({ patch, limit: limit + PAGE_LINES })}>{t("console.showMoreLines", { count: Math.min(PAGE_LINES, total - limit) })}</button></div>}
         </div>
     );
 }
 
-function SplitCells({ line, side }: { line?: DiffLine; side: "before" | "after" }) {
+function SplitCells({ line, side, numberCell }: { line?: DiffLine; side: "before" | "after"; numberCell: (line: number | undefined, side: "before" | "after") => ReactNode }) {
     const tone = line ? `review-diff-${line.kind}` : "review-diff-empty";
     return (
         <Fragment>
-            <td className={`review-diff-number ${side === "after" ? "review-diff-divider" : ""} ${tone}`}>{side === "before" ? line?.oldLine : line?.newLine}</td>
+            <td className={`review-diff-number ${side === "after" ? "review-diff-divider" : ""} ${tone}`}>{numberCell(side === "before" ? line?.oldLine : line?.newLine, side)}</td>
             <LineContent line={line} tone={tone} />
         </Fragment>
     );
 }
 
 function LineContent({ line, tone = "" }: { line?: DiffLine; tone?: string }) {
+    const { t } = useI18n();
     const sign = line?.kind === "addition" ? "+" : line?.kind === "deletion" ? "−" : " ";
     return (
         <Fragment>
-            <td className={`review-diff-sign ${tone}`} aria-label={line?.kind === "addition" ? "新增" : line?.kind === "deletion" ? "删除" : undefined}>{sign}</td>
-            <td className={`review-diff-code ${tone}`}><code>{line?.text ?? ""}</code>{line?.noNewline && <span className="review-diff-no-newline">文件末尾无换行</span>}</td>
+            <td className={`review-diff-sign ${tone}`} aria-label={line?.kind === "addition" ? t("console.added") : line?.kind === "deletion" ? t("console.deleted") : undefined}>{sign}</td>
+            <td className={`review-diff-code ${tone}`}><code>{line?.text ?? ""}</code>{line?.noNewline && <span className="review-diff-no-newline">{t("console.noNewline")}</span>}</td>
         </Fragment>
     );
 }

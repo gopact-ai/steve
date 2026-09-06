@@ -9,6 +9,21 @@
 .usage-metric p { margin-top: 8px; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.6; }
 .usage-token-details { display: flex; flex-wrap: wrap; gap: 8px 24px; color: var(--color-text-tertiary); font-size: 12px; }
 .usage-token-details b { margin-left: 6px; color: var(--color-text-secondary); font-weight: 500; font-variant-numeric: tabular-nums; }
+.usage-task-statistics { display: flex; flex-wrap: wrap; gap: 10px 28px; padding: 12px 0; border-top: 1px solid var(--color-border-secondary); color: var(--color-text-tertiary); font-size: 12px; }
+.usage-task-statistics b { margin-left: 8px; font-weight: 500; color: var(--color-text-secondary); font-variant-numeric: tabular-nums; }
+.usage-series { display: flex; flex-wrap: wrap; gap: 8px; padding: 8px 24px; }
+.usage-series button { display: inline-flex; align-items: center; gap: 6px; border-radius: 6px; padding: 5px 8px; font-size: 12px; color: var(--color-text-tertiary); opacity: .65; }
+.usage-series button[aria-pressed=true] { background: var(--color-bg-secondary); color: var(--color-text-primary); opacity: 1; }
+.usage-series i { height: 6px; width: 6px; border-radius: 50%; }
+.usage-series button:focus-visible, .usage-sort select:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+.usage-analysis { display: flex; min-width: 0; flex-direction: column; gap: 14px; }
+.usage-analysis-header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+.usage-sort { display: flex; align-items: center; gap: 8px; font-size: 12px; color: var(--color-text-tertiary); }
+.usage-sort select { border: 1px solid var(--color-border-secondary); border-radius: 6px; padding: 6px 8px; color: var(--color-text-primary); background: var(--color-bg-primary); }
+.usage-dimensions { align-self: start; max-width: 100%; flex-wrap: wrap; }
+.usage-dimensions button { min-height: 34px; }
+.usage-breakdown [role=gridcell] { font-variant-numeric: tabular-nums; white-space: nowrap; }
+.usage-task-name { min-width: 160px; max-width: 300px; white-space: normal; overflow-wrap: anywhere; }
 .usage-chart-panel { border: 1px solid var(--color-border-secondary); border-radius: 12px; background: var(--color-bg-primary); min-width: 0; }
 .usage-chart-header { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 16px; padding: 20px 24px 0; }
 .usage-chart-value { display: flex; align-items: center; gap: 8px; padding: 18px 24px 4px; font-size: 12px; color: var(--color-text-secondary); }

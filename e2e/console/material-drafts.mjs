@@ -1,0 +1,15 @@
+import assert from "node:assert/strict";
+const saved=new Map();globalThis.sessionStorage={getItem:k=>saved.get(k)||null,setItem:(k,v)=>saved.set(k,v)};
+const store=await import('../../web/console/src/lib/drafts.ts');
+const ref={id:'m-one',title:'File lines',project:'p',kind:'text',mime:'text/plain',size:50,selector:{kind:'lines',start:2,end:4}};
+assert.equal(store.addDraftMaterial('console:a',ref),true);store.updateDraft('console:a','Discuss this range');
+const first=store.beginSubmission('console:a','Discuss this range',[],true,'en');
+assert.deepEqual(first.refs,[ref]);assert.equal(first.locale,'en');assert.equal(JSON.parse(saved.get('steve.console.drafts')).materials['console:a'],undefined);
+store.addDraftMaterial('console:a',{...ref,id:'m-next'});store.updateDraft('console:a','New draft');
+store.failSubmission('console:a',first.id,'reset','unknown');const retry=store.retrySubmission('console:a');assert.deepEqual(retry.refs,[ref]);assert.equal(retry.locale,'en');assert.equal(retry.id,first.id);
+assert.equal(store.reconcileSubmission('console:a',[{conversation:'console:a',key:'client:'+first.id,input:first.input,refs:[{id:'m-wrong'}],locale:'en'}]),false);
+assert.equal(store.reconcileSubmission('console:a',[{conversation:'console:a',key:'client:'+first.id,input:first.input,refs:[{id:ref.id,selector:ref.selector}],locale:'en'}]),true);
+const second=store.beginSubmission('console:a','New draft',[],true,'zh');store.failSubmission('console:a',second.id,'rejected','rejected');
+const restored=JSON.parse(saved.get('steve.console.drafts'));assert.equal(restored.drafts['console:a'],'New draft');assert.equal(restored.materials['console:a'][0].id,'m-next');
+const control=store.beginSubmission('console:a','/project use q',[],false,'en');assert.deepEqual(control.refs,[]);assert.equal(JSON.parse(saved.get('steve.console.drafts')).materials['console:a'][0].id,'m-next');
+console.log('PASS material refs and locale are atomic with draft submission, retry and recovery');
