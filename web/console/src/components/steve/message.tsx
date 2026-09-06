@@ -6,7 +6,7 @@ import { ChangesFold } from "./changes";
 import { DelegationCard } from "./delegation";
 import { Md } from "./markdown";
 import { ToolCalls, headingOf } from "./tool-calls";
-import { ProcessBody } from "./trace";
+import { hasProcessContent, ProcessBody } from "./trace";
 
 // UserMessage is what the person typed: a bubble on the right.
 export function UserMessage({ text }: { text: string }) {
@@ -44,23 +44,25 @@ export function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply;
 // folded, then for a planned turn one group per step, then the turn's
 // own calls.
 export function InlineProcess({ process }: { process: Process }) {
+    if (!hasProcessContent(process, true)) return null;
     const steps: StepProcess[] = process.steps || [];
-    if (process.timeline?.length || steps.some((s) => s.timeline?.length)) return (
+    if (process.timeline?.length || steps.some((s) => s.timeline?.length || s.plan?.length)) return (
         <details className="group/process min-w-0">
             <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-tertiary hover:text-primary">
-                过程 <ChevronDown className="size-3.5 transition group-open/process:rotate-180" />
+                过程 <ChevronDown aria-hidden="true" className="size-3.5 transition group-open/process:rotate-180" />
             </summary>
             <div className="mt-2"><ProcessBody process={process} omitFinalText /></div>
         </details>
     );
-    const calls = (process.tools?.length || 0) + steps.reduce((n, s) => n + (s.tools?.length || 0), 0);
-    if (!calls && !process.reasoning && !steps.some((s) => s.kind === "delegate")) return null;
     return (
         <div className="flex min-w-0 flex-col gap-0.5">
-            {process.reasoning && <ThinkingFold text={process.reasoning} />}
+            {process.reasoning?.trim() && <ThinkingFold text={process.reasoning} />}
             {steps.map((s) => s.kind === "delegate"
                 ? <DelegationCard key={s.id} id={s.id} info={s} progress={s} />
-                : (s.tools?.length ? <ToolCalls key={s.id} tools={s.tools} title={`${s.id} · ${headingOf(s.tools)}`} defaultOpen={false} /> : null))}
+                : (s.reasoning?.trim() || s.tools?.length ? <div key={s.id}>
+                    {s.reasoning?.trim() && <ThinkingFold text={s.reasoning} />}
+                    {s.tools?.length ? <ToolCalls tools={s.tools} title={`${s.id} · ${headingOf(s.tools)}`} defaultOpen={false} /> : null}
+                </div> : null))}
             {process.tools?.length ? <ToolCalls tools={process.tools} defaultOpen={steps.length === 0} /> : null}
         </div>
     );

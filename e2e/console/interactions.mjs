@@ -1093,6 +1093,44 @@ checks["usage-dashboard-gaps"] = async (f) => {
     assert.notEqual(await f.page.locator(".recharts-surface").evaluate((el) => getComputedStyle(el).outlineStyle), "none", "Keyboard chart navigation needs visible focus");
 };
 
+checks["empty-process"] = async (f) => {
+    const processes = [
+        { timeline: [{ kind: "text", text: "Direct answer", at }] },
+        { timeline: [{ kind: "thought", text: " \n ", at }, { kind: "tool", tool: "missing", at }, { kind: "text", text: "Direct answer", at }] },
+        { timeline: [{ kind: "text", text: "Direct answer", at }, { kind: "text", text: " \n", at }], steps: [{ id: "empty-step", timeline: [{ kind: "thought", text: " ", at }] }] },
+        { reasoning: " \n " },
+    ];
+    f.replies[A] = processes.map((process, i) => ({ id: `empty-${i}`, kind: "reply", conversation: A, at, text: "Direct answer", process }));
+    await f.page.reload();
+    await f.page.getByText("Direct answer", { exact: true }).first().waitFor();
+    assert.equal(await f.page.locator(".message-assistant summary").count(), 0, "A final answer, blank trace, or missing tool must not create an empty disclosure");
+    assert.equal(await f.page.getByText("Direct answer", { exact: true }).count(), processes.length, "Each final answer remains visible once");
+    assert.equal(f.calls.length, 0);
+};
+
+checks["process-content"] = async (f) => {
+    const process = { tools: [{ id: "read", title: "Read file", status: "completed", output: "file content" }], timeline: [{ kind: "thought", text: "Checking the file", at }, { kind: "text", text: "Opening the file", at }, { kind: "tool", tool: "read", at }, { kind: "text", text: "Checked answer", at }], steps: [{ id: "empty-step", timeline: [{ kind: "thought", text: " ", at }] }] };
+    f.replies[A] = [{ id: "trace", kind: "reply", conversation: A, at, text: "Checked answer", process }];
+    await f.page.reload();
+    const message = f.page.locator(".message-assistant");
+    await message.getByText("Checked answer", { exact: true }).waitFor();
+    const toggle = message.locator("summary").filter({ hasText: /^过程/ });
+    await toggle.press("Enter");
+    await message.getByText("Checking the file", { exact: true }).waitFor();
+    await message.getByText("Opening the file", { exact: true }).waitFor();
+    assert.equal(await message.locator('[data-span-kind="tool"]').count(), 1, "Actual tool activity remains inspectable");
+    assert.equal(await message.getByText("Checked answer", { exact: true }).count(), 1, "The final answer is not repeated inside the trace");
+    assert.equal(await message.getByText("empty-step", { exact: true }).count(), 0, "Empty plan steps must not leave a heading");
+    await toggle.press("Enter");
+    await f.startRunning();
+    await f.page.getByText("正在放置…", { exact: true }).waitFor();
+    await f.emit({ kind: "console.progress", exchange_id: "design-running", progress: { agent: "test-agent", timeline: [{ kind: "thought", text: " ", at }], answer: "Streaming answer" } });
+    await f.page.getByText("test-agent", { exact: true }).waitFor();
+    await f.page.getByText("Streaming answer", { exact: true }).waitFor();
+    assert.equal(await f.page.locator('summary').filter({ hasText: /^过程/ }).count(), 1, "Empty live progress retains its status without a disclosure");
+    assert.equal(f.calls.length, 0);
+};
+
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);
 let failed = 0;
 try {

@@ -4,7 +4,7 @@ import { CheckCircle, Loading01, ChevronDown, File02, Edit05, Terminal, Users01,
 import { useFollowTail } from "@/hooks/use-follow-tail";
 import { activity, type ActivityKind } from "@/lib/activity";
 import { when } from "@/lib/api";
-import type { Event, Injected, Plan, Process, Progress, Span, Step, StepProcess, StepInfo, ToolCall } from "@/lib/types";
+import type { Event, Injected, Plan, Process, Progress, Span, Step, StepInfo, ToolCall } from "@/lib/types";
 import { CodeBlock, Md } from "./markdown";
 import { Chips, KeyValue, Panel } from "./page";
 import { ThinkingFold } from "./message";
@@ -71,13 +71,13 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
                 </div>
                 {steps.map((s) => group(s.id))}
                 {extra.map(group)}
-                {live.turn?.timeline?.length ? (
+                {live.turn?.timeline?.length && hasTraceContent(live.turn) ? (
                     <details open className="text-xs text-tertiary">
                         <summary className="cursor-pointer">过程</summary>
                         <Trace p={live.turn} live />
                     </details>
                 ) : <>
-                    {latest?.reasoning && <ThinkingTail text={latest.reasoning} />}
+                    {latest?.reasoning?.trim() && <ThinkingTail text={latest.reasoning} />}
                     {live.turn?.tools?.length ? <ToolCalls tools={live.turn.tools} /> : null}
                 </>}
                 {live.turn?.answer && <Md text={live.turn.answer} />}
@@ -140,7 +140,7 @@ export function Trace({ p, showAnswer, live, thinkingOpen = true, omitText }: { 
                 </ul>
             ) : null}
             {p.timeline?.length ? <Timeline p={p} live={live} omitText={omitText} /> : <>
-                {p.reasoning && <ThinkingFold text={p.reasoning} open={thinkingOpen} live={live} />}
+                {p.reasoning?.trim() && <ThinkingFold text={p.reasoning} open={thinkingOpen} live={live} />}
                 {p.tools?.length ? <ToolCalls tools={p.tools} /> : null}
             </>}
             {(p.agent || p.node || p.model) && <div className="break-words text-xs text-quaternary">{[[p.agent, p.node].filter(Boolean).join(" @ "), p.model].filter(Boolean).join(" · ")}</div>}
@@ -181,7 +181,9 @@ function ThoughtSpan({ text, live }: { text: string; live?: boolean }) {
     </div>;
 }
 
-function Timeline({ p, live, omitText }: { p: Progress; live?: boolean; omitText?: number }) {
+// Disclosures and rendering share this projection so a final-only or
+// blank timeline cannot leave an empty process control.
+function timelineEntries(p: Progress, omitText?: number) {
     const entries: { index: number; span: Span; tools?: ToolCall[] }[] = [];
     const tools = new Map((p.tools || []).map((tool) => [tool.id, tool]));
     let previousKind = "";
@@ -196,6 +198,11 @@ function Timeline({ p, live, omitText }: { p: Progress; live?: boolean; omitText
         } else if (span.text?.trim() && index !== omitText) entries.push({ index, span: { ...span, text: span.text.trim() } });
         previousKind = span.kind;
     }
+    return entries;
+}
+
+function Timeline({ p, live, omitText }: { p: Progress; live?: boolean; omitText?: number }) {
+    const entries = timelineEntries(p, omitText);
     return <div data-timeline className="flex min-w-0 flex-col gap-2">{entries.map(({ index, span, tools }) => tools
         ? <Activity key={index} tools={tools} />
         : span.kind === "thought"
@@ -203,21 +210,37 @@ function Timeline({ p, live, omitText }: { p: Progress; live?: boolean; omitText
             : <div key={index} data-span-kind="text"><Md text={span.text || ""} /></div>)}</div>;
 }
 
+function finalTextIndex(process: Process): number | undefined {
+    const index = process.timeline?.findLastIndex((span) => span.kind === "text" && !!span.text?.trim());
+    return index !== undefined && index >= 0 ? index : undefined;
+}
+
+function hasTraceContent(p: Progress, omitText?: number): boolean {
+    return !!p.plan?.length || (p.timeline?.length
+        ? timelineEntries(p, omitText).length > 0
+        : !!(p.reasoning?.trim() || p.tools?.length));
+}
+
+export function hasProcessContent(process: Process, omitFinalText = false): boolean {
+    return hasTraceContent(process, omitFinalText ? finalTextIndex(process) : undefined)
+        || !!process.steps?.some((step) => step.kind === "delegate" || hasTraceContent(step));
+}
+
 // ProcessBody is a reply's trace: each step's, then the turn's own.
 // omitFinalText leaves the turn's last narration out: in the transcript
 // it is the reply itself, printed right under the fold.
 export function ProcessBody({ process, omitFinalText }: { process: Process; omitFinalText?: boolean }) {
-    const steps: StepProcess[] = process.steps || [];
-    const finalText = omitFinalText ? (process.timeline || []).map((s) => s.kind).lastIndexOf("text") : -1;
+    const steps = (process.steps || []).filter((step) => step.kind === "delegate" || hasTraceContent(step));
+    const finalText = omitFinalText ? finalTextIndex(process) : undefined;
     return (
         <div className="flex flex-col gap-3">
             {steps.map((s) => s.kind === "delegate" ? <DelegationCard key={s.id} id={s.id} info={s} progress={s} /> : (
                 <div key={s.id} className="flex flex-col gap-1.5">
                     <div className="text-xs font-medium text-primary">{s.id} <span className="font-normal text-tertiary">{[s.agent, s.node].filter(Boolean).join(" @ ")}</span></div>
-                    <Trace p={{ reasoning: s.reasoning, tools: s.tools, timeline: s.timeline }} />
+                    <Trace p={{ reasoning: s.reasoning, tools: s.tools, timeline: s.timeline, plan: s.plan }} />
                 </div>
             ))}
-            {(process.reasoning || process.tools?.length || process.timeline?.length) ? <Trace p={process} omitText={finalText >= 0 ? finalText : undefined} /> : null}
+            {hasTraceContent(process, finalText) ? <Trace p={process} omitText={finalText} /> : null}
         </div>
     );
 }
