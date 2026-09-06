@@ -33,6 +33,10 @@ import (
 // a node-local fact — which binaries exist and which model endpoints are
 // reachable is a property of this machine, not of the hub's config file.
 type HarnessSpec struct {
+	// Adapter names an ACP adapter from the built-in catalog, fetched at a
+	// pinned version and verified before it runs. Give this or Command: a
+	// command is this machine's own build, and Steve leaves it alone.
+	Adapter    string   `json:"adapter,omitempty"`
 	Command    string   `json:"command"`
 	Args       []string `json:"args,omitempty"`
 	Env        []string `json:"env,omitempty"`

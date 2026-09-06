@@ -17,6 +17,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/adapter"
 	"github.com/gopact-ai/steve/internal/node"
 )
 
@@ -70,6 +71,9 @@ func run(args []string) error {
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if err := prepareAdapters(ctx, &cfg); err != nil {
+		return err
+	}
 	return node.NewServer(cfg).Serve(ctx)
 }
 
@@ -177,9 +181,42 @@ func load(path string) (node.ServerConfig, error) {
 	}
 	for id, spec := range cfg.Harnesses {
 		spec.ProcessDir = absolute(spec.ProcessDir)
+		switch {
+		case spec.Adapter != "" && spec.Command != "":
+			return node.ServerConfig{}, fmt.Errorf("harness %q sets both adapter and command; pick one", id)
+		case spec.Adapter != "" && len(spec.Args) > 0:
+			return node.ServerConfig{}, fmt.Errorf("harness %q: an adapter takes no args", id)
+		case spec.Adapter != "":
+			if _, known := adapter.Catalog[spec.Adapter]; !known {
+				return node.ServerConfig{}, fmt.Errorf("harness %q: adapter %q is not one of %s", id, spec.Adapter, strings.Join(adapter.Names(), ", "))
+			}
+		}
 		cfg.Harnesses[id] = spec
 	}
 	return cfg, nil
+}
+
+// prepareAdapters fetches and verifies every adapter this machine's config
+// names, filling in the command that starts it. A node that cannot get the
+// pinned version does not come up: an agent running some other version is
+// worse than a machine that says why it is missing.
+func prepareAdapters(ctx context.Context, cfg *node.ServerConfig) error {
+	install := &adapter.Installer{Dir: filepath.Join(cfg.StateDir, "adapters")}
+	for id, spec := range cfg.Harnesses {
+		if spec.Adapter == "" {
+			continue
+		}
+		got, err := install.Ensure(ctx, spec.Adapter)
+		if err != nil {
+			return fmt.Errorf("harness %q: %w", id, err)
+		}
+		if !got.Cached {
+			log.Printf("steve-node: installed %s@%s for harness %s", got.Package, got.Version, id)
+		}
+		spec.Command = got.Command
+		cfg.Harnesses[id] = spec
+	}
+	return nil
 }
 
 func absolute(path string) string {

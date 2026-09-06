@@ -14,7 +14,7 @@ Steve makes three structural commitments:
 
 **Startup currently requires Feishu/Lark configuration; console-only startup is in roadmap §9 B3 of the [architecture document](docs/architecture.md).** Console use also requires `feishu.owner_open_id`: actions run as that owner. You can use the console for everyday interaction, but the current program still establishes a Feishu/Lark connection.
 
-Prepare Go 1.27+, Git and at least one installed, authenticated ACP adapter. codex-acp / claude-agent-acp also need their Node.js runtime; see [hub deployment](docs/operations.md#部署-hub) for installation examples.
+Prepare Go 1.27+, Git, Node.js with npm, and an authenticated coding agent. Adapters in the built-in catalog (codex-acp, claude-agent-acp) are fetched by Steve at a pinned version, so you do not install them yourself; they are npm packages, which is why the Node.js runtime is still a prerequisite. An adapter you build yourself is named with `command` — see [hub deployment](docs/operations.md#部署-hub).
 
 1. Build and generate configuration from the repository root:
 
@@ -34,15 +34,14 @@ Prepare Go 1.27+, Git and at least one installed, authenticated ACP adapter. cod
      },
      "harnesses": {
        "codex": {
-         "command": "/home/me/.local/bin/codex-acp",
-         "args": [],
+         "adapter": "codex-acp",
          "permission": "read"
        }
      }
    }
    ```
 
-   **Setup still generates `npx` launch entries. Replace them with absolute paths to installed adapters and clear the old arguments before starting.** `command` does not undergo shell expansion, so `~/...` does not work. [config.example.json](config.example.json) is a full multi-machine reference: replace placeholders and remove unused projects, agents and services before using it.
+   `adapter` names an entry in the built-in catalog: Steve fetches that exact version, verifies it against a digest compiled into the binary, and runs it — nothing to install, and no version that changes underneath you. To run an adapter you built yourself, give `command` instead (an absolute path; it does not undergo shell expansion, so `~/...` does not work). Give one or the other, never both. [config.example.json](config.example.json) is a full multi-machine reference: replace placeholders and remove unused projects, agents and services before using it.
 
 3. Check the configuration, then start the hub:
 

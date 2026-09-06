@@ -1113,6 +1113,9 @@ func load(path string) (*config.Config, *agent.Catalog, *harness.Manager, *skill
 		item.Env = runtime.ApplyEnv(item.Env, id, stateDir)
 		cfg.Harnesses[id] = item
 	}
+	if err := cfg.PrepareAdapters(context.Background()); err != nil {
+		return nil, nil, nil, nil, err
+	}
 	manager, err := cfg.HarnessManager()
 	if err != nil {
 		return nil, nil, nil, nil, err

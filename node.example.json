@@ -10,8 +10,7 @@
   ],
   "harnesses": {
     "codex": {
-      "command": "/home/me/.local/bin/codex-acp",
-      "args": [],
+      "adapter": "codex-acp",
       "models": [
         "<model-id-from-this-harness>"
       ],

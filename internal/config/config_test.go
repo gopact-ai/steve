@@ -291,3 +291,62 @@ func TestLoadRefusesBothLayoutsAndReservedName(t *testing.T) {
 		t.Fatalf("two projects must not pick a default silently, got %q", cfg.Gateway.DefaultProject)
 	}
 }
+
+// A harness names an adapter or a command. Both is a contradiction about
+// what runs; neither leaves nothing to run.
+func TestHarnessTakesAnAdapterOrACommandButNotBoth(t *testing.T) {
+	for _, c := range []struct {
+		name    string
+		harness string
+		wants   string
+	}{
+		{"both", `{"adapter":"codex-acp","command":"/usr/bin/codex-acp"}`, "pick one"},
+		{"neither", `{"permission":"read"}`, "needs an adapter or a command"},
+		{"unknown adapter", `{"adapter":"nope-acp"}`, "is not one of"},
+		{"adapter with args", `{"adapter":"codex-acp","args":["-y"]}`, "takes no args"},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := writeAndLoad(t, `{
+				"agents":{"codex":{"harness":"codex","default":true}},
+				"harnesses":{"codex":`+c.harness+`},
+				"projects":{"work":{"home":{"path":"/srv/work"}}},
+				"feishu":{"app_id":"cli_x","app_secret":"s"},
+				"gateway":{"state_path":"/tmp/steve/state.json"}}`)
+			if err == nil {
+				t.Fatalf("%s was accepted", c.name)
+			}
+			if !strings.Contains(err.Error(), c.wants) {
+				t.Fatalf("error = %v, want it to mention %q", err, c.wants)
+			}
+		})
+	}
+}
+
+// An adapter-backed harness loads without a command: the command arrives
+// when the adapter is fetched, and loading a file must not need a network.
+func TestAnAdapterHarnessLoadsWithoutACommand(t *testing.T) {
+	cfg, err := writeAndLoad(t, `{
+		"agents":{"codex":{"harness":"codex","default":true}},
+		"harnesses":{"codex":{"adapter":"codex-acp"}},
+		"projects":{"work":{"home":{"path":"/srv/work"}}},
+		"feishu":{"app_id":"cli_x","app_secret":"s"},
+		"gateway":{"state_path":"/tmp/steve/state.json"}}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := cfg.Harnesses["codex"]; got.Adapter != "codex-acp" || got.Command != "" {
+		t.Fatalf("harness = %#v", got)
+	}
+	if dir := cfg.AdapterDir(); !strings.HasSuffix(dir, "/adapters") {
+		t.Fatalf("adapter dir = %q", dir)
+	}
+}
+
+func writeAndLoad(t *testing.T, body string) (*Config, error) {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return Load(path)
+}

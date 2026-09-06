@@ -89,8 +89,7 @@
   },
   "harnesses": {
     "codex": {
-      "command": "/home/me/.local/bin/codex-acp",
-      "args": [],
+      "adapter": "codex-acp",
       "permission": "read",
       "slots": 4,
       "process_dir": "/home/me/steve-runtime",
