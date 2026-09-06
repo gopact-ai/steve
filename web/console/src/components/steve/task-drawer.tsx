@@ -25,6 +25,7 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
     const navigate = useNavigate();
     const [pending, setPending] = useState(false);
     const [error, setError] = useState("");
+    const [result, setResult] = useState("");
     const acting = useRef(false);
     const t = snap.tasks.find((task) => task.id === selected.id) || selected;
     const meta = useTaskMeta(t);
@@ -37,7 +38,8 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
         acting.current = true;
         setPending(true);
         setError("");
-        try { await send(t.channel, command); refresh(); }
+        setResult("");
+        try { const reply = await send(t.channel, command); setResult(reply.text); refresh(); }
         catch (e) { setError(String(e).replace(/^Error: /, "")); }
         finally { acting.current = false; setPending(false); }
     }
@@ -53,6 +55,7 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
             subtitle={<>
                     {meta.error && <div role="alert" className="mt-1 text-xs text-error-primary">{meta.error}</div>}
                     {error && <div role="alert" className="mt-1 text-xs text-error-primary">{error}</div>}
+                    {result && <div role="status" className="mt-1 text-xs text-secondary">{result}</div>}
                     <div className="mt-1 text-xs text-tertiary">{t.member} @ {t.node || snap.hub.node} · 项目 {t.project_id || "—"} · {label(zh.origin, t.origin || "chat")} · 会话 {t.channel}</div></>} onClose={onClose}>
                 <DrawerSection title="结果">
                     <div className="flex flex-col gap-1 text-sm">
@@ -63,7 +66,7 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                         {landings.length > 0 && <Row k="最近合并" v={landings.map((l) => `${label(zh.taskState, l.state) === l.state ? l.state : l.state} ${short(l.artifact)} ${when(l.at)}`).join(" · ")} />}
                     </div>
                     <div className="mt-3 flex gap-2">
-                        {holds && t.lifecycle !== "paused" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks pause ${t.id}`)}>暂停</Button>}
+                        {holds && !["paused", "failed"].includes(t.lifecycle) && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks pause ${t.id}`)}>暂停</Button>}
                         {t.lifecycle === "paused" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>继续</Button>}
                         {t.lifecycle === "failed" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>重试</Button>}
                         {holds && <Button size="sm" color="secondary-destructive" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks cancel ${t.id}`)}>取消</Button>}

@@ -185,6 +185,83 @@ const checks = {
         await f.pick("A");
         assert.equal(await f.box.inputValue(), "", "A's submitted instruction must not reappear as a draft");
     },
+    async "send-unmount-failure"(f) {
+        const release = f.hold("enqueue");
+        f.failEnqueue = true;
+        await f.box.fill("Original instruction");
+        await f.box.press("Enter");
+        await eventually(() => f.queued().length === 1, "Enqueue request must start");
+        await f.page.locator('a[href="#/projects"]').click();
+        await f.page.getByRole("button", { name: "添加项目", exact: true }).waitFor();
+        await f.page.locator('a[href="#/console"]').click();
+        await f.box.fill("New draft after remount");
+        release();
+        await delay(200);
+        assert.match(await f.box.inputValue(), /New draft after remount/, "An old failure must not overwrite the new mounted draft");
+        await f.page.reload();
+        await f.box.waitFor();
+        assert.match(await f.box.inputValue(), /New draft after remount/, "Newer typing must remain persisted after an unmounted request fails");
+        assert.match(await f.box.inputValue(), /Original instruction/, "The failed instruction must remain recoverable");
+        assert.equal(f.queued().length, 1, "Remounting must not automatically resend the failed instruction");
+    },
+    async "send-reload-pending"(f) {
+        f.hold("enqueue");
+        await f.box.fill("Instruction before network delivery");
+        await f.box.press("Enter");
+        await eventually(() => f.queued().length === 1, "Enqueue request must start");
+        await f.box.fill("Newer unsent draft");
+        await f.page.reload();
+        await f.box.waitFor();
+        await f.page.getByText("发送结果尚未确认，请先查看会话记录", { exact: false }).waitFor();
+        assert.equal(await f.page.getByText("Instruction before network delivery", { exact: true }).count(), 1, "Recovery must show the original unacknowledged instruction");
+        assert.equal(await f.box.inputValue(), "Newer unsent draft", "Reload must keep new typing separate from an uncertain submission");
+        assert.equal(f.queued().length, 1, "Reload must not resend an instruction that may already have been accepted");
+        await f.box.press("Enter");
+        await delay(150);
+        assert.equal(f.queued().length, 1, "Enter must not bypass unresolved submission recovery");
+        assert.equal(await f.box.inputValue(), "Newer unsent draft");
+        await f.page.getByRole("button", { name: "恢复为草稿", exact: true }).click();
+        assert.match(await f.box.inputValue(), /Instruction before network delivery/, "Explicit recovery must restore the original instruction");
+        assert.match(await f.box.inputValue(), /Newer unsent draft/, "Explicit recovery must also preserve the newer draft");
+        assert.equal(f.queued().length, 1, "Recovering a draft must not send it automatically");
+    },
+    async "recovery-storage-failure"(f) {
+        f.hold("enqueue");
+        await f.box.fill("Original uncertain instruction");
+        await f.box.press("Enter");
+        await eventually(() => f.queued().length === 1, "Enqueue request must start");
+        await f.box.fill("Newer persisted draft");
+        await f.page.reload();
+        const recover = f.page.getByRole("button", { name: "恢复为草稿", exact: true });
+        await recover.waitFor();
+        await f.page.evaluate(() => {
+            Storage.prototype.setItem = () => { throw new DOMException("Quota exceeded", "QuotaExceededError"); };
+        });
+        await recover.click();
+        await f.page.reload();
+        await f.box.waitFor();
+        await recover.waitFor();
+        assert.equal(await f.page.getByText("Original uncertain instruction", { exact: true }).count(), 1, "Failed draft persistence must retain the original pending submission");
+        assert.equal(await f.box.inputValue(), "Newer persisted draft", "Failed recovery must preserve the previously saved draft");
+        assert.equal(f.queued().length, 1, "Failed recovery must not submit work");
+    },
+    async "quotes-unmount-failure"(f) {
+        const release = f.hold("enqueue");
+        f.failEnqueue = true;
+        await f.page.getByRole("button", { name: "引用", exact: true }).click();
+        await f.box.fill("Question about this quote");
+        await f.box.press("Enter");
+        await eventually(() => f.queued().length === 1, "Enqueue request must start");
+        assert.deepEqual(f.queued()[0].quotes, [{ conversation: A, reply_id: `${A}-0` }]);
+        await f.page.locator('a[href="#/projects"]').click();
+        await f.page.getByRole("button", { name: "添加项目", exact: true }).waitFor();
+        await f.page.locator('a[href="#/console"]').click();
+        await f.box.waitFor();
+        release();
+        await eventually(() => f.page.getByRole("button", { name: "去掉引用", exact: true }).count(), "An unmounted failed submission must restore its quote in the current composer");
+        assert.equal(await f.box.inputValue(), "Question about this quote");
+        assert.equal(f.queued().length, 1, "Restoring the quoted draft must not submit it automatically");
+    },
     async "repeat-enter"(f) {
         f.hold("enqueue");
         await f.box.fill("Only once");
@@ -204,6 +281,16 @@ const checks = {
     async "stop-with-draft"(f) {
         await f.box.fill("Draft written while a task is running");
         assert.equal(await f.page.getByRole("button", { name: "停止", exact: true }).count(), 1, "Stop must remain reachable while a draft is present");
+    },
+    async "stop-enter"(f) {
+        f.hold("cancel");
+        await f.page.getByRole("button", { name: "停止", exact: true }).click();
+        await f.box.fill("New instruction during cancellation");
+        assert.equal(await f.page.getByRole("button", { name: "排队", exact: true }).isDisabled(), true, "Send must be disabled while cancellation is pending");
+        await f.box.press("Enter");
+        await delay(150);
+        assert.equal(f.queued().length, 0, "Enter must obey the same pending-cancel guard as the send button");
+        assert.equal(await f.box.inputValue(), "New instruction during cancellation", "A blocked Enter must preserve the draft");
     },
     async "scroll-poll"(f) {
         const scroller = f.page.locator("main .overflow-y-auto.overflow-x-hidden");
@@ -238,6 +325,24 @@ const checks = {
         await f.page.getByRole("dialog").getByRole("button", { name: "暂停", exact: true }).click();
         await eventually(() => f.calls.some((c) => c.input === "/tasks pause 22"), "Task pause command must be submitted");
         assert.equal(f.calls.find((c) => c.input === "/tasks pause 22").conversation, B, "Task action must target its owning conversation");
+    },
+    async "task-logical-failure"(f) {
+        const rejection = "任务 #22 现在是「失败」，这一步做不了。";
+        await f.page.route("**/console/send", (route) => route.fulfill({ json: { reply: { kind: "reply", conversation: B, at, text: rejection } } }));
+        await f.page.getByRole("button", { name: "看板", exact: true }).click();
+        await f.page.getByRole("button", { name: "打开任务 #22 Task 22", exact: true }).click();
+        await f.page.getByRole("dialog").getByRole("button", { name: "暂停", exact: true }).click();
+        await f.page.getByRole("dialog").getByText(rejection, { exact: true }).waitFor();
+    },
+    async "intent-remount-draft"(f) {
+        await f.page.getByRole("button", { name: "看板", exact: true }).click();
+        await f.page.getByRole("button", { name: "新计划", exact: true }).click();
+        await eventually(async () => (await f.box.inputValue()).startsWith("/plan"), "New plan must fill the composer");
+        await f.box.fill("Plan carefully drafted after fill");
+        await f.page.locator('a[href="#/projects"]').click();
+        await f.page.getByRole("button", { name: "添加项目", exact: true }).waitFor();
+        await f.page.locator('a[href="#/console"]').click();
+        assert.equal(await f.box.inputValue(), "Plan carefully drafted after fill", "An already-consumed fill intent must not overwrite the persisted draft");
     },
 };
 

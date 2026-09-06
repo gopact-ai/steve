@@ -84,13 +84,14 @@ export function useFleet(): FleetState {
 
 // Verbs sent from other pages land on the console: this is the hand-off.
 interface Intent { text: string; mode: "run" | "fill"; n: number }
-const IntentContext = createContext<{ intent: Intent | null; act: (t: string) => void; fill: (t: string) => void } | null>(null);
+const IntentContext = createContext<{ intent: Intent | null; act: (t: string) => void; fill: (t: string) => void; consume: (n: number) => void } | null>(null);
 
 export function IntentProvider({ children, onNavigate }: { children: ReactNode; onNavigate: () => void }) {
     const [intent, setIntent] = useState<Intent | null>(null);
     const act = useCallback((text: string) => { setIntent({ text, mode: "run", n: Date.now() }); onNavigate(); }, [onNavigate]);
     const fill = useCallback((text: string) => { setIntent({ text, mode: "fill", n: Date.now() }); onNavigate(); }, [onNavigate]);
-    const value = useMemo(() => ({ intent, act, fill }), [intent, act, fill]);
+    const consume = useCallback((n: number) => setIntent((current) => current?.n === n ? null : current), []);
+    const value = useMemo(() => ({ intent, act, fill, consume }), [intent, act, fill, consume]);
     return <IntentContext.Provider value={value}>{children}</IntentContext.Provider>;
 }
 
