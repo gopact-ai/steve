@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Download01, Folder, Plus, PuzzlePiece01, RefreshCw01, Server01, Trash01 } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Badge } from "@/components/base/badges/badges";
@@ -10,8 +10,10 @@ import { Drawer } from "@/components/steve/drawer";
 import { Md } from "@/components/steve/markdown";
 import { Chips, KeyValue, PageBody, PageHeader, Panel } from "@/components/steve/page";
 import { Mono, Nothing } from "@/components/steve/ui";
-import { addSkillPath, addSkillSource, fetchMachineSkills, fetchSkill, fetchSkills, importSkill, refreshMachineSkills, removeSkillPath, removeSkillSource, setSkill, updateSkillSources, when } from "@/lib/api";
+import { addSkillPath, addSkillSource, fetchMachineSkills, fetchSkill, fetchSkills, importSkill, refreshMachineSkills, removeSkillPath, removeSkillSource, setSkill, updateSkillSources } from "@/lib/api/skills";
+import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
+import { useResourceRead } from "@/hooks/use-resource-read";
 import type { MachineSkills, SkillDoc, SkillView, SkillsView } from "@/lib/types";
 
 const fail = (e: unknown) => String(e).replace(/^Error: /, "");
@@ -31,8 +33,10 @@ export function SkillsPage() {
     const [spec, setSpec] = useState("");
     const [machines, setMachines] = useState<MachineSkills[] | null>(null);
     const pending = useRef(false);
-    const load = useCallback(async () => { try { setView(await fetchSkills()); setError(""); } catch (e) { setError(fail(e)); } }, []);
-    const loadMachines = useCallback(() => { void fetchMachineSkills().then((v) => setMachines(v.machines)).catch((e) => setError(fail(e))); }, []);
+    const [readError, setReadError] = useState("");
+    const [machinesError, setMachinesError] = useState("");
+    const load = useResourceRead("skills", fetchSkills, (next) => { setView(next); setReadError(""); }, (error) => setReadError(fail(error)));
+    const loadMachines = useResourceRead("machine-skills", fetchMachineSkills, (next) => { setMachines(next.machines); setMachinesError(""); }, (error) => setMachinesError(fail(error)));
     const [rescanning, setRescanning] = useState(false);
     const rescan = () => { setRescanning(true); void refreshMachineSkills().then((v) => setMachines(v.machines)).catch((e) => setError(fail(e))).finally(() => setRescanning(false)); };
     useEffect(() => { load(); }, [load, snap.at]);
@@ -56,7 +60,7 @@ export function SkillsPage() {
             <PageHeader title="技能"
                 description={`${on} 个已启用 · 安装和管理 Agent 技能，同步至所有机器。`} />
             <PageBody>
-                {error && <div role="alert" className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error}</div>}
+                {(error || readError || machinesError) && <div role="alert" className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error || readError || machinesError}</div>}
                 <p className="text-xs text-tertiary">变更会重启 AI 工具，执行期间不可修改。单独绑定的技能不受开关影响。</p>
                 <TableCard.Root size="sm" className="workbench-table min-w-0">
                     {!view ? <div className="px-5 py-6 text-sm text-tertiary">读取中…</div> : skills.length === 0 ? (

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Download01, Dataflow03, RefreshCw01, SearchSm, Server01, Trash01 } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Badge } from "@/components/base/badges/badges";
@@ -10,8 +10,10 @@ import { CodeBlock } from "@/components/steve/markdown";
 import { MCPToolList } from "@/components/steve/mcp-tools";
 import { Chips, KeyValue, PageBody, PageHeader, Panel } from "@/components/steve/page";
 import { Mono, Nothing } from "@/components/steve/ui";
-import { adoptMCP, fetchMCP, installMCP, probeMCP, removeMCP, searchMCPRegistry, when } from "@/lib/api";
+import { adoptMCP, fetchMCP, installMCP, probeMCP, removeMCP, searchMCPRegistry } from "@/lib/api/mcp";
+import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
+import { useResourceRead } from "@/hooks/use-resource-read";
 import type { MCPDeployment, MCPRegistryEntry, MCPView } from "@/lib/types";
 
 const fail = (e: unknown) => String(e).replace(/^Error: /, "");
@@ -48,11 +50,12 @@ export function MCPPage() {
     const [error, setError] = useState("");
     const [busy, setBusy] = useState("");
     const [opened, setOpened] = useState<string | null>(null);
-    const load = useCallback(() => { void fetchMCP().then((v) => { setView(v); setError(""); }).catch((e) => setError(fail(e))); }, []);
+    const [readError, setReadError] = useState("");
+    const load = useResourceRead("mcp", fetchMCP, (next) => { setView(next); setReadError(""); }, (error) => setReadError(fail(error)));
     useEffect(() => { load(); }, [load, snap.at]);
     async function run(key: string, op: () => Promise<unknown>) {
         setBusy(key); setError("");
-        try { await op(); load(); } catch (e) { setError(fail(e)); } finally { setBusy(""); }
+        try { await op(); await load(); } catch (e) { setError(fail(e)); } finally { setBusy(""); }
     }
     const deployments = view?.deployments ?? [];
     const current = opened ? deployments.find((d) => d.node + "/" + d.name === opened) : undefined;
@@ -61,7 +64,7 @@ export function MCPPage() {
             <PageHeader title="MCP"
                 description="连接 Agent 使用的工具服务，按机器管理部署与配置。" />
             <PageBody>
-                {error && <div role="alert" className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error}</div>}
+                {(error || readError) && <div role="alert" className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error || readError}</div>}
                 <TableCard.Root size="sm" className="workbench-table min-w-0">
                     <TableCard.Header title="已安装" badge={`${deployments.length}`} description="选择服务查看工具与连接状态；命令和密钥在机器配置中编辑。" />
                     {!view ? <div className="px-5 py-6 text-sm text-tertiary">读取中…</div> : deployments.length === 0 ? (

@@ -1,0 +1,13 @@
+import type { MachineSkills, SkillDoc, SkillSource, SkillsView } from "../types";
+import { request } from "../http";
+export const fetchSkills = (signal?: AbortSignal) => request<SkillsView>("/console/skills", { signal });
+export const fetchSkill = (name: string, signal?: AbortSignal) => request<SkillDoc>(`/console/skills/${encodeURIComponent(name)}`, { signal });
+export const setSkill = (name: string, enabled: boolean) => request<{ ok: boolean }>(`/console/skills/${encodeURIComponent(name)}`, { method: "PUT", body: { enabled } });
+export const addSkillPath = (path: string) => request<{ ok: boolean }>("/console/skills/paths", { method: "POST", body: { path } });
+export const removeSkillPath = (path: string) => request<{ ok: boolean }>(`/console/skills/paths?path=${encodeURIComponent(path)}`, { method: "DELETE" });
+export const addSkillSource = (spec: string) => request<SkillSource>("/console/skills/sources", { method: "POST", body: { spec } });
+export const updateSkillSources = () => request<{ sources: SkillSource[] }>("/console/skills/sources/update", { method: "POST" });
+export const removeSkillSource = (slug: string) => request<{ ok: boolean }>(`/console/skills/sources/${encodeURIComponent(slug)}`, { method: "DELETE" });
+export const fetchMachineSkills = (signal?: AbortSignal) => request<{ machines: MachineSkills[] }>("/console/skills/machines", { signal });
+export const refreshMachineSkills = () => request<{ machines: MachineSkills[] }>("/console/skills/machines/refresh", { method: "POST" });
+export const importSkill = (node: string, path: string) => request<{ ok: boolean; name: string }>("/console/skills/import", { method: "POST", body: { node, path } });

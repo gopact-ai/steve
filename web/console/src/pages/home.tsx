@@ -10,7 +10,7 @@ import { Md } from "@/components/steve/markdown";
 import { KeyValue, PageBody, PageHeader } from "@/components/steve/page";
 import { Mono, Nothing } from "@/components/steve/ui";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
-import { fetchHome, saveHomeFile, saveProjectMemory } from "@/lib/api";
+import { fetchHome, saveHomeFile, saveProjectMemory } from "@/lib/api/home";
 import { useFleet } from "@/lib/fleet";
 import type { HomeView } from "@/lib/types";
 

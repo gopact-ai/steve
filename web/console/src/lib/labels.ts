@@ -1,12 +1,12 @@
 // The words the page uses, and the internal ones they stand for. Internal
 // terms show only in tooltips and the audit view.
 export const zh = {
-    status: { pending: "空闲", running: "执行中", needs_you: "等你处理", set_aside: "已搁置", ended: "已结束" } as Record<string, string>,
+    status: { unknown: "状态未知", pending: "空闲", running: "执行中", needs_you: "等你处理", set_aside: "已搁置", ended: "已结束" } as Record<string, string>,
     taskState: { draft: "草稿", running: "进行中", idle: "空闲", blocked: "受阻", review: "待审", done: "已完成", failed: "失败", paused: "已暂停", cancelled: "已取消" } as Record<string, string>,
     stepState: { pending: "待执行", ready: "可执行", running: "执行中", verifying: "验证中", "awaiting-human": "等你回答", done: "完成", failed: "失败", skipped: "跳过" } as Record<string, string>,
     repo: { inplace: "直接修改主目录", isolated: "隔离副本，完成后合并" } as Record<string, string>,
     level: { public: "public", internal: "internal", restricted: "restricted", sealed: "sealed" } as Record<string, string>,
-    requestType: { disclosure: "允许发送", effect: "外部动作对账", question: "回答问题", pairing: "接入申请" } as Record<string, string>,
+    requestType: { writer: "隔离执行待核实", disclosure: "允许发送", effect: "外部动作对账", question: "回答问题", pairing: "接入申请" } as Record<string, string>,
     origin: { chat: "对话", plan: "计划", schedule: "定时", delegate: "子任务", repair: "修复" } as Record<string, string>,
 };
 

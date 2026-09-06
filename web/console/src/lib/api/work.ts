@@ -1,0 +1,10 @@
+import type { AttemptView, ChangeIndex, FileDiff, FileView, HistoryEntry, Task, TaskDetail, TaskMetaPatch, TreeView } from "../types";
+import { request } from "../http";
+export const fetchHistory = (before: number, limit = 60, signal?: AbortSignal) => request<{ entries: HistoryEntry[]; next: number }>(`/history?before=${before}&limit=${limit}`, { signal });
+export const fetchTask = (id: string, signal?: AbortSignal) => request<TaskDetail>(`/console/tasks/${encodeURIComponent(id)}`, { signal });
+export const patchTaskMeta = (id: string, body: TaskMetaPatch) => request<Task>(`/console/tasks/${encodeURIComponent(id)}/meta`, { method: "PATCH", body });
+export const fetchTaskAttempts = (id: string, signal?: AbortSignal) => request<AttemptView[]>(`/console/tasks/${encodeURIComponent(id)}/attempts`, { signal });
+export const fetchAttemptTree = (attempt: string, path: string, signal?: AbortSignal) => request<TreeView>(`/console/attempts/${encodeURIComponent(attempt)}/tree?path=${encodeURIComponent(path)}`, { signal });
+export const fetchAttemptFile = (attempt: string, path: string, signal?: AbortSignal) => request<FileView>(`/console/attempts/${encodeURIComponent(attempt)}/file?path=${encodeURIComponent(path)}`, { signal });
+export const fetchAttemptChanges = (attempt: string, signal?: AbortSignal) => request<ChangeIndex>(`/console/attempts/${encodeURIComponent(attempt)}/changes`, { signal });
+export const fetchAttemptDiff = (attempt: string, path: string, signal?: AbortSignal) => request<FileDiff>(`/console/attempts/${encodeURIComponent(attempt)}/diff?path=${encodeURIComponent(path)}`, { signal });

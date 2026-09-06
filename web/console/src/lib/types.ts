@@ -24,7 +24,7 @@ export interface Activity {
 export interface Condition { atom: string; met: boolean; code?: string; detail?: string }
 export interface Agent {
     id: string; node?: string; harness: string; model?: string; models?: string[]; eligible: boolean; why?: string;
-    requires?: string[]; level?: string; slots?: number; region?: string; repair?: string; activities?: Activity[]; busy?: number; snapshot?: AbilitySnapshot;
+    requires?: string[]; level?: string; slots?: number; region?: string; repair?: string; activities?: Activity[]; busy?: number; activity_known?: boolean; snapshot?: AbilitySnapshot;
     preferred?: string; observed?: string; conditions?: Condition[]; mcp_servers?: string[]; default?: boolean;
     options?: Record<string, string>; selectors?: Selector[]; about?: string;
 }
@@ -54,7 +54,7 @@ export interface Admission {
 }
 export interface Attempt {
     id: string; kind: string; state: string; task_id?: string; project: string; agent?: string; node?: string;
-    scope?: string; workspace?: string; leases?: string[]; started_at: string; requires?: string[]; admission?: Admission;
+    scope?: string; workspace?: string; leases?: string[]; started_at: string; requires?: string[]; admission?: Admission; unsettled?: boolean; error?: string;
 }
 export interface Landing { id: string; project: string; state: string; artifact: string; paths?: string; error?: string; at: string }
 export interface Reservation { id: string; key: string; node: string; harness: string; slots: number; for: string; by: string; expires_at: string }
@@ -68,9 +68,9 @@ export interface Facts {
 }
 export interface Choice { label: string; command: string; danger?: boolean }
 export interface HumanRequest {
-    id: string; type: string; source: string; project_id?: string; task_id?: string; summary: string; choices: Choice[]; created_at: string; resolvable: boolean;
+    id: string; type: string; source: string; project_id?: string; task_id?: string; attempt_id?: string; node?: string; workspace?: string; summary: string; choices: Choice[]; created_at: string; resolvable: boolean;
 }
-export interface Schedule { id: string; conversation: string; agent?: string; prompt: string; spec: string; next_at: string; last_at?: string; runs: number }
+export interface Schedule { id: string; conversation: string; agent?: string; prompt: string; spec: string; next_at: string; last_at?: string; runs: number; state?: string; error?: string; pending_key?: string }
 export interface SourceHealth { name: string; wired: boolean; error?: string }
 export interface UsageRow { key: string; tokens: Tokens; seconds: number; attempts: number; unreported?: number }
 export type UsageRange = "1d" | "7d" | "30d";
@@ -85,7 +85,7 @@ export interface Project {
 }
 export interface Workspace {
     id: string; node: string; path: string; kind: "canonical" | "copy" | "worktree" | string; origin?: string; source?: string;
-    state?: "ready" | "provisioning" | "failed" | string; error?: string; busy?: boolean;
+    state?: "ready" | "provisioning" | "failed" | string; error?: string; busy?: boolean; activity_known?: boolean;
     repos?: Repo[]; agents: string[];
 }
 // Placement is where an agent works in a project, as the server decides.
@@ -119,8 +119,8 @@ export interface TaskDetail { task: Task; plan?: Plan; children: Task[]; attempt
 // QuoteRef points at a line of some thread to carry along with a message;
 // the server reads the text, the page only keeps a preview.
 export interface Exchange {
-    id: string; conversation: string; input: string; quotes?: QuoteRef[];
-    state: "queued" | "running" | "done" | "failed";
+    id: string; conversation: string; input: string; quotes?: QuoteRef[]; key?: string;
+    state: "queued" | "running" | "done" | "failed" | "cancelled";
     enqueued_at: string; started_at?: string; reply_id?: string;
 }
 export interface QuoteRef { conversation: string; reply_id: string; title?: string; excerpt?: string }

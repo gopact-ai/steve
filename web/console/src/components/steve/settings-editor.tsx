@@ -1,46 +1,52 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Plus, Trash01 } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
 import { ButtonUtility } from "@/components/base/buttons/button-utility";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
 import { TextArea } from "@/components/base/textarea/textarea";
-import { fetchNodeSettings, saveNodeSettings, type HarnessSetting, type MCPSetting, type NodeSettings } from "@/lib/api";
+import { fetchNodeSettings, saveNodeSettings, type HarnessSetting } from "@/lib/api/fleet";
+import { changeMapFormat, settingsDraft, parseSettings, type MapFormat, type MCPDraft, type SettingRow, type SettingsDraft } from "@/lib/settings-draft";
 
 // SettingsEditor changes what a machine offers, from the page: its AI
 // tools, the commands it checks for, its MCP servers, and what it merely
 // declares. The machine validates, writes its own file, and reports back
 // with a fresh snapshot; nothing here is saved until it says so.
 export function SettingsEditor({ node, onClose, onSaved }: { node: string; onClose: () => void; onSaved: () => void }) {
-    const [s, setS] = useState<NodeSettings | null>(null);
+    const [s, setS] = useState<SettingsDraft | null>(null);
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
+    const saving = useRef(false);
     useEffect(() => {
-        void fetchNodeSettings(node).then((d) => setS(d.settings)).catch((e) => setError(String(e).replace(/^Error: /, "")));
+        let alive = true;
+        const controller = new AbortController();
+        setS(null); setError("");
+        void fetchNodeSettings(node, controller.signal).then((data) => { if (alive) setS(settingsDraft(data.settings)); }).catch((error) => { if (alive) setError(String(error).replace(/^Error: /, "")); });
+        return () => { alive = false; controller.abort(); };
     }, [node]);
     if (!s) return <div className="text-sm text-tertiary">{error || "读取中…"}</div>;
-    const update = (patch: Partial<NodeSettings>) => setS({ ...s, ...patch });
+    const update = (patch: Partial<SettingsDraft>) => setS({ ...s, ...patch });
     async function save() {
-        if (!s) return;
-        setBusy(true); setError("");
+        if (!s || saving.current) return;
+        saving.current = true; setBusy(true); setError("");
         try {
-            await saveNodeSettings(node, s);
+            await saveNodeSettings(node, parseSettings(s));
             onSaved();
             onClose();
-        } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
+        } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { saving.current = false; setBusy(false); }
     }
     return (
-        <div className="flex flex-col gap-5">
+        <fieldset disabled={busy} className="flex min-w-0 flex-col gap-5">
             <Section title="AI 工具" hint="每个 AI 工具是一条启动命令；Agent 按名字用它。">
                 <KeyedRows
-                    entries={s.harnesses}
+                    rows={s.harnesses}
                     onChange={(harnesses) => update({ harnesses })}
                     blank={{ command: "" }}
                     render={(id, h, set) => (
                         <div className="grid flex-1 grid-cols-[1fr_1fr_1.4fr] gap-2">
                             <Input size="sm" aria-label="名字" placeholder="名字，如 codex" value={id.value} onChange={id.set} />
                             <Input size="sm" aria-label="命令" placeholder="命令，如 npx" value={h.command} onChange={(v) => set({ ...h, command: v })} />
-                            <Input size="sm" aria-label="参数" placeholder="参数，空格分隔" value={(h.args || []).join(" ")} onChange={(v) => set({ ...h, args: splitArgs(v) })} />
+                            <ArgumentsEditor args={h.args || []} onChange={(args) => set({ ...h, args })} />
                         </div>
                     )}
                 />
@@ -51,9 +57,9 @@ export function SettingsEditor({ node, onClose, onSaved }: { node: string; onClo
             <Section title="MCP 服务器" hint={s.external_broker ? "这台机器的 MCP 由独立的 broker 进程持有，改它的 mcp.json。" : "这台机器能为会话启动的 MCP 服务器；env 和 headers 只留在这台机器上。"}>
                 {!s.external_broker && (
                     <KeyedRows
-                        entries={s.mcp_servers}
+                        rows={s.mcp_servers}
                         onChange={(mcp_servers) => update({ mcp_servers })}
-                        blank={{ type: "stdio", command: "" }}
+                        blank={{ type: "stdio", command: "", envText: "", headersText: "", envFormat: "lines", headersFormat: "lines" }}
                         render={(id, m, set) => <MCPRow id={id} m={m} set={set} />}
                     />
                 )}
@@ -64,12 +70,12 @@ export function SettingsEditor({ node, onClose, onSaved }: { node: string; onClo
             <Section title="标签" hint="自由词，计划步骤用裸词匹配它们，如 gpu、build。">
                 <ListEditor items={s.capabilities} placeholder="gpu" onChange={(capabilities) => update({ capabilities })} />
             </Section>
-            {error && <div className="text-sm text-error-primary">{error}</div>}
+            {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
             <div className="flex justify-end gap-2">
                 <Button size="sm" color="secondary" onClick={onClose}>取消</Button>
                 <Button size="sm" color="primary" isLoading={busy} onClick={() => void save()}>保存到这台机器</Button>
             </div>
-        </div>
+        </fieldset>
     );
 }
 
@@ -112,32 +118,43 @@ export function ListEditor({ items, placeholder, onChange }: { items: string[]; 
 
 // KeyedRows edits a map of id → value as rows that can be renamed,
 // removed, and added; the id is part of the row so a rename is a rename.
-function KeyedRows<T>({ entries, onChange, blank, render }: {
-    entries: Record<string, T>; onChange: (next: Record<string, T>) => void; blank: T;
-    render: (id: { value: string; set: (v: string) => void }, value: T, set: (v: T) => void) => React.ReactNode;
+function KeyedRows<T>({ rows, onChange, blank, render }: {
+    rows: SettingRow<T>[]; onChange: (next: SettingRow<T>[]) => void; blank: T;
+    render: (id: { value: string; set: (value: string) => void }, value: T, set: (value: T) => void) => React.ReactNode;
 }) {
-    const [rows, setRows] = useState<{ id: string; value: T }[]>(() => Object.entries(entries).sort(([a], [b]) => a.localeCompare(b)).map(([id, value]) => ({ id, value })));
-    const commit = (next: { id: string; value: T }[]) => {
-        setRows(next);
-        const out: Record<string, T> = {};
-        for (const r of next) if (r.id.trim()) out[r.id.trim()] = r.value;
-        onChange(out);
-    };
-    return (
-        <div className="flex flex-col gap-1.5">
-            {rows.map((r, i) => (
-                <div key={i} className="flex items-start gap-2">
-                    {render({ value: r.id, set: (v) => commit(rows.map((x, j) => (j === i ? { ...x, id: v } : x))) }, r.value, (v) => commit(rows.map((x, j) => (j === i ? { ...x, value: v } : x))))}
-                    <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip="移除" className="mt-1.5" onClick={() => commit(rows.filter((_, j) => j !== i))} />
-                </div>
-            ))}
-            <div><Button size="sm" color="link-gray" iconLeading={Plus} onClick={() => commit([...rows, { id: "", value: blank }])}>添加一项</Button></div>
-        </div>
-    );
+    const nextKey = useRef(Math.max(-1, ...rows.map((row) => row.key)) + 1);
+    return <div className="flex flex-col gap-1.5">
+        {rows.map((row) => <div key={row.key} className="flex items-start gap-2">
+            {render({ value: row.id, set: (id) => onChange(rows.map((item) => item.key === row.key ? { ...item, id } : item)) }, row.value,
+                (value) => onChange(rows.map((item) => item.key === row.key ? { ...item, value } : item)))}
+            <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip="移除" className="mt-1.5" onClick={() => onChange(rows.filter((item) => item.key !== row.key))} />
+        </div>)}
+        <div><Button size="sm" color="link-gray" iconLeading={Plus} onClick={() => onChange([...rows, { key: nextKey.current++, id: "", value: blank }])}>添加一项</Button></div>
+    </div>;
 }
 
-function MCPRow({ id, m, set }: { id: { value: string; set: (v: string) => void }; m: MCPSetting; set: (v: MCPSetting) => void }) {
+function ArgumentsEditor({ args, onChange }: { args: string[]; onChange: (args: string[]) => void }) {
+    return <div className="flex min-w-0 flex-col gap-1.5">
+        {args.map((argument, index) => <div key={index} className="flex min-w-0 items-center gap-1">
+            <Input size="sm" aria-label={`参数 ${index + 1}`} value={argument} onChange={(value) => onChange(args.map((item, i) => i === index ? value : item))} />
+            <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip={`移除参数 ${index + 1}`} onClick={() => onChange(args.filter((_, i) => i !== index))} />
+        </div>)}
+        <Button size="sm" color="link-gray" className="self-start" iconLeading={Plus} onClick={() => onChange([...args, ""])}>添加参数</Button>
+    </div>;
+}
+
+function MCPRow({ id, m, set }: { id: { value: string; set: (v: string) => void }; m: MCPDraft; set: (v: MCPDraft) => void }) {
     const stdio = !m.type || m.type === "stdio";
+    const [formatError, setFormatError] = useState("");
+    const mapLabel = stdio ? "环境变量" : "请求头";
+    const format = stdio ? m.envFormat : m.headersFormat;
+    function changeFormat(next: MapFormat) {
+        setFormatError("");
+        try {
+            const text = changeMapFormat(stdio ? m.envText : m.headersText, format, next, stdio ? "=" : ":", mapLabel);
+            set(stdio ? { ...m, envText: text, envFormat: next } : { ...m, headersText: text, headersFormat: next });
+        } catch (error) { setFormatError(error instanceof Error ? error.message : String(error)); }
+    }
     return (
         <div className="flex flex-1 flex-col gap-2 rounded-lg bg-secondary/50 p-2">
             <div className="grid grid-cols-[1fr_120px] gap-2">
@@ -149,28 +166,23 @@ function MCPRow({ id, m, set }: { id: { value: string; set: (v: string) => void 
             {stdio ? (
                 <div className="grid grid-cols-[1fr_1.4fr] gap-2">
                     <Input size="sm" aria-label="命令" placeholder="命令" value={m.command || ""} onChange={(v) => set({ ...m, command: v })} />
-                    <Input size="sm" aria-label="参数" placeholder="参数，空格分隔" value={(m.args || []).join(" ")} onChange={(v) => set({ ...m, args: splitArgs(v) })} />
+                    <ArgumentsEditor args={m.args || []} onChange={(args) => set({ ...m, args })} />
                 </div>
             ) : (
                 <Input size="sm" aria-label="地址" placeholder="https://…" value={m.url || ""} onChange={(v) => set({ ...m, url: v })} />
             )}
-            <TextArea aria-label={stdio ? "环境变量" : "请求头"} rows={2} placeholder={stdio ? "环境变量，每行一个 KEY=value（只留在这台机器）" : "请求头，每行一个 Name: value（只留在这台机器）"}
-                value={stdio ? kvLines(m.env, "=") : kvLines(m.headers, ": ")}
-                onChange={(v) => set(stdio ? { ...m, env: parseKV(v, "=") } : { ...m, headers: parseKV(v, ":") })} />
+            <Select size="sm" label={`${mapLabel}格式`} selectedKey={format} onSelectionChange={(key) => key && changeFormat(String(key) as MapFormat)}
+                items={[{ id: "lines", label: stdio ? "每行 KEY=value" : "每行 Name: value" }, { id: "json", label: "JSON 对象（支持多行值）" }]}>
+                {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+            </Select>
+            <TextArea aria-label={mapLabel} rows={format === "json" ? 5 : 2} textAreaClassName="font-mono text-xs"
+                hint={format === "json" ? "值使用 JSON 字符串；换行写为 \\n，双引号写为 \\\"。保存前会校验，不会改动未完成的输入。" : "每行一个名称和值；需要多行值时切换为 JSON 对象。内容只保留在这台机器。"}
+                placeholder={format === "json" ? '{"KEY": "first\\nsecond"}' : stdio ? "KEY=value" : "Name: value"}
+                value={stdio ? m.envText : m.headersText}
+                onChange={(value) => { setFormatError(""); set(stdio ? { ...m, envText: value } : { ...m, headersText: value }); }} />
+            {formatError && <p role="alert" className="text-xs text-error-primary">{formatError}</p>}
         </div>
     );
-}
-
-function splitArgs(v: string): string[] { return v.split(/\s+/).map((x) => x.trim()).filter(Boolean); }
-function kvLines(m: Record<string, string> | undefined, sep: string): string { return Object.entries(m || {}).map(([k, v]) => `${k}${sep}${v}`).join("\n"); }
-function parseKV(text: string, sep: string): Record<string, string> {
-    const out: Record<string, string> = {};
-    for (const line of text.split("\n")) {
-        const i = line.indexOf(sep);
-        if (i <= 0) continue;
-        out[line.slice(0, i).trim()] = line.slice(i + sep.length).trim();
-    }
-    return out;
 }
 
 export type { HarnessSetting };

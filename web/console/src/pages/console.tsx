@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { LayoutLeft, LayoutRight, MessageChatSquare, X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
@@ -12,15 +12,18 @@ import { TaskDrawer } from "@/components/steve/task-drawer";
 import { DelegationCard } from "@/components/steve/delegation";
 import { RAIL_WIDTH } from "@/components/steve/rail";
 import { BoardPage } from "./board";
-import { Working, applyLive, type Live } from "@/components/steve/trace";
+import { Working } from "@/components/steve/trace";
+import { applyLive, type Live } from "@/lib/live";
 import { Nothing } from "@/components/steve/ui";
-import { enqueue, fetchQueue, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, fetchSelectors, setPreferences } from "@/lib/api";
+import { enqueue, fetchQueue, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, fetchSelectors, setPreferences, checkSubmissionSupport, requireSubmissionSupport, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { Sheet } from "@/components/steve/drawer";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
+import { useResourceRead } from "@/hooks/use-resource-read";
 import { placeLabel } from "@/lib/workspaces";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { applyDelegation, restoreDelegations, withDelegations, type Delegations } from "@/lib/delegations";
-import { beginSubmission, finishSubmission, restoreSubmission, updateDraft, useDraft, useQuotes, useSubmission } from "@/lib/drafts";
+import { beginSubmission, retrySubmission, failSubmission, finishSubmission, reconcileSubmission, restoreSubmission, updateDraft, useDraft, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission } from "@/lib/drafts";
+import { HTTPError, isRejectedRequest } from "@/lib/http";
 import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, StepProcess, Exchange } from "@/lib/types";
 
 // ConsolePage is composition: it owns the conversation, the transcript,
@@ -40,14 +43,19 @@ export function ConsolePage() {
     }
     const setText = (value: SetStateAction<string>) => writeDraft(conversation, value);
     const submission = useSubmission(conversation);
-    const [stopping, setStopping] = useState<Record<string, boolean>>({});
-    const stopRequests = useRef(new Set<string>());
+    const submissionSupport = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
+    const canSubmit = submissionSupport.state === "supported";
+    const stops = useStops();
+    const stopState = stops[conversation];
+    const stopping = !!stopState?.active;
     const [creating, setCreating] = useState(false);
     const creatingRequest = useRef(false);
     const [status, setStatus] = useState("");
+    const [contextError, setContextError] = useState("");
+    const [conversationsError, setConversationsError] = useState("");
     useEffect(() => {
-        if (hubUpdated && !text && !creating && !submission && !Object.values(stopping).some(Boolean)) window.location.reload();
-    }, [hubUpdated, text, creating, submission, stopping]);
+        if (hubUpdated && !text && !creating && !submission && !Object.values(stops).some((stop) => stop.active || stop.uncertain)) window.location.reload();
+    }, [hubUpdated, text, creating, submission, stops]);
     const [live, setLive] = useState<Live | null>(null);
     const [delegations, setDelegations] = useState<Delegations>({});
     const transcript = entries.map((r) => withDelegations(r, delegations));
@@ -129,12 +137,10 @@ export function ConsolePage() {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location.search]);
 
-    const loadContext = useCallback(() => {
-        void fetchContext(conversation).then((data) => { if (activeConversation.current === conversation) setContext(data.context ?? null); }).catch(() => undefined);
-    }, [conversation]);
-    const loadConversations = useCallback(() => {
-        void fetchConversations().then((data) => setConversations(data.conversations || [])).catch(() => undefined);
-    }, []);
+    const loadContext = useResourceRead(`context:${conversation}`, (signal) => fetchContext(conversation, signal),
+        (data) => { setContext(data.context ?? null); setContextError(""); }, (error) => setContextError(String(error).replace(/^Error: /, "")));
+    const loadConversations = useResourceRead("conversations", fetchConversations,
+        (data) => { setConversations(data.conversations || []); setConversationsError(""); }, (error) => setConversationsError(String(error).replace(/^Error: /, "")));
 
     const loadQueue = useCallback(async () => {
         if (activeConversation.current !== conversation) return;
@@ -143,6 +149,7 @@ export function ConsolePage() {
             const data = await fetchQueue(conversation);
             if (activeConversation.current !== conversation || request !== queueRequest.current) return;
             setExchanges(data.queue || []);
+            reconcileSubmission(conversation, data.queue || []);
             const running = [...(data.queue || [])].filter((e) => e.state === "running").sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""))[0];
             setLive((cur) => running ? (cur?.exchangeID === running.id ? cur : { since: running.started_at || running.enqueued_at, exchangeID: running.id, steps: {}, order: [] }) : null);
         } catch (e) {
@@ -184,6 +191,12 @@ export function ConsolePage() {
         setLive(null);
         setChild(null);
     }, [conversation, loadContext, loadConversations, loadQueue, loadReplies]);
+
+    // Completion can arrive in an old route instance; the current subscriber
+    // refreshes its own projection when the shared stop operation settles.
+    useEffect(() => {
+        if (stopState && !stopState.active) { void loadQueue(); void loadReplies(); }
+    }, [stopState, loadQueue, loadReplies]);
 
     // Recover after reconnecting or missing an SSE event, including a turn
     // completed while this tab was asleep. Fetches never submit work.
@@ -238,13 +251,13 @@ export function ConsolePage() {
 
     useEffect(() => {
         if (!intent || intent.n === handled.current) return;
-        if (intent.mode === "run" && (!context || submission || creating || stopping[conversation])) return;
+        if (intent.mode === "run" && (!canSubmit || !context || submission || creating || isStopPending(conversation))) return;
         handled.current = intent.n;
         consume(intent.n);
         if (intent.mode === "fill") { setText(intent.text + " "); box.current?.focus(); }
         else void submit(intent.text);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [intent, context, submission, creating, stopping, consume]);
+    }, [intent, context, submission, creating, stopping, canSubmit, consume]);
 
     // The composer grows with the text, up to a few lines, like a chat app's.
     useEffect(() => {
@@ -264,6 +277,7 @@ export function ConsolePage() {
         setLoadingReplies(true);
         setExchanges([]);
         setContext(nextContext);
+        setContextError("");
         setLive(null);
         setChild(null);
         setPickedTask(null);
@@ -310,6 +324,7 @@ export function ConsolePage() {
     async function sideChat(q: Queued) {
         const id = "console:" + Date.now().toString(36);
         await queueAction(async () => {
+            await requireSubmissionSupport();
             // Finish binding before submitting: a timer can race a slow hub.
             if (context?.project?.id) await send(id, `/project use ${context.project.id}`);
             await deleteQueued(q.id);
@@ -319,52 +334,54 @@ export function ConsolePage() {
         });
     }
 
-    async function submit(line?: string) {
-        const input = (line ?? text).trim();
-        if (!input || submission || stopRequests.current.has(conversation) || creatingRequest.current || !context) return;
-        if (busy && !queueing) { setStatus("当前回合进行中，排队已关闭"); return; }
-        const carried = quotes;
-        try { if (!beginSubmission(conversation, input, carried)) return; }
-        catch { setStatus("暂时无法保存待发送内容，请保留草稿并检查浏览器存储"); return; }
-        setStatus("");
-        if (line === undefined) setText("");
-        setQuotes((list) => list.filter((q) => !carried.includes(q)));
-        followTranscript.current = true;
+    async function deliver(pending: Submission) {
         try {
-            await enqueue(conversation, input, carried.length ? carried : undefined);
-            if (activeConversation.current === conversation) {
-                setSelectedReply(null);
-            }
-        } catch (e) {
-            if (line === undefined) writeDraft(conversation, (current) => current ? `${input}\n${current}` : input);
-            setQuotes((list) => [...carried.filter((q) => !list.some((x) => x.conversation === q.conversation && x.reply_id === q.reply_id)), ...list]);
-            if (activeConversation.current === conversation) setStatus(String(e).replace(/^Error: /, ""));
+            await enqueue(conversation, pending.input, pending.quotes.length ? pending.quotes : undefined, pending.id);
+            finishSubmission(conversation, pending.id);
+            if (activeConversation.current === conversation) setSelectedReply(null);
+        } catch (error) {
+            const conflict = error instanceof HTTPError && error.status === 409;
+            const message = error instanceof Error ? error.message : String(error);
+            const retained = failSubmission(conversation, pending.id, message, conflict ? "conflict" : isRejectedRequest(error) ? "rejected" : "unknown");
+            if (retained && activeConversation.current === conversation) setStatus(isRejectedRequest(error) && !pending.uncertain ? message : "");
         } finally {
-            finishSubmission(conversation);
             await loadQueue();
-            refresh();
-            loadContext();
-            loadConversations();
+            refresh(); loadContext(); loadConversations();
             if (activeConversation.current === conversation) box.current?.focus();
         }
     }
 
+    async function submit(line?: string) {
+        const input = (line ?? text).trim();
+        if (!input || !canSubmit || submission || isStopPending(conversation) || creatingRequest.current || !context) return;
+        if (busy && !queueing) { setStatus("当前回合进行中，排队已关闭"); return; }
+        let pending: Submission | null;
+        try { pending = beginSubmission(conversation, input, quotes, line === undefined); }
+        catch { setStatus("暂时无法保存待发送内容，请保留草稿并检查浏览器存储"); return; }
+        if (!pending) return;
+        setStatus(""); clearStopNotice(conversation);
+        followTranscript.current = true;
+        await deliver(pending);
+    }
+
+    async function retrySend() {
+        if (!canSubmit || isStopPending(conversation)) return;
+        let pending: Submission | null;
+        try { pending = retrySubmission(conversation); }
+        catch { setStatus("暂时无法保存待发送内容，请检查浏览器存储"); return; }
+        if (pending) { setStatus(""); await deliver(pending); }
+    }
+
     async function stop() {
-        if (stopRequests.current.has(conversation)) return;
-        stopRequests.current.add(conversation);
-        setStopping((all) => ({ ...all, [conversation]: true }));
+        const id = beginStop(conversation);
+        if (!id) return;
         setStatus("");
         try {
-            await send(conversation, "/cancel");
-            await loadQueue();
-            await loadReplies();
-        } catch (e) {
-            if (activeConversation.current === conversation) setStatus(String(e).replace(/^Error: /, ""));
-        } finally {
-            stopRequests.current.delete(conversation);
-            setStopping((all) => ({ ...all, [conversation]: false }));
-            refresh();
-        }
+            const reply = await send(conversation, "/cancel", undefined, id);
+            finishStop(conversation, id, { message: reply.text || "停止请求已处理" });
+        } catch (error) {
+            finishStop(conversation, id, { error: error instanceof Error ? error.message : String(error), uncertain: !isRejectedRequest(error) });
+        } finally { refresh(); }
     }
 
     const settled = ["done", "failed", "skipped", "cancelled"];
@@ -441,7 +458,7 @@ export function ConsolePage() {
                             <button type="button" className="text-xs text-tertiary hover:text-primary" onClick={() => void updateConversation(current.id, { archived: false }).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}>取消归档</button>
                         </span>
                     )}
-                    <span role="status" className="console-status">{status || (creating ? "正在创建会话…" : stopping[conversation] ? "正在停止…" : submission?.active ? "正在发送…" : live || busy ? "进行中…" : "")}</span>
+                    <span role="status" className="console-status">{status || contextError || conversationsError || stopState?.error || stopState?.message || (creating ? "正在创建会话…" : stopping ? "正在停止…" : submission?.active ? "正在发送…" : live || busy ? "进行中…" : "")}</span>
                     <span className="workbench-segmented" role="group" aria-label="工作视图">
                         <button type="button" onClick={() => navigate("/console")} aria-pressed>会话</button>
                         <button type="button" onClick={() => navigate("/console?view=board")} aria-pressed={false}>看板</button>
@@ -477,15 +494,26 @@ export function ConsolePage() {
                             </div>
                         </div>
                         <div className="composer-dock">
+                            {!canSubmit && <div role="status" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
+                                <p>{submissionSupport.state === "unsupported" ? "Hub 需更新后才能发送指令。当前仍可查看会话和执行记录。" : submissionSupport.error ? "无法确认 Hub 是否支持安全提交，当前仅供查看。" : "正在确认 Hub 的提交能力，当前仅供查看。"}</p>
+                                {submissionSupport.error && <p className="mt-1 break-words">{submissionSupport.error}</p>}
+                                <button type="button" className="mt-1 underline disabled:opacity-50" disabled={submissionSupport.checking} onClick={() => void checkSubmissionSupport()}>{submissionSupport.checking ? "正在检查…" : "重新检查"}</button>
+                            </div>}
                             {submission && !submission.active && <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
-                                <p>发送结果尚未确认，请先查看会话记录，避免重复执行。</p>
+                                <p>{submission.conflict ? "这次发送的标识与服务器记录冲突，请核对会话记录，不要直接重新发送。" : submission.rejected ? "发送已被拒绝，草稿恢复失败。原内容仍保留，请检查浏览器存储。" : "发送结果尚未确认，请先查看会话记录，避免重复执行。"}</p>
+                                {submission.error && <p className="mt-1 break-words">{submission.error}</p>}
                                 <p className="my-1 whitespace-pre-wrap break-words">{submission.input}</p>
-                                <button type="button" className="mr-4 underline" onClick={() => { if (!restoreSubmission(conversation)) setStatus("草稿未能保存，待确认内容仍保留，请检查浏览器存储"); }}>恢复为草稿</button>
-                                <button type="button" className="underline" onClick={() => finishSubmission(conversation)}>已确认收到</button>
+                                {submission.id && !submission.conflict && !submission.rejected && <button type="button" className="mr-4 underline" onClick={() => void retrySend()}>重试这次发送</button>}
+                                {(!submission.id || submission.rejected) && <button type="button" className="mr-4 underline" onClick={() => { if (!restoreSubmission(conversation)) setStatus("草稿未能保存，待确认内容仍保留，请检查浏览器存储"); }}>恢复为草稿</button>}
+                                <button type="button" className="underline" onClick={() => { finishSubmission(conversation, submission.id); setStatus(""); }}>已确认收到</button>
+                            </div>}
+                            {stopState?.uncertain && <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
+                                <p>停止结果尚未确认。重试会核对同一次停止请求。</p>
+                                <button type="button" className="mt-1 underline" onClick={() => void stop()}>重试停止</button>
                             </div>}
                             <Composer
                                 value={text} onChange={setText} onSubmit={() => void submit()} onStop={() => void stop()}
-                                busy={busy} pending={!!submission} stopping={!!stopping[conversation]} disabled={creating || !context} boxRef={box} onKey={onKey}
+                                busy={busy} pending={!!submission} stopping={stopping} disabled={creating || !context || !canSubmit} boxRef={box} onKey={onKey}
                                 quotes={quotes} onDropQuote={(x) => setQuotes((list) => list.filter((y) => y.reply_id !== x.reply_id))}
                                 queue={queue} queueing={queueing} onToggleQueueing={() => setQueueing(!queueing)}
                                 onSteer={steer} onDropQueued={(q) => void queueAction(() => deleteQueued(q.id))}

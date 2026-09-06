@@ -3,7 +3,7 @@ import { Badge } from "@/components/base/badges/badges";
 import type { Progress, StepInfo } from "@/lib/types";
 import { ChangesFold } from "./changes";
 import { Md } from "./markdown";
-import { Trace } from "./trace";
+import { Trace } from "./progress-view";
 import { useFollowTail } from "@/hooks/use-follow-tail";
 
 // DelegationCard is one delegated child as the transcript shows it: a

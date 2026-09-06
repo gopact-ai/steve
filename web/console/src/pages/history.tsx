@@ -5,7 +5,8 @@ import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
-import { fetchHistory, short, when } from "@/lib/api";
+import { fetchHistory } from "@/lib/api/work";
+import { short, when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import type { HistoryEntry } from "@/lib/types";
 import { PageBody, PageHeader } from "@/components/steve/page";
@@ -29,9 +30,9 @@ export function HistoryPage() {
             setNext(data.next);
         } finally { setLoading(false); }
     };
-    useEffect(() => { void load(0, true); }, []);
-    // A new event means the head of the timeline moved; re-read it.
-    useEffect(() => { if (events.length) void load(0, true); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [events.length]);
+    // Identity changes even after the bounded event buffer reaches 300 items.
+    const latestEvent = events[0];
+    useEffect(() => { void load(0, true); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [latestEvent]);
     const shown = entries.filter((e) => !filter || `${e.subject} ${e.text} ${e.actor}`.toLowerCase().includes(filter.toLowerCase()));
     const f = snap.facts;
     return (

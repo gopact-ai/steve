@@ -27,7 +27,7 @@ export default function UsageDashboard() {
     const range = ranges.includes(selected) ? selected : "7d";
     const [metric, setMetric] = useState<Metric>("tokens");
     const period = snap.usage.periods?.[range];
-    const ledger = snap.sources.find((source) => source.name === "ledger");
+    const ledger = snap.sources.find((source) => source.name === "ledger-usage") ?? snap.sources.find((source) => source.name === "ledger");
     const zone = snap.usage.timezone && snap.usage.timezone !== "Local" ? snap.usage.timezone : period?.to.endsWith("Z") ? "UTC" : `UTC${period?.to.slice(-6) || ""}`;
     function chooseRange(range: UsageRange) {
         const next = new URLSearchParams(params); next.set("range", range); next.set("tab", "usage"); setParams(next, { replace: true });

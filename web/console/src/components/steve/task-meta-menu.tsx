@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Archive, DotsHorizontal, Edit05 } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
-import { patchTaskMeta } from "@/lib/api";
+import { patchTaskMeta } from "@/lib/api/work";
 import { useFleet } from "@/lib/fleet";
 import type { Task, TaskMetaPatch } from "@/lib/types";
 

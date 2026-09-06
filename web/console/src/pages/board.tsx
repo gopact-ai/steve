@@ -7,7 +7,7 @@ import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { ProgressBarBase } from "@/components/base/progress-indicators/progress-indicators";
 import { Toggle } from "@/components/base/toggle/toggle";
-import { relative, when } from "@/lib/api";
+import { relative, when } from "@/lib/format";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { fmtSeconds, fmtTokens, label, spend, zh } from "@/lib/labels";
 import type { Plan, Task } from "@/lib/types";
@@ -16,12 +16,15 @@ import { TaskDrawer } from "@/components/steve/task-drawer";
 import { TaskMetaMenu, TaskTitleEditor, useTaskMeta } from "@/components/steve/task-meta-menu";
 import { Nothing, StateBadge, Where, taskState } from "@/components/steve/ui";
 
+import { unavailableSource } from "@/lib/source-health";
+
 type TabKey = "active" | "all" | "scheduled" | "usage";
 const UsageDashboard = lazy(() => import("./usage-dashboard"));
 const lanes: { key: string; title: string; hint: string }[] = [
     { key: "pending", title: "待继续", hint: "等待下一条指令或排队执行" },
     { key: "running", title: "执行中", hint: "正在执行任务" },
     { key: "needs_you", title: "待处理", hint: "等待确认，或执行失败后需要处理" },
+    { key: "unknown", title: "状态未知", hint: "相关数据暂时无法完整读取" },
     { key: "ended", title: "已结束", hint: "完成或取消" },
 ];
 
@@ -41,9 +44,11 @@ export function BoardPage() {
     const roots = visibleTasks.filter((t) => !t.parent || !byID.has(t.parent));
     const running = roots.filter((t) => t.lane === "running").length;
     const needsYou = roots.filter((t) => t.lane === "needs_you").length;
+    const activityUnavailable = !!unavailableSource(snap.sources, "ledger-live");
+    const attentionUnavailable = !!unavailableSource(snap.sources, "ledger-attention");
     const today = new Date().toISOString().slice(0, 10);
     const todayUsage = snap.usage.periods?.["1d"]?.total ?? snap.usage.by_day.find((r) => r.key === today);
-    const usageUnavailable = snap.sources.some((source) => source.name === "ledger" && (!source.wired || source.error));
+    const usageUnavailable = !!unavailableSource(snap.sources, "ledger-usage");
     const todayTokens = todayUsage && todayUsage.attempts > 0 && (todayUsage.unreported || 0) >= todayUsage.attempts ? "未上报" : `${fmtTokens(todayUsage?.tokens.total || 0)} tok`;
     const setAside = roots.filter((t) => t.lane === "set_aside");
     const current = selected ? byID.get(selected) : undefined;
@@ -63,8 +68,8 @@ export function BoardPage() {
                     </TabList>
                 </Tabs>
                 {tab !== "usage" && <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
-                    <Stat label="执行中" value={running} tone={running ? "blue" : "gray"} />
-                    <Stat label="待处理" value={needsYou} tone={needsYou ? "warning" : "gray"} />
+                    <Stat label="执行中" value={activityUnavailable ? (running ? `${running}+` : "未知") : running} tone={running ? "blue" : "gray"} />
+                    <Stat label="待处理" value={attentionUnavailable ? (needsYou ? `${needsYou}+` : "未知") : needsYou} tone={needsYou ? "warning" : "gray"} />
                     <Stat label="今日" value={todayUsage && !usageUnavailable ? `${todayTokens} · ${fmtSeconds(todayUsage.seconds)}` : "—"} tone="gray" />
                 </div>}
                 </div>
@@ -72,7 +77,7 @@ export function BoardPage() {
             <div className="workbench-page-body min-h-0 min-w-0 flex-1 overflow-auto px-4 py-5 sm:px-6 lg:px-8">
                 {tab === "active" && (
                     <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
-                        {lanes.map((lane) => {
+                        {lanes.filter((lane) => lane.key !== "unknown" || roots.some((task) => task.lane === "unknown")).map((lane) => {
                             const items = roots.filter((t) => t.lane === lane.key || (lane.key === "ended" && t.lane === "set_aside" && false)).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
                             const shown = lane.key === "ended" ? items.slice(0, 8) : items;
                             return (
@@ -217,8 +222,8 @@ function Scheduled() {
                         {(s) => (
                             <Table.Row id={s.id}>
                                 <Table.Cell><span className="text-primary">{s.spec}</span></Table.Cell>
-                                <Table.Cell><span className="text-tertiary">{when(s.next_at)}</span></Table.Cell>
-                                <Table.Cell><span className="line-clamp-2 max-w-md">{s.prompt}</span></Table.Cell>
+                                <Table.Cell><span className="text-tertiary">{when(s.next_at)}</span>{s.state && <div className="mt-1"><StateBadge state={s.state} /></div>}</Table.Cell>
+                                <Table.Cell><span className="line-clamp-2 max-w-md">{s.prompt}</span>{s.error && <span className="mt-1 block max-w-md text-xs text-error-primary">{s.error}</span>}</Table.Cell>
                                 <Table.Cell><span className="text-xs text-tertiary">{s.conversation} · {s.agent || "默认"}</span></Table.Cell>
                                 <Table.Cell><span className="text-xs text-tertiary">{s.last_at ? `${relative(s.last_at)} · 共 ${s.runs} 次` : "还没跑过"}</span></Table.Cell>
                                 <Table.Cell><Button size="sm" color="link-gray" onClick={() => act("/schedules")}>查看</Button></Table.Cell>

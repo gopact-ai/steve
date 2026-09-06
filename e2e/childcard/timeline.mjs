@@ -89,7 +89,7 @@ try {
     await page.route("**/console/**", (route) => {
         const pathname = new URL(route.request().url()).pathname;
         const body = pathname === "/console/replies" ? { enabled: true, replies }
-            : pathname === "/console/queue" ? { queue: [] }
+            : pathname === "/console/queue" ? { submission_keys: true, queue: [] }
             : pathname === "/console/conversations" ? { enabled: true, conversations: [{ id: conversation, title: "过程时间线验证", count: 2, last_at: at }] }
             : pathname === "/console/context" ? { enabled: true, context: { conversation, agents: [], project: { id: "scratch", node: "node-a", path: "/scratch", bound: true } } }
             : { verbs: [], suggestions: [] };

@@ -7,7 +7,8 @@ import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
-import { addProject, addWorkspace, removeProject, removeWorkspace, when } from "@/lib/api";
+import { addProject, addWorkspace, removeProject, removeWorkspace } from "@/lib/api/projects";
+import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import type { Project, Repo, Workspace } from "@/lib/types";
 import { kindWord, stateWords } from "@/lib/workspaces";
@@ -120,6 +121,7 @@ function WorkspaceCard({ w, project, onChanged }: { w: Workspace; project: strin
                 {w.state === "provisioning" && <span className="flex items-center gap-1 u-meta"><Loading01 className="size-3 animate-spin text-fg-brand-primary" />正在克隆</span>}
                 {w.state === "failed" && <Badge type="pill-color" size="sm" color="error">克隆失败</Badge>}
                 {w.busy && <Badge type="pill-color" size="sm" color="warning">执行中</Badge>}
+                {w.activity_known === false && <Badge type="pill-color" size="sm" color="gray">活动状态未知</Badge>}
                 {w.kind === "copy" && (
                     <span className="ml-auto flex items-center gap-1">
                         {removing ? (

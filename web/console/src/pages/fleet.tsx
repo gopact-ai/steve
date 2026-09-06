@@ -8,8 +8,9 @@ import { Select } from "@/components/base/select/select";
 import { TextArea } from "@/components/base/textarea/textarea";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
-import { relative, removeNode, when } from "@/lib/api";
-import { addAgent, addNode, removeAgent, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api";
+import { removeNode } from "@/lib/api/fleet";
+import { relative, when } from "@/lib/format";
+import { addAgent, addNode, removeAgent, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
 import { useFleet, useIntent } from "@/lib/fleet";
 import type { AbilitySnapshot, Agent, Attempt, Capability, Condition, Node as NodeT } from "@/lib/types";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
@@ -95,7 +96,7 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
                             </details>
                         ) : null}
                         <DrawerSection title="当前活动">
-                            {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="text-xs text-secondary">#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since)}{x.detail ? ` · ${x.detail}` : ""}</div>) : <div className="text-xs text-quaternary">空闲</div>}
+                            {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="text-xs text-secondary">#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since)}{x.detail ? ` · ${x.detail}` : ""}</div>) : <div className="text-xs text-quaternary">{a.activity_known === false ? "活动状态未知" : "空闲"}</div>}
                         </DrawerSection>
                         <section className="rounded-lg bg-secondary/40 p-3">
                             <div className="flex min-w-0 flex-wrap items-center gap-3">
@@ -438,7 +439,7 @@ export function FleetPage() {
                                 </Table.Cell>
                                 <Table.Cell><div className="flex min-w-0 flex-col gap-1"><div><StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />{a.busy ? <span className="ml-1 text-xs text-tertiary">{a.busy}{a.slots ? `/${a.slots}` : ""}</span> : null}</div>{a.why && <span className="truncate text-xs text-error-primary" title={a.why}>{a.why}</span>}{a.repair && <Button size="sm" color="link-color" onClick={(e: React.MouseEvent) => { e.stopPropagation(); act(`/repair ${a.id}`); }}>让 {a.repair} 修复</Button>}</div></Table.Cell>
                                 <Table.Cell>
-                                    {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="truncate text-xs text-secondary" title={x.detail}>#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since)}</div>) : <span className="text-xs text-quaternary">空闲</span>}
+                                    {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="truncate text-xs text-secondary" title={x.detail}>#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since)}</div>) : <span className="text-xs text-quaternary">{a.activity_known === false ? "活动状态未知" : "空闲"}</span>}
                                 </Table.Cell>
                                 <Table.Cell><div className="flex min-w-0 flex-col gap-1"><span className="truncate text-xs text-secondary" title={a.node || snap.hub.node}>{a.node || snap.hub.node}</span><span className="truncate text-xs text-tertiary">{a.harness}</span></div></Table.Cell>
                                 <Table.Cell>
@@ -477,7 +478,7 @@ export function FleetPage() {
                                 <Table.Row id={a.id}>
                                     <Table.Cell><Mono>{a.id}</Mono></Table.Cell>
                                     <Table.Cell>{a.kind}</Table.Cell>
-                                    <Table.Cell><StateBadge state={a.state} /></Table.Cell>
+                                    <Table.Cell><div className="flex flex-col gap-1" title={a.error}><StateBadge state={a.unsettled ? "quarantined" : a.state} />{a.unsettled && <span className="text-xs text-warning-primary">原进程退出未确认</span>}</div></Table.Cell>
                                     <Table.Cell>{a.agent || "—"}</Table.Cell>
                                     <Table.Cell><Where node={a.node} /></Table.Cell>
                                     <Table.Cell>{a.project}</Table.Cell>

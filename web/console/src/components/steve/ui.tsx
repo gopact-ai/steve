@@ -22,8 +22,8 @@ export function colorOf(state: string): BadgeColors {
 }
 
 const stateWords: Record<string, string> = {
-    draft: "草稿", running: "进行中", blocked: "受阻", review: "待审", done: "已完成", failed: "失败", paused: "已暂停", cancelled: "已取消",
-    pending: "待执行", ready: "可执行", verifying: "验证中", "awaiting-human": "等你回答", skipped: "跳过",
+    draft: "草稿", running: "进行中", unknown: "状态未知", blocked: "受阻", review: "待审", done: "已完成", failed: "失败", paused: "已暂停", cancelled: "已取消",
+    pending: "待执行", dispatching: "投递中", accepted: "已接收", ready: "可执行", verifying: "验证中", "awaiting-human": "等你回答", skipped: "跳过",
     up: "在线", down: "离线", ready_agent: "可用", blocked_agent: "不可用", idle: "空闲",
     bound: "已绑定", committed: "已提交", verified: "已验证", pass: "通过", fail: "未通过", succeeded: "成功",
     leased: "已租", prepared: "已准备", applying: "应用中", transferring: "传输中", present: "在", lost: "丢失", expired: "过期",
@@ -83,6 +83,7 @@ export const Section = ({ title, description, aside, children }: { title: string
 // attempt is live; an open task nobody is working on is idle — a chat
 // thread waiting for its next line — not 进行中.
 export function taskState(t: { lifecycle: string; execution?: string }): string {
+    if (t.execution === "unknown" && t.lifecycle !== "done" && t.lifecycle !== "cancelled") return "unknown";
     if (t.lifecycle === "running") return t.execution === "running" ? "running" : "idle";
     return t.lifecycle;
 }

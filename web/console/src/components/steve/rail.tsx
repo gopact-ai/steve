@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { GitBranch01, MessageChatSquare, X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
-import { when } from "@/lib/api";
+import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import { label, zh } from "@/lib/labels";
 import { placeLabel } from "@/lib/workspaces";
@@ -15,7 +15,8 @@ import { CodeTab } from "./work-tabs";
 // the same width, so the side of the page does not jump.
 export const RAIL_WIDTH = 360;
 import { Chips, KeyValue, Panel } from "./page";
-import { InjectedPanel, ProcessBody, Working, type Live } from "./trace";
+import { InjectedPanel, ProcessBody, Working } from "./trace";
+import type { Live } from "@/lib/live";
 import { Mono, Nothing } from "./ui";
 
 export type RailTab = "context" | "trace" | "graph" | "code";

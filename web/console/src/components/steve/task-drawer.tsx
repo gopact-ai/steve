@@ -1,6 +1,7 @@
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
-import { send, short, when } from "@/lib/api";
+import { send } from "@/lib/api/console";
+import { short, when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import { fmtSeconds, fmtTokens, label, spend, zh } from "@/lib/labels";
 import type { Plan, Task } from "@/lib/types";
@@ -59,7 +60,7 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                     <div className="mt-1 text-xs text-tertiary">{t.member} @ {t.node || snap.hub.node} · 项目 {t.project_id || "—"} · {label(zh.origin, t.origin || "chat")} · 会话 {t.channel}</div></>} onClose={onClose}>
                 <DrawerSection title="结果">
                     <div className="flex flex-col gap-1 text-sm">
-                        <Row k="执行" v={t.execution === "running" ? "有 attempt 在跑" : "空闲"} />
+                        <Row k="执行" v={t.execution === "running" ? "有 attempt 在跑" : t.execution === "unknown" ? "状态未知" : "空闲"} />
                         <Row k="待你处理" v={t.attention ? `${t.attention} 项，见待处理页` : "无"} />
                         <Row k="预算" v={`${t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns} 回合 · ${t.elapsed || "0s"}${t.max_elapsed && t.max_elapsed !== "0s" ? ` / ${t.max_elapsed}` : ""}`} />
                         <Row k="用量" v={`${spend(t.tokens)} · ${fmtSeconds(t.seconds)}`} />

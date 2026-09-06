@@ -9,7 +9,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { preview } from "../childcard/preview.mjs";
 import { usageFixture, usageState } from "./usage-fixture.mjs";
 
-const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || "playwright");
+const { chromium } = await import(process.env.PLAYWRIGHT_MODULE || new URL("../../web/console/node_modules/playwright/index.mjs", import.meta.url).href);
 const output = process.env.OUTPUT_DIR || path.join(os.tmpdir(), "steve-console-interactions");
 await mkdir(output, { recursive: true });
 const app = await preview();
@@ -67,8 +67,8 @@ async function fixture({ history = false, running = false } = {}) {
         if (pathname === "/console/queue" && req.method() === "POST") {
             call.projectAtEnqueue = current?.project || "home";
             if (f.enqueue) await f.enqueue;
-            if (f.failEnqueue) return route.fulfill({ status: 503, body: "Enqueue unavailable" });
-            return route.fulfill({ json: { id: `queued-${f.calls.length}`, conversation, input: input.input, state: "queued", enqueued_at: at } });
+            if (f.failEnqueue) return route.fulfill({ status: 400, body: "Enqueue rejected" });
+            return route.fulfill({ json: { id: `queued-${f.calls.length}`, key: input.command_id ? `client:${input.command_id}` : undefined, conversation, input: input.input, state: "queued", enqueued_at: at } });
         }
         if (pathname === "/console/replies") {
             f.replyReads++;
@@ -76,7 +76,7 @@ async function fixture({ history = false, running = false } = {}) {
             if (f.replyResponse) await f.replyResponse;
             return route.fulfill({ json: { enabled: true, replies: snapshot } });
         }
-        if (pathname === "/console/queue") return route.fulfill({ json: { queue: queue.filter((q) => q.conversation === conversation) } });
+        if (pathname === "/console/queue") return route.fulfill({ json: { submission_keys: true, queue: queue.filter((q) => q.conversation === conversation) } });
         if (pathname === "/console/context") return route.fulfill({ json: { enabled: true, context: { conversation, agents: [], project: { ...project(current?.project || "home"), bound: !!current } } } });
         if (pathname === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations: conversations.map((c) => ({ ...c, count: replies[c.id]?.length || 0, running: running && c.id === A, last_at: at })) } });
         if (pathname.startsWith("/console/conversations/") && req.method() === "PUT") {
@@ -282,7 +282,7 @@ const checks = {
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.box.pressSequentially("New draft typed during submission");
         release();
-        await f.page.getByText("Enqueue unavailable", { exact: true }).waitFor();
+        await f.page.getByText("Enqueue rejected", { exact: true }).waitFor();
         assert.match(await f.box.inputValue(), /^Unsent first instruction\n+New draft typed during submission$/, "Failed submission must restore the first instruction without losing newer typing");
         assert.equal(f.queued().length, 1, "Failed submission must not retry automatically");
     },
@@ -319,7 +319,7 @@ const checks = {
         assert.equal(f.queued().length, 1, "Remounting must not automatically resend the failed instruction");
     },
     async "send-reload-pending"(f) {
-        f.hold("enqueue");
+        const release = f.hold("enqueue");
         await f.box.fill("Instruction before network delivery");
         await f.box.press("Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
@@ -334,10 +334,13 @@ const checks = {
         await delay(150);
         assert.equal(f.queued().length, 1, "Enter must not bypass unresolved submission recovery");
         assert.equal(await f.box.inputValue(), "Newer unsent draft");
-        await f.page.getByRole("button", { name: "恢复为草稿", exact: true }).click();
-        assert.match(await f.box.inputValue(), /Instruction before network delivery/, "Explicit recovery must restore the original instruction");
-        assert.match(await f.box.inputValue(), /Newer unsent draft/, "Explicit recovery must also preserve the newer draft");
-        assert.equal(f.queued().length, 1, "Recovering a draft must not send it automatically");
+        assert.equal(await f.page.getByRole("button", { name: "恢复为草稿", exact: true }).count(), 0, "An unresolved keyed submission must retain idempotency protection");
+        await f.page.getByRole("button", { name: "重试这次发送", exact: true }).click();
+        await eventually(() => f.queued().length === 2, "Explicit retry must be submitted");
+        assert.equal(f.queued()[0].command_id, f.queued()[1].command_id, "Retry must preserve the original identity");
+        release();
+        await eventually(async () => await f.page.getByRole("button", { name: "重试这次发送", exact: true }).count() === 0, "Receipt must settle the pending submission");
+        assert.equal(await f.box.inputValue(), "Newer unsent draft", "Retry must preserve newer typing");
     },
     async "recovery-storage-failure"(f) {
         f.hold("enqueue");
@@ -346,7 +349,7 @@ const checks = {
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.box.fill("Newer persisted draft");
         await f.page.reload();
-        const recover = f.page.getByRole("button", { name: "恢复为草稿", exact: true });
+        const recover = f.page.getByRole("button", { name: "重试这次发送", exact: true });
         await recover.waitFor();
         await f.page.evaluate(() => {
             Storage.prototype.setItem = () => { throw new DOMException("Quota exceeded", "QuotaExceededError"); };
@@ -1222,6 +1225,28 @@ checks["skill-toggle-layout"] = async (f) => {
         assert.equal(after.sidebar.bottom, after.height, "The sidebar must remain anchored to the viewport");
     }
     assert.equal(f.calls.length, 2, "Each mouse/keyboard toggle sends exactly one update");
+};
+
+checks["readmodel-unknown"] = async (f) => {
+    const usage = usageFixture();
+    const state = { ...usageState(usage), tasks: [{ ...task("11", A, "scratch"), execution: "unknown", lane: "unknown" }], agents: [{ id: "test-agent", harness: "mock", eligible: true, activity_known: false, busy: 0, activities: [] }], sources: [
+        { name: "ledger", wired: true, error: "partial ledger read" },
+        { name: "ledger-live", wired: true, error: "activity unavailable" },
+        { name: "ledger-attention", wired: true, error: "attention unavailable" },
+        { name: "ledger-usage", wired: true },
+    ] };
+    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    await f.page.goto(`${app.url}/#/console?view=board`); await f.page.reload();
+    await f.page.getByText("Task 11", { exact: true }).waitFor();
+    await f.page.getByText("状态未知", { exact: true }).first().waitFor();
+    await f.page.getByRole("tab", { name: "用量", exact: true }).click();
+    await f.page.getByRole("heading", { name: "用量概览", exact: true }).waitFor();
+    await f.page.getByRole("region", { name: "区间用量汇总", exact: true }).waitFor();
+    await f.page.getByRole("link", { name: "待处理", exact: true }).click();
+    await f.page.getByText(/待处理信息尚未完整读取/).waitFor();
+    assert.equal(await f.page.getByText("暂无待处理请求", { exact: true }).count(), 0, "Unavailable attention cannot be presented as no requests");
+    await f.page.getByRole("link", { name: "资源", exact: true }).click();
+    await f.page.getByText("活动状态未知", { exact: true }).waitFor();
 };
 
 checks["usage-dashboard-ranges"] = async (f) => {
