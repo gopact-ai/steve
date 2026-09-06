@@ -28,6 +28,47 @@
     transition-timing-function: inherit;
 }
 
+/* TEXT ROLES
+ *
+ * The type scale in theme.css is 12 / 14 / 16 / 18 / 20, a step of about
+ * 1.15. A component that picks a size is choosing a rung on that ladder
+ * for reasons only it knows, and once two components disagree the ladder
+ * stops meaning anything: 42 places had settled on 11px, off the scale
+ * entirely, and that one size was doing four unrelated jobs at once.
+ *
+ * So a component says what a thing IS and the system decides how it
+ * looks. There are three roles and they are enough for this console:
+ *
+ *   u-title  what the row is about — the one thing worth reading
+ *   u-meta   what qualifies it — read only after the title has landed
+ *   u-label  what a group of rows is — read once, then ignored
+ *
+ * Note what does NOT vary: title and meta are one step apart (14 → 12),
+ * and every further demotion is carried by colour and weight. Size is
+ * expensive — it changes the shape of the page — so it is spent once.
+ */
+
+@utility u-title {
+    font-size: var(--text-sm);
+    line-height: var(--text-sm--line-height);
+    color: var(--color-text-primary);
+}
+
+@utility u-meta {
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    color: var(--color-text-tertiary);
+}
+
+@utility u-label {
+    font-size: var(--text-xs);
+    line-height: var(--text-xs--line-height);
+    font-weight: 500;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+    color: var(--color-text-quaternary);
+}
+
 html,
 body {
     font-family: var(--font-body);

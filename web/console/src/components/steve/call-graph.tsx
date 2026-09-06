@@ -44,13 +44,13 @@ function TaskNode({ t, tasks, plans, depth, liveSteps, seen, onSelect }: { t: Ta
                                 <Who agent={s.agent} node={s.node} running={s.state === "running" || liveSteps?.includes(s.id)} small />
                                 <span className="ml-auto shrink-0"><StateBadge state={s.state} /></span>
                             </div>
-                            <div className="ml-4 line-clamp-1 text-[11px] text-secondary" title={s.goal}>{s.goal}</div>
-                            {s.needs?.length ? <div className="ml-4 text-[11px] text-quaternary">依赖 {s.needs.join(", ")}{s.merge?.length ? ` · 汇合 ${s.merge.join(", ")}` : ""}</div> : null}
+                            <div className="ml-4 line-clamp-1 u-meta text-secondary" title={s.goal}>{s.goal}</div>
+                            {s.needs?.length ? <div className="ml-4 u-meta text-quaternary">依赖 {s.needs.join(", ")}{s.merge?.length ? ` · 汇合 ${s.merge.join(", ")}` : ""}</div> : null}
                         </li>
                     ))}
                     {children.map((c) => (
                         <li key={c.id} className="flex min-w-0 flex-col gap-1">
-                            <div className="text-[11px] text-quaternary">{t.member || "steve"} 委派 →</div>
+                            <div className="u-meta text-quaternary">{t.member || "steve"} 委派 →</div>
                             <TaskNode t={c} tasks={tasks} plans={plans} depth={depth + 1} liveSteps={liveSteps} seen={seen} onSelect={onSelect} />
                         </li>
                     ))}
@@ -73,7 +73,7 @@ function kindOf(t: Task): string {
 
 function Who({ agent, node, running, small }: { agent?: string; node?: string; running?: boolean; small?: boolean }) {
     return (
-        <span className={`inline-flex shrink-0 items-center gap-1 rounded-md bg-secondary px-1.5 ${small ? "py-0 text-[11px]" : "py-0.5 text-xs"} font-medium text-primary`}>
+        <span className={`inline-flex shrink-0 items-center gap-1 rounded-md bg-secondary px-1.5 ${small ? "py-0 u-meta" : "py-0.5 text-xs"} font-medium text-primary`}>
             {running && <Loading01 className="size-3 animate-spin text-fg-brand-primary" />}
             {agent || "未放置"}
             {node && <span className="font-normal text-tertiary">@ {node}</span>}

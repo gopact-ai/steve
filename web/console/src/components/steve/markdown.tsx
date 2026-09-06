@@ -48,7 +48,7 @@ export function CodeBlock({ code, lang, label, meta, muted, maxHeight = 320, cla
     }
     return (
         <div className={`not-prose my-2 flex min-w-0 flex-col overflow-hidden rounded-lg bg-secondary ring-1 ring-secondary ${className ?? ""}`}>
-            <div className="flex items-center gap-1.5 border-b border-secondary px-3 py-1 text-[11px] text-quaternary">
+            <div className="flex items-center gap-1.5 border-b border-secondary px-3 py-1 u-meta text-quaternary">
                 <Icon className="size-3.5 shrink-0" />
                 <span className="font-medium">{label ?? langName(lang)}</span>
                 {meta && <span className="truncate">· {meta}</span>}

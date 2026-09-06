@@ -116,7 +116,7 @@ function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () 
                         {t.priority === "high" && <Badge type="pill-color" size="sm" color="warning">高</Badge>}
                         {t.archived_at && <Badge type="pill-color" size="sm" color="gray">已归档</Badge>}
                         {t.attention ? <Badge type="pill-color" size="sm" color="warning">{t.attention} 项待处理</Badge> : null}
-                        <span className="text-[11px] text-quaternary">{label(zh.origin, t.origin || "chat")}</span>
+                        <span className="u-meta text-quaternary">{label(zh.origin, t.origin || "chat")}</span>
                     </div>
                     <div className="pointer-events-auto shrink-0"><TaskMetaMenu t={t} pending={meta.pending || meta.renaming} onRename={meta.rename} onPatch={(patch) => void meta.save(patch)} /></div>
                 </div>
@@ -133,7 +133,7 @@ function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () 
                     </div>
                 )}
                 {steps.length > 0 && <div className="text-xs text-tertiary">计划 {done}/{steps.length} 步</div>}
-                <div className="flex items-center gap-2 text-[11px] text-quaternary">
+                <div className="flex items-center gap-2 u-meta text-quaternary">
                     <span className="w-16">{t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns} 回合</span>
                     <ProgressBarBase value={pct} className="flex-1" progressClassName={pct > 80 ? "bg-warning-solid" : undefined} />
                     <span>{t.elapsed}</span>

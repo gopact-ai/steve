@@ -334,7 +334,7 @@ function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
         <div className="grid grid-cols-2 gap-x-6 gap-y-3 md:grid-cols-3">
             {shown.map((b) => (
                 <div key={b.title} className="flex min-w-0 flex-col gap-1.5">
-                    <div className="text-[11px] font-medium uppercase tracking-wide text-quaternary" title={b.hint ?? (snapshot.coverage?.[b.kinds[0]] ? `覆盖：${snapshot.coverage[b.kinds[0]]}` : undefined)}>{b.title}</div>
+                    <div className="u-label" title={b.hint ?? (snapshot.coverage?.[b.kinds[0]] ? `覆盖：${snapshot.coverage[b.kinds[0]]}` : undefined)}>{b.title}</div>
                     <div className="flex flex-wrap gap-1 text-xs">
                         {merge(b.items).map(({ c, scopes }) => {
                             const st = state(c, snapshot);
@@ -350,7 +350,7 @@ function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
                     </div>
                 </div>
             ))}
-            {snapshot.source === "legacy" && <span className="col-span-full text-[11px] text-quaternary">旧版本 node：只知道 AI 工具与标签，其它类别未知。</span>}
+            {snapshot.source === "legacy" && <span className="col-span-full u-meta text-quaternary">旧版本 node：只知道 AI 工具与标签，其它类别未知。</span>}
         </div>
     );
 }

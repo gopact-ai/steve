@@ -47,13 +47,13 @@ export function DelegationCard({ id, info, progress, live, open }: {
                 {progress && <Trace p={progress} live={running} thinkingOpen={running} omitText={!running ? finalText : undefined} />}
                 {answer && (
                     <div className="rounded-md bg-secondary/50 px-3 py-2">
-                        <div className="mb-1 text-[11px] text-quaternary">它说</div>
+                        <div className="mb-1 u-meta text-quaternary">它说</div>
                         <Md size="xs" text={answer} className="max-h-72 overflow-y-auto text-secondary" />
                     </div>
                 )}
                 {info.attempt && info.files ? <ChangesFold summary={{ attempt: info.attempt, files: info.files }} /> : null}
                 {info.refs?.length ? (
-                    <ul className="flex flex-col gap-0.5 text-[11px] text-quaternary">{info.refs.map((r, i) => <li key={i} className="truncate font-mono" title={r}>{r}</li>)}</ul>
+                    <ul className="flex flex-col gap-0.5 u-meta text-quaternary">{info.refs.map((r, i) => <li key={i} className="truncate font-mono" title={r}>{r}</li>)}</ul>
                 ) : null}
             </div>
         </details>

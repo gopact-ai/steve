@@ -60,7 +60,7 @@ export function MCPPage() {
                             <Table.Body items={deployments.map((d) => ({ ...d, key: d.node + "/" + d.name }))}>
                                 {(d) => (
                                     <Table.Row id={d.node + "/" + d.name} className="cursor-pointer">
-                                        <Table.Cell><span className="font-medium text-primary">{d.name}</span>{d.same_name_elsewhere && <span className="ml-1 text-[11px] text-quaternary" title="别的机器上也有这个名字；是不是同一个服务只有你知道">同名</span>}</Table.Cell>
+                                        <Table.Cell><span className="font-medium text-primary">{d.name}</span>{d.same_name_elsewhere && <span className="ml-1 u-meta text-quaternary" title="别的机器上也有这个名字；是不是同一个服务只有你知道">同名</span>}</Table.Cell>
                                         <Table.Cell><Mono>{d.node}</Mono></Table.Cell>
                                         <Table.Cell><span className="text-xs text-secondary">{typeWords[d.type] || d.type}</span></Table.Cell>
                                         <Table.Cell><Mono className="max-w-xs truncate text-tertiary" >{d.command || d.url || "—"}</Mono></Table.Cell>
@@ -103,8 +103,8 @@ export function MCPPage() {
                                             {m.own.map((o) => (
                                                 <li key={o.source + "/" + o.name + o.scope} className="flex items-center gap-3 py-1.5">
                                                     <div className="min-w-0 flex-1">
-                                                        <div className="flex items-center gap-2 text-sm"><span className="font-medium text-primary">{o.name}</span><Badge type="modern" size="sm" color="gray">{o.source}</Badge>{o.scope && <span className="truncate text-[11px] text-quaternary" title={o.scope}>项目 {o.scope}</span>}</div>
-                                                        <div className="truncate font-mono text-[11px] text-tertiary">{o.type}: {o.command ? [o.command, ...(o.args || [])].join(" ") : o.url}{o.env_keys?.length ? ` · env ${o.env_keys.join(", ")}` : ""}{o.header_keys?.length ? ` · headers ${o.header_keys.join(", ")}` : ""}</div>
+                                                        <div className="flex items-center gap-2 text-sm"><span className="font-medium text-primary">{o.name}</span><Badge type="modern" size="sm" color="gray">{o.source}</Badge>{o.scope && <span className="truncate u-meta text-quaternary" title={o.scope}>项目 {o.scope}</span>}</div>
+                                                        <div className="truncate font-mono u-meta">{o.type}: {o.command ? [o.command, ...(o.args || [])].join(" ") : o.url}{o.env_keys?.length ? ` · env ${o.env_keys.join(", ")}` : ""}{o.header_keys?.length ? ` · headers ${o.header_keys.join(", ")}` : ""}</div>
                                                     </div>
                                                     {o.adopted ? <span className="text-xs text-quaternary">已纳入</span>
                                                         : o.scope ? <span className="text-xs text-quaternary" title="项目级配置绑着一个目录，第一版只展示">项目级，先不纳入</span>
@@ -149,7 +149,7 @@ function DeploymentDrawer({ d, onClose, busy, onProbe, onRemove }: { d: MCPDeplo
                 { k: "谁在用", v: <Chips items={d.agents.map((a) => ({ id: a }))} empty={<span className="text-quaternary">没有 Agent 引用它</span>} /> },
                 { k: "来历", v: d.provenance || <span className="text-quaternary">手写配置</span> },
             ]} />
-            <DrawerSection title="工具" aside={d.probe ? <span className="text-[11px] text-quaternary">探测于 {when(d.probe.at)}{d.probe.stale ? " · 配置后来变了，结果可能过时" : ""}{d.probe.server_name ? ` · ${d.probe.server_name} ${d.probe.server_version || ""}` : ""}</span> : undefined}>
+            <DrawerSection title="工具" aside={d.probe ? <span className="u-meta text-quaternary">探测于 {when(d.probe.at)}{d.probe.stale ? " · 配置后来变了，结果可能过时" : ""}{d.probe.server_name ? ` · ${d.probe.server_name} ${d.probe.server_version || ""}` : ""}</span> : undefined}>
                 {!d.probe ? <div className="text-xs text-quaternary">还没探测过。探测会真的启动一次这个服务器（本机进程会跑起来、远端会被连一次），只问它有哪些工具，不调用任何一个。</div>
                     : d.probe.error ? <CodeBlock code={d.probe.error} label="探测失败" muted maxHeight={160} />
                         : d.probe.tools.length === 0 ? <div className="text-xs text-quaternary">它说自己没有工具。</div> : (
@@ -164,7 +164,7 @@ function DeploymentDrawer({ d, onClose, busy, onProbe, onRemove }: { d: MCPDeplo
                                 ))}
                             </ul>
                         )}
-                {d.probe && !d.probe.error && <div className="mt-1 text-[11px] text-quaternary">工具集摘要 <Mono>{d.probe.digest}</Mono>（名字 + 输入 schema；变了就说明服务器换了工具）</div>}
+                {d.probe && !d.probe.error && <div className="mt-1 u-meta text-quaternary">工具集摘要 <Mono>{d.probe.digest}</Mono>（名字 + 输入 schema；变了就说明服务器换了工具）</div>}
             </DrawerSection>
             <section className="rounded-lg bg-secondary/40 p-3">
                 <div className="flex items-center gap-3">
@@ -230,7 +230,7 @@ function RegistryPanel({ onInstalled }: { onInstalled: () => void }) {
                             <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2 text-sm"><span className="font-medium text-primary">{e.name}</span>{e.version && <Mono className="text-quaternary">{e.version}</Mono>}</div>
                                 <div className="line-clamp-2 text-xs text-tertiary">{e.description}</div>
-                                <div className="mt-0.5 flex flex-wrap gap-1 text-[11px] text-quaternary">{e.packages.map((p, i) => <span key={i}>{p.registry_type}{p.needs ? ` · 要 ${p.needs}` : ""}</span>)}{e.remotes.map((r, i) => <span key={"r" + i}>远端 {r.type}</span>)}{e.repository && <a className="underline" href={e.repository} target="_blank" rel="noreferrer">仓库</a>}</div>
+                                <div className="mt-0.5 flex flex-wrap gap-1 u-meta text-quaternary">{e.packages.map((p, i) => <span key={i}>{p.registry_type}{p.needs ? ` · 要 ${p.needs}` : ""}</span>)}{e.remotes.map((r, i) => <span key={"r" + i}>远端 {r.type}</span>)}{e.repository && <a className="underline" href={e.repository} target="_blank" rel="noreferrer">仓库</a>}</div>
                             </div>
                             <Button size="sm" color="secondary" onClick={() => pick(e)} isDisabled={e.packages.length + e.remotes.length === 0}>选它</Button>
                         </li>
