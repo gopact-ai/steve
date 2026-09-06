@@ -58,7 +58,7 @@ function Shell() {
             {groups.map((group) => <div key={group.title} className="app-nav-group">
                 {!small && <span className="app-nav-label">{group.title}</span>}
                 {group.items.map((item) => <a key={item.href} href={"#" + item.href} aria-label={small ? item.label : undefined}
-                    aria-current={selected === item.href ? "page" : undefined} title={small ? item.label : undefined}
+                    aria-current={(item.href === "/home" ? location.pathname === "/home" : selected === item.href) ? "page" : undefined} title={small ? item.label : undefined}
                     className="app-nav-item" onClick={() => setMobileNav(false)}>
                     <item.icon aria-hidden="true" />
                     {!small && <span>{item.label}</span>}

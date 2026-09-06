@@ -593,6 +593,101 @@ checks["mcp-tool-details"] = async (f) => {
     assert.equal(f.calls.length, 0, "Reading tool descriptions must not invoke, probe, or install services");
 };
 
+async function homeFixture(f) {
+    const files = [
+        { name: "SOUL.md", text: "# Identity\n\nA calm assistant.", budget: 128 },
+        { name: "USER.md", text: "# Preferences\n\nConcise replies.", budget: 256 },
+        { name: "MEMORY.md", text: "", budget: 256, missing: true },
+    ];
+    const projects = [{ id: "scratch", path: "/test/scratch/MEMORY.md", text: "# Project memory\n\nInitial context.", budget: 256, facts: 0 }];
+    const state = { writes: [], hold: null, failWrite: false, failRead: false };
+    await f.page.route(/\/console\/(home|memory)(\/|$)/, async (route) => {
+        const req = route.request(), url = new URL(req.url());
+        if (req.method() === "GET") {
+            if (state.failRead) return route.fulfill({ status: 503, body: "Readback unavailable" });
+            return route.fulfill({ json: { path: "/test/home", files, projects, total_budget: 640, owner_bytes: 80, guest_bytes: 30, warnings: [], audit: "/test/audit" } });
+        }
+        assert.equal(req.method(), "PUT");
+        const input = req.postDataJSON();
+        state.writes.push({ path: url.pathname, ...input });
+        if (state.hold) await state.hold;
+        if (state.failWrite) return route.fulfill({ status: 400, body: "Save rejected" });
+        const name = decodeURIComponent(url.pathname.split("/").pop());
+        const doc = url.pathname.includes("/memory/") ? projects.find((p) => p.id === name) : files.find((p) => p.name === name);
+        doc.text = input.text.trimEnd() + "\n";
+        doc.missing = false;
+        return route.fulfill({ json: { ok: true } });
+    });
+    await f.page.getByRole("link", { name: "档案", exact: true }).click();
+    await f.page.getByRole("heading", { name: "身份", exact: true }).waitFor();
+    return state;
+}
+
+checks["home-document-drafts"] = async (f) => {
+    const state = await homeFixture(f);
+    assert.equal(await f.page.getByRole("textbox").count(), 0, "Profiles should open as a single readable document");
+    await f.page.getByRole("button", { name: "编辑", exact: true }).click();
+    const identity = f.page.getByRole("textbox", { name: "SOUL.md", exact: true });
+    await identity.fill("Identity draft");
+    await f.page.getByRole("link", { name: "用户档案", exact: true }).click();
+    await f.page.getByRole("button", { name: "编辑", exact: true }).click();
+    const user = f.page.getByRole("textbox", { name: "USER.md", exact: true });
+    await user.fill("Preferences draft");
+    const pending = gate(); state.hold = pending.promise; f.releases.push(pending.release);
+    await f.page.getByRole("button", { name: "保存", exact: true }).dblclick();
+    await eventually(() => state.writes.length === 1, "Save must start once");
+    await user.fill("Preferences continued while saving");
+    await f.page.getByRole("link", { name: "身份", exact: true }).click();
+    assert.equal(await identity.inputValue(), "Identity draft", "Switching documents must keep each draft");
+    pending.release();
+    await f.page.getByRole("link", { name: "用户档案", exact: true }).click();
+    await eventually(() => f.page.getByRole("button", { name: "保存", exact: true }).isEnabled(), "Save and readback must finish before checking the retained draft");
+    assert.equal(await user.inputValue(), "Preferences continued while saving", "Server readback must preserve input typed after submission");
+    assert.equal(state.writes.length, 1, "Repeated save must not duplicate the PUT");
+    assert.match(await f.page.getByRole("status").last().innerText(), /未保存/);
+    await f.page.getByRole("link", { name: "身份", exact: true }).click();
+    assert.equal(await identity.inputValue(), "Identity draft", "Saving another document must not replace this draft");
+    await f.page.getByRole("button", { name: "放弃修改", exact: true }).click();
+    await f.page.getByRole("button", { name: "继续编辑", exact: true }).click();
+    assert.equal(await identity.inputValue(), "Identity draft", "Canceling discard must keep the draft");
+    await f.page.getByRole("button", { name: "放弃修改", exact: true }).click();
+    await f.page.getByRole("button", { name: "确认放弃", exact: true }).click();
+    assert.equal(await identity.count(), 0);
+    await f.page.getByRole("link", { name: "工作台", exact: true }).click();
+    await f.box.waitFor();
+    await f.page.getByRole("link", { name: "档案", exact: true }).click();
+    await f.page.getByRole("link", { name: "用户档案", exact: true }).click();
+    assert.equal(await user.inputValue(), "Preferences continued while saving", "Returning to profiles must restore unsaved work");
+};
+
+checks["home-save-feedback"] = async (f) => {
+    const state = await homeFixture(f);
+    await f.page.getByRole("button", { name: "编辑", exact: true }).click();
+    const editor = f.page.getByRole("textbox", { name: "SOUL.md", exact: true });
+    await editor.fill("界".repeat(50));
+    assert.equal(await f.page.getByRole("button", { name: "保存", exact: true }).isEnabled(), false, "Budget counts UTF-8 bytes");
+    await editor.fill("Retryable draft");
+    state.failWrite = true;
+    await f.page.getByRole("button", { name: "保存", exact: true }).click();
+    await f.page.getByRole("alert").filter({ hasText: "Save rejected" }).waitFor();
+    assert.equal(await editor.inputValue(), "Retryable draft");
+    state.failWrite = false; state.failRead = true;
+    await f.page.getByRole("button", { name: "保存", exact: true }).click();
+    await f.page.getByText(/已保存.*刷新失败/).waitFor();
+    assert.equal(state.writes.length, 2);
+    state.failRead = false;
+    await f.page.getByRole("link", { name: "全局记忆", exact: true }).click();
+    await f.page.getByRole("button", { name: "编辑", exact: true }).click();
+    await f.page.getByRole("textbox", { name: "MEMORY.md", exact: true }).fill("New memory");
+    await f.page.getByRole("button", { name: "保存", exact: true }).click();
+    await f.page.getByText("已保存", { exact: true }).waitFor();
+    await f.page.getByRole("link", { name: "scratch", exact: true }).click();
+    await f.page.getByRole("button", { name: "编辑", exact: true }).click();
+    await f.page.getByRole("textbox", { name: "memory scratch", exact: true }).fill("Project draft");
+    await f.page.getByRole("button", { name: "保存", exact: true }).click();
+    await eventually(() => state.writes.some((w) => w.path === "/console/memory/scratch"), "Project memory must save to the selected project's endpoint");
+};
+
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);
 let failed = 0;
 try {
