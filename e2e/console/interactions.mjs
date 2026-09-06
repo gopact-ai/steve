@@ -561,6 +561,38 @@ checks["design-inspector-toggle"] = async (f) => {
     assert.equal(await f.box.inputValue(), "Draft while inspecting");
 };
 
+checks["mcp-tool-details"] = async (f) => {
+    const description = "Read the current workspace. " + "A long explanation of the available context. ".repeat(20) + "Final detail remains readable.";
+    const externalName = "external_workspace_".repeat(6);
+    await f.page.route("**/console/mcp", (route) => route.fulfill({ json: {
+        platform: [{ name: "steve", description: "Session tools", tools: [{ name: "steve_context", description }] }],
+        deployments: [{ node: "test-node", name: "example-service", type: "http", url: "https://example.test/mcp", agents: [], probe: { at, ok: true, tools: [{ name: externalName, description, input_schema: { type: "object", properties: { workspace: { type: "string" } } } }] } }],
+        machines: [],
+    } }));
+    await f.page.getByRole("link", { name: "MCP", exact: true }).click();
+    const summary = f.page.locator("summary").filter({ hasText: "steve_context" });
+    await summary.waitFor();
+    assert.match(await summary.innerText(), /查看当前会话/);
+    const fullDescription = f.page.getByText(description, { exact: true });
+    assert.equal(await fullDescription.isVisible(), false, "Long tool instructions should not crowd the initial list");
+    await summary.click();
+    assert.equal(await fullDescription.isVisible(), true, "Expanding a tool must expose its complete description");
+    await summary.press("Enter");
+    assert.equal(await fullDescription.isVisible(), false, "Keyboard must collapse the tool details");
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await summary.click();
+    await noHorizontalOverflow(f.page);
+    await f.page.getByRole("row").filter({ hasText: "example-service" }).click();
+    const drawer = f.page.getByRole("dialog", { name: "详细信息", exact: true });
+    await drawer.waitFor();
+    await drawer.locator("summary").filter({ hasText: externalName }).click();
+    assert.equal(await drawer.getByRole("paragraph").filter({ hasText: description }).isVisible(), true, "Installed tools must also expose the full description beyond the preview");
+    await drawer.getByText("输入参数", { exact: true }).waitFor();
+    assert.match(await drawer.locator("pre").innerText(), /"workspace"/);
+    assert.ok(await drawer.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), "Long tool names must not overflow the mobile drawer");
+    assert.equal(f.calls.length, 0, "Reading tool descriptions must not invoke, probe, or install services");
+};
+
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);
 let failed = 0;
 try {

@@ -7,6 +7,7 @@ import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
 import { CodeBlock } from "@/components/steve/markdown";
+import { MCPToolList } from "@/components/steve/mcp-tools";
 import { Chips, KeyValue, PageBody, PageHeader, Panel } from "@/components/steve/page";
 import { Mono, Nothing } from "@/components/steve/ui";
 import { adoptMCP, fetchMCP, installMCP, probeMCP, removeMCP, searchMCPRegistry, when } from "@/lib/api";
@@ -15,6 +16,25 @@ import type { MCPDeployment, MCPRegistryEntry, MCPView } from "@/lib/types";
 
 const fail = (e: unknown) => String(e).replace(/^Error: /, "");
 const typeWords: Record<string, string> = { stdio: "本机进程", http: "HTTP", sse: "SSE（旧式）" };
+
+const steveToolSummaries: Record<string, string> = {
+    feishu_send: "向当前飞书会话发送阶段进展",
+    feishu_update: "更新本轮已发送的进度卡片",
+    feishu_recall: "撤回本轮已发送的消息",
+    steve_fleet: "查看 Agent 及其可用能力",
+    steve_delegate: "把一项工作委派给其他 Agent",
+    steve_await: "等待子任务并获取结果",
+    steve_context: "查看当前会话、Agent 与工作目录",
+    steve_projects: "查看项目位置与可用副本",
+    steve_help: "阅读 Steve 的使用说明",
+    steve_nodes: "查看机器状态与可用资源",
+    steve_node_add: "添加机器并生成接入命令",
+    steve_node_remove: "从工作空间移除机器",
+    steve_node_refresh: "重新发现机器上的工具与能力",
+    steve_remember: "保存偏好、约定等长期记忆",
+    steve_recall: "查找已保存的记忆",
+    steve_forget: "删除一条已保存的记忆",
+};
 
 // MCPPage: an MCP server is a deployment on one machine — a command to
 // start or an address to reach, its secrets in that machine's own file.
@@ -75,12 +95,15 @@ export function MCPPage() {
                 </TableCard.Root>
 
                 {view && view.platform.length > 0 && (
-                    <Panel title="内置服务" description="由 Steve 为每个会话创建，无需安装。">
-                        <ul className="flex flex-col gap-2">
+                    <Panel title="内置服务" description="由 Steve 为每个会话创建，无需安装。选择工具查看完整说明。">
+                        <ul className="flex min-w-0 flex-col gap-6">
                             {view.platform.map((p) => (
-                                <li key={p.name} className="flex flex-col gap-1">
-                                    <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm"><span className="font-medium text-primary">{p.name}</span><span className="text-xs text-tertiary">{p.description}</span></div>
-                                    <ul className="ml-4 flex flex-wrap gap-x-4 gap-y-0.5 text-xs">{p.tools.map((t) => <li key={t.name}><Mono className="text-primary">{t.name}</Mono> <span className="text-tertiary">{t.description}</span></li>)}</ul>
+                                <li key={p.name} className="flex min-w-0 flex-col gap-4">
+                                    <div className="flex min-w-0 flex-col gap-2">
+                                        <div className="flex flex-wrap items-baseline gap-3"><h3 className="text-base font-semibold text-primary">{p.name}</h3><span className="text-sm text-tertiary">{p.tools.length} 个工具</span></div>
+                                        <p className="max-w-3xl text-sm leading-6 text-secondary">{p.description}</p>
+                                    </div>
+                                    <MCPToolList tools={p.tools} summaries={p.name === "steve" ? steveToolSummaries : undefined} />
                                 </li>
                             ))}
                         </ul>
@@ -154,16 +177,7 @@ function DeploymentDrawer({ d, onClose, busy, onProbe, onRemove }: { d: MCPDeplo
                 {!d.probe ? <div className="text-xs text-quaternary">尚未探测，点击「探测」读取工具列表。</div>
                     : d.probe.error ? <CodeBlock code={d.probe.error} label="探测失败" muted maxHeight={160} />
                         : d.probe.tools.length === 0 ? <div className="text-xs text-quaternary">此服务未提供工具。</div> : (
-                            <ul className="flex flex-col divide-y divide-secondary">
-                                {d.probe.tools.map((t) => (
-                                    <li key={t.name} className="py-1.5">
-                                        <details className="group/tool">
-                                            <summary className="flex cursor-pointer list-none items-baseline gap-2 text-sm"><Mono className="text-primary">{t.name}</Mono><span className="line-clamp-2 text-xs text-tertiary">{t.description}</span></summary>
-                                            {t.input_schema ? <CodeBlock code={JSON.stringify(t.input_schema, null, 2)} lang="json" label="输入" maxHeight={240} /> : null}
-                                        </details>
-                                    </li>
-                                ))}
-                            </ul>
+                            <MCPToolList tools={d.probe.tools} />
                         )}
                 {d.probe && !d.probe.error && <div className="mt-1 u-meta text-quaternary">工具集摘要 <Mono>{d.probe.digest}</Mono>（名字 + 输入 schema；变了就说明服务器换了工具）</div>}
             </DrawerSection>
