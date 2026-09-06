@@ -32,6 +32,9 @@ export interface ComposerProps {
     onSubmit: () => void;
     onStop: () => void;
     busy: boolean;
+    pending?: boolean;
+    stopping?: boolean;
+    disabled?: boolean;
     boxRef: RefObject<HTMLTextAreaElement | null>;
     onKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
     suggestions: Suggestion[];
@@ -93,8 +96,8 @@ export function Composer(p: ComposerProps) {
                     aria-label="Message"
                     value={p.value}
                     rows={1}
-                    disabled={p.busy && p.queueing === false}
-                    placeholder={p.busy ? (p.queueing === false ? "正在进行…" : "先排着，当前回合结束后发出；开头加 ! 立即打断") : "想做什么"}
+                    disabled={p.disabled || (p.busy && p.queueing === false)}
+                    placeholder={p.disabled ? "正在准备会话…" : p.busy ? (p.queueing === false ? "正在进行…" : "先排着，当前回合结束后发出；开头加 ! 立即打断") : "想做什么"}
                     onChange={(e) => p.onChange(e.target.value)}
                     onKeyDown={p.onKey}
                     className="max-h-[200px] w-full resize-none bg-transparent px-4 pb-1 pt-3 text-sm text-primary outline-none placeholder:text-placeholder"
@@ -121,7 +124,7 @@ export function Composer(p: ComposerProps) {
                         </Dropdown.Popover>
                     </Dropdown.Root>
                     <Dropdown.Root>
-                        <AriaButton aria-label="项目" className={`${chip} text-tertiary hover:text-secondary`}>
+                        <AriaButton isDisabled={p.disabled || p.pending} aria-label="项目" className={`${chip} text-tertiary hover:text-secondary`}>
                             <Folder className="size-3.5" />
                             <span>{p.project?.id || "项目"}</span>
                             {p.project && (p.agent?.place ? <span className="text-quaternary">{placeLabel(p.agent.place)}</span> : p.agent ? <span className="text-error-primary">{p.agent.node} 上没有工作区</span> : <span className="text-quaternary">{p.project.node}</span>)}
@@ -138,7 +141,7 @@ export function Composer(p: ComposerProps) {
                         {p.queueing === false ? "排队已关闭" : "排队已打开"}
                     </button>
                     <Dropdown.Root>
-                        <AriaButton aria-label="Agent" className={`${chip} text-secondary`}>
+                        <AriaButton isDisabled={p.disabled || p.pending} aria-label="Agent" className={`${chip} text-secondary`}>
                             <span>{p.agent?.id || "Agent"}</span>
                             <ChevronDown className="size-3 text-fg-quaternary" />
                         </AriaButton>
@@ -156,18 +159,19 @@ export function Composer(p: ComposerProps) {
                         </Dropdown.Popover>
                     </Dropdown.Root>
                     {p.agent && p.onSelectors && <PreferenceChips key={p.agent.id} agent={p.agent} load={p.onSelectors} onPrefer={p.onPrefer} />}
-                    {p.busy && p.value.trim() && p.queueing !== false ? (
-                        <button type="button" aria-label="排队" title="排到当前回合之后（Enter）" onClick={p.onSubmit}
-                            className="flex size-8 items-center justify-center rounded-full bg-secondary text-primary transition hover:bg-tertiary">
-                            <CornerDownRight className="size-4" />
-                        </button>
-                    ) : p.busy ? (
-                        <button type="button" aria-label="停止" title="停止（/cancel）" onClick={p.onStop}
-                            className="ml-1 flex size-8 items-center justify-center rounded-full bg-secondary text-fg-secondary ring-1 ring-secondary transition hover:bg-tertiary">
+                    {p.busy && (
+                        <button type="button" aria-label={p.stopping ? "正在停止" : "停止"} title={p.stopping ? "正在停止…" : "停止（/cancel）"} disabled={p.stopping} onClick={p.onStop}
+                            className="ml-1 flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-fg-secondary ring-1 ring-secondary transition hover:bg-tertiary disabled:opacity-50">
                             <Square className="size-3.5" />
                         </button>
+                    )}
+                    {p.busy ? p.value.trim() && p.queueing !== false && (
+                        <button type="button" aria-label="排队" title={p.pending ? "正在发送…" : "排到当前回合之后（Enter）"} disabled={p.disabled || p.pending || p.stopping} onClick={p.onSubmit}
+                            className="flex size-8 shrink-0 items-center justify-center rounded-full bg-secondary text-primary transition hover:bg-tertiary disabled:opacity-50">
+                            <CornerDownRight className="size-4" />
+                        </button>
                     ) : (
-                        <button type="button" aria-label="发送" title="发送（Enter）" disabled={!p.value.trim()} onClick={p.onSubmit}
+                        <button type="button" aria-label="发送" title={p.pending ? "正在发送…" : "发送（Enter）"} disabled={p.disabled || p.pending || !p.value.trim()} onClick={p.onSubmit}
                             className="ml-1 flex size-8 items-center justify-center rounded-full bg-brand-solid text-white transition hover:bg-brand-solid_hover disabled:bg-disabled disabled:text-fg-disabled">
                             <ArrowUp className="size-4" />
                         </button>

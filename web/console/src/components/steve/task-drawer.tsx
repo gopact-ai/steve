@@ -1,7 +1,7 @@
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
-import { short, when } from "@/lib/api";
-import { useFleet, useIntent } from "@/lib/fleet";
+import { send, short, when } from "@/lib/api";
+import { useFleet } from "@/lib/fleet";
 import { fmtSeconds, fmtTokens, label, spend, zh } from "@/lib/labels";
 import type { Plan, Task } from "@/lib/types";
 import { CallGraph } from "./call-graph";
@@ -21,13 +21,28 @@ export function TaskDrawer(props: TaskDrawerProps) {
 }
 
 function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDrawerProps) {
-    const { snap } = useFleet();
-    const { act } = useIntent();
+    const { snap, refresh } = useFleet();
+    const navigate = useNavigate();
+    const [pending, setPending] = useState(false);
+    const [error, setError] = useState("");
+    const [result, setResult] = useState("");
+    const acting = useRef(false);
     const t = snap.tasks.find((task) => task.id === selected.id) || selected;
     const meta = useTaskMeta(t);
     const children = tasks.filter((c) => c.parent === t.id);
     const landings = snap.landings.filter((l) => l.project === t.project_id).slice(0, 5);
     const holds = ["running", "blocked", "review", "paused", "draft", "failed"].includes(t.lifecycle);
+    const consoleTask = t.channel?.startsWith("console:");
+    async function act(command: string) {
+        if (acting.current || !consoleTask || !t.channel) return;
+        acting.current = true;
+        setPending(true);
+        setError("");
+        setResult("");
+        try { const reply = await send(t.channel, command); setResult(reply.text); refresh(); }
+        catch (e) { setError(String(e).replace(/^Error: /, "")); }
+        finally { acting.current = false; setPending(false); }
+    }
     return (
         <Drawer width={width} title={<>
                 <span className="text-sm font-semibold text-primary">#{t.id}</span>
@@ -39,6 +54,8 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
             actions={<TaskMetaMenu t={t} pending={meta.pending || meta.renaming} onRename={meta.rename} onPatch={(patch) => void meta.save(patch)} />}
             subtitle={<>
                     {meta.error && <div role="alert" className="mt-1 text-xs text-error-primary">{meta.error}</div>}
+                    {error && <div role="alert" className="mt-1 text-xs text-error-primary">{error}</div>}
+                    {result && <div role="status" className="mt-1 text-xs text-secondary">{result}</div>}
                     <div className="mt-1 text-xs text-tertiary">{t.member} @ {t.node || snap.hub.node} · 项目 {t.project_id || "—"} · {label(zh.origin, t.origin || "chat")} · 会话 {t.channel}</div></>} onClose={onClose}>
                 <DrawerSection title="结果">
                     <div className="flex flex-col gap-1 text-sm">
@@ -49,12 +66,13 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                         {landings.length > 0 && <Row k="最近合并" v={landings.map((l) => `${label(zh.taskState, l.state) === l.state ? l.state : l.state} ${short(l.artifact)} ${when(l.at)}`).join(" · ")} />}
                     </div>
                     <div className="mt-3 flex gap-2">
-                        {holds && t.lifecycle !== "paused" && <Button size="sm" color="secondary" onClick={() => act(`/tasks pause ${t.id}`)}>暂停</Button>}
-                        {t.lifecycle === "paused" && <Button size="sm" color="secondary" onClick={() => act(`/tasks resume ${t.id}`)}>继续</Button>}
-                        {t.lifecycle === "failed" && <Button size="sm" color="secondary" onClick={() => act(`/tasks resume ${t.id}`)}>重试</Button>}
-                        {holds && <Button size="sm" color="secondary-destructive" onClick={() => act(`/tasks cancel ${t.id}`)}>取消</Button>}
-                        <Button size="sm" color="link-gray" onClick={() => act(`/tasks ${t.id}`)}>在工作台里看</Button>
+                        {holds && !["paused", "failed"].includes(t.lifecycle) && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks pause ${t.id}`)}>暂停</Button>}
+                        {t.lifecycle === "paused" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>继续</Button>}
+                        {t.lifecycle === "failed" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>重试</Button>}
+                        {holds && <Button size="sm" color="secondary-destructive" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks cancel ${t.id}`)}>取消</Button>}
+                        <Button size="sm" color="link-gray" isDisabled={!consoleTask} onClick={() => { onClose(); navigate(`/console?conversation=${encodeURIComponent(t.channel!)}`); }}>在工作台里看</Button>
                     </div>
+                    {!consoleTask && <p className="mt-2 text-xs text-tertiary">请在任务所属的聊天渠道继续操作。</p>}
                 </DrawerSection>
                 {plan && (
                     <DrawerSection title={<>计划 {plan.id} · 第 {plan.rev} 版 · {plan.by}</>}>
@@ -98,3 +116,5 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
 function Row({ k, v }: { k: string; v: string }) {
     return <div className="flex gap-3"><span className="w-20 shrink-0 text-tertiary">{k}</span><span className="text-primary">{v}</span></div>;
 }
+import { useRef, useState } from "react";
+import { useNavigate } from "react-router";
