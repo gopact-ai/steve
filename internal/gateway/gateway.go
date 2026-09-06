@@ -258,6 +258,7 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 	}
 	ui := g.newTurnUI(msg, listen)
 	result, err := g.processor.Handle(context.Background(), turn.Request{
+		Channel:        "feishu",
 		ConversationID: conversationID,
 		Input:          g.promptText(msg),
 		Origin:         msg.Origin,

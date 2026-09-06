@@ -2,6 +2,8 @@ package agent
 
 import (
 	"fmt"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -62,6 +64,37 @@ type catalogData struct {
 
 func (c *Catalog) snap() *catalogData { return c.d.Load() }
 
+// Publish replaces the catalog with a candidate already validated by
+// NewCatalog. Callers can persist that candidate before publishing it;
+// this step performs no validation or I/O and cannot partially fail.
+func (c *Catalog) Publish(prepared *Catalog) {
+	if c == prepared {
+		return
+	}
+	prepared.mu.Lock()
+	configs := maps.Clone(prepared.configs)
+	data := prepared.snap()
+	prepared.mu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.configs = configs
+	c.d.Store(data)
+}
+
+func cloneConfig(cfg Config) Config {
+	cfg.Options = maps.Clone(cfg.Options)
+	cfg.Aliases = slices.Clone(cfg.Aliases)
+	cfg.Requires = slices.Clone(cfg.Requires)
+	cfg.Skills = slices.Clone(cfg.Skills)
+	cfg.MCPServers = slices.Clone(cfg.MCPServers)
+	return cfg
+}
+
+func cloneAgent(value Agent) Agent {
+	value.Config = cloneConfig(value.Config)
+	return value
+}
+
 // Set replaces one agent's configuration, or adds it. What is not in cfg
 // is gone: the caller passes the whole thing.
 func (c *Catalog) Set(id string, cfg Config) error {
@@ -76,7 +109,7 @@ func (c *Catalog) Set(id string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	c.configs = all
+	c.configs = fresh.configs
 	c.d.Store(fresh.snap())
 	return nil
 }
@@ -102,7 +135,7 @@ func (c *Catalog) Remove(id string) error {
 	if err != nil {
 		return err
 	}
-	c.configs = all
+	c.configs = fresh.configs
 	c.d.Store(fresh.snap())
 	return nil
 }
@@ -125,7 +158,7 @@ func (c *Catalog) Add(id string, cfg Config) error {
 	if err != nil {
 		return err
 	}
-	c.configs = all
+	c.configs = fresh.configs
 	c.d.Store(fresh.snap())
 	return nil
 }
@@ -135,7 +168,9 @@ func NewCatalog(configs map[string]Config) (*Catalog, error) {
 		return nil, fmt.Errorf("at least one agent is required")
 	}
 	d := &catalogData{agents: make(map[string]Agent, len(configs)), aliases: map[string]string{}}
+	owned := make(map[string]Config, len(configs))
 	for configuredID, cfg := range configs {
+		cfg = cloneConfig(cfg)
 		id := normalize(configuredID)
 		if id == "" || cfg.Harness == "" {
 			return nil, fmt.Errorf("agent id and harness are required")
@@ -144,6 +179,7 @@ func NewCatalog(configs map[string]Config) (*Catalog, error) {
 			return nil, fmt.Errorf("duplicate agent id %q", id)
 		}
 		agent := Agent{ID: id, Config: cfg}
+		owned[id] = cfg
 		d.agents[id] = agent
 		for _, alias := range append([]string{id}, cfg.Aliases...) {
 			alias = normalize(alias)
@@ -172,28 +208,27 @@ func NewCatalog(configs map[string]Config) (*Catalog, error) {
 	sort.Slice(d.longestAliases, func(i, j int) bool {
 		return len(d.longestAliases[i]) > len(d.longestAliases[j])
 	})
-	c := &Catalog{configs: make(map[string]Config, len(configs))}
-	for k, v := range configs {
-		c.configs[k] = v
-	}
+	c := &Catalog{configs: owned}
 	c.d.Store(d)
 	return c, nil
 }
 
 func (c *Catalog) Resolve(name string) (Agent, bool) {
-	id, ok := c.snap().aliases[normalize(name)]
+	data := c.snap()
+	id, ok := data.aliases[normalize(name)]
 	if !ok {
 		return Agent{}, false
 	}
-	return c.snap().agents[id], true
+	return cloneAgent(data.agents[id]), true
 }
 
-func (c *Catalog) Default() Agent { return c.snap().defaultAgent }
+func (c *Catalog) Default() Agent { return cloneAgent(c.snap().defaultAgent) }
 
 func (c *Catalog) List() []Agent {
-	agents := make([]Agent, 0, len(c.snap().agents))
-	for _, item := range c.snap().agents {
-		agents = append(agents, item)
+	data := c.snap()
+	agents := make([]Agent, 0, len(data.agents))
+	for _, item := range data.agents {
+		agents = append(agents, cloneAgent(item))
 	}
 	sort.Slice(agents, func(i, j int) bool { return agents[i].ID < agents[j].ID })
 	return agents
@@ -238,9 +273,10 @@ func (c *Catalog) Select(input string) (Selection, bool) {
 func (c *Catalog) resolvePrefix(rest string) (Agent, string, bool) {
 	rest = strings.TrimSpace(rest)
 	normalized := normalize(rest)
-	for _, alias := range c.snap().longestAliases {
+	data := c.snap()
+	for _, alias := range data.longestAliases {
 		if strings.HasPrefix(normalized, alias) {
-			agent := c.snap().agents[c.snap().aliases[alias]]
+			agent := cloneAgent(data.agents[data.aliases[alias]])
 			return agent, strings.TrimSpace(rest[len(alias):]), true
 		}
 	}

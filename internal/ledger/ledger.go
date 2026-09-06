@@ -772,6 +772,17 @@ func (l *Ledger) Operation(ctx context.Context, id string) (Operation, bool, err
 
 // Operations lists operations of a kind, optionally in a state, newest first.
 func (l *Ledger) Operations(ctx context.Context, kind, state string) ([]Operation, error) {
+	return readOperations(ctx, l.db, kind, state)
+}
+
+// Operations observes operation facts within the caller's mutation transaction.
+func (t *Tx) Operations(kind, state string) ([]Operation, error) {
+	return readOperations(t.ctx, t.tx, kind, state)
+}
+
+func readOperations(ctx context.Context, source interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, kind, state string) ([]Operation, error) {
 	query := `SELECT id, kind, state, revision, incarnation, data, created_at, updated_at FROM operations WHERE kind = ?`
 	args := []any{kind}
 	if state != "" {
@@ -779,7 +790,7 @@ func (l *Ledger) Operations(ctx context.Context, kind, state string) ([]Operatio
 		args = append(args, state)
 	}
 	query += ` ORDER BY updated_at DESC`
-	rows, err := l.db.QueryContext(ctx, query, args...)
+	rows, err := source.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -931,6 +942,17 @@ func (l *Ledger) DeleteBinding(ctx context.Context, kind, id string) error {
 // Bindings lists every record of a kind as raw JSON, keyed by id.
 func (l *Ledger) Bindings(ctx context.Context, kind string) (map[string]json.RawMessage, error) {
 	rows, err := l.db.QueryContext(ctx, `SELECT id, data FROM bindings WHERE kind = ?`, kind)
+	return scanBindings(rows, err)
+}
+
+// Bindings reads the binding set in the same transaction as a mutation.
+// Domains can validate cross-record invariants before publishing changes.
+func (t *Tx) Bindings(kind string) (map[string]json.RawMessage, error) {
+	rows, err := t.tx.QueryContext(t.ctx, `SELECT id, data FROM bindings WHERE kind = ?`, kind)
+	return scanBindings(rows, err)
+}
+
+func scanBindings(rows *sql.Rows, err error) (map[string]json.RawMessage, error) {
 	if err != nil {
 		return nil, err
 	}

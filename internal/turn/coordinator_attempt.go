@@ -11,6 +11,8 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/execution"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -25,7 +27,7 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 		return attempt.Record{}, nil, errors.New("turn: attempts are not wired")
 	}
 	var bound []acp.MCPServer
-	spec := attempt.Spec{
+	spec := attempt.Spec{Execution: execution.Token(ctx),
 		TaskID: taskID, TurnID: req.MessageID, Kind: attempt.KindChat, Project: binding.ProjectID,
 		Node: selected.Node, Harness: selected.Harness, Agent: selected.ID,
 		Workspace: workspace, Scope: attempt.ScopeUnrestricted, By: req.SenderOpenID,
@@ -108,7 +110,7 @@ func (c *Coordinator) advanceAttempt(ctx context.Context, id string, to attempt.
 
 // closeAttempt records the outcome even when the turn's own context is
 // gone: a cancelled turn is still a fact.
-func (c *Coordinator) closeAttempt(parent context.Context, id string, result Result, turnErr error, spent *turnSpend) {
+func (c *Coordinator) closeAttempt(parent context.Context, id string, result Result, turnErr error, spent *turnSpend) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Minute)
 	defer cancel()
 	// Last of all — after the attempt is closed and the queued landings
@@ -119,6 +121,12 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 		}
 	}
 	usage := spent.attemptUsage()
+	if errors.Is(turnErr, harness.ErrStopUnconfirmed) {
+		if err := c.attempts.MarkUnsettled(ctx, id, "turn", turnErr, usage); err != nil {
+			return errors.Join(turnErr, err)
+		}
+		return turnErr
+	}
 	if c.fleet != nil {
 		if record, err := c.attempts.Get(ctx, id); err == nil && record.Admission != nil && len(record.Admission.Bound) > 0 {
 			c.fleet.Release(ctx, record.Node, id)
@@ -126,38 +134,59 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 	}
 	if turnErr == nil {
 		outcome := attempt.Result{Summary: clip(result.Text, 200)}
+		var binding *attempt.NameBinding
+		var pending *project.Project
+		reject := func(cause error) error {
+			return c.attempts.RejectCompletion(ctx, id, "turn", attempt.Completion{Result: outcome, Usage: usage, Binding: binding}, cause)
+		}
 		record, err := c.attempts.Get(ctx, id)
-		if err == nil && c.artifacts != nil && record.Base != "" {
+		if err != nil {
+			return reject(fmt.Errorf("read attempt completion: %w", err))
+		}
+		if c.artifacts != nil && record.Base != "" {
 			// The after-snapshot: the turn's change, bound to the turn's
 			// name; then whatever delegations queued up lands under a lock
 			// this turn no longer holds.
-			if p, ok, perr := c.projects.Get(ctx, record.Project); perr == nil && ok {
-				after, changed, serr := c.snapshot(ctx, p, record.Workspace, record.Base, id, "after turn "+record.TurnID)
-				if serr != nil {
-					log.Printf("turn: attempt %s after-snapshot: %v", id, serr)
-					outcome.CaptureError = serr.Error()
-				} else if changed {
-					outcome.Artifact = after.ID
-					name := "steve/" + record.TaskID + "/turn/" + record.TurnID
-					current, _, _ := c.artifacts.Resolve(ctx, name)
-					if _, err := c.artifacts.Bind(ctx, name, current.Version, after.ID); err != nil {
-						log.Printf("turn: bind %s: %v", name, err)
-					}
+			if c.projects == nil {
+				return reject(errors.New("completion project source is not configured"))
+			}
+			p, ok, perr := c.projects.Get(ctx, record.Project)
+			if perr != nil {
+				return reject(fmt.Errorf("read completion project %s: %w", record.Project, perr))
+			}
+			if !ok {
+				return reject(fmt.Errorf("completion project %s: %w", record.Project, project.ErrUnknown))
+			}
+			after, changed, serr := c.snapshot(ctx, p, record.Workspace, record.Base, id, "after turn "+record.TurnID)
+			if serr != nil {
+				log.Printf("turn: attempt %s after-snapshot: %v", id, serr)
+				outcome.CaptureError = serr.Error()
+			} else if changed {
+				outcome.Artifact = after.ID
+				name := "steve/" + record.TaskID + "/turn/" + record.TurnID
+				current, _, err := c.artifacts.Resolve(ctx, name)
+				if err != nil {
+					return reject(fmt.Errorf("resolve completion name: %w", err))
 				}
-				if record.Workspace.Kind == project.KindCanonical {
-					defer c.landPending(ctx, p)
-				}
+				binding = &attempt.NameBinding{Name: name, ExpectedVersion: current.Version}
+			}
+			if record.Workspace.Kind == project.KindCanonical {
+				pending = &p
 			}
 		}
-		if _, err := c.attempts.FinishWith(ctx, id, "turn", outcome, usage); err != nil {
-			log.Printf("turn: attempt %s finish: %v", id, err)
+		if _, err := c.attempts.FinishCompletion(ctx, id, "turn", attempt.Completion{Result: outcome, Usage: usage, Binding: binding}); err != nil {
+			return reject(fmt.Errorf("commit attempt %s: %w", id, err))
+		}
+		if pending != nil {
+			c.landPending(ctx, *pending)
 		}
 		c.recordDisclosure(ctx, record, result)
-		return
+		return nil
 	}
 	if _, err := c.attempts.FailWith(ctx, id, "turn", turnErr.Error(), usage); err != nil {
-		log.Printf("turn: attempt %s fail: %v", id, err)
+		return fmt.Errorf("record failed attempt %s: %w", id, err)
 	}
+	return nil
 }
 
 func clip(text string, limit int) string {

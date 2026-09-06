@@ -2,16 +2,16 @@ package planner
 
 import (
 	"context"
+	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
-	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/agent"
-	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/agentexec"
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/plan"
-	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
-	"github.com/gopact-ai/steve/internal/view"
 )
 
 // scripted plays the planning agent: it answers each prompt in turn and
@@ -20,23 +20,25 @@ import (
 type scripted struct {
 	answers []string
 	asked   []string
+	specs   []agentexec.Spec
+	err     error
 }
 
-func (s *scripted) OpenSession(context.Context, harness.Placement, string, string, []acp.MCPServer) (harness.Runner, error) {
-	return s, nil
-}
-func (s *scripted) CloseSession(context.Context, harness.Placement, string) error { return nil }
-func (s *scripted) ID() string                                                    { return "plan-session" }
-func (s *scripted) Cancel(context.Context) error                                  { return nil }
-func (s *scripted) Abort()                                                        {}
-func (s *scripted) Prompt(_ context.Context, text string, _ func(view.Progress)) (string, []string, error) {
+func (s *scripted) Prompt(_ context.Context, spec agentexec.Spec, text string, validate func(string) error) (agentexec.Result, error) {
 	s.asked = append(s.asked, text)
-	if len(s.answers) == 0 {
-		return "", nil, nil
+	s.specs = append(s.specs, spec)
+	if s.err != nil {
+		return agentexec.Result{}, s.err
 	}
-	next := s.answers[0]
-	s.answers = s.answers[1:]
-	return next, nil, nil
+	answer := ""
+	if len(s.answers) > 0 {
+		answer, s.answers = s.answers[0], s.answers[1:]
+	}
+	result := agentexec.Result{Answer: answer}
+	if err := validate(answer); err != nil {
+		return result, &agentexec.ValidationError{Cause: err}
+	}
+	return result, nil
 }
 
 func testRoster() []roster.Candidate {
@@ -56,7 +58,7 @@ const goodPlan = `Here is the plan:
 
 func TestLLMPlanIsParsedAndValidated(t *testing.T) {
 	agentSession := &scripted{answers: []string{goodPlan}}
-	p := LLM{Workspaces: anywhere{}, Agent: "claude", Sessions: agentSession}
+	p := LLM{Agent: "claude", Executor: agentSession}
 	built, err := p.Plan(t.Context(), Request{Goal: "ship the release", TaskID: "7", Roster: testRoster(), TurnsLeft: 12})
 	if err != nil {
 		t.Fatal(err)
@@ -83,13 +85,13 @@ func TestLLMPlanIsParsedAndValidated(t *testing.T) {
 	}
 }
 
-// An invalid plan is sent back with the exact reason, in the same session.
+// A correction is a new bounded prompt with the previous output and exact error.
 func TestInvalidPlanIsCorrectedNotAccepted(t *testing.T) {
 	cyclic := `{"steps":[
 	  {"id":"a","goal":"x","requires":["gpu"],"needs":["b"],"verify":{"kind":"none","why":"w"}},
 	  {"id":"b","goal":"y","requires":["gpu"],"needs":["a"],"verify":{"kind":"none","why":"w"}}]}`
 	agentSession := &scripted{answers: []string{cyclic, goodPlan}}
-	p := LLM{Workspaces: anywhere{}, Agent: "claude", Sessions: agentSession}
+	p := LLM{Agent: "claude", Executor: agentSession}
 	built, err := p.Plan(t.Context(), Request{Goal: "g", TaskID: "1", Roster: testRoster()})
 	if err != nil {
 		t.Fatalf("a correctable plan was not corrected: %v", err)
@@ -100,12 +102,24 @@ func TestInvalidPlanIsCorrectedNotAccepted(t *testing.T) {
 	if len(agentSession.asked) != 2 || !strings.Contains(agentSession.asked[1], "cycle") {
 		t.Fatalf("the correction did not name the problem: %q", agentSession.asked[len(agentSession.asked)-1])
 	}
+	if !strings.Contains(agentSession.asked[1], cyclic) || agentSession.specs[0].Kind != attempt.KindPlan || agentSession.specs[1].Kind != attempt.KindPlan || agentSession.specs[0].TurnID == agentSession.specs[1].TurnID {
+		t.Fatal("correction lost its previous response or independent execution identity")
+	}
+}
+
+func TestPlannerDoesNotRetryExecutionFailures(t *testing.T) {
+	cause := errors.New("completion could not be recorded")
+	executor := &scripted{err: cause}
+	_, err := (LLM{Agent: "planner", Executor: executor}).Plan(t.Context(), Request{TaskID: "task", ProjectID: "project", Goal: "work"})
+	if !errors.Is(err, cause) || len(executor.asked) != 1 {
+		t.Fatalf("execution failure was retried: calls=%d err=%v", len(executor.asked), err)
+	}
 }
 
 func TestUnverifiedStepIsRefused(t *testing.T) {
 	lazy := `{"steps":[{"id":"a","goal":"x","requires":["gpu"]}]}`
 	agentSession := &scripted{answers: []string{lazy, lazy}}
-	p := LLM{Workspaces: anywhere{}, Agent: "claude", Sessions: agentSession, Attempts: 2}
+	p := LLM{Agent: "claude", Executor: agentSession, Attempts: 2}
 	_, err := p.Plan(t.Context(), Request{Goal: "g", Roster: testRoster()})
 	if err == nil {
 		t.Fatal("a plan with an unverified step was accepted")
@@ -117,7 +131,7 @@ func TestUnverifiedStepIsRefused(t *testing.T) {
 
 func TestProseWithoutJSONIsRefused(t *testing.T) {
 	agentSession := &scripted{answers: []string{"I would first build, then ship.", "still prose"}}
-	p := LLM{Workspaces: anywhere{}, Agent: "claude", Sessions: agentSession, Attempts: 2}
+	p := LLM{Agent: "claude", Executor: agentSession, Attempts: 2}
 	if _, err := p.Plan(t.Context(), Request{Goal: "g", Roster: testRoster()}); err == nil {
 		t.Fatal("prose was accepted as a plan")
 	}
@@ -135,12 +149,13 @@ func TestRevisionKeepsDoneStepsAndTheirResults(t *testing.T) {
 			Result: &plan.StepResult{Error: "prod-cred node is down",
 				Findings: []plan.Finding{{Text: "the release must go through the staging box first"}}}},
 	}}
+	before := append([]plan.Step(nil), current.Steps...)
 	revised := `{"steps":[
 	  {"id":"build","goal":"compile","requires":["gpu"],"verify":{"kind":"none","why":"w"}},
 	  {"id":"stage","goal":"push through staging","requires":["internal-net"],"needs":["build"],"verify":{"kind":"none","why":"w"}},
 	  {"id":"ship","goal":"release from staging","requires":["prod-cred"],"needs":["stage"],"verify":{"kind":"none","why":"w"}}]}`
 	agentSession := &scripted{answers: []string{revised}}
-	p := LLM{Workspaces: anywhere{}, Agent: "claude", Sessions: agentSession}
+	p := LLM{Agent: "claude", Executor: agentSession}
 	built, err := p.Plan(t.Context(), Request{
 		Goal: "g", TaskID: "9", Current: current, Trigger: "ship failed: prod-cred node is down", Roster: testRoster(),
 	})
@@ -149,6 +164,9 @@ func TestRevisionKeepsDoneStepsAndTheirResults(t *testing.T) {
 	}
 	if built.ID != "9" || built.Because != "ship failed: prod-cred node is down" {
 		t.Fatalf("revision identity = %+v", built)
+	}
+	if !reflect.DeepEqual(current.Steps, before) {
+		t.Fatal("planning mutated the prior revision while parsing a candidate")
 	}
 	build, _ := built.Step("build")
 	if build.State != plan.StepDone || build.Result == nil || build.Result.Refs[0].Value != "abc" {
@@ -168,11 +186,4 @@ func TestRevisionKeepsDoneStepsAndTheirResults(t *testing.T) {
 			t.Errorf("revision brief is missing %q", want)
 		}
 	}
-}
-
-// anywhere is a workspace seam with the same directory on every node.
-type anywhere struct{}
-
-func (anywhere) Materialize(_ context.Context, req project.Request) (project.Workspace, error) {
-	return project.Workspace{ID: "ws:" + req.Node, Project: req.Project, Node: req.Node, Path: "/w", Kind: project.KindCanonical}, nil
 }

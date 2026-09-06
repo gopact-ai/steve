@@ -1,23 +1,15 @@
-package readmodel
+package httpapi
 
 import (
-	"embed"
-	"io/fs"
 	"net/http"
 	"path"
 	"strings"
+
+	"github.com/gopact-ai/steve/internal/readmodel/web"
 )
 
-// The console is a built React app embedded whole, so the binary is the
-// whole deployment: no asset directory to lose, nothing served from disk
-// at runtime. The source lives in web/console; `make console` (npm run
-// build there) refreshes web/dist before `go build`.
-//
-//go:embed all:web/dist
-var dist embed.FS
-
 func (s *Server) page(w http.ResponseWriter, r *http.Request) {
-	root, err := fs.Sub(dist, "web/dist")
+	root, err := web.Files()
 	if err != nil {
 		http.Error(w, "console not built", http.StatusInternalServerError)
 		return

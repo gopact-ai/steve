@@ -12,7 +12,7 @@ Steve 提供三条结构性承诺：
 
 ## 从控制台开始
 
-**当前启动需要配置飞书，纯控制台启动在 [架构文档](docs/architecture.md)的路线图 §9 B3。** 使用控制台还必须填写 `feishu.owner_open_id`，控制台以该 owner 身份执行。飞书可以不作为日常交互入口，但当前程序仍会建立飞书连接。
+**当前启动需要配置飞书，当前通道边界见 [架构文档](docs/architecture.md)。** 使用控制台还必须填写 `feishu.owner_open_id`，控制台以该 owner 身份执行。飞书可以不作为日常交互入口，但当前程序仍会建立飞书连接。
 
 准备 Go 1.27+、Git、Node.js 与 npm，以及一个已完成认证的 coding agent。内置清单里的适配器（codex-acp、claude-agent-acp）由 steve 按钉死的版本自己取，不用预装；它们是 npm 包，所以 Node.js 运行环境仍是前置条件。自己编译的适配器写 `command` 直接用，见 [运维文档](docs/operations.md#部署-hub)。
 
@@ -98,15 +98,16 @@ agent 用 `steve_delegate` 交出一件有界工作；调用短暂等待后返�
 
 | 命令 | 范围 |
 |---|---|
-| `go test -race ./...` | 本地 Go 测试与竞态检查。 |
+| `make test` | 本地 Go 测试、竞态检查与依赖门禁。 |
+| `make test-console` | 前端依赖门禁、构建和隔离浏览器交互测试。 |
 | `make e2e-fleet` | 对已运行机群验证指定远端委派、attempt、改动、用量和落地；客户端默认及上限 **10 分钟**。 |
 | `make e2e-autonomous` | 验证自主查机群、拆解并行委派、按能力执行和主动回传；默认及上限 **20 分钟**，需要项目主目录中的 `kvtool/main.go` 和申报 `build` 的远端节点。 |
 
-[CI](.github/workflows/test.yml) 只跑 gofmt、vet、race，不运行真实机群门禁。真实机群门禁使用已有 hub 和 node，不构建、部署或重启它们；会产生真实任务与文件。连接参数、前置工具、超时处理和 PR 证据要求见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [运维文档](docs/operations.md#门禁与-ci)。
+[CI](.github/workflows/test.yml) 运行 gofmt、vet、race，以及前端构建、依赖门禁和隔离浏览器测试；不运行真实机群门禁。真实机群门禁使用已有 hub 和 node，不构建、部署或重启它们；会产生真实任务与文件。连接参数、前置工具、超时处理和 PR 证据要求见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [运维文档](docs/operations.md#门禁与-ci)。
 
 ## 继续阅读
 
-- [docs/architecture.md](docs/architecture.md)：定位、对象、权威边界、实现状态与路线图。
+- [docs/architecture.md](docs/architecture.md)：模块依赖、状态权威、提交与读取边界。
 - [docs/operations.md](docs/operations.md)：逐键配置参考、部署、门禁与排障。
 - [docs/history/](docs/history/)：旧控制台方案、能力清单方案与协作审计，作为历史记录保存。
 - 代码入口：[cmd/](cmd/)、核心实现 [internal/](internal/)、控制台 [web/console/](web/console/)、验收 [e2e/](e2e/)。

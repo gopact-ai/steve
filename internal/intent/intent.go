@@ -250,6 +250,17 @@ func (s *Service) Unresolved(ctx context.Context) ([]Intent, error) {
 	return out, nil
 }
 
+// PendingResolution observes outcomes that need reconciliation without
+// performing recovery writes. A read model may call this safely; Resolve
+// performs the guarded recovery transition when the operator acts.
+func (s *Service) PendingResolution(ctx context.Context) ([]Intent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.list(ctx, func(it Intent) bool {
+		return it.State == Unknown || (it.State == Dispatched && !s.active[it.ID])
+	})
+}
+
 // recoverDispatch runs under mu. The active set belongs to this process;
 // after restart, or after a failed terminal write, a dispatched operation
 // has no live caller that can establish its result.

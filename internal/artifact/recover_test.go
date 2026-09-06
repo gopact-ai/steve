@@ -32,7 +32,7 @@ func crashMidApply(t *testing.T, store *Store, p project.Project, canonical stri
 	if err != nil || len(conflicts) > 0 {
 		t.Fatal(err, conflicts)
 	}
-	land := Landing{ID: "land-crash", Project: "p", Artifact: result.ID, Base: base, Now: now.ID, Merged: merged, By: "test",
+	land := Landing{Target: p.Home, ID: "land-crash", Project: "p", Artifact: result.ID, Base: base, Now: now.ID, Merged: merged, By: "test",
 		State: LandApplying, Paths: []string{"a", "b", "c"}, Round: 1}
 	if _, err := store.ledger.Begin(ctx, land.ID, landKind, LandApplying, "test", land); err != nil {
 		t.Fatal(err)

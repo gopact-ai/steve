@@ -56,6 +56,9 @@ func (c *Coordinator) resolveWorkspace(ctx context.Context, req Request, selecte
 	if err != nil {
 		return project.Binding{}, project.Workspace{}, err
 	}
+	if err := checkScheduledProject(req.ExpectedProject, binding.ProjectID); err != nil {
+		return project.Binding{}, project.Workspace{}, err
+	}
 	if err := c.require(ctx, binding.ProjectID, req.SenderOpenID, project.RoleWrite); err != nil {
 		return project.Binding{}, project.Workspace{}, err
 	}

@@ -15,7 +15,6 @@ import (
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/delegate"
 	"github.com/gopact-ai/steve/internal/exec"
-	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
@@ -46,13 +45,16 @@ func TestAutoPlanDecomposesAndPlacesAcrossTheFleet(t *testing.T) {
 	brain, _ := f.catalog.Resolve("builder")
 	supervisor := exec.NewSupervisor(
 		planner.LLM{
-			Agent: brain.ID, Sessions: f.manager, Workspaces: f.artifacts,
-			At: harness.Placement{Node: brain.Node, Harness: brain.Harness},
+			Agent: brain.ID, Executor: sharedAgentExecutor(t, f),
 		},
 		exec.Deps{Workspaces: f.artifacts, Attempts: f.attempts, Artifacts: f.artifacts, Roster: f.roster, Runner: exec.NewAgentRunner(f.manager, noCaps{}, f.roster)},
 		workflow.NewMemoryStore(),
 	)
 	supervisor.SetPlans(f.plans)
+	supervisor.SetLedger(f.book, "mesh")
+	supervisor.SetTasks(f.tasks)
+	supervisor.SetExecution(f.executions)
+	coordinator.SetExecution(f.executions)
 	supervisor.Runs().Observe(f.view)
 	coordinator.SetSupervisor(supervisor, f.plans, f.roster)
 

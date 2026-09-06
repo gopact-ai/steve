@@ -3,23 +3,20 @@ package planner
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/ability"
 	"strings"
 	"time"
 
-	"github.com/gopact-ai/acp"
-	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/agentexec"
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/plan"
-	"github.com/gopact-ai/steve/internal/project"
-	"github.com/gopact-ai/steve/internal/view"
 )
 
-// Sessions opens a session on the planning agent. The harness manager
-// satisfies it; the planner needs only this much.
-type Sessions interface {
-	OpenSession(ctx context.Context, at harness.Placement, upstreamID, workdir string, servers []acp.MCPServer) (harness.Runner, error)
-	CloseSession(ctx context.Context, at harness.Placement, upstreamID string) error
+// Executor admits and settles the planning prompt; parsing stays here.
+type Executor interface {
+	Prompt(context.Context, agentexec.Spec, string, func(string) error) (agentexec.Result, error)
 }
 
 // LLM plans by asking a model to decompose the goal, and holds it to a typed
@@ -34,12 +31,8 @@ type Sessions interface {
 // open goal into steps and poor at being a manager of long-lived peers, so
 // it gets the first job and not the second.
 type LLM struct {
-	// Agent is the catalog id of the planning agent, and At is where it
-	// runs. Workspaces gives its session the project's directory there.
-	Agent      string
-	At         harness.Placement
-	Workspaces project.Workspaces
-	Sessions   Sessions
+	Agent    string
+	Executor Executor
 	// Timeout bounds one planning call. Zero takes the default.
 	Timeout time.Duration
 	// Attempts is how many times an invalid plan is sent back with the
@@ -55,8 +48,8 @@ const (
 func (l LLM) Name() string { return "llm:" + l.Agent }
 
 func (l LLM) Plan(ctx context.Context, req Request) (plan.Plan, error) {
-	if l.Sessions == nil {
-		return plan.Plan{}, fmt.Errorf("llm planner has no way to open a session")
+	if l.Executor == nil {
+		return plan.Plan{}, fmt.Errorf("llm planner has no bounded agent executor")
 	}
 	timeout := l.Timeout
 	if timeout <= 0 {
@@ -69,47 +62,29 @@ func (l LLM) Plan(ctx context.Context, req Request) (plan.Plan, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	if l.Workspaces == nil {
-		return plan.Plan{}, fmt.Errorf("llm planner has no workspaces to open a session in")
-	}
-	// The planner looks at the project from its own worktree: it reads,
-	// it does not write, and it may sit on any machine.
-	workspace, err := l.Workspaces.Materialize(ctx, project.Request{Project: req.ProjectID, Node: l.At.Node, Isolated: true, Owner: "plan-" + req.TaskID})
-	if err != nil {
-		return plan.Plan{}, fmt.Errorf("planning session workspace: %w", err)
-	}
-	defer discard(ctx, l.Workspaces, workspace)
-	session, err := l.Sessions.OpenSession(ctx, l.At, "", workspace.Path, nil)
-	if err != nil {
-		return plan.Plan{}, fmt.Errorf("open planning session on %s: %w", l.At, err)
-	}
-	defer func() {
-		closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-		defer closeCancel()
-		if err := l.Sessions.CloseSession(closeCtx, l.At, session.ID()); err != nil {
-			session.Abort()
-		}
-	}()
-
-	prompt := renderPrompt(req)
+	brief := renderPrompt(req)
+	prompt := brief
 	var lastErr error
-	for attempt := range attempts {
-		if attempt > 0 {
-			// The contract is enforced, not hoped for: an invalid plan goes
-			// back with the exact reason, in the same session, so the model
-			// fixes that rather than starting over.
-			prompt = "上一份计划无法执行：" + lastErr.Error() + "\n\n只修这个问题，重新输出完整的 JSON。"
+	var previous string
+	for round := range attempts {
+		if round > 0 {
+			prompt = brief + "\n\n上一份计划无法执行：" + lastErr.Error() + "\n\n上一份输出：\n" + previous + "\n\n只修这个问题，重新输出完整的 JSON。"
 		}
-		answer, _, err := session.Prompt(ctx, prompt, func(view.Progress) {})
-		if err != nil {
+		var built plan.Plan
+		result, err := l.Executor.Prompt(ctx, agentexec.Spec{TaskID: req.TaskID, TurnID: fmt.Sprintf("plan/%s/r%d/prompt/%d", req.TaskID, req.Current.Rev+1, round+1),
+			Agent: l.Agent, Project: req.ProjectID, Kind: attempt.KindPlan, Timeout: timeout}, prompt, func(answer string) error {
+			var err error
+			built, err = parsePlan(answer, req, l.Name())
+			return err
+		})
+		if err == nil {
+			return built, nil
+		}
+		var invalid *agentexec.ValidationError
+		if !errors.As(err, &invalid) {
 			return plan.Plan{}, fmt.Errorf("planning agent %s: %w", l.Agent, err)
 		}
-		built, err := parsePlan(answer, req, l.Name())
-		if err != nil {
-			lastErr = err
-			continue
-		}
-		return built, nil
+		lastErr, previous = invalid.Cause, result.Answer
 	}
 	return plan.Plan{}, fmt.Errorf("planning agent %s produced no valid plan after %d attempts: %w", l.Agent, attempts, lastErr)
 }
@@ -159,7 +134,7 @@ func parsePlan(answer string, req Request, by string) (plan.Plan, error) {
 		built.By = by
 		built.Because = req.Trigger
 	}
-	built.Steps = built.Steps[:0]
+	built.Steps = nil
 	done := map[string]plan.Step{}
 	for _, s := range req.Current.Steps {
 		if s.State == plan.StepDone {
@@ -267,10 +242,3 @@ func renderPrompt(req Request) string {
 
 // discard drops a worktree if the seam knows how; a seam that cannot has
 // nothing to clean.
-func discard(ctx context.Context, w project.Workspaces, ws project.Workspace) {
-	if d, ok := w.(interface {
-		Discard(context.Context, project.Workspace) error
-	}); ok && ws.Kind == project.KindWorktree {
-		_ = d.Discard(context.WithoutCancel(ctx), ws)
-	}
-}

@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"os"
 	"path/filepath"
 	"sort"
@@ -175,20 +177,22 @@ type Project struct {
 	Skills         []string    `json:"skills,omitempty"`
 	DurablePlaces  []string    `json:"durable_places,omitempty"`
 	ExternalRemote string      `json:"external_remote,omitempty"`
-	// Grants maps a principal (Feishu open_id) to a role: read, write or
-	// admin. DefaultRole is what everyone else gets.
+	// Grants maps a principal to a configured role, including explicit none.
+	// Configured roles override runtime grants. Removing a configured entry
+	// reveals the retained runtime grant, then DefaultRole/the level default.
 	Grants      map[string]string `json:"grants,omitempty"`
 	DefaultRole string            `json:"default_role,omitempty"`
-	// Workspaces are the project's copies: directories on machines other
-	// than its home where interactive turns may run. Each is adopted as
-	// it is; cloning happens before it is written here.
+	// Workspaces declare the project's copies. Clone origin/source describe
+	// intent; provisioning progress remains in the project ledger projection.
 	Workspaces []ProjectWorkspace `json:"workspaces,omitempty"`
 }
 
 // ProjectWorkspace is one copy of a project: a machine and a directory.
 type ProjectWorkspace struct {
-	Node string `json:"node,omitempty"`
-	Path string `json:"path"`
+	Node   string `json:"node,omitempty"`
+	Path   string `json:"path"`
+	Origin string `json:"origin,omitempty"`
+	Source string `json:"source,omitempty"`
 }
 
 // ProjectHome is the (node, path) of a project's canonical workspace. An
@@ -210,7 +214,9 @@ type Config struct {
 	// Migrated lists what Load rewrote from an older layout, for the
 	// operator to move into the file: the runtime never reads the old
 	// fields again.
-	Migrated []string `json:"-"`
+	Migrated          []string `json:"-"`
+	sourcePath        string
+	sourceFingerprint string
 }
 
 // Node is one remote machine running steve-node. Everything about what it
@@ -355,8 +361,35 @@ func StarterFeishu(feishu Feishu) *Config {
 	}
 }
 
+// CommittedError means the replacement is visible, but syncing its directory
+// failed. Callers must retain the new configuration; rolling back only their
+// in-memory state would disagree with the file already installed by rename.
+type CommittedError struct{ Err error }
+
+func (e *CommittedError) Error() string {
+	return "configuration applied; directory sync failed (durability uncertain): " + e.Err.Error()
+}
+func (e *CommittedError) Unwrap() error { return e.Err }
+
+func Committed(err error) bool {
+	var committed *CommittedError
+	return errors.As(err, &committed)
+}
+
 func Save(path string, cfg *Config) error {
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	return saveWithSync(path, cfg, syncDir)
+}
+
+func saveWithSync(path string, cfg *Config, syncParent func(string) error) error {
+	persisted := *cfg
+	persisted.Harnesses = maps.Clone(cfg.Harnesses)
+	for name, h := range persisted.Harnesses {
+		if h.Adapter != "" {
+			h.Command = ""
+			persisted.Harnesses[name] = h
+		}
+	}
+	data, err := json.MarshalIndent(&persisted, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode config: %w", err)
 	}
@@ -373,11 +406,19 @@ func Save(path string, cfg *Config) error {
 		os.Remove(name)
 		return err
 	}
+	if err := cfg.CheckFileRevision(path); err != nil {
+		os.Remove(name)
+		return err
+	}
 	if err := os.Rename(name, path); err != nil {
 		os.Remove(name)
 		return fmt.Errorf("replace config: %w", err)
 	}
-	return syncDir(dir)
+	cfg.rememberFileRevision(path, append(data, '\n'))
+	if err := syncParent(dir); err != nil {
+		return &CommittedError{Err: err}
+	}
+	return nil
 }
 
 // syncDir flushes a directory entry after a rename so the replacement
@@ -400,6 +441,10 @@ func writeConfigFile(file *os.File, data []byte) error {
 		file.Close()
 		return fmt.Errorf("write config: %w", err)
 	}
+	if err := file.Sync(); err != nil {
+		file.Close()
+		return fmt.Errorf("sync config: %w", err)
+	}
 	if err := file.Close(); err != nil {
 		return fmt.Errorf("close config: %w", err)
 	}
@@ -412,6 +457,7 @@ func Load(path string) (*Config, error) {
 		return nil, fmt.Errorf("read config: %w", err)
 	}
 	cfg := &Config{}
+	cfg.rememberFileRevision(path, data)
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(cfg); err != nil {
@@ -696,11 +742,21 @@ func (c *Config) ProjectList() []project.Project {
 			DurablePlaces: item.DurablePlaces, ExternalRemote: item.ExternalRemote, DefaultRole: project.Role(item.DefaultRole),
 			Home: project.Home{Node: item.Home.Node, Path: item.Home.Path},
 		}
+		if len(item.Grants) > 0 {
+			p.ConfigGrants = make(map[string]project.Role, len(item.Grants))
+			for principal, role := range item.Grants {
+				p.ConfigGrants[principal] = project.Role(role)
+			}
+		}
 		for _, ws := range item.Workspaces {
 			if p.Copies == nil {
 				p.Copies = map[string]project.Copy{}
 			}
-			p.Copies[ws.Node] = project.Copy{Node: ws.Node, Path: ws.Path}
+			copy := project.Copy{Node: ws.Node, Path: ws.Path, Origin: project.Origin(ws.Origin), Source: ws.Source}
+			if copy.Origin == project.OriginCloned {
+				copy.State = project.CopyProvisioning
+			}
+			p.Copies[ws.Node] = copy
 		}
 		out = append(out, p)
 	}

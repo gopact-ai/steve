@@ -12,10 +12,9 @@ const MaxDepth = 4
 
 // Spawn opens a child task funded from what the parent has left.
 //
-// Budget is a property of the tree, not of each task alone. A child is given
-// the parent's *remaining* turns and time as its ceiling, so delegation can
-// never spend more than the work it belongs to was allowed — without this,
-// handing work to another agent would be the one way around the brake.
+// A child inherits a ceiling from the parent's remaining budget. This is
+// not a reservation: Begin checks and charges the shared ancestor budget
+// atomically, so siblings cannot each consume the same remaining turns.
 func (s *Store) Spawn(parentID string, child Task) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -23,11 +22,20 @@ func (s *Store) Spawn(parentID string, child Task) (Task, error) {
 	if !ok {
 		return Task{}, fmt.Errorf("parent task %s not found", parentID)
 	}
-	if parent.State.Terminal() {
+	if !parent.State.Holds() {
 		return Task{}, fmt.Errorf("parent task %s is %s; nothing can be delegated from it", parentID, parent.State)
 	}
 	if limit, spent := parent.Budget.Exhausted(); spent {
 		return Task{}, fmt.Errorf("parent task %s budget exhausted: %s", parentID, limit)
+	}
+	lineage, err := taskLineage(s.data.Tasks, parentID)
+	if err != nil {
+		return Task{}, err
+	}
+	for _, ancestor := range lineage {
+		if ancestor.State == StatePaused || ancestor.State == StateCancelled {
+			return Task{}, fmt.Errorf("%w: ancestor %s", ErrExecutionStopped, ancestor.ID)
+		}
 	}
 	depth := 1
 	for cursor := parent; cursor.Parent != ""; depth++ {
@@ -61,6 +69,7 @@ func (s *Store) Spawn(parentID string, child Task) (Task, error) {
 	child.ID = fmt.Sprintf("%d", s.data.NextID)
 	child.Parent = parentID
 	child.State = StateDraft
+	child.ExecutionEpoch = 1
 	child.CreatedAt = now
 	child.UpdatedAt = now
 	if child.Channel == "" {
@@ -101,34 +110,24 @@ func (s *Store) Spawn(parentID string, child Task) (Task, error) {
 	return child, nil
 }
 
-// Charge folds a finished child's spend into its parent, so what the child
-// used is no longer available to anyone else in the tree. It walks up: a
-// grandchild's cost reaches the root.
-func (s *Store) Charge(childID string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	child, ok := s.data.Tasks[childID]
-	if !ok {
-		return fmt.Errorf("task %s not found", childID)
-	}
-	if child.Parent == "" {
-		return nil
-	}
-	next := s.clone()
-	now := s.now()
-	spent := child.Budget
-	for cursor := next.Tasks[child.Parent]; cursor != nil; {
-		cursor.Budget.Turns += spent.Turns
-		cursor.Budget.Elapsed += spent.Elapsed
-		cursor.Budget.ToolCalls += spent.ToolCalls
-		cursor.Budget.Tokens = cursor.Budget.Tokens.Add(spent.Tokens)
-		cursor.UpdatedAt = now
-		if cursor.Parent == "" {
-			break
+// taskLineage returns the task followed by its ancestors from a candidate
+// store snapshot. Invalid ancestry refuses the whole budget mutation.
+func taskLineage(tasks map[string]*Task, id string) ([]*Task, error) {
+	var out []*Task
+	seen := map[string]bool{}
+	for id != "" {
+		if seen[id] {
+			return nil, fmt.Errorf("task %s has cyclic ancestry", id)
 		}
-		cursor = next.Tasks[cursor.Parent]
+		seen[id] = true
+		member, ok := tasks[id]
+		if !ok {
+			return nil, fmt.Errorf("task %s not found in ancestry", id)
+		}
+		out = append(out, member)
+		id = member.Parent
 	}
-	return s.replaceLocked(next)
+	return out, nil
 }
 
 // Ancestry lists the tasks above id, nearest parent first. It is what a

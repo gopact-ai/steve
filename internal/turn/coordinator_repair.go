@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -113,6 +114,14 @@ func (c *Coordinator) repairCmd(ctx context.Context, req Request, rest string) R
 	if err != nil {
 		return Result{Title: title, Text: err.Error()}
 	}
+	if c.executions != nil {
+		scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "repair/" + tracked.ID})
+		if err != nil {
+			return Result{Title: title, Text: err.Error()}
+		}
+		defer scope.Finish(nil)
+		ctx = scope.Context()
+	}
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
 
@@ -138,7 +147,7 @@ func (c *Coordinator) repairCmd(ctx context.Context, req Request, rest string) R
 	if runErr != nil {
 		return Result{Title: title, Text: c.text.T(i18n.RepairStopped, agentID, runErr) + "\n\n" + c.planTree(final, outcome)}
 	}
-	if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
+	if _, err := c.advanceExecution(ctx, tracked.ID, task.StateDone); err != nil {
 		log.Printf("turn: close repair task %s: %v", tracked.ID, err)
 	}
 	// The verify command passed on that machine; now let the machine say

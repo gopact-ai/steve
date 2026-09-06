@@ -241,7 +241,7 @@ hub 对 `state_path` 的父目录持单例锁，同一状态目录不能同时�
 
 ### 控制台与凭据
 
-当前启动会校验飞书 `app_id` / `app_secret` 并启动飞书连接；不存在跳过飞书的运行模式。`owner_open_id` 为空不会阻止 hub 启动，但控制台无法执行动作。owner 是当前应用下的 open_id，由 setup 确认；首次 owner 初始化还会用到飞书私聊。纯控制台启动见 [architecture.md](architecture.md) 路线图 §9 B3。
+当前启动会校验飞书 `app_id` / `app_secret` 并启动飞书连接；不存在跳过飞书的运行模式。`owner_open_id` 为空不会阻止 hub 启动，但控制台无法执行动作。owner 是当前应用下的 open_id，由 setup 确认；首次 owner 初始化还会用到飞书私聊。当前通道边界见 [architecture.md](architecture.md)。
 
 默认地址 `127.0.0.1:7710` 只在 hub 本机可访问。对外监听需要设置 `gateway.read_model_addr` 和非空 `gateway.read_model_token`。`dash` / `top` / `say` 不读取 config.json 的地址或 token，使用自定义监听时要显式传参：
 
@@ -254,6 +254,10 @@ hub 对 `state_path` 的父目录持单例锁，同一状态目录不能同时�
 这里的环境变量由部署者预先设置。read-model token 代表 owner 管理权限；`dash` 输出的 URL 会包含 token，不要贴进 PR。它与飞书 app secret、node 认证 token、MCP broker token 和区域 issuer token 分别配置。
 
 资源页可以即时添加机器和 agent，项目页可以添加项目/工作区，并写回相应配置；直接在磁盘上编辑 JSON 不是通用热加载接口。当前没有 `steve config apply` 命令。
+
+管理保存会检测配置文件是否被外部改过，拒绝覆盖检测到的新版本。项目配置已保存但账本投影失败时，界面会报告“投影尚未应用”，对应项目解析暂停；修复存储问题后重试管理操作或重启恢复。不要把已保存误当成未执行，再并发修改另一份配置。删除声明不会删除已保存的历史产物。
+
+控制台前端与 Hub 应一起更新。当前前端在发送前检查 Hub 的持久提交身份能力；旧 Hub 未提供 `submission_keys` 时，Console 保持只读并提示更新。提交结果不明时使用原请求的“重试”，同一个提交编号不会创建第二份工作。
 
 ## 部署 node
 
@@ -372,7 +376,31 @@ bash -lc 'exec /home/me/steve-bin/steve-node mcp-broker -config /home/me/steve-b
 
 旧节点没有此能力，断线仍会结束流。超过宽限、node 进程已消失、日志超出保留范围（`too old`）、日志写入失败或不可续接都会失败；journal 有界，不保证无限期回放。显式结束、取消和干净关闭不按网络故障保留进程。
 
-hub 进程重启是另一条路径：先过期旧 attempt、恢复未完成的落地，再恢复符合条件的会话任务及持久队列，并补投递已完成子任务的结果。暂停的任务不会自动续跑；中断超过 24 小时的会话任务留在停止状态，缺少消息锚点的聊天任务不能自动回复。它不承诺恢复旧 hub 内存中的 ACP 连接。
+hub 进程重启是另一条路径：先将缺少停止证据的旧执行隔离，回收已确认静止的未完成 attempt，再应用配置、恢复未完成落地及符合条件的任务和队列，并补投递已完成子任务的结果。隔离中的任务和暂停任务不会自动续跑；中断超过 24 小时的会话任务留在停止状态，缺少消息锚点的聊天任务不能自动回复。重启不承诺恢复旧 hub 内存中的 ACP 连接，也不表示旧 node 进程已经停止。
+
+计划恢复从已提交的步骤输出和工作流检查点继续；输出分支使用稳定落地 ID。`applying` 阶段会按原目录完成 WAL 恢复，恢复前不能移动或退休该项目。任务只有在全部约定落地完成后才显示完成。
+
+### 隔离执行与复制操作
+
+`/tasks cancel ID` 撤销任务及子任务的执行授权并等待收尾；普通回合结束不会取消已派发子任务。若未能确认进程停止，隔离会继续阻止目录接管，租约到期也不会解除它。
+
+以下命令用于检查隔离记录：
+
+```bash
+./steve ledger quarantine --config config.json
+./steve ledger clones --config config.json
+```
+
+先在记录指定的机器确认原进程已经退出。不能仅凭断连、关闭流或重启 Hub 认定退出。停止使用该状态目录的 Hub，再记录核实依据：
+
+```bash
+./steve ledger confirm-stopped --config config.json --evidence 'verified original process exit' ATTEMPT_ID
+./steve ledger confirm-clone-stopped --config config.json --evidence 'verified original clone process exit' CLONE_OPERATION_ID
+```
+
+然后启动 Hub 重新对账。确认 clone 停止只解除隔离；原目录内容是否完整仍需检查，后续由工作区管理操作重新准备。
+
+定时任务结果不明时，`/schedules` 显示 `unknown`。检查对应通道和任务后，已执行使用 `/schedules confirm ID`；确认允许再次执行才使用 `/schedules retry ID`。确认和重试限原创建者或 owner；未处理的未知触发不能通过删除定时任务隐藏。
 
 ## 门禁与 CI
 
@@ -381,11 +409,12 @@ hub 进程重启是另一条路径：先过期旧 attempt、恢复未完成的�
 | 命令 | 内容 | 期限/前置 |
 |---|---|---|
 | `make build` | 静态构建 hub 和 node | Go 1.27+；不启动服务 |
-| `make test` / `go test -race ./...` | Go 测试与竞态检查 | 本地运行 |
+| `make test` | Go 测试、竞态检查与依赖门禁 | 本地运行 |
+| `make test-console` | 前端构建、依赖与隔离浏览器测试 | 先安装 npm 开发依赖和 Playwright Chromium |
 | `make e2e-fleet` | 指定远端 agent 的委派、attempt、改动索引、用量、文件落地 | 已运行机群；客户端默认/上限 10 分钟 |
 | `make e2e-autonomous` | 查机群、并行拆解委派、按 build 能力执行、回传结果与落地 | 已运行机群；客户端默认/上限 20 分钟 |
 | `make e2e` | `STEVE_MESH_E2E=1` 的 mesh 测试 | Go 测试总超时 25 分钟；独立测试机群配置见 [e2e/mesh/](../e2e/mesh/) |
-| CI | gofmt、`go vet ./...`、`go test -race ./...` | master push 与 PR；不运行真实机群门禁 |
+| CI | Go gofmt/vet/race、前端构建/依赖门禁/隔离浏览器测试 | master push 与 PR；不运行真实机群门禁 |
 
 两个 fleet 门禁在 **hub 机器的仓库根目录**运行，使用已有 hub 和 node，不构建、部署或重启它们。它们以 owner 访问控制台 API，读取 hub 本机项目主目录，所以仅有远程 HTTP 访问不够；任务会使用真实模型并留下会话与文件证据。
 
@@ -416,7 +445,9 @@ bash -lc 'make e2e-autonomous'
 
 | 日志或现象 | 含义与处理 |
 |---|---|
-| `expired attempt of the previous process: ... hub restarted` | hub 启动时把前一个进程留下的活 attempt 置为过期，释放旧执行占用；不是“新任务刚启动就超时”。继续找该 task 的恢复或停止记录。 |
+| `recovered settled attempt: ...` | 旧 attempt 有明确静止证据，启动已回收其占用；继续查看 task 的恢复记录。 |
+| `quarantined previous writer: ...` / `automatic revival is blocked` | 不能确认旧执行进程已经停止；按隔离恢复流程核实进程并记录证据，不要靠 TTL 或重启反复重试。 |
+| `execution shutdown incomplete` | 有界关闭未能确认所有执行已清理；启动时会保守对账，检查隔离列表和原机器进程。 |
 | `console: resuming task #...` | 为控制台任务建立恢复交换并继续；若出现 `console: resume task #...: ...`，查看后面的具体恢复错误。 |
 | `console restarted before this exchange completed` | 上一个进程未完成的 running 交换被明确结算为错误；任务若符合恢复条件，会另开恢复交换。 |
 | `node: <name> disconnected (connection ...)` / `node: <name> up ...` | 节点连接断开/重新连上；仅有 up 不代表原 agent 流已经续接，继续找 stream 日志。 |

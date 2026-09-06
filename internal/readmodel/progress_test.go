@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -18,7 +19,7 @@ func TestDelegateProgressPreservesReasoningPlanAndModel(t *testing.T) {
 	reasoning := "开头\n" + strings.Repeat("完整的思考摘要\n", 2000) + "\n[… 省略 123 字节 …]\n结尾"
 	p := view.Progress{Reasoning: reasoning, Settings: view.Settings{Model: "reported-model"},
 		Plan: []view.Step{{Text: "verify", Status: view.StepCompleted}}}
-	m.DelegateProgress("59", "builder", "node-a", StepInfo{State: "done", Answer: "verified"}, p)
+	m.DelegateProgress("59", "builder", "node-a", consoleapi.StepInfo{State: "done", Answer: "verified"}, p)
 	ev := <-events
 	if ev.Progress.Reasoning != reasoning || ev.Progress.Model != "reported-model" || ev.Progress.Agent != "builder" || ev.Progress.Node != "node-a" || len(ev.Progress.Plan) != 1 {
 		t.Fatalf("delegate progress lost the agent's trace: %+v", ev.Progress)
@@ -48,12 +49,12 @@ func TestTimelineSurvivesProjectionWithEveryToolReference(t *testing.T) {
 	}
 	p.Timeline = append(p.Timeline, view.Span{Kind: "text", Text: "final", At: at})
 	progress := FromProgress(p)
-	step := FromStepProgress("#72", progress, StepInfo{Kind: "delegate", State: "done", Answer: "legacy answer"})
+	step := FromStepProgress("#72", progress, consoleapi.StepInfo{Kind: "delegate", State: "done", Answer: "legacy answer"})
 	raw, err := json.Marshal(step)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var restored StepProcess
+	var restored consoleapi.StepProcess
 	if err := json.Unmarshal(raw, &restored); err != nil {
 		t.Fatal(err)
 	}

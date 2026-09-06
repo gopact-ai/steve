@@ -2,6 +2,7 @@ package exec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -51,7 +52,7 @@ func NewAgentRunner(sessions Sessions, caps Capabilities, r *roster.Roster) *Age
 
 const defaultStepTimeout = 15 * time.Minute
 
-func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (plan.StepResult, error) {
+func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan.StepResult, runErr error) {
 	candidate, ok := a.find(ctx, req.Agent)
 	if !ok {
 		return plan.StepResult{}, fmt.Errorf("agent %q is no longer in the roster", req.Agent)
@@ -80,32 +81,40 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (plan.StepRe
 	if err != nil {
 		return plan.StepResult{}, fmt.Errorf("open session on %s: %w", at, err)
 	}
-	harness.ApplyPreferences(ctx, session, candidate.Agent.ID, candidate.Agent.Model, candidate.Agent.Options)
+	unsettled := false
 	defer func() {
+		if unsettled {
+			return
+		}
 		// A step's session is finished with; closing it releases the agent
 		// process's session state on whichever machine it lives.
 		closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer closeCancel()
 		if err := a.sessions.CloseSession(closeCtx, at, session.ID()); err != nil {
-			session.Abort()
+			stopped, ok := session.(interface{ Stopped() bool })
+			if !ok || !stopped.Stopped() {
+				runErr = errors.Join(runErr, harness.ErrStopUnconfirmed, err)
+			}
 		}
 	}()
 
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return plan.StepResult{}, ctxErr
+	}
+	harness.ApplyPreferences(ctx, session, candidate.Agent.ID, candidate.Agent.Model, candidate.Agent.Options)
 	prompt := req.Context.Render()
 	if instructions != "" {
 		prompt = instructions + "\n\n" + prompt
 	}
 	var spent stepSpend
 	answer, _, err := session.Prompt(ctx, prompt, spent.wrap(a.progress(req), req.Agent))
-	if err != nil {
-		return plan.StepResult{}, err
-	}
+	unsettled = errors.Is(err, harness.ErrStopUnconfirmed)
 	return plan.StepResult{
 		Answer:   strings.TrimSpace(answer),
 		Refs:     ParseRefs(answer),
 		Findings: parseFindings(answer),
 		Usage:    spent.usage(),
-	}, nil
+	}, err
 }
 
 // stepSpend follows a step's progress for its cost and model.
@@ -128,10 +137,7 @@ func (s *stepSpend) usage() *plan.Usage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	u := s.last.Usage
-	if u.InputTokens == 0 && u.OutputTokens == 0 && s.last.Settings.Model == "" {
-		return nil
-	}
-	return &plan.Usage{Model: s.last.Settings.Model, Input: int64(u.InputTokens), Output: int64(u.OutputTokens), CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens)}
+	return &plan.Usage{Model: s.last.Settings.Model, Input: int64(u.InputTokens), Output: int64(u.OutputTokens), CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens), Context: int64(u.ContextTokens), Reported: u.TokensReported()}
 }
 
 func (a *AgentRunner) find(ctx context.Context, id string) (roster.Candidate, bool) {

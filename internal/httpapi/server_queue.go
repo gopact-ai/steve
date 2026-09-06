@@ -1,35 +1,12 @@
-package readmodel
+package httpapi
 
 import (
 	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
-	"time"
-)
 
-// Exchange names one submission throughout its queue, sent line and answer.
-// Reply IDs still name individual transcript lines, including quoted lines.
-type Exchange struct {
-	ID           string `json:"id"`
-	Conversation string `json:"conversation"`
-	Input        string `json:"input"`
-	// Prompt is what the agent is given when it differs from Input: a
-	// continuation after a restart shows the notice and says "go on".
-	Prompt string `json:"prompt,omitempty"`
-	// Key names an exchange the platform put in on its own — a child's
-	// result delivered to its parent — so a retry cannot add it twice.
-	Key        string     `json:"key,omitempty"`
-	Quotes     []QuoteRef `json:"quotes,omitempty"`
-	State      string     `json:"state"` // queued | running | done | failed
-	EnqueuedAt time.Time  `json:"enqueued_at"`
-	StartedAt  time.Time  `json:"started_at,omitzero"`
-	ReplyID    string     `json:"reply_id,omitempty"`
-}
-
-var (
-	ErrExchangeNotFound  = errors.New("exchange not found")
-	ErrExchangeNotQueued = errors.New("exchange is no longer queued")
+	"github.com/gopact-ai/steve/internal/consoleapi"
 )
 
 func (s *Server) queueEnabled(w http.ResponseWriter) bool {
@@ -45,9 +22,9 @@ func queueResponse(w http.ResponseWriter, value any, err error) {
 	if err != nil {
 		status := http.StatusBadRequest
 		switch {
-		case errors.Is(err, ErrExchangeNotFound):
+		case errors.Is(err, consoleapi.ErrExchangeNotFound):
 			status = http.StatusNotFound
-		case errors.Is(err, ErrExchangeNotQueued):
+		case errors.Is(err, consoleapi.ErrExchangeNotQueued), errors.Is(err, consoleapi.ErrCommandConflict):
 			status = http.StatusConflict
 		}
 		w.WriteHeader(status)
@@ -62,9 +39,10 @@ func (s *Server) consoleEnqueue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req struct {
-		Conversation string     `json:"conversation"`
-		Input        string     `json:"input"`
-		Quotes       []QuoteRef `json:"quotes,omitempty"`
+		Conversation string                `json:"conversation"`
+		Input        string                `json:"input"`
+		CommandID    string                `json:"command_id"`
+		Quotes       []consoleapi.QuoteRef `json:"quotes,omitempty"`
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		queueResponse(w, nil, err)
@@ -77,11 +55,12 @@ func (s *Server) consoleEnqueue(w http.ResponseWriter, r *http.Request) {
 	if req.Conversation == "" {
 		req.Conversation = "console:main"
 	}
-	exchange, err := s.console.Enqueue(r.Context(), req.Conversation, req.Input, req.Quotes)
+	exchange, err := s.console.EnqueueCommand(r.Context(), req.Conversation, req.Input, req.CommandID, req.Quotes)
 	queueResponse(w, exchange, err)
 }
 
 func (s *Server) consoleQueue(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if !s.queueEnabled(w) {
 		return
 	}
@@ -91,9 +70,11 @@ func (s *Server) consoleQueue(w http.ResponseWriter, r *http.Request) {
 	}
 	list := s.console.Queue(conversation)
 	if list == nil {
-		list = []Exchange{}
+		list = []consoleapi.Exchange{}
 	}
-	queueResponse(w, map[string]any{"queue": list}, nil)
+	// Clients must confirm support before submitting or retrying a command ID;
+	// older hubs accepted the field but did not preserve its identity.
+	queueResponse(w, map[string]any{"queue": list, "submission_keys": true}, nil)
 }
 
 func (s *Server) consoleDeleteQueued(w http.ResponseWriter, r *http.Request) {

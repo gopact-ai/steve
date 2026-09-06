@@ -104,6 +104,13 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		}
 	}
 	input := text.String()
+	if strings.Contains(input, "ignore-cancel") {
+		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("still running"))}); err != nil {
+			return nil, err
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 
 	if strings.Contains(input, "perm") {
 		resp, err := a.client.RequestPermission(ctx, &acp.RequestPermissionRequest{

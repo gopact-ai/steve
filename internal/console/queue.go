@@ -6,19 +6,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/turn"
 )
 
-type Exchange = readmodel.Exchange
+type Exchange = consoleapi.Exchange
 
 // Only Exchange is serialized. Request lifetimes and waiters belong to this
 // process; accepted work belongs to the durable console document.
 type queuedExchange struct {
 	Exchange
-	ctx     context.Context
-	cancel  context.CancelFunc
-	done    chan struct{}
-	outcome outcome
+	// Submission identity survives edits/steering. A keyed exchange's result
+	// outlives the bounded transcript projection so restart retries can reply.
+	PayloadHash string            `json:"payload_hash,omitempty"`
+	Receipt     *consoleapi.Reply `json:"receipt,omitempty"`
+	ctx         context.Context
+	cancel      context.CancelFunc
+	done        chan struct{}
+	outcome     outcome
 }
 
 func conversationID(conversation string) string {
@@ -32,13 +38,11 @@ func conversationID(conversation string) string {
 }
 
 func interruptInput(input string) (prefix, rest string) {
-	input = strings.TrimSpace(input)
-	for _, prefix := range []string{"!", "！"} {
-		if rest, ok := strings.CutPrefix(input, prefix); ok && strings.TrimSpace(rest) != "" {
-			return prefix, strings.TrimSpace(rest)
-		}
+	parsed := turn.ParseInput(input)
+	if parsed.Interrupt {
+		return parsed.Prefix, parsed.Prompt
 	}
-	return "", input
+	return "", strings.TrimSpace(input)
 }
 
 func isInterrupt(input string) bool {
@@ -46,10 +50,18 @@ func isInterrupt(input string) bool {
 	return prefix != ""
 }
 
-func immediate(input string) bool {
-	// A stop must reach the coordinator while its target is still running.
-	fields := strings.Fields(input)
-	return isInterrupt(input) || (len(fields) > 0 && fields[0] == "/cancel")
+func (s *Service) parseInput(input string) (string, turn.ParsedInput) {
+	if parser, ok := s.handler.(interface {
+		ParseInput(string) (string, turn.ParsedInput)
+	}); ok {
+		return parser.ParseInput(input)
+	}
+	return turn.ParseAddressedInput(input)
+}
+
+func (s *Service) immediate(input string) bool {
+	_, parsed := s.parseInput(input)
+	return parsed.Interrupt || parsed.Control()
 }
 
 func copyExchange(e Exchange) Exchange {
@@ -60,37 +72,65 @@ func copyExchange(e Exchange) Exchange {
 // Enqueue returns as soon as the submission is durable. The first line in
 // an idle conversation starts here; no browser is needed to drain the rest.
 func (s *Service) Enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef) (Exchange, error) {
-	_, exchange, err := s.enqueue(ctx, conversation, input, "", quotes, false, "")
+	return s.EnqueueCommand(ctx, conversation, input, "", quotes)
+}
+
+// EnqueueCommand uses the same durable exchange as SendCommand, returning
+// immediately after acceptance or when replaying its current state.
+func (s *Service) EnqueueCommand(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (Exchange, error) {
+	_, exchange, err := s.enqueue(ctx, conversation, input, quotes, enqueueOptions{Key: clientKey(commandID)})
 	return exchange, err
 }
 
 // enqueue accepts one line. prompt, when set, is what the agent gets
 // instead of the input; front puts the line ahead of everything still
 // waiting, behind what already ran or runs.
-func (s *Service) enqueue(ctx context.Context, conversation, input, prompt string, quotes []QuoteRef, front bool, key string) (*queuedExchange, Exchange, error) {
+type enqueueOptions struct {
+	Prompt, Key                        string
+	Front                              bool
+	Origin, Requester, ExpectedProject string
+}
+
+func (s *Service) enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef, options enqueueOptions) (*queuedExchange, Exchange, error) {
+	prompt, key, front := options.Prompt, options.Key, options.Front
 	if s.owner == "" {
 		return nil, Exchange{}, errors.New("the console needs feishu.owner_open_id: it acts as the owner")
+	}
+	conversation = conversationID(conversation)
+	input, prompt, quotes, hash := submission(input, prompt, quotes)
+	s.mu.Lock()
+	existing, err := s.submittedLocked(conversation, key, hash)
+	s.mu.Unlock()
+	if existing != nil || err != nil {
+		if err != nil {
+			return nil, Exchange{}, err
+		}
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return existing, copyExchange(existing.Exchange), nil
 	}
 	if strings.TrimSpace(input) == "" {
 		return nil, Exchange{}, errors.New("input is required")
 	}
-	conversation = conversationID(conversation)
 	if _, err := s.quoteBlock(ctx, conversation, quotes); err != nil {
 		return nil, Exchange{}, err
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if key != "" {
-		for _, other := range s.exchanges[conversation] {
-			if other.Key == key {
-				return other, copyExchange(other.Exchange), nil
-			}
+	if other, err := s.submittedLocked(conversation, key, hash); other != nil || err != nil {
+		if err != nil {
+			return nil, Exchange{}, err
 		}
+		return other, copyExchange(other.Exchange), nil
 	}
 	e := &queuedExchange{
 		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
+			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject,
 			Quotes: append([]QuoteRef(nil), quotes...), State: "queued", EnqueuedAt: time.Now().UTC()},
-		ctx: context.WithoutCancel(ctx), done: make(chan struct{}),
+		PayloadHash: hash, ctx: context.WithoutCancel(ctx), done: make(chan struct{}),
+	}
+	if !strings.HasPrefix(key, "client:") {
+		e.PayloadHash = ""
 	}
 	list := s.exchanges[conversation]
 	at := len(list)
@@ -106,8 +146,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input, prompt strin
 	copy(list[at+1:], list[at:])
 	list[at] = e
 	s.exchanges[conversation] = list
-	var err error
-	if immediate(input) {
+	if s.immediate(input) {
 		err = s.startLocked(e)
 	} else if s.running[conversation] == 0 {
 		err = s.startNextLocked(conversation)
@@ -130,8 +169,20 @@ func (s *Service) Queue(conversation string) []Exchange {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := []Exchange{}
-	for _, e := range s.exchanges[conversationID(conversation)] {
+	list := s.exchanges[conversationID(conversation)]
+	remaining := keep
+	for i := len(list) - 1; i >= 0; i-- {
+		e := list[i]
+		if terminalExchange(e.State) {
+			if remaining == 0 {
+				continue
+			}
+			remaining--
+		}
 		out = append(out, copyExchange(e.Exchange))
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
 	}
 	return out
 }
@@ -141,13 +192,13 @@ func (s *Service) queuedLocked(id string) (*queuedExchange, int, error) {
 		for i, e := range list {
 			if e.ID == id {
 				if e.State != "queued" {
-					return nil, 0, readmodel.ErrExchangeNotQueued
+					return nil, 0, consoleapi.ErrExchangeNotQueued
 				}
 				return e, i, nil
 			}
 		}
 	}
-	return nil, 0, readmodel.ErrExchangeNotFound
+	return nil, 0, consoleapi.ErrExchangeNotFound
 }
 
 func (s *Service) DeleteQueued(id string) error {
@@ -158,6 +209,20 @@ func (s *Service) DeleteQueued(id string) error {
 		return err
 	}
 	list := s.exchanges[e.Conversation]
+	if e.Key != "" {
+		previousState, previousReceipt := e.State, e.Receipt
+		e.State = "cancelled"
+		r := consoleapi.Reply{Conversation: e.Conversation, ExchangeID: e.ID, Kind: "reply", Text: "queued exchange cancelled", Error: "queued exchange cancelled"}
+		e.Receipt = &r
+		if err := s.save(); err != nil {
+			e.State, e.Receipt = previousState, previousReceipt
+			return err
+		}
+		e.outcome = replyOutcome(r)
+		close(e.done)
+		s.publishQueue(e.Conversation)
+		return nil
+	}
 	next := append([]*queuedExchange(nil), list[:index]...)
 	s.exchanges[e.Conversation] = append(next, list[index+1:]...)
 	if err := s.save(); err != nil {
@@ -215,7 +280,7 @@ func (s *Service) startLocked(e *queuedExchange) error {
 	previous := s.replies[conversation]
 	e.State, e.StartedAt = "running", time.Now().UTC()
 	s.running[conversation]++
-	sent := s.recordLocked(readmodel.Reply{At: e.StartedAt, Conversation: conversation, ExchangeID: e.ID, Input: e.Input, Kind: "sent"})
+	sent := s.recordLocked(consoleapi.Reply{At: e.StartedAt, Conversation: conversation, ExchangeID: e.ID, Input: e.Input, Kind: "sent"})
 	if err := s.save(); err != nil {
 		e.State, e.StartedAt = "queued", time.Time{}
 		s.running[conversation]--
@@ -256,7 +321,7 @@ func (s *Service) startNextLocked(conversation string) error {
 	return nil
 }
 
-func (s *Service) finish(e *queuedExchange, reply readmodel.Reply, err error) {
+func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	s.mu.Lock()
 	if work := s.processes[e.ID]; work != nil {
 		reply.Process = work.summary()
@@ -275,6 +340,9 @@ func (s *Service) finish(e *queuedExchange, reply readmodel.Reply, err error) {
 		e.State = "failed"
 	}
 	e.outcome = outcome{reply: reply, err: err}
+	if e.Key != "" {
+		e.Receipt = &reply
+	}
 	s.trimExchangesLocked(e.Conversation)
 	// Keep the reservation until the terminal state is durable. Retrying a
 	// document write must never invoke the handler a second time.
@@ -296,15 +364,15 @@ func (s *Service) finish(e *queuedExchange, reply readmodel.Reply, err error) {
 	s.mu.Unlock()
 }
 
-// Pending work is never evicted. Terminal history has the same bound as
-// replies so long-lived conversations do not grow the document forever.
+// Pending work and keyed business records are never evicted. Only unkeyed
+// terminal history is bounded; Queue separately limits its UI projection.
 func (s *Service) trimExchangesLocked(conversation string) {
 	list := s.exchanges[conversation]
 	remaining := keep
 	out := make([]*queuedExchange, 0, len(list))
 	for i := len(list) - 1; i >= 0; i-- {
 		e := list[i]
-		if e.State == "done" || e.State == "failed" {
+		if terminalExchange(e.State) && e.Key == "" {
 			if remaining == 0 {
 				continue
 			}
@@ -333,10 +401,23 @@ func (s *Service) restoreQueueLocked() error {
 			e.ctx, e.done = context.Background(), make(chan struct{})
 			if e.State == "running" {
 				err := errors.New("console restarted before this exchange completed")
-				r := s.recordLocked(readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, ExchangeID: e.ID, Kind: "reply", Text: err.Error(), Error: err.Error()})
+				r := s.recordLocked(consoleapi.Reply{At: time.Now().UTC(), Conversation: conversation, ExchangeID: e.ID, Kind: "reply", Text: err.Error(), Error: err.Error()})
 				e.State, e.ReplyID = "failed", r.ID
+				if e.Key != "" {
+					e.Receipt = &r
+				}
 			}
-			if e.State == "done" || e.State == "failed" {
+			if terminalExchange(e.State) {
+				if e.Receipt != nil {
+					e.outcome = replyOutcome(*e.Receipt)
+				} else {
+					for _, r := range s.replies[conversation] {
+						if r.ID == e.ReplyID {
+							e.outcome = replyOutcome(r)
+							break
+						}
+					}
+				}
 				e.ctx = nil
 				close(e.done)
 			}

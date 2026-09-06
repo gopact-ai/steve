@@ -64,6 +64,8 @@ type Step struct {
 }
 
 type Usage struct {
+	// Reported distinguishes an explicit zero-token report from no report.
+	Reported         bool
 	TotalTokens      uint64
 	InputTokens      uint64
 	OutputTokens     uint64
@@ -77,6 +79,12 @@ type Usage struct {
 	// Cost is the latest session total, not this turn's incremental spend.
 	// Keeping its currency avoids assuming every provider bills in USD.
 	Cost *Cost
+}
+
+// TokensReported also accepts positive counters supplied by a harness.
+// Context occupancy alone is not a report of tokens spent.
+func (u Usage) TokensReported() bool {
+	return u.Reported || u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0
 }
 
 type Cost struct {

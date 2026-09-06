@@ -1,4 +1,4 @@
-package readmodel
+package httpapi
 
 import (
 	"encoding/json"
@@ -6,10 +6,13 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
 func TestConsoleQueueRoutes(t *testing.T) {
-	server, err := NewServer(New(Sources{}), ServerConfig{Addr: "127.0.0.1:0", Token: "token"})
+	server, err := NewServer(readmodel.New(readmodel.Sources{}), ServerConfig{Addr: "127.0.0.1:0", Token: "token"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -36,6 +39,9 @@ func TestConsoleQueueRoutes(t *testing.T) {
 		if res.StatusCode != status {
 			t.Fatalf("%s %s = %d, want %d: %s", method, path, res.StatusCode, status, raw)
 		}
+		if method == http.MethodGet && status == http.StatusOK && res.Header.Get("Cache-Control") != "no-store" {
+			t.Fatal("queue capability and live state must not be cached")
+		}
 		return raw
 	}
 	for _, route := range []struct{ method, path, body string }{
@@ -45,13 +51,19 @@ func TestConsoleQueueRoutes(t *testing.T) {
 		{"PATCH", "/console/queue/1", `{"input":"edited"}`},
 		{"POST", "/console/queue/1/steer", ""},
 	} {
-		request(route.method, route.path, route.body, "", http.StatusUnauthorized)
-		request(route.method, route.path, route.body, "token", http.StatusNotImplemented)
+		for _, rejected := range [][]byte{
+			request(route.method, route.path, route.body, "", http.StatusUnauthorized),
+			request(route.method, route.path, route.body, "token", http.StatusNotImplemented),
+		} {
+			if strings.Contains(string(rejected), `"submission_keys":true`) {
+				t.Fatal("an unauthorized or unwired console advertised submission support")
+			}
+		}
 	}
 	server.SetConsole(&fakeConsole{})
-	decode := func(raw []byte) Exchange {
+	decode := func(raw []byte) consoleapi.Exchange {
 		t.Helper()
-		var e Exchange
+		var e consoleapi.Exchange
 		if err := json.Unmarshal(raw, &e); err != nil {
 			t.Fatal(err)
 		}
@@ -68,12 +80,13 @@ func TestConsoleQueueRoutes(t *testing.T) {
 		t.Fatal("reused exchange ID")
 	}
 	var listing struct {
-		Queue []Exchange `json:"queue"`
+		Queue          []consoleapi.Exchange `json:"queue"`
+		SubmissionKeys bool                  `json:"submission_keys"`
 	}
 	if err := json.Unmarshal(request("GET", "/console/queue?conversation=console:main", "", "token", http.StatusOK), &listing); err != nil {
 		t.Fatal(err)
 	}
-	if len(listing.Queue) != 1 || listing.Queue[0].ID != first.ID {
+	if !listing.SubmissionKeys || len(listing.Queue) != 1 || listing.Queue[0].ID != first.ID {
 		t.Fatalf("queue = %+v", listing)
 	}
 	request("PATCH", "/console/queue/"+first.ID, `{"input":" "}`, "token", http.StatusBadRequest)
@@ -93,7 +106,7 @@ func TestConsoleQueueRoutes(t *testing.T) {
 	request("PATCH", "/console/queue/missing", `{"input":"late"}`, "token", http.StatusNotFound)
 	request("POST", "/console/queue/missing/steer", "", "token", http.StatusNotFound)
 	raw := request("GET", "/console/queue?conversation=console:other", "", "token", http.StatusOK)
-	if strings.TrimSpace(string(raw)) != `{"queue":[]}` {
+	if strings.TrimSpace(string(raw)) != `{"queue":[],"submission_keys":true}` {
 		t.Fatalf("empty queue = %s", raw)
 	}
 }

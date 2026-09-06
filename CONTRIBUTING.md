@@ -81,8 +81,10 @@ As with the ten-minute fleet gate, a client timeout does not cancel server-side
 work. Include the full output through `AUTONOMOUS PASS` and the conversation,
 task and attempt IDs when reporting this gate.
 
-CI runs only `gofmt`, `go vet ./...` and `go test -race ./...`; it does not run
-either live fleet gate. Configuration, deployment and troubleshooting are in
+CI runs gofmt, Go vet/race tests, frontend dependency checks, production builds
+and isolated browser interactions. It does not run either live fleet gate.
+Run `make test` and `make test-console` locally; install the test browser with
+`cd web/console && npm ci && npx playwright install chromium` first. Configuration, deployment and troubleshooting are in
 [operations](docs/operations.md).
 
 Historical background and the regressions these gates cover: [console §21](docs/history/console.md#21-跨机器协作-e2e2026-09-04)

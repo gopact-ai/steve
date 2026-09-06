@@ -114,6 +114,15 @@ func (r *Repo) File(ctx context.Context, commit, path string) (text string, size
 	if len(raw) > MaxFileBytes {
 		raw = raw[:MaxFileBytes]
 	}
+	if truncated && len(raw) > 0 {
+		start := len(raw) - 1
+		for start > 0 && !utf8.RuneStart(raw[start]) {
+			start--
+		}
+		if !utf8.FullRune(raw[start:]) {
+			raw = raw[:start]
+		}
+	}
 	if bytes.IndexByte(raw, 0) >= 0 || !utf8.Valid(raw) {
 		return "", size, true, false, nil
 	}

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
@@ -166,7 +167,7 @@ func TestConsoleStreamsProgressAndKeepsTheProcess(t *testing.T) {
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		model.Publish(readmodel.Event{Kind: "step.progress", Conversation: "console:main", StepID: "repair",
-			Progress: &readmodel.Progress{Agent: "builder", Node: "node-a", Tools: []readmodel.ToolCall{{Kind: "shell", Name: "install", Status: "completed"}}}})
+			Progress: &consoleapi.Progress{Agent: "builder", Node: "node-a", Tools: []consoleapi.ToolCall{{Kind: "shell", Name: "install", Status: "completed"}}}})
 	}()
 	slow := New(slowStreamer{}, "ou_owner", model)
 	reply, err := slow.Send(context.Background(), "main", "/repair fixer")

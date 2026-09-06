@@ -50,6 +50,26 @@ func TestActiveDispatchedIntentCannotBeRecoveredOrResolved(t *testing.T) {
 	}
 }
 
+func TestPendingResolutionDoesNotMutateTheLedger(t *testing.T) {
+	s, book := newRecoveryService(t)
+	it := dispatchedIntent(t, s)
+	if pending, err := s.PendingResolution(t.Context()); err != nil || len(pending) != 0 {
+		t.Fatalf("active dispatch presented for resolution: %+v, %v", pending, err)
+	}
+	restarted := New(book)
+	pending, err := restarted.PendingResolution(t.Context())
+	if err != nil || len(pending) != 1 || pending[0].ID != it.ID {
+		t.Fatalf("abandoned dispatch missing: %+v, %v", pending, err)
+	}
+	stored, err := restarted.Get(t.Context(), it.ID)
+	if err != nil || stored.State != Dispatched {
+		t.Fatalf("read query changed state: %+v, %v", stored, err)
+	}
+	if _, err := restarted.Resolve(t.Context(), it.ID, "new", "owner"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestFailedTerminalRecordingCanBeReconciled(t *testing.T) {
 	for _, terminal := range []string{"confirmed", "lost", "failed"} {
 		t.Run(terminal, func(t *testing.T) {

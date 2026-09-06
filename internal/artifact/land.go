@@ -9,8 +9,11 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
+	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 // Landing is the operation that brings an artifact into the project's
@@ -25,21 +28,48 @@ import (
 // journaled as an effect — started before, confirmed after — under the WAL
 // round, so a landing cut off mid-apply is recovered per path rather than
 // guessed at.
+// Source keeps an execution's original permission with its result.
+type Source struct {
+	Execution *task.ExecutionToken `json:"execution"`
+	AttemptID string               `json:"attempt_id"`
+}
+
+// SourceOf attaches the currently executing task's authorization to a result.
+func SourceOf(ctx context.Context, attemptID string) []Source {
+	if token := execution.Token(ctx); token != nil {
+		return []Source{{Execution: token, AttemptID: attemptID}}
+	}
+	return nil
+}
+
+func firstSource(s []Source) *Source {
+	if len(s) == 0 {
+		return nil
+	}
+	origin := s[0]
+	return &origin
+}
+
 type Landing struct {
-	ID        string        `json:"id"`
-	Project   string        `json:"project"`
-	Artifact  string        `json:"artifact"`
-	Base      string        `json:"base,omitempty"`
-	Now       string        `json:"now,omitempty"`
-	Merged    string        `json:"merged,omitempty"`
-	By        string        `json:"by,omitempty"`
-	State     string        `json:"state"`
-	Paths     []string      `json:"paths,omitempty"`
-	Round     int           `json:"round"`
-	Error     string        `json:"error,omitempty"`
-	Lease     *ledger.Lease `json:"lease,omitempty"`
-	StartedAt time.Time     `json:"started_at"`
-	EndedAt   time.Time     `json:"ended_at,omitempty"`
+	Target         project.Home `json:"target"`
+	writer         project.Home
+	borrowedHolder string
+	Source         *Source       `json:"source,omitempty"`
+	ID             string        `json:"id"`
+	Project        string        `json:"project"`
+	Artifact       string        `json:"artifact"`
+	Base           string        `json:"base,omitempty"`
+	Now            string        `json:"now,omitempty"`
+	Merged         string        `json:"merged,omitempty"`
+	By             string        `json:"by,omitempty"`
+	State          string        `json:"state"`
+	Paths          []string      `json:"paths,omitempty"`
+	Round          int           `json:"round"`
+	Error          string        `json:"error,omitempty"`
+	Lease          *ledger.Lease `json:"lease,omitempty"`
+	StartedAt      time.Time     `json:"started_at"`
+	EndedAt        time.Time     `json:"ended_at,omitempty"`
+	Recoverable    bool          `json:"recoverable,omitempty"`
 }
 
 const (
@@ -68,19 +98,48 @@ func (c Conflict) Error() string {
 // Land merges an artifact into the project's canonical workspace. The
 // caller must not hold the canonical lock: the landing takes it, and
 // ErrHeld comes back as ledger.ErrHeld when someone else has it.
-func (s *Store) Land(ctx context.Context, p project.Project, artifactID, by string) (Landing, error) {
-	return s.land(ctx, p, artifactID, by, nil)
+func (s *Store) Land(ctx context.Context, p project.Project, artifactID, by string, source ...Source) (Landing, error) {
+	return s.land(ctx, p, artifactID, by, nil, firstSource(source), nil)
 }
 
 // LandUnder lands while someone else legitimately holds the canonical lock
 // and asked for it: a parent turn in place, taking a delegate's result into
 // its own directory. The landing is fenced on that lease and releases
 // nothing.
-func (s *Store) LandUnder(ctx context.Context, p project.Project, artifactID, by string, held ledger.Lease) (Landing, error) {
-	return s.land(ctx, p, artifactID, by, &held)
+func (s *Store) LandUnder(ctx context.Context, p project.Project, artifactID, by string, held ledger.Lease, source ...Source) (Landing, error) {
+	return s.land(ctx, p, artifactID, by, &held, firstSource(source), nil)
 }
 
-func (s *Store) land(ctx context.Context, p project.Project, artifactID, by string, held *ledger.Lease) (Landing, error) {
+func (s *Store) land(ctx context.Context, p project.Project, artifactID, by string, held *ledger.Lease, source *Source, resume *Landing) (Landing, error) {
+	borrowedHolder := ""
+	if held != nil {
+		if held.Key != "canonical:"+p.ID {
+			return Landing{}, fmt.Errorf("landing lease %s does not own project %s", held.Key, p.ID)
+		}
+		if err := s.ledger.CheckAny(ctx, *held); err != nil {
+			return Landing{}, err
+		}
+		borrowedHolder = held.Holder
+	}
+	if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error { return attempt.CheckWriterTx(tx, p.Home.Node, p.Home.Path, borrowedHolder) }); err != nil {
+		return Landing{}, err
+	}
+	if source != nil {
+		if source.Execution == nil {
+			return Landing{}, errors.New("landing source requires execution authorization")
+		}
+		if s.executions != nil {
+			scope, err := s.executions.BeginAccepted(ctx, execution.Key{TaskID: source.Execution.TaskID, InstanceID: "land/" + artifactID, AttemptID: source.AttemptID}, source.Execution)
+			if err != nil {
+				return Landing{}, err
+			}
+			defer scope.Finish(nil)
+			ctx = scope.Context()
+		}
+		if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error { return task.CheckExecutionTx(tx, source.Execution) }); err != nil {
+			return Landing{}, err
+		}
+	}
 	m, ok, err := s.Manifest(ctx, artifactID)
 	if err != nil {
 		return Landing{}, err
@@ -95,9 +154,17 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	if err != nil {
 		return Landing{}, err
 	}
-	land := Landing{ID: "land-" + short(artifactID) + "-" + fmt.Sprint(s.now().UnixNano()), Project: p.ID, Artifact: artifactID, Base: base, By: by, State: LandProposed, StartedAt: s.now().UTC()}
-	if _, err := s.ledger.Begin(ctx, land.ID, landKind, LandProposed, by, land); err != nil {
-		return Landing{}, err
+	land := Landing{borrowedHolder: borrowedHolder, writer: p.Home, Target: p.Home, Source: source, ID: "land-" + short(artifactID) + "-" + fmt.Sprint(s.now().UnixNano()), Project: p.ID, Artifact: artifactID, Base: base, By: by, State: LandProposed, StartedAt: s.now().UTC()}
+	if resume != nil {
+		land.ID, land.Recoverable = resume.ID, true
+		if !resume.StartedAt.IsZero() {
+			land.StartedAt = resume.StartedAt
+		}
+	}
+	if resume == nil || resume.State == "" {
+		if _, err := s.ledger.Begin(ctx, land.ID, landKind, LandProposed, by, land); err != nil {
+			return Landing{}, err
+		}
 	}
 	var lease ledger.Lease
 	if held != nil {
@@ -106,13 +173,16 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		}
 		lease = *held
 	} else {
-		acquired, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, land.ID, landTTL)
+		acquired, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, landingHolder(ctx, land.ID), landTTL)
 		if err != nil {
-			_ = s.fail(ctx, &land, LandProposed, LandMergeConflicted, err.Error(), nil)
+			if !land.Recoverable {
+				_ = s.fail(ctx, &land, LandProposed, LandMergeConflicted, err.Error(), nil)
+			}
 			return land, err
 		}
 		lease = acquired
 		defer func() { _ = s.ledger.ReleaseAny(context.WithoutCancel(ctx), lease) }()
+		defer trackLandingLease(ctx, lease)()
 	}
 	land.Lease = &lease
 	if err := s.move(ctx, &land, LandProposed, LandLocked, nil); err != nil {
@@ -122,7 +192,9 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	// Under the lock: what the canonical workspace holds right now.
 	now, _, err := s.SnapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before landing "+short(artifactID))
 	if err != nil {
-		_ = s.fail(ctx, &land, LandLocked, LandMergeConflicted, "snapshot: "+err.Error(), nil)
+		if !land.Recoverable {
+			_ = s.fail(ctx, &land, LandLocked, LandMergeConflicted, "snapshot: "+err.Error(), nil)
+		}
 		return land, err
 	}
 	land.Now = now.ID
@@ -138,7 +210,9 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		merged, conflicts, err = repo.Merge(ctx, base, now.ID, artifactID, "land "+short(artifactID)+" into "+p.ID)
 	}
 	if err != nil {
-		_ = s.fail(ctx, &land, LandLocked, LandMergeConflicted, err.Error(), nil)
+		if !land.Recoverable {
+			_ = s.fail(ctx, &land, LandLocked, LandMergeConflicted, err.Error(), nil)
+		}
 		return land, err
 	}
 	if len(conflicts) > 0 {
@@ -170,6 +244,11 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	if err := s.move(ctx, &land, LandMerged, LandApplying, nil); err != nil {
 		return land, err
 	}
+	// Applying is already admitted under the source epoch. Finish this WAL
+	// operation even if a later stop revokes permission for new work.
+	applyCtx, finishApply := landingApplyContext(ctx)
+	defer finishApply()
+	ctx = applyCtx
 	journal := s.ledger.Journal()
 	for _, path := range paths {
 		if _, err := journal.Started(ledger.EffectID{Operation: land.ID, Kind: "land-path", InstanceKey: fmt.Sprintf("%d/%s", land.Round, path)}, "", nil); err != nil {
@@ -182,6 +261,9 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		err = s.applyOnNode(ctx, p, now.ID, merged, repo)
 	}
 	if err != nil {
+		if land.Recoverable {
+			return land, err
+		}
 		_ = s.fail(ctx, &land, LandApplying, LandApplyConflicted, err.Error(), paths)
 		return land, Conflict{State: LandApplyConflicted, Paths: paths}
 	}
@@ -195,7 +277,7 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	current, _, _ := s.ledger.Name(ctx, CanonicalRef(p.ID))
 	land.State = LandCommitted
 	land.EndedAt = s.now().UTC()
-	_, err = s.ledger.Transition(ctx, land.ID, LandApplying, LandCommitted, by, []ledger.Lease{lease}, map[string]any{"paths": paths},
+	_, err = s.ledger.Transition(ctx, land.ID, LandApplying, LandCommitted, by, landingFence(ctx, []ledger.Lease{lease}), map[string]any{"paths": paths},
 		func(tx *ledger.Tx, op *ledger.Operation) error {
 			if _, err := tx.CompareAndSetName(CanonicalRef(p.ID), current.Version, merged); err != nil {
 				return err
@@ -277,8 +359,25 @@ func (s *Store) move(ctx context.Context, land *Landing, from, to string, effect
 	if land.Lease != nil {
 		fencings = []ledger.Lease{*land.Lease}
 	}
-	_, err := s.ledger.Transition(ctx, land.ID, from, to, land.By, fencings, effects,
-		func(tx *ledger.Tx, op *ledger.Operation) error { return tx.SetData(op, *land) })
+	_, err := s.ledger.Transition(ctx, land.ID, from, to, land.By, landingFence(ctx, fencings), effects,
+		func(tx *ledger.Tx, op *ledger.Operation) error {
+			if to == LandApplying || (to == LandCommitted && from != LandApplying && from != LandRecoveryPending) {
+				if err := project.CheckHomeTx(tx, land.Project, land.Target); err != nil {
+					return err
+				}
+			}
+			if to == LandApplying {
+				if err := attempt.CheckWriterTx(tx, land.writer.Node, land.writer.Path, land.borrowedHolder); err != nil {
+					return err
+				}
+			}
+			if land.Source != nil && (to == LandApplying || (to == LandCommitted && from != LandApplying && from != LandRecoveryPending)) {
+				if err := task.CheckExecutionTx(tx, land.Source.Execution); err != nil {
+					return err
+				}
+			}
+			return tx.SetData(op, *land)
+		})
 	return err
 }
 

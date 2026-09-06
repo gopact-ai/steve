@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -88,3 +89,8 @@ func (p legacyRemoteProcess) Wait() error {
 }
 
 func (p legacyRemoteProcess) Kill() { _ = p.stream.Close() }
+
+func (p legacyRemoteProcess) Stopped() bool {
+	err := p.stream.Err()
+	return err != nil && strings.HasPrefix(err.Error(), nodewire.ExitPrefix)
+}

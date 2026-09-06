@@ -114,7 +114,7 @@ func TestPromptResponseUsageReachesProgress(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := view.Usage{
-		TotalTokens: 300, InputTokens: 100, OutputTokens: 110, ThoughtTokens: 30,
+		Reported: true, TotalTokens: 300, InputTokens: 100, OutputTokens: 110, ThoughtTokens: 30,
 		CacheReadTokens: 40, CacheWriteTokens: 50, ContextTokens: 1600, ContextWindow: 128000,
 		Cost: &view.Cost{Amount: 0.125, Currency: "USD"},
 	}
@@ -511,5 +511,60 @@ func TestCancelledPromptIsSettledByTheAgent(t *testing.T) {
 	// interrupting non-destructive.
 	if _, _, err := h.Prompt(t.Context(), sid, generation, "next", nil); err != nil {
 		t.Fatalf("session unusable after a settled cancel: %v", err)
+	}
+}
+
+func TestAbandonedPromptDoesNotClaimTheWriterStopped(t *testing.T) {
+	h := newTestHost(t, "deny")
+	sid, generation, err := h.OpenSession(t.Context(), "", SessionConfig{Workdir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	started := make(chan struct{})
+	var once sync.Once
+	done := make(chan error, 1)
+	go func() {
+		_, _, err := h.Prompt(ctx, sid, generation, "ignore-cancel", func(view.Progress) { once.Do(func() { close(started) }) })
+		done <- err
+	}()
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("agent did not start")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrStopUnconfirmed) || !errors.Is(err, context.Canceled) || errors.Is(err, ErrTurnCanceled) {
+			t.Fatalf("abandoned prompt returned %v", err)
+		}
+	case <-time.After(cancelNotifyTimeout + cancelSettleTimeout + 5*time.Second):
+		t.Fatal("abandoned prompt never returned")
+	}
+	if h.ProcessStopped(generation) {
+		t.Fatal("abandoned RPC falsely proved process exit")
+	}
+	h.Close()
+	if !h.ProcessStopped(generation) {
+		t.Fatal("local process exit was not recorded")
+	}
+}
+
+func TestExplicitZeroUsageIsDifferentFromNoUsage(t *testing.T) {
+	var got view.Progress
+	col := &collector{progress: func(p view.Progress) { got = p }}
+	col.promptUsage(nil)
+	if got.Usage.Reported {
+		t.Fatal("nil usage claimed a report")
+	}
+	col.promptUsage(&acp.Usage{})
+	if !got.Usage.Reported || got.Usage.InputTokens != 0 || got.Usage.OutputTokens != 0 {
+		t.Fatalf("explicit zero report lost: %+v", got.Usage)
+	}
+	col.handle(acp.SessionUpdate{SessionUpdate: acp.SessionUpdateTypeUsageUpdate, Used: 150, Size: 1000})
+	if !got.Usage.Reported || got.Usage.ContextTokens != 150 {
+		t.Fatalf("context update reset token report: %+v", got.Usage)
 	}
 }

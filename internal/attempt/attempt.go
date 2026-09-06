@@ -31,6 +31,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 type State string
@@ -103,14 +104,17 @@ const (
 
 // Spec is what an attempt is fixed to when it opens.
 type Spec struct {
-	ID      string `json:"id"`
-	TaskID  string `json:"task_id"`
-	TurnID  string `json:"turn_id"`
-	Kind    Kind   `json:"kind"`
-	Project string `json:"project"`
-	Node    string `json:"node"`
-	Harness string `json:"harness"`
-	Agent   string `json:"agent"`
+	// WorkID is the caller-owned specification identity used by recovery.
+	WorkID    string               `json:"work_id,omitempty"`
+	Execution *task.ExecutionToken `json:"execution,omitempty"`
+	ID        string               `json:"id"`
+	TaskID    string               `json:"task_id"`
+	TurnID    string               `json:"turn_id"`
+	Kind      Kind                 `json:"kind"`
+	Project   string               `json:"project"`
+	Node      string               `json:"node"`
+	Harness   string               `json:"harness"`
+	Agent     string               `json:"agent"`
 	// Slots is the endpoint's capacity for (node, harness); zero is
 	// unlimited and takes no slot lease.
 	Slots int `json:"slots,omitempty"`
@@ -137,6 +141,8 @@ type Result struct {
 	Summary  string   `json:"summary,omitempty"`
 	Artifact string   `json:"artifact,omitempty"`
 	Refs     []string `json:"refs,omitempty"`
+	// Output is the caller-owned recovery document committed with this result.
+	Output json.RawMessage `json:"output,omitempty"`
 	// CaptureError keeps a successful turn's missing snapshot visible.
 	CaptureError string `json:"capture_error,omitempty"`
 }
@@ -158,11 +164,16 @@ type Usage struct {
 // Record is the attempt as the ledger holds it.
 type Record struct {
 	Spec
-	State    State          `json:"state"`
-	Revision int64          `json:"revision"`
-	Session  string         `json:"session,omitempty"`
-	Leases   []ledger.Lease `json:"leases"`
-	Result   *Result        `json:"result,omitempty"`
+	// SessionSettled is nil for records without durable execution evidence.
+	// Running arms it false before Prompt; confirmed settlement writes true.
+	SessionSettled *bool          `json:"session_settled,omitempty"`
+	Unsettled      bool           `json:"unsettled,omitempty"`
+	StopEvidence   string         `json:"stop_evidence,omitempty"`
+	State          State          `json:"state"`
+	Revision       int64          `json:"revision"`
+	Session        string         `json:"session,omitempty"`
+	Leases         []ledger.Lease `json:"leases"`
+	Result         *Result        `json:"result,omitempty"`
 	// Usage is what the attempt cost, as the harness last reported it,
 	// written with every terminal transition — success, failure, expiry
 	// alike — so failed work is not free in the books.
@@ -208,6 +219,9 @@ const (
 	kind       = "attempt"
 	DefaultTTL = 90 * time.Second
 )
+
+// ErrStopConfirmationRequired blocks replacing an unknown writer.
+var ErrStopConfirmationRequired = errors.New("attempt requires physical stop confirmation")
 
 // Service opens, moves and sweeps attempts.
 type Service struct {
@@ -261,6 +275,17 @@ func (s *Service) Hold(ctx context.Context, region, key, holder string) (func(),
 // all or nothing: a lease that cannot be had releases the ones already
 // taken and reports which resource is busy.
 func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
+	if err := s.checkUnsettled(ctx, spec); err != nil {
+		return Record{}, err
+	}
+	if spec.Execution != nil {
+		if spec.Execution.TaskID != spec.TaskID {
+			return Record{}, errors.New("attempt execution owner mismatch")
+		}
+		if err := s.l.Update(ctx, func(tx *ledger.Tx) error { return task.CheckExecutionTx(tx, spec.Execution) }); err != nil {
+			return Record{}, err
+		}
+	}
 	if spec.ID == "" {
 		spec.ID = newID()
 	}
@@ -356,7 +381,8 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 			return Record{}, NoSlot{Endpoint: endpoint, Slots: spec.Slots}
 		}
 	}
-	record := Record{Spec: spec, State: Leased, Revision: 1, Leases: held, StartedAt: s.now().UTC()}
+	settled := true
+	record := Record{SessionSettled: &settled, Spec: spec, State: Leased, Revision: 1, Leases: held, StartedAt: s.now().UTC()}
 	if _, err := s.l.Begin(ctx, spec.ID, kind, string(Leased), spec.By, record); err != nil {
 		release()
 		return Record{}, err
@@ -367,6 +393,10 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 // Advance moves an attempt. Every lease it holds is a fencing on the
 // transition; a terminal state releases them afterwards.
 func (s *Service) Advance(ctx context.Context, id string, to State, actor string, mutate func(*Record)) (Record, error) {
+	return s.advance(ctx, id, to, actor, mutate, nil)
+}
+
+func (s *Service) advance(ctx context.Context, id string, to State, actor string, mutate func(*Record), bind *NameBinding) (Record, error) {
 	current, err := s.Get(ctx, id)
 	if err != nil {
 		return Record{}, err
@@ -381,6 +411,21 @@ func (s *Service) Advance(ctx context.Context, id string, to State, actor string
 			if err := json.Unmarshal(op.Data, &next); err != nil {
 				return err
 			}
+			if to == Bound || to == Running {
+				if err := task.CheckExecutionTx(tx, next.Execution); err != nil {
+					return err
+				}
+				if next.Unsettled {
+					return errors.New("attempt writer has not confirmed stopping")
+				}
+			}
+			if to == Running {
+				if err := checkAdmissionTx(tx, next.Spec); err != nil {
+					return err
+				}
+				settled := false
+				next.SessionSettled = &settled
+			}
 			next.State = to
 			next.Revision = op.Revision + 1
 			if mutate != nil {
@@ -388,6 +433,11 @@ func (s *Service) Advance(ctx context.Context, id string, to State, actor string
 			}
 			if to.Terminal() {
 				next.EndedAt = s.now().UTC()
+			}
+			if bind != nil {
+				if _, err := tx.CompareAndSetName(bind.Name, bind.ExpectedVersion, next.Result.Artifact); err != nil {
+					return err
+				}
 			}
 			return tx.SetData(op, next)
 		})
@@ -397,12 +447,75 @@ func (s *Service) Advance(ctx context.Context, id string, to State, actor string
 		}
 		return Record{}, err
 	}
-	if to.Terminal() {
+	if to.Terminal() && !next.Unsettled {
 		for _, lease := range next.Leases {
 			_ = s.l.ReleaseAny(ctx, lease)
 		}
 	}
 	return next, nil
+}
+
+// NameBinding is the result name this completion may move, at the version
+// its driver observed. The attempt's leases fence this CAS and its outcome.
+type NameBinding struct {
+	Name            string
+	ExpectedVersion int64
+}
+
+// Completion is the result and spend to record together with a result name.
+// A nil Binding completes an attempt without publishing a name.
+type Completion struct {
+	Result  Result
+	Usage   *Usage
+	Binding *NameBinding
+}
+
+// Complete commits a prepared result from BindReady to Bound. A stale lease
+// or conflicting name leaves the name, result, spend and state unchanged.
+func (s *Service) Complete(ctx context.Context, id, actor string, completion Completion) (Record, error) {
+	if completion.Binding != nil && (completion.Binding.Name == "" || completion.Result.Artifact == "") {
+		return Record{}, errors.New("attempt: a named completion requires a name and artifact")
+	}
+	return s.advance(ctx, id, Bound, actor, func(r *Record) {
+		r.Result = &completion.Result
+		if completion.Usage != nil {
+			r.Usage = completion.Usage
+		}
+	}, completion.Binding)
+}
+
+// RejectCompletion closes an uncommitted execution without deleting its
+// workspace or publishing its name. A conflict retains the candidate for
+// review; another rejection records failure. Both transitions remain fenced.
+// If even failure cannot be recorded, the caller receives both errors and
+// the live attempt remains available to the recovery/sweep path.
+func (s *Service) RejectCompletion(parent context.Context, id, actor string, completion Completion, cause error) error {
+	if cause == nil {
+		return errors.New("attempt: completion rejection requires a cause")
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
+	defer cancel()
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return errors.Join(cause, fmt.Errorf("read rejected completion %s: %w", id, err))
+	}
+	if current.State.Terminal() {
+		return cause
+	}
+	to := Failed
+	if errors.Is(cause, ledger.ErrConflict) && current.State == BindReady {
+		to = BindConflict
+	}
+	_, err = s.Advance(ctx, id, to, actor, func(r *Record) {
+		r.Error, r.Result = cause.Error(), &completion.Result
+		if completion.Usage != nil {
+			r.Usage = completion.Usage
+		}
+	})
+	if err != nil {
+		return errors.Join(cause, fmt.Errorf("close rejected completion %s: %w", id, err))
+	}
+	return cause
 }
 
 // Renew extends every lease. A lease that no longer matches means the
@@ -412,13 +525,30 @@ func (s *Service) Renew(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if current.State.Terminal() {
+	if current.State.Terminal() || current.Unsettled {
 		return fmt.Errorf("%w: attempt is %s", ErrLost, current.State)
 	}
 	renewed := make([]ledger.Lease, 0, len(current.Leases))
 	for _, lease := range current.Leases {
 		next, err := s.l.RenewAny(ctx, lease, s.TTL)
 		if err != nil {
+			// Session cleanup may have removed its endpoint fence after
+			// this renewal took its snapshot. That is not a lease loss.
+			if strings.HasPrefix(lease.Key, "endpoint:") {
+				latest, readErr := s.Get(ctx, id)
+				if readErr == nil && !latest.State.Terminal() {
+					retained := false
+					for _, held := range latest.Leases {
+						if held.Key == lease.Key && held.Region == lease.Region && held.Holder == lease.Holder && held.Epoch == lease.Epoch && held.Incarnation == lease.Incarnation {
+							retained = true
+							break
+						}
+					}
+					if !retained {
+						continue
+					}
+				}
+			}
 			return fmt.Errorf("%w: %v", ErrLost, err)
 		}
 		renewed = append(renewed, next)
@@ -467,6 +597,13 @@ func (s *Service) Finish(ctx context.Context, id, actor string, result Result) (
 // FinishWith is Finish with what the attempt cost, written in the same
 // transition as its result: one record, one place the spend is true.
 func (s *Service) FinishWith(ctx context.Context, id, actor string, result Result, usage *Usage) (Record, error) {
+	return s.FinishCompletion(ctx, id, actor, Completion{Result: result, Usage: usage})
+}
+
+// FinishCompletion prepares a completed execution and then atomically commits
+// its result, usage and optional name binding under the attempt's leases.
+func (s *Service) FinishCompletion(ctx context.Context, id, actor string, completion Completion) (Record, error) {
+	result, usage := completion.Result, completion.Usage
 	current, err := s.Get(ctx, id)
 	if err != nil {
 		return Record{}, err
@@ -477,16 +614,17 @@ func (s *Service) FinishWith(ctx context.Context, id, actor string, result Resul
 		}
 	}
 	if current.State == Running || current.State == Durable || current.State == Verifying {
-		if _, err := s.Advance(ctx, id, BindReady, actor, func(r *Record) { r.Result = &result; meter(r) }); err != nil {
+		prepared, err := s.Advance(ctx, id, BindReady, actor, func(r *Record) { r.Result = &result; meter(r) })
+		if err != nil {
 			return Record{}, err
 		}
+		current = prepared
 	}
-	return s.Advance(ctx, id, Bound, actor, func(r *Record) {
-		if r.Result == nil {
-			r.Result = &result
-		}
-		meter(r)
-	})
+	if current.Result != nil {
+		result = *current.Result
+	}
+	completion.Result = result
+	return s.Complete(ctx, id, actor, completion)
 }
 
 // Fail records a failure from any live state.
@@ -514,6 +652,16 @@ func (s *Service) Supersede(ctx context.Context, oldID string, spec Spec, actor 
 	if err != nil {
 		return Record{}, err
 	}
+	if old.Unsettled {
+		return Record{}, fmt.Errorf("%w: %s", ErrStopConfirmationRequired, oldID)
+	}
+	if !old.State.Terminal() && (old.SessionSettled == nil || !*old.SessionSettled) {
+		cause := fmt.Errorf("%w: attempt %s was not confirmed settled before takeover", ErrStopConfirmationRequired, oldID)
+		if err := s.MarkUnsettled(ctx, old.ID, actor, cause, nil); err != nil {
+			return Record{}, errors.Join(cause, err)
+		}
+		return Record{}, cause
+	}
 	if old.Scope == ScopeUnrestricted {
 		return Record{}, fmt.Errorf("attempt %s ran in place; it cannot be taken over, only retried by its turn", oldID)
 	}
@@ -524,7 +672,7 @@ func (s *Service) Supersede(ctx context.Context, oldID string, spec Spec, actor 
 		// A live attempt is expired first, unfenced: its own leases may be
 		// dead already, and the point is to cut them so that even if the
 		// process behind it is still alive, nothing it writes lands.
-		if err := s.expire(ctx, old, actor, "superseded while live"); err != nil {
+		if err := s.expireSettled(ctx, old, actor, "superseded after confirmed session settlement"); err != nil {
 			return Record{}, err
 		}
 		from = Expired
@@ -539,7 +687,9 @@ func (s *Service) Supersede(ctx context.Context, oldID string, spec Spec, actor 
 	}
 	for _, lease := range old.Leases {
 		if lease.Region != "" && lease.Region != s.l.Region() {
-			_ = s.l.InvalidateIn(ctx, lease.Region, lease.Key)
+			if err := s.l.ReleaseAny(ctx, lease); err != nil && !errors.Is(err, ledger.ErrStale) {
+				return Record{}, fmt.Errorf("release superseded attempt %s lease %s: %w", old.ID, lease.Key, err)
+			}
 		}
 	}
 	if spec.ID == "" {
@@ -574,6 +724,9 @@ func (s *Service) Sweep(ctx context.Context) ([]Record, error) {
 	}
 	var expired []Record
 	for _, r := range live {
+		if r.Unsettled {
+			continue
+		}
 		lease, ok, err := s.l.LeaseOf(ctx, "attempt:"+r.ID)
 		if err != nil {
 			return expired, err
@@ -581,7 +734,15 @@ func (s *Service) Sweep(ctx context.Context) ([]Record, error) {
 		if ok && lease.Holder == r.ID && lease.ExpiresAt.After(s.now()) {
 			continue
 		}
-		if err := s.expire(ctx, r, "sweeper", "lease expired"); err != nil {
+		if r.SessionSettled == nil || !*r.SessionSettled {
+			cause := fmt.Errorf("%w: lease expired without session settlement", ErrStopConfirmationRequired)
+			if err := s.MarkUnsettled(ctx, r.ID, "sweeper", cause, nil); err != nil {
+				return expired, err
+			}
+			log.Printf("attempt: quarantined %s after lease loss without stop evidence", r.ID)
+			continue
+		}
+		if err := s.expireSettled(ctx, r, "sweeper", "lease expired after confirmed settlement"); err != nil {
 			continue // it moved on its own between the list and now
 		}
 		_, _ = s.l.InvalidateHeldBy(ctx, r.ID)
@@ -591,10 +752,10 @@ func (s *Service) Sweep(ctx context.Context) ([]Record, error) {
 	return expired, nil
 }
 
-// ExpireAll expires every live attempt, lease or no lease: the process
-// that drove them is gone, and a lease it renewed a moment before dying
-// proves nothing. A hub calls this once at start-up, before any turn,
-// so that a resumed task is not refused by its own ghost.
+// ExpireAll explicitly invalidates live attempts after the caller has
+// established that their writers are no longer active. It is not a startup
+// safety check: a new hub must use PrepareRecovery, because process death
+// does not prove that local or remote child writers stopped.
 func (s *Service) ExpireAll(ctx context.Context, cause string) ([]Record, error) {
 	live, err := s.Live(ctx)
 	if err != nil {
@@ -602,6 +763,9 @@ func (s *Service) ExpireAll(ctx context.Context, cause string) ([]Record, error)
 	}
 	var expired []Record
 	for _, r := range live {
+		if r.Unsettled {
+			continue
+		}
 		if err := s.expire(ctx, r, "restart", cause); err != nil {
 			continue
 		}
@@ -616,11 +780,20 @@ func (s *Service) ExpireAll(ctx context.Context, cause string) ([]Record, error)
 // expire is the unfenced edge into expired: the attempt's leases are, by
 // definition, not something it can prove any more.
 func (s *Service) expire(ctx context.Context, r Record, actor, cause string) error {
+	return s.expireWith(ctx, r, actor, cause, false)
+}
+func (s *Service) expireSettled(ctx context.Context, r Record, actor, cause string) error {
+	return s.expireWith(ctx, r, actor, cause, true)
+}
+func (s *Service) expireWith(ctx context.Context, r Record, actor, cause string, requireSettled bool) error {
 	_, err := s.l.Transition(ctx, r.ID, string(r.State), string(Expired), actor, nil, nil,
 		func(tx *ledger.Tx, op *ledger.Operation) error {
 			var next Record
 			if err := json.Unmarshal(op.Data, &next); err != nil {
 				return err
+			}
+			if requireSettled && (next.Unsettled || next.SessionSettled == nil || !*next.SessionSettled) {
+				return fmt.Errorf("%w: %s is not settled", ErrStopConfirmationRequired, r.ID)
 			}
 			next.State = Expired
 			next.Error = cause
@@ -651,14 +824,13 @@ func (s *Service) Live(ctx context.Context) ([]Record, error) {
 	}
 	var out []Record
 	for _, op := range ops {
-		if State(op.State).Terminal() {
-			continue
-		}
 		r, err := decode(op)
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, r)
+		if !r.State.Terminal() || r.Unsettled {
+			out = append(out, r)
+		}
 	}
 	return out, nil
 }
@@ -779,7 +951,7 @@ func (s *Service) LiveAttemptOf(ctx context.Context, taskID string) (string, boo
 		return "", false
 	}
 	for i := len(records) - 1; i >= 0; i-- {
-		if !records[i].State.Terminal() {
+		if !records[i].State.Terminal() || records[i].Unsettled {
 			return records[i].ID, true
 		}
 	}
@@ -921,4 +1093,113 @@ func (s *Service) Reservations(ctx context.Context) ([]Reservation, error) {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].ID < out[j].ID })
 	return out, nil
+}
+
+// MarkUnsettled preserves a durable quarantine when a runner abandoned its
+// prompt without proving its writer stopped. Lease expiry must not admit a
+// replacement writer onto that directory or an occupied finite endpoint.
+func (s *Service) MarkUnsettled(ctx context.Context, id, actor string, cause error, usage *Usage) error {
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	_, err = s.l.Transition(ctx, id, string(current.State), string(current.State), actor, nil, nil, func(tx *ledger.Tx, op *ledger.Operation) error {
+		var next Record
+		if err := json.Unmarshal(op.Data, &next); err != nil {
+			return err
+		}
+		next.Unsettled = true
+		next.Error = cause.Error()
+		if usage != nil {
+			next.Usage = usage
+		}
+		return tx.SetData(op, next)
+	})
+	return err
+}
+
+// ConfirmStopped clears quarantine only after the caller has verified the
+// original process can no longer write. Evidence is retained for operations;
+// a generation change or a closed RPC alone is not such verification.
+func (s *Service) ConfirmStopped(ctx context.Context, id, actor, evidence string) (Record, error) {
+	if strings.TrimSpace(evidence) == "" {
+		return Record{}, errors.New("physical stop evidence is required")
+	}
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return Record{}, err
+	}
+	if !current.Unsettled {
+		return Record{}, errors.New("attempt is not quarantined")
+	}
+	to := current.State
+	if !to.Terminal() {
+		to = Failed
+	}
+	var next Record
+	_, err = s.l.Transition(ctx, id, string(current.State), string(to), actor, nil, nil, func(tx *ledger.Tx, op *ledger.Operation) error {
+		if err := json.Unmarshal(op.Data, &next); err != nil {
+			return err
+		}
+		if !next.Unsettled {
+			return errors.New("attempt is not quarantined")
+		}
+		next.Unsettled = false
+		settled := true
+		next.SessionSettled = &settled
+		next.StopEvidence = evidence
+		next.State = to
+		next.EndedAt = s.now().UTC()
+		return tx.SetData(op, next)
+	})
+	if err != nil {
+		return Record{}, err
+	}
+	for _, lease := range current.Leases {
+		if err := s.l.ReleaseAny(ctx, lease); err != nil && !errors.Is(err, ledger.ErrStale) {
+			return next, err
+		}
+	}
+	return next, nil
+}
+
+// ReleaseEndpointAfterSessionClosed frees capacity only after the driver has
+// confirmed its session finished. Unconfirmed cancellation must never call
+// this method. Workspace leases and completion permission remain in force.
+func (s *Service) ReleaseEndpointAfterSessionClosed(ctx context.Context, id, actor string) error {
+	current, err := s.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	var released []ledger.Lease
+	_, err = s.l.Transition(ctx, id, string(current.State), string(current.State), actor, current.Leases, nil, func(tx *ledger.Tx, op *ledger.Operation) error {
+		var next Record
+		if err := json.Unmarshal(op.Data, &next); err != nil {
+			return err
+		}
+		if next.Unsettled {
+			return errors.New("cannot release an unconfirmed session's endpoint")
+		}
+		held := make([]ledger.Lease, 0, len(next.Leases))
+		for _, lease := range next.Leases {
+			if strings.HasPrefix(lease.Key, "endpoint:") {
+				released = append(released, lease)
+			} else {
+				held = append(held, lease)
+			}
+		}
+		next.Leases = held
+		settled := true
+		next.SessionSettled = &settled
+		return tx.SetData(op, next)
+	})
+	if err != nil {
+		return err
+	}
+	for _, lease := range released {
+		if err := s.l.ReleaseAny(ctx, lease); err != nil && !errors.Is(err, ledger.ErrStale) {
+			return err
+		}
+	}
+	return nil
 }

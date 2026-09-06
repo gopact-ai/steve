@@ -63,7 +63,7 @@ func TestChildIsFundedFromParentRemainder(t *testing.T) {
 }
 
 // What a child spends is no longer available to the rest of the tree.
-func TestChargeReachesTheRoot(t *testing.T) {
+func TestExecutionSpendReachesTheRoot(t *testing.T) {
 	s := treeStore(t)
 	root, _ := s.Create(Task{Goal: "root", Channel: "c", Member: "a"})
 	child, err := s.Spawn(root.ID, Task{Goal: "child", Member: "b"})
@@ -82,12 +82,9 @@ func TestChargeReachesTheRoot(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if err := s.Charge(grandchild.ID); err != nil {
-		t.Fatal(err)
-	}
 	got, _ := s.Get(root.ID)
 	if got.Budget.Turns != 2 || got.Budget.Tokens.Total != 1000 || got.Budget.ToolCalls != 6 {
-		t.Fatalf("root budget after charge = %+v; the grandchild's spend did not reach it", got.Budget)
+		t.Fatalf("root budget after finish = %+v; the grandchild's spend did not reach it", got.Budget)
 	}
 	mid, _ := s.Get(child.ID)
 	if mid.Budget.Turns != 2 {
@@ -99,7 +96,7 @@ func TestChargeReachesTheRoot(t *testing.T) {
 		t.Fatal(err)
 	}
 	if next.Budget.MaxTurns != 8 {
-		t.Fatalf("after the charge the root had %d turns to give, want 8", next.Budget.MaxTurns)
+		t.Fatalf("after execution the root had %d turns to give, want 8", next.Budget.MaxTurns)
 	}
 }
 

@@ -3,10 +3,12 @@ package artifact
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"path/filepath"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -33,8 +35,22 @@ func (s *Store) RecoverLandings(ctx context.Context) ([]Landing, error) {
 			continue
 		}
 		land.State = op.State
+		if land.Recoverable {
+			if err := s.ledger.Invalidate(ctx, "landing-driver:"+land.ID); err != nil {
+				return out, err
+			}
+			if land.Lease != nil {
+				if err := s.ledger.ReleaseAny(ctx, *land.Lease); err != nil && !errors.Is(err, ledger.ErrStale) {
+					return out, err
+				}
+			}
+		}
 		switch op.State {
 		case LandProposed, LandLocked, LandMerged:
+			if land.Recoverable {
+				out = append(out, land)
+				continue
+			}
 			land.Lease = nil
 			_ = s.fail(ctx, &land, op.State, LandMergeConflicted, "interrupted before apply; nothing was written", nil)
 			out = append(out, land)
@@ -50,9 +66,15 @@ func (s *Store) RecoverLandings(ctx context.Context) ([]Landing, error) {
 }
 
 func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, error) {
-	p, ok, err := s.projects.Get(ctx, land.Project)
+	p, ok, err := s.projects.GetHistorical(ctx, land.Project)
 	if err != nil || !ok {
 		return land, fmt.Errorf("landing %s: project %s is unknown", land.ID, land.Project)
+	}
+	if land.Target.Path == "" || land.Target != p.Home {
+		return land, fmt.Errorf("landing %s: original target no longer matches project metadata", land.ID)
+	}
+	if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error { return attempt.CheckWriterTx(tx, p.Home.Node, p.Home.Path) }); err != nil {
+		return land, err
 	}
 	if land.State == LandApplying {
 		land.Lease = nil
@@ -61,12 +83,13 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		}
 	}
 	// Nothing may be written before the lock is held again.
-	lease, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, land.ID, landTTL)
+	lease, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, landingHolder(ctx, land.ID), landTTL)
 	if err != nil {
 		return land, fmt.Errorf("landing %s: %w", land.ID, err)
 	}
 	land.Lease = &lease
 	defer func() { _ = s.ledger.ReleaseAny(context.WithoutCancel(ctx), lease) }()
+	defer trackLandingLease(ctx, lease)()
 
 	land.Round++
 	journal := s.ledger.Journal()
@@ -101,7 +124,7 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 	current, _, _ := s.ledger.Name(ctx, CanonicalRef(p.ID))
 	land.State = LandCommitted
 	land.EndedAt = s.now().UTC()
-	_, err = s.ledger.Transition(ctx, land.ID, LandRecoveryPending, LandCommitted, "recovery", []ledger.Lease{lease},
+	_, err = s.ledger.Transition(ctx, land.ID, LandRecoveryPending, LandCommitted, "recovery", landingFence(ctx, []ledger.Lease{lease}),
 		map[string]any{"paths": land.Paths, "rewritten": rewritten, "round": land.Round},
 		func(tx *ledger.Tx, op *ledger.Operation) error {
 			if current.Artifact != land.Merged {

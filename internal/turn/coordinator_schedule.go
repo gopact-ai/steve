@@ -1,6 +1,7 @@
 package turn
 
 import (
+	"context"
 	"fmt"
 	"strings"
 	"time"
@@ -42,7 +43,15 @@ func (c *Coordinator) scheduleCmd(req Request, selected agent.Agent, cmd protoco
 	if req.MessageID == "" {
 		return Result{AgentID: selected.ID, Title: title, Text: c.text.T(i18n.ScheduleUsage, cmd)}
 	}
+	if req.Channel == "" {
+		return Result{AgentID: selected.ID, Title: title, Text: "未创建定时任务：当前会话没有明确的通道。"}
+	}
+	binding, err := c.bindingFor(context.Background(), req)
+	if err != nil {
+		return Result{AgentID: selected.ID, Title: title, Text: "未创建定时任务：" + err.Error()}
+	}
 	created, err := c.schedules.Create(schedule.Job{
+		Channel: req.Channel, ProjectID: binding.ProjectID,
 		ConversationID: req.ConversationID,
 		ChatID:         req.ChatID,
 		ChatType:       string(req.ChatType),
@@ -69,6 +78,28 @@ func (c *Coordinator) schedulesCmd(req Request, rest string) Result {
 	if c.schedules == nil {
 		return Result{Title: title, Text: c.text.T(i18n.SchedulesEmpty, protocol.CommandEvery)}
 	}
+	fields := strings.Fields(rest)
+	if len(fields) == 2 && (fields[0] == "confirm" || fields[0] == "retry" || fields[0] == "确认" || fields[0] == "重试") {
+		id := strings.TrimPrefix(fields[1], "#")
+		job, ok := c.schedules.Get(id)
+		if !ok || job.ConversationID != req.ConversationID {
+			return Result{Title: title, Text: c.text.T(i18n.ScheduleUnknown, id)}
+		}
+		if req.SenderOpenID == "" || (req.SenderOpenID != job.Requester && req.SenderOpenID != c.ownerOpenID) {
+			return Result{Title: title, Text: "只有创建这项定时任务的人或 owner 可以确认执行结果或授权重试。"}
+		}
+		verdict := "confirm"
+		if fields[0] == "retry" || fields[0] == "重试" {
+			verdict = "retry"
+		}
+		if err := c.schedules.ResolveFiring(id, verdict, req.SenderOpenID); err != nil {
+			return Result{Title: title, Text: err.Error()}
+		}
+		if verdict == "retry" {
+			return Result{Title: title, Text: "定时任务 #" + id + " 已获准重试本次触发。"}
+		}
+		return Result{Title: title, Text: "已确认定时任务 #" + id + " 本次已执行，不会重复运行。"}
+	}
 	verb, id, ok := parseTaskArgs(rest)
 	if !ok {
 		return Result{Title: title, Text: c.text.T(i18n.ScheduleUsage, protocol.CommandEvery)}
@@ -91,6 +122,15 @@ func (c *Coordinator) schedulesCmd(req Request, rest string) Result {
 			fmt.Fprintf(&b, " · %s", c.text.T(i18n.ScheduleRunsLabel, job.Runs))
 		}
 		fmt.Fprintf(&b, " · %s\n%s", job.Member, job.Prompt)
+		if job.PendingKey != "" {
+			fmt.Fprintf(&b, "\n状态：%s", job.State)
+			if job.Error != "" {
+				fmt.Fprintf(&b, " · %s", job.Error)
+			}
+			if job.State == schedule.FiringUnknown {
+				fmt.Fprintf(&b, "\n检查本次是否已执行：已执行用 /schedules confirm %s；确认可以再次执行用 /schedules retry %s。", job.ID, job.ID)
+			}
+		}
 	}
 	return Result{Title: title, Text: b.String()}
 }
@@ -105,7 +145,10 @@ func (c *Coordinator) cancelSchedule(conversationID, id, title string) Result {
 		return Result{Title: title, Text: c.text.T(i18n.ScheduleUnknown, id)}
 	}
 	removed, ok, err := c.schedules.Delete(id)
-	if err != nil || !ok {
+	if err != nil {
+		return Result{Title: title, Text: fmt.Sprintf("定时任务 #%s 未取消：%v", id, err)}
+	}
+	if !ok {
 		return Result{Title: title, Text: c.text.T(i18n.ScheduleUnknown, id)}
 	}
 	return Result{Title: title, Text: c.text.T(i18n.ScheduleCancelled, removed.ID) + "\n" + removed.Prompt}

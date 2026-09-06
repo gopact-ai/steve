@@ -24,10 +24,14 @@ import (
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/gopact/workflow"
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/exec"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -40,16 +44,19 @@ import (
 
 // fleet is the three-machine world under test: this hub plus the two nodes.
 type fleet struct {
-	catalog   *agent.Catalog
-	registry  *node.Registry
-	roster    *roster.Roster
-	manager   *harness.Manager
-	tasks     *task.Store
-	plans     *plan.Store
-	projects  *project.Store
-	attempts  *attempt.Service
-	artifacts *artifact.Store
-	view      *readmodel.Model
+	book       *ledger.Ledger
+	executions *execution.Registry
+	executor   *agentexec.Runner
+	catalog    *agent.Catalog
+	registry   *node.Registry
+	roster     *roster.Roster
+	manager    *harness.Manager
+	tasks      *task.Store
+	plans      *plan.Store
+	projects   *project.Store
+	attempts   *attempt.Service
+	artifacts  *artifact.Store
+	view       *readmodel.Model
 }
 
 // nodeWork is the directory every node's project is homed at.
@@ -118,7 +125,8 @@ func newFleet(t *testing.T) *fleet {
 	fleetRoster.SetHubCapabilities([]string{"basic"})
 
 	dir := t.TempDir()
-	tasks, err := task.Open(filepath.Join(dir, "tasks.json"))
+	projects, attempts, artifacts := declareProjects(t, dir, reg)
+	tasks, err := task.OpenLedger(ledgerOf(t, dir), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,13 +135,12 @@ func newFleet(t *testing.T) *fleet {
 		t.Fatal(err)
 	}
 
-	projects, attempts, artifacts := declareProjects(t, dir, reg)
 	view := readmodel.New(readmodel.Sources{
 		Hub:    readmodel.Hub{Node: "hub-e2e", Started: time.Now(), Capabilities: []string{"basic"}},
 		Roster: fleetRoster, Nodes: reg, Tasks: tasks, Plans: plans,
 		Ledger: readmodel.Ledger{Attempts: attempts, Artifacts: artifacts, Projects: projects},
 	})
-	return &fleet{catalog: catalog, registry: reg, roster: fleetRoster, manager: manager, tasks: tasks, plans: plans,
+	return &fleet{book: ledgerOf(t, dir), catalog: catalog, registry: reg, roster: fleetRoster, manager: manager, tasks: tasks, plans: plans,
 		projects: projects, attempts: attempts, artifacts: artifacts, view: view}
 }
 
@@ -332,7 +339,7 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server, err := readmodel.NewServer(f.view, readmodel.ServerConfig{})
+	server, err := httpapi.NewServer(f.view, httpapi.ServerConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -389,6 +396,8 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 	consoleSup := exec.NewSupervisor(planner.Rule{}, exec.Deps{Workspaces: f.artifacts, Attempts: f.attempts, Artifacts: f.artifacts, Roster: f.roster,
 		Runner: exec.NewAgentRunner(f.manager, noCaps{}, f.roster), Recorder: f.plans}, nil)
 	consoleSup.SetPlans(f.plans)
+	consoleSup.SetLedger(f.book, "mesh")
+	consoleSup.SetTasks(f.tasks)
 	coordinator.SetSupervisor(consoleSup, f.plans, f.roster)
 	server.SetConsole(console.New(coordinator, "ou_owner", f.view))
 	payload, _ := json.Marshal(map[string]string{"conversation": "console:main", "input": "/fleet"})
@@ -400,8 +409,8 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 	}
 	defer res2.Body.Close()
 	var sent struct {
-		Reply readmodel.Reply `json:"reply"`
-		Error string          `json:"error"`
+		Reply consoleapi.Reply `json:"reply"`
+		Error string           `json:"error"`
 	}
 	if err := json.NewDecoder(res2.Body).Decode(&sent); err != nil {
 		t.Fatal(err)
@@ -495,7 +504,7 @@ func TestB3TUIRendersTheFleet(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	server, err := readmodel.NewServer(f.view, readmodel.ServerConfig{})
+	server, err := httpapi.NewServer(f.view, httpapi.ServerConfig{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -562,4 +571,36 @@ func ledgerOf(t *testing.T, dir string) *ledger.Ledger {
 		t.Fatalf("no ledger under %s", dir)
 	}
 	return book
+}
+
+func sharedAgentExecutor(t *testing.T, f *fleet) *agentexec.Runner {
+	t.Helper()
+	if f.executor == nil {
+		f.executions = execution.New(t.Context(), f.tasks)
+		f.artifacts.SetExecution(f.executions)
+		f.executor = agentexec.New(f.manager, f.roster, f.artifacts, f.attempts, f.executions, meshExecutionBudget{f.tasks})
+	}
+	return f.executor
+}
+
+type meshExecutionBudget struct{ tasks *task.Store }
+
+func (b meshExecutionBudget) Reserve(id string) (int, time.Time, error) {
+	tracked, err := b.tasks.ReserveTurn(id)
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	var deadline time.Time
+	if tracked.Budget.MaxElapsed > 0 {
+		deadline = tracked.Deadline(time.Now())
+	}
+	return tracked.Budget.MaxTurns - tracked.Budget.Turns, deadline, nil
+}
+func verificationTask(t *testing.T, f *fleet, goal string) string {
+	t.Helper()
+	tracked, err := f.tasks.Create(task.Task{Channel: "verification", ProjectID: "local", Goal: goal, Budget: task.Budget{MaxTurns: 30}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tracked.ID
 }

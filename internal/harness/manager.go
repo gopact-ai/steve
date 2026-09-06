@@ -261,6 +261,9 @@ func (m *Manager) host(at Placement) (*acphost.Host, error) {
 // a turn the agent ended itself without importing the host package.
 var ErrTurnCanceled = acphost.ErrTurnCanceled
 
+// ErrStopUnconfirmed requires writer exclusion until process termination is verified.
+var ErrStopUnconfirmed = acphost.ErrStopUnconfirmed
+
 type Media struct {
 	MIME string
 	Data []byte
@@ -398,6 +401,9 @@ type Session struct {
 	// selectors were just pinned can report its settings again.
 	observe Observer
 }
+
+// Stopped reports verified termination of this session's original process.
+func (s *Session) Stopped() bool { return s.host.ProcessStopped(s.generation) }
 
 // Reobserve reports the session's settings to the observer once more:
 // what the book keeps should be what the session runs with after its

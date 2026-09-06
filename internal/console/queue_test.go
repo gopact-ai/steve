@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
@@ -187,7 +188,7 @@ func TestQueueDrainsWithoutAClientAndKeepsExchangeIDs(t *testing.T) {
 func TestQueueDeleteAndEditPreserveOrderAndQuotes(t *testing.T) {
 	h := &queueHandler{started: make(chan *queueCall, 8)}
 	s := New(h, "owner", nil)
-	quote := s.record(readmodel.Reply{Conversation: "console:main", Kind: "reply", Text: "quoted context"})
+	quote := s.record(consoleapi.Reply{Conversation: "console:main", Kind: "reply", Text: "quoted context"})
 	first := enqueueForTest(t, s, "main", "first")
 	one := nextCall(t, h)
 	removed := enqueueForTest(t, s, "main", "remove")
@@ -195,10 +196,10 @@ func TestQueueDeleteAndEditPreserveOrderAndQuotes(t *testing.T) {
 	if err := s.DeleteQueued(removed.ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteQueued(removed.ID); !errors.Is(err, readmodel.ErrExchangeNotFound) {
+	if err := s.DeleteQueued(removed.ID); !errors.Is(err, consoleapi.ErrExchangeNotFound) {
 		t.Fatalf("delete twice: %v", err)
 	}
-	if err := s.DeleteQueued(first.ID); !errors.Is(err, readmodel.ErrExchangeNotQueued) {
+	if err := s.DeleteQueued(first.ID); !errors.Is(err, consoleapi.ErrExchangeNotQueued) {
 		t.Fatalf("delete running: %v", err)
 	}
 	if _, err := s.EditQueued(edited.ID, " "); err == nil {
@@ -261,7 +262,7 @@ func TestConcurrentEnqueuesReserveOnlyOneTurn(t *testing.T) {
 func TestSteerInterruptsAndKeepsTheRemainingQueue(t *testing.T) {
 	h := &queueHandler{started: make(chan *queueCall, 8)}
 	s := New(h, "owner", nil)
-	quote := s.record(readmodel.Reply{Conversation: "console:main", Kind: "reply", Text: "context"})
+	quote := s.record(consoleapi.Reply{Conversation: "console:main", Kind: "reply", Text: "context"})
 	first := enqueueForTest(t, s, "main", "first")
 	one := nextCall(t, h)
 	second := enqueueForTest(t, s, "main", "second")
@@ -280,7 +281,7 @@ func TestSteerInterruptsAndKeepsTheRemainingQueue(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("first turn was not canceled")
 	}
-	if _, err := s.Steer(context.Background(), steer.ID); !errors.Is(err, readmodel.ErrExchangeNotQueued) {
+	if _, err := s.Steer(context.Background(), steer.ID); !errors.Is(err, consoleapi.ErrExchangeNotQueued) {
 		t.Fatalf("steer twice: %v", err)
 	}
 	correction.finish <- nil
@@ -319,9 +320,11 @@ func TestSendWaitsForItsExchangeAndCancelBypassesQueue(t *testing.T) {
 			time.Sleep(time.Millisecond)
 		}
 	}
-	if _, err := s.SendCommand(context.Background(), "main", "second", "command"); !errors.Is(err, ErrCommandRunning) {
-		t.Fatalf("duplicate: %v", err)
-	}
+	replayed := make(chan outcome, 1)
+	go func() {
+		r, err := s.SendCommand(context.Background(), "main", "second", "command")
+		replayed <- outcome{r, err}
+	}()
 	cancel := enqueueForTest(t, s, "main", "/cancel")
 	stop := nextCall(t, h)
 	if stop.req.Input != "/cancel" {
@@ -347,6 +350,9 @@ func TestSendWaitsForItsExchangeAndCancelBypassesQueue(t *testing.T) {
 		t.Fatal("send did not return")
 	}
 	noCall(t, h)
+	if duplicate := <-replayed; duplicate.err != nil || duplicate.reply.ExchangeID == "" {
+		t.Fatalf("duplicate did not receive the original reply: %+v", duplicate)
+	}
 }
 
 func TestQueueRestoresWaitingWorkWithoutReplayingRunningTurn(t *testing.T) {

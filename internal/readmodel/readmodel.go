@@ -16,13 +16,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/ability"
-	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/ledger"
-	"github.com/gopact-ai/steve/internal/models"
-	"github.com/gopact-ai/steve/internal/nodewire"
-	"github.com/gopact-ai/steve/internal/schedule"
-	"github.com/gopact-ai/steve/internal/view"
 	"log"
 	"sort"
 	"strings"
@@ -30,11 +23,19 @@ import (
 	"time"
 
 	"github.com/gopact-ai/gopact"
+	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
+	"github.com/gopact-ai/steve/internal/schedule"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 // Snapshot is everything a renderer needs in one read.
@@ -72,6 +73,9 @@ type Facts struct {
 	Disclosures  []Disclosure  `json:"disclosures"`
 	Effects      []Effect      `json:"effects"`
 	Grants       []Grant       `json:"grants"`
+	// attentionKnown preserves the completeness of the two inbox queries
+	// independently of failures in unrelated fact groups.
+	attentionKnown bool
 }
 
 type Reservation struct {
@@ -128,6 +132,8 @@ type Grant struct {
 }
 
 type Attempt struct {
+	Unsettled bool      `json:"unsettled,omitempty"`
+	Error     string    `json:"error,omitempty"`
 	ID        string    `json:"id"`
 	Kind      string    `json:"kind"`
 	State     string    `json:"state"`
@@ -252,10 +258,13 @@ type Agent struct {
 	Level      string            `json:"level,omitempty"`
 	Slots      int               `json:"slots,omitempty"`
 	Region     string            `json:"region,omitempty"`
-	// Activities are the agent's live attempts with the latest thing each
-	// was seen doing; Busy is their count.
+	// Activities are known live attempts with the latest thing each was
+	// seen doing; Busy is their count. Neither proves absence when the
+	// activity query is incomplete.
 	Activities []Activity `json:"activities,omitempty"`
 	Busy       int        `json:"busy,omitempty"`
+	// ActivityKnown is false when the live-attempt query is incomplete.
+	ActivityKnown *bool `json:"activity_known,omitempty"`
 	// Snapshot is the machine's, plus the models this harness was seen
 	// running: what a requirement is matched against.
 	Snapshot *ability.Snapshot `json:"snapshot,omitempty"`
@@ -296,7 +305,7 @@ type Task struct {
 	AttemptRows []AttemptRow `json:"attempt_rows,omitempty"`
 	// Four axes, decided here and rolled up from every descendant task:
 	// Lifecycle is the task's own state; Execution says whether an
-	// attempt is live (idle|running); Attention counts the human requests
+	// attempt is live (idle|running|unknown); Attention counts known requests
 	// waiting; Lane is the board column that follows from the three.
 	Lifecycle string `json:"lifecycle"`
 	Execution string `json:"execution"`
@@ -388,11 +397,11 @@ type Sources struct {
 // LedgerSource is what the read model needs from the ledger-backed
 // services: the live attempts and a project's landings.
 type LedgerSource interface {
-	LiveAttempts(ctx context.Context) []Attempt
-	RecentLandings(ctx context.Context) []Landing
-	Facts(ctx context.Context) Facts
+	LiveAttempts(ctx context.Context) ([]Attempt, error)
+	RecentLandings(ctx context.Context) ([]Landing, error)
+	Facts(ctx context.Context) (Facts, error)
 	// ProjectList lists every project, for the page and the context bar.
-	ProjectList(ctx context.Context) []project.Project
+	ProjectList(ctx context.Context) ([]project.Project, error)
 	// ClosedAttempts are every attempt that reached a terminal state: the
 	// authority on spend. Events pages the journal for history.
 	ClosedAttempts(ctx context.Context) ([]attempt.Record, error)
@@ -443,9 +452,9 @@ type Event struct {
 	Format       string `json:"format,omitempty"`
 	// Progress is what an agent is doing right now: console.progress for
 	// a chat turn, step.progress for a plan step.
-	Progress *Progress `json:"progress,omitempty"`
+	Progress *consoleapi.Progress `json:"progress,omitempty"`
 	// Step is the child's snapshot; console.step also names its owning reply.
-	Step *StepProcess `json:"step,omitempty"`
+	Step *consoleapi.StepProcess `json:"step,omitempty"`
 	// ReplyID names the console line a console.* event is about.
 	ReplyID    string `json:"reply_id,omitempty"`
 	ExchangeID string `json:"exchange_id,omitempty"`
@@ -555,6 +564,9 @@ type UsageRow struct {
 // outcome. The operation stays the authority; this is how the inbox
 // shows it, with the choices that are actually available.
 type HumanRequest struct {
+	AttemptID  string    `json:"attempt_id,omitempty"`
+	Node       string    `json:"node,omitempty"`
+	Workspace  string    `json:"workspace,omitempty"`
 	ID         string    `json:"id"`
 	Type       string    `json:"type"`
 	Source     string    `json:"source"`
@@ -583,6 +595,9 @@ type Schedule struct {
 	NextAt       time.Time `json:"next_at"`
 	LastAt       time.Time `json:"last_at,omitzero"`
 	Runs         int       `json:"runs"`
+	State        string    `json:"state,omitempty"`
+	Error        string    `json:"error,omitempty"`
+	PendingKey   string    `json:"pending_key,omitempty"`
 }
 
 // SourceHealth says whether a source contributed to the snapshot, so a
@@ -652,49 +667,14 @@ type Workspace struct {
 	Source string `json:"source,omitempty"`
 	// State is ready, provisioning or failed (a copy being cloned, or one
 	// that could not be); Error says why it failed. Busy says an attempt
-	// is running in it now.
-	State string `json:"state,omitempty"`
-	Error string `json:"error,omitempty"`
-	Busy  bool   `json:"busy,omitempty"`
+	// is known to run here; a false value proves idle only if ActivityKnown.
+	State         string `json:"state,omitempty"`
+	Error         string `json:"error,omitempty"`
+	Busy          bool   `json:"busy,omitempty"`
+	ActivityKnown *bool  `json:"activity_known,omitempty"`
 	// Repos is nil until the machine has been asked.
 	Repos  []nodewire.Repo `json:"repos"`
 	Agents []string        `json:"agents"`
-}
-
-// Progress is one agent's turn as it happens, small enough to stream:
-// reasoning, an answer tail, the tool calls with their status, the
-// agent's own checklist. It is view.Progress cut down for a wire.
-type Progress struct {
-	Agent     string     `json:"agent,omitempty"`
-	Node      string     `json:"node,omitempty"`
-	Model     string     `json:"model,omitempty"`
-	Reasoning string     `json:"reasoning,omitempty"`
-	Answer    string     `json:"answer,omitempty"`
-	Tools     []ToolCall `json:"tools,omitempty"`
-	Plan      []PlanLine `json:"plan,omitempty"`
-	Timeline  []Span     `json:"timeline,omitempty"`
-}
-
-type Span struct {
-	Kind string    `json:"kind"`
-	Text string    `json:"text,omitempty"`
-	Tool string    `json:"tool,omitempty"`
-	At   time.Time `json:"at"`
-}
-
-type ToolCall struct {
-	ID     string `json:"id,omitempty"`
-	Kind   string `json:"kind,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Detail string `json:"detail,omitempty"`
-	Status string `json:"status"`
-	Input  string `json:"input,omitempty"`
-	Output string `json:"output,omitempty"`
-}
-
-type PlanLine struct {
-	Text   string `json:"text"`
-	Status string `json:"status"`
 }
 
 // Answers and tool output are previews. Reasoning is already bounded by
@@ -706,8 +686,8 @@ const (
 )
 
 // FromProgress cuts a turn's progress down to what is worth sending.
-func FromProgress(p view.Progress) Progress {
-	out := Progress{
+func FromProgress(p view.Progress) consoleapi.Progress {
+	out := consoleapi.Progress{
 		Agent: p.Agent, Node: p.Settings.Node, Model: p.Settings.Model,
 		Reasoning: p.Reasoning, Answer: tailText(p.Answer, answerKept),
 	}
@@ -718,10 +698,10 @@ func FromProgress(p view.Progress) Progress {
 	}
 	out.Tools = toolCalls(p.Tools, 0, limit)
 	for _, s := range p.Timeline {
-		out.Timeline = append(out.Timeline, Span{Kind: s.Kind, Text: s.Text, Tool: s.Tool, At: s.At})
+		out.Timeline = append(out.Timeline, consoleapi.Span{Kind: s.Kind, Text: s.Text, Tool: s.Tool, At: s.At})
 	}
 	for _, s := range p.Plan {
-		out.Plan = append(out.Plan, PlanLine{Text: s.Text, Status: string(s.Status)})
+		out.Plan = append(out.Plan, consoleapi.PlanLine{Text: s.Text, Status: string(s.Status)})
 	}
 	return out
 }
@@ -776,13 +756,13 @@ func platformTool(raw string) (name, title string, ok bool) {
 	return "", "", false
 }
 
-func toolCalls(tools []view.Tool, depth, limit int) []ToolCall {
-	var out []ToolCall
+func toolCalls(tools []view.Tool, depth, limit int) []consoleapi.ToolCall {
+	var out []consoleapi.ToolCall
 	for _, t := range tools {
 		if limit > 0 && len(out) >= limit {
 			break
 		}
-		call := ToolCall{
+		call := consoleapi.ToolCall{
 			ID: t.ID, Kind: t.Kind, Name: t.Name, Detail: t.Detail, Status: string(t.Status),
 			Input: headText(t.Input, toolTextKept), Output: headText(t.Output, toolTextKept),
 		}
@@ -811,60 +791,20 @@ func headText(s string, n int) string {
 	return s[:n] + "…"
 }
 
-// Process is how a reply was made, kept with it: the turn's own reasoning
-// and tool calls, and for a plan each step's. It is the answer to "what
-// did it actually do" after the live view is gone.
-type Process struct {
-	Reasoning string        `json:"reasoning,omitempty"`
-	Tools     []ToolCall    `json:"tools,omitempty"`
-	Timeline  []Span        `json:"timeline,omitempty"`
-	Steps     []StepProcess `json:"steps,omitempty"`
-}
-
-type StepProcess struct {
-	ID        string     `json:"id"`
-	Agent     string     `json:"agent,omitempty"`
-	Node      string     `json:"node,omitempty"`
-	Model     string     `json:"model,omitempty"`
-	Reasoning string     `json:"reasoning,omitempty"`
-	Tools     []ToolCall `json:"tools,omitempty"`
-	Plan      []PlanLine `json:"plan,omitempty"`
-	Timeline  []Span     `json:"timeline,omitempty"`
-	// The rest is what a delegated child adds: what it was asked, how it
-	// ended, what it said. A plan step leaves them empty.
-	StepInfo
-}
-
 // FromStepProgress uses the same projection for live events and durable steps.
-func FromStepProgress(id string, p Progress, info StepInfo) StepProcess {
+func FromStepProgress(id string, p consoleapi.Progress, info consoleapi.StepInfo) consoleapi.StepProcess {
 	if info.Answer == "" {
 		info.Answer = p.Answer
 	}
-	return StepProcess{ID: id, Agent: p.Agent, Node: p.Node, Model: p.Model,
+	return consoleapi.StepProcess{ID: id, Agent: p.Agent, Node: p.Node, Model: p.Model,
 		Reasoning: p.Reasoning, Tools: p.Tools, Plan: p.Plan, Timeline: p.Timeline, StepInfo: info}
-}
-
-// StepInfo is what a step.progress event says about the step itself,
-// beyond the agent's progress: for a delegated child, who asked what
-// and how it is going.
-type StepInfo struct {
-	Kind    string   `json:"kind,omitempty"`
-	Goal    string   `json:"goal,omitempty"`
-	State   string   `json:"state,omitempty"`
-	Since   string   `json:"since,omitempty"`
-	Elapsed string   `json:"elapsed,omitempty"`
-	Answer  string   `json:"answer,omitempty"`
-	Refs    []string `json:"refs,omitempty"`
-	// Attempt and Files say what the child changed, once it ended.
-	Attempt string `json:"attempt,omitempty"`
-	Files   int    `json:"files,omitempty"`
 }
 
 // DelegateProgress publishes what a delegated child is doing, as a step
 // of its parent's conversation: the page shows it as a card under the
 // parent's delegate call. A terminal state is never throttled — the
 // last word must land.
-func (m *Model) DelegateProgress(childTaskID, agent, node string, info StepInfo, p view.Progress) {
+func (m *Model) DelegateProgress(childTaskID, agent, node string, info consoleapi.StepInfo, p view.Progress) {
 	stepID := "#" + childTaskID
 	key := "delegate/" + stepID
 	terminal := info.State == "done" || info.State == "failed"

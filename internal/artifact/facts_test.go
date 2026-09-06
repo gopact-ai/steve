@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -186,5 +187,52 @@ func TestDeriveLowersALabelOnlyWithApprovalAndNewContent(t *testing.T) {
 	m, _, _ := store.Manifest(ctx, derived.ID)
 	if m.Label != project.LevelPublic {
 		t.Fatalf("derived manifest label = %s", m.Label)
+	}
+}
+
+func TestLandUnderLiveParentRequiresItsExactLeaseNotSourceMetadata(t *testing.T) {
+	ctx := t.Context()
+	canonical := t.TempDir()
+	write(t, canonical, "a", "before")
+	s, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	ws, err := s.Materialize(ctx, project.Request{Project: p.ID, Isolated: true, Owner: "child"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, ws.Path, "b", "child result")
+	result, _, err := s.Publish(ctx, ws, ws.Base, "child", "child")
+	if err != nil {
+		t.Fatal(err)
+	}
+	attempts := attempt.New(s.ledger)
+	parent, err := attempts.Open(ctx, attempt.Spec{ID: "parent", Kind: attempt.KindChat, Project: p.ID, Workspace: project.Workspace{ID: "canonical:" + p.ID, Project: p.ID, Kind: project.KindCanonical, Path: canonical}, Scope: attempt.ScopeUnrestricted})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, phase := range []attempt.State{attempt.Prepared, attempt.Running} {
+		if _, err := attempts.Advance(ctx, parent.ID, phase, "test", nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var lease ledger.Lease
+	for _, held := range parent.Leases {
+		if held.Key == "canonical:"+p.ID {
+			lease = held
+		}
+	}
+	if _, err := s.Land(ctx, p, result.ID, "ordinary"); !errors.Is(err, attempt.ErrStopConfirmationRequired) {
+		t.Fatalf("ordinary landing bypassed active writer: %v", err)
+	}
+	stale := lease
+	stale.Epoch++
+	if _, err := s.LandUnder(ctx, p, result.ID, "forged parent", stale); err == nil {
+		t.Fatal("invalid borrowed tuple gained exemption")
+	}
+	land, err := s.LandUnder(ctx, p, result.ID, "authorized child", lease)
+	if err != nil || land.State != LandCommitted || read(t, canonical, "b") != "child result" {
+		t.Fatalf("valid parent cooperation blocked: %+v %v", land, err)
+	}
+	if err := s.ledger.Check(ctx, lease); err != nil {
+		t.Fatal("child released live parent fence", err)
 	}
 }

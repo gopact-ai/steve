@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -102,8 +103,17 @@ func (f *fakeRunner) placedOn(stepID string) []string {
 type verifyFunc func(StepRequest) error
 
 func (f verifyFunc) Verify(_ context.Context, req StepRequest, _ plan.Verify, _ plan.StepResult) error {
-	return f(req)
+	err := f(req)
+	if err == nil || errors.Is(err, harness.ErrStopUnconfirmed) {
+		return err
+	}
+	return testExitError{err}
 }
+
+type testExitError struct{ error }
+
+func (e testExitError) ExitCode() int { return 1 }
+func (e testExitError) Unwrap() error { return e.error }
 
 type budgetFunc func(string) (int, time.Time, error)
 
@@ -179,30 +189,54 @@ func TestPlacementFollowsCapabilities(t *testing.T) {
 // Fan-out really overlaps, and the merge waits for both branches.
 func TestFanOutRunsInParallelAndMergeWaits(t *testing.T) {
 	art, att := stores(t)
-	runner := &fakeRunner{}
-	outcome := execute(t, plan.Plan{ProjectID: "p", ID: "2", TaskID: "t2", Goal: "g", Steps: []plan.Step{
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	var mu sync.Mutex
+	var order []string
+	arrived, finished := 0, 0
+	both := make(chan struct{})
+	runner := runnerFunc(func(ctx context.Context, req StepRequest) (plan.StepResult, error) {
+		mu.Lock()
+		order = append(order, req.StepID)
+		branch := req.StepID == "branch-a" || req.StepID == "branch-b"
+		if branch {
+			arrived++
+			if arrived == 2 {
+				close(both)
+			}
+		}
+		if req.StepID == "merge" && finished != 2 {
+			mu.Unlock()
+			return plan.StepResult{}, errors.New("merge ran before both branches finished")
+		}
+		mu.Unlock()
+		if branch {
+			select {
+			case <-both:
+			case <-ctx.Done():
+				return plan.StepResult{}, ctx.Err()
+			}
+			mu.Lock()
+			finished++
+			mu.Unlock()
+		}
+		return plan.StepResult{Answer: "did " + req.StepID}, nil
+	})
+	runs := NewRuns(workflow.NewMemoryStore())
+	outcome, err := runs.Execute(ctx, plan.Plan{ProjectID: "p", ID: "2", TaskID: "t2", Goal: "g", Steps: []plan.Step{
 		step("seed", "prepare", []string{"basic"}),
 		step("branch-a", "half one", []string{"gpu"}, "seed"),
 		step("branch-b", "half two", []string{"prod-cred"}, "seed"),
-		{
-			ID: "merge", Goal: "converge", Requires: []string{"basic"},
-			Merge: []string{"branch-a", "branch-b"}, State: plan.StepPending,
-			Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "fixture"},
-		},
+		{ID: "merge", Goal: "converge", Requires: []string{"basic"}, Merge: []string{"branch-a", "branch-b"}, State: plan.StepPending,
+			Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "fixture"}},
 	}}, Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Runner: runner})
-
-	if outcome.Err != nil {
-		t.Fatalf("plan failed: %v", outcome.Err)
+	if err != nil || outcome.Err != nil {
+		t.Fatalf("plan failed: %v / %v", err, outcome.Err)
 	}
-	if runner.maxInFlight < 2 {
-		t.Errorf("fan-out never overlapped (max in flight = %d)", runner.maxInFlight)
-	}
-	order := []string{}
-	for _, req := range runner.requests() {
-		order = append(order, req.StepID)
-	}
-	if order[0] != "seed" || order[len(order)-1] != "merge" {
-		t.Fatalf("order = %v; seed first, merge last", order)
+	mu.Lock()
+	defer mu.Unlock()
+	if arrived != 2 || finished != 2 || len(order) != 4 || order[0] != "seed" || order[3] != "merge" {
+		t.Fatalf("arrived=%d finished=%d order=%v", arrived, finished, order)
 	}
 }
 
@@ -438,7 +472,7 @@ func planStore(t *testing.T) *plan.Store {
 // revision with the reason on record, and the revised run reuses the step
 // that already finished instead of running it again.
 func TestFindingTakesTheRevisionEdgeAndKeepsFinishedWork(t *testing.T) {
-	art, att := stores(t)
+	art, att, book := storesWithLedger(t)
 	plans := planStore(t)
 	created, err := plans.Create(plan.Plan{ProjectID: "p", TaskID: "t", Goal: "ship", By: "test", Steps: []plan.Step{
 		step("probe", "look at the target", []string{"gpu"}),
@@ -467,6 +501,7 @@ func TestFindingTakesTheRevisionEdgeAndKeepsFinishedWork(t *testing.T) {
 	p := &scriptedPlanner{revisions: [][]plan.Step{revised}}
 	sup := NewSupervisor(p, Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Runner: runner}, nil)
 	sup.SetPlans(plans)
+	sup.SetLedger(book, "test")
 
 	outcome, err := sup.Execute(t.Context(), created)
 	if err != nil {
@@ -503,7 +538,7 @@ func TestFindingTakesTheRevisionEdgeAndKeepsFinishedWork(t *testing.T) {
 // A placement nothing satisfies is a revision trigger too: a plan that
 // needs "quantum" should be reshaped, not retried into the same wall.
 func TestUnplaceableStepAsksForARevision(t *testing.T) {
-	art, att := stores(t)
+	art, att, book := storesWithLedger(t)
 	plans := planStore(t)
 	created, err := plans.Create(plan.Plan{ProjectID: "p", TaskID: "t", Goal: "g", By: "test", Steps: []plan.Step{
 		step("exotic", "needs hardware nobody has", []string{"quantum"}),
@@ -514,6 +549,7 @@ func TestUnplaceableStepAsksForARevision(t *testing.T) {
 	p := &scriptedPlanner{revisions: [][]plan.Step{{step("plain", "do it the ordinary way", []string{"gpu"})}}}
 	sup := NewSupervisor(p, Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Runner: &fakeRunner{}}, nil)
 	sup.SetPlans(plans)
+	sup.SetLedger(book, "test")
 	if _, err := sup.Execute(t.Context(), created); err != nil {
 		t.Fatalf("the revision should have rescued the plan: %v", err)
 	}
@@ -526,7 +562,7 @@ func TestUnplaceableStepAsksForARevision(t *testing.T) {
 // Revisions are bounded, and when the planner has nothing better the
 // original failure is what gets reported.
 func TestRevisionIsBoundedAndHonest(t *testing.T) {
-	art, att := stores(t)
+	art, att, book := storesWithLedger(t)
 	plans := planStore(t)
 	created, _ := plans.Create(plan.Plan{ProjectID: "p", TaskID: "t", Goal: "g", By: "test", Steps: []plan.Step{
 		step("exotic", "impossible", []string{"quantum"}),
@@ -534,6 +570,7 @@ func TestRevisionIsBoundedAndHonest(t *testing.T) {
 	p := &scriptedPlanner{} // never has a better idea
 	sup := NewSupervisor(p, Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Runner: &fakeRunner{}}, nil)
 	sup.SetPlans(plans)
+	sup.SetLedger(book, "test")
 	_, err := sup.Execute(t.Context(), created)
 	if err == nil || !strings.Contains(err.Error(), "quantum") {
 		t.Fatalf("err = %v, want the original placement failure", err)
@@ -646,6 +683,11 @@ func TestExhaustedStepAsksForARevision(t *testing.T) {
 // homed on the hub at a fresh directory, attempts, and artifacts whose
 // node side runs on this machine.
 func stores(t *testing.T) (*artifact.Store, *attempt.Service) {
+	art, att, _ := storesWithLedger(t)
+	return art, att
+}
+
+func storesWithLedger(t *testing.T) (*artifact.Store, *attempt.Service, *ledger.Ledger) {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
@@ -656,7 +698,7 @@ func stores(t *testing.T) (*artifact.Store, *attempt.Service) {
 	if err := projects.Declare(context.Background(), []project.Project{{ID: "p", Home: project.Home{Path: t.TempDir()}}}); err != nil {
 		t.Fatal(err)
 	}
-	return artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()}), attempt.New(book)
+	return artifact.New(filepath.Join(t.TempDir(), "artifacts"), book, projects, artifact.LocalNodes{Dir: t.TempDir()}), attempt.New(book), book
 }
 
 // hasRef says whether a ref with the value reached a step. Steps also
@@ -909,7 +951,7 @@ func TestVerifiedStepRecordsAnAttestation(t *testing.T) {
 // front; two parallel gpu steps share it in turn — the second waits for
 // the slot instead of failing — and nothing stays reserved afterwards.
 func TestReservedCapacityIsTakenOverAndWaitedFor(t *testing.T) {
-	art, att := stores(t)
+	art, att, book := storesWithLedger(t)
 	slotPollInterval = 50 * time.Millisecond
 	t.Cleanup(func() { slotPollInterval = 3 * time.Second })
 	nodes := &fakeNodes{statuses: []node.Status{{Name: "node-a", Up: true, Advert: nodewire.Advert{
@@ -922,6 +964,7 @@ func TestReservedCapacityIsTakenOverAndWaitedFor(t *testing.T) {
 	runner := &fakeRunner{}
 	sup := NewSupervisor(planner.Rule{}, Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, nodes), Runner: runner}, nil)
 	sup.SetPlans(plans)
+	sup.SetLedger(book, "test")
 	created, err := plans.Create(plan.Plan{ProjectID: "p", TaskID: "tcap", Goal: "capacity", By: "test", Steps: []plan.Step{
 		step("left", "half", []string{"gpu"}),
 		step("right", "other half", []string{"gpu"}),
@@ -941,14 +984,20 @@ func TestReservedCapacityIsTakenOverAndWaitedFor(t *testing.T) {
 			t.Fatalf("reservation for %s survived the plan", id)
 		}
 	}
-	// One of the two attempts took a reservation over (its slot lease is at
-	// a transferred epoch); the other waited for the slot to free.
+	// The journal retains the transferred slot fence. The final record no
+	// longer holds session capacity after its session was closed.
 	records, _ := att.ForTask(context.Background(), "tcap")
 	transferred := 0
 	for _, r := range records {
-		for _, l := range r.Leases {
-			if strings.HasPrefix(l.Key, "endpoint:node-a/mock:slot:") && l.Epoch >= 2 {
-				transferred++
+		history, err := att.History(t.Context(), r.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, event := range history {
+			for _, l := range event.Fencings {
+				if strings.HasPrefix(l.Key, "endpoint:node-a/mock:slot:") && l.Epoch >= 2 {
+					transferred++
+				}
 			}
 		}
 	}
@@ -961,7 +1010,7 @@ func TestReservedCapacityIsTakenOverAndWaitedFor(t *testing.T) {
 // back to the planner: its one step is the point, and a planner routing
 // around the broken machine would defeat it. The failure stands as is.
 func TestFixedPlanIsNotRevised(t *testing.T) {
-	art, att := stores(t)
+	art, att, book := storesWithLedger(t)
 	plans := planStore(t)
 	created, _ := plans.Create(plan.Plan{ProjectID: "p", TaskID: "t", Goal: "g", By: "repair", Fixed: true, Steps: []plan.Step{
 		step("exotic", "impossible", []string{"quantum"}),
@@ -969,6 +1018,7 @@ func TestFixedPlanIsNotRevised(t *testing.T) {
 	p := &scriptedPlanner{revisions: [][]plan.Step{{step("plain", "do it the ordinary way", []string{"gpu"})}}}
 	sup := NewSupervisor(p, Deps{Workspaces: art, Attempts: att, Artifacts: art, Roster: testRoster(t, bothNodes()), Runner: &fakeRunner{}}, nil)
 	sup.SetPlans(plans)
+	sup.SetLedger(book, "test")
 	_, err := sup.Execute(t.Context(), created)
 	if err == nil || !strings.Contains(err.Error(), "quantum") {
 		t.Fatalf("err = %v, want the placement failure itself", err)

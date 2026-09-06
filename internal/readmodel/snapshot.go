@@ -3,13 +3,14 @@ package readmodel
 import (
 	"context"
 	"fmt"
+	"slices"
+	"sort"
+	"time"
+
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
-	"slices"
-	"sort"
-	"time"
 
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -81,10 +82,13 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 		{Name: "tasks", Wired: m.src.Tasks != nil}, {Name: "plans", Wired: m.src.Plans != nil},
 		{Name: "ledger", Wired: m.src.Ledger != nil}, {Name: "schedules", Wired: m.src.Schedules != nil},
 	}
+	for _, name := range []string{"ledger-live", "ledger-projects", "ledger-landings", "ledger-facts", "ledger-attention", "ledger-usage"} {
+		snap.Sources = append(snap.Sources, SourceHealth{Name: name, Wired: m.src.Ledger != nil})
+	}
 	snap.Schedules = []Schedule{}
 	if m.src.Schedules != nil {
 		for _, j := range m.src.Schedules.List("") {
-			snap.Schedules = append(snap.Schedules, Schedule{ID: j.ID, Conversation: j.ConversationID, Agent: j.Member, Prompt: j.Prompt, Spec: j.Spec.Text, NextAt: j.NextAt, LastAt: j.LastAt, Runs: j.Runs})
+			snap.Schedules = append(snap.Schedules, Schedule{ID: j.ID, Conversation: j.ConversationID, Agent: j.Member, Prompt: j.Prompt, Spec: j.Spec.Text, NextAt: j.NextAt, LastAt: j.LastAt, Runs: j.Runs, State: j.State, Error: j.Error, PendingKey: j.PendingKey})
 		}
 	}
 	// Absence is a fact too: every list is present, empty or not, so a
@@ -103,14 +107,23 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	}
 	snap.Projects = []Project{}
 	var liveAttempts []Attempt
+	activityKnown := false
 	if m.src.Ledger != nil {
-		liveAttempts = m.src.Ledger.LiveAttempts(ctx)
+		var err error
+		liveAttempts, err = m.src.Ledger.LiveAttempts(ctx)
+		activityKnown = err == nil
+		m.markLedgerSource(&snap, "live", err)
+		if err != nil {
+			m.markSource(&snap, "ledger-attention", fmt.Errorf("writers: %w", err))
+		}
 		for i := range liveAttempts {
 			liveAttempts[i].Node = m.place(liveAttempts[i].Node)
 		}
 	}
 	if m.src.Ledger != nil {
-		for _, p := range m.src.Ledger.ProjectList(ctx) {
+		projects, err := m.src.Ledger.ProjectList(ctx)
+		m.markLedgerSource(&snap, "projects", err)
+		for _, p := range projects {
 			item := Project{
 				ID: p.ID, Node: m.place(p.Home.Node), Path: p.Home.Path,
 				Level: string(p.Level.OrDefault()), Repo: string(p.Repo), DefaultRole: string(p.DefaultRole), Agents: []string{},
@@ -118,7 +131,7 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 			}
 			item.Workspaces = []Workspace{}
 			for _, ws := range p.Workspaces() {
-				w := Workspace{ID: ws.ID, Node: m.place(ws.Node), Path: ws.Path, Kind: string(ws.Kind), Agents: []string{}}
+				w := Workspace{ID: ws.ID, Node: m.place(ws.Node), Path: ws.Path, Kind: string(ws.Kind), Agents: []string{}, ActivityKnown: &activityKnown}
 				if c, ok := p.CopyOn(ws.Node); ok {
 					w.Origin, w.Source, w.State, w.Error = string(c.Origin), c.Source, string(c.State), c.Error
 				}
@@ -150,22 +163,29 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	snap.Attempts, snap.Landings = []Attempt{}, []Landing{}
 	snap.Facts = Facts{Reservations: []Reservation{}, Attestations: []Attestation{}, Replicas: []Replica{}, Disclosures: []Disclosure{}, Effects: []Effect{}, Grants: []Grant{}}
 	var closed []attempt.Record
+	attentionKnown := false
 	if m.src.Ledger != nil {
 		if liveAttempts != nil {
 			snap.Attempts = liveAttempts
 		}
-		if recent := m.src.Ledger.RecentLandings(ctx); recent != nil {
+		recent, err := m.src.Ledger.RecentLandings(ctx)
+		m.markLedgerSource(&snap, "landings", err)
+		if recent != nil {
 			snap.Landings = recent
 		}
-		snap.Facts = m.src.Ledger.Facts(ctx)
-		var err error
-		closed, err = m.src.Ledger.ClosedAttempts(ctx)
-		if err != nil {
-			m.markSource(&snap, "ledger", err)
+		snap.Facts, err = m.src.Ledger.Facts(ctx)
+		factsAttentionKnown := err == nil || snap.Facts.attentionKnown
+		attentionKnown = factsAttentionKnown && activityKnown
+		m.markLedgerSource(&snap, "facts", err)
+		if !factsAttentionKnown {
+			m.markSource(&snap, "ledger-attention", err)
 		}
+		closed, err = m.src.Ledger.ClosedAttempts(ctx)
+		m.markLedgerSource(&snap, "usage", err)
 	}
+	normalizeFacts(&snap.Facts)
 	snap.Usage = usage(closed, snap.At)
-	snap.Inbox = inbox(snap.Facts)
+	snap.Inbox = inbox(snap.Facts, snap.Attempts)
 	// Activities: live attempts are the truth about "busy"; the latest
 	// progress says what the attempt is doing, when it was seen at all.
 	m.mu.Lock()
@@ -177,7 +197,10 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	byAgent := map[string][]Activity{}
 	for _, a := range snap.Attempts {
 		act := Activity{Agent: a.Agent, AttemptID: a.ID, Kind: a.Kind, Workspace: a.Workspace, TaskID: a.TaskID, Since: a.StartedAt, At: a.StartedAt}
-		if seen, ok := observed[a.Agent]; ok && seen.TaskID == a.TaskID && time.Since(seen.At) < activityFresh {
+		if a.Unsettled {
+			act.Kind = "writer"
+			act.Detail = "原执行进程是否退出尚未确认" + errSuffix(a.Error)
+		} else if seen, ok := observed[a.Agent]; ok && seen.TaskID == a.TaskID && time.Since(seen.At) < activityFresh {
 			act.StepID, act.Tool, act.Detail, act.At, act.Conversation = seen.StepID, seen.Tool, seen.Detail, seen.At, seen.Conversation
 		}
 		byAgent[a.Agent] = append(byAgent[a.Agent], act)
@@ -185,6 +208,7 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	for i := range snap.Agents {
 		snap.Agents[i].Activities = byAgent[snap.Agents[i].ID]
 		snap.Agents[i].Busy = len(byAgent[snap.Agents[i].ID])
+		snap.Agents[i].ActivityKnown = &activityKnown
 	}
 	// Four axes per task, then each descendant's execution and attention
 	// roll up into its ancestors: a top-level card answers for its tree.
@@ -194,15 +218,19 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 			attention[r.TaskID]++
 		}
 	}
-	live := map[string]bool{}
+	live, unsettled := map[string]bool{}, map[string]bool{}
 	for _, a := range snap.Attempts {
-		live[a.TaskID] = true
+		if a.Unsettled {
+			unsettled[a.TaskID] = true
+		} else {
+			live[a.TaskID] = true
+		}
 	}
 	parent := map[string]string{}
 	for _, t := range snap.Tasks {
 		parent[t.ID] = t.Parent
 	}
-	rolledLive, rolledAttention := map[string]bool{}, map[string]int{}
+	rolledLive, rolledUnsettled, rolledAttention := map[string]bool{}, map[string]bool{}, map[string]int{}
 	for _, t := range snap.Tasks {
 		waiting := attention[t.ID]
 		if p, ok := planByTask[t.ID]; ok {
@@ -216,6 +244,9 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 			if live[t.ID] {
 				rolledLive[id] = true
 			}
+			if unsettled[t.ID] {
+				rolledUnsettled[id] = true
+			}
 			rolledAttention[id] += waiting
 		}
 	}
@@ -223,20 +254,58 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 		t := &snap.Tasks[i]
 		t.Lifecycle = t.State
 		t.Execution = "idle"
+		if !activityKnown || rolledUnsettled[t.ID] {
+			t.Execution = "unknown"
+		}
 		if rolledLive[t.ID] {
 			t.Execution = "running"
 		}
 		t.Attention = rolledAttention[t.ID]
 		t.Lane = lane(*t)
+		if t.Lane == "pending" && !attentionKnown {
+			t.Lane = "unknown"
+		}
 	}
 	return snap
+}
+
+func normalizeFacts(f *Facts) {
+	if f.Reservations == nil {
+		f.Reservations = []Reservation{}
+	}
+	if f.Attestations == nil {
+		f.Attestations = []Attestation{}
+	}
+	if f.Replicas == nil {
+		f.Replicas = []Replica{}
+	}
+	if f.Disclosures == nil {
+		f.Disclosures = []Disclosure{}
+	}
+	if f.Effects == nil {
+		f.Effects = []Effect{}
+	}
+	if f.Grants == nil {
+		f.Grants = []Grant{}
+	}
+}
+
+func (m *Model) markLedgerSource(snap *Snapshot, query string, err error) {
+	if err == nil {
+		return
+	}
+	m.markSource(snap, "ledger-"+query, err)
+	m.markSource(snap, "ledger", fmt.Errorf("%s: %w", query, err))
 }
 
 // markSource records that a source failed to contribute.
 func (m *Model) markSource(snap *Snapshot, name string, err error) {
 	for i := range snap.Sources {
 		if snap.Sources[i].Name == name {
-			snap.Sources[i].Error = err.Error()
+			if snap.Sources[i].Error != "" {
+				snap.Sources[i].Error += "; "
+			}
+			snap.Sources[i].Error += err.Error()
 		}
 	}
 }
@@ -260,6 +329,9 @@ func lane(t Task) string {
 		// Recoverable, and only a person decides how: continue or cancel.
 		return "needs_you"
 	default:
+		if t.Execution == "unknown" {
+			return "unknown"
+		}
 		// Open and idle: waiting for its next line, or for its turn.
 		return "pending"
 	}
@@ -267,7 +339,7 @@ func lane(t Task) string {
 
 // inbox projects what only a person can settle, with the commands that
 // settle it. The operations behind these stay the authority.
-func inbox(f Facts) []HumanRequest {
+func inbox(f Facts, attempts []Attempt) []HumanRequest {
 	out := []HumanRequest{}
 	for _, d := range f.Disclosures {
 		out = append(out, HumanRequest{
@@ -281,6 +353,17 @@ func inbox(f Facts) []HumanRequest {
 			ID: e.ID, Type: "effect", Source: e.Attempt, TaskID: e.TaskID, CreatedAt: e.At, Resolvable: true,
 			Summary: fmt.Sprintf("%s was called for task #%s and nobody knows whether it happened%s", e.Tool, e.TaskID, errSuffix(e.Error)),
 			Choices: []Choice{{Label: "confirm it happened", Command: "/effects " + e.ID + " happened"}, {Label: "allow it to be called again", Command: "/effects " + e.ID + " new", Danger: true}},
+		})
+	}
+	for _, a := range attempts {
+		if !a.Unsettled {
+			continue
+		}
+		out = append(out, HumanRequest{
+			ID: "writer:" + a.ID, Type: "writer", Source: a.ID, AttemptID: a.ID, Node: a.Node, Workspace: a.Workspace,
+			ProjectID: a.Project, TaskID: a.TaskID, CreatedAt: a.StartedAt,
+			Summary: "原执行进程是否退出尚未确认，目录与执行资源继续保留占用" + errSuffix(a.Error),
+			Choices: []Choice{}, Resolvable: false,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreatedAt.After(out[j].CreatedAt) })

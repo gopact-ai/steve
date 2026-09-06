@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
@@ -64,7 +65,7 @@ func (s MessageSender) Send(ctx context.Context, address channel.Address, messag
 		return "", errors.New("console anchor does not belong to this conversation")
 	}
 	before := c.replies[address.Conversation]
-	r := readmodel.Reply{ID: newReplyID(), ExchangeID: exchangeID, At: time.Now().UTC(), Conversation: address.Conversation,
+	r := consoleapi.Reply{ID: newReplyID(), ExchangeID: exchangeID, At: time.Now().UTC(), Conversation: address.Conversation,
 		Text: message.Content, Format: message.Format, Title: message.Attribution, Kind: "milestone"}
 	c.recordLocked(r)
 	if err := c.save(); err != nil {

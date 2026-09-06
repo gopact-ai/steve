@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"sync/atomic"
 )
 
 // Transport starts one agent process and hands back the pipes that talk to
@@ -30,8 +31,9 @@ type Transport interface {
 type Process interface {
 	Stdout() io.ReadCloser
 	Stdin() io.WriteCloser
-	// Wait blocks until the agent is gone and releases its resources. It is
-	// called exactly once, after the ACP connection has closed.
+	// Wait releases this transport's resources after its logical lifetime.
+	// It is called exactly once. Remote stream loss alone does not prove
+	// process exit; transports may also implement Stopped() bool as evidence.
 	Wait() error
 	// Kill forces the agent and everything it spawned to die — the escape
 	// hatch for a graceful close that did not settle.
@@ -76,14 +78,21 @@ func (t LocalTransport) Start(context.Context) (Process, error) {
 }
 
 type localProcess struct {
-	cmd    *exec.Cmd
-	stdout io.ReadCloser
-	stdin  io.WriteCloser
+	cmd     *exec.Cmd
+	stdout  io.ReadCloser
+	stdin   io.WriteCloser
+	stopped atomic.Bool
 }
 
 func (p *localProcess) Stdout() io.ReadCloser { return p.stdout }
 func (p *localProcess) Stdin() io.WriteCloser { return p.stdin }
-func (p *localProcess) Wait() error           { return p.cmd.Wait() }
+func (p *localProcess) Wait() error {
+	err := p.cmd.Wait()
+	p.stopped.Store(true)
+	return err
+}
+
+func (p *localProcess) Stopped() bool { return p.stopped.Load() }
 
 // Kill signals the whole process group: the agent spawns MCP stdio servers
 // and tools of its own, and killing only the parent orphans them.

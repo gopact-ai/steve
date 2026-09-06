@@ -95,6 +95,7 @@ func (s *Store) Create(t Task) (Task, error) {
 	now := s.now()
 	t.ID = strconv.Itoa(s.data.NextID)
 	t.State = StateDraft
+	t.ExecutionEpoch = 1
 	t.CreatedAt = now
 	t.UpdatedAt = now
 	if t.Budget.MaxTurns == 0 {
@@ -338,9 +339,9 @@ func (s *Store) Interrupted() []Task {
 	return out
 }
 
-// Begin opens an attempt and moves the task to running. It refuses when the
-// budget is spent so a runaway loop stops at the store rather than relying on
-// every caller to remember to check.
+// Begin opens an attempt and charges one turn to this task and every
+// ancestor in the same durable write. Concurrent siblings share the same
+// ancestor budget; a task may have only one open attempt of its own.
 func (s *Store) Begin(id, member, node, session string) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -349,18 +350,19 @@ func (s *Store) Begin(id, member, node, session string) (Task, error) {
 	if !ok {
 		return Task{}, fmt.Errorf("task %s not found", id)
 	}
-	if limit, spent := stored.Budget.Exhausted(); spent {
-		return Task{}, fmt.Errorf("task %s budget exhausted: %s", id, limit)
+	if n := len(stored.Attempts); n > 0 && stored.Attempts[n-1].Open() {
+		return Task{}, fmt.Errorf("task %s already has an open attempt", id)
 	}
-	if !stored.State.CanMoveTo(StateRunning) {
+	if !stored.State.Holds() || !stored.State.CanMoveTo(StateRunning) {
 		return Task{}, fmt.Errorf("task %s cannot run from %s", id, stored.State)
 	}
 	now := s.now()
+	if err := reserveTurn(next.Tasks, id, now); err != nil {
+		return Task{}, err
+	}
 	stored.State = StateRunning
 	stored.Member = member
 	stored.Node = node
-	stored.Budget.Turns++
-	stored.UpdatedAt = now
 	stored.Attempts = append(stored.Attempts, Attempt{
 		Member: member, Node: node, Session: session, StartedAt: now,
 	})
@@ -370,8 +372,53 @@ func (s *Store) Begin(id, member, node, session string) (Task, error) {
 	return *stored.clone(), nil
 }
 
-// Finish closes the open attempt and folds its cost into the budget. The task
-// state is left to the caller: a finished turn is not a finished task.
+// ReserveTurn charges one independently tracked execution, such as a plan
+// step, without opening a synthetic conversation attempt. Admission and the
+// charge to every ancestor share one durable update.
+func (s *Store) ReserveTurn(id string) (Task, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := s.clone()
+	stored, ok := next.Tasks[id]
+	if !ok {
+		return Task{}, fmt.Errorf("task %s not found", id)
+	}
+	if !stored.State.Holds() || !stored.State.CanMoveTo(StateRunning) {
+		return Task{}, fmt.Errorf("task %s cannot run from %s", id, stored.State)
+	}
+	if err := reserveTurn(next.Tasks, id, s.now()); err != nil {
+		return Task{}, err
+	}
+	stored.State = StateRunning
+	if err := s.replaceLocked(next); err != nil {
+		return Task{}, err
+	}
+	return *stored.clone(), nil
+}
+
+func reserveTurn(tasks map[string]*Task, id string, now time.Time) error {
+	lineage, err := taskLineage(tasks, id)
+	if err != nil {
+		return err
+	}
+	for _, member := range lineage {
+		if member.State == StatePaused || member.State == StateCancelled {
+			return fmt.Errorf("%w: ancestor %s", ErrExecutionStopped, member.ID)
+		}
+		if limit, spent := member.Budget.Exhausted(); spent {
+			return fmt.Errorf("task %s budget exhausted: %s", member.ID, limit)
+		}
+	}
+	for _, member := range lineage {
+		member.Budget.Turns++
+		member.UpdatedAt = now
+	}
+	return nil
+}
+
+// Finish closes the open attempt and atomically adds only that execution's
+// elapsed time, tool calls and tokens to this task and every ancestor.
+// The task state is left to the caller: a finished turn is not a finished task.
 func (s *Store) Finish(id string, outcome Outcome, tokens Tokens, toolCalls int) (Task, error) {
 	return s.FinishAs(id, outcome, tokens, toolCalls, "")
 }
@@ -392,15 +439,21 @@ func (s *Store) FinishAs(id string, outcome Outcome, tokens Tokens, toolCalls in
 	if !attempt.Open() {
 		return Task{}, fmt.Errorf("task %s attempt already finished", id)
 	}
+	lineage, err := taskLineage(next.Tasks, id)
+	if err != nil {
+		return Task{}, err
+	}
 	now := s.now()
 	attempt.EndedAt = now
 	attempt.Outcome = outcome
 	attempt.Tokens = tokens
 	attempt.Model = model
-	stored.Budget.Elapsed += now.Sub(attempt.StartedAt)
-	stored.Budget.ToolCalls += toolCalls
-	stored.Budget.Tokens = stored.Budget.Tokens.Add(tokens)
-	stored.UpdatedAt = now
+	for _, member := range lineage {
+		member.Budget.Elapsed += now.Sub(attempt.StartedAt)
+		member.Budget.ToolCalls += toolCalls
+		member.Budget.Tokens = member.Budget.Tokens.Add(tokens)
+		member.UpdatedAt = now
+	}
 	if err := s.replaceLocked(next); err != nil {
 		return Task{}, err
 	}
@@ -417,6 +470,9 @@ func (s *Store) Advance(id string, to State) (Task, error) {
 	}
 	if !stored.State.CanMoveTo(to) {
 		return Task{}, fmt.Errorf("task %s cannot move %s -> %s", id, stored.State, to)
+	}
+	if stored.State == StatePaused && to == StateRunning {
+		stored.ExecutionEpoch++
 	}
 	stored.State = to
 	stored.UpdatedAt = s.now()

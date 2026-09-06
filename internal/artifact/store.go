@@ -13,8 +13,10 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 // Manifest is what the ledger knows about an artifact: a commit in the
@@ -70,12 +72,14 @@ type Nodes interface {
 // Store holds every project's shadow repository on the hub — the default
 // durable place — and materialises workspaces anywhere.
 type Store struct {
-	Dir      string
-	Limits   Limits
-	ledger   *ledger.Ledger
-	projects *project.Store
-	nodes    Nodes
-	now      func() time.Time
+	landingDriverTTL time.Duration
+	executions       *execution.Registry
+	Dir              string
+	Limits           Limits
+	ledger           *ledger.Ledger
+	projects         *project.Store
+	nodes            Nodes
+	now              func() time.Time
 	// LegacyMerge forces the pre-2.38 merge path at nodes; tests use it
 	// to exercise that path on a modern git.
 	LegacyMerge bool
@@ -83,6 +87,8 @@ type Store struct {
 	// it, the hub granting the transfer, instead of relaying the bytes.
 	Direct bool
 }
+
+func (s *Store) SetExecution(r *execution.Registry) { s.executions = r }
 
 func New(dir string, l *ledger.Ledger, projects *project.Store, nodes Nodes) *Store {
 	return &Store{Dir: dir, ledger: l, projects: projects, nodes: nodes, now: time.Now}
@@ -577,6 +583,7 @@ const pendingKind = "pending-landing"
 // what a delegated child made while its parent's in-place turn still held
 // the lock.
 type Pending struct {
+	Source   *Source   `json:"source,omitempty"`
 	Project  string    `json:"project"`
 	Artifact string    `json:"artifact"`
 	By       string    `json:"by"`
@@ -584,8 +591,16 @@ type Pending struct {
 }
 
 // Defer queues an artifact to land later.
-func (s *Store) Defer(ctx context.Context, projectID, artifactID, by string) error {
-	return s.ledger.PutBinding(ctx, pendingKind, projectID+"/"+artifactID, Pending{Project: projectID, Artifact: artifactID, By: by, At: s.now().UTC()})
+func (s *Store) Defer(ctx context.Context, projectID, artifactID, by string, source ...Source) error {
+	origin := firstSource(source)
+	return s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+		if origin != nil {
+			if err := task.CheckExecutionTx(tx, origin.Execution); err != nil {
+				return err
+			}
+		}
+		return tx.PutBinding(pendingKind, projectID+"/"+artifactID, Pending{Project: projectID, Artifact: artifactID, By: by, At: s.now().UTC(), Source: origin})
+	})
 }
 
 // LandPending lands everything queued for the project, oldest first, and
@@ -606,7 +621,17 @@ func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, 
 	sort.Slice(queue, func(i, j int) bool { return queue[i].At.Before(queue[j].At) })
 	var out []Landing
 	for _, item := range queue {
-		land, err := s.Land(ctx, p, item.Artifact, item.By)
+		var source []Source
+		if item.Source != nil {
+			source = []Source{*item.Source}
+		}
+		land, err := s.Land(ctx, p, item.Artifact, item.By, source...)
+		if errors.Is(err, task.ErrExecutionStopped) {
+			if err := s.ledger.DeleteBinding(ctx, pendingKind, item.Project+"/"+item.Artifact); err != nil {
+				return out, err
+			}
+			continue
+		}
 		if err != nil {
 			var conflict Conflict
 			if errors.As(err, &conflict) {

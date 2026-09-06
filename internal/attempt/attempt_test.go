@@ -152,21 +152,21 @@ func TestLostLeaseStopsEveryTransition(t *testing.T) {
 	if _, err := s.Advance(ctx, r.ID, Bound, "hub", nil); !errors.Is(err, ErrBadState) {
 		t.Fatalf("running → bound = %v", err)
 	}
-	// Time passes; the sweeper expires it and cuts its leases.
+	// A lost running lease proves no process exit: quarantine the writer.
 	c.t = c.t.Add(2 * time.Minute)
 	expired, err := s.Sweep(ctx)
-	if err != nil || len(expired) != 1 || expired[0].ID != r.ID {
+	if err != nil || len(expired) != 0 {
 		t.Fatalf("sweep = %+v err=%v", expired, err)
 	}
 	if err := s.Renew(ctx, r.ID); !errors.Is(err, ErrLost) {
 		t.Fatalf("renew after expiry = %v", err)
 	}
-	// The zombie driver tries to finish: refused, and the record stays expired.
+	// The zombie driver cannot complete while its writer remains unknown.
 	if _, err := s.Finish(ctx, r.ID, "zombie", Result{Summary: "late"}); err == nil {
 		t.Fatal("a zombie finished an expired attempt")
 	}
 	got, _ := s.Get(ctx, r.ID)
-	if got.State != Expired || got.Result != nil {
+	if got.State != Running || !got.Unsettled || got.Result != nil {
 		t.Fatalf("record = %+v", got)
 	}
 }
@@ -183,7 +183,10 @@ func TestSupersedeCutsOnlyTheOldAttemptsLeases(t *testing.T) {
 	if _, err := s.Supersede(ctx, chat.ID, Spec{Kind: KindChat, Project: "q", Workspace: canonical("q"), Scope: ScopeUnrestricted}, "hub"); err == nil {
 		t.Fatal("an in-place attempt was taken over")
 	}
-	// The old one is live but its hub died; the slot it held has expired
+	if err := s.MarkSessionSettled(ctx, "old", "worker confirmed finished"); err != nil {
+		t.Fatal(err)
+	}
+	// Its session is confirmed finished; the slot it held has expired
 	// and been legitimately re-leased by someone else before takeover.
 	c.t = c.t.Add(2 * time.Minute)
 	other, err := s.l.Acquire(ctx, "endpoint:node-a/codex:slot:1", "other", time.Minute)

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/readmodel"
@@ -32,12 +33,9 @@ const (
 )
 
 type outcome struct {
-	reply readmodel.Reply
+	reply consoleapi.Reply
 	err   error
 }
-
-// ErrCommandRunning says the same command id is being handled right now.
-var ErrCommandRunning = errors.New("this command is already running")
 
 // Handler is the coordinator's door.
 type Handler interface {
@@ -63,26 +61,28 @@ type Titler interface {
 // transcript is the durable shape: every conversation's lines, and what
 // is known about each beyond them.
 type transcript struct {
-	Replies   map[string][]readmodel.Reply `json:"replies"`
-	Meta      map[string]Meta              `json:"meta,omitempty"`
-	Exchanges map[string][]*queuedExchange `json:"exchanges,omitempty"`
+	Replies   map[string][]consoleapi.Reply `json:"replies"`
+	Meta      map[string]Meta               `json:"meta,omitempty"`
+	Exchanges map[string][]*queuedExchange  `json:"exchanges,omitempty"`
+}
+
+// Events is the conversation's view of the shared change stream. The console
+// does not own or require a concrete read-model runtime.
+type Events interface {
+	Publish(readmodel.Event)
+	Subscribe(context.Context) (<-chan readmodel.Event, func())
 }
 
 type Service struct {
 	handler   Handler
 	owner     string
-	model     *readmodel.Model
+	model     Events
 	titler    Titler
 	inspector Inspector
 
 	mu      sync.Mutex
-	replies map[string][]readmodel.Reply
+	replies map[string][]consoleapi.Reply
 	meta    map[string]Meta
-	// commands remembers each command id's answer; inflight guards a
-	// command still running.
-	commands     map[string]outcome
-	commandOrder []string
-	inflight     map[string]bool
 	// anchor tells the agents' messaging server which line a turn runs
 	// under, so an agent's channel_send lands on the page as a milestone
 	// instead of being refused for having no conversation.
@@ -99,8 +99,8 @@ type Service struct {
 	doc ledger.Doc
 }
 
-func New(handler Handler, owner string, model *readmodel.Model) *Service {
-	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]readmodel.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}}
+func New(handler Handler, owner string, model Events) *Service {
+	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}}
 }
 
 // SetTitler gives the service a way to name conversations. Without one,
@@ -110,13 +110,13 @@ func (s *Service) SetTitler(t Titler) { s.titler = t }
 // Inspector says what an attempt changed, for the reply to carry, and
 // which project a conversation works in, for a quote's boundary.
 type Inspector interface {
-	Changes(ctx context.Context, attempt string) (*readmodel.ChangeSummary, error)
+	Changes(ctx context.Context, attempt string) (*consoleapi.ChangeSummary, error)
 	ProjectOf(ctx context.Context, conversation string) string
 }
 
 // QuoteRef points at one stored line of a thread to carry along with a
 // message. The page only sends the pointer; the text is read here.
-type QuoteRef = readmodel.QuoteRef
+type QuoteRef = consoleapi.QuoteRef
 
 // quoteLimits bound what a quote can cost the prompt.
 const (
@@ -148,7 +148,7 @@ func (s *Service) quoteBlock(ctx context.Context, conversation string, quotes []
 			return "", fmt.Errorf("quote from %s: not the same project as this thread", source)
 		}
 		s.mu.Lock()
-		var found *readmodel.Reply
+		var found *consoleapi.Reply
 		for i := range s.replies[source] {
 			if s.replies[source][i].ID == q.ReplyID {
 				r := s.replies[source][i]
@@ -178,7 +178,7 @@ func (s *Service) quoteBlock(ctx context.Context, conversation string, quotes []
 	return b.String(), nil
 }
 
-func orUnknown(in *readmodel.Injected) string {
+func orUnknown(in *consoleapi.Injected) string {
 	if in == nil || in.Agent == "" {
 		return ""
 	}
@@ -188,7 +188,7 @@ func orUnknown(in *readmodel.Injected) string {
 // SendCommandWith is SendCommand with quotes carried along: the block
 // goes ahead of the line in the prompt the agent sees, while the
 // transcript keeps the line as typed.
-func (s *Service) SendCommandWith(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (readmodel.Reply, error) {
+func (s *Service) SendCommandWith(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (consoleapi.Reply, error) {
 	return s.sendCommand(ctx, conversation, input, commandID, quotes)
 }
 
@@ -212,7 +212,7 @@ func (s *Service) Persist(doc ledger.Doc) error {
 		var saved transcript
 		if err := json.Unmarshal(raw, &saved); err != nil || saved.Replies == nil {
 			// The earlier shape: just the lines, by conversation.
-			var legacy map[string][]readmodel.Reply
+			var legacy map[string][]consoleapi.Reply
 			if err := json.Unmarshal(raw, &legacy); err != nil {
 				return fmt.Errorf("console: transcript is not readable: %w", err)
 			}
@@ -232,9 +232,9 @@ func (s *Service) Persist(doc ledger.Doc) error {
 	return s.restoreQueueLocked()
 }
 
-// save writes the transcript; the caller holds the lock. The whole thing
-// is small (keep lines per conversation), so one durable replace is
-// simpler than a log to compact.
+// save writes one durable document; the caller holds the lock. Transcript
+// projections are bounded, but keyed exchanges are retained as business
+// records. Large histories will need an explicit storage/retention contract.
 func (s *Service) save() error {
 	if s.doc == nil {
 		return nil
@@ -252,7 +252,7 @@ func (s *Service) save() error {
 
 // Update takes what the owner said about a conversation: a name of their
 // own (empty gives it back to the agent's), or whether it is put away.
-func (s *Service) Update(_ context.Context, conversation string, patch readmodel.ConversationPatch) error {
+func (s *Service) Update(_ context.Context, conversation string, patch consoleapi.ConversationPatch) error {
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
@@ -355,12 +355,12 @@ func (s *Service) Conversations() []string {
 // its name, where it stands, when it last spoke, whether it is busy.
 // Newest first. Where a conversation stands is asked of the coordinator,
 // so a fresh page shows the project and agent each thread would use.
-func (s *Service) Summaries(ctx context.Context) []readmodel.Conversation {
+func (s *Service) Summaries(ctx context.Context) []consoleapi.Conversation {
 	s.mu.Lock()
-	var out []readmodel.Conversation
+	var out []consoleapi.Conversation
 	for name, list := range s.replies {
 		m := s.meta[name]
-		c := readmodel.Conversation{ID: name, Count: len(list), Running: s.running[name] > 0, Title: m.Title, TitleBy: m.TitleBy, Archived: m.Archived}
+		c := consoleapi.Conversation{ID: name, Count: len(list), Running: s.running[name] > 0, Title: m.Title, TitleBy: m.TitleBy, Archived: m.Archived}
 		// The name is the first thing the owner said that was not a verb:
 		// "/fleet" names nothing, "把登录页改成深色" does.
 		first := ""
@@ -406,11 +406,11 @@ func (s *Service) Summaries(ctx context.Context) []readmodel.Conversation {
 	return out
 }
 
-func placement(p *turn.Placement) *readmodel.Placement {
+func placement(p *turn.Placement) *consoleapi.Placement {
 	if p == nil {
 		return nil
 	}
-	return &readmodel.Placement{Workspace: p.Workspace, Kind: p.Kind, Node: p.Node}
+	return &consoleapi.Placement{Workspace: p.Workspace, Kind: p.Kind, Node: p.Node}
 }
 
 // clipTitle is a line's first sentence-ish, short enough for a sidebar.
@@ -426,7 +426,7 @@ func clipTitle(input string) string {
 }
 
 // Context is where a conversation stands, from the coordinator's own rules.
-func (s *Service) Context(ctx context.Context, conversation string) (readmodel.Context, error) {
+func (s *Service) Context(ctx context.Context, conversation string) (consoleapi.Context, error) {
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
@@ -434,18 +434,18 @@ func (s *Service) Context(ctx context.Context, conversation string) (readmodel.C
 		Context(ctx context.Context, conversationID string) (turn.Context, error)
 	})
 	if !ok {
-		return readmodel.Context{Conversation: conversation, Agents: []readmodel.AgentChoice{}}, nil
+		return consoleapi.Context{Conversation: conversation, Agents: []consoleapi.AgentChoice{}}, nil
 	}
 	got, err := aware.Context(ctx, conversation)
 	if err != nil {
-		return readmodel.Context{}, err
+		return consoleapi.Context{}, err
 	}
-	out := readmodel.Context{Conversation: conversation, Agents: []readmodel.AgentChoice{}}
+	out := consoleapi.Context{Conversation: conversation, Agents: []consoleapi.AgentChoice{}}
 	if got.Project != nil {
-		out.Project = &readmodel.ContextProject{ID: got.Project.ID, Node: got.Project.Node, Path: got.Project.Path, Level: got.Project.Level, Repo: got.Project.Repo, Version: got.Project.Version, Bound: got.Project.Bound}
+		out.Project = &consoleapi.ContextProject{ID: got.Project.ID, Node: got.Project.Node, Path: got.Project.Path, Level: got.Project.Level, Repo: got.Project.Repo, Version: got.Project.Version, Bound: got.Project.Bound}
 	}
-	convert := func(a turn.AgentChoice) readmodel.AgentChoice {
-		return readmodel.AgentChoice{ID: a.ID, Node: a.Node, Harness: a.Harness, Model: a.Model, Ready: a.Ready, Why: a.Why, Usable: a.Usable, Because: a.Because, Current: a.Current, Place: placement(a.Place)}
+	convert := func(a turn.AgentChoice) consoleapi.AgentChoice {
+		return consoleapi.AgentChoice{ID: a.ID, Node: a.Node, Harness: a.Harness, Model: a.Model, Ready: a.Ready, Why: a.Why, Usable: a.Usable, Because: a.Because, Current: a.Current, Place: placement(a.Place)}
 	}
 	if got.Agent != nil {
 		current := convert(*got.Agent)
@@ -458,7 +458,7 @@ func (s *Service) Context(ctx context.Context, conversation string) (readmodel.C
 }
 
 // Suggest completes a line by the coordinator's rules.
-func (s *Service) Suggest(ctx context.Context, conversation, line string) []readmodel.Suggestion {
+func (s *Service) Suggest(ctx context.Context, conversation, line string) []consoleapi.Suggestion {
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
@@ -468,22 +468,22 @@ func (s *Service) Suggest(ctx context.Context, conversation, line string) []read
 	if !ok {
 		return nil
 	}
-	var out []readmodel.Suggestion
+	var out []consoleapi.Suggestion
 	for _, x := range aware.Suggest(ctx, conversation, line) {
-		out = append(out, readmodel.Suggestion{Label: x.Label, Args: x.Args, Detail: x.Detail, Insert: x.Insert, Muted: x.Muted})
+		out = append(out, consoleapi.Suggestion{Label: x.Label, Args: x.Args, Detail: x.Detail, Insert: x.Insert, Muted: x.Muted})
 	}
 	return out
 }
 
 // Verbs is what the console can be told, with help, from the coordinator.
-func (s *Service) Verbs() []readmodel.Verb {
+func (s *Service) Verbs() []consoleapi.Verb {
 	aware, ok := s.handler.(interface{ Verbs() []turn.Verb })
 	if !ok {
 		return nil
 	}
-	var out []readmodel.Verb
+	var out []consoleapi.Verb
 	for _, v := range aware.Verbs() {
-		out = append(out, readmodel.Verb{Command: v.Command, Args: v.Args, Summary: v.Summary})
+		out = append(out, consoleapi.Verb{Command: v.Command, Args: v.Args, Summary: v.Summary})
 	}
 	return out
 }
@@ -498,52 +498,22 @@ func IsConsole(conversationOrAnchor string) bool {
 // calls stream to the page as console.progress, a plan's steps report
 // theirs as step.progress, and the reply keeps the whole process so it
 // can be unfolded later.
-func (s *Service) Send(ctx context.Context, conversation, input string) (readmodel.Reply, error) {
+func (s *Service) Send(ctx context.Context, conversation, input string) (consoleapi.Reply, error) {
 	return s.SendCommand(ctx, conversation, input, "")
 }
 
 // SendCommand is Send with an idempotency key: a page that retries, a
 // double click, a second tab — the same command id gets the first
 // answer back and nothing runs twice.
-func (s *Service) SendCommand(ctx context.Context, conversation, input, commandID string) (readmodel.Reply, error) {
+func (s *Service) SendCommand(ctx context.Context, conversation, input, commandID string) (consoleapi.Reply, error) {
 	return s.sendCommand(ctx, conversation, input, commandID, nil)
 }
 
 // sendCommand keeps the synchronous API while the service owns execution.
-func (s *Service) sendCommand(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (reply readmodel.Reply, err error) {
-	if commandID != "" {
-		s.mu.Lock()
-		if done, ok := s.commands[commandID]; ok {
-			s.mu.Unlock()
-			return done.reply, done.err
-		}
-		if s.inflight[commandID] {
-			s.mu.Unlock()
-			return readmodel.Reply{}, ErrCommandRunning
-		}
-		if s.inflight == nil {
-			s.inflight = map[string]bool{}
-		}
-		s.inflight[commandID] = true
-		s.mu.Unlock()
-		defer func() {
-			s.mu.Lock()
-			delete(s.inflight, commandID)
-			if s.commands == nil {
-				s.commands = map[string]outcome{}
-			}
-			s.commands[commandID] = outcome{reply: reply, err: err}
-			s.commandOrder = append(s.commandOrder, commandID)
-			if len(s.commandOrder) > keep {
-				delete(s.commands, s.commandOrder[0])
-				s.commandOrder = s.commandOrder[1:]
-			}
-			s.mu.Unlock()
-		}()
-	}
-	exchange, _, err := s.enqueue(ctx, conversation, input, "", quotes, false, "")
+func (s *Service) sendCommand(ctx context.Context, conversation, input, commandID string, quotes []QuoteRef) (consoleapi.Reply, error) {
+	exchange, _, err := s.enqueue(ctx, conversation, input, quotes, enqueueOptions{Key: clientKey(commandID)})
 	if err != nil {
-		return readmodel.Reply{}, err
+		return consoleapi.Reply{}, err
 	}
 	// Closing the page must not cancel either the queued work or its wait.
 	<-exchange.done
@@ -552,26 +522,43 @@ func (s *Service) sendCommand(ctx context.Context, conversation, input, commandI
 
 // runExchange only invokes the handler; queue completion records its answer
 // and terminal state together so a restart cannot replay a finished turn.
-func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply readmodel.Reply, err error) {
+func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply consoleapi.Reply, err error) {
 	if s.owner == "" {
-		return readmodel.Reply{}, errors.New("the console needs feishu.owner_open_id: it acts as the owner")
+		return consoleapi.Reply{}, errors.New("the console needs feishu.owner_open_id: it acts as the owner")
+	}
+	requester := s.owner
+	if exchange.Requester != "" {
+		if exchange.Requester != s.owner {
+			return consoleapi.Reply{}, errors.New("scheduled owner is no longer the console owner")
+		}
+		requester = exchange.Requester
 	}
 	conversation, input := exchange.Conversation, exchange.Input
 	block, err := s.quoteBlock(ctx, conversation, exchange.Quotes)
 	if err != nil {
-		return readmodel.Reply{Text: err.Error(), Error: err.Error()}, err
+		return consoleapi.Reply{Text: err.Error(), Error: err.Error()}, err
 	}
 	text := input
 	if exchange.Prompt != "" {
 		text = exchange.Prompt
 	}
 	prompt := block + text
-	if prefix, rest := interruptInput(text); prefix != "" {
+	address, parsed := s.parseInput(text)
+	if parsed.Control() {
+		// Controls are parsed by the coordinator, not sent to a model; a
+		// quoted prelude must not turn /cancel or /tasks pause into prose.
+		prompt = text
+	} else if parsed.Interrupt {
 		// Quotes must not hide the interrupt prefix from the coordinator.
-		prompt = prefix + block + rest
+		prompt = parsed.Prefix + block + parsed.Prompt
+		if address != "" {
+			prompt = address + " " + prompt
+		}
+	} else if address != "" && block != "" {
+		prompt = address + " " + block + parsed.Prompt
 	}
 	if err := ctx.Err(); err != nil {
-		return readmodel.Reply{Text: err.Error(), Error: err.Error()}, err
+		return consoleapi.Reply{Text: err.Error(), Error: err.Error()}, err
 	}
 	work := newProcess()
 	s.mu.Lock()
@@ -585,12 +572,14 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply rea
 	}
 	stop := s.follow(ctx, conversation, work)
 	result, err := s.handler.Handle(ctx, turn.Request{
+		Channel:        "console",
 		ConversationID: conversation, ChatID: ChatID, MessageID: AnchorMark + exchange.ID, Input: prompt, Queue: !isInterrupt(input),
-		SenderOpenID: s.owner, ChatType: protocol.ChatP2P, Mentioned: true,
+		SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true,
+		Origin: exchange.Origin, ExpectedProject: exchange.ExpectedProject,
 		OnProgress: s.progress(conversation, exchange.ID, work),
 	})
 	stop()
-	reply = readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary()}
+	reply = consoleapi.Reply{At: time.Now().UTC(), Conversation: conversation, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary()}
 	if result.Attempt != "" && s.inspector != nil {
 		if changes, cerr := s.inspector.Changes(ctx, result.Attempt); cerr != nil {
 			log.Printf("console: changes of attempt %s: %v", result.Attempt, cerr)
@@ -599,7 +588,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply rea
 		}
 	}
 	if in := result.Injected; in != nil {
-		reply.Injected = &readmodel.Injected{Project: in.Project, Workspace: in.Workspace, Agent: in.Agent, Node: in.Node, Harness: in.Harness, Model: in.Model, Options: in.Options,
+		reply.Injected = &consoleapi.Injected{Project: in.Project, Workspace: in.Workspace, Agent: in.Agent, Node: in.Node, Harness: in.Harness, Model: in.Model, Options: in.Options,
 			Session: in.Session, NewSession: in.NewSession, InstructionsSent: in.InstructionsSent, Instructions: in.Instructions, InstructionsBytes: in.InstructionsBytes,
 			MCPServers: in.MCPServers, Fingerprint: in.Fingerprint, Prompt: in.Prompt}
 	}
@@ -649,7 +638,7 @@ func (s *Service) progress(conversation, exchangeID string, work *process) func(
 // progressEvery bounds how often a token stream repaints the page.
 const progressEvery = 500 * time.Millisecond
 
-func toolsChanged(work *process, next readmodel.Progress) bool {
+func toolsChanged(work *process, next consoleapi.Progress) bool {
 	work.mu.Lock()
 	defer work.mu.Unlock()
 	if len(next.Tools) != work.publishedTools {
@@ -673,7 +662,7 @@ func (s *Service) follow(ctx context.Context, conversation string, work *process
 		defer close(done)
 		for ev := range events {
 			if ev.Kind == "step.progress" && ev.Conversation == conversation && ev.Progress != nil {
-				work.step(readmodel.FromStepProgress(ev.StepID, *ev.Progress, readmodel.StepInfo{}))
+				work.step(readmodel.FromStepProgress(ev.StepID, *ev.Progress, consoleapi.StepInfo{}))
 			}
 		}
 	}()
@@ -686,21 +675,21 @@ func (s *Service) follow(ctx context.Context, conversation string, work *process
 // process is what one console line caused, gathered as it happens.
 type process struct {
 	mu             sync.Mutex
-	last           readmodel.Progress
-	steps          map[string]readmodel.StepProcess
+	last           consoleapi.Progress
+	steps          map[string]consoleapi.StepProcess
 	order          []string
 	publishedTools int
 }
 
-func newProcess() *process { return &process{steps: map[string]readmodel.StepProcess{}} }
+func newProcess() *process { return &process{steps: map[string]consoleapi.StepProcess{}} }
 
-func (w *process) turn(p readmodel.Progress) {
+func (w *process) turn(p consoleapi.Progress) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	w.last = p
 }
 
-func (w *process) step(step readmodel.StepProcess) {
+func (w *process) step(step consoleapi.StepProcess) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if _, seen := w.steps[step.ID]; !seen {
@@ -711,7 +700,7 @@ func (w *process) step(step readmodel.StepProcess) {
 
 // UpdateStep keeps a child's snapshot with the reply that launched it,
 // even after that turn ends or another turn starts in the conversation.
-func (s *Service) UpdateStep(conversation, taskID string, step readmodel.StepProcess) {
+func (s *Service) UpdateStep(conversation, taskID string, step consoleapi.StepProcess) {
 	conversation = conversationID(conversation)
 	step.ID = "#" + taskID
 	s.mu.Lock()
@@ -727,7 +716,7 @@ func (s *Service) UpdateStep(conversation, taskID string, step readmodel.StepPro
 			// Readers may still be encoding the previous reply outside our
 			// lock. Replace its process instead of mutating shared slices.
 			updated := *reply.Process
-			updated.Steps = append([]readmodel.StepProcess(nil), updated.Steps...)
+			updated.Steps = append([]consoleapi.StepProcess(nil), updated.Steps...)
 			updated.Steps[j] = step
 			s.replies[conversation][i].Process = &updated
 			if s.save() == nil && s.model != nil {
@@ -753,7 +742,8 @@ func (s *Service) UpdateStep(conversation, taskID string, step readmodel.StepPro
 			work.step(step)
 			return
 		}
-		if immediate(exchange.Input) && !isInterrupt(exchange.Input) {
+		_, parsed := s.parseInput(exchange.Input)
+		if parsed.Control() && !parsed.Interrupt {
 			continue
 		}
 		if current == nil || exchange.StartedAt.After(current.StartedAt) {
@@ -767,10 +757,10 @@ func (s *Service) UpdateStep(conversation, taskID string, step readmodel.StepPro
 
 // summary is the process as the reply keeps it, or nil when nothing was
 // observed — a verb answered from state has no process worth a fold.
-func (w *process) summary() *readmodel.Process {
+func (w *process) summary() *consoleapi.Process {
 	w.mu.Lock()
 	defer w.mu.Unlock()
-	out := &readmodel.Process{Reasoning: w.last.Reasoning, Tools: w.last.Tools, Timeline: w.last.Timeline}
+	out := &consoleapi.Process{Reasoning: w.last.Reasoning, Tools: w.last.Tools, Timeline: w.last.Timeline}
 	for _, id := range w.order {
 		out.Steps = append(out.Steps, w.steps[id])
 	}
@@ -781,13 +771,13 @@ func (w *process) summary() *readmodel.Process {
 }
 
 // Replies is a conversation's recent exchanges, oldest first.
-func (s *Service) Replies(conversation string) []readmodel.Reply {
+func (s *Service) Replies(conversation string) []consoleapi.Reply {
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]readmodel.Reply{}, s.replies[conversation]...)
+	return append([]consoleapi.Reply{}, s.replies[conversation]...)
 }
 
 // Notice takes a task notice whose anchor is the console — a resumed
@@ -797,7 +787,7 @@ func (s *Service) Notice(n turn.TaskNotice) {
 	if IsConsole(n.Conversation) {
 		conversation = n.Conversation
 	}
-	s.record(readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Title: "task #" + n.TaskID, Text: n.Text, Kind: "notice"})
+	s.record(consoleapi.Reply{At: time.Now().UTC(), Conversation: conversation, Title: "task #" + n.TaskID, Text: n.Text, Kind: "notice"})
 }
 
 // newReplyID names a line: time-ordered, unique enough for a transcript.
@@ -807,7 +797,7 @@ func newReplyID() string {
 	return fmt.Sprintf("r%x%x", time.Now().UnixNano()/1000, raw)
 }
 
-func (s *Service) record(r readmodel.Reply) readmodel.Reply {
+func (s *Service) record(r consoleapi.Reply) consoleapi.Reply {
 	s.mu.Lock()
 	r = s.recordLocked(r)
 	s.save()
@@ -818,7 +808,7 @@ func (s *Service) record(r readmodel.Reply) readmodel.Reply {
 
 // recordLocked appends without saving so an exchange transition and its
 // line can be committed in the same document replace.
-func (s *Service) recordLocked(r readmodel.Reply) readmodel.Reply {
+func (s *Service) recordLocked(r consoleapi.Reply) consoleapi.Reply {
 	if r.ID == "" {
 		r.ID = newReplyID()
 	}
@@ -830,7 +820,7 @@ func (s *Service) recordLocked(r readmodel.Reply) readmodel.Reply {
 	return r
 }
 
-func (s *Service) publishReply(r readmodel.Reply) {
+func (s *Service) publishReply(r consoleapi.Reply) {
 	if s.model != nil {
 		text := r.Text
 		if r.Kind == "sent" {
@@ -855,7 +845,7 @@ func (s *Service) Resume(ctx context.Context, conversation, taskID, member, noti
 		return fmt.Errorf("revive session for task #%s: %w", taskID, err)
 	}
 	log.Printf("console: resuming task #%s conversation=%s member=%s", taskID, conversation, member)
-	_, _, err := s.enqueue(ctx, conversation, notice, "@"+member+" "+prompt, nil, true, "")
+	_, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true})
 	return err
 }
 
@@ -867,6 +857,6 @@ func (s *Service) Continue(ctx context.Context, conversation, key, member, notic
 	if member == "" {
 		return fmt.Errorf("continue %s: no member to address", conversation)
 	}
-	_, _, err := s.enqueue(ctx, conversation, notice, "@"+member+" "+prompt, nil, true, key)
+	_, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true, Key: key})
 	return err
 }

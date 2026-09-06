@@ -178,7 +178,7 @@ func (s *Store) FileDiff(ctx context.Context, projectID, from, to, path string) 
 }
 
 func (s *Store) reviewRepo(ctx context.Context, projectID, from, to string) (*Repo, error) {
-	p, ok, err := s.Project(ctx, projectID)
+	p, ok, err := s.projects.GetHistorical(ctx, projectID)
 	if err != nil {
 		return nil, err
 	}

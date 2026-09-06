@@ -12,7 +12,7 @@ Steve makes three structural commitments:
 
 ## Start with the console
 
-**Startup currently requires Feishu/Lark configuration; console-only startup is in roadmap §9 B3 of the [architecture document](docs/architecture.md).** Console use also requires `feishu.owner_open_id`: actions run as that owner. You can use the console for everyday interaction, but the current program still establishes a Feishu/Lark connection.
+**Startup currently requires Feishu/Lark configuration; the current channel boundaries are described in the [architecture document](docs/architecture.md).** Console use also requires `feishu.owner_open_id`: actions run as that owner. You can use the console for everyday interaction, but the current program still establishes a Feishu/Lark connection.
 
 Prepare Go 1.27+, Git, Node.js with npm, and an authenticated coding agent. Adapters in the built-in catalog (codex-acp, claude-agent-acp) are fetched by Steve at a pinned version, so you do not install them yourself; they are npm packages, which is why the Node.js runtime is still a prerequisite. An adapter you build yourself is named with `command` — see [hub deployment](docs/operations.md#部署-hub).
 
@@ -96,15 +96,16 @@ The parent agent can end its turn and wait for platform delivery; **polling is n
 
 | Command | Scope |
 |---|---|
-| `go test -race ./...` | Local Go tests and race checks. |
+| `make test` | Local Go tests, race checks and dependency boundaries. |
+| `make test-console` | Frontend boundaries, build and isolated browser interactions. |
 | `make e2e-fleet` | Checks a named remote delegation, attempt, changes, usage and landing on an existing fleet; default and maximum client deadline **10 minutes**. |
 | `make e2e-autonomous` | Checks fleet discovery, parallel decomposition and delegation, capability placement and proactive result delivery; default and maximum **20 minutes**, requiring `kvtool/main.go` in the project's canonical directory and a remote node advertising `build`. |
 
-[CI](.github/workflows/test.yml) runs only gofmt, vet and race tests, without live fleet gates. The live gates use existing hub and node processes and do not build, deploy or restart them; they create real tasks and files. Connection options, required tools, timeout handling and PR evidence requirements are in [CONTRIBUTING.md](CONTRIBUTING.md) and [operations](docs/operations.md#门禁与-ci).
+[CI](.github/workflows/test.yml) runs gofmt, vet, race tests, frontend builds, dependency checks and isolated browser tests, without live fleet gates. The live gates use existing hub and node processes and do not build, deploy or restart them; they create real tasks and files. Connection options, required tools, timeout handling and PR evidence requirements are in [CONTRIBUTING.md](CONTRIBUTING.md) and [operations](docs/operations.md#门禁与-ci).
 
 ## Further reading
 
-- [docs/architecture.md](docs/architecture.md): positioning, objects, authority boundaries, implementation status and roadmap.
+- [docs/architecture.md](docs/architecture.md): module dependencies, authority, commit and query boundaries.
 - [docs/operations.md](docs/operations.md): configuration keys, deployment, gates and troubleshooting.
 - [docs/history/](docs/history/): archived console and capability proposals and the collaboration audit.
 - Code: entry points in [cmd/](cmd/), core implementation in [internal/](internal/), console in [web/console/](web/console/), acceptance checks in [e2e/](e2e/).

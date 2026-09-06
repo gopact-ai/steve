@@ -18,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -40,6 +41,7 @@ import (
 )
 
 type Request struct {
+	Channel        string
 	ConversationID string
 	Input          string
 	SenderOpenID   string
@@ -59,6 +61,8 @@ type Request struct {
 	// they typed — a schedule firing, say. It rides onto the task so
 	// unattended work stays recognisable after the fact.
 	Origin string
+	// ExpectedProject fences an unattended submission to its creation-time project.
+	ExpectedProject string
 	// Queue makes this prompt wait for the running turn instead of
 	// interrupting it: "also do this after" rather than "stop, do this".
 	Queue   bool
@@ -136,6 +140,7 @@ type Result struct {
 }
 
 type Coordinator struct {
+	executions   *execution.Registry
 	catalog      *agent.Catalog
 	store        *state.Store
 	assembler    *capability.Assembler
@@ -193,6 +198,7 @@ type Coordinator struct {
 // owns session cleanup; done is closed by clearActive once it has finished,
 // so /cancel can confirm the turn ended before deciding to force-kill.
 type turnEntry struct {
+	err    error
 	cancel context.CancelFunc
 	done   chan struct{}
 }
@@ -265,6 +271,8 @@ func (c *Coordinator) ReviveSession(conversationID, agentID string) error {
 // SetTasks enables task tracking. It is optional: with no store the
 // coordinator behaves exactly as before, which keeps the turn path testable
 // without a filesystem.
+func (c *Coordinator) SetExecution(r *execution.Registry) { c.executions = r }
+
 func (c *Coordinator) SetTasks(store *task.Store, node string) {
 	c.tasks = store
 	c.node = node
@@ -311,24 +319,9 @@ func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
 	// deliberate gesture instead of the accidental fate of every message.
 	// "+" still queues for muscle memory from when interrupting was the
 	// default; it is now a no-op alias.
-	prompt = strings.TrimSpace(prompt)
-	req.Queue = true
-	for _, bang := range []string{"!", "！"} {
-		if rest, ok := strings.CutPrefix(prompt, bang); ok && strings.TrimSpace(rest) != "" {
-			req.Queue = false
-			prompt = strings.TrimSpace(rest)
-			break
-		}
-	}
-	if req.Queue {
-		for _, plus := range []string{"+", "＋"} {
-			if rest, ok := strings.CutPrefix(prompt, plus); ok && strings.TrimSpace(rest) != "" {
-				prompt = strings.TrimSpace(rest)
-				break
-			}
-		}
-	}
-	cmd, rest := protocol.ParseCommand(prompt)
+	parsed := ParseInput(prompt)
+	prompt, req.Queue = parsed.Prompt, !parsed.Interrupt
+	cmd, rest := parsed.Command, parsed.Rest
 	switch cmd {
 	case protocol.CommandNew, protocol.CommandClear:
 		return c.reset(ctx, req.ConversationID, selected)
@@ -411,18 +404,48 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
 	defer c.clearActive(conversationID, selected.ID)
+	defer func() {
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		if entry := c.cancels[sessionKey(conversationID, selected.ID)]; entry != nil {
+			entry.err = err
+		}
+	}()
 	// The clock starts now, not at arrival: a queued prompt must not
 	// burn its own running time standing behind the turn it waited for.
 	// And it is an idle clock: it runs out after c.timeout of silence,
 	// not of work, so a turn that awaits other agents is not cut short
 	// while they are still answering.
-	ctx, expire, touch := idle.WithTimeout(turnCtx, c.timeout)
+	idleCtx, expire, touch := idle.WithTimeout(turnCtx, c.timeout)
+	var ctx context.Context = idleCtx
 	defer expire()
 	if c.RegisterIdle != nil {
-		defer c.RegisterIdle(selected.Node, ctx)()
+		defer c.RegisterIdle(selected.Node, idleCtx)()
 	}
 	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
 		return Result{}, context.Canceled
+	}
+	var runningScope *execution.Scope
+	if c.executions != nil {
+		taskID := ""
+		if c.tasks != nil {
+			if previous, ok := c.tasks.Active(req.ConversationID, selected.ID, req.Origin); ok {
+				taskID = previous.ID
+			}
+		}
+		scope, scopeErr := c.executions.Begin(ctx, execution.Key{TaskID: taskID, InstanceID: req.MessageID})
+		if scopeErr != nil {
+			return Result{}, scopeErr
+		}
+		runningScope = scope
+		defer func() {
+			var unresolved error
+			if errors.Is(err, harness.ErrStopUnconfirmed) {
+				unresolved = err
+			}
+			scope.Finish(unresolved)
+		}()
+		ctx = scope.Context()
 	}
 	// The directory is settled before the task opens: a turn that has
 	// nowhere to run has not started and spends nothing.
@@ -448,6 +471,11 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			c.finishTask(tracked, err, spent.tokens(), spent.model())
 			c.offlineReminder(req, tracked, started, err)
 		}()
+	}
+	if runningScope != nil {
+		if bindErr := runningScope.BindTask(tracked); bindErr != nil {
+			return Result{}, bindErr
+		}
 	}
 	conversation := c.store.Conversation(conversationID)
 	saved := conversation.Sessions[selected.ID]
@@ -478,6 +506,9 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if err != nil {
 		return Result{}, err
 	}
+	if runningScope != nil {
+		runningScope.SetAttempt(att.ID)
+	}
 	servers := append(append([]acp.MCPServer(nil), capabilities.MCPServers...), bound...)
 	beat, stopBeat := context.WithCancel(ctx)
 	defer stopBeat()
@@ -490,7 +521,12 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		case <-beat.Done():
 		}
 	}()
-	defer func() { c.closeAttempt(parent, att.ID, result, err, spent) }()
+	defer func() {
+		if closeErr := c.closeAttempt(parent, att.ID, result, err, spent); closeErr != nil {
+			log.Printf("turn: completion: %v", closeErr)
+			err = errors.Join(err, closeErr)
+		}
+	}()
 	req.phase(view.PhaseWaking)
 	runner, err := c.open(ctx, saved, selected, workspace.Path, servers)
 	if err != nil && saved.UpstreamID != "" {
@@ -506,6 +542,10 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}
 	if err != nil {
 		return Result{}, err
+	}
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		c.discard(parent, selected, runner)
+		return Result{}, ctxErr
 	}
 	if att.State == attempt.Leased {
 		admission := att.Admission
@@ -561,12 +601,27 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}
 	prompt = user
 	c.setRunner(conversationID, selected.ID, runner)
-	c.advanceAttempt(ctx, att.ID, attempt.Running)
+	if _, armErr := c.attempts.Advance(ctx, att.ID, attempt.Running, "turn", nil); armErr != nil {
+		return Result{}, fmt.Errorf("arm prompt execution: %w", armErr)
+	}
 	out, activity, err := promptTurn(ctx, runner, prompt, req)
+	if acphost.PromptSettled(err) {
+		settledCtx, finishSettle := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		if settleErr := c.attempts.MarkSessionSettled(settledCtx, att.ID, "turn"); settleErr != nil {
+			err = errors.Join(err, fmt.Errorf("record prompt settlement: %w", settleErr))
+		}
+		finishSettle()
+	}
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}
 	if err != nil {
+		if errors.Is(err, harness.ErrStopUnconfirmed) {
+			if stateErr := c.store.DeleteSession(conversationID, selected.ID); stateErr != nil {
+				log.Printf("turn: delete unconfirmed session: %v", stateErr)
+			}
+			return Result{}, err
+		}
 		if errors.Is(err, harness.ErrTurnCanceled) {
 			// The agent stopped the turn itself (e.g. a permission request
 			// was rejected); the session stays consistent, so keep it and
@@ -578,25 +633,11 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			}
 			return Result{}, err
 		}
-		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
-			// Agent error or cooperative cancel: drop the session and keep
-			// the shared process. Only a deadline means the process may be
-			// stuck and needs to be killed.
-			if stateErr := c.store.DeleteSession(conversationID, selected.ID); stateErr != nil {
-				log.Printf("turn: delete failed session state: %v", stateErr)
-			}
-			return Result{}, err
-		}
-		// The turn timed out while possibly still running.
-		cancelCtx, stop := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
-		cancelErr := runner.Cancel(cancelCtx)
-		stop()
-		runner.Abort()
+		// A failed/expired turn does not authorize killing the shared host.
+		// Unknown physical writers were classified above and quarantined;
+		// confirmed responses only invalidate this conversation's session.
 		if stateErr := c.store.DeleteSession(conversationID, selected.ID); stateErr != nil {
 			log.Printf("turn: delete failed session state: %v", stateErr)
-		}
-		if cancelErr != nil {
-			return Result{}, fmt.Errorf("%w; cancel failed: %v", err, cancelErr)
 		}
 		return Result{}, err
 	}
@@ -847,10 +888,8 @@ func (c *Coordinator) cancel(ctx context.Context, conversationID string, selecte
 		stop()
 		if err != nil {
 			// The agent did not accept the cancel: cancel the turn context
-			// and force-kill the harness process so the next turn starts
-			// fresh instead of waiting out the prompt timeout.
+			// and let its owner report whether the session really stopped.
 			entry.cancel()
-			runner.Abort()
 			return Result{}, err
 		}
 	} else {
@@ -860,20 +899,21 @@ func (c *Coordinator) cancel(ctx context.Context, conversationID string, selecte
 		entry.cancel()
 	}
 	// Give the agent a chance to stop gracefully; the blocked prompt
-	// goroutine owns session cleanup. Only abandon the pending call and
-	// force-terminate the harness process if the turn does not end in time.
+	// goroutine owns session cleanup. A timeout reports uncertainty; it
+	// cannot safely kill a shared host or claim the writer has stopped.
 	select {
 	case <-entry.done:
 	case <-time.After(10 * time.Second):
 		entry.cancel()
-		if runner != nil {
-			runner.Abort()
-		}
+
 		select {
 		case <-entry.done:
 		case <-time.After(10 * time.Second):
-			log.Printf("turn: prompt goroutine did not finish after abort")
+			return Result{}, fmt.Errorf("%w: prompt has not acknowledged cancellation", harness.ErrStopUnconfirmed)
 		}
+	}
+	if errors.Is(entry.err, harness.ErrStopUnconfirmed) {
+		return Result{}, entry.err
 	}
 	return Result{AgentID: selected.ID, Text: c.text.T(i18n.CancelRequested, selected.ID)}, nil
 }
@@ -1024,7 +1064,7 @@ func (t *turnSpend) attemptUsage() *attempt.Usage {
 	return &attempt.Usage{
 		Model: t.used, Input: int64(u.InputTokens), Output: int64(u.OutputTokens),
 		CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens), Context: int64(u.ContextTokens),
-		Reported: u.InputTokens+u.OutputTokens+u.CacheReadTokens > 0,
+		Reported: u.TokensReported(),
 	}
 }
 
