@@ -1191,6 +1191,39 @@ checks["skill-source-controls"] = async (f) => {
     }
 };
 
+checks["skill-toggle-layout"] = async (f) => {
+    const skills = Array.from({ length: 32 }, (_, i) => ({ name: `skill-${String(i).padStart(2, "0")}`, path: `/test/skills/skill-${i}`, root: "/test/skills", source: "sample-skills", description: "A skill for testing enablement in a long, scrollable directory.", enabled: i < 8, agents: [], projects: [] }));
+    const source = { slug: "sample-skills", url: "https://github.com/example/skills.git", root: "/test/skills", skills: skills.map((skill) => skill.name) };
+    await f.page.route(/\/console\/skills(?:\/|$)/, async (route) => {
+        const request = route.request(), pathname = new URL(request.url()).pathname;
+        if (request.method() === "PUT") {
+            const input = request.postDataJSON(); f.calls.push({ path: pathname, ...input });
+            skills.find((skill) => pathname.endsWith(skill.name)).enabled = input.enabled;
+            return route.fulfill({ json: { ok: true } });
+        }
+        if (pathname.endsWith("/machines")) return route.fulfill({ json: { machines: [{ name: "test-node", up: true, hub: true, skills: Array.from({ length: 30 }, (_, i) => ({ name: `local-${i}`, path: `/test/local-${i}`, description: "Available on this machine.", loaded: false })) }] } });
+        return route.fulfill({ json: { skills, sources: [source], search_paths: [], nodes: [] } });
+    });
+    await f.page.getByRole("link", { name: "技能", exact: true }).click();
+    await f.page.getByText("管理技能", { exact: true }).click();
+    const toggle = f.page.locator(".skill-source-card label").filter({ has: f.page.getByRole("switch", { name: "启用 skill-22", exact: true }) });
+    await toggle.scrollIntoViewIfNeeded();
+    const geometry = () => f.page.evaluate(() => ({ window: window.scrollY, root: document.querySelector(".workbench-shell").scrollTop, main: document.querySelector("main").getBoundingClientRect().toJSON(), sidebar: document.querySelector(".app-sidebar").getBoundingClientRect().toJSON(), height: window.innerHeight }));
+    for (const keyboard of [false, true]) {
+        const before = await geometry();
+        if (keyboard) await toggle.getByRole("switch").press("Space");
+        else await toggle.click();
+        await f.page.locator(".skill-source-card").getByText(`${keyboard ? 8 : 9} / 32 个已启用`, { exact: true }).waitFor();
+        await eventually(() => toggle.getByRole("switch").isEnabled(), "The skill switch must recover after saving");
+        const after = await geometry();
+        assert.equal(after.window, before.window, "Skill enablement must not scroll the outer document");
+        assert.equal(after.root, before.root, "Skill enablement must not scroll the app shell");
+        assert.equal(after.main.bottom, after.height, "Main content must still fill the viewport without a black gap");
+        assert.equal(after.sidebar.bottom, after.height, "The sidebar must remain anchored to the viewport");
+    }
+    assert.equal(f.calls.length, 2, "Each mouse/keyboard toggle sends exactly one update");
+};
+
 checks["usage-dashboard-ranges"] = async (f) => {
     const usage = usageFixture();
     await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
