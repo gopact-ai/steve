@@ -688,6 +688,55 @@ checks["home-save-feedback"] = async (f) => {
     await eventually(() => state.writes.some((w) => w.path === "/console/memory/scratch"), "Project memory must save to the selected project's endpoint");
 };
 
+checks["inspector-resize"] = async (f) => {
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    const handle = f.page.getByRole("separator", { name: "调整详情栏宽度", exact: true });
+    await handle.waitFor();
+    const panel = f.page.locator(".workbench-inspector");
+    const initial = (await panel.boundingBox()).width;
+    const drag = async (dx) => {
+        const box = await handle.boundingBox();
+        const x = box.x + box.width / 2, y = box.y + box.height / 2;
+        await f.page.mouse.move(x, y); await f.page.mouse.down();
+        await f.page.mouse.move(x + dx, y, { steps: 10 }); await f.page.mouse.up();
+    };
+    await drag(-140);
+    assert.ok(Math.abs((await panel.boundingBox()).width - initial - 140) <= 2, "Dragging left must widen the right inspector");
+    await handle.press("ArrowRight");
+    const preferred = (await panel.boundingBox()).width;
+    assert.ok(preferred < initial + 140, "Arrow keys provide a non-drag resize alternative");
+    await f.page.getByRole("button", { name: "关闭详情", exact: true }).click();
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    assert.ok(Math.abs((await panel.boundingBox()).width - preferred) <= 1, "Reopening must restore the chosen width");
+    await f.page.reload(); await f.box.waitFor();
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    assert.ok(Math.abs((await panel.boundingBox()).width - preferred) <= 1, "Reload must preserve the width preference");
+    await drag(-1000);
+    assert.ok((await f.page.locator(".conversation-content").boundingBox()).width >= 480, "Resizing must preserve space to compose messages");
+    await f.page.setViewportSize({ width: 1536, height: 1000 });
+    await eventually(async () => (await f.page.locator(".conversation-content").boundingBox()).width >= 480, "Window resizing must enforce the conversation minimum");
+    await drag(1000);
+    assert.ok((await panel.boundingBox()).width >= 320, "Inspector cannot collapse below its readable minimum");
+    await handle.dblclick();
+    assert.ok(Math.abs((await panel.boundingBox()).width - initial) <= 1, "Double-click restores the default width");
+    await f.page.setViewportSize({ width: 1280, height: 900 });
+    await f.page.getByRole("dialog", { name: "详情", exact: true }).waitFor();
+    const conversationBefore = (await f.page.locator(".conversation-content").boundingBox()).width;
+    await drag(-80);
+    assert.ok((await panel.boundingBox()).width > initial, "Desktop overlay inspector should also resize");
+    assert.equal((await f.page.locator(".conversation-content").boundingBox()).width, conversationBefore, "Resizing the overlay must not squeeze the underlying conversation");
+    const handleBox = await handle.boundingBox();
+    await f.page.mouse.move(handleBox.x + 5, handleBox.y + 50); await f.page.mouse.down();
+    await f.page.mouse.move(handleBox.x - 50, handleBox.y + 50);
+    await handle.press("Escape"); await f.page.mouse.up();
+    assert.ok(Math.abs((await panel.boundingBox()).width - initial - 80) <= 1, "Escape must cancel an active resize");
+    assert.notEqual(await f.page.evaluate(() => document.body.style.cursor), "col-resize", "Cancel must release the drag cursor");
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await handle.waitFor({ state: "detached" });
+    assert.equal(await handle.count(), 0, "The mobile sheet must not show a desktop resize handle");
+    await noHorizontalOverflow(f.page);
+};
+
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);
 let failed = 0;
 try {

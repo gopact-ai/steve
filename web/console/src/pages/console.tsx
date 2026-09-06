@@ -5,6 +5,7 @@ import { Badge } from "@/components/base/badges/badges";
 import { Composer, type Queued } from "@/components/steve/composer";
 import { AssistantMessage, UserMessage } from "@/components/steve/message";
 import { Rail, type RailTab } from "@/components/steve/rail";
+import { ResizableInspector } from "@/components/steve/resizable-inspector";
 import { SessionsTree } from "@/components/steve/sessions-tree";
 import { TaskDrawer } from "@/components/steve/task-drawer";
 import { DelegationCard } from "@/components/steve/delegation";
@@ -56,6 +57,7 @@ export function ConsolePage() {
     const [tab, setTab] = useState<RailTab>("context");
     const desktopSessions = useBreakpoint("lg");
     const dockInspector = useBreakpoint("2xl");
+    const resizeInspector = useBreakpoint("sm");
     const [mobileSessions, setMobileSessions] = useState(false);
     const [inspectorOpen, setInspectorOpen] = useState(false);
     const [pickedTask, setPickedTask] = useState<Task | null>(null);
@@ -479,8 +481,8 @@ export function ConsolePage() {
                             />
                         </div>
                     </div>
-                    {inspectorOpen && dockInspector && inspector}
-                {inspectorOpen && !dockInspector && <Sheet label="详情" width={360} onClose={() => setInspectorOpen(false)}>{inspector}</Sheet>}
+                    {inspectorOpen && dockInspector && <ResizableInspector>{inspector}</ResizableInspector>}
+                {inspectorOpen && !dockInspector && <Sheet label="详情" width={resizeInspector ? "max-content" : 360} onClose={() => setInspectorOpen(false)}>{resizeInspector ? <ResizableInspector overlay>{inspector}</ResizableInspector> : inspector}</Sheet>}
                 </div>
                 )}
             </div>
