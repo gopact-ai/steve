@@ -84,8 +84,8 @@ func (f *flipNodes) Refresh(_ context.Context, name string) (nodewire.Advert, er
 
 type recordCommands struct{ lines []string }
 
-func (r *recordCommands) Exec(_ context.Context, node, _, command string) (string, error) {
-	r.lines = append(r.lines, node+": "+command)
+func (r *recordCommands) Files(_ context.Context, node string, req nodewire.FileRequest) (string, error) {
+	r.lines = append(r.lines, node+": "+string(req.Op))
 	return "/home/u/.local/bin:/usr/bin:/bin", nil
 }
 

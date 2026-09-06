@@ -316,6 +316,10 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 		switch stream.Request().Kind {
 		case nodewire.StreamExec:
 			go s.runCommand(ctx, stream)
+		case nodewire.StreamArtifact:
+			go s.runArtifact(ctx, stream)
+		case nodewire.StreamFiles:
+			go s.runFiles(ctx, stream)
 		case nodewire.StreamAdvert:
 			go s.sendAdvert(stream)
 		case nodewire.StreamBlob:
@@ -961,11 +965,12 @@ func Advertise(name string, specs map[string]HarnessSpec, caps []string) nodewir
 		harnesses = append(harnesses, h)
 	}
 	hostname, ips := nodewire.Identity()
+	git := gitVersion()
 	return nodewire.Advert{
 		Node: name, OS: runtime.GOOS, Arch: runtime.GOARCH,
 		BuildVersion: nodewire.Version(), Hostname: hostname, IPs: ips,
 		Harnesses: harnesses, Capabilities: caps,
-		Git: gitVersion(),
+		Git: git, GitMinimum: nodewire.MinimumGitVersion, GitWarning: nodewire.GitWarning(git),
 	}
 }
 
@@ -1018,7 +1023,9 @@ func (s *Server) rememberPort(port int) {
 
 // gitVersion reports the node's git, or nothing.
 func gitVersion() string {
-	out, err := exec.Command("git", "--version").Output()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	out, err := exec.CommandContext(ctx, "git", "--version").Output()
 	if err != nil {
 		return ""
 	}

@@ -275,6 +275,7 @@ func doctor(args []string) error {
 	self := hubAdvert(cfg)
 	log.Printf("steve: hub %s — %s %v, %s/%s, level=%s, harnesses=%s, caps=%v",
 		self.Node, self.Hostname, self.IPs, self.OS, self.Arch, cfg.HubLevel(), harnessSummary(self), self.Capabilities)
+	reportGit("hub "+self.Node, self)
 	for _, h := range self.Harnesses {
 		if h.Missing != "" {
 			log.Printf("steve: hub cannot run %s: %s", h.ID, h.Missing)
@@ -287,6 +288,7 @@ func doctor(args []string) error {
 		log.Printf("steve: node %s up — %s/%s, level=%s, harnesses=%s, caps=%v",
 			status.Name, status.Advert.OS, status.Advert.Arch, status.Level,
 			harnessSummary(status.Advert), status.Advert.Capabilities)
+		reportGit("node "+status.Name, status.Advert)
 		for _, h := range status.Advert.Harnesses {
 			if h.Missing != "" {
 				log.Printf("steve: node %s cannot run %s: %s", status.Name, h.ID, h.Missing)
@@ -516,7 +518,7 @@ func serve(args []string) error {
 		if node == "" {
 			return os.MkdirAll(dir, 0o700)
 		}
-		_, err := nodes.Exec(ctx, node, "", "mkdir -p '"+dir+"'")
+		_, err := nodes.Files(ctx, node, nodewire.FileRequest{Op: nodewire.FileMkdir, Path: dir})
 		return err
 	})
 	probeDir := func(node string) string {
@@ -1801,9 +1803,9 @@ func (a *fleetAdmin) cloneSource(p project.Project) string {
 func (a *fleetAdmin) clone(projectID, nodeKey, path string, c project.Copy) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	defer cancel()
-	out, err := a.nodes.Exec(ctx, nodeKey, "", cloneScript(path, c.Source))
+	_, err := a.nodes.Files(ctx, nodeKey, nodewire.FileRequest{Op: nodewire.FileClone, Path: path, Source: c.Source})
 	if err != nil {
-		c.State, c.Error = project.CopyFailed, clip(strings.TrimSpace(out+"\n"+err.Error()), 400)
+		c.State, c.Error = project.CopyFailed, clip(strings.TrimSpace(err.Error()), 400)
 		log.Printf("steve: clone %s onto %s: %v", projectID, nodewire.Place(nodeKey), err)
 	} else {
 		c.State, c.Error = project.CopyReady, ""
@@ -1818,26 +1820,6 @@ func (a *fleetAdmin) clone(projectID, nodeKey, path string, c project.Copy) {
 		a.repos.wake()
 	}
 }
-
-// cloneScript clones source into dest through a staging directory beside
-// it, so a clone that dies leaves nothing at dest. Git may not ask for
-// credentials: there is no one at the terminal to answer.
-func cloneScript(dest, source string) string {
-	return strings.Join([]string{
-		"set -e",
-		"export GIT_TERMINAL_PROMPT=0",
-		"dest=" + shellQuote(dest),
-		"src=" + shellQuote(source),
-		`parent=$(dirname "$dest")`,
-		`mkdir -p "$parent"`,
-		`tmp=$(mktemp -d "$parent/.steve-clone.XXXXXX")`,
-		`trap 'rm -rf "$tmp"' EXIT`,
-		`git clone --quiet -- "$src" "$tmp/repo" 2>&1`,
-		`mv "$tmp/repo" "$dest"`,
-	}, "\n")
-}
-
-func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'" }
 
 func clip(s string, n int) string {
 	if r := []rune(s); len(r) > n {
@@ -2092,7 +2074,7 @@ func (a *fleetAdmin) ImportSkill(ctx context.Context, nodeName, path string) (st
 	}
 	sctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
-	encoded, err := a.nodes.Exec(sctx, a.nodeKey(nodeName), "", skills.ImportScript(path))
+	encoded, err := a.nodes.Files(sctx, a.nodeKey(nodeName), nodewire.FileRequest{Op: nodewire.FileImportSkill, Path: path})
 	if err != nil {
 		return "", fmt.Errorf("从 %s 取 %s：%s", nodewire.Place(a.nodeKey(nodeName)), path, clip(strings.TrimSpace(err.Error()), 200))
 	}

@@ -2,7 +2,6 @@ package skills
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,13 +20,12 @@ func TestScanLocalAndImportRoundTrip(t *testing.T) {
 	if len(found) != 1 || found[0].Name != "notes" || found[0].Description != "keep notes" || found[0].Path != real {
 		t.Fatalf("found = %+v", found)
 	}
-	cmd := exec.Command("/bin/sh", "-c", ImportScript(dir))
-	encoded, err := cmd.Output()
+	encoded, err := PackImport(t.Context(), dir)
 	if err != nil {
 		t.Fatal(err)
 	}
 	dest := filepath.Join(t.TempDir(), "notes")
-	if err := UnpackImport(string(encoded), dest); err != nil {
+	if err := UnpackImport(encoded, dest); err != nil {
 		t.Fatal(err)
 	}
 	if Describe(dest).Description != "keep notes" {
@@ -36,7 +34,7 @@ func TestScanLocalAndImportRoundTrip(t *testing.T) {
 	if info, err := os.Stat(filepath.Join(dest, "scripts", "run.sh")); err != nil || info.Mode()&0o100 == 0 {
 		t.Fatalf("script lost its bit: %v", err)
 	}
-	if err := UnpackImport(string(encoded), dest); err == nil || !strings.Contains(err.Error(), "exists") {
+	if err := UnpackImport(encoded, dest); err == nil || !strings.Contains(err.Error(), "exists") {
 		t.Fatalf("overwrote: %v", err)
 	}
 	if err := UnpackImport("not base64!", filepath.Join(t.TempDir(), "x")); err == nil {

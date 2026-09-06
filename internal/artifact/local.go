@@ -7,12 +7,12 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 )
 
-// LocalNodes runs the node-side scripts on this machine, with a workspace
-// root and state directory per node name. It is what a single-host hub and
-// the tests use in place of a real node: the same commands, the same blob
-// directory, no wire.
+// LocalNodes runs the shared artifact operations on this machine, with a
+// workspace root and state directory per node name and no wire.
 type LocalNodes struct {
 	Dir string
 	// Levels is the level per node name; unset is internal. Regions is the
@@ -39,6 +39,11 @@ func (l LocalNodes) Level(_ context.Context, node string) (string, error) {
 func (l LocalNodes) root(node string) string  { return filepath.Join(l.Dir, node, "work") }
 func (l LocalNodes) state(node string) string { return filepath.Join(l.Dir, node, "state") }
 
+func (l LocalNodes) Artifact(ctx context.Context, _ string, req ops.Request) (ops.Result, error) {
+	return RunOperation(ctx, req)
+}
+
+// Exec runs only harness verification commands.
 func (l LocalNodes) Exec(ctx context.Context, node, dir, command string) (string, error) {
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	if dir != "" {

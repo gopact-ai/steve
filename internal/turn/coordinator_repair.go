@@ -23,15 +23,15 @@ type Refresher interface {
 	Refresh(ctx context.Context, node string) (nodewire.Advert, error)
 }
 
-// Commands runs a shell line on a machine; "" is the hub.
-type Commands interface {
-	Exec(ctx context.Context, node, dir, command string) (string, error)
+// MachineFiles reads platform file facts on a machine; "" is the hub.
+type MachineFiles interface {
+	Files(ctx context.Context, node string, req nodewire.FileRequest) (string, error)
 }
 
 // SetRepair wires what the repair verb needs beyond the supervisor.
-func (c *Coordinator) SetRepair(nodes Refresher, commands Commands) {
+func (c *Coordinator) SetRepair(nodes Refresher, files MachineFiles) {
 	c.refresher = nodes
-	c.commands = commands
+	c.files = files
 }
 
 // SetProber wires model discovery: one endpoint on demand (after a repair,
@@ -197,10 +197,10 @@ func (c *Coordinator) repairProject(ctx context.Context, fix roster.Fix) (string
 // pathOn reads the PATH the steve process on a machine actually has, so
 // the helper installs somewhere that process will look.
 func (c *Coordinator) pathOn(ctx context.Context, node string) string {
-	if c.commands == nil {
+	if c.files == nil {
 		return "(unknown)"
 	}
-	out, err := c.commands.Exec(ctx, node, "", "printf '%s' \"$PATH\"")
+	out, err := c.files.Files(ctx, node, nodewire.FileRequest{Op: nodewire.FileSearchPath})
 	if err != nil || strings.TrimSpace(out) == "" {
 		return "(unknown)"
 	}

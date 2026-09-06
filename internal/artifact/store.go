@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact/ops"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 )
@@ -53,10 +54,10 @@ func (m Manifest) Durable(p project.Project) bool {
 	return false
 }
 
-// Nodes is what the store needs from the node registry: a shell, a file
-// each way, and the advert that says whether git is there.
+// Nodes is what the store needs from the node registry: typed artifact
+// operations, blob transfer, and the node's git and placement facts.
 type Nodes interface {
-	Exec(ctx context.Context, node, dir, command string) (string, error)
+	Artifact(ctx context.Context, node string, req ops.Request) (ops.Result, error)
 	PutBlob(ctx context.Context, node, name string, content io.Reader, size int64) error
 	GetBlob(ctx context.Context, node, name string, into io.Writer) error
 	Git(ctx context.Context, node string) (version string, root string, state string, err error)
@@ -285,13 +286,12 @@ func (s *Store) setHead(ctx context.Context, name, sha string) error {
 // snapshotOnNode snapshots a directory on a node into the node's shadow
 // repository and fetches the result to the hub.
 func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo, flatten bool) (string, bool, error) {
-	_, root, state, err := s.nodes.Git(ctx, node)
+	_, _, state, err := s.nodes.Git(ctx, node)
 	if err != nil {
 		return "", false, err
 	}
-	_ = root
 	bare := nodeBare(state, p.ID)
-	if _, err := s.nodes.Exec(ctx, node, "", Script{}.Init(bare)); err != nil {
+	if _, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Init, Repo: bare}); err != nil {
 		return "", false, fmt.Errorf("init shadow repo on %s: %w", node, err)
 	}
 	if parent != "" && !s.nodeHas(ctx, node, bare, parent) {
@@ -299,18 +299,19 @@ func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Proje
 			return "", false, err
 		}
 	}
-	out, err := s.nodes.Exec(ctx, node, "", Script{Limits: s.Limits}.Snapshot(bare, dir, parent, message, flatten))
+	result, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Snapshot, Repo: bare, WorkTree: dir, Parent: parent, Message: message, Flatten: flatten, Limits: ops.Limits(s.Limits)})
 	if err != nil {
-		if tooLarge, ok := snapshotTooLarge(out, err); ok {
+		var tooLarge TooLarge
+		if errors.As(err, &tooLarge) {
 			return "", false, tooLarge
 		}
 		return "", false, fmt.Errorf("snapshot %s on %s: %w", dir, node, err)
 	}
-	sha := lastLine(out)
+	sha := result.Commit
 	if !shaPattern.MatchString(sha) {
 		return "", false, fmt.Errorf("snapshot on %s returned %q", node, sha)
 	}
-	if sha == parent {
+	if !result.Changed {
 		return sha, false, nil
 	}
 	s.setReplica(ctx, sha, node, s.generationOf(ctx, node), ReplicaVerified, "made here")
@@ -324,8 +325,8 @@ func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Proje
 }
 
 func (s *Store) nodeHas(ctx context.Context, node, bare, sha string) bool {
-	_, err := s.nodes.Exec(ctx, node, "", fmt.Sprintf("git --git-dir=%s cat-file -e %s^{commit}", quote(bare), quote(sha)))
-	return err == nil
+	result, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Has, Repo: bare, Commit: sha})
+	return err == nil && result.Has
 }
 
 // push carries an artifact hub → node as a bundle.
@@ -355,10 +356,10 @@ func (s *Store) push(ctx context.Context, node, bare string, hub *Repo, sha stri
 		return err
 	}
 	remote := filepath.Join(state, "blobs", name)
-	if _, err := s.nodes.Exec(ctx, node, "", Script{}.Unbundle(bare, remote)); err != nil {
+	if _, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Unbundle, Repo: bare, Path: remote}); err != nil {
 		return fmt.Errorf("unbundle on %s: %w", node, err)
 	}
-	_, _ = s.nodes.Exec(ctx, node, "", "rm -f "+quote(remote))
+	_, _ = s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Remove, Path: remote})
 	return nil
 }
 
@@ -370,7 +371,7 @@ func (s *Store) pull(ctx context.Context, node, bare string, hub *Repo, sha stri
 	}
 	name := "pull-" + short(sha) + ".bundle"
 	remote := filepath.Join(state, "blobs", name)
-	if _, err := s.nodes.Exec(ctx, node, "", "mkdir -p "+quote(filepath.Dir(remote))+" && "+Script{}.Bundle(bare, remote, sha, have)); err != nil {
+	if _, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Bundle, Repo: bare, Path: remote, Commit: sha, Have: have}); err != nil {
 		return fmt.Errorf("bundle on %s: %w", node, err)
 	}
 	temp, err := os.CreateTemp("", "steve-pull-*.bundle")
@@ -384,17 +385,12 @@ func (s *Store) pull(ctx context.Context, node, bare string, hub *Repo, sha stri
 		return err
 	}
 	temp.Close()
-	_, _ = s.nodes.Exec(ctx, node, "", "rm -f "+quote(remote))
+	_, _ = s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Remove, Path: remote})
 	return hub.Unbundle(ctx, path)
 }
 
 func nodeBare(state, projectID string) string {
 	return filepath.Join(state, "objects", projectID+".git")
-}
-
-func lastLine(out string) string {
-	lines := strings.Split(strings.TrimSpace(out), "\n")
-	return strings.TrimSpace(lines[len(lines)-1])
 }
 
 // ---------------------------------------------------------------- workspaces
@@ -455,7 +451,7 @@ func (s *Store) Materialize(ctx context.Context, req project.Request) (project.W
 		return project.Workspace{}, fmt.Errorf("node %s has no git; it cannot hold a workspace for %s", req.Node, p.ID)
 	}
 	bare := nodeBare(state, p.ID)
-	if _, err := s.nodes.Exec(ctx, req.Node, "", Script{}.Init(bare)); err != nil {
+	if _, err := s.nodes.Artifact(ctx, req.Node, ops.Request{Op: ops.Init, Repo: bare}); err != nil {
 		return project.Workspace{}, fmt.Errorf("init shadow repo on %s: %w", req.Node, err)
 	}
 	wanted := append([]string{base}, inputArtifacts(req.Inputs)...)
@@ -465,11 +461,11 @@ func (s *Store) Materialize(ctx context.Context, req project.Request) (project.W
 		}
 	}
 	dir := filepath.Join(root, "worktrees", id)
-	if _, err := s.nodes.Exec(ctx, req.Node, "", Script{}.Checkout(bare, base, dir)); err != nil {
+	if _, err := s.nodes.Artifact(ctx, req.Node, ops.Request{Op: ops.Checkout, Repo: bare, Commit: base, WorkTree: dir}); err != nil {
 		return project.Workspace{}, fmt.Errorf("checkout on %s: %w", req.Node, err)
 	}
 	for _, in := range req.Inputs {
-		if _, err := s.nodes.Exec(ctx, req.Node, "", Script{}.Checkout(bare, in.Artifact, filepath.Join(dir, "inputs", in.Name))); err != nil {
+		if _, err := s.nodes.Artifact(ctx, req.Node, ops.Request{Op: ops.Checkout, Repo: bare, Commit: in.Artifact, WorkTree: filepath.Join(dir, "inputs", in.Name)}); err != nil {
 			return project.Workspace{}, fmt.Errorf("input %s on %s: %w", in.Name, req.Node, err)
 		}
 	}
@@ -507,7 +503,7 @@ func (s *Store) Publish(ctx context.Context, ws project.Workspace, parent, by, m
 		// inside it is flattened so the files come through.
 		sha, changed, err = hub.Snapshot(ctx, ws.Path, parent, message, ws.Kind == project.KindWorktree)
 	} else {
-		_, _ = s.nodes.Exec(ctx, ws.Node, "", "rm -rf "+quote(filepath.Join(ws.Path, "inputs")))
+		_, _ = s.nodes.Artifact(ctx, ws.Node, ops.Request{Op: ops.Remove, Path: filepath.Join(ws.Path, "inputs")})
 		sha, changed, err = s.snapshotOnNode(ctx, ws.Node, p, ws.Path, parent, message, hub, ws.Kind == project.KindWorktree)
 	}
 	if err != nil {
@@ -535,7 +531,7 @@ func (s *Store) Discard(ctx context.Context, ws project.Workspace) error {
 	if ws.Node == "" {
 		return os.RemoveAll(ws.Path)
 	}
-	_, err := s.nodes.Exec(ctx, ws.Node, "", "rm -rf "+quote(ws.Path))
+	_, err := s.nodes.Artifact(ctx, ws.Node, ops.Request{Op: ops.Remove, Path: ws.Path})
 	return err
 }
 
