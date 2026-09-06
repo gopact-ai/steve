@@ -201,3 +201,51 @@ func waitTunnel(t *testing.T, endpoint string) {
 		time.Sleep(20 * time.Millisecond)
 	}
 }
+
+// The reverse listener is bound during the handshake, before the hub
+// connection is recorded (serve.go), so a tool call can arrive in that
+// window. It waits for the hub rather than reporting it unreachable.
+func TestTheFirstCallWaitsForTheHubToAttach(t *testing.T) {
+	s := &Server{}
+	got := make(chan error, 1)
+	go func() {
+		_, err := s.awaitHub(t.Context())
+		got <- err
+	}()
+	select {
+	case err := <-got:
+		t.Fatalf("answered before any hub existed: %v", err)
+	case <-time.After(200 * time.Millisecond):
+	}
+	s.mu.Lock()
+	s.hubMux = &nodewire.Mux{}
+	s.hubSeen = true
+	if s.hubWaiters != nil {
+		close(s.hubWaiters)
+		s.hubWaiters = nil
+	}
+	s.mu.Unlock()
+	select {
+	case err := <-got:
+		if err != nil {
+			t.Fatalf("the wait ended badly once the hub was there: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("attaching a hub did not release the waiting call")
+	}
+}
+
+// An outage is not a cold start. Once a hub has been here, its absence is
+// reported at once: it reconnects on its own, and a caller told to retry
+// can do something with that, while a caller left waiting cannot.
+func TestAnOutageIsReportedAtOnce(t *testing.T) {
+	s := &Server{}
+	s.hubSeen = true
+	start := time.Now()
+	if _, err := s.awaitHub(t.Context()); err == nil {
+		t.Fatal("a node whose hub is gone reported one")
+	}
+	if waited := time.Since(start); waited > time.Second {
+		t.Fatalf("waited %s for a hub that had already been and gone", waited)
+	}
+}

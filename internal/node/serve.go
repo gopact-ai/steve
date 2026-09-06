@@ -152,10 +152,20 @@ type Server struct {
 	listener    net.Listener
 	mcpListener net.Listener
 	hubMux      *nodewire.Mux
-	processMu   sync.Mutex
-	processes   map[string]*agentProcess
-	processWG   sync.WaitGroup
-	faultOnce   sync.Once
+	// hubWaiters is closed when a hub attaches and replaced with a fresh
+	// open channel when one leaves, so anything waiting blocks on the
+	// current state instead of a stale answer. Guarded by mu; read it and
+	// hubMux under the same hold.
+	hubWaiters chan struct{}
+	// hubSeen records that a hub has attached at least once. Before that,
+	// "no hub" means the node is still coming up; after it, the hub is
+	// gone and will come back on its own — a caller learns more from a
+	// prompt retryable error than from a wait.
+	hubSeen   bool
+	processMu sync.Mutex
+	processes map[string]*agentProcess
+	processWG sync.WaitGroup
+	faultOnce sync.Once
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -288,6 +298,11 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 	defer mux.Close()
 	s.mu.Lock()
 	s.hubMux = mux
+	s.hubSeen = true
+	if s.hubWaiters != nil {
+		close(s.hubWaiters)
+		s.hubWaiters = nil
+	}
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()

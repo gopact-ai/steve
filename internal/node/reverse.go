@@ -47,6 +47,43 @@ func (s *Server) closeMCP() {
 	}
 }
 
+// hubGrace is how long a request waits for the first hub to attach. A
+// node that has only just come up is not unreachable, and the agent
+// asking has no way to tell the difference. An outage is a different
+// thing: once a hub has been here, its absence is reported at once, since
+// it reconnects on its own and the caller is told to retry.
+const hubGrace = 5 * time.Second
+
+// awaitHub returns the hub connection, waiting briefly for the first one
+// to attach. The wait exists because nothing else announces readiness:
+// the reverse channel is wired by a goroutine, and the first tool call
+// can arrive before it has run.
+func (s *Server) awaitHub(ctx context.Context) (*nodewire.Mux, error) {
+	s.mu.Lock()
+	mux := s.hubMux
+	if mux == nil && !s.hubSeen {
+		if s.hubWaiters == nil {
+			s.hubWaiters = make(chan struct{})
+		}
+		waiters := s.hubWaiters
+		s.mu.Unlock()
+		wait, cancel := context.WithTimeout(ctx, hubGrace)
+		defer cancel()
+		select {
+		case <-waiters:
+		case <-wait.Done():
+			return nil, fmt.Errorf("hub unreachable")
+		}
+		s.mu.Lock()
+		mux = s.hubMux
+	}
+	s.mu.Unlock()
+	if mux == nil {
+		return nil, fmt.Errorf("hub unreachable")
+	}
+	return mux, nil
+}
+
 func (s *Server) forwardMCP(listener net.Listener) {
 	transport := &http.Transport{
 		// Each request gets one stream. In particular, failed writes are
@@ -54,11 +91,9 @@ func (s *Server) forwardMCP(listener net.Listener) {
 		DisableKeepAlives:     true,
 		ResponseHeaderTimeout: 15 * time.Second,
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-			s.mu.Lock()
-			mux := s.hubMux
-			s.mu.Unlock()
-			if mux == nil {
-				return nil, fmt.Errorf("hub unreachable")
+			mux, err := s.awaitHub(ctx)
+			if err != nil {
+				return nil, err
 			}
 			select {
 			case <-mux.Done():
