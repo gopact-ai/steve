@@ -130,3 +130,29 @@ func TestPotentialWriterPreventsDeclarationReuseBeforeSweep(t *testing.T) {
 		t.Fatal("declaration reused active physical writer directory")
 	}
 }
+
+func TestEquivalentRemotePathCannotBypassExpiredWriter(t *testing.T) {
+	for _, alias := range []string{"/srv/p/.", "/srv//p", "/srv/other/../p"} {
+		t.Run(alias, func(t *testing.T) {
+			s, clock := newService(t)
+			projects := project.Open(s.l, CheckDeclarationsTx)
+			p := project.Project{ID: "p", Home: project.Home{Node: "remote", Path: "/srv/p"}}
+			if err := projects.Declare(t.Context(), []project.Project{p}); err != nil {
+				t.Fatal(err)
+			}
+			workspace := project.Workspace{ID: "canonical:p", Project: "p", Kind: project.KindCanonical, Node: "remote", Path: p.Home.Path}
+			runningForAdmission(t, s, Spec{ID: "old", TaskID: "old-task", Node: "remote", Harness: "old", Project: "p", Workspace: workspace, Scope: ScopeUnrestricted})
+			clock.t = clock.t.Add(2 * time.Minute)
+			p.Home.Path, workspace.Path = alias, alias
+			if err := projects.Reconcile(t.Context(), []project.Project{p}, "equivalent path"); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := s.Open(t.Context(), Spec{ID: "new", TaskID: "new-task", Node: "remote", Harness: "new", Project: "p", Workspace: workspace, Scope: ScopeUnrestricted}); !errors.Is(err, ErrStopConfirmationRequired) {
+				t.Errorf("equivalent path admitted another writer: %v", err)
+			}
+			if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error { return CheckWriterTx(tx, "remote", alias) }); !errors.Is(err, ErrStopConfirmationRequired) {
+				t.Errorf("equivalent path admitted landing: %v", err)
+			}
+		})
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"path"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
@@ -12,6 +13,10 @@ import (
 // potentialWriter is independent of TTL: expiry is not physical exit.
 func potentialWriter(r Record) bool {
 	return r.Unsettled || (!r.State.Terminal() && (r.SessionSettled == nil || !*r.SessionSettled))
+}
+
+func samePhysicalPath(a, b string) bool {
+	return a != "" && b != "" && path.Clean(a) == path.Clean(b)
 }
 
 func lostOwnLease(tx *ledger.Tx, r Record) (bool, error) {
@@ -51,7 +56,7 @@ func checkAdmissionTx(tx *ledger.Tx, spec Spec) error {
 		if r.ID == spec.ID || !potentialWriter(r) {
 			continue
 		}
-		sameWriter := r.Workspace.Path != "" && r.Workspace.Path == spec.Workspace.Path && r.Workspace.Node == spec.Workspace.Node
+		sameWriter := samePhysicalPath(r.Workspace.Path, spec.Workspace.Path) && r.Workspace.Node == spec.Workspace.Node
 		sameTask := spec.TaskID != "" && spec.TaskID == r.TaskID
 		sameEndpoint := spec.Slots > 0 && spec.Node == r.Node && spec.Harness == r.Harness
 		if !sameWriter && !sameTask && !sameEndpoint {
@@ -117,7 +122,7 @@ func CheckWriterTx(tx *ledger.Tx, node, path string, authorizedAttemptID ...stri
 		if err != nil {
 			return err
 		}
-		if !potentialWriter(r) || r.Workspace.Path != path || r.Workspace.Node != node {
+		if !potentialWriter(r) || !samePhysicalPath(r.Workspace.Path, path) || r.Workspace.Node != node {
 			continue
 		}
 		if r.ID == allowed && !r.Unsettled {
