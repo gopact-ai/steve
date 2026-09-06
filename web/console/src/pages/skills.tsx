@@ -50,6 +50,7 @@ export function SkillsPage() {
     const skills = all.filter((s) => s.builtin || !s.source || s.enabled);
     const on = all.filter((s) => s.enabled).length;
     const skillsByName = new Map(all.map((skill) => [skill.name, skill]));
+    const localPaths = (view?.search_paths ?? []).filter((path) => !view?.sources.some((source) => source.root === path));
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title="技能"
@@ -169,35 +170,41 @@ export function SkillsPage() {
                         </ul>
                     )}
                 </Panel>
-                <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-2">
-                    <Panel title="本地目录" description="扫描 hub 上各目录中的 SKILL.md。">
-                        <ul className="flex flex-col divide-y divide-secondary">
-                            {(view?.search_paths ?? []).filter((p) => !view?.sources.some((src) => src.root === p)).map((p) => (
-                                <li key={p} className="flex items-center gap-2 py-1.5">
-                                    <Mono className="min-w-0 flex-1 truncate text-primary">{p}</Mono>
-                                    {p === view?.builtin_root ? <span className="u-meta text-quaternary" title="随 steve 发布的技能：官方的 skill-creator。每次启动重写，不能移除，可以逐个关掉。">内置 · 随 steve 更新</span>
-                                        : <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip="不再在这里找" isDisabled={busy !== ""} onClick={() => void run("rm:" + p, () => removeSkillPath(p))} />}
+                <div className="skill-settings-grid">
+                    <Panel title="本地目录" description="从 hub 的这些目录读取技能。" className="skill-settings-panel"
+                        aside={<span className="text-xs text-tertiary">{localPaths.length} 个目录</span>}>
+                        <ul className="skill-settings-list" aria-label="本地技能目录">
+                            {localPaths.map((p) => (
+                                <li key={p} className="skill-settings-row">
+                                    <Folder aria-hidden="true" className="size-4 shrink-0 text-fg-tertiary" />
+                                    <div className="min-w-0 flex-1"><div className="text-sm font-medium text-primary">{p === view?.builtin_root ? "内置技能" : p.split("/").filter(Boolean).at(-1) || "/"}</div><Mono className="mt-1 block break-words text-tertiary [overflow-wrap:anywhere]">{p}</Mono></div>
+                                    {p === view?.builtin_root ? <span className="shrink-0 text-xs text-tertiary">随版本更新</span>
+                                        : <ButtonUtility size="sm" color="tertiary" icon={Trash01} tooltip="移除目录" aria-label={`移除目录 ${p}`} isDisabled={busy !== ""} onClick={() => void run("rm:" + p, () => removeSkillPath(p))} />}
                                 </li>
                             ))}
-                            {view && view.search_paths.length === 0 && <li className="py-1.5 text-xs text-quaternary">没有搜索目录。</li>}
+                            {view && localPaths.length === 0 && <li className="py-4 text-sm text-tertiary">没有本地搜索目录。</li>}
                         </ul>
-                        <div className="skill-source-install">
+                        <div className="skill-source-install skill-settings-footer">
                             <Input size="sm" label="添加目录" aria-describedby="skill-path-hint" placeholder="/home/me/skills" value={newPath} onChange={setNewPath} isDisabled={busy === "add"} />
                             <Button size="sm" color="secondary" iconLeading={Plus} isDisabled={!newPath.trim() || busy !== ""} isLoading={busy === "add"} onClick={() => void run("add", async () => { await addSkillPath(newPath.trim()); setNewPath(""); })}>添加</Button>
                             <p id="skill-path-hint" className="skill-source-hint">hub 上已存在的目录。</p>
                         </div>
                     </Panel>
-                    <Panel title="同步状态" badge={view?.fingerprint ? <Mono className="text-quaternary">{view.fingerprint.slice(0, 12)}</Mono> : undefined}>
-                        <ul className="flex flex-col gap-1.5 text-sm">
-                            <li className="flex items-center gap-2"><span className="text-primary">{snap.hub.node}</span><Badge type="pill-color" size="sm" color="brand">hub</Badge><span className="text-xs text-tertiary">来源</span></li>
+                    <Panel title="同步状态" description="连接或技能变更后自动同步。" className="skill-settings-panel">
+                        <ul className="skill-settings-list" aria-label="技能同步节点">
+                            <li className="skill-settings-row"><Server01 aria-hidden="true" className="size-4 shrink-0 text-fg-tertiary" /><span className="min-w-0 flex-1 break-words text-sm font-medium text-primary">{snap.hub.node}</span><Badge type="modern" size="sm" color="gray">分发源</Badge></li>
                             {(view?.nodes ?? []).map((n) => (
-                                <li key={n.name} className="flex items-center gap-2">
-                                    <span className="text-primary">{n.name}</span>
+                                <li key={n.name} className="skill-settings-row">
+                                    <Server01 aria-hidden="true" className="size-4 shrink-0 text-fg-tertiary" />
+                                    <span className="min-w-0 flex-1 break-words text-sm text-primary">{n.name}</span>
                                     {!n.up ? <Badge type="pill-color" size="sm" color="gray">离线</Badge> : !n.takes ? <Badge type="pill-color" size="sm" color="warning">不支持同步</Badge> : n.synced ? <Badge type="pill-color" size="sm" color="success">已同步</Badge> : <Badge type="pill-color" size="sm" color="warning">未同步</Badge>}
                                 </li>
                             ))}
                         </ul>
-                        <p className="text-xs text-quaternary">连接或技能变更后自动同步。持续未同步时，可在历史中查看 node.skills 记录。</p>
+                        <div className="skill-settings-footer flex flex-col gap-2">
+                            {view?.fingerprint && <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-tertiary"><span>同步版本</span><Mono className="text-tertiary" >{view.fingerprint.slice(0, 12)}</Mono></div>}
+                            <p className="text-xs leading-relaxed text-tertiary">持续未同步时，可<a href="#/history" className="underline underline-offset-2 hover:text-primary">查看同步记录</a>。</p>
+                        </div>
                     </Panel>
                 </div>
                 {opened && (

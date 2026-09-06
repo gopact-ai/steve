@@ -220,6 +220,18 @@ button:enabled, summary { cursor: pointer; }
 .skill-source-name:hover > span:first-child { text-decoration: underline; text-underline-offset: 3px; }
 .skill-source-info { padding: 0 16px; border-top: 1px solid var(--color-border-secondary); font-size: 12px; color: var(--color-text-tertiary); }
 .skill-source-info > summary { padding-block: 12px; }
+.skill-settings-grid { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 20px; }
+.skill-settings-panel { border: 1px solid var(--color-border-secondary); border-radius: 10px; }
+.skill-settings-panel > .workbench-panel-header { padding: 18px 20px; }
+.skill-settings-panel > div { gap: 0; padding: 0 20px 20px; }
+.skill-settings-list { min-width: 0; }
+.skill-settings-row { display: flex; align-items: center; min-height: 72px; gap: 12px; padding-block: 12px; }
+.skill-settings-row + .skill-settings-row { border-top: 1px solid var(--color-border-secondary); }
+.skill-settings-footer { margin-top: auto; padding-top: 18px; border-top: 1px solid var(--color-border-secondary); }
+@media (min-width: 1280px) {
+    .skill-settings-grid { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr); grid-template-rows: auto 1fr; row-gap: 0; }
+    .skill-settings-panel { display: grid; grid-row: span 2; grid-template-rows: subgrid; }
+}
 @media (max-width: 767px) { .skill-source-grid { grid-template-columns: minmax(0, 1fr); } }
 .profile-workspace { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 28px; align-items: start; }
 .profile-directory { position: sticky; top: 20px; display: flex; flex-direction: column; gap: 3px; max-height: calc(100dvh - 160px); overflow-y: auto; padding: 8px; border-radius: 12px; background: var(--color-bg-secondary); }
