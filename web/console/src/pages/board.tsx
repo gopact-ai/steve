@@ -244,9 +244,9 @@ function UsagePanel() {
                 <div className="mt-2 text-xs text-tertiary">输入 {fmtTokens(u.total.tokens.input)} · 输出 {fmtTokens(u.total.tokens.output)} · 缓存 {fmtTokens(u.total.tokens.cached_read)} · 上下文 {fmtTokens(u.total.tokens.context)}</div>
                 <div className="mt-1 text-xs text-quaternary">含成功和失败的执行，仅统计提供方上报数据。ACP 仅上报上下文占用。</div>
             </div>
-            <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-3">
+            <div className="grid min-w-0 grid-cols-1 gap-5 xl:grid-cols-3 xl:grid-rows-[auto_1fr] xl:gap-y-0">
                 {tables.map((tbl) => (
-                    <TableCard.Root key={tbl.title} size="sm" className="workbench-table min-w-0">
+                    <TableCard.Root key={tbl.title} size="sm" className="workbench-table min-w-0 xl:row-span-2 xl:grid xl:grid-rows-subgrid">
                         <TableCard.Header title={tbl.title} description={tbl.hint || undefined} />
                         {tbl.rows.length === 0 ? <Nothing icon={ClipboardCheck} title="还没有记录" /> : (
                             <Table aria-label={tbl.title} size="sm">
