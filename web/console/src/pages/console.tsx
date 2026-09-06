@@ -86,6 +86,7 @@ export function ConsolePage() {
     activeConversation.current = conversation;
     const queueRequest = useRef(0);
     const transcriptRequest = useRef(0);
+    const transcriptRevision = useRef(0);
     // Quotes ride with the next message wherever it is sent from; they
     // survive switching threads on purpose — that is how a line from one
     // thread reaches another.
@@ -151,14 +152,21 @@ export function ConsolePage() {
     const loadReplies = useCallback(async () => {
         if (activeConversation.current !== conversation) return;
         const request = ++transcriptRequest.current;
-        const cursor = seen.current;
         try {
-            const data = await fetchReplies(conversation);
-            if (activeConversation.current !== conversation || request !== transcriptRequest.current) return;
-            setEnabled(data.enabled);
-            setEntries(data.replies || []);
-            setLoadingReplies(false);
-            setDelegations((cur) => restoreDelegations(cur, data.replies || [], cursor));
+            // An SSE mutation may be newer than an in-flight HTTP snapshot.
+            // Retry once; continuous traffic settles through the regular poll.
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const revision = transcriptRevision.current;
+                const cursor = seen.current;
+                const data = await fetchReplies(conversation);
+                if (activeConversation.current !== conversation || request !== transcriptRequest.current) return;
+                if (revision !== transcriptRevision.current) continue;
+                setEnabled(data.enabled);
+                setEntries(data.replies || []);
+                setLoadingReplies(false);
+                setDelegations((cur) => restoreDelegations(cur, data.replies || [], cursor));
+                return;
+            }
         } catch (e) {
             if (activeConversation.current === conversation) { setStatus(String(e)); setLoadingReplies(false); }
         }
@@ -196,18 +204,24 @@ export function ConsolePage() {
         if (fresh.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.meta" || ev.kind === "console.queue")) loadConversations();
         const mine = fresh.filter((ev) => ev.conversation === conversation);
         if (!mine.length) return;
+        const lines = mine.filter((ev) => ["console.sent", "console.reply", "console.notice", "console.milestone", "console.recalled"].includes(ev.kind));
+        if (lines.length) transcriptRevision.current++;
         setLive((cur) => mine.reduce(applyLive, cur));
         setDelegations((cur) => mine.reduce(applyDelegation, cur));
         if (mine.some((ev) => ev.kind === "console.queue")) void loadQueue();
         if (mine.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply")) void loadReplies();
         if (mine.some((ev) => ev.kind === "console.reply")) { loadContext(); refresh(); }
-        const lines = mine.filter((ev) => ["console.sent", "console.reply", "console.notice", "console.milestone"].includes(ev.kind));
         if (!lines.length) return;
         setEntries((list) => {
             const next = [...list];
             for (const ev of lines) {
+                if (ev.kind === "console.recalled") {
+                    const index = next.findIndex((r) => ev.reply_id && r.id === ev.reply_id);
+                    if (index >= 0) next.splice(index, 1);
+                    continue;
+                }
                 const kind = ev.kind.slice("console.".length);
-                const r: Reply = { id: ev.reply_id, exchange_id: ev.exchange_id, at: ev.at, conversation, kind, title: ev.title, text: kind === "sent" ? "" : ev.text || "", input: kind === "sent" ? ev.text : undefined };
+                const r: Reply = { id: ev.reply_id, exchange_id: ev.exchange_id, at: ev.at, conversation, kind, title: ev.title, text: kind === "sent" ? "" : ev.text || "", format: ev.format, input: kind === "sent" ? ev.text : undefined };
                 const index = next.findIndex((x) => r.id ? x.id === r.id : r.exchange_id ? x.exchange_id === r.exchange_id && x.kind === r.kind : x.at === r.at && x.kind === r.kind);
                 if (index < 0) next.push(r);
                 else next[index] = { ...next[index], ...r };

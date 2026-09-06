@@ -825,6 +825,7 @@ type Reply struct {
 	Input        string    `json:"input,omitempty"`
 	Title        string    `json:"title,omitempty"`
 	Text         string    `json:"text"`
+	Format       string    `json:"format,omitempty"` // markdown (default) | text
 	Error        string    `json:"error,omitempty"`
 	Kind         string    `json:"kind"` // reply | milestone | notice
 	// Process is how the reply was made, for the page to unfold; Injected

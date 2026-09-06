@@ -292,8 +292,26 @@ func (s *Store) AddInterim(channel, member, messageID string) error {
 	if !ok {
 		return fmt.Errorf("no running task for %s/%s", channel, member)
 	}
+	return s.addInterimLocked(newest.ID, messageID)
+}
+
+// AddInterimForTask records a sent message against the task that issued it.
+// A delayed receipt still belongs there after another task starts running.
+func (s *Store) AddInterimForTask(taskID, messageID string) error {
+	if messageID == "" {
+		return fmt.Errorf("interim message id is required")
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.addInterimLocked(taskID, messageID)
+}
+
+func (s *Store) addInterimLocked(taskID, messageID string) error {
+	if _, ok := s.data.Tasks[taskID]; !ok {
+		return fmt.Errorf("task %s not found", taskID)
+	}
 	next := s.clone()
-	stored := next.Tasks[newest.ID]
+	stored := next.Tasks[taskID]
 	stored.Interim = append(stored.Interim, messageID)
 	if len(stored.Interim) > maxInterim {
 		stored.Interim = stored.Interim[len(stored.Interim)-maxInterim:]

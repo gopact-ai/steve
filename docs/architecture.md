@@ -75,13 +75,13 @@ type Channel interface {
 
 - `gateway` 拆成 `channel/feishu`（渲染 + SDK）和留在协调层的通用部分（resume、notify、deliver 都变成"向会话投递一条消息"）。
 - `card` 并入 `channel/feishu`，输入改为 `readmodel.Reply/Process`，不再直接吃 `view.Progress`。
-- `agentmcp` 的 `feishu_send/update/recall` 工具改名 `steve_post/edit/recall`（旧名保留一个版本作为别名），语义是"向本会话投递一条里程碑消息"，由通道决定怎么画。
+- `agentmcp` 通过 `channel_send / channel_update / channel_recall` 向已绑定的会话通道投递进度消息，由通道适配器渲染。`steve_recall` 仍用于查找长期记忆。
 - 任务记录里的 `ChatID / AnchorMessage / ChatType / Requester` 收成一个 `Anchor{Channel, Conversation, Message, Actor}`。
 - 控制台的 `Sender` 垫片、`console.IsConsole` 前缀判断消失：hub 按 `Anchor.Channel` 路由。
 
 飞书概念今天泄漏到 hub 核心的面（codex 审计，2026-09-05）：`turn` 的 27 处（身份、ChatType / Mentioned、message_id 充当 TurnID、恢复与通知的锚点）、`task` 记录的 Requester / ChatID / AnchorMessage / ChatType / OpenCard / Interim、`delegate` 的投递、`agentmcp` 的工具名与卡片接口、`console` 的伪锚点与 `owner_open_id`、`readmodel` 透传 Requester、`i18n` 按域名定语言、`config` / `setup` / `onboard` / `schedule` 的注册与锚点、`cmd/steve` 的 19 处分流。两条渲染管线：飞书从 `turn.Result` → `view.Turn` → `card.Render`，**时间线在这条线上丢失**；控制台从 `readmodel.Reply / Process`，保留时间线与子任务但缺完整 usage / settings，且权限询问（`OnAsk / OnAskUser`）未接。
 
-迁移六步，每步独立合入、有测试：① 中性身份与锚点（`Actor`、`Anchor{Channel, Conversation, Message}`），旧字段做迁移；② 会话与交换队列从 `console` 上提为 `conversation` 包（任何通道共用），重启 / 去重 / 续接顺序有测试；③ `readmodel` 补齐为唯一投影（usage、settings、审批、版本与顺序），与旧卡片做影子比较；④ 控制台切到 `Channel` 接口，补权限闭环；⑤ 飞书切到新渲染（快照、限流分页、失效锚点、回调重放）；⑥ MCP 工具中性名（兼容旧名一个版本）、解除启动对飞书的依赖（仅控制台可启动）。风险：重复投递、锚点过期、跨回合误更新、权限串线——靠持久 outbox、幂等键、版本与身份校验；按通道开关回退旧投递器。
+迁移六步，每步独立合入、有测试：① 中性身份与锚点（`Actor`、`Anchor{Channel, Conversation, Message}`），旧字段做迁移；② 会话与交换队列从 `console` 上提为 `conversation` 包（任何通道共用），重启 / 去重 / 续接顺序有测试；③ `readmodel` 补齐为唯一投影（usage、settings、审批、版本与顺序），与旧卡片做影子比较；④ 控制台切到 `Channel` 接口，补权限闭环；⑤ 飞书切到新渲染（快照、限流分页、失效锚点、回调重放）；⑥ MCP 工具中性名、解除启动对飞书的依赖（仅控制台可启动）。风险：重复投递、锚点过期、跨回合误更新、权限串线——靠持久 outbox、幂等键、版本与身份校验；按通道开关回退旧投递器。
 
 ## 5. 执行层
 

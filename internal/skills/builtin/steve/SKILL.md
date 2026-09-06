@@ -21,7 +21,7 @@ Steve 是一个个人助手系统：一个 **hub** 进程连着若干台机器�
 - 活数据用 `steve_context()` 看：你是谁、在哪台机器、哪个项目和工作区、任务预算、接了哪些 MCP、启用了哪些技能、私聊还是群聊。
 - 会话第一轮的 prompt 前面拼了**指令**：Steve 的身份（SOUL.md）、在用户私聊里还有用户档案（USER.md）与记忆（MEMORY.md）、技能说明、MCP 工具说明。之后的回合靠你自己的会话记忆，不再重发。
 - **工作目录**：项目在你这台机器上的工作区。
-- **MCP 工具**（接上了才有）：`feishu_send / feishu_update / feishu_recall`（进度卡）、`steve_fleet / steve_delegate / steve_await`（看机器、委派、等结果）。
+- **MCP 工具**（接上了才有）：`channel_send / channel_update / channel_recall`（进度卡）、`steve_fleet / steve_delegate / steve_await`（看机器、委派、等结果）。
 - 这台机器上有什么就是什么：别的机器的凭据、GPU、内网不在这里。需要就委派。
 
 # 平台替你做的事
@@ -41,5 +41,5 @@ Steve 是一个个人助手系统：一个 **hub** 进程连着若干台机器�
 | 项目在哪、我为什么在这个目录、改完怎么落地、被告知项目在别的机器 | `steve_projects`，规则见 `steve_help("projects")` |
 | 用户说 /plan、/tasks、定时、验证、预算，或你在一个计划步骤里 | `steve_help("plans")` |
 | 要记住用户的事、更新记忆、档案文件长什么样、群聊里能说什么 | `steve_remember` / `steve_profile`，规则见 `steve_help("memory")` |
-| 长活要给用户看进度、发里程碑卡 | `feishu_send` / `feishu_update`，做法见 `steve_help("feishu")` |
+| 长活要给用户看进度、发里程碑卡 | `channel_send` / `channel_update`，做法见 `steve_help("channel")` |
 | 用户要写一个新技能或改技能 | `skill-creator` |

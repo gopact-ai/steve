@@ -1,8 +1,7 @@
 // Package console is the owner acting from the web page: the same verbs
 // the chat has, through the same coordinator, as the same principal. A
-// console conversation is "console:<name>"; its anchors are not Feishu
-// messages, so what would have been a card or a milestone in the chat is
-// kept here and pushed to the page over the change stream.
+// console conversation is "console:<name>"; its messages and milestones
+// are kept here and pushed to the page over the change stream.
 package console
 
 import (
@@ -85,7 +84,7 @@ type Service struct {
 	commandOrder []string
 	inflight     map[string]bool
 	// anchor tells the agents' messaging server which line a turn runs
-	// under, so an agent's feishu_send lands on the page as a milestone
+	// under, so an agent's channel_send lands on the page as a milestone
 	// instead of being refused for having no conversation.
 	anchor func(conversation, chatID, messageID string)
 	// running counts lines in flight per conversation, for the sidebar.
@@ -801,31 +800,6 @@ func (s *Service) Notice(n turn.TaskNotice) {
 	s.record(readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Title: "task #" + n.TaskID, Text: n.Text, Kind: "notice"})
 }
 
-// Milestone is what an agent's feishu_send becomes on the console: a
-// line in the conversation whose turn the anchor names.
-func (s *Service) Milestone(anchor, text string) string {
-	conversation := s.conversationOfAnchor(anchor)
-	id := fmt.Sprintf("%s%d", AnchorMark, time.Now().UnixNano())
-	s.record(readmodel.Reply{At: time.Now().UTC(), Conversation: conversation, Text: text, Kind: "milestone"})
-	return id
-}
-
-// conversationOfAnchor finds the conversation whose exchange the anchor
-// names; main when the anchor is not one of ours.
-func (s *Service) conversationOfAnchor(anchor string) string {
-	id := strings.TrimPrefix(anchor, AnchorMark)
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for conversation, list := range s.exchanges {
-		for _, e := range list {
-			if e.ID == id {
-				return conversation
-			}
-		}
-	}
-	return Prefix + "main"
-}
-
 // newReplyID names a line: time-ordered, unique enough for a transcript.
 func newReplyID() string {
 	var raw [4]byte
@@ -862,7 +836,7 @@ func (s *Service) publishReply(r readmodel.Reply) {
 		if r.Kind == "sent" {
 			text = r.Input
 		}
-		s.model.Publish(readmodel.Event{At: r.At, Kind: "console." + r.Kind, Conversation: r.Conversation, Text: text, Title: r.Title, ReplyID: r.ID, ExchangeID: r.ExchangeID})
+		s.model.Publish(readmodel.Event{At: r.At, Kind: "console." + r.Kind, Conversation: r.Conversation, Text: text, Format: r.Format, Title: r.Title, ReplyID: r.ID, ExchangeID: r.ExchangeID})
 	}
 }
 

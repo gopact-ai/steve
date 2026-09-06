@@ -188,7 +188,7 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 				}},
 			},
 		}
-		ereq := acp.SessionFormCreateElicitationRequest(`Allow tool feishu_send on server "feishu"?`, schema, req.SessionID)
+		ereq := acp.SessionFormCreateElicitationRequest(`Allow tool channel_send on server "steve"?`, schema, req.SessionID)
 		ereq.Meta = acp.Meta{"codex_approval_kind": "mcp_tool_call"}
 		resp, err := a.client.CreateElicitation(ctx, &ereq)
 		if err != nil {
@@ -207,7 +207,7 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	}
 
 	// "mcpupdate" sends one milestone card and evolves it twice with
-	// feishu_update, the one-evolving-card shape the instructions steer
+	// channel_update, the one-evolving-card shape the instructions steer
 	// agents toward. Results are echoed for the wire test.
 	if strings.Contains(input, "mcpupdate") {
 		note := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(a.mcpUpdate(req.SessionID) + " "))
@@ -353,17 +353,17 @@ func (a *agent) mcpFull(sessionID acp.SessionID) string {
 	}); err != nil {
 		return "[mcp: initialize failed: " + err.Error() + "]"
 	}
-	sent, isError, err := a.mcpTool(target, "feishu_send", map[string]any{"content": "## milestone\nphase one done"})
+	sent, isError, err := a.mcpTool(target, "channel_send", map[string]any{"content": "## milestone\nphase one done"})
 	if err != nil || isError {
 		return fmt.Sprintf("[mcp: send failed err=%v text=%s]", err, sent)
 	}
 	id := strings.TrimPrefix(sent, "sent message_id=")
-	mention, mentionRejected, err := a.mcpTool(target, "feishu_send", map[string]any{"content": "hi", "mention": true})
+	mention, mentionRejected, err := a.mcpTool(target, "channel_send", map[string]any{"content": "hi", "mention": true})
 	if err != nil {
 		return "[mcp: mention call failed: " + err.Error() + "]"
 	}
 	_ = mention
-	recalled, recallErr, err := a.mcpTool(target, "feishu_recall", map[string]any{"message_id": id})
+	recalled, recallErr, err := a.mcpTool(target, "channel_recall", map[string]any{"message_id": id})
 	if err != nil || recallErr {
 		return fmt.Sprintf("[mcp: recall failed err=%v text=%s]", err, recalled)
 	}
@@ -386,7 +386,7 @@ func (a *agent) mcpUpdate(sessionID acp.SessionID) string {
 	if target == nil {
 		return "[mcp: no steve server]"
 	}
-	sent, isError, err := a.mcpTool(target, "feishu_send", map[string]any{"content": "progress v1", "progress": "1/2"})
+	sent, isError, err := a.mcpTool(target, "channel_send", map[string]any{"content": "progress v1", "progress": "1/2"})
 	if err != nil || isError {
 		return fmt.Sprintf("[mcp: send failed err=%v text=%s]", err, sent)
 	}
@@ -396,7 +396,7 @@ func (a *agent) mcpUpdate(sessionID acp.SessionID) string {
 		{"message_id": id, "content": "progress v3 final", "progress": "2/2"},
 	}
 	for _, step := range steps {
-		out, isError, err := a.mcpTool(target, "feishu_update", step)
+		out, isError, err := a.mcpTool(target, "channel_update", step)
 		if err != nil || isError {
 			return fmt.Sprintf("[mcp: update failed err=%v text=%s]", err, out)
 		}

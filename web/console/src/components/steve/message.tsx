@@ -27,7 +27,9 @@ export function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply;
             {r.title && <div className="text-sm font-semibold text-primary">{r.title}</div>}
             {r.process && <InlineProcess process={r.process} />}
             {r.changes && <ChangesFold summary={r.changes} label="本轮净改动，含已落地的子任务" />}
-            {r.text && <Md text={state === "已停止" && r.text === r.error ? "已停止本次执行。" : r.text} className={r.error && state !== "已停止" ? "text-error-primary" : ""} />}
+            {r.text && (r.format === "text"
+                ? <div className={`whitespace-pre-wrap break-words text-sm [overflow-wrap:anywhere] ${r.error && state !== "已停止" ? "text-error-primary" : ""}`}>{state === "已停止" && r.text === r.error ? "已停止本次执行。" : r.text}</div>
+                : <Md text={state === "已停止" && r.text === r.error ? "已停止本次执行。" : r.text} className={r.error && state !== "已停止" ? "text-error-primary" : ""} />)}
             <div className="message-meta">
                 <span>{when(r.at)}</span>
                 {state && <span className={r.error && state !== "已停止" ? "text-error-primary" : ""}>{state}</span>}

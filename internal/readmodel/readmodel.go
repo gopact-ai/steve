@@ -440,6 +440,7 @@ type Event struct {
 	// page can follow one conversation's work.
 	Conversation string `json:"conversation,omitempty"`
 	Text         string `json:"text,omitempty"`
+	Format       string `json:"format,omitempty"`
 	// Progress is what an agent is doing right now: console.progress for
 	// a chat turn, step.progress for a plan step.
 	Progress *Progress `json:"progress,omitempty"`

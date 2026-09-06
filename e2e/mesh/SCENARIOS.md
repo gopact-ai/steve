@@ -33,7 +33,7 @@ Retry 不复活伤员；同步工具调用扛不住分钟级子任务；Bearings
 `@agent-a 说句话` → agent 进程真的起在 node-a（在 node-a 上 `pgrep` 得到）；答案回到 hub 的卡片。
 
 **A3 反向 MCP**
-远端 agent 调 `feishu_send` → 请求从 node-a 的 127.0.0.1 出发、经隧道到 hub 的 agentmcp；
+远端 agent 调 `channel_send` → 请求从 node-a 的 127.0.0.1 出发、经隧道到 hub 的 agentmcp；
 hub 侧收到的 Authorization 是该会话自己的 token。
 
 **A4 node 掉线与重连**

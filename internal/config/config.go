@@ -101,6 +101,8 @@ func validateIDs(field string, ids []string) error {
 const DefaultOfflineReminder = 15 * time.Minute
 
 type Gateway struct {
+	// DefaultChannel fills only a missing channel on an authorized message anchor.
+	DefaultChannel string `json:"default_channel,omitempty"`
 	// NodeBinary is a steve-node executable the hub can hand to a machine
 	// being added (static build, the nodes' architecture); empty means the
 	// bootstrap script expects the binary to be there already.
@@ -417,6 +419,9 @@ func Load(path string) (*Config, error) {
 	}
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, fmt.Errorf("parse config: expected one JSON object")
+	}
+	if cfg.Gateway.DefaultChannel == "" {
+		cfg.Gateway.DefaultChannel = "feishu"
 	}
 	cfg.Feishu.applyDefaults()
 	cfg.Feishu.OwnerOpenID = strings.TrimSpace(cfg.Feishu.OwnerOpenID)

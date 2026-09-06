@@ -120,6 +120,7 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 
 | 键 | 类型 | 默认 | 作用 | 示例 |
 |---|---|---|---|---|
+| `default_channel` | string | `"feishu"` | 填充授权消息锚点缺省的通道；当前会话绑定优先，不改变收件人 | `"feishu"` |
 | `node_binary` | string | `""` | 引导脚本可下载的 steve-node 文件；不填则需预先复制 | `"/home/me/steve-bin/steve-node"` |
 | `prompt_timeout` | Duration string | `"10m"`；非正值也取此默认 | 一轮没有文本、工具调用或报告的静默超时；不是总时长上限 | `"15m"` |
 | `state_path` | string | `"~/.steve/state.json"` | 旧状态文件路径，其父目录决定账本、运行状态和锁的位置 | `"/home/me/.steve/state.json"` |

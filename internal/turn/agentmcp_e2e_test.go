@@ -13,6 +13,8 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/state"
 )
@@ -69,7 +71,8 @@ func TestAgentSendPrimitiveE2E(t *testing.T) {
 		t.Fatal(err)
 	}
 	sender := &e2eSender{}
-	gate.BindChannel(sender)
+	gate.BindChannel("feishu", feishu.Messenger{API: sender})
+	gate.SetDefaultChannel("feishu")
 	ctx, cancel := context.WithCancel(context.Background())
 	served := make(chan struct{})
 	go func() {
@@ -102,7 +105,7 @@ func TestAgentSendPrimitiveE2E(t *testing.T) {
 	t.Cleanup(manager.Stop)
 	coordinator := newCoordinator(t, catalog, store, capability.NewAssembler(nil), manager, 30*time.Second)
 	coordinator.SetAgentGate(gate)
-	gate.Anchor("chat", "oc_chat", "om_user_1")
+	gate.Anchor("chat", channel.Address{Channel: "feishu", Conversation: "chat", Message: "om_user_1"})
 
 	result, err := handle(coordinator, context.Background(), "mcpfull now")
 	if err != nil {
@@ -127,7 +130,7 @@ func TestAgentSendPrimitiveE2E(t *testing.T) {
 	}
 
 	// Second turn: the evolving progress card — one send, two updates.
-	gate.Anchor("chat", "oc_chat", "om_user_2")
+	gate.Anchor("chat", channel.Address{Channel: "feishu", Conversation: "chat", Message: "om_user_2"})
 	result, err = handle(coordinator, context.Background(), "mcpupdate now")
 	if err != nil {
 		t.Fatal(err)

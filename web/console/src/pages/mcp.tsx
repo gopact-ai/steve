@@ -18,9 +18,9 @@ const fail = (e: unknown) => String(e).replace(/^Error: /, "");
 const typeWords: Record<string, string> = { stdio: "本机进程", http: "HTTP", sse: "SSE（旧式）" };
 
 const steveToolSummaries: Record<string, string> = {
-    feishu_send: "向当前飞书会话发送阶段进展",
-    feishu_update: "更新本轮已发送的进度卡片",
-    feishu_recall: "撤回本轮已发送的消息",
+    channel_send: "向当前会话的 channel 发送阶段进展",
+    channel_update: "更新本轮已发送的进度消息",
+    channel_recall: "撤回本轮已发送的消息",
     steve_fleet: "查看 Agent 及其可用能力",
     steve_delegate: "把一项工作委派给其他 Agent",
     steve_await: "等待子任务并获取结果",

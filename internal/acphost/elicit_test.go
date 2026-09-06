@@ -146,7 +146,7 @@ func TestMCPToolApprovalReadPolicyAsksHuman(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(asked.Choices) != 3 || !strings.Contains(asked.Message, "feishu_send") {
+	if len(asked.Choices) != 3 || !strings.Contains(asked.Message, "channel_send") {
 		t.Fatalf("human question = %+v, want the approval choices", asked)
 	}
 	if !strings.Contains(out, "[approval: accept:persist=once]") {

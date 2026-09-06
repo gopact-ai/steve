@@ -33,6 +33,7 @@ async function fixture({ history = false, running = false } = {}) {
     const conversations = [{ id: A, title: "Conversation A", project: "scratch" }, { id: B, title: "Conversation B", project: "home" }];
     const projects = [project("scratch"), project("home")];
     const replies = Object.fromEntries(conversations.map((c) => [c.id, Array.from({ length: history && c.id === A ? 35 : 1 }, (_, i) => ({ id: `${c.id}-${i}`, kind: "reply", conversation: c.id, at, text: `${c.title} history ${i}\n\nA retained answer with enough detail to occupy its own row.` }))]));
+    f.replies = replies;
     const queue = running ? [{ id: "running-a", conversation: A, state: "running", input: "Running task", started_at: at, enqueued_at: at }] : [];
     const emit = (event) => page.evaluate((event) => window.emit(event), { at, conversation: A, ...event });
     f.emit = emit;
@@ -68,7 +69,12 @@ async function fixture({ history = false, running = false } = {}) {
             if (f.failEnqueue) return route.fulfill({ status: 503, body: "Enqueue unavailable" });
             return route.fulfill({ json: { id: `queued-${f.calls.length}`, conversation, input: input.input, state: "queued", enqueued_at: at } });
         }
-        if (pathname === "/console/replies") { f.replyReads++; return route.fulfill({ json: { enabled: true, replies: replies[conversation] || [] } }); }
+        if (pathname === "/console/replies") {
+            f.replyReads++;
+            const snapshot = structuredClone(replies[conversation] || []);
+            if (f.replyResponse) await f.replyResponse;
+            return route.fulfill({ json: { enabled: true, replies: snapshot } });
+        }
         if (pathname === "/console/queue") return route.fulfill({ json: { queue: queue.filter((q) => q.conversation === conversation) } });
         if (pathname === "/console/context") return route.fulfill({ json: { enabled: true, context: { conversation, agents: [], project: { ...project(current?.project || "home"), bound: !!current } } } });
         if (pathname === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations: conversations.map((c) => ({ ...c, count: replies[c.id]?.length || 0, running: running && c.id === A, last_at: at })) } });
@@ -100,6 +106,104 @@ async function fixture({ history = false, running = false } = {}) {
 }
 
 const checks = {
+    async "channel-milestone-lifecycle"(f) {
+        const milestone = { id: "progress-side", conversation: A, exchange_id: "exchange-side", kind: "milestone", at, text: "First channel milestone", format: "markdown", title: "builder · test" };
+        f.replies[A].push(milestone);
+        await f.emit({ ...milestone, reply_id: milestone.id, kind: "console.milestone" });
+        await f.page.getByText(milestone.text, { exact: true }).waitFor();
+        milestone.text = "Updated channel milestone";
+        await f.emit({ ...milestone, reply_id: milestone.id, kind: "console.milestone" });
+        await f.page.getByText(milestone.text, { exact: true }).waitFor();
+        assert.equal(await f.page.getByText("First channel milestone", { exact: true }).count(), 0, "Update must replace the original milestone");
+        assert.equal(await f.page.getByText(milestone.text, { exact: true }).count(), 1, "Update must retain one milestone line");
+        await f.page.reload();
+        await f.page.getByText(milestone.text, { exact: true }).waitFor();
+        await f.emit({ kind: "console.recalled", conversation: B, reply_id: milestone.id });
+        assert.equal(await f.page.getByText(milestone.text, { exact: true }).count(), 1, "Another conversation cannot recall this line");
+        f.replies[A] = f.replies[A].filter((r) => r.id !== milestone.id);
+        await f.emit({ kind: "console.recalled", reply_id: milestone.id });
+        await eventually(async () => await f.page.getByText(milestone.text, { exact: true }).count() === 0, "Recall must remove its milestone immediately");
+        await f.page.reload();
+        await f.page.getByText("Conversation A history 0", { exact: false }).waitFor();
+        assert.equal(await f.page.getByText(milestone.text, { exact: true }).count(), 0, "Refresh must keep the recalled milestone absent");
+        assert.equal(f.calls.length, 0, "Displaying lifecycle events must never submit work");
+    },
+    async "channel-message-format"(f) {
+        const literal = "**Literal text**\n[not a link](https://example.test)";
+        const text = { id: "plain-progress", conversation: A, kind: "milestone", at, text: literal, format: "text" };
+        f.replies[A].push(text);
+        await f.emit({ ...text, reply_id: text.id, kind: "console.milestone" });
+        const message = f.page.locator(".message-assistant").filter({ hasText: "Literal text" });
+        await message.waitFor();
+        assert.ok((await message.innerText()).includes(literal), "Text format must preserve Markdown punctuation and newlines");
+        assert.equal(await message.locator("a,strong").count(), 0, "Text format must not parse Markdown");
+        await f.page.reload();
+        await message.waitFor();
+        assert.ok((await message.innerText()).includes(literal), "Reload must retain plain-text format");
+        await f.emit({ kind: "console.milestone", reply_id: "legacy-progress", text: "**Default markdown**" });
+        await f.page.locator(".message-assistant strong").getByText("Default markdown", { exact: true }).waitFor();
+    },
+    async "channel-milestone-late-snapshot"(f) {
+        const milestone = { id: "late-progress", conversation: A, kind: "milestone", at, text: "Before update" };
+        f.replies[A].push(milestone);
+        await f.emit({ ...milestone, reply_id: milestone.id, kind: "console.milestone" });
+        await f.page.getByText(milestone.text, { exact: true }).waitFor();
+        for (const action of ["update", "recall"]) {
+            const release = f.hold("replyResponse");
+            const reads = f.replyReads;
+            await f.page.clock.runFor(10100);
+            await eventually(() => f.replyReads > reads, "Polling must capture a snapshot before the next event");
+            if (action === "update") {
+                milestone.text = "After update";
+                await f.emit({ ...milestone, reply_id: milestone.id, kind: "console.milestone" });
+                await f.page.getByText(milestone.text, { exact: true }).waitFor();
+            } else {
+                f.replies[A] = f.replies[A].filter((r) => r.id !== milestone.id);
+                await f.emit({ kind: "console.recalled", reply_id: milestone.id });
+                await eventually(async () => await f.page.getByText(milestone.text, { exact: true }).count() === 0, "Recall must update the page while polling waits");
+            }
+            f.replyResponse = null;
+            release();
+            await delay(200);
+            assert.equal(await f.page.getByText("Before update", { exact: true }).count(), 0, "Late snapshots must not undo a milestone update");
+            assert.equal(await f.page.getByText("After update", { exact: true }).count(), action === "update" ? 1 : 0, "Late snapshots must not resurrect a recalled milestone");
+        }
+    },
+    async "channel-milestone-snapshot-convergence"(f) {
+        const milestone = { id: "converging-progress", conversation: A, kind: "milestone", at, text: "Initial snapshot" };
+        f.replies[A].push(milestone);
+        await f.emit({ ...milestone, reply_id: milestone.id, kind: "console.milestone" });
+        await f.page.getByText(milestone.text, { exact: true }).waitFor();
+        const releaseFirst = f.hold("replyResponse"), reads = f.replyReads;
+        await f.page.clock.runFor(10100);
+        await eventually(() => f.replyReads > reads, "Polling must begin");
+        milestone.text = "First concurrent update";
+        await f.emit({ ...milestone, reply_id: milestone.id, kind: "console.milestone" });
+        await f.page.getByText(milestone.text, { exact: true }).waitFor();
+        const releaseRetry = f.hold("replyResponse");
+        releaseFirst();
+        await eventually(() => f.replyReads === reads + 2, "A stale snapshot should trigger one fresh read");
+        milestone.text = "Latest concurrent update";
+        await f.emit({ ...milestone, reply_id: milestone.id, kind: "console.milestone" });
+        await f.page.getByText(milestone.text, { exact: true }).waitFor();
+        f.replyResponse = null;
+        releaseRetry();
+        await delay(200);
+        assert.equal(f.replyReads, reads + 2, "Continuous events must not create an unbounded immediate retry loop");
+        assert.equal(await f.page.getByText(milestone.text, { exact: true }).count(), 1, "The latest event must survive both stale responses");
+        await f.page.clock.runFor(10100);
+        await eventually(() => f.replyReads > reads + 2, "The next normal poll must resume snapshot recovery");
+        const releaseSwitch = f.hold("replyResponse"), beforeSwitch = f.replyReads;
+        await f.page.clock.runFor(10100);
+        await eventually(() => f.replyReads > beforeSwitch, "A snapshot must be in flight during the conversation switch");
+        await f.pick("B");
+        f.replyResponse = null;
+        releaseSwitch();
+        await f.page.getByText("Conversation B history 0", { exact: false }).waitFor();
+        assert.equal(await f.page.getByText(milestone.text, { exact: true }).count(), 0, "Late A snapshots must not enter B");
+        await f.pick("A");
+        await f.page.getByText(milestone.text, { exact: true }).waitFor();
+    },
     async "project-inheritance"(f) {
         await f.page.getByRole("button", { name: "新会话", exact: true }).click();
         await eventually(() => f.calls.some((c) => c.input === "/project use scratch"), "Generic new conversation must bind the current project");
@@ -915,8 +1019,10 @@ checks["skill-source-controls"] = async (f) => {
     await f.page.getByRole("button", { name: "关闭", exact: true }).click();
     for (const width of [1600, 390]) {
         await f.page.setViewportSize({ width, height: 900 });
-        const a = await input.boundingBox(), b = await install.boundingBox();
-        assert.ok(Math.abs(a.y - b.y) <= 1 && Math.abs(a.y + a.height - b.y - b.height) <= 1, "Install button must align with the input, excluding its label and hint");
+        await eventually(async () => {
+            const a = await input.boundingBox(), b = await install.boundingBox();
+            return Math.abs(a.y - b.y) <= 1 && Math.abs(a.y + a.height - b.y - b.height) <= 1;
+        }, "Install button must align with the input after responsive layout settles");
         await noHorizontalOverflow(f.page);
     }
 };

@@ -42,6 +42,7 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
+	messagechannel "github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
@@ -871,8 +872,13 @@ func serve(args []string) error {
 			return dialer.DialContext(ctx, "tcp", gate.Addr())
 		})
 		gw.SetAgentGate(gate)
-		gate.SetJournal(func(conversationID, agentID, messageID string) {
-			if err := tasks.AddInterim(conversationID, agentID, messageID); err != nil {
+		gate.SetJournal(func(_, _, taskID string, receipt messagechannel.Address) {
+			// The existing Feishu revival flow keeps its native message receipts.
+			if receipt.Channel != "feishu" {
+				return
+			}
+			messageID := receipt.Message
+			if err := tasks.AddInterimForTask(taskID, messageID); err != nil {
 				log.Printf("steve: journal interim message: %v", err)
 			}
 		})
@@ -907,8 +913,12 @@ func serve(args []string) error {
 	gw.BindChannel(channel)
 	channel.SetJournal(book.Journal())
 	if gate != nil {
-		gate.BindChannel(console.Sender{Feishu: channel, Console: cons})
-		cons.SetAnchorer(gate.Anchor)
+		gate.SetDefaultChannel(cfg.Gateway.DefaultChannel)
+		gate.BindChannel("feishu", feishu.Messenger{API: channel})
+		gate.BindChannel("console", console.MessageSender{Console: cons})
+		cons.SetAnchorer(func(conversation, _ string, message string) {
+			gate.Anchor(conversation, messagechannel.Address{Channel: "console", Conversation: conversation, Message: message})
+		})
 	}
 
 	// /tasks resume re-enters through the same path a crash recovery does:

@@ -18,7 +18,7 @@ func TestSameCallFromANewAttemptIsBlockedUntilResolved(t *testing.T) {
 	ctx := context.Background()
 	args := []byte(`{"content":"phase 1 done"}`)
 
-	first, err := s.Claim(ctx, "t1", "att-1", "feishu_send", args)
+	first, err := s.Claim(ctx, "t1", "att-1", "channel_send", args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,16 +30,16 @@ func TestSameCallFromANewAttemptIsBlockedUntilResolved(t *testing.T) {
 		t.Fatal(err)
 	}
 	// The next attempt of the same task asks for the same call.
-	_, err = s.Claim(ctx, "t1", "att-2", "feishu_send", args)
+	_, err = s.Claim(ctx, "t1", "att-2", "channel_send", args)
 	var blocked Blocked
 	if !errors.As(err, &blocked) || blocked.Previous.ID != first.ID {
 		t.Fatalf("second attempt's call = %v", err)
 	}
 	// A different call, or another task, is not blocked.
-	if _, err := s.Claim(ctx, "t1", "att-2", "feishu_send", []byte(`{"content":"other"}`)); err != nil {
+	if _, err := s.Claim(ctx, "t1", "att-2", "channel_send", []byte(`{"content":"other"}`)); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.Claim(ctx, "t2", "att-3", "feishu_send", args); err != nil {
+	if _, err := s.Claim(ctx, "t2", "att-3", "channel_send", args); err != nil {
 		t.Fatal(err)
 	}
 	// A person says it happened: the record is done and the block lifts.
@@ -50,7 +50,7 @@ func TestSameCallFromANewAttemptIsBlockedUntilResolved(t *testing.T) {
 	if err != nil || resolved.State != Succeeded {
 		t.Fatalf("resolve = %+v err=%v", resolved, err)
 	}
-	again, err := s.Claim(ctx, "t1", "att-2", "feishu_send", args)
+	again, err := s.Claim(ctx, "t1", "att-2", "channel_send", args)
 	if err != nil {
 		t.Fatalf("still blocked after resolution: %v", err)
 	}

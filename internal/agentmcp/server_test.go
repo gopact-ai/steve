@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/channel/feishu"
 )
 
 type fakeSender struct {
@@ -74,7 +77,8 @@ func startServer(t *testing.T) (*Server, *fakeSender) {
 		t.Fatal(err)
 	}
 	sender := &fakeSender{}
-	s.BindChannel(sender)
+	s.BindChannel("feishu", feishu.Messenger{API: sender})
+	s.SetDefaultChannel("feishu")
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
@@ -155,7 +159,7 @@ func callTool(t *testing.T, url, token, name string, args map[string]any) (strin
 
 func register(s *Server, conversation, agent, token, anchorMessage string) {
 	s.Extras(conversation, agent, token, "")
-	s.Anchor(conversation, conversation, anchorMessage)
+	s.Anchor(conversation, channel.Address{Channel: "feishu", Conversation: conversation, Message: anchorMessage})
 }
 
 func TestRejectsMissingOrUnknownToken(t *testing.T) {
@@ -181,7 +185,7 @@ func TestInitializeAndToolsList(t *testing.T) {
 		t.Fatalf("protocol not echoed: %v", result)
 	}
 	list := rpc(t, s.URL(), "tok-a", "tools/list", nil)
-	if !strings.Contains(list.rawBody, "feishu_send") || !strings.Contains(list.rawBody, "feishu_recall") {
+	if !strings.Contains(list.rawBody, "channel_send") || !strings.Contains(list.rawBody, "channel_recall") {
 		t.Fatalf("tools missing: %s", list.rawBody)
 	}
 }
@@ -206,8 +210,8 @@ func TestSendDeliversToOwnConversationAnchor(t *testing.T) {
 	s, sender := startServer(t)
 	register(s, "oc_a", "codex", "tok-a", "om_a")
 	register(s, "oc_b", "codex", "tok-b", "om_b")
-	text, isError := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "## milestone\ndone phase 1"})
-	if isError || !strings.Contains(text, "sent message_id=om_sent_1") {
+	text, isError := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "## milestone\ndone phase 1"})
+	if isError || !strings.Contains(text, "sent message_id=msg_") {
 		t.Fatalf("send failed: %q isError=%v", text, isError)
 	}
 	if len(sender.cards) != 1 || !strings.HasPrefix(sender.cards[0], "om_a:") {
@@ -221,7 +225,7 @@ func TestSendDeliversToOwnConversationAnchor(t *testing.T) {
 func TestSendTextFormat(t *testing.T) {
 	s, sender := startServer(t)
 	register(s, "oc_a", "codex", "tok-a", "om_a")
-	text, isError := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "plain note", "format": "text"})
+	text, isError := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "plain note", "format": "text"})
 	if isError || !strings.Contains(text, "sent message_id=") {
 		t.Fatalf("text send failed: %q", text)
 	}
@@ -233,7 +237,7 @@ func TestSendTextFormat(t *testing.T) {
 func TestSendRejectsMention(t *testing.T) {
 	s, sender := startServer(t)
 	register(s, "oc_a", "codex", "tok-a", "om_a")
-	text, isError := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "hello", "mention": true})
+	text, isError := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "hello", "mention": true})
 	if !isError || !strings.Contains(text, "mention") {
 		t.Fatalf("mention was not rejected: %q", text)
 	}
@@ -245,7 +249,7 @@ func TestSendRejectsMention(t *testing.T) {
 func TestSendStripsAtMarkup(t *testing.T) {
 	s, sender := startServer(t)
 	register(s, "oc_a", "codex", "tok-a", "om_a")
-	_, isError := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{
+	_, isError := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{
 		"content": "ping <at id=all>everyone</at> and <at user_id=\"ou_x\">bob</at> now",
 	})
 	if isError {
@@ -262,7 +266,7 @@ func TestSendStripsAtMarkup(t *testing.T) {
 func TestSendWithoutAnchorFails(t *testing.T) {
 	s, sender := startServer(t)
 	s.Extras("oc_a", "codex", "tok-a", "")
-	text, isError := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "hello"})
+	text, isError := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "hello"})
 	if !isError || !strings.Contains(text, "no active conversation") {
 		t.Fatalf("anchorless send not refused: %q", text)
 	}
@@ -275,17 +279,17 @@ func TestSendLimitPerTurn(t *testing.T) {
 	s, _ := startServer(t)
 	register(s, "oc_a", "codex", "tok-a", "om_a")
 	for i := 0; i < maxSendsPerTurn; i++ {
-		if _, isError := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "m"}); isError {
+		if _, isError := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "m"}); isError {
 			t.Fatalf("send %d refused", i)
 		}
 	}
-	text, isError := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "m"})
+	text, isError := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "m"})
 	if !isError || !strings.Contains(text, "limit") {
 		t.Fatalf("limit not enforced: %q", text)
 	}
 	// A new turn resets the budget.
-	s.Anchor("oc_a", "oc_a", "om_a2")
-	if _, isError := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "m"}); isError {
+	s.Anchor("oc_a", channel.Address{Channel: "feishu", Conversation: "oc_a", Message: "om_a2"})
+	if _, isError := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "m"}); isError {
 		t.Fatal("new turn did not reset the send budget")
 	}
 }
@@ -294,10 +298,10 @@ func TestRecallOwnMessageOnly(t *testing.T) {
 	s, sender := startServer(t)
 	register(s, "oc_a", "codex", "tok-a", "om_a")
 	register(s, "oc_b", "codex", "tok-b", "om_b")
-	textA, _ := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "from a"})
+	textA, _ := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "from a"})
 	idA := strings.TrimPrefix(textA, "sent message_id=")
 	// The other conversation's agent cannot recall A's message.
-	text, isError := callTool(t, s.URL(), "tok-b", "feishu_recall", map[string]any{"message_id": idA})
+	text, isError := callTool(t, s.URL(), "tok-b", "channel_recall", map[string]any{"message_id": idA})
 	if !isError || !strings.Contains(text, "current turn") {
 		t.Fatalf("cross-conversation recall allowed: %q", text)
 	}
@@ -305,15 +309,15 @@ func TestRecallOwnMessageOnly(t *testing.T) {
 		t.Fatal("cross-conversation recall deleted a message")
 	}
 	// The owner can.
-	text, isError = callTool(t, s.URL(), "tok-a", "feishu_recall", map[string]any{"message_id": idA})
+	text, isError = callTool(t, s.URL(), "tok-a", "channel_recall", map[string]any{"message_id": idA})
 	if isError || !strings.Contains(text, "recalled") {
 		t.Fatalf("own recall failed: %q", text)
 	}
-	if len(sender.deleted) != 1 || sender.deleted[0] != idA {
+	if len(sender.deleted) != 1 || sender.deleted[0] != "om_sent_1" {
 		t.Fatalf("wrong message deleted: %v", sender.deleted)
 	}
 	// And only once.
-	if _, isError = callTool(t, s.URL(), "tok-a", "feishu_recall", map[string]any{"message_id": idA}); !isError {
+	if _, isError = callTool(t, s.URL(), "tok-a", "channel_recall", map[string]any{"message_id": idA}); !isError {
 		t.Fatal("double recall allowed")
 	}
 }
@@ -321,10 +325,10 @@ func TestRecallOwnMessageOnly(t *testing.T) {
 func TestRecallStopsAtTurnBoundary(t *testing.T) {
 	s, sender := startServer(t)
 	register(s, "oc_a", "codex", "tok-a", "om_a")
-	text, _ := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "from a"})
+	text, _ := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "from a"})
 	id := strings.TrimPrefix(text, "sent message_id=")
-	s.Anchor("oc_a", "oc_a", "om_a2") // next turn begins
-	out, isError := callTool(t, s.URL(), "tok-a", "feishu_recall", map[string]any{"message_id": id})
+	s.Anchor("oc_a", channel.Address{Channel: "feishu", Conversation: "oc_a", Message: "om_a2"}) // next turn begins
+	out, isError := callTool(t, s.URL(), "tok-a", "channel_recall", map[string]any{"message_id": id})
 	if !isError || !strings.Contains(out, "current turn") {
 		t.Fatalf("stale recall allowed: %q", out)
 	}
@@ -391,17 +395,17 @@ func TestPreferredPortReusedAcrossRestarts(t *testing.T) {
 func TestUpdateRewritesOwnMilestoneCard(t *testing.T) {
 	s, sender := startServer(t)
 	register(s, "oc_a", "codex", "tok-a", "om_a")
-	text, _ := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "v1"})
+	text, _ := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "v1"})
 	id := strings.TrimPrefix(text, "sent message_id=")
-	out, isError := callTool(t, s.URL(), "tok-a", "feishu_update", map[string]any{"message_id": id, "content": "## v2 进度"})
+	out, isError := callTool(t, s.URL(), "tok-a", "channel_update", map[string]any{"message_id": id, "content": "## v2 进度"})
 	if isError || !strings.Contains(out, "updated "+id) {
 		t.Fatalf("update failed: %q", out)
 	}
-	if len(sender.patches) != 1 || !strings.HasPrefix(sender.patches[0], id+":") || !strings.Contains(sender.patches[0], "v2 进度") {
+	if len(sender.patches) != 1 || !strings.HasPrefix(sender.patches[0], "om_sent_1:") || !strings.Contains(sender.patches[0], "v2 进度") {
 		t.Fatalf("patch wrong: %v", sender.patches)
 	}
 	// An updated card can still be recalled.
-	if out, isError = callTool(t, s.URL(), "tok-a", "feishu_recall", map[string]any{"message_id": id}); isError {
+	if out, isError = callTool(t, s.URL(), "tok-a", "channel_recall", map[string]any{"message_id": id}); isError {
 		t.Fatalf("recall after update failed: %q", out)
 	}
 }
@@ -411,20 +415,20 @@ func TestUpdateRejectsTextAndForeignAndStale(t *testing.T) {
 	register(s, "oc_a", "codex", "tok-a", "om_a")
 	register(s, "oc_b", "codex", "tok-b", "om_b")
 	// Text messages cannot become cards.
-	text, _ := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "plain", "format": "text"})
+	text, _ := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "plain", "format": "text"})
 	textID := strings.TrimPrefix(text, "sent message_id=")
-	if out, isError := callTool(t, s.URL(), "tok-a", "feishu_update", map[string]any{"message_id": textID, "content": "x"}); !isError || !strings.Contains(out, "markdown") {
+	if out, isError := callTool(t, s.URL(), "tok-a", "channel_update", map[string]any{"message_id": textID, "content": "x"}); !isError || !strings.Contains(out, "markdown") {
 		t.Fatalf("text update not refused: %q", out)
 	}
 	// Another conversation's agent cannot update it either.
-	card, _ := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "card"})
+	card, _ := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "card"})
 	cardID := strings.TrimPrefix(card, "sent message_id=")
-	if out, isError := callTool(t, s.URL(), "tok-b", "feishu_update", map[string]any{"message_id": cardID, "content": "x"}); !isError || !strings.Contains(out, "current turn") {
+	if out, isError := callTool(t, s.URL(), "tok-b", "channel_update", map[string]any{"message_id": cardID, "content": "x"}); !isError || !strings.Contains(out, "current turn") {
 		t.Fatalf("foreign update not refused: %q", out)
 	}
 	// A new turn ends updatability.
-	s.Anchor("oc_a", "oc_a", "om_a2")
-	if out, isError := callTool(t, s.URL(), "tok-a", "feishu_update", map[string]any{"message_id": cardID, "content": "x"}); !isError || !strings.Contains(out, "current turn") {
+	s.Anchor("oc_a", channel.Address{Channel: "feishu", Conversation: "oc_a", Message: "om_a2"})
+	if out, isError := callTool(t, s.URL(), "tok-a", "channel_update", map[string]any{"message_id": cardID, "content": "x"}); !isError || !strings.Contains(out, "current turn") {
 		t.Fatalf("stale update not refused: %q", out)
 	}
 	if len(sender.patches) != 0 {
@@ -436,23 +440,23 @@ func TestMilestoneTailStyleAndProgress(t *testing.T) {
 	s, sender := startServer(t)
 	register(s, "oc_a", "codex", "tok-a", "om_a")
 	// Before the platform reports its identity line, the agent id is the tail.
-	callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "m1"})
+	callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "m1"})
 	if !strings.Contains(sender.cards[0], "codex · 里程碑 1") {
 		t.Fatalf("auto-numbered tail missing: %v", sender.cards[0])
 	}
 	s.SetStyle("oc_a", "codex · GPT X · Agent")
-	text, _ := callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "m2", "progress": "2/3"})
+	text, _ := callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "m2", "progress": "2/3"})
 	id := strings.TrimPrefix(text, "sent message_id=")
 	if !strings.Contains(sender.cards[1], "codex · GPT X · Agent · 里程碑 2/3") {
 		t.Fatalf("styled progress tail missing: %v", sender.cards[1])
 	}
 	// An update without progress keeps the card's own badge; with progress
 	// it advances.
-	callTool(t, s.URL(), "tok-a", "feishu_update", map[string]any{"message_id": id, "content": "m2b"})
+	callTool(t, s.URL(), "tok-a", "channel_update", map[string]any{"message_id": id, "content": "m2b"})
 	if !strings.Contains(sender.patches[0], "里程碑 2/3") {
 		t.Fatalf("update lost the badge: %v", sender.patches[0])
 	}
-	callTool(t, s.URL(), "tok-a", "feishu_update", map[string]any{"message_id": id, "content": "m2c", "progress": "3/3"})
+	callTool(t, s.URL(), "tok-a", "channel_update", map[string]any{"message_id": id, "content": "m2c", "progress": "3/3"})
 	if !strings.Contains(sender.patches[1], "里程碑 3/3") {
 		t.Fatalf("update did not advance the badge: %v", sender.patches[1])
 	}
@@ -464,14 +468,14 @@ func TestInterimTracksCurrentEpoch(t *testing.T) {
 	if s.Interim("oc_a") {
 		t.Fatal("interim before any send")
 	}
-	callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "m"})
+	callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "m"})
 	if !s.Interim("oc_a") {
 		t.Fatal("interim not reported after a send")
 	}
 	if s.Interim("oc_other") {
 		t.Fatal("interim leaked across conversations")
 	}
-	s.Anchor("oc_a", "oc_a", "om_a2")
+	s.Anchor("oc_a", channel.Address{Channel: "feishu", Conversation: "oc_a", Message: "om_a2"})
 	if s.Interim("oc_a") {
 		t.Fatal("interim survived the turn boundary")
 	}
@@ -482,13 +486,14 @@ func TestJournalSeesEverySend(t *testing.T) {
 	register(s, "oc_a", "codex", "tok-a", "om_a")
 	var mu sync.Mutex
 	var seen []string
-	s.SetJournal(func(conversationID, agentID, messageID string) {
+	s.SetJournal(func(conversationID, agentID, taskID string, receipt channel.Address) {
+		messageID := receipt.Message
 		mu.Lock()
 		defer mu.Unlock()
 		seen = append(seen, conversationID+":"+agentID+":"+messageID)
 	})
-	callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "card"})
-	callTool(t, s.URL(), "tok-a", "feishu_send", map[string]any{"content": "plain", "format": "text"})
+	callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "card"})
+	callTool(t, s.URL(), "tok-a", "channel_send", map[string]any{"content": "plain", "format": "text"})
 	mu.Lock()
 	defer mu.Unlock()
 	if len(seen) != 2 || seen[0] != "oc_a:codex:om_sent_1" || seen[1] != "oc_a:codex:om_sent_2" {

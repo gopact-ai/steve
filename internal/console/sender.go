@@ -2,73 +2,128 @@ package console
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
+	"fmt"
 	"strings"
+	"time"
 
-	"github.com/gopact-ai/steve/internal/agentmcp"
+	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
-// Sender routes an agent's messaging calls: anchors that are Feishu
-// messages go to Feishu, console anchors stay on the page.
-type Sender struct {
-	Feishu  agentmcp.Sender
+// MessageSender delivers agent milestones to their exact console conversation.
+// Inbound exchange anchors and outbound reply receipts are distinct identities.
+type MessageSender struct {
 	Console *Service
 }
 
-func (s Sender) isConsole(anchor string) bool { return strings.HasPrefix(anchor, AnchorMark) }
+var _ channel.Messenger = MessageSender{}
 
-func (s Sender) ReplyCard(ctx context.Context, messageID string, payload []byte) (string, error) {
-	if s.isConsole(messageID) {
-		return s.Console.Milestone(messageID, cardText(payload)), nil
+func (s MessageSender) validate(ctx context.Context, address channel.Address) error {
+	if err := ctx.Err(); err != nil {
+		return err
 	}
-	return s.Feishu.ReplyCard(ctx, messageID, payload)
+	if s.Console == nil {
+		return errors.New("console messaging is unavailable")
+	}
+	if address.Channel != "console" || !strings.HasPrefix(address.Conversation, Prefix) || address.Conversation == Prefix || address.Message == "" {
+		return errors.New("console messaging requires a console channel, conversation and message")
+	}
+	return nil
 }
 
-func (s Sender) ReplyText(ctx context.Context, messageID, text string) (string, error) {
-	if s.isConsole(messageID) {
-		return s.Console.Milestone(messageID, text), nil
+func consoleMessage(message channel.Message) (channel.Message, error) {
+	if message.Format == "" {
+		message.Format = "markdown"
 	}
-	return s.Feishu.ReplyText(ctx, messageID, text)
+	if message.Format != "markdown" && message.Format != "text" {
+		return message, fmt.Errorf("unsupported console message format %q", message.Format)
+	}
+	return message, nil
 }
 
-func (s Sender) PatchCard(ctx context.Context, messageID string, payload []byte) error {
-	if s.isConsole(messageID) {
-		s.Console.Milestone(messageID, cardText(payload))
-		return nil
+func (s MessageSender) Send(ctx context.Context, address channel.Address, message channel.Message) (string, error) {
+	if err := s.validate(ctx, address); err != nil {
+		return "", err
 	}
-	return s.Feishu.PatchCard(ctx, messageID, payload)
-}
-
-func (s Sender) DeleteMessage(ctx context.Context, messageID string) error {
-	if s.isConsole(messageID) {
-		return nil
+	message, err := consoleMessage(message)
+	if err != nil {
+		return "", err
 	}
-	return s.Feishu.DeleteMessage(ctx, messageID)
-}
-
-// cardText pulls the markdown out of a card payload, best effort; the raw
-// payload is shown when the shape is unknown.
-func cardText(payload []byte) string {
-	var card struct {
-		Body struct {
-			Elements []struct {
-				Content string `json:"content"`
-			} `json:"elements"`
-		} `json:"body"`
-		Elements []struct {
-			Content string `json:"content"`
-		} `json:"elements"`
-	}
-	if err := json.Unmarshal(payload, &card); err == nil {
-		var parts []string
-		for _, e := range append(card.Body.Elements, card.Elements...) {
-			if e.Content != "" {
-				parts = append(parts, e.Content)
-			}
-		}
-		if len(parts) > 0 {
-			return strings.Join(parts, "\n")
+	c := s.Console
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	var exchangeID string
+	for _, exchange := range c.exchanges[address.Conversation] {
+		if address.Message == AnchorMark+exchange.ID {
+			exchangeID = exchange.ID
+			break
 		}
 	}
-	return string(payload)
+	if exchangeID == "" {
+		return "", errors.New("console anchor does not belong to this conversation")
+	}
+	before := c.replies[address.Conversation]
+	r := readmodel.Reply{ID: newReplyID(), ExchangeID: exchangeID, At: time.Now().UTC(), Conversation: address.Conversation,
+		Text: message.Content, Format: message.Format, Title: message.Attribution, Kind: "milestone"}
+	c.recordLocked(r)
+	if err := c.save(); err != nil {
+		c.replies[address.Conversation] = before
+		return "", err
+	}
+	c.publishReply(r)
+	return r.ID, nil
+}
+
+func (s MessageSender) Update(ctx context.Context, address channel.Address, message channel.Message) error {
+	if err := s.validate(ctx, address); err != nil {
+		return err
+	}
+	message, err := consoleMessage(message)
+	if err != nil {
+		return err
+	}
+	c := s.Console
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	for i, r := range c.replies[address.Conversation] {
+		if r.ID != address.Message || r.Kind != "milestone" {
+			continue
+		}
+		updated := r
+		updated.Text, updated.Format, updated.Title = message.Content, message.Format, message.Attribution
+		c.replies[address.Conversation][i] = updated
+		if err := c.save(); err != nil {
+			c.replies[address.Conversation][i] = r
+			return err
+		}
+		c.publishReply(updated)
+		return nil
+	}
+	return errors.New("console milestone does not belong to this conversation")
+}
+
+func (s MessageSender) Recall(ctx context.Context, address channel.Address) error {
+	if err := s.validate(ctx, address); err != nil {
+		return err
+	}
+	c := s.Console
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	list := c.replies[address.Conversation]
+	for i, r := range list {
+		if r.ID != address.Message || r.Kind != "milestone" {
+			continue
+		}
+		c.replies[address.Conversation] = append(list[:i:i], list[i+1:]...)
+		if err := c.save(); err != nil {
+			c.replies[address.Conversation] = list
+			return err
+		}
+		if c.model != nil {
+			c.model.Publish(readmodel.Event{At: time.Now().UTC(), Kind: "console.recalled", Conversation: address.Conversation, ReplyID: r.ID})
+		}
+		return nil
+	}
+	return errors.New("console milestone does not belong to this conversation")
 }

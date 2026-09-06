@@ -21,6 +21,7 @@ import (
 // project and workspace, on what budget, with what attached.
 type ContextInfo struct {
 	Agent   string `json:"agent"`
+	Channel string `json:"channel,omitempty"`
 	Node    string `json:"node"`
 	Harness string `json:"harness"`
 	Model   string `json:"model,omitempty"`
@@ -73,7 +74,7 @@ var helpTopics = []struct{ id, about string }{
 	{"projects", "项目 / 主目录 / 副本 / 工作树，改动怎么被记录和落地，被告知项目在别的机器时怎么办"},
 	{"plans", "任务与回合预算、计划步骤怎么跑和验证、在步骤里该怎么做、定时与修复"},
 	{"memory", "三份档案何时注入、群聊与访客、什么值得记、怎么记"},
-	{"feishu", "什么时候一张进度卡有用、怎么更新同一张、最终答案怎么到用户那里"},
+	{"channel", "什么时候一张进度卡有用、怎么更新同一张、最终答案怎么到用户那里"},
 }
 
 func helpText(topic string) (string, error) {
@@ -105,6 +106,10 @@ func helpText(topic string) (string, error) {
 func (s *Server) steveContext(ctx context.Context, bind binding) (string, error) {
 	s.mu.Lock()
 	informer := s.informer
+	boundChannel := ""
+	if a := s.anchors[bind.conversationID]; a != nil {
+		boundChannel = a.address.Channel
+	}
 	s.mu.Unlock()
 	if informer == nil {
 		return "", errors.New("steve_context is not wired on this gateway")
@@ -114,6 +119,7 @@ func (s *Server) steveContext(ctx context.Context, bind binding) (string, error)
 		return "", err
 	}
 	info.DelegatedBy = bind.delegatedBy
+	info.Channel = boundChannel
 	// Anyone but the owner in private gets the shape without the
 	// places: which project, what kind of workspace, but no paths.
 	if info.Mode != "owner" {
@@ -130,7 +136,7 @@ func (s *Server) steveContext(ctx context.Context, bind binding) (string, error)
 		"你的最终回答由平台投递给用户，不要用工具重复发。",
 		"同一个目录同一时刻只有一个写者；租约、快照、落地由 hub 管。",
 		"写文件的范围由工具权限控制；工作区之外的路径会被拒或要求确认。",
-		"做法按主题看 steve_help：overview, delegate, projects, plans, memory, feishu。")
+		"做法按主题看 steve_help：overview, delegate, projects, plans, memory, channel。")
 	sort.Strings(info.MCPServers)
 	sort.Strings(info.Skills)
 	raw, err := json.MarshalIndent(info, "", "  ")
@@ -175,9 +181,9 @@ func informTools() []map[string]any {
 		},
 		{
 			"name":        "steve_help",
-			"description": "How things are done in Steve, by topic: overview, delegate, projects, plans, memory, feishu. Without a topic it lists them. Read the topic before delegating, before working in a plan step, before remembering something for the user, before sending a progress card.",
+			"description": "How things are done in Steve, by topic: overview, delegate, projects, plans, memory, channel. Without a topic it lists them. Read the topic before delegating, before working in a plan step, before remembering something for the user, before sending a progress card.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
-				"topic": map[string]any{"type": "string", "description": "One of: overview, delegate, projects, plans, memory, feishu."},
+				"topic": map[string]any{"type": "string", "description": "One of: overview, delegate, projects, plans, memory, channel."},
 			}},
 		},
 	}
