@@ -89,14 +89,12 @@ func TestMCPListenerStaysPutAndReturnsRetryableErrorDuringOutage(t *testing.T) {
 	if err != nil || after != endpoint {
 		t.Fatalf("endpoint changed: %q -> %q (%v)", endpoint, after, err)
 	}
-	resp, err = client.Post(endpoint, "application/json", strings.NewReader(`{}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		t.Fatal(resp.Status)
-	}
+	// Recovery is asynchronous on the node's side too: connect returns
+	// when the hub has the connection, and the node records its end of it
+	// in its own goroutine. What the endpoint promises is that it comes
+	// back on the same port, not that it is back the instant the hub
+	// says so — until then it answers the retryable error, correctly.
+	waitTunnel(t, endpoint)
 }
 
 func checkUnreachable(t *testing.T, r *http.Response) {
