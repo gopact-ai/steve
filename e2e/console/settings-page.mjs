@@ -76,6 +76,7 @@ if (process.env.PURE_ONLY !== "1") {
             const request = route.request(), url = new URL(request.url());
             if (url.origin !== origin) { external.push(url.href); return route.abort(); }
             if (url.pathname === "/state") return route.fulfill({ json: { at: "2026-09-07T00:00:00Z", hub: { node: "hub-fixture", version: "v1", started: "" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] } });
+            if (url.pathname === "/console/queue" && request.method() === "GET") return route.fulfill({ json: { queue: [], submission_keys: true, material_refs: true, interactive_requests: true } });
             if (url.pathname === "/console/settings") {
                 if (request.method() === "GET") { settingsReads++; return route.fulfill({ json: { ...state, revision: configRevision } }); }
                 const body = request.postDataJSON(); writes.push({ group: "hub", ...body });

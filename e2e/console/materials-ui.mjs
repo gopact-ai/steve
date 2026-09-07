@@ -80,7 +80,7 @@ try{
  f.questions=[...Array.from({length:24},(_,i)=>makeQuestion('history-'+i,'answered',new Date(Date.parse(at)+i*1000).toISOString())),makeQuestion('pending-later','pending','2026-09-07T03:00:00Z'),makeQuestion('pending-first','pending','2026-09-07T02:00:00Z')];
  await page.evaluate(e=>window.emit(e),{kind:'console.question',conversation:A,text:'pending-first',at});await page.getByRole('heading',{name:'pending-first',exact:true}).waitFor();
  const panel=page.getByRole('region',{name:'Your response is needed'});assert.equal(await panel.locator(':scope > article h3').first().innerText(),'pending-first');assert.equal(await panel.locator('details article').count(),5);await page.setViewportSize({width:390,height:844});
- const message=page.getByRole('textbox',{name:'Message',exact:true});const box=await message.boundingBox();assert.ok(box&&box.y>=0&&box.y+box.height<=844,'Question history must not push the composer out of the viewport');
+ const message=page.getByRole('textbox',{name:'Message',exact:true});await waitFor(async()=>{const box=await message.boundingBox();return box&&box.y>=0&&box.y+box.height<=844;},'Question history must not push the composer out of the viewport after responsive layout settles');
  await panel.getByRole('textbox',{name:'Answer',exact:true}).first().fill('Narrow-screen response');assert.equal(await panel.getByRole('textbox',{name:'Answer',exact:true}).first().inputValue(),'Narrow-screen response');assert.ok(await panel.evaluate(el=>el.clientHeight<=window.innerHeight*.4+1));console.log('PASS many questions keep pending order, bound history and preserve a reachable mobile composer');
 
  assert.deepEqual(f.errors,[]);

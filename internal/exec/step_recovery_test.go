@@ -38,7 +38,9 @@ func TestBoundOutputRestoresProjectionWithoutAnotherInvocation(t *testing.T) {
 	}
 	cache.err = nil
 	restored, err := runStepWithRecovery(t.Context(), p, step, nil, deps)
-	first.StartedAt, first.EndedAt = first.StartedAt.Round(0), first.EndedAt.Round(0)
+	// JSON preserves instants, not monotonic readings or Location identity.
+	first.StartedAt, first.EndedAt = first.StartedAt.UTC(), first.EndedAt.UTC()
+	restored.StartedAt, restored.EndedAt = restored.StartedAt.UTC(), restored.EndedAt.UTC()
 	if err != nil || calls != 1 || !reflect.DeepEqual(first, restored) || len(cache.saved) != 1 {
 		t.Fatalf("bound output not restored: first=%+v restored=%+v calls=%d saved=%d err=%v", first, restored, calls, len(cache.saved), err)
 	}
