@@ -3,12 +3,12 @@ package console
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/view"
 	"sync"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 type retainedStopDriver interface {
@@ -19,9 +19,20 @@ type retainedStopDriver interface {
 // has detached. Stop must reach that original task, not an empty turn slot.
 func (s *Service) stopRecovering(ctx context.Context, control Exchange, requester string) (turn.Result, bool, error) {
 	s.mu.Lock()
+	var controlRecord *queuedExchange
+	for _, e := range s.exchanges[control.Conversation] {
+		if e.ID == control.ID {
+			controlRecord = e
+			break
+		}
+	}
+	var bound *recoveryStopTarget
+	if controlRecord != nil {
+		bound = controlRecord.RecoveryStopTarget
+	}
 	var target *queuedExchange
 	for _, e := range s.exchanges[control.Conversation] {
-		if e.ID == control.ID || (e.State != "recovering" && e.State != "awaiting-user") {
+		if e.ID == control.ID || (bound != nil && e.ID != bound.ExchangeID) || (bound == nil && e.State != "recovering" && e.State != "awaiting-user") {
 			continue
 		}
 		if target != nil {
@@ -33,7 +44,35 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	driver := s.recoveryDriver
 	if target == nil {
 		s.mu.Unlock()
+		if bound != nil {
+			return turn.Result{}, true, errors.New("original stop target is unavailable")
+		}
 		return turn.Result{}, false, nil
+	}
+	if bound != nil && (bound.Requester != requester || bound.Conversation != control.Conversation) {
+		s.mu.Unlock()
+		return turn.Result{}, true, errors.New("original stop target identity changed")
+	}
+	if target.RecoveryStop != nil {
+		reply := *target.RecoveryStop
+		s.mu.Unlock()
+		return turn.Result{Text: reply.Text, Title: reply.Title}, true, nil
+	}
+	if terminalExchange(target.State) {
+		s.mu.Unlock()
+		return turn.Result{}, true, errors.New("original stop target has already finished without a stop receipt")
+	}
+	if target.Requester != "" && target.Requester != requester {
+		s.mu.Unlock()
+		return turn.Result{}, true, errors.New("recovery requires the original requester")
+	}
+	if controlRecord != nil && controlRecord.RecoveryStopTarget == nil {
+		controlRecord.RecoveryStopTarget = &recoveryStopTarget{Conversation: control.Conversation, ExchangeID: target.ID, Requester: requester}
+		if err := s.save(); err != nil {
+			controlRecord.RecoveryStopTarget = nil
+			s.mu.Unlock()
+			return turn.Result{}, true, err
+		}
 	}
 	if target.recoveryStopping != nil {
 		s.mu.Unlock()
@@ -63,7 +102,13 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	if original.Requester != "" && original.Requester != requester {
 		return turn.Result{}, true, errors.New("recovery requires the original requester")
 	}
+	if bound != nil && bound.TaskID != "" && bound.TaskID != candidate.TaskID {
+		return turn.Result{}, true, errors.New("original stop task identity changed")
+	}
 	s.mu.Lock()
+	if controlRecord != nil {
+		controlRecord.RecoveryStopTarget = &recoveryStopTarget{Conversation: control.Conversation, ExchangeID: target.ID, TaskID: candidate.TaskID, Requester: requester}
+	}
 	previousPending := target.RecoveryStopPending
 	target.RecoveryStopPending = "Stop requested; waiting for confirmation from the original task and its children."
 	if err := s.save(); err != nil {

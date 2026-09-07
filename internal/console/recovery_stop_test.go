@@ -94,8 +94,12 @@ func TestStopRecoveryTargetsOriginalTaskAndPersistsSettlement(t *testing.T) {
 				awaitExchange(t, s, "e2")
 			}
 			_, _ = s.SendCommand(t.Context(), "main", "/cancel", "stop-original")
-			if driver.stops.Load() != 1 {
-				t.Fatal("same stop command repeated side effects")
+			expectedCalls := int32(1)
+			if uncertain {
+				expectedCalls = 2
+			}
+			if driver.stops.Load() != expectedCalls {
+				t.Fatal("stop retry did not reconcile only the unconfirmed operation")
 			}
 			cancel()
 			s.workers.Wait()
@@ -402,5 +406,218 @@ func TestRestartDoesNotTreatNewlyAcceptedStopAsNativeExecution(t *testing.T) {
 	got := restored.Queue("main")
 	if got[0].State != "recovering" || got[1].State != "failed" {
 		t.Fatalf("stop became a native recovery: %+v", got)
+	}
+}
+
+func TestSameStopCommandRechecksOriginalTaskAfterNodeReturns(t *testing.T) {
+	lifetime, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	doc := recoveryDocument()
+	s := New(&echo{}, "owner", nil)
+	s.EnableRetainedRecovery(lifetime)
+	if err := s.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	driver := &stoppingRecoveryDriver{recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
+		return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "node is offline", Choices: []view.Choice{{Value: "wait", Label: "Wait"}}}}
+	}}, stopErr: harness.ErrStopUnconfirmed}
+	if err := s.RecoverChats(lifetime, driver); err != nil {
+		t.Fatal(err)
+	}
+	waitRecoveryQuestion(t, s)
+	failed, err := s.SendCommand(t.Context(), "main", "/cancel", "same-stop")
+	if err == nil {
+		t.Fatal("offline stop reported success")
+	}
+	driver.stopErr = nil
+	confirmed, err := s.SendCommand(t.Context(), "main", "/cancel", "same-stop")
+	if err != nil {
+		t.Fatalf("retry returned cached outage after original node confirmed stop: %v", err)
+	}
+	if confirmed.ExchangeID != failed.ExchangeID || driver.stops.Load() != 2 {
+		t.Fatalf("retry changed stop identity or did not recheck: %+v calls=%d", confirmed, driver.stops.Load())
+	}
+	if got := awaitExchange(t, s, "e1"); got.State != "cancelled" {
+		t.Fatalf("original task remains blocked: %+v", got)
+	}
+	for _, q := range s.Questions("main") {
+		if q.State == "pending" {
+			t.Fatal("stop confirmation left a question pending")
+		}
+	}
+	awaitExchange(t, s, "e2")
+	if cached, err := s.SendCommand(t.Context(), "main", "/cancel", "same-stop"); err != nil || cached.ID != confirmed.ID {
+		t.Fatalf("confirmed stop was not replayed as its original receipt: %+v %v", cached, err)
+	}
+	if driver.stops.Load() != 2 {
+		t.Fatal("confirmed stop was executed again")
+	}
+}
+
+func TestRecoveryStopRetryKeepsItsTargetAcrossRestart(t *testing.T) {
+	for _, oldReceipt := range []bool{false, true} {
+		t.Run(map[bool]string{false: "bound", true: "older-receipt"}[oldReceipt], func(t *testing.T) {
+			lifetime, cancel := context.WithCancel(t.Context())
+			doc := recoveryDocument()
+			s := New(&echo{}, "owner", nil)
+			s.EnableRetainedRecovery(lifetime)
+			if err := s.Persist(doc); err != nil {
+				t.Fatal(err)
+			}
+			driver := &stoppingRecoveryDriver{recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
+				return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "node is offline", Choices: []view.Choice{{Value: "wait", Label: "Wait"}}}}
+			}}, stopErr: errors.New("attempt attempt-1 writer is quarantined until physically confirmed stopped")}
+			if err := s.RecoverChats(lifetime, driver); err != nil {
+				t.Fatal(err)
+			}
+			waitRecoveryQuestion(t, s)
+			failed, err := s.SendCommand(t.Context(), "main", "/cancel", "restart-stop")
+			if err == nil {
+				t.Fatal("offline stop reported success")
+			}
+			cancel()
+			s.workers.Wait()
+			if oldReceipt {
+				s.mu.Lock()
+				for _, e := range s.exchanges["console:main"] {
+					if e.ID == failed.ExchangeID {
+						e.RecoveryStopTarget = nil
+					}
+				}
+				err = s.save()
+				s.mu.Unlock()
+				if err != nil {
+					t.Fatal(err)
+				}
+			}
+			restored := New(&echo{}, "owner", nil)
+			restored.EnableRetainedRecovery(t.Context())
+			if err := restored.Persist(doc); err != nil {
+				t.Fatal(err)
+			}
+			driver.stopErr = nil
+			if err := restored.RecoverChats(t.Context(), driver); err != nil {
+				t.Fatal(err)
+			}
+			waitRecoveryQuestion(t, restored)
+			if _, err := restored.SendSubmission(t.Context(), consoleapi.Submission{Conversation: "main", Input: "/cancel", CommandID: "restart-stop"}); err != nil {
+				t.Fatalf("original stop failed after restart: %v", err)
+			}
+			if got := awaitExchange(t, restored, "e1"); got.State != "cancelled" {
+				t.Fatalf("wrong stop target after restart: %+v", got)
+			}
+			awaitExchange(t, restored, "e2")
+			if driver.stops.Load() != 2 {
+				t.Fatalf("wrong number of checks: %d", driver.stops.Load())
+			}
+		})
+	}
+}
+
+func TestConcurrentRetrySharesOriginalStopCheck(t *testing.T) {
+	lifetime, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	s := New(&echo{}, "owner", nil)
+	s.EnableRetainedRecovery(lifetime)
+	if err := s.Persist(recoveryDocument()); err != nil {
+		t.Fatal(err)
+	}
+	driver := &stoppingRecoveryDriver{recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
+		return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Message: "offline", Choices: []view.Choice{{Value: "wait", Label: "Wait"}}}}
+	}}, stopErr: harness.ErrStopUnconfirmed}
+	if err := s.RecoverChats(lifetime, driver); err != nil {
+		t.Fatal(err)
+	}
+	waitRecoveryQuestion(t, s)
+	_, _ = s.SendCommand(t.Context(), "main", "/cancel", "parallel-stop")
+	entered, release := make(chan struct{}), make(chan struct{})
+	driver.stopErr = nil
+	driver.stopHook = func() { close(entered); <-release }
+	results := make(chan error, 2)
+	go func() { _, err := s.SendCommand(t.Context(), "main", "/cancel", "parallel-stop"); results <- err }()
+	<-entered
+	go func() { _, err := s.SendCommand(t.Context(), "main", "/cancel", "parallel-stop"); results <- err }()
+	close(release)
+	for range 2 {
+		if err := <-results; err != nil {
+			t.Fatal(err)
+		}
+	}
+	if driver.stops.Load() != 2 {
+		t.Fatalf("concurrent retry duplicated check: %d", driver.stops.Load())
+	}
+	awaitExchange(t, s, "e2")
+}
+
+type lookupFailureStopDriver struct {
+	*stoppingRecoveryDriver
+	lookupErr atomic.Bool
+}
+
+func (d *lookupFailureStopDriver) RetainedChats(ctx context.Context) ([]turn.RetainedChat, error) {
+	if d.lookupErr.Load() {
+		return nil, errors.New("retained lookup unavailable")
+	}
+	return d.recoveryDriver.RetainedChats(ctx)
+}
+
+func TestSameStopRetryRecoversAfterOriginalTaskLookupFails(t *testing.T) {
+	lifetime, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	s := New(&echo{}, "owner", nil)
+	s.EnableRetainedRecovery(lifetime)
+	if err := s.Persist(recoveryDocument()); err != nil {
+		t.Fatal(err)
+	}
+	driver := &lookupFailureStopDriver{stoppingRecoveryDriver: &stoppingRecoveryDriver{recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
+		return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Message: "offline", Choices: []view.Choice{{Value: "wait", Label: "Wait"}}}}
+	}}}}
+	if err := s.RecoverChats(lifetime, driver); err != nil {
+		t.Fatal(err)
+	}
+	waitRecoveryQuestion(t, s)
+	driver.lookupErr.Store(true)
+	if _, err := s.SendCommand(t.Context(), "main", "/cancel", "lookup-stop"); err == nil {
+		t.Fatal("unavailable lookup reported success")
+	}
+	driver.lookupErr.Store(false)
+	if _, err := s.SendCommand(t.Context(), "main", "/cancel", "lookup-stop"); err != nil {
+		t.Fatalf("lookup recovery was cached as failed: %v", err)
+	}
+	if driver.stops.Load() != 1 {
+		t.Fatalf("unexpected stop target calls: %d", driver.stops.Load())
+	}
+	awaitExchange(t, s, "e2")
+}
+
+func TestHistoricalStopDoesNotInferAnUnrelatedRecoveryTarget(t *testing.T) {
+	for _, mode := range []string{"missing-attempt", "different-error", "newer-task"} {
+		t.Run(mode, func(t *testing.T) {
+			s := New(&echo{}, "owner", nil)
+			s.EnableRetainedRecovery(t.Context())
+			if err := s.Persist(recoveryDocument()); err != nil {
+				t.Fatal(err)
+			}
+			s.mu.Lock()
+			target := s.exchanges["console:main"][0]
+			target.RecoveryStopPending = "attempt original-attempt writer is quarantined"
+			old := &queuedExchange{Exchange: Exchange{ID: "old-stop", Conversation: "console:main", Input: "/cancel", Key: "client:old", State: "failed", EnqueuedAt: time.Now()}, Receipt: &consoleapi.Reply{Error: target.RecoveryStopPending}}
+			s.exchanges["console:main"] = append(s.exchanges["console:main"], old)
+			s.questions["old-question"] = consoleapi.PendingQuestion{Conversation: "console:main", ExchangeID: target.ID, AttemptID: "original-attempt", TaskID: "task-1", Principal: "owner"}
+			switch mode {
+			case "missing-attempt":
+				old.Receipt.Error = "unconfirmed"
+				target.RecoveryStopPending = "unconfirmed"
+			case "different-error":
+				old.Receipt.Error = "attempt other-attempt writer is quarantined"
+			case "newer-task":
+				target.EnqueuedAt = old.EnqueuedAt.Add(time.Second)
+			}
+			got, err := s.retryRecoveryStopLocked(old)
+			if err != nil || got != old || got.RecoveryStopTarget != nil || got.State != "failed" {
+				t.Fatalf("old stop selected unrelated recovery: %+v %v", got, err)
+			}
+			s.mu.Unlock()
+		})
 	}
 }

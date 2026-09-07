@@ -247,7 +247,7 @@ func TestPermissionAskCallsHook(t *testing.T) {
 	}
 	select {
 	case ask := <-asked:
-		if ask.ToolName != "dangerous operation" {
+		if ask.ToolName != "dangerous operation" || ask.Kind != acp.ToolKindOther {
 			t.Fatalf("ask = %#v", ask)
 		}
 	default:

@@ -557,7 +557,9 @@ func (ch *clientHandler) Update(_ context.Context, n *acp.SessionNotification) e
 }
 
 func (ch *clientHandler) RequestPermission(ctx context.Context, req *acp.RequestPermissionRequest) (*acp.RequestPermissionResponse, error) {
-	var kind acp.ToolKind
+	// ACP makes ToolCall.Kind optional; the internal permission question is
+	// persisted and sent across nodes with a concrete, valid discriminator.
+	kind := acp.ToolKindOther
 	if req.ToolCall.Kind != nil {
 		kind = *req.ToolCall.Kind
 	}

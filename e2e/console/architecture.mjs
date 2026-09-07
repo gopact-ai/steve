@@ -147,7 +147,7 @@ if (process.env.PURE_ONLY !== "1") {
     async function fixture() {
         const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: "block" });
         const page = await context.newPage(); await page.addInitScript(() => localStorage.setItem("steve.ui.locale", "zh")); page.setDefaultTimeout(3500);
-        const f = { page, context, queue: [], posts: [], stopCalls: [], submissionKeys: true, queueReadError: 0, repliesReadError: false, repliesTransportError: false, queueGate: null, inbox: [], stopReset: false, resetAfterAccept: false, hideQueue: false, reject: 0, stopGate: null, releases: [], errors: [], historyReads: 0, contextReads: [], held: null, agent: "first-agent", writes: [], settings: { ...original, mcp_servers: { sample: { type: "stdio", command: "sample", env: {}, headers: {} } } } };
+        const f = { page, context, queue: [], posts: [], stopCalls: [], submissionKeys: true, queueReadError: 0, repliesReadError: false, repliesTransportError: false, queueGate: null, inbox: [], stopReset: false, stopError: "", resetAfterAccept: false, hideQueue: false, reject: 0, stopGate: null, releases: [], errors: [], historyReads: 0, contextReads: [], held: null, agent: "first-agent", writes: [], settings: { ...original, mcp_servers: { sample: { type: "stdio", command: "sample", env: {}, headers: {} } } } };
         page.on("pageerror", (error) => f.errors.push(String(error)));
         await page.clock.install();
         await page.route("**/*", async (route) => {
@@ -185,6 +185,7 @@ if (process.env.PURE_ONLY !== "1") {
                 const input = req.postDataJSON(); f.stopCalls.push(input);
                 if (f.stopGate) await f.stopGate.promise;
                 for (const entry of f.queue) if (entry.conversation === input.conversation) entry.state = "cancelled";
+                if (f.stopError) return route.fulfill({ status: 503, json: { error: f.stopError } });
                 if (f.stopReset) { f.stopReset = false; return route.abort("connectionreset"); }
                 return route.fulfill({ json: { reply: { conversation: input.conversation, kind: "reply", at, text: "Stopped" } } });
             }
@@ -256,6 +257,26 @@ if (process.env.PURE_ONLY !== "1") {
             await eventually(() => f.posts.length === 3, "A later retry still uses the original operation");
             assert.ok(f.posts.every((post) => post.command_id === id));
             assert.equal(f.queue.length, 1, "Lost receipt plus rejected retries still produce only one logical work item");
+        },
+        async "long-stop-error-layout"(f) {
+            f.queue.push({ id: "running", conversation: A, state: "running", input: "Long work", started_at: at, enqueued_at: at });
+            await f.emit({ kind: "console.queue" });
+            f.stopError = "Stop outcome is unconfirmed: " + "nested transport context deadline exceeded on unavailable execution node; ".repeat(35);
+            await f.page.getByRole("button", { name: "停止", exact: true }).click();
+            await f.page.getByRole("button", { name: "重试停止", exact: true }).waitFor();
+            for (const viewport of [{ width: 1240, height: 820 }, { width: 780, height: 540 }]) {
+                await f.page.setViewportSize(viewport);
+                const toolbar = await f.page.locator(".console-toolbar").boundingBox();
+                assert.ok(toolbar.height <= 104 && toolbar.y >= 0, "a long stop failure must not expand or clip the toolbar");
+                const box = await f.page.getByRole("textbox", { name: "消息", exact: true }).boundingBox();
+                assert.ok(box.y >= 0 && box.y + box.height <= viewport.height, "the main input remains within the window");
+                const details = f.page.getByRole("alert").filter({ has: f.page.getByRole("button", { name: "重试停止", exact: true }) }).locator("details");
+                await details.locator("summary").click();
+                assert.equal(await details.locator("pre").innerText(), f.stopError, "technical stop details remain available in full");
+                const after = await f.page.getByRole("textbox", { name: "消息", exact: true }).boundingBox();
+                assert.ok(after.y >= 0 && after.y + after.height <= viewport.height, "expanded details scroll without hiding the main input");
+                await details.locator("summary").click();
+            }
         },
         async "uncertain-stop-preflight"(f) {
             f.queue.push({ id: "running", conversation: A, state: "running", input: "Long work", started_at: at, enqueued_at: at });

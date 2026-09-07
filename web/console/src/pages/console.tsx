@@ -459,6 +459,7 @@ export function ConsolePage() {
         catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }
         finally { setUploading(false); }
     }
+    const toolbarStatus = stopState?.uncertain ? t("console.stopUncertain") : status || contextError || conversationsError || (queueReadError?.conversation === conversation ? readErrorText(queueReadError.error) : "") || (replyReadError?.conversation === conversation ? readErrorText(replyReadError.error) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "");
     const listed = conversations.some((c) => c.id === conversation) ? conversations : [{ id: conversation, title: t("console.newConversation"), last_at: "", count: 0, running: false, project: context?.project?.id, agent: context?.agent?.id }, ...conversations];
 
     const sessions = (collapsed = sessionsCollapsed) => <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={selectConversation} onNew={(project) => void newSession(project)} creating={creating}
@@ -488,7 +489,7 @@ export function ConsolePage() {
                             <button type="button" className="text-xs text-tertiary hover:text-primary" onClick={() => void updateConversation(current.id, { archived: false }).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}>{t("console.unarchive")}</button>
                         </span>
                     )}
-                    <span role="status" className="console-status">{status || contextError || conversationsError || (queueReadError?.conversation === conversation ? readErrorText(queueReadError.error) : "") || (replyReadError?.conversation === conversation ? readErrorText(replyReadError.error) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "")}</span>
+                    <span role="status" className="console-status" title={toolbarStatus}>{toolbarStatus}</span>
                     <span className="workbench-segmented" role="group" aria-label={t("console.workView")} >
                         <button type="button" onClick={() => navigate("/console")} aria-pressed>{t("console.conversation")}</button>
                         <button type="button" onClick={() => navigate("/console?view=board")} aria-pressed={false}>{t("console.board")}</button>
@@ -540,6 +541,7 @@ export function ConsolePage() {
                             </div>}
                             {stopState?.uncertain && <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
                                 <p>{t("console.stopUncertain")}</p>
+                                {stopState.error && <details className="mt-2"><summary className="cursor-pointer text-xs text-tertiary">{t("console.details")}</summary><pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words text-xs [overflow-wrap:anywhere]">{stopState.error}</pre></details>}
                                 <button type="button" className="mt-1 underline" onClick={() => void stop()}>{t("console.retryStop")}</button>
                             </div>}
                             {submissionSupport.interactive_requests && <QuestionPanel key={conversation} conversation={conversation} />}

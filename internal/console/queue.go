@@ -22,11 +22,12 @@ type queuedExchange struct {
 	Exchange
 	// Submission identity survives edits/steering. A keyed exchange's result
 	// outlives the bounded transcript projection so restart retries can reply.
-	PayloadHash         string            `json:"payload_hash,omitempty"`
-	QuoteAliases        map[string]string `json:"quote_aliases,omitempty"`
-	Receipt             *consoleapi.Reply `json:"receipt,omitempty"`
-	RecoveryStop        *consoleapi.Reply `json:"recovery_stop,omitempty"`
-	RecoveryStopPending string            `json:"recovery_stop_pending,omitempty"`
+	PayloadHash         string              `json:"payload_hash,omitempty"`
+	QuoteAliases        map[string]string   `json:"quote_aliases,omitempty"`
+	Receipt             *consoleapi.Reply   `json:"receipt,omitempty"`
+	RecoveryStopTarget  *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
+	RecoveryStop        *consoleapi.Reply   `json:"recovery_stop,omitempty"`
+	RecoveryStopPending string              `json:"recovery_stop_pending,omitempty"`
 	recoveryStopping    chan struct{}
 	ctx                 context.Context
 	cancel              context.CancelFunc
@@ -162,6 +163,11 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
+		var retryErr error
+		existing, retryErr = s.retryRecoveryStopLocked(existing)
+		if retryErr != nil {
+			return nil, Exchange{}, retryErr
+		}
 		return existing, copyExchange(existing.Exchange), nil
 	}
 	if strings.TrimSpace(input) == "" && len(options.Refs) == 0 {
@@ -190,6 +196,11 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	if other, err := s.submittedLocked(conversation, key, hash); other != nil || err != nil {
 		if err != nil {
 			return nil, Exchange{}, err
+		}
+		var retryErr error
+		other, retryErr = s.retryRecoveryStopLocked(other)
+		if retryErr != nil {
+			return nil, Exchange{}, retryErr
 		}
 		return other, copyExchange(other.Exchange), nil
 	}
@@ -350,6 +361,7 @@ func (s *Service) startLocked(e *queuedExchange) error {
 	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
 		return consoleapi.ErrConsoleClosing
 	}
+	s.bindRecoveryStopTargetLocked(e)
 	conversation := e.Conversation
 	previous := s.replies[conversation]
 	e.State, e.StartedAt = "running", time.Now().UTC()
