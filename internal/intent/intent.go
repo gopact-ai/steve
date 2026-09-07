@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -34,34 +35,42 @@ const (
 )
 
 type Intent struct {
-	ID          string          `json:"id"`
-	TaskID      string          `json:"task_id"`
-	AttemptID   string          `json:"attempt_id"`
-	Tool        string          `json:"tool"`
-	Fingerprint string          `json:"fingerprint"`
-	State       State           `json:"state"`
-	Receipt     json.RawMessage `json:"receipt,omitempty"`
-	Error       string          `json:"error,omitempty"`
-	Resolution  string          `json:"resolution,omitempty"`
-	At          time.Time       `json:"at"`
+	RequiresReconciliation bool            `json:"requires_reconciliation,omitempty"`
+	ID                     string          `json:"id"`
+	TaskID                 string          `json:"task_id"`
+	AttemptID              string          `json:"attempt_id"`
+	Tool                   string          `json:"tool"`
+	Fingerprint            string          `json:"fingerprint"`
+	State                  State           `json:"state"`
+	Receipt                json.RawMessage `json:"receipt,omitempty"`
+	Error                  string          `json:"error,omitempty"`
+	Resolution             string          `json:"resolution,omitempty"`
+	At                     time.Time       `json:"at"`
 }
 
-// Blocked is a claim refused because an earlier attempt's identical call
-// is outcome-unknown.
+// Blocked is a claim refused because the same task's identical call is
+// still active or has an unknown outcome.
 type Blocked struct {
 	Previous Intent
 }
 
 func (b Blocked) Error() string {
+	if b.Previous.State == Dispatched {
+		return fmt.Sprintf("blocked: intent %s is still in progress; wait for its result before retrying", b.Previous.ID)
+	}
 	return fmt.Sprintf("blocked pending reconciliation: intent %s from attempt %s made this same call and its outcome is unknown; a person must resolve it with /effects %s happened|new", b.Previous.ID, b.Previous.AttemptID, b.Previous.ID)
 }
 
 type Service struct {
-	l   *ledger.Ledger
-	now func() time.Time
+	l      *ledger.Ledger
+	now    func() time.Time
+	mu     sync.Mutex
+	active map[string]bool
 }
 
-func New(l *ledger.Ledger) *Service { return &Service{l: l, now: time.Now} }
+func New(l *ledger.Ledger) *Service {
+	return &Service{l: l, now: time.Now, active: map[string]bool{}}
+}
 
 // Fingerprint identifies a call by what it does, not when.
 func Fingerprint(tool string, args []byte) string {
@@ -69,9 +78,11 @@ func Fingerprint(tool string, args []byte) string {
 	return hex.EncodeToString(sum[:12])
 }
 
-// Claim opens an intent for the attempt, unless the same call from another
-// attempt of the task is still unresolved.
+// Claim opens an intent unless that task's same operation is still in flight
+// or has an unknown outcome, including retries in the same attempt.
 func (s *Service) Claim(ctx context.Context, taskID, attemptID, tool string, args []byte) (Intent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	fp := Fingerprint(tool, args)
 	if taskID != "" {
 		all, err := s.ForTask(ctx, taskID)
@@ -79,7 +90,11 @@ func (s *Service) Claim(ctx context.Context, taskID, attemptID, tool string, arg
 			return Intent{}, err
 		}
 		for _, prev := range all {
-			if prev.AttemptID != attemptID && prev.Fingerprint == fp && prev.State == Unknown {
+			if (prev.RequiresReconciliation || prev.Fingerprint == fp) && (prev.State == Unknown || prev.State == Dispatched) {
+				prev, err = s.recoverDispatch(ctx, prev)
+				if err != nil {
+					return Intent{}, err
+				}
 				return Intent{}, Blocked{Previous: prev}
 			}
 		}
@@ -89,12 +104,20 @@ func (s *Service) Claim(ctx context.Context, taskID, attemptID, tool string, arg
 	if _, err := s.l.Begin(ctx, id, kind, string(Claimed), attemptID, it); err != nil {
 		return Intent{}, err
 	}
+	s.active[id] = true
 	return it, nil
 }
 
 // Dispatched marks the moment before the call leaves, in the journal
 // first: the record must exist before the world can be changed.
-func (s *Service) Dispatched(ctx context.Context, id string) error {
+func (s *Service) Dispatched(ctx context.Context, id string) (err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	defer func() {
+		if err != nil {
+			delete(s.active, id)
+		}
+	}()
 	if _, err := s.l.Journal().Started(ledger.EffectID{Operation: id, Kind: "dispatch", InstanceKey: "1"}, "", nil); err != nil {
 		return err
 	}
@@ -103,6 +126,9 @@ func (s *Service) Dispatched(ctx context.Context, id string) error {
 
 // Confirmed records the receipt.
 func (s *Service) Confirmed(ctx context.Context, id string, receipt any) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	defer delete(s.active, id)
 	raw, _ := json.Marshal(receipt)
 	if _, err := s.l.Journal().Confirmed(ledger.EffectID{Operation: id, Kind: "dispatch", InstanceKey: "1"}, receipt); err != nil {
 		return err
@@ -112,6 +138,9 @@ func (s *Service) Confirmed(ctx context.Context, id string, receipt any) error {
 
 // Failed records a call the platform refused: it did not happen.
 func (s *Service) Failed(ctx context.Context, id string, cause error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	defer delete(s.active, id)
 	it, err := s.Get(ctx, id)
 	if err != nil {
 		return err
@@ -121,6 +150,9 @@ func (s *Service) Failed(ctx context.Context, id string, cause error) error {
 
 // Lost records a call whose answer never came: it may have happened.
 func (s *Service) Lost(ctx context.Context, id string, cause error) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	defer delete(s.active, id)
 	return s.move(ctx, id, Dispatched, Unknown, nil, cause.Error())
 }
 
@@ -128,6 +160,8 @@ func (s *Service) Lost(ctx context.Context, id string, cause error) error {
 // keeps it as done, "new" says it never did and the call may be made
 // again.
 func (s *Service) Resolve(ctx context.Context, id, verdict, by string) (Intent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	to := State("")
 	switch verdict {
 	case "happened":
@@ -136,6 +170,20 @@ func (s *Service) Resolve(ctx context.Context, id, verdict, by string) (Intent, 
 		to = Failed
 	default:
 		return Intent{}, fmt.Errorf("verdict %q is not happened or new", verdict)
+	}
+	if s.active[id] {
+		return Intent{}, fmt.Errorf("intent %s is still in progress", id)
+	}
+	it, err := s.Get(ctx, id)
+	if err != nil {
+		return Intent{}, err
+	}
+	it, err = s.recoverDispatch(ctx, it)
+	if err != nil {
+		return Intent{}, err
+	}
+	if it.State != Unknown {
+		return Intent{}, ErrNotUnknown
 	}
 	if err := s.move(ctx, id, Unknown, to, nil, "resolved as "+verdict+" by "+by); err != nil {
 		return Intent{}, err
@@ -181,9 +229,52 @@ func (s *Service) ForTask(ctx context.Context, taskID string) ([]Intent, error) 
 	return s.list(ctx, func(it Intent) bool { return it.TaskID == taskID })
 }
 
-// Unresolved lists every outcome-unknown intent.
+// Unresolved includes abandoned dispatches, recovered to outcome-unknown so
+// they can be resolved. A live provider request never becomes recoverable.
 func (s *Service) Unresolved(ctx context.Context) ([]Intent, error) {
-	return s.list(ctx, func(it Intent) bool { return it.State == Unknown })
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	candidates, err := s.list(ctx, func(it Intent) bool { return it.State == Unknown || it.State == Dispatched })
+	if err != nil {
+		return nil, err
+	}
+	var out []Intent
+	for _, it := range candidates {
+		it, err = s.recoverDispatch(ctx, it)
+		if err != nil {
+			return nil, err
+		}
+		if it.State == Unknown {
+			out = append(out, it)
+		}
+	}
+	return out, nil
+}
+
+// PendingResolution observes outcomes that need reconciliation without
+// performing recovery writes. A read model may call this safely; Resolve
+// performs the guarded recovery transition when the operator acts.
+func (s *Service) PendingResolution(ctx context.Context) ([]Intent, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.list(ctx, func(it Intent) bool {
+		return it.State == Unknown || (it.State == Dispatched && !s.active[it.ID])
+	})
+}
+
+// recoverDispatch runs under mu. The active set belongs to this process;
+// after restart, or after a failed terminal write, a dispatched operation
+// has no live caller that can establish its result.
+func (s *Service) recoverDispatch(ctx context.Context, it Intent) (Intent, error) {
+	if it.State != Dispatched || s.active[it.ID] {
+		return it, nil
+	}
+	note := "operation ended before its final result was recorded"
+	if err := s.move(ctx, it.ID, Dispatched, Unknown, nil, note); err != nil {
+		return Intent{}, err
+	}
+	it.State, it.Error = Unknown, note
+	return it, nil
 }
 
 func (s *Service) list(ctx context.Context, keep func(Intent) bool) ([]Intent, error) {

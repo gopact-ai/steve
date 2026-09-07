@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/ability"
 	"io"
 	"log"
 	"net"
@@ -22,6 +21,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/mcpprobe"
 	"github.com/gopact-ai/steve/internal/mcpscan"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -127,6 +128,8 @@ type Observe struct {
 
 // Server accepts hub connections and runs agents on this machine.
 type Server struct {
+	settingsMu           sync.Mutex
+	settingsFileRevision string
 	// cfg is replaced whole when the hub changes the node's settings;
 	// readers take the current one without locking.
 	cfg atomic.Pointer[ServerConfig]
@@ -165,17 +168,36 @@ type Server struct {
 	// "no hub" means the node is still coming up; after it, the hub is
 	// gone and will come back on its own — a caller learns more from a
 	// prompt retryable error than from a wait.
-	hubSeen   bool
-	processMu sync.Mutex
-	processes map[string]*agentProcess
-	processWG sync.WaitGroup
-	faultOnce sync.Once
+	hubSeen      bool
+	processMu    sync.Mutex
+	processes    map[string]*agentProcess
+	processWG    sync.WaitGroup
+	workWG       sync.WaitGroup
+	requestWG    sync.WaitGroup
+	backgroundWG sync.WaitGroup
+	restart      restartControl
+	faultOnce    sync.Once
 }
 
 func NewServer(cfg ServerConfig) *Server {
-	s := &Server{mcpPort: rememberedPort(cfg), generation: time.Now().Unix(), launch: NewLaunchProbe(), processes: map[string]*agentProcess{}}
+	s := &Server{mcpPort: rememberedPort(cfg), generation: nextGeneration(), launch: NewLaunchProbe(), processes: map[string]*agentProcess{}}
 	s.cfg.Store(&cfg)
+	s.settingsFileRevision, _ = nodeSettingsFileRevision(cfg.Source)
 	return s
+}
+
+var lastGeneration atomic.Int64
+
+func nextGeneration() int64 {
+	// Microseconds distinguish fast reexecs while remaining an exact JS
+	// integer in status responses. In-process fixtures can start together.
+	for {
+		before := lastGeneration.Load()
+		next := max(time.Now().UnixMicro(), before+1)
+		if lastGeneration.CompareAndSwap(before, next) {
+			return next
+		}
+	}
 }
 
 // conf is the configuration in force.
@@ -183,6 +205,13 @@ func (s *Server) conf() ServerConfig { return *s.cfg.Load() }
 
 // Serve blocks until ctx ends or the listener fails.
 func (s *Server) Serve(ctx context.Context) error {
+	if s.conf().StateDir != "" {
+		unlock, err := steveruntime.AcquireLock(filepath.Join(s.conf().StateDir, "instance-control"))
+		if err != nil {
+			return fmt.Errorf("node instance is already running: %w", err)
+		}
+		defer unlock()
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s.ctx = ctx
@@ -195,14 +224,20 @@ func (s *Server) Serve(ctx context.Context) error {
 	s.mu.Unlock()
 	var handlers sync.WaitGroup
 	defer func() {
+		s.restart.mu.Lock()
+		s.restart.draining = true
+		s.restart.mu.Unlock()
 		cancel()
 		_ = listener.Close()
 		s.closeMCP()
 		handlers.Wait()
+		s.requestWG.Wait()
+		s.workWG.Wait()
 		s.stopProcesses("")
 		s.processWG.Wait()
+		s.backgroundWG.Wait()
 	}()
-	go s.pruneStreams(ctx)
+	s.backgroundWG.Go(func() { s.pruneStreams(ctx) })
 	log.Printf("steve-node: %s listening on %s", s.conf().Name, listener.Addr())
 	go func() {
 		<-ctx.Done()
@@ -219,14 +254,23 @@ func (s *Server) Serve(ctx context.Context) error {
 			log.Printf("steve-node: skills %s from last run could not be materialized: %v", hash[:12], err)
 		}
 	}
-	go s.launch.Run(ctx, s.commands)
+	s.backgroundWG.Go(func() { s.launch.Run(ctx, s.commands) })
 	if err := s.startBroker(); err != nil {
+		return err
+	}
+	if err := s.startRestartControl(cancel); err != nil {
 		return err
 	}
 	for {
 		socket, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
+				s.restart.mu.Lock()
+				requested := s.restart.requested
+				s.restart.mu.Unlock()
+				if requested {
+					return ErrRestartRequested
+				}
 				return nil
 			}
 			return fmt.Errorf("accept: %w", err)
@@ -332,40 +376,58 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 			log.Printf("steve-node: hub %q disconnected", hello.Hub)
 			return
 		}
-		switch stream.Request().Kind {
-		case nodewire.StreamExec:
-			go s.runCommand(ctx, stream)
-		case nodewire.StreamArtifact:
-			go s.runArtifact(ctx, stream)
-		case nodewire.StreamFiles:
-			go s.runFiles(ctx, stream)
-		case nodewire.StreamAdvert:
-			go s.sendAdvert(stream)
-		case nodewire.StreamBlob:
-			go s.transferBlob(ctx, stream)
-		case nodewire.StreamGrant:
-			go s.grant(stream)
-		case nodewire.StreamFetch:
-			go s.fetch(ctx, stream)
-		case nodewire.StreamAdmit:
-			go s.admit(stream)
-		case nodewire.StreamSkills:
-			go s.applySkills(stream)
-		case nodewire.StreamRelease:
-			go s.releaseAttempt(stream)
-		case nodewire.StreamConfig:
-			go s.configure(stream)
-		case nodewire.StreamInspect:
-			go s.inspect(ctx, stream)
-		case nodewire.StreamMCPProbe:
-			go s.mcpProbe(ctx, stream)
-		default:
-			if stream.Request().Kind == nodewire.StreamACP {
-				s.injectDrop(ctx, mux)
-			}
-			s.processWG.Add(1)
-			go func() { defer s.processWG.Done(); s.runAgent(ctx, stream) }()
+		req := stream.Request()
+		if req.Kind == nodewire.StreamRestart {
+			s.requestWG.Go(func() { s.restartStream(hello.Hub, stream) })
+			continue
 		}
+		readOnly := req.Kind == nodewire.StreamAdvert || req.Kind == nodewire.StreamInspect || (req.Kind == nodewire.StreamConfig && req.Command == "get")
+		var done func()
+		if !readOnly {
+			done, err = s.beginWork()
+			if err != nil {
+				_ = stream.CloseWithReason(err.Error())
+				continue
+			}
+		}
+		s.requestWG.Go(func() {
+			if done != nil {
+				defer done()
+			}
+			switch req.Kind {
+			case nodewire.StreamExec:
+				s.runCommand(ctx, stream)
+			case nodewire.StreamArtifact:
+				s.runArtifact(ctx, stream)
+			case nodewire.StreamFiles:
+				s.runFiles(ctx, stream)
+			case nodewire.StreamAdvert:
+				s.sendAdvert(stream)
+			case nodewire.StreamBlob:
+				s.transferBlob(ctx, stream)
+			case nodewire.StreamGrant:
+				s.grant(stream)
+			case nodewire.StreamFetch:
+				s.fetch(ctx, stream)
+			case nodewire.StreamAdmit:
+				s.admit(stream)
+			case nodewire.StreamSkills:
+				s.applySkills(stream)
+			case nodewire.StreamRelease:
+				s.releaseAttempt(stream)
+			case nodewire.StreamConfig:
+				s.configure(stream)
+			case nodewire.StreamInspect:
+				s.inspect(ctx, stream)
+			case nodewire.StreamMCPProbe:
+				s.mcpProbe(ctx, stream)
+			default:
+				if stream.Request().Kind == nodewire.StreamACP {
+					s.injectDrop(ctx, mux)
+				}
+				s.runAgent(ctx, stream)
+			}
+		})
 	}
 }
 
@@ -415,72 +477,106 @@ func (s *Server) nextSequence() int64 {
 	return s.seq
 }
 
-// claim admits one hub at a time by name. A second hub with the right
-// token is still refused while the first is connected: sharing a machine
-// between two schedulers is a decision, not an accident.
+// claim admits the instance's owner by name. Disconnecting or losing a hub
+// never grants ownership to another; adoption changes the persisted owner
+// while the instance is stopped.
 func (s *Server) claim(hub string) error {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
-	if s.hubLive > 0 && s.hubName != hub {
-		return fmt.Errorf("this node is served by hub %q; refuse %q", s.hubName, hub)
+	if s.hubName != "" && s.hubName != hub {
+		return fmt.Errorf("this node belongs to hub %q; stop this instance and explicitly adopt %q", s.hubName, hub)
 	}
-	// A node remembers its hub across restarts: a hub that vanished
-	// without saying goodbye keeps the node for OwnerGrace, so a second
-	// hub pointed at the same machine cannot take it over during a blip.
-	// A hub that disconnected cleanly has handed the node back.
+	// The disk record preserves ownership across restarts. Released is
+	// evidence that the old processes stopped, not permission to take over.
 	if s.hubLive == 0 {
-		owner := s.owner()
-		if owner.Hub != "" && owner.Hub != hub && !owner.Released && time.Since(owner.LastSeen) < OwnerGrace {
-			return fmt.Errorf("this node belongs to hub %q, last seen %s ago; it is free %s after that hub goes silent, or now with `steve-node adopt %s`",
-				owner.Hub, time.Since(owner.LastSeen).Round(time.Second), OwnerGrace, hub)
+		owner, err := s.readOwner()
+		if err != nil {
+			return err
 		}
-		if owner.Hub != hub && owner.Hub != "" {
-			log.Printf("steve-node: hub changed from %q to %q", owner.Hub, hub)
+		if owner.Hub != "" && owner.Hub != hub {
+			return fmt.Errorf("this node belongs to hub %q; stop this instance and explicitly adopt %q", owner.Hub, hub)
 		}
+	}
+	if err := s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC()}); err != nil {
+		return err
 	}
 	s.hubName = hub
 	s.hubLive++
-	s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC()})
 	return nil
 }
 
 func (s *Server) release(hub string, clean bool) {
+	if clean {
+		clean = s.processesStopped(hub)
+	}
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
 	if s.hubName == hub && s.hubLive > 0 {
 		s.hubLive--
 		if s.hubLive == 0 {
-			s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC(), Released: clean})
+			if err := s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC(), Released: clean}); err != nil {
+				log.Printf("node: persist owner release: %v", err)
+			}
 		}
 	}
 }
 
-// OwnerGrace is how long a node stays with a hub that went silent.
-const OwnerGrace = 10 * time.Minute
-
-// hubOwner is the hub a node last served, kept on disk.
+// hubOwner binds an instance to its hub across disconnects and restarts.
 type hubOwner struct {
 	Hub      string    `json:"hub"`
 	LastSeen time.Time `json:"last_seen"`
-	// Released says the hub disconnected on purpose; the node is free.
+	// Released records a clean disconnect with stopped processes. It can
+	// supply stop evidence to offline adoption but never clears ownership.
 	Released bool `json:"released,omitempty"`
 }
 
 func (s *Server) ownerPath() string { return filepath.Join(s.conf().StateDir, "hub.json") }
 
-func (s *Server) owner() hubOwner {
+func (s *Server) owner() hubOwner { o, _ := s.readOwner(); return o }
+func (s *Server) readOwner() (hubOwner, error) {
 	var o hubOwner
-	if b, err := os.ReadFile(s.ownerPath()); err == nil {
-		_ = json.Unmarshal(b, &o)
+	if s.conf().StateDir == "" {
+		return o, nil
 	}
-	return o
+	raw, err := os.ReadFile(s.ownerPath())
+	if os.IsNotExist(err) {
+		return o, nil
+	}
+	if err != nil {
+		return o, err
+	}
+	if err := json.Unmarshal(raw, &o); err != nil {
+		return o, fmt.Errorf("node ownership record unreadable: %w", err)
+	}
+	return o, nil
 }
 
-func (s *Server) writeOwner(o hubOwner) {
-	b, _ := json.Marshal(o)
-	if err := os.MkdirAll(s.conf().StateDir, 0o700); err == nil {
-		_ = os.WriteFile(s.ownerPath(), b, 0o600)
+func (s *Server) writeOwner(o hubOwner) error {
+	if s.conf().StateDir == "" {
+		return nil
 	}
+	raw, err := json.Marshal(o)
+	if err != nil {
+		return err
+	}
+	return (&ledger.FileDocument{Path: s.ownerPath()}).Save(raw)
+}
+
+func (s *Server) processesStopped(hub string) bool {
+	s.processMu.Lock()
+	defer s.processMu.Unlock()
+	for _, p := range s.processes {
+		if p.owner != hub {
+			continue
+		}
+		p.mu.Lock()
+		ended := p.exit != ""
+		p.mu.Unlock()
+		if !ended {
+			return false
+		}
+	}
+	return true
 }
 
 // touchOwner marks the serving hub as seen now; the hub's minute refresh
@@ -489,21 +585,66 @@ func (s *Server) touchOwner() {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
 	if s.hubLive > 0 {
-		s.writeOwner(hubOwner{Hub: s.hubName, LastSeen: time.Now().UTC()})
+		if err := s.writeOwner(hubOwner{Hub: s.hubName, LastSeen: time.Now().UTC()}); err != nil {
+			log.Printf("node: persist owner heartbeat: %v", err)
+		}
 	}
 }
 
-// Adopt hands the node to a hub explicitly: the next handshake from it is
-// accepted whatever the previous owner's grace says.
-func Adopt(stateDir, hub string) error {
-	if hub == "" {
-		return errors.New("adopt: hub name is required")
+// Adopt assigns a stopped instance to the named hub. Handshakes from any
+// other hub remain refused, even before the new owner first connects.
+func Adopt(stateDir, hub string) error { return AdoptWithEvidence(stateDir, hub, "operator", "") }
+
+// AdoptWithEvidence requires the instance stopped. Unfinished stream journals
+// additionally require the operator's explicit physical-stop verification.
+// This records that statement; it does not pretend to verify another process.
+func AdoptWithEvidence(stateDir, hub, actor, evidence string) error {
+	if hub == "" || stateDir == "" {
+		return errors.New("adopt requires node state directory and hub identity")
+	}
+	unlock, err := steveruntime.AcquireLock(filepath.Join(stateDir, "instance-control"))
+	if err != nil {
+		return fmt.Errorf("stop the node instance before adoption: %w", err)
+	}
+	defer unlock()
+	streams, err := os.ReadDir(filepath.Join(stateDir, "streams"))
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	var unknown []string
+	for _, stream := range streams {
+		if !stream.IsDir() {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(stateDir, "streams", stream.Name(), "ended")); err != nil {
+			unknown = append(unknown, stream.Name())
+		}
+	}
+	if len(unknown) > 0 && strings.TrimSpace(evidence) == "" {
+		return fmt.Errorf("process streams %v have no verified exit; --evidence must record operator verification after physically stopping them", unknown)
 	}
 	s := &Server{}
-	c := ServerConfig{StateDir: stateDir}
-	s.cfg.Store(&c)
-	s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC(), Released: true})
-	return nil
+	s.cfg.Store(&ServerConfig{StateDir: stateDir})
+	previous, err := s.readOwner()
+	if err != nil {
+		return err
+	}
+	if previous.Hub != "" && previous.Hub != hub && !previous.Released && strings.TrimSpace(evidence) == "" {
+		return errors.New("previous owner did not cleanly release; explicit physical stop evidence is required")
+	}
+	record := struct {
+		From, To, Actor, Evidence string
+		At                        time.Time
+		UnknownStreams            []string
+	}{previous.Hub, hub, actor, evidence, time.Now().UTC(), unknown}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	if err := (&ledger.FileDocument{Path: filepath.Join(stateDir, "last-adoption.json")}).Save(raw); err != nil {
+		return err
+	}
+	return s.writeOwner(hubOwner{Hub: hub, LastSeen: record.At, Released: true})
 }
 
 // advert reports what this machine can honestly do. Harnesses whose command
@@ -514,6 +655,11 @@ func (s *Server) advert() nodewire.Advert {
 	adv := Advertise(s.conf().Name, s.conf().Harnesses, s.conf().Capabilities)
 	adv.Snapshot = s.snapshot()
 	adv.Features = nodewire.Features()
+	s.restart.mu.Lock()
+	if s.restart.enabled && s.conf().StateDir != "" {
+		adv.Features = append(adv.Features, nodewire.FeatureRestart)
+	}
+	s.restart.mu.Unlock()
 	adv.SessionGraceMS = s.sessionGrace().Milliseconds()
 	adv.WorkspaceRoot = s.conf().WorkspaceRoot
 	adv.StateDir = s.conf().StateDir
@@ -1206,6 +1352,12 @@ func (s *Server) servePeer(ctx context.Context, socket net.Conn, hello nodewire.
 		_ = stream.CloseWithReason(nodewire.ExitPrefix + "2")
 		return
 	}
+	done, err := s.beginWork()
+	if err != nil {
+		_ = stream.CloseWithReason(err.Error())
+		return
+	}
+	defer done()
 	s.transferBlob(ctx, stream)
 }
 

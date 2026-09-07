@@ -1,0 +1,8 @@
+.side-chat { display: flex; flex-direction: column; min-width: 0; min-height: 0; height: 100%; width: min(400px, 100%); background: var(--color-bg-primary); border-left: 1px solid var(--color-border-secondary); color: var(--color-text-primary); }
+.side-chat-header { display: flex; align-items: center; gap: 8px; padding: 12px 16px 8px; }
+.side-chat-transcript { min-height: 80px; flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 12px 16px; }
+.side-chat-user { margin: 12px 0 12px 20px; border-radius: 10px; padding: 10px 12px; background: var(--color-bg-secondary); font-size: 13px; }
+.side-chat-answer { min-width: 0; margin: 16px 0; font-size: 13px; overflow-wrap: anywhere; }
+.side-chat-compose { border-top: 1px solid var(--color-border-secondary); padding: 12px 16px max(12px, env(safe-area-inset-bottom)); flex-shrink: 0; max-height: 55%; overflow-y: auto; }
+.side-chat > section { flex-shrink: 0; max-height: 25dvh; padding-inline: 12px; }
+@media (max-width: 639px) { .side-chat { width: 100%; } }

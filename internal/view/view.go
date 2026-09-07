@@ -64,6 +64,8 @@ type Step struct {
 }
 
 type Usage struct {
+	// Reported distinguishes an explicit zero-token report from no report.
+	Reported         bool
 	TotalTokens      uint64
 	InputTokens      uint64
 	OutputTokens     uint64
@@ -77,6 +79,12 @@ type Usage struct {
 	// Cost is the latest session total, not this turn's incremental spend.
 	// Keeping its currency avoids assuming every provider bills in USD.
 	Cost *Cost
+}
+
+// TokensReported also accepts positive counters supplied by a harness.
+// Context occupancy alone is not a report of tokens spent.
+func (u Usage) TokensReported() bool {
+	return u.Reported || u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0
 }
 
 type Cost struct {
@@ -180,10 +188,14 @@ type Turn struct {
 // Steve can actually put in front of a person as a card, and anything outside
 // it is declined rather than half-rendered.
 type Question struct {
-	RequestID string
-	Message   string
-	Title     string
-	Choices   []Choice
+	RequestID  string
+	SessionID  string
+	Generation uint64
+	Kind       string
+	Required   bool
+	Message    string
+	Title      string
+	Choices    []Choice
 }
 
 type Choice struct {
@@ -206,7 +218,8 @@ type Option struct {
 // Answer carries the chosen Choice.Value. An empty Value means the user
 // declined or never answered.
 type Answer struct {
-	Value string
+	Value    string
+	Decision string
 }
 
 func (a Answer) Chosen() bool { return a.Value != "" }

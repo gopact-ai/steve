@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { emptySnapshot, eventsURL, fetchState } from "./api";
+import { emptySnapshot, fetchState } from "./api/fleet";
+import { eventsURL, HTTPError } from "./http";
+import { useResourceRead } from "@/hooks/use-resource-read";
 import type { Event, Snapshot } from "./types";
 
 export type Live = "connecting" | "live" | "reconnecting" | "unauthorized";
@@ -26,19 +28,16 @@ export function FleetProvider({ children }: { children: ReactNode }) {
     const firstVersion = useRef<string | null>(null);
     const [hubUpdated, setHubUpdated] = useState(false);
 
-    const load = useCallback(async () => {
-        try {
-            const snapshot = await fetchState();
-            if (snapshot.hub.version) {
-                firstVersion.current ??= snapshot.hub.version;
-                if (snapshot.hub.version !== firstVersion.current) setHubUpdated(true);
-            }
-            setSnap(snapshot);
-            setLive((s) => (s === "unauthorized" ? "connecting" : s));
-        } catch (e) {
-            if (/401|unauthorized/i.test(String(e))) setLive("unauthorized");
+    const load = useResourceRead("fleet", fetchState, (snapshot) => {
+        if (snapshot.hub.version) {
+            firstVersion.current ??= snapshot.hub.version;
+            if (snapshot.hub.version !== firstVersion.current) setHubUpdated(true);
         }
-    }, []);
+        setSnap(snapshot);
+        setLive((state) => state === "unauthorized" ? "connecting" : state);
+    }, (error) => {
+        if (error instanceof HTTPError && error.status === 401) setLive("unauthorized");
+    });
 
     const refresh = useCallback(() => {
         if (pending.current) return;
@@ -69,7 +68,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
             };
         };
         connect();
-        return () => { window.clearInterval(floor); source?.close(); if (retry) window.clearTimeout(retry); };
+        return () => { window.clearInterval(floor); source?.close(); if (retry) window.clearTimeout(retry); if (pending.current) window.clearTimeout(pending.current); };
     }, [load, refresh]);
 
     const value = useMemo(() => ({ snap, live, events, consoleEvents, refresh, hubUpdated }), [snap, live, events, consoleEvents, refresh, hubUpdated]);

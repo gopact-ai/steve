@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
@@ -21,17 +22,17 @@ func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
 	if err := s.Persist(doc); err != nil {
 		t.Fatal(err)
 	}
-	first, _, err := s.enqueue(t.Context(), "main", "delegate", "", nil, false, "")
+	first, _, err := s.enqueue(t.Context(), "main", "delegate", nil, enqueueOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	call := nextCall(t, h)
-	step := readmodel.FromStepProgress("#59", readmodel.Progress{
+	step := readmodel.FromStepProgress("#59", consoleapi.Progress{
 		Agent: "builder", Node: "node-a", Model: "child-model",
 		Reasoning: strings.Repeat("完整思考\n", 2000),
-		Plan:      []readmodel.PlanLine{{Text: "build", Status: "in_progress"}},
-		Tools:     []readmodel.ToolCall{{ID: "tool-1", Name: "build", Status: "running"}},
-	}, readmodel.StepInfo{Kind: "delegate", Goal: "build the release", State: "running"})
+		Plan:      []consoleapi.PlanLine{{Text: "build", Status: "in_progress"}},
+		Tools:     []consoleapi.ToolCall{{ID: "tool-1", Name: "build", Status: "running"}},
+	}, consoleapi.StepInfo{Kind: "delegate", Goal: "build the release", State: "running"})
 	s.UpdateStep("main", "59", step)
 	other := step
 	other.ID = "#60"
@@ -45,7 +46,7 @@ func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
 	// Late progress while idle updates the existing reply immediately.
 	step.Reasoning += "父回合已经结束"
 	s.UpdateStep("console:main", "59", step)
-	second, _, err := s.enqueue(t.Context(), "main", "a different turn", "", nil, false, "")
+	second, _, err := s.enqueue(t.Context(), "main", "a different turn", nil, enqueueOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,8 +61,8 @@ func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
 	}()
 	step.State, step.Answer, step.Elapsed = "done", "built the release", "2m0s"
 	step.Refs, step.Attempt, step.Files = []string{"artifact:release"}, "attempt-59", 2
-	step.Plan = []readmodel.PlanLine{{Text: "build", Status: "completed"}}
-	step.Tools = []readmodel.ToolCall{{ID: "tool-1", Name: "build", Status: "completed"}}
+	step.Plan = []consoleapi.PlanLine{{Text: "build", Status: "completed"}}
+	step.Tools = []consoleapi.ToolCall{{ID: "tool-1", Name: "build", Status: "completed"}}
 	for range 100 {
 		s.UpdateStep("main", "59", step)
 	}
@@ -99,7 +100,7 @@ func TestChildSnapshotOutlivesItsParentTurn(t *testing.T) {
 func TestParentAndLateChildTimelinesSurviveRestart(t *testing.T) {
 	doc := &memDoc{}
 	parentTimeline := []view.Span{{Kind: "text", Text: "parent narration", At: time.Now().UTC()}}
-	child := readmodel.FromStepProgress("#72", readmodel.Progress{Timeline: []readmodel.Span{{Kind: "thought", Text: "child thinking", At: time.Now().UTC()}}}, readmodel.StepInfo{Kind: "delegate", State: "running"})
+	child := readmodel.FromStepProgress("#72", consoleapi.Progress{Timeline: []consoleapi.Span{{Kind: "thought", Text: "child thinking", At: time.Now().UTC()}}}, consoleapi.StepInfo{Kind: "delegate", State: "running"})
 	var s *Service
 	s = New(stepHandler(func(req turn.Request) turn.Result {
 		req.OnProgress(view.Progress{Timeline: parentTimeline})
@@ -113,7 +114,7 @@ func TestParentAndLateChildTimelinesSurviveRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	child.State = "done"
-	child.Timeline = append(child.Timeline, readmodel.Span{Kind: "text", Text: "child final", At: time.Now().UTC()})
+	child.Timeline = append(child.Timeline, consoleapi.Span{Kind: "text", Text: "child final", At: time.Now().UTC()})
 	s.UpdateStep("main", "72", child)
 	restored := New(nil, "owner", nil)
 	if err := restored.Persist(doc); err != nil {
@@ -134,7 +135,7 @@ func (h stepHandler) Handle(_ context.Context, req turn.Request) (turn.Result, e
 type finishingInspector struct{ entered, release chan struct{} }
 
 func (i finishingInspector) ProjectOf(context.Context, string) string { return "scratch" }
-func (i finishingInspector) Changes(context.Context, string) (*readmodel.ChangeSummary, error) {
+func (i finishingInspector) Changes(context.Context, string) (*consoleapi.ChangeSummary, error) {
 	close(i.entered)
 	<-i.release
 	return nil, nil
@@ -142,14 +143,14 @@ func (i finishingInspector) Changes(context.Context, string) (*readmodel.ChangeS
 
 func TestChildFinishesBetweenHandlerReturnAndReplySave(t *testing.T) {
 	inspector := finishingInspector{make(chan struct{}), make(chan struct{})}
-	step := readmodel.FromStepProgress("#59", readmodel.Progress{Model: "child-model"}, readmodel.StepInfo{Kind: "delegate", State: "running"})
+	step := readmodel.FromStepProgress("#59", consoleapi.Progress{Model: "child-model"}, consoleapi.StepInfo{Kind: "delegate", State: "running"})
 	var s *Service
 	s = New(stepHandler(func(req turn.Request) turn.Result {
 		s.UpdateStep(req.ConversationID, "59", step)
 		return turn.Result{Text: "parent finished", Attempt: "parent-attempt"}
 	}), "owner", nil)
 	s.SetInspector(inspector)
-	e, _, err := s.enqueue(t.Context(), "main", "delegate", "", nil, false, "")
+	e, _, err := s.enqueue(t.Context(), "main", "delegate", nil, enqueueOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -170,14 +171,14 @@ func TestChildFinishesBetweenHandlerReturnAndReplySave(t *testing.T) {
 func TestReplacementTurnKeepsSeparateChildrenWhileOldTurnFinishes(t *testing.T) {
 	h := &queueHandler{started: make(chan *queueCall, 4)}
 	s := New(h, "owner", nil)
-	first, _, err := s.enqueue(t.Context(), "main", "first", "", nil, false, "")
+	first, _, err := s.enqueue(t.Context(), "main", "first", nil, enqueueOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	oldCall := nextCall(t, h)
-	step := readmodel.FromStepProgress("#59", readmodel.Progress{}, readmodel.StepInfo{Kind: "delegate", State: "running"})
+	step := readmodel.FromStepProgress("#59", consoleapi.Progress{}, consoleapi.StepInfo{Kind: "delegate", State: "running"})
 	s.UpdateStep("main", "59", step)
-	next, _, err := s.enqueue(t.Context(), "main", "!replacement", "", nil, false, "")
+	next, _, err := s.enqueue(t.Context(), "main", "!replacement", nil, enqueueOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}

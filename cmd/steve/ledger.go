@@ -8,9 +8,11 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/project"
 )
 
 // openLedger opens the authority every store lives in. A database older
@@ -29,11 +31,12 @@ func openLedger(cfg *config.Config) (*ledger.Ledger, error) {
 // before the gateway serves again.
 func ledgerCmd(args []string) error {
 	if len(args) == 0 {
-		return errors.New("usage: steve ledger status|rotate|recover|effects|resolve <id> happened|new [--config config.json]")
+		return errors.New("usage: steve ledger status|rotate|recover|effects|resolve|quarantine|confirm-stopped|clones|confirm-clone-stopped [--config config.json]")
 	}
 	verb := args[0]
 	flags := flag.NewFlagSet("ledger "+verb, flag.ContinueOnError)
 	configPath := flags.String("config", "config.json", "path to config file")
+	evidence := flags.String("evidence", "", "verified physical termination evidence for confirm-stopped")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -43,6 +46,60 @@ func ledgerCmd(args []string) error {
 	}
 	dir := filepath.Dir(cfg.Gateway.StatePath)
 	switch verb {
+	case "clones", "confirm-clone-stopped":
+		book, err := ledger.Open(dir, ledger.Options{})
+		if err != nil {
+			return err
+		}
+		defer book.Close()
+		projects := project.Open(book)
+		if verb == "clones" {
+			ops, err := projects.CloneOperations(context.Background())
+			if err != nil {
+				return err
+			}
+			for _, op := range ops {
+				fmt.Printf("%s  state=%s  project=%s  node=%s  path=%s  %s\n", op.ID, op.State, op.Project, op.Copy.Node, op.Copy.Path, op.Error)
+			}
+			return nil
+		}
+		if len(flags.Args()) != 1 || *evidence == "" {
+			return errors.New("usage: steve ledger confirm-clone-stopped --config <config> --evidence <verified clone process exit> <operation id>")
+		}
+		if err := projects.ConfirmCloneStopped(context.Background(), flags.Args()[0], "operator", *evidence); err != nil {
+			return err
+		}
+		fmt.Printf("%s: clone stop evidence recorded; directory quarantine cleared\n", flags.Args()[0])
+		return nil
+	case "quarantine", "confirm-stopped":
+		book, err := ledger.Open(dir, ledger.Options{})
+		if err != nil {
+			return err
+		}
+		defer book.Close()
+		service := attempt.New(book)
+		if verb == "quarantine" {
+			records, err := service.Unsettled(context.Background())
+			if err != nil {
+				return err
+			}
+			for _, r := range records {
+				fmt.Printf("%s  task=%s  node=%s  harness=%s  workspace=%s  %s\n", r.ID, r.TaskID, r.Node, r.Harness, r.Workspace.Path, r.Error)
+			}
+			if len(records) == 0 {
+				fmt.Println("no quarantined writers")
+			}
+			return nil
+		}
+		if len(flags.Args()) != 1 || *evidence == "" {
+			return errors.New("usage: steve ledger confirm-stopped --config <config> --evidence <verified process exit> <attempt id>; verify the original writer stopped, then restart the hub after reconciliation")
+		}
+		r, err := service.ConfirmStopped(context.Background(), flags.Args()[0], "operator", *evidence)
+		if err != nil {
+			return err
+		}
+		fmt.Printf("%s: physical stop evidence recorded; quarantine cleared; restart the hub to reload runtime state\n", r.ID)
+		return nil
 	case "status":
 		book, err := ledger.Open(dir, ledger.Options{})
 		if errors.Is(err, ledger.ErrRecoveryRequired) {

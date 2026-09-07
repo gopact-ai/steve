@@ -12,6 +12,25 @@ jobs:
         with:
           go-version-file: go.mod
       - name: gofmt
-        run: test -z "$(gofmt -l .)"
-      - run: go vet ./...
-      - run: go test -race ./...
+        run: test -z "$(git ls-files -z '*.go' | xargs -0 gofmt -l)"
+      - run: go vet ./cmd/... ./internal/... ./e2e/...
+      - run: go test -race ./cmd/... ./internal/... ./e2e/...
+  console:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: web/console/package-lock.json
+      - run: npm ci
+        working-directory: web/console
+      - run: npm run test:boundaries && npm run test:unit && npm run build
+        working-directory: web/console
+      - name: Verify embedded console matches source
+        run: test -z "$(git status --porcelain -- internal/readmodel/web/dist)"
+      - run: npx playwright install --with-deps chromium
+        working-directory: web/console
+      - run: npm run test:ui && npm run test:architecture && npm run test:settings && npm run test:materials && npm run test:selection
+        working-directory: web/console

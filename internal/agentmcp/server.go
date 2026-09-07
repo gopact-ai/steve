@@ -1,6 +1,5 @@
-// Package agentmcp is the gateway's built-in MCP server: the send primitive
-// that lets an agent post interim milestones into the Feishu conversation it
-// is working for, before Steve renders the final answer card itself.
+// Package agentmcp provides session-scoped collaboration tools. Messages
+// are addressed to an authorized channel; adapters render and deliver them.
 //
 // It speaks MCP streamable HTTP (JSON responses, stateless) on a loopback
 // listener. Every session gets its own bearer token bound to exactly one
@@ -22,16 +21,17 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/channel"
 )
 
 // ServerName is the MCP server name agents see; tool calls arrive as
-// feishu_send / feishu_recall under it.
+// channel_send / channel_recall under it.
 const ServerName = "steve"
 
 const (
 	maxSendsPerTurn = 8
 	// Updates are edits to existing cards, cheaper than sends, but a
-	// runaway narrator patching in a loop would hit Feishu's rate limits.
+	// runaway narrator patching in a loop would hit channel rate limits.
 	maxUpdatesPerTurn = 30
 	maxBodyBytes      = 1 << 20
 	sendTimeout       = 15 * time.Second
@@ -44,30 +44,22 @@ const (
 const Instructions = `## Steve (steve_context / steve_projects / steve_help)
 - Call steve_context first: it says who you are, where you are working, your budget, and what you have. steve_help(topic) has the way things are done here; steve_projects says where every project is.
 
-## Feishu messaging (feishu_send / feishu_update / feishu_recall)
-The "feishu" MCP server posts and maintains interim messages in the current Feishu conversation while you work.
-- feishu_send posts a milestone: a phase conclusion, a produced artifact, a decision worth surfacing early. Most turns need zero interim messages; never narrate step by step.
-- Prefer ONE evolving progress card per task: feishu_update(message_id, content) rewrites a markdown card you sent earlier this turn. Update it as phases complete instead of sending a new card each time.
-- On multi-stage work pass progress like "2/3" (stage/total) to feishu_send and feishu_update so the card badge shows which stage of how many.
+## Channel messaging (channel_send / channel_update / channel_recall)
+The Steve MCP server posts and maintains interim messages in the current conversation.
+- Omit channel to use the current conversation channel. An explicit channel must match its authorized binding; it never grants a new recipient. steve_context reports the bound channel.
+- Pass the opaque message_id from channel_send to update or recall; the receipt fixes its channel and destination.
+- channel_send posts a milestone: a phase conclusion, a produced artifact, a decision worth surfacing early. Most turns need zero interim messages; never narrate step by step.
+- Prefer ONE evolving progress message per task: channel_update(message_id, content) rewrites a message you sent earlier this turn. Update it as phases complete instead of sending a new message each time.
+- On multi-stage work pass progress like "2/3" (stage/total) to channel_send and channel_update to identify the current stage.
 - Your final answer is delivered automatically by the platform when the turn ends. Do NOT send it with these tools, and do not duplicate it there.
-- Do not @-mention anyone. Mentions are reserved for the platform's own final answer card.
-- feishu_recall deletes a message you sent earlier in this same turn (pass its message_id) if it turned out wrong or obsolete.
+- Do not @-mention anyone. Mentions are reserved for the platform's own final answer.
+- channel_recall deletes a message you sent earlier in this same turn (pass its message_id) if it turned out wrong or obsolete.
 
 ## Delegation (steve_delegate / steve_await, when offered)
 - steve_delegate hands ONE bounded goal to another agent — possibly on another machine. Use it when the work needs a machine, credential or environment you do not have.
 - It returns quickly with a task_id and a state. While state is running, call steve_await(task_id) — it waits up to 50 seconds per call — until state is done or failed. Then report the task_id, agent, node and outcome it gives you; do not invent them.
 - Pass refs (a commit, a branch, a blob digest), never pasted content. The child starts a fresh session with only what you give it.
 - The child spends your task's budget. Delegate what you cannot do yourself, not what you would rather not.`
-
-// Sender is the slice of the Feishu channel the tools need. Replies attach
-// to the turn's inbound message, which is what keeps a milestone inside the
-// topic thread it belongs to.
-type Sender interface {
-	ReplyCard(ctx context.Context, messageID string, payload []byte) (string, error)
-	ReplyText(ctx context.Context, messageID, text string) (string, error)
-	PatchCard(ctx context.Context, messageID string, payload []byte) error
-	DeleteMessage(ctx context.Context, messageID string) error
-}
 
 // binding is what a bearer token means: this agent, in this conversation,
 // and nowhere else. A delegated child carries its task and who delegated it,
@@ -130,9 +122,8 @@ type Delegator interface {
 // anchor is where a conversation's sends currently land. The epoch advances
 // with every inbound message, which is what scopes recall to "this turn".
 type anchor struct {
-	chatID    string
-	messageID string
-	epoch     uint64
+	address channel.Address
+	epoch   uint64
 }
 
 // sentState tracks what one agent sent during the current epoch of its
@@ -141,9 +132,14 @@ type anchor struct {
 // this turn: enough to authorize recall/update and to keep the card's
 // stage badge stable across updates.
 type sentMsg struct {
-	format   string
-	seq      int
-	progress string
+	address     channel.Address
+	messenger   channel.Messenger
+	attribution string
+	busy        bool
+	version     uint64
+	format      string
+	seq         int
+	progress    string
 }
 
 type sentState struct {
@@ -160,18 +156,20 @@ type Server struct {
 	listener net.Listener
 	srv      *http.Server
 
-	mu        sync.Mutex
-	sender    Sender
-	delegator Delegator
-	informer  Informer
-	fleeter   Fleeter
-	memorizer Memorizer
-	journal   func(conversationID, agentID, messageID string)
-	tokens    map[string]binding
-	byBind    map[binding]string
-	anchors   map[string]*anchor
-	sent      map[binding]*sentState
-	styles    map[string]string
+	mu             sync.Mutex
+	channels       map[string]channel.Messenger
+	defaultChannel string
+	delegator      Delegator
+	informer       Informer
+	fleeter        Fleeter
+	memorizer      Memorizer
+	journal        func(conversationID, agentID, taskID string, receipt channel.Address)
+	tokens         map[string]binding
+	byBind         map[binding]string
+	anchors        map[string]*anchor
+	sent           map[binding]*sentState
+	styles         map[string]string
+	effects        map[string]bool
 }
 
 // New binds the loopback listener immediately so the URL is known before any
@@ -196,6 +194,7 @@ func New(preferredPort int) (*Server, error) {
 	}
 	s := &Server{
 		listener: listener,
+		channels: map[string]channel.Messenger{},
 		tokens:   map[string]binding{},
 		byBind:   map[binding]string{},
 		anchors:  map[string]*anchor{},
@@ -242,28 +241,40 @@ func (s *Server) Port() int {
 	return addr.Port
 }
 
-func (s *Server) BindChannel(sender Sender) {
+// BindChannel registers a transport adapter. Configuration chooses the default;
+// the adapter registry never infers destinations from message ID prefixes.
+func (s *Server) BindChannel(name string, messenger channel.Messenger) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.sender = sender
+	s.channels[name] = messenger
 }
 
-// Anchor records where the conversation's next sends should attach and
-// advances the turn epoch: messages sent before this moment stop being
-// recallable, because they belong to a turn that is over.
-func (s *Server) Anchor(conversationID, chatID, messageID string) {
-	if conversationID == "" || messageID == "" {
+func (s *Server) SetDefaultChannel(name string) {
+	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.defaultChannel = name
+}
+
+// Anchor binds the current turn to an authorized channel destination.
+// A missing Channel uses the configured default; no destination is invented.
+func (s *Server) Anchor(conversationID string, address channel.Address) {
+	if conversationID == "" || address.Conversation == "" || address.Message == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if address.Channel == "" {
+		address.Channel = s.defaultChannel
+	}
 	a := s.anchors[conversationID]
 	if a == nil {
 		a = &anchor{}
 		s.anchors[conversationID] = a
 	}
-	a.chatID = chatID
-	a.messageID = messageID
+	a.address = address
 	a.epoch++
 }
 
@@ -314,7 +325,7 @@ func (s *Server) Revoke(token string) {
 	}
 }
 
-func (s *Server) SetJournal(journal func(conversationID, agentID, messageID string)) {
+func (s *Server) SetJournal(journal func(conversationID, agentID, taskID string, receipt channel.Address)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.journal = journal
@@ -460,7 +471,7 @@ func initializeResult(params json.RawMessage) map[string]any {
 	return map[string]any{
 		"protocolVersion": version,
 		"capabilities":    map[string]any{"tools": map[string]any{}},
-		"serverInfo":      map[string]any{"name": "steve-feishu", "version": "0.1.0"},
+		"serverInfo":      map[string]any{"name": "steve", "version": "0.1.0"},
 	}
 }
 
@@ -471,7 +482,7 @@ type PlatformTool struct {
 }
 
 // PlatformTools lists the tools the platform's session server offers:
-// the Feishu set always, delegation when a delegator is wired.
+// the channel messaging set always, delegation when a delegator is wired.
 func PlatformTools(delegating bool) []PlatformTool {
 	var out []PlatformTool
 	for _, t := range toolList(delegating, true, true, true) {
@@ -496,7 +507,7 @@ var titles = map[string]string{
 	"steve_context": "看当前上下文", "steve_help": "查平台用法", "steve_projects": "查项目", "steve_fleet": "查名册",
 	"steve_delegate": "委派子任务", "steve_await": "等子任务",
 	"steve_remember": "记一条记忆", "steve_recall": "查记忆", "steve_forget": "忘一条记忆",
-	"feishu_send": "发进度消息", "feishu_update": "改进度消息", "feishu_recall": "撤回消息",
+	"channel_send": "发进度消息", "channel_update": "改进度消息", "channel_recall": "撤回消息",
 	"steve_nodes": "查机器", "steve_node_add": "登记机器", "steve_node_refresh": "刷新机器", "steve_node_remove": "移除机器",
 }
 
@@ -522,25 +533,26 @@ func ToolTitles() map[string]string {
 func toolList(delegating, informing, fleeting, remembering bool) []map[string]any {
 	tools := []map[string]any{
 		{
-			"name": "feishu_send",
-			"description": "Post an interim milestone message into the current Feishu conversation. " +
+			"name": "channel_send",
+			"description": "Post an interim milestone message into the current channel conversation. " +
 				"Use only for phase conclusions or artifacts worth surfacing before the final answer; " +
 				"the final answer itself is delivered by the platform automatically.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
+					"channel": channelArgument(),
 					"content": map[string]any{
 						"type":        "string",
-						"description": "Message body. Markdown is rendered as a card.",
+						"description": "Message body. The channel renders Markdown or plain text.",
 					},
 					"format": map[string]any{
 						"type":        "string",
 						"enum":        []string{"markdown", "text"},
-						"description": "markdown (default) renders a card; text sends a plain message.",
+						"description": "markdown (default) or plain text; the channel owns rendering.",
 					},
 					"mention": map[string]any{
 						"type":        "boolean",
-						"description": "Must stay false: mentions are reserved for the platform's final answer card.",
+						"description": "Must stay false: mentions are reserved for the platform's final answer.",
 					},
 					"progress": map[string]any{
 						"type":        "string",
@@ -551,19 +563,20 @@ func toolList(delegating, informing, fleeting, remembering bool) []map[string]an
 			},
 		},
 		{
-			"name": "feishu_update",
-			"description": "Rewrite a markdown card this agent sent earlier in the current turn via feishu_send. " +
-				"Prefer one evolving progress card over many separate sends.",
+			"name": "channel_update",
+			"description": "Rewrite a message this agent sent earlier in the current turn via channel_send. " +
+				"Prefer one evolving progress message over many separate sends.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
+					"channel": channelArgument(),
 					"message_id": map[string]any{
 						"type":        "string",
-						"description": "The message_id returned by feishu_send.",
+						"description": "The message_id returned by channel_send.",
 					},
 					"content": map[string]any{
 						"type":        "string",
-						"description": "The full replacement markdown body.",
+						"description": "The full replacement message body, using the original format.",
 					},
 					"progress": map[string]any{
 						"type":        "string",
@@ -589,14 +602,15 @@ func toolList(delegating, informing, fleeting, remembering bool) []map[string]an
 			}},
 		},
 		{
-			"name":        "feishu_recall",
-			"description": "Recall (delete) a message this agent sent earlier in the current turn via feishu_send.",
+			"name":        "channel_recall",
+			"description": "Recall (delete) a message this agent sent earlier in the current turn via channel_send.",
 			"inputSchema": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
+					"channel": channelArgument(),
 					"message_id": map[string]any{
 						"type":        "string",
-						"description": "The message_id returned by feishu_send.",
+						"description": "The message_id returned by channel_send.",
 					},
 				},
 				"required": []string{"message_id"},
@@ -677,12 +691,8 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 	var out string
 	var err error
 	switch call.Name {
-	case "feishu_send":
-		out, err = s.effect(ctx, bind, call.Name, call.Arguments, func() (string, error) { return s.send(ctx, bind, call.Arguments) })
-	case "feishu_update":
-		out, err = s.effect(ctx, bind, call.Name, call.Arguments, func() (string, error) { return s.update(ctx, bind, call.Arguments) })
-	case "feishu_recall":
-		out, err = s.effect(ctx, bind, call.Name, call.Arguments, func() (string, error) { return s.recall(ctx, bind, call.Arguments) })
+	case "channel_send", "channel_update", "channel_recall":
+		out, err = s.channelCall(ctx, bind, call.Name, call.Arguments)
 	case "steve_fleet":
 		out, err = s.fleet(ctx, bind, call.Arguments)
 	case "steve_delegate":
@@ -745,102 +755,6 @@ func (s *Server) fleet(ctx context.Context, bind binding, rawArgs json.RawMessag
 		}
 	}
 	return delegator.Fleet(ctx, bind.conversationID, bind.agentID, args.Requires)
-}
-
-func (s *Server) send(ctx context.Context, bind binding, rawArgs json.RawMessage) (string, error) {
-	var args struct {
-		Content  string `json:"content"`
-		Format   string `json:"format"`
-		Mention  bool   `json:"mention"`
-		Progress string `json:"progress"`
-	}
-	if err := json.Unmarshal(rawArgs, &args); err != nil {
-		return "", errors.New("bad feishu_send arguments")
-	}
-	if args.Mention {
-		return "", errors.New("mention is not allowed: mentions are reserved for the platform's final answer card")
-	}
-	format := args.Format
-	if format == "" {
-		format = "markdown"
-	}
-	switch format {
-	case "markdown", "text":
-	default:
-		return "", fmt.Errorf("unknown format %q (use markdown or text)", args.Format)
-	}
-	content := truncateRunes(stripMentions(args.Content), maxContentRunes)
-	if strings.TrimSpace(content) == "" {
-		return "", errors.New("content is required")
-	}
-	s.mu.Lock()
-	sender := s.sender
-	a := s.anchors[bind.conversationID]
-	if sender == nil || a == nil || a.messageID == "" {
-		s.mu.Unlock()
-		return "", errors.New("no active conversation to deliver to")
-	}
-	st := s.sent[bind]
-	if st == nil {
-		st = &sentState{}
-		s.sent[bind] = st
-	}
-	if st.epoch != a.epoch {
-		st.epoch = a.epoch
-		st.ids = map[string]sentMsg{}
-		st.count = 0
-		st.updates = 0
-	}
-	if st.count >= maxSendsPerTurn {
-		s.mu.Unlock()
-		return "", fmt.Errorf("send limit reached (%d per turn); save the rest for the final answer", maxSendsPerTurn)
-	}
-	// Reserve the slot before releasing the lock so parallel calls cannot
-	// overshoot the cap while a send is in flight.
-	st.count++
-	seq := st.count
-	progress := sanitizeProgress(args.Progress)
-	tail := milestoneTail(s.styles[bind.conversationID], bind.agentID, seq, progress)
-	if bind.delegatedBy != "" {
-		tail = bind.agentID + " · 受 " + bind.delegatedBy + " 委派 · " + strings.TrimPrefix(tail, s.styles[bind.conversationID]+" · ")
-	}
-	anchorID := a.messageID
-	epoch := a.epoch
-	s.mu.Unlock()
-
-	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
-	defer cancel()
-	var id string
-	var err error
-	if format == "text" {
-		id, err = sender.ReplyText(callCtx, anchorID, content)
-	} else {
-		id, err = sender.ReplyCard(callCtx, anchorID, milestoneCard(content, tail))
-	}
-	s.mu.Lock()
-	if err != nil {
-		if st.epoch == epoch && st.count > 0 {
-			st.count--
-		}
-		s.mu.Unlock()
-		return "", fmt.Errorf("send failed: %w", err)
-	}
-	if st.epoch == epoch && id != "" {
-		st.ids[id] = sentMsg{format: format, seq: seq, progress: progress}
-	}
-	journal := s.journal
-	s.mu.Unlock()
-	if journal != nil && id != "" {
-		journal(bind.conversationID, bind.agentID, id)
-	}
-	return "sent message_id=" + id, nil
-}
-
-// sanitizeProgress bounds the free-form stage badge ("2/3") an agent may
-// attach to a card.
-func sanitizeProgress(raw string) string {
-	compact := strings.Join(strings.Fields(stripMentions(raw)), "")
-	return truncateRunes(compact, 16)
 }
 
 // delegate hands work to another agent and blocks until it is done. The
@@ -919,87 +833,6 @@ func milestoneTail(style, agentID string, seq int, progress string) string {
 	return base + " · " + label
 }
 
-// update rewrites a markdown card this agent sent earlier in the current
-// turn — one evolving progress card instead of a stream of new ones.
-func (s *Server) update(ctx context.Context, bind binding, rawArgs json.RawMessage) (string, error) {
-	var args struct {
-		MessageID string `json:"message_id"`
-		Content   string `json:"content"`
-		Progress  string `json:"progress"`
-	}
-	if err := json.Unmarshal(rawArgs, &args); err != nil || strings.TrimSpace(args.MessageID) == "" {
-		return "", errors.New("message_id and content are required")
-	}
-	content := truncateRunes(stripMentions(args.Content), maxContentRunes)
-	if strings.TrimSpace(content) == "" {
-		return "", errors.New("content is required")
-	}
-	s.mu.Lock()
-	sender := s.sender
-	a := s.anchors[bind.conversationID]
-	st := s.sent[bind]
-	var record sentMsg
-	owned := false
-	if sender != nil && a != nil && st != nil && st.epoch == a.epoch {
-		record, owned = st.ids[args.MessageID]
-	}
-	if !owned {
-		s.mu.Unlock()
-		return "", errors.New("can only update a message this agent sent in the current turn")
-	}
-	if record.format != "markdown" {
-		s.mu.Unlock()
-		return "", errors.New("only markdown cards can be updated; recall and resend a text message instead")
-	}
-	if st.updates >= maxUpdatesPerTurn {
-		s.mu.Unlock()
-		return "", fmt.Errorf("update limit reached (%d per turn)", maxUpdatesPerTurn)
-	}
-	st.updates++
-	if progress := sanitizeProgress(args.Progress); progress != "" {
-		record.progress = progress
-		st.ids[args.MessageID] = record
-	}
-	tail := milestoneTail(s.styles[bind.conversationID], bind.agentID, record.seq, record.progress)
-	s.mu.Unlock()
-	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
-	defer cancel()
-	if err := sender.PatchCard(callCtx, args.MessageID, milestoneCard(content, tail)); err != nil {
-		return "", fmt.Errorf("update failed: %w", err)
-	}
-	return "updated " + args.MessageID, nil
-}
-
-func (s *Server) recall(ctx context.Context, bind binding, rawArgs json.RawMessage) (string, error) {
-	var args struct {
-		MessageID string `json:"message_id"`
-	}
-	if err := json.Unmarshal(rawArgs, &args); err != nil || strings.TrimSpace(args.MessageID) == "" {
-		return "", errors.New("message_id is required")
-	}
-	s.mu.Lock()
-	sender := s.sender
-	a := s.anchors[bind.conversationID]
-	st := s.sent[bind]
-	owned := false
-	if sender != nil && a != nil && st != nil && st.epoch == a.epoch {
-		_, owned = st.ids[args.MessageID]
-	}
-	s.mu.Unlock()
-	if !owned {
-		return "", errors.New("can only recall a message this agent sent in the current turn")
-	}
-	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
-	defer cancel()
-	if err := sender.DeleteMessage(callCtx, args.MessageID); err != nil {
-		return "", fmt.Errorf("recall failed: %w", err)
-	}
-	s.mu.Lock()
-	delete(st.ids, args.MessageID)
-	s.mu.Unlock()
-	return "recalled " + args.MessageID, nil
-}
-
 func writeRPCResult(w http.ResponseWriter, id json.RawMessage, result any) {
 	writeJSON(w, map[string]any{"jsonrpc": "2.0", "id": id, "result": result})
 }
@@ -1034,9 +867,22 @@ type Intents interface {
 func (s *Server) SetIntents(i Intents) { s.intents = i }
 
 // effect runs one side-effecting tool under the intent protocol.
-func (s *Server) effect(ctx context.Context, bind binding, tool string, args json.RawMessage, call func() (string, error)) (string, error) {
+func (s *Server) effect(ctx context.Context, bind binding, tool string, args json.RawMessage, call func() (string, channel.Address, error)) (string, error) {
+	key := bind.taskID + "\x00" + bind.conversationID + "\x00" + tool + "\x00" + string(args)
+	s.mu.Lock()
+	if s.effects == nil {
+		s.effects = map[string]bool{}
+	}
+	if s.effects[key] {
+		s.mu.Unlock()
+		return "", errors.New("the same message operation is already in progress")
+	}
+	s.effects[key] = true
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); delete(s.effects, key); s.mu.Unlock() }()
 	if s.intents == nil {
-		return call()
+		out, _, err := call()
+		return out, err
 	}
 	id, err := s.intents.Claim(ctx, bind.taskID, tool, args)
 	if err != nil {
@@ -1045,14 +891,21 @@ func (s *Server) effect(ctx context.Context, bind binding, tool string, args jso
 	if err := s.intents.Dispatched(ctx, id); err != nil {
 		return "", fmt.Errorf("record intent: %w", err)
 	}
-	out, err := call()
+	out, receipt, err := call()
+	// A disconnected caller must not erase an external effect's receipt.
+	journalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendTimeout)
+	defer cancel()
+	var journalErr error
 	switch {
 	case err == nil:
-		_ = s.intents.Confirmed(ctx, id, map[string]string{"message_id": out})
-	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded):
-		_ = s.intents.Lost(ctx, id, err)
+		journalErr = s.intents.Confirmed(journalCtx, id, map[string]any{"result": out, "message": receipt})
+	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, errOutcomeUnknown):
+		journalErr = s.intents.Lost(journalCtx, id, err)
 	default:
-		_ = s.intents.Failed(ctx, id, err)
+		journalErr = s.intents.Failed(journalCtx, id, err)
+	}
+	if journalErr != nil {
+		return "", fmt.Errorf("%w: could not persist result for intent %s: %v", errOutcomeUnknown, id, journalErr)
 	}
 	return out, err
 }

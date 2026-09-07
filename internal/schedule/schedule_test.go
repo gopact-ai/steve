@@ -172,10 +172,20 @@ func TestDueClaimsAndAdvancesInOneWrite(t *testing.T) {
 	if len(due) != 2 {
 		t.Fatalf("due = %d jobs; want both", len(due))
 	}
-	// Claiming and advancing in one write is what stops a slow run from
-	// being fired again by the next tick.
+	// Dispatch claims prevent another sender from starting the same firing;
+	// accepted receipts, not merely observing Due, consume the schedule.
+	for _, firing := range due {
+		if err := store.BeginFiring(firing.Key); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if again, err := store.Due(now.Add(31 * time.Minute)); err != nil || len(again) != 0 {
 		t.Fatalf("Due fired the same jobs twice: %v, %v", again, err)
+	}
+	for _, firing := range due {
+		if err := store.AcceptFiring(firing.Key, "receipt:"+firing.Key, now.Add(31*time.Minute)); err != nil {
+			t.Fatal(err)
+		}
 	}
 	remaining := store.List("chat")
 	if len(remaining) != 1 || remaining[0].ID != recurring.ID {

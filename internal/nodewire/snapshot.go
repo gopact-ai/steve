@@ -53,6 +53,7 @@ type MCPProbeReply struct {
 // bind, and what is only declared. It is the editable part of node.json,
 // and of the hub's own configuration for the hub machine.
 type Settings struct {
+	Revision     string                    `json:"revision"`
 	Harnesses    map[string]HarnessSetting `json:"harnesses"`
 	Tools        []string                  `json:"tools"`
 	MCPServers   map[string]MCPSetting     `json:"mcp_servers"`
@@ -65,9 +66,12 @@ type Settings struct {
 
 // HarnessSetting is one AI tool: how to start it.
 type HarnessSetting struct {
+	Adapter    *string  `json:"adapter,omitempty"`
+	Slots      *int     `json:"slots,omitempty"`
+	Permission *string  `json:"permission,omitempty"`
 	Command    string   `json:"command"`
 	Args       []string `json:"args,omitempty"`
-	Env        []string `json:"env,omitempty"`
+	Env        []string `json:"env"`
 	ProcessDir string   `json:"process_dir,omitempty"`
 	Models     []string `json:"models,omitempty"`
 }
@@ -79,15 +83,16 @@ type MCPSetting struct {
 	Type    string            `json:"type"`
 	Command string            `json:"command,omitempty"`
 	Args    []string          `json:"args,omitempty"`
-	Env     map[string]string `json:"env,omitempty"`
+	Env     map[string]string `json:"env"`
 	URL     string            `json:"url,omitempty"`
-	Headers map[string]string `json:"headers,omitempty"`
+	Headers map[string]string `json:"headers"`
 }
 
 // ConfigReply answers StreamConfig: the settings in force, or why not.
 type ConfigReply struct {
-	Settings Settings `json:"settings"`
-	Error    string   `json:"error,omitempty"`
+	Settings  Settings `json:"settings"`
+	ErrorCode string   `json:"error_code,omitempty"`
+	Error     string   `json:"error,omitempty"`
 }
 
 // AdmitRequest asks a node for its final word on the part of a requirement
@@ -136,7 +141,8 @@ const (
 	FeatureMCP = "node_mcp_binding.v1"
 	// FeatureConfig says the node takes its offers from the hub over
 	// StreamConfig and writes them to its own config file.
-	FeatureConfig = "node_config.v1"
+	FeatureConfig         = "node_config.v1"
+	FeatureConfigRevision = "node_config_revision.v1"
 	// FeatureInspect says the node answers StreamInspect.
 	FeatureInspect = "inspect.v1"
 	// FeatureMCPProbe says the node answers StreamMCPProbe and reports
@@ -151,7 +157,7 @@ const (
 
 // Features is what this build supports.
 func Features() []string {
-	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureInspect, FeatureMCPProbe, FeatureOwnSkills, FeatureJournal, FeatureArtifact, FeatureFiles}
+	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureConfigRevision, FeatureInspect, FeatureMCPProbe, FeatureOwnSkills, FeatureJournal, FeatureArtifact, FeatureFiles}
 }
 
 // HasFeature says whether a list names a feature.

@@ -7,10 +7,12 @@ import (
 	"time"
 
 	"github.com/gopact-ai/gopact/workflow"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/planner"
 	"github.com/gopact-ai/steve/internal/roster"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 // MaxRevisions bounds how many times a plan may be reshaped. Recovery
@@ -41,13 +43,15 @@ type PlanStore interface {
 // new revision from the planner, keeping every step that already finished.
 // Both are ordinary edges, taken with the reason on record.
 type Supervisor struct {
-	planner planner.Planner
-	runs    *Runs
-	deps    Deps
-	plans   PlanStore
-	fleet   *roster.Roster
-	ledger  *ledger.Ledger
-	owner   string
+	planner   planner.Planner
+	runs      *Runs
+	deps      Deps
+	plans     PlanStore
+	fleet     *roster.Roster
+	ledger    *ledger.Ledger
+	owner     string
+	tasks     *task.Store
+	driverTTL time.Duration
 }
 
 func NewSupervisor(p planner.Planner, deps Deps, store workflow.Store) *Supervisor {
@@ -59,6 +63,8 @@ func NewSupervisor(p planner.Planner, deps Deps, store workflow.Store) *Supervis
 
 // SetPlans wires the plan store: step outcomes are written back as they
 // happen, and revisions have somewhere to go.
+func (s *Supervisor) SetExecution(r *execution.Registry) { s.deps.Executions = r }
+
 func (s *Supervisor) SetPlans(store PlanStore) {
 	s.plans = store
 	s.deps.Recorder = store
@@ -80,29 +86,46 @@ func (s *Supervisor) Plan(ctx context.Context, req planner.Request) (plan.Plan, 
 // plan itself was wrong. It returns the last outcome either way: a plan that
 // was called off is a result too, and the caller needs to see where it got.
 func (s *Supervisor) Execute(ctx context.Context, p plan.Plan) (Outcome, error) {
-	s.opened(ctx, p)
-	defer s.closed(ctx, p)
-	s.reserve(ctx, p)
-	defer s.unreserve(ctx, p)
-	outcome, err := s.runs.Execute(ctx, p, s.deps)
-	if err == nil || ctx.Err() != nil {
-		return outcome, err
+	rec, err := s.opened(ctx, p)
+	if err != nil {
+		return Outcome{}, err
 	}
-	return s.continueFrom(ctx, p, outcome, err, 0)
+	fresh := rec.fresh
+	return s.runOwner(ctx, rec, func(ctx context.Context, rec RunRecord) (Outcome, error) {
+		if rec.Phase == RunLanding || rec.Phase == RunCompleted {
+			return s.finishRun(ctx, rec, p, Outcome{RunID: rec.RunID})
+		}
+		if err := s.prepareBase(ctx, &rec, &p); err != nil {
+			return Outcome{}, err
+		}
+		s.reserve(ctx, p)
+		defer s.unreserve(ctx, p)
+		var out Outcome
+		var err error
+		if fresh {
+			out, err = s.runs.Execute(ctx, p, s.deps)
+		} else {
+			out, err = s.runs.Resume(ctx, p, s.deps, rec.RunID)
+		}
+		if err != nil && ctx.Err() == nil {
+			out, err = s.continueFrom(ctx, p, out, err)
+		}
+		return s.executed(ctx, rec, p, out, err)
+	})
 }
 
 // continueFrom is the revise-and-rerun loop after a first run failed.
-func (s *Supervisor) continueFrom(ctx context.Context, p plan.Plan, outcome Outcome, err error, revision int) (Outcome, error) {
+func (s *Supervisor) continueFrom(ctx context.Context, p plan.Plan, outcome Outcome, err error) (Outcome, error) {
 	current := p
-	for ; ; revision++ {
+	for {
 		if err == nil || ctx.Err() != nil {
 			return outcome, err
 		}
 		if s.plans == nil || !NeedsRevision(err) || current.Fixed {
 			return outcome, err
 		}
-		if revision >= MaxRevisions {
-			return outcome, fmt.Errorf("called off after %d revisions: %w", revision, err)
+		if current.Rev-1 >= MaxRevisions {
+			return outcome, fmt.Errorf("called off after %d revisions: %w", current.Rev-1, err)
 		}
 		revised, revErr := s.revise(ctx, current, err)
 		if revErr != nil {
@@ -112,7 +135,15 @@ func (s *Supervisor) continueFrom(ctx context.Context, p plan.Plan, outcome Outc
 			return outcome, err
 		}
 		current = revised
-		s.opened(ctx, current)
+		rec, _, loadErr := s.loadRun(ctx, planRunID(current.ID))
+		if loadErr != nil {
+			return outcome, loadErr
+		}
+		current.Base = rec.Base
+		rec.Rev, rec.RunID = current.Rev, runIDFor(current)
+		if saveErr := s.saveRun(ctx, &rec, RunExecuting); saveErr != nil {
+			return outcome, saveErr
+		}
 		outcome, err = s.runs.Execute(ctx, current, s.deps)
 	}
 }
@@ -161,7 +192,7 @@ func keepFinished(current plan.Plan, proposed []plan.Step) []plan.Step {
 	out := make([]plan.Step, len(proposed))
 	for i, s := range proposed {
 		if prior, ok := done[s.ID]; ok {
-			s.State, s.Result, s.Attempts, s.Tried = prior.State, prior.Result, prior.Attempts, prior.Tried
+			s = prior
 		} else if s.State == plan.StepDone {
 			// A planner claiming a step is done that the record does not
 			// show as done is not believed.

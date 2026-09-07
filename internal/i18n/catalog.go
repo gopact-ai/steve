@@ -1,6 +1,7 @@
 package i18n
 
 var zh = map[Key]string{
+	HubMaintenance:         "Hub 正在维护，暂不接受新请求。",
 	TurnCanceled:           "任务已取消",
 	AgentFailed:            "Agent 调用失败，请检查 Steve 日志。",
 	EmptyReply:             "(agent 本轮没有文本输出)",
@@ -172,7 +173,7 @@ var zh = map[Key]string{
 	ScheduleNextLabel:      "下次",
 	ScheduleRunsLabel:      "已跑 %d 次",
 	ResumeNotice:           "⟳ 网关重启，继续任务 #%s",
-	ResumePrompt:           "[steve: 网关在上一轮执行中重启，会话已恢复] 继续完成任务：%s。基于会话里已有的进度接着做，不要从头开始；若任务实际已完成，直接给出最终结果。此前发出的进度卡已随中断清理，之前的 message_id 已失效；如需进度卡请重新 feishu_send。",
+	ResumePrompt:           "[steve: 网关在上一轮执行中重启，会话已恢复] 继续完成任务：%s。基于会话里已有的进度接着做，不要从头开始；若任务实际已完成，直接给出最终结果。此前发出的进度卡已随中断清理，之前的 message_id 已失效；如需进度卡请重新 channel_send。",
 	CardRunning:            "进行中",
 	CardCompleted:          "完成",
 	CardFailed:             "失败",
@@ -228,6 +229,7 @@ var zh = map[Key]string{
 }
 
 var en = map[Key]string{
+	HubMaintenance:         "The Hub is under maintenance; new requests are temporarily unavailable.",
 	TurnCanceled:           "Task canceled",
 	AgentFailed:            "Agent call failed. Check the Steve logs.",
 	EmptyReply:             "(the agent returned no text)",
@@ -399,7 +401,7 @@ var en = map[Key]string{
 	ScheduleNextLabel:      "next",
 	ScheduleRunsLabel:      "%d runs",
 	ResumeNotice:           "⟳ Gateway restarted; resuming task #%s",
-	ResumePrompt:           "[steve: the gateway restarted mid-turn; the session is restored] Continue the task: %s. Pick up from the progress already in this session — do not start over. If the task is actually complete, give the final result. Progress cards from the interrupted turn were cleaned up and their message_ids are void; feishu_send a fresh one if needed.",
+	ResumePrompt:           "[steve: the gateway restarted mid-turn; the session is restored] Continue the task: %s. Pick up from the progress already in this session — do not start over. If the task is actually complete, give the final result. Progress cards from the interrupted turn were cleaned up and their message_ids are void; channel_send a fresh one if needed.",
 	CardRunning:            "Running",
 	CardCompleted:          "Done",
 	CardFailed:             "Failed",

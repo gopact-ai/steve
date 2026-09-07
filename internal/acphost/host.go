@@ -12,6 +12,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 
@@ -23,6 +24,7 @@ import (
 type Image struct {
 	MIME string
 	Data []byte
+	URI  string
 }
 
 var ErrResumeUnsupported = errors.New("agent does not support session resume")
@@ -35,6 +37,37 @@ var ErrDeleteUnsupported = errors.New("agent does not support session deletion")
 // StopReasonCanceled (e.g. a permission request was rejected). The session
 // stays consistent, so callers keep it instead of tearing the process down.
 var ErrTurnCanceled = errors.New("agent canceled the turn")
+
+// ErrStopUnconfirmed means the RPC was abandoned without an agent stop
+// response. Its process may still be writing; callers must retain exclusion.
+var ErrStopUnconfirmed = errors.New("agent stop was not confirmed")
+
+// PromptSettled recognizes an explicit ACP response (including an error
+// response), not transport EOF or a local cancellation of the pending RPC.
+func PromptSettled(err error) bool {
+	if errors.Is(err, ErrStopUnconfirmed) {
+		return false
+	}
+	if err == nil || errors.Is(err, ErrTurnCanceled) {
+		return true
+	}
+	var rpc *acp.Error
+	var settled interface{ PromptSettled() bool }
+	return errors.As(err, &rpc) || (errors.As(err, &settled) && settled.PromptSettled())
+}
+
+type settledPromptError struct{ cause error }
+
+func (e settledPromptError) Error() string       { return e.cause.Error() }
+func (e settledPromptError) Unwrap() error       { return e.cause }
+func (e settledPromptError) PromptSettled() bool { return true }
+
+func promptFailure(cause error, stopped bool) error {
+	if PromptSettled(cause) || stopped {
+		return settledPromptError{cause}
+	}
+	return fmt.Errorf("%w: %w", ErrStopUnconfirmed, cause)
+}
 
 // cancelNotifyTimeout bounds the session/cancel notification itself;
 // cancelSettleTimeout bounds how long the agent gets to end the turn after
@@ -69,6 +102,7 @@ type Host struct {
 
 	mu           sync.Mutex
 	proc         Process
+	processes    map[uint64]Process
 	conn         *acp.Conn
 	caller       *acp.AgentCaller
 	stdin        io.WriteCloser
@@ -96,7 +130,8 @@ func New(cfg Config) *Host {
 	}
 	return &Host{
 		cfg: cfg, collectors: map[acp.SessionID]*collector{}, sessions: map[acp.SessionID]*sessionState{},
-		opening: map[acp.SessionID]uint64{}, active: map[acp.SessionID]uint64{},
+		processes: map[uint64]Process{},
+		opening:   map[acp.SessionID]uint64{}, active: map[acp.SessionID]uint64{},
 	}
 }
 
@@ -121,6 +156,7 @@ type collector struct {
 	ask          permission.AskFunc
 	askUser      AskUserFunc
 	ctx          context.Context
+	cancelAsk    context.CancelFunc
 }
 
 // maxCollectBytes caps the aggregated assistant text so a runaway agent
@@ -190,6 +226,7 @@ func (c *collector) promptUsage(usage *acp.Usage) {
 		return
 	}
 	c.mu.Lock()
+	c.usage.Reported = true
 	c.usage.TotalTokens = usage.TotalTokens
 	c.usage.InputTokens = usage.InputTokens
 	c.usage.OutputTokens = usage.OutputTokens
@@ -539,6 +576,7 @@ func (ch *clientHandler) RequestPermission(ctx context.Context, req *acp.Request
 
 	if broker.NeedsAsk(kind) && ask != nil {
 		outcome, err := ask(ctx, permission.Ask{
+			SessionID: string(req.SessionID), Generation: ch.generation, ToolCallID: string(req.ToolCall.ToolCallID),
 			ToolName: title,
 			Kind:     kind,
 			Reason:   permissionReason(req.ToolCall),
@@ -596,6 +634,10 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	}
 	exited := make(chan struct{})
 	h.proc = proc
+	if h.processes == nil {
+		h.processes = map[uint64]Process{}
+	}
+	h.processes[generation] = proc
 	h.conn = conn
 	h.stdin = stdin
 	h.alive = true
@@ -618,6 +660,9 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		_ = proc.Wait()
 		close(exited)
 		h.mu.Lock()
+		if evidence, ok := proc.(interface{ Stopped() bool }); ok && evidence.Stopped() {
+			delete(h.processes, generation)
+		}
 		if h.proc == proc {
 			h.alive = false
 			h.collectors = map[acp.SessionID]*collector{}
@@ -798,18 +843,30 @@ func (h *Host) PromptTurn(
 	}
 	caller := h.caller
 	caps := h.capabilities
+	for _, media := range images {
+		if len(media.Data) == 0 {
+			continue
+		}
+		if caps == nil || caps.PromptCapabilities == nil || (media.URI == "" && !caps.PromptCapabilities.Image) || (media.URI != "" && !caps.PromptCapabilities.EmbeddedContext) {
+			h.mu.Unlock()
+			return "", nil, fmt.Errorf("agent does not support the attached media type %s", media.MIME)
+		}
+	}
+	askCtx, cancelAsk := context.WithCancel(ctx)
 	col := &collector{
 		progress:   progress,
 		settings:   h.sessionSettings(sid),
 		generation: generation,
 		ask:        ask,
 		askUser:    askUser,
-		ctx:        ctx,
+		ctx:        askCtx,
+		cancelAsk:  cancelAsk,
 	}
 	h.collectors[sid] = col
 	h.active[sid] = generation
 	h.mu.Unlock()
 	defer func() {
+		cancelAsk()
 		h.mu.Lock()
 		if h.collectors[sid] == col {
 			delete(h.collectors, sid)
@@ -828,6 +885,7 @@ func (h *Host) PromptTurn(
 	// call instead leaves the agent working on a turn nobody is listening to
 	// and the session too dirty to reuse.
 	settled := make(chan struct{})
+	var abandoned atomic.Bool
 	defer close(settled)
 	promptCtx, abandon := context.WithCancel(context.WithoutCancel(ctx))
 	defer abandon()
@@ -847,9 +905,9 @@ func (h *Host) PromptTurn(
 		case <-settled:
 		case <-time.After(cancelSettleTimeout):
 			// The agent did not end the turn. Give up on a clean stop; the
-			// plain context error that surfaces tells the caller the session
-			// can no longer be trusted.
+			// distinct error tells the caller it cannot prove writer quiescence.
 			log.Printf("acphost: agent did not settle a cancelled turn in %s", cancelSettleTimeout)
+			abandoned.Store(true)
 			abandon()
 		}
 	}()
@@ -863,10 +921,17 @@ func (h *Host) PromptTurn(
 	sameGeneration := h.generation == generation
 	h.mu.Unlock()
 	if !sameGeneration {
-		return out, activity, fmt.Errorf("agent process changed during prompt")
+		cause := fmt.Errorf("agent process changed during prompt")
+		if PromptSettled(err) {
+			return out, activity, settledPromptError{cause}
+		}
+		return out, activity, promptFailure(cause, h.ProcessStopped(generation))
 	}
 	if err != nil {
-		return out, activity, fmt.Errorf("session/prompt: %w", err)
+		if abandoned.Load() {
+			return out, activity, promptFailure(errors.Join(err, ctx.Err()), h.ProcessStopped(generation))
+		}
+		return out, activity, promptFailure(fmt.Errorf("session/prompt: %w", err), h.ProcessStopped(generation))
 	}
 	col.promptUsage(resp.Usage)
 	if resp.StopReason == acp.StopReasonCanceled {
@@ -882,6 +947,9 @@ func (h *Host) PromptTurn(
 func (h *Host) Cancel(ctx context.Context, sid acp.SessionID, generation uint64) error {
 	h.mu.Lock()
 	caller, alive := h.caller, h.alive && h.generation == generation
+	if col := h.collectors[sid]; alive && col != nil && col.generation == generation && col.cancelAsk != nil {
+		col.cancelAsk()
+	}
 	h.mu.Unlock()
 	if !alive || caller == nil {
 		return nil
@@ -895,6 +963,25 @@ func (h *Host) Abort(generation uint64) {
 	if h.generation == generation {
 		h.shutdownLocked()
 	}
+}
+
+// ProcessStopped requires explicit termination evidence from the transport.
+// Losing a stream or beginning a new generation is not such evidence.
+func (h *Host) ProcessStopped(generation uint64) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if generation == 0 || generation > h.generation {
+		return false
+	}
+	proc, exists := h.processes[generation]
+	if !exists {
+		return true
+	}
+	if evidence, ok := proc.(interface{ Stopped() bool }); ok && evidence.Stopped() {
+		delete(h.processes, generation)
+		return true
+	}
+	return false
 }
 
 func (h *Host) CloseSession(ctx context.Context, sid acp.SessionID) error {
@@ -931,10 +1018,6 @@ func promptBlocks(text string, images []Image, caps *acp.AgentCapabilities) []ac
 	if len(images) == 0 {
 		return blocks
 	}
-	if caps == nil || caps.PromptCapabilities == nil || !caps.PromptCapabilities.Image {
-		blocks[0] = acp.TextContentBlock(text + "\n\n[steve: images omitted; agent has no image prompt capability]")
-		return blocks
-	}
 	for _, img := range images {
 		if len(img.Data) == 0 {
 			continue
@@ -942,6 +1025,18 @@ func promptBlocks(text string, images []Image, caps *acp.AgentCapabilities) []ac
 		mime := img.MIME
 		if mime == "" {
 			mime = "image/png"
+		}
+		if img.URI != "" {
+			if caps != nil && caps.PromptCapabilities != nil && caps.PromptCapabilities.EmbeddedContext {
+				resource := acp.BlobEmbeddedResourceContents(base64.StdEncoding.EncodeToString(img.Data), img.URI)
+				resource.MIMEType = &mime
+				blocks = append(blocks, acp.ResourceContentBlock(resource))
+			}
+			continue
+		}
+		if caps == nil || caps.PromptCapabilities == nil || !caps.PromptCapabilities.Image {
+			blocks[0] = acp.TextContentBlock(text + "\n\n[steve: images omitted; agent has no image prompt capability]")
+			continue
 		}
 		blocks = append(blocks, acp.ImageContentBlock(base64.StdEncoding.EncodeToString(img.Data), mime))
 	}
@@ -993,6 +1088,21 @@ func (h *Host) Close() {
 	defer h.mu.Unlock()
 	h.isClosed = true
 	h.shutdownLocked()
+}
+
+// AllProcessesStopped requires positive transport evidence, including older
+// generations whose connection has already closed.
+func (h *Host) AllProcessesStopped() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for generation, proc := range h.processes {
+		proof, ok := proc.(interface{ Stopped() bool })
+		if !ok || !proof.Stopped() {
+			return false
+		}
+		delete(h.processes, generation)
+	}
+	return true
 }
 
 // shutdownLocked closes the connection and waits for the monitor goroutine to

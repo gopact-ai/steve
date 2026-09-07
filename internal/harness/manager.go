@@ -60,12 +60,13 @@ type Transports interface {
 }
 
 type Manager struct {
-	configs map[string]Config
-	remote  Transports
-	observe Observer
-	mu      sync.Mutex
-	hosts   map[string]*acphost.Host
-	stopped bool
+	suspended map[string]bool
+	configs   map[string]Config
+	remote    Transports
+	observe   Observer
+	mu        sync.Mutex
+	hosts     map[string]*acphost.Host
+	stopped   bool
 }
 
 func NewManager(configs map[string]Config) (*Manager, error) {
@@ -226,6 +227,9 @@ func (m *Manager) Restart() error {
 func (m *Manager) host(at Placement) (*acphost.Host, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.suspended["*"] || m.suspended[at.Node] {
+		return nil, fmt.Errorf("service is restarting")
+	}
 	if m.stopped {
 		return nil, fmt.Errorf("harness manager is stopped")
 	}
@@ -261,9 +265,13 @@ func (m *Manager) host(at Placement) (*acphost.Host, error) {
 // a turn the agent ended itself without importing the host package.
 var ErrTurnCanceled = acphost.ErrTurnCanceled
 
+// ErrStopUnconfirmed requires writer exclusion until process termination is verified.
+var ErrStopUnconfirmed = acphost.ErrStopUnconfirmed
+
 type Media struct {
 	MIME string
 	Data []byte
+	URI  string // nonempty for an embedded resource; empty for an image
 }
 
 type Runner interface {
@@ -399,6 +407,9 @@ type Session struct {
 	observe Observer
 }
 
+// Stopped reports verified termination of this session's original process.
+func (s *Session) Stopped() bool { return s.host.ProcessStopped(s.generation) }
+
 // Reobserve reports the session's settings to the observer once more:
 // what the book keeps should be what the session runs with after its
 // agent's pins were applied, not what it opened with.
@@ -427,7 +438,7 @@ func (s *Session) PromptTurn(
 		if len(item.Data) == 0 {
 			continue
 		}
-		images = append(images, acphost.Image{MIME: item.MIME, Data: item.Data})
+		images = append(images, acphost.Image{MIME: item.MIME, Data: item.Data, URI: item.URI})
 	}
 	return s.host.PromptTurn(ctx, s.id, s.generation, text, images, ask, askUser, s.stamp(progress))
 }

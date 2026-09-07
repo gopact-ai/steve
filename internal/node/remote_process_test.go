@@ -55,6 +55,25 @@ func startRemote(t *testing.T, r *Registry) *remoteProcess {
 	return p.(*remoteProcess)
 }
 
+func TestDisconnectedProcessWaitDoesNotProvePhysicalStop(t *testing.T) {
+	m := newMemoryNode(t, "/bin/cat")
+	r := memoryRegistry(t)
+	c := connectMemory(t, m, r)
+	p := startRemote(t, r)
+	_, _ = io.WriteString(p.Stdin(), "ready\n")
+	expectLine(t, bufio.NewReader(p.Stdout()), "ready\n")
+	_ = c.mux.Close()
+	if err := p.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.Wait(); err != nil {
+		t.Fatal(err)
+	}
+	if p.Stopped() {
+		t.Fatal("logical disconnect was accepted as physical exit evidence")
+	}
+}
+
 type lineResult struct {
 	line string
 	err  error

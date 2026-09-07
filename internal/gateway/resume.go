@@ -2,14 +2,22 @@ package gateway
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/turn"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 // Revival is one interrupted task the gateway picks back up after a restart.
@@ -169,6 +177,8 @@ func (g *Gateway) ResumeTask(r Revival, revive func(conversationID, member strin
 // conversation nobody is currently typing in, and the only way to say it as a
 // turn is to become a message first.
 type Fire struct {
+	Channel        string
+	ProjectID      string
 	ScheduleID     string
 	ConversationID string
 	ChatID         string
@@ -179,34 +189,50 @@ type Fire struct {
 	Prompt         string
 }
 
+type FireReceipt struct{ MessageID string }
+
 // FireSchedule announces the run at the schedule's anchor and then replays the
 // stored instruction as a message from the person who scheduled it. The notice
 // is the new anchor: a replayed message needs an id of its own, and the
 // announcement is also what makes an unattended run visible rather than
 // something that just appears.
-func (g *Gateway) FireSchedule(f Fire) {
+func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error) {
 	tr, ok := g.ch.(textReplier)
 	if !ok {
-		log.Printf("gateway: channel cannot post schedule notices; schedule #%s did not run", f.ScheduleID)
-		return
+		return FireReceipt{}, fmt.Errorf("channel cannot post schedule notice for #%s", f.ScheduleID)
 	}
-	if f.ConversationID == "" || f.MessageID == "" || f.Prompt == "" {
-		log.Printf("gateway: schedule #%s not runnable: incomplete anchor", f.ScheduleID)
-		return
+	if f.Channel != "feishu" || strings.HasPrefix(f.ConversationID, "console:") || f.ChatID == "console" {
+		return FireReceipt{}, fmt.Errorf("schedule %s does not target the Feishu channel", f.ScheduleID)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	noticeID, err := tr.ReplyText(ctx, f.MessageID, g.text.T(i18n.ScheduleNotice, f.ScheduleID))
+	if f.ConversationID == "" || f.MessageID == "" || f.Prompt == "" || f.Member == "" || f.Requester == "" || f.ProjectID == "" {
+		return FireReceipt{}, fmt.Errorf("schedule %s has incomplete execution context", f.ScheduleID)
+	}
+	if validator, ok := g.processor.(interface {
+		ValidateScheduled(context.Context, string, string, string) error
+	}); ok {
+		if err := validator.ValidateScheduled(ctx, f.ConversationID, f.ProjectID, f.Requester); err != nil {
+			return FireReceipt{}, err
+		}
+	}
+	noticeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+	noticeID, err := tr.ReplyText(noticeCtx, f.MessageID, g.text.T(i18n.ScheduleNotice, f.ScheduleID))
 	cancel()
-	if err != nil || noticeID == "" {
-		log.Printf("gateway: post schedule notice for #%s: %v", f.ScheduleID, err)
-		return
+	if err != nil {
+		var network net.Error
+		if errors.As(err, &network) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			err = errors.Join(channel.ErrOutcomeUnknown, err)
+		}
+		return FireReceipt{}, fmt.Errorf("schedule notice: %w", err)
+	}
+	if noticeID == "" {
+		return FireReceipt{}, fmt.Errorf("%w: schedule notice has no receipt", channel.ErrOutcomeUnknown)
 	}
 	text := f.Prompt
 	if f.Member != "" {
 		text = "@" + f.Member + " " + text
 	}
 	log.Printf("gateway: firing schedule #%s conversation=%s member=%s", f.ScheduleID, f.ConversationID, f.Member)
-	g.HandleMessage(feishu.InboundMessage{
+	msg := feishu.InboundMessage{
 		ConversationID: f.ConversationID,
 		ChatID:         f.ChatID,
 		MessageID:      noticeID,
@@ -215,5 +241,43 @@ func (g *Gateway) FireSchedule(f Fire) {
 		Mentioned:      true,
 		Origin:         "schedule:" + f.ScheduleID,
 		Text:           text,
+	}
+	// The firing record owns the durable dispatch. Return a receipt only
+	// after Handle has actually processed this input, never after merely
+	// spawning an in-memory goroutine that a restart could lose.
+	g.mu.Lock()
+	first := g.serving[f.ConversationID] == 0
+	g.serving[f.ConversationID]++
+	g.mu.Unlock()
+	if first {
+		g.slots <- struct{}{}
+	}
+	defer func() {
+		g.mu.Lock()
+		g.serving[f.ConversationID]--
+		last := g.serving[f.ConversationID] == 0
+		if last {
+			delete(g.serving, f.ConversationID)
+		}
+		g.mu.Unlock()
+		if last {
+			<-g.slots
+		}
+	}()
+	if g.gate != nil {
+		g.gate.Anchor(f.ConversationID, channel.Address{Channel: "feishu", Conversation: f.ConversationID, Message: noticeID})
+	}
+	ui := g.newTurnUI(msg, false)
+	result, runErr := g.processor.Handle(ctx, turn.Request{
+		Channel: "feishu", ConversationID: f.ConversationID, Input: text, Origin: msg.Origin,
+		MessageID: noticeID, ChatID: f.ChatID, CardID: ui.cardID, SenderOpenID: f.Requester,
+		ChatType: protocol.ParseChatType(f.ChatType), Mentioned: true, ExpectedProject: f.ProjectID,
+		OnProgress: ui.progress, OnPhase: ui.setPhase,
+		OnAskUser: func(ctx context.Context, q view.Question) (view.Answer, error) { return g.askQuestion(ctx, ui, q) },
+		OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
+			return g.askPermission(ctx, ui, ask)
+		},
 	})
+	ui.finish(result, runErr)
+	return FireReceipt{MessageID: noticeID}, nil
 }

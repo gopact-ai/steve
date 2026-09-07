@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
@@ -24,7 +26,7 @@ func (e *echo) Handle(_ context.Context, req turn.Request) (turn.Result, error) 
 }
 
 // A console line runs as the owner, in a console conversation, with an
-// anchor that is not a Feishu message; replies and milestones are kept
+// anchor in that conversation; replies and milestones are kept
 // and published on the change stream.
 func TestConsoleActsAsTheOwnerAndKeepsTheExchange(t *testing.T) {
 	model := readmodel.New(readmodel.Sources{})
@@ -50,9 +52,9 @@ func TestConsoleActsAsTheOwnerAndKeepsTheExchange(t *testing.T) {
 		t.Fatalf("replies = %+v", replies)
 	}
 	// Milestones from agents and notices for the console land here too.
-	id := s.Milestone("web-1", "phase 1 done")
-	if !strings.HasPrefix(id, AnchorMark) {
-		t.Fatalf("milestone id = %q", id)
+	id, err := (MessageSender{Console: s}).Send(context.Background(), channel.Address{Channel: "console", Conversation: req.ConversationID, Message: req.MessageID}, channel.Message{Content: "phase 1 done"})
+	if err != nil || id == "" {
+		t.Fatalf("milestone id = %q err=%v", id, err)
 	}
 	s.Notice(turn.TaskNotice{TaskID: "9", ChatID: ChatID, MessageID: "web-1", Text: "plan finished"})
 	replies = s.Replies("main")
@@ -75,32 +77,7 @@ func TestConsoleActsAsTheOwnerAndKeepsTheExchange(t *testing.T) {
 	if _, err := New(h, "", model).Send(context.Background(), "main", "hi"); err == nil {
 		t.Fatal("a console without an owner acted")
 	}
-	// Feishu anchors go to Feishu; console anchors stay here.
-	var sink recorder
-	sender := Sender{Feishu: &sink, Console: s}
-	if _, err := sender.ReplyText(context.Background(), "om_real", "to feishu"); err != nil || sink.texts != 1 {
-		t.Fatalf("feishu route: err=%v texts=%d", err, sink.texts)
-	}
-	if _, err := sender.ReplyCard(context.Background(), "web-2", []byte(`{"elements":[{"content":"## card"}]}`)); err != nil || sink.cards != 0 {
-		t.Fatalf("console route: err=%v cards=%d", err, sink.cards)
-	}
-	if last := s.Replies("main"); last[len(last)-1].Text != "## card" {
-		t.Fatalf("card text = %q", last[len(last)-1].Text)
-	}
 }
-
-type recorder struct{ texts, cards int }
-
-func (r *recorder) ReplyCard(context.Context, string, []byte) (string, error) {
-	r.cards++
-	return "om_c", nil
-}
-func (r *recorder) ReplyText(context.Context, string, string) (string, error) {
-	r.texts++
-	return "om_t", nil
-}
-func (r *recorder) PatchCard(context.Context, string, []byte) error { return nil }
-func (r *recorder) DeleteMessage(context.Context, string) error     { return nil }
 
 // memDoc is a durable document that lives for one test.
 type memDoc struct {
@@ -190,7 +167,7 @@ func TestConsoleStreamsProgressAndKeepsTheProcess(t *testing.T) {
 	go func() {
 		time.Sleep(20 * time.Millisecond)
 		model.Publish(readmodel.Event{Kind: "step.progress", Conversation: "console:main", StepID: "repair",
-			Progress: &readmodel.Progress{Agent: "builder", Node: "node-a", Tools: []readmodel.ToolCall{{Kind: "shell", Name: "install", Status: "completed"}}}})
+			Progress: &consoleapi.Progress{Agent: "builder", Node: "node-a", Tools: []consoleapi.ToolCall{{Kind: "shell", Name: "install", Status: "completed"}}}})
 	}()
 	slow := New(slowStreamer{}, "ou_owner", model)
 	reply, err := slow.Send(context.Background(), "main", "/repair fixer")
@@ -399,7 +376,9 @@ func TestAConsoleTurnIsAnchoredSoMilestonesLandInItsThread(t *testing.T) {
 		t.Fatalf("anchored = %v", anchored)
 	}
 	// An agent's progress message during the turn lands in this thread.
-	s.Milestone(AnchorMark+e.ID, "halfway")
+	if _, err := (MessageSender{Console: s}).Send(context.Background(), channel.Address{Channel: "console", Conversation: e.Conversation, Message: AnchorMark + e.ID}, channel.Message{Content: "halfway"}); err != nil {
+		t.Fatal(err)
+	}
 	if got := s.Replies("side"); len(got) != 2 || got[1].Kind != "milestone" || got[1].Text != "halfway" {
 		t.Fatalf("side thread = %+v", got)
 	}

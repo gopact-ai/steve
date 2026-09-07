@@ -350,3 +350,20 @@ func writeAndLoad(t *testing.T, body string) (*Config, error) {
 	}
 	return Load(path)
 }
+
+func TestDefaultMessageChannel(t *testing.T) {
+	for _, name := range []string{"", "console"} {
+		raw := `{"agents":{"codex":{"harness":"codex","workspace":"/tmp/steve-test","default":true}},"harnesses":{"codex":{"command":"mockagent"}},"feishu":{"app_id":"app","app_secret":"secret"},"gateway":{"default_channel":"` + name + `"}}`
+		cfg, err := Load(writeConfig(t, raw))
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := name
+		if want == "" {
+			want = "feishu"
+		}
+		if cfg.Gateway.DefaultChannel != want {
+			t.Fatalf("channel=%s want=%s", cfg.Gateway.DefaultChannel, want)
+		}
+	}
+}

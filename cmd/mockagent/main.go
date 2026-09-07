@@ -15,6 +15,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,8 +47,9 @@ func (a *agent) Initialize(_ context.Context, _ *acp.InitializeRequest) (*acp.In
 		ProtocolVersion: acp.ProtocolVersionV1,
 		AgentInfo:       &acp.Implementation{Name: "mockagent", Version: "0.1.0"},
 		AgentCapabilities: &acp.AgentCapabilities{
-			LoadSession:     true,
-			MCPCapabilities: &acp.MCPCapabilities{HTTP: true},
+			PromptCapabilities: &acp.PromptCapabilities{Image: os.Getenv("MOCKAGENT_NO_MEDIA") == "", EmbeddedContext: os.Getenv("MOCKAGENT_NO_MEDIA") == ""},
+			LoadSession:        true,
+			MCPCapabilities:    &acp.MCPCapabilities{HTTP: true},
 			SessionCapabilities: &acp.SessionCapabilities{
 				List:   &acp.SessionListCapabilities{},
 				Delete: &acp.SessionDeleteCapabilities{},
@@ -104,6 +107,38 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		}
 	}
 	input := text.String()
+	for _, block := range req.Prompt {
+		encoded, mime, kind := "", "", ""
+		if block.Type == acp.ContentBlockTypeImage {
+			encoded, kind = block.Data, "image"
+			if block.MIMEType != nil {
+				mime = *block.MIMEType
+			}
+		}
+		if block.Type == acp.ContentBlockTypeResource && block.Resource.Blob != nil {
+			encoded, kind = *block.Resource.Blob, "resource"
+			if block.Resource.MIMEType != nil {
+				mime = *block.Resource.MIMEType
+			}
+		}
+		if kind != "" {
+			data, err := base64.StdEncoding.DecodeString(encoded)
+			if err != nil {
+				return nil, err
+			}
+			marker := fmt.Sprintf("[media: %s %s %d %x] ", kind, mime, len(data), sha256.Sum256(data))
+			if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(marker))}); err != nil {
+				return nil, err
+			}
+		}
+	}
+	if strings.Contains(input, "ignore-cancel") {
+		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("still running"))}); err != nil {
+			return nil, err
+		}
+		<-ctx.Done()
+		return nil, ctx.Err()
+	}
 
 	if strings.Contains(input, "perm") {
 		resp, err := a.client.RequestPermission(ctx, &acp.RequestPermissionRequest{
@@ -142,7 +177,8 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		title := "Colour"
 		red, blue := "You prefer red.", "You prefer blue."
 		schema := acp.ElicitationSchema{
-			Type: acp.ElicitationSchemaTypeObject,
+			Type:     acp.ElicitationSchemaTypeObject,
+			Required: &[]string{"question_0"},
 			Properties: map[string]acp.ElicitationPropertySchema{
 				"question_0": {
 					Type: acp.ElicitationPropertySchemaTypeString, Title: &title,
@@ -155,6 +191,9 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 				// choices; a client that cannot render it may skip it.
 				"question_0_custom": {Type: acp.ElicitationPropertySchemaTypeString},
 			},
+		}
+		if strings.Contains(input, "askme-required-text") {
+			schema.Required = &[]string{"question_0", "question_0_custom"}
 		}
 		req := acp.SessionFormCreateElicitationRequest("Which colour do you prefer?", schema, req.SessionID)
 		resp, err := a.client.CreateElicitation(ctx, &req)
@@ -188,7 +227,7 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 				}},
 			},
 		}
-		ereq := acp.SessionFormCreateElicitationRequest(`Allow tool feishu_send on server "feishu"?`, schema, req.SessionID)
+		ereq := acp.SessionFormCreateElicitationRequest(`Allow tool channel_send on server "steve"?`, schema, req.SessionID)
 		ereq.Meta = acp.Meta{"codex_approval_kind": "mcp_tool_call"}
 		resp, err := a.client.CreateElicitation(ctx, &ereq)
 		if err != nil {
@@ -207,7 +246,7 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 	}
 
 	// "mcpupdate" sends one milestone card and evolves it twice with
-	// feishu_update, the one-evolving-card shape the instructions steer
+	// channel_update, the one-evolving-card shape the instructions steer
 	// agents toward. Results are echoed for the wire test.
 	if strings.Contains(input, "mcpupdate") {
 		note := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(a.mcpUpdate(req.SessionID) + " "))
@@ -353,17 +392,17 @@ func (a *agent) mcpFull(sessionID acp.SessionID) string {
 	}); err != nil {
 		return "[mcp: initialize failed: " + err.Error() + "]"
 	}
-	sent, isError, err := a.mcpTool(target, "feishu_send", map[string]any{"content": "## milestone\nphase one done"})
+	sent, isError, err := a.mcpTool(target, "channel_send", map[string]any{"content": "## milestone\nphase one done"})
 	if err != nil || isError {
 		return fmt.Sprintf("[mcp: send failed err=%v text=%s]", err, sent)
 	}
 	id := strings.TrimPrefix(sent, "sent message_id=")
-	mention, mentionRejected, err := a.mcpTool(target, "feishu_send", map[string]any{"content": "hi", "mention": true})
+	mention, mentionRejected, err := a.mcpTool(target, "channel_send", map[string]any{"content": "hi", "mention": true})
 	if err != nil {
 		return "[mcp: mention call failed: " + err.Error() + "]"
 	}
 	_ = mention
-	recalled, recallErr, err := a.mcpTool(target, "feishu_recall", map[string]any{"message_id": id})
+	recalled, recallErr, err := a.mcpTool(target, "channel_recall", map[string]any{"message_id": id})
 	if err != nil || recallErr {
 		return fmt.Sprintf("[mcp: recall failed err=%v text=%s]", err, recalled)
 	}
@@ -386,7 +425,7 @@ func (a *agent) mcpUpdate(sessionID acp.SessionID) string {
 	if target == nil {
 		return "[mcp: no steve server]"
 	}
-	sent, isError, err := a.mcpTool(target, "feishu_send", map[string]any{"content": "progress v1", "progress": "1/2"})
+	sent, isError, err := a.mcpTool(target, "channel_send", map[string]any{"content": "progress v1", "progress": "1/2"})
 	if err != nil || isError {
 		return fmt.Sprintf("[mcp: send failed err=%v text=%s]", err, sent)
 	}
@@ -396,7 +435,7 @@ func (a *agent) mcpUpdate(sessionID acp.SessionID) string {
 		{"message_id": id, "content": "progress v3 final", "progress": "2/2"},
 	}
 	for _, step := range steps {
-		out, isError, err := a.mcpTool(target, "feishu_update", step)
+		out, isError, err := a.mcpTool(target, "channel_update", step)
 		if err != nil || isError {
 			return fmt.Sprintf("[mcp: update failed err=%v text=%s]", err, out)
 		}

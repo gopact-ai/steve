@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/node/journal"
@@ -28,6 +30,7 @@ type inputLine struct {
 // remoteProcess outlives individual wire streams. ACP keeps its client and
 // session map across a disconnect; it sees EOF only on terminal failure.
 type remoteProcess struct {
+	stopped               atomic.Bool
 	transport             remoteTransport
 	id                    string
 	grace                 time.Duration
@@ -87,7 +90,8 @@ func (p *remoteProcess) Wait() error {
 	}
 	return p.err
 }
-func (p *remoteProcess) Kill() { _ = p.Close() }
+func (p *remoteProcess) Kill()         { _ = p.Close() }
+func (p *remoteProcess) Stopped() bool { return p.stopped.Load() }
 
 func (p *remoteProcess) wakeLocked() { close(p.changed); p.changed = make(chan struct{}) }
 
@@ -130,7 +134,9 @@ func (p *remoteProcess) Close() error {
 			}
 			stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamRelease, Stream: p.id})
 			if err == nil {
-				_ = awaitExit(ctx, stream, p.transport.node)
+				if awaitExit(ctx, stream, p.transport.node) == nil {
+					p.stopped.Store(true)
+				}
 				_ = stream.Close()
 			}
 		}()
@@ -328,6 +334,9 @@ func (p *remoteProcess) readLoop(c *conn, stream *nodewire.Stream, reader *bufio
 		p.wakeLocked()
 		p.mu.Unlock()
 		if !canResume {
+			if err != nil && strings.HasPrefix(err.Error(), nodewire.ExitPrefix) {
+				p.stopped.Store(true)
+			}
 			p.finish(err)
 			return
 		}

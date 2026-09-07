@@ -1,16 +1,18 @@
 package node
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/mcpscan"
 	"log"
 	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/mcpscan"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -22,7 +24,7 @@ func (s *Server) settings() nodewire.Settings {
 	out := nodewire.Settings{Harnesses: map[string]nodewire.HarnessSetting{}, Tools: append([]string{}, cfg.Tools...),
 		MCPServers: map[string]nodewire.MCPSetting{}, Declares: append([]string{}, cfg.Declares...), Capabilities: append([]string{}, cfg.Capabilities...)}
 	for id, h := range cfg.Harnesses {
-		out.Harnesses[id] = nodewire.HarnessSetting{Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir, Models: h.Models}
+		out.Harnesses[id] = nodewire.HarnessSetting{Adapter: &h.Adapter, Slots: &h.Slots, Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir, Models: h.Models}
 	}
 	for id, m := range cfg.MCPServers {
 		out.MCPServers[id] = nodewire.MCPSetting{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
@@ -30,7 +32,8 @@ func (s *Server) settings() nodewire.Settings {
 	if cfg.MCPBroker != nil && cfg.MCPBroker.Socket != "" {
 		out.ExternalBroker = true
 	}
-	return out
+	out.Revision = nodewire.SettingsRevision(out)
+	return nodewire.CloneSettings(out)
 }
 
 // applySettings validates and takes new settings: the file this node was
@@ -38,6 +41,12 @@ func (s *Server) settings() nodewire.Settings {
 // the launch probe woken, the broker told. The next advert carries the
 // result; the hub asks for one as soon as this returns.
 func (s *Server) applySettings(set nodewire.Settings) error {
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	if set.Revision == "" || set.Revision != s.settings().Revision {
+		return nodewire.ErrSettingsRevisionConflict
+	}
+	set = nodewire.CloneSettings(set)
 	cfg := s.conf()
 	next := cfg
 	next.Harnesses = make(map[string]HarnessSpec, len(set.Harnesses))
@@ -48,7 +57,30 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 		if strings.TrimSpace(h.Command) == "" {
 			return fmt.Errorf("harness %q needs a command", id)
 		}
-		next.Harnesses[id] = HarnessSpec{Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir, Models: h.Models}
+		previous := cfg.Harnesses[id]
+		if h.Adapter != nil && *h.Adapter != previous.Adapter {
+			return fmt.Errorf("harness %s adapter changes require configuration and restart", id)
+		}
+		if previous.Adapter != "" && h.Command != previous.Command {
+			return fmt.Errorf("harness %s has a pinned adapter; its generated command cannot be edited", id)
+		}
+		if h.Permission != nil && *h.Permission != "" {
+			return fmt.Errorf("harness %s permissions are managed by the hub", id)
+		}
+		previous.Command, previous.Args, previous.ProcessDir = h.Command, h.Args, h.ProcessDir
+		if h.Env != nil {
+			previous.Env = h.Env
+		}
+		if h.Models != nil {
+			previous.Models = h.Models
+		}
+		if h.Slots != nil {
+			if *h.Slots < 0 {
+				return fmt.Errorf("harness %s slots must be nonnegative", id)
+			}
+			previous.Slots = *h.Slots
+		}
+		next.Harnesses[id] = previous
 	}
 	if len(next.Harnesses) == 0 {
 		return errors.New("a node needs at least one AI tool")
@@ -68,6 +100,13 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 	} else {
 		next.MCPServers = make(map[string]MCPSpec, len(set.MCPServers))
 		for id, m := range set.MCPServers {
+			previous := cfg.MCPServers[id]
+			if m.Env == nil {
+				m.Env = previous.Env
+			}
+			if m.Headers == nil {
+				m.Headers = previous.Headers
+			}
 			if !idShape.MatchString(id) {
 				return fmt.Errorf("MCP server id %q is not a plain name", id)
 			}
@@ -88,9 +127,17 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 		}
 	}
 	if next.Source != "" {
+		current, err := nodeSettingsFileRevision(next.Source)
+		if err != nil {
+			return fmt.Errorf("read node configuration revision: %w", err)
+		}
+		if current != s.settingsFileRevision {
+			return fmt.Errorf("%w: node configuration was edited externally; restart before saving", nodewire.ErrSettingsRevisionConflict)
+		}
 		if err := writeConfig(next); err != nil {
 			return err
 		}
+		s.settingsFileRevision, _ = nodeSettingsFileRevision(next.Source)
 	}
 	s.cfg.Store(&next)
 	s.launch.Wake()
@@ -121,12 +168,13 @@ func (s *Server) startBroker() error {
 	case len(cfg.MCPServers) > 0 && s.broker == nil && s.ctx != nil:
 		b := NewBroker(BrokerConfig{Socket: s.SocketPath(), MCPServers: cfg.MCPServers, WorkspaceRoot: cfg.WorkspaceRoot,
 			PortFile: filepath.Join(cfg.StateDir, "mcp-proxy.port")})
+		b.work = s.beginWork
 		s.broker = localBroker{b}
-		go func() {
+		s.backgroundWG.Go(func() {
 			if err := b.Serve(s.ctx); err != nil {
 				log.Printf("steve-node: %v", err)
 			}
-		}()
+		})
 	}
 	return nil
 }
@@ -135,7 +183,15 @@ func (s *Server) startBroker() error {
 // the whole document, so nothing the file had is lost, through a
 // temporary file so a crash mid-write leaves the old one.
 func writeConfig(cfg ServerConfig) error {
-	raw, err := json.MarshalIndent(cfg, "", "  ")
+	declared := cfg
+	declared.Harnesses = make(map[string]HarnessSpec, len(cfg.Harnesses))
+	for id, h := range cfg.Harnesses {
+		if h.Adapter != "" {
+			h.Command = ""
+		}
+		declared.Harnesses[id] = h
+	}
+	raw, err := json.MarshalIndent(declared, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -173,6 +229,9 @@ func (s *Server) configure(stream *nodewire.Stream) {
 		out := nodewire.ConfigReply{Settings: s.settings()}
 		if err != nil {
 			out.Error = err.Error()
+			if errors.Is(err, nodewire.ErrSettingsRevisionConflict) {
+				out.ErrorCode = nodewire.SettingsRevisionConflictCode
+			}
 		}
 		_ = json.NewEncoder(stream).Encode(out)
 	}
@@ -198,6 +257,21 @@ func (s *Server) configure(stream *nodewire.Stream) {
 		}
 		reply(fmt.Errorf("unknown config verb %q", verb))
 	}
+}
+
+func nodeSettingsFileRevision(path string) (string, error) {
+	if path == "" {
+		return "", nil
+	}
+	raw, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return "missing", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(raw)
+	return hex.EncodeToString(sum[:]), nil
 }
 
 // reservedMCP are names the platform gives its own session servers.

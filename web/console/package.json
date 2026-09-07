@@ -6,7 +6,14 @@
     "scripts": {
         "dev": "vite",
         "build": "tsc -b && vite build",
-        "preview": "vite preview"
+        "preview": "vite preview",
+        "test:boundaries": "node --test ../../e2e/console/architecture-boundaries.mjs",
+        "test:unit": "node --test ../../e2e/console/diff-parser.mjs ../../e2e/console/settings-draft.mjs ../../e2e/console/i18n.mjs && PURE_ONLY=1 node ../../e2e/console/settings-page.mjs && node ../../e2e/console/material-drafts.mjs",
+        "test:ui": "node ../../e2e/console/interactions.mjs",
+        "test:architecture": "node ../../e2e/console/architecture.mjs",
+        "test:settings": "node ../../e2e/console/settings-page.mjs",
+        "test:materials": "node ../../e2e/console/materials-ui.mjs",
+        "test:selection": "node ../../e2e/console/selection.mjs && node ../../e2e/console/selection-ui.mjs && node ../../e2e/console/side-chat-ui.mjs && node ../../e2e/console/changes-card.mjs"
     },
     "dependencies": {
         "@tailwindcss/typography": "^0.5.19",
@@ -14,6 +21,7 @@
         "@untitledui/file-icons": "^0.0.9",
         "@untitledui/icons": "^0.0.22",
         "embla-carousel-react": "^8.6.0",
+        "highlight.js": "11.12.0",
         "input-otp": "^1.4.2",
         "motion": "^12.38.0",
         "qr-code-styling": "^1.9.2",
@@ -39,6 +47,7 @@
         "@types/react-dom": "^19.2.3",
         "@vitejs/plugin-react": "^6.0.1",
         "globals": "^16.5.0",
+        "playwright": "1.62.1",
         "prettier": "^3.8.1",
         "prettier-plugin-tailwindcss": "^0.7.2",
         "typescript": "^5.9.3",

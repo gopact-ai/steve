@@ -17,7 +17,7 @@ func TestLedgerViewShowsEveryKindOfFact(t *testing.T) {
 		Attestations: []readmodel.Attestation{{Artifact: "0123456789abcdef0123", Step: "build", Kind: "command", Verifier: "go test ./...", Verdict: "pass", Attempt: "att-1", At: now}},
 		Replicas:     []readmodel.Replica{{Artifact: "0123456789abcdef0123", Node: "node-b", Generation: 2, State: "verified", Note: "direct from node-a", At: now}},
 		Disclosures:  []readmodel.Disclosure{{ID: "disc-7", Project: "vault", TaskID: "9", Requester: "ou_guest", Bytes: 512, At: now}},
-		Effects:      []readmodel.Effect{{ID: "int-abc", Tool: "feishu_send", TaskID: "9", Attempt: "att-2", Error: "timeout", At: now}},
+		Effects:      []readmodel.Effect{{ID: "int-abc", Tool: "channel_send", TaskID: "9", Attempt: "att-2", Error: "timeout", At: now}},
 		Grants:       []readmodel.Grant{{Project: "vault", Principal: "ou_guest", Role: "write", By: "ou_owner"}},
 	}}
 	out := renderLedger(snap, 120)

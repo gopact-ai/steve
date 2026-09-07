@@ -143,7 +143,7 @@ func TestCoordinatorDropsSessionOnTurnErrorWithoutKillingProcess(t *testing.T) {
 	}
 }
 
-func TestCoordinatorAbortsStuckTurnOnTimeout(t *testing.T) {
+func TestCoordinatorTimeoutDoesNotAbortSharedProcess(t *testing.T) {
 	catalog, _ := agent.NewCatalog(map[string]agent.Config{"codex": {Harness: "codex", Default: true}})
 	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
 	runner := &fakeRunner{started: make(chan struct{}), done: make(chan struct{})}
@@ -161,8 +161,8 @@ func TestCoordinatorAbortsStuckTurnOnTimeout(t *testing.T) {
 	if got := runner.seen(); len(got) != 1 {
 		t.Fatalf("the turn timed out before reaching the agent: prompts = %v", got)
 	}
-	if runner.aborts.Load() == 0 {
-		t.Fatal("stuck turn did not abort the process")
+	if runner.aborts.Load() != 0 || runner.cancels.Load() != 0 {
+		t.Fatal("one expired turn tore down or re-cancelled the shared process")
 	}
 	if _, ok := store.Conversation("chat").Sessions["codex"]; ok {
 		t.Fatal("timed-out session was retained")

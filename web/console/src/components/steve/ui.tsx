@@ -1,9 +1,10 @@
 import type { ReactNode } from "react";
 import { Badge } from "@/components/base/badges/badges";
 import type { BadgeColors } from "@/components/base/badges/badge-types";
-import { EmptyState } from "@/components/application/empty-state/empty-state";
 import type { FC } from "react";
 import { useFleet } from "@/lib/fleet";
+import { useI18n } from "@/providers/locale-provider";
+import type { MessageKey } from "@/lib/i18n";
 
 // One vocabulary of colours for every state the ledger speaks.
 export function colorOf(state: string): BadgeColors {
@@ -22,21 +23,60 @@ export function colorOf(state: string): BadgeColors {
     }
 }
 
-const stateWords: Record<string, string> = {
-    draft: "草稿", running: "进行中", blocked: "受阻", review: "待审", done: "已完成", failed: "失败", paused: "已暂停", cancelled: "已取消",
-    pending: "待执行", ready: "可执行", verifying: "验证中", "awaiting-human": "等你回答", skipped: "跳过",
-    up: "在线", down: "离线", ready_agent: "可用", blocked_agent: "不可用", idle: "空闲",
-    bound: "已绑定", committed: "已提交", verified: "已验证", pass: "通过", fail: "未通过", succeeded: "成功",
-    leased: "已租", prepared: "已准备", applying: "应用中", transferring: "传输中", present: "在", lost: "丢失", expired: "过期",
-    "merge-conflicted": "合并冲突", "apply-conflicted": "应用冲突", "commit-conflicted": "提交冲突", "bind-conflict": "绑定冲突", "outcome-unknown": "结果未知",
-    merged: "已合并", locked: "已锁", quarantined: "隔离", proposed: "待定", "recovery-pending": "待恢复",
-};
+const stateWords = {
+    "draft": "status.draft",
+    "running": "status.inProgress",
+    "unknown": "status.unknown",
+    "blocked": "status.blocked",
+    "review": "status.review",
+    "done": "status.done",
+    "failed": "status.failed",
+    "paused": "status.paused",
+    "cancelled": "status.cancelled",
+    "pending": "status.pending",
+    "dispatching": "status.dispatching",
+    "accepted": "status.accepted",
+    "ready": "status.ready",
+    "verifying": "status.verifying",
+    "awaiting-human": "status.awaitingHuman",
+    "skipped": "status.skipped",
+    "up": "status.up",
+    "down": "status.down",
+    "ready_agent": "status.available",
+    "blocked_agent": "status.unavailable",
+    "idle": "status.idle",
+    "bound": "status.bound",
+    "committed": "status.committed",
+    "verified": "status.verified",
+    "pass": "status.pass",
+    "fail": "status.fail",
+    "succeeded": "status.succeeded",
+    "leased": "status.leased",
+    "prepared": "status.prepared",
+    "applying": "status.applying",
+    "transferring": "status.transferring",
+    "present": "status.present",
+    "lost": "status.lost",
+    "expired": "status.expired",
+    "merge-conflicted": "status.mergeConflict",
+    "apply-conflicted": "status.applyConflict",
+    "commit-conflicted": "status.commitConflict",
+    "bind-conflict": "status.bindConflict",
+    "outcome-unknown": "status.outcomeUnknown",
+    "merged": "status.merged",
+    "locked": "status.locked",
+    "quarantined": "status.quarantined",
+    "proposed": "status.proposed",
+    "recovery-pending": "status.recoveryPending"
+} as const satisfies Record<string, MessageKey>;
 
 // StateBadge shows a state in the page's words; the internal word is the
 // tooltip, for anyone reading logs alongside.
-export const StateBadge = ({ state, size = "sm" }: { state: string; size?: "sm" | "md" }) => (
-    <span title={state}><Badge type="pill-color" size={size} color={colorOf(state)}>{stateWords[state] ?? state}</Badge></span>
-);
+export const StateBadge = ({ state, size = "sm" }: { state: string; size?: "sm" | "md" }) => {
+    const { t } = useI18n();
+    const key = stateWords[state as keyof typeof stateWords];
+    return <span title={state}><Badge type="pill-color" size={size} color={colorOf(state)}>{key ? t(key) : state}</Badge></span>;
+};
 
 // The model's empty node is the hub's own machine; name it, never the role.
 export const Where = ({ node }: { node?: string }) => {
@@ -48,16 +88,12 @@ export const Mono = ({ children, className }: { children: ReactNode; className?:
     <code className={`font-mono text-xs text-secondary ${className ?? ""}`}>{children}</code>
 );
 
-export const Nothing = ({ icon, title, children }: { icon: FC<{ className?: string }>; title: string; children?: ReactNode }) => (
-    <EmptyState size="sm" className="overflow-hidden py-10">
-        <EmptyState.Header>
-            <EmptyState.FeaturedIcon icon={icon} color="gray" theme="modern" />
-        </EmptyState.Header>
-        <EmptyState.Content>
-            <EmptyState.Title>{title}</EmptyState.Title>
-            {children ? <EmptyState.Description>{children}</EmptyState.Description> : null}
-        </EmptyState.Content>
-    </EmptyState>
+export const Nothing = ({ icon: Icon, title, children }: { icon: FC<{ className?: string }>; title: string; children?: ReactNode }) => (
+    <div className="workbench-empty flex min-w-0 flex-col items-center gap-2 px-6 py-10 text-center">
+        <span aria-hidden="true" className="mb-1 text-fg-quaternary"><Icon className="size-6" /></span>
+        <p className="text-sm font-medium text-secondary">{title}</p>
+        {children ? <div className="max-w-sm text-xs leading-relaxed text-tertiary">{children}</div> : null}
+    </div>
 );
 
 export const Tags = ({ items }: { items?: string[] }) =>
@@ -72,10 +108,10 @@ export const Tags = ({ items }: { items?: string[] }) =>
     );
 
 export const Section = ({ title, description, aside, children }: { title: string; description?: string; aside?: ReactNode; children: ReactNode }) => (
-    <section className="flex flex-col gap-4">
-        <div className="flex items-end justify-between gap-4">
-            <div>
-                <h2 className="text-lg font-semibold text-primary">{title}</h2>
+    <section className="flex min-w-0 flex-col gap-4">
+        <div className="flex flex-wrap items-end justify-between gap-4">
+            <div className="min-w-0">
+                <h2 className="text-base font-semibold text-primary">{title}</h2>
                 {description && <p className="text-sm text-tertiary">{description}</p>}
             </div>
             {aside}
@@ -88,7 +124,7 @@ export const Section = ({ title, description, aside, children }: { title: string
 // attempt is live; an open task nobody is working on is idle — a chat
 // thread waiting for its next line — not 进行中.
 export function taskState(t: { lifecycle: string; execution?: string }): string {
+    if (t.execution === "unknown" && t.lifecycle !== "done" && t.lifecycle !== "cancelled") return "unknown";
     if (t.lifecycle === "running") return t.execution === "running" ? "running" : "idle";
     return t.lifecycle;
 }
-

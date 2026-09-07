@@ -2,16 +2,16 @@ package exec
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
-	"github.com/gopact-ai/steve/internal/project"
-	"github.com/gopact-ai/steve/internal/roster"
-	"github.com/gopact-ai/steve/internal/view"
 )
 
 // Commands runs a shell command on a machine. The node registry satisfies
@@ -23,25 +23,26 @@ type Commands interface {
 // Verifiers is the executor's verification: a command run where the work is,
 // or a second agent asked to check the first one's. Neither takes the
 // working agent's word for anything — that is the whole point.
+type AgentVerifier interface {
+	Prompt(context.Context, agentexec.Spec, string, func(string) error) (agentexec.Result, error)
+}
+
 type Verifiers struct {
-	commands   Commands
-	sessions   Sessions
-	roster     *roster.Roster
-	workspaces project.Workspaces
-	// Timeout bounds one verification. Zero takes the default.
-	Timeout time.Duration
+	commands Commands
+	executor AgentVerifier
+	Timeout  time.Duration
 }
 
-func NewVerifiers(commands Commands, sessions Sessions, r *roster.Roster, workspaces project.Workspaces) *Verifiers {
-	return &Verifiers{commands: commands, sessions: sessions, roster: r, workspaces: workspaces}
+func NewVerifiers(commands Commands, executor AgentVerifier) *Verifiers {
+	return &Verifiers{commands: commands, executor: executor}
 }
 
-const defaultVerifyTimeout = 10 * time.Minute
+const DefaultVerifyTimeout = 10 * time.Minute
 
 func (v *Verifiers) Verify(ctx context.Context, req StepRequest, check plan.Verify, result plan.StepResult) error {
 	timeout := v.Timeout
 	if timeout <= 0 {
-		timeout = defaultVerifyTimeout
+		timeout = DefaultVerifyTimeout
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
@@ -65,6 +66,10 @@ func (v *Verifiers) byCommand(ctx context.Context, req StepRequest, check plan.V
 	}
 	out, err := v.commands.Exec(ctx, req.Node, req.Workspace, check.Command)
 	if err != nil {
+		var exit interface{ ExitCode() int }
+		if req.Node != "" && !errors.As(err, &exit) {
+			err = errors.Join(harness.ErrStopUnconfirmed, err)
+		}
 		return fmt.Errorf("%q on %s: %w", check.Command, nodeLabel(req.Node), err)
 	}
 	_ = out
@@ -74,67 +79,24 @@ func (v *Verifiers) byCommand(ctx context.Context, req StepRequest, check plan.V
 // byAgent asks a different agent whether the work holds up. The answer is
 // held to one word so it cannot be hedged into a pass.
 func (v *Verifiers) byAgent(ctx context.Context, req StepRequest, check plan.Verify, result plan.StepResult) error {
-	if v.sessions == nil {
-		return fmt.Errorf("no way to open a session for verifier %s", check.Agent)
+	if v.executor == nil {
+		return fmt.Errorf("agent verification execution is not configured")
 	}
 	if check.Agent == req.Agent {
 		return fmt.Errorf("a step cannot be verified by the agent that did it")
 	}
-	c, ok := v.candidate(ctx, check.Agent)
-	if !ok {
-		return fmt.Errorf("verifier %q is not in the roster", check.Agent)
-	}
-	if !c.Eligible {
-		return fmt.Errorf("verifier %s cannot run now: %s", check.Agent, c.Why)
-	}
-	at := harness.Placement{Node: c.Node, Harness: c.Harness}
-	if v.workspaces == nil {
-		return fmt.Errorf("no workspaces wired: verifier %s has nowhere to run", check.Agent)
-	}
-	// The verifier reads exactly what was published, in its own worktree
-	// on its own machine; nothing it does can reach the step's tree.
-	workspace, err := v.workspaces.Materialize(ctx, project.Request{Project: req.Project, Node: c.Node, Isolated: true, Base: result.Artifact, Owner: "verify-" + req.StepID})
-	if err != nil {
-		return fmt.Errorf("workspace for verifier %s: %w", check.Agent, err)
-	}
-	defer discardWorkspace(ctx, v.workspaces, workspace)
-	session, err := v.sessions.OpenSession(ctx, at, "", workspace.Path, nil)
-	if err != nil {
-		return fmt.Errorf("open verifier session on %s: %w", at, err)
-	}
-	defer func() {
-		closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-		defer closeCancel()
-		if err := v.sessions.CloseSession(closeCtx, at, session.ID()); err != nil {
-			session.Abort()
+	_, err := v.executor.Prompt(ctx, agentexec.Spec{TaskID: req.TaskID, TurnID: req.PlanID + "/" + req.StepID + "/verify", Agent: check.Agent, Project: req.Project, Base: result.Artifact, Kind: attempt.KindVerify, Timeout: v.Timeout}, verifyBrief(req, result), func(answer string) error {
+		verdict, reason := parseVerdict(answer)
+		switch verdict {
+		case "PASS":
+			return nil
+		case "FAIL":
+			return fmt.Errorf("verifier %s rejected: %s", check.Agent, reason)
+		default:
+			return fmt.Errorf("verifier %s did not return PASS or FAIL: %s", check.Agent, firstLine(answer))
 		}
-	}()
-	prompt := verifyBrief(req, result)
-	answer, _, err := session.Prompt(ctx, prompt, func(view.Progress) {})
-	if err != nil {
-		return fmt.Errorf("verifier %s: %w", check.Agent, err)
-	}
-	verdict, reason := parseVerdict(answer)
-	switch verdict {
-	case "PASS":
-		return nil
-	case "FAIL":
-		return fmt.Errorf("verifier %s: %s", check.Agent, reason)
-	default:
-		return fmt.Errorf("verifier %s gave no verdict: %s", check.Agent, strings.TrimSpace(firstLine(answer)))
-	}
-}
-
-func (v *Verifiers) candidate(ctx context.Context, id string) (roster.Candidate, bool) {
-	if v.roster == nil {
-		return roster.Candidate{}, false
-	}
-	for _, c := range v.roster.All(ctx) {
-		if c.Agent.ID == id {
-			return c, true
-		}
-	}
-	return roster.Candidate{}, false
+	})
+	return err
 }
 
 func verifyBrief(req StepRequest, result plan.StepResult) string {
@@ -173,11 +135,3 @@ func firstLine(s string) string {
 }
 
 func nodeLabel(node string) string { return nodewire.Place(node) }
-
-func discardWorkspace(ctx context.Context, w project.Workspaces, ws project.Workspace) {
-	if d, ok := w.(interface {
-		Discard(context.Context, project.Workspace) error
-	}); ok && ws.Kind == project.KindWorktree {
-		_ = d.Discard(context.WithoutCancel(ctx), ws)
-	}
-}

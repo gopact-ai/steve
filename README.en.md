@@ -12,55 +12,48 @@ Steve makes three structural commitments:
 
 ## Start with the console
 
-**Startup currently requires Feishu/Lark configuration; console-only startup is in roadmap §9 B3 of the [architecture document](docs/architecture.md).** Console use also requires `feishu.owner_open_id`: actions run as that owner. You can use the console for everyday interaction, but the current program still establishes a Feishu/Lark connection.
+The console can run independently without a Feishu/Lark application. Set `gateway.owner_id` for a standalone deployment. To add Feishu/Lark, configure both application credentials and its channel owner. Both entry points share projects, tasks and the ledger.
 
-Prepare Go 1.27+, Git, Node.js with npm, and an authenticated coding agent. Adapters in the built-in catalog (codex-acp, claude-agent-acp) are fetched by Steve at a pinned version, so you do not install them yourself; they are npm packages, which is why the Node.js runtime is still a prerequisite. An adapter you build yourself is named with `command` — see [hub deployment](docs/operations.md#部署-hub).
+Prepare Go 1.27+, Git, Node.js with npm, and an authenticated coding agent. Steve downloads and verifies pinned versions of the built-in `codex-acp` and `claude-agent-acp` adapters. The first download requires npm registry access; subsequent starts use the local cache.
 
-1. Build and generate configuration from the repository root:
+1. Build and copy the minimal configuration from the repository root:
 
    ```bash
    make build
-   ./steve setup
+   cp config.console.example.json config.json
+   chmod 600 config.json
    ```
 
-   Setup accepts an existing Feishu/Lark application or creates one through the official device flow (`./steve setup -create-app` starts creation directly). Confirm your own application-scoped `open_id` as the owner.
+2. Edit `config.json`: set `projects.workspace.home.path` to an existing project directory and `gateway.owner_id` to a stable owner identifier for this deployment. The example uses codex with the `read` permission policy. Adjust `agents` / `harnesses` for other tools. A self-managed adapter can use an absolute `command` path instead of `adapter`; specify one, not both.
 
-2. Edit the generated `config.json`. Keep the `feishu` and `projects` fields from setup and reduce `agents` / `harnesses` to tools you have installed. These two top-level fields use only codex; replace the path with its location on your machine:
+   [config.console.example.json](config.console.example.json) is the standalone example. [config.example.json](config.example.json) covers multiple machines, regions, MCP and optional Feishu/Lark; replace placeholders and remove unused sections before using it.
 
-   ```json
-   {
-     "agents": {
-       "codex": { "harness": "codex", "default": true }
-     },
-     "harnesses": {
-       "codex": {
-         "adapter": "codex-acp",
-         "permission": "read"
-       }
-     }
-   }
-   ```
-
-   `adapter` names an entry in the built-in catalog: Steve fetches that exact version, verifies it against a digest compiled into the binary, and runs it — nothing to install, and no version that changes underneath you. To run an adapter you built yourself, give `command` instead (an absolute path; it does not undergo shell expansion, so `~/...` does not work). Give one or the other, never both. [config.example.json](config.example.json) is a full multi-machine reference: replace placeholders and remove unused projects, agents and services before using it.
-
-3. Check the configuration, then start the hub:
+3. Check the configuration, then start the Hub:
 
    ```bash
-   ./steve doctor
-   ./steve run
+   ./steve doctor -config config.json
+   ./steve run -config config.json
    ```
 
-   Doctor validates Feishu/Lark credentials and home, and probes configured machines and agent sessions; it starts tool processes. After initial owner binding, run also uses a Feishu/Lark DM to initialize home.
+   Doctor prepares runtime directories and starts configured tools for probing; it is not a read-only production health check. Feishu/Lark is validated and connected only when configured. A standalone console prepares identity and memory files locally.
 
-4. Leave run active and use another terminal:
+4. Leave run active and open the console from another terminal:
 
    ```bash
    ./steve dash
    ```
 
-   Open the printed address (default `http://127.0.0.1:7710`). In the workbench, send `/project use workspace` (setup's default project name), then `@codex List this project's files and explain their purpose`. The `read` policy suits this first task; choose a policy from the [permission reference](docs/operations.md#harnessesname) before asking for file edits.
+   The default address is `http://127.0.0.1:7710`. Send `/project use workspace`, then `@codex List this project's files and explain their purpose`. When a tool asks for permissions beyond the `read` policy, approve or decline the request within the current turn; see the [permission reference](docs/operations.md#harnessesname).
 
-The console has nine entries: workbench, tasks, projects, resources, skills, MCP, profile, inbox, and history/audit. Tasks opens the workbench's board view. The input offers `/` and `@` completion; messages can queue while work runs, and progress, tool calls, replies and changes stay with their exchange. The listener defaults to loopback; see [console access and credentials](docs/operations.md#控制台与凭据) for remote access and tokens.
+For Feishu/Lark, `./steve setup` accepts an existing application and `./steve setup -create-app` uses the official device flow. Confirm your application-scoped `open_id`. Once configured, Feishu/Lark and the console can be used together. See [console access and credentials](docs/operations.md#控制台与凭据) for remote access, custom addresses and tokens.
+
+The console includes the workbench, tasks, projects, resources, skills, MCP, profile, inbox, history/audit and Settings at the bottom of the sidebar. Tasks opens the board. General settings offers Simplified Chinese, English or the browser language. Switching languages preserves drafts, file tabs and reading position, and does not rewrite user input, agent replies or historical text.
+
+The workbench supports `/` and `@` completion, queued messages, tool permission requests and agent questions. Answers go directly to the waiting turn instead of entering the task queue; retries retain the same answer identity. Materials can come from conversations, snapshot text or file uploads, with text selections, source/Diff line ranges, image rectangles and project-scoped annotations. Submitted references are frozen rather than rereading changing files. See [materials, annotations and questions](docs/operations.md#材料标记与问答).
+
+Usage provides **1d / 7d / 30d** trends: hourly buckets for the Hub's current day, or the last 7 / 30 calendar days including today. Unreported token points plot as **zero** with a continuous line; reporting coverage remains visible separately. Input/output tokens, cache reads/writes, TPM, task latency and breakdowns by agent, model, harness, trigger and project share the selected interval, with expandable task details.
+
+Each reply can show an expandable change card with file and line totals, the first three files, and direct Review links to that execution's snapshot. Selecting reply text, source or Diff opens actions to add a reference, inspect details or ask in an independent side chat while keeping the original conversation and draft. The conversation's Code view combines the file tree, highlighted source, line numbers, file tabs and source/Diff views. It reads the selected execution's start or end snapshot and is read-only. Settings groups General, Channels, Execution & resources, and Nodes & services. Channels configures the default channel, Feishu/Lark credentials and access rules. Saved service settings are distinguished from running values. Nodes & services can restart an idle Hub or node after confirmation and verify the new process after reconnection; version and ownership details are secondary. No upgrade action is provided.
 
 ## Core concepts
 
@@ -70,6 +63,7 @@ The console has nine entries: workbench, tasks, projects, resources, skills, MCP
 | node | An execution machine running `steve-node`, which starts local harness processes and reports tools, capabilities and health to the hub. |
 | agent | A named execution configuration: machine, harness (ACP tool), preferred model, requirements, session options, skills and MCP. The tool's session report determines the actual model. |
 | project | A workspace and its rules: one canonical `home`, optional workspaces on other machines, a data level and an execution mode. Directories belong to projects, not agents. |
+| channel | A conversation delivery channel such as `console` or `feishu`. Agents use `channel_send`, `channel_update` and `channel_recall` for progress messages; the adapter renders and delivers them. |
 | conversation and exchange | A conversation contains dialogue bound to a project. An exchange is one console input and its queue state, execution, progress and reply; a conversation contains multiple exchanges. |
 | task and child task | A task holds a goal, budget and execution history across exchanges. Delegation creates children under the parent task, sharing its remaining budget and subject to depth and cycle limits. |
 | attempt | A ledger record of one execution, including the agent, machine, workspace, leases and result. Recovery creates new execution records. |
@@ -84,7 +78,7 @@ Add a machine from the console's resources page using its name, data level and a
 
 The target needs Git, authenticated harnesses and a `steve-node` binary matching its OS and CPU architecture. The hub can serve a binary built with `CGO_ENABLED=0` through `gateway.node_binary`, or you can copy it with `scp`; see [node deployment](docs/operations.md#部署-node). The hub URL in the bootstrap command must be reachable from the node. Bootstrap copies only harness `command` / `args`, not authentication, environment or other harness settings, and it does not update an existing executable. Start nodes and locally provided wrappers such as `nodectl` from a login shell.
 
-After negotiating **`process_journal.v1`**, a dropped connection leaves the node process alive. The hub reattaches using acknowledged input and output sequence numbers, with a default **10-minute** grace period. Legacy nodes, expired grace, unavailable replay logs or a lost node process still cause failure. A hub process restart follows task recovery: it expires old attempts and resumes eligible tasks; this is separate from reattaching the original process stream.
+After negotiating **`process_journal.v1`**, a dropped connection leaves the node process alive. The hub reattaches using acknowledged input and output sequence numbers, with a default **10-minute** grace period. Legacy nodes, expired grace, unavailable replay logs or a lost node process still cause failure. A Hub restart first quarantines executions without proof that they stopped, then recovers settled attempts and eligible tasks. This is separate from reattaching the original process stream.
 
 ## Duplex delegation
 
@@ -96,15 +90,16 @@ The parent agent can end its turn and wait for platform delivery; **polling is n
 
 | Command | Scope |
 |---|---|
-| `go test -race ./...` | Local Go tests and race checks. |
+| `make test` | Local Go tests, race checks and dependency boundaries. |
+| `make test-console` | Frontend boundaries, build and isolated browser interactions. |
 | `make e2e-fleet` | Checks a named remote delegation, attempt, changes, usage and landing on an existing fleet; default and maximum client deadline **10 minutes**. |
 | `make e2e-autonomous` | Checks fleet discovery, parallel decomposition and delegation, capability placement and proactive result delivery; default and maximum **20 minutes**, requiring `kvtool/main.go` in the project's canonical directory and a remote node advertising `build`. |
 
-[CI](.github/workflows/test.yml) runs only gofmt, vet and race tests, without live fleet gates. The live gates use existing hub and node processes and do not build, deploy or restart them; they create real tasks and files. Connection options, required tools, timeout handling and PR evidence requirements are in [CONTRIBUTING.md](CONTRIBUTING.md) and [operations](docs/operations.md#门禁与-ci).
+[CI](.github/workflows/test.yml) runs gofmt, vet, race tests, frontend builds, dependency checks and isolated browser tests, without live fleet gates. The live gates use existing hub and node processes and do not build, deploy or restart them; they create real tasks and files. Connection options, required tools, timeout handling and PR evidence requirements are in [CONTRIBUTING.md](CONTRIBUTING.md) and [operations](docs/operations.md#门禁与-ci).
 
 ## Further reading
 
-- [docs/architecture.md](docs/architecture.md): positioning, objects, authority boundaries, implementation status and roadmap.
+- [docs/architecture.md](docs/architecture.md): module dependencies, authority, commit and query boundaries.
 - [docs/operations.md](docs/operations.md): configuration keys, deployment, gates and troubleshooting.
 - [docs/history/](docs/history/): archived console and capability proposals and the collaboration audit.
 - Code: entry points in [cmd/](cmd/), core implementation in [internal/](internal/), console in [web/console/](web/console/), acceptance checks in [e2e/](e2e/).

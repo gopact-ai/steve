@@ -160,6 +160,7 @@
   },
   "gateway": {
     "default_project": "steve",
+    "default_channel": "feishu",
     "level": "restricted",
     "region": "east",
     "regions": {

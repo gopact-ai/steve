@@ -2,12 +2,56 @@ package artifact
 
 import (
 	"context"
+	"github.com/gopact-ai/steve/internal/project"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestRetiredProjectKeepsReadOnlySnapshots(t *testing.T) {
+	canonical := t.TempDir()
+	write(t, canonical, "README", "historical source")
+	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	snapshot, _, err := store.SnapshotCanonical(t.Context(), p, "", "test", "before retirement")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.projects.Reconcile(t.Context(), nil, "empty-declaration"); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := store.Project(t.Context(), p.ID); err != nil || found {
+		t.Fatalf("retired project still active: %v, %v", found, err)
+	}
+	text, _, binary, _, err := store.File(t.Context(), p.ID, snapshot.ID, "README")
+	if err != nil || binary || text != "historical source" {
+		t.Fatalf("retirement lost read access: %q, %v", text, err)
+	}
+	if _, err := store.Materialize(t.Context(), project.Request{Project: p.ID, Isolated: true, Owner: "new-work"}); err == nil {
+		t.Fatal("retired project admitted new execution")
+	}
+}
+
+func TestSourceTruncationPreservesUTF8Text(t *testing.T) {
+	work := t.TempDir()
+	contents := strings.Repeat("a", MaxFileBytes-1) + "中文"
+	if err := os.WriteFile(filepath.Join(work, "large.txt"), []byte(contents), 0600); err != nil {
+		t.Fatal(err)
+	}
+	repo, err := Open(t.Context(), filepath.Join(t.TempDir(), "objects.git"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	commit, _, err := repo.Snapshot(t.Context(), work, "", "large text", false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text, size, binary, truncated, err := repo.File(t.Context(), commit, "large.txt")
+	if err != nil || binary || !truncated || len(text) != MaxFileBytes-1 || size != int64(len(contents)) {
+		t.Fatalf("UTF-8 boundary became binary or corrupt: size=%d bytes=%d binary=%v truncated=%v err=%v", size, len(text), binary, truncated, err)
+	}
+}
 
 func TestChangesIndexAndFileDiff(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {

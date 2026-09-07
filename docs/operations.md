@@ -10,8 +10,9 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 - `Duration` 的 JSON 类型是字符串，使用 Go duration，如 `"30s"`、`"10m"`、`"1h30m"`，不能用数字代替。`[]` / `{}` 表示没有配置项。
 - 路径示例统一用 `/home/me`，需替换为实际部署用户。harness 的 `command`、`args`、环境变量值不经过 shell 展开，`command` 不要写 `~/...` 或启动时在线安装的命令。预先安装适配器，填实际绝对路径。
 - hub 会展开本机的 `state_path`、`home_path`、本机项目 `home.path`、技能路径和 harness `process_dir`；相对路径以进程启动目录为基准。远端项目路径保留原值，工作区副本要求绝对路径。跨机器路径一律填写目标机器上的绝对路径最清楚。
+- [config.console.example.json](../config.console.example.json) 是不带飞书的独立控制台最小配置；设置稳定的 `gateway.owner_id` 并替换项目路径即可使用。
 - [config.example.json](../config.example.json) 展示多机、区域、MCP 和调试配置，并非最小配置。模型和选项的 `<...>` 是占位符，必须替换为资源页实际报告的 ID/值，或删除对应字段；技能目录、地址和密钥同样需要替换。删除不用的 agent、项目、区域和服务；不用调试时删除 `debug_addr` / `debug_chat_id`。
-- [node.example.json](../node.example.json) 展示带 `hubs` 名称绑定和独立 MCP broker 的节点。将 `hubs` 里的 `hub-a` 换成实际 hub 名称，或以 `STEVE_NODE=hub-a` 启动 hub。只运行 node 时可删除 `mcp_broker`，保留空 `mcp_servers`；需要 MCP 时按[下文](#mcp-部署)选内置或独立 broker。
+- [node.example.json](../node.example.json) 展示带 `hubs` 名称绑定和独立 MCP broker 的节点。将 `hubs` 里的 `hub-a` 换成实际 `gateway.hub_id`（控制台配置页可查看），不要使用显示机器名代替。只运行 node 时可删除 `mcp_broker`，保留空 `mcp_servers`；需要 MCP 时按[下文](#mcp-部署)选内置或独立 broker。
 
 ### hub 顶层
 
@@ -22,8 +23,9 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 | `harnesses` | object<string, Harness> | 无，至少一项 | hub 本机启动命令与权限策略；agent 引用的 harness 必须在此登记 | `{"codex":{"command":"/home/me/.local/bin/codex-acp"}}` |
 | `nodes` | object<string, Node> | `{}` | hub 如何连接远端机器；能力来自 node 的实际申报 | `{"host-3":{"addr":"10.0.0.3:7701","token":"replace-me"}}` |
 | `mcp_servers` | object<string, MCPServer> | `{}` | hub 本机 MCP 定义 | `{"docs":{"type":"http","url":"https://mcp.example.com/mcp"}}` |
-| `feishu` | Feishu object | 无有效默认，凭据必填 | 飞书/Lark 连接、访问规则与 owner | `{"app_id":"cli_...","app_secret":"replace-me","owner_open_id":"ou_..."}` |
-| `gateway` | Gateway object | 各字段按下表 | 状态目录、控制台、预算与协调设置 | `{"read_model_addr":"127.0.0.1:7710"}` |
+| `feishu` | Feishu object | 可省略；启用时凭据成对填写 | 可选飞书/Lark 连接、访问规则与该通道 owner | `{"app_id":"cli_...","app_secret":"replace-me","owner_open_id":"ou_..."}` |
+| `gateway` | Gateway object | 各字段按下表 | 状态目录、控制台、预算与协调设置 | `{"owner_id":"local-owner","read_model_addr":"127.0.0.1:7710"}` |
+| `policies` | Policies object | 各组采用下文默认值 | 执行、规划、快照与审阅限制 | `{"execution":{"step_timeout":"15m"}}` |
 
 `Config.Migrated` 是加载时生成的迁移提示（`json:"-"`），不是可配置键。
 
@@ -39,7 +41,7 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 | `skills` | string[] | `[]` | 固定到项目的技能目录，在 hub 读取 | `["/home/me/steve-skills/review"]` |
 | `durable_places` | string[] | `[]`（hub）；sealed 会补入 home 所在机器 | 哪些机器的产物回执算耐久；其中任一有效回执即可，`""` 表示 hub | `[""]` |
 | `external_remote` | string | `""`；克隆时尝试使用主目录根仓库的 remote | 控制台创建工作区副本时优先使用的克隆来源；加载配置本身不克隆 | `"git@github.com:example/work.git"` |
-| `grants` | object<string, string> | `{}` | principal（飞书 open_id）到 `none` / `read` / `write` / `admin`；owner 总是 admin | `{"ou_...":"write"}` |
+| `grants` | object<string, string> | `{}` | principal（owner 标识或飞书 open_id）到 `none` / `read` / `write` / `admin`；owner 总是 admin | `{"ou_...":"write"}` |
 | `default_role` | string | public/internal 为 `write`，restricted/sealed 为 `none` | 未单独授权的用户角色，可显式设上述四种值 | `"none"` |
 | `workspaces` | ProjectWorkspace[] | `[]` | 主目录之外的已有工作区，一台机器一个；配置不会自动克隆，sealed 不允许副本 | `[{"node":"host-3","path":"/srv/work-copy"}]` |
 | `workspaces[].node` | string | `""`（hub） | 副本所在机器，不能是项目 home 所在机器 | `"host-3"` |
@@ -85,7 +87,7 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 | `always_allow` | 放行，优先选择 allow-always。 |
 | `deny` | 拒绝工具权限请求。 |
 
-策略作用于 harness 经 ACP 发出的权限请求，session mode 也会尝试与策略匹配。**当前控制台没有接入工具权限的人工问答回调**，所以 `read` 下的写请求会被拒绝；在控制台执行写任务需要选择允许写入的策略。飞书回合接有卡片问答。控制台“待处理”里的 sealed 披露批准、对外动作对账是另外的机制。依据：[permission/broker.go](../internal/permission/broker.go)、[acphost/host.go](../internal/acphost/host.go)、[console/console.go](../internal/console/console.go)。
+策略作用于 harness 经 ACP 发出的权限请求，session mode 也会尝试与策略匹配。控制台会显示本轮工具权限请求和 Agent 提问，用户可按提供的选项批准、拒绝或取消；回答通过独立接口送回当前等待，不排在执行队列之后。未提供人工回调或策略直接拒绝时，不会自动放行。飞书回合使用卡片问答。控制台“待处理”里的 sealed 披露批准、对外动作对账是另外的机制。依据：[permission/broker.go](../internal/permission/broker.go)、[acphost/host.go](../internal/acphost/host.go)、[console/console.go](../internal/console/console.go)。
 
 ### `mcp_servers.<name>`
 
@@ -107,19 +109,24 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 | `app_id` | string | 必填 | 飞书/Lark 自建应用 ID | `"cli_..."` |
 | `app_secret` | string | 必填 | 应用密钥 | `"replace-me"` |
 | `domain` | string | `"feishu"` | `feishu` 或 `lark` | `"lark"` |
-| `owner_open_id` | string | `""` | owner 身份；控制台必须配置。省略时 hub 可启动，但私聊用 guest home，控制台不能执行 | `"ou_..."` |
-| `allowed_senders` | string[] | `[]`（群消息不按发送者限制） | 非空时只接收这些发送者的群消息，私聊不使用此名单 | `["ou_..."]` |
+| `owner_open_id` | string | `""` | 飞书/Lark owner；也是未设置 `gateway.owner_id` 时的控制台 owner 后备值 | `"ou_..."` |
+| `allowed_senders` | string[] | `[]` | `group_policy=allowlist` 时的群聊发送者名单，空名单拒绝全部群聊；私聊不使用此名单 | `["ou_..."]` |
 | `blocked_senders` | string[] | `[]` | 群聊和私聊均拒绝这些发送者，优先于其他规则 | `["ou_..."]` |
-| `group_policy` | string | `"open"` | 接受 `open` / `allowlist` / `disabled`；`disabled` 禁止群消息 | `"disabled"` |
+| `group_policy` | string | `"open"` | `open` 允许群聊，`allowlist` 仅允许名单命中者（空名单拒绝全部），`disabled` 禁止群消息；阻止名单始终优先 | `"disabled"` |
 | `allow_unmentioned` | boolean | `false` | 接收未 @ bot 的群消息，再由参与策略决定是否响应 | `true` |
 | `dm_policy` | string | `""`，兼容项 | 只校验 `pairing` / `allowlist`，当前不参与访问决策 | `"pairing"`（仅旧文件） |
 
-当前访问代码对非 disabled 群消息都会检查 `allowed_senders`，与 `group_policy` 写 open 还是 allowlist 无关；**空名单不会封闭群访问**。要关闭群入口用 `disabled`。这两个兼容项（`feishu.dm_policy`、`agents.<name>.workspace`）不放进新样例。依据：[channel/feishu/access.go](../internal/channel/feishu/access.go)。
+`feishu.enabled` 可显式启停适配器；省略时由凭据是否齐全决定。停用可以保留凭据，但默认通道必须指向仍启用的通道。控制台操作和旧群聊限制升级说明见 [Channel 设置](#channel-设置)。`feishu.dm_policy`、`agents.<name>.workspace` 两个兼容字段不放进新样例。
 
 ### gateway
 
 | 键 | 类型 | 默认 | 作用 | 示例 |
 |---|---|---|---|---|
+| `hub_id` | string | 首次从状态目录生成并持久化的 ID | Hub 的稳定身份；不能借修改 ID 接管其他 Hub 的项目 | `"hub-a"` |
+| `peers` | object<string, HubPeer> | `{}` | 稳定 Hub ID 对应的配置记录；每项含 `name`、`url`、`token`，URL 禁止用户凭据、查询参数和 fragment；不代表在线状态，不启用自动接管 | `{"hub-b":{"url":"https://hub-b.example","token":"replace-me"}}` |
+| `owner_id` | string | 后备到 `feishu.owner_open_id` | 控制台 owner 标识；独立控制台需要有效 owner | `"local-owner"` |
+| `locale` | string | `lark` 域为 `en`，其他为 `zh` | 系统回复默认语言，接受 `""` / `zh` / `en`；浏览器语言另行选择 | `"en"` |
+| `default_channel` | string | 启用飞书时 `"feishu"`，否则 `"console"` | 填充授权消息锚点缺省的通道；只能指向已配置通道，不改变收件人 | `"console"` |
 | `node_binary` | string | `""` | 引导脚本可下载的 steve-node 文件；不填则需预先复制 | `"/home/me/steve-bin/steve-node"` |
 | `prompt_timeout` | Duration string | `"10m"`；非正值也取此默认 | 一轮没有文本、工具调用或报告的静默超时；不是总时长上限 | `"15m"` |
 | `state_path` | string | `"~/.steve/state.json"` | 旧状态文件路径，其父目录决定账本、运行状态和锁的位置 | `"/home/me/.steve/state.json"` |
@@ -145,6 +152,28 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 
 任务预算的 **0 是不限**；设置正值才施加限制，子任务从父任务剩余预算分配。`prompt_timeout`、任务预算、node 续接宽限和 e2e 客户端截止时间是不同的时钟。
 
+### policies
+
+依据：[internal/config/policies.go](../internal/config/policies.go)。载入配置时，省略或为零的策略值采用以下默认值；控制台编辑策略时要求显式正值，避免把零误认为关闭限制。所有策略变更在重启 Hub 后生效。
+
+| 键 | 类型 | 默认 | 含义 |
+|---|---|---|---|
+| `execution.step_timeout` | Duration string | `"15m"` | 单个执行步骤的超时 |
+| `execution.verify_timeout` | Duration string | `"10m"` | 验证执行的超时 |
+| `planning.timeout` | Duration string | `"3m"` | 规划请求超时 |
+| `planning.attempts` | integer | `2` | 规划尝试次数 |
+| `snapshot.max_files` | integer | `20000` | 快照文件数量上限 |
+| `snapshot.max_bytes` | integer bytes | `2147483648`（2 GiB） | 快照总字节上限 |
+| `snapshot.max_file_bytes` | integer bytes | `209715200`（200 MiB） | 快照单文件上限，不能大于总字节上限 |
+| `review.max_changes` | integer | `500` | 返回的变更文件数量上限 |
+| `review.max_diff_bytes` | integer bytes | `204800`（200 KiB） | Diff 读取上限 |
+| `review.max_file_bytes` | integer bytes | `204800`（200 KiB） | 源码文件读取上限 |
+| `review.max_entries` | integer | `2000` | 目录列表条目上限 |
+| `review.timeout` | Duration string | `"30s"` | 审阅读取超时 |
+
+表中键位于顶层 `policies` 下，例如 `policies.snapshot.max_bytes`。整数要求 1–9007199254740991；时长必须为正。上限导致的截断会在对应读取结果中标记，不能把截断内容当作完整文件。
+
+
 ### `nodes.<name>` 与 `gateway.regions.<name>`
 
 | 键 | 类型 | 默认 | 作用 | 示例 |
@@ -167,7 +196,7 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 | `name` | string | 必填 | node 申报的名字，应与 hub 中登记的机器名一致 | `"host-3"` |
 | `listen` | string | `"0.0.0.0:7701"` | 接收 hub 连接；`-listen` 参数可覆盖 | `"10.0.0.3:7701"` |
 | `token` | string | 必填，即使配置了 `hubs` | 通用 hub 认证 token；若也列在 `hubs`，名称同样受约束 | `"replace-me-with-a-long-random-secret"` |
-| `hubs` | object<string, string> | `{}` | hub 名称 → token；表中的 token 必须匹配该名字，不会自动禁用未列入表的顶层 token | `{"hub-a":"replace-me-with-a-long-random-secret"}` |
+| `hubs` | object<string, string> | `{}` | 稳定 Hub ID → token；表中的 token 必须匹配该 ID，不会自动禁用未列入表的顶层 token | `{"hub-a":"replace-me-with-a-long-random-secret"}` |
 | `harnesses` | object<string, HarnessSpec> | 必填，至少一项 | 该机器可启动的 ACP 工具 | `{"codex":{"command":"/home/me/.local/bin/codex-acp"}}` |
 | `harnesses.<name>.adapter` | string | `""` | 内置清单里的适配器名；node 自己取到 `state_dir/adapters` 并校验后运行。与 `command` 二选一 | `"codex-acp"` |
 | `harnesses.<name>.command` | string | 与 `adapter` 二选一 | 本机自己预装的可执行文件 | `"/home/me/.local/bin/codex-acp"` |
@@ -196,7 +225,7 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 
 | 环境变量 | 默认 | 作用与示例 |
 |---|---|---|
-| `STEVE_NODE`（hub） | 主机名；无法读取时 `local` | 固定 hub 机器名，例如 `STEVE_NODE=hub-a`；使用 `hubs` 时必须匹配。 |
+| `STEVE_NODE`（hub） | 主机名；无法读取时 `local` | 固定 Hub 所在机器的显示名称；不改变稳定 `gateway.hub_id` 或节点归属。 |
 | `STEVE_NODE_SESSION_GRACE`（node） | `10m` | 进程流续接宽限，必须为正 duration，例如 `15m`；通过 advert 告知 hub。 |
 | `STEVE_NODE_FAULT`（node） | 关闭 | 测试故障注入，例如 `drop-hub-after:20s`；会切断 hub 连接，不用于正常部署。 |
 
@@ -226,7 +255,7 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 npm install -g --prefix /home/me/.local @agentclientprotocol/codex-acp
 ```
 
-只使用一个工具时只保留对应 agent/harness。工具本身的认证与代理是部署用户 profile 里的东西，先在登录 shell 里确认，再按 [README](../README.md#从控制台开始) 执行 `make build` → `steve setup` → `steve doctor` → `steve run` → `steve dash`。
+只使用一个工具时只保留对应 agent/harness。工具本身的认证与代理在部署用户环境中准备，先在登录 shell 里确认。独立控制台按 [README](../README.md#从控制台开始) 构建、复制 `config.console.example.json`、修改路径与 owner，再执行 `steve doctor` → `steve run` → `steve dash`；`steve setup` 用于配置可选的飞书/Lark 通道。
 
 `make build` 使用 `CGO_ENABLED=0` 构建 `steve` 和 `steve-node`；控制台静态文件已嵌入 Go 源码目录，普通后端构建不需要重新构建前端。修改前端时先执行 `make console`，再构建二进制。
 
@@ -240,7 +269,7 @@ hub 对 `state_path` 的父目录持单例锁，同一状态目录不能同时�
 
 ### 控制台与凭据
 
-当前启动会校验飞书 `app_id` / `app_secret` 并启动飞书连接；不存在跳过飞书的运行模式。`owner_open_id` 为空不会阻止 hub 启动，但控制台无法执行动作。owner 是当前应用下的 open_id，由 setup 确认；首次 owner 初始化还会用到飞书私聊。纯控制台启动见 [architecture.md](architecture.md) 路线图 §9 B3。
+省略飞书应用凭据即可独立运行控制台，设置 `gateway.owner_id` 为稳定的部署 owner 标识；`app_id` / `app_secret` 只填写其中一个会被拒绝。两者都填写时，Steve 才验证并启动飞书/Lark 通道。控制台 owner 优先使用 `gateway.owner_id`，否则使用 `feishu.owner_open_id`；独立部署没有有效 owner 时启动失败。飞书 owner 仍使用该应用下的 open_id。身份和记忆文件在本地准备，不需要通过飞书完成首次启动。
 
 默认地址 `127.0.0.1:7710` 只在 hub 本机可访问。对外监听需要设置 `gateway.read_model_addr` 和非空 `gateway.read_model_token`。`dash` / `top` / `say` 不读取 config.json 的地址或 token，使用自定义监听时要显式传参：
 
@@ -253,6 +282,72 @@ hub 对 `state_path` 的父目录持单例锁，同一状态目录不能同时�
 这里的环境变量由部署者预先设置。read-model token 代表 owner 管理权限；`dash` 输出的 URL 会包含 token，不要贴进 PR。它与飞书 app secret、node 认证 token、MCP broker token 和区域 issuer token 分别配置。
 
 资源页可以即时添加机器和 agent，项目页可以添加项目/工作区，并写回相应配置；直接在磁盘上编辑 JSON 不是通用热加载接口。当前没有 `steve config apply` 命令。
+
+管理保存会检测配置文件是否被外部改过，拒绝覆盖检测到的新版本。项目配置已保存但账本投影失败时，界面会报告“投影尚未应用”，对应项目解析暂停；修复存储问题后重试管理操作或重启恢复。不要把已保存误当成未执行，再并发修改另一份配置。删除声明不会删除已保存的历史产物。
+
+控制台前端与 Hub 应一起更新。当前前端在发送前检查 Hub 的持久提交身份能力；旧 Hub 未提供 `submission_keys` 时，Console 保持只读并提示更新。提交结果不明时使用原请求的“重试”，同一个提交编号不会创建第二份工作。
+
+
+### 语言、控制台配置与版本
+
+侧栏底部“设置”的通用页可选择简体中文、English 或跟随浏览器，并设置外观。显式选择保存在当前浏览器，不写入 Hub 配置；界面切换保留草稿、标签页和阅读状态。普通 API 请求带 `Accept-Language`，一次提交的 locale 在接收时固定，重试沿用原提交身份与语言。用户输入、材料、Agent 输出和历史正文不会随界面切换被重写；浏览器切换语言也不修改 Hub 默认语言或飞书连接配置。
+
+设置中心按通用、Channel、执行与资源、节点与服务分类展示；低频字段默认折叠，运行值仅在与保存值不同时提示，不平铺原始含密钥配置。`gateway.owner_id` 在页面只读；身份变更通过部署配置完成。
+
+- `GET /console/settings` 返回 `revision`、`desired`、`effective`、`pending_restart`、`apply_mode` 和字段 schema（类型、范围、单位与默认值）。
+- `PUT` / `PATCH /console/settings` 接收 `{"base_revision":"读取到的版本","settings":{"gateway":{"task_max_turns":20}}}`。只有版本一致才保存；409 表示配置已变更，界面保留草稿，重新读取前要求确认。
+- 这组设置的 `apply_mode` 当前都是 `restart`。`desired` 是已保存的目标值，`effective` 是当前进程运行值；保存成功不意味着已热更新。落盘成功但目录同步出现告警时，响应带 `warning`，仍应按已保存处理。
+- `GET /console/versions` 返回 Hub ID、Hub/节点版本、协议范围与协商信息，以及可用的项目归属和 peer 配置。peer 配置与项目归属不等于在线/健康状态，页面不探测远端，也不发起迁移。
+- 当前无自动安装。未配置 ReleaseProvider 时不查询公网发布服务；配置后只发现版本清单，安装仍与发现分离。
+
+### Channel 设置
+
+`GET /console/channels` 返回共享配置 `revision`、`desired`、`effective`、`pending_restart` 和 `apply_mode: restart`。`runtime_error` 表示适配器初始化或连接失败；已启用不等于连接正常，Console 会保留以便修正凭据。
+
+`PUT /console/channels` 接收 `base_revision` 和 `channels` 对象，其中可修改 `default_channel` 及 `feishu` 的 `enabled`、`app_id`、`domain`、`owner_open_id`、`group_policy`、`allow_unmentioned`、`allowed_senders`、`blocked_senders`。凭据仅写入：省略 `app_secret` 保留现值；`{"action":"replace","value":"..."}` 替换；`{"action":"clear"}` 明确清除，不能清除仍启用适配器的凭据。读取仅返回 `app_secret_configured`，不回显密钥或摘要。
+
+Console 始终启用，owner 在该接口只读。首次保存将原有效 Console owner 和默认语言固定为独立配置，之后修改 IM owner 或域不再改变它们。不可停用当前默认通道；先选择 Console。群聊 `open` 放行未被阻止的发送者，`allowlist` 仅放行名单命中者（空名单拒绝全部群聊），`disabled` 拒绝群聊，阻止名单优先，私聊不受群聊名单控制。旧配置若以 `open` 加非空名单表达限制，升级时应显式改为 `allowlist`，保持原限制。
+
+### 服务重启
+
+“节点与服务”列出 Hub 和 worker 的版本、可用性及重启结果。服务只能在工作台空闲、没有排队请求或待核实执行时重启。重启先关闭准入，释放缓存会话并等待进程退出；下一回合由新进程恢复会话。Hub 重启会短暂中断 Console。升级安装不在此入口提供。
+
+- `GET /console/services` 查询列表。
+- `POST /console/services/{name}/restart` 接收稳定 `command_id`；Hub 名称为 `hub`，worker 使用已登记节点名。
+- `GET /console/services/{name}/restart?command_id=...` 查询回执；省略编号查询当前实例最近操作。
+- `accepted` 只表示请求已持久受理，`restarted` 要求新 incarnation 上线。断线和未知响应不等于成功；重试原编号，不另造一次重启。节点需协商 `service_restart.v1`。
+- 重启前验证配置。Console 外直接编辑了 Hub 配置时，UI 重启会拒绝，需通过部署校验并应用；服务地址、身份、认证和状态目录的变更也应走部署。自动端口 `:0` 不支持保持地址的 UI 重启。
+- Unix CLI 在清理完成后重新执行当前二进制，保留 PID、参数和环境；不依赖额外 supervisor，不下载或切换版本。配置无效、退出未确认或服务正在工作时返回明确错误并保留当前服务。
+
+### 材料、标记与问答
+
+材料按项目保存，来源可记录会话回复、执行快照和上传文件；来源描述不授权任意文件系统或 URL 读取。文本可选择精确片段或行范围，图片可选择矩形区域。源码和 Diff 的标记绑定材料与快照来源，不会因当前文件变化而自动漂移。注释保存带 `expected_revision`，冲突不覆盖已有内容；删除使用带版本的删除标记。
+
+| 接口 | 作用 |
+|---|---|
+| `GET /console/materials`、`GET /console/materials/{id}` | 查询项目材料与元数据 |
+| `GET /console/materials/{id}/content` | 读取材料内容 |
+| `POST /console/materials/capture`、`POST /console/materials/upload` | 捕获已有来源或上传文件 |
+| `POST /console/materials/resolve` | 解析指定材料及选区 |
+| `GET /console/annotations`、`PUT /console/annotations/{id}` | 查询和按 revision 保存标记 |
+| `GET /console/questions?conversation=...` | 读取会话中的待处理问答及结果 |
+| `POST /console/questions/{id}/answer` | 以稳定 `command_id` 回答当前问题 |
+
+Console 回复、源码及 Diff 的选区显示浮动操作条。加入对话先核对目标项目，保留原始回复版本或代码快照；Markdown 显示文本映射回原始文本，不能证明来源的选区不生成引用。源码支持精确文本引用，Diff 局部选区扩为同侧连续整行并显示行范围；跨修改前后或跨行号缺口的选区不会混合成一个引用。键盘选区可用 Tab 或 Shift+F10 进入操作条，方向键切换操作，Escape 关闭。
+
+侧边提问使用同项目的独立 Console 会话，不替换当前主会话；点击侧聊入口只准备引用，用户发送问题后才绑定项目并提交。草稿、引用、语言和提交身份独立保留，未知响应重试沿用同一身份。审查工作区内的侧聊可继续阅读代码，也可打开为主会话。
+
+回复下的变更卡片绑定该回复的 attempt，默认显示三个文件，可展开或收起。增删行和二进制计数来自同一快照；截断结果明确标为部分统计，未捕获不显示为“无变更”。卡片进入可见区域时才加载文件索引。Review 和文件行打开原快照；该入口不提供撤销写操作。
+
+当前材料限制：单个 blob 20 MiB、文本 2 MiB、图片 10 MiB 且不超过 1600 万像素；每次提交最多 8 个引用，解析后的文本合计 64 KiB、媒体合计 10 MiB，单条标记正文 16 KiB。材料不是可执行指令；二进制附件保留类型与来源，不能冒充图片。提交时解析并固定引用，受目标项目作用域校验。
+
+问题答复使用 `decision`（`accept` / `decline` / `cancel`）和问题提供的 `choice`；同一 `command_id` 的相同答复可以重放，不同答复冲突返回 409。问题绑定会话、执行、会话代次与 principal，过期或已解决的请求不能再次批准。回答直接交给等待中的执行，不通过普通 `enqueue` 创建下一轮消息。网络结果未知时应重试原答复，不另造新的答复编号。
+
+### 用量口径
+
+1d 按 Hub 当天的小时聚合，7d / 30d 按包含今天的日历天聚合，沿用 Hub 提供的时区与区间。未上报 token 在图中按 0 绘制并保持连线，覆盖率仍单独表示缺失程度；0 点不构成提供方已确认“零消耗”的证据。
+
+用量页分别展示输入、输出、缓存读取和缓存写入，可按 Agent、模型、harness、触发方式、项目查看，并展开任务明细。TPM 和任务耗时使用接口报告的统计口径；界面语言切换只改变格式，不重新划分时间桶或改变统计范围。
 
 ## 部署 node
 
@@ -302,13 +397,13 @@ node 要安装 Git；工作树物化和产物传输依赖它。默认 harness ho
 
 手工部署时在 hub 登记对应 `nodes`、绑定 `node` 的 agent，以及需要的项目工作区；资源页登记可即时连接，无需重启 hub。配置中写了 harness 只代表声明，资源页或 `/fleet` 报的可用性来自机器观测；缺命令、模型不匹配或能力不足都有具体原因。
 
-node 同时只服务一个 hub。`hubs` 可把 token 绑定到 hub 名称；hub 名称取 `STEVE_NODE`，否则取主机名。原 hub 干净断开会交还 node；异常静默时归属保留 10 分钟，之后其他 hub 才可认领，也可在明确移交时使用：
+每个 node 实例归属一个 Hub，`hubs` 将 token 绑定到稳定 `gateway.hub_id`。归属持久化；正常断线、心跳超时和进程流续接宽限到期都不会把实例自动交给另一个 Hub。显式移交时，先停止 node 实例并核实旧 harness 进程已退出，再执行：
 
 ```bash
-./steve-node adopt -config /home/me/steve-bin/node.json hub-b
+./steve-node adopt -config /home/me/steve-bin/node.json -evidence "旧实例与其 harness 进程已停止" hub-b
 ```
 
-`adopt` 更新归属记录，不会修改 `hubs` 的认证映射或踢掉仍在线的 hub。这一归属宽限与下面的进程流续接宽限相互独立。
+`adopt` 获取实例维护锁并更新归属记录；仍运行的实例会拒绝移交。存在未确认退出的旧进程记录时必须提供核实证据。它不修改 `hubs` 的认证映射，也不迁移项目；先配置目标 Hub 的认证，再启动 node。同一物理机器可运行多个拥有独立端口、state_dir 和 harness 环境的 node 实例；单实例不同时接受多个 Hub 调度。
 
 ### MCP 部署
 
@@ -371,7 +466,31 @@ bash -lc 'exec /home/me/steve-bin/steve-node mcp-broker -config /home/me/steve-b
 
 旧节点没有此能力，断线仍会结束流。超过宽限、node 进程已消失、日志超出保留范围（`too old`）、日志写入失败或不可续接都会失败；journal 有界，不保证无限期回放。显式结束、取消和干净关闭不按网络故障保留进程。
 
-hub 进程重启是另一条路径：先过期旧 attempt、恢复未完成的落地，再恢复符合条件的会话任务及持久队列，并补投递已完成子任务的结果。暂停的任务不会自动续跑；中断超过 24 小时的会话任务留在停止状态，缺少消息锚点的聊天任务不能自动回复。它不承诺恢复旧 hub 内存中的 ACP 连接。
+hub 进程重启是另一条路径：先将缺少停止证据的旧执行隔离，回收已确认静止的未完成 attempt，再应用配置、恢复未完成落地及符合条件的任务和队列，并补投递已完成子任务的结果。隔离中的任务和暂停任务不会自动续跑；中断超过 24 小时的会话任务留在停止状态，缺少消息锚点的聊天任务不能自动回复。重启不承诺恢复旧 hub 内存中的 ACP 连接，也不表示旧 node 进程已经停止。
+
+计划恢复从已提交的步骤输出和工作流检查点继续；输出分支使用稳定落地 ID。`applying` 阶段会按原目录完成 WAL 恢复，恢复前不能移动或退休该项目。任务只有在全部约定落地完成后才显示完成。
+
+### 隔离执行与复制操作
+
+`/tasks cancel ID` 撤销任务及子任务的执行授权并等待收尾；普通回合结束不会取消已派发子任务。若未能确认进程停止，隔离会继续阻止目录接管，租约到期也不会解除它。
+
+以下命令用于检查隔离记录：
+
+```bash
+./steve ledger quarantine --config config.json
+./steve ledger clones --config config.json
+```
+
+先在记录指定的机器确认原进程已经退出。不能仅凭断连、关闭流或重启 Hub 认定退出。停止使用该状态目录的 Hub，再记录核实依据：
+
+```bash
+./steve ledger confirm-stopped --config config.json --evidence 'verified original process exit' ATTEMPT_ID
+./steve ledger confirm-clone-stopped --config config.json --evidence 'verified original clone process exit' CLONE_OPERATION_ID
+```
+
+然后启动 Hub 重新对账。确认 clone 停止只解除隔离；原目录内容是否完整仍需检查，后续由工作区管理操作重新准备。
+
+定时任务结果不明时，`/schedules` 显示 `unknown`。检查对应通道和任务后，已执行使用 `/schedules confirm ID`；确认允许再次执行才使用 `/schedules retry ID`。确认和重试限原创建者或 owner；未处理的未知触发不能通过删除定时任务隐藏。
 
 ## 门禁与 CI
 
@@ -380,11 +499,12 @@ hub 进程重启是另一条路径：先过期旧 attempt、恢复未完成的�
 | 命令 | 内容 | 期限/前置 |
 |---|---|---|
 | `make build` | 静态构建 hub 和 node | Go 1.27+；不启动服务 |
-| `make test` / `go test -race ./...` | Go 测试与竞态检查 | 本地运行 |
+| `make test` | Go 测试、竞态检查与依赖门禁 | 本地运行 |
+| `make test-console` | 前端构建、依赖与隔离浏览器测试 | 先安装 npm 开发依赖和 Playwright Chromium |
 | `make e2e-fleet` | 指定远端 agent 的委派、attempt、改动索引、用量、文件落地 | 已运行机群；客户端默认/上限 10 分钟 |
 | `make e2e-autonomous` | 查机群、并行拆解委派、按 build 能力执行、回传结果与落地 | 已运行机群；客户端默认/上限 20 分钟 |
 | `make e2e` | `STEVE_MESH_E2E=1` 的 mesh 测试 | Go 测试总超时 25 分钟；独立测试机群配置见 [e2e/mesh/](../e2e/mesh/) |
-| CI | gofmt、`go vet ./...`、`go test -race ./...` | master push 与 PR；不运行真实机群门禁 |
+| CI | Go gofmt/vet/race、前端构建/依赖门禁/隔离浏览器测试 | master push 与 PR；不运行真实机群门禁 |
 
 两个 fleet 门禁在 **hub 机器的仓库根目录**运行，使用已有 hub 和 node，不构建、部署或重启它们。它们以 owner 访问控制台 API，读取 hub 本机项目主目录，所以仅有远程 HTTP 访问不够；任务会使用真实模型并留下会话与文件证据。
 
@@ -415,7 +535,9 @@ bash -lc 'make e2e-autonomous'
 
 | 日志或现象 | 含义与处理 |
 |---|---|
-| `expired attempt of the previous process: ... hub restarted` | hub 启动时把前一个进程留下的活 attempt 置为过期，释放旧执行占用；不是“新任务刚启动就超时”。继续找该 task 的恢复或停止记录。 |
+| `recovered settled attempt: ...` | 旧 attempt 有明确静止证据，启动已回收其占用；继续查看 task 的恢复记录。 |
+| `quarantined previous writer: ...` / `automatic revival is blocked` | 不能确认旧执行进程已经停止；按隔离恢复流程核实进程并记录证据，不要靠 TTL 或重启反复重试。 |
+| `execution shutdown incomplete` | 有界关闭未能确认所有执行已清理；启动时会保守对账，检查隔离列表和原机器进程。 |
 | `console: resuming task #...` | 为控制台任务建立恢复交换并继续；若出现 `console: resume task #...: ...`，查看后面的具体恢复错误。 |
 | `console restarted before this exchange completed` | 上一个进程未完成的 running 交换被明确结算为错误；任务若符合恢复条件，会另开恢复交换。 |
 | `node: <name> disconnected (connection ...)` / `node: <name> up ...` | 节点连接断开/重新连上；仅有 up 不代表原 agent 流已经续接，继续找 stream 日志。 |
@@ -429,7 +551,7 @@ bash -lc 'make e2e-autonomous'
 | `sweep: land pending for <project>: <error>` | 后台落地遇到非占锁错误；查看对应产物/landing。规范锁被占用时继续排队，不打印这一错误。 |
 | `sweep: removed N orphaned worktree(s) on ...` | 清理没有活 attempt 持有的隔离工作树；启动及 node 连接时会触发检查。 |
 | `sweep: worktrees on <node>: <error>` | 该机器的孤儿工作树清扫失败；检查可达性、目录和文件权限。 |
-| `the console needs feishu.owner_open_id` | owner 未配置；补上当前应用的 open_id。只有 read-model token 不足以建立 owner。 |
+| `gateway.owner_id is required for a console-only hub` | 独立控制台缺少 owner。设置稳定的 `gateway.owner_id`；控制台 token 用于认证，不能代替 owner 身份。 |
 | `Authentication required`，但资源页 harness 可用 | 可执行程序存在/能启动不等于模型认证有效；检查 node 的登录环境、认证链接和隔离 home，尤其不要用裸环境启动 node/nodectl。 |
 | `harness ... missing` 或 `start agent ...` | 检查目标机器命令的绝对路径、执行权限、解释器及 PATH；不是只检查 hub 的安装。启动探针有 3 秒期限。 |
 | `this node is served by hub ...` / `this node belongs to hub ...` | 机器已有活 hub 或仍在归属宽限；确认连接的 hub 名称和 token，按明确的移交流程处理。 |

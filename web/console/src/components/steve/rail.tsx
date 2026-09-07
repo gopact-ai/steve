@@ -1,71 +1,80 @@
-import { useEffect, useState } from "react";
-import { GitBranch01, MessageChatSquare } from "@untitledui/icons";
+import { useEffect, useState, useSyncExternalStore } from "react";
+import { GitBranch01, MessageChatSquare, X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
-import { when } from "@/lib/api";
+import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import { label, zh } from "@/lib/labels";
+import { placeLabel } from "@/lib/workspaces";
 import type { ConversationContext, Plan, Reply, Task } from "@/lib/types";
 import { CallGraph } from "./call-graph";
 import { TaskDrawer } from "./task-drawer";
-import { ChangesTab, FilesTab } from "./work-tabs";
+import { useI18n } from "@/providers/locale-provider";
+import { MaterialShelf } from "./material-shelf";
+import { getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
+import { CodeTab } from "./work-tabs";
 
 // RAIL_WIDTH is the console's right column; a drawer opened from it is
 // the same width, so the side of the page does not jump.
-export const RAIL_WIDTH = 380;
+export const RAIL_WIDTH = 360;
 import { Chips, KeyValue, Panel } from "./page";
-import { InjectedPanel, ProcessBody, Working, type Live } from "./trace";
+import { InjectedPanel, ProcessBody, Working } from "./trace";
+import type { Live } from "@/lib/live";
 import { Mono, Nothing } from "./ui";
 
-export type RailTab = "context" | "trace" | "graph" | "changes" | "files";
+export type RailTab = "context" | "trace" | "graph" | "code" | "materials";
 
 // Rail is the console's right column: the session's facts, the trace of
 // the line in flight or the one picked, and the call graph of who is
 // working for this session.
-export function Rail({ context, live, plans, reply, tab, setTab, roots }: { context: ConversationContext | null; live: Live | null; plans: Plan[]; reply: Reply | null; tab: RailTab; setTab: (t: RailTab) => void; roots: Task[] }) {
+export function Rail({ context, live, plans, reply, tab, setTab, roots, onClose }: { context: ConversationContext | null; live: Live | null; plans: Plan[]; reply: Reply | null; tab: RailTab; setTab: (t: RailTab) => void; roots: Task[]; onClose: () => void }) {
     const [picked, setPicked] = useState<Task | null>(null);
     const { snap } = useFleet();
+    const { t, locale } = useI18n();
+    const support = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
     // The trace tab takes over while something runs, and returns to
     // context when the user asks.
-    useEffect(() => { if (live) setTab("trace"); }, [live, setTab]);
+    useEffect(() => { if (live?.exchangeID) setTab("trace"); }, [live?.exchangeID, setTab]);
     const usable = context?.agents.filter((a) => a.usable) ?? [];
     const elsewhere = context?.agents.filter((a) => !a.usable) ?? [];
     return (
-        <aside className="hidden min-h-0 flex-col border-l border-secondary bg-secondary xl:flex">
-            <div className="border-b border-secondary bg-primary px-4 py-2">
+        <aside className="workbench-inspector" aria-label={t("console.details")} >
+            <div className="inspector-heading"><strong>{t("console.details")}</strong><button type="button" className="workbench-icon-button" aria-label={t("console.closeDetails")}  onClick={onClose}><X aria-hidden="true" /></button></div>
+            <div className="inspector-tabs">
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as RailTab)}>
-                    <TabList type="button-border" size="sm" items={[{ id: "context", label: "会话" }, { id: "trace", label: live ? "过程（进行中）" : "过程" }, { id: "graph", label: roots.length ? `关系 (${roots.length})` : "关系" }, { id: "changes", label: "变更" }, { id: "files", label: "文件" }]}>{(item) => <Tab {...item} />}</TabList>
+                    <TabList type="button-border" size="sm" items={[{ id: "context", label: t("console.conversation") }, { id: "trace", label: t("console.trace") }, { id: "graph", label: t("console.graph") }, { id: "code", label: t("console.code") }, ...(support.material_refs ? [{ id: "materials", label: t("materials.shelf") }] : [])]}>{(item) => <Tab {...item} />}</TabList>
                 </Tabs>
             </div>
-            <div className="flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto p-4">
+            <div className="inspector-body">
                 {tab === "context" && context && (
                     <>
-                        <Panel title="项目" badge={context.project && !context.project.bound ? <Badge type="pill-color" size="sm" color="gray">默认，未绑定</Badge> : undefined}>
+                        <Panel title={t("console.project")}  badge={context.project && !context.project.bound ? <Badge type="pill-color" size="sm" color="gray">{t("console.unbound")}</Badge> : undefined}>
                             {context.project ? (
                                 <KeyValue dense rows={[
-                                    { k: "名字", v: <span className="font-medium">{context.project.id}</span> },
-                                    { k: "项目主机", v: <Mono>{context.project.node}</Mono> },
-                                    { k: "主目录", v: <Mono className="text-secondary">{context.project.path}</Mono> },
-                                    { k: "工作方式", v: label(zh.repo, context.project.repo), hint: "直接修改主目录：只有项目主机上的 Agent 能接。隔离副本：计划在别的机器上物化副本，完成后合并。" },
-                                    { k: "数据等级", v: context.project.level },
+                                    { k: t("console.name"), v: <span className="font-medium">{context.project.id}</span> },
+                                    { k: t("console.projectHost"), v: <Mono>{context.project.node}</Mono> },
+                                    { k: t("console.canonical"), v: <Mono className="text-secondary">{context.project.path}</Mono> },
+                                    { k: t("console.workspace"), v: context.agent?.place ? placeLabel(context.agent.place, locale) : t("console.notSelected") },
+                                    { k: t("console.workMode"), v: label(zh.repo, context.project.repo), hint: t("console.workModeHint") },
+                                    { k: t("console.level"), v: context.project.level },
                                 ]} />
-                            ) : <span className="text-sm text-quaternary">没有项目</span>}
-                            <p className="text-xs text-quaternary">切换项目只影响本会话：已有任务不迁移，当前 Agent 的会话归档并新开，有回合在跑时不能切。</p>
+                            ) : <span className="text-sm text-quaternary">{t("console.noProject")}</span>}
+
                         </Panel>
-                        <Panel title="当前 Agent">
+                        <Panel title={t("console.currentAgent")} >
                             {context.agent ? (
                                 <KeyValue dense rows={[
-                                    { k: "名字", v: <span className="font-medium">{context.agent.id}</span> },
-                                    { k: "机器", v: <Mono>{context.agent.node}</Mono> },
-                                    { k: "AI 工具", v: context.agent.harness },
-                                    { k: "实际模型", v: context.agent.model || <span className="text-quaternary">未观测到</span> },
-                                    { k: "状态", v: context.agent.ready ? <span className="text-success-primary">可用</span> : <span className="text-error-primary">不可用 · {context.agent.why}</span> },
+                                    { k: t("console.name"), v: <span className="font-medium">{context.agent.id}</span> },
+                                    { k: t("console.machine"), v: <Mono>{context.agent.node}</Mono> },
+                                    { k: t("console.harness"), v: context.agent.harness },
+                                    { k: t("console.model"), v: context.agent.model || <span className="text-quaternary">{t("console.unobserved")}</span> },
+                                    { k: t("console.state"), v: context.agent.ready ? <span className="text-success-primary">{t("console.ready")}</span> : <span className="text-error-primary">{t("console.unavailablePrefix")} · {context.agent.why}</span> },
                                 ]} />
-                            ) : <span className="text-sm text-quaternary">没有当前 Agent</span>}
+                            ) : <span className="text-sm text-quaternary">{t("console.noAgent")}</span>}
                         </Panel>
-                        <Panel title="谁能接本会话">
+                        <Panel title={t("console.usableAgents")} >
                             <div className="flex flex-col gap-2 text-sm">
-                                <Chips items={usable.map((a) => ({ id: a.id, title: `${a.node} · ${a.harness}` }))} empty={<span className="text-error-primary">没有 — 换一个 Agent 所在机器上的项目</span>} />
+                                <Chips items={usable.map((a) => ({ id: a.id, title: `${a.node} · ${a.harness}` }))} empty={<span className="text-error-primary">{t("console.noUsableAgents")}</span>} />
                                 {elsewhere.length > 0 && (
                                     <ul className="flex flex-col gap-1 text-xs text-tertiary">
                                         {elsewhere.map((a) => <li key={a.id}><Mono className="text-quaternary">{a.id}</Mono> <span>{a.because || a.why}</span></li>)}
@@ -80,21 +89,21 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots }: { cont
                         <>
                             {reply.injected && <InjectedPanel at={reply.at} in={reply.injected} />}
                             {reply.process && (
-                                <Panel title={`过程 · ${when(reply.at)}`}>
+                                <Panel title={`${t("console.trace")} · ${when(reply.at, locale)}`}>
                                     <ProcessBody process={reply.process} />
                                 </Panel>
                             )}
                         </>
-                    ) : <Nothing icon={MessageChatSquare} title="还没有过程">发一条消息，这里会显示给 agent 的上下文、它的推理、工具调用和步骤。</Nothing>
+                    ) : <Nothing icon={MessageChatSquare} title={t("console.noTrace")} >{t("console.noTraceHint")}</Nothing>
                 )}
-                {tab === "changes" && <ChangesTab roots={roots} all={snap.tasks} />}
-                {tab === "files" && <FilesTab roots={roots} all={snap.tasks} />}
+                {tab === "materials" && support.material_refs && context?.project && <MaterialShelf key={context.project.id} project={context.project.id} />}
+                {tab === "code" && <CodeTab roots={roots} all={snap.tasks} />}
                 {tab === "graph" && (
                     roots.length ? (
-                        <Panel title="谁在为这条会话干活" badge={<span className="text-xs text-tertiary">任务 → 步骤 / 委派</span>}>
+                        <Panel title={t("console.workingFor")}  badge={<span className="text-xs text-tertiary">{t("console.treeHint")}</span>}>
                             <CallGraph roots={roots} tasks={snap.tasks} plans={snap.plans} liveSteps={live?.order} onSelect={setPicked} />
                         </Panel>
-                    ) : <Nothing icon={GitBranch01} title="还没有任务">这条会话的任务、它拆出的步骤、以及 Agent 之间的委派会画在这里。</Nothing>
+                    ) : <Nothing icon={GitBranch01} title={t("console.noTasks")} >{t("console.noTasksHint")}</Nothing>
                 )}
             </div>
             {picked && <TaskDrawer t={picked} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === picked.id)} onClose={() => setPicked(null)} width={RAIL_WIDTH} />}

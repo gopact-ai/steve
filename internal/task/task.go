@@ -33,7 +33,7 @@ var transitions = map[State][]State{
 	StateReview:    {StateRunning, StatePaused, StateDone, StateFailed, StateCancelled},
 	StatePaused:    {StateRunning, StateDone, StateFailed, StateCancelled},
 	StateDone:      {},
-	StateFailed:    {StateRunning, StateCancelled},
+	StateFailed:    {StateRunning, StatePaused, StateCancelled},
 	StateCancelled: {},
 }
 
@@ -99,6 +99,8 @@ const (
 // Budget counts what Steve observes itself. Turns and elapsed time are the
 // authoritative limits precisely because they never depend on a harness
 // reporting usage; tokens ride along for display and cost attribution.
+// Every counter includes this task's own executions and all descendants.
+// Turns are charged when execution begins; other costs when it finishes.
 type Budget struct {
 	Turns      int           `json:"turns"`
 	MaxTurns   int           `json:"max_turns,omitempty"`
@@ -145,12 +147,13 @@ func FromUsage(input, output, cachedRead, cachedWrite uint64) Tokens {
 func (a Attempt) Open() bool { return a.EndedAt.IsZero() }
 
 type Task struct {
-	ID        string `json:"id"`
-	Goal      string `json:"goal"`
-	Requester string `json:"requester,omitempty"`
-	Channel   string `json:"channel"`
-	Member    string `json:"member,omitempty"`
-	Node      string `json:"node,omitempty"`
+	ExecutionEpoch uint64 `json:"execution_epoch"`
+	ID             string `json:"id"`
+	Goal           string `json:"goal"`
+	Requester      string `json:"requester,omitempty"`
+	Channel        string `json:"channel"`
+	Member         string `json:"member,omitempty"`
+	Node           string `json:"node,omitempty"`
 	// Origin records what opened the task when it was not a person typing:
 	// a schedule's id, say. It is how unattended work can be recognised and
 	// rotated without touching a task the user has since taken over.

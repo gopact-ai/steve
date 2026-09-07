@@ -1,6 +1,7 @@
 package turn
 
 import (
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -13,6 +14,9 @@ import (
 func scheduleCoordinator(t *testing.T) (*Coordinator, *schedule.Store) {
 	t.Helper()
 	coordinator, _ := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	if err := coordinator.SetChannelOwner("feishu", ""); err != nil {
+		t.Fatal(err)
+	}
 	store, err := schedule.Open(filepath.Join(t.TempDir(), "schedules.json"))
 	if err != nil {
 		t.Fatalf("open schedules: %v", err)
@@ -23,6 +27,7 @@ func scheduleCoordinator(t *testing.T) (*Coordinator, *schedule.Store) {
 
 func schedRequest(input string) Request {
 	return Request{
+		Channel:        "feishu",
 		ConversationID: "chat", Input: input,
 		MessageID: "om_anchor", ChatID: "oc_chat", SenderOpenID: "ou_asker",
 	}
@@ -48,11 +53,65 @@ func TestEveryStoresTheInstructionAndItsAnchor(t *testing.T) {
 	if job.Prompt != "看一眼 CI" || job.Member != "codex" {
 		t.Fatalf("job = %+v; want the bare instruction bound to codex", job)
 	}
+	if job.Channel != "feishu" || job.ProjectID == "" {
+		t.Fatalf("schedule did not freeze its channel/project: %+v", job)
+	}
 	if job.AnchorMessage != "om_anchor" || job.ChatID != "oc_chat" || job.Requester != "ou_asker" {
 		t.Fatalf("job lost its anchor: %+v", job)
 	}
 	if job.Spec.Every != 30*time.Minute || job.NextAt.IsZero() {
 		t.Fatalf("spec = %+v next=%s", job.Spec, job.NextAt)
+	}
+}
+
+func TestUncertainScheduleHasVisibleAndAuthorizedResolution(t *testing.T) {
+	c, store := scheduleCoordinator(t)
+	if _, err := c.Handle(t.Context(), schedRequest("/at 1m scheduled work")); err != nil {
+		t.Fatal(err)
+	}
+	jobs := store.List("chat")
+	if len(jobs) != 1 {
+		t.Fatalf("missing schedule: %+v", jobs)
+	}
+	due, err := store.Due(jobs[0].NextAt)
+	if err != nil || len(due) != 1 {
+		t.Fatalf("due=%+v %v", due, err)
+	}
+	unknown := func() {
+		if err := store.BeginFiring(due[0].Key); err != nil {
+			t.Fatal(err)
+		}
+		if err := store.FailFiring(due[0].Key, errors.New("delivery response lost"), true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	unknown()
+	listed, err := c.Handle(t.Context(), schedRequest("/schedules"))
+	if err != nil || !strings.Contains(listed.Text, "unknown") || !strings.Contains(listed.Text, "delivery response lost") || !strings.Contains(listed.Text, "/schedules confirm "+jobs[0].ID) {
+		t.Fatalf("uncertainty has no resolution UI: %+v %v", listed, err)
+	}
+	stranger := schedRequest("/schedules confirm " + jobs[0].ID)
+	stranger.SenderOpenID = "stranger"
+	if _, err := c.Handle(t.Context(), stranger); err != nil {
+		t.Fatal(err)
+	}
+	still, _ := store.Get(jobs[0].ID)
+	if still.State != schedule.FiringUnknown {
+		t.Fatal("another person resolved the scheduled effect")
+	}
+	if _, err := c.Handle(t.Context(), schedRequest("/schedules retry "+jobs[0].ID)); err != nil {
+		t.Fatal(err)
+	}
+	again, err := store.Due(jobs[0].NextAt)
+	if err != nil || len(again) != 1 || again[0].Key != due[0].Key {
+		t.Fatalf("explicit retry did not resume same occurrence: %+v %v", again, err)
+	}
+	unknown()
+	if _, err := c.Handle(t.Context(), schedRequest("/schedules confirm "+jobs[0].ID)); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := store.Get(jobs[0].ID); ok {
+		t.Fatal("explicit confirmed one-shot remains blocked")
 	}
 }
 

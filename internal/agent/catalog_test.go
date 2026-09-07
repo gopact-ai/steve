@@ -2,6 +2,60 @@ package agent
 
 import "testing"
 
+func TestCatalogOwnsImmutableConfigurations(t *testing.T) {
+	options := map[string]string{"effort": "high"}
+	aliases := []string{"worker"}
+	catalog, err := NewCatalog(map[string]Config{"main": {Harness: "mock", Default: true, Options: options, Aliases: aliases}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	options["effort"], aliases[0] = "low", "changed"
+	got, ok := catalog.Resolve("worker")
+	if !ok || got.Options["effort"] != "high" || got.Aliases[0] != "worker" {
+		t.Fatalf("caller changed catalog: %+v", got)
+	}
+	got.Options["effort"] = "low"
+	listed := catalog.List()
+	listed[0].Aliases[0] = "changed"
+	if catalog.Default().Options["effort"] != "high" || catalog.Default().Aliases[0] != "worker" {
+		t.Fatal("read results changed the published catalog")
+	}
+}
+
+func TestCatalogPublishesPreparedSnapshot(t *testing.T) {
+	live, err := NewCatalog(map[string]Config{"old": {Harness: "mock", Default: true, Aliases: []string{"worker"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := NewCatalog(map[string]Config{"new": {Harness: "mock", Default: true, Aliases: []string{"worker"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if live.Default().ID != "old" {
+		t.Fatal("preparation changed live state")
+	}
+	live.Publish(prepared)
+	if got, ok := live.Resolve("worker"); !ok || got.ID != "new" {
+		t.Fatalf("published alias = %+v, %v", got, ok)
+	}
+	if err := prepared.Add("later", Config{Harness: "mock"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := live.Resolve("later"); ok {
+		t.Fatal("candidate mutation leaked into published snapshot")
+	}
+	if err := live.Add("local", Config{Harness: "mock"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := prepared.Resolve("local"); ok {
+		t.Fatal("published catalog shares mutable configs")
+	}
+	live.Publish(live)
+	if live.Default().ID != "new" {
+		t.Fatal("self publication changed catalog")
+	}
+}
+
 func TestCatalogResolveAlias(t *testing.T) {
 	catalog, err := NewCatalog(map[string]Config{
 		"claude": {Harness: "claude-code", Aliases: []string{"cc"}},

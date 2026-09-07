@@ -3,12 +3,12 @@ package exec
 import (
 	"context"
 	"errors"
-	"strings"
 	"sync"
 	"sync/atomic"
 
 	"github.com/gopact-ai/gopact"
 	"github.com/gopact-ai/gopact/workflow"
+	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/plan"
 )
 
@@ -57,6 +57,7 @@ type Outcome struct {
 	// Recoveries is how many step retries the run spent, across all steps.
 	Recoveries int
 	Err        error
+	Landings   []artifact.Landing
 }
 
 // Execute compiles and runs the plan once. Retries happen inside the steps.
@@ -96,6 +97,5 @@ func NeedsRevision(err error) bool {
 	var inv ErrInvalidated
 	var exhausted ErrExhausted
 	var nowhere ErrNowhereToRun
-	return errors.As(err, &inv) || errors.As(err, &exhausted) || errors.As(err, &nowhere) ||
-		strings.Contains(err.Error(), "nothing can run it")
+	return errors.As(err, &inv) || errors.As(err, &exhausted) || errors.As(err, &nowhere)
 }

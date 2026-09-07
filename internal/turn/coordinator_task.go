@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/project"
@@ -317,6 +318,17 @@ func parseTaskArgs(rest string) (taskVerb, string, bool) {
 }
 
 func isTaskID(s string) bool {
+	if prefix, tail, ok := strings.Cut(s, "~"); ok {
+		if len(prefix) != 13 || prefix[0] != 'h' {
+			return false
+		}
+		for _, r := range prefix[1:] {
+			if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
+				return false
+			}
+		}
+		s = tail
+	}
 	if s == "" {
 		return false
 	}
@@ -399,11 +411,50 @@ func (c *Coordinator) taskTarget(conversationID, id string, verb taskVerb) (task
 // turn that happens to finish during the stop cannot flip the task back to
 // running, then stop the turn that is actually burning time.
 func (c *Coordinator) taskSetAside(ctx context.Context, title string, tracked task.Task, to task.State) Result {
-	moved, err := c.tasks.Advance(tracked.ID, to)
-	if err != nil {
-		return Result{Title: title, Text: c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))}
+	var stopErr error
+	if c.executions != nil {
+		ids, err := c.tasks.SetAside(tracked.ID, to)
+		if err != nil {
+			return Result{Title: title, Text: err.Error()}
+		}
+		if c.attempts != nil {
+			for _, id := range ids {
+				if records, err := c.attempts.ForTask(ctx, id); err == nil {
+					for _, record := range records {
+						if !record.Unsettled && record.StopEvidence != "" {
+							c.executions.Resolve(record.ID)
+						}
+					}
+				}
+			}
+		}
+		waitCtx, finishWait := context.WithTimeout(ctx, 20*time.Second)
+		stopErr = c.executions.Stop(ids, task.ErrExecutionStopped).Wait(waitCtx)
+		finishWait()
+		if c.attempts != nil {
+			for _, id := range ids {
+				records, err := c.attempts.ForTask(context.WithoutCancel(ctx), id)
+				if err != nil {
+					stopErr = errors.Join(stopErr, err)
+					continue
+				}
+				for _, record := range records {
+					if record.Unsettled {
+						stopErr = errors.Join(stopErr, fmt.Errorf("attempt %s writer is quarantined until physically confirmed stopped", record.ID))
+					}
+				}
+			}
+		}
+	} else {
+		if _, err := c.tasks.Advance(tracked.ID, to); err != nil {
+			return Result{Title: title, Text: c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))}
+		}
+		c.stopTurnFor(ctx, tracked)
 	}
-	c.stopTurnFor(ctx, moved)
+	moved, _ := c.tasks.Get(tracked.ID)
+	if stopErr != nil {
+		return Result{Title: title, Text: fmt.Sprintf("task #%s: stop recorded, execution has not confirmed stopping: %v", tracked.ID, stopErr)}
+	}
 	// Re-read: the stopped turn closes its own attempt, and the detail is
 	// only worth showing if it reflects that.
 	if latest, ok := c.tasks.Get(moved.ID); ok {
@@ -547,4 +598,11 @@ func statusMark(state task.State) string {
 	default:
 		return string(state)
 	}
+}
+
+func (c *Coordinator) advanceExecution(ctx context.Context, id string, to task.State) (task.Task, error) {
+	if token := execution.Token(ctx); token != nil {
+		return c.tasks.AdvanceExecution(*token, to)
+	}
+	return c.tasks.Advance(id, to)
 }

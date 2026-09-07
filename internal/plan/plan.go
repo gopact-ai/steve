@@ -7,7 +7,10 @@
 // afterwards is to have kept the revisions.
 package plan
 
-import "time"
+import (
+	"github.com/gopact-ai/steve/internal/task"
+	"time"
+)
 
 // StepState tracks one step through the executor.
 type StepState string
@@ -74,6 +77,9 @@ type Finding struct {
 }
 
 type StepResult struct {
+	PlanRevision   int                  `json:"plan_revision,omitempty"`
+	AttemptID      string               `json:"attempt_id,omitempty"`
+	ExecutionToken *task.ExecutionToken `json:"execution_token,omitempty"`
 	// Artifact is the step's published result: a commit in the project's
 	// shadow repository, bound to the step's name.
 	Artifact string    `json:"artifact,omitempty"`
@@ -100,6 +106,8 @@ type Usage struct {
 	Output      int64  `json:"output,omitempty"`
 	CachedRead  int64  `json:"cached_read,omitempty"`
 	CachedWrite int64  `json:"cached_write,omitempty"`
+	Context     int64  `json:"context,omitempty"`
+	Reported    bool   `json:"reported"`
 }
 
 // Step is one unit of work. Placement is expressed as Requires rather than a

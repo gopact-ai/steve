@@ -36,6 +36,7 @@ func (f *fakeSupervisor) Execute(_ context.Context, p plan.Plan) (exec.Outcome, 
 	return exec.Outcome{}, f.fail
 }
 func (f *fakeSupervisor) Name() string                                       { return "fake" }
+func (f *fakeSupervisor) PrepareRecovery(context.Context) error              { return nil }
 func (f *fakeSupervisor) OpenRuns(context.Context) ([]exec.RunRecord, error) { return nil, nil }
 func (f *fakeSupervisor) Resume(context.Context, exec.RunRecord) (exec.Outcome, error) {
 	return exec.Outcome{}, nil

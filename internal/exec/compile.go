@@ -30,9 +30,12 @@ import (
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ctxpack"
+	"github.com/gopact-ai/steve/internal/execution"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 // maxParallelSteps bounds how many steps of one plan run at once. A step
@@ -86,11 +89,12 @@ type Recorder interface {
 
 // Deps are what a compiled plan needs to run.
 type Deps struct {
-	Roster   *roster.Roster
-	Runner   Runner
-	Verifier Verifier
-	Budget   Budget
-	Recorder Recorder
+	Executions *execution.Registry
+	Roster     *roster.Roster
+	Runner     Runner
+	Verifier   Verifier
+	Budget     Budget
+	Recorder   Recorder
 	// Workspaces answers where a step runs, given its project and the node
 	// placement chose. It is asked after placement and before the budget
 	// is touched: a step that cannot get a directory has not started.
@@ -236,9 +240,6 @@ func Compile(p plan.Plan, deps Deps, store workflow.Store) (*workflow.Workflow[s
 			// A step that already finished in an earlier revision is not
 			// run again: the model may reshape what comes after it, but
 			// finished work is finished, and its result is on record.
-			if step.State == plan.StepDone && step.Result != nil {
-				return Result{StepID: step.ID, Result: *step.Result}, nil
-			}
 			// Recovery happens here, inside the node, and not by failing
 			// the run and retrying it. The runtime's failure semantics are
 			// fail-fast — one node failing cancels the others — which is
@@ -247,7 +248,7 @@ func Compile(p plan.Plan, deps Deps, store workflow.Store) (*workflow.Workflow[s
 			// machines precisely because they do not. A branch that is
 			// retrying must not take a healthy branch down with it.
 			out, err := runStepWithRecovery(ctx, p, step, upstream, deps)
-			if err == nil {
+			if err == nil && out.PlanRevision == p.Rev {
 				if inv, ok := invalidated(out).(ErrInvalidated); ok {
 					// The step succeeded and learned something that makes
 					// later steps wrong. Stop here, on purpose: running
@@ -304,12 +305,11 @@ func Compile(p plan.Plan, deps Deps, store workflow.Store) (*workflow.Workflow[s
 	return wf, nil
 }
 
-// record writes what happened to a step back to the plan. A failure to record
-// is logged rather than raised: losing the bookkeeping must not also lose the
-// work, and the run log still holds the truth.
-func record(deps Deps, planID string, step plan.Step, result plan.StepResult, runErr error) {
+// record projects the authoritative attempt outcome into the plan. A failed
+// projection stops scheduling; recovery repairs it from the bound output.
+func record(deps Deps, planID string, step plan.Step, result plan.StepResult, runErr error) error {
 	if deps.Recorder == nil {
-		return
+		return nil
 	}
 	step.Result = &result
 	step.State = plan.StepDone
@@ -317,26 +317,34 @@ func record(deps Deps, planID string, step plan.Step, result plan.StepResult, ru
 		step.State = plan.StepFailed
 	}
 	if err := deps.Recorder.RecordStep(planID, step); err != nil {
-		log.Printf("exec: record step %s of plan %s: %v", step.ID, planID, err)
+		return fmt.Errorf("%w: step %s of plan %s: %w", ErrProjection, step.ID, planID, err)
 	}
+	return nil
 }
 
 // runStepWithRecovery tries a step until it succeeds or Steve gives up.
 // Each attempt is recorded as it happens, so the plan store — and every
 // screen that reads it — shows a step mid-retry rather than pending.
 func runStepWithRecovery(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result, deps Deps) (plan.StepResult, error) {
+	if restored, ok, err := restoreStep(ctx, p, &step, upstream, deps); err != nil {
+		return restored, err
+	} else if ok {
+		return restored, record(deps, p.ID, step, restored, nil)
+	}
 	var last plan.StepResult
 	var lastErr error
-	for attempt := 0; attempt <= MaxRecoveries; attempt++ {
+	for retry := step.Attempts; retry <= MaxRecoveries; retry++ {
 		step.Attempts++
 		out, err := runStep(ctx, p, step, upstream, deps)
-		record(deps, p.ID, step, out, err)
+		if saveErr := record(deps, p.ID, step, out, err); saveErr != nil {
+			return out, saveErr
+		}
 		if err == nil {
 			return out, nil
 		}
 		last, lastErr = out, err
 		// Some failures do not get better by trying again.
-		if ctx.Err() != nil {
+		if ctx.Err() != nil || errors.Is(err, ErrCompletion) || errors.Is(err, harness.ErrStopUnconfirmed) || errors.Is(err, attempt.ErrStopConfirmationRequired) || errors.Is(err, task.ErrExecutionStopped) {
 			return out, err
 		}
 		var nowhere ErrNowhereToRun
@@ -347,7 +355,7 @@ func runStepWithRecovery(ctx context.Context, p plan.Plan, step plan.Step, upstr
 		if out.Agent != "" && !contains(step.Tried, out.Agent) {
 			step.Tried = append(step.Tried, out.Agent)
 		}
-		if attempt < MaxRecoveries {
+		if retry < MaxRecoveries {
 			if deps.recoveries != nil {
 				deps.recoveries.Add(1)
 			}
@@ -542,6 +550,16 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 	// The step runs in its own worktree: from the plan's base, or from the
 	// one step it continues, with what it merges laid out under inputs/.
 	attemptID := attempt.NewID()
+	var scope *execution.Scope
+	var unresolved error
+	if deps.Executions != nil {
+		scope, err = deps.Executions.Begin(ctx, execution.Key{TaskID: p.TaskID, InstanceID: p.ID + "/" + step.ID, AttemptID: attemptID})
+		if err != nil {
+			return plan.StepResult{}, err
+		}
+		defer func() { scope.Finish(unresolved) }()
+		ctx = scope.Context()
+	}
 	base, inputs := lineage(p, step, upstream)
 	workspace, err := materialize(ctx, deps, p, candidate.Node, base, inputs, attemptID)
 	if err != nil {
@@ -552,7 +570,11 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 	if base == "" {
 		base = workspace.Base
 	}
-	spec := attempt.Spec{
+	workID, err := stepHash(p, step, upstream)
+	if err != nil {
+		return plan.StepResult{}, err
+	}
+	spec := attempt.Spec{WorkID: workID, Execution: execution.Token(ctx),
 		ID: attemptID, TaskID: p.TaskID, TurnID: p.ID + "/" + step.ID, Kind: attempt.KindStep, Project: p.ProjectID,
 		Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID, Slots: candidate.Slots,
 		Region: candidate.Region, CanonicalRegion: deps.Roster.RegionOf(proj.Home.Node),
@@ -600,19 +622,35 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 	}
 	stepCtx, stop := context.WithCancel(ctx)
 	defer stop()
-	lost := deps.Attempts.Heartbeat(stepCtx, record.ID)
+	beatCtx, stopBeat := context.WithCancel(stepCtx)
+	defer stopBeat()
+	lost := deps.Attempts.Heartbeat(beatCtx, record.ID)
 	go func() {
 		select {
 		case <-lost:
+			if beatCtx.Err() != nil {
+				return
+			}
 			log.Printf("exec: attempt %s lost its lease; cancelling step %s", record.ID, step.ID)
 			stop()
-		case <-stepCtx.Done():
+		case <-beatCtx.Done():
 		}
 	}()
 	ctx = stepCtx
+	var observed *plan.Usage
 	fail := func(cause error) {
-		if _, ferr := deps.Attempts.Fail(context.WithoutCancel(ctx), record.ID, "exec", cause.Error()); ferr != nil {
+		var owned interface{ UnsettledAttempt() string }
+		ownUnsettled := errors.Is(cause, harness.ErrStopUnconfirmed) && (!errors.As(cause, &owned) || owned.UnsettledAttempt() == record.ID)
+		if ownUnsettled {
+			unresolved = cause
+			if err := deps.Attempts.MarkUnsettled(context.WithoutCancel(ctx), record.ID, "exec", cause, attemptUsage(observed)); err != nil {
+				log.Printf("exec: quarantine: %v", err)
+			}
+			return
+		}
+		if _, ferr := deps.Attempts.FailWith(context.WithoutCancel(ctx), record.ID, "exec", cause.Error(), attemptUsage(observed)); ferr != nil {
 			log.Printf("exec: attempt %s could not be failed: %v", record.ID, ferr)
+			return
 		}
 		_ = deps.Artifacts.Discard(context.WithoutCancel(ctx), workspace)
 	}
@@ -621,6 +659,7 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 	if deps.Budget != nil {
 		turnsLeft, deadline, err = deps.Budget.Reserve(p.TaskID)
 		if err != nil {
+			fail(err)
 			return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, ErrNoBudget{Cause: err}
 		}
 	}
@@ -637,6 +676,7 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 		Deadline:  deadlineLabel(deadline),
 	})
 	if err != nil {
+		fail(err)
 		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
 	}
 
@@ -672,9 +712,20 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
 	}
 	result, err := deps.Runner.RunStep(ctx, req)
+	if err == nil {
+		err = ctx.Err()
+	}
+	result.AttemptID, result.ExecutionToken = record.ID, record.Execution
+	result.PlanRevision = p.Rev
+	observed = result.Usage
 	result.Agent, result.Node = candidate.Agent.ID, candidate.Node
 	result.StartedAt, result.EndedAt = started, time.Now()
 	if err != nil {
+		result.Error = err.Error()
+		fail(err)
+		return result, err
+	}
+	if err := deps.Attempts.ReleaseEndpointAfterSessionClosed(ctx, record.ID, "exec"); err != nil {
 		result.Error = err.Error()
 		fail(err)
 		return result, err
@@ -697,8 +748,7 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 	} else if len(strayed) > 0 {
 		err := fmt.Errorf("step %s wrote outside its declared paths: %s", step.ID, strings.Join(strayed, ", "))
 		result.Error = err.Error()
-		_, _ = deps.Attempts.Advance(context.WithoutCancel(ctx), record.ID, attempt.Failed, "exec", func(r *attempt.Record) { r.Error = err.Error() })
-		_ = deps.Artifacts.Discard(context.WithoutCancel(ctx), workspace)
+		fail(err)
 		return result, err
 	}
 	for _, to := range []attempt.State{attempt.Snapshotted, attempt.Published, attempt.Durable} {
@@ -708,13 +758,13 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 			return result, err
 		}
 	}
-	defer func() { _ = deps.Artifacts.Discard(context.WithoutCancel(ctx), workspace) }()
 
 	// An agent reporting success is not evidence of success. A step reaches
 	// done only through its own verification.
 	if step.Verify != nil && step.Verify.Kind != plan.VerifyNone {
 		if deps.Verifier == nil {
 			result.Error = "step requires verification but no verifier is wired"
+			fail(errors.New(result.Error))
 			return result, fmt.Errorf("%s", result.Error)
 		}
 		if _, err := deps.Attempts.Advance(ctx, record.ID, attempt.Verifying, "exec", nil); err != nil {
@@ -722,7 +772,31 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 			fail(err)
 			return result, err
 		}
+		if step.Verify.Kind == plan.VerifyCommand {
+			if err := deps.Attempts.ArmSession(ctx, record.ID, "verify-command"); err != nil {
+				fail(err)
+				return result, err
+			}
+		}
 		verifyErr := deps.Verifier.Verify(ctx, req, *step.Verify, result)
+		if step.Verify.Kind == plan.VerifyCommand {
+			var exited interface{ ExitCode() int }
+			if verifyErr == nil || (errors.As(verifyErr, &exited) && exited.ExitCode() >= 0) {
+				if err := deps.Attempts.MarkSessionSettled(context.WithoutCancel(ctx), record.ID, "verify-command"); err != nil {
+					fail(err)
+					return result, err
+				}
+			} else if !errors.Is(verifyErr, harness.ErrStopUnconfirmed) {
+				verifyErr = errors.Join(verifyErr, harness.ErrStopUnconfirmed)
+			}
+		}
+		// Do not replace missing stop evidence with a cancelled attestation
+		// write: that would release a directory a verifier may still use.
+		if errors.Is(verifyErr, harness.ErrStopUnconfirmed) {
+			result.Error = verifyErr.Error()
+			fail(verifyErr)
+			return result, verifyErr
+		}
 		// The verdict is a fact either way, written before it is acted on.
 		if _, aerr := deps.Artifacts.Attest(ctx, attestationFor(p, step, record.ID, candidate.Node, published.ID, verifyErr)); aerr != nil {
 			result.Error = "attest: " + aerr.Error()
@@ -730,8 +804,8 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 			return result, aerr
 		}
 		if err := verifyErr; err != nil {
-			_, _ = deps.Attempts.Fail(context.WithoutCancel(ctx), record.ID, "exec", "verification failed: "+err.Error())
 			result.Error = "verification failed: " + err.Error()
+			fail(errors.New(result.Error))
 			return result, fmt.Errorf("%s", result.Error)
 		}
 	}
@@ -747,28 +821,36 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 			return result, err
 		}
 	}
-	// Bound: the step's name points at its artifact, under compare-and-set
-	// on the name's version, in the same breath as the attempt's last
-	// transition. A name that moved underneath is a bind-conflict.
+	// The result name, spend and terminal state commit under the same fences.
 	name := stepRef(p.TaskID, step.ID)
-	current, _, _ := deps.Artifacts.Resolve(ctx, name)
-	if _, err := deps.Attempts.Advance(ctx, record.ID, attempt.BindReady, "exec", func(r *attempt.Record) {
-		r.Result = &attempt.Result{Summary: clipSummary(result.Answer), Artifact: published.ID, Refs: refNames(result.Refs)}
-	}); err != nil {
+	current, _, err := deps.Artifacts.Resolve(ctx, name)
+	if err != nil {
+		result.Error = "resolve result: " + err.Error()
+		fail(err)
+		return result, err
+	}
+	if _, err := deps.Attempts.Advance(ctx, record.ID, attempt.BindReady, "exec", nil); err != nil {
 		result.Error = err.Error()
 		fail(err)
 		return result, err
 	}
-	if _, err := deps.Artifacts.Bind(ctx, name, current.Version, published.ID); err != nil {
-		_, _ = deps.Attempts.Advance(context.WithoutCancel(ctx), record.ID, attempt.BindConflict, "exec", func(r *attempt.Record) { r.Error = err.Error() })
-		result.Error = "bind: " + err.Error()
-		return result, err
-	}
-	if _, err := deps.Attempts.Advance(ctx, record.ID, attempt.Bound, "exec", nil); err != nil {
-		result.Error = err.Error()
-		return result, err
+	completion := attempt.Completion{
+		Result: attempt.Result{Summary: clipSummary(result.Answer), Artifact: published.ID, Refs: refNames(result.Refs)},
+		Usage:  attemptUsage(result.Usage), Binding: &attempt.NameBinding{Name: name, ExpectedVersion: current.Version},
 	}
 	result.Refs = append(result.Refs, plan.Ref{Kind: "artifact", Value: published.ID})
+	completion.Result.Output, err = encodeStepOutput(p, step, upstream, result)
+	if err != nil {
+		fail(err)
+		return result, err
+	}
+	stopBeat()
+	if _, err := deps.Attempts.Complete(ctx, record.ID, "exec", completion); err != nil {
+		err = deps.Attempts.RejectCompletion(ctx, record.ID, "exec", completion, err)
+		result.Error = "complete result: " + err.Error()
+		return result, fmt.Errorf("%w: %w", ErrCompletion, err)
+	}
+	_ = deps.Artifacts.Discard(context.WithoutCancel(ctx), workspace)
 	return result, nil
 }
 
@@ -870,3 +952,14 @@ func facts(self roster.Candidate, _ []roster.Candidate) []string {
 
 // factsBudget bounds the ability line inside a step's context.
 const factsBudget = 4 << 10
+
+// ErrCompletion means the result could not be committed. Its workspace is
+// retained; retrying the agent would hide the original completion conflict.
+var ErrCompletion = errors.New("execution result was not committed")
+
+func attemptUsage(u *plan.Usage) *attempt.Usage {
+	if u == nil {
+		return nil
+	}
+	return &attempt.Usage{Model: u.Model, Input: u.Input, Output: u.Output, CachedRead: u.CachedRead, CachedWrite: u.CachedWrite, Context: u.Context, Reported: u.Reported}
+}

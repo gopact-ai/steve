@@ -14,6 +14,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/card"
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -64,7 +65,7 @@ type processor interface {
 // inbound message tells it where that conversation's interim agent sends
 // should attach, and starts a fresh recall epoch.
 type agentAnchor interface {
-	Anchor(conversationID, chatID, messageID string)
+	Anchor(conversationID string, address channel.Address)
 	// SetStyle hands the messaging server the turn's card tail ("codex ·
 	// GPT 5.6 Sol · Agent") so interim cards read as the same family as
 	// the final card.
@@ -253,10 +254,11 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 		return
 	}
 	if g.gate != nil && msg.MessageID != "" {
-		g.gate.Anchor(conversationID, msg.ChatID, msg.MessageID)
+		g.gate.Anchor(conversationID, channel.Address{Channel: "feishu", Conversation: conversationID, Message: msg.MessageID})
 	}
 	ui := g.newTurnUI(msg, listen)
 	result, err := g.processor.Handle(context.Background(), turn.Request{
+		Channel:        "feishu",
 		ConversationID: conversationID,
 		Input:          g.promptText(msg),
 		Origin:         msg.Origin,

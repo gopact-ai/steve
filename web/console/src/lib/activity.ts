@@ -1,3 +1,5 @@
+import { translate, type Locale } from "./i18n.ts";
+import { number } from "./format.ts";
 import type { ToolCall } from "./types";
 
 export type ActivityKind = "read" | "edit" | "run" | "delegate" | "platform" | "search" | "fetch" | "other";
@@ -38,22 +40,27 @@ function fileName(t: ToolCall): string | undefined {
     return typeof file === "string" ? file.split(/[\\/]/).pop() : undefined;
 }
 
-const phrases: Record<ActivityKind, (tools: ToolCall[]) => string> = {
-    read: (tools) => `读了 ${tools.length} 个文件`,
-    edit: (tools) => tools.length === 1 && fileName(tools[0]) ? `改了 ${fileName(tools[0])}` : `改了 ${tools.length} 个文件`,
-    run: (tools) => `跑了 ${tools.length} 条命令`,
-    delegate: (tools) => tools.length === 1 ? "委派了一个子任务" : `委派了 ${tools.length} 个子任务`,
-    platform: (tools) => {
-        const labels = [...new Set(tools.map((t) => t.kind === "platform" ? t.detail : "").filter(Boolean))];
-        const what = labels.length ? `（${labels.slice(0, 3).join("、")}${labels.length > 3 ? "…" : ""}）` : "";
-        return (tools.length === 1 ? "问了平台一次" : `问了平台 ${tools.length} 次`) + what;
-    },
-    search: (tools) => `搜索了 ${tools.length} 次`,
-    fetch: (tools) => `抓取了 ${tools.length} 次`,
-    other: (tools) => `调用了 ${tools.length} 次工具`,
-};
+const phraseKeys = {
+    read: ["consoleChrome.readOne", "consoleChrome.readMany"],
+    edit: ["consoleChrome.editOne", "consoleChrome.editMany"],
+    run: ["consoleChrome.runOne", "consoleChrome.runMany"],
+    delegate: ["consoleChrome.delegateOne", "consoleChrome.delegateMany"],
+    platform: ["consoleChrome.platformOne", "consoleChrome.platformMany"],
+    search: ["consoleChrome.searchOne", "consoleChrome.searchMany"],
+    fetch: ["consoleChrome.fetchOne", "consoleChrome.fetchMany"],
+    other: ["consoleChrome.toolOne", "consoleChrome.toolMany"],
+} as const;
 
-export function activity(tools: ToolCall[]) {
+function phrase(kind: ActivityKind, tools: ToolCall[], locale: Locale): string {
+    const file = tools.length === 1 ? fileName(tools[0]) : undefined;
+    if (kind === "edit" && file) return translate(locale, "consoleChrome.editFile", { file });
+    const text = translate(locale, phraseKeys[kind][tools.length === 1 ? 0 : 1], { count: number(tools.length, locale) });
+    if (kind !== "platform") return text;
+    const labels = [...new Set(tools.map((tool) => tool.kind === "platform" ? tool.detail : "").filter(Boolean))];
+    return labels.length ? `${text} (${labels.slice(0, 3).join(locale === "zh" ? "、" : ", ")}${labels.length > 3 ? "…" : ""})` : text;
+}
+
+export function activity(tools: ToolCall[], locale: Locale = "zh") {
     const groups = new Map<ActivityKind, ToolCall[]>();
     for (const tool of tools) {
         const kind = activityKind(tool);
@@ -61,7 +68,7 @@ export function activity(tools: ToolCall[]) {
     }
     return {
         kinds: [...groups.keys()],
-        text: [...groups].map(([kind, calls]) => phrases[kind](calls)).join("、"),
+        text: [...groups].map(([kind, calls]) => phrase(kind, calls, locale)).join(locale === "zh" ? "、" : "; "),
         failed: tools.some(toolFailed),
         running: tools.some((t) => t.status !== "completed" && t.status !== "failed"),
     };

@@ -25,7 +25,7 @@ func TestC3VerifyCommandRunsOnTheNodeAndGatesDone(t *testing.T) {
 	t.Cleanup(func() { _, _ = sshOut(t, host, "rm -f ~/steve-work/.verified") })
 
 	created, err := f.plans.Create(plan.Plan{ProjectID: "local",
-		TaskID: "e2e-verify", Goal: "prove the check runs where the work is", By: "declared",
+		TaskID: verificationTask(t, f, "verify"), Goal: "prove the check runs where the work is", By: "declared",
 		Steps: []plan.Step{{
 			ID: "work", Goal: "say worked", Requires: []string{"internal-net"}, State: plan.StepPending,
 			// Fails once, plants the marker, passes next time.
@@ -43,9 +43,12 @@ func TestC3VerifyCommandRunsOnTheNodeAndGatesDone(t *testing.T) {
 		Workspaces: f.artifacts, Attempts: f.attempts, Artifacts: f.artifacts,
 		Roster:   f.roster,
 		Runner:   exec.NewAgentRunner(f.manager, noCaps{}, f.roster),
-		Verifier: exec.NewVerifiers(f.registry, f.manager, f.roster, f.artifacts),
+		Verifier: exec.NewVerifiers(f.registry, sharedAgentExecutor(t, f)),
 	}, workflow.NewMemoryStore())
 	sup.SetPlans(f.plans)
+	sup.SetLedger(f.book, "mesh")
+	sup.SetTasks(f.tasks)
+	sup.SetExecution(f.executions)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
@@ -80,11 +83,11 @@ func TestC3AgentVerificationIsCrossMachineAndBinding(t *testing.T) {
 		Workspaces: f.artifacts, Attempts: f.attempts, Artifacts: f.artifacts,
 		Roster:   f.roster,
 		Runner:   exec.NewAgentRunner(f.manager, noCaps{}, f.roster),
-		Verifier: exec.NewVerifiers(f.registry, f.manager, f.roster, f.artifacts),
+		Verifier: exec.NewVerifiers(f.registry, sharedAgentExecutor(t, f)),
 	}
 
 	// Work on node-a, checked by the agent on node-b: passes.
-	good, err := f.plans.Create(plan.Plan{ProjectID: "local", TaskID: "e2e-xv-ok", Goal: "cross-check", By: "declared",
+	good, err := f.plans.Create(plan.Plan{ProjectID: "local", TaskID: verificationTask(t, f, "passing verification"), Goal: "cross-check", By: "declared",
 		Steps: []plan.Step{{
 			ID: "work", Goal: "say built", Requires: []string{"gpu"}, State: plan.StepPending,
 			Verify: &plan.Verify{Kind: plan.VerifyAgent, Agent: "shipper"},
@@ -94,6 +97,9 @@ func TestC3AgentVerificationIsCrossMachineAndBinding(t *testing.T) {
 	}
 	sup := exec.NewSupervisor(planner.Rule{}, deps, workflow.NewMemoryStore())
 	sup.SetPlans(f.plans)
+	sup.SetLedger(f.book, "mesh")
+	sup.SetTasks(f.tasks)
+	sup.SetExecution(f.executions)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 	if _, err := sup.Execute(ctx, good); err != nil {
@@ -102,7 +108,7 @@ func TestC3AgentVerificationIsCrossMachineAndBinding(t *testing.T) {
 
 	// The same shape, but the goal asks the verifier to reject: stays out
 	// of done, and the failure names the verifier's reason.
-	bad, err := f.plans.Create(plan.Plan{ProjectID: "local", TaskID: "e2e-xv-bad", Goal: "cross-check", By: "declared",
+	bad, err := f.plans.Create(plan.Plan{ProjectID: "local", TaskID: verificationTask(t, f, "failing verification"), Goal: "cross-check", By: "declared",
 		Steps: []plan.Step{{
 			ID: "work", Goal: "say built, reject me", Requires: []string{"gpu"}, State: plan.StepPending,
 			Verify: &plan.Verify{Kind: plan.VerifyAgent, Agent: "shipper"},
@@ -135,7 +141,7 @@ func TestC7FindingRevisesThePlanAndKeepsFinishedWork(t *testing.T) {
 	brain, _ := f.catalog.Resolve("builder")
 
 	created, err := f.plans.Create(plan.Plan{ProjectID: "local",
-		TaskID: "e2e-finding", Goal: "ship, but the world changes underneath", By: "declared",
+		TaskID: verificationTask(t, f, "revise after finding"), Goal: "ship, but the world changes underneath", By: "declared",
 		Steps: []plan.Step{
 			{ID: "build", Goal: "say built, surprise", Requires: []string{"gpu"}, State: plan.StepPending,
 				Verify: &plan.Verify{Kind: plan.VerifyNone, Why: "e2e"}},
@@ -149,12 +155,14 @@ func TestC7FindingRevisesThePlanAndKeepsFinishedWork(t *testing.T) {
 		t.Fatal(err)
 	}
 	sup := exec.NewSupervisor(
-		planner.LLM{Agent: brain.ID, Sessions: f.manager, Workspaces: f.artifacts,
-			At: placementOf(brain.Node, brain.Harness)},
+		planner.LLM{Agent: brain.ID, Executor: sharedAgentExecutor(t, f)},
 		exec.Deps{Workspaces: f.artifacts, Attempts: f.attempts, Artifacts: f.artifacts, Roster: f.roster, Runner: exec.NewAgentRunner(f.manager, noCaps{}, f.roster)},
 		workflow.NewMemoryStore(),
 	)
 	sup.SetPlans(f.plans)
+	sup.SetLedger(f.book, "mesh")
+	sup.SetTasks(f.tasks)
+	sup.SetExecution(f.executions)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	defer cancel()
 	if _, err := sup.Execute(ctx, created); err != nil {

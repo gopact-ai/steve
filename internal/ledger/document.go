@@ -171,3 +171,16 @@ func (f *FileDocument) Check() error {
 	}
 	return nil
 }
+
+// LoadDocument reads a document under the caller's existing transaction.
+func (t *Tx) LoadDocument(kind string) ([]byte, bool, error) {
+	var data string
+	err := t.QueryRow(`SELECT data FROM bindings WHERE kind = ? AND id = ?`, documentKind, kind).Scan(&data)
+	if errors.Is(err, errNoRows()) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	return []byte(data), true, nil
+}

@@ -1,7 +1,11 @@
+import { useI18n } from "@/providers/locale-provider";
+import { number, relative } from "@/lib/format";
+import type { Locale } from "@/lib/i18n";
 import { useEffect, useRef, useState } from "react";
 import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, Plus, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
+import { Input } from "@/components/base/input/input";
 import type { Conversation, Project, Task } from "@/lib/types";
 import { taskState } from "./ui";
 import { kindWord, placeLabel } from "@/lib/workspaces";
@@ -31,7 +35,7 @@ export type ConversationPatch = { title?: string; archived?: boolean };
 // So a row says nothing about its agent or its place while it matches
 // the usual one, and the list states its own norm by leaving it out. The
 // exception is then visible because it is the only row that speaks.
-function usual(threads: Conversation[]): { agent: string; place: string } {
+function usual(threads: Conversation[], locale: Locale): { agent: string; place: string } {
     const common = (pick: (c: Conversation) => string) => {
         const counts = new Map<string, number>();
         for (const c of threads) {
@@ -45,7 +49,7 @@ function usual(threads: Conversation[]): { agent: string; place: string } {
     };
     return {
         agent: common((c) => c.agent || ""),
-        place: common((c) => (c.place ? placeLabel(c.place) : "")),
+        place: common((c) => (c.place ? placeLabel(c.place, locale) : "")),
     };
 }
 
@@ -54,13 +58,17 @@ function notable(t: Task, all: Task[]): boolean {
 }
 
 export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate, collapsed, onToggle, creating, tasks = [], onTask }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onUpdate: (id: string, patch: ConversationPatch) => void; collapsed?: boolean; onToggle?: () => void; creating?: boolean; tasks?: Task[]; onTask?: (t: Task) => void }) {
+    const { t: tr, locale } = useI18n();
     const [folded, setFolded] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem("steve.folded") || "{}"); } catch { return {}; } });
     const toggle = (id: string) => setFolded((f) => { const next = { ...f, [id]: !f[id] }; try { localStorage.setItem("steve.folded", JSON.stringify(next)); } catch { /* ignore */ } return next; });
+    const [search, setSearch] = useState("");
+    const query = search.trim().toLocaleLowerCase();
+    const matches = (c: Conversation) => !query || `${c.title} ${c.project || ""} ${c.agent || ""}`.toLocaleLowerCase().includes(query);
     const [renaming, setRenaming] = useState<string | null>(null);
     // An archived thread stays under 已归档 even while it is open: moving
     // it back under its project would look like it had been unarchived.
-    const archived = list.filter((c) => c.archived);
-    const live = list.filter((c) => !c.archived);
+    const archived = list.filter((c) => c.archived && matches(c));
+    const live = list.filter((c) => !c.archived && matches(c));
     const archivedOpen = archived.some((c) => c.id === current);
     const byProject = new Map<string, Conversation[]>();
     for (const c of live) {
@@ -80,29 +88,30 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
     );
     const node = (p: Project, title: string, hint?: string) => {
         const threads = byProject.get(p.id) || [];
-        const open = !folded[p.id];
+        const norm = usual(threads, locale);
+        const open = !!query || !folded[p.id];
+        if (query && !threads.length) return null;
         const holdsCurrent = threads.some((c) => c.id === current);
-        const places = p.workspaces.map((w) => `${kindWord(w.kind)} ${w.node}`).join(" · ");
+        const places = p.workspaces.map((w) => `${kindWord(w.kind, locale)} ${w.node}`).join(" · ");
         return (
             <li key={p.id} className="flex flex-col">
-                <div className={`group flex items-center gap-1 rounded-lg px-1.5 py-1 ${holdsCurrent && !open ? "bg-primary/60" : ""}`}>
-                    <button type="button" onClick={() => toggle(p.id)} className="flex size-5 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-primary/60" aria-label={open ? "折叠" : "展开"}>
+                <div className={`conversation-project group ${holdsCurrent && !open ? "is-current" : ""}`}>
+                    <button type="button" onClick={() => toggle(p.id)} className="flex size-5 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-primary/60" aria-expanded={open} aria-label={open ? tr("consoleChrome.collapse") : tr("consoleChrome.expand")}>
                         <ChevronDown className={`size-3.5 transition ${open ? "" : "-rotate-90"}`} />
                     </button>
                     <Folder className="size-4 shrink-0 text-fg-quaternary" />
                     <button type="button" onClick={() => toggle(p.id)} className="flex min-w-0 flex-1 flex-col text-left" title={hint || places}>
                         <span className="truncate u-title">{title}</span>
-                        <span className="truncate u-meta text-quaternary">{places}</span>
                     </button>
                     {threads.some((c) => c.running) && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
-                    <button type="button" disabled={creating} onClick={() => onNew(p.id)} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary opacity-0 transition hover:bg-primary/60 hover:text-fg-quaternary_hover group-hover:opacity-100" aria-label={`在 ${p.id} 下新会话`} title={`在 ${p.id} 下新会话`}>
+                    <button type="button" disabled={creating} onClick={() => onNew(p.id)} className="workbench-icon-button conversation-project-new" aria-label={tr("consoleChrome.newInProject", { project: p.id })} title={tr("consoleChrome.newInProject", { project: p.id })}>
                         <Plus className="size-3.5" />
                     </button>
                 </div>
                 {open && (
                     <ul className="ml-4 flex flex-col gap-0.5 border-l border-secondary pl-2">
-                        {threads.length === 0 && <li className="px-2 py-1 u-meta text-quaternary">还没有会话</li>}
-                        {threads.map((c) => row(c, usual(threads)))}
+                        {threads.length === 0 && <li className="px-2 py-1 u-meta text-quaternary">{tr("consoleChrome.noConversations")}</li>}
+                        {threads.map((c) => row(c, norm))}
                     </ul>
                 )}
             </li>
@@ -110,42 +119,44 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
     };
     if (collapsed) {
         return (
-            <aside className="hidden w-10 shrink-0 flex-col items-center gap-1 border-r border-secondary bg-secondary pt-3 lg:flex">
-                <button type="button" onClick={onToggle} className="flex size-8 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title="展开会话栏" aria-label="展开会话栏"><ChevronRightDouble className="size-4" /></button>
-                <button type="button" disabled={creating} onClick={() => onNew()} className="flex size-8 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title="新会话" aria-label="新会话"><Edit05 className="size-4" /></button>
+            <aside className="conversation-sidebar is-collapsed">
+                <button type="button" onClick={onToggle} className="flex size-8 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title={tr("consoleChrome.expandSessions")} aria-label={tr("consoleChrome.expandSessions")}><ChevronRightDouble className="size-4" /></button>
+                <button type="button" disabled={creating} onClick={() => onNew()} className="flex size-8 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title={tr("console.newConversation")} aria-label={tr("console.newConversation")}><Edit05 className="size-4" /></button>
                 {list.some((c) => c.running) && <Loading01 className="mt-1 size-3 animate-spin text-fg-brand-primary" />}
             </aside>
         );
     }
     return (
-        <aside className="hidden w-72 shrink-0 flex-col border-r border-secondary bg-secondary lg:flex">
-            <div className="flex items-center gap-1 px-2 pt-3 pb-1">
-                <button type="button" disabled={creating} onClick={() => onNew()} className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-primary transition hover:bg-primary/70" title="在当前项目下开一条新会话">
+        <aside className="conversation-sidebar">
+            <div className="conversation-sidebar-toolbar">
+                <button type="button" disabled={creating} onClick={() => onNew()} className="conversation-new" title={tr("consoleChrome.newCurrentProject")}>
                     <Edit05 className="size-4 text-fg-quaternary" />
-                    <span>新会话</span>
+                    <span>{tr("console.newConversation")}</span>
                 </button>
-                {onToggle && <button type="button" onClick={onToggle} className="flex size-7 shrink-0 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title="收起会话栏" aria-label="收起会话栏"><ChevronLeftDouble className="size-4" /></button>}
+                {onToggle && <button type="button" onClick={onToggle} className="flex size-7 shrink-0 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title={tr("consoleChrome.collapseSessions")} aria-label={tr("consoleChrome.collapseSessions")}><ChevronLeftDouble className="size-4" /></button>}
             </div>
-            <div className="min-h-0 flex-1 overflow-y-auto px-2 pb-4">
-                <TreeHeading>项目</TreeHeading>
-                <ul className="flex flex-col gap-0.5">{work.map((p) => node(p, p.id + (p.default ? " · 默认" : "")))}</ul>
+            <div className="conversation-search"><Input size="sm" aria-label={tr("consoleChrome.searchConversations")} placeholder={tr("consoleChrome.searchPlaceholder")} value={search} onChange={setSearch} /></div>
+            <div className="conversation-tree">
+                <TreeHeading>{tr("console.project")}</TreeHeading>
+                {query && !live.length && !archived.length && <p className="px-3 py-4 text-sm text-tertiary">{tr("consoleChrome.noMatches")}</p>}
+                <ul className="flex flex-col gap-0.5">{work.map((p) => node(p, p.id))}</ul>
                 {orphans.length > 0 && (
                     <>
-                        <TreeHeading>未归属</TreeHeading>
+                        <TreeHeading>{tr("consoleChrome.unassigned")}</TreeHeading>
                         <ul className="ml-2 flex flex-col gap-0.5">{orphans.map((c) => row(c))}</ul>
                     </>
                 )}
                 {home && (
                     <>
-                        <TreeHeading>私聊</TreeHeading>
-                        <ul className="flex flex-col gap-0.5">{node(home, home.id, "你和 Steve 的私聊默认在这里；放的是档案，不是代码。")}</ul>
+                        <TreeHeading>{tr("consoleChrome.privateChat")}</TreeHeading>
+                        <ul className="flex flex-col gap-0.5">{node(home, home.id, tr("consoleChrome.homeHint"))}</ul>
                     </>
                 )}
                 {archived.length > 0 && (
                     <details className="group/archived mt-3" open={archivedOpen || undefined}>
                         <summary className="flex cursor-pointer list-none items-center gap-1 px-2 py-1 u-label hover:text-tertiary">
                             <Archive className="size-3" />
-                            <span>已归档 · {archived.length}</span>
+                            <span>{tr("consoleChrome.archivedCount", { count: number(archived.length, locale) })}</span>
                             <ChevronDown className="size-3 transition group-open/archived:rotate-180" />
                         </summary>
                         <ul className="ml-2 flex flex-col gap-0.5 opacity-80">{archived.map((c) => row(c))}</ul>
@@ -157,20 +168,21 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
 }
 
 function TreeHeading({ children }: { children: string }) {
-    return <div className="px-2 pt-3 pb-1 u-label first:pt-2">{children}</div>;
+    return <div className="conversation-section-label">{children}</div>;
 }
 
 // Thread is one conversation: its name, its agent, when it last spoke,
 // and — when the project is in more than one place, or the agent has
 // nowhere to work — where it runs. Its menu renames or puts it away.
 function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArchive, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; onPick: (id: string) => void; norm?: { agent: string; place: string }; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
+    const { t: tr, locale } = useI18n();
     const nowhere = !!c.project && !!c.agent && !c.place;
     // The second line earns its place only when it says something this
     // row does not share with its neighbours. Usually nothing does, and
     // then the row is one line: a title and when it last moved.
-    const place = c.place ? placeLabel(c.place) : "";
+    const place = c.place ? placeLabel(c.place, locale) : "";
     const qualifiers = [
-        c.archived ? "已归档" : "",
+        c.archived ? tr("console.archived") : "",
         norm && c.agent && c.agent !== norm.agent ? c.agent : "",
         norm && place && place !== norm.place ? place : "",
     ].filter(Boolean);
@@ -179,25 +191,25 @@ function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArc
             {renaming ? (
                 <RenameBox initial={c.title} onDone={onRenamed} />
             ) : (
-                <button type="button" onClick={() => onPick(c.id)} className={`flex w-full flex-col gap-0.5 rounded-lg py-1.5 pl-2 pr-7 text-left transition ${current ? "bg-primary" : "hover:bg-primary/50"}`} title={nowhere ? "它的 Agent 所在机器上没有这个项目的工作区" : c.place ? placeLabel(c.place) : undefined}>
+                <button type="button" onClick={() => onPick(c.id)} aria-current={current ? "page" : undefined} className={`conversation-row ${current ? "is-selected" : ""}`} title={nowhere ? tr("consoleChrome.noWorkspace") : c.place ? placeLabel(c.place, locale) : undefined}>
                     <span className="flex w-full items-baseline gap-2">
                         {c.running && <Loading01 className="size-3 shrink-0 self-center animate-spin text-fg-brand-primary" />}
                         {nowhere && <AlertCircle className="size-3 shrink-0 self-center text-fg-error-primary" />}
-                        <span className="min-w-0 flex-1 truncate u-title">{c.title || "新会话"}</span>
-                        <span className="shrink-0 u-meta text-quaternary">{c.last_at ? ago(c.last_at) : "未开始"}</span>
+                        <span className="min-w-0 flex-1 truncate u-title">{c.title || tr("console.newConversation")}</span>
+                        <span className="conversation-time">{c.last_at ? ago(c.last_at, locale) : tr("consoleChrome.notStarted")}</span>
                     </span>
                     {qualifiers.length > 0 && <span className="truncate u-meta">{qualifiers.join(" · ")}</span>}
                 </button>
             )}
             {!renaming && (
                 <Dropdown.Root>
-                    <AriaButton aria-label="更多" className={`absolute right-1 top-1.5 flex size-5 items-center justify-center rounded text-fg-quaternary outline-none transition hover:bg-primary hover:text-fg-quaternary_hover group-hover/thread:opacity-100 ${current ? "" : "opacity-0"}`}>
+                    <AriaButton aria-label={tr("consoleChrome.more")} className="workbench-icon-button conversation-more">
                         <DotsHorizontal className="size-3.5" />
                     </AriaButton>
                     <Dropdown.Popover placement="bottom end" className="w-44">
                         <Dropdown.Menu onAction={(k) => { if (k === "rename") onRename(); else if (k === "archive") onArchive(!c.archived); }}>
-                            <Dropdown.Item id="rename" label="重命名" icon={Edit05} />
-                            <Dropdown.Item id="archive" label={c.archived ? "取消归档" : "归档"} icon={Archive} />
+                            <Dropdown.Item id="rename" label={tr("consoleChrome.rename")} icon={Edit05} />
+                            <Dropdown.Item id="archive" label={c.archived ? tr("console.unarchive") : tr("consoleChrome.archive")} icon={Archive} />
                         </Dropdown.Menu>
                     </Dropdown.Popover>
                 </Dropdown.Root>
@@ -212,6 +224,7 @@ function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArc
 // tree stays a list of threads; open, it is the tasks with their
 // delegations indented, one line each.
 function WorkFold({ threadID, work, childrenOf, onTask }: { threadID: string; work: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
+    const { t: tr, locale } = useI18n();
     const key = "steve.work.open." + threadID;
     const [open, setOpen] = useState<boolean>(() => { try { return localStorage.getItem(key) === "1"; } catch { return false; } });
     const toggle = () => { setOpen((v) => { try { localStorage.setItem(key, v ? "0" : "1"); } catch { /* ignore */ } return !v; }); };
@@ -228,10 +241,10 @@ function WorkFold({ threadID, work, childrenOf, onTask }: { threadID: string; wo
                     counts are what the fold already implies — it exists
                     because there is work — and they read as noise beside
                     "2 失败". They come back when nothing is going on. */}
-                {running > 0 && <span className="flex items-center gap-1 text-fg-brand-primary"><Loading01 className="size-3 animate-spin" />{running} 在跑</span>}
-                {waiting > 0 && <span className="text-warning-primary">{waiting} 待你处理</span>}
-                {failed > 0 && <span className="text-error-primary">{failed} 失败</span>}
-                {running + waiting + failed === 0 && <span>{work.length} 个任务{kids ? ` · ${kids} 次委派` : ""}</span>}
+                {running > 0 && <span className="flex items-center gap-1 text-fg-brand-primary"><Loading01 className="size-3 animate-spin" />{tr("consoleChrome.runningCount", { count: number(running, locale) })}</span>}
+                {waiting > 0 && <span className="text-warning-primary">{tr("consoleChrome.waitingCount", { count: number(waiting, locale) })}</span>}
+                {failed > 0 && <span className="text-error-primary">{tr("consoleChrome.failedCount", { count: number(failed, locale) })}</span>}
+                {running + waiting + failed === 0 && <span>{tr("consoleChrome.taskCount", { count: number(work.length, locale) })}{kids ? ` · ${tr("consoleChrome.delegationCount", { count: number(kids, locale) })}` : ""}</span>}
             </button>
             {open && (
                 <ul className="mb-1 flex flex-col">
@@ -266,22 +279,19 @@ function TaskLine({ t, onTask, child }: { t: Task; onTask?: (t: Task) => void; c
 // RenameBox edits a thread's name in place: Enter keeps, Escape drops,
 // an empty name gives it back to the agent.
 function RenameBox({ initial, onDone }: { initial: string; onDone: (title: string | null) => void }) {
+    const { t: tr } = useI18n();
     const [value, setValue] = useState(initial);
     const ref = useRef<HTMLInputElement>(null);
+    const finished = useRef(false);
+    const finish = (value: string | null) => { if (!finished.current) { finished.current = true; onDone(value); } };
     useEffect(() => { ref.current?.focus(); ref.current?.select(); }, []);
     return (
         <input ref={ref} value={value} onChange={(e) => setValue(e.target.value)}
-            onKeyDown={(e) => { if (e.key === "Enter") onDone(value.trim()); else if (e.key === "Escape") onDone(null); }}
-            onBlur={() => onDone(value.trim() === initial ? null : value.trim())}
-            aria-label="会话名称" placeholder="留空则交给 Agent 起名"
+            onKeyDown={(e) => { if (e.nativeEvent.isComposing) return; if (e.key === "Enter" || e.key === "Escape") { e.preventDefault(); e.stopPropagation(); finish(e.key === "Escape" ? null : value.trim()); } }}
+            onBlur={() => finish(value.trim() === initial ? null : value.trim())}
+            aria-label={tr("consoleChrome.conversationName")} placeholder={tr("consoleChrome.autoName")}
             className="w-full rounded-lg bg-primary px-2 py-1.5 text-sm text-primary outline-none ring-1 ring-brand placeholder:text-placeholder" />
     );
 }
 
-export function ago(at: string): string {
-    const s = Math.max(0, Math.round((Date.now() - Date.parse(at)) / 1000));
-    if (s < 60) return "刚刚";
-    if (s < 3600) return `${Math.floor(s / 60)} 分钟前`;
-    if (s < 86400) return `${Math.floor(s / 3600)} 小时前`;
-    return `${Math.floor(s / 86400)} 天前`;
-}
+export function ago(at: string, locale: Locale = "zh"): string { return relative(at, locale); }

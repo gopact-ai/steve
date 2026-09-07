@@ -1,4 +1,6 @@
 import { useState } from "react";
+import { useI18n } from "@/providers/locale-provider";
+import { labelsFor } from "@/lib/labels";
 import { Folder, GitBranch01, Loading01, Plus, X } from "@untitledui/icons";
 import { useNavigate } from "react-router";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
@@ -7,19 +9,16 @@ import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
-import { addProject, addWorkspace, removeProject, removeWorkspace, when } from "@/lib/api";
+import { addProject, addWorkspace, removeProject, removeWorkspace } from "@/lib/api/projects";
+import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
-import { label, zh } from "@/lib/labels";
 import type { Project, Repo, Workspace } from "@/lib/types";
-import { kindWord, stateWords } from "@/lib/workspaces";
+import { kindWord, workspaceState as workspaceStateLabel, levelName } from "@/lib/workspaces";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
 import { CodeBlock } from "@/components/steve/markdown";
 import { Chips, KeyValue, PageBody, PageHeader } from "@/components/steve/page";
 import { Mono, Nothing, StateBadge, taskState } from "@/components/steve/ui";
 
-const levelWords: Record<string, string> = { public: "公开", internal: "内部", restricted: "受限", sealed: "密封" };
-const levelHint = "项目数据的等级：公开 < 内部 < 受限 < 密封。只有等级不低于它的机器能持有它的文件。";
-const repoWords: Record<string, string> = { inplace: "直接改主目录", isolated: "隔离副本，完成后合并" };
 
 // ProjectsPage: a project is a thing to work on and the rules for it —
 // how agents may change it, what level its data is — with a home
@@ -27,6 +26,7 @@ const repoWords: Record<string, string> = { inplace: "直接改主目录", isola
 // its workspaces. Steve's own home is listed apart: it is where the
 // owner's private conversation lives, not a codebase.
 export function ProjectsPage() {
+    const { t: tr, locale } = useI18n();
     const { snap, refresh } = useFleet();
     const navigate = useNavigate();
     const [opened, setOpened] = useState<string | null>(null);
@@ -36,52 +36,50 @@ export function ProjectsPage() {
     const current = opened ? snap.projects.find((p) => p.id === opened) : undefined;
     const newSession = (id: string) => navigate(`/console?new=1&project=${encodeURIComponent(id)}`);
     return (
-        <div className="flex flex-col">
-            <PageHeader title="项目"
-                description={<>一个项目是<b>一件要做的事及其规矩</b>：Agent 怎么改它（直接改，或在隔离副本里改完再合并）、数据等级（哪些机器能碰它的文件）。它落在机器上的目录叫<b>工作区</b>：主目录只有一个，合并落回那里；副本可以有多个，各在一台机器上，那台机器上的 Agent 就在副本里干活。会话和任务属于项目，跑在它的某个工作区里。</>}
-                actions={<Button size="md" color="secondary" iconLeading={Plus} onClick={() => setAdding(true)}>添加项目</Button>} />
+        <div className="workbench-page flex min-w-0 flex-col">
+            <PageHeader title={tr("nav.projects")}
+                description={tr("projects.summary", { count: work.length })}
+                actions={<Button size="sm" color="primary" iconLeading={Plus} onClick={() => setAdding(true)}>{tr("projects.add")}</Button>} />
             <PageBody>
             {adding && <AddProject onClose={() => setAdding(false)} onDone={() => refresh()} />}
-            <TableCard.Root size="sm">
-                <TableCard.Header title="项目" badge={`${work.length}`} description="点一行看它的工作区、谁能在上面干活、权限；「新会话」在这个项目下开一条线程。" />
-                {work.length === 0 ? <Nothing icon={Folder} title="还没有项目">用右上角"添加项目"声明一个：先有主目录，副本以后再加。</Nothing> : (
-                    <Table aria-label="Projects" size="sm" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
+            <TableCard.Root size="sm" className="workbench-table min-w-0">
+                {work.length === 0 ? <Nothing icon={Folder} title={tr("projects.empty")}>{tr("projects.emptyHint")}</Nothing> : (
+                    <Table aria-label={tr("nav.projects")} size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
                         <Table.Header>
-                            <Table.Head id="name" label="名称" isRowHeader />
-                            <Table.Head id="where" label="工作区" />
-                            <Table.Head id="repos" label="主目录的仓库" />
-                            <Table.Head id="mode" label="怎么改" />
-                            <Table.Head id="level" label="数据等级" />
-                            <Table.Head id="tasks" label="活动任务" />
-                            <Table.Head id="actions" label="" />
+                            <Table.Head id="name" label={tr("projects.name")} className="w-[18%]" isRowHeader />
+                            <Table.Head id="where" label={tr("projects.workspaces")} className="w-[26%]" />
+                            <Table.Head id="repos" label={tr("projects.repositories")} className="w-[20%]" />
+                            <Table.Head id="mode" label={tr("projects.settings")} className="w-[14%]" />
+                            <Table.Head id="tasks" label={tr("projects.activeTasks")} className="w-[12%]" />
+                            <Table.Head id="actions" label="" className="w-[10%]" />
                         </Table.Header>
                         <Table.Body items={work.map((p) => ({ ...p, key: p.id }))}>
                             {(p) => {
                                 const tasks = snap.tasks.filter((t) => t.project_id === p.id && t.lane !== "ended");
+                                const workspace = p.workspaces.find((w) => w.kind === "canonical") ?? p.workspaces[0];
+                                const workspaceState = p.workspaces.find((w) => w.state === "failed") ?? p.workspaces.find((w) => w.state && w.state !== "ready");
                                 return (
                                     <Table.Row id={p.id} className="cursor-pointer">
                                         <Table.Cell>
-                                            <div className="flex items-center gap-2">
-                                                <span className="font-medium text-primary">{p.id}</span>
-                                                {p.default && <Badge type="pill-color" size="sm" color="brand">默认</Badge>}
+                                            <div className="flex min-w-0 items-center gap-2">
+                                                <span className="truncate font-medium text-primary" title={p.id}>{p.id}</span>
+                                                {p.default && <Badge type="pill-color" size="sm" color="brand">{tr("common.default")}</Badge>}
                                             </div>
                                         </Table.Cell>
                                         <Table.Cell>
-                                            <div className="flex flex-col gap-0.5">
-                                                {p.workspaces.map((w) => (
-                                                    <div key={w.id} className="flex items-baseline gap-1.5" title={w.path}>
-                                                        <span className="text-xs text-primary">{kindWord(w.kind)} · {w.node}</span>
-                                                        {w.state && w.state !== "ready" && <span className={`u-meta ${w.state === "failed" ? "text-error-primary" : "text-tertiary"}`}>{stateWords[w.state] || w.state}</span>}
-                                                        <span className="truncate font-mono u-meta text-quaternary">{w.path}</span>
-                                                    </div>
-                                                ))}
+                                            <div className="flex min-w-0 flex-col gap-1" title={p.workspaces.map((w) => `${kindWord(w.kind, locale)} · ${w.node}\n${w.path}`).join("\n\n")}>
+                                                <div className="flex min-w-0 items-center gap-2">
+                                                    <span className="truncate text-xs text-primary">{workspace?.node || p.node}</span>
+                                                    {p.workspaces.length > 1 && <span className="shrink-0 text-xs text-tertiary">+{p.workspaces.length - 1}</span>}
+                                                    {workspaceState?.state && <span className={`shrink-0 u-meta ${workspaceState.state === "failed" ? "text-error-primary" : "text-tertiary"}`}>{workspaceStateLabel(workspaceState.state, locale)}</span>}
+                                                </div>
+                                                <span className="truncate font-mono u-meta text-quaternary">{workspace?.path || p.path}</span>
                                             </div>
                                         </Table.Cell>
                                         <Table.Cell><RepoChips repos={p.repos} /></Table.Cell>
-                                        <Table.Cell><span className="text-xs text-secondary">{repoWords[p.repo] || label(zh.repo, p.repo)}</span></Table.Cell>
-                                        <Table.Cell><span title={levelHint}>{levelWords[p.level] || p.level}</span></Table.Cell>
-                                        <Table.Cell><span className="text-xs text-tertiary">{tasks.length ? tasks.map((t) => `#${t.id}`).join(" ") : "—"}</span></Table.Cell>
-                                        <Table.Cell><Button size="sm" color="link-color" onClick={() => newSession(p.id)}>新会话</Button></Table.Cell>
+                                        <Table.Cell><div className="flex flex-col gap-1 text-xs"><span className="truncate text-secondary" title={labelsFor(locale).repo[p.repo] || p.repo}>{p.repo === "inplace" ? tr("projects.editInPlace") : p.repo === "isolated" ? tr("projects.isolated") : p.repo}</span><span className="text-tertiary" title={tr("projects.levelHint")}>{levelName(p.level, locale)}</span></div></Table.Cell>
+                                        <Table.Cell><span className="text-sm tabular-nums text-secondary" title={tasks.map((t) => `#${t.id} ${t.title || t.goal}`).join("\n")}>{tasks.length || "—"}</span></Table.Cell>
+                                        <Table.Cell><Button size="sm" color="link-color" onClick={() => newSession(p.id)}>{tr("projects.newConversation")}</Button></Table.Cell>
                                     </Table.Row>
                                 );
                             }}
@@ -90,12 +88,12 @@ export function ProjectsPage() {
                 )}
             </TableCard.Root>
             {home && (
-                <div className="flex items-center gap-4 rounded-xl bg-primary px-5 py-4 shadow-xs ring-1 ring-secondary">
+                <div className="workbench-panel flex min-w-0 flex-wrap items-center gap-4 rounded-lg bg-primary px-4 py-4 ring-1 ring-secondary">
                     <div className="min-w-0 flex-1">
-                        <div className="flex items-center gap-2"><span className="text-sm font-semibold text-primary">私聊</span><Mono className="text-quaternary">{home.id}</Mono><Badge type="modern" size="sm" color="gray">{levelWords[home.level] || home.level}</Badge></div>
-                        <div className="mt-0.5 text-xs text-tertiary">你和 Steve 的私聊默认在这里。放的是它的身份、画像和记忆，不是代码。目录 <Mono>{home.path}</Mono>。</div>
+                        <div className="flex items-center gap-2"><span className="text-sm font-semibold text-primary">{tr("projects.personal")}</span><Mono className="text-quaternary">{home.id}</Mono><Badge type="modern" size="sm" color="gray">{levelName(home.level, locale)}</Badge></div>
+                        <div className="mt-0.5 text-xs text-tertiary">{tr("projects.personalHint")}<Mono>{home.path}</Mono></div>
                     </div>
-                    <Button size="sm" color="link-color" onClick={() => newSession(home.id)}>新会话</Button>
+                    <Button size="sm" color="link-color" onClick={() => newSession(home.id)}>{tr("projects.newConversation")}</Button>
                 </div>
             )}
             {current && <ProjectDrawer p={current} onClose={() => setOpened(null)} onNewSession={() => newSession(current.id)} />}
@@ -107,6 +105,7 @@ export function ProjectsPage() {
 // WorkspaceCard is one place a project is: the directory, what git says
 // about it, and who can work there.
 function WorkspaceCard({ w, project, onChanged }: { w: Workspace; project: string; onChanged: () => void }) {
+    const { t: tr, locale } = useI18n();
     const [removing, setRemoving] = useState(false);
     const [error, setError] = useState("");
     const missing = w.repos?.length === 1 && w.repos[0].missing;
@@ -115,69 +114,72 @@ function WorkspaceCard({ w, project, onChanged }: { w: Workspace; project: strin
         try { await removeWorkspace(project, w.node); onChanged(); } catch (e) { setError(String(e).replace(/^Error: /, "")); setRemoving(false); }
     }
     return (
-        <li className="flex flex-col gap-1.5 rounded-lg px-3 py-2 ring-1 ring-secondary">
-            <div className="flex items-center gap-2">
-                <Badge type="pill-color" size="sm" color={w.kind === "canonical" ? "brand" : "gray"}>{kindWord(w.kind)}</Badge>
+        <li className="flex min-w-0 flex-col gap-2 rounded-lg bg-secondary/40 px-3 py-3">
+            <div className="flex min-w-0 flex-wrap items-center gap-2">
+                <Badge type="pill-color" size="sm" color={w.kind === "canonical" ? "brand" : "gray"}>{kindWord(w.kind, locale)}</Badge>
                 <span className="text-sm font-medium text-primary">{w.node}</span>
                 <Mono className="truncate text-tertiary" >{w.path}</Mono>
-                {w.state === "provisioning" && <span className="flex items-center gap-1 u-meta"><Loading01 className="size-3 animate-spin text-fg-brand-primary" />正在克隆</span>}
-                {w.state === "failed" && <Badge type="pill-color" size="sm" color="error">克隆失败</Badge>}
-                {w.busy && <Badge type="pill-color" size="sm" color="warning">有回合在跑</Badge>}
+                {w.state === "provisioning" && <span className="flex items-center gap-1 u-meta"><Loading01 className="size-3 animate-spin text-fg-brand-primary" />{tr("projects.cloning")}</span>}
+                {w.state === "failed" && <Badge type="pill-color" size="sm" color="error">{tr("projects.cloneFailed")}</Badge>}
+                {w.busy && <Badge type="pill-color" size="sm" color="warning">{tr("status.running")}</Badge>}
+                {w.activity_known === false && <Badge type="pill-color" size="sm" color="gray">{tr("projects.activityUnknown")}</Badge>}
                 {w.kind === "copy" && (
                     <span className="ml-auto flex items-center gap-1">
                         {removing ? (
                             <>
-                                <Button size="sm" color="link-gray" onClick={() => setRemoving(false)}>算了</Button>
-                                <Button size="sm" color="link-destructive" onClick={() => void remove()}>确认忘掉</Button>
+                                <Button size="sm" color="link-gray" onClick={() => setRemoving(false)}>{tr("common.cancel")}</Button>
+                                <Button size="sm" color="link-destructive" onClick={() => void remove()}>{tr("projects.confirmRemove")}</Button>
                             </>
-                        ) : <Button size="sm" color="link-gray" onClick={() => setRemoving(true)}>移除</Button>}
+                        ) : <Button size="sm" color="link-gray" onClick={() => setRemoving(true)}>{tr("common.remove")}</Button>}
                     </span>
                 )}
             </div>
-            {error && <div className="text-xs text-error-primary">{error}</div>}
-            {w.state === "failed" && w.error && <CodeBlock code={w.error} label="克隆输出" muted maxHeight={160} />}
-            {w.source && <div className="truncate u-meta text-quaternary" title={w.source}>来自 {w.source}</div>}
-            {!w.repos ? <div className="text-xs text-quaternary">还没看过这个目录。</div> : missing ? <div className="text-xs text-error-primary">这台机器上没有这个目录。</div> : !w.repos.length ? <div className="text-xs text-quaternary">目录里没有 git 仓库；Agent 仍能在里面干活，只是没有版本记录。</div> : (
+            {error && <div role="alert" className="text-xs text-error-primary">{error}</div>}
+            {w.state === "failed" && w.error && <CodeBlock code={w.error} label={tr("projects.cloneOutput")} muted maxHeight={160} />}
+            {w.source && <div className="truncate u-meta text-quaternary" title={w.source}>{tr("projects.from", { source: w.source })}</div>}
+            {!w.repos ? <div className="text-xs text-quaternary">{tr("projects.unreadDirectory")}</div> : missing ? <div className="text-xs text-error-primary">{tr("projects.missingDirectoryHint")}</div> : !w.repos.length ? <div className="text-xs text-quaternary">{tr("projects.noRepoHint")}</div> : (
                 <ul className="flex flex-col divide-y divide-secondary">
                     {w.repos.map((r) => (
                         <li key={r.path} className="flex flex-col gap-0.5 py-1.5">
                             <div className="flex items-center gap-2">
                                 <GitBranch01 className="size-3.5 text-fg-quaternary" />
-                                <span className="font-mono text-xs text-primary">{r.path === "." ? "（目录本身）" : r.path}</span>
+                                <span className="font-mono text-xs text-primary">{r.path === "." ? tr("projects.directoryRoot") : r.path}</span>
                                 <Badge type="modern" size="sm" color="gray">{r.branch || "?"}</Badge>
-                                {r.dirty && <Badge type="pill-color" size="sm" color="warning">有未提交修改</Badge>}
+                                {r.dirty && <Badge type="pill-color" size="sm" color="warning">{tr("projects.uncommitted")}</Badge>}
                                 {r.agents_md && <Badge type="pill-color" size="sm" color="success">AGENTS.md</Badge>}
                             </div>
-                            {r.subject && <div className="truncate text-xs text-secondary" title={r.subject}><Mono className="text-quaternary">{r.head}</Mono> {r.subject}{r.at ? <span className="text-quaternary"> · {when(r.at)}</span> : null}</div>}
+                            {r.subject && <div className="truncate text-xs text-secondary" title={r.subject}><Mono className="text-quaternary">{r.head}</Mono> {r.subject}{r.at ? <span className="text-quaternary"> · {when(r.at, locale)}</span> : null}</div>}
                             {r.remote && <div className="truncate font-mono u-meta text-quaternary" title={r.remote}>{r.remote}</div>}
                         </li>
                     ))}
                 </ul>
             )}
-            <div className="flex items-center gap-2 text-xs"><span className="text-tertiary">这里能接：</span><Chips items={w.agents.map((a) => ({ id: a }))} empty={<span className="text-quaternary">这台机器上没有可用的 Agent</span>} /></div>
+            <div className="flex items-center gap-2 text-xs"><span className="text-tertiary">{tr("projects.availableAgents")}</span><Chips items={w.agents.map((a) => ({ id: a }))} empty={<span className="text-quaternary">{tr("projects.noAgents")}</span>} /></div>
         </li>
     );
 }
 
 function RepoChips({ repos }: { repos?: Repo[] }) {
-    if (!repos) return <span className="text-xs text-quaternary">还没看过</span>;
-    if (repos.length === 1 && repos[0].missing) return <span className="text-xs text-error-primary">目录不存在</span>;
-    if (!repos.length) return <span className="text-xs text-quaternary">目录里没有 git 仓库</span>;
+    const { t: tr } = useI18n();
+    if (!repos) return <span className="text-xs text-quaternary">{tr("projects.unread")}</span>;
+    if (repos.length === 1 && repos[0].missing) return <span className="text-xs text-error-primary">{tr("projects.missingDirectory")}</span>;
+    if (!repos.length) return <span className="text-xs text-quaternary">{tr("projects.noRepo")}</span>;
     return (
-        <div className="flex flex-wrap gap-1">
-            {repos.slice(0, 4).map((r) => (
-                <span key={r.path} className="inline-flex items-center gap-1 rounded-md bg-secondary px-1.5 py-0.5 font-mono text-xs text-primary" title={`${r.subject || ""}${r.head ? " (" + r.head + ")" : ""}${r.dirty ? " · 有未提交修改" : ""}`}>
-                    <GitBranch01 className="size-3 text-fg-quaternary" />
-                    {r.path === "." ? "" : r.path + " "}<span className="text-tertiary">{r.branch || "?"}</span>
-                    {r.dirty && <span className="size-1.5 rounded-full bg-warning-solid" />}
+        <div className="flex min-w-0 flex-col gap-1" title={repos.map((r) => `${r.path} · ${r.branch || "?"}\n${r.subject || ""}${r.head ? " (" + r.head + ")" : ""}${r.dirty ? tr("projects.uncommittedSuffix") : ""}`).join("\n\n")}>
+            {repos.slice(0, 2).map((r) => (
+                <span key={r.path} className="flex min-w-0 items-center gap-1.5 font-mono text-xs text-primary">
+                    <GitBranch01 className="size-3 shrink-0 text-fg-quaternary" />
+                    <span className="min-w-0 truncate text-tertiary">{r.path === "." ? "" : r.path + " · "}{r.branch || "?"}</span>
+                    {r.dirty && <span className="size-1.5 shrink-0 rounded-full bg-warning-solid" />}
                 </span>
             ))}
-            {repos.length > 4 && <span className="text-xs text-quaternary">+{repos.length - 4}</span>}
+            {repos.length > 2 && <span className="text-xs text-quaternary">{tr("projects.moreRepositories", { count: repos.length - 2 })}</span>}
         </div>
     );
 }
 
 function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () => void; onNewSession: () => void }) {
+    const { t: tr, locale } = useI18n();
     const { snap, refresh } = useFleet();
     const [removing, setRemoving] = useState(false);
     const [error, setError] = useState("");
@@ -191,41 +193,41 @@ function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () =
     const grants = snap.facts.grants.filter((g) => g.project === p.id);
     const stepAgents = snap.agents.filter((a) => a.eligible && (p.repo === "isolated" || a.node === p.node)).map((a) => a.id);
     return (
-        <Drawer width={600} title={<><span className="text-base font-semibold text-primary">{p.id}</span>{p.default && <Badge type="pill-color" size="sm" color="brand">默认项目</Badge>}<Badge type="modern" size="sm" color="gray">{levelWords[p.level] || p.level}</Badge></>} subtitle={<><div className="mt-0.5 text-xs text-tertiary">{p.workspaces.length === 1 ? <>只有主目录，在 {p.node}</> : <>{p.workspaces.length} 个工作区：主目录在 {p.node}，副本在 {p.workspaces.filter((w) => w.kind !== "canonical").map((w) => w.node).join("、")}</>}</div></>} actions={<><Button size="sm" color="primary" onClick={onNewSession}>新会话</Button></>} onClose={onClose}>
-                <DrawerSection title="工作区" aside={<Button size="sm" color="link-color" iconLeading={Plus} onClick={() => setAddingWorkspace(true)}>添加副本</Button>}>
+        <Drawer width={600} title={<><span className="text-base font-semibold text-primary">{p.id}</span>{p.default && <Badge type="pill-color" size="sm" color="brand">{tr("projects.defaultProject")}</Badge>}<Badge type="modern" size="sm" color="gray">{levelName(p.level, locale)}</Badge></>} subtitle={<><div className="mt-0.5 text-xs text-tertiary">{p.workspaces.length === 1 ? <>{tr("projects.primaryOnly", { node: p.node })}</> : <>{tr("projects.workspaceSummary", { count: p.workspaces.length, node: p.node, copies: p.workspaces.filter((w) => w.kind !== "canonical").map((w) => w.node).join(", ") })}</>}</div></>} actions={<><Button size="sm" color="primary" onClick={onNewSession}>{tr("projects.newConversation")}</Button></>} onClose={onClose}>
+                <DrawerSection title={tr("projects.workspaces")} aside={<Button size="sm" color="link-color" iconLeading={Plus} onClick={() => setAddingWorkspace(true)}>{tr("projects.addCopy")}</Button>}>
                     {addingWorkspace && <AddWorkspace p={p} onClose={() => setAddingWorkspace(false)} onDone={() => refresh()} />}
                     <ul className="flex flex-col gap-3">
                         {p.workspaces.map((w) => <WorkspaceCard key={w.id} w={w} project={p.id} onChanged={refresh} />)}
                     </ul>
-                    <p className="mt-2 u-meta text-quaternary">主目录只有一个，合并落回那里。副本每台机器至多一个：那台机器上的 Agent 在副本里干活，副本不自动落回主目录，靠 git 与它同步。</p>
+                    <p className="mt-2 u-meta text-quaternary">{tr("projects.copyHint")}</p>
                 </DrawerSection>
                 <KeyValue dense rows={[
-                    { k: "怎么改", v: repoWords[p.repo] || p.repo, hint: "直接改主目录：只有项目主机上的 Agent 能接手，一次只有一个写者。隔离副本：计划可以在别的机器上物化副本，完成后合并回来。" },
-                    { k: "数据等级", v: `${levelWords[p.level] || p.level}（${p.level}）`, hint: levelHint },
-                    { k: "可接对话", v: <Chips items={p.agents.map((a) => ({ id: a }))} empty={<span className="text-error-primary">没有 Agent 在它有工作区的机器上</span>} />, hint: "在它任一工作区所在机器上的 Agent。" },
-                    { k: "可跑计划步骤", v: <Chips items={stepAgents.map((a) => ({ id: a }))} /> },
-                    { k: "访问权限", v: grants.length ? grants.map((g) => `${g.principal}: ${g.role}`).join(" · ") : `默认 ${p.default_role || "owner 之外无权限"}` },
+                    { k: tr("projects.executionMode"), v: labelsFor(locale).repo[p.repo] || p.repo, hint: tr("projects.executionHint") },
+                    { k: tr("projects.classification"), v: `${levelName(p.level, locale)}（${p.level}）`, hint: tr("projects.levelHint") },
+                    { k: tr("projects.conversationAgents"), v: <Chips items={p.agents.map((a) => ({ id: a }))} empty={<span className="text-error-primary">{tr("projects.noWorkspaceAgents")}</span>} />, hint: tr("projects.conversationAgentsHint") },
+                    { k: tr("projects.planAgents"), v: <Chips items={stepAgents.map((a) => ({ id: a }))} /> },
+                    { k: tr("projects.access"), v: grants.length ? grants.map((g) => `${g.principal}: ${g.role}`).join(" · ") : tr("projects.defaultAccess", { role: p.default_role || tr("projects.ownerOnly") }) },
                 ]} />
-                <DrawerSection title="活动任务">
-                    {tasks.length === 0 ? <div className="text-xs text-quaternary">没有</div> : (
+                <DrawerSection title={tr("projects.activeTasks")}>
+                    {tasks.length === 0 ? <div className="text-xs text-quaternary">{tr("projects.none")}</div> : (
                         <ul className="flex flex-col gap-1">{tasks.map((t) => <li key={t.id} className="flex items-center gap-2 text-sm"><StateBadge state={taskState(t)} /><span>#{t.id}</span><span className="truncate text-secondary">{t.goal}</span><span className="ml-auto text-xs text-tertiary">{t.member}</span></li>)}</ul>
                     )}
                 </DrawerSection>
                 <section className="rounded-lg bg-secondary/40 p-3">
-                    <div className="flex items-center gap-3">
-                        <div className="flex-1 text-xs text-tertiary">移除只是让 hub 忘掉这个项目：目录和仓库都不动；它下面的任务记录保留。{tasks.length ? ` 现在还有 ${tasks.length} 个活动任务。` : ""}</div>
+                    <div className="flex min-w-0 flex-wrap items-center gap-3">
+                        <div className="flex-1 text-xs text-tertiary">{tr("projects.removeHint")}{tasks.length ? tr("projects.remainingTasks", { count: tasks.length }) : ""}</div>
                         {removing ? (
                             <>
-                                <Button size="sm" color="secondary" onClick={() => setRemoving(false)}>算了</Button>
-                                <Button size="sm" color="primary-destructive" onClick={() => void remove()}>确认移除</Button>
+                                <Button size="sm" color="secondary" onClick={() => setRemoving(false)}>{tr("common.cancel")}</Button>
+                                <Button size="sm" color="primary-destructive" onClick={() => void remove()}>{tr("projects.confirmRemove")}</Button>
                             </>
-                        ) : <Button size="sm" color="secondary-destructive" isDisabled={!!p.default} onClick={() => setRemoving(true)}>移除项目</Button>}
+                        ) : <Button size="sm" color="secondary-destructive" isDisabled={!!p.default} onClick={() => setRemoving(true)}>{tr("projects.removeProject")}</Button>}
                     </div>
-                    {error && <div className="mt-2 text-xs text-error-primary">{error}</div>}
+                    {error && <div role="alert" className="mt-2 text-xs text-error-primary">{error}</div>}
                 </section>
-                <DrawerSection title="最近合并">
-                    {landings.length === 0 ? <div className="text-xs text-quaternary">没有</div> : (
-                        <ul className="flex flex-col gap-1 text-xs">{landings.map((l) => <li key={l.id} className="flex items-center gap-2"><StateBadge state={l.state} /><Mono>{l.artifact.slice(0, 12)}</Mono><span className="text-tertiary">{when(l.at)}</span>{l.error && <span className="text-error-primary">{l.error}</span>}</li>)}</ul>
+                <DrawerSection title={tr("projects.recentMerges")}>
+                    {landings.length === 0 ? <div className="text-xs text-quaternary">{tr("projects.none")}</div> : (
+                        <ul className="flex flex-col gap-1 text-xs">{landings.map((l) => <li key={l.id} className="flex items-center gap-2"><StateBadge state={l.state} /><Mono>{l.artifact.slice(0, 12)}</Mono><span className="text-tertiary">{when(l.at, locale)}</span>{l.error && <span className="text-error-primary">{l.error}</span>}</li>)}</ul>
                     )}
                 </DrawerSection>
         </Drawer>
@@ -235,6 +237,7 @@ function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () =
 // AddWorkspace gives a project a copy on another machine: a directory
 // that is already there, or one cloned from the project's remote.
 function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void; onDone: () => void }) {
+    const { t: tr } = useI18n();
     const { snap } = useFleet();
     const home = p.workspaces.find((w) => w.kind === "canonical");
     const taken = new Set(p.workspaces.map((w) => w.node));
@@ -252,32 +255,32 @@ function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void;
     return (
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
             <Modal className="max-w-xl">
-                <Dialog>
+                <Dialog aria-label={tr("projects.addWorkspaceFor", { project: p.id })}>
                     <div className="flex w-full flex-col gap-4 rounded-2xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
                         <div className="flex items-start gap-3">
                             <div className="min-w-0 flex-1">
-                                <div className="text-base font-semibold text-primary">给 {p.id} 添加副本</div>
-                                <div className="mt-0.5 text-xs text-tertiary">主目录在 {home?.node}。副本是它在另一台机器上的目录：那台机器上的 Agent 就在副本里干活。每台机器至多一个。</div>
+                                <div className="text-base font-semibold text-primary">{tr("projects.addWorkspaceFor", { project: p.id })}</div>
+                                <div className="mt-0.5 text-xs text-tertiary">{tr("projects.primaryHint", { node: home?.node || "—" })}</div>
                             </div>
-                            <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label="关闭" />
+                            <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label={tr("common.close")} />
                         </div>
-                        {machines.length === 0 ? <div className="text-sm text-tertiary">每台机器上都已经有这个项目的工作区了。</div> : (
+                        {machines.length === 0 ? <div className="text-sm text-tertiary">{tr("projects.allMachinesHaveWorkspace")}</div> : (
                             <div className="grid grid-cols-1 gap-4">
-                                <Select size="sm" label="机器" selectedKey={node} onSelectionChange={(k) => k && setNode(String(k))} items={machines}>
+                                <Select size="sm" label={tr("projects.machine")} selectedKey={node} onSelectionChange={(k) => k && setNode(String(k))} items={machines}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
-                                <Select size="sm" label="怎么来" selectedKey={origin} onSelectionChange={(k) => k && setOrigin(String(k) as "adopt" | "clone")}
-                                    hint={origin === "clone" ? (remote ? `从 ${remote} 克隆到下面的目录；目录必须还不存在。` : "这个项目的主目录不是单个带 remote 的 git 仓库，没法克隆；先在机器上放好目录再认领。") : "目录要已经在那台机器上；里面有什么 hub 自己去看。"}
-                                    items={[{ id: "adopt", label: "认领已有目录" }, { id: "clone", label: "克隆一份" }]}>
+                                <Select size="sm" label={tr("projects.source")} selectedKey={origin} onSelectionChange={(k) => k && setOrigin(String(k) as "adopt" | "clone")}
+                                    hint={origin === "clone" ? (remote ? tr("projects.cloneHint", { remote }) : tr("projects.noRemoteHint")) : tr("projects.adoptHint")}
+                                    items={[{ id: "adopt", label: tr("projects.adopt") }, { id: "clone", label: tr("projects.clone") }]}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
-                                <Input size="sm" label="目录" placeholder="/home/me/work/my-service" value={path} onChange={setPath} autoFocus hint="那台机器上的绝对路径" />
+                                <Input size="sm" label={tr("projects.directory")} placeholder="/home/me/work/my-service" value={path} onChange={setPath} autoFocus hint={tr("projects.absolutePath")} />
                             </div>
                         )}
-                        {error && <div className="text-sm text-error-primary">{error}</div>}
+                        {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
                         <div className="flex justify-end gap-2">
-                            <Button size="sm" color="secondary" onClick={onClose}>取消</Button>
-                            {machines.length > 0 && <Button size="sm" color="primary" isLoading={busy} isDisabled={!path.trim() || (origin === "clone" && !remote)} onClick={() => void submit()}>{origin === "clone" ? "开始克隆" : "认领"}</Button>}
+                            <Button size="sm" color="secondary" onClick={onClose}>{tr("common.cancel")}</Button>
+                            {machines.length > 0 && <Button size="sm" color="primary" isLoading={busy} isDisabled={!path.trim() || (origin === "clone" && !remote)} onClick={() => void submit()}>{origin === "clone" ? tr("projects.startClone") : tr("projects.addWorkspace")}</Button>}
                         </div>
                     </div>
                 </Dialog>
@@ -287,6 +290,7 @@ function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void;
 }
 
 function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
+    const { t: tr, locale } = useI18n();
     const { snap } = useFleet();
     const [id, setID] = useState("");
     const [node, setNode] = useState("");
@@ -308,34 +312,34 @@ function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => vo
     return (
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
             <Modal className="max-w-xl">
-                <Dialog>
+                <Dialog aria-label={tr("projects.add")}>
                     <div className="flex w-full flex-col gap-4 rounded-2xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
                         <div className="flex items-start gap-3">
                             <div className="min-w-0 flex-1">
-                                <div className="text-base font-semibold text-primary">添加项目</div>
-                                <div className="mt-0.5 text-xs text-tertiary">一台机器上的一个目录。目录要已经存在；里面有没有仓库、有几个，hub 会自己去看。加入后立刻可用，并写进 hub 的配置。</div>
+                                <div className="text-base font-semibold text-primary">{tr("projects.add")}</div>
+                                <div className="mt-0.5 text-xs text-tertiary">{tr("projects.addHint")}</div>
                             </div>
-                            <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label="关闭" />
+                            <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label={tr("common.close")} />
                         </div>
-                        {done ? <div className="text-sm text-primary">项目 <b>{id.trim()}</b> 已加入。</div> : (
+                        {done ? <div className="text-sm text-primary">{tr("projects.added", { project: id.trim() })}</div> : (
                             <div className="grid grid-cols-1 gap-4">
-                                <Input size="sm" label="名称" placeholder="my-service" value={id} onChange={setID} autoFocus hint="小写字母、数字、点、下划线、连字符" />
-                                <Select size="sm" label="机器" selectedKey={node || "__hub"} onSelectionChange={(k) => setNode(!k || String(k) === "__hub" ? "" : String(k))} items={machines}>
+                                <Input size="sm" label={tr("projects.name")} placeholder="my-service" value={id} onChange={setID} autoFocus hint={tr("projects.nameHint")} />
+                                <Select size="sm" label={tr("projects.machine")} selectedKey={node || "__hub"} onSelectionChange={(k) => setNode(!k || String(k) === "__hub" ? "" : String(k))} items={machines}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
-                                <Input size="sm" label="目录" placeholder="/home/me/work/my-service" value={path} onChange={setPath} hint="那台机器上的绝对路径；里面可以是一个仓库，也可以放几个仓库" />
-                                <Select size="sm" label="怎么改" hint="直接改：只有这台机器上的 Agent 能接手。隔离副本：别的机器也能领步骤，完成后合并回来。" selectedKey={repo} onSelectionChange={(k) => k && setRepo(String(k))} items={[{ id: "inplace", label: repoWords.inplace }, { id: "isolated", label: repoWords.isolated }]}>
+                                <Input size="sm" label={tr("projects.directory")} placeholder="/home/me/work/my-service" value={path} onChange={setPath} hint={tr("projects.pathHint")} />
+                                <Select size="sm" label={tr("projects.executionMode")} hint={tr("projects.modeHint")} selectedKey={repo} onSelectionChange={(k) => k && setRepo(String(k))} items={[{ id: "inplace", label: labelsFor(locale).repo.inplace }, { id: "isolated", label: labelsFor(locale).repo.isolated }]}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
-                                <Select size="sm" label="数据等级" hint={levelHint} selectedKey={level} onSelectionChange={(k) => k && setLevel(String(k))} items={["public", "internal", "restricted", "sealed"].map((l) => ({ id: l, label: `${levelWords[l]}（${l}）` }))}>
+                                <Select size="sm" label={tr("projects.classification")} hint={tr("projects.levelHint")} selectedKey={level} onSelectionChange={(k) => k && setLevel(String(k))} items={["public", "internal", "restricted", "sealed"].map((l) => ({ id: l, label: `${levelName(l, locale)} (${l})` }))}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
                             </div>
                         )}
-                        {error && <div className="text-sm text-error-primary">{error}</div>}
+                        {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
                         <div className="flex justify-end gap-2">
-                            <Button size="sm" color="secondary" onClick={onClose}>{done ? "完成" : "取消"}</Button>
-                            {!done && <Button size="sm" color="primary" isLoading={busy} isDisabled={!id.trim() || !path.trim()} onClick={() => void submit()}>加入项目</Button>}
+                            <Button size="sm" color="secondary" onClick={onClose}>{done ? tr("projects.done") : tr("common.cancel")}</Button>
+                            {!done && <Button size="sm" color="primary" isLoading={busy} isDisabled={!id.trim() || !path.trim()} onClick={() => void submit()}>{tr("projects.add")}</Button>}
                         </div>
                     </div>
                 </Dialog>

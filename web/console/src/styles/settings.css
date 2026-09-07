@@ -1,0 +1,50 @@
+.settings-page { width: 100%; min-height: 100%; }
+.settings-header { display: flex; align-items: center; gap: 20px; min-height: 78px; padding: 20px 32px; border-bottom: 1px solid var(--color-border-secondary); }
+.settings-header h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.4px; }
+.settings-header > div { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-left: auto; font-size: 12px; color: var(--color-text-tertiary); }
+.settings-layout { display: grid; grid-template-columns: 184px minmax(0,760px); align-items: start; gap: 40px; max-width: 1064px; padding: 28px 32px 48px; }
+.settings-nav { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 20px; }
+.settings-nav a { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 12px; border-radius: 8px; color: var(--color-text-secondary); font-size: 14px; white-space: nowrap; }
+.settings-nav a:hover { background: var(--color-bg-secondary); }
+.settings-nav a[aria-current=page] { color: var(--selected-text); background: var(--selected-surface); font-weight: 600; }
+.settings-nav svg { width: 17px; height: 17px; flex: 0 0 auto; }
+.settings-dirty-dot { width: 5px; height: 5px; flex: 0 0 auto; border-radius: 50%; background: var(--color-bg-brand-solid); margin-left: auto; }
+.settings-content { min-width: 0; outline: none; }
+.settings-section-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; margin: 4px 0 22px; }
+.settings-section-heading h2 { margin: 0 0 6px; color: var(--color-text-primary); font-size: 20px; font-weight: 600; letter-spacing: -.3px; }
+.settings-section-heading p,.settings-note { margin: 0; color: var(--color-text-tertiary); font-size: 13px; line-height: 1.6; }
+.settings-content h3 { color: var(--color-text-primary); font-size: 14px; font-weight: 600; margin: 0; }
+.settings-field { display: grid; grid-template-columns: minmax(0,1fr) minmax(160px,250px); align-items: start; gap: 28px; padding: 16px 0; border-bottom: 1px solid var(--color-border-secondary); min-height: 68px; }
+.settings-field label { display: block; color: var(--color-text-primary); font-size: 14px; font-weight: 500; padding-top: 8px; }
+.settings-field p { margin: 5px 0 0; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.6; }
+.settings-field .settings-difference { color: var(--color-text-secondary); }
+.settings-field-help { color: var(--color-text-tertiary); font-size: 11px; line-height: 1.5; margin-top: 7px; }
+.settings-field-help summary { cursor: pointer; width: fit-content; }
+.settings-subsection { margin-top: 30px; }
+.settings-advanced { border-top: 1px solid var(--color-border-secondary); padding-top: 2px; margin-top: 22px; }
+.settings-advanced > summary { min-height: 44px; padding: 13px 0; cursor: pointer; font-size: 13px; font-weight: 500; color: var(--color-text-secondary); }
+.settings-advanced p { font-size: 12px; color: var(--color-text-tertiary); line-height: 1.6; }
+.settings-advanced dl { display: grid; grid-template-columns: 140px minmax(0,1fr); gap: 10px; font-size: 12px; }
+.settings-advanced dt { color: var(--color-text-tertiary); }
+.settings-advanced dd { margin: 0; overflow-wrap: anywhere; color: var(--color-text-secondary); }
+.settings-savebar { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; margin-top: 28px; padding-top: 18px; border-top: 1px solid var(--color-border-secondary); }
+.settings-savebar > span { flex: 1; min-width: 140px; font-size: 12px; color: var(--color-text-tertiary); }
+.settings-alert { color: var(--color-text-error-primary); font-size: 13px; line-height: 1.6; margin: 0 0 16px; overflow-wrap: anywhere; }
+.settings-conflict { color: var(--color-text-warning-primary); background: var(--color-bg-warning-primary); border-radius: 8px; padding: 14px 16px; margin-bottom: 18px; font-size: 13px; line-height: 1.6; }
+.settings-conflict p { margin: 0 0 10px; }
+.settings-actions { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 12px; }
+.settings-dialog { width: 100%; padding: 24px; border-radius: 12px; background: var(--color-bg-primary); box-shadow: 0 12px 40px #0002; }
+.settings-dialog h2 { margin: 0; font-size: 17px; font-weight: 600; color: var(--color-text-primary); }
+.settings-dialog p { margin: 12px 0; font-size: 14px; line-height: 1.7; color: var(--color-text-secondary); }
+.settings-dialog .settings-actions { justify-content: flex-end; margin-top: 20px; }
+.settings-channel-summary,.settings-service-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 14px 0; }
+.settings-channel-summary p,.settings-service-heading p { margin: 6px 0 0; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.6; }
+.settings-service-list { margin: 0; padding: 0; list-style: none; }
+.settings-service-list > li { padding: 4px 0 18px; border-bottom: 1px solid var(--color-border-secondary); }
+.settings-operation { padding: 12px 14px; border-radius: 8px; background: var(--color-bg-secondary); font-size: 12px; line-height: 1.6; color: var(--color-text-secondary); overflow-wrap: anywhere; }
+.settings-operation p { margin: 5px 0; }
+.app-settings-link { display: flex; align-items: center; gap: 8px; min-height: 36px; flex: 1; color: var(--color-text-secondary); font-size: 12px; }
+.app-settings-link > svg { width: 17px; height: 17px; }
+.app-settings-link[aria-current=page] { color: var(--color-text-brand-secondary); }
+@media(max-width: 900px) { .settings-layout { grid-template-columns: 164px minmax(0,1fr); gap: 24px; padding-inline: 24px; } .settings-field { grid-template-columns: minmax(0,1fr) 200px; gap: 16px; } }
+@media(max-width: 680px) { .settings-header { padding: 16px 20px; min-height: 64px; } .settings-layout { display: block; padding: 12px 20px 40px; } .settings-nav { position: static; flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 12px; margin-bottom: 16px; } .settings-nav a { flex-shrink: 0; padding-inline: 10px; } .settings-nav svg { display:none; } .settings-field { grid-template-columns: minmax(0,1fr); gap: 10px; padding-block: 14px; } .settings-field label { padding-top:0; } .settings-header > div { justify-content:flex-end; } }

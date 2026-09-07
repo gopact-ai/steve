@@ -3,11 +3,11 @@ package turn
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/home"
 	"regexp"
 	"sort"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
@@ -68,6 +68,7 @@ type Suggestion struct {
 // by: verbs from the catalogue, agents with their admission here, projects,
 // and only this conversation's tasks — the page keeps no rules of its own.
 func (c *Coordinator) Suggest(ctx context.Context, conversationID, line string) []Suggestion {
+	c = c.localized(i18n.ContextLocale(ctx))
 	line = strings.TrimLeft(line, " ")
 	if line == "" || strings.Contains(line, "\n") {
 		return nil
@@ -256,6 +257,7 @@ type Placement struct {
 
 // Context answers for one conversation.
 func (c *Coordinator) Context(ctx context.Context, conversationID string) (Context, error) {
+	c = c.localized(i18n.ContextLocale(ctx))
 	out := Context{Conversation: conversationID}
 	var current *project.Project
 	if c.projects != nil {

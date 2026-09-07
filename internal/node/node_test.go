@@ -6,9 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/gopact-ai/steve/internal/nodewire"
-	steveruntime "github.com/gopact-ai/steve/internal/runtime"
-	"github.com/gopact-ai/steve/internal/skills"
 	"io"
 	"net"
 	"net/http"
@@ -22,7 +19,10 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
+	steveruntime "github.com/gopact-ai/steve/internal/runtime"
+	"github.com/gopact-ai/steve/internal/skills"
 )
 
 // buildMockAgent compiles the ACP test agent so a node has something real to
@@ -708,52 +708,60 @@ func TestMCPBindingKeepsSecretsOnTheNode(t *testing.T) {
 	}
 }
 
-// A node remembers its hub. While that hub is silent but within grace a
-// second hub is refused, so a blip cannot hand the machine to whoever
-// dials next; a hub that disconnected cleanly has given the node back;
-// adopt hands it over explicitly.
+// A node keeps its owner through both clean disconnects and silence. The
+// same hub may reconnect; another must wait for explicit offline adoption.
 func TestNodeRemembersItsHub(t *testing.T) {
 	bin := buildMockAgent(t)
 	state := t.TempDir()
 	server := startNode(t, ServerConfig{Name: "host-10", Token: "tok", StateDir: state, Harnesses: map[string]HarnessSpec{"codex": {Command: bin}}})
 	first := NewRegistry("hub-1", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(first.Close)
 	if _, err := first.Advert(t.Context(), "host-10"); err != nil {
 		t.Fatal(err)
 	}
-	// The owner went silent: pretend by rewriting the record it wrote.
 	first.Close()
-	time.Sleep(100 * time.Millisecond)
-	server.writeOwner(hubOwner{Hub: "hub-1", LastSeen: time.Now().Add(-time.Minute)})
+	waitDisconnected := func() {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			server.hubMu.Lock()
+			live := server.hubLive
+			server.hubMu.Unlock()
+			if live == 0 {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatal("hub did not disconnect")
+	}
+	waitDisconnected()
+	if owner := server.owner(); owner.Hub != "hub-1" || !owner.Released {
+		t.Fatalf("clean disconnect did not retain owner and stop evidence: %+v", owner)
+	}
 	second := NewRegistry("hub-2", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
 	t.Cleanup(second.Close)
-	if _, err := second.Advert(t.Context(), "host-10"); err == nil || !errors.Is(err, nodewire.ErrRefused) {
-		t.Fatalf("a second hub took over a node whose hub went silent a minute ago: %v", err)
+	if _, err := second.Advert(t.Context(), "host-10"); !errors.Is(err, nodewire.ErrRefused) {
+		t.Fatalf("clean disconnect allowed another hub to take ownership: %v", err)
 	}
-	// Beyond grace, or after a clean release, or by adoption, it is free.
-	server.writeOwner(hubOwner{Hub: "hub-1", LastSeen: time.Now().Add(-OwnerGrace - time.Minute)})
-	if _, err := second.Advert(t.Context(), "host-10"); err != nil {
-		t.Fatalf("after grace: %v", err)
+	reconnected := NewRegistry("hub-1", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(reconnected.Close)
+	if _, err := reconnected.Advert(t.Context(), "host-10"); err != nil {
+		t.Fatalf("same owner could not reconnect: %v", err)
 	}
-	second.Close()
-	time.Sleep(100 * time.Millisecond)
-	if o := server.owner(); o.Hub != "hub-2" || !o.Released {
-		t.Fatalf("owner after a clean disconnect = %+v", o)
-	}
-	third := NewRegistry("hub-3", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
-	t.Cleanup(third.Close)
-	if _, err := third.Advert(t.Context(), "host-10"); err != nil {
-		t.Fatalf("after a clean release: %v", err)
-	}
-	third.Close()
-	time.Sleep(100 * time.Millisecond)
-	server.writeOwner(hubOwner{Hub: "hub-3", LastSeen: time.Now()})
-	if err := Adopt(state, "hub-4"); err != nil {
+	reconnected.Close()
+	waitDisconnected()
+	// Even an arbitrarily old record does not authorize a different hub.
+	if err := server.writeOwner(hubOwner{Hub: "hub-1", LastSeen: time.Now().Add(-365 * 24 * time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	fourth := NewRegistry("hub-4", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
-	t.Cleanup(fourth.Close)
-	if _, err := fourth.Advert(t.Context(), "host-10"); err != nil {
-		t.Fatalf("after adopt: %v", err)
+	if _, err := second.Advert(t.Context(), "host-10"); !errors.Is(err, nodewire.ErrRefused) {
+		t.Fatalf("timeout granted ownership to another hub: %v", err)
+	}
+	if err := Adopt(state, "hub-2"); err == nil {
+		t.Fatal("adoption changed a running node instance")
+	}
+	if owner := server.owner(); owner.Hub != "hub-1" {
+		t.Fatalf("refused handshake changed owner: %+v", owner)
 	}
 }
 
@@ -861,7 +869,7 @@ func TestHubConfiguresANode(t *testing.T) {
 	state := t.TempDir()
 	source := filepath.Join(state, "node.json")
 	cfg := ServerConfig{Source: source, Name: "host-13", Token: "tok", StateDir: state, Listen: "127.0.0.1:0",
-		Harnesses: map[string]HarnessSpec{"codex": {Command: bin}}, Tools: []string{"sh"}}
+		Harnesses: map[string]HarnessSpec{"codex": {Adapter: "codex-acp", Command: bin, Slots: 3, Env: []string{"SECRET=keep"}}}, Tools: []string{"sh"}, MCPServers: map[string]MCPSpec{"private": {Type: "http", URL: "http://127.0.0.1:1", Env: map[string]string{"SECRET": "keep"}, Headers: map[string]string{"Authorization": "keep"}}}}
 	raw, _ := json.Marshal(cfg)
 	_ = os.WriteFile(source, raw, 0o600)
 	server := startNode(t, cfg)
@@ -882,8 +890,23 @@ func TestHubConfiguresANode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if got.Revision == "" || applied.Revision == got.Revision {
+		t.Fatal("wire settings omitted/failed to advance revision")
+	}
+	if _, err := registry.Configure(t.Context(), "host-13", got); !errors.Is(err, nodewire.ErrSettingsRevisionConflict) {
+		t.Fatalf("wire did not preserve typed stale revision: %v", err)
+	}
+	missing := applied
+	missing.Revision = ""
+	if _, err := registry.Configure(t.Context(), "host-13", missing); !errors.Is(err, nodewire.ErrSettingsRevisionConflict) {
+		t.Fatalf("wire accepted missing revision: %v", err)
+	}
 	if len(applied.Harnesses) != 2 || len(applied.Tools) != 3 || applied.Declares[0] != "network:lab" {
 		t.Fatalf("applied = %+v", applied)
+	}
+	pin := applied.Harnesses["codex"]
+	if pin.Adapter == nil || *pin.Adapter != "codex-acp" || pin.Slots == nil || *pin.Slots != 3 || pin.Env[0] != "SECRET=keep" || applied.MCPServers["private"].Headers["Authorization"] != "keep" {
+		t.Fatal("wire roundtrip lost hidden fields")
 	}
 	// The file the node started from now says the same.
 	var onDisk ServerConfig
@@ -912,6 +935,45 @@ func TestHubConfiguresANode(t *testing.T) {
 	again, _ := registry.Settings(t.Context(), "host-13")
 	if len(again.Harnesses) != 2 {
 		t.Fatalf("a refused setting changed the node: %+v", again)
+	}
+	clear := nodewire.CloneSettings(again)
+	zero := 0
+	pin = clear.Harnesses["codex"]
+	pin.Slots = &zero
+	pin.Env = []string{}
+	clear.Harnesses["codex"] = pin
+	secret := clear.MCPServers["private"]
+	secret.Env = map[string]string{}
+	secret.Headers = map[string]string{}
+	clear.MCPServers["private"] = secret
+	again, err = registry.Configure(t.Context(), "host-13", clear)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *again.Harnesses["codex"].Slots != 0 || len(again.Harnesses["codex"].Env) != 0 || len(again.MCPServers["private"].Env) != 0 || len(again.MCPServers["private"].Headers) != 0 {
+		t.Fatal("explicit clear was lost in actual wire encoding")
+	}
+	connection, err := registry.connect(t.Context(), "host-13")
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldAdvert := connection.getAdvert()
+	oldAdvert.Features = append([]string(nil), oldAdvert.Features...)
+	for i, feature := range oldAdvert.Features {
+		if feature == nodewire.FeatureConfigRevision {
+			oldAdvert.Features = append(oldAdvert.Features[:i:i], oldAdvert.Features[i+1:]...)
+			break
+		}
+	}
+	connection.setAdvert(oldAdvert)
+	unprotected := again
+	unprotected.Tools = append(append([]string(nil), again.Tools...), "must-not-apply")
+	if _, err := registry.Configure(t.Context(), "host-13", unprotected); !errors.Is(err, nodewire.ErrSettingsRevisionUnsupported) {
+		t.Fatalf("old node accepted unprotected set: %v", err)
+	}
+	unchanged, err := registry.Settings(t.Context(), "host-13")
+	if err != nil || unchanged.Revision != again.Revision {
+		t.Fatalf("unsupported revision set reached node: %+v %v", unchanged, err)
 	}
 }
 

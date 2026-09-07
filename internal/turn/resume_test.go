@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
@@ -191,5 +192,37 @@ func TestOnboardingTurnOpensNoTask(t *testing.T) {
 	}
 	if all := tasks.List(""); len(all) != 0 {
 		t.Fatalf("onboarding opened a task: %+v", all)
+	}
+}
+
+func TestIncompleteProfileOnlyInterceptsHomeProject(t *testing.T) {
+	for _, projectID := range []string{"codex", "home"} {
+		t.Run(projectID, func(t *testing.T) {
+			runner := &fakeRunner{reply: "ok"}
+			coordinator, tasks := taskCoordinator(t, runner)
+			dir := t.TempDir()
+			if err := home.BootstrapLocale(dir, "owner", home.LocaleZH); err != nil {
+				t.Fatal(err)
+			}
+			useHome(t, coordinator, dir)
+			coordinator.SetIdentity("owner", home.Dir{Path: dir})
+			if _, err := coordinator.projects.Bind(t.Context(), "chat", projectID, "owner"); err != nil {
+				t.Fatal(err)
+			}
+			result, err := coordinator.Handle(t.Context(), Request{
+				ConversationID: "chat", Input: "don't scan; explain the project", SenderOpenID: "owner", ChatType: protocol.ChatP2P,
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			building := strings.Contains(result.Injected.Prompt, "Build their profile now.")
+			if building != (projectID == "home") {
+				t.Fatalf("project=%s profile intercepted=%v", projectID, building)
+			}
+			all := tasks.List("chat")
+			if len(all) != 1 || all[0].ProjectID != projectID {
+				t.Fatalf("task attribution: %+v", all)
+			}
+		})
 	}
 }

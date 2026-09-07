@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/card"
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/channel/feishu"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/protocol"
@@ -983,8 +984,8 @@ func TestTopicCommandGuards(t *testing.T) {
 
 type recordingGate struct{ calls chan string }
 
-func (g *recordingGate) Anchor(conversationID, chatID, messageID string) {
-	g.calls <- conversationID + "|" + chatID + "|" + messageID
+func (g *recordingGate) Anchor(conversationID string, address channel.Address) {
+	g.calls <- conversationID + "|" + address.Channel + "|" + address.Conversation + "|" + address.Message
 }
 
 func (g *recordingGate) SetStyle(string, string) {}
@@ -995,9 +996,9 @@ func (g *recordingGate) Interim(string) bool { return false }
 // cards, so the final card must land below them.
 type interimGate struct{}
 
-func (interimGate) Anchor(string, string, string) {}
-func (interimGate) SetStyle(string, string)       {}
-func (interimGate) Interim(string) bool           { return true }
+func (interimGate) Anchor(string, channel.Address) {}
+func (interimGate) SetStyle(string, string)        {}
+func (interimGate) Interim(string) bool            { return true }
 
 func TestGatewayFinalCardLandsBelowInterim(t *testing.T) {
 	g := New(fakeProcessor{})
@@ -1030,7 +1031,7 @@ func TestGatewayAnchorsConversationBeforeTurn(t *testing.T) {
 	})
 	select {
 	case got := <-gate.calls:
-		if got != "oc_1|oc_1|om_1" {
+		if got != "oc_1|feishu|oc_1|om_1" {
 			t.Fatalf("anchor = %q", got)
 		}
 	case <-time.After(waitDeadline):
@@ -1047,7 +1048,7 @@ func TestGatewayAnchorsConversationBeforeTurn(t *testing.T) {
 	})
 	select {
 	case got := <-gate.calls:
-		if got != "omt_thread|oc_1|om_2" {
+		if got != "omt_thread|feishu|omt_thread|om_2" {
 			t.Fatalf("thread anchor = %q", got)
 		}
 	case <-time.After(waitDeadline):

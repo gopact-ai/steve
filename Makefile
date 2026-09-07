@@ -1,18 +1,28 @@
 GO ?= go
 
-.PHONY: build console test e2e e2e-fleet e2e-autonomous
+.PHONY: build console test test-console e2e e2e-fleet e2e-autonomous
 
 # The console is a React app built into internal/readmodel/web/dist and
 # embedded into the binary; rebuild it after touching web/console.
 console:
-	cd web/console && npm install --no-audit --no-fund && npm run build
+	cd web/console && npm ci --no-audit --no-fund && npm run build
 
 build: 
 	CGO_ENABLED=0 $(GO) build -o steve ./cmd/steve
 	CGO_ENABLED=0 $(GO) build -o steve-node ./cmd/steve-node
 
 test:
-	$(GO) test -race ./...
+	$(GO) test -race ./cmd/... ./internal/... ./e2e/...
+
+test-console:
+	npm --prefix web/console run test:boundaries
+	npm --prefix web/console run test:unit
+	npm --prefix web/console run build
+	npm --prefix web/console run test:ui
+	npm --prefix web/console run test:architecture
+	npm --prefix web/console run test:settings
+	npm --prefix web/console run test:materials
+	npm --prefix web/console run test:selection
 
 e2e:
 	STEVE_MESH_E2E=1 $(GO) test -count=1 -timeout 25m ./e2e/mesh/

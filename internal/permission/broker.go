@@ -29,10 +29,13 @@ func New(policy string) (*Broker, error) {
 
 // Ask is one tool-permission prompt that must be answered by a human.
 type Ask struct {
-	ToolName string
-	Kind     acp.ToolKind
-	Reason   string
-	Options  []acp.PermissionOption
+	SessionID  string
+	Generation uint64
+	ToolCallID string
+	ToolName   string
+	Kind       acp.ToolKind
+	Reason     string
+	Options    []acp.PermissionOption
 }
 
 type AskFunc func(context.Context, Ask) (acp.RequestPermissionOutcome, error)

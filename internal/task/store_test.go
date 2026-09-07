@@ -1,6 +1,7 @@
 package task
 
 import (
+	"fmt"
 	"path/filepath"
 	"slices"
 	"testing"
@@ -353,6 +354,63 @@ func TestInterimJournalFollowsTheTurn(t *testing.T) {
 	}
 	if err := store.AddInterim("chat", "nobody", "om_x"); err == nil {
 		t.Fatal("journal accepted a memberless conversation")
+	}
+}
+
+func TestInterimReceiptStaysWithItsOriginalTask(t *testing.T) {
+	store, clock := newStore(t)
+	original := mustCreate(t, store, "first task", "chat")
+	if _, err := store.Begin(original.ID, "builder", "node", ""); err != nil {
+		t.Fatal(err)
+	}
+	*clock = clock.Add(time.Minute)
+	if _, err := store.Finish(original.ID, OutcomeOK, Tokens{}, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Advance(original.ID, StateDone); err != nil {
+		t.Fatal(err)
+	}
+	replacement := mustCreate(t, store, "next task", "chat")
+	if _, err := store.Begin(replacement.ID, "builder", "node", ""); err != nil {
+		t.Fatal(err)
+	}
+	// Delivery can finish after the old task ended and its successor started.
+	// Only the task captured before sending owns these receipts.
+	for i := 0; i < maxInterim+2; i++ {
+		if err := store.AddInterimForTask(original.ID, fmt.Sprintf("late-%d", i)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	original, _ = store.Get(original.ID)
+	replacement, _ = store.Get(replacement.ID)
+	if len(original.Interim) != maxInterim || original.Interim[0] != "late-2" || original.Interim[maxInterim-1] != fmt.Sprintf("late-%d", maxInterim+1) {
+		t.Fatalf("original task journal = %v", original.Interim)
+	}
+	if len(replacement.Interim) != 0 {
+		t.Fatalf("late receipts moved to the replacement task: %v", replacement.Interim)
+	}
+	reloaded, err := openWith(store.doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := reloaded.Get(original.ID); !slices.Equal(got.Interim, original.Interim) {
+		t.Fatalf("durable journal = %v, want %v", got.Interim, original.Interim)
+	}
+	if got, _ := reloaded.Get(replacement.ID); len(got.Interim) != 0 {
+		t.Fatalf("durable replacement journal = %v", got.Interim)
+	}
+}
+
+func TestInterimForTaskRejectsMissingIDs(t *testing.T) {
+	store, _ := newStore(t)
+	created := mustCreate(t, store, "task", "chat")
+	for _, ids := range [][2]string{{"missing", "receipt"}, {"", "receipt"}, {created.ID, ""}} {
+		if err := store.AddInterimForTask(ids[0], ids[1]); err == nil {
+			t.Errorf("accepted task %q receipt %q", ids[0], ids[1])
+		}
+	}
+	if got, _ := store.Get(created.ID); len(got.Interim) != 0 {
+		t.Fatalf("invalid receipts changed the journal: %v", got.Interim)
 	}
 }
 

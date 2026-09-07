@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/exec"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/planner"
@@ -26,6 +27,7 @@ type Supervisor interface {
 	Plan(ctx context.Context, req planner.Request) (plan.Plan, error)
 	Execute(ctx context.Context, p plan.Plan) (exec.Outcome, error)
 	Name() string
+	PrepareRecovery(ctx context.Context) error
 	OpenRuns(ctx context.Context) ([]exec.RunRecord, error)
 	Resume(ctx context.Context, rec exec.RunRecord) (exec.Outcome, error)
 }
@@ -65,6 +67,14 @@ func (c *Coordinator) planCmd(ctx context.Context, req Request, rest string) Res
 	if err != nil {
 		return Result{Title: title, Text: err.Error()}
 	}
+	if c.executions != nil {
+		scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "plan/" + tracked.ID})
+		if err != nil {
+			return Result{Title: title, Text: err.Error()}
+		}
+		defer scope.Finish(nil)
+		ctx = scope.Context()
+	}
 	// A plan runs many steps across machines, so it gets more room than a
 	// single turn — but not unbounded room: the chat is waiting on it.
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
@@ -99,6 +109,9 @@ func (c *Coordinator) planCmd(ctx context.Context, req Request, rest string) Res
 	}
 
 	outcome, runErr := c.supervisor.Execute(ctx, stored)
+	if runErr == nil {
+		runErr = ctx.Err()
+	}
 	final, _ := c.plans.Latest(stored.ID)
 	if runErr != nil {
 		// A failed plan is a result, not an absence of one: the tree shows
@@ -109,13 +122,9 @@ func (c *Coordinator) planCmd(ctx context.Context, req Request, rest string) Res
 				c.planTree(final, outcome),
 		}
 	}
-	if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
-		log.Printf("turn: close plan task %s: %v", tracked.ID, err)
-	}
-	landing := c.landSinks(ctx, final)
 	return Result{
 		Title: title,
-		Text:  c.text.T(i18n.PlanDone, stored.ID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + landing,
+		Text:  c.text.T(i18n.PlanDone, stored.ID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + landingSummary(outcome),
 	}
 }
 
@@ -277,35 +286,14 @@ func (c *Coordinator) fleetCmd(ctx context.Context, req Request) Result {
 // room, because the chat is waiting on it.
 const planTimeout = 30 * time.Minute
 
-// landSinks brings the plan's final results into the canonical workspace:
-// every step nothing else depends on, in plan order. A conflict is
-// reported, not forced.
-func (c *Coordinator) landSinks(ctx context.Context, p plan.Plan) string {
-	if c.artifacts == nil || p.Base == "" {
-		return ""
-	}
-	proj, ok, err := c.projects.Get(ctx, p.ProjectID)
-	if err != nil || !ok {
-		return ""
-	}
-	depended := map[string]bool{}
-	for _, s := range p.Steps {
-		for _, id := range append(append([]string{}, s.Needs...), s.Merge...) {
-			depended[id] = true
-		}
-	}
+func landingSummary(outcome exec.Outcome) string {
 	var lines []string
-	for _, s := range p.Steps {
-		if depended[s.ID] || s.Result == nil || s.Result.Artifact == "" || s.Result.Artifact == p.Base {
-			continue
+	for _, land := range outcome.Landings {
+		text := fmt.Sprintf("↳ %s → %s: %s (%d paths)", land.Artifact, land.Project, land.State, len(land.Paths))
+		if land.Error != "" {
+			text += ": " + land.Error
 		}
-		land, err := c.artifacts.Land(ctx, proj, s.Result.Artifact, "plan "+p.ID)
-		switch {
-		case err == nil:
-			lines = append(lines, fmt.Sprintf("↳ %s → %s: landed %d path(s)", s.ID, proj.ID, len(land.Paths)))
-		default:
-			lines = append(lines, fmt.Sprintf("↳ %s → %s: %s", s.ID, proj.ID, err))
-		}
+		lines = append(lines, text)
 	}
 	if len(lines) == 0 {
 		return ""
@@ -321,6 +309,10 @@ func (c *Coordinator) ResumePlans(ctx context.Context) {
 	if c.supervisor == nil || c.plans == nil || c.tasks == nil {
 		return
 	}
+	if err := c.supervisor.PrepareRecovery(ctx); err != nil {
+		log.Printf("turn: prepare plan recovery: %v", err)
+		return
+	}
 	open, err := c.supervisor.OpenRuns(ctx)
 	if err != nil {
 		log.Printf("turn: list open plan runs: %v", err)
@@ -328,7 +320,7 @@ func (c *Coordinator) ResumePlans(ctx context.Context) {
 	}
 	for _, rec := range open {
 		tracked, ok := c.tasks.Get(rec.TaskID)
-		if !ok || !tracked.State.Holds() || tracked.State == task.StatePaused {
+		if !ok || tracked.State == task.StatePaused || tracked.State == task.StateCancelled {
 			log.Printf("turn: plan %s run not resumed: task #%s is %s", rec.PlanID, rec.TaskID, tracked.State)
 			continue
 		}
@@ -341,15 +333,15 @@ func (c *Coordinator) resumePlan(ctx context.Context, rec exec.RunRecord, tracke
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
 	outcome, runErr := c.supervisor.Resume(ctx, rec)
+	if runErr == nil {
+		runErr = ctx.Err()
+	}
 	final, _ := c.plans.Latest(rec.PlanID)
 	var text string
 	if runErr != nil {
 		text = c.text.T(i18n.PlanStopped, rec.PlanID, runErr) + "\n\n" + c.planTree(final, outcome)
 	} else {
-		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
-			log.Printf("turn: close resumed plan task %s: %v", tracked.ID, err)
-		}
-		text = c.text.T(i18n.PlanDone, rec.PlanID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + c.landSinks(ctx, final)
+		text = c.text.T(i18n.PlanDone, rec.PlanID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + landingSummary(outcome)
 	}
 	if c.notifier != nil && tracked.AnchorMessage != "" {
 		c.notifier(TaskNotice{TaskID: tracked.ID, ChatID: tracked.ChatID, MessageID: tracked.AnchorMessage, Requester: tracked.Requester, Conversation: tracked.Channel, Text: text})

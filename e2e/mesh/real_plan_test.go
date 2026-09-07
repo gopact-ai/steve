@@ -72,7 +72,12 @@ func newRealFleet(t *testing.T) *realFleet {
 	fleetRoster.SetHubCapabilities([]string{"basic"})
 
 	dir := t.TempDir()
-	tasks, err := task.Open(filepath.Join(dir, "tasks.json"))
+	projects, attempts, artifacts := declareProjects(t, dir, reg,
+		project.Project{ID: "real", Home: project.Home{Path: hubWork}},
+		project.Project{ID: "real-a", Home: project.Home{Node: nodeA, Path: nodeWork + "/real-a"}},
+		project.Project{ID: "real-b", Home: project.Home{Node: nodeB, Path: nodeWork + "/real-b"}},
+	)
+	tasks, err := task.OpenLedger(ledgerOf(t, dir), "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,11 +90,7 @@ func newRealFleet(t *testing.T) *realFleet {
 		Hub:    readmodel.Hub{Node: "hub-e2e", Started: time.Now(), Capabilities: []string{"basic"}},
 		Roster: fleetRoster, Nodes: reg, Tasks: tasks, Plans: plans,
 	})
-	projects, attempts, artifacts := declareProjects(t, dir, reg,
-		project.Project{ID: "real", Home: project.Home{Path: hubWork}},
-		project.Project{ID: "real-a", Home: project.Home{Node: nodeA, Path: nodeWork + "/real-a"}},
-		project.Project{ID: "real-b", Home: project.Home{Node: nodeB, Path: nodeWork + "/real-b"}},
-	)
+
 	return &realFleet{
 		fleet: &fleet{catalog: catalog, registry: reg, roster: fleetRoster, manager: manager,
 			tasks: tasks, plans: plans, view: view, projects: projects, attempts: attempts, artifacts: artifacts},
@@ -134,19 +135,22 @@ func TestRealClaudePlansRealCodexExecutesOnTheNodes(t *testing.T) {
 	brain, _ := f.catalog.Resolve("claude")
 	supervisor := exec.NewSupervisor(
 		planner.LLM{
-			Agent: brain.ID, Sessions: f.manager, Workspaces: f.artifacts,
-			At:      harness.Placement{Node: brain.Node, Harness: brain.Harness},
+			Agent: brain.ID, Executor: sharedAgentExecutor(t, f.fleet),
 			Timeout: 6 * time.Minute,
 		},
 		exec.Deps{
 			Workspaces: f.artifacts, Attempts: f.attempts, Artifacts: f.artifacts,
 			Roster:   f.roster,
 			Runner:   exec.NewAgentRunner(f.manager, realCaps{}, f.roster),
-			Verifier: exec.NewVerifiers(f.registry, f.manager, f.roster, f.artifacts),
+			Verifier: exec.NewVerifiers(f.registry, sharedAgentExecutor(t, f.fleet)),
 		},
 		workflow.NewMemoryStore(),
 	)
 	supervisor.SetPlans(f.plans)
+	supervisor.SetLedger(f.book, "mesh")
+	supervisor.SetTasks(f.tasks)
+	supervisor.SetExecution(f.executions)
+	coordinator.SetExecution(f.executions)
 	supervisor.Runs().Observe(f.view)
 	coordinator.SetSupervisor(supervisor, f.plans, f.roster)
 

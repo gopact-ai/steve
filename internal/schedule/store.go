@@ -18,6 +18,11 @@ import (
 // still says which chat and which topic it belongs to.
 type Job struct {
 	ID             string    `json:"id"`
+	Channel        string    `json:"channel"`
+	ProjectID      string    `json:"project_id,omitempty"`
+	State          string    `json:"-"`
+	Error          string    `json:"-"`
+	PendingKey     string    `json:"-"`
 	ConversationID string    `json:"conversation_id"`
 	ChatID         string    `json:"chat_id,omitempty"`
 	ChatType       string    `json:"chat_type,omitempty"`
@@ -40,15 +45,17 @@ const MaxPerConversation = 8
 // Store persists jobs with the same durable-replace discipline as the task
 // store: one writer, a temp file, a rename, a directory sync.
 type Store struct {
-	doc  ledger.Doc
-	mu   sync.Mutex
-	data data
-	now  func() time.Time
+	doc    ledger.Doc
+	mu     sync.Mutex
+	data   data
+	now    func() time.Time
+	active map[string]bool
 }
 
 type data struct {
-	NextID int             `json:"next_id"`
-	Jobs   map[string]*Job `json:"jobs"`
+	NextID  int                `json:"next_id"`
+	Jobs    map[string]*Job    `json:"jobs"`
+	Firings map[string]*Firing `json:"firings,omitempty"`
 }
 
 // Open keeps the store in one JSON file; the gateway opens the ledger.
@@ -66,7 +73,7 @@ func OpenLedger(l *ledger.Ledger, legacy string) (*Store, error) {
 }
 
 func openWith(doc ledger.Doc) (*Store, error) {
-	s := &Store{doc: doc, data: data{NextID: 1, Jobs: map[string]*Job{}}, now: time.Now}
+	s := &Store{doc: doc, data: data{NextID: 1, Jobs: map[string]*Job{}, Firings: map[string]*Firing{}}, now: time.Now, active: map[string]bool{}}
 	raw, ok, err := doc.Load()
 	if err != nil {
 		return nil, fmt.Errorf("read schedules: %w", err)
@@ -84,7 +91,13 @@ func openWith(doc ledger.Doc) (*Store, error) {
 	if loaded.NextID < 1 {
 		loaded.NextID = 1
 	}
+	if loaded.Firings == nil {
+		loaded.Firings = map[string]*Firing{}
+	}
 	s.data = loaded
+	if err := s.recoverFirings(); err != nil {
+		return nil, err
+	}
 	return s, nil
 }
 
@@ -130,7 +143,7 @@ func (s *Store) List(conversationID string) []Job {
 		if conversationID != "" && stored.ConversationID != conversationID {
 			continue
 		}
-		out = append(out, *stored)
+		out = append(out, s.describeLocked(*stored))
 	}
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].NextAt.Equal(out[j].NextAt) {
@@ -148,7 +161,7 @@ func (s *Store) Get(id string) (Job, bool) {
 	if !ok {
 		return Job{}, false
 	}
-	return *stored, true
+	return s.describeLocked(*stored), true
 }
 
 // Delete removes a job. Cancelling a schedule is a deletion rather than a
@@ -163,6 +176,17 @@ func (s *Store) Delete(id string) (Job, bool, error) {
 	}
 	removed := *stored
 	replacement := s.clone()
+	for _, f := range replacement.Firings {
+		if f.ID != id {
+			continue
+		}
+		if f.State == FiringDispatching || f.State == FiringUnknown {
+			return Job{}, false, fmt.Errorf("schedule %s has an unresolved firing; confirm it or authorize retry first", id)
+		}
+		if f.State == FiringPending {
+			f.State = FiringCancelled
+		}
+	}
 	delete(replacement.Jobs, id)
 	if err := s.replaceLocked(replacement); err != nil {
 		return Job{}, false, err
@@ -175,50 +199,6 @@ func (s *Store) Delete(id string) (Job, bool, error) {
 // job it slept through: the moment those instructions were about has passed,
 // and the schedule's next turn comes round soon enough.
 const MaxLateness = time.Hour
-
-// Due claims every job whose moment has come and advances it in the same
-// write. Claiming and advancing together is what stops a slow firing from
-// being fired again by the next tick.
-func (s *Store) Due(now time.Time) ([]Job, error) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	replacement := s.clone()
-	var claimed []Job
-	changed := false
-	for id, stored := range replacement.Jobs {
-		if stored.NextAt.IsZero() || stored.NextAt.After(now) {
-			continue
-		}
-		changed = true
-		if now.Sub(stored.NextAt) <= MaxLateness {
-			stored.LastAt = now
-			stored.Runs++
-			claimed = append(claimed, *stored)
-		}
-		next := stored.Spec.Next(now)
-		if !stored.Spec.Recurring() || next.IsZero() {
-			// A one-shot has said everything it had to say.
-			delete(replacement.Jobs, id)
-			continue
-		}
-		stored.NextAt = next
-	}
-	if changed && len(claimed) == 0 {
-		// Nothing to run, but the skipped jobs still moved on.
-		if err := s.replaceLocked(replacement); err != nil {
-			return nil, err
-		}
-		return nil, nil
-	}
-	if len(claimed) == 0 {
-		return nil, nil
-	}
-	if err := s.replaceLocked(replacement); err != nil {
-		return nil, err
-	}
-	sort.Slice(claimed, func(i, j int) bool { return lessID(claimed[i].ID, claimed[j].ID) })
-	return claimed, nil
-}
 
 // lessID orders ids the way the person reading them does. They are decimal
 // counters, so comparing them as text puts #10 before #2 the moment a
@@ -233,10 +213,14 @@ func lessID(a, b string) bool {
 }
 
 func (s *Store) clone() data {
-	next := data{NextID: s.data.NextID, Jobs: make(map[string]*Job, len(s.data.Jobs))}
+	next := data{NextID: s.data.NextID, Jobs: make(map[string]*Job, len(s.data.Jobs)), Firings: make(map[string]*Firing, len(s.data.Firings))}
 	for id, stored := range s.data.Jobs {
 		copied := *stored
 		next.Jobs[id] = &copied
+	}
+	for key, firing := range s.data.Firings {
+		copied := *firing
+		next.Firings[key] = &copied
 	}
 	return next
 }

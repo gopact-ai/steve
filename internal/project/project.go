@@ -21,14 +21,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync/atomic"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/nodewire"
-
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 // Level is the data level the hub assigns a project. Levels order
@@ -96,7 +97,8 @@ type Project struct {
 	// DefaultRole is what a principal without a grant gets. Empty means
 	// write for public and internal projects, none for restricted and
 	// sealed ones.
-	DefaultRole Role `json:"default_role,omitempty"`
+	DefaultRole  Role            `json:"default_role,omitempty"`
+	ConfigGrants map[string]Role `json:"config_grants,omitempty"`
 	// Copies are the project's workspaces away from home, by machine.
 	Copies map[string]Copy `json:"copies,omitempty"`
 }
@@ -144,6 +146,22 @@ func (p Project) normalized() (Project, error) {
 	}
 	if p.DefaultRole != "" && !p.DefaultRole.Valid() {
 		return p, fmt.Errorf("project %s: default_role %q is not none, read, write or admin", p.ID, p.DefaultRole)
+	}
+	grants := make(map[string]Role, len(p.ConfigGrants))
+	for principal, role := range p.ConfigGrants {
+		g, err := normalizeGrant(p.ID, principal, role, "config", time.Time{})
+		if err != nil {
+			return p, err
+		}
+		if _, exists := grants[g.Principal]; exists {
+			return p, fmt.Errorf("duplicate configured grant for %s", g.Principal)
+		}
+		grants[g.Principal] = g.Role
+	}
+	if len(grants) > 0 {
+		p.ConfigGrants = grants
+	} else {
+		p.ConfigGrants = nil
 	}
 	for node, c := range p.Copies {
 		fixed, err := p.copyShape(node, c)
@@ -400,8 +418,11 @@ const (
 
 // Store keeps projects and bindings in the ledger.
 type Store struct {
-	l   *ledger.Ledger
-	now func() time.Time
+	l           *ledger.Ledger
+	now         func() time.Time
+	declaration atomic.Pointer[string]
+	hubID       atomic.Pointer[string]
+	guards      []DeclarationGuard
 	// Levels answers a machine's data level, when the store is given a way
 	// to know; a copy may only sit where the project's level admits.
 	Levels func(node string) Level
@@ -419,8 +440,29 @@ func (s *Store) admits(p Project, node string) error {
 	return nil
 }
 
-func Open(l *ledger.Ledger) *Store {
-	return &Store{l: l, now: time.Now}
+type DeclarationGuard func(*ledger.Tx, []Project) error
+
+func Open(l *ledger.Ledger, guards ...DeclarationGuard) *Store {
+	return &Store{l: l, now: time.Now, guards: append([]DeclarationGuard(nil), guards...)}
+}
+
+func (s *Store) guardDeclaration(tx *ledger.Tx, desired map[string]Project) error {
+	if err := s.guardOwners(tx, desired); err != nil {
+		return err
+	}
+	if err := validateCloneOwnership(tx, desired); err != nil {
+		return err
+	}
+	values := make([]Project, 0, len(desired))
+	for _, p := range desired {
+		values = append(values, p)
+	}
+	for _, guard := range s.guards {
+		if err := guard(tx, values); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Declare records the operator's projects as the hub's assignment. It is
@@ -432,42 +474,124 @@ func Open(l *ledger.Ledger) *Store {
 // origin, source, who added it, whether it is ready; one declared at a
 // new place starts over as adopted; one no longer declared is forgotten.
 func (s *Store) Declare(ctx context.Context, projects []Project) error {
+	declared := make([]Project, 0, len(projects))
+	seen := map[string]bool{}
 	for _, p := range projects {
+		p.Copies = maps.Clone(p.Copies)
 		normalized, err := p.normalized()
 		if err != nil {
 			return err
 		}
-		var previous Project
-		if ok, err := s.l.GetBinding(ctx, kindProject, normalized.ID, &previous); err != nil {
-			return err
-		} else if ok {
-			for node, c := range normalized.Copies {
-				if had, ok := previous.Copies[node]; ok && had.Path == c.Path {
-					normalized.Copies[node] = had
-				}
-			}
+		if seen[normalized.ID] {
+			return fmt.Errorf("project %s is declared more than once", normalized.ID)
 		}
+		seen[normalized.ID] = true
 		for node := range normalized.Copies {
 			if err := s.admits(normalized, node); err != nil {
 				return err
 			}
 		}
-		if err := s.l.PutBinding(ctx, kindProject, normalized.ID, normalized); err != nil {
+		declared = append(declared, normalized)
+	}
+	return s.l.Update(ctx, func(tx *ledger.Tx) error {
+		all, err := projectsIn(tx)
+		if err != nil {
 			return err
+		}
+		for _, p := range declared {
+			previous := all[p.ID]
+			for node, c := range p.Copies {
+				if had, ok := previous.Copies[node]; ok && had.Path == c.Path {
+					p.Copies[node] = had
+				}
+			}
+			all[p.ID] = p
+		}
+		if err := validateOwnership(all); err != nil {
+			return err
+		}
+		if err := s.guardDeclaration(tx, all); err != nil {
+			return err
+		}
+		for _, p := range declared {
+			if err := tx.PutBinding(kindProject, p.ID, all[p.ID]); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func projectsIn(tx *ledger.Tx) (map[string]Project, error) {
+	raw, err := tx.Bindings(kindProject)
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[string]Project, len(raw))
+	for id, data := range raw {
+		var p Project
+		if err := json.Unmarshal(data, &p); err != nil {
+			return nil, fmt.Errorf("read project %s: %w", id, err)
+		}
+		out[id] = p
+	}
+	return out, nil
+}
+
+// validateOwnership examines the final set inside the same transaction that
+// writes it, including homes and copies on every node. Batch replacements do
+// not conflict with their own previous locations.
+func validateOwnership(projects map[string]Project) error {
+	ids := make([]string, 0, len(projects))
+	for id := range projects {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	var owned []Workspace
+	for _, id := range ids {
+		for _, ws := range projects[id].Workspaces() {
+			for _, other := range owned {
+				if ws.Node == other.Node && pathsOverlap(ws.Path, other.Path) {
+					return fmt.Errorf("project %s workspace %s on %s overlaps project %s workspace %s", ws.Project, ws.Path, nodeLabel(ws.Node), other.Project, other.Path)
+				}
+			}
+			owned = append(owned, ws)
 		}
 	}
 	return nil
+}
+
+func pathsOverlap(a, b string) bool {
+	a, b = filepath.Clean(a), filepath.Clean(b)
+	return a == b || strings.HasPrefix(a, strings.TrimSuffix(b, "/")+"/") || strings.HasPrefix(b, strings.TrimSuffix(a, "/")+"/")
 }
 
 // Retire forgets a project the operator no longer wants. Conversations
 // bound to it keep their binding until they switch; tasks created under
 // it keep their record. Nothing on disk is touched.
 func (s *Store) Retire(ctx context.Context, id string) error {
-	return s.l.DeleteBinding(ctx, kindProject, id)
+	return s.l.Update(ctx, func(tx *ledger.Tx) error {
+		all, err := projectsIn(tx)
+		if err != nil {
+			return err
+		}
+		delete(all, id)
+		if err := s.guardDeclaration(tx, all); err != nil {
+			return err
+		}
+		_, err = tx.Exec("DELETE FROM bindings WHERE kind = ? AND id = ?", kindProject, id)
+		return err
+	})
 }
 
 // Get reads one project.
 func (s *Store) Get(ctx context.Context, id string) (Project, bool, error) {
+	if err := s.checkOwner(ctx, id); err != nil {
+		return Project{}, false, err
+	}
+	if err := s.checkDeclaration(ctx); err != nil {
+		return Project{}, false, err
+	}
 	var p Project
 	ok, err := s.l.GetBinding(ctx, kindProject, id, &p)
 	return p, ok, err
@@ -475,13 +599,16 @@ func (s *Store) Get(ctx context.Context, id string) (Project, bool, error) {
 
 // List returns every project, sorted by id.
 func (s *Store) List(ctx context.Context) ([]Project, error) {
+	if err := s.checkDeclaration(ctx); err != nil {
+		return nil, err
+	}
 	raw, err := s.l.Bindings(ctx, kindProject)
 	if err != nil {
 		return nil, err
 	}
 	out := make([]Project, 0, len(raw))
 	for id := range raw {
-		p, ok, err := s.Get(ctx, id)
+		p, ok, err := s.Lookup(ctx, id)
 		if err != nil {
 			return nil, err
 		}
@@ -533,7 +660,6 @@ func (s *Store) Bind(ctx context.Context, conversationID, projectID, by string) 
 // two would both claim the same files, and a single-writer lock on one
 // would not know about the other.
 func (s *Store) Conflict(ctx context.Context, node, path string) (Workspace, bool, error) {
-	clean := filepath.Clean(path)
 	list, err := s.List(ctx)
 	if err != nil {
 		return Workspace{}, false, err
@@ -543,8 +669,7 @@ func (s *Store) Conflict(ctx context.Context, node, path string) (Workspace, boo
 			if ws.Node != node {
 				continue
 			}
-			theirs := filepath.Clean(ws.Path)
-			if theirs == clean || strings.HasPrefix(clean, theirs+"/") || strings.HasPrefix(theirs, clean+"/") {
+			if pathsOverlap(ws.Path, path) {
 				return ws, true, nil
 			}
 		}
@@ -557,57 +682,81 @@ func (s *Store) Conflict(ctx context.Context, node, path string) (Workspace, boo
 // shape, the machine's level, and own its directory alone; a project has
 // one copy per machine.
 func (s *Store) SetCopy(ctx context.Context, projectID string, c Copy) (Workspace, error) {
-	p, ok, err := s.Get(ctx, projectID)
+	if err := s.checkDeclaration(ctx); err != nil {
+		return Workspace{}, err
+	}
+	var workspace Workspace
+	err := s.l.Update(ctx, func(tx *ledger.Tx) error {
+		all, err := projectsIn(tx)
+		if err != nil {
+			return err
+		}
+		p, ok := all[projectID]
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrUnknown, projectID)
+		}
+		c, err = p.copyShape(c.Node, c)
+		if err != nil {
+			return err
+		}
+		if had, exists := p.Copies[c.Node]; exists && had.Path != c.Path {
+			return fmt.Errorf("project %s already has a copy on %s (%s); a project has one copy per machine", p.ID, nodeLabel(c.Node), had.Path)
+		} else if !exists {
+			if err := s.admits(p, c.Node); err != nil {
+				return err
+			}
+			if c.At.IsZero() {
+				c.At = s.now().UTC()
+			}
+		}
+		if p.Copies == nil {
+			p.Copies = map[string]Copy{}
+		}
+		p.Copies[c.Node] = c
+		all[p.ID] = p
+		if err := validateOwnership(all); err != nil {
+			return err
+		}
+		if err := s.guardDeclaration(tx, all); err != nil {
+			return err
+		}
+		if err := tx.PutBinding(kindProject, p.ID, p); err != nil {
+			return err
+		}
+		workspace = c.workspace(p.ID, c.Node)
+		return nil
+	})
 	if err != nil {
 		return Workspace{}, err
 	}
-	if !ok {
-		return Workspace{}, fmt.Errorf("%w: %s", ErrUnknown, projectID)
-	}
-	c, err = p.copyShape(c.Node, c)
-	if err != nil {
-		return Workspace{}, err
-	}
-	if had, exists := p.Copies[c.Node]; exists && had.Path != c.Path {
-		return Workspace{}, fmt.Errorf("project %s already has a copy on %s (%s); a project has one copy per machine", p.ID, nodeLabel(c.Node), had.Path)
-	} else if !exists {
-		if err := s.admits(p, c.Node); err != nil {
-			return Workspace{}, err
-		}
-		if other, taken, err := s.Conflict(ctx, c.Node, c.Path); err != nil {
-			return Workspace{}, err
-		} else if taken {
-			return Workspace{}, fmt.Errorf("%s on %s already belongs to project %s (%s)", c.Path, nodeLabel(c.Node), other.Project, other.Path)
-		}
-		if c.At.IsZero() {
-			c.At = s.now().UTC()
-		}
-	}
-	if p.Copies == nil {
-		p.Copies = map[string]Copy{}
-	}
-	p.Copies[c.Node] = c
-	if err := s.l.PutBinding(ctx, kindProject, p.ID, p); err != nil {
-		return Workspace{}, err
-	}
-	return c.workspace(p.ID, c.Node), nil
+	return workspace, nil
 }
 
 // DeleteCopy forgets a project's copy on a machine. The directory is not
 // touched. Whether something is running there is the caller's check.
 func (s *Store) DeleteCopy(ctx context.Context, projectID, node string) error {
-	p, ok, err := s.Get(ctx, projectID)
-	if err != nil {
+	if err := s.checkDeclaration(ctx); err != nil {
 		return err
 	}
-	if !ok {
-		return fmt.Errorf("%w: %s", ErrUnknown, projectID)
-	}
-	if _, has := p.Copies[node]; !has {
-		return fmt.Errorf("project %s has no copy on %s", projectID, nodeLabel(node))
-	}
-	delete(p.Copies, node)
-	return s.l.PutBinding(ctx, kindProject, p.ID, p)
+	return s.l.Update(ctx, func(tx *ledger.Tx) error {
+		all, err := projectsIn(tx)
+		if err != nil {
+			return err
+		}
+		p, ok := all[projectID]
+		if !ok {
+			return fmt.Errorf("%w: %s", ErrUnknown, projectID)
+		}
+		if _, has := p.Copies[node]; !has {
+			return fmt.Errorf("project %s has no copy on %s", projectID, nodeLabel(node))
+		}
+		delete(p.Copies, node)
+		all[p.ID] = p
+		if err := s.guardDeclaration(tx, all); err != nil {
+			return err
+		}
+		return tx.PutBinding(kindProject, p.ID, p)
+	})
 }
 
 // Materialize serves the project's workspace on a machine for an in-place
@@ -668,23 +817,35 @@ type Grant struct {
 }
 
 const kindGrant = "grant"
+const kindConfigGrant = "config-grant"
+
+func normalizeGrant(projectID, principal string, role Role, by string, at time.Time) (Grant, error) {
+	if !role.Valid() {
+		return Grant{}, fmt.Errorf("role %q is not none, read, write or admin", role)
+	}
+	principal = strings.TrimSpace(principal)
+	if principal == "" {
+		return Grant{}, errors.New("a grant needs a principal")
+	}
+	return Grant{Project: projectID, Principal: principal, Role: role, By: by, At: at}, nil
+}
 
 // Grant records a principal's role in a project.
 func (s *Store) Grant(ctx context.Context, projectID, principal string, role Role, by string) (Grant, error) {
-	if !role.Valid() {
-		return Grant{}, fmt.Errorf("role %q is not none, read, write or admin", role)
+	g, err := normalizeGrant(projectID, principal, role, by, s.now().UTC())
+	if err != nil {
+		return Grant{}, err
 	}
 	if _, ok, err := s.Get(ctx, projectID); err != nil {
 		return Grant{}, err
 	} else if !ok {
 		return Grant{}, fmt.Errorf("%w: %s", ErrUnknown, projectID)
 	}
-	principal = strings.TrimSpace(principal)
-	if principal == "" {
-		return Grant{}, errors.New("a grant needs a principal")
+	kind := kindGrant
+	if by == "config" {
+		kind = kindConfigGrant
 	}
-	g := Grant{Project: projectID, Principal: principal, Role: role, By: by, At: s.now().UTC()}
-	return g, s.l.PutBinding(ctx, kindGrant, projectID+"/"+principal, g)
+	return g, s.l.PutBinding(ctx, kind, projectID+"/"+g.Principal, g)
 }
 
 // Grants lists a project's grants.
@@ -692,6 +853,13 @@ func (s *Store) Grants(ctx context.Context, projectID string) ([]Grant, error) {
 	raw, err := s.l.Bindings(ctx, kindGrant)
 	if err != nil {
 		return nil, err
+	}
+	configured, err := s.l.Bindings(ctx, kindConfigGrant)
+	if err != nil {
+		return nil, err
+	}
+	for id, data := range configured {
+		raw[id] = data
 	}
 	var out []Grant
 	for _, data := range raw {
@@ -720,6 +888,12 @@ func (s *Store) Access(ctx context.Context, projectID, principal, owner string) 
 		return RoleAdmin, nil
 	}
 	if principal != "" {
+		var configured Grant
+		if ok, err := s.l.GetBinding(ctx, kindConfigGrant, projectID+"/"+principal, &configured); err != nil {
+			return RoleNone, err
+		} else if ok {
+			return configured.Role, nil
+		}
 		var g Grant
 		if ok, err := s.l.GetBinding(ctx, kindGrant, projectID+"/"+principal, &g); err != nil {
 			return RoleNone, err
@@ -753,10 +927,11 @@ type DisclosureRequest struct {
 }
 
 const (
-	DisclosureProposed = "proposed"
-	DisclosureApproved = "approved"
-	DisclosureDenied   = "denied"
-	kindDisclosureOp   = "disclosure-request"
+	DisclosureProposed    = "proposed"
+	DisclosureApproved    = "approved"
+	DisclosureDenied      = "denied"
+	DisclosureInterrupted = "interrupted"
+	kindDisclosureOp      = "disclosure-request"
 )
 
 // ProposeDisclosure opens the operation; the content waits elsewhere.

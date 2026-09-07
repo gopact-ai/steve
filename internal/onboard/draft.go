@@ -57,7 +57,7 @@ func Continue(locale i18n.Locale, homePath, excerpts string) string {
 	b.WriteString("- USER.md is a durable portrait: name, timezone, projects, preferences, people. Short bullets.\n")
 	b.WriteString("- SOUL.md is Steve's identity as their personal assistant. The AI tools Steve drives are hands, not another self; do not name specific tools, Steve is told what it has each turn.\n")
 	b.WriteString("- Do not put channel identifiers (a Feishu open_id, a token) in USER.md; they live in Steve's config. Do not include the template marker comment.\n")
-	b.WriteString("- First write a short Feishu reply confirming what you recorded.\n")
+	b.WriteString("- First write a short reply confirming what you recorded.\n")
 	b.WriteString("- Then output ONLY this shape:\n\n")
 	b.WriteString(soulFence)
 	b.WriteString("\n<full SOUL.md>\n")

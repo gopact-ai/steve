@@ -27,6 +27,7 @@ import (
 
 // Repo is one project's bare shadow repository.
 type Repo struct {
+	Review ReviewLimits
 	Dir    string
 	Limits Limits
 }

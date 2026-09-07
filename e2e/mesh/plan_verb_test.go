@@ -60,7 +60,9 @@ func TestChatPlanVerbAcrossTheFleet(t *testing.T) {
 		Roster: f.roster,
 		Runner: exec.NewAgentRunner(f.manager, noCaps{}, f.roster),
 	}, workflow.NewMemoryStore())
-	supervisor.SetRecorder(f.plans)
+	supervisor.SetPlans(f.plans)
+	supervisor.SetLedger(f.book, "mesh")
+	supervisor.SetTasks(f.tasks)
 	supervisor.Runs().Observe(f.view)
 	coordinator.SetSupervisor(supervisor, f.plans, f.roster)
 

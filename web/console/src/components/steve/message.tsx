@@ -1,19 +1,26 @@
+import { SelectionSurface } from "@/providers/selection-provider";
+import { selectionForReply } from "@/lib/selection";
+import { useSyncExternalStore } from "react";
+import { getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
+import { useI18n } from "@/providers/locale-provider";
 import { ChevronDown } from "@untitledui/icons";
-import { useFollowTail } from "@/hooks/use-follow-tail";
-import { Badge } from "@/components/base/badges/badges";
-import { when } from "@/lib/api";
+import { when } from "@/lib/format";
 import type { Process, Reply, StepProcess } from "@/lib/types";
 import { ChangesFold } from "./changes";
 import { DelegationCard } from "./delegation";
 import { Md } from "./markdown";
 import { ToolCalls, headingOf } from "./tool-calls";
 import { ProcessBody } from "./trace";
+import { hasProcessContent } from "./progress-view";
+import { MaterialReferences } from "./material-shelf";
+import { MaterialActions } from "./material-actions";
+import { ThinkingFold } from "./thinking-fold";
 
 // UserMessage is what the person typed: a bubble on the right.
 export function UserMessage({ text }: { text: string }) {
     return (
-        <div className="flex justify-end">
-            <div className="max-w-[75%] rounded-2xl bg-secondary px-4 py-2.5 text-sm text-primary whitespace-pre-wrap break-words [overflow-wrap:anywhere]">{text}</div>
+        <div className="message-user">
+            <div className="message-user-body">{text}</div>
         </div>
     );
 }
@@ -22,19 +29,24 @@ export function UserMessage({ text }: { text: string }) {
 // out a turn: first what the agent did (its thinking summary and tool
 // calls, folding), then what it said, then a small meta line.
 export function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply; selected?: boolean; onSelect?: () => void; onQuote?: () => void }) {
-    const tone = r.error ? "error" : r.kind === "milestone" ? "success" : r.kind === "notice" ? "warning" : "gray";
+    const { t, locale } = useI18n();
+    const support = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
+    const state = r.error ? (/cancelled|canceled|context canceled/i.test(r.error) ? t("console.stopped") : t("console.unfinished")) : r.kind === "notice" ? t("console.notice") : r.kind === "milestone" ? t("console.milestone") : "";
     return (
-        <div className={`flex min-w-0 flex-col gap-2 rounded-xl px-2 py-1 ${selected ? "bg-secondary/60" : ""}`}>
+        <div className={`message-assistant ${selected ? "is-selected" : ""}`}>
             {r.title && <div className="text-sm font-semibold text-primary">{r.title}</div>}
             {r.process && <InlineProcess process={r.process} />}
-            {r.changes && <ChangesFold summary={r.changes} label="本轮净改动，含已落地的子任务" />}
-            {r.text && <Md text={r.text} className={r.error ? "text-error-primary" : ""} />}
-            <div className="flex items-center gap-2 u-meta text-quaternary">
-                <span>{when(r.at)}</span>
-                {r.kind !== "reply" && <Badge type="pill-color" size="sm" color={tone}>{r.kind}</Badge>}
-                {r.error && <Badge type="pill-color" size="sm" color="error">error</Badge>}
-                {onSelect && <button type="button" onClick={onSelect} className="hover:text-primary">细节</button>}
-                {onQuote && r.id && r.text && <button type="button" onClick={onQuote} className="hover:text-primary" title="把这条回复作为资料带给下一条消息">引用</button>}
+            {r.text && <SelectionSurface version={`${r.conversation}:${r.id}:${r.revision}`} resolve={(range,root)=>{ if(!r.project_id||!r.id||!r.revision)return null; const selected=selectionForReply(range,root,r.text); return selected ? { ...selected,capture:{project:r.project_id,title:r.title||r.text.split("\n")[0].slice(0,60),source:{kind:"reply",conversation:r.conversation,reply_id:r.id,revision:r.revision}} } : null; }}>{r.format === "text"
+                ? <div className={`whitespace-pre-wrap break-words text-sm [overflow-wrap:anywhere] ${r.error && state !== t("console.stopped") ? "text-error-primary" : ""}`}>{state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text}</div>
+                : <Md text={state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text} className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""} />}</SelectionSurface>}
+            {r.changes && <ChangesFold summary={r.changes} label={t("console.netChanges")} />}
+            {!!r.materials?.length && <MaterialReferences items={r.materials} />}
+            <div className="message-meta">
+                <span>{when(r.at, locale)}</span>
+                {state && <span className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""}>{state}</span>}
+                {onSelect && <button type="button" onClick={onSelect} className="hover:text-primary">{t("console.detailAction")}</button>}
+                {r.id && r.project_id && r.revision && <MaterialActions capture={{ project: r.project_id, title: r.title || r.text.split("\n")[0].slice(0, 60) || t("materials.reply"), source: { kind: "reply", conversation: r.conversation, reply_id: r.id, revision: r.revision } }} />}
+                {!support.material_refs && onQuote && r.id && r.text && <button type="button" onClick={onQuote} className="hover:text-primary" title={t("console.quoteHint")} >{t("console.quote")}</button>}
             </div>
         </div>
     );
@@ -44,41 +56,27 @@ export function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply;
 // folded, then for a planned turn one group per step, then the turn's
 // own calls.
 export function InlineProcess({ process }: { process: Process }) {
+    const { t, locale } = useI18n();
+    if (!hasProcessContent(process, true)) return null;
     const steps: StepProcess[] = process.steps || [];
-    if (process.timeline?.length || steps.some((s) => s.timeline?.length)) return (
+    if (process.timeline?.length || steps.some((s) => s.timeline?.length || s.plan?.length)) return (
         <details className="group/process min-w-0">
             <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-tertiary hover:text-primary">
-                过程 <ChevronDown className="size-3.5 transition group-open/process:rotate-180" />
+                {t("console.trace")} <ChevronDown aria-hidden="true" className="size-3.5 transition group-open/process:rotate-180" />
             </summary>
             <div className="mt-2"><ProcessBody process={process} omitFinalText /></div>
         </details>
     );
-    const calls = (process.tools?.length || 0) + steps.reduce((n, s) => n + (s.tools?.length || 0), 0);
-    if (!calls && !process.reasoning && !steps.some((s) => s.kind === "delegate")) return null;
     return (
         <div className="flex min-w-0 flex-col gap-0.5">
-            {process.reasoning && <ThinkingFold text={process.reasoning} />}
+            {process.reasoning?.trim() && <ThinkingFold text={process.reasoning} />}
             {steps.map((s) => s.kind === "delegate"
                 ? <DelegationCard key={s.id} id={s.id} info={s} progress={s} />
-                : (s.tools?.length ? <ToolCalls key={s.id} tools={s.tools} title={`${s.id} · ${headingOf(s.tools)}`} defaultOpen={false} /> : null))}
+                : (s.reasoning?.trim() || s.tools?.length ? <div key={s.id}>
+                    {s.reasoning?.trim() && <ThinkingFold text={s.reasoning} />}
+                    {s.tools?.length ? <ToolCalls tools={s.tools} title={`${s.id} · ${headingOf(s.tools, locale)}`} defaultOpen={false} /> : null}
+                </div> : null))}
             {process.tools?.length ? <ToolCalls tools={process.tools} defaultOpen={steps.length === 0} /> : null}
         </div>
-    );
-}
-
-// ThinkingFold is the agent's one-line-per-step summary of what it was
-// thinking, folded; it is a summary, not the thinking.
-export function ThinkingFold({ text, open, live }: { text: string; open?: boolean; live?: boolean }) {
-    const { followTail, ...scroll } = useFollowTail(text, live);
-    return (
-        <details open={open} className="group/think min-w-0" onToggle={followTail}>
-            <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-xs text-tertiary hover:text-primary" title="AI 工具在每一步之前给出的一句话概要；它不暴露完整的思考过程。">
-                <span>思考摘要</span>
-                <ChevronDown className="size-3.5 shrink-0 transition group-open/think:rotate-180" />
-            </summary>
-            <div {...scroll} tabIndex={0} className="ml-2 max-h-60 overflow-y-auto border-l border-secondary pl-3 [overflow-anchor:none]">
-                <Md size="xs" text={text} className="text-tertiary" />
-            </div>
-        </details>
     );
 }

@@ -458,7 +458,8 @@ func (c *Channel) ReplyCard(ctx context.Context, messageID string, payload []byt
 	return deref(resp.Data.MessageId), nil
 }
 
-// PatchCard updates an existing card in place. Falls back to update if patch fails.
+// PatchCard updates an existing card in place. Only a definite provider
+// refusal permits the update fallback; a lost response may already have applied.
 func (c *Channel) PatchCard(ctx context.Context, messageID string, payload []byte) error {
 	if messageID == "" || len(payload) == 0 {
 		return fmt.Errorf("feishu card patch: message id and payload are required")
@@ -469,7 +470,10 @@ func (c *Channel) PatchCard(ctx context.Context, messageID string, payload []byt
 		Body(larkim.NewPatchMessageReqBodyBuilder().Content(content).Build()).
 		Build()
 	resp, err := c.api.Im.V1.Message.Patch(ctx, patch)
-	if err == nil && resp.Success() {
+	if err != nil {
+		return fmt.Errorf("feishu card patch: %w", err)
+	}
+	if resp.Success() {
 		return nil
 	}
 	upd := larkim.NewUpdateMessageReqBuilder().
@@ -481,15 +485,9 @@ func (c *Channel) PatchCard(ctx context.Context, messageID string, payload []byt
 		Build()
 	updated, updErr := c.api.Im.V1.Message.Update(ctx, upd)
 	if updErr != nil {
-		if err != nil {
-			return fmt.Errorf("feishu card patch: %w", err)
-		}
 		return fmt.Errorf("feishu card update: %w", updErr)
 	}
 	if !updated.Success() {
-		if err != nil {
-			return fmt.Errorf("feishu card patch: code=%d msg=%s", resp.Code, resp.Msg)
-		}
 		return fmt.Errorf("feishu card update: code=%d msg=%s", updated.Code, updated.Msg)
 	}
 	return nil
