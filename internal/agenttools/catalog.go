@@ -117,17 +117,6 @@ func Discover(options Options) []Candidate {
 	return FromPaths(paths)
 }
 
-func ExecutablePath(home string) string {
-	if home == "" {
-		home, _ = os.UserHomeDir()
-	}
-	parts := []string{os.Getenv("PATH"), "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"}
-	if home != "" {
-		parts = append(parts, filepath.Join(home, ".local", "bin"), filepath.Join(home, "bin"), filepath.Join(home, ".npm-global", "bin"), filepath.Join(home, ".bun", "bin"))
-	}
-	return strings.Join(parts, string(os.PathListSeparator))
-}
-
 func findExecutable(search, name string) string {
 	for _, dir := range filepath.SplitList(search) {
 		if !filepath.IsAbs(dir) {

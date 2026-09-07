@@ -27,6 +27,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/agentmcp"
+	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/capability"
@@ -145,6 +146,9 @@ func probeWorkspace(projects []project.Project, node string) (string, bool) {
 }
 
 func main() {
+	if err := agenttools.InitializePath(); err != nil {
+		log.Fatal(err)
+	}
 	if err := run(os.Args[1:]); err != nil {
 		var restart *hubRestartExit
 		if errors.As(err, &restart) {

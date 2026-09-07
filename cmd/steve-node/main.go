@@ -20,12 +20,16 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/adapter"
+	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/processrestart"
 )
 
 func main() {
 	log.SetFlags(log.LstdFlags)
+	if err := agenttools.InitializePath(); err != nil {
+		log.Fatal(err)
+	}
 	if err := run(os.Args[1:]); err != nil {
 		fmt.Fprintf(os.Stderr, "steve-node: %v\n", err)
 		os.Exit(1)
