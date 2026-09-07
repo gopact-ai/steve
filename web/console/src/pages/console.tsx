@@ -1,3 +1,5 @@
+import { useSideChat } from "@/providers/side-chat-provider";
+import { SideChatPanel } from "@/components/steve/side-chat";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { LayoutLeft, LayoutRight, MessageChatSquare, X } from "@untitledui/icons";
@@ -39,6 +41,7 @@ export function ConsolePage() {
     const { snap, consoleEvents, refresh, live: connection, hubUpdated } = useFleet();
     const { t, locale } = useI18n();
     const materials = useMaterial();
+    const side = useSideChat();
     const [uploading, setUploading] = useState(false);
     const [openedMaterial, setOpenedMaterial] = useState<MaterialRef | null>(null);
     const { intent, consume } = useIntent();
@@ -455,8 +458,8 @@ export function ConsolePage() {
                 tasks={snap.tasks} onTask={(t) => { setMobileSessions(false); if (t.parent && stepOf(t.id)) { setChild(t); setPickedTask(null); } else setPickedTask(t); }} />;
     const inspector = <Rail key={conversation} context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} onClose={() => setInspectorOpen(false)} />;
     return (
-        <div className="console-workbench">
-            {view === "chat" && desktopSessions && sessions()}
+        <div className={`console-workbench ${side.session ? "has-side-chat" : ""}`}>
+            {view === "chat" && desktopSessions && !side.session && sessions()}
             {mobileSessions && !desktopSessions && <Sheet label={t("console.sessions")}  side="left" width={300} onClose={() => setMobileSessions(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("console.closeSessions")}  onClick={() => setMobileSessions(false)}><X aria-hidden="true" /></button>{sessions(false)}</Sheet>}
             {pickedTask && <TaskDrawer t={pickedTask} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === pickedTask.id)} onClose={() => setPickedTask(null)} width={RAIL_WIDTH} />}
 
@@ -481,7 +484,7 @@ export function ConsolePage() {
                         <button type="button" onClick={() => navigate("/console")} aria-pressed>{t("console.conversation")}</button>
                         <button type="button" onClick={() => navigate("/console?view=board")} aria-pressed={false}>{t("console.board")}</button>
                     </span>
-                    {view === "chat" && <button type="button" className="workbench-icon-button inspector-toggle" aria-label={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} aria-pressed={inspectorOpen} title={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} onClick={() => setInspectorOpen(!inspectorOpen)}><LayoutRight aria-hidden="true" /></button>}
+                    {view === "chat" && <button type="button" className="workbench-icon-button inspector-toggle" aria-label={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} aria-pressed={inspectorOpen} title={inspectorOpen ? t("console.hideDetails") : t("console.showDetails")} onClick={() => { if(side.session)side.close();setInspectorOpen(side.session?true:!inspectorOpen); }}><LayoutRight aria-hidden="true" /></button>}
                 </header>}
 
                 {view === "board" ? <div className="min-h-0 flex-1 overflow-hidden"><BoardPage /></div> : child && stepOf(child.id) ? (
@@ -551,11 +554,12 @@ export function ConsolePage() {
                             />
                         </div>
                     </div>
-                    {inspectorOpen && dockInspector && <ResizableInspector>{inspector}</ResizableInspector>}
-                {inspectorOpen && !dockInspector && <Sheet label={t("console.details")}  width={resizeInspector ? "max-content" : 360} onClose={() => setInspectorOpen(false)}>{resizeInspector ? <ResizableInspector overlay>{inspector}</ResizableInspector> : inspector}</Sheet>}
+                    {!side.session && inspectorOpen && dockInspector && <ResizableInspector>{inspector}</ResizableInspector>}
+                {!side.session && inspectorOpen && !dockInspector && <Sheet label={t("console.details")}  width={resizeInspector ? "max-content" : 360} onClose={() => setInspectorOpen(false)}>{resizeInspector ? <ResizableInspector overlay>{inspector}</ResizableInspector> : inspector}</Sheet>}
                 </div>
                 )}
             </div>
+            {!reviewing && <SideChatPanel />}
         </div>
     );
 }

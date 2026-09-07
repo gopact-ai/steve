@@ -1,3 +1,5 @@
+import { SelectionProvider } from "@/providers/selection-provider";
+import { SideChatProvider } from "@/providers/side-chat-provider";
 import { useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import { BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
@@ -20,7 +22,7 @@ import { ReviewProvider } from "@/components/steve/review-context";
 
 export function App() {
     const navigate = useNavigate();
-    return <FleetProvider><IntentProvider onNavigate={() => navigate("/console")}><MaterialProvider><ReviewProvider><Shell /></ReviewProvider></MaterialProvider></IntentProvider></FleetProvider>;
+    return <FleetProvider><IntentProvider onNavigate={() => navigate("/console")}><MaterialProvider><SideChatProvider><SelectionProvider><ReviewProvider><Shell /></ReviewProvider></SelectionProvider></SideChatProvider></MaterialProvider></IntentProvider></FleetProvider>;
 }
 
 function Shell() {

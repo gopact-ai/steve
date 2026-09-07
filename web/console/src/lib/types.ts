@@ -111,7 +111,7 @@ export interface Progress {
     timeline?: Span[];
 }
 export interface StepInfo { kind?: string; goal?: string; state?: string; since?: string; elapsed?: string; answer?: string; refs?: string[]; attempt?: string; files?: number }
-export interface ChangeSummary { attempt: string; project?: string; base?: string; artifact?: string; files: number; note?: string }
+export interface ChangeSummary { attempt: string; project?: string; base?: string; artifact?: string; files: number; added?: number; deleted?: number; binary_files?: number; truncated?: boolean; note?: string }
 export interface Change { path: string; status: string; added: number; deleted: number; binary?: boolean }
 export interface ChangeIndex { attempt: string; project?: string; base?: string; artifact?: string; changes: Change[]; truncated?: boolean; note?: string }
 export interface FileDiff { path: string; diff: string; truncated?: boolean }

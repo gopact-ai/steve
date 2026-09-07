@@ -1,0 +1,44 @@
+.changes-card { min-width: 0; max-width: 100%; overflow: hidden; border: 1px solid var(--color-border-secondary); border-radius: 12px; background: var(--color-bg-secondary); }
+.changes-card-header { display: flex; align-items: center; flex-wrap: wrap; gap: 4px 12px; min-height: 52px; padding: 4px 12px; }
+.changes-card-toggle { display: flex; align-items: center; gap: 7px; min-width: 0; min-height: 40px; padding: 0; border-radius: 5px; color: var(--color-text-primary); font-size: 13px; font-weight: 600; text-align: left; }
+.changes-card-toggle:hover { color: var(--color-text-secondary); }
+.changes-card-chevron { width: 14px; height: 14px; flex-shrink: 0; color: var(--color-text-tertiary); transform: rotate(-90deg); transition: transform 120ms; }
+.changes-card-chevron[data-open=true] { transform: rotate(0); }
+.changes-card-totals, .changes-card-file-totals { display: inline-flex; align-items: center; gap: 8px; flex-shrink: 0; font: 12px var(--font-mono); font-variant-numeric: tabular-nums; }
+.changes-card-partial { font: 11px var(--font-body); color: var(--color-text-tertiary); }
+.changes-added { color: var(--color-text-success-primary); }
+.changes-deleted { color: var(--color-text-error-primary); }
+.changes-card-review { min-height: 40px; margin-left: auto; padding: 6px 8px; font-size: 12px; }
+.changes-card-review [data-icon] { width: 14px; height: 14px; }
+.changes-card-body { min-width: 0; padding: 0 8px 8px; }
+.changes-card-body[hidden] { display: none; }
+.changes-card-label, .changes-card-note { margin: 0; padding: 3px 5px 7px; font-size: 11px; line-height: 1.5; color: var(--color-text-tertiary); overflow-wrap: anywhere; }
+.changes-card-loading, .changes-card-error { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-height: 44px; padding: 4px 5px; color: var(--color-text-tertiary); font-size: 12px; overflow-wrap: anywhere; }
+.changes-card-error { color: var(--color-text-error-primary); }
+.changes-card-files { margin: 0; padding: 0; list-style: none; }
+.changes-card-files[data-expanded=true] { max-height: 320px; overflow-y: auto; overscroll-behavior: contain; }
+.changes-card-files[data-expanded=true] > li { content-visibility: auto; contain-intrinsic-size: auto 40px; }
+.changes-card-file { display: flex; align-items: center; gap: 9px; width: 100%; min-width: 0; min-height: 40px; padding: 7px 6px; border-radius: 6px; text-align: left; }
+.changes-card-file:hover { background: var(--color-bg-primary_hover); }
+.changes-card-file:active { background: var(--color-bg-tertiary); }
+.changes-card-file-icon { width: 15px; height: 15px; flex-shrink: 0; color: var(--color-text-tertiary); }
+.changes-card-path { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 12px var(--font-mono); color: var(--color-text-secondary); }
+.changes-card-status { width: 12px; flex-shrink: 0; text-align: center; font: 11px var(--font-mono); color: var(--color-text-tertiary); }
+.changes-card-status[data-status=A] { color: var(--color-text-success-primary); }
+.changes-card-status[data-status=D] { color: var(--color-text-error-primary); }
+.changes-card-binary { flex-shrink: 0; color: var(--color-text-tertiary); font-size: 11px; }
+.changes-card-more { display: flex; align-items: center; justify-content: center; gap: 6px; width: 100%; min-height: 40px; margin-top: 4px; border-radius: 6px; color: var(--color-text-tertiary); font-size: 12px; }
+.changes-card-more:hover { background: var(--color-bg-primary_hover); color: var(--color-text-primary); }
+.changes-card-more .changes-card-chevron { transform: rotate(0); }
+.changes-card-more .changes-card-chevron[data-open=true] { transform: rotate(180deg); }
+.changes-card button:focus-visible { outline: 2px solid var(--color-focus-ring); outline-offset: -2px; }
+@media (max-width: 480px) {
+    .changes-card-header { gap: 0 8px; padding: 4px 10px; }
+    .changes-card-toggle { font-size: 12px; }
+    .changes-card-totals { gap: 6px; font-size: 11px; }
+    .changes-card-review { gap: 4px; padding: 6px; }
+    .changes-card-review [data-icon] { display: none; }
+    .changes-card-file { gap: 7px; }
+    .changes-card-file-totals { gap: 5px; font-size: 11px; }
+}
+@media (prefers-reduced-motion: reduce) { .changes-card-chevron { transition: none; } }

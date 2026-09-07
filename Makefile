@@ -22,6 +22,7 @@ test-console:
 	npm --prefix web/console run test:architecture
 	npm --prefix web/console run test:settings
 	npm --prefix web/console run test:materials
+	npm --prefix web/console run test:selection
 
 e2e:
 	STEVE_MESH_E2E=1 $(GO) test -count=1 -timeout 25m ./e2e/mesh/

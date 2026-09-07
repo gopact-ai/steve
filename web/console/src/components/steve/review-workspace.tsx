@@ -1,3 +1,4 @@
+import { SideChatPanel } from "./side-chat";
 import { useI18n } from "@/providers/locale-provider";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowLeft, Check, Code02, File02, Folder, SearchSm, X } from "@untitledui/icons";
@@ -39,8 +40,8 @@ export function ReviewWorkspace({ request, onClose }: { request: ReviewRequest; 
                 <div className="review-title"><Code02 aria-hidden="true" className="size-4 text-fg-tertiary" /><h1>{t("console.code")}</h1><span>{t("console.readOnlySnapshot")}</span></div>
                 <div className="review-attempt"><Select aria-label={t("console.chooseAttempt")}  size="sm" selectedKey={attempt} onSelectionChange={(key) => key && setAttempt(String(key))} items={options}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
             </header>
-            <SnapshotWorkspace key={`${attempt}:${revision}`} attempt={attempt} choice={options.find((item) => item.id === attempt)} request={request}
-                fresh={revision > 0} reload={() => setRevision((value) => value + 1)} />
+            <div className="review-with-side"><div className="review-primary"><SnapshotWorkspace key={`${attempt}:${revision}`} attempt={attempt} choice={options.find((item) => item.id === attempt)} request={request}
+                fresh={revision > 0} reload={() => setRevision((value) => value + 1)} /></div><SideChatPanel onOpenMain={onClose} /></div>
         </Dialog></Modal>
     </ModalOverlay>;
 }

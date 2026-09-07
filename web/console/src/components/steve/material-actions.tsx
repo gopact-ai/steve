@@ -3,7 +3,7 @@ import { DotsHorizontal } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { captureMaterial } from "@/lib/api/material";
-import { getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
+import { getSubmissionSupport, subscribeSubmissionSupport, fetchContext } from "@/lib/api/console";
 import type { Material, MaterialSource, MaterialSelector, MaterialRef } from "@/lib/types";
 import { useMaterial } from "@/providers/material-provider";
 import { useI18n } from "@/providers/locale-provider";
@@ -22,7 +22,7 @@ export function MaterialActions({ capture, material, selector, anchor }: { captu
             const value = material || (capture ? await captureMaterial(capture.project, capture.source, capture.title) : null);
             if (!value) throw new Error(t("materials.unknownSource"));
             const ref: MaterialRef = anchor || { id: value.id, ...(selector ? { selector } : {}) };
-            if (kind === "chat") store.add(value, ref, target!);
+            if (kind === "chat") { const {context}=await fetchContext(target!.conversation); if(context?.project?.id!==target!.project || !context.project.bound)throw new Error(t("materials.wrongProject")); store.add(value, ref, target!); }
             else if (kind === "side") store.pin(value, ref);
             else store.annotate({ material: value, ref });
         } catch (error) { setError(error instanceof Error ? error.message : String(error)); }

@@ -1,3 +1,5 @@
+import { SelectionSurface } from "@/providers/selection-provider";
+import { selectionForReply } from "@/lib/selection";
 import { useSyncExternalStore } from "react";
 import { getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { useI18n } from "@/providers/locale-provider";
@@ -34,10 +36,10 @@ export function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply;
         <div className={`message-assistant ${selected ? "is-selected" : ""}`}>
             {r.title && <div className="text-sm font-semibold text-primary">{r.title}</div>}
             {r.process && <InlineProcess process={r.process} />}
-            {r.changes && <ChangesFold summary={r.changes} label={t("console.netChanges")}  />}
-            {r.text && (r.format === "text"
+            {r.text && <SelectionSurface version={`${r.conversation}:${r.id}:${r.revision}`} resolve={(range,root)=>{ if(!r.project_id||!r.id||!r.revision)return null; const selected=selectionForReply(range,root,r.text); return selected ? { ...selected,capture:{project:r.project_id,title:r.title||r.text.split("\n")[0].slice(0,60),source:{kind:"reply",conversation:r.conversation,reply_id:r.id,revision:r.revision}} } : null; }}>{r.format === "text"
                 ? <div className={`whitespace-pre-wrap break-words text-sm [overflow-wrap:anywhere] ${r.error && state !== t("console.stopped") ? "text-error-primary" : ""}`}>{state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text}</div>
-                : <Md text={state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text} className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""} />)}
+                : <Md text={state === t("console.stopped") && r.text === r.error ? t("console.stoppedText") : r.text} className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""} />}</SelectionSurface>}
+            {r.changes && <ChangesFold summary={r.changes} label={t("console.netChanges")} />}
             {!!r.materials?.length && <MaterialReferences items={r.materials} />}
             <div className="message-meta">
                 <span>{when(r.at, locale)}</span>

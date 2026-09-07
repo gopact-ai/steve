@@ -1,4 +1,5 @@
 export const consoleZh = {
+    "console.reviewLoadFailed": "代码工作区加载失败。请关闭后刷新页面重试，当前对话草稿仍保留。",
     "console.reloadConfirm": "刷新会中断当前上传，并丢弃未保存的编辑内容。确定刷新？",
     "console.fileScope": "文件范围",
     "console.execution": "执行",
@@ -191,6 +192,7 @@ export const consoleZh = {
 } as const;
 
 export const consoleEn = {
+    "console.reviewLoadFailed": "The code workspace could not load. Close it and refresh to retry. Your conversation draft is retained.",
     "console.reloadConfirm": "Reloading interrupts uploads and discards unsaved edits. Reload now?",
     "console.fileScope": "File scope",
     "console.execution": "Execution",

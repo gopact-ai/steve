@@ -12,7 +12,8 @@
         "test:ui": "node ../../e2e/console/interactions.mjs",
         "test:architecture": "node ../../e2e/console/architecture.mjs",
         "test:settings": "node ../../e2e/console/settings-page.mjs",
-        "test:materials": "node ../../e2e/console/materials-ui.mjs"
+        "test:materials": "node ../../e2e/console/materials-ui.mjs",
+        "test:selection": "node ../../e2e/console/selection.mjs && node ../../e2e/console/selection-ui.mjs && node ../../e2e/console/side-chat-ui.mjs && node ../../e2e/console/changes-card.mjs"
     },
     "dependencies": {
         "@tailwindcss/typography": "^0.5.19",

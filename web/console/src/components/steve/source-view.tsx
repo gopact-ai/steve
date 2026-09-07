@@ -1,3 +1,5 @@
+import { SelectionSurface, useSelectionAction } from "@/providers/selection-provider";
+import { selectionForSource } from "@/lib/selection";
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, Copy01 } from "@untitledui/icons";
 import { useI18n } from "@/providers/locale-provider";
@@ -34,6 +36,7 @@ export function SourceView(props: SourceViewProps) {
 
 function SourceContent({ file, lang, readingState, onReadingStateChange, capture }: SourceViewProps) {
     const { t } = useI18n();
+    const showSelection = useSelectionAction();
     const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
     const [preview, setPreview] = useState<string | null>(null);
     const [captureError, setCaptureError] = useState("");
@@ -54,7 +57,14 @@ function SourceContent({ file, lang, readingState, onReadingStateChange, capture
     const size = file.size < 1024 ? `${file.size} B` : `${(file.size / 1024).toFixed(1)} KB`;
 
     const selectedRange = selection ? { kind: "lines" as const, start: Math.min(selection.start, selection.end), end: Math.max(selection.start, selection.end) } : undefined;
-    function selectLine(line: number, extend: boolean) { setSelection((old) => ({ start: extend && old ? old.start : line, end: line })); }
+    function selectLine(line: number, extend: boolean, element?: HTMLElement) {
+        const origin = extend && selection ? selection.start : line;
+        setSelection({ start: origin, end: line });
+        if (capture && element) {
+            const start = Math.min(origin,line), end = Math.max(origin,line);
+            showSelection({capture,selector:{kind:"lines",start,end},excerpt:rawLines.slice(start-1,end).join("\n"),label:t("materials.selection",{start,end})},element);
+        }
+    }
     async function previewCapture() { if (!capture || capturing) return; setCapturing(true); setCaptureError(""); try { const material = await captureMaterial(capture.project, capture.source, capture.title); setPreview(material.id); } catch (error) { setCaptureError(String(error)); } finally { setCapturing(false); } }
     function remember(patch: Partial<SourceReadingState> = {}) {
         const element = scroll.current;
@@ -94,7 +104,7 @@ function SourceContent({ file, lang, readingState, onReadingStateChange, capture
     }
 
     return (
-        <section className="source-view" aria-label={t("console.sourceLabel", { path: file.path })}>
+        <SelectionSurface className="selection-source-surface" version={`${file.attempt}:${file.commit}:${file.path}`} resolve={(range,root)=>{ if(!capture)return null;const selected=selectionForSource(range,root,file.text);return selected?{...selected,capture}:null; }}><section className="source-view" aria-label={t("console.sourceLabel", { path: file.path })}>
             <div className="source-toolbar">
                 {capture && <MaterialActions capture={capture} selector={selectedRange} />}
                 {capture && file.binary && <Button size="sm" color="secondary" isLoading={capturing} onClick={() => void previewCapture()}>{t("materials.preview")}</Button>}
@@ -111,10 +121,10 @@ function SourceContent({ file, lang, readingState, onReadingStateChange, capture
             {file.truncated && <p className="source-notice" role="status">{t("console.partialFile")}</p>}
             {file.binary ? <div className="source-empty"><p>{t("console.binaryFile")}</p><span>{t("console.binaryHint")}</span></div> : !file.text ? <div className="source-empty"><p>{t("console.emptyFile")}</p><span>{t("console.emptyFileHint")}</span></div> : (
                 <div ref={scroll} onScroll={() => remember()} className={`source-scroll ${wrap ? "source-wrap" : ""}`} tabIndex={0} role="region" aria-label={t("console.fileContentLabel", { path: file.path })}>
-                    <pre className="source-code"><code>{visible.map((html, index) => <span className="source-line" key={index}><button type="button" className={`source-number ${selectedRange && index + 1 >= selectedRange.start && index + 1 <= selectedRange.end ? "bg-brand-primary text-brand-secondary" : ""}`} data-line={index + 1} aria-label={t("materials.selectLine", { line: index + 1 })} aria-pressed={!!selectedRange && index + 1 >= selectedRange.start && index + 1 <= selectedRange.end} tabIndex={selection ? selection.end === index + 1 ? 0 : -1 : index === 0 ? 0 : -1} onClick={(event) => selectLine(index + 1, event.shiftKey)} onKeyDown={(event) => { const next = event.key === "ArrowDown" ? Math.min(index + 2, visible.length) : event.key === "ArrowUp" ? Math.max(index, 1) : null; if (next !== null) { event.preventDefault(); selectLine(next, event.shiftKey); scroll.current?.querySelector<HTMLButtonElement>(`[data-line="${next}"]`)?.focus(); } }}>{index + 1}</button><span className="source-text" dangerouslySetInnerHTML={{ __html: html || "\n" }} /></span>)}</code></pre>
+                    <pre className="source-code"><code>{visible.map((html, index) => <span className="source-line" key={index} data-selection-line={index+1}><button type="button" className={`source-number ${selectedRange && index + 1 >= selectedRange.start && index + 1 <= selectedRange.end ? "bg-brand-primary text-brand-secondary" : ""}`} data-line={index + 1} aria-label={t("materials.selectLine", { line: index + 1 })} aria-pressed={!!selectedRange && index + 1 >= selectedRange.start && index + 1 <= selectedRange.end} tabIndex={selection ? selection.end === index + 1 ? 0 : -1 : index === 0 ? 0 : -1} onClick={(event) => selectLine(index+1,event.shiftKey,event.currentTarget)} onKeyDown={(event) => { const next = event.key === "ArrowDown" ? Math.min(index + 2, visible.length) : event.key === "ArrowUp" ? Math.max(index, 1) : null; if (next !== null) { event.preventDefault(); const target=scroll.current?.querySelector<HTMLButtonElement>(`[data-line="${next}"]`); selectLine(next, event.shiftKey,target||undefined); target?.focus(); } }}>{index + 1}</button><span className="source-text" data-selection-code dangerouslySetInnerHTML={{ __html: html || "\n" }} /></span>)}</code></pre>
                     {remaining > 0 && <div className="source-more"><span>{t("console.shownLines", { shown: Math.min(limit, total), total })}</span><Button size="sm" color="secondary" onClick={() => { remember({ limit: limit + pageSize }); setLimit(limit + pageSize); }}>{t("console.moreLines", { count: Math.min(pageSize, remaining) })}</Button></div>}
                 </div>
             )}
-        </section>
+        </section></SelectionSurface>
     );
 }

@@ -121,6 +121,17 @@ func (a *fleetAdmin) Changes(ctx context.Context, attemptID string) (*consoleapi
 		return summary, nil
 	}
 	summary.Files = len(changes)
+	added, deleted, binaryFiles := 0, 0, 0
+	for _, change := range changes {
+		if change.Binary {
+			binaryFiles++
+			continue
+		}
+		added += change.Added
+		deleted += change.Deleted
+	}
+	summary.Added, summary.Deleted, summary.BinaryFiles = &added, &deleted, &binaryFiles
+	summary.Truncated = truncated
 	if truncated {
 		summary.Note = "只统计了前 " + fmt.Sprint(len(changes)) + " 个"
 	}

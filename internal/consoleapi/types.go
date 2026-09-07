@@ -526,15 +526,20 @@ type FileView struct {
 }
 
 // ChangeSummary is what a turn changed, as the reply keeps it: the
-// attempt to ask for the index, and the count. Paths and diffs are
-// read on demand, never stored with the reply.
+// attempt to ask for the index and its bounded totals. Nil line/binary totals
+// mean unknown. Truncated totals cover the indexed files only. Paths and
+// diffs are read on demand, never stored with the reply.
 type ChangeSummary struct {
-	Attempt  string `json:"attempt"`
-	Project  string `json:"project,omitempty"`
-	Base     string `json:"base,omitempty"`
-	Artifact string `json:"artifact,omitempty"`
-	Files    int    `json:"files"`
-	Note     string `json:"note,omitempty"`
+	Attempt     string `json:"attempt"`
+	Project     string `json:"project,omitempty"`
+	Base        string `json:"base,omitempty"`
+	Artifact    string `json:"artifact,omitempty"`
+	Files       int    `json:"files"`
+	Added       *int   `json:"added,omitempty"`
+	Deleted     *int   `json:"deleted,omitempty"`
+	BinaryFiles *int   `json:"binary_files,omitempty"`
+	Truncated   bool   `json:"truncated,omitempty"`
+	Note        string `json:"note,omitempty"`
 }
 
 // ChangeIndex is the files an attempt changed, bounded.

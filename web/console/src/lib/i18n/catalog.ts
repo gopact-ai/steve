@@ -1,3 +1,5 @@
+import {selectionZh,selectionEn} from "./selection.ts";
+import {sideChatZh,sideChatEn} from "./side-chat.ts";
 import { consoleEn, consoleZh } from "./console.ts";
 import { domainEn as consoleChromeEn, domainZh as consoleChromeZh } from "./console-chrome.ts";
 import { materialsEn, materialsZh } from "./materials.ts";
@@ -17,6 +19,6 @@ import { commonEn, commonZh } from "./common.ts";
 import { usageEn, usageZh } from "./usage.ts";
 
 export const catalogs = {
-    zh: { ...commonZh, ...consoleZh, ...consoleChromeZh, ...materialsZh, ...settingsPageZh, ...mcpToolsZh, ...tasksZh, ...settingsEditorZh, ...inboxZh, ...historyZh, ...boardZh, ...homeZh, ...skillsZh, ...mcpZh, ...fleetZh, ...projectsZh, ...usageZh },
-    en: { ...commonEn, ...consoleEn, ...consoleChromeEn, ...materialsEn, ...settingsPageEn, ...mcpToolsEn, ...tasksEn, ...settingsEditorEn, ...inboxEn, ...historyEn, ...boardEn, ...homeEn, ...skillsEn, ...mcpEn, ...fleetEn, ...projectsEn, ...usageEn },
+    zh: { ...selectionZh, ...sideChatZh, ...commonZh, ...consoleZh, ...consoleChromeZh, ...materialsZh, ...settingsPageZh, ...mcpToolsZh, ...tasksZh, ...settingsEditorZh, ...inboxZh, ...historyZh, ...boardZh, ...homeZh, ...skillsZh, ...mcpZh, ...fleetZh, ...projectsZh, ...usageZh },
+    en: { ...selectionEn, ...sideChatEn, ...commonEn, ...consoleEn, ...consoleChromeEn, ...materialsEn, ...settingsPageEn, ...mcpToolsEn, ...tasksEn, ...settingsEditorEn, ...inboxEn, ...historyEn, ...boardEn, ...homeEn, ...skillsEn, ...mcpEn, ...fleetEn, ...projectsEn, ...usageEn },
 } as const;
