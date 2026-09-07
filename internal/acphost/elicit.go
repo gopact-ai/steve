@@ -6,45 +6,46 @@ import (
 	"fmt"
 	"log"
 	"slices"
+	"strings"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
 // AskUserFunc puts a question from the agent in front of the user and returns
-// what they chose. An empty answer means they declined or never replied.
+// their choice or written reply. An empty answer means they never replied.
 type AskUserFunc func(context.Context, view.Question) (view.Answer, error)
 
-// errUnsupportedForm marks a form Steve cannot honestly render — a number, a
-// free-text box, a multi-select. Declining is the correct answer there:
-// making something up would put words in the user's mouth, and rendering
-// half the form would silently drop the rest.
-var errUnsupportedForm = errors.New("elicitation form is not a single choice")
+// errUnsupportedForm marks forms that need more than one choice or plain-text
+// reply. Declining avoids inventing values or silently omitting required fields.
+var errUnsupportedForm = errors.New("elicitation form is not a supported question")
 
 // CreateElicitation answers the agent's request to ask the user something.
 //
-// Steve advertises only the form mode, and within it only the single-select
-// shape: one property whose values are enumerated. That is exactly what
-// claude-agent-acp's AskUserQuestion sends, and it is the only shape a chat
-// card can put in front of someone without inventing a UI for arbitrary JSON
-// Schema.
+// Supported forms contain one enum, one plain string, or an enum with an
+// optional text alternative. Permission approvals still require an enum.
 func (ch *clientHandler) CreateElicitation(ctx context.Context, req *acp.CreateElicitationRequest) (*acp.CreateElicitationResponse, error) {
 	if req == nil {
 		return nil, fmt.Errorf("elicitation/create: empty request")
 	}
-	if resp, decided := ch.decideMCPToolApproval(req); decided {
-		return resp, nil
-	}
 	ch.h.mu.Lock()
 	col := ch.h.collectors[req.SessionID]
 	var ask AskUserFunc
-	if col != nil && col.generation == ch.generation {
+	active := col != nil && col.generation == ch.generation
+	if active {
 		ask = col.askUser
 		if col.ctx != nil {
 			ctx = col.ctx
 		}
 	}
 	ch.h.mu.Unlock()
+	if !active || ctx.Err() != nil {
+		resp := acp.CancelCreateElicitationResponse()
+		return &resp, nil
+	}
+	if resp, decided := ch.decideMCPToolApproval(req); decided {
+		return resp, nil
+	}
 	if ask == nil {
 		// No turn is listening — nobody can be asked, so say so rather than
 		// leaving the agent blocked until its own timeout.
@@ -55,29 +56,41 @@ func (ch *clientHandler) CreateElicitation(ctx context.Context, req *acp.CreateE
 		resp := acp.DeclineCreateElicitationResponse()
 		return &resp, nil
 	}
-	key, question, err := elicitQuestion(req)
+	form, question, err := elicitQuestion(req)
 	if err != nil {
 		resp := acp.DeclineCreateElicitationResponse()
 		return &resp, nil
 	}
 	if isMCPToolApproval(req) {
 		question.Kind = "permission"
+		question.AllowFreeText = false
+		if len(question.Choices) == 0 {
+			resp := acp.DeclineCreateElicitationResponse()
+			return &resp, nil
+		}
 	}
 	question.SessionID, question.Generation = string(req.SessionID), ch.generation
 	answer, err := ask(ctx, question)
-	if err != nil || !answer.Chosen() {
-		if err == nil && answer.Decision == "decline" {
+	if err != nil || !answer.Chosen() || (answer.Decision != "" && answer.Decision != "accept") {
+		if err == nil && !answer.Chosen() && answer.Decision == "decline" {
 			resp := acp.DeclineCreateElicitationResponse()
 			return &resp, nil
 		}
 		resp := acp.CancelCreateElicitationResponse()
 		return &resp, nil
 	}
-	if !slices.ContainsFunc(question.Choices, func(choice view.Choice) bool { return choice.Value == answer.Value }) {
+	key, text := form.choiceKey, answer.Value
+	if answer.Text != "" {
+		if !question.AllowFreeText || answer.Value != "" || strings.TrimSpace(answer.Text) == "" || len(answer.Text) > 64<<10 {
+			resp := acp.CancelCreateElicitationResponse()
+			return &resp, nil
+		}
+		key, text = form.textKey, answer.Text
+	} else if !slices.ContainsFunc(question.Choices, func(choice view.Choice) bool { return choice.Value == answer.Value }) {
 		resp := acp.CancelCreateElicitationResponse()
 		return &resp, nil
 	}
-	value, err := acp.NewElicitationContentValue(answer.Value)
+	value, err := acp.NewElicitationContentValue(text)
 	if err != nil {
 		resp := acp.CancelCreateElicitationResponse()
 		return &resp, nil
@@ -154,46 +167,68 @@ func persistChoice(req *acp.CreateElicitationRequest) (acp.ElicitationContentVal
 	return acp.ElicitationContentValue{}, false
 }
 
-// elicitQuestion reduces a requested schema to the one choice Steve can ask,
-// returning the property key the answer must come back under.
-func elicitQuestion(req *acp.CreateElicitationRequest) (string, view.Question, error) {
+type elicitationForm struct {
+	choiceKey string
+	textKey   string
+}
+
+// elicitQuestion retains the original property keys so text alternatives are
+// returned as text, without fabricating a value for an unselected enum.
+func elicitQuestion(req *acp.CreateElicitationRequest) (elicitationForm, view.Question, error) {
+	unsupported := func() (elicitationForm, view.Question, error) {
+		return elicitationForm{}, view.Question{}, errUnsupportedForm
+	}
+	if req.RequestedSchema.Type != "" && req.RequestedSchema.Type != acp.ElicitationSchemaTypeObject {
+		return unsupported()
+	}
+	required := func(name string) bool {
+		return req.RequestedSchema.Required != nil && slices.Contains(*req.RequestedSchema.Required, name)
+	}
 	if req.RequestedSchema.Required != nil {
 		for _, name := range *req.RequestedSchema.Required {
 			if _, ok := req.RequestedSchema.Properties[name]; !ok {
-				return "", view.Question{}, errUnsupportedForm
+				return unsupported()
 			}
 		}
 	}
-	var key string
-	var chosen acp.ElicitationPropertySchema
+	var form elicitationForm
 	for name, property := range req.RequestedSchema.Properties {
-		choices := propertyChoices(property)
-		if len(choices) == 0 {
-			// A free-text companion field is optional by construction, so
-			// ignoring it still leaves a form we can answer honestly.
-			if isOptionalText(property) && (req.RequestedSchema.Required == nil || !slices.Contains(*req.RequestedSchema.Required, name)) {
-				continue
+		if name == "" || !isSupportedString(property) {
+			return unsupported()
+		}
+		if property.Enum != nil || property.OneOf != nil {
+			if form.choiceKey != "" || len(propertyChoices(property)) == 0 {
+				return unsupported()
 			}
-			return "", view.Question{}, errUnsupportedForm
+			form.choiceKey = name
+		} else {
+			if form.textKey != "" {
+				return unsupported()
+			}
+			form.textKey = name
 		}
-		if key != "" {
-			// Two real questions in one form; a card answers one.
-			return "", view.Question{}, errUnsupportedForm
-		}
-		key, chosen = name, property
+	}
+	key := form.choiceKey
+	if key == "" {
+		key = form.textKey
+	} else if form.textKey != "" && required(form.textKey) {
+		// Both fields could be required; this UI only submits one answer.
+		return unsupported()
 	}
 	if key == "" {
-		return "", view.Question{}, errUnsupportedForm
+		return unsupported()
 	}
+	chosen := req.RequestedSchema.Properties[key]
 	title := ""
 	if chosen.Title != nil {
 		title = *chosen.Title
 	}
-	return key, view.Question{
-		Kind: "question", Required: req.RequestedSchema.Required != nil && slices.Contains(*req.RequestedSchema.Required, key),
-		Message: req.Message,
-		Title:   title,
-		Choices: propertyChoices(chosen),
+	return form, view.Question{
+		Kind: "question", Required: required(key),
+		Message:       req.Message,
+		Title:         title,
+		Choices:       propertyChoices(chosen),
+		AllowFreeText: form.textKey != "" && (form.choiceKey == "" || !required(form.choiceKey)),
 	}, nil
 }
 
@@ -231,12 +266,11 @@ func propertyChoices(property acp.ElicitationPropertySchema) []view.Choice {
 	return nil
 }
 
-// isOptionalText spots the free-text box an agent offers beside its choices.
-// claude-agent-acp sends one for "type your own answer instead"; it is never
-// required, so leaving it unanswered is valid.
-func isOptionalText(property acp.ElicitationPropertySchema) bool {
+// String constraints require validation and a way to explain those constraints
+// before accepting a reply; do not present them as unrestricted text inputs.
+func isSupportedString(property acp.ElicitationPropertySchema) bool {
 	return property.Type == acp.ElicitationPropertySchemaTypeString &&
-		property.OneOf == nil && property.Enum == nil
+		property.MinLength == nil && property.MaxLength == nil && property.Pattern == nil && property.Format == nil && len(property.Fields) == 0
 }
 
 func enumConst(option acp.EnumOption) string {

@@ -45,6 +45,7 @@ const (
 	TurnCanceled           Key = "turn_canceled"
 	HubMaintenance         Key = "hub_maintenance"
 	AgentFailed            Key = "agent_failed"
+	NoAgentConfigured      Key = "no_agent_configured"
 	EmptyReply             Key = "empty_reply"
 	Truncated              Key = "truncated"
 	Switched               Key = "switched"

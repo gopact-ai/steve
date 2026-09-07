@@ -2,6 +2,7 @@ package turn
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -32,14 +33,19 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 		Node: selected.Node, Harness: selected.Harness, Agent: selected.ID,
 		Workspace: workspace, Scope: attempt.ScopeUnrestricted, By: req.SenderOpenID,
 	}
+	if workspace.Kind == project.KindWorktree {
+		spec.Scope = attempt.ScopePathSet
+		spec.Base = workspace.Base
+	}
 	// The machine must qualify for the project's level; the roster knows
 	// both the machine's level and the endpoint's session cap.
 	var chosen *roster.Candidate
 	if c.fleet != nil {
 		for _, cand := range c.fleet.All(ctx) {
-			if cand.Agent.ID != selected.ID {
+			if cand.Node != selected.Node || cand.Harness != selected.Harness {
 				continue
 			}
+			cand.Agent = selected
 			chosen = &cand
 			spec.Slots = cand.Slots
 			spec.Region = cand.Region
@@ -49,10 +55,17 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 			if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok && !p.Level.OrDefault().Admits(cand.Level.OrDefault()) {
 				return attempt.Record{}, nil, UserError{Text: c.text.T(i18n.ProjectLevel, p.ID, p.Level.OrDefault(), selected.ID, placeLabel(selected.Node), cand.Level.OrDefault(), protocol.CommandProject)}
 			}
+			break
 		}
 	}
 	spec.Requires = selected.Requires
 	record, err := c.attempts.Open(ctx, spec)
+	if err == nil && c.tasks != nil && record.Execution != nil {
+		if bindErr := c.tasks.BindAttempt(*record.Execution, record.ID, record.TurnID); bindErr != nil {
+			_, closeErr := c.attempts.Fail(ctx, record.ID, "turn", "bind task accounting: "+bindErr.Error())
+			return attempt.Record{}, nil, errors.Join(bindErr, closeErr)
+		}
+	}
 	if err == nil {
 		// A chat turn is admitted like any other attempt: the machine's
 		// own word on the agent's requirements, taken now, kept on the
@@ -72,7 +85,13 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 		}
 		// The before-snapshot is the precondition of running in place: what
 		// the turn changes is measured against it.
-		if c.artifacts != nil {
+		if workspace.Kind == project.KindWorktree {
+			prepared, perr := c.attempts.Advance(ctx, record.ID, attempt.Prepared, "turn", func(next *attempt.Record) { next.Base = workspace.Base; next.Admission = record.Admission })
+			if perr != nil {
+				return record, nil, perr
+			}
+			record = prepared
+		} else if c.artifacts != nil {
 			if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok {
 				before, _, serr := c.snapshot(ctx, p, workspace, "", record.ID, "before turn "+req.MessageID)
 				if serr != nil {
@@ -133,7 +152,11 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 		}
 	}
 	if turnErr == nil {
-		outcome := attempt.Result{Summary: clip(result.Text, 200)}
+		output, err := json.Marshal(result)
+		if err != nil {
+			return err
+		}
+		outcome := attempt.Result{Summary: clip(result.Text, 200), Output: output}
 		var binding *attempt.NameBinding
 		var pending *project.Project
 		reject := func(cause error) error {
@@ -176,6 +199,18 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 		}
 		if _, err := c.attempts.FinishCompletion(ctx, id, "turn", attempt.Completion{Result: outcome, Usage: usage, Binding: binding}); err != nil {
 			return reject(fmt.Errorf("commit attempt %s: %w", id, err))
+		}
+		if record.Workspace.Kind == project.KindWorktree && record.Execution != nil && c.tasks != nil {
+			if tracked, ok := c.tasks.Get(record.TaskID); ok && tracked.RecoveryWorkspace != nil && tracked.RecoveryWorkspace.ID == record.Workspace.ID {
+				workspace := *tracked.RecoveryWorkspace
+				if outcome.Artifact != "" {
+					workspace.Base = outcome.Artifact
+				}
+				workspace.AttemptID = record.ID
+				if err := c.tasks.BindRecoveryWorkspace(*record.Execution, workspace); err != nil {
+					return err
+				}
+			}
 		}
 		if pending != nil {
 			c.landPending(ctx, *pending)
@@ -246,6 +281,12 @@ func (c *Coordinator) recordDisclosure(ctx context.Context, record attempt.Recor
 // in: the canonical one moves the project's canonical name, a copy moves
 // its own head. An empty parent means "from the workspace's last snapshot".
 func (c *Coordinator) snapshot(ctx context.Context, p project.Project, ws project.Workspace, parent, by, message string) (artifact.Manifest, bool, error) {
+	if ws.Kind == project.KindWorktree {
+		if parent == "" {
+			parent = ws.Base
+		}
+		return c.artifacts.Publish(ctx, ws, parent, by, message)
+	}
 	if ws.Kind == project.KindCopy {
 		if parent == "" {
 			parent = c.artifacts.HeadOf(ctx, ws.ID)

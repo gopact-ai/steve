@@ -42,6 +42,10 @@ type ServerConfig struct {
 
 // Server exposes the snapshot, the change stream and the dashboard.
 type Server struct {
+	coordination consoleapi.CoordinationService
+	ssh          SSHService
+	sshOrigin    string
+	desktop      consoleapi.DesktopService
 	mutationMu   sync.RWMutex
 	maintenance  bool
 	services     consoleapi.ServiceControl
@@ -78,6 +82,11 @@ func (s *Server) URL() string { return "http://" + s.listener.Addr().String() }
 
 func (s *Server) Serve() error {
 	mux := http.NewServeMux()
+	s.sshRoutes(mux)
+	s.coordinationRoutes(mux)
+	mux.HandleFunc("GET /console/desktop", s.guard(s.consoleDesktop))
+	mux.HandleFunc("GET /console/desktop/agents", s.guard(s.consoleDesktopAgents))
+	mux.HandleFunc("POST /console/desktop/agents", s.guard(s.consoleDesktopAgents))
 	mux.HandleFunc("GET /console/services", s.guard(s.consoleServices))
 	mux.HandleFunc("GET /console/services/{name}/restart", s.guard(s.consoleRestart))
 	mux.HandleFunc("POST /console/services/{name}/restart", s.guard(s.consoleRestart))
@@ -103,6 +112,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("PUT /console/conversations/{id}", s.guard(s.consoleUpdateConversation))
 	mux.HandleFunc("POST /console/nodes", s.guard(s.consoleAddNode))
 	mux.HandleFunc("DELETE /console/nodes/{name}", s.guard(s.consoleRemoveNode))
+	mux.HandleFunc("GET /console/nodes/{name}/agents", s.guard(s.consoleNodeAgents))
+	mux.HandleFunc("POST /console/nodes/{name}/agents", s.guard(s.consoleNodeAgents))
 	mux.HandleFunc("POST /console/agents", s.guard(s.consoleAddAgent))
 	mux.HandleFunc("PUT /console/agents/{id}", s.guard(s.consoleUpdateAgent))
 	mux.HandleFunc("DELETE /console/agents/{id}", s.guard(s.consoleRemoveAgent))

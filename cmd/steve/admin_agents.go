@@ -42,19 +42,26 @@ func (a *fleetAdmin) changeAgents(change func(map[string]config.Agent) error) er
 }
 
 // UpdateAgent preserves fields that are not editable through this endpoint.
-func (a *fleetAdmin) UpdateAgent(_ context.Context, id string, spec consoleapi.AgentSpec) error {
+func (a *fleetAdmin) UpdateAgent(ctx context.Context, id string, spec consoleapi.AgentSpec) error {
+	if a.clusterMode {
+		spec.Node = a.nodeKey(spec.Node)
+	}
 	id = strings.ToLower(strings.TrimSpace(id))
-	err := a.changeAgents(func(agents map[string]config.Agent) error {
+	target, err := a.checkRemoteHarness(ctx, spec.Node, spec.Harness)
+	if err != nil {
+		return err
+	}
+	err = a.changeAgents(func(agents map[string]config.Agent) error {
 		item, ok := agents[id]
 		if !ok {
 			return fmt.Errorf("没有叫 %q 的 Agent", id)
 		}
-		if _, ok := a.cfg.Harnesses[spec.Harness]; !ok {
-			return fmt.Errorf("hub 的 harnesses 里没有 %q", spec.Harness)
+		if _, ok := a.cfg.Harnesses[spec.Harness]; !ok && spec.Node == "" {
+			return fmt.Errorf("本机没有配置 AI 工具 %q", spec.Harness)
 		}
 		if spec.Node != "" {
-			if _, ok := a.cfg.Nodes[spec.Node]; !ok {
-				return fmt.Errorf("没有叫 %q 的机器", spec.Node)
+			if err := a.checkAgentNodeTarget(spec.Node, target); err != nil {
+				return err
 			}
 		}
 		if err := ability.ValidateText(spec.Requires); err != nil {
@@ -89,24 +96,31 @@ func (a *fleetAdmin) UpdateAgent(_ context.Context, id string, spec consoleapi.A
 	return err
 }
 
-func (a *fleetAdmin) AddAgent(_ context.Context, req consoleapi.AddAgentRequest) error {
+func (a *fleetAdmin) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) error {
+	if a.clusterMode {
+		req.Node = a.nodeKey(req.Node)
+	}
 	id := strings.ToLower(strings.TrimSpace(req.ID))
 	if !nameShape.MatchString(id) {
 		return fmt.Errorf("Agent 名只能是小写字母、数字、点、下划线、连字符")
 	}
-	err := a.changeAgents(func(agents map[string]config.Agent) error {
-		if _, ok := a.cfg.Harnesses[req.Harness]; !ok {
-			return fmt.Errorf("hub 的 harnesses 里没有 %q；Agent 用的 AI 工具要先在 hub 配置", req.Harness)
+	target, err := a.checkRemoteHarness(ctx, req.Node, req.Harness)
+	if err != nil {
+		return err
+	}
+	err = a.changeAgents(func(agents map[string]config.Agent) error {
+		if _, ok := a.cfg.Harnesses[req.Harness]; !ok && req.Node == "" {
+			return fmt.Errorf("本机没有配置 AI 工具 %q，请先选择并登记已安装的工具", req.Harness)
 		}
 		if req.Node != "" {
-			if _, ok := a.cfg.Nodes[req.Node]; !ok {
-				return fmt.Errorf("没有叫 %q 的机器", req.Node)
+			if err := a.checkAgentNodeTarget(req.Node, target); err != nil {
+				return err
 			}
 		}
 		if _, exists := agents[id]; exists {
 			return fmt.Errorf("Agent %s 已经存在", id)
 		}
-		agents[id] = config.Agent{Harness: req.Harness, Node: req.Node, Model: req.Model}
+		agents[id] = config.Agent{Harness: req.Harness, Node: req.Node, Model: req.Model, Default: len(agents) == 0}
 		return nil
 	})
 	if err == nil || config.Committed(err) {

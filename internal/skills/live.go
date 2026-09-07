@@ -100,6 +100,28 @@ func (l *Live) Apply() error {
 	return l.applyLocked()
 }
 
+// AddDests prepares newly registered runtimes for subsequent skill changes.
+// It does not restart existing agents when a different tool is registered.
+func (l *Live) AddDests(dests ...string) error {
+	if l == nil || l.Map == nil {
+		return fmt.Errorf("skills map is not configured")
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var added []string
+	for _, dest := range dests {
+		if contains(l.Dests, dest) || contains(added, dest) {
+			continue
+		}
+		if err := l.Map.Materialize(dest); err != nil {
+			return err
+		}
+		added = append(added, dest)
+	}
+	l.Dests = append(l.Dests, added...)
+	return nil
+}
+
 func (l *Live) mutate(op func() error) error {
 	if l == nil || l.Map == nil {
 		return fmt.Errorf("skills map is not configured")

@@ -51,6 +51,9 @@ func (c *Coordinator) modelCmd(parent context.Context, req Request, selected age
 	if err := configurable.SetModel(ctx, optionID, picked.Value); err != nil {
 		return Result{}, err
 	}
+	if err := c.store.SetPreferences(req.ConversationID, selected.ID, map[string]string{"model": picked.Value}); err != nil {
+		return Result{}, err
+	}
 	// Read back rather than echoing the request: the agent confirms with a
 	// config option update, and it is the authority on what it now runs.
 	settled := configurable.Settings().Model
@@ -70,12 +73,13 @@ func (c *Coordinator) openForCommand(ctx context.Context, req Request, selected 
 		return nil, err
 	}
 	saved := c.store.Conversation(req.ConversationID).Sessions[selected.ID]
+	saved.ConversationID = req.ConversationID
 	_, workspace, err := c.resolveWorkspace(ctx, req, selected)
 	if err != nil {
 		return nil, err
 	}
 	runner, err := c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
-	if err != nil && saved.UpstreamID != "" {
+	if err != nil && saved.UpstreamID != "" && !strings.HasPrefix(saved.UpstreamID, "ns_") {
 		// Same fallback as a prompt: a session the agent no longer holds is
 		// replaced rather than reported as a failure.
 		saved.UpstreamID = ""

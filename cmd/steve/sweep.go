@@ -13,6 +13,7 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 // The two sweepers clean up what a dropped connection or a dead parent
@@ -70,12 +71,23 @@ func liveWorktrees(ctx context.Context, attempts *attempt.Service) map[string]bo
 
 // sweepWorktrees removes the orphaned worktrees on one machine ("" is
 // the hub) and says what it took.
-func sweepWorktrees(ctx context.Context, artifacts *artifact.Store, attempts *attempt.Service, view *readmodel.Model, node, root string) {
+func sweepWorktrees(ctx context.Context, artifacts *artifact.Store, attempts *attempt.Service, tasks *task.Store, view *readmodel.Model, node, root string) {
 	keep := liveWorktrees(ctx, attempts)
 	if keep == nil {
 		return
 	}
-	removed, err := artifacts.SweepWorktrees(ctx, node, root, func(path string) bool { return keep[path] })
+	physical := node
+	if physical == "" {
+		physical = nodeName()
+	}
+	prepared, err := attempts.RelocationWorkspaces(ctx, physical)
+	if err != nil {
+		log.Printf("sweep: pending recovery workspaces on %s: %v", physical, err)
+		return
+	}
+	removed, err := artifacts.SweepWorktrees(ctx, node, root, func(path string) bool {
+		return keep[path] || prepared[path] || tasks != nil && tasks.KeepsRecoveryWorkspace(physical, path)
+	})
 	where := node
 	if where == "" {
 		where = nodeName()

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
@@ -34,6 +35,31 @@ func (s *Service) PrepareRecovery(ctx context.Context, actor string) (RecoveryRe
 			continue
 		}
 		if r.State.Terminal() {
+			continue
+		}
+		if PreparingRelocation(r) {
+			if err := s.MarkUnsettled(ctx, r.ID, actor, errors.New("approved relocation preparation awaits its original idempotent open"), nil); err != nil {
+				return report, err
+			}
+			current, err := s.Get(ctx, r.ID)
+			if err != nil {
+				return report, err
+			}
+			report.Quarantined = append(report.Quarantined, current)
+			continue
+		}
+		if retainedKind(r.Kind) && retainedPhase(r.State) && strings.HasPrefix(r.Session, "ns_") {
+			// The node may hold either an active prompt or a settled result
+			// whose completion was not committed before coordinator loss.
+			// Preserve its exact leases until authenticated reattachment.
+			if err := s.MarkUnsettled(ctx, r.ID, actor, errors.New("retained node session awaits reattachment"), nil); err != nil {
+				return report, err
+			}
+			current, err := s.Get(ctx, r.ID)
+			if err != nil {
+				return report, err
+			}
+			report.Quarantined = append(report.Quarantined, current)
 			continue
 		}
 		if r.SessionSettled != nil && *r.SessionSettled {

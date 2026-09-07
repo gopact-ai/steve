@@ -55,7 +55,10 @@ type HarnessSpec struct {
 type ServerConfig struct {
 	// Source is the file this configuration came from; settings changed
 	// from the hub are written back there. Empty means nowhere.
-	Source string `json:"-"`
+	Source            string                        `json:"-"`
+	Listener          net.Listener                  `json:"-"`
+	SessionAuthorizer SessionAuthorizer             `json:"-"`
+	AuthenticatedPeer func(net.Conn) (string, bool) `json:"-"`
 
 	Name      string                 `json:"name"`
 	Listen    string                 `json:"listen"`
@@ -128,6 +131,7 @@ type Observe struct {
 
 // Server accepts hub connections and runs agents on this machine.
 type Server struct {
+	enrollmentMu         sync.Mutex
 	settingsMu           sync.Mutex
 	settingsFileRevision string
 	// cfg is replaced whole when the hub changes the node's settings;
@@ -177,6 +181,7 @@ type Server struct {
 	backgroundWG sync.WaitGroup
 	restart      restartControl
 	faultOnce    sync.Once
+	sessions     *SessionService
 }
 
 func NewServer(cfg ServerConfig) *Server {
@@ -215,9 +220,13 @@ func (s *Server) Serve(ctx context.Context) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	s.ctx = ctx
-	listener, err := net.Listen("tcp", s.conf().Listen)
-	if err != nil {
-		return fmt.Errorf("listen on %s: %w", s.conf().Listen, err)
+	listener := s.conf().Listener
+	if listener == nil {
+		var err error
+		listener, err = net.Listen("tcp", s.conf().Listen)
+		if err != nil {
+			return fmt.Errorf("listen on %s: %w", s.conf().Listen, err)
+		}
 	}
 	s.mu.Lock()
 	s.listener = listener
@@ -229,6 +238,9 @@ func (s *Server) Serve(ctx context.Context) error {
 		s.restart.mu.Unlock()
 		cancel()
 		_ = listener.Close()
+		if s.sessions != nil {
+			s.sessions.Close()
+		}
 		s.closeMCP()
 		handlers.Wait()
 		s.requestWG.Wait()
@@ -246,7 +258,11 @@ func (s *Server) Serve(ctx context.Context) error {
 	// Every harness runs in a home this node owns, never the user's own
 	// ~/.codex or ~/.claude: personal MCP servers, skills and instructions
 	// there would otherwise leak into every task the hub sends here.
-	if err := steveruntime.Prepare(s.conf().StateDir); err != nil {
+	selectedHarnesses := make([]string, 0, len(s.conf().Harnesses))
+	for id := range s.conf().Harnesses {
+		selectedHarnesses = append(selectedHarnesses, id)
+	}
+	if err := steveruntime.PrepareSelected(s.conf().StateDir, selectedHarnesses); err != nil {
 		return fmt.Errorf("prepare harness homes under %s: %w", s.conf().StateDir, err)
 	}
 	if hash := s.currentSkills(); hash != "" {
@@ -256,6 +272,9 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	s.backgroundWG.Go(func() { s.launch.Run(ctx, s.commands) })
 	if err := s.startBroker(); err != nil {
+		return err
+	}
+	if err := s.startSessions(ctx); err != nil {
 		return err
 	}
 	if err := s.startRestartControl(cancel); err != nil {
@@ -334,6 +353,15 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 		return
 	}
 	_ = socket.SetDeadline(time.Time{})
+	sessionPrincipal := hello.Hub
+	if authenticate := s.conf().AuthenticatedPeer; authenticate != nil {
+		var ok bool
+		sessionPrincipal, ok = authenticate(socket)
+		if !ok || sessionPrincipal == "" {
+			log.Printf("steve-node: rejected connection without authenticated peer identity")
+			return
+		}
+	}
 	if name, ok := s.grantedName(hello.Token); ok {
 		// A peer, not the hub: it may take the one blob it was granted and
 		// nothing else, and the grant is spent by the connection.
@@ -381,7 +409,7 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 			s.requestWG.Go(func() { s.restartStream(hello.Hub, stream) })
 			continue
 		}
-		readOnly := req.Kind == nodewire.StreamAdvert || req.Kind == nodewire.StreamInspect || (req.Kind == nodewire.StreamConfig && req.Command == "get")
+		readOnly := req.Kind == nodewire.StreamAdvert || req.Kind == nodewire.StreamInspect || (req.Kind == nodewire.StreamConfig && (req.Command == "get" || req.Command == "discover-agents"))
 		var done func()
 		if !readOnly {
 			done, err = s.beginWork()
@@ -395,6 +423,8 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 				defer done()
 			}
 			switch req.Kind {
+			case nodewire.StreamNodeSessions:
+				s.sessionStream(ctx, sessionPrincipal, stream)
 			case nodewire.StreamExec:
 				s.runCommand(ctx, stream)
 			case nodewire.StreamArtifact:
@@ -563,6 +593,9 @@ func (s *Server) writeOwner(o hubOwner) error {
 }
 
 func (s *Server) processesStopped(hub string) bool {
+	if s.sessions != nil && !s.sessions.processesStopped() {
+		return false
+	}
 	s.processMu.Lock()
 	defer s.processMu.Unlock()
 	for _, p := range s.processes {
@@ -655,6 +688,9 @@ func (s *Server) advert() nodewire.Advert {
 	adv := Advertise(s.conf().Name, s.conf().Harnesses, s.conf().Capabilities)
 	adv.Snapshot = s.snapshot()
 	adv.Features = nodewire.Features()
+	if s.sessions != nil {
+		adv.Features = append(adv.Features, nodewire.FeatureNodeSessions)
+	}
 	s.restart.mu.Lock()
 	if s.restart.enabled && s.conf().StateDir != "" {
 		adv.Features = append(adv.Features, nodewire.FeatureRestart)
@@ -782,6 +818,8 @@ func (s *Server) skillEntries() []skills.Entry {
 // ones keep what they started with until the hub restarts them.
 func (s *Server) applySkills(stream *nodewire.Stream) {
 	defer stream.Close()
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
 	verb, hash, _ := strings.Cut(stream.Request().Command, " ")
 	hash = strings.TrimSpace(hash)
 	fail := func(code string, err error) {
@@ -845,12 +883,20 @@ func (s *Server) applySkills(stream *nodewire.Stream) {
 // materializeSkills links every skill of the bundle into every harness
 // home, replacing whatever was linked before.
 func (s *Server) materializeSkills(hash string) error {
+	selected := make([]string, 0, len(s.conf().Harnesses))
+	for id := range s.conf().Harnesses {
+		selected = append(selected, id)
+	}
+	return s.materializeSkillsFor(hash, selected)
+}
+
+func (s *Server) materializeSkillsFor(hash string, selected []string) error {
 	dir := filepath.Join(s.SkillsDir(), hash)
 	names, err := os.ReadDir(dir)
 	if err != nil {
 		return err
 	}
-	for _, dest := range steveruntime.SkillDests(s.conf().StateDir) {
+	for _, dest := range steveruntime.SelectedSkillDests(s.conf().StateDir, selected) {
 		if err := os.MkdirAll(dest, 0o700); err != nil {
 			return err
 		}

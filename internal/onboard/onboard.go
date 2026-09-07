@@ -3,6 +3,7 @@ package onboard
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/gopact-ai/steve/internal/home"
@@ -24,6 +25,7 @@ type TurnResult struct {
 type Request struct {
 	Owner   string
 	Home    string
+	Reader  home.Loader
 	Store   *state.Store
 	Handle  func(context.Context, TurnRequest) (TurnResult, error)
 	Send    func(context.Context, string, string) (chatID string, err error)
@@ -45,16 +47,40 @@ func Start(ctx context.Context, req Request) error {
 	if req.Store.Onboarded() {
 		return nil
 	}
-	if !home.NeedsInit(req.Home) {
+	needsInit := false
+	shared := false
+	if reader, ok := req.Reader.(interface{ NeedsInit() (bool, error) }); ok {
+		var err error
+		needsInit, err = reader.NeedsInit()
+		if err != nil {
+			return err
+		}
+		shared = true
+	} else if req.Reader != nil {
+		snapshot, err := req.Reader.Load(home.ModeOwner)
+		if err != nil && !errors.Is(err, home.ErrMissing) {
+			return err
+		}
+		needsInit = errors.Is(err, home.ErrMissing) || home.IsTemplate(snapshot.Soul) || home.IsTemplate(snapshot.User)
+		_, local := req.Reader.(home.Dir)
+		shared = !local
+	} else {
+		needsInit = home.NeedsInit(req.Home)
+	}
+	if !needsInit {
 		return nil
 	}
 	if req.Handle == nil || req.Send == nil {
 		return fmt.Errorf("onboard: handle and send are required")
 	}
 	pendingID := PendingID(req.Owner)
+	prompt := Prompt(req.Catalog.Locale(), req.Home)
+	if shared {
+		prompt = sharedPrompt(req.Catalog.Locale())
+	}
 	result, err := req.Handle(ctx, TurnRequest{
 		ConversationID: pendingID,
-		Input:          Prompt(req.Catalog.Locale(), req.Home),
+		Input:          prompt,
 		SenderOpenID:   req.Owner,
 		ChatType:       "p2p",
 	})
@@ -78,6 +104,13 @@ func Start(ctx context.Context, req Request) error {
 		}
 	}
 	return nil
+}
+
+func sharedPrompt(locale i18n.Locale) string {
+	if locale == i18n.LocaleEN {
+		return "You are Steve. This is your first private message to the owner. Your shared identity is still a template. Briefly introduce yourself, ask what to call them and confirm their timezone. Build the profile from what they choose to tell you. Do not scan local sessions or use tools in this turn."
+	}
+	return "你是 Steve。这是你第一次私聊联系用户，共享档案还没有完成。简短介绍自己，问怎么称呼用户，并确认时区。根据用户主动提供的信息构建档案。这一轮不要扫描本机会话，不要使用工具。"
 }
 
 func Prompt(locale i18n.Locale, homePath string) string {

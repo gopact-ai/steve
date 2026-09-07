@@ -35,6 +35,9 @@ import (
 type Config struct {
 	Addr  string
 	Token string
+	// DialContext may supply an authenticated transport for this node. The
+	// ordinary token handshake still runs inside that connection.
+	DialContext func(context.Context, string) (net.Conn, error)
 	// DialTimeout bounds one connection attempt; zero takes the default.
 	DialTimeout time.Duration
 	// Level is the data level the hub assigns this node: what it may hold.
@@ -68,7 +71,9 @@ type Status struct {
 // a drop. It never blocks a turn on a node it cannot reach: the dial fails
 // fast and the error names the node.
 type Registry struct {
-	hub string
+	configRevisions map[string]uint64
+	configSerial    uint64
+	hub             string
 	// mcpDial connects to whatever the reverse MCP streams should reach —
 	// the hub's loopback agentmcp listener. Nil disables the reverse channel.
 	mcpDial func(ctx context.Context) (net.Conn, error)
@@ -200,10 +205,13 @@ const defaultDialTimeout = 10 * time.Second
 
 func NewRegistry(hub string, configs map[string]Config) *Registry {
 	confs := make(map[string]Config, len(configs))
+	revisions := make(map[string]uint64, len(configs))
 	for name, cfg := range configs {
 		confs[name] = cfg
+		revisions[name] = 1
 	}
 	return &Registry{
+		configRevisions: revisions, configSerial: 1,
 		hub: hub, confs: confs,
 		live: map[string]*conn{}, last: map[string]*Status{},
 		dialing: map[string]chan struct{}{}, changed: map[string]chan struct{}{},
@@ -237,6 +245,11 @@ func (r *Registry) SetMCPDialer(dial func(ctx context.Context) (net.Conn, error)
 func (r *Registry) Add(name string, cfg Config) {
 	r.mu.Lock()
 	r.confs[name] = cfg
+	if r.configRevisions == nil {
+		r.configRevisions = map[string]uint64{}
+	}
+	r.configSerial++
+	r.configRevisions[name] = r.configSerial
 	r.mu.Unlock()
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultDialTimeout)
@@ -474,13 +487,13 @@ func (r *Registry) Settings(ctx context.Context, name string) (nodewire.Settings
 // own file, and answers with what is in force; a fresh advert follows.
 func (r *Registry) Configure(ctx context.Context, name string, set nodewire.Settings) (nodewire.Settings, error) {
 	out, err := r.configStream(ctx, name, "set", &set)
-	if err != nil {
+	if err != nil && !settingsCommitted(err) {
 		return out, err
 	}
 	if _, err := r.Refresh(ctx, name); err != nil {
 		log.Printf("node: %s: refresh after configure: %v", name, err)
 	}
-	return out, nil
+	return out, err
 }
 
 func (r *Registry) configStream(ctx context.Context, name, verb string, set *nodewire.Settings) (nodewire.Settings, error) {
@@ -509,6 +522,9 @@ func (r *Registry) configStream(ctx context.Context, name, verb string, set *nod
 		return nodewire.Settings{}, fmt.Errorf("node %q: config: %w", name, err)
 	}
 	if reply.Error != "" {
+		if reply.ErrorCode == "settings_committed" {
+			return reply.Settings, &settingsCommittedError{err: errors.New(reply.Error)}
+		}
 		if reply.ErrorCode == nodewire.SettingsRevisionConflictCode {
 			return reply.Settings, fmt.Errorf("%w: %s", nodewire.ErrSettingsRevisionConflict, reply.Error)
 		}
@@ -635,6 +651,9 @@ var RefreshEvery = time.Minute
 // placement — the roster would be describing the registry's ignorance rather
 // than the fleet.
 func (r *Registry) Start(ctx context.Context) {
+	// Capture startup configuration before background work begins. Tests and
+	// later registries can change the default without racing these goroutines.
+	refreshEvery := RefreshEvery
 	r.Probe(ctx)
 	go func() {
 		ticker := time.NewTicker(RedialEvery)
@@ -659,7 +678,7 @@ func (r *Registry) Start(ctx context.Context) {
 		}
 	}()
 	go func() {
-		ticker := time.NewTicker(RefreshEvery)
+		ticker := time.NewTicker(refreshEvery)
 		defer ticker.Stop()
 		for {
 			select {
@@ -678,7 +697,7 @@ func (r *Registry) Start(ctx context.Context) {
 						select {
 						case <-ctx.Done():
 							return
-						case <-time.After(time.Duration(rand.Int64N(int64(RefreshEvery / 5)))):
+						case <-time.After(time.Duration(rand.Int64N(max(1, int64(refreshEvery/5))))):
 						}
 						refreshCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
 						defer cancel()
@@ -718,6 +737,7 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 	for {
 		r.mu.Lock()
 		cfg, known := r.confs[name]
+		configurationRevision := r.configRevisions[name]
 		if !known || r.closed {
 			r.mu.Unlock()
 			return nil, fmt.Errorf("node %q released", name)
@@ -752,7 +772,7 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 			r.noteDrift(name, adv)
 			r.eventMu.Lock()
 			r.mu.Lock()
-			if current, ok := r.confs[name]; !ok || current != cfg || r.closed {
+			if _, ok := r.confs[name]; !ok || r.configRevisions[name] != configurationRevision || r.closed {
 				err = fmt.Errorf("node %q released while dialing", name)
 				r.mu.Unlock()
 				_ = c.mux.Close()

@@ -9,19 +9,20 @@ import "time"
 type Kind string
 
 const (
-	Init          Kind = "init"
-	Snapshot      Kind = "snapshot"
-	Checkout      Kind = "checkout"
-	Has           Kind = "has"
-	Bundle        Kind = "bundle"
-	Unbundle      Kind = "unbundle"
-	Merge         Kind = "merge"
-	Apply         Kind = "apply"
-	Changed       Kind = "changed"
-	Remove        Kind = "remove"
-	ListWorktrees Kind = "list_worktrees"
-	PathState     Kind = "path_state"
-	WritePath     Kind = "write_path"
+	Init           Kind = "init"
+	Snapshot       Kind = "snapshot"
+	Checkout       Kind = "checkout"
+	VerifyCheckout Kind = "verify_checkout"
+	Has            Kind = "has"
+	Bundle         Kind = "bundle"
+	Unbundle       Kind = "unbundle"
+	Merge          Kind = "merge"
+	Apply          Kind = "apply"
+	Changed        Kind = "changed"
+	Remove         Kind = "remove"
+	ListWorktrees  Kind = "list_worktrees"
+	PathState      Kind = "path_state"
+	WritePath      Kind = "write_path"
 )
 
 type Limits struct {

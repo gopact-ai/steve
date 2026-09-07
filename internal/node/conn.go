@@ -61,7 +61,15 @@ func dial(ctx context.Context, name, hub string, cfg Config, mcpDial func(contex
 		timeout = defaultDialTimeout
 	}
 	dialer := net.Dialer{Timeout: timeout}
-	socket, err := dialer.DialContext(ctx, "tcp", cfg.Addr)
+	var socket net.Conn
+	var err error
+	if cfg.DialContext != nil {
+		dialCtx, cancel := context.WithTimeout(ctx, timeout)
+		socket, err = cfg.DialContext(dialCtx, name)
+		cancel()
+	} else {
+		socket, err = dialer.DialContext(ctx, "tcp", cfg.Addr)
+	}
 	if err != nil {
 		return nil, err
 	}

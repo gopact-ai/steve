@@ -9,6 +9,43 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 )
 
+func TestPrepareSelectedDoesNotAccessUnselectedToolHomes(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	stateDir := t.TempDir()
+	if err := PrepareSelected(stateDir, nil); err != nil {
+		t.Fatal(err)
+	}
+	if entries, err := os.ReadDir(stateDir); err != nil || len(entries) != 0 {
+		t.Fatalf("empty selection created runtime files: %v, %v", entries, err)
+	}
+	// Reading an unselected tool's config would fail because it is a directory.
+	for _, tool := range []string{".codex", ".grok"} {
+		if err := os.MkdirAll(filepath.Join(home, tool, "config.toml"), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := PrepareSelected(stateDir, []string{harness.Kimi}); err != nil {
+		t.Fatal(err)
+	}
+	for _, dir := range []string{CodexHome(stateDir), ClaudeHome(stateDir), GrokHome(stateDir)} {
+		if _, err := os.Lstat(dir); !os.IsNotExist(err) {
+			t.Fatalf("unselected runtime %s was touched: %v", dir, err)
+		}
+	}
+	if _, err := os.Stat(filepath.Join(KimiHome(stateDir), "skills")); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSelectedSkillDestsOnlyNamesSelectedRuntimes(t *testing.T) {
+	stateDir := t.TempDir()
+	got := SelectedSkillDests(stateDir, []string{harness.Kimi, "custom", harness.Kimi, harness.Codex})
+	if len(got) != 2 || got[0] != filepath.Join(KimiHome(stateDir), "skills") || got[1] != filepath.Join(CodexHome(stateDir), "skills") {
+		t.Fatalf("selected skill directories = %v", got)
+	}
+}
+
 func TestFilterCodexConfigDropsSkillsKeepsModel(t *testing.T) {
 	src := []byte(`
 model = "gpt-5.4"

@@ -21,6 +21,8 @@ await page.route("**/*",async route=>{
  if(u.origin!==new URL(url).origin){f.errors.push("external "+u.origin);return route.abort();}
  if(!p.startsWith("/console/")&&!['/state','/events'].includes(p))return route.continue();
  const input=req.method()==="GET"?null:(req.headers()['content-type']||'').includes('application/json')?req.postDataJSON():null;
+ if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
+ if(p==="/console/desktop")return route.fulfill({json:{enabled:false,setup_required:false,agent_count:0}});
  if(p==="/state")return route.fulfill({json:{at,hub:{node:"test-hub",version:f.version},nodes:[],agents:[],projects:[{id:"p",node:"test-hub",path:"/work/p",repo:"inplace",level:"public",agents:[],workspaces:[]}],tasks:[{id:"11",channel:A,project_id:"p",goal:"Code task",state:"running",lifecycle:"running",execution:"idle",lane:"pending",attention:0,turns:1,max_turns:10,updated_at:at}],plans:[],attempts:[],landings:[]}});
  if(p==="/console/send"){f.posts.push(input);return route.fulfill({json:{reply:{id:"binding",conversation:input.conversation,text:"bound",at,kind:"reply"}}});}
  if(p==="/console/context")return route.fulfill({json:{enabled:true,context:{conversation:u.searchParams.get("conversation"),project:{id:f.project,node:"test-hub",path:"/work/p",repo:"inplace",level:"public",bound:true},agents:[]}}});

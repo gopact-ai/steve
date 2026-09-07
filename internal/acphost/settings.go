@@ -325,7 +325,11 @@ func (h *Host) SetOption(ctx context.Context, sid acp.SessionID, generation uint
 	if resp != nil && len(resp.ConfigOptions) > 0 {
 		h.mu.Lock()
 		state := h.sessions[sid]
+		sameGeneration := h.generation == generation && h.alive
 		h.mu.Unlock()
+		if state == nil || !sameGeneration {
+			return fmt.Errorf("agent session ended before confirming settings")
+		}
 		state.setOptions(resp.ConfigOptions)
 	}
 	return nil

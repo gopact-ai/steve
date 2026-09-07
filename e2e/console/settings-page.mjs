@@ -75,6 +75,8 @@ if (process.env.PURE_ONLY !== "1") {
         await page.route("**/*", async (route) => {
             const request = route.request(), url = new URL(request.url());
             if (url.origin !== origin) { external.push(url.href); return route.abort(); }
+            if (url.pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
+            if (url.pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
             if (url.pathname === "/state") return route.fulfill({ json: { at: "2026-09-07T00:00:00Z", hub: { node: "hub-fixture", version: "v1", started: "" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] } });
             if (url.pathname === "/console/queue" && request.method() === "GET") return route.fulfill({ json: { queue: [], submission_keys: true, material_refs: true, interactive_requests: true } });
             if (url.pathname === "/console/settings") {
@@ -95,7 +97,7 @@ if (process.env.PURE_ONLY !== "1") {
                 channels = { ...channels, revision: configRevision, desired: { ...channels.desired, ...body.channels, feishu: { ...channels.desired.feishu, ...patch, app_secret_configured: app_secret ? app_secret.action === "replace" : channels.desired.feishu.app_secret_configured } }, pending_restart: true };
                 return route.fulfill({ json: channels });
             }
-            if (url.pathname === "/console/services") return route.fulfill({ json: { services: [{ name: "hub", kind: "hub", label: "Main Hub", online: true, version: "v1", supported: true }, { name: "node-a", kind: "node", label: "Node A", online: true, version: "v1", supported: true }] } });
+            if (url.pathname === "/console/services") return route.fulfill({ json: { services: [{ name: "hub", kind: "hub", label: "Coordinator", online: true, version: "v1", supported: true }, { name: "node-a", kind: "node", label: "Node A", online: true, version: "v1", supported: true }] } });
             const service = /^\/console\/services\/(.+)\/restart$/.exec(url.pathname);
             if (service) {
                 const name = decodeURIComponent(service[1]);
@@ -147,12 +149,12 @@ if (process.env.PURE_ONLY !== "1") {
         await page.getByRole("button", { name: "保留草稿并读取", exact: true }).click();
         await page.getByRole("status").filter({ hasText: "已读取最新配置" }).waitFor();
         assert.equal(await turns.inputValue(), "7");
-        await page.getByRole("button", { name: "保存 Hub 设置", exact: true }).click();
+        await page.getByRole("button", { name: "保存系统设置", exact: true }).click();
         await page.locator('[data-setting="gateway.task_max_turns"] [data-desired]').filter({ hasText: "7" }).waitFor();
         assert.equal(writes[1].base_revision, "revision-1");
         assert.equal(await page.locator('[data-setting="gateway.task_max_turns"] [data-effective]').innerText(), "0");
         await turns.fill("8"); conflict = true;
-        await page.getByRole("button", { name: "保存 Hub 设置", exact: true }).click();
+        await page.getByRole("button", { name: "保存系统设置", exact: true }).click();
         await page.getByRole("alert").filter({ hasText: "配置版本已变化" }).waitFor();
         assert.equal(await turns.inputValue(), "8");
         page.once("dialog", (dialog) => dialog.dismiss());
@@ -164,9 +166,9 @@ if (process.env.PURE_ONLY !== "1") {
         await page.waitForFunction(() => document.querySelector('[data-setting="gateway.task_max_turns"] input')?.value === "7");
         if (screenshots) await page.screenshot({ path: path.join(screenshots, "policies-desktop.png") });
         await nav.getByRole("link", { name: "节点与服务", exact: true }).click();
-        const hubRow = page.locator('.settings-service-list > li').filter({ hasText: "Main Hub" });
+        const hubRow = page.locator('.settings-service-list > li').filter({ hasText: "Coordinator" });
         await hubRow.getByRole("button", { name: "重启服务", exact: true }).click();
-        await page.getByRole("dialog", { name: "重启「Main Hub」？", exact: true }).waitFor();
+        await page.getByRole("dialog", { name: "重启「Coordinator」？", exact: true }).waitFor();
         await page.getByRole("button", { name: "确认重启", exact: true }).click();
         await hubRow.getByText("重启结果尚未确认", { exact: true }).waitFor();
         const id = restartPosts[0].id;

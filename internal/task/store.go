@@ -16,6 +16,7 @@ import (
 // data that would outgrow a single file — transcripts and tree snapshots — is
 // meant to land in a sharded archive on disk, not in here.
 type Store struct {
+	book *ledger.Ledger
 	doc  ledger.Doc
 	mu   sync.Mutex
 	data data
@@ -55,7 +56,11 @@ func OpenLedger(l *ledger.Ledger, legacy string) (*Store, error) {
 	if _, err := doc.Import(legacy); err != nil {
 		return nil, err
 	}
-	return openWith(doc)
+	s, err := openWith(doc)
+	if err == nil {
+		s.book = l
+	}
+	return s, err
 }
 
 func openWith(doc ledger.Doc) (*Store, error) {
@@ -96,6 +101,12 @@ func (s *Store) Create(t Task) (Task, error) {
 	t.ID = strconv.Itoa(s.data.NextID)
 	t.State = StateDraft
 	t.ExecutionEpoch = 1
+	if t.PreparedPlan != nil {
+		prepared := *t.PreparedPlan
+		prepared.Execution = ExecutionToken{TaskID: t.ID, Epoch: t.ExecutionEpoch}
+		prepared.Snapshot = append([]byte(nil), prepared.Snapshot...)
+		t.PreparedPlan = &prepared
+	}
 	t.CreatedAt = now
 	t.UpdatedAt = now
 	if t.Budget.MaxTurns == 0 {
@@ -110,7 +121,7 @@ func (s *Store) Create(t Task) (Task, error) {
 	if err := s.replaceLocked(next); err != nil {
 		return Task{}, err
 	}
-	return t, nil
+	return *t.clone(), nil
 }
 
 // Active returns the newest unfinished task this member holds on the channel
@@ -140,8 +151,7 @@ func (s *Store) Running(channel, member string) (Task, bool) {
 		if stored.Channel != channel || stored.Member != member || !stored.State.Holds() {
 			return false
 		}
-		n := len(stored.Attempts)
-		return n > 0 && stored.Attempts[n-1].Open()
+		return stored.HasOpenExecution()
 	})
 }
 
@@ -287,8 +297,7 @@ func (s *Store) AddInterim(channel, member, messageID string) error {
 		if stored.Channel != channel || stored.Member != member || !stored.State.Holds() {
 			return false
 		}
-		n := len(stored.Attempts)
-		return n > 0 && stored.Attempts[n-1].Open()
+		return stored.HasOpenExecution()
 	})
 	if !ok {
 		return fmt.Errorf("no running task for %s/%s", channel, member)
@@ -321,7 +330,7 @@ func (s *Store) addInterimLocked(taskID, messageID string) error {
 	return s.replaceLocked(next)
 }
 
-// Interrupted lists non-terminal tasks whose latest attempt never ended —
+// Interrupted lists non-terminal tasks with an open current execution —
 // the gateway died mid-turn. Newest first.
 func (s *Store) Interrupted() []Task {
 	s.mu.Lock()
@@ -331,7 +340,7 @@ func (s *Store) Interrupted() []Task {
 		if stored.State.Terminal() {
 			continue
 		}
-		if n := len(stored.Attempts); n > 0 && stored.Attempts[n-1].Open() {
+		if stored.HasOpenExecution() {
 			out = append(out, *stored.clone())
 		}
 	}
@@ -350,7 +359,7 @@ func (s *Store) Begin(id, member, node, session string) (Task, error) {
 	if !ok {
 		return Task{}, fmt.Errorf("task %s not found", id)
 	}
-	if n := len(stored.Attempts); n > 0 && stored.Attempts[n-1].Open() {
+	if row := stored.primaryAttempt(); row != nil && row.Open() {
 		return Task{}, fmt.Errorf("task %s already has an open attempt", id)
 	}
 	if !stored.State.Holds() || !stored.State.CanMoveTo(StateRunning) {
@@ -364,7 +373,7 @@ func (s *Store) Begin(id, member, node, session string) (Task, error) {
 	stored.Member = member
 	stored.Node = node
 	stored.Attempts = append(stored.Attempts, Attempt{
-		Member: member, Node: node, Session: session, StartedAt: now,
+		Member: member, Node: node, Session: session, StartedAt: now, ExecutionEpoch: stored.ExecutionEpoch,
 	})
 	if err := s.replaceLocked(next); err != nil {
 		return Task{}, err
@@ -432,10 +441,10 @@ func (s *Store) FinishAs(id string, outcome Outcome, tokens Tokens, toolCalls in
 	if !ok {
 		return Task{}, fmt.Errorf("task %s not found", id)
 	}
-	if len(stored.Attempts) == 0 {
+	attempt := stored.primaryAttempt()
+	if attempt == nil {
 		return Task{}, fmt.Errorf("task %s has no attempt to finish", id)
 	}
-	attempt := &stored.Attempts[len(stored.Attempts)-1]
 	if !attempt.Open() {
 		return Task{}, fmt.Errorf("task %s attempt already finished", id)
 	}
@@ -496,8 +505,23 @@ func lessID(a, b string) bool {
 
 func (t *Task) clone() *Task {
 	copied := *t
+	if t.PreparedPlan != nil {
+		prepared := *t.PreparedPlan
+		prepared.Snapshot = append([]byte(nil), prepared.Snapshot...)
+		copied.PreparedPlan = &prepared
+	}
 	copied.Attempts = append([]Attempt(nil), t.Attempts...)
+	for i := range copied.Attempts {
+		if copied.Attempts[i].UsageKnown != nil {
+			known := *copied.Attempts[i].UsageKnown
+			copied.Attempts[i].UsageKnown = &known
+		}
+	}
 	copied.Interim = append([]string(nil), t.Interim...)
+	if t.RecoveryWorkspace != nil {
+		workspace := *t.RecoveryWorkspace
+		copied.RecoveryWorkspace = &workspace
+	}
 	if t.Result != nil {
 		r := *t.Result
 		r.Refs = append([]string(nil), t.Result.Refs...)
@@ -529,6 +553,11 @@ func (s *Store) replaceLocked(next data) error {
 	if err := s.doc.Save(raw); err != nil {
 		return fmt.Errorf("save tasks: %w", err)
 	}
+	s.installLocked(next)
+	return nil
+}
+
+func (s *Store) installLocked(next data) {
 	if s.observe != nil {
 		var changed []string
 		for id, t := range next.Tasks {
@@ -551,5 +580,4 @@ func (s *Store) replaceLocked(next data) error {
 		}
 	}
 	s.data = next
-	return nil
 }

@@ -61,6 +61,11 @@ func (s *Supervisor) SetTasks(tasks *task.Store)               { s.tasks = tasks
 
 // PrepareRecovery is startup-only, before this hub admits new executions.
 func (s *Supervisor) PrepareRecovery(ctx context.Context) error {
+	s.recoveryMu.Lock()
+	defer s.recoveryMu.Unlock()
+	if s.recoveryPrepared {
+		return nil
+	}
 	if s.ledger == nil {
 		return errors.New("plan run ledger is not configured")
 	}
@@ -73,6 +78,7 @@ func (s *Supervisor) PrepareRecovery(ctx context.Context) error {
 			return err
 		}
 	}
+	s.recoveryPrepared = true
 	return nil
 }
 
@@ -114,6 +120,9 @@ func (s *Supervisor) opened(ctx context.Context, p plan.Plan) (RunRecord, error)
 		return RunRecord{}, errors.New("plan project is missing")
 	}
 	rec := RunRecord{Target: proj.Home, ID: id, PlanID: p.ID, Rev: p.Rev, TaskID: p.TaskID, ProjectID: p.ProjectID, Base: p.Base, RunID: runIDFor(p), Phase: RunExecuting, Execution: execution.Token(ctx), OpenedAt: time.Now().UTC(), Owner: s.owner}
+	if p.Execution != nil {
+		rec.Execution = p.Execution
+	}
 	if rec.Execution == nil && s.tasks != nil && p.TaskID != "" {
 		token, err := s.tasks.ExecutionToken(p.TaskID)
 		if err != nil {
@@ -167,6 +176,16 @@ func (s *Supervisor) saveRun(ctx context.Context, rec *RunRecord, phase string) 
 }
 
 func (s *Supervisor) OpenRuns(ctx context.Context) ([]RunRecord, error) {
+	return s.retainedRuns(ctx, false)
+}
+
+// RetainedRuns includes committed completion facts awaiting their original
+// exchange's reply; reading them does not re-authorize execution.
+func (s *Supervisor) RetainedRuns(ctx context.Context) ([]RunRecord, error) {
+	return s.retainedRuns(ctx, true)
+}
+
+func (s *Supervisor) retainedRuns(ctx context.Context, completed bool) ([]RunRecord, error) {
 	if s.ledger == nil {
 		return nil, errors.New("plan run ledger is not configured")
 	}
@@ -176,7 +195,7 @@ func (s *Supervisor) OpenRuns(ctx context.Context) ([]RunRecord, error) {
 	}
 	out := []RunRecord{}
 	for _, op := range ops {
-		if op.State == RunCompleted {
+		if op.State == RunCompleted && !completed {
 			continue
 		}
 		var rec RunRecord
@@ -241,6 +260,19 @@ func (s *Supervisor) Resume(ctx context.Context, rec RunRecord) (Outcome, error)
 	if s.ledger == nil {
 		return Outcome{}, errors.New("plan run ledger is not configured")
 	}
+	latest, found, err := s.loadRun(ctx, rec.ID)
+	if err != nil || !found {
+		return Outcome{}, errors.Join(err, errors.New("retained plan run unavailable"))
+	}
+	if latest.PlanID != rec.PlanID || latest.TaskID != rec.TaskID || latest.ProjectID != rec.ProjectID {
+		return Outcome{}, errors.New("retained plan run identity changed")
+	}
+	if latest.Phase == RunCompleted {
+		if latest.Outcome != "success" {
+			return Outcome{RunID: latest.RunID}, fmt.Errorf("plan %s %s: %s", latest.PlanID, latest.Outcome, latest.Error)
+		}
+		return Outcome{RunID: latest.RunID}, nil
+	}
 	return s.runOwner(ctx, rec, func(ctx context.Context, rec RunRecord) (Outcome, error) {
 		if s.plans == nil {
 			return Outcome{}, errors.New("plan store is not configured")
@@ -281,8 +313,8 @@ func (s *Supervisor) executed(ctx context.Context, rec RunRecord, p plan.Plan, o
 		var nowhere ErrNowhereToRun
 		var noBudget ErrNoBudget
 		if errors.As(runErr, &exhausted) || errors.As(runErr, &nowhere) || errors.As(runErr, &noBudget) {
-			rec.Outcome, rec.Error = "failed", runErr.Error()
-			if err := s.saveRun(ctx, &rec, RunCompleted); err != nil {
+			rec.Error = runErr.Error()
+			if err := s.saveRun(ctx, &rec, RunExecuting); err != nil {
 				return out, errors.Join(runErr, err)
 			}
 			return out, runErr

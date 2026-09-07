@@ -73,7 +73,7 @@ func (a *fleetAdmin) mcpSettingsOf(ctx context.Context, nodeKey string) (map[str
 // advertOf is what a machine last said about itself; the hub's is made now.
 func (a *fleetAdmin) advertOf(ctx context.Context, nodeKey string) (nodewire.Advert, error) {
 	if nodeKey == "" {
-		return hubAdvert(a.cfg), nil
+		return observedHubAdvert(a.cfg, a.observation), nil
 	}
 	return a.nodes.Advert(ctx, nodeKey)
 }

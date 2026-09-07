@@ -2,6 +2,8 @@
 
 本文按当前代码说明配置、部署、门禁和排障。对象与权威边界见 [architecture.md](architecture.md)，首次使用见 [中文 README](../README.md) / [English README](../README.en.md)，旧方案保存在 [history/](history/)。
 
+桌面 App 的首次启动、完整节点接入、协调交接与容灾要求见 [桌面指南](desktop.md)。下方 `steve run` / `steve-node` 配置说明以独立部署为主；共享账本模式的机器身份与声明由 App 管理。
+
 ## 配置约定
 
 hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路径/config.json` 指定；node 读取 `node.json`，可用 `steve-node -config /绝对路径/node.json` 指定。两者都拒绝未知 JSON 字段。下文“默认”指省略字段时的代码行为，不是样例里显式写入的值。
@@ -18,7 +20,7 @@ hub 读取 `config.json`，可通过 `steve setup|doctor|run -config /绝对路�
 
 | 键 | 类型 | 默认 | 作用 | 示例 |
 |---|---|---|---|---|
-| `agents` | object<string, Agent> | 无，至少一项 | 命名执行配置，必须恰有一个默认 agent | `{"codex":{"harness":"codex","default":true}}` |
+| `agents` | object<string, Agent> | 可为空 | 命名执行配置；非空时恰有一个默认 agent | `{"codex":{"harness":"codex","default":true}}` |
 | `projects` | object<string, Project> | 无，至少一项；旧布局可迁移 | 声明项目；`home` 是保留项目名 | `{"work":{"home":{"path":"/srv/work"}}}` |
 | `harnesses` | object<string, Harness> | 无，至少一项 | hub 本机启动命令与权限策略；agent 引用的 harness 必须在此登记 | `{"codex":{"command":"/home/me/.local/bin/codex-acp"}}` |
 | `nodes` | object<string, Node> | `{}` | hub 如何连接远端机器；能力来自 node 的实际申报 | `{"host-3":{"addr":"10.0.0.3:7701","token":"replace-me"}}` |

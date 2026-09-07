@@ -114,7 +114,7 @@ func (l *Ledger) ReleaseAny(ctx context.Context, lease Lease) error {
 
 // Check verifies a lease of this region; it is what other regions call.
 func (l *Ledger) Check(ctx context.Context, lease Lease) error {
-	tx, err := l.db.BeginTx(ctx, nil)
+	tx, err := l.beginWrite(ctx)
 	if err != nil {
 		return err
 	}

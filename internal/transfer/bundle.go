@@ -96,6 +96,18 @@ func Export(ctx context.Context, o Options) (Bundle, error) {
 	return exportProject(ctx, o, (*os.File).Sync)
 }
 
+var ErrClusterOfflineTransfer = errors.New("cluster-managed state cannot use offline project transfer; use coordinator handoff to move coordination between nodes in the same cluster")
+
+func offlineLedger(ctx context.Context, book *ledger.Ledger) error {
+	// A stopped replica still belongs to its cluster. An offline process has
+	// no authority to release ownership or export only its old local files.
+	err := book.Update(ctx, func(*ledger.Tx) error { return nil })
+	if errors.Is(err, ledger.ErrReplicaUnavailable) {
+		return fmt.Errorf("%w: %w", ErrClusterOfflineTransfer, err)
+	}
+	return err
+}
+
 func exportProject(ctx context.Context, o Options, syncFile func(*os.File) error) (Bundle, error) {
 	var b Bundle
 	if o.HubID == "" || o.Project == "" || o.TargetHub == "" || o.Output == "" || o.Evidence == "" {
@@ -111,6 +123,9 @@ func exportProject(ctx context.Context, o Options, syncFile func(*os.File) error
 		return b, err
 	}
 	defer book.Close()
+	if err := offlineLedger(ctx, book); err != nil {
+		return b, err
+	}
 	projects := project.Open(book)
 	projects.SetHubID(o.HubID)
 	if err := book.Update(ctx, func(tx *ledger.Tx) error { return releaseGuard(tx, o.Project) }); err != nil {
@@ -417,6 +432,9 @@ func importProject(ctx context.Context, o ImportOptions, syncFile func(*os.File)
 		return empty, err
 	}
 	defer book.Close()
+	if err := offlineLedger(ctx, book); err != nil {
+		return empty, err
+	}
 	projects := project.Open(book)
 	projects.SetHubID(o.HubID)
 	existing, ok, err := projects.Ownership(ctx, p.ID)

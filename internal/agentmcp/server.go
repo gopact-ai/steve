@@ -132,14 +132,17 @@ type anchor struct {
 // this turn: enough to authorize recall/update and to keep the card's
 // stage badge stable across updates.
 type sentMsg struct {
-	address     channel.Address
-	messenger   channel.Messenger
-	attribution string
-	busy        bool
-	version     uint64
-	format      string
-	seq         int
-	progress    string
+	address         channel.Address
+	messenger       channel.Messenger
+	attribution     string
+	busy            bool
+	version         uint64
+	format          string
+	seq             int
+	progress        string
+	intentID        string
+	pendingTool     string
+	pendingProgress string
 }
 
 type sentState struct {
@@ -156,20 +159,26 @@ type Server struct {
 	listener net.Listener
 	srv      *http.Server
 
-	mu             sync.Mutex
-	channels       map[string]channel.Messenger
-	defaultChannel string
-	delegator      Delegator
-	informer       Informer
-	fleeter        Fleeter
-	memorizer      Memorizer
-	journal        func(conversationID, agentID, taskID string, receipt channel.Address)
-	tokens         map[string]binding
-	byBind         map[binding]string
-	anchors        map[string]*anchor
-	sent           map[binding]*sentState
-	styles         map[string]string
-	effects        map[string]bool
+	mu                  sync.Mutex
+	channels            map[string]channel.Messenger
+	defaultChannel      string
+	delegator           Delegator
+	informer            Informer
+	fleeter             Fleeter
+	memorizer           Memorizer
+	journal             func(conversationID, agentID, taskID string, receipt channel.Address)
+	tokens              map[string]binding
+	byBind              map[binding]string
+	anchors             map[string]*anchor
+	sent                map[binding]*sentState
+	styles              map[string]string
+	effects             map[string]bool
+	store               Store
+	storeErr            error
+	onFailure           func(error)
+	interims            map[string]bool
+	loadedConversations map[string]bool
+	loadedMessages      map[binding]bool
 }
 
 // New binds the loopback listener immediately so the URL is known before any
@@ -193,13 +202,16 @@ func New(preferredPort int) (*Server, error) {
 		return nil, fmt.Errorf("agentmcp: listen: %w", err)
 	}
 	s := &Server{
-		listener: listener,
-		channels: map[string]channel.Messenger{},
-		tokens:   map[string]binding{},
-		byBind:   map[binding]string{},
-		anchors:  map[string]*anchor{},
-		sent:     map[binding]*sentState{},
-		styles:   map[string]string{},
+		listener:            listener,
+		channels:            map[string]channel.Messenger{},
+		tokens:              map[string]binding{},
+		byBind:              map[binding]string{},
+		anchors:             map[string]*anchor{},
+		sent:                map[binding]*sentState{},
+		styles:              map[string]string{},
+		interims:            map[string]bool{},
+		loadedConversations: map[string]bool{},
+		loadedMessages:      map[binding]bool{},
 	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("/mcp", s.handleMCP)
@@ -266,16 +278,24 @@ func (s *Server) Anchor(conversationID string, address channel.Address) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.loadConversationLocked(context.Background(), conversationID, nil); err != nil {
+		return
+	}
 	if address.Channel == "" {
 		address.Channel = s.defaultChannel
 	}
 	a := s.anchors[conversationID]
+	if a != nil && a.address == address {
+		return
+	}
 	if a == nil {
 		a = &anchor{}
 		s.anchors[conversationID] = a
 	}
 	a.address = address
 	a.epoch++
+	s.interims[conversationID] = false
+	_ = s.saveConversationLocked(context.Background(), conversationID)
 }
 
 // SetJournal registers a callback for every message an agent sends, so the
@@ -300,9 +320,11 @@ func (s *Server) Delegated(conversationID, agentID, taskID, delegatedBy, token, 
 	}
 	b := binding{conversationID: conversationID, agentID: agentID, taskID: taskID, delegatedBy: delegatedBy}
 	s.mu.Lock()
-	s.tokens[token] = b
-	s.byBind[b] = token
+	err := s.prepareLocked(b, token)
 	s.mu.Unlock()
+	if err != nil {
+		return nil
+	}
 	return []capability.Extra{{
 		Name: ServerName,
 		Server: capability.MCPServer{
@@ -319,10 +341,7 @@ func (s *Server) Delegated(conversationID, agentID, taskID, delegatedBy, token, 
 func (s *Server) Revoke(token string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if b, ok := s.tokens[token]; ok {
-		delete(s.byBind, b)
-		delete(s.tokens, token)
-	}
+	_ = s.revokeLocked(token)
 }
 
 func (s *Server) SetJournal(journal func(conversationID, agentID, taskID string, receipt channel.Address)) {
@@ -340,11 +359,15 @@ func (s *Server) SetStyle(conversationID, style string) {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if strings.TrimSpace(style) == "" {
-		delete(s.styles, conversationID)
+	if err := s.loadConversationLocked(context.Background(), conversationID, nil); err != nil {
 		return
 	}
-	s.styles[conversationID] = style
+	if strings.TrimSpace(style) == "" {
+		delete(s.styles, conversationID)
+	} else {
+		s.styles[conversationID] = style
+	}
+	_ = s.saveConversationLocked(context.Background(), conversationID)
 }
 
 // Interim reports whether any agent posted messages into the conversation
@@ -356,6 +379,12 @@ func (s *Server) Interim(conversationID string) bool {
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := s.loadConversationLocked(context.Background(), conversationID, nil); err != nil {
+		return false
+	}
+	if s.interims[conversationID] {
+		return true
+	}
 	a := s.anchors[conversationID]
 	if a == nil {
 		return false
@@ -387,12 +416,11 @@ func (s *Server) Extras(conversationID, agentID, token, endpoint string) []capab
 	}
 	b := binding{conversationID: conversationID, agentID: agentID}
 	s.mu.Lock()
-	if old, ok := s.byBind[b]; ok && old != token {
-		delete(s.tokens, old)
-	}
-	s.tokens[token] = b
-	s.byBind[b] = token
+	err := s.prepareLocked(b, token)
 	s.mu.Unlock()
+	if err != nil {
+		return nil
+	}
 	return []capability.Extra{{
 		Name: ServerName,
 		Server: capability.MCPServer{
@@ -420,10 +448,8 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-	s.mu.Lock()
-	bind, authorized := s.tokens[token]
-	s.mu.Unlock()
-	if token == "" || !authorized {
+	_, _, authErr := s.authenticate(r.Context(), token, false)
+	if token == "" || authErr != nil {
 		http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 		return
 	}
@@ -452,7 +478,12 @@ func (s *Server) handleMCP(w http.ResponseWriter, r *http.Request) {
 	case "tools/list":
 		writeRPCResult(w, req.ID, map[string]any{"tools": s.toolList()})
 	case "tools/call":
-		writeRPCResult(w, req.ID, s.callTool(r.Context(), bind, req.Params))
+		bind, callCtx, err := s.authenticate(r.Context(), token, true)
+		if err != nil {
+			http.Error(w, `{"error":"unauthorized execution"}`, http.StatusUnauthorized)
+			return
+		}
+		writeRPCResult(w, req.ID, s.callTool(callCtx, bind, req.Params))
 	default:
 		writeRPCError(w, req.ID, -32601, fmt.Sprintf("method %q not found", req.Method))
 	}
@@ -496,8 +527,9 @@ func PlatformTools(delegating bool) []PlatformTool {
 func (s *Server) toolList() []map[string]any {
 	s.mu.Lock()
 	informing, fleeting, remembering := s.informer != nil, s.fleeter != nil, s.memorizer != nil
+	delegating := s.delegator != nil
 	s.mu.Unlock()
-	return toolList(s.delegator != nil, informing, fleeting, remembering)
+	return toolList(delegating, informing, fleeting, remembering)
 }
 
 // titles are the short labels the console shows for the platform's own
@@ -864,12 +896,15 @@ type Intents interface {
 }
 
 // SetIntents wires the side-effect ledger.
-func (s *Server) SetIntents(i Intents) { s.intents = i }
+func (s *Server) SetIntents(i Intents) { s.mu.Lock(); defer s.mu.Unlock(); s.intents = i }
 
 // effect runs one side-effecting tool under the intent protocol.
-func (s *Server) effect(ctx context.Context, bind binding, tool string, args json.RawMessage, call func() (string, channel.Address, error)) (string, error) {
+type intentContextKey struct{}
+
+func (s *Server) effect(ctx context.Context, bind binding, tool string, args json.RawMessage, call func(context.Context) (string, channel.Address, error)) (string, error) {
 	key := bind.taskID + "\x00" + bind.conversationID + "\x00" + tool + "\x00" + string(args)
 	s.mu.Lock()
+	intents := s.intents
 	if s.effects == nil {
 		s.effects = map[string]bool{}
 	}
@@ -880,29 +915,41 @@ func (s *Server) effect(ctx context.Context, bind binding, tool string, args jso
 	s.effects[key] = true
 	s.mu.Unlock()
 	defer func() { s.mu.Lock(); delete(s.effects, key); s.mu.Unlock() }()
-	if s.intents == nil {
-		out, _, err := call()
+	if intents == nil {
+		out, _, err := call(ctx)
 		return out, err
 	}
-	id, err := s.intents.Claim(ctx, bind.taskID, tool, args)
+	var id string
+	var err error
+	if scope, fixed := ScopeFromContext(ctx); fixed {
+		claims, ok := intents.(interface {
+			ClaimExecution(context.Context, string, string, string, []byte) (string, error)
+		})
+		if !ok || scope.TaskID != bind.taskID {
+			return "", errors.New("fixed execution intent claims are unavailable")
+		}
+		id, err = claims.ClaimExecution(ctx, scope.TaskID, scope.AttemptID, tool, args)
+	} else {
+		id, err = intents.Claim(ctx, bind.taskID, tool, args)
+	}
 	if err != nil {
 		return "", err
 	}
-	if err := s.intents.Dispatched(ctx, id); err != nil {
+	if err := intents.Dispatched(ctx, id); err != nil {
 		return "", fmt.Errorf("record intent: %w", err)
 	}
-	out, receipt, err := call()
+	out, receipt, err := call(context.WithValue(ctx, intentContextKey{}, id))
 	// A disconnected caller must not erase an external effect's receipt.
 	journalCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), sendTimeout)
 	defer cancel()
 	var journalErr error
 	switch {
 	case err == nil:
-		journalErr = s.intents.Confirmed(journalCtx, id, map[string]any{"result": out, "message": receipt})
+		journalErr = intents.Confirmed(journalCtx, id, map[string]any{"result": out, "message": receipt})
 	case ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) || errors.Is(err, errOutcomeUnknown):
-		journalErr = s.intents.Lost(journalCtx, id, err)
+		journalErr = intents.Lost(journalCtx, id, err)
 	default:
-		journalErr = s.intents.Failed(journalCtx, id, err)
+		journalErr = intents.Failed(journalCtx, id, err)
 	}
 	if journalErr != nil {
 		return "", fmt.Errorf("%w: could not persist result for intent %s: %v", errOutcomeUnknown, id, journalErr)

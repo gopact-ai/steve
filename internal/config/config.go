@@ -222,14 +222,17 @@ type ProjectHome struct {
 }
 
 type Config struct {
-	Policies   Policies             `json:"policies,omitempty"`
-	Agents     map[string]Agent     `json:"agents"`
-	Projects   map[string]Project   `json:"projects,omitempty"`
-	Harnesses  map[string]Harness   `json:"harnesses"`
-	Nodes      map[string]Node      `json:"nodes,omitempty"`
-	MCPServers map[string]MCPServer `json:"mcp_servers"`
-	Feishu     Feishu               `json:"feishu"`
-	Gateway    Gateway              `json:"gateway"`
+	// RuntimeHome keeps the shared home workspace anchored to its physical
+	// node while this process uses its own local identity files.
+	RuntimeHome *ProjectHome         `json:"-"`
+	Policies    Policies             `json:"policies,omitempty"`
+	Agents      map[string]Agent     `json:"agents"`
+	Projects    map[string]Project   `json:"projects,omitempty"`
+	Harnesses   map[string]Harness   `json:"harnesses"`
+	Nodes       map[string]Node      `json:"nodes,omitempty"`
+	MCPServers  map[string]MCPServer `json:"mcp_servers"`
+	Feishu      Feishu               `json:"feishu"`
+	Gateway     Gateway              `json:"gateway"`
 	// Migrated lists what Load rewrote from an older layout, for the
 	// operator to move into the file: the runtime never reads the old
 	// fields again.
@@ -617,7 +620,7 @@ func Load(path string) (*Config, error) {
 		return nil, err
 	}
 	for id, item := range cfg.Agents {
-		if _, ok := cfg.Harnesses[item.Harness]; !ok {
+		if _, ok := cfg.Harnesses[item.Harness]; !ok && item.Node == "" {
 			return nil, fmt.Errorf("agent %q references unknown harness %q", id, item.Harness)
 		}
 		if item.Node != "" {
@@ -650,9 +653,6 @@ func (c *Config) AgentCatalog() (*agent.Catalog, error) {
 }
 
 func (c *Config) validateHarnesses() error {
-	if len(c.Harnesses) == 0 {
-		return fmt.Errorf("at least one harness is required")
-	}
 	for id, item := range c.Harnesses {
 		if id == "" {
 			return fmt.Errorf("a harness needs a name")

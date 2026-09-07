@@ -46,6 +46,7 @@ type Entry struct {
 // rolled back with the database. What it says started may or may not have
 // happened; what it says was confirmed did.
 type Journal struct {
+	ledger      *Ledger
 	path        string
 	incarnation uint64
 	now         func() time.Time
@@ -76,6 +77,9 @@ func OpenJournal(path string, incarnation uint64, now func() time.Time) (*Journa
 func (j *Journal) Close() error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	if j.file == nil {
+		return nil
+	}
 	return j.file.Close()
 }
 
@@ -98,6 +102,9 @@ func (j *Journal) append(effect EffectID, phase Phase, command string, payload a
 			return Entry{}, err
 		}
 		raw = b
+	}
+	if j.ledger != nil {
+		return j.ledger.appendEffect(Entry{At: j.now().UTC(), Incarnation: j.ledger.Incarnation(), Effect: effect, Phase: phase, Command: command, Payload: raw})
 	}
 	j.mu.Lock()
 	defer j.mu.Unlock()
@@ -160,6 +167,13 @@ func (j *Journal) Reconcile() ([]Outcome, error) {
 }
 
 func (j *Journal) readAll() ([]Entry, error) {
+	if j.ledger != nil {
+		return j.ledger.effectEntries(0)
+	}
+	return j.readFileAll()
+}
+
+func (j *Journal) readFileAll() ([]Entry, error) {
 	if _, err := j.file.Seek(0, 0); err != nil {
 		return nil, err
 	}

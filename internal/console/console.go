@@ -108,6 +108,8 @@ type Service struct {
 	questionTimeout    time.Duration
 	defaultLocale      string
 	closing            bool
+	recoveryLifetime   context.Context
+	recoveryDriver     RetainedChatDriver
 	workers            sync.WaitGroup
 	drained            chan struct{}
 	materials          MaterialResolver
@@ -621,25 +623,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		OnProgress: s.progress(conversation, exchange.ID, work),
 	})
 	stop()
-	reply = consoleapi.Reply{At: time.Now().UTC(), Conversation: conversation, ProjectID: exchange.ExpectedProject, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary(), Refs: exchange.Refs, Materials: exchange.Materials}
-	if result.Attempt != "" && s.inspector != nil {
-		if changes, cerr := s.inspector.Changes(ctx, result.Attempt); cerr != nil {
-			log.Printf("console: changes of attempt %s: %v", result.Attempt, cerr)
-		} else if changes != nil {
-			reply.Changes = changes
-		}
-	}
-	if in := result.Injected; in != nil {
-		reply.Injected = &consoleapi.Injected{Project: in.Project, Workspace: in.Workspace, Agent: in.Agent, Node: in.Node, Harness: in.Harness, Model: in.Model, Options: in.Options,
-			Session: in.Session, NewSession: in.NewSession, InstructionsSent: in.InstructionsSent, Instructions: in.Instructions, InstructionsBytes: in.InstructionsBytes,
-			MCPServers: in.MCPServers, Fingerprint: in.Fingerprint, Prompt: in.Prompt}
-	}
-	if err != nil {
-		reply.Error = err.Error()
-		if reply.Text == "" {
-			reply.Text = err.Error()
-		}
-	}
+	reply = s.resultReply(ctx, exchange, work, result, err)
 	// The first real exchange names the conversation, unless it has a
 	// name already: the agent summarises what the owner wants, the way a
 	// chat app names a thread. Verbs name nothing.

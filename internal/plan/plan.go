@@ -142,6 +142,9 @@ type Step struct {
 type Plan struct {
 	ID     string `json:"id"`
 	TaskID string `json:"task_id"`
+	// Execution is fixed before creation so recovery between the plan and
+	// its run record cannot obtain a later authorization epoch.
+	Execution *task.ExecutionToken `json:"execution,omitempty"`
 	// ProjectID is the project the task was created under. Every step of
 	// every revision runs against that project; it is copied here so the
 	// executor never has to look the task up to know where "here" is.

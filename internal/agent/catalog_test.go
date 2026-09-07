@@ -2,6 +2,28 @@ package agent
 
 import "testing"
 
+func TestEmptyCatalogCanBeReadBeforeFirstRegistration(t *testing.T) {
+	catalog, err := NewCatalog(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.List()) != 0 || catalog.Default().ID != "" {
+		t.Fatal("empty catalog has a configured agent")
+	}
+	if _, ok := catalog.Resolve("codex"); ok {
+		t.Fatal("empty catalog resolved an agent")
+	}
+	if _, ok := catalog.Select("@codex hello"); ok {
+		t.Fatal("empty catalog selected an agent")
+	}
+	if err := catalog.Add("codex", Config{Harness: "codex", Default: true}); err != nil {
+		t.Fatal(err)
+	}
+	if catalog.Default().ID != "codex" {
+		t.Fatal("first registration was not published")
+	}
+}
+
 func TestCatalogOwnsImmutableConfigurations(t *testing.T) {
 	options := map[string]string{"effort": "high"}
 	aliases := []string{"worker"}

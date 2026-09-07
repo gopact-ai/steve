@@ -23,6 +23,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	gopactsqlite "github.com/gopact-ai/gopact-ext/stores/sqlite"
+	"github.com/gopact-ai/gopact/workflow"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/agentmcp"
@@ -34,8 +35,10 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/debugapi"
 	"github.com/gopact-ai/steve/internal/delegate"
+	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/gateway"
@@ -47,7 +50,6 @@ import (
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/material"
-	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -68,6 +70,7 @@ import (
 	"github.com/gopact-ai/steve/internal/tui"
 	"github.com/gopact-ai/steve/internal/turn"
 	steveview "github.com/gopact-ai/steve/internal/view"
+	"github.com/gopact-ai/steve/internal/workflowstore"
 	"golang.org/x/term"
 )
 
@@ -165,6 +168,12 @@ func run(args []string) error {
 			return top(os.Args[2:])
 		case "dash":
 			return dash(os.Args[2:])
+		case "desktop":
+			return desktopCmd(args[1:])
+		case "peer":
+			return peerCmd(args[1:])
+		case "peer-import":
+			return peerImportCmd(args[1:])
 		case "ledger":
 			return ledgerCmd(args[1:])
 		case "migrate":
@@ -282,8 +291,9 @@ func doctor(args []string) error {
 			return fmt.Errorf("grant %s in %s: %w", g.Principal, g.Project, err)
 		}
 	}
-	startHubLaunch(context.Background(), cfg)
-	self := hubAdvert(cfg)
+	observation, closeObservation := newLocalObservation(ctx, cfg)
+	defer closeObservation()
+	self := observedHubAdvert(cfg, observation)
 	log.Printf("steve: hub %s — %s %v, %s/%s, level=%s, harnesses=%s, caps=%v",
 		self.Node, self.Hostname, self.IPs, self.OS, self.Arch, cfg.HubLevel(), harnessSummary(self), self.Capabilities)
 	reportGit("hub "+self.Node, self)
@@ -416,7 +426,30 @@ const scheduleTick = 20 * time.Second
 // answer a question nobody is still asking.
 const staleTask = 24 * time.Hour
 
-func serve(args []string) (runErr error) {
+type applicationEnvironment struct {
+	Ledger                *ledger.Ledger
+	Content               contentreplica.Replicator
+	NodeID                string
+	HTTPConfig            *httpapi.ServerConfig
+	WriteConfig           func(string, *config.Config) error
+	WriteConfigContext    func(context.Context, string, *config.Config) error
+	ConfigureNodes        func(map[string]node.Config) error
+	SessionBinder         func(context.Context, harness.Placement, string, string) (context.Context, error)
+	Fail                  func(error)
+	ConfigurationRevision func() string
+	Configure             func(*config.Config) error
+	Coordination          consoleapi.CoordinationService
+	Ready                 func(*fleetAdmin, *httpapi.Server) error
+}
+
+func serve(args []string) error {
+	if handled, err := maybeManagedPeer(args); handled {
+		return err
+	}
+	return serveApplication(context.Background(), args, nil)
+}
+
+func serveApplication(parent context.Context, args []string, environment *applicationEnvironment) (runErr error) {
 	var services *hubServices
 	defer func() {
 		if services != nil && services.requested() {
@@ -432,10 +465,14 @@ func serve(args []string) (runErr error) {
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	ctx, stop := signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	cfg, catalog, manager, live, err := load(*configPath)
+	var configure func(*config.Config) error
+	if environment != nil {
+		configure = environment.Configure
+	}
+	cfg, catalog, manager, live, err := loadConfigured(*configPath, configure)
 	if err != nil {
 		return err
 	}
@@ -447,14 +484,31 @@ func serve(args []string) (runErr error) {
 		return err
 	}
 	defer unlock()
-	book, err := openLedger(cfg)
-	if err != nil {
-		return err
+	var book *ledger.Ledger
+	if environment != nil {
+		book = environment.Ledger
+		if book == nil {
+			return fmt.Errorf("coordinated application needs its generation ledger")
+		}
+		if environment.NodeID != "" {
+			localNodeIdentity.Store(environment.NodeID)
+		}
+	} else {
+		book, err = openLedger(cfg)
+		if err != nil {
+			return err
+		}
+		defer book.Close()
 	}
-	defer book.Close()
 	// Cancel background owners before storage closes, including early exits
 	// that happen before the execution registry is assembled.
 	defer stop()
+	if environment != nil && environment.SessionBinder != nil {
+		manager.SetNodeSessionBinder(environment.SessionBinder)
+		manager.SetStopRegistrar(execution.RegisterStopHandler)
+	}
+	background := newApplicationBackground(ctx)
+	defer background.Close()
 	if cfg.Gateway.Region != "" {
 		book.SetRegion(cfg.Gateway.Region)
 	}
@@ -478,9 +532,25 @@ func serve(args []string) (runErr error) {
 	if err != nil {
 		return err
 	}
-	assembler, err := wireHome(cfg, live)
+	var sharedMemoryBook *ledger.Ledger
+	if environment != nil {
+		sharedMemoryBook = book
+	}
+	profile, err := prepareApplicationMemory(ctx, cfg, sharedMemoryBook)
 	if err != nil {
 		return err
+	}
+	var assembler *capability.Assembler
+	if environment != nil {
+		assembler = cfg.CapabilityAssembler().SetHome(profile.Home)
+		if live != nil && live.Map != nil {
+			assembler.SetSkills(live.Map)
+		}
+	} else {
+		assembler, err = wireHome(cfg, live)
+		if err != nil {
+			return err
+		}
 	}
 	warnHome(cfg)
 	for _, selected := range catalog.List() {
@@ -494,7 +564,13 @@ func serve(args []string) (runErr error) {
 		}
 	}
 	nodewire.SetSelf(nodeName())
-	nodes := node.NewRegistry(cfg.Gateway.HubID, cfg.NodeConfigs())
+	nodeConfigs := cfg.NodeConfigs()
+	if environment != nil && environment.ConfigureNodes != nil {
+		if err := environment.ConfigureNodes(nodeConfigs); err != nil {
+			return err
+		}
+	}
+	nodes := node.NewRegistry(cfg.Gateway.HubID, nodeConfigs)
 	defer nodes.Close()
 	manager.SetTransports(nodes)
 
@@ -503,7 +579,7 @@ func serve(args []string) (runErr error) {
 	// the owner's DM works in — so nothing special-cases it downstream.
 	projects := project.Open(book, artifact.CheckDeclarationsTx, attempt.CheckDeclarationsTx)
 	projects.SetHubID(cfg.Gateway.HubID)
-	if err := (config.ProjectController{Store: projects}).Reconcile(context.Background(), cfg); err != nil {
+	if err := (config.ProjectController{Store: projects}).Reconcile(ctx, cfg); err != nil {
 		return fmt.Errorf("reconcile configured projects: %w", err)
 	}
 	for _, note := range cfg.Migrated {
@@ -515,8 +591,9 @@ func serve(args []string) (runErr error) {
 	fleet := roster.New(catalog)
 	fleet.SetNodes(nodes)
 	fleet.SetHubCapabilities(cfg.Gateway.Capabilities)
-	startHubLaunch(context.Background(), cfg)
-	fleet.SetHubAdvert(func() nodewire.Advert { return hubAdvert(cfg) })
+	observation, closeObservation := newLocalObservation(ctx, cfg)
+	defer closeObservation()
+	fleet.SetHubAdvert(func() nodewire.Advert { return observedHubAdvert(cfg, observation) })
 	fleet.SetHubLevel(cfg.HubLevel())
 	// What every harness was seen running, per machine: sessions report
 	// it as they open, and a probe asks on purpose for the ones nobody
@@ -584,7 +661,7 @@ func serve(args []string) (runErr error) {
 		catalog, store, assembler, manager, time.Duration(cfg.Gateway.PromptTimeout),
 	)
 	catalogText := i18n.New(i18n.FromLang(cfg.EffectiveLocale()))
-	coordinator.SetIdentity(cfg.EffectiveOwnerID(), home.Dir{Path: cfg.Gateway.HomePath})
+	coordinator.SetIdentity(cfg.EffectiveOwnerID(), profile.Home)
 	if cfg.FeishuEnabled() {
 		if err := coordinator.SetChannelOwner("feishu", cfg.Feishu.OwnerOpenID); err != nil {
 			return err
@@ -594,16 +671,18 @@ func serve(args []string) (runErr error) {
 	coordinator.SetProjects(projects, cfg.Gateway.DefaultProject, homeProjectID)
 	// Memory: the home's MEMORY.md for the owner, one file per project,
 	// every write locked and audited under the state directory.
-	memoryDir := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "memory")
-	memories := memory.NewService(memory.NewMarkdown(cfg.Gateway.HomePath, memoryDir), filepath.Join(memoryDir, "audit.jsonl"))
+	memories := profile.Service
 	coordinator.SetMemory(memories)
 	// Recovery classification already ran before project reconciliation;
 	// uncertain writers retain their physical directory ownership.
-	go sweepAttempts(ctx, attempts)
+	background.Go(func(ctx context.Context) { sweepAttempts(ctx, attempts) })
 	coordinator.SetAttempts(attempts)
 	// Artifacts: every result is a commit in the project's shadow
 	// repository on the hub, materialised wherever a step runs.
 	artifacts := artifact.New(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "artifacts"), book, projects, nodes)
+	if environment != nil {
+		artifacts.SetReplication(environment.Content)
+	}
 	artifacts.Direct = cfg.Gateway.DirectTransfer
 	artifacts.Limits = artifact.Limits{MaxFiles: cfg.Policies.Snapshot.MaxFiles, MaxBytes: cfg.Policies.Snapshot.MaxBytes, MaxFileBytes: cfg.Policies.Snapshot.MaxFileBytes}
 	artifacts.Review = artifact.ReviewLimits{MaxChanges: cfg.Policies.Review.MaxChanges, MaxDiffBytes: cfg.Policies.Review.MaxDiffBytes, MaxFileBytes: cfg.Policies.Review.MaxFileBytes, MaxEntries: cfg.Policies.Review.MaxEntries, Timeout: time.Duration(cfg.Policies.Review.Timeout)}
@@ -614,7 +693,7 @@ func serve(args []string) (runErr error) {
 	coordinator.SetIntents(intents)
 	// A landing the previous process was cut off in is finished — or
 	// stopped at a conflict — before any turn can touch the canonical.
-	if recovered, err := artifacts.RecoverLandings(context.Background()); err != nil {
+	if recovered, err := artifacts.RecoverLandings(ctx); err != nil {
 		return fmt.Errorf("recover landings: %w", err)
 	} else {
 		for _, l := range recovered {
@@ -659,15 +738,21 @@ func serve(args []string) (runErr error) {
 	stepRunner.Timeout = time.Duration(cfg.Policies.Execution.StepTimeout)
 	// Workflow checkpoints are durable so a plan outlives the process that
 	// started it; the ledger records which runs are open.
-	workflowsDB := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "workflows.db")
-	if err := gopactsqlite.Migrate(workflowsDB); err != nil {
-		return fmt.Errorf("migrate workflow checkpoints: %w", err)
+	var checkpoints workflow.Store
+	if environment != nil {
+		checkpoints = workflowstore.New(book)
+	} else {
+		workflowsDB := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "workflows.db")
+		if err := gopactsqlite.Migrate(workflowsDB); err != nil {
+			return fmt.Errorf("migrate workflow checkpoints: %w", err)
+		}
+		localStore, err := gopactsqlite.Open(workflowsDB)
+		if err != nil {
+			return fmt.Errorf("open workflow checkpoints: %w", err)
+		}
+		defer localStore.Close()
+		checkpoints = localStore
 	}
-	checkpoints, err := gopactsqlite.Open(workflowsDB)
-	if err != nil {
-		return fmt.Errorf("open workflow checkpoints: %w", err)
-	}
-	defer checkpoints.Close()
 
 	auxiliary := agentexec.New(manager, fleet, artifacts, attempts, executions, taskBudget{tasks: tasks})
 	auxiliary.SetCapabilities(capabilitiesFor(assembler))
@@ -691,6 +776,7 @@ func serve(args []string) (runErr error) {
 	supervisor.SetLedger(book, nodeName())
 	supervisor.SetTasks(tasks)
 	coordinator.SetSupervisor(supervisor, plans, fleet)
+	coordinator.SetPlanRecoveryOwner(func(tracked task.Task) bool { return environment != nil && console.IsConsole(tracked.Channel) })
 	coordinator.SetRepair(nodes, nodes)
 	coordinator.SetProber(func(ctx context.Context, node, harnessID string) error {
 		dir := probeDir(node)
@@ -712,7 +798,7 @@ func serve(args []string) (runErr error) {
 			Node: nodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities,
 			Level: string(cfg.HubLevel()),
 		},
-		HubAdvert: func() nodewire.Advert { return hubAdvert(cfg) },
+		HubAdvert: func() nodewire.Advert { return observedHubAdvert(cfg, observation) },
 		Repos:     repos.get, HomeProject: homeProjectID, DefaultProject: cfg.Gateway.DefaultProject,
 		Models: seen,
 		Roster: fleet, Nodes: nodes, Tasks: tasks, Plans: plans,
@@ -731,23 +817,27 @@ func serve(args []string) (runErr error) {
 	// Skills are the hub's to enable and every machine's to have: each
 	// node gets the enabled set as a content-addressed bundle when it
 	// connects and whenever the set changes, before harnesses restart.
-	hubSkills = &skillShipper{nodes: nodes, live: live, observe: view.Observe}
-	if _, err := hubSkills.pack(); err != nil {
+	shipper := &skillShipper{nodes: nodes, live: live, observe: view.Observe}
+	observation.skills.Store(shipper)
+	if _, err := shipper.pack(); err != nil {
 		log.Printf("steve: skills could not be packed for nodes: %v", err)
 	}
 	live.After = func() error {
-		hubSkills.shipAll(context.Background())
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		shipper.shipAll(ctx)
 		return manager.Restart()
 	}
 	// Machines coming and going are history, not just log lines.
 	nodes.SetObserver(func(s node.Status) {
 		if s.Up {
 			view.Observe("node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion))
-			go hubSkills.ship(context.Background(), s.Name)
+			background.Go(func(ctx context.Context) { shipper.ship(ctx, s.Name) })
 			// A machine that comes back may hold worktrees of attempts that
 			// died with the connection; nothing else ever returns for them.
 			if root := s.Advert.WorkspaceRoot; root != "" {
-				go sweepWorktrees(context.Background(), artifacts, attempts, view, s.Name, root)
+				background.Go(func(ctx context.Context) { sweepWorktrees(ctx, artifacts, attempts, tasks, view, s.Name, root) })
 			}
 			return
 		}
@@ -756,16 +846,31 @@ func serve(args []string) (runErr error) {
 	stepRunner.SetObserver(func(req exec.StepRequest, p steveview.Progress) {
 		view.StepProgress(req.TaskID, req.PlanID, req.StepID, req.Agent, req.Node, p)
 	})
-	dashboard, err := httpapi.NewServer(view, httpapi.ServerConfig{
+	httpConfig := httpapi.ServerConfig{
 		Addr: cfg.Gateway.ReadModelAddr, Token: cfg.Gateway.ReadModelToken,
-	})
+	}
+	if environment != nil && environment.HTTPConfig != nil {
+		httpConfig = *environment.HTTPConfig
+	}
+	dashboard, err := httpapi.NewServer(view, httpConfig)
 	if err != nil {
 		return err
 	}
 	defer dashboard.Close()
+	if environment == nil {
+		if err := desktop.PinAddress(*configPath, cfg, dashboard.URL()); err != nil {
+			return fmt.Errorf("remember desktop address: %w", err)
+		}
+	}
 	// The console: the owner acting from the page, through this same
 	// coordinator. Notices anchored on the console stay on the page.
 	cons := console.New(coordinator, cfg.EffectiveOwnerID(), view)
+	if environment != nil {
+		cons.EnableRetainedRecovery(ctx)
+		ask, askUser := nativePlanQuestions(cons, tasks, attempts)
+		stepRunner.SetQuestionHandlers(ask, askUser)
+		auxiliary.SetQuestionHandlers(ask, askUser)
+	}
 	view.SetInteractions(cons)
 	cons.SetTitler(&conversationTitler{manager: manager, catalog: catalog, projects: projects, home: cfg.Gateway.HomePath})
 	dashboard.SetConsole(cons)
@@ -779,14 +884,32 @@ func serve(args []string) (runErr error) {
 		return project.Level(level)
 	}
 	admin := &fleetAdmin{lifetime: ctx, cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos, attempts: attempts, tasks: tasks, view: view,
-		skills: live, shipper: hubSkills, coordinator: coordinator, homePath: cfg.Gateway.HomePath, memory: memories, artifacts: artifacts}
+		skills: live, shipper: shipper, observation: observation, coordinator: coordinator, homePath: cfg.Gateway.HomePath, memory: memories, artifacts: artifacts}
+	defer admin.closeSSH()
+	if environment != nil {
+		admin.writeConfig = environment.WriteConfig
+		admin.writeConfigContext = environment.WriteConfigContext
+		admin.configRevision = environment.ConfigurationRevision
+		admin.clusterMode = true
+	}
+	admin.homeLoader, admin.sharedHome = profile.Home, profile.Shared
 	dashboard.SetAdmin(admin)
+	dashboard.SetDesktop(admin)
+	dashboard.SetSSH(admin)
+	if environment != nil {
+		dashboard.SetCoordination(environment.Coordination)
+	}
 	cons.SetInspector(admin)
 	materials, err := material.Open(filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "materials"), book)
 	if err != nil {
 		return fmt.Errorf("open materials: %w", err)
 	}
 	defer materials.Close()
+	var reconciliations sync.WaitGroup
+	defer func() { stop(); reconciliations.Wait() }()
+	if environment != nil {
+		materials.SetReplication(environment.Content)
+	}
 	defer func() {
 		stop()
 		cleanup, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -814,12 +937,16 @@ func serve(args []string) (runErr error) {
 	dashboard.SetSettings(newHubSettingsService(admin, cfg))
 	channelSettings := newHubChannelsService(admin, cfg)
 	dashboard.SetChannels(channelSettings)
-	services, err = newHubServices(admin, executions, dashboard.SealWrites, stop, &ledger.FileDocument{Path: filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "service-restarts.json")})
+	var restartDocument ledger.Doc = &ledger.FileDocument{Path: filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "service-restarts.json")}
+	if environment != nil {
+		restartDocument = book.Document("service-restarts")
+	}
+	services, err = newHubServices(admin, executions, dashboard.SealWrites, stop, restartDocument)
 	if err != nil {
 		return fmt.Errorf("initialize service restart control: %w", err)
 	}
 	dashboard.SetServices(services)
-	if err := admin.ResumeProjectCopies(context.Background()); err != nil {
+	if err := admin.ResumeProjectCopies(ctx); err != nil {
 		return fmt.Errorf("resume configured copies: %w", err)
 	}
 	tasks.SetObserver(func(id string) { view.TaskChanged(id) })
@@ -832,14 +959,14 @@ func serve(args []string) (runErr error) {
 	nodes.Start(ctx)
 	// What earlier processes and dropped connections left behind: the
 	// hub's own orphaned worktrees now, queued landings from here on.
-	go sweepWorktrees(ctx, artifacts, attempts, view, "", "")
-	go sweepLandings(ctx, projects, artifacts, view)
-	go repos.run(ctx)
-	go sweepIdleTasks(ctx, tasks, attempts, view)
+	background.Go(func(ctx context.Context) { sweepWorktrees(ctx, artifacts, attempts, tasks, view, "", "") })
+	background.Go(func(ctx context.Context) { sweepLandings(ctx, projects, artifacts, view) })
+	background.Go(repos.run)
+	background.Go(func(ctx context.Context) { sweepIdleTasks(ctx, tasks, attempts, view) })
 	// Discover models for whatever nobody has run yet. It is discovery,
 	// not work: a session opened and closed, no prompt sent. Done off the
 	// startup path so a slow adapter never delays the first message.
-	go func() {
+	background.Go(func(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
@@ -852,7 +979,7 @@ func serve(args []string) (runErr error) {
 			}
 			log.Printf("steve: %s/%s runs %q, offers %v", nodewire.Place(r.Endpoint.Node), r.Endpoint.Harness, r.Current, r.Available)
 		}
-	}()
+	})
 
 	// The messaging server's URL is baked into session fingerprints, so the
 	// port is remembered across restarts: losing it would ask every live
@@ -864,12 +991,18 @@ func serve(args []string) (runErr error) {
 	gate, err := agentmcp.New(readPort(portPath))
 	// redeliverPending is the delegation service's start-up pass, once it exists.
 	var redeliverPending func(context.Context)
+	var recoverRetainedDelegates func(context.Context) error
 	if err != nil {
 		// The send primitive is an enhancement; a box that cannot bind a
 		// loopback port still serves ordinary turns.
 		log.Printf("steve: agent messaging disabled: %v", err)
 		gate = nil
 	} else {
+		if environment != nil {
+			if err := gate.SetStore(newApplicationMCPStore(book), environment.Fail); err != nil {
+				return fmt.Errorf("configure shared collaboration tools: %w", err)
+			}
+		}
 		if err := os.WriteFile(portPath, []byte(fmt.Sprintf("%d\n", gate.Port())), 0o600); err != nil {
 			log.Printf("steve: remember agent messaging port: %v", err)
 		}
@@ -885,6 +1018,13 @@ func serve(args []string) (runErr error) {
 		delegation.SetLedger(attempts, artifacts)
 		delegation.SetGate(gate)
 		delegation.SetEndpoints(nodes)
+		if environment != nil {
+			wireDelegateQuestions(delegation, cons)
+			delegation.SetSpawnGuard(func(ctx context.Context, tx *ledger.Tx) error {
+				return agentmcp.AuthorizeContext(ctx, applicationMCPTx{tx})
+			})
+			recoverRetainedDelegates = delegation.RecoverRetained
+		}
 		delegation.MaxSilence = time.Duration(cfg.Gateway.PromptTimeout)
 		delegation.RegisterIdle = nodes.RegisterIdle
 		delegation.SetObserver(func(c delegate.Child, p steveview.Progress) {
@@ -895,7 +1035,7 @@ func serve(args []string) (runErr error) {
 			info := consoleapi.StepInfo{Kind: "delegate", Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
 				Elapsed: c.Elapsed.Round(time.Second).String(), Answer: c.Answer, Refs: c.Refs}
 			if c.State != "running" && c.Attempt != "" {
-				if changes, err := admin.Changes(context.Background(), c.Attempt); err == nil && changes != nil {
+				if changes, err := admin.Changes(ctx, c.Attempt); err == nil && changes != nil {
 					info.Attempt, info.Files = changes.Attempt, changes.Files
 				}
 			}
@@ -917,7 +1057,7 @@ func serve(args []string) (runErr error) {
 			return gw.Deliver(gateway.Revival{TaskID: d.ParentTask, Member: d.Member, ConversationID: d.Conversation,
 				ChatID: d.ChatID, MessageID: d.Anchor, Requester: d.Requester, ChatType: d.ChatType}, d.Notice(), d.Prompt())
 		})
-		coordinator.SetAfterTurn(func(taskID string) { delegation.Flush(context.Background(), taskID) })
+		coordinator.SetAfterTurn(func(taskID string) { delegation.Flush(ctx, taskID) })
 		redeliverPending = delegation.RedeliverPending
 		// Remote agents call a loopback port on their own machine; the node
 		// forwards it back here over the connection it already holds, so the
@@ -937,11 +1077,11 @@ func serve(args []string) (runErr error) {
 				log.Printf("steve: journal interim message: %v", err)
 			}
 		})
-		go func() {
+		background.Go(func(ctx context.Context) {
 			if err := gate.Start(ctx); err != nil {
 				log.Printf("steve: %v", err)
 			}
-		}()
+		})
 		log.Printf("steve: agent messaging MCP server on %s", gate.URL())
 	}
 	if gate != nil {
@@ -999,7 +1139,7 @@ func serve(args []string) (runErr error) {
 	})
 	coordinator.SetResumer(func(r turn.TaskResume) {
 		if r.ChatID == console.ChatID || console.IsConsole(r.ConversationID) {
-			if err := cons.Resume(context.Background(), r.ConversationID, r.TaskID, r.Member,
+			if err := cons.Resume(ctx, r.ConversationID, r.TaskID, r.Member,
 				catalogText.T(i18n.TaskResumeNotice, r.TaskID), catalogText.T(i18n.TaskResumeManual, r.Goal), coordinator.ReviveSession); err != nil {
 				log.Printf("console: resume task #%s: %v", r.TaskID, err)
 			}
@@ -1019,8 +1159,11 @@ func serve(args []string) (runErr error) {
 	var revivals []gateway.Revival
 	var dropped []gateway.Notice
 	var pageResumes []task.Task
-	coordinator.ResumePlans(context.Background())
+	coordinator.ResumePlans(ctx)
 	for _, interrupted := range tasks.Interrupted() {
+		if interrupted.Origin == "plan" {
+			continue
+		}
 		if quarantinedTasks[interrupted.ID] {
 			log.Printf("steve: task #%s has an unconfirmed previous writer; automatic revival is blocked", interrupted.ID)
 			continue
@@ -1087,8 +1230,13 @@ func serve(args []string) (runErr error) {
 	if err := cons.Persist(book.Document("console")); err != nil {
 		return err
 	}
+	if environment != nil {
+		if err := cons.RecoverChats(ctx, coordinator); err != nil {
+			return fmt.Errorf("recover running conversations: %w", err)
+		}
+	}
 	for _, t := range pageResumes {
-		if err := cons.Resume(context.Background(), t.Channel, t.ID, t.Member,
+		if err := cons.Resume(ctx, t.Channel, t.ID, t.Member,
 			catalogText.T(i18n.ResumeNotice, t.ID), catalogText.T(i18n.ResumePrompt, t.Goal), coordinator.ReviveSession); err != nil {
 			log.Printf("console: resume task #%s: %v", t.ID, err)
 		}
@@ -1099,19 +1247,37 @@ func serve(args []string) (runErr error) {
 	// Children that ended before the last process died, whose parents
 	// were never told.
 	if redeliverPending != nil {
-		go redeliverPending(ctx)
+		background.Go(redeliverPending)
+	}
+	if recoverRetainedDelegates != nil {
+		reconciliations.Go(func() { runReconciler(ctx, "reconcile retained child executions", recoverRetainedDelegates) })
+	}
+	if environment != nil {
+		stops := newApplicationStops(attempts, tasks, manager)
+		reconciliations.Go(func() { runReconciler(ctx, "reconcile requested task stops", stops.Reconcile) })
 	}
 	if err := services.ready(); err != nil {
 		return fmt.Errorf("record service readiness: %w", err)
 	}
-	go func() {
+	if environment == nil {
+		removeEndpoint, err := desktop.PublishEndpoint(*configPath, dashboard.URL())
+		if err != nil {
+			return fmt.Errorf("publish desktop endpoint: %w", err)
+		}
+		defer removeEndpoint()
+	} else if environment.Ready != nil {
+		if err := environment.Ready(admin, dashboard); err != nil {
+			return err
+		}
+	}
+	background.Go(func(context.Context) {
 		if err := dashboard.Serve(); err != nil {
 			log.Printf("steve: read model: %v", err)
 		}
-	}()
+	})
 	log.Printf("steve: dashboard on %s  (steve top -url %s)", dashboard.URL(), dashboard.URL())
 
-	go runScheduleDispatcher(ctx, schedules, cons, gw, coordinator)
+	background.Go(func(ctx context.Context) { runScheduleDispatcher(ctx, schedules, cons, gw, coordinator) })
 
 	if addr := cfg.Gateway.DebugAddr; addr != "" && channel != nil {
 		go func() {
@@ -1130,12 +1296,13 @@ func serve(args []string) (runErr error) {
 		<-ctx.Done()
 		return nil
 	}
-	go func() {
+	background.Go(func(ctx context.Context) {
 		onboardCtx, cancel := context.WithTimeout(ctx, time.Duration(cfg.Gateway.PromptTimeout))
 		defer cancel()
 		if err := onboard.Start(onboardCtx, onboard.Request{
 			Owner:   cfg.Feishu.OwnerOpenID,
 			Home:    cfg.Gateway.HomePath,
+			Reader:  profile.Home,
 			Store:   store,
 			Catalog: catalogText,
 			Handle: func(ctx context.Context, req onboard.TurnRequest) (onboard.TurnResult, error) {
@@ -1161,7 +1328,7 @@ func serve(args []string) (runErr error) {
 		}); err != nil {
 			log.Printf("steve: onboard: %v", err)
 		}
-	}()
+	})
 
 	log.Printf("steve: starting Feishu long connection")
 	if err := channel.Start(ctx); err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
@@ -1174,9 +1341,19 @@ func serve(args []string) (runErr error) {
 }
 
 func load(path string) (*config.Config, *agent.Catalog, *harness.Manager, *skills.Live, error) {
+	return loadConfigured(path, nil)
+}
+
+func loadConfigured(path string, configure func(*config.Config) error) (*config.Config, *agent.Catalog, *harness.Manager, *skills.Live, error) {
 	cfg, err := config.Load(path)
 	if err != nil {
 		return nil, nil, nil, nil, err
+	}
+	persistedHubID := cfg.Gateway.HubID
+	if configure != nil {
+		if err := configure(cfg); err != nil {
+			return nil, nil, nil, nil, err
+		}
 	}
 	if err := cfg.ValidateChannels(); err != nil {
 		return nil, nil, nil, nil, err
@@ -1186,19 +1363,25 @@ func load(path string) (*config.Config, *agent.Catalog, *harness.Manager, *skill
 		return nil, nil, nil, nil, err
 	}
 	stateDir := filepath.Dir(cfg.Gateway.StatePath)
-	identity, err := hubid.Resolve(stateDir, cfg.Gateway.HubID)
+	identity, err := hubid.Resolve(stateDir, persistedHubID)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	cfg.Gateway.HubID = identity
-	if err := runtime.Prepare(stateDir); err != nil {
+	if configure == nil || cfg.Gateway.HubID == "" {
+		cfg.Gateway.HubID = identity
+	}
+	selectedRuntimes := make([]string, 0, len(cfg.Harnesses))
+	for name := range cfg.Harnesses {
+		selectedRuntimes = append(selectedRuntimes, name)
+	}
+	if err := runtime.PrepareSelected(stateDir, selectedRuntimes); err != nil {
 		return nil, nil, nil, nil, err
 	}
 	skillMap, err := skills.Setup(stateDir)
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
-	live := &skills.Live{Map: skillMap, Dests: runtime.SkillDests(stateDir)}
+	live := &skills.Live{Map: skillMap, Dests: runtime.SelectedSkillDests(stateDir, selectedRuntimes)}
 	if err := live.Apply(); err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -1320,7 +1503,9 @@ var (
 // hubAdvert describes the hub's own machine the way a node's advert
 // describes a node: the same harness check against this PATH, the same
 // identity, so the fleet has one shape for every machine.
-func hubAdvert(cfg *config.Config) nodewire.Advert {
+func hubAdvert(cfg *config.Config) nodewire.Advert { return observedHubAdvert(cfg, nil) }
+
+func observedHubAdvert(cfg *config.Config, observation *localObservation) nodewire.Advert {
 	configMu.RLock()
 	defer configMu.RUnlock()
 	specs := make(map[string]node.HarnessSpec, len(cfg.Harnesses))
@@ -1332,8 +1517,14 @@ func hubAdvert(cfg *config.Config) nodewire.Advert {
 	for id, m := range cfg.MCPServers {
 		mcp[id] = node.MCPSpec{Type: m.Type, Command: m.Command, Args: m.Args, URL: m.URL}
 	}
-	entries, known := hubSkills.entries()
-	adv.Snapshot = node.Snapshot(nodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: hubLaunch.Lookup, Skills: entries, SkillsKnown: known})
+	var shipper *skillShipper
+	var launch func(string) (node.LaunchResult, bool)
+	if observation != nil {
+		shipper = observation.skills.Load()
+		launch = observation.launch.Lookup
+	}
+	entries, known := shipper.entries()
+	adv.Snapshot = node.Snapshot(nodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: launch, Skills: entries, SkillsKnown: known})
 	adv.Features = nodewire.Features()
 	adv.OwnSkills = node.OwnSkills(5 * time.Minute)
 	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
@@ -1426,10 +1617,6 @@ func selectorsOf(options []steveview.Option) []models.Selector {
 	return out
 }
 
-// hubSkills ships the enabled skills to every node. Nil until run wires it;
-// doctor then reports the hub's skills as unknown rather than none.
-var hubSkills *skillShipper
-
 // skillShipper keeps every node's harness homes holding the same skills
 // the hub enabled. The bundle is packed from the live map each time it is
 // needed — skills are small, and a stale bundle would ship stale skills.
@@ -1518,24 +1705,13 @@ func (s *skillShipper) shipAll(ctx context.Context) {
 	}
 }
 
-// hubLaunch checks that the hub machine's own binaries start, the way a
-// node checks its own. startHubLaunch runs it for the life of the process.
-var hubLaunch = node.NewLaunchProbe()
-
-func startHubLaunch(ctx context.Context, cfg *config.Config) {
-	go hubLaunch.Run(ctx, func() []string {
-		configMu.RLock()
-		defer configMu.RUnlock()
-		out := make([]string, 0, len(cfg.Harnesses)+len(cfg.Gateway.Tools))
-		for _, h := range cfg.Harnesses {
-			out = append(out, h.Command)
-		}
-		return append(out, cfg.Gateway.Tools...)
-	})
-}
-
 // nodeName labels which machine ran a turn: the hub's own node name.
+var localNodeIdentity atomic.Value
+
 func nodeName() string {
+	if id, ok := localNodeIdentity.Load().(string); ok && id != "" {
+		return id
+	}
 	if name := strings.TrimSpace(os.Getenv("STEVE_NODE")); name != "" {
 		return name
 	}
@@ -1569,6 +1745,26 @@ func (a assembledCaps) Assemble(candidate roster.Candidate) (string, []acp.MCPSe
 // the plan, so a plan cannot spend more than the work it belongs to was
 // allowed — the same budget a chat turn is held to.
 type taskBudget struct{ tasks *task.Store }
+
+func (b taskBudget) ReserveAttempt(record attempt.Record) (int, time.Time, error) {
+	if record.Execution == nil {
+		return 0, time.Time{}, errors.New("budget reservation needs the original execution token")
+	}
+	tracked, err := b.tasks.ReserveAttempt(*record.Execution, record.ID, record.TurnID, record.Agent, record.Node, record.StartedAt)
+	if err != nil {
+		return 0, time.Time{}, err
+	}
+	left := max(0, tracked.Budget.MaxTurns-tracked.Budget.Turns)
+	var deadline time.Time
+	if tracked.Budget.MaxElapsed > 0 {
+		deadline = time.Now().Add(tracked.Budget.MaxElapsed - tracked.Budget.Elapsed)
+	}
+	return left, deadline, nil
+}
+
+func (b taskBudget) SettleAttempt(record attempt.Record, outcome task.Outcome) error {
+	return b.tasks.SettleAttempt(record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome, stoppedAccounting(record))
+}
 
 func (b taskBudget) Reserve(taskID string) (int, time.Time, error) {
 	tracked, err := b.tasks.ReserveTurn(taskID)

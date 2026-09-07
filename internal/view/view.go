@@ -183,19 +183,19 @@ type Turn struct {
 	UpdatedAt time.Time
 }
 
-// Question is the agent asking the user to choose. Agents ask through ACP's
-// elicitation, which permits arbitrary JSON-Schema forms; this is the subset
-// Steve can actually put in front of a person as a card, and anything outside
-// it is declined rather than half-rendered.
+// Question is the agent asking the user for a choice or a written answer.
+// It represents one supported ACP form; renderers that cannot collect its
+// answer must decline rather than display an unanswerable question.
 type Question struct {
-	RequestID  string
-	SessionID  string
-	Generation uint64
-	Kind       string
-	Required   bool
-	Message    string
-	Title      string
-	Choices    []Choice
+	RequestID     string
+	SessionID     string
+	Generation    uint64
+	Kind          string
+	Required      bool
+	Message       string
+	Title         string
+	Choices       []Choice
+	AllowFreeText bool
 }
 
 type Choice struct {
@@ -215,11 +215,12 @@ type Option struct {
 	Choices  []Choice
 }
 
-// Answer carries the chosen Choice.Value. An empty Value means the user
-// declined or never answered.
+// Answer carries either a Choice.Value or the user's own Text. Both empty
+// means the user declined or never answered; a decision never supplies text.
 type Answer struct {
 	Value    string
+	Text     string
 	Decision string
 }
 
-func (a Answer) Chosen() bool { return a.Value != "" }
+func (a Answer) Chosen() bool { return a.Value != "" || a.Text != "" }

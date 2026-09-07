@@ -12,7 +12,7 @@ func (s *Service) Shutdown(ctx context.Context) error {
 		s.drained = make(chan struct{})
 		for _, list := range s.exchanges {
 			for _, e := range list {
-				if e.State == "running" && e.cancel != nil {
+				if e.cancel != nil {
 					e.cancel()
 				}
 			}

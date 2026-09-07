@@ -534,9 +534,14 @@ func TestSkillsArePushedAndMaterialized(t *testing.T) {
 	if err := registry.PushSkills(t.Context(), "host-8", bundle); err != nil {
 		t.Fatal(err)
 	}
-	for _, dest := range steveruntime.SkillDests(state) {
+	for _, dest := range steveruntime.SelectedSkillDests(state, []string{"codex", "claude-code"}) {
 		if _, err := os.ReadFile(filepath.Join(dest, "deploy", "SKILL.md")); err != nil {
 			t.Errorf("skill not materialized in %s: %v", dest, err)
+		}
+	}
+	for _, unselected := range []string{"grok", "kimi"} {
+		if _, err := os.Stat(filepath.Join(state, "runtimes", unselected)); !os.IsNotExist(err) {
+			t.Errorf("unregistered tool %s runtime was created: %v", unselected, err)
 		}
 	}
 	after, err := registry.Refresh(t.Context(), "host-8")
@@ -926,11 +931,11 @@ func TestHubConfiguresANode(t *testing.T) {
 	if keys["harness:mock2"] != ability.Available || keys["tool:git"] != ability.Available || keys["tool:no-such-tool-xyz"] != ability.Unavailable || keys["tag:gpu"] != ability.Available {
 		t.Fatalf("offers after configure = %v", keys)
 	}
-	// A bad setting is refused and nothing changes.
+	// An invalid command is refused and leaves the current settings in force.
 	bad := applied
-	bad.Harnesses = map[string]nodewire.HarnessSetting{}
+	bad.Harnesses = map[string]nodewire.HarnessSetting{"invalid": {Command: ""}}
 	if _, err := registry.Configure(t.Context(), "host-13", bad); err == nil {
-		t.Fatal("a node with no AI tool was accepted")
+		t.Fatal("a configured tool without a command was accepted")
 	}
 	again, _ := registry.Settings(t.Context(), "host-13")
 	if len(again.Harnesses) != 2 {

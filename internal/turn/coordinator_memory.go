@@ -5,7 +5,9 @@ import (
 	"errors"
 	"log"
 
+	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/capability"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/memory"
 )
@@ -27,6 +29,22 @@ func (c *Coordinator) memoryService() *memory.Service {
 // one it is bound to, or the default, never Steve's own home (its memory
 // is the global one).
 func (c *Coordinator) memoryProject(ctx context.Context, conversationID string) string {
+	attemptID := ""
+	if scope, ok := agentmcp.ScopeFromContext(ctx); ok {
+		attemptID = scope.AttemptID
+	} else if key, ok := execution.KeyOf(ctx); ok {
+		attemptID = key.AttemptID
+	}
+	if attemptID != "" {
+		if c.attempts == nil {
+			return ""
+		}
+		r, err := c.attempts.Get(ctx, attemptID)
+		if err != nil || r.Project == c.homeProject {
+			return ""
+		}
+		return r.Project
+	}
 	if c.projects == nil {
 		return ""
 	}

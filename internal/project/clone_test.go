@@ -8,9 +8,16 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
-func cloneFixture(t *testing.T) (*Store, Project, CloneOperation) {
+func cloneFixture(t *testing.T) (*Store, Project, CloneOperation, func(time.Duration)) {
 	t.Helper()
-	s := openStore(t)
+	now := time.Date(2026, 9, 7, 0, 0, 0, 0, time.UTC)
+	book, err := ledger.Open(t.TempDir(), ledger.Options{Now: func() time.Time { return now }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { book.Close() })
+	s := Open(book)
+	s.now = func() time.Time { return now }
 	c := Copy{Node: "remote", Path: "/clone", Origin: OriginCloned, Source: "source", State: CopyProvisioning}
 	p := Project{ID: "p", Home: Home{Path: "/p"}, Copies: map[string]Copy{"remote": c}}
 	if err := s.Reconcile(t.Context(), []Project{p}, "one"); err != nil {
@@ -20,12 +27,12 @@ func cloneFixture(t *testing.T) (*Store, Project, CloneOperation) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return s, p, op
+	return s, p, op, func(delta time.Duration) { now = now.Add(delta) }
 }
 
 func TestCloneIsolationOutlivesLeaseAndRequiresStopEvidence(t *testing.T) {
-	s, p, op := cloneFixture(t)
-	time.Sleep(50 * time.Millisecond)
+	s, p, op, advance := cloneFixture(t)
+	advance(50 * time.Millisecond)
 	p.Copies = nil
 	for _, desired := range [][]Project{{}, {p}, {{ID: "other", Home: Home{Node: "remote", Path: "/clone"}}}} {
 		if err := s.ValidateDeclaration(t.Context(), desired); !errors.Is(err, ErrCloneIsolated) {
@@ -54,7 +61,7 @@ func TestCloneIsolationOutlivesLeaseAndRequiresStopEvidence(t *testing.T) {
 }
 
 func TestUnknownCloneAndFailedCleanupNeverAutomaticallyReplay(t *testing.T) {
-	s, p, op := cloneFixture(t)
+	s, p, op, advance := cloneFixture(t)
 	if err := s.FinishClone(t.Context(), op, false, "remote connection closed without a terminal reply", errors.New("transport lost")); err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +69,7 @@ func TestUnknownCloneAndFailedCleanupNeverAutomaticallyReplay(t *testing.T) {
 	if err != nil || len(active) != 1 || active[0].State != "unconfirmed" || active[0].Evidence == "" {
 		t.Fatalf("uncertainty not durable: %+v %v", active, err)
 	}
-	time.Sleep(50 * time.Millisecond)
+	advance(50 * time.Millisecond)
 	if _, err := s.BeginClone(t.Context(), p.ID, p.Copies["remote"], "", "retry", time.Second); err == nil {
 		t.Fatal("unconfirmed clone was replayed")
 	}
@@ -72,7 +79,7 @@ func TestUnknownCloneAndFailedCleanupNeverAutomaticallyReplay(t *testing.T) {
 }
 
 func TestCloneCompletionWriteFailureRetainsIsolation(t *testing.T) {
-	s, p, op := cloneFixture(t)
+	s, p, op, advance := cloneFixture(t)
 	if err := s.l.Update(t.Context(), func(tx *ledger.Tx) error {
 		_, err := tx.Exec(`CREATE TRIGGER clone_finish_failure BEFORE UPDATE ON operations WHEN NEW.kind='workspace-clone' BEGIN SELECT RAISE(ABORT,'completion store failed'); END`)
 		return err
@@ -82,7 +89,7 @@ func TestCloneCompletionWriteFailureRetainsIsolation(t *testing.T) {
 	if err := s.FinishClone(t.Context(), op, true, "synchronous local process exited", errors.New("clone failed")); err == nil {
 		t.Fatal("failed cleanup acknowledged")
 	}
-	time.Sleep(50 * time.Millisecond)
+	advance(50 * time.Millisecond)
 	p.Copies = nil
 	if err := s.Reconcile(t.Context(), []Project{p}, "after"); !errors.Is(err, ErrCloneIsolated) {
 		t.Fatalf("failed cleanup lost ownership: %v", err)
@@ -90,8 +97,8 @@ func TestCloneCompletionWriteFailureRetainsIsolation(t *testing.T) {
 }
 
 func TestCloneLeaseLossCannotClearPhysicalIsolation(t *testing.T) {
-	s, p, op := cloneFixture(t)
-	time.Sleep(50 * time.Millisecond)
+	s, p, op, advance := cloneFixture(t)
+	advance(50 * time.Millisecond)
 	cause := s.RenewClone(t.Context(), &op, time.Second)
 	if !errors.Is(cause, ledger.ErrStale) {
 		t.Fatalf("expired clone ownership unexpectedly renewed: %v", cause)

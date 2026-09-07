@@ -107,7 +107,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	conversation = conversationID(conversation)
 	input, prompt, quotes, hash := submission(input, prompt, quotes)
 	s.mu.Lock()
-	if s.closing || s.maintenance {
+	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
 		s.mu.Unlock()
 		return nil, Exchange{}, consoleapi.ErrConsoleClosing
 	}
@@ -181,7 +181,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closing || s.maintenance {
+	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
 		return nil, Exchange{}, consoleapi.ErrConsoleClosing
 	}
 	if other, err := s.submittedLocked(conversation, key, hash); other != nil || err != nil {
@@ -195,7 +195,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject,
 			Refs: copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
 			Quotes: append([]QuoteRef(nil), quotes...), State: "queued", EnqueuedAt: time.Now().UTC()},
-		PayloadHash: hash, ctx: context.WithoutCancel(ctx), done: make(chan struct{}),
+		PayloadHash: hash, ctx: s.exchangeContext(ctx), done: make(chan struct{}),
 	}
 	if !strings.HasPrefix(key, "client:") {
 		e.PayloadHash = ""
@@ -344,7 +344,7 @@ func (s *Service) Steer(_ context.Context, id string) (Exchange, error) {
 // startLocked reserves the conversation before launching a goroutine. Even
 // concurrent submissions cannot both observe an idle queue and start it.
 func (s *Service) startLocked(e *queuedExchange) error {
-	if s.closing || s.maintenance {
+	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
 		return consoleapi.ErrConsoleClosing
 	}
 	conversation := e.Conversation
@@ -377,13 +377,16 @@ func (s *Service) startLocked(e *queuedExchange) error {
 		defer s.workers.Done()
 		defer cancel()
 		reply, err := s.runExchange(ctx, exchange)
+		if s.continueDetached(e, err) {
+			return
+		}
 		s.finish(e, reply, err)
 	}()
 	return nil
 }
 
 func (s *Service) startNextLocked(conversation string) error {
-	if s.closing || s.maintenance {
+	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
 		return nil
 	}
 	if s.running[conversation] != 0 {
@@ -399,6 +402,11 @@ func (s *Service) startNextLocked(conversation string) error {
 
 func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	s.mu.Lock()
+	if s.recoveryStoppedLocked() {
+		s.detachRecoveryLocked(e, context.Canceled)
+		s.mu.Unlock()
+		return
+	}
 	var interrupted []consoleapi.PendingQuestion
 	for id, q := range s.questions {
 		if q.ExchangeID == e.ID && q.State == "pending" {
@@ -435,6 +443,11 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	// Keep the reservation until the terminal state is durable. Retrying a
 	// document write must never invoke the handler a second time.
 	for s.save() != nil {
+		if s.recoveryStoppedLocked() {
+			s.detachRecoveryLocked(e, context.Canceled)
+			s.mu.Unlock()
+			return
+		}
 		s.mu.Unlock()
 		time.Sleep(time.Second)
 		s.mu.Lock()
@@ -493,7 +506,12 @@ func (s *Service) publishQueue(conversation string) {
 func (s *Service) restoreQueueLocked() error {
 	for conversation, list := range s.exchanges {
 		for _, e := range list {
-			e.ctx, e.done = context.Background(), make(chan struct{})
+			e.ctx, e.done = s.exchangeContext(context.Background()), make(chan struct{})
+			if s.recoveryLifetime != nil && (e.State == "running" || e.State == "recovering" || e.State == "awaiting-user") {
+				e.State = "recovering"
+				s.running[conversation]++
+				continue
+			}
 			if e.State == "running" {
 				err := errors.New("console restarted before this exchange completed")
 				r := s.recordLocked(consoleapi.Reply{At: time.Now().UTC(), Conversation: conversation, ExchangeID: e.ID, Kind: "reply", Text: err.Error(), Error: err.Error()})

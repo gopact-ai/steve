@@ -1,11 +1,6 @@
-// Package nodewire is the protocol between the Steve hub and a steve-node.
-//
-// It carries whole ACP sessions rather than a request/response API of its
-// own. Steve advertises only Elicitation as an ACP client capability — no
-// filesystem, no terminal — so every ACP method is a pure message and a
-// session works identically over a socket and over a subprocess's pipes.
-// Inventing an open/prompt/cancel RPC here would lose the reverse requests
-// (permission, elicitation) and duplicate a protocol that already fits.
+// Package nodewire carries authenticated node operations over multiplexed
+// streams. Node-owned sessions keep ACP clients and their reverse callbacks on
+// the execution node; older peers can still transport raw ACP process streams.
 package nodewire
 
 import (

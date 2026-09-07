@@ -52,6 +52,14 @@ func waitForBlockedNodeRemoval(t *testing.T) {
 
 func TestRemoveNodeRechecksAgentPlacementAfterPendingUpdate(t *testing.T) {
 	admin := nodeAdminFixture(t)
+	// Placement now checks the destination's own tool declaration. Keep the
+	// original serialization test against a real authenticated node.
+	server := startAgentAdminNode(t, map[string]node.HarnessSpec{"mock": {Command: "/bin/echo"}})
+	admin.cfg.Nodes["node-test"] = config.Node{Addr: server.Addr(), Token: "test-node-token", Level: "internal"}
+	admin.nodes.Add("node-test", node.Config{Addr: server.Addr(), Token: "test-node-token", Level: "internal"})
+	if err := config.Save(admin.path, admin.cfg); err != nil {
+		t.Fatal(err)
+	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }

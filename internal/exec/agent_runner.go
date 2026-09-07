@@ -9,9 +9,16 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/agentexec"
+	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/roster"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -44,6 +51,9 @@ type AgentRunner struct {
 	// observe sees each step's progress as it streams: what the agent is
 	// thinking and calling, for whoever is watching the plan run.
 	observe func(StepRequest, view.Progress)
+	mu      sync.Mutex
+	ask     permission.AskFunc
+	askUser acphost.AskUserFunc
 }
 
 func NewAgentRunner(sessions Sessions, caps Capabilities, r *roster.Roster) *AgentRunner {
@@ -79,11 +89,14 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 	servers = append(servers, req.MCP...)
 	session, err := a.sessions.OpenSession(ctx, at, "", req.Workspace, servers)
 	if err != nil {
+		if req.OpenFailure != nil {
+			err = req.OpenFailure(err)
+		}
 		return plan.StepResult{}, fmt.Errorf("open session on %s: %w", at, err)
 	}
 	unsettled := false
 	defer func() {
-		if unsettled {
+		if unsettled || strings.HasPrefix(session.ID(), "ns_") {
 			return
 		}
 		// A step's session is finished with; closing it releases the agent
@@ -98,6 +111,16 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 		}
 	}()
 
+	if strings.HasPrefix(session.ID(), "ns_") {
+		if req.RecordSession == nil {
+			return result, errors.Join(harness.ErrStopUnconfirmed, errors.New("step session persistence is unavailable"))
+		}
+		if err := req.RecordSession(session.ID()); err != nil {
+			key, _ := execution.KeyOf(ctx)
+			record := attempt.Record{Spec: attempt.Spec{ID: key.AttemptID, TaskID: req.TaskID, Node: req.Node}, Session: session.ID()}
+			return result, retainedStepDetached(record, err)
+		}
+	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return plan.StepResult{}, ctxErr
 	}
@@ -107,10 +130,27 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 		prompt = instructions + "\n\n" + prompt
 	}
 	var spent stepSpend
-	answer, _, err := session.Prompt(ctx, prompt, spent.wrap(a.progress(req), req.Agent))
+	var answer string
+	a.mu.Lock()
+	ask, askUser := a.ask, a.askUser
+	a.mu.Unlock()
+	if turn, ok := session.(harness.TurnRunner); ok && strings.HasPrefix(session.ID(), "ns_") {
+		answer, _, err = turn.PromptTurn(ctx, prompt, nil, ask, askUser, spent.wrap(a.progress(ctx, req), req.Agent))
+	} else {
+		answer, _, err = session.Prompt(ctx, prompt, spent.wrap(a.progress(ctx, req), req.Agent))
+	}
+	if strings.HasPrefix(session.ID(), "ns_") {
+		if !acphost.PromptSettled(err) || (ctx.Err() != nil && !errors.Is(execution.CheckExecution(ctx), task.ErrExecutionStopped)) {
+			key, _ := execution.KeyOf(ctx)
+			record := attempt.Record{Spec: attempt.Spec{ID: key.AttemptID, TaskID: req.TaskID, Node: req.Node}, Session: session.ID()}
+			err = agentexec.Blocked(record, "observer", "观察原步骤的节点命令", "原步骤的观察连接中断。", "建议恢复节点后接续同一次执行。", retainedStepDetached(record, errors.Join(err, ctx.Err())))
+		}
+	} else {
+		answer = strings.TrimSpace(answer)
+	}
 	unsettled = errors.Is(err, harness.ErrStopUnconfirmed)
 	return plan.StepResult{
-		Answer:   strings.TrimSpace(answer),
+		Answer:   answer,
 		Refs:     ParseRefs(answer),
 		Findings: parseFindings(answer),
 		Usage:    spent.usage(),
@@ -218,9 +258,52 @@ const ReportingContract = `
 // SetObserver installs where step progress goes; nil discards it.
 func (a *AgentRunner) SetObserver(observe func(StepRequest, view.Progress)) { a.observe = observe }
 
-func (a *AgentRunner) progress(req StepRequest) func(view.Progress) {
-	if a.observe == nil {
-		return func(view.Progress) {}
+func (a *AgentRunner) progress(ctx context.Context, req StepRequest) func(view.Progress) {
+	return func(p view.Progress) {
+		agentexec.EmitProgress(ctx, p)
+		if a.observe != nil {
+			a.observe(req, p)
+		}
 	}
-	return func(p view.Progress) { a.observe(req, p) }
+}
+
+func (a *AgentRunner) SetQuestionHandlers(ask permission.AskFunc, askUser acphost.AskUserFunc) {
+	a.mu.Lock()
+	a.ask, a.askUser = ask, askUser
+	a.mu.Unlock()
+}
+func (a *AgentRunner) ResumeStep(ctx context.Context, req StepRequest, record attempt.Record, attached func(nodewire.SessionState) error) (plan.StepResult, error) {
+	manager, ok := a.sessions.(interface {
+		AttachRetainedSession(context.Context, harness.Placement, string, string) (harness.ResumableRunner, error)
+	})
+	if !ok {
+		return plan.StepResult{}, errors.New("retained step session interface unavailable")
+	}
+	session, err := manager.AttachRetainedSession(ctx, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Session, record.Workspace.Path)
+	if err != nil {
+		return plan.StepResult{}, err
+	}
+	inspector, ok := session.(harness.RetainedSessionInspector)
+	if !ok {
+		return plan.StepResult{}, errors.New("retained step evidence unavailable")
+	}
+	state, err := inspector.InspectRetained(ctx)
+	if err != nil {
+		return plan.StepResult{}, err
+	}
+	if err := attached(state); err != nil {
+		return plan.StepResult{}, err
+	}
+	if record.State != attempt.Running {
+		return plan.StepResult{}, nil
+	}
+	a.mu.Lock()
+	ask, askUser := a.ask, a.askUser
+	a.mu.Unlock()
+	var spent stepSpend
+	answer, _, err := session.ResumeTurn(ctx, ask, askUser, spent.wrap(a.progress(ctx, req), record.Agent))
+	return plan.StepResult{Answer: answer, Refs: ParseRefs(answer), Findings: parseFindings(answer), Usage: spent.usage()}, err
+}
+func (a *AgentRunner) CloseRetainedStep(ctx context.Context, record attempt.Record) error {
+	return a.sessions.CloseSession(ctx, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Session)
 }

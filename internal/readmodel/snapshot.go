@@ -29,7 +29,14 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 		snap.Nodes = append(snap.Nodes, hubNode(snap.Hub))
 	}
 	if m.src.Nodes != nil {
-		snap.Nodes = append(snap.Nodes, nodes(m.src.Nodes.Statuses())...)
+		for _, worker := range nodes(m.src.Nodes.Statuses()) {
+			if len(snap.Nodes) > 0 && worker.Name == snap.Hub.Node {
+				worker.Role = RoleHub
+				snap.Nodes[0] = worker
+			} else {
+				snap.Nodes = append(snap.Nodes, worker)
+			}
+		}
 	}
 	for i := range snap.Nodes {
 		m.observedModels(&snap.Nodes[i])

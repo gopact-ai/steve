@@ -2,6 +2,7 @@ package turn
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/i18n"
@@ -45,105 +47,138 @@ func (c *Coordinator) SetSupervisor(s Supervisor, plans *plan.Store, fleet *rost
 // machine does what: they state the goal, and placement is decided against
 // the live roster. What they get back is the tree, so the answer is
 // inspectable rather than a paragraph claiming success.
-func (c *Coordinator) planCmd(ctx context.Context, req Request, rest string) Result {
+func (c *Coordinator) planCmd(ctx context.Context, req Request, rest string) (Result, error) {
+	ctx = agentexec.WithProgress(ctx, req.OnProgress)
 	title := c.text.T(i18n.CardPlan)
 	goal := strings.TrimSpace(rest)
 	if c.supervisor == nil || c.plans == nil {
-		return Result{Title: title, Text: c.text.T(i18n.PlanDisabled)}
+		return Result{Title: title, Text: c.text.T(i18n.PlanDisabled)}, nil
 	}
 	if goal == "" {
-		return Result{Title: title, Text: c.text.T(i18n.PlanUsage, protocol.CommandPlan)}
+		return Result{Title: title, Text: c.text.T(i18n.PlanUsage, protocol.CommandPlan)}, nil
 	}
-
 	binding, err := c.bindingFor(ctx, req)
 	if err != nil {
 		var user UserError
 		if errors.As(err, &user) {
-			return Result{Title: title, Text: user.Text}
+			return Result{Title: title, Text: user.Text}, nil
 		}
-		return Result{Title: title, Text: c.text.T(i18n.PlanFailed, err)}
+		return Result{Title: title, Text: c.text.T(i18n.PlanFailed, err)}, nil
 	}
-	tracked, err := c.openPlanTask(req, goal, binding.ProjectID)
+	tracked, err := c.openPreparedPlanTask(ctx, req, goal, binding.ProjectID)
 	if err != nil {
-		return Result{Title: title, Text: err.Error()}
+		return Result{Title: title, Text: err.Error()}, nil
 	}
 	if c.executions != nil {
 		scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "plan/" + tracked.ID})
 		if err != nil {
-			return Result{Title: title, Text: err.Error()}
+			return Result{Title: title, Text: err.Error()}, nil
 		}
 		defer scope.Finish(nil)
 		ctx = scope.Context()
 	}
-	// A plan runs many steps across machines, so it gets more room than a
-	// single turn — but not unbounded room: the chat is waiting on it.
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
-
 	var candidates []roster.Candidate
 	if c.fleet != nil {
 		candidates = c.fleet.All(ctx)
 	}
-	proposed, err := c.supervisor.Plan(ctx, planner.Request{
-		Goal: goal, TaskID: tracked.ID, ProjectID: tracked.ProjectID, Roster: candidates,
-		TurnsLeft: tracked.Budget.MaxTurns - tracked.Budget.Turns,
-	})
+	var proposed plan.Plan
+	if tracked.PreparedPlan != nil {
+		proposed, err = preparedTaskPlan(tracked)
+	} else {
+		proposed, err = c.supervisor.Plan(ctx, planner.Request{Goal: goal, TaskID: tracked.ID, ProjectID: tracked.ProjectID, Roster: candidates, TurnsLeft: tracked.Budget.MaxTurns - tracked.Budget.Turns})
+	}
 	if err != nil {
-		return Result{Title: title, Text: c.text.T(i18n.PlanFailed, err)}
-	}
-	// The plan is about the task's project, whatever the planner said, and
-	// every step starts from where the project is right now.
-	proposed.ProjectID = tracked.ProjectID
-	if c.artifacts != nil {
-		if p, ok, perr := c.projects.Get(ctx, tracked.ProjectID); perr == nil && ok {
-			base, _, serr := c.artifacts.SnapshotCanonical(ctx, p, c.artifacts.CanonicalOf(ctx, p.ID), "plan", "base of plan for task #"+tracked.ID)
-			if serr != nil {
-				return Result{Title: title, Text: c.text.T(i18n.PlanFailed, serr)}
-			}
-			proposed.Base = base.ID
+		if blocked := planRecoveryError(err); blocked != nil {
+			return Result{Title: title}, blocked
 		}
+		return Result{Title: title, Text: c.text.T(i18n.PlanFailed, err)}, nil
 	}
+	// The supervisor records its run before taking the base snapshot. This
+	// leaves a recoverable owner even if snapshotting or startup is interrupted.
+	proposed.ProjectID, proposed.Execution = tracked.ProjectID, execution.Token(ctx)
 	stored, err := c.plans.Create(proposed)
 	if err != nil {
-		return Result{Title: title, Text: c.text.T(i18n.PlanFailed, err)}
+		return Result{Title: title}, retainedBlocked("plan-store", "保存已生成的计划", "规划结果尚未保存到任务。", err.Error(), "建议恢复存储后重新核对已提交的规划结果。", err)
 	}
-
 	outcome, runErr := c.supervisor.Execute(ctx, stored)
 	if runErr == nil {
 		runErr = ctx.Err()
 	}
-	final, _ := c.plans.Latest(stored.ID)
+	return c.planExecutionResult(ctx, stored.ID, outcome, runErr)
+}
+
+func (c *Coordinator) planExecutionResult(ctx context.Context, planID string, outcome exec.Outcome, runErr error) (Result, error) {
+	title := c.text.T(i18n.CardPlan)
+	if blocked := planRecoveryError(runErr); blocked != nil {
+		return Result{Title: title}, blocked
+	}
 	if runErr != nil {
-		// A failed plan is a result, not an absence of one: the tree shows
-		// how far it got and which step stopped it.
-		return Result{
-			Title: title,
-			Text: c.text.T(i18n.PlanStopped, stored.ID, runErr) + "\n\n" +
-				c.planTree(final, outcome),
+		runs, lookupErr := c.supervisor.OpenRuns(ctx)
+		if lookupErr != nil {
+			return Result{Title: title}, retainedBlocked("plan-state", "读取计划的执行状态", "暂时无法确认计划是否已经完成。", lookupErr.Error(), "建议恢复存储后重新检查原计划。", errors.Join(runErr, lookupErr))
+		}
+		for _, run := range runs {
+			if run.PlanID == planID {
+				return Result{Title: title}, retainedBlocked("plan-state", "读取原计划的持久执行阶段", "计划尚未完整完成。", runErr.Error(), "建议恢复执行条件后重新检查，保留已完成步骤。", runErr)
+			}
 		}
 	}
-	return Result{
-		Title: title,
-		Text:  c.text.T(i18n.PlanDone, stored.ID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + landingSummary(outcome),
+	final, _ := c.plans.Latest(planID)
+	if runErr != nil {
+		return Result{Title: title, Text: c.text.T(i18n.PlanStopped, planID, runErr) + "\n\n" + c.planTree(final, outcome)}, nil
 	}
+	return Result{Title: title, Text: c.text.T(i18n.PlanDone, planID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + landingSummary(outcome)}, nil
 }
 
 // openPlanTask gives the plan a task so its budget, anchor and history are
 // the same machinery every other kind of work uses.
 func (c *Coordinator) openPlanTask(req Request, goal, projectID string) (task.Task, error) {
+	return c.openPlanTaskWithPrepared(req, goal, projectID, nil)
+}
+
+func (c *Coordinator) openPreparedPlanTask(ctx context.Context, req Request, goal, projectID string) (task.Task, error) {
+	if c.tasks == nil {
+		return task.Task{}, fmt.Errorf("%s", c.text.T(i18n.PlanDisabled))
+	}
+	var prepared *task.PreparedPlan
+	if pure, ok := c.supervisor.(interface {
+		PrepareRulePlan(context.Context, string, string) (plan.Plan, bool, error)
+	}); ok {
+		built, available, err := pure.PrepareRulePlan(ctx, goal, projectID)
+		if err != nil {
+			return task.Task{}, err
+		}
+		if available {
+			if built.By != "rule" || built.ID != "" || built.TaskID != "" || built.Execution != nil || built.Goal != goal || built.ProjectID != projectID {
+				return task.Task{}, errors.New("pure planning result has inconsistent ownership")
+			}
+			raw, err := json.Marshal(built)
+			if err != nil {
+				return task.Task{}, err
+			}
+			prepared = &task.PreparedPlan{Snapshot: raw}
+		}
+	}
+	return c.openPlanTaskWithPrepared(req, goal, projectID, prepared)
+}
+
+func (c *Coordinator) openPlanTaskWithPrepared(req Request, goal, projectID string, prepared *task.PreparedPlan) (task.Task, error) {
 	if c.tasks == nil {
 		return task.Task{}, fmt.Errorf("%s", c.text.T(i18n.PlanDisabled))
 	}
 	created, err := c.tasks.Create(task.Task{
 		Goal: goal, Requester: req.SenderOpenID, Channel: req.ConversationID,
 		Node: c.node, Origin: "plan", ProjectID: projectID,
+		PreparedPlan: prepared,
 	})
 	if err != nil {
 		return task.Task{}, fmt.Errorf("%s", c.text.T(i18n.PlanFailed, err))
 	}
 	if req.MessageID != "" {
 		if err := c.tasks.SetAnchor(created.ID, req.ChatID, req.MessageID, string(req.ChatType), req.CardID); err != nil {
-			log.Printf("turn: anchor plan task %s: %v", created.ID, err)
+			return task.Task{}, fmt.Errorf("persist plan task anchor: %w", err)
 		}
 	}
 	return created, nil
@@ -320,6 +355,9 @@ func (c *Coordinator) ResumePlans(ctx context.Context) {
 	}
 	for _, rec := range open {
 		tracked, ok := c.tasks.Get(rec.TaskID)
+		if ok && c.planRecoveryOwner != nil && c.planRecoveryOwner(tracked) {
+			continue
+		}
 		if !ok || tracked.State == task.StatePaused || tracked.State == task.StateCancelled {
 			log.Printf("turn: plan %s run not resumed: task #%s is %s", rec.PlanID, rec.TaskID, tracked.State)
 			continue

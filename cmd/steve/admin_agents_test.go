@@ -13,6 +13,28 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 )
 
+func TestFirstAgentRegistrationBecomesTheDefault(t *testing.T) {
+	admin := agentAdminFixture(t)
+	admin.cfg.Agents = nil
+	catalog, err := admin.cfg.AgentCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	admin.catalog.Publish(catalog)
+	if err := admin.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "first", Harness: "mock"}); err != nil {
+		t.Fatal(err)
+	}
+	if !admin.cfg.Agents["first"].Default || admin.catalog.Default().ID != "first" {
+		t.Fatal("first registered Agent is not the default")
+	}
+	if err := admin.AddAgent(t.Context(), consoleapi.AddAgentRequest{ID: "second", Harness: "mock"}); err != nil {
+		t.Fatal(err)
+	}
+	if admin.cfg.Agents["second"].Default || admin.catalog.Default().ID != "first" {
+		t.Fatal("later registration changed the default")
+	}
+}
+
 func agentAdminFixture(t *testing.T) *fleetAdmin {
 	t.Helper()
 	cfg := &config.Config{

@@ -49,18 +49,18 @@ func (d *Document) Load() ([]byte, bool, error) {
 }
 
 func (d *Document) Save(raw []byte) error {
-	_, err := d.l.db.Exec(`INSERT INTO bindings(kind, id, data, updated_at) VALUES (?, ?, ?, ?)
+	_, err := d.l.execWrite(context.Background(), `INSERT INTO bindings(kind, id, data, updated_at) VALUES (?, ?, ?, ?)
 		ON CONFLICT(kind, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
 		documentKind, d.kind, string(raw), d.l.now().UTC().Format(rfc3339nano))
 	return err
 }
 
 func (d *Document) Check() error {
-	tx, err := d.l.db.BeginTx(context.Background(), nil)
+	tx, err := d.l.beginWrite(context.Background())
 	if err != nil {
 		return fmt.Errorf("ledger not writable: %w", err)
 	}
-	if _, err := tx.Exec(`INSERT INTO meta(key, value) VALUES ('check', '1') ON CONFLICT(key) DO UPDATE SET value = '1'`); err != nil {
+	if _, err := tx.ExecContext(context.Background(), `UPDATE bindings SET data = data WHERE 0`); err != nil {
 		tx.Rollback()
 		return fmt.Errorf("ledger not writable: %w", err)
 	}

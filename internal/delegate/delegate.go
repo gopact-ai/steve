@@ -36,6 +36,7 @@ import (
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
@@ -94,22 +95,29 @@ type Service struct {
 	// deliver carries a finished child's result into its parent's
 	// conversation; deliverMu serialises deliveries per process so a
 	// turn ending and a child ending at once send one message, not two.
-	deliver   func(context.Context, Delivery) error
-	deliverMu sync.Mutex
+	spawnGuard func(context.Context, *ledger.Tx) error
+	deliver    func(context.Context, Delivery) error
+	deliverMu  sync.Mutex
 
-	mu      sync.Mutex
-	pending map[string]*child
-	bases   map[string]string
-	spends  map[string]view.Progress
+	mu                 sync.Mutex
+	pending            map[string]*child
+	bases              map[string]string
+	spends             map[string]view.Progress
+	recoveryQuestions  map[string]*recoveryNotice
+	recoveryQuestion   func(context.Context, RecoveryQuestion) (view.Answer, error)
+	retainedPermission func(context.Context, QuestionBinding, permission.Ask) (acp.RequestPermissionOutcome, error)
+	retainedQuestion   func(context.Context, QuestionBinding, view.Question) (view.Answer, error)
 }
 
 // child is a delegation in flight or recently finished.
 type child struct {
+	waiters int
 	scope   *execution.Scope
 	result  agentmcp.DelegateResult
 	err     error
 	started time.Time
 	done    chan struct{}
+	session string
 }
 
 const (
@@ -162,10 +170,14 @@ func New(tasks *task.Store, r *roster.Roster, sessions Sessions, assembler *capa
 // within InlineWait. Placement, budget, depth and cycle refusals come back
 // immediately as errors: those are decided before anything runs.
 func (s *Service) Start(ctx context.Context, conversationID, agentID string, req agentmcp.DelegateRequest) (agentmcp.DelegateResult, error) {
+	return s.start(ctx, conversationID, agentID, req, s.InlineWait)
+}
+
+func (s *Service) start(ctx context.Context, conversationID, agentID string, req agentmcp.DelegateRequest, inlineWait time.Duration) (agentmcp.DelegateResult, error) {
 	requestCtx := ctx
-	parent, ok := s.tasks.Running(conversationID, agentID)
-	if !ok {
-		return agentmcp.DelegateResult{}, fmt.Errorf("%s has no running task in this conversation to delegate from", agentID)
+	parent, accepted, err := s.parentTask(ctx, conversationID, agentID)
+	if err != nil {
+		return agentmcp.DelegateResult{}, err
 	}
 	candidate, err := s.place(ctx, agentID, req)
 	if err != nil {
@@ -180,7 +192,7 @@ func (s *Service) Start(ctx context.Context, conversationID, agentID string, req
 	}
 	attemptID := attempt.NewID()
 	if s.executions != nil {
-		preparation, err := s.executions.Begin(s.executions.Detached(ctx), execution.Key{TaskID: parent.ID, InstanceID: "spawn/" + attemptID})
+		preparation, err := s.executions.BeginAccepted(s.executions.Detached(ctx), execution.Key{TaskID: parent.ID, InstanceID: "spawn/" + attemptID}, accepted)
 		if err != nil {
 			return agentmcp.DelegateResult{}, err
 		}
@@ -196,11 +208,22 @@ func (s *Service) Start(ctx context.Context, conversationID, agentID string, req
 		return agentmcp.DelegateResult{}, err
 	}
 	s.rememberBase(workspace.ID, workspace.Base)
-	spawned, err := s.tasks.Spawn(parent.ID, task.Task{
+	childSpec := task.Task{
 		Goal: goal(req.Goal), Member: candidate.Agent.ID, Node: candidate.Node,
 		Origin: "delegate:" + parent.ID, ProjectID: parent.ProjectID, Workspace: workspace.Path,
 		ChatID: parent.ChatID, AnchorMessage: parent.AnchorMessage, ChatType: parent.ChatType,
-	})
+	}
+	var spawned task.Task
+	if accepted != nil {
+		guard, guardErr := s.fixedGuard(requestCtx)
+		if guardErr != nil {
+			err = guardErr
+		} else {
+			spawned, err = s.tasks.SpawnAuthorized(ctx, *accepted, childSpec, guard)
+		}
+	} else {
+		spawned, err = s.tasks.Spawn(parent.ID, childSpec)
+	}
 	if err != nil {
 		_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
 		return agentmcp.DelegateResult{}, err
@@ -216,7 +239,7 @@ func (s *Service) Start(ctx context.Context, conversationID, agentID string, req
 			return agentmcp.DelegateResult{}, err
 		}
 	}
-	entry := &child{scope: scope, started: time.Now(), done: make(chan struct{})}
+	entry := &child{scope: scope, started: time.Now(), done: make(chan struct{}), waiters: 1}
 	entry.result = agentmcp.DelegateResult{
 		TaskID: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node, State: "running",
 	}
@@ -237,7 +260,7 @@ func (s *Service) Start(ctx context.Context, conversationID, agentID string, req
 	}
 	go s.drive(driveCtx, conversationID, agentID, parent, spawned, candidate, req, entry)
 
-	first, err := s.wait(requestCtx, entry, s.InlineWait)
+	first, err := s.waitRegistered(requestCtx, entry, inlineWait)
 	if err == nil && first.State == "running" && s.deliver != nil {
 		first.Note = "Still running. You need not wait: when it ends, Steve sends its result into this conversation as a new message. End your turn if nothing else is left."
 	}
@@ -248,9 +271,9 @@ func (s *Service) Start(ctx context.Context, conversationID, agentID string, req
 // the caller's own descendants can be awaited: a task id is short, and one
 // agent must not be able to read another's delegations.
 func (s *Service) Await(ctx context.Context, conversationID, agentID string, req agentmcp.AwaitRequest) (agentmcp.DelegateResult, error) {
-	caller, ok := s.tasks.Running(conversationID, agentID)
-	if !ok {
-		return agentmcp.DelegateResult{}, fmt.Errorf("%s has no running task in this conversation", agentID)
+	caller, _, err := s.parentTask(ctx, conversationID, agentID)
+	if err != nil {
+		return agentmcp.DelegateResult{}, err
 	}
 	if !s.descends(req.TaskID, caller.ID) {
 		return agentmcp.DelegateResult{}, fmt.Errorf("task %s is not a delegation of yours", req.TaskID)
@@ -268,7 +291,7 @@ func (s *Service) Await(ctx context.Context, conversationID, agentID string, req
 	if entry == nil {
 		// Not in memory — finished and forgotten, or from before a restart.
 		// The task store still knows how it ended.
-		return s.fromStore(req.TaskID)
+		return s.fromStore(ctx, req.TaskID)
 	}
 	return s.wait(ctx, entry, wait)
 }
@@ -276,7 +299,7 @@ func (s *Service) Await(ctx context.Context, conversationID, agentID string, req
 // Delegate is the synchronous form: start, then wait as long as it takes.
 // The tool never uses it; tests and in-process callers do.
 func (s *Service) Delegate(ctx context.Context, conversationID, agentID string, req agentmcp.DelegateRequest) (agentmcp.DelegateResult, error) {
-	first, err := s.Start(ctx, conversationID, agentID, req)
+	first, err := s.start(ctx, conversationID, agentID, req, -1)
 	if err != nil {
 		return first, err
 	}
@@ -314,17 +337,41 @@ func (s *Service) settle(result agentmcp.DelegateResult) (agentmcp.DelegateResul
 }
 
 func (s *Service) wait(ctx context.Context, entry *child, wait time.Duration) (agentmcp.DelegateResult, error) {
-	timer := time.NewTimer(wait)
-	defer timer.Stop()
+	s.mu.Lock()
+	entry.waiters++
+	s.mu.Unlock()
+	return s.waitRegistered(ctx, entry, wait)
+}
+
+func (s *Service) waitRegistered(ctx context.Context, entry *child, wait time.Duration) (agentmcp.DelegateResult, error) {
+	defer func() {
+		s.mu.Lock()
+		entry.waiters--
+		id, done := entry.result.TaskID, entry.result.State == "done" || entry.result.State == "failed"
+		s.mu.Unlock()
+		if done {
+			if tracked, ok := s.tasks.Get(id); ok {
+				s.flushIfIdle(ctx, tracked.Parent)
+			}
+		}
+	}()
+	var deadline <-chan time.Time
+	if wait >= 0 {
+		timer := time.NewTimer(wait)
+		defer timer.Stop()
+		deadline = timer.C
+	}
 	select {
 	case <-entry.done:
-	case <-timer.C:
+	case <-deadline:
 	case <-ctx.Done():
 		// The caller went away; the child does not. Report what we know.
 	}
 	out := s.snapshot(entry)
 	if ctx.Err() == nil {
-		s.collect(out.TaskID, out)
+		if err := s.collectContext(ctx, out.TaskID, out); err != nil {
+			return agentmcp.DelegateResult{}, err
+		}
 	}
 	return out, nil
 }
@@ -337,21 +384,27 @@ func (s *Service) snapshot(entry *child) agentmcp.DelegateResult {
 	return out
 }
 
-func (s *Service) fromStore(taskID string) (agentmcp.DelegateResult, error) {
+func (s *Service) fromStore(ctx context.Context, taskID string) (agentmcp.DelegateResult, error) {
 	stored, ok := s.tasks.Get(taskID)
-	if ok && stored.Result != nil {
+	if ok && stored.Result != nil && stored.Finished() && (len(stored.Attempts) == 0 || !stored.Attempts[len(stored.Attempts)-1].Open()) {
 		out := agentmcp.DelegateResult{TaskID: stored.ID, Agent: stored.Member, Node: stored.Node, State: "done",
 			Elapsed: stored.UpdatedAt.Sub(stored.CreatedAt).Round(time.Second).String(),
 			Outcome: stored.Result.Outcome, Answer: stored.Result.Answer, Refs: append([]string(nil), stored.Result.Refs...)}
 		if stored.State != task.StateDone {
 			out.State = "failed"
 		}
-		s.collect(taskID, out)
+		if err := s.collectContext(ctx, taskID, out); err != nil {
+			return agentmcp.DelegateResult{}, err
+		}
 		return out, nil
 	}
 	if !ok {
 		return agentmcp.DelegateResult{}, fmt.Errorf("no task %s", taskID)
 	}
+	if stored.Delegated() && stored.Result == nil && stored.State != task.StateCancelled {
+		return agentmcp.DelegateResult{TaskID: stored.ID, Agent: stored.Member, Node: stored.Node, State: "running"}, nil
+	}
+
 	state := "running"
 	switch stored.State {
 	case task.StateDone:
@@ -387,6 +440,43 @@ func (s *Service) drive(ctx context.Context, conversationID, agentID string, par
 			Goal: req.Goal, State: "running", Since: since, Elapsed: time.Since(since)}, p)
 	})
 
+	s.completeChild(ctx, conversationID, parent, spawned, req.Goal, entry, result, runErr, last)
+}
+
+func (s *Service) completeChild(ctx context.Context, conversationID string, parent, spawned task.Task, description string, entry *child, result agentmcp.DelegateResult, runErr error, last view.Progress) {
+	since := entry.started
+
+	var detached *execution.RetainedObserverDetached
+	if errors.As(runErr, &detached) {
+		s.detachChild(spawned, entry, detached)
+		return
+	}
+	s.mu.Lock()
+	managedSession := entry.session
+	s.mu.Unlock()
+	if strings.HasPrefix(managedSession, "ns_") && s.canSettleStopped(ctx, runErr) {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer cancel()
+	}
+	var retainedRecord attempt.Record
+	if strings.HasPrefix(managedSession, "ns_") {
+		var err error
+		retainedRecord, err = s.attempts.Get(ctx, s.attemptOf(spawned.ID))
+		if err == nil && !retainedRecord.State.Terminal() {
+			err = errors.New("delegate result has not been durably settled")
+		}
+		if err == nil {
+			err = s.finishFromRecord(retainedRecord, outcomeOf(runErr))
+		}
+		if err != nil {
+			binding := QuestionBinding{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Attempt: s.attemptOf(spawned.ID), Node: spawned.Node, Agent: spawned.Member, Project: spawned.ProjectID, Session: managedSession}
+			s.reportRecovery(ctx, binding, "task-bookkeeping", "核对已提交的子任务结果和预算", "原执行结果尚未完整写入任务记录。", "预算或任务状态的持久化失败，不能提前宣布完成。", "建议恢复存储后核对同一次执行。")
+			s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: binding.Attempt, NodeID: binding.Node, SessionID: binding.Session, Cause: err})
+			return
+		}
+	}
+
 	if entry.scope != nil {
 		defer func() {
 			var unresolved error
@@ -406,29 +496,44 @@ func (s *Service) drive(ctx context.Context, conversationID, agentID string, par
 		}
 		if _, err := s.advanceExecution(ctx, spawned.ID, task.StateFailed); err != nil {
 			log.Printf("delegate: mark task #%s failed: %v", spawned.ID, err)
+			if strings.HasPrefix(managedSession, "ns_") {
+				s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-state", "保存子任务的已提交执行状态", "任务状态尚未完整保存。", "已有执行结果保持可恢复，不能提前报告任务结束。", "建议恢复存储后核对同一次执行。")
+				s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
+				return
+			}
 		}
-		runErr = fmt.Errorf("delegated task #%s on %s failed: %w", spawned.ID, candidate.Agent.ID, runErr)
+		runErr = fmt.Errorf("delegated task #%s on %s failed: %w", spawned.ID, spawned.Member, runErr)
 	} else {
 		result.State = "done"
 		if _, err := s.advanceExecution(ctx, spawned.ID, task.StateDone); err != nil {
 			log.Printf("delegate: mark task #%s done: %v", spawned.ID, err)
+			if strings.HasPrefix(managedSession, "ns_") {
+				s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-state", "保存子任务的已提交执行状态", "任务状态尚未完整保存。", "已有执行结果保持可恢复，不能提前报告任务结束。", "建议恢复存储后核对同一次执行。")
+				s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
+				return
+			}
 		}
 	}
 	if latest, ok := s.tasks.Get(spawned.ID); ok && (latest.State == task.StatePaused || latest.State == task.StateCancelled) {
 		result.State, result.Outcome = string(latest.State), string(task.OutcomeCancelled)
 	}
-	result.TaskID, result.Agent, result.Node = spawned.ID, candidate.Agent.ID, candidate.Node
+	result.TaskID, result.Agent, result.Node = spawned.ID, spawned.Member, spawned.Node
 
 	if err := s.tasks.SetResult(spawned.ID, task.Result{Outcome: result.Outcome, Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}); err != nil {
 		log.Printf("delegate: record result of task #%s: %v", spawned.ID, err)
+		if strings.HasPrefix(managedSession, "ns_") {
+			s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-result", "保存原执行的完整答复到子任务记录", "答复尚未完整写入任务。", "已提交的执行结果仍保留，不能提前向父任务宣布完成。", "建议恢复存储后重新核对。")
+			s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
+			return
+		}
 	}
 	s.mu.Lock()
 	entry.result, entry.err = result, runErr
 	s.mu.Unlock()
 	close(entry.done)
-	log.Printf("delegate: task #%s %s on %s", spawned.ID, result.State, nodeLabel(candidate.Node))
-	s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node,
-		Goal: req.Goal, State: result.State, Since: since, Elapsed: time.Since(since), Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}, last)
+	log.Printf("delegate: task #%s %s on %s", spawned.ID, result.State, nodeLabel(spawned.Node))
+	s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: spawned.Member, Node: spawned.Node,
+		Goal: description, State: result.State, Since: since, Elapsed: time.Since(since), Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}, last)
 
 	// The parent is told now if no turn of it is running; a running turn
 	// is told when it ends. An awaiter that already read the result in
@@ -476,6 +581,9 @@ func (s *Service) rememberAttempt(childID, attemptID string) {
 		s.attempts_ = map[string]string{}
 	}
 	s.attempts_[childID] = attemptID
+	if entry := s.pending[childID]; entry != nil && entry.scope != nil {
+		entry.scope.SetAttempt(attemptID)
+	}
 }
 
 func (s *Service) report(c Child, p view.Progress) {
@@ -511,7 +619,12 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		}
 		if candidate.Node == "" || endpoint != "" {
 			extras = s.gate.Delegated(conversationID, candidate.Agent.ID, child.ID, delegatedBy, token, endpoint)
-			defer s.gate.Revoke(token)
+			defer func() {
+				var detached *execution.RetainedObserverDetached
+				if !errors.As(runErr, &detached) {
+					s.gate.Revoke(token)
+				}
+			}()
 		}
 	}
 
@@ -557,23 +670,32 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	}
 
 	at := harness.Placement{Node: candidate.Node, Harness: candidate.Harness}
-	if _, err := s.tasks.Begin(child.ID, candidate.Agent.ID, orHub(candidate.Node, s.node), ""); err != nil {
+	accountingTask, err := s.tasks.Begin(child.ID, candidate.Agent.ID, orHub(candidate.Node, s.node), "")
+	if err != nil {
 		return result, err
 	}
 	workspace := project.Workspace{ID: s.worktreeID(child), Project: parent.ProjectID, Node: candidate.Node, Path: child.Workspace, Kind: project.KindWorktree}
 	base := s.baseOf(workspace.ID)
+	attemptID, turnID := strings.TrimPrefix(workspace.ID, "wt-"), "delegate/"+child.ID
+	accountingToken := task.ExecutionToken{TaskID: accountingTask.ID, Epoch: accountingTask.ExecutionEpoch}
+	if original := execution.Token(ctx); original != nil {
+		accountingToken = *original
+	}
+	s.rememberAttempt(child.ID, attemptID)
+	if err := s.tasks.BindAttempt(accountingToken, attemptID, turnID); err != nil {
+		return result, fmt.Errorf("bind delegate accounting: %w", err)
+	}
 	record, err := s.attempts.Open(ctx, attempt.Spec{Execution: execution.Token(ctx),
-		ID: strings.TrimPrefix(workspace.ID, "wt-"), TaskID: child.ID, TurnID: "delegate/" + child.ID, Kind: attempt.KindDelegate,
+		ID: attemptID, TaskID: child.ID, TurnID: turnID, Kind: attempt.KindDelegate,
 		Project: parent.ProjectID, Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID, Slots: candidate.Slots,
 		Region: candidate.Region, CanonicalRegion: s.homeRegion(ctx, parent.ProjectID),
 		Workspace: workspace, Scope: attempt.ScopePathSet, Base: base, By: delegatedBy, Requires: req.Requires,
 	})
 	if err != nil {
-		s.finish(child.ID, task.OutcomeError)
+		accountingErr := s.finish(child.ID, task.OutcomeError)
 		_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
-		return result, fmt.Errorf("lease delegation: %w", err)
+		return result, fmt.Errorf("lease delegation: %w", errors.Join(err, accountingErr))
 	}
-	s.rememberAttempt(child.ID, record.ID)
 	beat, stopBeat := context.WithCancel(ctx)
 	defer stopBeat()
 	lost := s.attempts.Heartbeat(beat, record.ID)
@@ -607,15 +729,40 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		return result, err
 	}
 	if len(bindings) > 0 {
-		defer s.roster.Release(context.WithoutCancel(ctx), candidate.Node, record.ID)
+		defer func() {
+			var detached *execution.RetainedObserverDetached
+			if !errors.As(runErr, &detached) {
+				s.roster.Release(context.WithoutCancel(ctx), candidate.Node, record.ID)
+			}
+		}()
+	}
+	if err := s.attempts.ArmSession(ctx, record.ID, "delegate-opening"); err != nil {
+		accountingErr := s.finish(child.ID, task.OutcomeError)
+		failAttempt(err)
+		return result, errors.Join(err, accountingErr)
 	}
 	session, err := s.sessions.OpenSession(ctx, at, "", child.Workspace, append(caps.MCPServers, roster.ToMCP(bindings)...))
 	if err != nil {
+		if opening := pendingDelegateOpen(record, child, err); opening != nil {
+			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+			persistErr := s.attempts.MarkUnsettled(cleanup, record.ID, "delegate-opening", err, observed)
+			cancel()
+			opening.Cause = errors.Join(err, persistErr)
+			s.reportDelegatePreparation(ctx, parent, child, record)
+			return result, retainedDetached(record, opening)
+		}
 		s.finish(child.ID, task.OutcomeError)
 		failAttempt(err)
 		return result, fmt.Errorf("open session on %s: %w", at, err)
 	}
 	unsettled, sessionClosed := false, false
+	managed := strings.HasPrefix(session.ID(), "ns_")
+	record.Session = session.ID()
+	s.mu.Lock()
+	if entry := s.pending[child.ID]; entry != nil {
+		entry.session = session.ID()
+	}
+	s.mu.Unlock()
 	closeSession := func() error {
 		if sessionClosed {
 			return nil
@@ -635,6 +782,16 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		if unsettled || sessionClosed {
 			return
 		}
+		if managed {
+			current, err := s.attempts.Get(context.WithoutCancel(ctx), record.ID)
+			if err != nil || !current.State.Terminal() {
+				return
+			}
+			if closeErr := closeSession(); closeErr != nil {
+				log.Printf("delegate: settled session cleanup task=%s attempt=%s: %v", child.ID, record.ID, closeErr)
+			}
+			return
+		}
 		if closeErr := closeSession(); closeErr != nil {
 			runErr = errors.Join(runErr, closeErr)
 			if err := s.attempts.MarkUnsettled(context.WithoutCancel(ctx), record.ID, "delegate", runErr, observed); err != nil {
@@ -649,10 +806,17 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	}
 	harness.ApplyPreferences(ctx, session, candidate.Agent.ID, candidate.Agent.Model, candidate.Agent.Options)
 	for _, state := range []attempt.State{attempt.Prepared, attempt.Running} {
-		if _, err := s.attempts.Advance(ctx, record.ID, state, "delegate", func(r *attempt.Record) { r.Admission = &admission }); err != nil {
+		if _, err := s.attempts.Advance(ctx, record.ID, state, "delegate", func(r *attempt.Record) { r.Admission = &admission; r.Session = session.ID() }); err != nil {
 			s.finish(child.ID, task.OutcomeError)
 			failAttempt(err)
 			return result, err
+		}
+	}
+	if managed {
+		if err := s.bindDelegatedExecution(ctx, parent, child, record); err != nil {
+			s.finish(child.ID, task.OutcomeError)
+			failAttempt(err)
+			return result, fmt.Errorf("bind delegated tools: %w", err)
 		}
 	}
 	runCtx, stopRun := context.WithCancel(ctx)
@@ -675,21 +839,51 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		prompt = caps.Instructions + "\n\n" + prompt
 	}
 	var last view.Progress
-	answer, _, err := session.Prompt(ctx, prompt, func(p view.Progress) {
+	observe := func(p view.Progress) {
 		last = p
 		touch()
 		if progress != nil {
 			progress(p)
 		}
-	})
+	}
+	var answer string
+	if turn, ok := session.(harness.TurnRunner); ok && managed {
+		ask, askUser := s.nodeQuestionHandlers(questionBinding(parent, child, record))
+		answer, _, err = turn.PromptTurn(ctx, prompt, nil, ask, askUser, observe)
+	} else {
+		answer, _, err = session.Prompt(ctx, prompt, observe)
+	}
 	promptSettled := acphost.PromptSettled(err)
-	if !errors.Is(err, harness.ErrStopUnconfirmed) {
+	if managed && s.canSettleStopped(ctx, err) {
+		if err == nil {
+			err = harness.ErrTurnCanceled
+		}
+		var finishCleanup context.CancelFunc
+		ctx, finishCleanup = context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		defer finishCleanup()
+	}
+	if managed && (ctx.Err() != nil || errors.Is(err, harness.ErrStopUnconfirmed) || !promptSettled) {
+		unsettled = true
+		s.spent(child.ID, last)
+		observed = attemptUsage(last)
+		cause := errors.Join(err, ctx.Err(), harness.ErrStopUnconfirmed)
+		if ctx.Err() == nil {
+			_ = s.attempts.MarkUnsettled(ctx, record.ID, "delegate-observer", cause, observed)
+		}
+		return result, retainedDetached(record, cause)
+	}
+	if !managed && !errors.Is(err, harness.ErrStopUnconfirmed) {
 		err = errors.Join(err, closeSession())
 	}
 	unsettled = errors.Is(err, harness.ErrStopUnconfirmed)
 	if promptSettled && !unsettled {
 		settledCtx, finishSettle := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		if settleErr := s.attempts.MarkSessionSettled(settledCtx, record.ID, "delegate"); settleErr != nil {
+			if managed {
+				finishSettle()
+				unsettled = true
+				return result, retainedDetached(record, settleErr)
+			}
 			err = errors.Join(err, settleErr)
 		}
 		finishSettle()
@@ -700,14 +894,36 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	s.spent(child.ID, last)
 	observed = attemptUsage(last)
 	if err != nil {
+		if managed {
+			result.Answer = answer
+			if _, saveErr := s.failRetainedResult(ctx, record, result, err, observed); saveErr != nil {
+				return result, retainedDetached(record, saveErr)
+			}
+		} else {
+			failAttempt(err)
+		}
 		s.finish(child.ID, outcomeOf(err))
-		failAttempt(err)
 		return result, err
 	}
+	return s.completeResult(ctx, parent, child, record, answer, observed, stopBeat, failAttempt)
+}
+
+func (s *Service) completeResult(ctx context.Context, parent, child task.Task, record attempt.Record, answer string, observed *attempt.Usage, stopBeat func(), failAttempt func(error)) (result agentmcp.DelegateResult, runErr error) {
+	result = agentmcp.DelegateResult{TaskID: child.ID, Agent: record.Agent, Node: record.Node}
+	workspace, base := record.Workspace, record.Base
+	fail := func(cause error) error {
+		if strings.HasPrefix(record.Session, "ns_") {
+			return retainedDetached(record, cause)
+		}
+		s.finish(child.ID, task.OutcomeError)
+		failAttempt(cause)
+		return cause
+	}
+
 	// What the child said is the result from here on, whatever happens
 	// to its files: every return below carries it.
 	result.Outcome = string(task.OutcomeOK)
-	result.Answer = strings.TrimSpace(answer)
+	result.Answer = answer
 	for _, ref := range exec.ParseRefs(answer) {
 		result.Refs = append(result.Refs, ref.Kind+" "+ref.Value)
 	}
@@ -715,35 +931,41 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	// to land once the parent's turn releases the canonical lock.
 	published, changed, err := s.artifacts.Publish(ctx, workspace, base, record.ID, "delegation #"+child.ID)
 	if err != nil {
-		s.finish(child.ID, task.OutcomeError)
-		failAttempt(err)
-		return result, fmt.Errorf("publish delegation result: %w", err)
+		return result, fail(fmt.Errorf("publish delegation result: %w", err))
 	}
 	for _, to := range []attempt.State{attempt.Snapshotted, attempt.Published, attempt.Durable, attempt.BindReady} {
 		if _, err := s.attempts.Advance(ctx, record.ID, to, "delegate", nil); err != nil {
-			s.finish(child.ID, task.OutcomeError)
-			failAttempt(err)
-			return result, err
+			return result, fail(err)
 		}
 	}
 	name := "steve/" + child.ID + "/result"
 	current, _, err := s.artifacts.Resolve(ctx, name)
 	if err != nil {
-		s.finish(child.ID, task.OutcomeError)
-		failAttempt(err)
+		return result, fail(err)
+	}
+	if changed {
+		result.Refs = append(result.Refs, "artifact "+published.ID)
+	}
+	output, err := json.Marshal(result)
+	if err != nil {
 		return result, err
 	}
-	completion := attempt.Completion{Result: attempt.Result{Artifact: published.ID, Summary: clipRunes(result.Answer, 200), Refs: result.Refs}, Usage: observed,
+	completion := attempt.Completion{Result: attempt.Result{Artifact: published.ID, Summary: clipRunes(result.Answer, 200), Refs: result.Refs, Output: output}, Usage: observed,
 		Binding: &attempt.NameBinding{Name: name, ExpectedVersion: current.Version}}
 	stopBeat()
 	if _, err := s.attempts.Complete(ctx, record.ID, "delegate", completion); err != nil {
+		if strings.HasPrefix(record.Session, "ns_") {
+			return result, retainedDetached(record, err)
+		}
 		err = s.attempts.RejectCompletion(ctx, record.ID, "delegate", completion, err)
 		s.finish(child.ID, task.OutcomeError)
 		return result, fmt.Errorf("complete delegation result: %w", err)
 	}
+	if strings.HasPrefix(record.Session, "ns_") && ctx.Err() != nil {
+		return result, retainedDetached(record, ctx.Err())
+	}
 	_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
 	if changed {
-		result.Refs = append(result.Refs, "artifact "+published.ID)
 		// The parent asked for this and holds the canonical lock right now:
 		// the result lands under its lease, into the directory it is
 		// working in, so the parent sees the files this turn. A conflict
@@ -763,6 +985,9 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 			}
 		}
 		if err := s.artifacts.Defer(ctx, parent.ProjectID, published.ID, "task #"+child.ID, artifact.SourceOf(ctx, record.ID)...); err != nil {
+			if strings.HasPrefix(record.Session, "ns_") {
+				return result, retainedDetached(record, err)
+			}
 			s.finish(child.ID, task.OutcomeError)
 			return result, fmt.Errorf("queue landing: %w", err)
 		}
@@ -864,15 +1089,29 @@ func (s *Service) refusal(ctx context.Context, caller string, requires []string)
 	return out
 }
 
-func (s *Service) finish(id string, outcome task.Outcome) {
+func (s *Service) finish(id string, outcome task.Outcome) error {
+	tracked, ok := s.tasks.Get(id)
+	if !ok || len(tracked.Attempts) == 0 {
+		return fmt.Errorf("task %s has no accepted attempt", id)
+	}
 	s.mu.Lock()
 	spent := s.spends[id]
-	delete(s.spends, id)
 	s.mu.Unlock()
 	tokens := task.FromUsage(spent.Usage.InputTokens, spent.Usage.OutputTokens, spent.Usage.CacheReadTokens, spent.Usage.CacheWriteTokens)
-	if _, err := s.tasks.FinishAs(id, outcome, tokens, 0, spent.Settings.Model); err != nil {
-		log.Printf("delegate: finish task #%s: %v", id, err)
+	if attemptID := s.attemptOf(id); attemptID != "" {
+		for _, row := range tracked.Attempts {
+			if row.ExecutionID == attemptID {
+				if err := s.tasks.SettleAttempt(id, attemptID, row.TurnID, time.Time{}, outcome, task.RecoveryUsage{Tokens: tokens, Model: spent.Settings.Model, Reported: spent.Usage.TokensReported()}); err != nil {
+					return fmt.Errorf("settle delegate task #%s: %w", id, err)
+				}
+				s.mu.Lock()
+				delete(s.spends, id)
+				s.mu.Unlock()
+				return nil
+			}
+		}
 	}
+	return errors.New("delegate execution has no exact task accounting row")
 }
 
 // spent remembers a child's last progress until its task is finished.
@@ -926,7 +1165,7 @@ func outcomeOf(err error) task.Outcome {
 		return task.OutcomeOK
 	case ctxErr(err, context.DeadlineExceeded):
 		return task.OutcomeTimeout
-	case ctxErr(err, context.Canceled):
+	case errors.Is(err, harness.ErrTurnCanceled) || ctxErr(err, context.Canceled):
 		return task.OutcomeCancelled
 	default:
 		return task.OutcomeError
@@ -1080,6 +1319,12 @@ func attemptUsage(p view.Progress) *attempt.Usage {
 }
 
 func (s *Service) advanceExecution(ctx context.Context, id string, to task.State) (task.Task, error) {
+	if tracked, ok := s.tasks.Get(id); ok && tracked.State == to {
+		if token := execution.Token(ctx); token != nil {
+			return tracked, s.tasks.CheckExecution(*token)
+		}
+		return tracked, nil
+	}
 	if token := execution.Token(ctx); token != nil {
 		return s.tasks.AdvanceExecution(*token, to)
 	}

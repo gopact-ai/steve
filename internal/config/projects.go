@@ -68,7 +68,9 @@ func ProjectDeclarations(c *Config) ([]project.Project, string, error) {
 		}
 	}
 	desired := c.ProjectList()
-	if c.Gateway.HomePath != "" {
+	if c.RuntimeHome != nil {
+		desired = append(desired, project.Project{ID: ReservedHomeProject, Level: project.LevelRestricted, Home: project.Home{Node: c.RuntimeHome.Node, Path: c.RuntimeHome.Path}})
+	} else if c.Gateway.HomePath != "" {
 		desired = append(desired, project.Project{ID: ReservedHomeProject, Level: project.LevelRestricted, Home: project.Home{Path: c.Gateway.HomePath}})
 	}
 	raw, err := json.Marshal(struct {

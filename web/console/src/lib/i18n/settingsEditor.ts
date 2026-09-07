@@ -1,5 +1,5 @@
 export const settingsEditorZh = {
-    "settingsEditor.reloadBeforeSaving": "当前配置没有版本信息，请更新 Hub 和节点并重新读取后再保存。",
+    "settingsEditor.reloadBeforeSaving": "当前配置没有版本信息，请更新相关节点的 Steve 并重新读取后再保存。",
     "settingsEditor.loading": "读取中…",
     "settingsEditor.harnesses": "AI 工具",
     "settingsEditor.harnessHint": "每个 AI 工具是一条启动命令；Agent 按名字用它。",
@@ -43,7 +43,7 @@ export const settingsEditorZh = {
 } as const;
 
 export const settingsEditorEn = {
-    "settingsEditor.reloadBeforeSaving": "Reload settings from an updated Hub and node before saving.",
+    "settingsEditor.reloadBeforeSaving": "Update Steve on the relevant nodes and reload settings before saving.",
     "settingsEditor.loading": "Loading…",
     "settingsEditor.harnesses": "AI tools",
     "settingsEditor.harnessHint": "Each AI tool has a launch command. Agents select tools by name.",

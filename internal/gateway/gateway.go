@@ -629,6 +629,10 @@ func (g *Gateway) unack(messageID, reactionID string) {
 // until a human decides, and a silent timeout has to resolve to something
 // rather than hanging the prompt.
 func (g *Gateway) askQuestion(ctx context.Context, ui *turnUI, q view.Question) (view.Answer, error) {
+	if len(q.Choices) == 0 {
+		log.Printf("gateway: question declined: text-only input is unsupported by Feishu cards")
+		return view.Answer{Decision: "decline"}, nil
+	}
 	ui.mu.Lock()
 	cardID := ui.cardID
 	closed := ui.closed || ui.listen || ui.fallback

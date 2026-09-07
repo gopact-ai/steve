@@ -64,6 +64,8 @@ type Request struct {
 	// they typed — a schedule firing, say. It rides onto the task so
 	// unattended work stays recognisable after the fact.
 	Origin string
+	// Relocation is the original input and scoped history from its adapter.
+	Relocation *RelocationContext
 	// ExpectedProject fences an unattended submission to its creation-time project.
 	ExpectedProject string
 	// Queue makes this prompt wait for the running turn instead of
@@ -188,12 +190,13 @@ type coordinatorState struct {
 	disclosures map[string]held
 	// defaultProject binds a fresh conversation; homeProject binds the
 	// owner's DM, where Steve's own home directory is the project.
-	defaultProject string
-	homeProject    string
-	node           string
-	resumer        func(TaskResume)
-	notifier       func(TaskNotice)
-	afterTurn      func(taskID string)
+	defaultProject    string
+	homeProject       string
+	node              string
+	resumer           func(TaskResume)
+	notifier          func(TaskNotice)
+	afterTurn         func(taskID string)
+	planRecoveryOwner func(task.Task) bool
 	// offlineAfter is how long a turn runs before its completion also earns
 	// a plain-text ping; zero keeps Steve quiet.
 	offlineAfter time.Duration
@@ -343,6 +346,7 @@ func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
+	selected = c.recoveryAgent(req.ConversationID, selected, req.Origin)
 	if switchOnly {
 		return Result{AgentID: selected.ID, Text: c.text.T(i18n.Switched, selected.ID)}, nil
 	}
@@ -375,7 +379,7 @@ func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 	case protocol.CommandHistory:
 		return c.historyCmd(req, selected, rest)
 	case protocol.CommandPlan:
-		return c.planCmd(ctx, req, rest), nil
+		return c.planCmd(ctx, req, rest)
 	case protocol.CommandPlans:
 		return c.plansCmd(req, rest), nil
 	case protocol.CommandFleet:
@@ -403,6 +407,9 @@ func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 }
 
 func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, string, bool, error) {
+	if c.catalog.Default().ID == "" {
+		return agent.Agent{}, "", false, UserError{Text: c.text.T(i18n.NoAgentConfigured)}
+	}
 	if selection, ok := c.catalog.Select(input); ok {
 		if err := c.store.SetActiveAgent(conversationID, selection.Agent.ID); err != nil {
 			return agent.Agent{}, "", false, err
@@ -459,6 +466,8 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return Result{}, context.Canceled
 	}
 	var runningScope *execution.Scope
+	var managedAttemptID, managedSessionID string
+	var openingAttempt attempt.Record
 	if c.executions != nil {
 		taskID := ""
 		if c.tasks != nil {
@@ -475,6 +484,11 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			var unresolved error
 			if errors.Is(err, harness.ErrStopUnconfirmed) {
 				unresolved = err
+				if managedAttemptID != "" && managedSessionID != "" && selected.Node != "" {
+					unresolved = &execution.RetainedObserverDetached{AttemptID: managedAttemptID, NodeID: selected.Node, SessionID: managedSessionID, Cause: err}
+				} else if pending := pendingNodeOpen(openingAttempt, err); pending != nil {
+					unresolved = pending
+				}
 			}
 			scope.Finish(unresolved)
 		}()
@@ -499,8 +513,12 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	// report's usage is what the task's attempt is charged.
 	spent := &turnSpend{touch: touch}
 	req.OnProgress = spent.wrap(req.OnProgress, selected.ID)
+	managedExecution := false
 	if tracked != "" {
 		defer func() {
+			if managedExecution && errors.Is(err, harness.ErrStopUnconfirmed) {
+				return
+			}
 			c.finishTask(tracked, err, spent.tokens(), spent.model())
 			c.offlineReminder(req, tracked, started, err)
 		}()
@@ -512,6 +530,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}
 	conversation := c.store.Conversation(conversationID)
 	saved := conversation.Sessions[selected.ID]
+	saved.ConversationID = conversationID
 	extras, agentToken, err := c.gateExtras(ctx, conversationID, selected, saved)
 	if err != nil {
 		return Result{}, err
@@ -539,6 +558,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if err != nil {
 		return Result{}, err
 	}
+	openingAttempt = att
 	if runningScope != nil {
 		runningScope.SetAttempt(att.ID)
 	}
@@ -565,7 +585,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}()
 	req.phase(view.PhaseWaking)
 	runner, err := c.open(ctx, saved, selected, workspace.Path, servers)
-	if err != nil && saved.UpstreamID != "" {
+	if err != nil && saved.UpstreamID != "" && !strings.HasPrefix(saved.UpstreamID, "ns_") && !errors.Is(err, harness.ErrNodeSessionUnavailable) {
 		// The saved upstream session could not be reopened; drop it and
 		// start a fresh session in this same turn instead of failing once
 		// and waiting for the user to send again.
@@ -577,7 +597,14 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		runner, err = c.open(ctx, saved, selected, workspace.Path, servers)
 	}
 	if err != nil {
+		if pendingNodeOpen(att, err) != nil {
+			managedExecution = true
+		}
 		return Result{}, err
+	}
+	managedExecution = strings.HasPrefix(runner.ID(), "ns_")
+	if managedExecution {
+		managedAttemptID, managedSessionID = att.ID, runner.ID()
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		c.discard(parent, selected, runner)
@@ -617,9 +644,19 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if prefix := c.listenPrefix(req); prefix != "" {
 		user = prefix + user
 	}
-	building := binding.ProjectID == c.homeProject && c.buildingProfile(req)
+	building := false
+	if binding.ProjectID == c.homeProject {
+		building, err = c.buildingProfile(req)
+		if err != nil {
+			return Result{}, err
+		}
+	}
 	if building {
-		user = onboard.Continue(c.text.Locale(), c.homePath, c.excerpts(prompt)) + "\n\n" + user
+		if _, shared := c.home.(home.IdentityEditor); shared {
+			user = onboard.ContinueShared(c.text.Locale()) + "\n\n" + user
+		} else {
+			user = onboard.Continue(c.text.Locale(), c.homePath, c.excerpts(prompt)) + "\n\n" + user
+		}
 	}
 	injected := &Injected{
 		Project: binding.ProjectID, Workspace: workspace.Path,
@@ -637,8 +674,14 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}
 	prompt = user
 	c.setRunner(conversationID, selected.ID, runner)
-	if _, armErr := c.attempts.Advance(ctx, att.ID, attempt.Running, "turn", nil); armErr != nil {
+	if _, armErr := c.attempts.Advance(ctx, att.ID, attempt.Running, "turn", func(record *attempt.Record) {
+		record.Session = runner.ID()
+		record.Preferences = sessionPreferences(runner)
+	}); armErr != nil {
 		return Result{}, fmt.Errorf("arm prompt execution: %w", armErr)
+	}
+	if err := c.bindExecutionGate(ctx, conversationID, att.ID); err != nil {
+		return Result{}, err
 	}
 	out, activity, err := promptTurn(ctx, runner, prompt, req)
 	if acphost.PromptSettled(err) {
@@ -653,7 +696,12 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}
 	if err != nil {
 		if errors.Is(err, harness.ErrStopUnconfirmed) {
-			if stateErr := c.store.DeleteSession(conversationID, selected.ID); stateErr != nil {
+			if stateErr := func() error {
+				if managedExecution {
+					return nil
+				}
+				return c.store.DeleteSession(conversationID, selected.ID)
+			}(); stateErr != nil {
 				log.Printf("turn: delete unconfirmed session: %v", stateErr)
 			}
 			return Result{}, err
@@ -684,9 +732,15 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		out += "\n\n" + c.text.T(i18n.StateSaveFailed, protocol.CommandNew)
 	}
 	if building {
-		reply, _, applyErr := onboard.Apply(c.homePath, out)
+		var reply string
+		var applyErr error
+		if editor, shared := c.home.(home.IdentityEditor); shared {
+			reply, _, applyErr = onboard.ApplyWith(out, func(soul, user string) error { return editor.WriteIdentity(ctx, soul, user) })
+		} else {
+			reply, _, applyErr = onboard.Apply(c.homePath, out)
+		}
 		if applyErr != nil {
-			log.Printf("turn: apply identity files: %v", applyErr)
+			return Result{}, fmt.Errorf("save generated identity: %w", applyErr)
 		} else {
 			out = reply
 		}
@@ -695,9 +749,15 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	return Result{AgentID: selected.ID, Text: out, Activity: activity, Injected: injected, Attempt: att.ID}, nil
 }
 
-func (c *Coordinator) buildingProfile(req Request) bool {
+func (c *Coordinator) buildingProfile(req Request) (bool, error) {
 	owner := injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID) == home.ModeOwner
-	return onboard.Building(req.ConversationID, owner, c.homePath != "" && home.NeedsInit(c.homePath))
+	if !onboard.Building(req.ConversationID, owner, true) {
+		return false, nil
+	}
+	if editor, shared := c.home.(home.IdentityEditor); shared {
+		return editor.NeedsInit()
+	}
+	return c.homePath != "" && home.NeedsInit(c.homePath), nil
 }
 
 func (c *Coordinator) excerpts(input string) string {

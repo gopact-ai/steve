@@ -2,7 +2,7 @@ import type { Material, MaterialAnnotation, MaterialRef, MaterialSource, FrozenM
 import { request, token, HTTPError } from "../http";
 import { checkSubmissionSupport } from "./console";
 
-export async function requireMaterials() { const support = await checkSubmissionSupport(); if (support.state !== "supported" || !support.material_refs) throw new Error("Materials are not supported by this Hub"); }
+export async function requireMaterials() { const support = await checkSubmissionSupport(); if (support.state !== "supported" || !support.material_refs) throw new Error("Materials are not supported by this coordinator"); }
 export const captureMaterial = async (project: string, source: MaterialSource, title?: string): Promise<Material> => { await requireMaterials(); return request("/console/materials/capture", { method: "POST", body: { project, source, title } }); };
 export const getMaterial = (project: string, id: string, signal?: AbortSignal) => request<Material>(`/console/materials/${encodeURIComponent(id)}?project=${encodeURIComponent(project)}`, { signal });
 export const listMaterials = (project: string, signal?: AbortSignal) => request<{ materials: Material[] }>(`/console/materials?project=${encodeURIComponent(project)}`, { signal });
@@ -23,7 +23,7 @@ export async function materialBlob(project: string, id: string, signal?: AbortSi
 export const questions = (conversation: string, signal?: AbortSignal) => request<{ questions: PendingQuestion[] }>(`/console/questions?conversation=${encodeURIComponent(conversation)}`, { signal, cache: "no-store" });
 export const answerQuestion = async (id: string, body: QuestionAnswer) => {
     const support = await checkSubmissionSupport();
-    if (!support.interactive_requests) throw new Error("Interactive requests are not supported by this Hub");
+    if (!support.interactive_requests) throw new Error("Interactive requests are not supported by this coordinator");
     return request<{ question: PendingQuestion }>(`/console/questions/${encodeURIComponent(id)}/answer`, { method: "POST", body });
 };
 export { refKey, wireRef } from "../material-ref";

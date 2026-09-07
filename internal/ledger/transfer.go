@@ -287,18 +287,22 @@ func (t *Tx) RecordTransition(op Operation, to, actor string) error {
 	if n != 1 {
 		return fmt.Errorf("operation changed during maintenance: %s", op.ID)
 	}
-	_, err = t.Exec("INSERT INTO events(operation_id,revision,incarnation,from_state,to_state,actor,fencings,effects,at) VALUES(?,?,?,?,?,?,?,?,?)", op.ID, revision, t.l.incarnation, op.State, to, actor, "[]", "null", now.Format(rfc3339nano))
+	_, err = t.Exec("INSERT INTO events(operation_id,revision,incarnation,from_state,to_state,actor,fencings,effects,at) VALUES(?,?,?,?,?,?,?,?,?)", op.ID, revision, t.l.Incarnation(), op.State, to, actor, "[]", "null", now.Format(rfc3339nano))
 	return err
 }
 
 // importEvidence keeps original timestamps/incarnations as provenance while
 // assigning a monotonic destination journal sequence. It dispatches nothing.
 func (j *Journal) importEvidence(entry Entry) error {
-	j.mu.Lock()
-	defer j.mu.Unlock()
 	if entry.Phase != PhaseStarted && entry.Phase != PhaseConfirmed {
 		return errors.New("invalid imported effect phase")
 	}
+	if j.ledger != nil {
+		_, err := j.ledger.appendEffect(entry)
+		return err
+	}
+	j.mu.Lock()
+	defer j.mu.Unlock()
 	entry.Seq = j.seq + 1
 	raw, err := json.Marshal(entry)
 	if err != nil {

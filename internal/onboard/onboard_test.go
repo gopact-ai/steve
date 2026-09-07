@@ -2,6 +2,7 @@ package onboard
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,40 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/state"
 )
+
+func TestStartUsesSharedProfileAndDoesNotPromiseLocalHistoryScanning(t *testing.T) {
+	for _, configured := range []bool{false, true} {
+		t.Run(map[bool]string{false: "template", true: "configured"}[configured], func(t *testing.T) {
+			store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			reader := home.Reader{ReadFiles: func() (map[string]string, error) {
+				if configured {
+					return map[string]string{home.FileSoul: "custom soul", home.FileUser: "custom user", home.FileMemory: ""}, nil
+				}
+				return home.DefaultFiles(home.LocaleZH), nil
+			}}
+			called := false
+			err = Start(t.Context(), Request{Owner: "owner", Home: "/unavailable-old-home", Reader: reader, Store: store, Catalog: i18n.New(i18n.LocaleZH), Handle: func(_ context.Context, request TurnRequest) (TurnResult, error) {
+				called = true
+				if strings.Contains(request.Input, "/unavailable-old-home") || strings.Contains(request.Input, "Codex") || strings.Contains(request.Input, "除非") {
+					t.Fatalf("shared prompt advertised local history scan: %s", request.Input)
+				}
+				return TurnResult{Text: "你好"}, nil
+			}, Send: func(context.Context, string, string) (string, error) { return "dm", nil }})
+			if err != nil || called == configured {
+				t.Fatalf("shared profile detection: configured=%v called=%v err=%v", configured, called, err)
+			}
+		})
+	}
+	store, _ := state.Open(filepath.Join(t.TempDir(), "state.json"))
+	failure := errors.New("shared profile read unavailable")
+	err := Start(t.Context(), Request{Owner: "owner", Store: store, Reader: home.Reader{ReadFiles: func() (map[string]string, error) { return nil, failure }}})
+	if !errors.Is(err, failure) {
+		t.Fatalf("failed shared read was ignored: %v", err)
+	}
+}
 
 func TestStartSendsAndRelocates(t *testing.T) {
 	dir := t.TempDir()

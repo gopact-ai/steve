@@ -2,6 +2,7 @@ package console
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -15,7 +16,7 @@ import (
 )
 
 func copyQuestion(q consoleapi.PendingQuestion) consoleapi.PendingQuestion {
-	q.Options = append([]consoleapi.QuestionOption(nil), q.Options...)
+	q.Options = append([]consoleapi.QuestionOption{}, q.Options...)
 	if q.Answer != nil {
 		answer := *q.Answer
 		q.Answer = &answer
@@ -64,7 +65,13 @@ func (s *Service) AnswerQuestionAs(ctx context.Context, principal, id string, an
 	if q.State != "pending" {
 		return copyQuestion(q), consoleapi.ErrQuestionConflict
 	}
-	if !q.Deadline.After(time.Now()) {
+	if s.questionWaiters[id] == nil {
+		if err := s.resolveQuestionLocked(q, "interrupted", nil); err != nil {
+			return q, err
+		}
+		return copyQuestion(s.questions[id]), consoleapi.ErrQuestionConflict
+	}
+	if !q.Deadline.IsZero() && !q.Deadline.After(time.Now()) {
 		if err := s.resolveQuestionLocked(q, "expired", nil); err != nil {
 			return q, err
 		}
@@ -73,6 +80,12 @@ func (s *Service) AnswerQuestionAs(ctx context.Context, principal, id string, an
 	state := "answered"
 	switch answer.Decision {
 	case "accept":
+		if answer.Text != "" {
+			if !q.AllowFreeText || q.Kind == "permission" || answer.Choice != "" || strings.TrimSpace(answer.Text) == "" || len(answer.Text) > 64<<10 {
+				return q, consoleapi.ErrInvalidAnswer
+			}
+			break
+		}
 		found := false
 		for _, option := range q.Options {
 			if option.ID == answer.Choice {
@@ -87,7 +100,7 @@ func (s *Service) AnswerQuestionAs(ctx context.Context, principal, id string, an
 			return q, consoleapi.ErrInvalidAnswer
 		}
 	case "decline", "cancel":
-		if answer.Choice != "" {
+		if answer.Choice != "" || answer.Text != "" {
 			return q, consoleapi.ErrInvalidAnswer
 		}
 		state = map[string]string{"decline": "declined", "cancel": "cancelled"}[answer.Decision]
@@ -126,7 +139,10 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 	if err := ctx.Err(); err != nil {
 		return q, err
 	}
-	if len(q.Options) == 0 || len(q.Options) > 64 || len(q.Message) > 64<<10 || len(q.Title) > 4096 {
+	if q.Kind == "permission" {
+		q.AllowFreeText = false
+	}
+	if (len(q.Options) == 0 && !q.AllowFreeText) || len(q.Options) > 64 || len(q.Message) > 64<<10 || len(q.Title) > 4096 {
 		return q, consoleapi.ErrInvalidAnswer
 	}
 	seen := map[string]bool{}
@@ -144,25 +160,61 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 	q.ID, q.State, q.Principal = "q"+strings.TrimPrefix(newReplyID(), "r"), "pending", s.owner
 	q.CreatedAt = time.Now().UTC()
 	q.UpdatedAt, q.Deadline = q.CreatedAt, q.CreatedAt.Add(s.questionTimeout)
+	if q.Kind == "recovery" || strings.HasPrefix(q.SessionID, "ns_") {
+		q.Deadline = time.Time{}
+	}
 	waiter := make(chan struct{})
 	s.mu.Lock()
+	var previous *consoleapi.PendingQuestion
+	if q.Kind != "recovery" && strings.HasPrefix(q.SessionID, "ns_") && q.AttemptID != "" && q.RequestID != "" {
+		for _, saved := range s.questions {
+			if saved.SessionID != q.SessionID || saved.AttemptID != q.AttemptID || saved.RequestID != q.RequestID {
+				continue
+			}
+			if previous != nil || !sameNodeQuestion(saved, q) {
+				s.mu.Unlock()
+				return q, consoleapi.ErrQuestionConflict
+			}
+			copy := saved
+			previous = &copy
+		}
+		if previous != nil {
+			if previous.Answer != nil {
+				s.mu.Unlock()
+				return copyQuestion(*previous), nil
+			}
+			if s.questionWaiters[previous.ID] != nil {
+				s.mu.Unlock()
+				return q, consoleapi.ErrQuestionConflict
+			}
+			q.ID, q.CreatedAt = previous.ID, previous.CreatedAt
+		}
+	}
 	s.questions[q.ID], s.questionWaiters[q.ID] = q, waiter
 	if err := s.save(); err != nil {
-		delete(s.questions, q.ID)
+		if previous != nil {
+			s.questions[q.ID] = *previous
+		} else {
+			delete(s.questions, q.ID)
+		}
 		delete(s.questionWaiters, q.ID)
 		s.mu.Unlock()
 		return q, err
 	}
 	s.publishQuestion(q)
 	s.mu.Unlock()
-	timer := time.NewTimer(time.Until(q.Deadline))
-	defer timer.Stop()
+	var deadline <-chan time.Time
+	if !q.Deadline.IsZero() {
+		timer := time.NewTimer(time.Until(q.Deadline))
+		defer timer.Stop()
+		deadline = timer.C
+	}
 	state := ""
 	select {
 	case <-waiter:
 	case <-ctx.Done():
 		state = "cancelled"
-	case <-timer.C:
+	case <-deadline:
 		state = "expired"
 	}
 	s.mu.Lock()
@@ -177,9 +229,18 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 	return copyQuestion(q), nil
 }
 
+func sameNodeQuestion(a, b consoleapi.PendingQuestion) bool {
+	return a.Principal == b.Principal && a.Conversation == b.Conversation && a.ExchangeID == b.ExchangeID &&
+		a.Project == b.Project && a.TaskID == b.TaskID && a.Kind == b.Kind && a.Title == b.Title &&
+		a.Message == b.Message && a.Required == b.Required && a.AllowFreeText == b.AllowFreeText &&
+		a.ToolCallID == b.ToolCallID && slices.Equal(a.Options, b.Options)
+}
+
 func (s *Service) askPermission(ctx context.Context, base consoleapi.PendingQuestion, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 	base.Kind, base.Title, base.Message, base.Required = "permission", ask.ToolName, ask.Reason, true
+	base.AllowFreeText = false
 	base.SessionID, base.Generation, base.ToolCallID = ask.SessionID, ask.Generation, ask.ToolCallID
+	base.RequestID = ask.RequestID
 	for _, option := range ask.Options {
 		base.Options = append(base.Options, consoleapi.QuestionOption{ID: string(option.OptionID), Label: option.Name, Kind: string(option.Kind)})
 	}
@@ -196,9 +257,11 @@ func (s *Service) askPermission(ctx context.Context, base consoleapi.PendingQues
 func (s *Service) askUser(ctx context.Context, base consoleapi.PendingQuestion, question view.Question) (view.Answer, error) {
 	base.Kind, base.Title, base.Message, base.Required = "question", question.Title, question.Message, question.Required
 	base.SessionID, base.Generation = question.SessionID, question.Generation
+	base.RequestID = question.RequestID
 	if question.Kind != "" {
 		base.Kind = question.Kind
 	}
+	base.AllowFreeText = question.AllowFreeText && base.Kind != "permission"
 	for _, option := range question.Choices {
 		base.Options = append(base.Options, consoleapi.QuestionOption{ID: option.Value, Label: option.Label, Description: option.Detail})
 	}
@@ -207,10 +270,13 @@ func (s *Service) askUser(ctx context.Context, base consoleapi.PendingQuestion, 
 		return view.Answer{}, err
 	}
 	if q.Answer != nil && q.Answer.Decision == "accept" {
-		return view.Answer{Value: q.Answer.Choice}, nil
+		return view.Answer{Value: q.Answer.Choice, Text: q.Answer.Text}, nil
 	}
 	if q.Answer != nil && q.Answer.Decision == "decline" {
 		return view.Answer{Decision: "decline"}, nil
+	}
+	if q.Answer != nil && q.Answer.Decision == "cancel" {
+		return view.Answer{Decision: "cancel"}, nil
 	}
 	return view.Answer{}, nil
 }

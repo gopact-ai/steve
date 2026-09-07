@@ -191,9 +191,6 @@ func decodeNodeConfig(raw []byte) (node.ServerConfig, error) {
 	if strings.TrimSpace(cfg.Token) == "" {
 		return node.ServerConfig{}, fmt.Errorf("token is required")
 	}
-	if len(cfg.Harnesses) == 0 {
-		return node.ServerConfig{}, fmt.Errorf("at least one harness is required")
-	}
 	if cfg.Listen == "" {
 		cfg.Listen = "0.0.0.0:7701"
 	}

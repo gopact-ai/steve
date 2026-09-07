@@ -41,8 +41,10 @@ func (s *Server) consoleAnswer(w http.ResponseWriter, r *http.Request) {
 	question, err := service.AnswerQuestion(r.Context(), r.PathValue("id"), answer)
 	w.Header().Set("Content-Type", "application/json")
 	if err != nil {
-		status := http.StatusBadRequest
+		status := http.StatusInternalServerError
 		switch {
+		case errors.Is(err, consoleapi.ErrInvalidAnswer):
+			status = http.StatusBadRequest
 		case errors.Is(err, consoleapi.ErrQuestionNotFound):
 			status = http.StatusNotFound
 		case errors.Is(err, consoleapi.ErrQuestionConflict):

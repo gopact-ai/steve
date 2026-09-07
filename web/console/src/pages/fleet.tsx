@@ -1,3 +1,6 @@
+import { NodeAgentEnrollment } from "@/components/steve/node-agent-enrollment";
+import { CoordinationPanel } from "@/components/steve/coordination-panel";
+import { SSHConnect } from "@/components/steve/ssh-connect";
 import { useState } from "react";
 import { useI18n } from "@/providers/locale-provider";
 import type { Translator } from "@/lib/i18n";
@@ -113,7 +116,7 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
                     </>
                 ) : (
                     <div className="flex flex-col gap-4">
-                        <Select size="sm" label={tr("fleet.machine")} hint={tr("fleet.machineHint")} selectedKey={spec.node || "__hub"} onSelectionChange={(k) => setSpec({ ...spec, node: !k || String(k) === "__hub" ? "" : String(k) })} items={[{ id: "__hub", label: `${snap.hub.node}（hub）` }, ...nodes.map((n) => ({ id: n, label: n }))]}>
+                        <Select size="sm" label={tr("fleet.machine")} hint={tr("fleet.machineHint")} selectedKey={spec.node || "__hub"} onSelectionChange={(k) => setSpec({ ...spec, node: !k || String(k) === "__hub" ? "" : String(k) })} items={[{ id: "__hub", label: `${snap.hub.node}（${tr("connection.coordinator")}）` }, ...nodes.map((n) => ({ id: n, label: n }))]}>
                             {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                         </Select>
                         <Select size="sm" label={tr("fleet.aiTool")} hint={tr("fleet.harnessHint")} selectedKey={spec.harness} onSelectionChange={(k) => k && setSpec({ ...spec, harness: String(k) })} items={harnesses.map((h) => ({ id: h, label: h }))}>
@@ -222,7 +225,7 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
                                 <Select size="sm" label={tr("fleet.aiTool")} hint={tr("fleet.harnessHint")} selectedKey={harness} onSelectionChange={(k) => k && setHarness(String(k))} items={harnesses.map((h) => ({ id: h, label: h }))}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
-                                <Select size="sm" label={tr("fleet.machine")} hint={tr("fleet.chooseMachineHint")} selectedKey={node || "__hub"} onSelectionChange={(k) => setNode(!k || String(k) === "__hub" ? "" : String(k))} items={[{ id: "__hub", label: `${hub}（hub）` }, ...nodes.map((n) => ({ id: n, label: n }))]}>
+                                <Select size="sm" label={tr("fleet.machine")} hint={tr("fleet.chooseMachineHint")} selectedKey={node || "__hub"} onSelectionChange={(k) => setNode(!k || String(k) === "__hub" ? "" : String(k))} items={[{ id: "__hub", label: `${hub}（${tr("connection.coordinator")}）` }, ...nodes.map((n) => ({ id: n, label: n }))]}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
                             </div>
@@ -276,6 +279,7 @@ function merge(items: Capability[]): { c: Capability; scopes: string[] }[] {
 // What it offers is a click away, in the drawer, where there is room.
 function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => void; onChanged: () => void }) {
     const { t: tr, locale } = useI18n();
+    const [enrolling, setEnrolling] = useState(false);
     const h = n.health;
     const [editing, setEditing] = useState(false);
     const [removing, setRemoving] = useState(false);
@@ -286,7 +290,7 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
     }
     return (
         <Drawer title={<><span className="text-base font-semibold text-primary">{n.name}</span>
-                        <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role === "hub" ? "hub" : "worker"}</Badge>
+                        <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role === "hub" ? tr("connection.coordinator") : tr("fleet.machine")}</Badge>
                         <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{!n.up && n.last_error && <div className="mt-1 text-xs text-error-primary">{n.last_error}</div>}</>} actions={<>{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>{tr("fleet.editConfiguration")}</Button>}</>} onClose={onClose}>
                 <KeyValue dense rows={[
                     { k: tr("fleet.hostname"), v: n.host || "—" },
@@ -299,6 +303,8 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
                     { k: tr("fleet.health"), v: h && h.disk_total > 0 ? tr("fleet.healthSummary", { disk: number(h.disk_free / (1 << 30), locale, { maximumFractionDigits: 0 }), load: number(h.load1, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), worktrees: h.worktrees }) : tr("fleet.unreported") },
                     { k: tr("fleet.connection"), v: n.since ? when(n.since, locale) : "—" },
                 ]} />
+                {enrolling && <NodeAgentEnrollment node={n.name} onClose={() => setEnrolling(false)} onRegistered={onChanged} />}
+                <section className="rounded-lg border border-secondary p-3">{n.role === "hub" ? <Button size="sm" color="secondary" href="#/console?setup=agents" onClick={onClose}>{tr("nodeAgents.entry")}</Button> : <Button size="sm" color="secondary" isDisabled={!n.up} onClick={() => setEnrolling(true)}>{tr("nodeAgents.entry")}</Button>}</section>
                 {editing ? (
                     <SettingsEditor node={n.name} onClose={() => setEditing(false)} onSaved={onChanged} />
                 ) : (
@@ -368,14 +374,17 @@ export function FleetPage() {
     const { act } = useIntent();
     const up = snap.nodes.filter((n) => n.up).length;
     const [adding, setAdding] = useState(false);
+    const [sshOpen, setSSHOpen] = useState(false);
     const [opened, setOpened] = useState<string | null>(null);
     const [openedAgent, setOpenedAgent] = useState<string | null>(null);
     const hubHarnesses = Array.from(new Set(snap.agents.map((a) => a.harness).filter(Boolean))) as string[];
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title={tr("fleet.title")} description={tr("fleet.description")}
-                actions={<Button size="sm" color="primary" iconLeading={Plus} onClick={() => setAdding(true)}>{tr("fleet.addResource")}</Button>} />
+                actions={<><Button size="sm" color="secondary" href="#/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => setAdding(true)}>{tr("fleet.addResource")}</Button></>} />
             <PageBody>
+            <CoordinationPanel />
+            {sshOpen && <SSHConnect onClose={() => setSSHOpen(false)} onChanged={refresh} />}
             {adding && <AddMachine hub={snap.hub.node} harnesses={hubHarnesses.length ? hubHarnesses : ["codex", "claude-code", "grok", "kimi"]} nodes={snap.nodes.filter((n) => n.role !== "hub").map((n) => n.name)} onClose={() => setAdding(false)} onDone={() => refresh()} />}
             <TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title={tr("fleet.machine")} badge={tr("fleet.online", { online: up, total: snap.nodes.length })} />
@@ -396,7 +405,7 @@ export function FleetPage() {
                                     <Table.Cell>
                                         <div className="flex min-w-0 flex-col gap-1">
                                             <span className="truncate font-medium text-primary" title={n.name}>{n.name}</span>
-                                            <span className="text-xs text-tertiary">{n.role === "hub" ? "hub" : "worker"}</span>
+                                            <span className="text-xs text-tertiary">{n.role === "hub" ? tr("connection.coordinator") : tr("fleet.machine")}</span>
                                         </div>
                                     </Table.Cell>
                                     <Table.Cell>

@@ -32,6 +32,19 @@ func (b testBudget) Reserve(id string) (int, time.Time, error) {
 	return 0, time.Time{}, err
 }
 
+func (b testBudget) ReserveAttempt(record attempt.Record) (int, time.Time, error) {
+	_, err := b.tasks.ReserveAttempt(*record.Execution, record.ID, record.TurnID, record.Agent, record.Node, record.StartedAt)
+	return 0, time.Time{}, err
+}
+
+func (b testBudget) SettleAttempt(record attempt.Record, outcome task.Outcome) error {
+	var usage task.RecoveryUsage
+	if u := record.Usage; u != nil {
+		usage = task.RecoveryUsage{Tokens: task.Tokens{Input: u.Input, Output: u.Output, CachedRead: u.CachedRead, CachedWrite: u.CachedWrite}, Model: u.Model, Reported: u.Reported}
+	}
+	return b.tasks.SettleAttempt(record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome, usage)
+}
+
 type testSessions struct {
 	stopped        bool
 	opened, closed atomic.Int32
@@ -137,7 +150,7 @@ func TestAuxiliaryPromptsUseIndependentAttemptsAndAccountUsage(t *testing.T) {
 		t.Fatal("attempt workspace or session ownership reused")
 	}
 	work, _ := w.tasks.Get(w.work.ID)
-	if work.Budget.Turns != 2 || len(work.Attempts) != 0 {
+	if work.Budget.Turns != 2 || len(work.Attempts) != 2 || work.Budget.Tokens.Total != 240 || work.Attempts[0].Open() || work.Attempts[1].Open() {
 		t.Fatalf("budget=%+v", work)
 	}
 }

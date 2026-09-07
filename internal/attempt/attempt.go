@@ -107,14 +107,22 @@ type Spec struct {
 	// WorkID is the caller-owned specification identity used by recovery.
 	WorkID    string               `json:"work_id,omitempty"`
 	Execution *task.ExecutionToken `json:"execution,omitempty"`
-	ID        string               `json:"id"`
-	TaskID    string               `json:"task_id"`
-	TurnID    string               `json:"turn_id"`
-	Kind      Kind                 `json:"kind"`
-	Project   string               `json:"project"`
-	Node      string               `json:"node"`
-	Harness   string               `json:"harness"`
-	Agent     string               `json:"agent"`
+	// ExecutionGeneration orders replacement executions of one logical turn.
+	// It does not replace any resource lease's own epoch or the task token.
+	ExecutionGeneration uint64 `json:"execution_generation,omitempty"`
+	// NativeCommandID distinguishes a new execution from the original input,
+	// while TurnID continues to identify the same logical console exchange.
+	NativeCommandID string              `json:"native_command_id,omitempty"`
+	Recovery        *RecoveryOrigin     `json:"recovery,omitempty"`
+	Preferences     *SessionPreferences `json:"preferences,omitempty"`
+	ID              string              `json:"id"`
+	TaskID          string              `json:"task_id"`
+	TurnID          string              `json:"turn_id"`
+	Kind            Kind                `json:"kind"`
+	Project         string              `json:"project"`
+	Node            string              `json:"node"`
+	Harness         string              `json:"harness"`
+	Agent           string              `json:"agent"`
 	// Slots is the endpoint's capacity for (node, harness); zero is
 	// unlimited and takes no slot lease.
 	Slots int `json:"slots,omitempty"`
@@ -134,6 +142,14 @@ type Spec struct {
 	By          string            `json:"by,omitempty"`
 	// Requires is what the work asked of the machine, as placed.
 	Requires []string `json:"requires,omitempty"`
+}
+
+// SessionPreferences records selectors actually used by this execution so a
+// replacement cannot silently change its model or operating mode.
+type SessionPreferences struct {
+	Model      string            `json:"model,omitempty"`
+	ModelLabel string            `json:"model_label,omitempty"`
+	Options    map[string]string `json:"options,omitempty"`
 }
 
 // Result is what a finished attempt produced.

@@ -16,7 +16,7 @@ export const materialsZh = {
     "materials.shelfHint": "本机固定资料，不会自动发送给 Agent。",
     "materials.empty": "尚未固定资料",
     "materials.emptyHint": "从回复或文件的操作菜单放到这里。",
-    "materials.unsupported": "Hub 尚未支持材料引用，请更新后重试。",
+    "materials.unsupported": "协调节点尚未支持材料引用，请更新后重试。",
     "materials.noTarget": "请先打开一个项目会话。",
     "materials.wrongProject": "来源与目标会话不属于同一项目。",
     "materials.added": "已加入「{title}」的草稿",
@@ -89,9 +89,19 @@ export const materialsZh = {
     "materials.cancelled": "已取消",
     "materials.deadline": "截止：{time}",
     "materials.answerRequired": "请先选择选项或输入答复。",
-    "materials.pending": "等待答复",
+    "materials.pending": "等你答复",
     "materials.answerConflict": "请求已由另一处处理，请刷新状态。",
-    "materials.refresh": "刷新"
+    "materials.refresh": "刷新",
+    "materials.writeAnswer": "给出其他安排",
+    "materials.questionContext": "查看问题说明",
+    "materials.backToOptions": "返回选项",
+    "materials.answerLater": "稍后答复",
+    "materials.replyNow": "现在答复",
+    "materials.answerDeferred": "仍在等你答复，原问题保持待处理。",
+    "materials.answerTarget": "直接答复这个问题，继续原任务。",
+    "materials.yourAnswer": "你的答复",
+    "materials.answerStorage": "无法保存答复草稿。请允许本机存储后重试；当前内容仍保留。",
+    "materials.answerUnconfirmed": "尚未确认答复是否已保存。重试会核对同一份答复。"
 } as const;
 
 export const materialsEn = {
@@ -112,7 +122,7 @@ export const materialsEn = {
     "materials.shelfHint": "Pinned on this device; not sent to the agent automatically.",
     "materials.empty": "No pinned materials",
     "materials.emptyHint": "Pin a reply or file from its actions.",
-    "materials.unsupported": "This Hub does not support materials yet. Update it to continue.",
+    "materials.unsupported": "This coordinator does not support materials yet. Update it to continue.",
     "materials.noTarget": "Open a project conversation first.",
     "materials.wrongProject": "Source and target conversation belong to different projects.",
     "materials.added": "Added to the draft in “{title}”",
@@ -187,5 +197,15 @@ export const materialsEn = {
     "materials.answerRequired": "Choose an option or enter a response.",
     "materials.pending": "Awaiting response",
     "materials.answerConflict": "This request was handled elsewhere. Refresh its state.",
-    "materials.refresh": "Refresh"
+    "materials.refresh": "Refresh",
+    "materials.writeAnswer": "Give another answer",
+    "materials.questionContext": "Review the question",
+    "materials.backToOptions": "Back to options",
+    "materials.answerLater": "Answer later",
+    "materials.replyNow": "Reply now",
+    "materials.answerDeferred": "Still awaiting your reply. The original question remains open.",
+    "materials.answerTarget": "Reply directly to this question and continue the original task.",
+    "materials.yourAnswer": "Your response",
+    "materials.answerStorage": "The response draft could not be saved. Enable local storage and retry; your text is retained.",
+    "materials.answerUnconfirmed": "This response has not been confirmed. Retrying checks the same response."
 } as const satisfies Record<keyof typeof materialsZh, string>;

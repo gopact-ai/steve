@@ -2,11 +2,16 @@ package exec
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
+	"strings"
+	"sync"
 	"time"
 
 	"github.com/gopact-ai/gopact/workflow"
+	"github.com/gopact-ai/steve/internal/agentexec"
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -43,15 +48,17 @@ type PlanStore interface {
 // new revision from the planner, keeping every step that already finished.
 // Both are ordinary edges, taken with the reason on record.
 type Supervisor struct {
-	planner   planner.Planner
-	runs      *Runs
-	deps      Deps
-	plans     PlanStore
-	fleet     *roster.Roster
-	ledger    *ledger.Ledger
-	owner     string
-	tasks     *task.Store
-	driverTTL time.Duration
+	planner          planner.Planner
+	runs             *Runs
+	deps             Deps
+	plans            PlanStore
+	fleet            *roster.Roster
+	ledger           *ledger.Ledger
+	owner            string
+	tasks            *task.Store
+	driverTTL        time.Duration
+	recoveryMu       sync.Mutex
+	recoveryPrepared bool
 }
 
 func NewSupervisor(p planner.Planner, deps Deps, store workflow.Store) *Supervisor {
@@ -80,6 +87,29 @@ func (s *Supervisor) Runs() *Runs { return s.runs }
 
 func (s *Supervisor) Plan(ctx context.Context, req planner.Request) (plan.Plan, error) {
 	return s.planner.Plan(ctx, req)
+}
+
+// PrepareRulePlan freezes the pure rule result before task creation. Other
+// planners use their independently admitted, retained native attempts.
+func (s *Supervisor) PrepareRulePlan(ctx context.Context, goal, projectID string) (plan.Plan, bool, error) {
+	switch s.planner.(type) {
+	case planner.Rule, *planner.Rule:
+		built, err := s.planner.Plan(ctx, planner.Request{Goal: goal, ProjectID: projectID})
+		built.ProjectID = projectID
+		return built, true, err
+	default:
+		return plan.Plan{}, false, nil
+	}
+}
+
+func (s *Supervisor) ResumePlanning(ctx context.Context, attemptID string) (plan.Plan, error) {
+	planner, ok := s.planner.(interface {
+		ResumePlan(context.Context, string) (plan.Plan, error)
+	})
+	if !ok {
+		return plan.Plan{}, fmt.Errorf("planner cannot resume retained planning")
+	}
+	return planner.ResumePlan(ctx, attemptID)
 }
 
 // Execute drives a plan to completion, revising it when execution finds the
@@ -121,6 +151,10 @@ func (s *Supervisor) continueFrom(ctx context.Context, p plan.Plan, outcome Outc
 		if err == nil || ctx.Err() != nil {
 			return outcome, err
 		}
+		var blocked *agentexec.RecoveryBlocked
+		if errors.As(err, &blocked) {
+			return outcome, err
+		}
 		if s.plans == nil || !NeedsRevision(err) || current.Fixed {
 			return outcome, err
 		}
@@ -129,6 +163,10 @@ func (s *Supervisor) continueFrom(ctx context.Context, p plan.Plan, outcome Outc
 		}
 		revised, revErr := s.revise(ctx, current, err)
 		if revErr != nil {
+			var retained *agentexec.RecoveryBlocked
+			if errors.As(revErr, &retained) {
+				return outcome, revErr
+			}
 			// The planner had nothing better. The original failure is the
 			// one worth reporting; the planner's refusal is why it stands.
 			log.Printf("exec: plan %s not revised: %v", current.ID, revErr)
@@ -159,10 +197,32 @@ func (s *Supervisor) revise(ctx context.Context, current plan.Plan, cause error)
 	if s.fleet != nil {
 		candidates = s.fleet.All(ctx)
 	}
-	proposed, err := s.planner.Plan(ctx, planner.Request{
+	request := planner.Request{
 		Goal: latest.Goal, TaskID: latest.TaskID, ProjectID: latest.ProjectID, Current: latest,
 		Trigger: cause.Error(), Roster: candidates,
-	})
+	}
+	var proposed plan.Plan
+	var err error
+	retainedID := ""
+	if s.deps.Attempts != nil {
+		records, loadErr := s.deps.Attempts.ForTask(ctx, latest.TaskID)
+		if loadErr != nil {
+			return plan.Plan{}, loadErr
+		}
+		prefix := fmt.Sprintf("plan/%s/r%d/prompt/", latest.TaskID, latest.Rev+1)
+		var retained attempt.Record
+		for _, record := range records {
+			if record.Kind == attempt.KindPlan && strings.HasPrefix(record.TurnID, prefix) && strings.HasPrefix(record.Session, "ns_") && record.State != attempt.Superseded && (retained.ID == "" || record.StartedAt.After(retained.StartedAt)) {
+				retained = record
+			}
+		}
+		retainedID = retained.ID
+	}
+	if retainedID != "" {
+		proposed, err = s.ResumePlanning(ctx, retainedID)
+	} else {
+		proposed, err = s.planner.Plan(ctx, request)
+	}
 	if err != nil {
 		return plan.Plan{}, err
 	}
@@ -172,7 +232,11 @@ func (s *Supervisor) revise(ctx context.Context, current plan.Plan, cause error)
 	// steps would spend the budget twice and could hit the same finding
 	// that triggered it.
 	steps := keepFinished(latest, proposed.Steps)
-	revised, err := s.plans.Revise(current.ID, steps, s.planner.Name(), cause.Error())
+	by, because := s.planner.Name(), cause.Error()
+	if retainedID != "" {
+		by, because = proposed.By, proposed.Because
+	}
+	revised, err := s.plans.Revise(current.ID, steps, by, because)
 	if err != nil {
 		return plan.Plan{}, err
 	}

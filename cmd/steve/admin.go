@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/node"
@@ -23,6 +24,7 @@ import (
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/skills"
+	"github.com/gopact-ai/steve/internal/sshconnect"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 )
@@ -32,23 +34,28 @@ import (
 // them so a restart keeps them. A new machine gets a token of its own
 // and one command to run.
 type fleetAdmin struct {
-	releases      consoleapi.ReleaseProvider
-	owner         string
-	materialLevel project.Level
-	materials     *material.Store
-	console       *console.Service
-	lifetime      context.Context
-	mu            sync.Mutex
-	cfg           *config.Config
-	path          string
-	writeConfig   func(string, *config.Config) error
-	cloning       map[string]bool
-	cloneFiles    func(context.Context, string, nodewire.FileRequest) (string, error)
-	cloneLeaseTTL time.Duration
-	cloneTimeout  time.Duration
-	nodes         *node.Registry
-	catalog       *agent.Catalog
-	fleet         *roster.Roster
+	observation        *localObservation
+	clusterMode        bool
+	ssh                *sshconnect.Service
+	releases           consoleapi.ReleaseProvider
+	owner              string
+	materialLevel      project.Level
+	materials          *material.Store
+	console            *console.Service
+	lifetime           context.Context
+	mu                 sync.Mutex
+	cfg                *config.Config
+	path               string
+	writeConfig        func(string, *config.Config) error
+	writeConfigContext func(context.Context, string, *config.Config) error
+	configRevision     func() string
+	cloning            map[string]bool
+	cloneFiles         func(context.Context, string, nodewire.FileRequest) (string, error)
+	cloneLeaseTTL      time.Duration
+	cloneTimeout       time.Duration
+	nodes              *node.Registry
+	catalog            *agent.Catalog
+	fleet              *roster.Roster
 	// projects is the ledger's project store; repos the hub's view of what
 	// each project's directory holds.
 	projects *project.Store
@@ -66,7 +73,9 @@ type fleetAdmin struct {
 	coordinator *turn.Coordinator
 	// homePath is Steve's own directory: who it is, who the owner is,
 	// what it remembers.
-	homePath string
+	homePath   string
+	homeLoader home.Loader
+	sharedHome *memory.LedgerStore
 	// memory is what Steve remembers, for the page to read and edit.
 	memory *memory.Service
 	// probes remembers what each MCP deployment answered when last
@@ -94,6 +103,12 @@ var nameShape = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 // nodeKey is the registry's name for a machine the page named: the hub
 // is "" inside, whatever it is called outside.
 func (a *fleetAdmin) nodeKey(name string) string {
+	if a.clusterMode {
+		if name == "" || name == "hub" {
+			return nodeName()
+		}
+		return name
+	}
 	if name == "" || name == "hub" || name == nodewire.Place("") {
 		return ""
 	}
@@ -116,11 +131,25 @@ func orHubName(node string) string {
 
 // persistConfig preserves the commit boundary for callers with derived live state.
 func (a *fleetAdmin) persistConfig(candidate *config.Config) error {
+	ctx := a.lifetime
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return a.persistConfigContext(ctx, candidate)
+}
+
+func (a *fleetAdmin) persistConfigContext(ctx context.Context, candidate *config.Config) error {
 	write := a.writeConfig
 	if write == nil {
 		write = config.Save
 	}
-	if err := write(a.path, candidate); err != nil {
+	var err error
+	if a.writeConfigContext != nil {
+		err = a.writeConfigContext(ctx, a.path, candidate)
+	} else {
+		err = write(a.path, candidate)
+	}
+	if err != nil {
 		if config.Committed(err) {
 			a.cfg.AdoptFileRevision(candidate)
 			return fmt.Errorf("配置已应用，目录同步失败，持久性尚未确认：%w", err)

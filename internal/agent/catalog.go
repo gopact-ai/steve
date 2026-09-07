@@ -114,7 +114,7 @@ func (c *Catalog) Set(id string, cfg Config) error {
 	return nil
 }
 
-// Remove forgets an agent. The default agent stays: a catalog needs one.
+// Remove forgets an agent. Select another default before removing it.
 func (c *Catalog) Remove(id string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -164,9 +164,6 @@ func (c *Catalog) Add(id string, cfg Config) error {
 }
 
 func NewCatalog(configs map[string]Config) (*Catalog, error) {
-	if len(configs) == 0 {
-		return nil, fmt.Errorf("at least one agent is required")
-	}
 	d := &catalogData{agents: make(map[string]Agent, len(configs)), aliases: map[string]string{}}
 	owned := make(map[string]Config, len(configs))
 	for configuredID, cfg := range configs {
@@ -198,7 +195,7 @@ func NewCatalog(configs map[string]Config) (*Catalog, error) {
 			d.defaultAgent = agent
 		}
 	}
-	if d.defaultAgent.ID == "" {
+	if len(configs) > 0 && d.defaultAgent.ID == "" {
 		return nil, fmt.Errorf("one default agent is required")
 	}
 	d.longestAliases = make([]string, 0, len(d.aliases))
@@ -222,6 +219,7 @@ func (c *Catalog) Resolve(name string) (Agent, bool) {
 	return cloneAgent(data.agents[id]), true
 }
 
+// Default is the zero Agent until the first agent is registered.
 func (c *Catalog) Default() Agent { return cloneAgent(c.snap().defaultAgent) }
 
 func (c *Catalog) List() []Agent {

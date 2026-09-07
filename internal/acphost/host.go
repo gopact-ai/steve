@@ -88,6 +88,9 @@ type Config struct {
 	ProcessDir string
 	Env        []string
 	Permission *permission.Broker
+	// NoRestart binds this host to its original native process. Recovery must
+	// create a new, explicitly admitted execution rather than reuse this host.
+	NoRestart bool
 }
 
 type SessionConfig struct {
@@ -617,6 +620,9 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	}
 	if h.alive {
 		return nil
+	}
+	if h.cfg.NoRestart && h.generation != 0 {
+		return ErrClosed
 	}
 	proc, err := h.cfg.Transport.Start(ctx)
 	if err != nil {

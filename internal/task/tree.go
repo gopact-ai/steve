@@ -18,6 +18,10 @@ const MaxDepth = 4
 func (s *Store) Spawn(parentID string, child Task) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.spawnLocked(parentID, child, s.replaceLocked)
+}
+
+func (s *Store) spawnLocked(parentID string, child Task, replace func(data) error) (Task, error) {
 	parent, ok := s.data.Tasks[parentID]
 	if !ok {
 		return Task{}, fmt.Errorf("parent task %s not found", parentID)
@@ -104,7 +108,7 @@ func (s *Store) Spawn(parentID string, child Task) (Task, error) {
 	next := s.clone()
 	next.NextID = s.data.NextID + 1
 	next.Tasks[child.ID] = &child
-	if err := s.replaceLocked(next); err != nil {
+	if err := replace(next); err != nil {
 		return Task{}, err
 	}
 	return child, nil

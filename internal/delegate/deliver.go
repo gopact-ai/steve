@@ -145,6 +145,19 @@ func (s *Service) Flush(ctx context.Context, parentID string) {
 	s.deliverMu.Lock()
 	defer s.deliverMu.Unlock()
 	waiting := s.tasks.Undelivered()[parentID]
+	// A caller already waiting gets the first chance to consume its result.
+	// Registration precedes execution, so closing done cannot race an inline
+	// response into an additional automatic continuation.
+	s.mu.Lock()
+	ready := waiting[:0]
+	for _, tracked := range waiting {
+		if current := s.pending[tracked.ID]; current != nil && current.waiters > 0 {
+			continue
+		}
+		ready = append(ready, tracked)
+	}
+	s.mu.Unlock()
+	waiting = ready
 	if len(waiting) == 0 {
 		return
 	}

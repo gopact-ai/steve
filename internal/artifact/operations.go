@@ -111,6 +111,8 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 		result.Commit, result.Changed, err = r.Snapshot(ctx, req.WorkTree, req.Parent, req.Message, req.Flatten)
 	case ops.Checkout:
 		err = r.Checkout(ctx, req.Commit, req.WorkTree)
+	case ops.VerifyCheckout:
+		err = r.VerifyCheckout(ctx, req.Commit, req.WorkTree)
 	case ops.Has:
 		// Missing commits are a negative answer; process/start failures are errors.
 		_, err = r.git(ctx, nil, "cat-file", "-e", req.Commit+"^{commit}")
@@ -179,7 +181,7 @@ func validateOperation(req ops.Request) error {
 		if req.Parent != "" {
 			commits = []string{req.Parent}
 		}
-	case ops.Checkout:
+	case ops.Checkout, ops.VerifyCheckout:
 		paths, commits = []string{req.Repo, req.WorkTree}, []string{req.Commit}
 	case ops.Has:
 		paths, commits = []string{req.Repo}, []string{req.Commit}

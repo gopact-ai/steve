@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/mcpscan"
@@ -61,8 +62,8 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 		if h.Adapter != nil && *h.Adapter != previous.Adapter {
 			return fmt.Errorf("harness %s adapter changes require configuration and restart", id)
 		}
-		if previous.Adapter != "" && h.Command != previous.Command {
-			return fmt.Errorf("harness %s has a pinned adapter; its generated command cannot be edited", id)
+		if previous.Adapter != "" && (h.Command != previous.Command || !slices.Equal(h.Args, previous.Args)) {
+			return fmt.Errorf("harness %s has a pinned adapter; its generated command and arguments cannot be edited", id)
 		}
 		if h.Permission != nil && *h.Permission != "" {
 			return fmt.Errorf("harness %s permissions are managed by the hub", id)
@@ -81,9 +82,6 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 			previous.Slots = *h.Slots
 		}
 		next.Harnesses[id] = previous
-	}
-	if len(next.Harnesses) == 0 {
-		return errors.New("a node needs at least one AI tool")
 	}
 	next.Tools = cleanList(set.Tools)
 	next.Declares = cleanList(set.Declares)
@@ -126,6 +124,7 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 			next.MCPServers[id] = MCPSpec{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
 		}
 	}
+	var writeErr error
 	if next.Source != "" {
 		current, err := nodeSettingsFileRevision(next.Source)
 		if err != nil {
@@ -134,8 +133,9 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 		if current != s.settingsFileRevision {
 			return fmt.Errorf("%w: node configuration was edited externally; restart before saving", nodewire.ErrSettingsRevisionConflict)
 		}
-		if err := writeConfig(next); err != nil {
-			return err
+		writeErr = writeConfig(next)
+		if writeErr != nil && !settingsCommitted(writeErr) {
+			return writeErr
 		}
 		s.settingsFileRevision, _ = nodeSettingsFileRevision(next.Source)
 	}
@@ -153,7 +153,7 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 	}
 	log.Printf("steve-node: settings applied from the hub: %d harnesses, %d tools, %d mcp, %d declares, %d tags",
 		len(next.Harnesses), len(next.Tools), len(next.MCPServers), len(next.Declares), len(next.Capabilities))
-	return nil
+	return writeErr
 }
 
 // startBroker starts the MCP broker the settings call for, if any.
@@ -195,15 +195,45 @@ func writeConfig(cfg ServerConfig) error {
 	if err != nil {
 		return err
 	}
-	tmp := cfg.Source + ".tmp"
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
+	tmp, err := os.CreateTemp(filepath.Dir(cfg.Source), ".node-config-*")
+	if err != nil {
+		return fmt.Errorf("write node configuration: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(append(raw, '\n')); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmp.Name(), cfg.Source); err != nil {
 		return fmt.Errorf("write %s: %w", cfg.Source, err)
 	}
-	if err := os.Rename(tmp, cfg.Source); err != nil {
-		os.Remove(tmp)
-		return fmt.Errorf("write %s: %w", cfg.Source, err)
+	dir, err := os.Open(filepath.Dir(cfg.Source))
+	if err != nil {
+		return &settingsCommittedError{err: err}
+	}
+	defer dir.Close()
+	if err := dir.Sync(); err != nil {
+		return &settingsCommittedError{err: err}
 	}
 	return nil
+}
+
+type settingsCommittedError struct{ err error }
+
+func (e *settingsCommittedError) Error() string {
+	return "node settings applied; directory sync failed: " + e.err.Error()
+}
+func (e *settingsCommittedError) Unwrap() error { return e.err }
+func settingsCommitted(err error) bool {
+	var committed *settingsCommittedError
+	return errors.As(err, &committed)
 }
 
 func cleanList(in []string) []string {
@@ -231,11 +261,15 @@ func (s *Server) configure(stream *nodewire.Stream) {
 			out.Error = err.Error()
 			if errors.Is(err, nodewire.ErrSettingsRevisionConflict) {
 				out.ErrorCode = nodewire.SettingsRevisionConflictCode
+			} else if settingsCommitted(err) {
+				out.ErrorCode = "settings_committed"
 			}
 		}
 		_ = json.NewEncoder(stream).Encode(out)
 	}
 	switch verb {
+	case "discover-agents", "enroll-agent":
+		s.configureAgentTools(stream)
 	case "get":
 		reply(nil)
 	case "set":

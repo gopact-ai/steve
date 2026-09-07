@@ -105,6 +105,10 @@ func helpText(topic string) (string, error) {
 
 func (s *Server) steveContext(ctx context.Context, bind binding) (string, error) {
 	s.mu.Lock()
+	if err := s.loadConversationLocked(ctx, bind.conversationID, nil); err != nil {
+		s.mu.Unlock()
+		return "", err
+	}
 	informer := s.informer
 	boundChannel := ""
 	if a := s.anchors[bind.conversationID]; a != nil {
@@ -242,7 +246,10 @@ func (s *Server) steveNodeAdd(ctx context.Context, bind binding, raw json.RawMes
 		return "", err
 	}
 	var args struct {
-		Name, Addr, Level, HubURL string
+		Name   string `json:"name"`
+		Addr   string `json:"addr"`
+		Level  string `json:"level"`
+		HubURL string `json:"hub_url"`
 	}
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return "", errors.New("bad steve_node_add arguments")

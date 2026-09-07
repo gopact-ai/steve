@@ -29,39 +29,79 @@ func KimiHome(stateDir string) string {
 }
 
 func Prepare(stateDir string) error {
+	return PrepareSelected(stateDir, []string{harness.Codex, harness.ClaudeCode, harness.Grok, harness.Kimi})
+}
+
+// PrepareSelected prepares only the tools the user registered. An empty
+// selection does not read tool settings, link credentials or create runtimes.
+// Custom harnesses manage their own runtime and are left untouched.
+func PrepareSelected(stateDir string, selected []string) error {
+	if len(selected) == 0 {
+		return nil
+	}
 	userHome, err := os.UserHomeDir()
 	if err != nil {
 		userHome = ""
 	}
-	var userCodex, userGrok, userKimi string
-	if userHome != "" {
-		userCodex = filepath.Join(userHome, ".codex")
-		userGrok = filepath.Join(userHome, ".grok")
-		userKimi = filepath.Join(userHome, ".kimi-code")
+	source := func(dir string) string {
+		if userHome == "" {
+			return ""
+		}
+		return filepath.Join(userHome, dir)
 	}
-	if err := PrepareCodex(CodexHome(stateDir), userCodex); err != nil {
-		return err
+	seen := make(map[string]bool, len(selected))
+	for _, id := range selected {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		var err error
+		switch id {
+		case harness.Codex:
+			err = PrepareCodex(CodexHome(stateDir), source(".codex"))
+		case harness.ClaudeCode:
+			err = PrepareClaude(ClaudeHome(stateDir), source(".claude"))
+		case harness.Grok:
+			err = PrepareGrok(GrokHome(stateDir), source(".grok"))
+		case harness.Kimi:
+			err = PrepareKimi(KimiHome(stateDir), source(".kimi-code"))
+		}
+		if err != nil {
+			return err
+		}
 	}
-	var userClaude string
-	if userHome != "" {
-		userClaude = filepath.Join(userHome, ".claude")
-	}
-	if err := PrepareClaude(ClaudeHome(stateDir), userClaude); err != nil {
-		return err
-	}
-	if err := PrepareGrok(GrokHome(stateDir), userGrok); err != nil {
-		return err
-	}
-	return PrepareKimi(KimiHome(stateDir), userKimi)
+	return nil
 }
 
 func SkillDests(stateDir string) []string {
-	return []string{
-		filepath.Join(CodexHome(stateDir), "skills"),
-		filepath.Join(ClaudeHome(stateDir), "skills"),
-		filepath.Join(GrokHome(stateDir), "skills"),
-		filepath.Join(KimiHome(stateDir), "skills"),
+	return SelectedSkillDests(stateDir, []string{harness.Codex, harness.ClaudeCode, harness.Grok, harness.Kimi})
+}
+
+// SelectedSkillDests returns each selected built-in tool's skills directory.
+func SelectedSkillDests(stateDir string, selected []string) []string {
+	dests := make([]string, 0, len(selected))
+	seen := make(map[string]bool, len(selected))
+	for _, id := range selected {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		var dest string
+		switch id {
+		case harness.Codex:
+			dest = CodexHome(stateDir)
+		case harness.ClaudeCode:
+			dest = ClaudeHome(stateDir)
+		case harness.Grok:
+			dest = GrokHome(stateDir)
+		case harness.Kimi:
+			dest = KimiHome(stateDir)
+		}
+		if dest != "" {
+			dests = append(dests, filepath.Join(dest, "skills"))
+		}
 	}
+	return dests
 }
 
 func ApplyEnv(env []string, harnessID, stateDir string) []string {

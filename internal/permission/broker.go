@@ -29,6 +29,7 @@ func New(policy string) (*Broker, error) {
 
 // Ask is one tool-permission prompt that must be answered by a human.
 type Ask struct {
+	RequestID  string
 	SessionID  string
 	Generation uint64
 	ToolCallID string

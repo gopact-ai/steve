@@ -101,7 +101,8 @@ export function ConsolePage() {
     // The server owns execution; every tab projects the same durable queue.
     const [exchanges, setExchanges] = useState<Exchange[]>([]);
     const queue = exchanges.filter((e) => e.conversation === conversation && e.state === "queued");
-    const busy = !!live || exchanges.some((e) => e.conversation === conversation && e.state === "running");
+    const recoveryState = exchanges.find((entry) => entry.conversation === conversation && ["recovering", "awaiting-user"].includes(entry.state))?.state;
+    const busy = !!live || exchanges.some((e) => e.conversation === conversation && ["running", "recovering", "awaiting-user"].includes(e.state));
     const activeConversation = useRef(conversation);
     activeConversation.current = conversation;
     const queueRequest = useRef(0);
@@ -162,7 +163,7 @@ export function ConsolePage() {
             if (activeConversation.current !== conversation || request !== queueRequest.current) return;
             setExchanges(data.queue || []);
             reconcileSubmission(conversation, data.queue || []);
-            const running = [...(data.queue || [])].filter((e) => e.state === "running").sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""))[0];
+            const running = [...(data.queue || [])].filter((e) => ["running", "recovering", "awaiting-user"].includes(e.state)).sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""))[0];
             setLive((cur) => running ? (cur?.exchangeID === running.id ? cur : { since: running.started_at || running.enqueued_at, exchangeID: running.id, steps: {}, order: [] }) : null);
         } catch (e) {
             if (activeConversation.current === conversation) setStatus(String(e).replace(/^Error: /, ""));
@@ -479,7 +480,7 @@ export function ConsolePage() {
                             <button type="button" className="text-xs text-tertiary hover:text-primary" onClick={() => void updateConversation(current.id, { archived: false }).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}>{t("console.unarchive")}</button>
                         </span>
                     )}
-                    <span role="status" className="console-status">{status || contextError || conversationsError || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : live || busy ? t("console.working") : "")}</span>
+                    <span role="status" className="console-status">{status || contextError || conversationsError || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "")}</span>
                     <span className="workbench-segmented" role="group" aria-label={t("console.workView")} >
                         <button type="button" onClick={() => navigate("/console")} aria-pressed>{t("console.conversation")}</button>
                         <button type="button" onClick={() => navigate("/console?view=board")} aria-pressed={false}>{t("console.board")}</button>

@@ -10,6 +10,20 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 )
 
+func TestIncompleteDraftDoesNotReportIdentitySaved(t *testing.T) {
+	for _, output := range []string{"已记下。\n===SOUL.md===\n# Soul\n你是用户的可靠助手，需要维护项目。\n", "已记下。\n===USER.md===\n# User\n- name\n", "已记下。\n===SOUL.md===\n<full SOUL.md>\n===USER.md===\n<full USER.md>"} {
+		written := false
+		reply, saved, err := ApplyWith(output, func(string, string) error { written = true; return nil })
+		if err == nil || saved || written || reply != "" {
+			t.Fatalf("malformed draft reported success: %q %v %v", reply, saved, err)
+		}
+	}
+	reply, saved, err := ApplyWith("请先告诉我你的时区。", func(string, string) error { t.Fatal("normal question wrote identity"); return nil })
+	if err != nil || saved || reply != "请先告诉我你的时区。" {
+		t.Fatalf("normal question was rejected: %q %v %v", reply, saved, err)
+	}
+}
+
 func TestAllowScan(t *testing.T) {
 	tests := []struct {
 		name  string

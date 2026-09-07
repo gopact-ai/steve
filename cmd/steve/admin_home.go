@@ -11,15 +11,31 @@ import (
 )
 
 // Home is Steve's own directory as the page shows it.
-func (a *fleetAdmin) Home(_ context.Context) (consoleapi.HomeView, error) {
-	if a.homePath == "" {
+func (a *fleetAdmin) Home(ctx context.Context) (consoleapi.HomeView, error) {
+	if a.homePath == "" && a.sharedHome == nil {
 		return consoleapi.HomeView{}, errors.New("没有配置档案目录（gateway.home_path）")
 	}
-	files, err := home.Files(a.homePath)
-	if err != nil {
-		return consoleapi.HomeView{}, err
+	var files []home.File
+	if a.sharedHome != nil {
+		shared, err := a.sharedHome.HomeFiles(ctx)
+		if err != nil {
+			return consoleapi.HomeView{}, err
+		}
+		for _, name := range []string{home.FileSoul, home.FileUser, home.FileMemory} {
+			text, exists := shared[name]
+			files = append(files, home.File{Name: name, Text: text, Budget: home.Budgets[name], Missing: !exists, Template: home.IsTemplate(text)})
+		}
+	} else {
+		var err error
+		files, err = home.Files(a.homePath)
+		if err != nil {
+			return consoleapi.HomeView{}, err
+		}
 	}
 	view := consoleapi.HomeView{Path: a.homePath, TotalBudget: home.BudgetTotal, Files: []consoleapi.HomeFile{}, Warnings: []string{}}
+	if a.sharedHome != nil {
+		view.Path = "shared profile"
+	}
 	for _, f := range files {
 		if f.Name == home.FileMemory && a.memory != nil && !f.Missing {
 			if text, err := a.memory.Text(context.Background(), memory.Global); err == nil {
@@ -28,7 +44,10 @@ func (a *fleetAdmin) Home(_ context.Context) (consoleapi.HomeView, error) {
 		}
 		view.Files = append(view.Files, consoleapi.HomeFile{Name: f.Name, Text: f.Text, Bytes: len([]byte(f.Text)), Budget: f.Budget, Template: f.Template, Missing: f.Missing})
 	}
-	dir := home.Dir{Path: a.homePath}
+	var dir home.Loader = home.Dir{Path: a.homePath}
+	if a.homeLoader != nil {
+		dir = a.homeLoader
+	}
 	if snap, err := dir.Load(home.ModeOwner); err == nil {
 		view.OwnerBytes = len([]byte(snap.Identity))
 		view.Warnings = append(view.Warnings, snap.Warnings...)
@@ -79,6 +98,9 @@ func (a *fleetAdmin) SetProjectMemory(ctx context.Context, id, text string) erro
 // SetHomeFile rewrites one of the three. The next turn reads it; a
 // session already open is told its instructions changed.
 func (a *fleetAdmin) SetHomeFile(ctx context.Context, name, text string) error {
+	if a.sharedHome != nil {
+		return a.sharedHome.WriteHomeFile(ctx, name, text, memory.Actor{By: "console"})
+	}
 	if a.homePath == "" {
 		return errors.New("没有配置档案目录（gateway.home_path）")
 	}

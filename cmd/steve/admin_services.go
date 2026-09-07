@@ -339,6 +339,25 @@ func (s *hubServices) preflight() error {
 			return serviceFailure("conflict", "The configuration file changed outside the console; validate and deploy it before restarting")
 		}
 	}
+	if s.admin.clusterMode {
+		// A coordinator activation uses the shared declaration over this
+		// machine's local configuration. Its logical cluster identity and
+		// internal listener intentionally differ from the installation file.
+		cfg := s.admin.cfg
+		if cfg == nil {
+			return serviceFailure("invalid", "The current shared configuration is unavailable")
+		}
+		if err := cfg.ValidateChannels(); err != nil {
+			return serviceFailure("invalid", "The saved channel configuration is invalid")
+		}
+		if _, err := cfg.AgentCatalog(); err != nil {
+			return serviceFailure("invalid", "The shared Agent configuration is invalid")
+		}
+		if _, _, err := config.ProjectDeclarations(cfg); err != nil {
+			return serviceFailure("invalid", "The shared project configuration is invalid")
+		}
+		return nil
+	}
 	cfg, err := config.Load(s.admin.path)
 	if err != nil {
 		return serviceFailure("invalid", "Saved configuration is invalid; fix it before restarting")

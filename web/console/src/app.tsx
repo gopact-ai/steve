@@ -1,3 +1,5 @@
+import { CoordinationProvider, useCoordination } from "@/lib/coordination";
+import { DesktopOnboarding } from "@/components/steve/desktop-onboarding";
 import { SelectionProvider } from "@/providers/selection-provider";
 import { SideChatProvider } from "@/providers/side-chat-provider";
 import { useState } from "react";
@@ -22,11 +24,12 @@ import { ReviewProvider } from "@/components/steve/review-context";
 
 export function App() {
     const navigate = useNavigate();
-    return <FleetProvider><IntentProvider onNavigate={() => navigate("/console")}><MaterialProvider><SideChatProvider><SelectionProvider><ReviewProvider><Shell /></ReviewProvider></SelectionProvider></SideChatProvider></MaterialProvider></IntentProvider></FleetProvider>;
+    return <FleetProvider><CoordinationProvider><IntentProvider onNavigate={() => navigate("/console")}><MaterialProvider><SideChatProvider><SelectionProvider><ReviewProvider><Shell /><DesktopOnboarding /></ReviewProvider></SelectionProvider></SideChatProvider></MaterialProvider></IntentProvider></CoordinationProvider></FleetProvider>;
 }
 
 function Shell() {
     const { snap, live } = useFleet();
+    const { view: coordination, error: coordinationError } = useCoordination();
     const location = useLocation();
     const { locale, t } = useI18n();
     const desktop = useBreakpoint("xl");
@@ -54,6 +57,9 @@ function Shell() {
     const selected = location.pathname + location.search;
     const connection = t(live === "live" ? (broken ? "connection.partial" : "connection.live") : live === "unauthorized" ? "connection.unauthorized" : "connection.connecting");
     const devices = t("connection.devices", { online: number(up, locale), total: number(snap.nodes.length, locale) });
+    const coordinatorName = coordination?.enabled ? coordination.nodes.find((node) => node.id === coordination.coordinator_id)?.name || coordination.coordinator_id || "" : coordination ? snap.hub.node : "";
+    const coordinatorCurrent = live === "live" && !coordinationError && (!coordination?.enabled || coordination.authoritative);
+    const coordinatedBy = coordinatorName ? t(coordinatorCurrent ? "connection.coordinatedBy" : "connection.lastCoordinator", { node: coordinatorName }) : t("connection.coordinatorUnknown");
     const navigation = (small: boolean) => <>
         <div className="app-brand">
             <span className="app-mark" aria-hidden="true"><Terminal /></span>
@@ -75,14 +81,17 @@ function Shell() {
             </div>
         </nav>
         <div className="app-sidebar-footer">
+            <a href="#/fleet" className={`mb-2 flex min-h-10 min-w-0 rounded-md px-1.5 py-2 text-xs hover:bg-secondary_hover ${small ? "items-center justify-center" : "flex-col gap-1"}`} aria-label={coordinatedBy} title={`${coordinatedBy} · ${t("connection.coordinatorRole")}`} onClick={() => setMobileNav(false)}>
+                {small ? <Server01 className="size-4 text-tertiary" aria-hidden="true" /> : <><span className="text-tertiary">{t(coordinatorCurrent ? "connection.coordinator" : "connection.lastCoordinatorRole")}</span><span className="truncate font-semibold text-primary">{coordinatorName || "—"}</span></>}
+            </a>
             {small && <span role="status" className="app-compact-status" aria-label={connection} title={`${connection} · ${devices}`}><span className={`connection-dot ${live === "live" && !broken ? "connected" : ""}`} /></span>}
-            {!small && <div className="app-connection" title={`hub ${snap.hub.version || ""} · ${devices}`}>
+            {!small && <div className="app-connection" title={`${coordinatedBy} · ${devices}`}>
                 <span className={`connection-dot ${live === "live" && !broken ? "connected" : ""}`} />
                 <span>{connection}</span><span className="app-device-count">{t("connection.online", { count: number(up, locale) })}</span>
             </div>}
             <div className="app-sidebar-tools">
                 <a href="#/settings?section=general" className="app-settings-link" aria-label={t("settingsPage.centerTitle")} title={small ? t("settingsPage.centerTitle") : undefined} aria-current={location.pathname === "/settings" ? "page" : undefined} onClick={() => setMobileNav(false)}><Settings01 aria-hidden="true" />{!small && <span>{t("settingsPage.centerTitle")}</span>}</a>
-                {!small && <span className="app-version" title={snap.hub.node}>hub {snap.hub.version || "—"}</span>}
+                {!small && <span className="app-version" title={snap.hub.node}>{snap.hub.version || "—"}</span>}
                 {desktop && <button type="button" className="workbench-icon-button app-collapse" aria-label={small ? t("nav.expand") : t("nav.collapse")} title={small ? t("nav.expand") : t("nav.collapse")} onClick={() => { const next = !navCollapsed; setNavCollapsed(next); try { localStorage.setItem("steve.nav.collapsed", next ? "1" : "0"); } catch { /* Preference is optional. */ } }}><ChevronLeftDouble className={small ? "rotate-180" : ""} aria-hidden="true" /></button>}
             </div>
         </div>
@@ -90,7 +99,7 @@ function Shell() {
     return <div className="workbench-shell">
         <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>{t("nav.skip")}</a>
         {tablet && <aside className={`app-sidebar ${compact ? "is-compact" : ""}`}>{navigation(compact)}</aside>}
-        {!tablet && <div className="app-mobile-bar"><button type="button" className="workbench-icon-button" aria-label={t("nav.menu")} onClick={() => setMobileNav(true)}><Menu01 aria-hidden="true" /></button><strong>Steve</strong><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
+        {!tablet && <div className="app-mobile-bar"><button type="button" className="workbench-icon-button" aria-label={t("nav.menu")} onClick={() => setMobileNav(true)}><Menu01 aria-hidden="true" /></button><strong>Steve</strong><a href="#/fleet" className="max-w-[60%] truncate rounded px-1 py-2 text-xs text-tertiary hover:text-primary" title={t("connection.coordinatorRole")}>{coordinatedBy}</a><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
         {mobileNav && !tablet && <Sheet label={t("nav.menu")} side="left" width={260} onClose={() => setMobileNav(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("nav.close")} onClick={() => setMobileNav(false)}><X aria-hidden="true" /></button><div className="app-sidebar is-mobile">{navigation(false)}</div></Sheet>}
         <main id="main-content" tabIndex={-1} className="app-main">
             <Routes>

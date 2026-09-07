@@ -2,7 +2,7 @@
 
 [中文](README.md)
 
-Steve is a personal platform for agent work across machines. Its Web console (with Feishu/Lark as an optional interaction channel) manages projects, conversations and tasks, places and delegates work according to machine capabilities, and records progress, artifacts, approvals and recovery state.
+Steve is a personal platform for agent work across machines. Its desktop app and Web console (with Feishu/Lark as an optional interaction channel) manage projects, conversations and tasks, place and delegate work according to machine capabilities, and record progress, artifacts, approvals and recovery state.
 
 Steve makes three structural commitments:
 
@@ -10,7 +10,13 @@ Steve makes three structural commitments:
 - **Execution has explicit boundaries**: admission uses machine observations, project access and data levels constrain placement, built-in MCP uses conversation-bound tokens, and policies handle tool permissions.
 - **Work leaves a record**: tasks, attempts, artifacts and landing states enter the ledger. Recovery rules determine whether interrupted work continues or records a failure, with approvals and external-effect reconciliation available for inspection.
 
-## Start with the console
+## Start with the desktop app
+
+On macOS, run `make desktop` to build the native app. The script prints the path to `Steve.app`. First launch initializes this computer as the coordinator; no other machine is required. Register existing local agents when ready, and connect other machines through SSH discovery in Resources.
+
+Closing the window leaves the backend running. See the [desktop and multi-node guide (Chinese)](docs/desktop.md) for installation, storage authorization, handover, quorum requirements and recovery. Full replicas require Restricted data access or higher; shared-ledger deployments do not support sealed projects.
+
+## Standalone Web console
 
 The console can run independently without a Feishu/Lark application. Set `gateway.owner_id` for a standalone deployment. To add Feishu/Lark, configure both application credentials and its channel owner. Both entry points share projects, tasks and the ledger.
 

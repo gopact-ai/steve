@@ -8,6 +8,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/platformconfig"
 )
 
 type hubChannelsService struct {
@@ -38,7 +39,7 @@ func (s *hubChannelsService) viewLocked() consoleapi.ChannelsView {
 	// A secret rotation is pending even if configured stays true in both
 	// public views. Compare privately without returning a secret digest.
 	pending := !reflect.DeepEqual(desired, s.applied) || s.admin.cfg.Feishu.AppSecret != s.appliedSecret
-	return consoleapi.ChannelsView{Revision: s.admin.cfg.FileRevision(), Desired: desired, Effective: cloneChannelSettings(s.applied), PendingRestart: pending, ApplyMode: "restart", RuntimeError: s.runtimeError}
+	return consoleapi.ChannelsView{Revision: s.admin.settingsRevision(), Desired: desired, Effective: cloneChannelSettings(s.applied), PendingRestart: pending, ApplyMode: "restart", RuntimeError: s.runtimeError}
 }
 
 func cloneChannelSettings(in config.ChannelSettings) config.ChannelSettings {
@@ -47,12 +48,12 @@ func cloneChannelSettings(in config.ChannelSettings) config.ChannelSettings {
 	return in
 }
 
-func (s *hubChannelsService) UpdateChannels(_ context.Context, req consoleapi.ChannelsUpdate) (consoleapi.ChannelsView, error) {
+func (s *hubChannelsService) UpdateChannels(ctx context.Context, req consoleapi.ChannelsUpdate) (consoleapi.ChannelsView, error) {
 	s.admin.mu.Lock()
 	defer s.admin.mu.Unlock()
 	configMu.Lock()
 	defer configMu.Unlock()
-	if req.BaseRevision == "" || req.BaseRevision != s.admin.cfg.FileRevision() {
+	if req.BaseRevision == "" || req.BaseRevision != s.admin.settingsRevision() {
 		return consoleapi.ChannelsView{}, consoleapi.ErrSettingsConflict
 	}
 	if err := s.admin.cfg.CheckFileRevision(s.admin.path); err != nil {
@@ -65,10 +66,10 @@ func (s *hubChannelsService) UpdateChannels(_ context.Context, req consoleapi.Ch
 	if reflect.DeepEqual(candidate.Feishu, s.admin.cfg.Feishu) && reflect.DeepEqual(candidate.Gateway, s.admin.cfg.Gateway) {
 		return s.viewLocked(), nil
 	}
-	saveErr := s.admin.persistConfig(candidate)
+	saveErr := s.admin.persistConfigContext(ctx, candidate)
 	saveErr = redactChannelError(saveErr, s.admin.cfg.Feishu.AppSecret, candidate.Feishu.AppSecret)
 	if saveErr != nil && !config.Committed(saveErr) {
-		if errors.Is(saveErr, config.ErrFileChanged) {
+		if errors.Is(saveErr, config.ErrFileChanged) || errors.Is(saveErr, platformconfig.ErrConflict) {
 			return consoleapi.ChannelsView{}, errors.Join(consoleapi.ErrSettingsConflict, saveErr)
 		}
 		return consoleapi.ChannelsView{}, saveErr

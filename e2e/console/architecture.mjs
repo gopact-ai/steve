@@ -155,6 +155,8 @@ if (process.env.PURE_ONLY !== "1") {
             assert.equal(url.searchParams.has("token"), false, "Normal API requests must not expose authentication in the URL");
             assert.equal(req.headers().authorization, `Bearer ${token}`, "Every normal API call must use Authorization");
             const channel = url.searchParams.get("conversation") || A;
+            if (url.pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
+            if (url.pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
             if (url.pathname === "/state") return route.fulfill({ json: { at, hub: { node: "test-node", version: "test", started: at }, nodes: [{ name: "test-node", role: "hub", up: true }], agents: [], tasks: [], plans: [], projects: [project], inbox: f.inbox, attempts: [], landings: [] } });
             if (url.pathname === "/console/context") {
                 const agent = channel === B ? "agent-b" : f.agent;
@@ -219,7 +221,7 @@ if (process.env.PURE_ONLY !== "1") {
             await f.page.getByText("/work/isolated-project", { exact: true }).waitFor();
             await f.page.getByText("attempt-isolated", { exact: true }).waitFor();
             const writer = f.page.getByRole("listitem").filter({ hasText: "attempt-isolated" });
-            assert.match(await writer.innerText(), /需运维.*核实原进程已退出/);
+            assert.match(await writer.innerText(), /需在指定机器核实原进程已退出/);
             assert.equal(await writer.getByRole("button").count(), 0, "Writer quarantine has no one-click settlement or effects action");
             assert.equal(await f.page.getByText("暂无待处理请求", { exact: true }).count(), 0, "Non-resolvable writers remain visible in the inbox");
             assert.equal(f.posts.length + f.stopCalls.length + f.writes.length, 0, "Reading quarantine must not perform a write");
@@ -233,7 +235,7 @@ if (process.env.PURE_ONLY !== "1") {
             const id = f.posts[0].command_id;
             f.queueReadError = 503;
             await retry.click();
-            await f.page.getByText("无法确认 Hub 是否支持安全提交，当前仅供查看。", { exact: true }).waitFor();
+            await f.page.getByText("无法确认协调节点是否支持安全提交，当前仅供查看。", { exact: true }).waitFor();
             await retry.waitFor();
             const retained = await f.page.evaluate(() => JSON.parse(sessionStorage.getItem("steve.console.drafts")));
             assert.equal(retained.submissions[A].id, id, "A failed retry preflight must retain the original possibly accepted key");
@@ -262,7 +264,7 @@ if (process.env.PURE_ONLY !== "1") {
             await retry.waitFor();
             const id = f.stopCalls[0].command_id;
             f.queueReadError = 503; await retry.click();
-            await f.page.getByText("无法确认 Hub 是否支持安全提交，当前仅供查看。", { exact: true }).waitFor();
+            await f.page.getByText("无法确认协调节点是否支持安全提交，当前仅供查看。", { exact: true }).waitFor();
             await retry.waitFor();
             assert.equal(f.stopCalls.length, 1, "Retry preflight did not send another stop");
             f.queueReadError = 0; await retry.click();
@@ -286,7 +288,7 @@ if (process.env.PURE_ONLY !== "1") {
             await f.page.reload();
             const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             await box.waitFor();
-            await f.page.getByText("Hub 需更新后才能发送指令。当前仍可查看会话和执行记录。", { exact: true }).waitFor();
+            await f.page.getByText("协调节点需更新后才能发送指令。当前仍可查看会话和执行记录。", { exact: true }).waitFor();
             assert.equal(await box.isDisabled(), true, "An old hub must remain read-only");
             await f.page.getByRole("button", { name: "新会话", exact: true }).click();
             await eventually(() => f.page.getByRole("button", { name: "新会话", exact: true }).isEnabled(), "Programmatic creation must finish without writing");
@@ -306,7 +308,7 @@ if (process.env.PURE_ONLY !== "1") {
             await f.page.reload();
             const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             await box.waitFor();
-            await f.page.getByText("无法确认 Hub 是否支持安全提交，当前仅供查看。", { exact: true }).waitFor();
+            await f.page.getByText("无法确认协调节点是否支持安全提交，当前仅供查看。", { exact: true }).waitFor();
             assert.equal(await box.isDisabled(), true);
             f.queueReadError = 0;
             await f.page.getByRole("button", { name: "重新检查", exact: true }).click();
@@ -394,7 +396,7 @@ if (process.env.PURE_ONLY !== "1") {
             assert.match(await f.page.getByRole("button", { name: "Agent", exact: true }).innerText(), /agent-b/, "Old resource responses cannot affect the selected conversation");
         },
         async "configuration-input"(f) {
-            await f.page.locator('a[href="#/fleet"]').click();
+            await f.page.getByRole("link", { name: "资源", exact: true }).click();
             await f.page.locator('[aria-label="机器"]').getByRole("row").filter({ hasText: "test-node" }).click();
             await f.page.getByRole("button", { name: "编辑配置", exact: true }).click();
             const env = f.page.getByRole("textbox", { name: "环境变量", exact: true });

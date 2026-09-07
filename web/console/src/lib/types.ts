@@ -124,7 +124,7 @@ export interface TaskDetail { task: Task; plan?: Plan; children: Task[]; attempt
 // the server reads the text, the page only keeps a preview.
 export interface Exchange {
     id: string; conversation: string; input: string; quotes?: QuoteRef[]; refs?: MaterialRef[]; materials?: FrozenMaterial[]; locale?: string; key?: string;
-    state: "queued" | "running" | "done" | "failed" | "cancelled";
+    state: "queued" | "running" | "recovering" | "awaiting-user" | "done" | "failed" | "cancelled";
     enqueued_at: string; started_at?: string; reply_id?: string;
 }
 export interface QuoteRef { conversation: string; reply_id: string; title?: string; excerpt?: string }
@@ -188,5 +188,5 @@ export interface Material { id: string; project: string; kind: "text" | "image" 
 export interface DraftMaterial extends MaterialRef { title: string; project: string; kind: Material["kind"]; mime: string; size: number }
 export interface MaterialAnnotation { id: string; project: string; ref: MaterialRef; body: string; author: string; revision: number; created_at: string; updated_at: string; deleted?: boolean }
 export interface FrozenMaterial { ref: MaterialRef; material: Material; text?: string; media?: { mime: string; digest: string } }
-export interface PendingQuestion { id: string; conversation: string; exchange_id: string; project?: string; task_id?: string; attempt_id?: string; kind: "permission" | "question"; title?: string; message: string; options: { id: string; label: string; description?: string; kind?: string }[]; required: boolean; locale?: string; created_at: string; deadline: string; updated_at: string; state: "pending" | "answered" | "declined" | "cancelled" | "expired" | "interrupted"; answer?: QuestionAnswer }
-export interface QuestionAnswer { command_id: string; choice?: string; decision: "accept" | "decline" | "cancel" }
+export interface PendingQuestion { id: string; request_id?: string; session_id?: string; conversation: string; exchange_id: string; project?: string; task_id?: string; attempt_id?: string; kind: "permission" | "question" | "recovery"; title?: string; message: string; options: { id: string; label: string; description?: string; kind?: string }[]; allow_free_text?: boolean; required: boolean; locale?: string; created_at: string; deadline: string; updated_at: string; state: "pending" | "answered" | "declined" | "cancelled" | "expired" | "interrupted"; answer?: QuestionAnswer }
+export interface QuestionAnswer { command_id: string; choice?: string; text?: string; decision: "accept" | "decline" | "cancel" }

@@ -317,16 +317,19 @@ func withinHome(resolvedHome, resolvedFile string) error {
 }
 
 func compose(path string, mode Mode, locale Locale, soul, user, memory string) (identity, prompt string, warnings []string) {
+	wrapper := guestWrapper(locale)
+	if mode == ModeOwner {
+		wrapper = ownerWrapper(path, locale)
+	}
+	return composeWithWrapper(wrapper, mode, soul, user, memory)
+}
+
+func composeWithWrapper(wrapper string, mode Mode, soul, user, memory string) (identity, prompt string, warnings []string) {
 	soul = truncateTo(soul, BudgetSoul)
 	user = truncateTo(user, BudgetUser)
 	memory = truncateTo(memory, BudgetMemory)
 
-	var parts []string
-	if mode == ModeOwner {
-		parts = append(parts, ownerWrapper(path, locale))
-	} else {
-		parts = append(parts, guestWrapper(locale))
-	}
+	parts := []string{wrapper}
 	if soul != "" {
 		parts = append(parts, soul)
 	}

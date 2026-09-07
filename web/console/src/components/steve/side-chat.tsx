@@ -28,7 +28,7 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
     useEffect(() => { void load(); }, [event, load]);
     useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [replies, queue]);
     useEffect(() => { if (stop && !stop.active) void load(); }, [stop, load]);
-    const busy = queue.some((entry) => entry.state === "running");
+    const busy = queue.some((entry) => ["running", "recovering", "awaiting-user"].includes(entry.state));
     const blocked = support.state !== "supported" || (refs.length > 0 && !support.material_refs);
     const focused = useRef(false);
     useEffect(() => { if (!blocked && !focused.current && input.current) { input.current.focus({ preventScroll: true }); focused.current = true; } }, [blocked]);

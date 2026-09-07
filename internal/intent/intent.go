@@ -326,6 +326,12 @@ func (f ForAgents) Claim(ctx context.Context, taskID, tool string, args []byte) 
 			attemptID = id
 		}
 	}
+	return f.ClaimExecution(ctx, taskID, attemptID, tool, args)
+}
+
+// ClaimExecution keeps an already authorized MCP request on its original
+// attempt even if another execution becomes current before dispatch.
+func (f ForAgents) ClaimExecution(ctx context.Context, taskID, attemptID, tool string, args []byte) (string, error) {
 	it, err := f.S.Claim(ctx, taskID, attemptID, tool, args)
 	if err != nil {
 		return "", err
@@ -342,4 +348,14 @@ func (f ForAgents) Failed(ctx context.Context, id string, cause error) error {
 }
 func (f ForAgents) Lost(ctx context.Context, id string, cause error) error {
 	return f.S.Lost(ctx, id, cause)
+}
+
+// Outcome lets message receipt recovery apply a confirmed result or a
+// person's reconciliation to its exact original operation before retrying.
+func (f ForAgents) Outcome(ctx context.Context, id string) (string, error) {
+	it, err := f.S.Get(ctx, id)
+	if err != nil {
+		return "", err
+	}
+	return string(it.State), nil
 }

@@ -4,6 +4,7 @@ package agentexec
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/view"
@@ -40,6 +42,7 @@ type Spec struct {
 	TaskID, TurnID, Agent, Project, Base string
 	Kind                                 attempt.Kind
 	Timeout                              time.Duration
+	Source                               json.RawMessage
 }
 type Result struct {
 	Answer  string
@@ -75,6 +78,11 @@ type Runner struct {
 	budget       Budget
 	capabilities Capabilities
 	slotPoll     time.Duration
+	mu           sync.Mutex
+	active       map[string]bool
+	ask          permission.AskFunc
+	askUser      acphost.AskUserFunc
+	observe      func(attempt.Record, view.Progress)
 }
 
 func New(sessions Sessions, fleet *roster.Roster, workspaces Workspaces, attempts *attempt.Service, executions *execution.Registry, budget Budget) *Runner {
@@ -94,6 +102,28 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 	}
 	if r == nil || r.sessions == nil || r.roster == nil || r.workspaces == nil || r.attempts == nil || r.executions == nil || r.budget == nil {
 		return out, errors.New("agentexec execution dependencies are not configured")
+	}
+	original := auxiliaryInput{Spec: spec, Prompt: prompt}
+	identity, err := workID(spec, prompt)
+	if err != nil {
+		return out, err
+	}
+	key := auxiliaryKey(spec)
+	if !r.claim(key) {
+		return out, Blocked(attempt.Record{Spec: attempt.Spec{TaskID: spec.TaskID}}, "busy", "检查原执行占用", "相同规划或验证请求已有观察者。", "建议等待这次执行完成后核对。", nil)
+	}
+	defer r.release(key)
+	if spec.TurnID != "" {
+		prior, found, err := r.attempts.LatestForTurn(parent, spec.TurnID)
+		if err != nil {
+			return out, err
+		}
+		if found && prior.Kind == spec.Kind && (strings.HasPrefix(prior.Session, "ns_") || PendingOpen(prior)) {
+			if prior.TaskID != spec.TaskID || prior.WorkID != identity {
+				return out, Blocked(prior, "work", "核对原规划或验证请求", "同一请求标识对应的输入条件已经变化。", "建议核对原任务与已有执行，不重发原命令。", nil)
+			}
+			return r.resumeAttempt(parent, prior, validate)
+		}
 	}
 	timeout := spec.Timeout
 	if timeout <= 0 {
@@ -150,7 +180,7 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 		keepWorkspace = true
 		return out, errors.New("agentexec requires an isolated worktree")
 	}
-	request := attempt.Spec{ID: id, TaskID: spec.TaskID, TurnID: spec.TurnID, Kind: spec.Kind, Execution: execution.Token(ctx), Project: spec.Project,
+	request := attempt.Spec{WorkID: identity, ID: id, TaskID: spec.TaskID, TurnID: spec.TurnID, Kind: spec.Kind, Execution: execution.Token(ctx), Project: spec.Project,
 		Node: selected.Node, Harness: selected.Harness, Agent: selected.Agent.ID, Slots: selected.Slots, Region: selected.Region,
 		Workspace: workspace, Scope: attempt.ScopeNone, Base: workspace.Base, By: "agentexec", Requires: selected.Agent.Requires}
 	for {
@@ -181,7 +211,7 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 		case <-heartbeatCtx.Done():
 		}
 	}()
-	_, deadline, reserveErr := r.budget.Reserve(spec.TaskID)
+	_, deadline, reserveErr := ReserveBudget(r.budget, out.Attempt)
 	if reserveErr != nil {
 		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer stop()
@@ -203,6 +233,31 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 	var session harness.Runner
 	var releaseBindings bool
 	defer func() {
+		if session != nil && strings.HasPrefix(session.ID(), "ns_") || !out.Attempt.State.Terminal() || out.Attempt.Unsettled {
+			return
+		}
+		if err := SettleBudget(r.budget, out.Attempt, runErr); err != nil {
+			validationReady = false
+			runErr = Blocked(out.Attempt, "accounting", "保存原执行的用量与预算", "执行结果已保存，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", err)
+		}
+	}()
+	defer func() {
+		if session != nil && strings.HasPrefix(session.ID(), "ns_") {
+			keepWorkspace = true
+			if out.Attempt.Session == "" {
+				// The node returned a real session, but publishing that identity
+				// failed before any prompt. Preserve the admitted preparation;
+				// this observer may leave without claiming native process exit.
+				cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+				defer cancel()
+				markerErr := r.attempts.MarkUnsettled(cleanup, out.Attempt.ID, "agentexec-open", errors.Join(harness.ErrStopUnconfirmed, runErr), out.Usage)
+				unresolved = &execution.NodePreparationObserverDetached{AttemptID: out.Attempt.ID, NodeID: out.Attempt.Node, OpenCommandID: attempt.InputCommandID(out.Attempt) + "/open", Cause: errors.Join(harness.ErrStopUnconfirmed, runErr, markerErr)}
+				runErr = Blocked(out.Attempt, "session-record", "保存原节点已返回的会话标识", "节点已经打开会话，但会话标识尚未写入执行记录；原始任务输入还未发送。", "建议恢复存储后核对原节点的打开回执，不重新打开会话。", unresolved)
+				return
+			}
+			out, runErr, unresolved = r.finishManaged(ctx, out, runErr, invalid, promptSettled)
+			return
+		}
 		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer stop()
 		if !errors.Is(runErr, harness.ErrStopUnconfirmed) && session != nil {
@@ -217,9 +272,15 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 			keepWorkspace = true
 			quarantine := r.attempts.MarkUnsettled(cleanup, id, "agentexec", runErr, out.Usage)
 			unresolved = &UnsettledError{AttemptID: id, Cause: errors.Join(runErr, quarantine)}
+			if pending := PendingNodeOpen(out.Attempt, runErr); pending != nil {
+				unresolved = pending
+			}
 			runErr = unresolved
 			if record, err := r.attempts.Get(cleanup, id); err == nil {
 				out.Attempt = record
+			}
+			if PendingOpen(out.Attempt) {
+				runErr = Blocked(out.Attempt, "open", "按原执行标识请求打开节点会话", "原节点未返回完整的打开回执，会话可能已经创建。", "建议恢复原节点连接后核对打开记录，保留原任务等待处理。", unresolved)
 			}
 			return
 		}
@@ -287,22 +348,52 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 	} else if selected.Node == "" && len(selected.Agent.MCPServers) > 0 {
 		return out, errors.New("hub MCP capabilities are not configured for agentexec")
 	}
-	out.Attempt, err = r.attempts.Advance(ctx, id, attempt.Prepared, "agentexec", func(record *attempt.Record) { record.Admission = &admission })
+	input, encodeErr := json.Marshal(auxiliaryOutput{WorkID: identity, Input: &original})
+	if encodeErr != nil {
+		return out, encodeErr
+	}
+	out.Attempt, err = r.attempts.Advance(ctx, id, attempt.Prepared, "agentexec", func(record *attempt.Record) {
+		record.Admission = &admission
+		record.Result = &attempt.Result{Output: input}
+	})
 	if err != nil {
+		return out, err
+	}
+	if err := r.attempts.ArmSession(ctx, id, "agentexec-open"); err != nil {
 		return out, err
 	}
 	session, err = r.sessions.OpenSession(ctx, at, "", workspace.Path, append(servers, roster.ToMCP(bindings)...))
 	if err != nil {
+		if !errors.Is(err, harness.ErrStopUnconfirmed) {
+			if markerErr := r.attempts.MarkSessionSettled(ctx, id, "agentexec-open-rejected"); markerErr != nil {
+				return out, errors.Join(err, markerErr)
+			}
+		}
 		return out, fmt.Errorf("open %s: %w", spec.Agent, err)
 	}
 	harness.ApplyPreferences(ctx, session, selected.Agent.ID, selected.Agent.Model, selected.Agent.Options)
-	out.Attempt, err = r.attempts.Advance(ctx, id, attempt.Running, "agentexec", nil)
+	running, err := r.attempts.Advance(ctx, id, attempt.Running, "agentexec", func(record *attempt.Record) { record.Session = session.ID() })
 	if err != nil {
 		return out, err
 	}
+	out.Attempt = running
 	var mu sync.Mutex
 	var last view.Progress
-	out.Answer, _, runErr = session.Prompt(ctx, prompt, func(p view.Progress) { mu.Lock(); last = p; mu.Unlock() })
+	ask, askUser, observe := r.callbacks()
+	progress := func(p view.Progress) {
+		EmitProgress(ctx, p)
+		mu.Lock()
+		last = p
+		mu.Unlock()
+		if observe != nil {
+			observe(out.Attempt, p)
+		}
+	}
+	if turn, ok := session.(harness.TurnRunner); ok && strings.HasPrefix(session.ID(), "ns_") {
+		out.Answer, _, runErr = turn.PromptTurn(ctx, prompt, nil, ask, askUser, progress)
+	} else {
+		out.Answer, _, runErr = session.Prompt(ctx, prompt, progress)
+	}
 	promptSettled = acphost.PromptSettled(runErr)
 	if stopped, ok := session.(interface{ Stopped() bool }); ok && stopped.Stopped() {
 		promptSettled = true
@@ -314,7 +405,9 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 	u := last.Usage
 	out.Usage = &attempt.Usage{Model: last.Settings.Model, Input: int64(u.InputTokens), Output: int64(u.OutputTokens), CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens), Context: int64(u.ContextTokens), Reported: u.TokensReported()}
 	mu.Unlock()
-	out.Answer = strings.TrimSpace(out.Answer)
+	if !strings.HasPrefix(session.ID(), "ns_") {
+		out.Answer = strings.TrimSpace(out.Answer)
+	}
 	if runErr == nil && ctx.Err() != nil {
 		runErr = ctx.Err()
 	}

@@ -208,6 +208,7 @@ func TestOwnerFollowUpSkipsScanWhenDenied(t *testing.T) {
 		t.Fatal(err)
 	}
 	coordinator, _, runner := homeCoordinator(t, dir, "ou_me")
+	runner.reply = "好的，不会扫描。"
 	coordinator.scanHome = t.TempDir()
 	if err := os.MkdirAll(filepath.Join(coordinator.scanHome, ".codex", "sessions"), 0o700); err != nil {
 		t.Fatal(err)
@@ -312,7 +313,7 @@ func homeCoordinatorWithManager(t *testing.T, homeDir, owner string) (*Coordinat
 	if err != nil {
 		t.Fatal(err)
 	}
-	runner := &fakeRunner{id: "sess"}
+	runner := &fakeRunner{id: "sess", reply: "请告诉我你常用的工作方式。"}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	assembler := capability.NewAssembler(nil).SetHome(home.Dir{Path: homeDir})
 	coordinator := newCoordinator(t, catalog, store, assembler, manager, time.Minute)

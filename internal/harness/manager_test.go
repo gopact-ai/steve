@@ -6,11 +6,60 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
 )
+
+func TestManagerAllowsEmptyConfigurationBeforeFirstRegistration(t *testing.T) {
+	manager, err := NewManager(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(manager.Stop)
+	if _, err := manager.host(Placement{Harness: "codex"}); err == nil || !strings.Contains(err.Error(), "unknown harness") {
+		t.Fatalf("missing harness did not produce a configuration error: %v", err)
+	}
+	if err := manager.Set("codex", Config{Command: "codex-acp", Permission: "read"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.host(Placement{Harness: "codex"}); err != nil {
+		t.Fatalf("first registration failed: %v", err)
+	}
+}
+
+func TestManagerPublishesPreparedConfigurationWithoutReplacingHosts(t *testing.T) {
+	live, err := NewManager(map[string]Config{"one": {Command: "original", Permission: "read"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(live.Stop)
+	host, err := live.host(Placement{Harness: "one"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	configs := map[string]Config{"one": {Command: "updated", Permission: "read"}, "two": {Command: "second", Args: []string{"acp"}, Permission: "read"}}
+	prepared, err := NewManager(configs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	configs["two"].Args[0] = "changed"
+	live.Publish(prepared)
+	if got, err := live.host(Placement{Harness: "one"}); err != nil || got != host {
+		t.Fatal("publishing stopped an existing host")
+	}
+	if live.configs["two"].Args[0] != "acp" || live.configs["one"].Command != "updated" {
+		t.Fatal("published configs differ from the validated candidate")
+	}
+	if err := prepared.Set("two", Config{Command: "later", Permission: "read"}); err != nil {
+		t.Fatal(err)
+	}
+	if live.configs["two"].Command != "second" {
+		t.Fatal("candidate mutation changed the published configs")
+	}
+}
 
 func TestManagerStartsHarnessesLazily(t *testing.T) {
 	bin := filepath.Join(t.TempDir(), "mockagent")

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/contentreplica"
 )
 
 const (
@@ -38,17 +40,18 @@ type Source struct {
 	Revision     string `json:"revision,omitempty"`
 }
 type Material struct {
-	ID        string    `json:"id"`
-	Project   string    `json:"project"`
-	Kind      string    `json:"kind"` // text | image | binary
-	Title     string    `json:"title"`
-	MIME      string    `json:"mime"`
-	Size      int64     `json:"size"`
-	Digest    string    `json:"digest"`
-	Source    Source    `json:"source"`
-	Width     int       `json:"width,omitempty"`
-	Height    int       `json:"height,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        string                   `json:"id"`
+	Project   string                   `json:"project"`
+	Kind      string                   `json:"kind"` // text | image | binary
+	Title     string                   `json:"title"`
+	MIME      string                   `json:"mime"`
+	Size      int64                    `json:"size"`
+	Digest    string                   `json:"digest"`
+	Source    Source                   `json:"source"`
+	Width     int                      `json:"width,omitempty"`
+	Height    int                      `json:"height,omitempty"`
+	CreatedAt time.Time                `json:"created_at"`
+	Content   *contentreplica.Manifest `json:"content,omitempty"`
 }
 type CaptureInput struct {
 	Project string `json:"project"`

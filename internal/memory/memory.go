@@ -212,6 +212,7 @@ func (s *Service) AuditPath() string { return s.auditPath }
 
 // Replace is the page's whole-file save.
 func (s *Service) Replace(ctx context.Context, scope Scope, text string, who Actor) error {
+	ctx = withActor(ctx, who)
 	err := s.store.Replace(ctx, scope, text)
 	s.audit(auditLine{Op: "replace", Scope: scope, Actor: who, Bytes: len([]byte(text)), Err: errText(err)})
 	return err
@@ -220,6 +221,7 @@ func (s *Service) Replace(ctx context.Context, scope Scope, text string, who Act
 // Remember replays a successful request in this scope for 24 hours when
 // idempotencyKey is set, even if the retried text or the memory has changed.
 func (s *Service) Remember(ctx context.Context, scope Scope, section, text, idempotencyKey string, who Actor) (Receipt, error) {
+	ctx = withActor(ctx, who)
 	if idempotencyKey != "" {
 		r, replayed, err := s.store.RememberOnce(ctx, scope, section, text, idempotencyKey, s.now())
 		if !replayed {
@@ -253,6 +255,13 @@ func (s *Service) recordRemember(ctx context.Context, scope Scope, section, text
 // store's keyword match otherwise.
 func (s *Service) Recall(ctx context.Context, scope Scope, query string, limit int) ([]Hit, string, error) {
 	if s.retriever != nil {
+		if authority, ok := s.store.(interface {
+			CheckRead(context.Context, Scope) error
+		}); ok {
+			if err := authority.CheckRead(ctx, scope); err != nil {
+				return nil, "", err
+			}
+		}
 		hits, err := s.retriever.Recall(ctx, scope, query, limit)
 		if err == nil {
 			return hits, s.retriever.Name(), nil
@@ -260,10 +269,15 @@ func (s *Service) Recall(ctx context.Context, scope Scope, query string, limit i
 		s.audit(auditLine{Op: "recall", Scope: scope, Err: err.Error()})
 	}
 	hits, err := s.store.Recall(ctx, scope, query, limit)
-	return hits, "markdown", err
+	source := "markdown"
+	if named, ok := s.store.(interface{ Name() string }); ok {
+		source = named.Name()
+	}
+	return hits, source, err
 }
 
 func (s *Service) Forget(ctx context.Context, scope Scope, id string, who Actor) (Item, error) {
+	ctx = withActor(ctx, who)
 	item, err := s.store.Forget(ctx, scope, id)
 	s.audit(auditLine{Op: "forget", Scope: scope, Actor: who, ID: id, Err: errText(err)})
 	if err == nil && s.retriever != nil {
@@ -290,6 +304,10 @@ type auditLine struct {
 
 // audit appends one line; the fact's text is not in it, only its size.
 func (s *Service) audit(line auditLine) {
+	if sink, ok := s.store.(interface{ recordAudit(auditLine) error }); ok {
+		_ = sink.recordAudit(line)
+		return
+	}
 	if s.auditPath == "" {
 		return
 	}
@@ -567,6 +585,10 @@ func (m *Markdown) Recall(ctx context.Context, scope Scope, query string, limit 
 	if err != nil {
 		return nil, err
 	}
+	return rankMemory(items, query, limit), nil
+}
+
+func rankMemory(items []Item, query string, limit int) []Hit {
 	words := tokens(query)
 	var hits []Hit
 	for _, it := range items {
@@ -590,7 +612,7 @@ func (m *Markdown) Recall(ctx context.Context, scope Scope, query string, limit 
 	if limit > 0 && len(hits) > limit {
 		hits = hits[:limit]
 	}
-	return hits, nil
+	return hits
 }
 
 // Forget drops the bullet with the id.

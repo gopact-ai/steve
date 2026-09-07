@@ -78,6 +78,10 @@ func (s *Server) channelCall(ctx context.Context, bind binding, tool string, raw
 	}
 
 	s.mu.Lock()
+	if err := s.loadConversationLocked(ctx, bind.conversationID, &bind); err != nil {
+		s.mu.Unlock()
+		return "", err
+	}
 	a := s.anchors[bind.conversationID]
 	if a == nil || a.address.Message == "" || a.address.Conversation == "" {
 		s.mu.Unlock()
@@ -96,8 +100,16 @@ func (s *Server) channelCall(ctx context.Context, bind binding, tool string, raw
 			return "", errors.New("can only update or recall a message this agent sent in the current turn")
 		}
 		if record.busy {
-			s.mu.Unlock()
-			return "", errors.New("another operation on this message is in progress")
+			if err := s.reconcileMessageLocked(ctx, bind, args.MessageID, st, record); err != nil {
+				s.mu.Unlock()
+				return "", err
+			}
+			var exists bool
+			record, exists = st.ids[args.MessageID]
+			if !exists {
+				s.mu.Unlock()
+				return "", errors.New("the message was already recalled")
+			}
 		}
 		prepared.record = record
 		prepared.address = record.address
@@ -120,10 +132,14 @@ func (s *Server) channelCall(ctx context.Context, bind binding, tool string, raw
 	}
 	prepared.args.Channel = prepared.address.Channel
 	informer := s.informer
+	hasIntents := s.intents != nil
 	s.mu.Unlock()
 
 	effectBind := bind
-	if s.intents != nil && effectBind.taskID == "" {
+	if fixed, ok := ctx.Value(grantContextKey{}).(grantContext); ok && fixed.Grant.Scope != nil {
+		effectBind.taskID = fixed.Grant.Scope.TaskID
+	}
+	if hasIntents && effectBind.taskID == "" {
 		if informer == nil {
 			return "", errors.New("no active task available for message effects")
 		}
@@ -149,8 +165,8 @@ func (s *Server) channelCall(ctx context.Context, bind binding, tool string, raw
 	if err != nil {
 		return "", err
 	}
-	return s.effect(ctx, effectBind, tool, normalized, func() (string, channel.Address, error) {
-		return s.dispatchMessage(ctx, bind, tool, prepared)
+	return s.effect(ctx, effectBind, tool, normalized, func(callCtx context.Context) (string, channel.Address, error) {
+		return s.dispatchMessage(callCtx, bind, tool, prepared)
 	})
 }
 
@@ -166,9 +182,17 @@ func (s *Server) dispatchMessage(ctx context.Context, bind binding, tool string,
 		return "", empty, errors.New("the current turn changed before dispatch")
 	}
 	st := s.sent[bind]
+	previous := st
+	var before sentState
+	if st != nil {
+		before = *st
+		before.ids = make(map[string]sentMsg, len(st.ids))
+		for id, record := range st.ids {
+			before.ids[id] = record
+		}
+	}
 	if st == nil || st.epoch != call.epoch {
 		st = &sentState{epoch: call.epoch, ids: map[string]sentMsg{}}
-		s.sent[bind] = st
 	}
 	var record sentMsg
 	if tool == "channel_send" {
@@ -197,7 +221,19 @@ func (s *Server) dispatchMessage(ctx context.Context, bind binding, tool string,
 			st.updates++
 		}
 		record.busy = true
+		record.intentID, _ = ctx.Value(intentContextKey{}).(string)
+		record.pendingTool = tool
+		record.pendingProgress = call.args.Progress
 		st.ids[call.args.MessageID] = record
+	}
+	s.sent[bind] = st
+	if err := s.saveMessagesLocked(ctx, bind, true); err != nil {
+		if previous != nil {
+			*previous = before
+		}
+		s.sent[bind] = previous
+		s.mu.Unlock()
+		return "", empty, err
 	}
 	s.mu.Unlock()
 
@@ -227,6 +263,11 @@ func (s *Server) dispatchMessage(ctx context.Context, bind binding, tool string,
 			st.count--
 		}
 		journal := s.journal
+		if stillCurrent {
+			if saveErr := s.saveMessagesLocked(context.Background(), bind, false); saveErr != nil {
+				err = fmt.Errorf("%w: message receipt could not be saved: %v", errOutcomeUnknown, saveErr)
+			}
+		}
 		s.mu.Unlock()
 		if err != nil {
 			return "", receipt, fmt.Errorf("send failed: %w", err)
@@ -241,8 +282,11 @@ func (s *Server) dispatchMessage(ctx context.Context, bind binding, tool string,
 		err = call.messenger.Recall(callCtx, receipt)
 	}
 	s.mu.Lock()
-	if st.epoch == call.epoch {
-		record.busy = false
+	if st.epoch == call.epoch && s.sent[bind] == st {
+		record.busy = errors.Is(err, channel.ErrOutcomeUnknown) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
+		if !record.busy {
+			record.intentID, record.pendingTool, record.pendingProgress = "", "", ""
+		}
 		if err == nil && tool == "channel_recall" {
 			delete(st.ids, call.args.MessageID)
 		} else {
@@ -251,6 +295,9 @@ func (s *Server) dispatchMessage(ctx context.Context, bind binding, tool string,
 				record.version++
 			}
 			st.ids[call.args.MessageID] = record
+		}
+		if saveErr := s.saveMessagesLocked(context.Background(), bind, false); saveErr != nil {
+			err = fmt.Errorf("%w: message receipt could not be saved: %v", errOutcomeUnknown, saveErr)
 		}
 	}
 	s.mu.Unlock()
@@ -261,4 +308,37 @@ func (s *Server) dispatchMessage(ctx context.Context, bind binding, tool string,
 		return "updated " + call.args.MessageID, receipt, nil
 	}
 	return "recalled " + call.args.MessageID, receipt, nil
+}
+
+func (s *Server) reconcileMessageLocked(ctx context.Context, bind binding, id string, st *sentState, record sentMsg) error {
+	reader, ok := s.intents.(interface {
+		Outcome(context.Context, string) (string, error)
+	})
+	if !ok || record.intentID == "" {
+		return errors.New("message operation is blocked pending reconciliation")
+	}
+	outcome, err := reader.Outcome(ctx, record.intentID)
+	if err != nil {
+		return fmt.Errorf("read message reconciliation: %w", err)
+	}
+	if outcome != "succeeded" && outcome != "failed" {
+		return fmt.Errorf("message operation is blocked pending reconciliation of intent %s", record.intentID)
+	}
+	before := st.ids[id]
+	if outcome == "succeeded" && record.pendingTool == "channel_recall" {
+		delete(st.ids, id)
+	} else {
+		if outcome == "succeeded" && record.pendingTool == "channel_update" {
+			record.version++
+			record.progress = record.pendingProgress
+		}
+		record.busy = false
+		record.intentID, record.pendingTool, record.pendingProgress = "", "", ""
+		st.ids[id] = record
+	}
+	if err := s.saveMessagesLocked(ctx, bind, true); err != nil {
+		st.ids[id] = before
+		return err
+	}
+	return nil
 }

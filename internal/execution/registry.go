@@ -25,18 +25,29 @@ func New(lifetime context.Context, tasks *task.Store) *Registry {
 }
 
 type Scope struct {
-	registry     *Registry
-	key          Key
-	token        *task.ExecutionToken
-	ctx          context.Context
-	cancel       context.CancelCauseFunc
-	stopLifetime func() bool
-	done         chan struct{}
-	finish       sync.Once
-	err          error
+	registry      *Registry
+	key           Key
+	token         *task.ExecutionToken
+	ctx           context.Context
+	cancel        context.CancelCauseFunc
+	stopLifetime  func() bool
+	done          chan struct{}
+	finish        sync.Once
+	err           error
+	stopHandlers  map[string]*stopHandler
+	stopRequested bool
+	stopComplete  <-chan struct{}
 }
 
 type scopeKey struct{}
+type probeKey struct{}
+
+// WithProbeKey identifies a committed execution for read-only node inspection.
+// It supplies no task token or running ownership; the node authorizes each RPC.
+func WithProbeKey(ctx context.Context, key Key) context.Context {
+	ctx = context.WithValue(ctx, scopeKey{}, (*Scope)(nil))
+	return context.WithValue(ctx, probeKey{}, key)
+}
 
 // Detached retains trace values while work belongs to the service lifetime.
 // It does not retain the parent prompt's cancellation or deadline.
@@ -100,7 +111,7 @@ func (r *Registry) begin(parent context.Context, key Key, accepted *task.Executi
 	}
 	ctx, cancel := context.WithCancelCause(parent)
 	s := &Scope{registry: r, key: key, token: token, cancel: cancel, done: make(chan struct{})}
-	s.ctx = context.WithValue(ctx, scopeKey{}, s)
+	s.ctx = context.WithValue(context.WithValue(ctx, probeKey{}, false), scopeKey{}, s)
 	s.stopLifetime = context.AfterFunc(r.lifetime, func() { cancel(context.Cause(r.lifetime)) })
 	r.entries[s] = struct{}{}
 	return s, nil
@@ -117,10 +128,24 @@ func (s *Scope) Token() *task.ExecutionToken {
 	return &t
 }
 func Token(ctx context.Context) *task.ExecutionToken {
-	if s, ok := ctx.Value(scopeKey{}).(*Scope); ok {
+	if s, ok := ctx.Value(scopeKey{}).(*Scope); ok && s != nil {
 		return s.Token()
 	}
 	return nil
+}
+
+// KeyOf returns a running scope's identity or an explicitly bound read-only
+// probe identity. A key grants no execution authority; node RPCs independently
+// validate the committed task, attempt and coordinator activation.
+func KeyOf(ctx context.Context) (Key, bool) {
+	s, ok := ctx.Value(scopeKey{}).(*Scope)
+	if !ok || s == nil {
+		key, ok := ctx.Value(probeKey{}).(Key)
+		return key, ok
+	}
+	s.registry.mu.Lock()
+	defer s.registry.mu.Unlock()
+	return s.key, true
 }
 
 // Finish belongs to the driver after durable outcome/resource cleanup. An
@@ -130,12 +155,10 @@ func (s *Scope) Finish(unresolved error) {
 		s.registry.mu.Lock()
 		defer s.registry.mu.Unlock()
 		s.err = unresolved
-		if unresolved == nil {
-			delete(s.registry.entries, s)
-		}
 		s.stopLifetime()
 		s.cancel(context.Canceled)
 		close(s.done)
+		s.pruneFinishedLocked()
 	})
 }
 
@@ -153,37 +176,113 @@ func (r *Registry) Shutdown(ctx context.Context) error {
 		waiting = append(waiting, s)
 	}
 	r.mu.Unlock()
-	return waiting.Wait(ctx)
+	return waiting.wait(ctx, r.lifetime.Err() != nil)
 }
 
-// Stop only signals already authorized IDs; task.SetAside owns persistence.
+// Stop acts only on already authorized IDs; task.SetAside owns persistence.
+// Native handlers run before observer cancellation. Service shutdown and
+// lifetime cancellation do not invoke these task-specific stop handlers.
 func (r *Registry) Stop(ids []string, cause error) WaitSet {
 	set := make(map[string]bool, len(ids))
 	for _, id := range ids {
 		set[id] = true
 	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	var waiting WaitSet
+	var stopping []*Scope
+	var handlers, starting []*stopHandler
 	for s := range r.entries {
 		if set[s.key.TaskID] {
-			s.cancel(cause)
 			waiting = append(waiting, s)
+			if !s.stopRequested {
+				s.stopRequested = true
+				stopping = append(stopping, s)
+			}
+			for _, h := range s.stopHandlers {
+				handlers = append(handlers, h)
+				if !h.started {
+					h.started = true
+					starting = append(starting, h)
+				}
+			}
 		}
+	}
+	if len(stopping) == 0 {
+		r.mu.Unlock()
+		return waiting
+	}
+	complete := make(chan struct{})
+	for _, s := range stopping {
+		s.stopComplete = complete
+	}
+	finish := func() {
+		for _, h := range handlers {
+			<-h.done
+		}
+		r.mu.Lock()
+		defer r.mu.Unlock()
+		for _, s := range stopping {
+			s.cancel(cause)
+		}
+		close(complete)
+		for _, s := range stopping {
+			s.pruneFinishedLocked()
+		}
+	}
+	r.mu.Unlock()
+	for _, h := range starting {
+		go h.run()
+	}
+	if len(handlers) == 0 {
+		finish()
+	} else {
+		go finish()
 	}
 	return waiting
 }
 func (w WaitSet) Wait(ctx context.Context) error {
+	return w.wait(ctx, false)
+}
+
+func (w WaitSet) wait(ctx context.Context, detachedObservers bool) error {
 	var failures []error
 	for _, s := range w {
 		select {
 		case <-s.done:
-			if s.err != nil {
-				failures = append(failures, fmt.Errorf("task %s: %w", s.key.TaskID, s.err))
-			}
 		case <-ctx.Done():
 			return errors.Join(append(failures, ctx.Err())...)
 		}
+		s.registry.mu.Lock()
+		complete := s.stopComplete
+		var handlers []*stopHandler
+		for _, h := range s.stopHandlers {
+			if h.started {
+				handlers = append(handlers, h)
+			}
+		}
+		s.registry.mu.Unlock()
+		if complete != nil {
+			select {
+			case <-complete:
+			case <-ctx.Done():
+				return errors.Join(append(failures, ctx.Err())...)
+			}
+		}
+		for _, h := range handlers {
+			select {
+			case <-h.done:
+				if h.err != nil {
+					failures = append(failures, fmt.Errorf("task %s stop %s: %w", s.key.TaskID, h.key, h.err))
+				}
+			case <-ctx.Done():
+				return errors.Join(append(failures, ctx.Err())...)
+			}
+		}
+		s.registry.mu.Lock()
+		if s.err != nil && !(detachedObservers && s.retainedDetached()) {
+			failures = append(failures, fmt.Errorf("task %s: %w", s.key.TaskID, s.err))
+		}
+		s.registry.mu.Unlock()
 	}
 	return errors.Join(failures...)
 }

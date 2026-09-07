@@ -8,6 +8,26 @@ import (
 	"time"
 )
 
+func TestLoadAllowsFirstLaunchWithoutRegisteredAgents(t *testing.T) {
+	path := writeConfig(t, `{
+		"agents": {}, "harnesses": {},
+		"projects": {"workspace": {"home": {"path": "/tmp/steve-desktop-workspace"}}}
+	}`)
+	cfg, err := Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	catalog, err := cfg.AgentCatalog()
+	if err != nil || len(catalog.List()) != 0 {
+		t.Fatalf("first-launch catalog: %v", err)
+	}
+	manager, err := cfg.HarnessManager()
+	if err != nil {
+		t.Fatal(err)
+	}
+	manager.Stop()
+}
+
 func TestLoadJSON(t *testing.T) {
 	path := writeConfig(t, `{
 		"agents": {"codex": {"harness": "codex", "workspace": "/tmp/steve-test", "default": true}},

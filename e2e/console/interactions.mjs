@@ -53,6 +53,8 @@ async function fixture({ history = false, running = false } = {}) {
         if (req.method() !== "GET") f.calls.push(call);
         const conversation = input?.conversation || url.searchParams.get("conversation") || A;
         let current = conversations.find((c) => c.id === conversation);
+        if (pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
+        if (pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
         if (pathname === "/state") return route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks: [task("11", A, "scratch"), task("22", B, "home")], plans: [], projects, attempts: [], landings: [] } });
         if (pathname === "/console/send" && input?.input.startsWith("/project use ")) {
             if (f.binding) await f.binding;
@@ -656,6 +658,7 @@ checks["design-inspector-toggle"] = async (f) => {
     await hide.first().click();
     assert.equal(await panel.isVisible(), false, "Inspector must be explicitly dismissible");
     await f.page.setViewportSize({ width: 390, height: 844 });
+    await f.page.locator(".app-mobile-bar").waitFor();
     const before = await visibleControl(f.box, "Mobile message before inspector");
     const underlyingMessage = await f.box.elementHandle();
     await show.click();

@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"reflect"
 
+	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -94,6 +95,9 @@ func restoreStep(ctx context.Context, p plan.Plan, step *plan.Step, upstream []R
 			}
 			step.Attempts = max(step.Attempts, count)
 		}
+		if found && !fromCache && retainedCandidate(r) {
+			return plan.StepResult{}, false, nil
+		}
 		if found && r.Result != nil && len(r.Result.Output) > 0 {
 			return plan.StepResult{}, false, fmt.Errorf("%w: attempt %s has an uncommitted candidate result", ErrRecovery, r.ID)
 		}
@@ -105,6 +109,14 @@ func restoreStep(ctx context.Context, p plan.Plan, step *plan.Step, upstream []R
 		}
 		if found && step.Attempts >= MaxRecoveries+1 {
 			return plan.StepResult{}, false, fmt.Errorf("%w: step %s exhausted its retries", ErrRecovery, step.ID)
+		}
+		if found && r.State.Terminal() && !r.Unsettled {
+			if err := agentexec.SettleBudget(deps.Budget, r, nil); err != nil {
+				return plan.StepResult{}, false, agentexec.Blocked(r, "accounting", "核对原步骤的用量与预算", "原执行已结束，但预算结算尚未完成。", "建议恢复存储后重新检查。", err)
+			}
+			if err := cleanupFailedStep(ctx, deps, r); err != nil {
+				return plan.StepResult{}, false, agentexec.Blocked(r, "cleanup", "释放已结束步骤的原会话", "失败结果已保存，但原会话或工作区尚未释放。", "建议恢复原节点后重新检查。", err)
+			}
 		}
 		return plan.StepResult{}, false, nil
 	}
@@ -131,6 +143,9 @@ func restoreStep(ctx context.Context, p plan.Plan, step *plan.Step, upstream []R
 			return plan.StepResult{}, false, fmt.Errorf("%w: %w", ErrRecovery, err)
 		}
 		scope.Finish(nil)
+	}
+	if err := agentexec.SettleBudget(deps.Budget, r, nil); err != nil {
+		return plan.StepResult{}, false, agentexec.Blocked(r, "accounting", "核对已提交步骤的用量与预算", "步骤结果已提交，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", err)
 	}
 	step.Attempts = max(step.Attempts, output.Attempts)
 	return output.Result, true, nil

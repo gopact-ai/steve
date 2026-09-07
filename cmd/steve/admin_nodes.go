@@ -5,11 +5,11 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net"
+	"net/url"
 	"path/filepath"
 	"strings"
 
@@ -18,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/nodebootstrap"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/project"
@@ -27,7 +28,7 @@ import (
 // NodeSettings reads what a machine offers: the hub's own from its
 // config, a node's from the node.
 func (a *fleetAdmin) NodeSettings(ctx context.Context, name string) (nodewire.Settings, error) {
-	if name == nodeName() {
+	if name == nodeName() && !a.clusterMode {
 		return a.hubSettings(), nil
 	}
 	return a.nodes.Settings(ctx, name)
@@ -37,7 +38,7 @@ func (a *fleetAdmin) NodeSettings(ctx context.Context, name string) (nodewire.Se
 // force: on the hub, the config file and the running manager, assembler,
 // roster and launch probe; on a node, the node itself.
 func (a *fleetAdmin) SetNodeSettings(ctx context.Context, name string, set nodewire.Settings) (nodewire.Settings, error) {
-	if name != nodeName() {
+	if name != nodeName() || a.clusterMode {
 		return a.nodes.Configure(ctx, name, set)
 	}
 	a.mu.Lock()
@@ -52,9 +53,6 @@ func (a *fleetAdmin) setNodeSettingsLocked(ctx context.Context, name string, set
 		return nodewire.Settings{}, nodewire.ErrSettingsRevisionConflict
 	}
 	set = nodewire.CloneSettings(set)
-	if len(set.Harnesses) == 0 {
-		return nodewire.Settings{}, fmt.Errorf("hub 至少要有一个 AI 工具")
-	}
 	harnesses := make(map[string]config.Harness, len(set.Harnesses))
 	for id, h := range set.Harnesses {
 		if !nameShape.MatchString(strings.ToLower(id)) || strings.TrimSpace(h.Command) == "" {
@@ -178,7 +176,9 @@ func (a *fleetAdmin) setNodeSettingsLocked(ctx context.Context, name string, set
 	slots := a.cfg.HubSlots()
 	configMu.RUnlock()
 	a.fleet.SetHubSlots(slots)
-	hubLaunch.Wake()
+	if a.observation != nil {
+		a.observation.launch.Wake()
+	}
 	log.Printf("steve: hub settings applied from the page: %d harnesses, %d tools, %d mcp, %d declares, %d tags",
 		len(harnesses), len(set.Tools), len(servers), len(set.Declares), len(set.Capabilities))
 	return a.hubSettings(), saveErr
@@ -199,7 +199,7 @@ func (a *fleetAdmin) hubSettings() nodewire.Settings {
 	return nodewire.CloneSettings(out)
 }
 
-func (a *fleetAdmin) AddNode(_ context.Context, req consoleapi.AddNodeRequest) (consoleapi.AddNodeResult, error) {
+func (a *fleetAdmin) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (consoleapi.AddNodeResult, error) {
 	name := strings.TrimSpace(req.Name)
 	if !nameShape.MatchString(name) {
 		return consoleapi.AddNodeResult{}, fmt.Errorf("机器名只能是小写字母、数字、点、下划线、连字符，如 node-c")
@@ -232,7 +232,7 @@ func (a *fleetAdmin) AddNode(_ context.Context, req consoleapi.AddNodeRequest) (
 		a.cfg.Nodes = map[string]config.Node{}
 	}
 	a.cfg.Nodes[name] = config.Node{Addr: addr, Token: token, Level: string(level)}
-	saveErr := a.persistConfig(a.cfg)
+	saveErr := a.persistConfigContext(ctx, a.cfg)
 	if saveErr != nil && !config.Committed(saveErr) {
 		delete(a.cfg.Nodes, name)
 		configMu.Unlock()
@@ -296,7 +296,7 @@ func (a *fleetAdmin) RemoveNode(ctx context.Context, name string) error {
 		return fmt.Errorf("没有叫 %q 的机器", name)
 	}
 	delete(a.cfg.Nodes, name)
-	saveErr := a.persistConfig(a.cfg)
+	saveErr := a.persistConfigContext(ctx, a.cfg)
 	if saveErr != nil && !config.Committed(saveErr) {
 		a.cfg.Nodes[name] = saved
 		configMu.Unlock()
@@ -319,13 +319,13 @@ func (a *fleetAdmin) Bootstrap(name, token string) (string, bool) {
 	a.mu.Lock()
 	configMu.RLock()
 	n, ok := a.cfg.Nodes[name]
-	harnesses := make(map[string]any, len(a.cfg.Harnesses))
+	harnesses := make(map[string]nodebootstrap.Harness, len(a.cfg.Harnesses))
 	for id, h := range a.cfg.Harnesses {
-		spec := map[string]any{"command": h.Command}
-		if len(h.Args) > 0 {
-			spec["args"] = h.Args
+		if h.Adapter != "" {
+			harnesses[id] = nodebootstrap.Harness{Adapter: h.Adapter}
+		} else {
+			harnesses[id] = nodebootstrap.Harness{Command: h.Command, Args: append([]string(nil), h.Args...)}
 		}
-		harnesses[id] = spec
 	}
 	binary, hubURL := a.cfg.Gateway.NodeBinary, a.hubURL
 	configMu.RUnlock()
@@ -337,21 +337,17 @@ func (a *fleetAdmin) Bootstrap(name, token string) (string, bool) {
 	if port == "" {
 		port = "7701"
 	}
-	nodeJSON, _ := json.MarshalIndent(map[string]any{
-		"name": name, "listen": "0.0.0.0:" + port, "token": token,
-		"workspace_root": "~/steve-work", "state_dir": "~/.steve-node", "harnesses": harnesses,
-	}, "", "  ")
-	var b strings.Builder
-	b.WriteString("#!/bin/bash\nset -e\nmkdir -p ~/steve-bin ~/steve-work\n")
-	fmt.Fprintf(&b, "cat > ~/steve-bin/node.json <<'STEVE_EOF'\n%s\nSTEVE_EOF\nchmod 600 ~/steve-bin/node.json\n", nodeJSON)
+	spec := nodebootstrap.Spec{Name: name, Port: port, Token: token, Harnesses: harnesses}
 	if binary != "" && hubURL != "" {
-		fmt.Fprintf(&b, "if [ ! -x ~/steve-bin/steve-node ]; then curl -fsSL '%s/dist/steve-node?token=%s' -o ~/steve-bin/steve-node && chmod +x ~/steve-bin/steve-node; fi\n", hubURL, token)
+		metadata, err := nodebootstrap.InspectBinary(binary)
+		if err != nil {
+			return "", false
+		}
+		spec.DownloadURL = strings.TrimRight(hubURL, "/") + "/dist/steve-node?" + url.Values{"token": {token}}.Encode()
+		spec.OS, spec.Arch, spec.SHA256 = metadata.OS, metadata.Arch, metadata.SHA256
 	}
-	b.WriteString("if [ ! -x ~/steve-bin/steve-node ]; then echo 'steve-node is not in ~/steve-bin; copy it there and run this again' >&2; exit 1; fi\n")
-	b.WriteString("for p in $(pgrep -f 'steve-bin/steve-node -config' 2>/dev/null); do kill \"$p\" 2>/dev/null || true; done\n")
-	b.WriteString("nohup bash -lc \"~/steve-bin/steve-node -config ~/steve-bin/node.json\" > ~/steve-node.log 2>&1 < /dev/null &\n")
-	fmt.Fprintf(&b, "echo 'steve-node %s started; log: ~/steve-node.log'\n", name)
-	return b.String(), true
+	script, err := nodebootstrap.Build(spec)
+	return script, err == nil
 }
 
 func (a *fleetAdmin) NodeBinary(token string) (string, bool) {

@@ -19,6 +19,29 @@ type Executor interface {
 	Prompt(context.Context, agentexec.Spec, string, func(string) error) (agentexec.Result, error)
 }
 
+type retainedExecutor interface {
+	OriginalSpec(context.Context, string) (agentexec.Spec, error)
+	ResumeAttempt(context.Context, string, func(string) error) (agentexec.Result, error)
+}
+
+// The rendered brief preserves the roster the model actually saw. Parsing and
+// a permitted correction use this request, never a new roster after recovery.
+type planningSource struct {
+	Goal, TaskID, ProjectID, Trigger string
+	Current                          plan.Plan
+	TurnsLeft                        int
+	Brief                            string
+	Round, Attempts                  int
+}
+
+func (s planningSource) request() Request {
+	return Request{Goal: s.Goal, TaskID: s.TaskID, ProjectID: s.ProjectID, Trigger: s.Trigger, Current: s.Current, TurnsLeft: s.TurnsLeft}
+}
+
+func planningTurn(req Request, round int) string {
+	return fmt.Sprintf("plan/%s/r%d/prompt/%d", req.TaskID, req.Current.Rev+1, round+1)
+}
+
 // LLM plans by asking a model to decompose the goal, and holds it to a typed
 // contract: the answer must be a plan that validates, or it is sent back
 // with the reason.
@@ -59,34 +82,74 @@ func (l LLM) Plan(ctx context.Context, req Request) (plan.Plan, error) {
 	if attempts <= 0 {
 		attempts = DefaultAttempts
 	}
+	source := planningSource{Goal: req.Goal, TaskID: req.TaskID, ProjectID: req.ProjectID, Trigger: req.Trigger,
+		Current: req.Current, TurnsLeft: req.TurnsLeft, Brief: renderPrompt(req), Attempts: attempts}
+	return l.run(ctx, source, l.Agent, timeout, "")
+}
+
+// ResumePlan consumes the original planning command. Only an invalid, settled
+// response can spend another correction round, with a distinct turn identity.
+func (l LLM) ResumePlan(ctx context.Context, id string) (plan.Plan, error) {
+	executor, ok := l.Executor.(retainedExecutor)
+	if !ok {
+		return plan.Plan{}, fmt.Errorf("planning executor cannot resume retained commands")
+	}
+	spec, err := executor.OriginalSpec(ctx, id)
+	if err != nil {
+		return plan.Plan{}, agentexec.Blocked(attempt.Record{ID: id}, "planning-source", "读取原规划请求", "无法读取原规划所依据的目标和输入。", "建议恢复原请求记录后重新检查。", err)
+	}
+	var source planningSource
+	if len(spec.Source) == 0 || json.Unmarshal(spec.Source, &source) != nil || spec.Kind != attempt.KindPlan || source.TaskID != spec.TaskID || source.ProjectID != spec.Project || source.Round < 0 || source.Round >= source.Attempts || source.Brief == "" || spec.TurnID != planningTurn(source.request(), source.Round) {
+		return plan.Plan{}, agentexec.Blocked(attempt.Record{ID: id, TaskID: spec.TaskID}, "planning-source", "核对原规划请求与执行标识", "规划请求缺失或与这次执行不一致。", "建议核对原任务记录，不构造另一份规划请求。", nil)
+	}
+	timeout := spec.Timeout
+	if timeout <= 0 {
+		timeout = DefaultTimeout
+	}
+	return l.run(ctx, source, spec.Agent, timeout, id)
+}
+
+func (l LLM) run(ctx context.Context, source planningSource, agentID string, timeout time.Duration, retainedID string) (plan.Plan, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-
-	brief := renderPrompt(req)
-	prompt := brief
+	req := source.request()
 	var lastErr error
 	var previous string
-	for round := range attempts {
-		if round > 0 {
-			prompt = brief + "\n\n上一份计划无法执行：" + lastErr.Error() + "\n\n上一份输出：\n" + previous + "\n\n只修这个问题，重新输出完整的 JSON。"
-		}
+	for round := source.Round; round < source.Attempts; round++ {
 		var built plan.Plan
-		result, err := l.Executor.Prompt(ctx, agentexec.Spec{TaskID: req.TaskID, TurnID: fmt.Sprintf("plan/%s/r%d/prompt/%d", req.TaskID, req.Current.Rev+1, round+1),
-			Agent: l.Agent, Project: req.ProjectID, Kind: attempt.KindPlan, Timeout: timeout}, prompt, func(answer string) error {
+		validate := func(answer string) error {
 			var err error
-			built, err = parsePlan(answer, req, l.Name())
+			built, err = parsePlan(answer, req, "llm:"+agentID)
 			return err
-		})
+		}
+		var result agentexec.Result
+		var err error
+		if retainedID != "" {
+			result, err = l.Executor.(retainedExecutor).ResumeAttempt(ctx, retainedID, validate)
+			retainedID = ""
+		} else {
+			prompt := source.Brief
+			if lastErr != nil {
+				prompt += "\n\n上一份计划无法执行：" + lastErr.Error() + "\n\n上一份输出：\n" + previous + "\n\n只修这个问题，重新输出完整的 JSON。"
+			}
+			source.Round = round
+			metadata, marshalErr := json.Marshal(source)
+			if marshalErr != nil {
+				return plan.Plan{}, marshalErr
+			}
+			result, err = l.Executor.Prompt(ctx, agentexec.Spec{TaskID: req.TaskID, TurnID: planningTurn(req, round), Agent: agentID,
+				Project: req.ProjectID, Kind: attempt.KindPlan, Timeout: timeout, Source: metadata}, prompt, validate)
+		}
 		if err == nil {
 			return built, nil
 		}
 		var invalid *agentexec.ValidationError
 		if !errors.As(err, &invalid) {
-			return plan.Plan{}, fmt.Errorf("planning agent %s: %w", l.Agent, err)
+			return plan.Plan{}, fmt.Errorf("planning agent %s: %w", agentID, err)
 		}
 		lastErr, previous = invalid.Cause, result.Answer
 	}
-	return plan.Plan{}, fmt.Errorf("planning agent %s produced no valid plan after %d attempts: %w", l.Agent, attempts, lastErr)
+	return plan.Plan{}, fmt.Errorf("planning agent %s produced no valid plan after %d attempts: %w", agentID, source.Attempts, lastErr)
 }
 
 // wirePlan is the contract the model writes to. It is the plan's own shape

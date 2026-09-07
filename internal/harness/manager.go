@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -60,19 +62,18 @@ type Transports interface {
 }
 
 type Manager struct {
-	suspended map[string]bool
-	configs   map[string]Config
-	remote    Transports
-	observe   Observer
-	mu        sync.Mutex
-	hosts     map[string]*acphost.Host
-	stopped   bool
+	suspended         map[string]bool
+	configs           map[string]Config
+	remote            Transports
+	observe           Observer
+	nodeSessionBinder func(context.Context, Placement, string, string) (context.Context, error)
+	stopRegistrar     func(context.Context, string, func(context.Context) error) error
+	mu                sync.Mutex
+	hosts             map[string]*acphost.Host
+	stopped           bool
 }
 
 func NewManager(configs map[string]Config) (*Manager, error) {
-	if len(configs) == 0 {
-		return nil, fmt.Errorf("at least one harness is required")
-	}
 	for id, cfg := range configs {
 		if id == "" || cfg.Command == "" {
 			return nil, fmt.Errorf("harness id and command are required")
@@ -81,7 +82,36 @@ func NewManager(configs map[string]Config) (*Manager, error) {
 			return nil, fmt.Errorf("harness %q: %w", id, err)
 		}
 	}
-	return &Manager{configs: configs, hosts: map[string]*acphost.Host{}}, nil
+	return &Manager{configs: cloneConfigs(configs), hosts: map[string]*acphost.Host{}}, nil
+}
+
+func cloneConfig(cfg Config) Config {
+	cfg.Args = slices.Clone(cfg.Args)
+	cfg.Env = slices.Clone(cfg.Env)
+	return cfg
+}
+
+func cloneConfigs(configs map[string]Config) map[string]Config {
+	owned := make(map[string]Config, len(configs))
+	for id, cfg := range configs {
+		owned[id] = cloneConfig(cfg)
+	}
+	return owned
+}
+
+// Publish installs a previously validated configuration after persistence.
+// Existing hosts keep their configuration and sessions until they restart.
+// This performs no I/O and cannot partially fail.
+func (m *Manager) Publish(prepared *Manager) {
+	if m == prepared {
+		return
+	}
+	prepared.mu.Lock()
+	configs := cloneConfigs(prepared.configs)
+	prepared.mu.Unlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.configs = configs
 }
 
 // Set adds or replaces one harness's configuration at runtime. Hosts
@@ -95,7 +125,7 @@ func (m *Manager) Set(id string, cfg Config) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.configs[id] = cfg
+	m.configs[id] = cloneConfig(cfg)
 	return nil
 }
 
@@ -138,6 +168,14 @@ func (m *Manager) SetTransports(remote Transports) {
 }
 
 func (m *Manager) OpenSession(ctx context.Context, at Placement, upstreamID, workdir string, servers []acp.MCPServer) (Runner, error) {
+	var bindErr error
+	ctx, bindErr = m.bindNodeSession(ctx, at, upstreamID, workdir)
+	if bindErr != nil {
+		return nil, bindErr
+	}
+	if runner, handled, err := m.openNodeSession(ctx, at, upstreamID, workdir, servers); handled {
+		return runner, err
+	}
 	if workdir == "" {
 		return nil, fmt.Errorf("agent workspace is required")
 	}
@@ -174,6 +212,25 @@ func (m *Manager) OpenSession(ctx context.Context, at Placement, upstreamID, wor
 // SupportsHTTPMCP reports whether the harness's agent can take an HTTP MCP
 // server in its session config.
 func (m *Manager) SupportsHTTPMCP(ctx context.Context, at Placement) (bool, error) {
+	var bindErr error
+	ctx, bindErr = m.bindNodeSession(ctx, at, "", "")
+	if bindErr != nil {
+		return false, bindErr
+	}
+	if binding, bound := NodeSessionFromContext(ctx); bound {
+		m.mu.Lock()
+		transport, ok := m.remote.(NodeSessionTransport)
+		m.mu.Unlock()
+		if !ok {
+			return false, ErrNodeSessionUnavailable
+		}
+		node := at.Node
+		if node == "" {
+			node = binding.Binding.NodeID
+		}
+		state, err := transport.NodeSession(ctx, node, nodewire.SessionRequest{Action: "capabilities", Authority: binding.Authority, Binding: binding.Binding, Harness: at.Harness})
+		return state.SupportsHTTPMCP, err
+	}
 	host, err := m.host(at)
 	if err != nil {
 		return false, err
@@ -182,6 +239,29 @@ func (m *Manager) SupportsHTTPMCP(ctx context.Context, at Placement) (bool, erro
 }
 
 func (m *Manager) CloseSession(ctx context.Context, at Placement, upstreamID string) error {
+	var bindErr error
+	ctx, bindErr = m.bindNodeSession(ctx, at, upstreamID, "")
+	if bindErr != nil {
+		return bindErr
+	}
+	if strings.HasPrefix(upstreamID, "ns_") {
+		binding, ok := NodeSessionFromContext(ctx)
+		if !ok {
+			return ErrNodeSessionUnavailable
+		}
+		m.mu.Lock()
+		transport, ok := m.remote.(NodeSessionTransport)
+		m.mu.Unlock()
+		if !ok {
+			return ErrNodeSessionUnavailable
+		}
+		node := at.Node
+		if node == "" {
+			node = binding.Binding.NodeID
+		}
+		_, err := transport.NodeSession(ctx, node, nodewire.SessionRequest{Action: "close", ID: upstreamID, Authority: binding.Authority, Binding: binding.Binding})
+		return err
+	}
 	m.mu.Lock()
 	host := m.hosts[at.key()]
 	m.mu.Unlock()
@@ -238,8 +318,14 @@ func (m *Manager) host(at Placement) (*acphost.Host, error) {
 		return host, nil
 	}
 	cfg, ok := m.configs[at.Harness]
-	if !ok {
+	if !ok && at.Node == "" {
 		return nil, fmt.Errorf("unknown harness %q", at.Harness)
+	}
+	if at.Node != "" && cfg.Permission == "" {
+		// A remote node owns its own tool declaration. A matching local
+		// policy remains explicit configuration; otherwise new remote tools
+		// use the same read policy as a first local registration.
+		cfg.Permission = permission.PolicyRead
 	}
 	broker, err := permission.New(cfg.Permission)
 	if err != nil {

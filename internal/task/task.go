@@ -3,7 +3,10 @@
 // gateway restarts, and it carries the budget that stops a runaway loop.
 package task
 
-import "time"
+import (
+	"encoding/json"
+	"time"
+)
 
 type State string
 
@@ -125,16 +128,25 @@ func (b Budget) Exhausted() (string, bool) {
 // Attempt is one turn against the task. A task accumulates attempts across
 // members and nodes, which is what makes a handoff inspectable after the fact.
 type Attempt struct {
-	Member    string    `json:"member"`
-	Node      string    `json:"node,omitempty"`
-	Session   string    `json:"session,omitempty"`
-	StartedAt time.Time `json:"started_at"`
-	EndedAt   time.Time `json:"ended_at,omitzero"`
-	Outcome   Outcome   `json:"outcome,omitempty"`
-	Tokens    Tokens    `json:"tokens,omitzero"`
+	// Independent executions (plan steps and verifiers) do not replace a
+	// task's conversation turn, even when they finish in a different order.
+	Independent    bool      `json:"independent,omitempty"`
+	ExecutionID    string    `json:"execution_id,omitempty"`
+	TurnID         string    `json:"turn_id,omitempty"`
+	ExecutionEpoch uint64    `json:"execution_epoch,omitempty"`
+	Member         string    `json:"member"`
+	Node           string    `json:"node,omitempty"`
+	Session        string    `json:"session,omitempty"`
+	StartedAt      time.Time `json:"started_at"`
+	EndedAt        time.Time `json:"ended_at,omitzero"`
+	Outcome        Outcome   `json:"outcome,omitempty"`
+	Tokens         Tokens    `json:"tokens,omitzero"`
 	// Model is what the attempt ran on, as the harness reported it, so
 	// usage can be read per model.
 	Model string `json:"model,omitempty"`
+	// UsageKnown is explicit for interrupted recovery attempts; false means
+	// their missing token report must not be presented as confirmed zero.
+	UsageKnown *bool `json:"usage_known,omitempty"`
 }
 
 // FromUsage converts a turn's reported usage into the store's shape.
@@ -146,14 +158,41 @@ func FromUsage(input, output, cachedRead, cachedWrite uint64) Tokens {
 
 func (a Attempt) Open() bool { return a.EndedAt.IsZero() }
 
+func (t Task) HasOpenExecution() bool {
+	for _, row := range t.Attempts {
+		if row.Open() && (row.ExecutionEpoch == 0 || row.ExecutionEpoch == t.ExecutionEpoch) {
+			return true
+		}
+	}
+	return false
+}
+
+func (t *Task) primaryAttempt() *Attempt {
+	for i := len(t.Attempts) - 1; i >= 0; i-- {
+		if !t.Attempts[i].Independent {
+			return &t.Attempts[i]
+		}
+	}
+	return nil
+}
+
+// PreparedPlan is pure planning output fixed at task creation, before a plan
+// store write or native execution. Its token cannot adopt a resumed task epoch.
+type PreparedPlan struct {
+	Execution ExecutionToken  `json:"execution"`
+	Snapshot  json.RawMessage `json:"snapshot"`
+}
+
 type Task struct {
-	ExecutionEpoch uint64 `json:"execution_epoch"`
-	ID             string `json:"id"`
-	Goal           string `json:"goal"`
-	Requester      string `json:"requester,omitempty"`
-	Channel        string `json:"channel"`
-	Member         string `json:"member,omitempty"`
-	Node           string `json:"node,omitempty"`
+	PreparedPlan      *PreparedPlan      `json:"prepared_plan,omitempty"`
+	ExecutionEpoch    uint64             `json:"execution_epoch"`
+	RecoveryWorkspace *RecoveryWorkspace `json:"recovery_workspace,omitempty"`
+	ID                string             `json:"id"`
+	Goal              string             `json:"goal"`
+	Requester         string             `json:"requester,omitempty"`
+	Channel           string             `json:"channel"`
+	Member            string             `json:"member,omitempty"`
+	Node              string             `json:"node,omitempty"`
 	// Origin records what opened the task when it was not a person typing:
 	// a schedule's id, say. It is how unattended work can be recognised and
 	// rotated without touching a task the user has since taken over.

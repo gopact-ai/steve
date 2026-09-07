@@ -40,20 +40,38 @@ func Building(conversationID string, ownerP2P, needsInit bool) bool {
 }
 
 func Continue(locale i18n.Locale, homePath, excerpts string) string {
+	return continueProfile(locale, homePath, excerpts, false)
+}
+
+// ContinueShared builds a profile only from the current conversation. Local
+// histories are not a shared identity source after a coordinator moves.
+func ContinueShared(locale i18n.Locale) string {
+	return continueProfile(locale, "", "", true)
+}
+
+func continueProfile(locale i18n.Locale, homePath, excerpts string, shared bool) string {
 	lang := "简体中文"
 	if locale == i18n.LocaleEN {
 		lang = "English"
 	}
 	var b strings.Builder
 	b.WriteString("The owner answered. Build their profile now.\n")
-	b.WriteString("Working directory: ")
-	b.WriteString(homePath)
+	if shared {
+		b.WriteString("Steve will persist this profile in its shared identity store.")
+	} else {
+		b.WriteString("Working directory: ")
+		b.WriteString(homePath)
+	}
 	b.WriteString("\nWrite both files in ")
 	b.WriteString(lang)
 	b.WriteString(".\n")
 	b.WriteString("Rules:\n")
 	b.WriteString("- Do not use tools. Steve will write the files from your output.\n")
-	b.WriteString("- Do not invent. Only use the owner's message and the session excerpts below.\n")
+	if shared {
+		b.WriteString("- Do not invent. Only use the owner's current messages and supplied shared profile. Do not scan local sessions.\n")
+	} else {
+		b.WriteString("- Do not invent. Only use the owner's message and the session excerpts below.\n")
+	}
 	b.WriteString("- USER.md is a durable portrait: name, timezone, projects, preferences, people. Short bullets.\n")
 	b.WriteString("- SOUL.md is Steve's identity as their personal assistant. The AI tools Steve drives are hands, not another self; do not name specific tools, Steve is told what it has each turn.\n")
 	b.WriteString("- Do not put channel identifiers (a Feishu open_id, a token) in USER.md; they live in Steve's config. Do not include the template marker comment.\n")
@@ -95,11 +113,21 @@ func usableDraft(soul, user string) bool {
 }
 
 func Apply(homePath, out string) (reply string, written bool, err error) {
+	return ApplyWith(out, func(soul, user string) error { return home.WriteIdentity(homePath, soul, user) })
+}
+
+func ApplyWith(out string, write func(soul, user string) error) (reply string, written bool, err error) {
 	draft, err := ParseDraft(out)
 	if err != nil {
+		if strings.Contains(out, soulFence) || strings.Contains(out, userFence) {
+			return "", false, fmt.Errorf("onboard: identity draft was incomplete and has not been saved: %w", err)
+		}
 		return strings.TrimSpace(stripDraft(out)), false, nil
 	}
-	if err := home.WriteIdentity(homePath, draft.Soul, draft.User); err != nil {
+	if write == nil {
+		return "", false, fmt.Errorf("onboard: identity writer is required")
+	}
+	if err := write(draft.Soul, draft.User); err != nil {
 		return "", false, err
 	}
 	return strings.TrimSpace(stripDraft(out)), true, nil

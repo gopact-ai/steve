@@ -27,31 +27,34 @@ type QuestionOption struct {
 type QuestionAnswer struct {
 	CommandID string `json:"command_id"`
 	Choice    string `json:"choice,omitempty"`
+	Text      string `json:"text,omitempty"`
 	Decision  string `json:"decision"` // accept | decline | cancel
 }
 
 type PendingQuestion struct {
-	ID           string           `json:"id"`
-	Conversation string           `json:"conversation"`
-	ExchangeID   string           `json:"exchange_id"`
-	Project      string           `json:"project,omitempty"`
-	TaskID       string           `json:"task_id,omitempty"`
-	AttemptID    string           `json:"attempt_id,omitempty"`
-	SessionID    string           `json:"session_id,omitempty"`
-	Generation   uint64           `json:"generation,omitempty"`
-	ToolCallID   string           `json:"tool_call_id,omitempty"`
-	Principal    string           `json:"principal"`
-	Kind         string           `json:"kind"` // permission | question
-	Title        string           `json:"title,omitempty"`
-	Message      string           `json:"message"`
-	Options      []QuestionOption `json:"options"`
-	Required     bool             `json:"required"`
-	Locale       string           `json:"locale,omitempty"`
-	CreatedAt    time.Time        `json:"created_at"`
-	Deadline     time.Time        `json:"deadline"`
-	UpdatedAt    time.Time        `json:"updated_at"`
-	State        string           `json:"state"` // pending | answered | declined | cancelled | expired | interrupted
-	Answer       *QuestionAnswer  `json:"answer,omitempty"`
+	ID            string           `json:"id"`
+	Conversation  string           `json:"conversation"`
+	ExchangeID    string           `json:"exchange_id"`
+	Project       string           `json:"project,omitempty"`
+	TaskID        string           `json:"task_id,omitempty"`
+	AttemptID     string           `json:"attempt_id,omitempty"`
+	SessionID     string           `json:"session_id,omitempty"`
+	Generation    uint64           `json:"generation,omitempty"`
+	ToolCallID    string           `json:"tool_call_id,omitempty"`
+	RequestID     string           `json:"request_id,omitempty"`
+	Principal     string           `json:"principal"`
+	Kind          string           `json:"kind"` // permission | question
+	Title         string           `json:"title,omitempty"`
+	Message       string           `json:"message"`
+	Options       []QuestionOption `json:"options"`
+	AllowFreeText bool             `json:"allow_free_text"`
+	Required      bool             `json:"required"`
+	Locale        string           `json:"locale,omitempty"`
+	CreatedAt     time.Time        `json:"created_at"`
+	Deadline      time.Time        `json:"deadline"`
+	UpdatedAt     time.Time        `json:"updated_at"`
+	State         string           `json:"state"` // pending | answered | declined | cancelled | expired | interrupted
+	Answer        *QuestionAnswer  `json:"answer,omitempty"`
 }
 
 type Interactions interface {

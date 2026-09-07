@@ -73,8 +73,14 @@ type Ledger struct {
 	journal     *Journal
 	now         func() time.Time
 
-	mu       sync.Mutex
-	recovery bool
+	mu                  sync.Mutex
+	recovery            bool
+	writerMu            sync.Mutex
+	applyMu             sync.Mutex
+	replication         Replicator
+	replicaFailure      error
+	replicationRequired bool
+	replicaWriter       bool
 
 	region  string
 	issuers map[string]Issuer
@@ -87,10 +93,24 @@ type Options struct {
 	// reconcile from the effects journal before serving.
 	Recover bool
 	Now     func() time.Time
+	// ReplicaWriter opens a separate generation-scoped business handle on an
+	// already replicated ledger. Only the permanent application handle may
+	// apply/restore consensus state or maintain the effects file.
+	ReplicaWriter bool
 }
 
 // Open opens or creates the ledger in dir.
 func Open(dir string, opts Options) (*Ledger, error) {
+	if opts.ReplicaWriter {
+		if _, err := os.Stat(filepath.Join(dir, replicaMarker)); err != nil {
+			return nil, ErrReplicaUnavailable
+		}
+		if _, err := os.Stat(filepath.Join(dir, replicaRestoreFile)); err == nil {
+			return nil, ErrReplicaUnavailable
+		} else if !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("ledger dir: %w", err)
 	}
@@ -109,23 +129,47 @@ func Open(dir string, opts Options) (*Ledger, error) {
 	// One writer at a time; SQLite serialises anyway, and a single
 	// connection keeps transactions from deadlocking on the busy handler.
 	db.SetMaxOpenConns(1)
-	if err := migrate(db); err != nil {
-		db.Close()
-		return nil, err
+	if opts.ReplicaWriter {
+		if schema, err := metaUint(db, "schema"); err != nil || schema != schemaVersion {
+			db.Close()
+			return nil, fmt.Errorf("ledger: replica schema is not ready")
+		}
+	} else {
+		if err := migrate(db); err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	seen, err := metaUint(db, "incarnation")
 	if err != nil {
 		db.Close()
 		return nil, err
 	}
-	l := &Ledger{dir: dir, db: db, incarnation: incarnation, now: now}
+	if !opts.ReplicaWriter {
+		incarnation, err = finishReplicaRestore(dir, seen, incarnation)
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
+	}
+	l := &Ledger{dir: dir, db: db, incarnation: incarnation, now: now, replicaWriter: opts.ReplicaWriter}
+	if _, err := os.Stat(filepath.Join(dir, replicaMarker)); err == nil {
+		l.replicationRequired = true
+	} else if !os.IsNotExist(err) {
+		db.Close()
+		return nil, fmt.Errorf("read replication marker: %w", err)
+	}
+	if opts.ReplicaWriter && !l.replicationRequired {
+		db.Close()
+		return nil, ErrReplicaUnavailable
+	}
 	switch {
 	case seen == incarnation:
 	case seen > incarnation:
 		db.Close()
 		return nil, ErrIncarnationLost
 	default: // seen < incarnation: the database is older than the file
-		if seen != 0 && !opts.Recover {
+		if seen != 0 && (!opts.Recover || l.replicationRequired) {
 			db.Close()
 			return nil, ErrRecoveryRequired
 		}
@@ -135,12 +179,24 @@ func Open(dir string, opts Options) (*Ledger, error) {
 			return nil, err
 		}
 	}
-	journal, err := OpenJournal(filepath.Join(dir, journalFile), incarnation, now)
-	if err != nil {
-		db.Close()
-		return nil, err
+	var journal *Journal
+	if opts.ReplicaWriter {
+		journal = &Journal{incarnation: incarnation, now: now}
+	} else {
+		journal, err = OpenJournal(filepath.Join(dir, journalFile), incarnation, now)
+		if err != nil {
+			db.Close()
+			return nil, err
+		}
 	}
 	l.journal = journal
+	journal.ledger = l
+	if !opts.ReplicaWriter {
+		if err := l.seedEffectsJournal(); err != nil {
+			l.Close()
+			return nil, err
+		}
+	}
 	return l, nil
 }
 
@@ -166,7 +222,11 @@ func (l *Ledger) Close() error {
 }
 
 // Incarnation is the value every lease and receipt must carry.
-func (l *Ledger) Incarnation() uint64 { return l.incarnation }
+func (l *Ledger) Incarnation() uint64 {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.incarnation
+}
 
 // InRecovery reports whether this open accepted an older database and still
 // owes a reconciliation pass.
@@ -186,9 +246,9 @@ func (l *Ledger) RecoveryDone() {
 // Journal is the effects journal beside the database.
 func (l *Ledger) Journal() *Journal { return l.journal }
 
-// DB exposes the connection for stores that keep their own tables inside the
-// same file. They must not touch the ledger's tables directly.
-func (l *Ledger) DB() *sql.DB { return l.db }
+// DB provides diagnostic access without exposing a raw connection. Direct
+// writes are disabled when consensus replication is attached.
+func (l *Ledger) DB() *Database { return &Database{l: l} }
 
 // ---------------------------------------------------------------- schema
 
@@ -218,6 +278,10 @@ func migrate(db *sql.DB) error {
 		`CREATE TABLE IF NOT EXISTS bindings (
 			kind TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
 			updated_at TEXT NOT NULL, PRIMARY KEY (kind, id))`,
+		`CREATE TABLE IF NOT EXISTS replica_state (singleton INTEGER PRIMARY KEY CHECK(singleton = 1), version INTEGER NOT NULL)`,
+		`INSERT OR IGNORE INTO replica_state(singleton, version) VALUES (1, 0)`,
+		`CREATE TABLE IF NOT EXISTS replica_commands (id TEXT PRIMARY KEY, version INTEGER NOT NULL UNIQUE, fingerprint TEXT NOT NULL, result BLOB NOT NULL)`,
+		`CREATE TABLE IF NOT EXISTS effect_entries (seq INTEGER PRIMARY KEY, data TEXT NOT NULL)`,
 	}
 	for _, stmt := range stmts {
 		if _, err := db.Exec(stmt); err != nil {
@@ -316,7 +380,7 @@ func (l *Ledger) Command(ctx context.Context, id, kind, actor string, run func(c
 		return nil, false, errors.New("ledger: command id is required")
 	}
 	now := l.now().UTC().Format(time.RFC3339Nano)
-	res, err := l.db.ExecContext(ctx, `INSERT OR IGNORE INTO commands(id, kind, actor, received_at) VALUES (?, ?, ?, ?)`,
+	res, err := l.execWrite(ctx, `INSERT OR IGNORE INTO commands(id, kind, actor, received_at) VALUES (?, ?, ?, ?)`,
 		id, kind, actor, now)
 	if err != nil {
 		return nil, false, err
@@ -341,7 +405,7 @@ func (l *Ledger) Command(ctx context.Context, id, kind, actor string, run func(c
 	if runErr != nil {
 		errText = runErr.Error()
 	}
-	if _, err := l.db.ExecContext(ctx, `UPDATE commands SET finished_at = ?, result = ?, error = ? WHERE id = ?`,
+	if _, err := l.execWrite(ctx, `UPDATE commands SET finished_at = ?, result = ?, error = ? WHERE id = ?`,
 		l.now().UTC().Format(time.RFC3339Nano), string(result), errText, id); err != nil {
 		return result, false, err
 	}
@@ -368,7 +432,7 @@ func (l *Ledger) Acquire(ctx context.Context, key, holder string, ttl time.Durat
 	if key == "" || holder == "" || ttl <= 0 {
 		return Lease{}, errors.New("ledger: acquire needs key, holder and ttl")
 	}
-	tx, err := l.db.BeginTx(ctx, nil)
+	tx, err := l.beginWrite(ctx)
 	if err != nil {
 		return Lease{}, err
 	}
@@ -391,7 +455,7 @@ func (l *Ledger) Acquire(ctx context.Context, key, holder string, ttl time.Durat
 			}
 		}
 	}
-	lease := Lease{Key: key, Incarnation: l.incarnation, Epoch: epoch + 1, Holder: holder, ExpiresAt: now.Add(ttl)}
+	lease := Lease{Key: key, Incarnation: l.Incarnation(), Epoch: epoch + 1, Holder: holder, ExpiresAt: now.Add(ttl)}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO leases(resource_key, incarnation, epoch, holder, expires_at) VALUES (?, ?, ?, ?, ?)
 		ON CONFLICT(resource_key) DO UPDATE SET incarnation = excluded.incarnation, epoch = excluded.epoch, holder = excluded.holder, expires_at = excluded.expires_at`,
 		key, lease.Incarnation, lease.Epoch, holder, lease.ExpiresAt.UTC().Format(time.RFC3339Nano)); err != nil {
@@ -405,7 +469,7 @@ func (l *Ledger) Acquire(ctx context.Context, key, holder string, ttl time.Durat
 
 // Renew extends a lease that still matches exactly.
 func (l *Ledger) Renew(ctx context.Context, lease Lease, ttl time.Duration) (Lease, error) {
-	tx, err := l.db.BeginTx(ctx, nil)
+	tx, err := l.beginWrite(ctx)
 	if err != nil {
 		return Lease{}, err
 	}
@@ -426,7 +490,7 @@ func (l *Ledger) Renew(ctx context.Context, lease Lease, ttl time.Duration) (Lea
 
 // Release gives a resource up. A stale lease releases nothing.
 func (l *Ledger) Release(ctx context.Context, lease Lease) error {
-	tx, err := l.db.BeginTx(ctx, nil)
+	tx, err := l.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -449,7 +513,7 @@ func (l *Ledger) Transfer(ctx context.Context, lease Lease, to string, ttl time.
 	if to == "" || ttl <= 0 {
 		return Lease{}, errors.New("ledger: transfer needs a holder and a ttl")
 	}
-	tx, err := l.db.BeginTx(ctx, nil)
+	tx, err := l.beginWrite(ctx)
 	if err != nil {
 		return Lease{}, err
 	}
@@ -457,7 +521,7 @@ func (l *Ledger) Transfer(ctx context.Context, lease Lease, to string, ttl time.
 	if err := l.checkLease(ctx, tx, lease); err != nil {
 		return Lease{}, err
 	}
-	next := Lease{Key: lease.Key, Incarnation: l.incarnation, Epoch: lease.Epoch + 1, Holder: to, ExpiresAt: l.now().Add(ttl)}
+	next := Lease{Key: lease.Key, Incarnation: l.Incarnation(), Epoch: lease.Epoch + 1, Holder: to, ExpiresAt: l.now().Add(ttl)}
 	if _, err := tx.ExecContext(ctx, `UPDATE leases SET incarnation = ?, epoch = ?, holder = ?, expires_at = ? WHERE resource_key = ? AND epoch = ?`,
 		next.Incarnation, next.Epoch, to, next.ExpiresAt.UTC().Format(time.RFC3339Nano), lease.Key, lease.Epoch); err != nil {
 		return Lease{}, err
@@ -471,9 +535,9 @@ func (l *Ledger) Transfer(ctx context.Context, lease Lease, to string, ttl time.
 // Invalidate forces the epoch forward and clears the holder, whoever it is.
 // Supersede uses it on the resources an expired attempt still holds.
 func (l *Ledger) Invalidate(ctx context.Context, key string) error {
-	_, err := l.db.ExecContext(ctx, `INSERT INTO leases(resource_key, incarnation, epoch, holder, expires_at) VALUES (?, ?, 1, '', ?)
+	_, err := l.execWrite(ctx, `INSERT INTO leases(resource_key, incarnation, epoch, holder, expires_at) VALUES (?, ?, 1, '', ?)
 		ON CONFLICT(resource_key) DO UPDATE SET epoch = leases.epoch + 1, holder = '', expires_at = excluded.expires_at, incarnation = excluded.incarnation`,
-		key, l.incarnation, l.now().UTC().Format(time.RFC3339Nano))
+		key, l.Incarnation(), l.now().UTC().Format(time.RFC3339Nano))
 	return err
 }
 
@@ -481,7 +545,12 @@ func (l *Ledger) Invalidate(ctx context.Context, key string) error {
 // holds — and only those: a resource someone else has since acquired keeps
 // its lease.
 func (l *Ledger) InvalidateHeldBy(ctx context.Context, holder string) ([]string, error) {
-	rows, err := l.db.QueryContext(ctx, `SELECT resource_key FROM leases WHERE holder = ?`, holder)
+	tx, err := l.beginWrite(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer tx.Rollback()
+	rows, err := tx.QueryContext(ctx, `SELECT resource_key FROM leases WHERE holder = ?`, holder)
 	if err != nil {
 		return nil, err
 	}
@@ -494,12 +563,17 @@ func (l *Ledger) InvalidateHeldBy(ctx context.Context, holder string) ([]string,
 		}
 		keys = append(keys, key)
 	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, err
+	}
 	rows.Close()
-	for _, key := range keys {
-		if _, err := l.db.ExecContext(ctx, `UPDATE leases SET epoch = epoch + 1, holder = '', expires_at = ? WHERE resource_key = ? AND holder = ?`,
-			l.now().UTC().Format(time.RFC3339Nano), key, holder); err != nil {
-			return keys, err
-		}
+	if _, err := tx.ExecContext(ctx, `UPDATE leases SET epoch = epoch + 1, holder = '', expires_at = ? WHERE holder = ?`,
+		l.now().UTC().Format(time.RFC3339Nano), holder); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
 	}
 	return keys, nil
 }
@@ -507,12 +581,12 @@ func (l *Ledger) InvalidateHeldBy(ctx context.Context, holder string) ([]string,
 // InvalidateAll forces every epoch forward. Recovery does this after
 // rotating the incarnation: nothing issued before survives.
 func (l *Ledger) InvalidateAll(ctx context.Context) error {
-	_, err := l.db.ExecContext(ctx, `UPDATE leases SET epoch = epoch + 1, holder = '', expires_at = ?, incarnation = ?`,
-		l.now().UTC().Format(time.RFC3339Nano), l.incarnation)
+	_, err := l.execWrite(ctx, `UPDATE leases SET epoch = epoch + 1, holder = '', expires_at = ?, incarnation = ?`,
+		l.now().UTC().Format(time.RFC3339Nano), l.Incarnation())
 	return err
 }
 
-func (l *Ledger) checkLease(ctx context.Context, tx *sql.Tx, lease Lease) error {
+func (l *Ledger) checkLease(ctx context.Context, tx *writeTx, lease Lease) error {
 	var incarnation, epoch uint64
 	var holder, expires string
 	err := tx.QueryRowContext(ctx, `SELECT incarnation, epoch, holder, expires_at FROM leases WHERE resource_key = ?`, lease.Key).
@@ -569,26 +643,26 @@ func (l *Ledger) Begin(ctx context.Context, id, kind, initial, actor string, dat
 		return Operation{}, err
 	}
 	now := l.now().UTC()
-	tx, err := l.db.BeginTx(ctx, nil)
+	tx, err := l.beginWrite(ctx)
 	if err != nil {
 		return Operation{}, err
 	}
 	defer tx.Rollback()
 	if _, err := tx.ExecContext(ctx, `INSERT INTO operations(id, kind, state, revision, incarnation, data, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
-		id, kind, initial, l.incarnation, string(raw), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
+		id, kind, initial, l.Incarnation(), string(raw), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {
 			return Operation{}, fmt.Errorf("%w: operation %s exists", ErrConflict, id)
 		}
 		return Operation{}, err
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO events(operation_id, revision, incarnation, from_state, to_state, actor, fencings, effects, at) VALUES (?, 1, ?, '', ?, ?, '[]', 'null', ?)`,
-		id, l.incarnation, initial, actor, now.Format(time.RFC3339Nano)); err != nil {
+		id, l.Incarnation(), initial, actor, now.Format(time.RFC3339Nano)); err != nil {
 		return Operation{}, err
 	}
 	if err := tx.Commit(); err != nil {
 		return Operation{}, err
 	}
-	return Operation{ID: id, Kind: kind, State: initial, Revision: 1, Incarnation: l.incarnation, Data: raw, CreatedAt: now, UpdatedAt: now}, nil
+	return Operation{ID: id, Kind: kind, State: initial, Revision: 1, Incarnation: l.Incarnation(), Data: raw, CreatedAt: now, UpdatedAt: now}, nil
 }
 
 // Tx is what a transition's mutation sees: the same SQLite transaction the
@@ -596,7 +670,7 @@ func (l *Ledger) Begin(ctx context.Context, id, kind, initial, actor string, dat
 type Tx struct {
 	l   *Ledger
 	ctx context.Context
-	tx  *sql.Tx
+	tx  *writeTx
 }
 
 // Transition moves an operation from one state to another, atomically with
@@ -618,7 +692,7 @@ func (l *Ledger) Transition(ctx context.Context, id, from, to, actor string, fen
 	if err := l.checkForeign(ctx, fencings); err != nil {
 		return Event{}, err
 	}
-	tx, err := l.db.BeginTx(ctx, nil)
+	tx, err := l.beginWrite(ctx)
 	if err != nil {
 		return Event{}, err
 	}
@@ -655,7 +729,7 @@ func (l *Ledger) Transition(ctx context.Context, id, from, to, actor string, fen
 	now := l.now().UTC()
 	revision := op.Revision + 1
 	res, err := tx.ExecContext(ctx, `UPDATE operations SET state = ?, revision = ?, incarnation = ?, data = ?, updated_at = ? WHERE id = ? AND revision = ?`,
-		to, revision, l.incarnation, string(op.Data), now.Format(time.RFC3339Nano), id, op.Revision)
+		to, revision, l.Incarnation(), string(op.Data), now.Format(time.RFC3339Nano), id, op.Revision)
 	if err != nil {
 		return Event{}, err
 	}
@@ -663,7 +737,7 @@ func (l *Ledger) Transition(ctx context.Context, id, from, to, actor string, fen
 		return Event{}, fmt.Errorf("%w: operation %s changed underneath", ErrConflict, id)
 	}
 	result, err := tx.ExecContext(ctx, `INSERT INTO events(operation_id, revision, incarnation, from_state, to_state, actor, fencings, effects, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, revision, l.incarnation, from, to, actor, string(fencingsRaw), string(effectsRaw), now.Format(time.RFC3339Nano))
+		id, revision, l.Incarnation(), from, to, actor, string(fencingsRaw), string(effectsRaw), now.Format(time.RFC3339Nano))
 	if err != nil {
 		return Event{}, err
 	}
@@ -671,7 +745,7 @@ func (l *Ledger) Transition(ctx context.Context, id, from, to, actor string, fen
 	if err := tx.Commit(); err != nil {
 		return Event{}, err
 	}
-	return Event{Seq: seq, OperationID: id, Revision: revision, Incarnation: l.incarnation, From: from, To: to,
+	return Event{Seq: seq, OperationID: id, Revision: revision, Incarnation: l.Incarnation(), From: from, To: to,
 		Actor: actor, Fencings: nonNil(fencings), Effects: effectsRaw, At: now}, nil
 }
 
@@ -679,7 +753,7 @@ func (l *Ledger) Transition(ctx context.Context, id, from, to, actor string, fen
 // bindings that are names rather than state machines, such as which
 // project a conversation points at.
 func (l *Ledger) Update(ctx context.Context, mutate func(tx *Tx) error) error {
-	tx, err := l.db.BeginTx(ctx, nil)
+	tx, err := l.beginWrite(ctx)
 	if err != nil {
 		return err
 	}
@@ -740,12 +814,14 @@ func (t *Tx) PutBinding(kind, id string, value any) error {
 
 // Exec runs a statement in the transition, for stores that keep their own
 // tables in the ledger's database and want their writes to land with the
-// event or not at all.
+// event or not at all. Replicated execution accepts parameterized INSERT,
+// UPDATE and DELETE against ordinary tables. Compute values in the mutation
+// callback; SQL functions, subqueries and schema changes are not replicated.
 func (t *Tx) Exec(query string, args ...any) (sql.Result, error) {
 	return t.tx.ExecContext(t.ctx, query, args...)
 }
 
-func (t *Tx) QueryRow(query string, args ...any) *sql.Row {
+func (t *Tx) QueryRow(query string, args ...any) *Row {
 	return t.tx.QueryRowContext(t.ctx, query, args...)
 }
 
@@ -927,7 +1003,7 @@ func (l *Ledger) PutBinding(ctx context.Context, kind, id string, value any) err
 	if err != nil {
 		return err
 	}
-	_, err = l.db.ExecContext(ctx, `INSERT INTO bindings(kind, id, data, updated_at) VALUES (?, ?, ?, ?)
+	_, err = l.execWrite(ctx, `INSERT INTO bindings(kind, id, data, updated_at) VALUES (?, ?, ?, ?)
 		ON CONFLICT(kind, id) DO UPDATE SET data = excluded.data, updated_at = excluded.updated_at`,
 		kind, id, string(raw), l.now().UTC().Format(time.RFC3339Nano))
 	return err
@@ -935,7 +1011,7 @@ func (l *Ledger) PutBinding(ctx context.Context, kind, id string, value any) err
 
 // DeleteBinding removes a binding record.
 func (l *Ledger) DeleteBinding(ctx context.Context, kind, id string) error {
-	_, err := l.db.ExecContext(ctx, `DELETE FROM bindings WHERE kind = ? AND id = ?`, kind, id)
+	_, err := l.execWrite(ctx, `DELETE FROM bindings WHERE kind = ? AND id = ?`, kind, id)
 	return err
 }
 

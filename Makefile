@@ -22,7 +22,16 @@ test-console:
 	npm --prefix web/console run test:architecture
 	npm --prefix web/console run test:settings
 	npm --prefix web/console run test:materials
+	npm --prefix web/console run test:questions
+	npm --prefix web/console run test:desktop
+	npm --prefix web/console run test:ssh
+	npm --prefix web/console run test:coordination
+	npm --prefix web/console run test:node-agents
 	npm --prefix web/console run test:selection
+
+.PHONY: desktop
+desktop:
+	./scripts/build-desktop.sh
 
 e2e:
 	STEVE_MESH_E2E=1 $(GO) test -count=1 -timeout 25m ./e2e/mesh/

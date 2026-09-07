@@ -216,6 +216,10 @@ func (s *Store) List() []Plan {
 }
 
 func clonePlan(p Plan) Plan {
+	if p.Execution != nil {
+		token := *p.Execution
+		p.Execution = &token
+	}
 	p.Steps = cloneSteps(p.Steps)
 	return p
 }

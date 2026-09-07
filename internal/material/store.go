@@ -25,6 +25,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
@@ -35,9 +36,13 @@ var digestPattern = regexp.MustCompile(`^[0-9a-f]{64}$`)
 var commitPattern = regexp.MustCompile(`^(?:[0-9a-f]{40}|[0-9a-f]{64})$`)
 
 type Store struct {
-	root *os.Root
-	book *ledger.Ledger
+	root        *os.Root
+	book        *ledger.Ledger
+	replication contentreplica.Replicator
 }
+
+// SetReplication is wired before this activation starts serving requests.
+func (s *Store) SetReplication(r contentreplica.Replicator) { s.replication = r }
 
 func Open(dir string, book *ledger.Ledger) (*Store, error) {
 	if book == nil {
@@ -64,6 +69,7 @@ func sum(data []byte) string  { digest := sha256.Sum256(data); return hex.Encode
 func identity(m Material) string {
 	m.ID = ""
 	m.CreatedAt = time.Time{}
+	m.Content = nil
 	raw, _ := json.Marshal(m)
 	return "m-" + sum(raw)
 }
@@ -133,24 +139,48 @@ func (s *Store) Capture(ctx context.Context, in CaptureInput) (Material, error) 
 	if err := validateSource(in.Source); err != nil {
 		return Material{}, err
 	}
+	if s.replication != nil {
+		if _, err := s.replication.CheckLocal(ctx, in.Project); err != nil {
+			return Material{}, err
+		}
+	}
 	kind, mimeType, width, height, err := inspect(in.Data, in.MIME)
 	if err != nil {
 		return Material{}, err
 	}
 	m := Material{Project: in.Project, Title: in.Title, Kind: kind, MIME: mimeType, Size: int64(len(in.Data)), Digest: sum(in.Data), Source: in.Source, Width: width, Height: height, CreatedAt: time.Now().UTC()}
 	m.ID = identity(m)
+	if s.replication != nil {
+		manifest, err := s.replication.Prepare(ctx, m.Project, contentreplica.Material, m.Digest, contentreplica.BlobRef{SHA256: m.Digest, Size: m.Size}, bytes.NewReader(in.Data))
+		if err != nil {
+			return Material{}, err
+		}
+		m.Content = &manifest
+	}
 	if err := s.writeBlob(m.Digest, in.Data); err != nil {
 		return Material{}, err
 	}
 	err = s.book.Update(ctx, func(tx *ledger.Tx) error {
+		if m.Content != nil {
+			manifest, err := contentreplica.Record(tx, *m.Content)
+			if err != nil {
+				return err
+			}
+			m.Content = &manifest
+		}
 		var old Material
 		ok, err := binding(tx, materialKind, m.ID, &old)
 		if err != nil {
 			return err
 		}
 		if ok {
+			if m.Content != nil {
+				old.Content = m.Content
+			}
 			m = old
-			return nil
+			if m.Content == nil {
+				return nil
+			}
 		}
 		return tx.PutBinding(materialKind, m.ID, m)
 	})
@@ -175,8 +205,21 @@ func (s *Store) Get(ctx context.Context, project, id string) (Material, error) {
 	if m.Project != project {
 		return Material{}, ErrScope
 	}
-	if m.ID != id || identity(m) != id || !digestPattern.MatchString(m.Digest) {
+	if m.ID != id || identity(m) != id || !digestPattern.MatchString(m.Digest) || m.Size < 0 || m.Size > MaxBlobBytes {
 		return Material{}, fmt.Errorf("%w: stored identity mismatch", ErrInvalid)
+	}
+	if m.Content != nil {
+		current, found, err := contentreplica.Lookup(ctx, s.book, m.Content.ID)
+		if err != nil {
+			return Material{}, err
+		}
+		if !found {
+			return Material{}, contentreplica.ErrIncomplete
+		}
+		if current.Object.Scope.ProjectID != m.Project || current.Object.Kind != contentreplica.Material || current.Object.Key != m.Digest || current.Object.Blob != (contentreplica.BlobRef{SHA256: m.Digest, Size: m.Size}) {
+			return Material{}, contentreplica.ErrIntegrity
+		}
+		m.Content = &current
 	}
 	return m, nil
 }
@@ -192,6 +235,11 @@ func (s *Store) List(ctx context.Context, project string) ([]Material, error) {
 			return nil, err
 		}
 		if m.Project == project {
+			var err error
+			m, err = s.Get(ctx, project, m.ID)
+			if err != nil {
+				return nil, err
+			}
 			out = append(out, m)
 		}
 	}
@@ -203,7 +251,45 @@ func (s *Store) Content(ctx context.Context, project, id string) (Material, []by
 	if err != nil {
 		return m, nil, err
 	}
+	if s.replication != nil {
+		if _, err := s.replication.CheckLocal(ctx, project); err != nil {
+			return m, nil, err
+		}
+	}
 	data, err := s.readBlob(m.Digest)
+	if err != nil && s.replication != nil && m.Content != nil {
+		manifest, ok, loadErr := contentreplica.Lookup(ctx, s.book, m.Content.ID)
+		if loadErr != nil {
+			return m, nil, loadErr
+		}
+		if !ok {
+			return m, nil, contentreplica.ErrIncomplete
+		}
+		if manifest.Object.Scope.ProjectID != m.Project || manifest.Object.Kind != contentreplica.Material || manifest.Object.Key != m.Digest || manifest.Object.Blob != (contentreplica.BlobRef{SHA256: m.Digest, Size: m.Size}) {
+			return m, nil, contentreplica.ErrIntegrity
+		}
+		var restored bytes.Buffer
+		manifest, err = s.replication.Read(ctx, manifest, &restored)
+		if err != nil {
+			return m, nil, err
+		}
+		data = restored.Bytes()
+		if int64(len(data)) != m.Size || sum(data) != m.Digest {
+			return m, nil, contentreplica.ErrIntegrity
+		}
+		err = s.book.Update(ctx, func(tx *ledger.Tx) error {
+			var err error
+			manifest, err = contentreplica.Record(tx, manifest)
+			return err
+		})
+		if err != nil {
+			return m, nil, err
+		}
+		if err = s.writeBlob(m.Digest, data); err != nil {
+			return m, nil, err
+		}
+		m.Content = &manifest
+	}
 	if err == nil && int64(len(data)) != m.Size {
 		err = fmt.Errorf("%w: blob size mismatch", ErrInvalid)
 	}
@@ -238,9 +324,13 @@ func (s *Store) writeBlob(digest string, data []byte) error {
 	if !digestPattern.MatchString(digest) || len(data) > MaxBlobBytes || sum(data) != digest {
 		return ErrInvalid
 	}
-	if _, err := s.root.Lstat(digest); err == nil {
-		_, err = s.readBlob(digest)
-		return err
+	if info, err := s.root.Lstat(digest); err == nil {
+		if !info.Mode().IsRegular() {
+			return ErrInvalid
+		}
+		if _, err = s.readBlob(digest); err == nil {
+			return nil
+		}
 	} else if !os.IsNotExist(err) {
 		return err
 	}
@@ -263,6 +353,13 @@ func (s *Store) writeBlob(digest string, data []byte) error {
 	// Link publishes without replacing another capture's immutable object.
 	if err = s.root.Link(name, digest); os.IsExist(err) {
 		_, err = s.readBlob(digest)
+		if err != nil {
+			info, statErr := s.root.Lstat(digest)
+			if statErr != nil || !info.Mode().IsRegular() {
+				return ErrInvalid
+			}
+			err = s.root.Rename(name, digest)
+		}
 	}
 	if err != nil {
 		return err

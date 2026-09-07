@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
+	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
@@ -37,7 +38,9 @@ type Manifest struct {
 	Workspace string `json:"workspace,omitempty"`
 	// Receipts say where the artifact is durably held. It counts as durable
 	// once one of the project's durable places has signed for it.
-	Receipts []Receipt `json:"receipts,omitempty"`
+	Receipts   []Receipt                `json:"receipts,omitempty"`
+	Content    *contentreplica.Manifest `json:"content,omitempty"`
+	Protection string                   `json:"protection,omitempty"`
 }
 
 // Receipt is a place's word that it holds the artifact.
@@ -48,6 +51,9 @@ type Receipt struct {
 
 // Durable reports whether one of the project's durable places holds it.
 func (m Manifest) Durable(p project.Project) bool {
+	if m.Content != nil && !m.Content.Complete() {
+		return false
+	}
 	for _, r := range m.Receipts {
 		if p.Durable(r.Place) {
 			return true
@@ -81,6 +87,11 @@ type Store struct {
 	projects         *project.Store
 	nodes            Nodes
 	now              func() time.Time
+	replication      contentreplica.Replicator
+	contentState     contentReplicationState
+	// ContentLimits bounds verification of a complete replicated history,
+	// independently of Limits, which bounds the current workspace snapshot.
+	ContentLimits ContentLimits
 	// LegacyMerge forces the pre-2.38 merge path at nodes; tests use it
 	// to exercise that path on a modern git.
 	LegacyMerge bool
@@ -90,6 +101,9 @@ type Store struct {
 }
 
 func (s *Store) SetExecution(r *execution.Registry) { s.executions = r }
+
+// SetReplication is wired with the active generation's ledger writer.
+func (s *Store) SetReplication(r contentreplica.Replicator) { s.replication = r }
 
 func New(dir string, l *ledger.Ledger, projects *project.Store, nodes Nodes) *Store {
 	return &Store{Dir: dir, ledger: l, projects: projects, nodes: nodes, now: time.Now}
@@ -133,9 +147,28 @@ func metadataOnly(p project.Project) bool {
 
 // Repo opens the project's shadow repository on the hub.
 func (s *Store) Repo(ctx context.Context, projectID string) (*Repo, error) {
+	objectsAllowed := true
+	if s.replication != nil {
+		p, ok, err := s.projects.GetHistorical(ctx, projectID)
+		if err != nil {
+			return nil, err
+		}
+		if !ok {
+			return nil, project.ErrUnknown
+		}
+		objectsAllowed = !metadataOnly(p)
+		if ok && !metadataOnly(p) {
+			if _, err := s.replication.CheckLocal(ctx, projectID); err != nil {
+				return nil, err
+			}
+		}
+	}
 	r, err := Open(ctx, filepath.Join(s.Dir, "objects", projectID+".git"))
 	if err == nil {
 		r.Limits = s.Limits
+		if s.replication != nil && objectsAllowed {
+			err = s.restoreContent(ctx, projectID, r)
+		}
 	}
 	return r, err
 }
@@ -144,6 +177,19 @@ func (s *Store) Repo(ctx context.Context, projectID string) (*Repo, error) {
 func (s *Store) Manifest(ctx context.Context, id string) (Manifest, bool, error) {
 	var m Manifest
 	ok, err := s.ledger.GetBinding(ctx, manifestKind, id, &m)
+	if err == nil && ok && m.Content != nil {
+		current, found, loadErr := contentreplica.Lookup(ctx, s.ledger, m.Content.ID)
+		if loadErr != nil {
+			return Manifest{}, false, loadErr
+		}
+		if !found {
+			return Manifest{}, false, contentreplica.ErrIncomplete
+		}
+		if current.Object.Scope.ProjectID != m.Project || current.Object.Kind != contentreplica.GitBundle || current.Object.Key != m.ID {
+			return Manifest{}, false, contentreplica.ErrIntegrity
+		}
+		m.Content, m.Protection = &current, current.Protection
+	}
 	return m, ok, err
 }
 
@@ -160,7 +206,41 @@ func (s *Store) record(ctx context.Context, m Manifest) (Manifest, error) {
 	if m.CreatedAt.IsZero() {
 		m.CreatedAt = s.now().UTC()
 	}
-	return m, s.ledger.PutBinding(ctx, manifestKind, m.ID, m)
+	if s.replication != nil {
+		p, ok, err := s.projects.GetHistorical(ctx, m.Project)
+		if err != nil {
+			return m, err
+		}
+		if !ok {
+			return m, project.ErrUnknown
+		}
+		if metadataOnly(p) {
+			m.Protection = contentreplica.SealedHome
+			m.Content = nil
+		} else {
+			manifest, err := s.prepareContent(ctx, m)
+			if err != nil {
+				return m, err
+			}
+			m.Content = &manifest
+			m.Protection = manifest.Protection
+		}
+	}
+	err := s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+		if m.Content != nil {
+			manifest, err := contentreplica.Record(tx, *m.Content)
+			if err != nil {
+				return err
+			}
+			m.Content = &manifest
+			m.Protection = manifest.Protection
+			if err := tx.PutBinding(artifactContentKind, m.Project+"/"+m.ID, manifest.ID); err != nil {
+				return err
+			}
+		}
+		return tx.PutBinding(manifestKind, m.ID, m)
+	})
+	return m, err
 }
 
 // hubReceipt signs for an artifact now held in the hub's repository.
@@ -206,7 +286,10 @@ func (s *Store) SnapshotCanonical(ctx context.Context, p project.Project, parent
 	if !changed {
 		m, ok, err := s.Manifest(ctx, sha)
 		if err == nil && ok {
-			return m, false, nil
+			if s.replication != nil {
+				m, err = s.receipt(ctx, p, m)
+			}
+			return m, false, err
 		}
 	}
 	m, err := s.receipt(ctx, p, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message, Canonical: true})
@@ -243,7 +326,10 @@ func (s *Store) SnapshotWorkspace(ctx context.Context, p project.Project, ws pro
 	}
 	if !changed {
 		if m, ok, err := s.Manifest(ctx, sha); err == nil && ok {
-			return m, false, nil
+			if s.replication != nil {
+				m, err = s.receipt(ctx, p, m)
+			}
+			return m, false, err
 		}
 	}
 	m, err := s.receipt(ctx, p, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message, Workspace: ws.ID})
@@ -519,7 +605,10 @@ func (s *Store) Publish(ctx context.Context, ws project.Workspace, parent, by, m
 	if !changed {
 		m, ok, err := s.Manifest(ctx, sha)
 		if err == nil && ok {
-			return m, false, nil
+			if s.replication != nil {
+				m, err = s.receipt(ctx, p, m)
+			}
+			return m, false, err
 		}
 	}
 	m, err := s.receipt(ctx, p, Manifest{ID: sha, Project: p.ID, Parent: parent, Label: p.Level, By: by, Message: message})

@@ -9,6 +9,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/platformconfig"
 )
 
 // Every field in this first settings service is restart-applied. The boot
@@ -35,14 +36,14 @@ func (s *hubSettingsService) viewLocked() consoleapi.SettingsView {
 	desired := s.admin.cfg.SettingsValues()
 	d, _ := json.Marshal(desired)
 	e, _ := json.Marshal(s.effective)
-	return consoleapi.SettingsView{Revision: s.admin.cfg.FileRevision(), Desired: d, Effective: e, PendingRestart: !reflect.DeepEqual(desired, s.applied), ApplyMode: "restart", Fields: settingsFields()}
+	return consoleapi.SettingsView{Revision: s.admin.settingsRevision(), Desired: d, Effective: e, PendingRestart: !reflect.DeepEqual(desired, s.applied), ApplyMode: "restart", Fields: settingsFields()}
 }
-func (s *hubSettingsService) UpdateSettings(_ context.Context, req consoleapi.SettingsUpdate) (consoleapi.SettingsView, error) {
+func (s *hubSettingsService) UpdateSettings(ctx context.Context, req consoleapi.SettingsUpdate) (consoleapi.SettingsView, error) {
 	s.admin.mu.Lock()
 	defer s.admin.mu.Unlock()
 	configMu.Lock()
 	defer configMu.Unlock()
-	if req.BaseRevision == "" || req.BaseRevision != s.admin.cfg.FileRevision() {
+	if req.BaseRevision == "" || req.BaseRevision != s.admin.settingsRevision() {
 		return consoleapi.SettingsView{}, consoleapi.ErrSettingsConflict
 	}
 	if err := s.admin.cfg.CheckFileRevision(s.admin.path); err != nil {
@@ -61,8 +62,11 @@ func (s *hubSettingsService) UpdateSettings(_ context.Context, req consoleapi.Se
 	if reflect.DeepEqual(candidate.SettingsValues(), s.admin.cfg.SettingsValues()) {
 		return s.viewLocked(), nil
 	}
-	saveErr := s.admin.persistConfig(candidate)
+	saveErr := redactChannelError(s.admin.persistConfigContext(ctx, candidate), s.admin.cfg.Feishu.AppSecret, candidate.Feishu.AppSecret)
 	if saveErr != nil && !config.Committed(saveErr) {
+		if errors.Is(saveErr, config.ErrFileChanged) || errors.Is(saveErr, platformconfig.ErrConflict) {
+			return consoleapi.SettingsView{}, errors.Join(consoleapi.ErrSettingsConflict, saveErr)
+		}
 		return consoleapi.SettingsView{}, saveErr
 	}
 	*s.admin.cfg = *candidate
@@ -71,6 +75,13 @@ func (s *hubSettingsService) UpdateSettings(_ context.Context, req consoleapi.Se
 		view.Warning = saveErr.Error()
 	}
 	return view, nil
+}
+
+func (a *fleetAdmin) settingsRevision() string {
+	if a.configRevision != nil {
+		return a.configRevision()
+	}
+	return a.cfg.FileRevision()
 }
 func settingsFields() []consoleapi.SettingsField {
 	zero, one, maxSafe := int64(0), int64(1), int64(9_007_199_254_740_991)
