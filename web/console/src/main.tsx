@@ -6,6 +6,7 @@ import { RouteProvider } from "@/providers/router-provider";
 import { ThemeProvider } from "@/providers/theme-provider";
 import { LocaleProvider } from "@/providers/locale-provider";
 import "@/styles/globals.css";
+import "@/styles/settings.css";
 
 // Hash routes keep the token in the query string across every page and
 // reload; the hub serves one shell for all of them.

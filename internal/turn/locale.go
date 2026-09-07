@@ -10,7 +10,7 @@ func (c *Coordinator) localized(locale i18n.Locale) *Coordinator {
 	if locale != i18n.LocaleZH && locale != i18n.LocaleEN {
 		return c
 	}
-	return &Coordinator{coordinatorState: c.coordinatorState, text: i18n.New(locale)}
+	return &Coordinator{coordinatorState: c.coordinatorState, text: i18n.New(locale), ownerOpenID: c.ownerOpenID}
 }
 
 // VerbsFor localizes system labels without changing the coordinator used by

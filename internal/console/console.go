@@ -79,11 +79,12 @@ type Events interface {
 }
 
 type Service struct {
-	handler   Handler
-	owner     string
-	model     Events
-	titler    Titler
-	inspector Inspector
+	maintenance bool
+	handler     Handler
+	owner       string
+	model       Events
+	titler      Titler
+	inspector   Inspector
 
 	mu      sync.Mutex
 	replies map[string][]consoleapi.Reply

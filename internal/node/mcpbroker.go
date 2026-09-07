@@ -92,6 +92,8 @@ type mcpBinding struct {
 // Broker holds the servers, mints bindings, launches, proxies.
 type Broker struct {
 	cfg BrokerConfig
+	// work is installed only by an embedded node, sharing its restart gate.
+	work func() (func(), error)
 
 	mu        sync.Mutex
 	bindings  map[string]mcpBinding
@@ -266,6 +268,8 @@ func (b *Broker) control(token string) bool {
 // conn serves one connection: a control command, or a launcher.
 func (b *Broker) conn(ctx context.Context, c net.Conn) {
 	defer c.Close()
+	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
+	defer stop()
 	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
 	// The reader stays: bytes after the first line are the session's
 	// first bytes, and they may already sit in its buffer.
@@ -280,6 +284,14 @@ func (b *Broker) conn(ctx context.Context, c net.Conn) {
 		return
 	}
 	reply := func(s string) { _, _ = io.WriteString(c, s+"\n") }
+	if fields[0] != "LIST" && b.work != nil {
+		done, err := b.work()
+		if err != nil {
+			reply("ERR node is restarting")
+			return
+		}
+		defer done()
+	}
 	switch fields[0] {
 	case "BIND":
 		if len(fields) != 5 || !b.control(fields[1]) {
@@ -425,6 +437,14 @@ func (b *Broker) proxyAddr() string {
 }
 
 func (b *Broker) proxy(w http.ResponseWriter, r *http.Request) {
+	if b.work != nil {
+		done, err := b.work()
+		if err != nil {
+			http.Error(w, "node is restarting", http.StatusServiceUnavailable)
+			return
+		}
+		defer done()
+	}
 	rest, ok := strings.CutPrefix(r.URL.Path, "/b/")
 	if !ok {
 		http.NotFound(w, r)

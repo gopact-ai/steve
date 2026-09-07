@@ -110,13 +110,13 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 | `app_secret` | string | 必填 | 应用密钥 | `"replace-me"` |
 | `domain` | string | `"feishu"` | `feishu` 或 `lark` | `"lark"` |
 | `owner_open_id` | string | `""` | 飞书/Lark owner；也是未设置 `gateway.owner_id` 时的控制台 owner 后备值 | `"ou_..."` |
-| `allowed_senders` | string[] | `[]`（群消息不按发送者限制） | 非空时只接收这些发送者的群消息，私聊不使用此名单 | `["ou_..."]` |
+| `allowed_senders` | string[] | `[]` | `group_policy=allowlist` 时的群聊发送者名单，空名单拒绝全部群聊；私聊不使用此名单 | `["ou_..."]` |
 | `blocked_senders` | string[] | `[]` | 群聊和私聊均拒绝这些发送者，优先于其他规则 | `["ou_..."]` |
-| `group_policy` | string | `"open"` | 接受 `open` / `allowlist` / `disabled`；`disabled` 禁止群消息 | `"disabled"` |
+| `group_policy` | string | `"open"` | `open` 允许群聊，`allowlist` 仅允许名单命中者（空名单拒绝全部），`disabled` 禁止群消息；阻止名单始终优先 | `"disabled"` |
 | `allow_unmentioned` | boolean | `false` | 接收未 @ bot 的群消息，再由参与策略决定是否响应 | `true` |
 | `dm_policy` | string | `""`，兼容项 | 只校验 `pairing` / `allowlist`，当前不参与访问决策 | `"pairing"`（仅旧文件） |
 
-当前访问代码对非 disabled 群消息都会检查 `allowed_senders`，与 `group_policy` 写 open 还是 allowlist 无关；**空名单不会封闭群访问**。要关闭群入口用 `disabled`。这两个兼容项（`feishu.dm_policy`、`agents.<name>.workspace`）不放进新样例。依据：[channel/feishu/access.go](../internal/channel/feishu/access.go)。
+`feishu.enabled` 可显式启停适配器；省略时由凭据是否齐全决定。停用可以保留凭据，但默认通道必须指向仍启用的通道。控制台操作和旧群聊限制升级说明见 [Channel 设置](#channel-设置)。`feishu.dm_policy`、`agents.<name>.workspace` 两个兼容字段不放进新样例。
 
 ### gateway
 
@@ -290,15 +290,34 @@ hub 对 `state_path` 的父目录持单例锁，同一状态目录不能同时�
 
 ### 语言、控制台配置与版本
 
-偏好设置可选择简体中文、English 或跟随浏览器。显式选择保存在当前浏览器，不写入 Hub 配置；界面切换保留草稿、标签页和阅读状态。普通 API 请求带 `Accept-Language`，一次提交的 locale 在接收时固定，重试沿用原提交身份与语言。用户输入、材料、Agent 输出和历史正文不会随界面切换被重写；浏览器切换语言也不修改 Hub 默认语言或飞书连接配置。
+侧栏底部“设置”的通用页可选择简体中文、English 或跟随浏览器，并设置外观。显式选择保存在当前浏览器，不写入 Hub 配置；界面切换保留草稿、标签页和阅读状态。普通 API 请求带 `Accept-Language`，一次提交的 locale 在接收时固定，重试沿用原提交身份与语言。用户输入、材料、Agent 输出和历史正文不会随界面切换被重写；浏览器切换语言也不修改 Hub 默认语言或飞书连接配置。
 
-“控制台配置”页面只展示允许编辑的预算、静默超时和 `policies` 字段，不展示原始含密钥配置。`gateway.owner_id` 在页面只读；身份变更通过部署配置完成。
+设置中心按通用、Channel、执行与资源、节点与服务分类展示；低频字段默认折叠，运行值仅在与保存值不同时提示，不平铺原始含密钥配置。`gateway.owner_id` 在页面只读；身份变更通过部署配置完成。
 
 - `GET /console/settings` 返回 `revision`、`desired`、`effective`、`pending_restart`、`apply_mode` 和字段 schema（类型、范围、单位与默认值）。
 - `PUT` / `PATCH /console/settings` 接收 `{"base_revision":"读取到的版本","settings":{"gateway":{"task_max_turns":20}}}`。只有版本一致才保存；409 表示配置已变更，界面保留草稿，重新读取前要求确认。
 - 这组设置的 `apply_mode` 当前都是 `restart`。`desired` 是已保存的目标值，`effective` 是当前进程运行值；保存成功不意味着已热更新。落盘成功但目录同步出现告警时，响应带 `warning`，仍应按已保存处理。
 - `GET /console/versions` 返回 Hub ID、Hub/节点版本、协议范围与协商信息，以及可用的项目归属和 peer 配置。peer 配置与项目归属不等于在线/健康状态，页面不探测远端，也不发起迁移。
 - 当前无自动安装。未配置 ReleaseProvider 时不查询公网发布服务；配置后只发现版本清单，安装仍与发现分离。
+
+### Channel 设置
+
+`GET /console/channels` 返回共享配置 `revision`、`desired`、`effective`、`pending_restart` 和 `apply_mode: restart`。`runtime_error` 表示适配器初始化或连接失败；已启用不等于连接正常，Console 会保留以便修正凭据。
+
+`PUT /console/channels` 接收 `base_revision` 和 `channels` 对象，其中可修改 `default_channel` 及 `feishu` 的 `enabled`、`app_id`、`domain`、`owner_open_id`、`group_policy`、`allow_unmentioned`、`allowed_senders`、`blocked_senders`。凭据仅写入：省略 `app_secret` 保留现值；`{"action":"replace","value":"..."}` 替换；`{"action":"clear"}` 明确清除，不能清除仍启用适配器的凭据。读取仅返回 `app_secret_configured`，不回显密钥或摘要。
+
+Console 始终启用，owner 在该接口只读。首次保存将原有效 Console owner 和默认语言固定为独立配置，之后修改 IM owner 或域不再改变它们。不可停用当前默认通道；先选择 Console。群聊 `open` 放行未被阻止的发送者，`allowlist` 仅放行名单命中者（空名单拒绝全部群聊），`disabled` 拒绝群聊，阻止名单优先，私聊不受群聊名单控制。旧配置若以 `open` 加非空名单表达限制，升级时应显式改为 `allowlist`，保持原限制。
+
+### 服务重启
+
+“节点与服务”列出 Hub 和 worker 的版本、可用性及重启结果。服务只能在工作台空闲、没有排队请求或待核实执行时重启。重启先关闭准入，释放缓存会话并等待进程退出；下一回合由新进程恢复会话。Hub 重启会短暂中断 Console。升级安装不在此入口提供。
+
+- `GET /console/services` 查询列表。
+- `POST /console/services/{name}/restart` 接收稳定 `command_id`；Hub 名称为 `hub`，worker 使用已登记节点名。
+- `GET /console/services/{name}/restart?command_id=...` 查询回执；省略编号查询当前实例最近操作。
+- `accepted` 只表示请求已持久受理，`restarted` 要求新 incarnation 上线。断线和未知响应不等于成功；重试原编号，不另造一次重启。节点需协商 `service_restart.v1`。
+- 重启前验证配置。Console 外直接编辑了 Hub 配置时，UI 重启会拒绝，需通过部署校验并应用；服务地址、身份、认证和状态目录的变更也应走部署。自动端口 `:0` 不支持保持地址的 UI 重启。
+- Unix CLI 在清理完成后重新执行当前二进制，保留 PID、参数和环境；不依赖额外 supervisor，不下载或切换版本。配置无效、退出未确认或服务正在工作时返回明确错误并保留当前服务。
 
 ### 材料、标记与问答
 

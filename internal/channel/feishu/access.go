@@ -36,14 +36,13 @@ func decide(msg InboundMessage, access Access) string {
 	if msg.ChatType != protocol.ChatGroup {
 		return actionAllow
 	}
-	if access.GroupPolicy == config.GroupPolicyDisabled {
-		return actionDrop
-	}
-	if len(access.Allowed) == 0 {
+	switch access.GroupPolicy {
+	case config.GroupPolicyOpen:
 		return actionAllow
-	}
-	if _, ok := access.Allowed[msg.SenderOpenID]; ok {
-		return actionAllow
+	case config.GroupPolicyAllowlist:
+		if _, ok := access.Allowed[msg.SenderOpenID]; ok {
+			return actionAllow
+		}
 	}
 	return actionDrop
 }

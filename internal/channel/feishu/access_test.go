@@ -9,7 +9,7 @@ import (
 func TestDecideAccess(t *testing.T) {
 	open := Access{GroupPolicy: config.GroupPolicyOpen, Allowed: map[string]struct{}{}, Blocked: map[string]struct{}{}}
 	allowlist := Access{
-		GroupPolicy: config.GroupPolicyOpen,
+		GroupPolicy: config.GroupPolicyAllowlist,
 		Allowed:     map[string]struct{}{"ou_user": {}},
 		Blocked:     map[string]struct{}{},
 	}
@@ -33,6 +33,10 @@ func TestDecideAccess(t *testing.T) {
 		{"dm open", open, InboundMessage{ChatType: "p2p", SenderOpenID: "ou_other"}, actionAllow},
 		{"empty sender", open, InboundMessage{ChatType: "p2p"}, actionDrop},
 		{"group open", open, InboundMessage{ChatType: "group", SenderOpenID: "ou_other"}, actionAllow},
+		{"open ignores allowed list", Access{GroupPolicy: config.GroupPolicyOpen, Allowed: map[string]struct{}{"ou_user": {}}}, InboundMessage{ChatType: "group", SenderOpenID: "ou_other"}, actionAllow},
+		{"empty allowlist denies everyone", Access{GroupPolicy: config.GroupPolicyAllowlist}, InboundMessage{ChatType: "group", SenderOpenID: "ou_user"}, actionDrop},
+		{"blocked wins over allowlist", Access{GroupPolicy: config.GroupPolicyAllowlist, Allowed: map[string]struct{}{"ou_user": {}}, Blocked: map[string]struct{}{"ou_user": {}}}, InboundMessage{ChatType: "group", SenderOpenID: "ou_user"}, actionDrop},
+		{"unknown group policy denies", Access{GroupPolicy: "unknown"}, InboundMessage{ChatType: "group", SenderOpenID: "ou_user"}, actionDrop},
 		{"group allowlist hit", allowlist, InboundMessage{ChatType: "group", SenderOpenID: "ou_user"}, actionAllow},
 		{"group allowlist miss", allowlist, InboundMessage{ChatType: "group", SenderOpenID: "ou_other"}, actionDrop},
 		{"dm ignores allowlist", allowlist, InboundMessage{ChatType: "p2p", SenderOpenID: "ou_other"}, actionAllow},

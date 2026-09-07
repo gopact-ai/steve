@@ -14,6 +14,9 @@ import (
 func scheduleCoordinator(t *testing.T) (*Coordinator, *schedule.Store) {
 	t.Helper()
 	coordinator, _ := taskCoordinator(t, &fakeRunner{reply: "ok"})
+	if err := coordinator.SetChannelOwner("feishu", ""); err != nil {
+		t.Fatal(err)
+	}
 	store, err := schedule.Open(filepath.Join(t.TempDir(), "schedules.json"))
 	if err != nil {
 		t.Fatalf("open schedules: %v", err)

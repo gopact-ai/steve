@@ -168,12 +168,13 @@ func (s *Server) startBroker() error {
 	case len(cfg.MCPServers) > 0 && s.broker == nil && s.ctx != nil:
 		b := NewBroker(BrokerConfig{Socket: s.SocketPath(), MCPServers: cfg.MCPServers, WorkspaceRoot: cfg.WorkspaceRoot,
 			PortFile: filepath.Join(cfg.StateDir, "mcp-proxy.port")})
+		b.work = s.beginWork
 		s.broker = localBroker{b}
-		go func() {
+		s.backgroundWG.Go(func() {
 			if err := b.Serve(s.ctx); err != nil {
 				log.Printf("steve-node: %v", err)
 			}
-		}()
+		})
 	}
 	return nil
 }

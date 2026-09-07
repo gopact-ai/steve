@@ -44,6 +44,9 @@ const (
 )
 
 type Feishu struct {
+	// Enabled separates connection state from stored credentials. Omitted
+	// retains credential-based activation for existing configuration files.
+	Enabled          *bool    `json:"enabled,omitempty"`
 	AppID            string   `json:"app_id"`
 	AppSecret        string   `json:"app_secret"`
 	Domain           string   `json:"domain,omitempty"`
@@ -65,10 +68,14 @@ func (c *Feishu) applyDefaults() {
 }
 
 func (c Feishu) Validate() error {
-	c.applyDefaults()
 	if c.AppID == "" || c.AppSecret == "" {
 		return fmt.Errorf("feishu.app_id and feishu.app_secret are required")
 	}
+	return c.validateOptions()
+}
+
+func (c Feishu) validateOptions() error {
+	c.applyDefaults()
 	switch c.Domain {
 	case DomainFeishu, DomainLark:
 	default:
@@ -488,7 +495,7 @@ func Load(path string) (*Config, error) {
 	cfg.Gateway.OwnerID = strings.TrimSpace(cfg.Gateway.OwnerID)
 	if cfg.Gateway.DefaultChannel == "" {
 		cfg.Gateway.DefaultChannel = "console"
-		if cfg.Feishu.AppID != "" || cfg.Feishu.AppSecret != "" {
+		if cfg.FeishuEnabled() {
 			cfg.Gateway.DefaultChannel = "feishu"
 		}
 	}

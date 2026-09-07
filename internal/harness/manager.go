@@ -60,12 +60,13 @@ type Transports interface {
 }
 
 type Manager struct {
-	configs map[string]Config
-	remote  Transports
-	observe Observer
-	mu      sync.Mutex
-	hosts   map[string]*acphost.Host
-	stopped bool
+	suspended map[string]bool
+	configs   map[string]Config
+	remote    Transports
+	observe   Observer
+	mu        sync.Mutex
+	hosts     map[string]*acphost.Host
+	stopped   bool
 }
 
 func NewManager(configs map[string]Config) (*Manager, error) {
@@ -226,6 +227,9 @@ func (m *Manager) Restart() error {
 func (m *Manager) host(at Placement) (*acphost.Host, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if m.suspended["*"] || m.suspended[at.Node] {
+		return nil, fmt.Errorf("service is restarting")
+	}
 	if m.stopped {
 		return nil, fmt.Errorf("harness manager is stopped")
 	}

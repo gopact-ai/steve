@@ -52,6 +52,9 @@ func (s *hubSettingsService) UpdateSettings(_ context.Context, req consoleapi.Se
 	if err != nil {
 		return consoleapi.SettingsView{}, err
 	}
+	if candidate.Gateway.OwnerID != s.admin.cfg.Gateway.OwnerID {
+		return consoleapi.SettingsView{}, errors.New("Owner identity must be changed through deployment configuration")
+	}
 	if err := candidate.ValidateChannels(); err != nil {
 		return consoleapi.SettingsView{}, err
 	}

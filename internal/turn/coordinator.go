@@ -144,27 +144,30 @@ type Result struct {
 
 type Coordinator struct {
 	*coordinatorState
-	text i18n.Catalog
+	text        i18n.Catalog
+	ownerOpenID string
 }
 
-// coordinatorState owns shared execution state. Request-local views only
-// replace the immutable text catalog; mutexes and runtime state are never copied.
+// coordinatorState owns shared execution state. Request-local views replace
+// the owner and text catalog; mutexes and runtime state are never copied.
 type coordinatorState struct {
-	executions   *execution.Registry
-	catalog      *agent.Catalog
-	store        *state.Store
-	assembler    *capability.Assembler
-	runtime      runtime
-	timeout      time.Duration
-	ownerOpenID  string
-	home         home.Loader
-	homePath     string
-	scanHome     string
-	skills       *skills.Live
-	gate         AgentGate
-	endpoints    NodeEndpoints
-	RegisterIdle idle.Registrar
-	tasks        *task.Store
+	requestMu     sync.RWMutex
+	maintaining   bool
+	executions    *execution.Registry
+	catalog       *agent.Catalog
+	store         *state.Store
+	assembler     *capability.Assembler
+	runtime       runtime
+	timeout       time.Duration
+	channelOwners map[string]string
+	home          home.Loader
+	homePath      string
+	scanHome      string
+	skills        *skills.Live
+	gate          AgentGate
+	endpoints     NodeEndpoints
+	RegisterIdle  idle.Registrar
+	tasks         *task.Store
 	// modes is how each conversation last reached Steve, for a tool call
 	// that has no request to read it from.
 	modes map[string]home.Mode
@@ -312,9 +315,19 @@ func (c *Coordinator) listenPrefix(req Request) string {
 }
 
 func (c *Coordinator) Handle(ctx context.Context, req Request) (Result, error) {
+	c.requestMu.RLock()
+	defer c.requestMu.RUnlock()
+	var err error
+	c, err = c.forChannel(req.Channel)
+	if err != nil {
+		return Result{}, err
+	}
 	c = c.localized(i18n.ContextLocale(ctx))
 	if req.Locale != "" {
 		c = c.localized(i18n.FromLang(req.Locale))
+	}
+	if c.maintaining {
+		return Result{}, UserError{Text: c.text.T(i18n.HubMaintenance)}
 	}
 	ctx = i18n.WithLocale(ctx, c.text.Locale())
 	return c.handle(ctx, req)

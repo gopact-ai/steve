@@ -7,8 +7,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -19,6 +21,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/adapter"
 	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/processrestart"
 )
 
 func main() {
@@ -74,7 +77,22 @@ func run(args []string) error {
 	if err := prepareAdapters(ctx, &cfg); err != nil {
 		return err
 	}
-	return node.NewServer(cfg).Serve(ctx)
+	server := node.NewServer(cfg)
+	if processrestart.Supported() {
+		server.SetRestartCheck(func() error { return checkRestartConfig(cfg, *listen) })
+		server.EnableRestart()
+	}
+	err = server.Serve(ctx)
+	if !errors.Is(err, node.ErrRestartRequested) {
+		return err
+	}
+	if ctx.Err() != nil {
+		return nil
+	}
+	if err := processrestart.ReexecCurrent(); err != nil {
+		return errors.Join(err, server.RestartFailed(err))
+	}
+	return nil
 }
 
 // broker runs the MCP broker as its own process: "steve-node mcp-broker
@@ -150,15 +168,19 @@ func launch(args []string) error {
 }
 
 func load(path string) (node.ServerConfig, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return node.ServerConfig{}, fmt.Errorf("read config: %w", err)
-	}
+	snapshot, err := readNodeConfig(path)
+	return snapshot.config, err
+}
+
+func decodeNodeConfig(raw []byte) (node.ServerConfig, error) {
 	var cfg node.ServerConfig
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&cfg); err != nil {
 		return node.ServerConfig{}, fmt.Errorf("parse config: %w", err)
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
+		return node.ServerConfig{}, errors.New("config must contain exactly one JSON document")
 	}
 	if strings.TrimSpace(cfg.Name) == "" {
 		return node.ServerConfig{}, fmt.Errorf("name is required — it is what the hub records on every attempt")

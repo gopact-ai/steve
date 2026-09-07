@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -41,6 +42,10 @@ type ServerConfig struct {
 
 // Server exposes the snapshot, the change stream and the dashboard.
 type Server struct {
+	mutationMu   sync.RWMutex
+	maintenance  bool
+	services     consoleapi.ServiceControl
+	channels     consoleapi.ChannelsService
 	settings     consoleapi.SettingsService
 	console      consoleapi.Console
 	admin        consoleapi.Admin
@@ -73,6 +78,11 @@ func (s *Server) URL() string { return "http://" + s.listener.Addr().String() }
 
 func (s *Server) Serve() error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /console/services", s.guard(s.consoleServices))
+	mux.HandleFunc("GET /console/services/{name}/restart", s.guard(s.consoleRestart))
+	mux.HandleFunc("POST /console/services/{name}/restart", s.guard(s.consoleRestart))
+	mux.HandleFunc("GET /console/channels", s.guard(s.consoleChannels))
+	mux.HandleFunc("PUT /console/channels", s.guard(s.consoleChannels))
 	mux.HandleFunc("GET /console/settings", s.guard(s.consoleSettings))
 	mux.HandleFunc("PUT /console/settings", s.guard(s.consoleSettings))
 	mux.HandleFunc("PATCH /console/settings", s.guard(s.consoleSettings))
@@ -194,6 +204,14 @@ func (s *Server) guard(next http.HandlerFunc) http.HandlerFunc {
 		if s.token != "" && !s.authorized(r) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
+		}
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && !(strings.HasPrefix(r.URL.Path, "/console/services/") && strings.HasSuffix(r.URL.Path, "/restart")) {
+			s.mutationMu.RLock()
+			defer s.mutationMu.RUnlock()
+			if s.maintenance {
+				serviceError(w, &consoleapi.ServiceError{Code: "busy", Message: "The Hub is preparing a service restart"})
+				return
+			}
 		}
 		next(w, r.WithContext(i18n.WithLocale(r.Context(), i18n.LocaleFromHeader(r.Header.Get("Accept-Language")))))
 	}

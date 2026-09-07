@@ -1,13 +1,9 @@
 import { useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
-import { BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, Check, X } from "@untitledui/icons";
-import { Button as AriaButton } from "react-aria-components";
-import { Dropdown } from "@/components/base/dropdown/dropdown";
+import { BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
 import { Sheet } from "@/components/steve/drawer";
 import { FleetProvider, IntentProvider, useFleet } from "@/lib/fleet";
-import { useTheme } from "@/providers/theme-provider";
 import { useI18n } from "@/providers/locale-provider";
-import type { LocalePreference } from "@/lib/i18n";
 import { number } from "@/lib/format";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { ConsolePage } from "@/pages/console";
@@ -30,8 +26,7 @@ export function App() {
 function Shell() {
     const { snap, live } = useFleet();
     const location = useLocation();
-    const { theme, setTheme } = useTheme();
-    const { locale, preference, setLocale, t } = useI18n();
+    const { locale, t } = useI18n();
     const desktop = useBreakpoint("xl");
     const tablet = useBreakpoint("sm");
     const [navCollapsed, setNavCollapsed] = useState(() => { try { return localStorage.getItem("steve.nav.collapsed") === "1"; } catch { return false; } });
@@ -52,7 +47,6 @@ function Shell() {
             { href: "/skills", label: t("nav.skills"), icon: PuzzlePiece01, badge: 0 },
             { href: "/mcp", label: t("nav.mcp"), icon: Dataflow03, badge: 0 },
             { href: "/home", label: t("nav.home"), icon: BookOpen01, badge: 0 },
-            { href: "/settings", label: t("settingsPage.title"), icon: Settings01, badge: 0 },
         ] },
     ];
     const selected = location.pathname + location.search;
@@ -85,17 +79,7 @@ function Shell() {
                 <span>{connection}</span><span className="app-device-count">{t("connection.online", { count: number(up, locale) })}</span>
             </div>}
             <div className="app-sidebar-tools">
-                <Dropdown.Root>
-                    <AriaButton className="workbench-icon-button" aria-label={t("settings.preferences")}><Settings01 aria-hidden="true" /></AriaButton>
-                    <Dropdown.Popover placement="top start" className="w-56"><Dropdown.Menu aria-label={t("settings.preferences")} onAction={(key) => { const [kind, value] = String(key).split(":"); if (kind === "theme") setTheme(value as "light" | "dark" | "system"); else if (kind === "locale") setLocale(value as LocalePreference); }}>
-                        <Dropdown.Section><Dropdown.SectionHeader className="px-3 py-1 text-xs text-tertiary">{t("settings.appearance")}</Dropdown.SectionHeader>
-                            {(['system', 'light', 'dark'] as const).map((key) => <Dropdown.Item key={key} id={`theme:${key}`} label={t(`settings.${key}`)} icon={theme === key ? Check : undefined} />)}
-                        </Dropdown.Section>
-                        <Dropdown.Section><Dropdown.SectionHeader className="px-3 py-1 text-xs text-tertiary">{t("settings.language")}</Dropdown.SectionHeader>
-                            {([["system", t("settings.system")], ["zh", "简体中文"], ["en", "English"]] as const).map(([key, label]) => <Dropdown.Item key={key} id={`locale:${key}`} label={label} icon={preference === key ? Check : undefined} />)}
-                        </Dropdown.Section>
-                    </Dropdown.Menu></Dropdown.Popover>
-                </Dropdown.Root>
+                <a href="#/settings?section=general" className="app-settings-link" aria-label={t("settingsPage.centerTitle")} title={small ? t("settingsPage.centerTitle") : undefined} aria-current={location.pathname === "/settings" ? "page" : undefined} onClick={() => setMobileNav(false)}><Settings01 aria-hidden="true" />{!small && <span>{t("settingsPage.centerTitle")}</span>}</a>
                 {!small && <span className="app-version" title={snap.hub.node}>hub {snap.hub.version || "—"}</span>}
                 {desktop && <button type="button" className="workbench-icon-button app-collapse" aria-label={small ? t("nav.expand") : t("nav.collapse")} title={small ? t("nav.expand") : t("nav.collapse")} onClick={() => { const next = !navCollapsed; setNavCollapsed(next); try { localStorage.setItem("steve.nav.collapsed", next ? "1" : "0"); } catch { /* Preference is optional. */ } }}><ChevronLeftDouble className={small ? "rotate-180" : ""} aria-hidden="true" /></button>}
             </div>

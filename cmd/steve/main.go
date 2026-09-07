@@ -54,6 +54,7 @@ import (
 	"github.com/gopact-ai/steve/internal/onboard"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/planner"
+	"github.com/gopact-ai/steve/internal/processrestart"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/readmodel"
@@ -142,6 +143,13 @@ func probeWorkspace(projects []project.Project, node string) (string, bool) {
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
+		var restart *hubRestartExit
+		if errors.As(err, &restart) {
+			err = processrestart.ReexecCurrent()
+			if err != nil {
+				restart.service.failed(err)
+			}
+		}
 		log.Fatal(err)
 	}
 }
@@ -408,7 +416,17 @@ const scheduleTick = 20 * time.Second
 // answer a question nobody is still asking.
 const staleTask = 24 * time.Hour
 
-func serve(args []string) error {
+func serve(args []string) (runErr error) {
+	var services *hubServices
+	defer func() {
+		if services != nil && services.requested() {
+			if runErr == nil {
+				runErr = &hubRestartExit{service: services}
+			} else {
+				services.failed(runErr)
+			}
+		}
+	}()
 	flags := flag.NewFlagSet("run", flag.ContinueOnError)
 	configPath := flags.String("config", "config.json", "path to config file")
 	if err := flags.Parse(args); err != nil {
@@ -567,6 +585,11 @@ func serve(args []string) error {
 	)
 	catalogText := i18n.New(i18n.FromLang(cfg.EffectiveLocale()))
 	coordinator.SetIdentity(cfg.EffectiveOwnerID(), home.Dir{Path: cfg.Gateway.HomePath})
+	if cfg.FeishuEnabled() {
+		if err := coordinator.SetChannelOwner("feishu", cfg.Feishu.OwnerOpenID); err != nil {
+			return err
+		}
+	}
 	coordinator.SetSkills(live)
 	coordinator.SetProjects(projects, cfg.Gateway.DefaultProject, homeProjectID)
 	// Memory: the home's MEMORY.md for the owner, one file per project,
@@ -772,12 +795,15 @@ func serve(args []string) error {
 		go func() { httpDone <- dashboard.Shutdown(cleanup) }()
 		if err := cons.Shutdown(cleanup); err != nil {
 			log.Printf("steve: console shutdown incomplete: %v", err)
+			runErr = errors.Join(runErr, err)
 		}
 		if err := executions.Shutdown(cleanup); err != nil {
 			log.Printf("steve: execution shutdown incomplete; startup will reconcile remaining writers: %v", err)
+			runErr = errors.Join(runErr, err)
 		}
 		if err := <-httpDone; err != nil {
 			log.Printf("steve: HTTP shutdown incomplete: %v", err)
+			runErr = errors.Join(runErr, err)
 		}
 		manager.Stop()
 	}()
@@ -786,6 +812,13 @@ func serve(args []string) error {
 	cons.SetMaterials(materials, admin.authorizeMaterials)
 	cons.SetDefaultLocale(cfg.EffectiveLocale())
 	dashboard.SetSettings(newHubSettingsService(admin, cfg))
+	channelSettings := newHubChannelsService(admin, cfg)
+	dashboard.SetChannels(channelSettings)
+	services, err = newHubServices(admin, executions, dashboard.SealWrites, stop, &ledger.FileDocument{Path: filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "service-restarts.json")})
+	if err != nil {
+		return fmt.Errorf("initialize service restart control: %w", err)
+	}
+	dashboard.SetServices(services)
 	if err := admin.ResumeProjectCopies(context.Background()); err != nil {
 		return fmt.Errorf("resume configured copies: %w", err)
 	}
@@ -920,7 +953,8 @@ func serve(args []string) error {
 	}
 	var channel *feishu.Channel
 	if cfg.FeishuEnabled() {
-		channel, err = feishu.New(ctx, feishu.Options{
+		connect, cancelConnect := context.WithTimeout(ctx, 15*time.Second)
+		channel, err = feishu.New(connect, feishu.Options{
 			AppID:            cfg.Feishu.AppID,
 			AppSecret:        cfg.Feishu.AppSecret,
 			Domain:           cfg.Feishu.Domain,
@@ -928,11 +962,15 @@ func serve(args []string) error {
 			AllowUnmentioned: cfg.Feishu.AllowUnmentioned,
 			OnCardAction:     gw.HandleCardAction,
 		}, gw.HandleMessage)
+		cancelConnect()
 		if err != nil {
-			return err
+			log.Printf("steve: Feishu initialization failed; Console remains available")
+			channelSettings.setRuntimeError("Feishu initialization failed; check the application credentials and restart the Hub")
+			channel = nil
+		} else {
+			gw.BindChannel(channel)
+			channel.SetJournal(book.Journal())
 		}
-		gw.BindChannel(channel)
-		channel.SetJournal(book.Journal())
 	}
 	if gate != nil {
 		gate.SetDefaultChannel(cfg.Gateway.DefaultChannel)
@@ -1063,6 +1101,9 @@ func serve(args []string) error {
 	if redeliverPending != nil {
 		go redeliverPending(ctx)
 	}
+	if err := services.ready(); err != nil {
+		return fmt.Errorf("record service readiness: %w", err)
+	}
 	go func() {
 		if err := dashboard.Serve(); err != nil {
 			log.Printf("steve: read model: %v", err)
@@ -1099,6 +1140,7 @@ func serve(args []string) error {
 			Catalog: catalogText,
 			Handle: func(ctx context.Context, req onboard.TurnRequest) (onboard.TurnResult, error) {
 				result, err := coordinator.Handle(ctx, turn.Request{
+					Channel:        "feishu",
 					ConversationID: req.ConversationID,
 					Input:          req.Input,
 					SenderOpenID:   req.SenderOpenID,
@@ -1123,7 +1165,10 @@ func serve(args []string) error {
 
 	log.Printf("steve: starting Feishu long connection")
 	if err := channel.Start(ctx); err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
-		return fmt.Errorf("start Feishu channel: %w", err)
+		log.Printf("steve: Feishu connection failed; Console remains available: %v", err)
+		view.Observe("channel.error", "feishu", "Feishu connection failed; check channel credentials and restart the Hub")
+		channelSettings.setRuntimeError("Feishu connection failed; check the channel configuration and restart the Hub")
+		<-ctx.Done()
 	}
 	return nil
 }

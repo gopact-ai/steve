@@ -35,7 +35,7 @@ func (s *Server) listenMCP() (net.Listener, error) {
 	s.mcpPort = listener.Addr().(*net.TCPAddr).Port
 	s.mcpListener = listener
 	s.rememberPort(s.mcpPort)
-	go s.forwardMCP(listener)
+	s.backgroundWG.Go(func() { s.forwardMCP(listener) })
 	return listener, nil
 }
 
@@ -122,7 +122,15 @@ func (s *Server) forwardMCP(listener net.Listener) {
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"hub unreachable, retry later"}}`))
 		},
 	}
-	server := &http.Server{Handler: proxy, ReadHeaderTimeout: 10 * time.Second}
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		done, err := s.beginWork()
+		if err != nil {
+			http.Error(w, "node is restarting", http.StatusServiceUnavailable)
+			return
+		}
+		defer done()
+		proxy.ServeHTTP(w, r)
+	}), ReadHeaderTimeout: 10 * time.Second}
 	defer server.Close()
 	defer transport.CloseIdleConnections()
 	_ = server.Serve(listener)

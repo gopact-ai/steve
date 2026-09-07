@@ -107,7 +107,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	conversation = conversationID(conversation)
 	input, prompt, quotes, hash := submission(input, prompt, quotes)
 	s.mu.Lock()
-	if s.closing {
+	if s.closing || s.maintenance {
 		s.mu.Unlock()
 		return nil, Exchange{}, consoleapi.ErrConsoleClosing
 	}
@@ -181,7 +181,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.closing {
+	if s.closing || s.maintenance {
 		return nil, Exchange{}, consoleapi.ErrConsoleClosing
 	}
 	if other, err := s.submittedLocked(conversation, key, hash); other != nil || err != nil {
@@ -344,7 +344,7 @@ func (s *Service) Steer(_ context.Context, id string) (Exchange, error) {
 // startLocked reserves the conversation before launching a goroutine. Even
 // concurrent submissions cannot both observe an idle queue and start it.
 func (s *Service) startLocked(e *queuedExchange) error {
-	if s.closing {
+	if s.closing || s.maintenance {
 		return consoleapi.ErrConsoleClosing
 	}
 	conversation := e.Conversation
@@ -383,7 +383,7 @@ func (s *Service) startLocked(e *queuedExchange) error {
 }
 
 func (s *Service) startNextLocked(conversation string) error {
-	if s.closing {
+	if s.closing || s.maintenance {
 		return nil
 	}
 	if s.running[conversation] != 0 {

@@ -1090,6 +1090,21 @@ func (h *Host) Close() {
 	h.shutdownLocked()
 }
 
+// AllProcessesStopped requires positive transport evidence, including older
+// generations whose connection has already closed.
+func (h *Host) AllProcessesStopped() bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for generation, proc := range h.processes {
+		proof, ok := proc.(interface{ Stopped() bool })
+		if !ok || !proof.Stopped() {
+			return false
+		}
+		delete(h.processes, generation)
+	}
+	return true
+}
+
 // shutdownLocked closes the connection and waits for the monitor goroutine to
 // reap the process; requires h.mu to be held. It releases h.mu while waiting
 // so in-flight session notifications can drain instead of blocking on the

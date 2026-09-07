@@ -1375,8 +1375,10 @@ checks["usage-dashboard-duration-coverage"] = async (f) => {
     assert.equal(await unknown.locator("td").last().innerText(), "—");
     await f.page.getByRole("heading", { name: "用量概览", exact: true }).scrollIntoViewIfNeeded();
     await f.page.screenshot({ path: path.join(output, "usage-duration-partial.png"), fullPage: true });
-    await f.page.getByRole("button", { name: "偏好设置", exact: true }).click();
-    await f.page.getByRole("menuitem", { name: "English", exact: true }).click();
+    await f.page.evaluate(() => {
+        localStorage.setItem("steve.ui.locale", "en");
+        window.dispatchEvent(new StorageEvent("storage", { key: "steve.ui.locale", newValue: "en", storageArea: localStorage }));
+    });
     await f.page.getByText("TPM covers 200 tokens; 100 tokens have no valid duration.", { exact: true }).waitFor();
     await f.page.getByText("Duration measured for 1/2 tasks", { exact: true }).waitFor();
 
@@ -1385,8 +1387,10 @@ checks["usage-dashboard-duration-coverage"] = async (f) => {
     assert.equal(await cardValue("TPM").innerText(), "0", "A valid duration with unreported tokens follows the explicit zero-token policy");
     assert.equal(await cardValue("任务平均耗时").innerText(), "1 分 0 秒");
     usage = usageDurationFixture("missing"); await f.page.reload();
-    await f.page.getByRole("button", { name: "偏好设置", exact: true }).click();
-    await f.page.getByRole("menuitem", { name: "English", exact: true }).click();
+    await f.page.evaluate(() => {
+        localStorage.setItem("steve.ui.locale", "en");
+        window.dispatchEvent(new StorageEvent("storage", { key: "steve.ui.locale", newValue: "en", storageArea: localStorage }));
+    });
     await f.page.getByText("TPM covers 0 tokens; 100 tokens have no valid duration.", { exact: true }).waitFor();
     assert.equal(await cardValue("TPM").innerText(), "Unavailable");
     await f.page.setViewportSize({ width: 390, height: 844 });

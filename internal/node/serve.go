@@ -168,18 +168,36 @@ type Server struct {
 	// "no hub" means the node is still coming up; after it, the hub is
 	// gone and will come back on its own — a caller learns more from a
 	// prompt retryable error than from a wait.
-	hubSeen   bool
-	processMu sync.Mutex
-	processes map[string]*agentProcess
-	processWG sync.WaitGroup
-	faultOnce sync.Once
+	hubSeen      bool
+	processMu    sync.Mutex
+	processes    map[string]*agentProcess
+	processWG    sync.WaitGroup
+	workWG       sync.WaitGroup
+	requestWG    sync.WaitGroup
+	backgroundWG sync.WaitGroup
+	restart      restartControl
+	faultOnce    sync.Once
 }
 
 func NewServer(cfg ServerConfig) *Server {
-	s := &Server{mcpPort: rememberedPort(cfg), generation: time.Now().Unix(), launch: NewLaunchProbe(), processes: map[string]*agentProcess{}}
+	s := &Server{mcpPort: rememberedPort(cfg), generation: nextGeneration(), launch: NewLaunchProbe(), processes: map[string]*agentProcess{}}
 	s.cfg.Store(&cfg)
 	s.settingsFileRevision, _ = nodeSettingsFileRevision(cfg.Source)
 	return s
+}
+
+var lastGeneration atomic.Int64
+
+func nextGeneration() int64 {
+	// Microseconds distinguish fast reexecs while remaining an exact JS
+	// integer in status responses. In-process fixtures can start together.
+	for {
+		before := lastGeneration.Load()
+		next := max(time.Now().UnixMicro(), before+1)
+		if lastGeneration.CompareAndSwap(before, next) {
+			return next
+		}
+	}
 }
 
 // conf is the configuration in force.
@@ -206,14 +224,20 @@ func (s *Server) Serve(ctx context.Context) error {
 	s.mu.Unlock()
 	var handlers sync.WaitGroup
 	defer func() {
+		s.restart.mu.Lock()
+		s.restart.draining = true
+		s.restart.mu.Unlock()
 		cancel()
 		_ = listener.Close()
 		s.closeMCP()
 		handlers.Wait()
+		s.requestWG.Wait()
+		s.workWG.Wait()
 		s.stopProcesses("")
 		s.processWG.Wait()
+		s.backgroundWG.Wait()
 	}()
-	go s.pruneStreams(ctx)
+	s.backgroundWG.Go(func() { s.pruneStreams(ctx) })
 	log.Printf("steve-node: %s listening on %s", s.conf().Name, listener.Addr())
 	go func() {
 		<-ctx.Done()
@@ -230,14 +254,23 @@ func (s *Server) Serve(ctx context.Context) error {
 			log.Printf("steve-node: skills %s from last run could not be materialized: %v", hash[:12], err)
 		}
 	}
-	go s.launch.Run(ctx, s.commands)
+	s.backgroundWG.Go(func() { s.launch.Run(ctx, s.commands) })
 	if err := s.startBroker(); err != nil {
+		return err
+	}
+	if err := s.startRestartControl(cancel); err != nil {
 		return err
 	}
 	for {
 		socket, err := listener.Accept()
 		if err != nil {
 			if ctx.Err() != nil {
+				s.restart.mu.Lock()
+				requested := s.restart.requested
+				s.restart.mu.Unlock()
+				if requested {
+					return ErrRestartRequested
+				}
 				return nil
 			}
 			return fmt.Errorf("accept: %w", err)
@@ -343,40 +376,58 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 			log.Printf("steve-node: hub %q disconnected", hello.Hub)
 			return
 		}
-		switch stream.Request().Kind {
-		case nodewire.StreamExec:
-			go s.runCommand(ctx, stream)
-		case nodewire.StreamArtifact:
-			go s.runArtifact(ctx, stream)
-		case nodewire.StreamFiles:
-			go s.runFiles(ctx, stream)
-		case nodewire.StreamAdvert:
-			go s.sendAdvert(stream)
-		case nodewire.StreamBlob:
-			go s.transferBlob(ctx, stream)
-		case nodewire.StreamGrant:
-			go s.grant(stream)
-		case nodewire.StreamFetch:
-			go s.fetch(ctx, stream)
-		case nodewire.StreamAdmit:
-			go s.admit(stream)
-		case nodewire.StreamSkills:
-			go s.applySkills(stream)
-		case nodewire.StreamRelease:
-			go s.releaseAttempt(stream)
-		case nodewire.StreamConfig:
-			go s.configure(stream)
-		case nodewire.StreamInspect:
-			go s.inspect(ctx, stream)
-		case nodewire.StreamMCPProbe:
-			go s.mcpProbe(ctx, stream)
-		default:
-			if stream.Request().Kind == nodewire.StreamACP {
-				s.injectDrop(ctx, mux)
-			}
-			s.processWG.Add(1)
-			go func() { defer s.processWG.Done(); s.runAgent(ctx, stream) }()
+		req := stream.Request()
+		if req.Kind == nodewire.StreamRestart {
+			s.requestWG.Go(func() { s.restartStream(hello.Hub, stream) })
+			continue
 		}
+		readOnly := req.Kind == nodewire.StreamAdvert || req.Kind == nodewire.StreamInspect || (req.Kind == nodewire.StreamConfig && req.Command == "get")
+		var done func()
+		if !readOnly {
+			done, err = s.beginWork()
+			if err != nil {
+				_ = stream.CloseWithReason(err.Error())
+				continue
+			}
+		}
+		s.requestWG.Go(func() {
+			if done != nil {
+				defer done()
+			}
+			switch req.Kind {
+			case nodewire.StreamExec:
+				s.runCommand(ctx, stream)
+			case nodewire.StreamArtifact:
+				s.runArtifact(ctx, stream)
+			case nodewire.StreamFiles:
+				s.runFiles(ctx, stream)
+			case nodewire.StreamAdvert:
+				s.sendAdvert(stream)
+			case nodewire.StreamBlob:
+				s.transferBlob(ctx, stream)
+			case nodewire.StreamGrant:
+				s.grant(stream)
+			case nodewire.StreamFetch:
+				s.fetch(ctx, stream)
+			case nodewire.StreamAdmit:
+				s.admit(stream)
+			case nodewire.StreamSkills:
+				s.applySkills(stream)
+			case nodewire.StreamRelease:
+				s.releaseAttempt(stream)
+			case nodewire.StreamConfig:
+				s.configure(stream)
+			case nodewire.StreamInspect:
+				s.inspect(ctx, stream)
+			case nodewire.StreamMCPProbe:
+				s.mcpProbe(ctx, stream)
+			default:
+				if stream.Request().Kind == nodewire.StreamACP {
+					s.injectDrop(ctx, mux)
+				}
+				s.runAgent(ctx, stream)
+			}
+		})
 	}
 }
 
@@ -604,6 +655,11 @@ func (s *Server) advert() nodewire.Advert {
 	adv := Advertise(s.conf().Name, s.conf().Harnesses, s.conf().Capabilities)
 	adv.Snapshot = s.snapshot()
 	adv.Features = nodewire.Features()
+	s.restart.mu.Lock()
+	if s.restart.enabled && s.conf().StateDir != "" {
+		adv.Features = append(adv.Features, nodewire.FeatureRestart)
+	}
+	s.restart.mu.Unlock()
 	adv.SessionGraceMS = s.sessionGrace().Milliseconds()
 	adv.WorkspaceRoot = s.conf().WorkspaceRoot
 	adv.StateDir = s.conf().StateDir
@@ -1296,6 +1352,12 @@ func (s *Server) servePeer(ctx context.Context, socket net.Conn, hello nodewire.
 		_ = stream.CloseWithReason(nodewire.ExitPrefix + "2")
 		return
 	}
+	done, err := s.beginWork()
+	if err != nil {
+		_ = stream.CloseWithReason(err.Error())
+		return
+	}
+	defer done()
 	s.transferBlob(ctx, stream)
 }
 

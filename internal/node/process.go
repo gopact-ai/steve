@@ -33,6 +33,7 @@ type agentProcess struct {
 	attached    *attachment
 	haveIn, out uint64
 	exit        string
+	exitReady   chan struct{}
 	ended       time.Time
 	released    bool
 	grace       *time.Timer
@@ -412,6 +413,9 @@ func (p *agentProcess) run(ctx context.Context) {
 		_ = p.journal.Finish(code)
 		_ = p.journal.Close()
 	}
+	if p.exitReady != nil {
+		close(p.exitReady)
+	}
 	p.mu.Unlock()
 	p.emit(outputLine{exit: fmt.Sprintf("exit %d", code)}, true)
 	log.Printf("steve-node: stream %s ended: exit %d", p.id, code)
@@ -470,13 +474,38 @@ func (s *Server) releaseProcess(stream *nodewire.Stream) {
 	s.processMu.Lock()
 	p := s.processes[stream.Request().Stream]
 	s.processMu.Unlock()
-	if p != nil {
-		p.mu.Lock()
-		p.released = true
-		p.mu.Unlock()
-		p.kill()
+	if p == nil {
+		_ = stream.CloseWithReason("unknown process stream; exit is unconfirmed")
+		return
 	}
-	_ = stream.CloseWithReason("exit 0")
+	p.mu.Lock()
+	p.released = true
+	if p.exit != "" {
+		p.mu.Unlock()
+		_ = stream.CloseWithReason("exit 0")
+		return
+	}
+	if p.exitReady == nil {
+		p.exitReady = make(chan struct{})
+	}
+	ended := p.exitReady
+	p.mu.Unlock()
+	p.kill()
+	var stopping <-chan struct{}
+	if s.ctx != nil {
+		stopping = s.ctx.Done()
+	}
+	// Kill returning confirms only delivery of a termination request. The
+	// successful release receipt is physical exit evidence for the hub, so
+	// it follows the sole process waiter regardless of the child's exit code.
+	select {
+	case <-ended:
+		_ = stream.CloseWithReason("exit 0")
+	case <-stream.Done():
+		return
+	case <-stopping:
+		_ = stream.CloseWithReason("process exit is unconfirmed: node is stopping")
+	}
 }
 
 func (s *Server) pruneStreams(ctx context.Context) {

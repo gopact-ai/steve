@@ -1,6 +1,7 @@
 package i18n
 
 var zh = map[Key]string{
+	HubMaintenance:         "Hub 正在维护，暂不接受新请求。",
 	TurnCanceled:           "任务已取消",
 	AgentFailed:            "Agent 调用失败，请检查 Steve 日志。",
 	EmptyReply:             "(agent 本轮没有文本输出)",
@@ -228,6 +229,7 @@ var zh = map[Key]string{
 }
 
 var en = map[Key]string{
+	HubMaintenance:         "The Hub is under maintenance; new requests are temporarily unavailable.",
 	TurnCanceled:           "Task canceled",
 	AgentFailed:            "Agent call failed. Check the Steve logs.",
 	EmptyReply:             "(the agent returned no text)",

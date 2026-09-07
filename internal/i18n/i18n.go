@@ -43,6 +43,7 @@ type Key string
 
 const (
 	TurnCanceled           Key = "turn_canceled"
+	HubMaintenance         Key = "hub_maintenance"
 	AgentFailed            Key = "agent_failed"
 	EmptyReply             Key = "empty_reply"
 	Truncated              Key = "truncated"

@@ -134,7 +134,9 @@ func (p *remoteProcess) Close() error {
 			}
 			stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamRelease, Stream: p.id})
 			if err == nil {
-				_ = awaitExit(ctx, stream, p.transport.node)
+				if awaitExit(ctx, stream, p.transport.node) == nil {
+					p.stopped.Store(true)
+				}
 				_ = stream.Close()
 			}
 		}()
