@@ -708,62 +708,60 @@ func TestMCPBindingKeepsSecretsOnTheNode(t *testing.T) {
 	}
 }
 
-// A node remembers its hub. While that hub is silent but within grace a
-// second hub is refused, so a blip cannot hand the machine to whoever
-// dials next; a hub that disconnected cleanly has given the node back;
-// adopt hands it over explicitly.
+// A node keeps its owner through both clean disconnects and silence. The
+// same hub may reconnect; another must wait for explicit offline adoption.
 func TestNodeRemembersItsHub(t *testing.T) {
 	bin := buildMockAgent(t)
 	state := t.TempDir()
 	server := startNode(t, ServerConfig{Name: "host-10", Token: "tok", StateDir: state, Harnesses: map[string]HarnessSpec{"codex": {Command: bin}}})
 	first := NewRegistry("hub-1", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(first.Close)
 	if _, err := first.Advert(t.Context(), "host-10"); err != nil {
 		t.Fatal(err)
 	}
-	// The owner went silent: pretend by rewriting the record it wrote.
 	first.Close()
-	time.Sleep(100 * time.Millisecond)
-	server.writeOwner(hubOwner{Hub: "hub-1", LastSeen: time.Now().Add(-time.Minute)})
+	waitDisconnected := func() {
+		t.Helper()
+		deadline := time.Now().Add(5 * time.Second)
+		for time.Now().Before(deadline) {
+			server.hubMu.Lock()
+			live := server.hubLive
+			server.hubMu.Unlock()
+			if live == 0 {
+				return
+			}
+			time.Sleep(time.Millisecond)
+		}
+		t.Fatal("hub did not disconnect")
+	}
+	waitDisconnected()
+	if owner := server.owner(); owner.Hub != "hub-1" || !owner.Released {
+		t.Fatalf("clean disconnect did not retain owner and stop evidence: %+v", owner)
+	}
 	second := NewRegistry("hub-2", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
 	t.Cleanup(second.Close)
-	if _, err := second.Advert(t.Context(), "host-10"); err == nil || !errors.Is(err, nodewire.ErrRefused) {
-		t.Fatalf("a second hub took over a node whose hub went silent a minute ago: %v", err)
+	if _, err := second.Advert(t.Context(), "host-10"); !errors.Is(err, nodewire.ErrRefused) {
+		t.Fatalf("clean disconnect allowed another hub to take ownership: %v", err)
 	}
-	// Time passing never authorizes another hub; only explicit release does.
-	server.writeOwner(hubOwner{Hub: "hub-1", LastSeen: time.Now().Add(-OwnerGrace - time.Minute)})
-	if _, err := second.Advert(t.Context(), "host-10"); err == nil {
-		t.Fatal("timeout granted ownership to another hub")
+	reconnected := NewRegistry("hub-1", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
+	t.Cleanup(reconnected.Close)
+	if _, err := reconnected.Advert(t.Context(), "host-10"); err != nil {
+		t.Fatalf("same owner could not reconnect: %v", err)
 	}
-	if err := server.writeOwner(hubOwner{Hub: "hub-1", LastSeen: time.Now(), Released: true}); err != nil {
+	reconnected.Close()
+	waitDisconnected()
+	// Even an arbitrarily old record does not authorize a different hub.
+	if err := server.writeOwner(hubOwner{Hub: "hub-1", LastSeen: time.Now().Add(-365 * 24 * time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := second.Advert(t.Context(), "host-10"); err != nil {
-		t.Fatalf("after explicit release: %v", err)
+	if _, err := second.Advert(t.Context(), "host-10"); !errors.Is(err, nodewire.ErrRefused) {
+		t.Fatalf("timeout granted ownership to another hub: %v", err)
 	}
-	second.Close()
-	time.Sleep(100 * time.Millisecond)
-	if o := server.owner(); o.Hub != "hub-2" || !o.Released {
-		t.Fatalf("owner after a clean disconnect = %+v", o)
-	}
-	third := NewRegistry("hub-3", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
-	t.Cleanup(third.Close)
-	if _, err := third.Advert(t.Context(), "host-10"); err != nil {
-		t.Fatalf("after a clean release: %v", err)
-	}
-	third.Close()
-	time.Sleep(100 * time.Millisecond)
-	server.writeOwner(hubOwner{Hub: "hub-3", LastSeen: time.Now()})
-	if err := Adopt(state, "hub-4"); err == nil {
+	if err := Adopt(state, "hub-2"); err == nil {
 		t.Fatal("adoption changed a running node instance")
 	}
-	// The offline adoption is tested separately; simulate its persisted owner.
-	if err := server.writeOwner(hubOwner{Hub: "hub-4", Released: true}); err != nil {
-		t.Fatal(err)
-	}
-	fourth := NewRegistry("hub-4", map[string]Config{"host-10": {Addr: server.Addr(), Token: "tok"}})
-	t.Cleanup(fourth.Close)
-	if _, err := fourth.Advert(t.Context(), "host-10"); err != nil {
-		t.Fatalf("after adopt: %v", err)
+	if owner := server.owner(); owner.Hub != "hub-1" {
+		t.Fatalf("refused handshake changed owner: %+v", owner)
 	}
 }
 

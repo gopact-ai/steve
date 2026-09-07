@@ -50,3 +50,47 @@ func TestOwnershipPersistenceErrorsAreNotIgnored(t *testing.T) {
 		t.Fatal("unwritable ownership was reported successful")
 	}
 }
+
+func TestNodeOwnerChangesOnlyAfterOfflineAdoption(t *testing.T) {
+	state := t.TempDir()
+	first := NewServer(ServerConfig{StateDir: state})
+	if err := first.claim("hub-1"); err != nil {
+		t.Fatal(err)
+	}
+	first.release("hub-1", true)
+	restarted := NewServer(ServerConfig{StateDir: state})
+	if err := restarted.claim("hub-2"); err == nil {
+		t.Fatal("restarting after clean disconnect granted another hub ownership")
+	}
+	if owner := restarted.owner(); owner.Hub != "hub-1" || !owner.Released {
+		t.Fatalf("refused handshake changed persisted owner: %+v", owner)
+	}
+	if err := Adopt(state, "hub-2"); err != nil {
+		t.Fatalf("explicit offline adoption failed: %v", err)
+	}
+	adopted := NewServer(ServerConfig{StateDir: state})
+	if err := adopted.claim("hub-3"); err == nil {
+		t.Fatal("explicit adoption allowed an unnamed third hub")
+	}
+	if err := adopted.claim("hub-2"); err != nil {
+		t.Fatalf("explicitly adopted hub refused: %v", err)
+	}
+	adopted.release("hub-2", true)
+	if err := adopted.claim("hub-1"); err == nil {
+		t.Fatal("former hub regained ownership without adoption")
+	}
+}
+
+func TestNodeRetainsHubWithoutStateDirectory(t *testing.T) {
+	server := NewServer(ServerConfig{})
+	if err := server.claim("hub-1"); err != nil {
+		t.Fatal(err)
+	}
+	server.release("hub-1", true)
+	if err := server.claim("hub-2"); err == nil {
+		t.Fatal("clean disconnect changed the running instance's in-memory owner")
+	}
+	if err := server.claim("hub-1"); err != nil {
+		t.Fatalf("same in-memory owner could not reconnect: %v", err)
+	}
+}

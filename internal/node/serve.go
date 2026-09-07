@@ -426,29 +426,24 @@ func (s *Server) nextSequence() int64 {
 	return s.seq
 }
 
-// claim admits one hub at a time by name. A second hub with the right
-// token is still refused while the first is connected: sharing a machine
-// between two schedulers is a decision, not an accident.
+// claim admits the instance's owner by name. Disconnecting or losing a hub
+// never grants ownership to another; adoption changes the persisted owner
+// while the instance is stopped.
 func (s *Server) claim(hub string) error {
 	s.hubMu.Lock()
 	defer s.hubMu.Unlock()
-	if s.hubLive > 0 && s.hubName != hub {
-		return fmt.Errorf("this node is served by hub %q; refuse %q", s.hubName, hub)
+	if s.hubName != "" && s.hubName != hub {
+		return fmt.Errorf("this node belongs to hub %q; stop this instance and explicitly adopt %q", s.hubName, hub)
 	}
-	// A node remembers its hub across restarts: a hub that vanished
-	// without saying goodbye keeps the node for OwnerGrace, so a second
-	// hub pointed at the same machine cannot take it over during a blip.
-	// A hub that disconnected cleanly has handed the node back.
+	// The disk record preserves ownership across restarts. Released is
+	// evidence that the old processes stopped, not permission to take over.
 	if s.hubLive == 0 {
 		owner, err := s.readOwner()
 		if err != nil {
 			return err
 		}
-		if owner.Hub != "" && owner.Hub != hub && !owner.Released {
-			return fmt.Errorf("this node belongs to hub %q; timeout does not transfer ownership: stop this instance and explicitly adopt %q", owner.Hub, hub)
-		}
-		if owner.Hub != hub && owner.Hub != "" {
-			log.Printf("steve-node: hub changed from %q to %q", owner.Hub, hub)
+		if owner.Hub != "" && owner.Hub != hub {
+			return fmt.Errorf("this node belongs to hub %q; stop this instance and explicitly adopt %q", owner.Hub, hub)
 		}
 	}
 	if err := s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC()}); err != nil {
@@ -475,14 +470,12 @@ func (s *Server) release(hub string, clean bool) {
 	}
 }
 
-// OwnerGrace is how long a node stays with a hub that went silent.
-const OwnerGrace = 10 * time.Minute
-
-// hubOwner is the hub a node last served, kept on disk.
+// hubOwner binds an instance to its hub across disconnects and restarts.
 type hubOwner struct {
 	Hub      string    `json:"hub"`
 	LastSeen time.Time `json:"last_seen"`
-	// Released says the hub disconnected on purpose; the node is free.
+	// Released records a clean disconnect with stopped processes. It can
+	// supply stop evidence to offline adoption but never clears ownership.
 	Released bool `json:"released,omitempty"`
 }
 
@@ -547,8 +540,8 @@ func (s *Server) touchOwner() {
 	}
 }
 
-// Adopt hands the node to a hub explicitly: the next handshake from it is
-// accepted whatever the previous owner's grace says.
+// Adopt assigns a stopped instance to the named hub. Handshakes from any
+// other hub remain refused, even before the new owner first connects.
 func Adopt(stateDir, hub string) error { return AdoptWithEvidence(stateDir, hub, "operator", "") }
 
 // AdoptWithEvidence requires the instance stopped. Unfinished stream journals
