@@ -10,7 +10,7 @@ export interface MaterialTarget { conversation: string; project: string; title: 
 interface Editor { material: Material; ref: MaterialRef; annotation?: MaterialAnnotation }
 interface MaterialContextValue {
     target: MaterialTarget | null; setTarget: (target: MaterialTarget | null) => void;
-    add: (material: Material, ref: MaterialRef, target: MaterialTarget) => void;
+    add: (material: Material, ref: MaterialRef, target: MaterialTarget) => Promise<void>;
     pin: (material: Material, ref: MaterialRef) => void; unpin: (project: string, ref: MaterialRef) => void;
     pins: (project: string) => DraftMaterial[]; annotate: (editor: Editor) => void;
     sideRequest: { project: string; nonce: number } | null; revision: number; changed: () => void;
@@ -29,9 +29,9 @@ export function MaterialProvider({ children }: { children: ReactNode }) {
     const storageKey = (project: string) => `steve.material.pins:${window.location.origin}:${snap.hub.node}:${project}`;
     const pins = (project: string): DraftMaterial[] => { try { const saved = JSON.parse(localStorage.getItem(storageKey(project)) || "[]"); return Array.isArray(saved) ? saved.filter((item) => item && typeof item.id === "string" && item.project === project && typeof item.title === "string" && ["text", "image", "binary"].includes(item.kind)) : []; } catch { return []; } };
     const item = (material: Material, ref: MaterialRef): DraftMaterial => ({ ...ref, title: material.title, project: material.project, kind: material.kind, mime: material.mime, size: material.size });
-    const add = (material: Material, ref: MaterialRef, to: MaterialTarget) => {
+    const add = async (material: Material, ref: MaterialRef, to: MaterialTarget) => {
         if (material.project !== to.project || (liveTarget.current?.conversation===to.conversation && liveTarget.current.project!==to.project)) throw new Error(t("materials.wrongProject"));
-        if (!addDraftMaterial(to.conversation, item(material, ref))) throw new Error(t("materials.sourceUnavailable"));
+        if (!await addDraftMaterial(to.conversation, item(material, ref))) throw new Error(t("materials.sourceUnavailable"));
         setNotice(t("materials.added", { title: to.title }));
     };
     const pin = (material: Material, ref: MaterialRef) => {

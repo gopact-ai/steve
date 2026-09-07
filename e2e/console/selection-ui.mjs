@@ -13,6 +13,8 @@ const A="console:selection-ui", at="2026-09-07T01:00:00Z", base="a".repeat(40), 
 const replyText="A **bold passage** with [a link](https://example.test) and `code`.\n\nSecond paragraph.";
 const png=Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO7+gxkAAAAASUVORK5CYII=","base64");
 const context=await browser.newContext({viewport:{width:1600,height:1000},serviceWorkers:"block"});const page=await context.newPage();page.setDefaultTimeout(7000);
+const agents=[{id:"local-agent",node:"test-hub",harness:"mock",ready:true,usable:true},{id:"remote-default",node:"other-node",harness:"mock",ready:true,usable:false,because:"No workspace for this project"}];
+const sideContexts=new Map();
 const f={version:"test",project:"p",captureGate:null,releaseCapture:null,supportsMaterials:true,captures:[],posts:[],queue:[],materials:new Map(),notes:[],answers:[],questions:[],hideQueue:false,reset:false,errors:[]};
 page.on("pageerror",e=>f.errors.push(String(e)));
 function material(id,title,source,kind="text",mime="text/plain",data=Buffer.from(replyText)) {const value={id,project:"p",title,source,kind,mime,size:data.length,digest:"d".repeat(64),created_at:at,...(kind==="image"?{width:1,height:1}:{})};f.materials.set(id,{value,data});return value;}
@@ -24,8 +26,18 @@ await page.route("**/*",async route=>{
  if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
  if(p==="/console/desktop")return route.fulfill({json:{enabled:false,setup_required:false,agent_count:0}});
  if(p==="/state")return route.fulfill({json:{at,hub:{node:"test-hub",version:f.version},nodes:[],agents:[],projects:[{id:"p",node:"test-hub",path:"/work/p",repo:"inplace",level:"public",agents:[],workspaces:[]}],tasks:[{id:"11",channel:A,project_id:"p",goal:"Code task",state:"running",lifecycle:"running",execution:"idle",lane:"pending",attention:0,turns:1,max_turns:10,updated_at:at}],plans:[],attempts:[],landings:[]}});
- if(p==="/console/send"){f.posts.push(input);return route.fulfill({json:{reply:{id:"binding",conversation:input.conversation,text:"bound",at,kind:"reply"}}});}
- if(p==="/console/context")return route.fulfill({json:{enabled:true,context:{conversation:u.searchParams.get("conversation"),project:{id:f.project,node:"test-hub",path:"/work/p",repo:"inplace",level:"public",bound:true},agents:[]}}});
+ if(p==="/console/send"){
+  f.posts.push(input);
+  const current=sideContexts.get(input.conversation)||{};
+  if(input.input.startsWith('/project use '))sideContexts.set(input.conversation,{...current,project:input.input.slice('/project use '.length)});
+  else if(input.input.startsWith('/use ')){assert.equal(input.input,'/use local-agent');sideContexts.set(input.conversation,{...current,agent:'local-agent'});}
+  else assert.fail('Unexpected control '+input.input);
+  return route.fulfill({json:{reply:{id:"binding",conversation:input.conversation,text:"bound",at,kind:"reply"}}});
+ }
+ if(p==="/console/context"){
+  const conversation=u.searchParams.get("conversation"),sideContext=sideContexts.get(conversation),project=conversation===A?f.project:sideContext?.project;
+  return route.fulfill({json:{enabled:true,context:{conversation,...(project?{project:{id:project,node:"test-hub",path:"/work/p",repo:"inplace",level:"public",bound:true}}:{}),agent:agents.find(agent=>agent.id===(conversation===A?'local-agent':sideContext?.agent||'remote-default')),agents}}});
+ }
  if(p==="/console/replies" && u.searchParams.get("conversation")!==A)return route.fulfill({json:{enabled:true,replies:[]}});
  if(p==="/console/replies")return route.fulfill({json:{enabled:true,replies:[{id:"r1",conversation:A,kind:"reply",at,text:replyText,project_id:"p",revision:"reply-version-1",changes:{attempt:"attempt1",project:"p",base,artifact:after,files:1,added:2,deleted:1}}]}});
  if(p==="/console/conversations")return route.fulfill({json:{conversations:[{id:A,title:"Material conversation",project:"p",count:1,last_at:at,running:false}]}});
@@ -67,8 +79,8 @@ try {
  const message=page.locator('.message-assistant [data-selection-surface]').first();
  await select(message,'bold passage with a link');
  const bar=page.getByRole('toolbar',{name:'Selection actions'});await bar.getByRole('button',{name:'Add to chat',exact:true}).click();
- await waitFor(async()=>!!(await page.evaluate(A=>JSON.parse(sessionStorage.getItem('steve.console.drafts')||'{}').materials?.[A]?.length,A)),'selection enters draft');
- const refs=await page.evaluate(A=>JSON.parse(sessionStorage.getItem('steve.console.drafts')).materials[A],A);
+ await waitFor(async()=>!!(await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.drafts')||'{}').materials?.[A]?.length,A)),'selection enters draft');
+ const refs=await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.drafts')).materials[A],A);
  assert.equal(refs[0].selector.kind,'quote');assert.ok(replyText.includes(refs[0].selector.quote));assert.equal(refs[0].selector.quote,'bold passage** with [a link');assert.equal(f.posts.length,0);
  console.log('PASS floating selection maps formatted reply to immutable raw source without sending');
  await select(message,'Second paragraph.');await page.keyboard.press('Tab');assert.equal(await bar.getByRole('button',{name:'Add to chat',exact:true}).evaluate(e=>e===document.activeElement),true);await page.keyboard.press('Escape');await bar.waitFor({state:'hidden'});
@@ -76,7 +88,7 @@ try {
  console.log('PASS selection keyboard actions and source details');
  await select(message,'bold passage');await bar.getByRole('button',{name:'Ask in side chat',exact:true}).click();await page.locator('[data-side-chat]').waitFor();assert.equal(f.posts.length,0);assert.equal(await page.evaluate(()=>sessionStorage.getItem('steve.conversation')),A);
  const side=page.locator('[data-side-chat]');await side.getByRole('textbox').last().fill('Explain this wording');await side.getByRole('button',{name:'Send',exact:true}).click();
- await waitFor(()=>f.posts.some(p=>p.input==='Explain this wording'),'side sends explicit question');const sent=f.posts.find(p=>p.input==='Explain this wording');assert.notEqual(sent.conversation,A);assert.equal(sent.refs.length,1);assert.equal(sent.refs[0].selector.quote,'bold passage');assert.equal(await page.evaluate(()=>sessionStorage.getItem('steve.conversation')),A);
+ await waitFor(()=>f.posts.some(p=>p.input==='Explain this wording'),'side sends explicit question');const sent=f.posts.find(p=>p.input==='Explain this wording');assert.notEqual(sent.conversation,A);assert.equal(sent.refs.length,1);assert.equal(sent.refs[0].selector.quote,'bold passage');assert.deepEqual(f.posts.map(post=>post.input),['/project use p','/use local-agent','Explain this wording']);assert.equal(sideContexts.get(sent.conversation).agent,'local-agent','side question uses the compatible origin agent instead of the remote default');assert.equal(await page.evaluate(()=>sessionStorage.getItem('steve.conversation')),A);
  await side.getByRole('button',{name:'Close side chat',exact:true}).click();
  console.log('PASS side question uses separate same-project conversation and preserves main context');
  await page.getByRole('button',{name:/Review changes/}).first().click();
@@ -85,16 +97,47 @@ try {
  const deleted=page.locator('code[data-selection-before="1"]').first();await select(deleted,'old');await bar.getByRole('button',{name:'Add to chat',exact:true}).click();await waitFor(()=>f.captures.at(-1)?.source.commit===base,'deleted selection captures base');
  await page.getByRole('button',{name:'Source',exact:true}).click();await page.locator('.source-text').first().waitFor();await select(page.locator('.source-code'),'second');await bar.getByRole('button',{name:'Add to chat',exact:true}).click();await waitFor(()=>f.captures.at(-1)?.source.commit===after,'source selection captures result');
  await select(page.locator('.source-code'),'third');await bar.getByRole('button',{name:'Ask in side chat',exact:true}).click();await page.getByRole('dialog',{name:'Code workspace',exact:true}).locator('[data-side-chat]').waitFor();
+ await side.getByRole('button',{name:'Close side chat',exact:true}).click();
+ await page.setViewportSize({width:780,height:540});
+ await page.getByRole('button',{name:'Diff',exact:true}).click();
+ const diffLine=page.locator('code[data-selection-after="3"]').first();
+ await select(diffLine,'third');await bar.getByRole('button',{name:'Ask in side chat',exact:true}).click();
+ await side.waitFor();
+ await side.getByRole('textbox').last().fill('Keep this diff question');
+ assert.equal(await page.locator('.review-primary').isVisible(),false,'narrow review must not squeeze its reader beneath the side chat');
+ const sideBox=await side.boundingBox(),reviewBody=await page.locator('.review-with-side').boundingBox();
+ assert.ok(sideBox.x>=0&&sideBox.x+sideBox.width<=780&&sideBox.y>=0&&sideBox.y+sideBox.height<=540,'side chat stays within the native minimum window');
+ assert.ok(Math.abs(sideBox.width-reviewBody.width)<1,'narrow side chat uses the available review width');
+ assert.equal(await side.getByRole('button',{name:'Close side chat',exact:true}).evaluate(el=>{const r=el.getBoundingClientRect();return el.contains(document.elementFromPoint(r.x+r.width/2,r.y+r.height/2));}),true,'close remains visible and receives clicks');
+ assert.equal(await page.locator('.review-file-header button:visible').count(),0,'covered review controls cannot float over or receive input through side chat');
+ for (const width of [1101,1240,1600]) {
+  await page.setViewportSize({width,height:820});
+  await page.locator('.review-primary').waitFor();
+  const header=page.locator('.review-file-header');
+  assert.equal(await header.evaluate(el=>{const r=el.getBoundingClientRect();return [...el.querySelectorAll('button')].every(button=>{const b=button.getBoundingClientRect();return b.left>=r.left&&b.right<=r.right&&b.top>=r.top&&b.bottom<=r.bottom;});}),true,'all review actions remain within the reader toolbar beside side chat');
+  const headerBox=await header.boundingBox();
+  assert.ok(headerBox.x+headerBox.width<=(await side.boundingBox()).x,'toolbar and side chat do not overlap');
+ }
+ await page.setViewportSize({width:780,height:540});
+ assert.equal(await side.getByRole('textbox').last().inputValue(),'Keep this diff question','resize preserves the side draft');
+ await side.getByRole('button',{name:'Close side chat',exact:true}).click();
+ await page.locator('.review-primary').waitFor();
+ assert.equal(await page.getByRole('button',{name:'Diff',exact:true}).getAttribute('aria-pressed'),'true','closing returns to the same file and reading mode');
+ await diffLine.waitFor();
+ assert.equal(await page.evaluate(()=>sessionStorage.getItem('steve.conversation')),A);
+ console.log('PASS minimum native window overlays side chat, wide toolbar stays bounded, and closing preserves diff context');
+ await page.getByRole('button',{name:'Source',exact:true}).click();
+ await select(page.locator('.source-code'),'third');await bar.getByRole('button',{name:'Ask in side chat',exact:true}).click();
  await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);await side.getByRole('button',{name:'Close side chat',exact:true}).click();await select(page.locator('.source-code'),'second');const box=await bar.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=390&&box.y>=0&&box.y+box.height<=844);
  await page.screenshot({path:'/tmp/steve-selection-review-mobile.png'});console.log('PASS source/deleted-side references, Review side chat and narrow toolbar placement');
  await page.keyboard.press('Escape');await page.getByRole('dialog',{name:'Code workspace',exact:true}).getByRole('button',{name:'Back',exact:true}).click();await page.setViewportSize({width:1600,height:1000});
  const draft=page.getByRole('textbox',{name:'Message',exact:true});await draft.fill('Keep this draft while the project changes');
- const saved=await page.evaluate(A=>JSON.parse(sessionStorage.getItem('steve.console.drafts')).materials[A],A),writes=f.posts.length,captures=f.captures.length;
+ const saved=await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.drafts')).materials[A],A),writes=f.posts.length,captures=f.captures.length;
  f.captureGate=new Promise(resolve=>f.releaseCapture=resolve);
  await select(message,'Second paragraph.');await bar.getByRole('button',{name:'Add to chat',exact:true}).click();await waitFor(()=>f.captures.length===captures+1,'delayed capture begins');
  f.project='q';await page.evaluate(event=>window.emit(event),{kind:'console.reply',conversation:A,reply_id:'binding-change',text:'Project changed',at});await page.getByText('q · test-hub',{exact:true}).waitFor();
  f.releaseCapture();f.captureGate=null;await bar.getByRole('alert').waitFor();
- assert.deepEqual(await page.evaluate(A=>JSON.parse(sessionStorage.getItem('steve.console.drafts')).materials[A],A),saved,'A delayed capture cannot add old-project material after the target is rebound');
+ assert.deepEqual(await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.drafts')).materials[A],A),saved,'A delayed capture cannot add old-project material after the target is rebound');
  assert.equal(await draft.inputValue(),'Keep this draft while the project changes');assert.equal(f.posts.length,writes,'Rejecting a stale capture cannot submit a question');
  console.log('PASS delayed capture rechecks the target project without changing drafts or sending');
  assert.deepEqual(f.errors,[]);

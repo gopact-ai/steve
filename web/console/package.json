@@ -12,6 +12,7 @@
         "test:ui": "node ../../e2e/console/interactions.mjs",
         "test:architecture": "node ../../e2e/console/architecture.mjs",
         "test:settings": "node ../../e2e/console/settings-page.mjs",
+        "test:durable-drafts": "node ../../e2e/console/durable-drafts.mjs",
         "test:materials": "node ../../e2e/console/materials-ui.mjs",
         "test:questions": "node ../../e2e/console/questions-ui.mjs",
         "test:desktop": "node ../../e2e/console/desktop-onboarding-ui.mjs",

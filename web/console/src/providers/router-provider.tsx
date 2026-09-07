@@ -1,6 +1,6 @@
 import { type PropsWithChildren } from "react";
 import { RouterProvider } from "react-aria-components";
-import { useNavigate } from "react-router";
+import { useHref, useNavigate } from "react-router";
 import type { NavigateOptions } from "react-router";
 
 declare module "react-aria-components" {
@@ -12,5 +12,5 @@ declare module "react-aria-components" {
 export const RouteProvider = ({ children }: PropsWithChildren) => {
     const navigate = useNavigate();
 
-    return <RouterProvider navigate={navigate}>{children}</RouterProvider>;
+    return <RouterProvider navigate={navigate} useHref={useHref}>{children}</RouterProvider>;
 };

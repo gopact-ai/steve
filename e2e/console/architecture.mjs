@@ -93,31 +93,33 @@ assert.equal(applyLive(running, { kind: "console.reply", at: "", exchange_id: "c
 console.log("PASS browser-independent formatting and live projection");
 
 const stored = new Map();
-globalThis.sessionStorage = { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) };
+globalThis.localStorage = { getItem: (key) => stored.get(key) ?? null, setItem: (key, value) => stored.set(key, value) };
+globalThis.navigator.locks ||= { request: async (_key, work) => work() };
 const submissions = await import("../../web/console/src/lib/drafts.ts");
-submissions.updateDraft("test:a", "Original");
-const first = submissions.beginSubmission("test:a", "Original", []);
+await submissions.updateDraft("test:a", "Original");
+const first = await submissions.beginSubmission("test:a", "Original", []);
 assert.ok(first.id);
 assert.equal(JSON.parse(stored.get("steve.console.drafts")).drafts["test:a"], undefined, "Persisting pending and consuming the draft must be atomic");
-submissions.updateDraft("test:a", "Newer draft");
-submissions.failSubmission("test:a", first.id, "Connection reset", "unknown");
-submissions.retrySubmission("test:a");
-submissions.failSubmission("test:a", first.id, "Preflight failed before retry", "rejected");
-assert.equal(submissions.restoreSubmission("test:a"), false, "Uncertain keyed work must not become a fresh draft");
-const retry = submissions.retrySubmission("test:a");
+await submissions.updateDraft("test:a", "Newer draft");
+await submissions.failSubmission("test:a", first.id, "Connection reset", "unknown");
+await submissions.retrySubmission("test:a");
+await submissions.failSubmission("test:a", first.id, "Preflight failed before retry", "rejected");
+assert.equal(await submissions.restoreSubmission("test:a"), false, "Uncertain keyed work must not become a fresh draft");
+const retry = await submissions.retrySubmission("test:a");
 assert.equal(retry.id, first.id);
 assert.equal(retry.input, "Original");
-assert.equal(submissions.reconcileSubmission("test:a", [{ conversation: "test:a", input: "Original", key: `client:${first.id}` }]), true);
-const second = submissions.beginSubmission("test:a", "Newer draft", []);
-assert.equal(submissions.failSubmission("test:a", first.id, "Late reset", "unknown"), false, "An old acknowledgement cannot change a newer operation");
-submissions.updateDraft("test:a", "More typing");
-submissions.failSubmission("test:a", second.id, "Bad input", "rejected");
+assert.equal(await submissions.reconcileSubmission("test:a", [{ conversation: "test:a", input: "Original", key: `client:${first.id}` }]), true);
+const second = await submissions.beginSubmission("test:a", "Newer draft", []);
+assert.equal(await submissions.failSubmission("test:a", first.id, "Late reset", "unknown"), false, "An old acknowledgement cannot change a newer operation");
+await submissions.updateDraft("test:a", "More typing");
+await submissions.failSubmission("test:a", second.id, "Bad input", "rejected");
 assert.equal(JSON.parse(stored.get("steve.console.drafts")).drafts["test:a"], "Newer draft\nMore typing");
-const conflict = submissions.beginSubmission("test:a", "Conflict", []);
-submissions.failSubmission("test:a", conflict.id, "Conflict", "conflict");
-assert.equal(submissions.retrySubmission("test:a"), null);
-assert.equal(submissions.restoreSubmission("test:a"), false);
-submissions.finishSubmission("test:a", conflict.id);
+await submissions.updateDraft("test:a", "Conflict");
+const conflict = await submissions.beginSubmission("test:a", "Conflict", []);
+await submissions.failSubmission("test:a", conflict.id, "Conflict", "conflict");
+assert.equal(await submissions.retrySubmission("test:a"), null);
+assert.equal(await submissions.restoreSubmission("test:a"), false);
+await submissions.finishSubmission("test:a", conflict.id);
 const stop = submissions.beginStop("test:a");
 assert.equal(submissions.beginStop("test:a"), null, "Stop pending is shared independently of route instances");
 submissions.finishStop("test:a", stop, { uncertain: true });
@@ -127,7 +129,7 @@ assert.equal(submissions.isStopPending("test:a"), true, "A failed stop retry can
 assert.equal(submissions.beginStop("test:a"), stop);
 submissions.finishStop("test:a", stop, { message: "Stopped" });
 assert.equal(submissions.isStopPending("test:a"), false);
-delete globalThis.sessionStorage;
+delete globalThis.localStorage;
 console.log("PASS durable submission identity, reconciliation, rejection and shared stop lifecycle");
 
 if (process.env.PURE_ONLY !== "1") {
@@ -145,7 +147,7 @@ if (process.env.PURE_ONLY !== "1") {
     async function fixture() {
         const context = await browser.newContext({ viewport: { width: 1600, height: 1000 }, serviceWorkers: "block" });
         const page = await context.newPage(); await page.addInitScript(() => localStorage.setItem("steve.ui.locale", "zh")); page.setDefaultTimeout(3500);
-        const f = { page, context, queue: [], posts: [], stopCalls: [], submissionKeys: true, queueReadError: 0, queueGate: null, inbox: [], stopReset: false, resetAfterAccept: false, hideQueue: false, reject: 0, stopGate: null, releases: [], errors: [], historyReads: 0, contextReads: [], held: null, agent: "first-agent", writes: [], settings: { ...original, mcp_servers: { sample: { type: "stdio", command: "sample", env: {}, headers: {} } } } };
+        const f = { page, context, queue: [], posts: [], stopCalls: [], submissionKeys: true, queueReadError: 0, repliesReadError: false, repliesTransportError: false, queueGate: null, inbox: [], stopReset: false, resetAfterAccept: false, hideQueue: false, reject: 0, stopGate: null, releases: [], errors: [], historyReads: 0, contextReads: [], held: null, agent: "first-agent", writes: [], settings: { ...original, mcp_servers: { sample: { type: "stdio", command: "sample", env: {}, headers: {} } } } };
         page.on("pageerror", (error) => f.errors.push(String(error)));
         await page.clock.install();
         await page.route("**/*", async (route) => {
@@ -165,7 +167,7 @@ if (process.env.PURE_ONLY !== "1") {
                 return route.fulfill({ json: { enabled: true, context: { conversation: channel, project: { ...project, bound: true }, agent: { id: agent, model: "test", ready: true }, agents: [] } } }).catch(() => {});
             }
             if (url.pathname === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations: [A, B].map((id) => ({ id, title: id === A ? "Architecture A" : "Architecture B", project: "scratch", count: 1, last_at: at, running: false })) } });
-            if (url.pathname === "/console/replies") return route.fulfill({ json: { enabled: true, replies: [] } });
+            if (url.pathname === "/console/replies") return f.repliesTransportError ? route.abort("connectionreset") : f.repliesReadError ? route.fulfill({ status: 503, json: { error: "context deadline exceeded" } }) : route.fulfill({ json: { enabled: true, replies: [] } });
             if (url.pathname === "/console/queue") {
                 if (req.method() === "POST") {
                     const input = req.postDataJSON(); f.posts.push(input);
@@ -237,7 +239,7 @@ if (process.env.PURE_ONLY !== "1") {
             await retry.click();
             await f.page.getByText("无法确认协调节点是否支持安全提交，当前仅供查看。", { exact: true }).waitFor();
             await retry.waitFor();
-            const retained = await f.page.evaluate(() => JSON.parse(sessionStorage.getItem("steve.console.drafts")));
+            const retained = await f.page.evaluate(() => JSON.parse(localStorage.getItem("steve.console.drafts")));
             assert.equal(retained.submissions[A].id, id, "A failed retry preflight must retain the original possibly accepted key");
             assert.equal(retained.drafts[A], "Newer unsent work");
             assert.equal(f.posts.length, 1, "A failed preflight sends no retry POST");
@@ -247,7 +249,7 @@ if (process.env.PURE_ONLY !== "1") {
             f.reject = 401; await retry.click();
             await eventually(() => f.posts.length === 2, "The server can reject authentication on a retry");
             await retry.waitFor();
-            const rejectedRetry = await f.page.evaluate(() => JSON.parse(sessionStorage.getItem("steve.console.drafts")));
+            const rejectedRetry = await f.page.evaluate(() => JSON.parse(localStorage.getItem("steve.console.drafts")));
             assert.equal(rejectedRetry.submissions[A].id, id, "A retry rejection cannot prove the original operation was never accepted");
             assert.equal(await box.inputValue(), "Newer unsent work");
             f.reject = 0; await retry.click();
@@ -322,7 +324,7 @@ if (process.env.PURE_ONLY !== "1") {
             await f.page.getByRole("button", { name: "重试这次发送", exact: true }).waitFor();
             await box.fill("Newer draft"); await box.press("Enter");
             assert.equal(f.posts.length, 1, "Uncertain receipt must block a fresh submission");
-            const persisted = await f.page.evaluate(() => JSON.parse(sessionStorage.getItem("steve.console.drafts")));
+            const persisted = await f.page.evaluate(() => JSON.parse(localStorage.getItem("steve.console.drafts")));
             assert.equal(persisted.submissions[A].id, f.posts[0].command_id, "The operation identity is durable before sending");
             await f.page.getByRole("button", { name: "重试这次发送", exact: true }).click();
             await eventually(() => f.posts.length === 2, "Explicit retry sends the original operation");
@@ -331,13 +333,34 @@ if (process.env.PURE_ONLY !== "1") {
             assert.equal(await box.inputValue(), "Newer draft");
             await eventually(async () => await f.page.getByRole("button", { name: "重试这次发送", exact: true }).count() === 0, "Acknowledgement clears uncertainty");
         },
+        async "read-errors-recover"(f) {
+            const status = f.page.locator(".console-status");
+            f.repliesReadError = true;
+            await f.page.clock.fastForward(10000);
+            await eventually(async () => (await status.innerText()).includes("context deadline exceeded"), "a transient read error is visible");
+            f.repliesReadError = false;
+            await f.page.clock.fastForward(10000);
+            await eventually(async () => !(await status.innerText()).includes("context deadline exceeded"), "successful reply refresh clears its own failure");
+            f.repliesTransportError = true;
+            await f.page.clock.fastForward(10000);
+            await eventually(async () => (await status.innerText()) === "部分数据不可用", "transport failures use the localized unavailable hint");
+            f.repliesTransportError = false;
+            await f.page.clock.fastForward(10000);
+            await eventually(async () => !(await status.innerText()).includes("部分数据不可用"), "transport recovery clears the matching error");
+            f.reject = 400;
+            const box = f.page.getByRole("textbox", { name: "消息", exact: true });
+            await box.fill("Keep the action error"); await box.press("Enter");
+            await eventually(async () => (await status.innerText()) === "Submission rejected", "explicit action error is shown");
+            await f.page.clock.fastForward(10000);
+            assert.equal(await status.innerText(), "Submission rejected", "successful background reads preserve action feedback");
+        },
         async "submission-reload-reconciliation"(f) {
             f.resetAfterAccept = true; f.hideQueue = true;
             const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             await box.fill("Accepted before reload"); await box.press("Enter");
             await f.page.getByRole("button", { name: "重试这次发送", exact: true }).waitFor();
             await box.fill("Draft survives reconciliation");
-            const pending = await f.page.evaluate(() => JSON.parse(sessionStorage.getItem("steve.console.drafts")).submissions["console:architecture-a"]);
+            const pending = await f.page.evaluate(() => JSON.parse(localStorage.getItem("steve.console.drafts")).submissions["console:architecture-a"]);
             assert.equal(pending.locale, "zh", "Submission captures the selected locale before HTTP");
             assert.equal(f.queue[0].locale, pending.locale, "The durable queue receipt preserves locale for reload reconciliation");
             assert.deepEqual(f.queue[0].refs, pending.refs || [], "The durable queue receipt preserves material reference identity");
@@ -352,7 +375,7 @@ if (process.env.PURE_ONLY !== "1") {
             const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             f.reject = 400;
             await box.fill("Rejected work"); await box.press("Enter");
-            await eventually(async () => await box.inputValue() === "Rejected work", "Explicit rejection restores the draft");
+            await eventually(async () => f.posts.length === 1 && await box.inputValue() === "Rejected work" && await f.page.evaluate(() => !JSON.parse(localStorage.getItem("steve.console.drafts")).submissions["console:architecture-a"]), "Explicit rejection restores the draft after the response is persisted");
             f.reject = 409; await box.press("Enter");
             await f.page.getByText("这次发送的标识与服务器记录冲突，请核对会话记录，不要直接重新发送。", { exact: true }).waitFor();
             assert.equal(await f.page.getByRole("button", { name: "重试这次发送", exact: true }).count(), 0);

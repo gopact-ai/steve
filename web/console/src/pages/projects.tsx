@@ -241,7 +241,7 @@ function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void;
     const { snap } = useFleet();
     const home = p.workspaces.find((w) => w.kind === "canonical");
     const taken = new Set(p.workspaces.map((w) => w.node));
-    const machines = [{ id: snap.hub.node, label: `${snap.hub.node}（hub）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.name }))].filter((m) => !taken.has(m.id));
+    const machines = [{ id: snap.hub.node, label: `${snap.hub.node}（${tr("connection.coordinator")}）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.name }))].filter((m) => !taken.has(m.id));
     const [node, setNode] = useState(machines[0]?.id || "");
     const [path, setPath] = useState("");
     const [origin, setOrigin] = useState<"adopt" | "clone">("adopt");
@@ -293,7 +293,7 @@ function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => vo
     const { t: tr, locale } = useI18n();
     const { snap } = useFleet();
     const [id, setID] = useState("");
-    const [node, setNode] = useState("");
+    const [node, setNode] = useState(snap.hub.node);
     const [path, setPath] = useState("");
     const [level, setLevel] = useState("internal");
     const [repo, setRepo] = useState("inplace");
@@ -303,12 +303,12 @@ function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => vo
     async function submit() {
         setBusy(true); setError("");
         try {
-            await addProject({ id: id.trim(), node: node || undefined, path: path.trim(), repo, level });
+            await addProject({ id: id.trim(), node, path: path.trim(), repo, level });
             setDone(true);
             onDone();
         } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
     }
-    const machines = [{ id: "__hub", label: `${snap.hub.node}（hub）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.name }))];
+    const machines = [{ id: snap.hub.node, label: `${snap.hub.node}（${tr("connection.coordinator")}）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.name }))];
     return (
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
             <Modal className="max-w-xl">
@@ -324,7 +324,7 @@ function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => vo
                         {done ? <div className="text-sm text-primary">{tr("projects.added", { project: id.trim() })}</div> : (
                             <div className="grid grid-cols-1 gap-4">
                                 <Input size="sm" label={tr("projects.name")} placeholder="my-service" value={id} onChange={setID} autoFocus hint={tr("projects.nameHint")} />
-                                <Select size="sm" label={tr("projects.machine")} selectedKey={node || "__hub"} onSelectionChange={(k) => setNode(!k || String(k) === "__hub" ? "" : String(k))} items={machines}>
+                                <Select size="sm" label={tr("projects.machine")} selectedKey={node} onSelectionChange={(k) => k && setNode(String(k))} items={machines}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
                                 <Input size="sm" label={tr("projects.directory")} placeholder="/home/me/work/my-service" value={path} onChange={setPath} hint={tr("projects.pathHint")} />

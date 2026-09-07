@@ -1,5 +1,6 @@
 export const coordinationZh = {
     "coord.title": "协调与接管",
+    "coord.settings": "接管设置",
     "coord.description": "协调节点负责分配任务、保存协作进度。",
     "coord.transfer": "交接",
     "coord.transferTitle": "交接协调职责",
@@ -7,7 +8,7 @@ export const coordinationZh = {
     "coord.target": "接任机器",
     "coord.targetRequired": "请选择一台已就绪的接任机器。",
     "coord.transferEffect": "将协调职责从 {from} 交接给 {to}。",
-    "coord.oneNode": "只有一台机器，暂无交接目标。",
+    "coord.oneNode": "当前只有一个可承担协调的节点，执行节点无法接任协调。",
     "coord.noAuthority": "当前无法确认多数派授权，暂不能更改协调设置。",
     "coord.policy": "自动接管",
     "coord.policyHint": "协调节点故障时，由符合条件的节点自动接任。",
@@ -53,6 +54,7 @@ export const coordinationZh = {
 } as const;
 export const coordinationEn = {
     "coord.title": "Coordination and failover",
+    "coord.settings": "Failover settings",
     "coord.description": "The coordinator assigns tasks and saves collaboration progress.",
     "coord.transfer": "Hand over",
     "coord.transferTitle": "Hand over coordination",
@@ -60,7 +62,7 @@ export const coordinationEn = {
     "coord.target": "Next coordinator",
     "coord.targetRequired": "Choose a ready machine to coordinate next.",
     "coord.transferEffect": "Hand coordination from {from} to {to}.",
-    "coord.oneNode": "There is only one machine, so no handover target is available.",
+    "coord.oneNode": "Only one node can coordinate tasks. Execution-only machines cannot take over coordination.",
     "coord.noAuthority": "A majority authorization is not confirmed. Coordination settings cannot be changed now.",
     "coord.policy": "Automatic failover",
     "coord.policyHint": "An eligible node takes over automatically when the coordinator fails.",

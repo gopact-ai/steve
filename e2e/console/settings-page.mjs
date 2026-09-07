@@ -195,6 +195,18 @@ if (process.env.PURE_ONLY !== "1") {
         await page.getByRole("button", { name: "简体中文 语言", exact: true }).click();
         await page.getByRole("option", { name: "English", exact: true }).click();
         await page.getByRole("heading", { name: "General", exact: true }).waitFor();
+        await page.setViewportSize({ width: 780, height: 540 });
+        const compactNav = page.getByRole("navigation", { name: "Settings categories", exact: true });
+        for (const link of await compactNav.getByRole("link").all()) {
+            assert.ok(await link.evaluate((el) => {
+                const bounds = el.getBoundingClientRect();
+                const label = el.querySelector("span").getBoundingClientRect();
+                const nav = el.parentElement.getBoundingClientRect();
+                return label.right <= bounds.right - 8 && bounds.right <= nav.right && bounds.height >= 44 && el.scrollWidth <= el.clientWidth;
+            }), "English settings labels fit their navigation column and preserve the touch area");
+        }
+        await page.getByText("Interface preferences on this device. Changes apply immediately.", { exact: true }).waitFor();
+        await page.setViewportSize({ width: 1280, height: 960 });
         await page.getByRole("navigation", { name: "Settings categories", exact: true }).getByRole("link", { name: "Channels", exact: true }).click();
         await page.getByRole("alert").filter({ hasText: "Channel startup failed" }).waitFor();
         await page.getByText("Error details", { exact: true }).click();

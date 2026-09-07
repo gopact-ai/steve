@@ -24,7 +24,7 @@ import { useResourceRead } from "@/hooks/use-resource-read";
 import { placeLabel } from "@/lib/workspaces";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { applyDelegation, restoreDelegations, withDelegations, type Delegations } from "@/lib/delegations";
-import { beginSubmission, retrySubmission, failSubmission, finishSubmission, reconcileSubmission, restoreSubmission, updateDraft, useDraft, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission, useMaterials, removeDraftMaterial, submissionRefs } from "@/lib/drafts";
+import { beginSubmission, retrySubmission, failSubmission, finishSubmission, reconcileSubmission, restoreSubmission, updateDraft, useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission, useMaterials, removeDraftMaterial, submissionRefs } from "@/lib/drafts";
 import { useI18n } from "@/providers/locale-provider";
 import { useMaterial } from "@/providers/material-provider";
 import { uploadMaterial, refKey } from "@/lib/api/material";
@@ -51,10 +51,10 @@ export function ConsolePage() {
     const [loadingReplies, setLoadingReplies] = useState(true);
     const [enabled, setEnabled] = useState(true);
     const text = useDraft(conversation);
+    const draftIssue = useDraftIssue(conversation);
+    const savedDraft = useSavedDraft(conversation);
     const draftMaterials = useMaterials(conversation);
-    function writeDraft(id: string, value: SetStateAction<string>) {
-        if (!updateDraft(id, value)) setStatus(t("console.draftStorage"));
-    }
+    function writeDraft(id: string, value: SetStateAction<string>) { void updateDraft(id, value); }
     const setText = (value: SetStateAction<string>) => writeDraft(conversation, value);
     const submission = useSubmission(conversation);
     const submissionSupport = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
@@ -65,6 +65,10 @@ export function ConsolePage() {
     const [creating, setCreating] = useState(false);
     const creatingRequest = useRef(false);
     const [status, setStatus] = useState("");
+    const [queueReadError, setQueueReadError] = useState<{ conversation: string; error: unknown } | null>(null);
+    const [replyReadError, setReplyReadError] = useState<{ conversation: string; error: unknown } | null>(null);
+    const readErrorText = (error: unknown) => error instanceof TypeError && /^(?:Load failed|Failed to fetch|NetworkError.*)$/i.test(error.message)
+        ? t("connection.partial") : String(error).replace(/^(?:Error|TypeError): /, "");
     const [contextError, setContextError] = useState("");
     const [conversationsError, setConversationsError] = useState("");
     const [live, setLive] = useState<Live | null>(null);
@@ -151,9 +155,9 @@ export function ConsolePage() {
     }, [location.search]);
 
     const loadContext = useResourceRead(`context:${conversation}`, (signal) => fetchContext(conversation, signal),
-        (data) => { setContext(data.context ?? null); setContextError(""); }, (error) => setContextError(String(error).replace(/^Error: /, "")));
+        (data) => { setContext(data.context ?? null); setContextError(""); }, (error) => setContextError(readErrorText(error)));
     const loadConversations = useResourceRead("conversations", fetchConversations,
-        (data) => { setConversations(data.conversations || []); setConversationsError(""); }, (error) => setConversationsError(String(error).replace(/^Error: /, "")));
+        (data) => { setConversations(data.conversations || []); setConversationsError(""); }, (error) => setConversationsError(readErrorText(error)));
 
     const loadQueue = useCallback(async () => {
         if (activeConversation.current !== conversation) return;
@@ -161,12 +165,14 @@ export function ConsolePage() {
         try {
             const data = await fetchQueue(conversation);
             if (activeConversation.current !== conversation || request !== queueRequest.current) return;
+            setQueueReadError(null);
             setExchanges(data.queue || []);
-            reconcileSubmission(conversation, data.queue || []);
+            await reconcileSubmission(conversation, data.queue || []);
+            if (activeConversation.current !== conversation || request !== queueRequest.current) return;
             const running = [...(data.queue || [])].filter((e) => ["running", "recovering", "awaiting-user"].includes(e.state)).sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""))[0];
             setLive((cur) => running ? (cur?.exchangeID === running.id ? cur : { since: running.started_at || running.enqueued_at, exchangeID: running.id, steps: {}, order: [] }) : null);
         } catch (e) {
-            if (activeConversation.current === conversation) setStatus(String(e).replace(/^Error: /, ""));
+            if (activeConversation.current === conversation && request === queueRequest.current) setQueueReadError({ conversation, error: e });
         }
     }, [conversation]);
     const loadReplies = useCallback(async () => {
@@ -181,6 +187,7 @@ export function ConsolePage() {
                 const data = await fetchReplies(conversation);
                 if (activeConversation.current !== conversation || request !== transcriptRequest.current) return;
                 if (revision !== transcriptRevision.current) continue;
+                setReplyReadError(null);
                 setEnabled(data.enabled);
                 setEntries(data.replies || []);
                 setLoadingReplies(false);
@@ -188,7 +195,7 @@ export function ConsolePage() {
                 return;
             }
         } catch (e) {
-            if (activeConversation.current === conversation) { setStatus(String(e)); setLoadingReplies(false); }
+            if (activeConversation.current === conversation && request === transcriptRequest.current) { setReplyReadError({ conversation, error: e }); setLoadingReplies(false); }
         }
     }, [conversation]);
 
@@ -350,13 +357,14 @@ export function ConsolePage() {
     async function deliver(pending: Submission) {
         try {
             await enqueue(conversation, pending.input, pending.quotes.length ? pending.quotes : undefined, pending.id, submissionRefs(pending), pending.locale);
-            finishSubmission(conversation, pending.id);
+            const recorded = await finishSubmission(conversation, pending.id);
+            if (!recorded && activeConversation.current === conversation) setStatus(t("console.receiptStorage"));
             if (activeConversation.current === conversation) setSelectedReply(null);
         } catch (error) {
             const conflict = error instanceof HTTPError && error.status === 409;
             const message = error instanceof Error ? error.message : String(error);
-            const retained = failSubmission(conversation, pending.id, message, conflict ? "conflict" : isRejectedRequest(error) ? "rejected" : "unknown");
-            if (retained && activeConversation.current === conversation) setStatus(isRejectedRequest(error) && !pending.uncertain ? message : "");
+            const retained = await failSubmission(conversation, pending.id, message, conflict ? "conflict" : isRejectedRequest(error) ? "rejected" : "unknown");
+            if (activeConversation.current === conversation) setStatus(!retained ? t("console.receiptStorage") : isRejectedRequest(error) && !pending.uncertain ? message : "");
         } finally {
             await loadQueue();
             refresh(); loadContext(); loadConversations();
@@ -369,20 +377,20 @@ export function ConsolePage() {
         if ((!input && !draftMaterials.length) || uploading || !canSubmit || submission || isStopPending(conversation) || creatingRequest.current || !context) return;
         if (busy && !queueing) { setStatus(t("console.queueDisabled")); return; }
         let pending: Submission | null;
-        try { pending = beginSubmission(conversation, input, quotes, line === undefined, locale); }
-        catch { setStatus(t("console.pendingStorage")); return; }
+        try { pending = await beginSubmission(conversation, input, quotes, line === undefined, locale, line === undefined); }
+        catch { if (activeConversation.current === conversation) setStatus(t("console.pendingStorage")); return; }
         if (!pending) return;
-        setStatus(""); clearStopNotice(conversation);
-        followTranscript.current = true;
+        clearStopNotice(conversation);
+        if (activeConversation.current === conversation) { setStatus(""); followTranscript.current = true; }
         await deliver(pending);
     }
 
     async function retrySend() {
         if (!canSubmit || isStopPending(conversation)) return;
         let pending: Submission | null;
-        try { pending = retrySubmission(conversation); }
-        catch { setStatus(t("console.retryStorage")); return; }
-        if (pending) { setStatus(""); await deliver(pending); }
+        try { pending = await retrySubmission(conversation); }
+        catch { if (activeConversation.current === conversation) setStatus(t("console.retryStorage")); return; }
+        if (pending) { if (activeConversation.current === conversation) setStatus(""); await deliver(pending); }
     }
 
     async function stop() {
@@ -447,7 +455,7 @@ export function ConsolePage() {
         if (!files?.length || uploading || !context?.project || !submissionSupport.material_refs) return;
         const target = { conversation, project: context.project.id, title };
         setUploading(true); setStatus("");
-        try { for (const file of Array.from(files)) { const material = await uploadMaterial(target.project, file, locale); materials.add(material, { id: material.id }, target); } }
+        try { for (const file of Array.from(files)) { const material = await uploadMaterial(target.project, file, locale); await materials.add(material, { id: material.id }, target); } }
         catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }
         finally { setUploading(false); }
     }
@@ -480,7 +488,7 @@ export function ConsolePage() {
                             <button type="button" className="text-xs text-tertiary hover:text-primary" onClick={() => void updateConversation(current.id, { archived: false }).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}>{t("console.unarchive")}</button>
                         </span>
                     )}
-                    <span role="status" className="console-status">{status || contextError || conversationsError || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "")}</span>
+                    <span role="status" className="console-status">{status || contextError || conversationsError || (queueReadError?.conversation === conversation ? readErrorText(queueReadError.error) : "") || (replyReadError?.conversation === conversation ? readErrorText(replyReadError.error) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "")}</span>
                     <span className="workbench-segmented" role="group" aria-label={t("console.workView")} >
                         <button type="button" onClick={() => navigate("/console")} aria-pressed>{t("console.conversation")}</button>
                         <button type="button" onClick={() => navigate("/console?view=board")} aria-pressed={false}>{t("console.board")}</button>
@@ -516,6 +524,7 @@ export function ConsolePage() {
                             </div>
                         </div>
                         <div className="composer-dock">
+                            {draftIssue && <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary"><p>{t(draftIssue === "conflict" ? "console.draftConflict" : draftIssue === "unavailable" ? "console.draftLockUnavailable" : "console.draftStorage")}</p>{draftIssue === "conflict" && <><pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words">{savedDraft}</pre><div className="mt-2 flex flex-wrap gap-3"><button type="button" className="underline" onClick={() => void resolveDraftConflict(conversation, "local")}>{t("console.keepLocalDraft")}</button><button type="button" className="underline" onClick={() => void resolveDraftConflict(conversation, "remote")}>{t("console.useSavedDraft")}</button></div></>}</div>}
                             {!canSubmit && <div role="status" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
                                 <p>{submissionSupport.state === "unsupported" ? t("console.unsupportedHub") : submissionSupport.error ? t("console.unknownHub") : t("console.checkingHub")}</p>
                                 {submissionSupport.error && <p className="mt-1 break-words">{submissionSupport.error}</p>}
@@ -526,15 +535,15 @@ export function ConsolePage() {
                                 {submission.error && <p className="mt-1 break-words">{submission.error}</p>}
                                 <p className="my-1 whitespace-pre-wrap break-words">{submission.input}</p>
                                 {submission.id && !submission.conflict && !submission.rejected && <button type="button" className="mr-4 underline" onClick={() => void retrySend()}>{t("console.retrySend")}</button>}
-                                {(!submission.id || submission.rejected) && <button type="button" className="mr-4 underline" onClick={() => { if (!restoreSubmission(conversation)) setStatus(t("console.recoveryStorage")); }}>{t("console.restoreDraft")}</button>}
-                                <button type="button" className="underline" onClick={() => { finishSubmission(conversation, submission.id); setStatus(""); }}>{t("console.received")}</button>
+                                {(!submission.id || submission.rejected) && <button type="button" className="mr-4 underline" onClick={async () => { if (!await restoreSubmission(conversation)) setStatus(t("console.recoveryStorage")); }}>{t("console.restoreDraft")}</button>}
+                                <button type="button" className="underline" onClick={async () => { if (await finishSubmission(conversation, submission.id)) setStatus(""); }}>{t("console.received")}</button>
                             </div>}
                             {stopState?.uncertain && <div role="alert" className="mx-auto mb-2 max-w-3xl rounded-lg bg-warning-primary p-3 text-sm text-secondary">
                                 <p>{t("console.stopUncertain")}</p>
                                 <button type="button" className="mt-1 underline" onClick={() => void stop()}>{t("console.retryStop")}</button>
                             </div>}
                             {submissionSupport.interactive_requests && <QuestionPanel key={conversation} conversation={conversation} />}
-                            {draftMaterials.length > 0 && <ul aria-label={t("materials.draftRefs")} className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">{draftMaterials.map((ref) => <li key={refKey(ref)} className="flex max-w-full items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs"><button type="button" className="truncate" onClick={() => setOpenedMaterial(ref)}>{ref.title}{ref.selector?.kind === "lines" ? ` · L${ref.selector.start}–L${ref.selector.end}` : ""}</button><button type="button" aria-label={t("materials.remove", { title: ref.title })} onClick={() => { if (!removeDraftMaterial(conversation, ref)) setStatus(t("materials.sourceUnavailable")); }}>×</button></li>)}</ul>}
+                            {draftMaterials.length > 0 && <ul aria-label={t("materials.draftRefs")} className="mx-auto mb-2 flex max-w-3xl flex-wrap gap-2">{draftMaterials.map((ref) => <li key={refKey(ref)} className="flex max-w-full items-center gap-2 rounded-lg bg-secondary px-3 py-2 text-xs"><button type="button" className="truncate" onClick={() => setOpenedMaterial(ref)}>{ref.title}{ref.selector?.kind === "lines" ? ` · L${ref.selector.start}–L${ref.selector.end}` : ""}</button><button type="button" aria-label={t("materials.remove", { title: ref.title })} onClick={async () => { if (!await removeDraftMaterial(conversation, ref)) setStatus(t("materials.sourceUnavailable")); }}>×</button></li>)}</ul>}
                             {submissionSupport.material_refs && <div className="mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-3"><label className="cursor-pointer rounded-md px-2 py-1 text-xs text-tertiary hover:bg-secondary">{uploading ? t("materials.uploading") : t("materials.upload")}<input type="file" multiple className="sr-only" disabled={uploading} aria-label={t("materials.upload")} onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} /></label><span className="text-xs text-quaternary">{t("materials.uploadHint")}</span></div>}
                             {openedMaterial && context?.project && <MaterialPreview project={context.project.id} anchor={openedMaterial} onClose={() => setOpenedMaterial(null)} />}
                             <Composer

@@ -228,7 +228,7 @@ export function SelectionProvider({ children }: { children: ReactNode }) {
       if (kind === "chat") {
                 const { context } = await fetchContext(target!.conversation);
                 if (context?.project?.id !== target!.project || !context.project.bound) throw new Error(t("materials.wrongProject"));
-                materials.add(material, ref, target!);
+                await materials.add(material, ref, target!);
             }
       if (kind === "details")
         setPreview({
@@ -237,7 +237,7 @@ export function SelectionProvider({ children }: { children: ReactNode }) {
           selector: ref.selector,
         });
       if (kind === "ask")
-        side.open({
+        await side.open({
           material,
           ref,
           excerpt: selected.content.excerpt,

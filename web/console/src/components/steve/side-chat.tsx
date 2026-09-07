@@ -7,7 +7,7 @@ import { useI18n } from "@/providers/locale-provider";
 import { useFleet } from "@/lib/fleet";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import { fetchQueue, fetchReplies, enqueue, send, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
-import { useDraft, useMaterials, useSubmission, updateDraft, removeDraftMaterial, beginSubmission, retrySubmission, finishSubmission, failSubmission, reconcileSubmission, restoreSubmission, submissionRefs, useStops, beginStop, finishStop, isStopPending, type Submission } from "@/lib/drafts";
+import { useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useMaterials, useSubmission, updateDraft, removeDraftMaterial, beginSubmission, retrySubmission, finishSubmission, failSubmission, reconcileSubmission, restoreSubmission, submissionRefs, useStops, beginStop, finishStop, isStopPending, type Submission } from "@/lib/drafts";
 import { HTTPError, isRejectedRequest } from "@/lib/http";
 import { refKey } from "@/lib/material-ref";
 import type { Exchange, Reply } from "@/lib/types";
@@ -18,6 +18,8 @@ import "@/styles/side-chat.css";
 export function SideChatPanel({ onOpenMain }: { onOpenMain?: () => void } = {}) { const { session } = useSideChat(); return session ? <SideConversation key={session.id} session={session} onOpenMain={onOpenMain} /> : null; }
 function SideConversation({ session, onOpenMain }: { session: SideSession; onOpenMain?: () => void }) {
     const { t, locale } = useI18n(); const side = useSideChat(); const { consoleEvents, live } = useFleet();
+    const draftIssue = useDraftIssue(session.id);
+    const savedDraft = useSavedDraft(session.id);
     const text = useDraft(session.id), refs = useMaterials(session.id), pending = useSubmission(session.id), stops = useStops(), stop = stops[session.id];
     const support = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
     const [replies, setReplies] = useState<Reply[]>([]), [queue, setQueue] = useState<Exchange[]>([]), [readError, setReadError] = useState(""), [loaded, setLoaded] = useState(false);
@@ -36,16 +38,16 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
         try {
             await side.ensureBound(session);
             await enqueue(session.id, submission.input, [], submission.id, submissionRefs(submission), submission.locale);
-            finishSubmission(session.id, submission.id); side.report(session.id, "");
+            const recorded = await finishSubmission(session.id, submission.id); side.report(session.id, recorded ? "" : t("console.receiptStorage"));
         } catch (error) {
             const outcome = error instanceof HTTPError && error.status === 409 ? "conflict" : isRejectedRequest(error) ? "rejected" : "unknown";
             const message = error instanceof Error ? error.message : String(error);
-            if (failSubmission(session.id, submission.id, message, outcome)) side.report(session.id, message);
+            const recorded = await failSubmission(session.id, submission.id, message, outcome); side.report(session.id, recorded ? message : t("console.receiptStorage"));
         } finally { void load(); }
     }
     async function submit(retry = false) {
         if (isStopPending(session.id) || blocked || (!retry && (!text.trim() && refs.length === 0))) return;
-        try { const submission = retry ? retrySubmission(session.id) : beginSubmission(session.id, text.trim(), [], true, locale); if (submission) { side.report(session.id, ""); follow.current = true; await deliver(submission); } }
+        try { const submission = retry ? await retrySubmission(session.id) : await beginSubmission(session.id, text.trim(), [], true, locale); if (submission) { side.report(session.id, ""); follow.current = true; await deliver(submission); } }
         catch { side.report(session.id, t("sideChat.storage")); }
     }
     async function cancel() {
@@ -67,10 +69,12 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
         </div>
         {support.interactive_requests && <QuestionPanel conversation={session.id} />}
         <div className="side-chat-compose">
-            {refs.length > 0 && <ul className="mb-2 flex flex-wrap gap-1" aria-label={t("materials.draftRefs")}>{refs.map((ref) => <li key={refKey(ref)} className="flex max-w-full items-center gap-1 rounded bg-secondary px-2 py-1 text-xs"><span className="truncate">{ref.title}</span><button type="button" aria-label={t("sideChat.removeRef", { title: ref.title })} onClick={() => { if (!removeDraftMaterial(session.id, ref)) side.report(session.id, t("sideChat.storage")); }}>×</button></li>)}</ul>}
+            {draftIssue && <div role="alert" className="mb-2 rounded-lg bg-warning-primary p-3 text-xs"><p>{t(draftIssue === "conflict" ? "console.draftConflict" : draftIssue === "unavailable" ? "console.draftLockUnavailable" : "console.draftStorage")}</p>{draftIssue === "conflict" && <><pre className="mt-2 max-h-24 overflow-auto whitespace-pre-wrap break-words">{savedDraft}</pre><div className="mt-2 flex flex-wrap gap-3"><button type="button" className="underline" onClick={() => void resolveDraftConflict(session.id, "local")}>{t("console.keepLocalDraft")}</button><button type="button" className="underline" onClick={() => void resolveDraftConflict(session.id, "remote")}>{t("console.useSavedDraft")}</button></div></>}</div>}
+            {refs.length > 0 && <ul className="mb-2 flex flex-wrap gap-1" aria-label={t("materials.draftRefs")}>{refs.map((ref) => <li key={refKey(ref)} className="flex max-w-full items-center gap-1 rounded bg-secondary px-2 py-1 text-xs"><span className="truncate">{ref.title}</span><button type="button" aria-label={t("sideChat.removeRef", { title: ref.title })} onClick={async () => { if (!await removeDraftMaterial(session.id, ref)) side.report(session.id, t("sideChat.storage")); }}>×</button></li>)}</ul>}
             {pending && !pending.active && <div role="alert" className="mb-2 rounded-lg bg-warning-primary p-3 text-xs"><p>{t(pending.conflict ? "sideChat.conflict" : pending.rejected ? "sideChat.rejected" : "sideChat.unknown")}</p><p className="my-1 whitespace-pre-wrap break-words">{pending.input}</p>{pending.error && <p className="mb-2 break-words">{pending.error}</p>}{pending.id && !pending.conflict && !pending.rejected && <button type="button" className="mr-3 underline" onClick={() => void submit(true)}>{t("sideChat.retrySend")}</button>}{(!pending.id || pending.rejected) && <button type="button" className="mr-3 underline" onClick={() => restoreSubmission(session.id)}>{t("sideChat.restore")}</button>}<button type="button" className="underline" onClick={() => finishSubmission(session.id, pending.id)}>{t("sideChat.confirmed")}</button></div>}
-            <TextArea textAreaRef={input} aria-label={t("sideChat.message")} placeholder={t("sideChat.placeholder")} value={text} onChange={(value) => { if (!updateDraft(session.id, value)) side.report(session.id, t("sideChat.storage")); }} rows={3} isDisabled={blocked} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); } }} />
+            <TextArea textAreaRef={input} aria-label={t("sideChat.message")} placeholder={t("sideChat.placeholder")} value={text} onChange={(value) => { void updateDraft(session.id, value); }} rows={3} isDisabled={blocked} onKeyDown={(event) => { if (event.nativeEvent.isComposing) return; if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); void submit(); } }} />
             <div className="mt-2 flex items-center gap-2"><span role="status" className="min-w-0 flex-1 text-xs text-tertiary">{blocked ? t("sideChat.unavailable") : session.binding ? t("sideChat.binding") : pending?.active ? t("sideChat.sending") : stop?.error || stop?.message || ""}</span>{(busy || stop?.uncertain) && <Button size="sm" color="secondary" isDisabled={stop?.active} onClick={() => void cancel()}>{t(stop?.active ? "sideChat.stopping" : "sideChat.stop")}</Button>}<Button size="sm" isDisabled={blocked || !!pending || isStopPending(session.id) || (!text.trim() && !refs.length)} onClick={() => void submit()}>{t(busy ? "sideChat.queue" : "sideChat.send")}</Button></div>
+            {session.agentReviewRequired && <div className="mt-2 space-y-2 text-xs"><p>{t("sideChat.chooseAgent")}</p><Button size="sm" color="secondary" onClick={() => void side.acceptWorkbenchAgent(session).catch((error) => side.report(session.id, error instanceof Error ? error.message : String(error)))}>{t("sideChat.checkChosenAgent")}</Button></div>}
             {session.error && !pending && <p role="alert" className="mt-2 text-xs text-error-primary">{session.error}</p>}{stop?.uncertain && <p role="alert" className="mt-2 text-xs text-error-primary">{t("sideChat.stopUnknown")}</p>}
         </div>
     </section>;

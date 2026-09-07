@@ -89,11 +89,36 @@ try {
     await panel.getByText("1 recent resolved requests", { exact: true }).click();
     await panel.getByText("Answered", { exact: true }).waitFor();
     await panel.getByText("Use dev-box", { exact: true }).waitFor();
-    assert.equal(await panel.getByRole("button", { name: "Use dev-box", exact: true }).count(), 0);
+    const staleRead = page.waitForResponse((response) => new URL(response.url()).pathname === "/console/questions");
+    await page.evaluate((event) => window.emit(event), { kind: "console.question", conversation, at });
+    await staleRead;
+    await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+    assert.equal(await panel.getByRole("button", { name: "Use dev-box", exact: true }).count(), 0, "an acknowledged answer is not reopened by stale pending reads");
     assert.equal(await composer.inputValue(), "A separate follow-up draft");
     assert.deepEqual(f.queue, []);
     f.staleReads = false;
     console.log("PASS single choice replies directly, awaits acknowledgement and preserves history without creating work");
+
+    for (const [state, label] of [["interrupted", "The session was interrupted; this request can no longer be answered."], ["cancelled", "Cancelled"]]) {
+        const recovered = makeQuestion(`q-recovered-${state}`, { title: `Restore unanswered ${state} request`, allow_free_text: true });
+        await show(recovered);
+        await panel.getByRole("button", { name: "Give another answer", exact: true }).click();
+        await panel.getByRole("textbox", { name: "Answer", exact: true }).fill("Keep my recovery answer draft");
+        const before = f.answers.length;
+        f.questions = [{ ...recovered, state }];
+        await page.evaluate((event) => window.emit(event), { kind: "console.question", conversation, at });
+        await panel.getByText("1 recent resolved requests", { exact: true }).click();
+        await panel.getByText(label, { exact: true }).waitFor();
+        assert.equal(await panel.getByRole("textbox", { name: "Answer", exact: true }).count(), 0);
+        f.questions = [recovered];
+        await page.evaluate((event) => window.emit(event), { kind: "console.question", conversation, at });
+        const restoredInput = panel.getByRole("textbox", { name: "Answer", exact: true });
+        await restoredInput.waitFor();
+        assert.equal(await restoredInput.inputValue(), "Keep my recovery answer draft");
+        assert.equal(await panel.getByText("1 recent resolved requests", { exact: true }).count(), 0);
+        assert.equal(f.answers.length, before, "recovery never synthesizes a user response");
+    }
+    console.log("PASS recovered unanswered requests reopen under the same ID and retain answer drafts");
 
     await show(makeQuestion("q-later", { title: "Choose when to continue" }));
     await panel.getByRole("button", { name: "Answer later", exact: true }).click();

@@ -50,6 +50,22 @@ try {
     await panel.waitFor();
     await page.getByRole("link", { name: "Coordinated by dev-box", exact: true }).waitFor();
     assert.equal(await page.getByRole("link", { name: "Coordinated by laptop", exact: true }).count(), 0);
+    await page.setViewportSize({ width: 780, height: 540 });
+    const initialView = structuredClone(f.view);
+    f.view.nodes = [node("a", "laptop")]; f.view.coordinator_id = "a"; f.view.ready = false;
+    await panel.getByRole("button", { name: "Refresh status", exact: true }).click();
+    await panel.getByText("Only one node can coordinate tasks. Execution-only machines cannot take over coordination.", { exact: true }).waitFor();
+    assert.ok((await panel.boundingBox()).height < 360, "default single-node summary leaves room for resource lists");
+    assert.equal(await panel.getByText("Automatic takeover is currently unavailable", { exact: true }).isVisible(), false, "disabled failover is an ordinary configuration, not an alarm");
+    const settings = panel.locator("details").filter({ has: page.locator("summary", { hasText: "Failover settings" }) });
+    assert.equal(await settings.getAttribute("open"), null);
+    const audit = panel.locator("details").filter({ has: page.locator("summary", { hasText: "Coordination history" }) });
+    assert.equal(await audit.getAttribute("open"), null);
+    f.view = initialView;
+    await panel.getByRole("button", { name: "Refresh status", exact: true }).click();
+    await panel.getByText("Coordinated by dev-box", { exact: true }).waitFor();
+    await panel.getByText("Failover settings", { exact: true }).click();
+    await page.setViewportSize({ width: 1440, height: 1000 });
     const policy = panel.getByRole("switch", { name: "Automatic failover", exact: true });
     assert.equal(await policy.isChecked(), false);
     assert.equal(await panel.getByRole("switch", { name: "Allow build-node to take over automatically", exact: true }).isChecked(), false);
@@ -74,7 +90,10 @@ try {
     assert.equal(await panel.getByRole("button", { name: "Hand over", exact: true }).isDisabled(), true);
     assert.equal(await policy.isDisabled(), true);
     assert.equal(await policy.isChecked(), true);
+    await panel.getByText("Failover settings", { exact: true }).click();
     await panel.getByText("Automatic takeover is currently unavailable", { exact: true }).waitFor();
+    assert.equal(await panel.getByText(f.view.reason, { exact: true }).isVisible(), true, "loss of authority stays visible with settings collapsed");
+    await panel.getByText("Failover settings", { exact: true }).click();
     assert.equal(f.calls.length, 1);
     f.view.authoritative = true; f.view.ready = true; f.view.reason = ""; f.view.auto_failover = false;
     const third = f.view.nodes.pop();
@@ -101,7 +120,9 @@ try {
     await panel.getByText("Operation recorded", { exact: true }).waitFor();
     assert.equal(f.calls.length, 2, "an existing receipt must not resend the transfer");
     await page.getByRole("link", { name: "Coordinated by laptop", exact: true }).waitFor();
+    await panel.getByText("Coordination history", { exact: true }).click();
     await panel.getByText("User requested handover", { exact: true }).waitFor();
+    await panel.getByText("Failover settings", { exact: true }).click();
     console.log("PASS role handover retains online nodes and reconciles a lost response without a second command");
 
     f.resetBeforeCommit = true;
@@ -115,6 +136,7 @@ try {
     f.view.cluster_id = "cluster-one";
     await page.reload();
     await panel.getByRole("button", { name: "Retry the same operation", exact: true }).click();
+    await panel.getByText("Failover settings", { exact: true }).click();
     await waitFor(() => panel.getByRole("switch", { name: "Allow build-node to take over automatically", exact: true }).isChecked(), "eligibility retry applied");
     assert.deepEqual(f.calls.at(-1), eligibility);
     console.log("PASS retry without a receipt retains the exact eligibility payload and command ID");

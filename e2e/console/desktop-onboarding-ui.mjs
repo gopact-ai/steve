@@ -44,7 +44,7 @@ async function fixture(enabled = true) {
             if (f.reset) { f.reset = false; return route.abort("connectionreset"); }
             return route.fulfill({ json: f.status });
         }
-        if (p === "/state") return route.fulfill({ json: { at, hub: { node: "my-desktop", version: "test" }, nodes: [], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] } });
+        if (p === "/state") return route.fulfill({ json: { at, hub: { node: "my-desktop", version: "test" }, nodes: [{ name: "my-desktop", role: "hub", up: true }], agents: [], tasks: [], plans: [], projects: [], attempts: [], landings: [] } });
         if (p === "/console/context") return route.fulfill({ json: { enabled: true, context: { conversation, agents: [] } } });
         if (p === "/console/conversations") return route.fulfill({ json: { conversations: [{ id: conversation, title: "First conversation", count: 1, last_at: at, running: false }] } });
         if (p === "/console/replies") return route.fulfill({ json: { enabled: true, replies: [] } });
@@ -81,6 +81,7 @@ try {
     await dialog.getByRole("button", { name: "Register selected agents", exact: true }).click();
     await dialog.getByText("Select at least one installed tool.", { exact: true }).waitFor();
     assert.equal(await codex.evaluate((el) => document.activeElement === el), true);
+    assert.equal(await dialog.getByRole("button", { name: "Register selected agents", exact: true }).count(), 1, "empty selection has not attempted registration");
     await page.keyboard.press("Space");
     assert.equal(await codex.isChecked(), true);
     f.hold = true;
@@ -107,11 +108,27 @@ try {
     await later.page.reload();
     await later.page.getByRole("heading", { name: "First conversation", exact: true }).waitFor();
     assert.equal(await later.page.getByRole("dialog").count(), 0);
-    await later.page.goto(url + "#/console?setup=agents");
+    await later.page.goto(url + "?token=test-desktop-route#/fleet");
+    await later.page.evaluate(() => { window.navigationSentinel = "same-document"; });
+    const enrollmentLink = later.page.getByRole("link", { name: "Register local agents", exact: true });
+    await enrollmentLink.waitFor();
+    assert.equal(await enrollmentLink.getAttribute("href"), "#/console?setup=agents", "native link actions use a hash-router URL");
+    await enrollmentLink.click();
     await laterDialog.waitFor();
+    assert.equal(new URL(later.page.url()).hash, "#/console?setup=agents");
+    assert.equal(new URL(later.page.url()).search, "?token=test-desktop-route");
+    assert.equal(await later.page.evaluate(() => window.navigationSentinel), "same-document", "route links preserve the running document");
+    await laterDialog.getByRole("button", { name: "Register later", exact: true }).click();
+    await later.page.getByRole("link", { name: "Resources", exact: true }).click();
+    await later.page.getByRole("row", { name: /my-desktop/ }).click();
+    const machineEnrollment = later.page.getByRole("link", { name: "Register agents on this machine", exact: true });
+    await machineEnrollment.focus();
+    await later.page.keyboard.press("Enter");
+    await laterDialog.waitFor();
+    assert.equal(new URL(later.page.url()).hash, "#/console?setup=agents");
     assert.deepEqual(later.posts, []);
     await later.close();
-    console.log("PASS postponing onboarding survives reload and the resources deep link opens it again");
+    console.log("PASS postponing survives reload; resource and machine links reopen enrollment with mouse and keyboard without reloading");
 
     const retry = await fixture(); retry.discoveryError = true;
     await retry.page.goto(url + "#/console");

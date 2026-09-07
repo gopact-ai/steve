@@ -3,8 +3,9 @@
 .settings-header h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -.4px; }
 .settings-header > div { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-left: auto; font-size: 12px; color: var(--color-text-tertiary); }
 .settings-layout { display: grid; grid-template-columns: 184px minmax(0,760px); align-items: start; gap: 40px; max-width: 1064px; padding: 28px 32px 48px; }
-.settings-nav { display: flex; flex-direction: column; gap: 4px; position: sticky; top: 20px; }
-.settings-nav a { display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 12px; border-radius: 8px; color: var(--color-text-secondary); font-size: 14px; white-space: nowrap; }
+.settings-nav { min-width: 0; display: flex; flex-direction: column; gap: 4px; position: sticky; top: 20px; }
+.settings-nav a { min-width: 0; display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 10px 12px; border-radius: 8px; color: var(--color-text-secondary); font-size: 14px; white-space: nowrap; }
+.settings-nav-label { flex: 1; min-width: 0; white-space: normal; overflow-wrap: anywhere; }
 .settings-nav a:hover { background: var(--color-bg-secondary); }
 .settings-nav a[aria-current=page] { color: var(--selected-text); background: var(--selected-surface); font-weight: 600; }
 .settings-nav svg { width: 17px; height: 17px; flex: 0 0 auto; }
@@ -47,4 +48,4 @@
 .app-settings-link > svg { width: 17px; height: 17px; }
 .app-settings-link[aria-current=page] { color: var(--color-text-brand-secondary); }
 @media(max-width: 900px) { .settings-layout { grid-template-columns: 164px minmax(0,1fr); gap: 24px; padding-inline: 24px; } .settings-field { grid-template-columns: minmax(0,1fr) 200px; gap: 16px; } }
-@media(max-width: 680px) { .settings-header { padding: 16px 20px; min-height: 64px; } .settings-layout { display: block; padding: 12px 20px 40px; } .settings-nav { position: static; flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 12px; margin-bottom: 16px; } .settings-nav a { flex-shrink: 0; padding-inline: 10px; } .settings-nav svg { display:none; } .settings-field { grid-template-columns: minmax(0,1fr); gap: 10px; padding-block: 14px; } .settings-field label { padding-top:0; } .settings-header > div { justify-content:flex-end; } }
+@media(max-width: 680px) { .settings-header { padding: 16px 20px; min-height: 64px; } .settings-layout { display: block; padding: 12px 20px 40px; } .settings-nav { position: static; flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 12px; margin-bottom: 16px; } .settings-nav a { flex-shrink: 0; padding-inline: 10px; } .settings-nav-label { white-space: nowrap; } .settings-nav svg { display:none; } .settings-field { grid-template-columns: minmax(0,1fr); gap: 10px; padding-block: 14px; } .settings-field label { padding-top:0; } .settings-header > div { justify-content:flex-end; } }

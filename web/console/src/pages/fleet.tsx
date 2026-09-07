@@ -304,7 +304,7 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
                     { k: tr("fleet.connection"), v: n.since ? when(n.since, locale) : "—" },
                 ]} />
                 {enrolling && <NodeAgentEnrollment node={n.name} onClose={() => setEnrolling(false)} onRegistered={onChanged} />}
-                <section className="rounded-lg border border-secondary p-3">{n.role === "hub" ? <Button size="sm" color="secondary" href="#/console?setup=agents" onClick={onClose}>{tr("nodeAgents.entry")}</Button> : <Button size="sm" color="secondary" isDisabled={!n.up} onClick={() => setEnrolling(true)}>{tr("nodeAgents.entry")}</Button>}</section>
+                <section className="rounded-lg border border-secondary p-3">{n.role === "hub" ? <Button size="sm" color="secondary" href="/console?setup=agents" onClick={onClose}>{tr("nodeAgents.entry")}</Button> : <Button size="sm" color="secondary" isDisabled={!n.up} onClick={() => setEnrolling(true)}>{tr("nodeAgents.entry")}</Button>}</section>
                 {editing ? (
                     <SettingsEditor node={n.name} onClose={() => setEditing(false)} onSaved={onChanged} />
                 ) : (
@@ -381,7 +381,7 @@ export function FleetPage() {
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title={tr("fleet.title")} description={tr("fleet.description")}
-                actions={<><Button size="sm" color="secondary" href="#/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => setAdding(true)}>{tr("fleet.addResource")}</Button></>} />
+                actions={<><Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => setAdding(true)}>{tr("fleet.addResource")}</Button></>} />
             <PageBody>
             <CoordinationPanel />
             {sshOpen && <SSHConnect onClose={() => setSSHOpen(false)} onChanged={refresh} />}

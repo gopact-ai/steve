@@ -19,9 +19,9 @@ export function QuestionPanel({ conversation }: { conversation: string }) {
     const [error, setError] = useState("");
     const load = useResourceRead(`questions:${conversation}`, (signal) => questions(conversation, signal), (value) => {
         setItems((previous) => {
-            const resolved = new Map(previous.filter((question) => question.state !== "pending").map((question) => [question.id, question]));
-            // A read already in flight cannot reopen a question acknowledged by
-            // the answer endpoint. Resolved question identities are immutable.
+            const resolved = new Map(previous.filter((question) => question.answer?.command_id && ["answered", "declined", "cancelled"].includes(question.state)).map((question) => [question.id, question]));
+            // Preserve acknowledged decisions against stale reads. An unanswered
+            // interruption or cancellation can return to pending after recovery.
             return (value.questions || []).map((question) => resolved.get(question.id) || { ...question, options: question.options || [] });
         });
         setError("");

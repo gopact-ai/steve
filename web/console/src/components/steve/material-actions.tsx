@@ -22,7 +22,7 @@ export function MaterialActions({ capture, material, selector, anchor }: { captu
             const value = material || (capture ? await captureMaterial(capture.project, capture.source, capture.title) : null);
             if (!value) throw new Error(t("materials.unknownSource"));
             const ref: MaterialRef = anchor || { id: value.id, ...(selector ? { selector } : {}) };
-            if (kind === "chat") { const {context}=await fetchContext(target!.conversation); if(context?.project?.id!==target!.project || !context.project.bound)throw new Error(t("materials.wrongProject")); store.add(value, ref, target!); }
+            if (kind === "chat") { const {context}=await fetchContext(target!.conversation); if(context?.project?.id!==target!.project || !context.project.bound)throw new Error(t("materials.wrongProject")); await store.add(value, ref, target!); }
             else if (kind === "side") store.pin(value, ref);
             else store.annotate({ material: value, ref });
         } catch (error) { setError(error instanceof Error ? error.message : String(error)); }

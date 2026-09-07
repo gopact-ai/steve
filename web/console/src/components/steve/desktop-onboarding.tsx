@@ -61,6 +61,7 @@ function DesktopSetupDialog({ status, onClose, onRegistered }: { status: Desktop
     const [discoveryError, setDiscoveryError] = useState("");
     const [error, setError] = useState("");
     const [busy, setBusy] = useState(false);
+    const [registrationAttempted, setRegistrationAttempted] = useState(false);
     const [result, setResult] = useState<DesktopStatus | null>(null);
     const acting = useRef(false);
     const agentList = useRef<HTMLFieldSetElement>(null);
@@ -77,6 +78,7 @@ function DesktopSetupDialog({ status, onClose, onRegistered }: { status: Desktop
     }
     function choose(id: string, selected: boolean) {
         setError("");
+        setRegistrationAttempted(false);
         save({ selected: selected ? [...draft.selected.filter((item) => item !== id), id] : draft.selected.filter((item) => item !== id) });
     }
     function finish(next: DesktopStatus) {
@@ -97,6 +99,7 @@ function DesktopSetupDialog({ status, onClose, onRegistered }: { status: Desktop
         acting.current = true; setBusy(true); setError("");
         try {
             if (draft.pending && await reconcile(selected)) return;
+            setRegistrationAttempted(true);
             const next = await enrollDesktopAgents(selected);
             if (!enrolled(next)) throw new Error(t("desktop.unconfirmed"));
             finish(next);
@@ -141,7 +144,7 @@ function DesktopSetupDialog({ status, onClose, onRegistered }: { status: Desktop
                     {error && <p role="alert" className="mt-3 break-words text-sm text-error-primary">{error}</p>}
                     {draft.pending && !busy && <p role="status" className="mt-3 text-xs leading-5 text-tertiary">{t("desktop.unconfirmed")}</p>}
                     {busy && <p role="status" className="mt-3 text-sm text-tertiary">{t("desktop.registering")}</p>}
-                    <div className="mt-5 flex flex-wrap gap-2"><Button size="md" isLoading={busy} isDisabled={loading || !!discoveryError} onClick={() => void register()}>{t(error || draft.pending ? "desktop.retryRegister" : "desktop.register")}</Button><Button size="md" color="secondary" isDisabled={busy} onClick={done}>{t("desktop.registerLater")}</Button></div>
+                    <div className="mt-5 flex flex-wrap gap-2"><Button size="md" isLoading={busy} isDisabled={loading || !!discoveryError} onClick={() => void register()}>{t(registrationAttempted || draft.pending ? "desktop.retryRegister" : "desktop.register")}</Button><Button size="md" color="secondary" isDisabled={busy} onClick={done}>{t("desktop.registerLater")}</Button></div>
                     <p className="mt-3 text-xs leading-5 text-quaternary">{t("desktop.selectionSaved")}</p>
                 </>}
             </div>

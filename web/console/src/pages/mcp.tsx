@@ -217,7 +217,7 @@ function RegistryPanel({ onInstalled }: { onInstalled: () => void }) {
     const [values, setValues] = useState<Record<string, string>>({});
     const [error, setError] = useState("");
     const [installing, setInstalling] = useState(false);
-    const machines = [{ id: snap.hub.node, label: `${snap.hub.node}（hub）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.name }))];
+    const machines = [{ id: snap.hub.node, label: `${snap.hub.node}（${tr("connection.coordinator")}）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.name }))];
     function search() {
         setSearching(true); setError("");
         void searchMCPRegistry(q).then((r) => setResults(r.entries)).catch((e) => setError(fail(e))).finally(() => setSearching(false));
