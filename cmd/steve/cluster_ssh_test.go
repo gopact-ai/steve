@@ -5,6 +5,10 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,6 +16,54 @@ import (
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
+
+func TestPeerSSHLocalCheckAdvertisesFullNodeMode(t *testing.T) {
+	home := t.TempDir()
+	if err := os.Mkdir(filepath.Join(home, ".ssh"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".ssh", "config"), []byte("Host fixture\nHostName fixture.invalid\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	commands := filepath.Join(home, "commands")
+	if err := os.Mkdir(commands, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Avoid all network connections: multiplex lifecycle calls succeed locally,
+	// and only the read-only production probe executes in this fixture HOME.
+	script := `#!/bin/sh
+for value do
+  case "$value" in -M|-O) exit 0;; esac
+  final="$value"
+done
+[ "$final" = 'sh -s' ] || exit 91
+SSH_CONNECTION='127.0.0.1 10000 127.0.0.1 22'
+export SSH_CONNECTION
+exec /bin/sh -s
+`
+	if err := os.WriteFile(filepath.Join(commands, "ssh"), []byte(script), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("PATH", commands+":/usr/bin:/bin")
+	peer := &clusterPeer{uiToken: strings.Repeat("a", 32), uiURL: "http://127.0.0.1:7700"}
+	t.Cleanup(func() {
+		if peer.localSSH != nil {
+			_ = peer.localSSH.Close()
+		}
+	})
+	req := httptest.NewRequest(http.MethodPost, "/console/ssh/check", strings.NewReader(`{"alias":"fixture"}`))
+	req.Header.Set("Authorization", "Bearer "+peer.uiToken)
+	response := httptest.NewRecorder()
+	peer.serveSSHLocal(response, req)
+	var check sshconnect.CheckResult
+	if err := json.Unmarshal(response.Body.Bytes(), &check); err != nil {
+		t.Fatal(err)
+	}
+	if response.Code != http.StatusOK || check.InstallationMode != sshconnect.InstallPeer || !check.Reachable {
+		t.Fatalf("desktop check did not advertise peer installation: %d %s", response.Code, response.Body.String())
+	}
+}
 
 type sshEnrollmentFixture struct {
 	prepares, completes int

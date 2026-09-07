@@ -24,7 +24,7 @@ func (p *clusterPeer) serveSSHLocal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if p.localSSH == nil {
-		p.localSSH = sshconnect.New(sshconnect.Options{Backend: peerSSHBackend{peer: p}})
+		p.localSSH = sshconnect.New(sshconnect.Options{Backend: peerSSHBackend{peer: p}, InstallationMode: sshconnect.InstallPeer})
 	}
 	service := p.localSSH
 	p.mu.Unlock()

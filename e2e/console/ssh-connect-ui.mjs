@@ -13,7 +13,7 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 1000
 const page = await context.newPage(); page.setDefaultTimeout(6500);
 const at = "2026-09-07T01:00:00Z";
 const candidate = { alias: "dev-box", host_name: "10.0.0.9", user: "developer", port: 22, proxy_jump: "bastion", has_proxy_command: false, has_identity_file: true, conditional: true, source: "/test/ssh/config", line: 3 };
-const check = { candidate, reachable: true, address: "10.0.0.9", os: "linux", arch: "arm64", tools: [{ name: "bash", available: true }, { name: "nohup", available: true }], existing_installation: false, steps: [{ id: "ssh", status: "ready", message: "SSH connection and authentication verified" }], checked_at: at };
+const check = { candidate, reachable: true, address: "10.0.0.9", os: "linux", arch: "arm64", tools: [{ name: "bash", available: true }, { name: "nohup", available: true }], existing_installation: false, existing_paths: [], installation_mode: "peer", steps: [{ id: "ssh", status: "ready", message: "SSH connection and authentication verified" }], checked_at: at };
 const f = { candidates: [candidate], checks: [], plans: [], installs: [], nodeAgentReads: [], errors: [], ready: false, checkError: false, discoveryError: false, reset: false, hold: false, release: null, connected: false, coordinator: "my-desktop", changedNetwork: false };
 page.on("pageerror", (error) => f.errors.push(String(error)));
 await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.sources = []; window.EventSource = class { constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() {} }; });
@@ -45,7 +45,7 @@ const routeRequest = async (route) => {
 };
 await page.route("**/*", routeRequest);
 async function waitFor(check, message) { for (let i = 0; i < 120; i++) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 25)); } assert.fail(message); }
-async function screenshot(name) { if (!process.env.SSH_SCREENSHOTS) return; await mkdir(process.env.SSH_SCREENSHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.SSH_SCREENSHOTS, name + ".png"), animations: "disabled" }); }
+async function screenshot(name, target = page) { if (!process.env.SSH_SCREENSHOTS) return; await mkdir(process.env.SSH_SCREENSHOTS, { recursive: true }); await target.screenshot({ path: path.join(process.env.SSH_SCREENSHOTS, name + ".png"), animations: "disabled" }); }
 try {
     await page.goto(url + "#/fleet");
     await page.getByRole("link", { name: "Register local agents", exact: true }).waitFor();
@@ -76,9 +76,38 @@ try {
     assert.equal(await dialog.getByRole("radio").evaluate((el) => el === document.activeElement || el.contains(document.activeElement)), true);
     await dialog.getByText("dev-box", { exact: true }).click();
     f.checkError = false;
+    check.existing_installation = true; check.existing_paths = ["~/steve-bin/node.json", "~/.steve-node"]; check.existing_node = { name: "recorded-worker", owner: "recorded-workspace" };
+    await page.setViewportSize({ width: 780, height: 540 });
     await dialog.getByRole("button", { name: "Check connection", exact: true }).click();
-    await dialog.getByText("SSH is reachable. The machine has not joined yet.", { exact: true }).waitFor();
-    assert.equal(await dialog.getByRole("heading", { name: "SSH is reachable. The machine has not joined yet.", exact: true }).evaluate((el) => el === document.activeElement), true);
+    await dialog.getByRole("heading", { name: "Existing Steve configuration found", exact: true }).waitFor();
+    await dialog.getByText("dev-box", { exact: true }).waitFor();
+    await dialog.getByText("10.0.0.9", { exact: true }).waitFor();
+    await dialog.getByText("~/steve-bin/node.json", { exact: true }).waitFor();
+    await dialog.getByText("Node name in configuration", { exact: true }).waitFor();
+    await dialog.getByText("recorded-worker", { exact: true }).waitFor();
+    await dialog.getByText("Workspace recorded in configuration", { exact: true }).waitFor();
+    await dialog.getByText("recorded-workspace", { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("textbox", { name: "Node name", exact: true }).count(), 0);
+    assert.equal(await dialog.getByRole("button", { name: "Review installation", exact: true }).count(), 0);
+    assert.equal(await dialog.getByRole("button", { name: "Connect as an execution node only", exact: true }).count(), 0);
+    assert.ok(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth));
+    assert.deepEqual(f.plans, []); assert.deepEqual(f.installs, []);
+    await dialog.getByRole("button", { name: "View machines in this workspace", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
+    assert.equal(await page.locator("#fleet-machines").evaluate((el) => el === document.activeElement), true);
+    await page.getByRole("button", { name: "Connect with SSH", exact: true }).click();
+    await dialog.getByRole("heading", { name: "Existing Steve configuration found", exact: true }).waitFor();
+    await dialog.getByText("dev-box", { exact: true }).waitFor();
+    await dialog.getByText("10.0.0.9", { exact: true }).waitFor();
+    check.existing_installation = false; check.existing_paths = [];
+    await dialog.getByRole("button", { name: "Check this machine again", exact: true }).click();
+    await dialog.getByRole("heading", { name: "Participate in collaboration and recovery", exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("button", { name: "Data level", exact: true }).count(), 0);
+    console.log("PASS existing installations show evidence and usable navigation without a fresh-install dead end");
+    await dialog.getByRole("button", { name: "Choose another machine", exact: true }).click();
+    await dialog.getByRole("button", { name: "Check connection", exact: true }).click();
+    await dialog.getByText("SSH is reachable. Review how to connect this machine.", { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("heading", { name: "SSH is reachable. Review how to connect this machine.", exact: true }).evaluate((el) => el === document.activeElement), true);
     assert.equal(await dialog.getByRole("textbox", { name: "Node address", exact: true }).inputValue(), "10.0.0.9:7701");
     await page.setViewportSize({ width: 780, height: 540 });
     await dialog.getByRole("textbox", { name: "Node name", exact: true }).fill("worker-west");
@@ -141,7 +170,16 @@ try {
     assert.deepEqual(f.installs, [original, original]); assert.equal(f.plans.length, 2);
     console.log("PASS installation awaits its result; reconnecting after coordinator change keeps the same plan and partial registration");
 
-    await page.setViewportSize({ width: 390, height: 844 });
+    await page.setViewportSize({ width: 780, height: 540 });
+    const planCountBeforeResume = f.plans.length;
+    f.hold = true;
+    await dialog.getByRole("button", { name: "Continue checking this connection", exact: true }).click();
+    await waitFor(() => f.installs.length === 3, "resume posts the original plan");
+    assert.equal(await dialog.getByRole("button", { name: "Connect another machine", exact: true }).isDisabled(), true);
+    f.hold = false; f.release();
+    await dialog.getByText("Registered, awaiting connection", { exact: true }).waitFor();
+    assert.equal(f.plans.length, planCountBeforeResume);
+    assert.deepEqual(f.installs, [original, original, original]);
     assert.equal(await dialog.getByRole("button", { name: "Check this installation", exact: true }).count(), 0);
     await dialog.getByRole("button", { name: "Back to resources", exact: true }).focus();
     assert.ok(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth));
@@ -152,11 +190,16 @@ try {
     await dialog.getByText("1 connection records on this device", { exact: true }).click();
     await dialog.getByText("worker-west", { exact: true }).waitFor();
     assert.equal(f.plans.length, 2);
+    check.existing_installation = true; check.existing_paths = ["~/steve-bin/node.json"];
+    await dialog.getByText("dev-box", { exact: true }).click();
+    await dialog.getByRole("button", { name: "Check connection", exact: true }).click();
+    await dialog.getByText("This device has connection records using the same SSH alias. These are saved plans, not proof of the same machine or installation.", { exact: true }).waitFor();
     await dialog.getByRole("button", { name: "View record", exact: true }).click();
     await dialog.getByText("Registered, awaiting connection", { exact: true }).waitFor();
+    check.existing_installation = false; check.existing_paths = [];
     await dialog.getByRole("button", { name: "Back to resources", exact: true }).click();
     await dialog.waitFor({ state: "hidden" });
-    assert.equal(f.plans.length, 2); assert.deepEqual(f.installs, [original, original]);
+    assert.equal(f.plans.length, 2); assert.deepEqual(f.installs, [original, original, original]);
     await page.getByRole("button", { name: "Add machine / agent", exact: true }).click();
     await page.getByRole("dialog", { name: "Add machine", exact: true }).waitFor();
     console.log("PASS known partial outcomes preserve registration and manual enrollment remains available");
@@ -203,6 +246,106 @@ try {
         assert.equal(f.installs.length, beforeInstall);
         console.log("PASS network overrides persist with the plan and a changed response cannot become approved installation details");
     } finally { await successContext.close(); }
+    // Saved low-access drafts require an explicit storage decision, in both languages.
+    for (const locale of ["zh", "en"]) {
+        const scopedContext = await browser.newContext({ viewport: { width: 780, height: 540 }, serviceWorkers: "block" });
+        try {
+            const scopedPage = await scopedContext.newPage(); scopedPage.setDefaultTimeout(6500);
+            await scopedPage.addInitScript(({ locale, check }) => {
+                localStorage.setItem("steve.ui.locale", locale);
+                localStorage.setItem(`steve.ssh.connect:${new URL(".", window.location.href).href}`, JSON.stringify({ request: { alias: "dev-box", name: "saved-worker", addr: "10.0.0.9:7701", level: "internal" }, check }));
+                window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+            }, { locale, check });
+            await scopedPage.route("**/*", routeRequest);
+            await scopedPage.goto(url + "#/fleet");
+            const zh = locale === "zh";
+            await scopedPage.getByRole("button", { name: zh ? "通过 SSH 接入" : "Connect with SSH", exact: true }).click();
+            const scoped = scopedPage.getByRole("dialog", { name: zh ? "通过 SSH 接入机器" : "Connect a machine with SSH", exact: true });
+            await scoped.getByRole("heading", { name: zh ? "参与协作与恢复" : "Participate in collaboration and recovery", exact: true }).waitFor();
+            assert.equal(await scoped.getByRole("button", { name: zh ? "查看安装计划" : "Review installation", exact: true }).count(), 0);
+            const before = f.plans.length;
+            await scoped.getByRole("button", { name: zh ? "允许保存上述数据并查看计划" : "Allow this data and review installation", exact: true }).click();
+            await scoped.getByRole("heading", { name: zh ? "确认接入改动" : "Review connection changes", exact: true }).waitFor();
+            assert.equal(f.plans.length, before + 1); assert.equal(f.plans.at(-1).level, "restricted");
+            assert.ok(await scoped.evaluate((el) => el.scrollWidth <= el.clientWidth));
+            await screenshot("ssh-peer-consent-" + locale, scopedPage);
+            await scoped.getByRole("button", { name: zh ? "修改接入信息" : "Edit connection details", exact: true }).click();
+            await scoped.getByRole("button", { name: zh ? "仅作为执行节点接入" : "Connect as an execution node only", exact: true }).click();
+            const manual = scopedPage.getByRole("dialog", { name: zh ? "添加机器" : "Add machine", exact: true });
+            await manual.waitFor();
+            assert.equal(await manual.getByRole("textbox").nth(0).inputValue(), "saved-worker");
+            assert.equal(await manual.getByRole("textbox").nth(1).inputValue(), "10.0.0.9:7701");
+            await manual.getByText(zh ? "先登记执行节点，再将生成的启动命令放到这台机器上运行。这个入口不会通过 SSH 自动安装，也不会迁移协作数据。" : "Register the execution node, then run the generated startup command on that machine. This action does not install through SSH or transfer collaboration data.", { exact: true }).waitFor();
+            assert.ok(await manual.evaluate((el) => el.scrollWidth <= el.clientWidth));
+        } finally { await scopedContext.close(); }
+    }
+    console.log("PASS Chinese and English low-access drafts require explicit consent; execution-only action prefills a real manual enrollment");
+    // Older unchecked drafts must not guess which kind of node the server installs.
+    const oldContext = await browser.newContext({ viewport: { width: 780, height: 540 }, serviceWorkers: "block" });
+    try {
+        const oldPage = await oldContext.newPage(); oldPage.setDefaultTimeout(6500);
+        const { installation_mode, ...oldCheck } = check;
+        await oldPage.addInitScript(({ check }) => {
+            localStorage.setItem("steve.ui.locale", "en");
+            localStorage.setItem(`steve.ssh.connect:${new URL(".", window.location.href).href}`, JSON.stringify({ request: { alias: "dev-box", name: "old-worker", addr: "10.0.0.9:7701", level: "internal" }, check }));
+            window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+        }, { check: oldCheck });
+        await oldPage.route("**/*", routeRequest);
+        await oldPage.goto(url + "#/fleet");
+        const before = f.checks.length;
+        await oldPage.getByRole("button", { name: "Connect with SSH", exact: true }).click();
+        const oldDialog = oldPage.getByRole("dialog", { name: "Connect a machine with SSH", exact: true });
+        await oldDialog.getByRole("button", { name: "Check connection", exact: true }).waitFor();
+        assert.equal(f.checks.length, before, "discarding an old check does not start SSH automatically");
+        check.installation_mode = "executor";
+        await oldDialog.getByRole("button", { name: "Check connection", exact: true }).click();
+        assert.equal(await oldDialog.getByRole("textbox", { name: "Node name", exact: true }).inputValue(), "old-worker");
+        const dataLevel = oldDialog.getByRole("button", { name: /Internal · e.g. internal code and work documents/ });
+        await dataLevel.click();
+        await oldPage.getByRole("option", { name: "Public · e.g. open-source code and public documents", exact: true }).click();
+        assert.equal(await oldDialog.getByRole("heading", { name: "Participate in collaboration and recovery", exact: true }).count(), 0);
+        const beforePlans = f.plans.length;
+        await oldDialog.getByRole("button", { name: "Review installation", exact: true }).click();
+        await oldDialog.getByRole("heading", { name: "Review connection changes", exact: true }).waitFor();
+        assert.equal(f.plans.length, beforePlans + 1); assert.equal(f.plans.at(-1).level, "public");
+        f.connected = false;
+        await oldDialog.getByRole("button", { name: "Confirm installation", exact: true }).click();
+        await oldDialog.getByText("Registered, awaiting connection", { exact: true }).waitFor();
+        assert.equal(await oldDialog.getByRole("button", { name: "Continue checking this connection", exact: true }).count(), 0, "execution-node cached outcomes do not offer unsupported registration recovery");
+    } finally { check.installation_mode = "peer"; await oldContext.close(); }
+    console.log("PASS old checks require explicit refresh and executor data options explain their project scope");
+
+    const reviewedContext = await browser.newContext({ viewport: { width: 780, height: 540 }, serviceWorkers: "block" });
+    try {
+        const reviewedPage = await reviewedContext.newPage(); reviewedPage.setDefaultTimeout(6500);
+        const { installation_mode, ...oldCheck } = check;
+        await reviewedPage.addInitScript(({ check }) => {
+            const request = { alias: "dev-box", name: "reviewed-worker", addr: "10.0.0.9:7701", level: "internal" };
+            localStorage.setItem("steve.ui.locale", "en");
+            localStorage.setItem(`steve.ssh.connect:${new URL(".", window.location.href).href}`, JSON.stringify({ request, check, plan: { id: "saved-reviewed-plan", request, check, steps: [], effects: ["Original reviewed effect"], ready: false, expires_at: "2030-01-01T00:00:00Z" } }));
+            window.EventSource = class { constructor() { setTimeout(() => this.onopen?.(), 0); } close() {} };
+        }, { check: oldCheck });
+        await reviewedPage.route("**/*", routeRequest);
+        await reviewedPage.goto(url + "#/fleet");
+        await reviewedPage.getByRole("button", { name: "Connect with SSH", exact: true }).click();
+        const reviewed = reviewedPage.getByRole("dialog", { name: "Connect a machine with SSH", exact: true });
+        await reviewed.getByText("Original reviewed effect", { exact: true }).waitFor();
+        const beforeChecks = f.checks.length;
+        await reviewed.getByRole("button", { name: "Edit connection details", exact: true }).click();
+        await reviewed.getByRole("button", { name: "Check connection", exact: true }).waitFor();
+        assert.equal(f.checks.length, beforeChecks);
+        assert.equal(await reviewed.getByRole("button", { name: "Review installation", exact: true }).count(), 0);
+        check.installation_mode = undefined;
+        await reviewed.getByRole("button", { name: "Check connection", exact: true }).click();
+        await reviewed.getByRole("alert").getByText("The service response was incomplete. Retry the same operation.", { exact: true }).waitFor();
+        assert.equal(await reviewed.getByRole("textbox", { name: "Node name", exact: true }).count(), 0);
+        check.installation_mode = "peer";
+        await reviewed.getByRole("button", { name: "Check connection", exact: true }).click();
+        await reviewed.getByRole("heading", { name: "Participate in collaboration and recovery", exact: true }).waitFor();
+        assert.equal(await reviewed.getByRole("textbox", { name: "Node name", exact: true }).inputValue(), "reviewed-worker");
+        await reviewed.getByRole("button", { name: "Allow this data and review installation", exact: true }).waitFor();
+    } finally { check.installation_mode = "peer"; await reviewedContext.close(); }
+    console.log("PASS editing a reviewed plan with unknown mode requires an explicit fresh check, preserving its request");
     assert.deepEqual(f.errors, []);
 } catch (error) { console.log("DEBUG", JSON.stringify(f.errors), await page.locator("body").innerText()); throw error; }
 finally { await context.close(); await browser.close(); await server.close(); }

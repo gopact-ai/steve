@@ -47,9 +47,26 @@ type CheckResult struct {
 	Tools                []Tool                 `json:"tools"`
 	Agents               []agenttools.Candidate `json:"agents"`
 	ExistingInstallation bool                   `json:"existing_installation"`
+	ExistingPaths        []string               `json:"existing_paths"`
+	ExistingNode         *ExistingNodeRecord    `json:"existing_node,omitempty"`
+	InstallationMode     InstallationMode       `json:"installation_mode"`
 	Steps                []Step                 `json:"steps"`
 	CheckedAt            time.Time              `json:"checked_at"`
 }
+
+// ExistingNodeRecord contains unverified values from fixed configuration
+// files. It must not authorize adoption or establish service availability.
+type ExistingNodeRecord struct {
+	Name  string `json:"name,omitempty"`
+	Owner string `json:"owner,omitempty"`
+}
+
+type InstallationMode string
+
+const (
+	InstallExecutor InstallationMode = "executor"
+	InstallPeer     InstallationMode = "peer"
+)
 
 func (c CheckResult) HasTool(name string) bool {
 	for _, tool := range c.Tools {
@@ -139,10 +156,11 @@ type Backend interface {
 }
 
 type Options struct {
-	ConfigPath string
-	Runner     Runner
-	Backend    Backend
-	PlanTTL    time.Duration
+	ConfigPath       string
+	Runner           Runner
+	Backend          Backend
+	PlanTTL          time.Duration
+	InstallationMode InstallationMode
 }
 
 type storedPlan struct {
@@ -157,14 +175,15 @@ type storedPlan struct {
 }
 
 type Service struct {
-	configPath string
-	runner     Runner
-	backend    Backend
-	ttl        time.Duration
-	now        func() time.Time
-	mu         sync.Mutex
-	plans      map[string]*storedPlan
-	closed     bool
+	configPath       string
+	runner           Runner
+	backend          Backend
+	ttl              time.Duration
+	now              func() time.Time
+	mu               sync.Mutex
+	plans            map[string]*storedPlan
+	closed           bool
+	installationMode InstallationMode
 }
 
 func New(options Options) *Service {
@@ -174,7 +193,10 @@ func New(options Options) *Service {
 	if options.PlanTTL <= 0 {
 		options.PlanTTL = 5 * time.Minute
 	}
-	return &Service{configPath: options.ConfigPath, runner: options.Runner, backend: options.Backend, ttl: options.PlanTTL, now: time.Now, plans: map[string]*storedPlan{}}
+	if options.InstallationMode == "" {
+		options.InstallationMode = InstallExecutor
+	}
+	return &Service{configPath: options.ConfigPath, runner: options.Runner, backend: options.Backend, ttl: options.PlanTTL, now: time.Now, plans: map[string]*storedPlan{}, installationMode: options.InstallationMode}
 }
 
 func (s *Service) Discover(ctx context.Context) (Discovery, error) {
@@ -244,7 +266,10 @@ func (s *Service) bind(ctx context.Context, c Candidate) (Connection, error) {
 }
 
 func (s *Service) check(ctx context.Context, c Candidate, connection Connection) (CheckResult, error) {
-	result := CheckResult{Candidate: c, Tools: []Tool{}, Agents: []agenttools.Candidate{}, Steps: []Step{}, CheckedAt: s.now().UTC()}
+	result := CheckResult{Candidate: c, Tools: []Tool{}, Agents: []agenttools.Candidate{}, ExistingPaths: []string{}, InstallationMode: s.installationMode, Steps: []Step{}, CheckedAt: s.now().UTC()}
+	if s.installationMode != InstallExecutor && s.installationMode != InstallPeer {
+		return result, fail("configuration", "invalid_installation_mode", "SSH 接入方式配置无效", "修正本机服务的接入配置后重试")
+	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	output, err := connection.Run(ctx, "sh -s", probeScript)
@@ -265,6 +290,14 @@ func (s *Service) check(ctx context.Context, c Candidate, connection Connection)
 	result.OS = map[string]string{"Linux": "linux", "Darwin": "darwin"}[values["os"]]
 	result.Arch = map[string]string{"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}[values["arch"]]
 	result.ExistingInstallation = values["existing"] == "1"
+	if values["existing_node_name"] != "" || values["existing_node_owner"] != "" {
+		result.ExistingNode = &ExistingNodeRecord{Name: values["existing_node_name"], Owner: values["existing_node_owner"]}
+	}
+	for _, entry := range existingProbePaths {
+		if values[entry.field] != "" {
+			result.ExistingPaths = append(result.ExistingPaths, values[entry.field])
+		}
+	}
 	result.Steps = append(result.Steps, Step{ID: "ssh", Status: "ready", Message: "SSH 连接与认证已通过：" + result.User + "@" + result.Address})
 	if result.OS == "" || result.Arch == "" {
 		result.Steps = append(result.Steps, Step{ID: "platform", Status: "blocked", Message: "当前安装流程不支持这台机器的平台", Suggestion: "选择 Linux 或 macOS 的 amd64/arm64 机器"})
@@ -285,7 +318,7 @@ func (s *Service) check(ctx context.Context, c Candidate, connection Connection)
 		}
 	}
 	if result.ExistingInstallation {
-		result.Steps = append(result.Steps, Step{ID: "existing_node", Status: "blocked", Message: "发现已有 Steve 节点配置或状态", Suggestion: "通过已有节点的管理入口接入或调整，避免覆盖任务与节点身份"})
+		result.Steps = append(result.Steps, Step{ID: "existing_node", Status: "blocked", Message: "发现已有 Steve 配置或数据，已停止新安装", Suggestion: "这次检查无法确认服务是否正在运行、配置属于哪个工作台；请先核对原接入记录，不要覆盖或删除这些文件"})
 	}
 	return result, nil
 }

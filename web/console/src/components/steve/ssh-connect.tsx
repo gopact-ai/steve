@@ -16,11 +16,13 @@ interface SSHRecord { plan: SSHPlan; result: SSHInstallResult }
 interface SSHDraft { request: SSHInstallRequest; check?: SSHCheck; plan?: SSHPlan; attempted?: boolean; result?: SSHInstallResult; history?: SSHRecord[] }
 const initialRequest: SSHInstallRequest = { alias: "", name: "", addr: "", level: "restricted" };
 function draftKey() { return `steve.ssh.connect:${new URL(".", window.location.href).href}`; }
+function usableCheck(check?: SSHCheck) { return check && (check.existing_installation || ["peer", "executor"].includes(check.installation_mode || "")) ? check : undefined; }
 function readDraft(): SSHDraft {
     try {
         const saved = JSON.parse(localStorage.getItem(draftKey()) || "null");
         if (!saved || !saved.request || typeof saved.request.alias !== "string") return { request: initialRequest };
         if (saved.plan && (!saved.plan.id || !Array.isArray(saved.plan.steps) || !Array.isArray(saved.plan.effects))) return { request: initialRequest };
+        if (!saved.plan) return { ...saved, check: usableCheck(saved.check) };
         return saved;
     } catch { return { request: initialRequest }; }
 }
@@ -28,7 +30,7 @@ function addressFor(host?: string) { return host ? `${host.includes(":") ? `[${h
 function suggestedName(alias: string) { return alias.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[^a-z0-9]+/, "").slice(0, 64); }
 function sameRequest(a: SSHInstallRequest, b: SSHInstallRequest) { return a.alias === b.alias && a.name === b.name && a.addr === b.addr && a.level === b.level && (a.raft_addr || "") === (b.raft_addr || "") && (a.source_host || "") === (b.source_host || ""); }
 
-export function SSHConnect({ onClose, onChanged }: { onClose: () => void; onChanged: () => void }) {
+export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }: { onClose: () => void; onChanged: () => void; onViewMachines: () => void; onAddExecutor: (request: SSHInstallRequest) => void }) {
     const { t, locale } = useI18n();
     const [draft, setDraft] = useState(readDraft);
     const [enrolling, setEnrolling] = useState(false);
@@ -44,7 +46,11 @@ export function SSHConnect({ onClose, onChanged }: { onClose: () => void; onChan
     const candidates = useRef<HTMLDivElement>(null);
     const [now, setNow] = useState(Date.now);
     const { request, check, plan, attempted, result } = draft;
-    const stage = result?.status || (attempted ? "installing" : plan ? "plan" : check ? "form" : "discovery");
+    const peerInstallation = check?.installation_mode === "peer";
+    const needsPeerConsent = peerInstallation && !["restricted", "sealed"].includes(request.level);
+    const existingInstallation = check?.existing_installation === true;
+    const relatedHistory = (draft.history || []).filter((record) => record.plan.request.alias === request.alias);
+    const stage = result?.status || (attempted ? "installing" : plan ? "plan" : check ? existingInstallation ? "existing" : "form" : "discovery");
     useLayoutEffect(() => {
         stageHeading.current?.focus({ preventScroll: true });
         if (scrollArea.current) scrollArea.current.scrollTop = 0;
@@ -62,6 +68,7 @@ export function SSHConnect({ onClose, onChanged }: { onClose: () => void; onChan
     useEffect(() => { if (!plan) return; const ms = Date.parse(plan.expires_at) - Date.now(); if (ms <= 0) return; const timer = window.setTimeout(() => setNow(Date.now()), Math.min(ms + 1, 2_147_483_647)); return () => window.clearTimeout(timer); }, [plan]);
     const expired = !!plan && Date.parse(plan.expires_at) <= now;
     const connected = result?.registered === true && result.connected === true && result.status === "connected";
+    const canResumeRegistration = plan?.check.installation_mode === "peer" && attempted && result?.registered === true && !result.connected && result.status === "needs_attention";
     const terminal = connected || result?.status === "needs_attention";
     function save(next: SSHDraft) {
         next = { ...next, history: next.history || draft.history || [] };
@@ -71,19 +78,19 @@ export function SSHConnect({ onClose, onChanged }: { onClose: () => void; onChan
     }
     function edit(patch: Partial<SSHInstallRequest>) { if (attempted || acting.current) return; setError(""); save({ ...draft, request: { ...request, ...patch }, plan: undefined }); }
     async function testConnection() {
-        if (acting.current || attempted || loading || readError) return;
-        if (!discovery.candidates.some((candidate) => candidate.alias === request.alias)) { setError(t("ssh.selectRequired")); candidates.current?.querySelector<HTMLInputElement>('input[type="radio"]')?.focus(); return; }
+        if (acting.current || attempted || (!check && (loading || readError))) return;
+        if (!check && !discovery.candidates.some((candidate) => candidate.alias === request.alias)) { setError(t("ssh.selectRequired")); candidates.current?.querySelector<HTMLInputElement>('input[type="radio"]')?.focus(); return; }
         acting.current = true; setBusy("check"); setError("");
         try {
             const checked = await checkSSH(request.alias);
-            if (!checked?.candidate || checked.candidate.alias !== request.alias || !Array.isArray(checked.steps)) throw new Error(t("ssh.responseInvalid"));
+            if (!checked?.candidate || checked.candidate.alias !== request.alias || !Array.isArray(checked.steps) || (checked.reachable && !usableCheck(checked))) throw new Error(t("ssh.responseInvalid"));
             save({ request: { ...request, name: request.name || suggestedName(request.alias), addr: request.addr || addressFor(checked.address) }, check: checked });
         } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
         finally { acting.current = false; setBusy(null); }
     }
-    async function preparePlan() {
-        if (acting.current || attempted || !check?.reachable) return;
-        const body = { ...request, name: request.name.trim(), addr: request.addr.trim(), raft_addr: request.raft_addr?.trim() || undefined, source_host: request.source_host?.trim() || undefined };
+    async function preparePlan(allowPeerData = false) {
+        if (acting.current || attempted || !check?.reachable || existingInstallation || (needsPeerConsent && !allowPeerData)) return;
+        const body = { ...request, ...(needsPeerConsent && allowPeerData ? { level: "restricted" } : {}), name: request.name.trim(), addr: request.addr.trim(), raft_addr: request.raft_addr?.trim() || undefined, source_host: request.source_host?.trim() || undefined };
         if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(body.name)) { setError(t("ssh.nameInvalid")); fields.current?.querySelector<HTMLInputElement>('input[name="ssh-node-name"]')?.focus(); return; }
         if (!body.addr) { setError(t("ssh.addressRequired")); fields.current?.querySelector<HTMLInputElement>('input[name="ssh-node-address"]')?.focus(); return; }
         acting.current = true; setBusy("plan"); setError("");
@@ -95,7 +102,7 @@ export function SSHConnect({ onClose, onChanged }: { onClose: () => void; onChan
         finally { acting.current = false; setBusy(null); }
     }
     async function install() {
-        if (acting.current || !plan || terminal) return;
+        if (acting.current || !plan || (terminal && !canResumeRegistration)) return;
         if (!attempted && (!plan.ready || Date.parse(plan.expires_at) <= Date.now())) { setNow(Date.now()); setError(t(plan.ready ? "ssh.expired" : "ssh.blocked")); return; }
         if (!save({ ...draft, attempted: true })) return;
         acting.current = true; setBusy("install"); setError("");
@@ -133,9 +140,17 @@ export function SSHConnect({ onClose, onChanged }: { onClose: () => void; onChan
                     <div className="flex flex-wrap gap-2"><Button size="md" isLoading={busy === "check"} isDisabled={loading || !!readError || discovery.candidates.length === 0} onClick={() => void testConnection()}>{t("ssh.check")}</Button><Button size="md" color="secondary" isDisabled={!!busy} onClick={() => { setLoading(true); void load(); }}>{t("ssh.refresh")}</Button></div>
                 </section>}
                 {check && !plan && <section className="space-y-4" ref={fields}>
-                    <h2 ref={stageHeading} tabIndex={-1} className="text-sm font-medium text-secondary focus-visible:outline-2 focus-visible:outline-focus-ring">{t(check.reachable ? "ssh.reachable" : "ssh.notReachable")}</h2>
-                    <SSHSteps steps={check.steps} />
-                    {check.reachable && <><Input size="sm" label={t("ssh.name")} name="ssh-node-name" autoComplete="off" spellCheck="false" placeholder="worker-west…" hint={t("ssh.nameHint")} value={request.name} onChange={(name) => edit({ name })} isDisabled={!!busy} />
+                    <h2 ref={stageHeading} tabIndex={-1} className="text-base font-semibold text-primary focus-visible:outline-2 focus-visible:outline-focus-ring">{t(existingInstallation ? "ssh.existing" : check.reachable ? "ssh.reachable" : "ssh.notReachable")}</h2>
+                    {existingInstallation ? <>
+                        <dl className="grid min-w-0 grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 text-sm"><dt className="text-tertiary">{t("ssh.targetAlias")}</dt><dd className="break-all font-medium text-primary">{check.candidate.alias}</dd>{check.address && <><dt className="text-tertiary">{t("ssh.checkedAddress")}</dt><dd className="break-all font-mono text-secondary">{check.address}</dd></>}</dl>
+                        <p className="text-sm leading-6 text-secondary">{t("ssh.existingHint")}</p>
+                        <div className="space-y-2 rounded-lg bg-secondary p-3"><h3 className="text-xs font-medium text-tertiary">{t("ssh.existingPaths")}</h3>{check.existing_paths?.length ? <ul className="space-y-1">{check.existing_paths.map((path) => <li key={path} className="break-all font-mono text-sm text-secondary">{path}</li>)}</ul> : <p className="text-sm text-secondary">{t("ssh.existingUnknownPaths")}</p>}</div>
+                        {(check.existing_node?.name || check.existing_node?.owner) && <dl className="grid min-w-0 grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">{check.existing_node.name && <><dt className="text-tertiary">{t("ssh.recordedNodeName")}</dt><dd className="break-all text-secondary">{check.existing_node.name}</dd></>}{check.existing_node.owner && <><dt className="text-tertiary">{t("ssh.recordedOwner")}</dt><dd className="break-all text-secondary">{check.existing_node.owner}</dd></>}</dl>}
+                        <p className="text-sm leading-6 text-secondary">{t("ssh.existingNext")}</p>
+                        {relatedHistory.length > 0 && <div className="space-y-3 rounded-lg border border-secondary p-3"><p className="text-xs leading-5 text-tertiary">{t("ssh.relatedHistory")}</p>{relatedHistory.toReversed().map((record) => <div key={record.plan.id} className="flex min-w-0 flex-wrap items-center justify-between gap-2"><span className="break-all text-sm text-secondary">{record.plan.request.name}</span><Button size="sm" color="secondary" isDisabled={!!busy} onClick={() => { setError(""); save({ request: record.plan.request, check: record.plan.check, plan: record.plan, attempted: true, result: record.result }); }}>{t("ssh.viewRecord")}</Button></div>)}</div>}
+                        <div className="flex flex-wrap gap-2"><Button size="md" isLoading={busy === "check"} onClick={() => void testConnection()}>{t("ssh.recheck")}</Button><Button size="md" color="secondary" isDisabled={!!busy} onClick={onViewMachines}>{t("ssh.viewMachines")}</Button></div>
+                    </> : <SSHSteps steps={check.steps} />}
+                    {check.reachable && !existingInstallation && <><Input size="sm" label={t("ssh.name")} name="ssh-node-name" autoComplete="off" spellCheck="false" placeholder="worker-west…" hint={t("ssh.nameHint")} value={request.name} onChange={(name) => edit({ name })} isDisabled={!!busy} />
                         <Input size="sm" label={t("ssh.address")} name="ssh-node-address" autoComplete="off" spellCheck="false" placeholder="192.0.2.7:7701…" hint={t("ssh.addressHint")} value={request.addr} onChange={(addr) => edit({ addr })} isDisabled={!!busy} />
                         <details className="rounded-lg border border-secondary p-3">
                             <summary className="cursor-pointer text-sm font-medium text-secondary focus-visible:outline-2 focus-visible:outline-focus-ring">{t("ssh.networkSettings")}</summary>
@@ -145,8 +160,9 @@ export function SSHConnect({ onClose, onChanged }: { onClose: () => void; onChan
                                 <Input size="sm" label={t("ssh.sourceHost")} name="ssh-source-host" autoComplete="off" spellCheck="false" placeholder="192.0.2.4…" hint={t("ssh.sourceHostHint")} value={request.source_host || ""} onChange={(source_host) => edit({ source_host })} isDisabled={!!busy} />
                             </div>
                         </details>
-                        <Select size="sm" label={t("ssh.level")} hint={t("ssh.levelHint")} selectedKey={request.level} isDisabled={!!busy} onSelectionChange={(value) => value && edit({ level: String(value) })} items={["public", "internal", "restricted", "sealed"].map((id) => ({ id, label: levelName(id, locale) }))}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></>}
-                    <div className="flex flex-wrap gap-2">{check.reachable && <Button size="md" isLoading={busy === "plan"} onClick={() => void preparePlan()}>{t("ssh.review")}</Button>}<Button size="md" color="secondary" isDisabled={!!busy} onClick={() => { setError(""); save({ request }); }}>{t("ssh.changeMachine")}</Button></div>
+                        {peerInstallation ? <div className="space-y-3 rounded-lg bg-secondary p-4"><h3 className="text-sm font-semibold text-primary">{t("ssh.peerScope")}</h3><p className="text-sm leading-6 text-secondary">{t("ssh.peerScopeHint")}</p><p className="text-xs leading-5 text-tertiary">{t("ssh.peerScopeLogin")}</p><p className="text-xs leading-5 text-tertiary">{t("ssh.peerScopeAuto")}</p>{needsPeerConsent && <p className="text-sm leading-6 text-secondary">{t("ssh.peerConsent", { level: levelName(request.level, locale) })}</p>}</div> : <ExecutionDataLevel value={request.level} isDisabled={!!busy} onChange={(level) => edit({ level })} />}</>}
+                    <div className="flex flex-wrap gap-2">{check.reachable && !existingInstallation && <Button size="md" isLoading={busy === "plan"} onClick={() => void preparePlan(needsPeerConsent)}>{t(needsPeerConsent ? "ssh.allowPeerReview" : "ssh.review")}</Button>}<Button size="md" color="secondary" isDisabled={!!busy} onClick={() => { setError(""); save({ request }); }}>{t("ssh.changeMachine")}</Button></div>
+                    {check.reachable && !existingInstallation && peerInstallation && <div className="space-y-2 border-t border-secondary pt-4"><p className="text-xs leading-5 text-tertiary">{t("ssh.executionOnlyHint")}</p><Button size="md" color="secondary" isDisabled={!!busy} onClick={() => onAddExecutor(request)}>{t("ssh.executionOnly")}</Button></div>}
                 </section>}
                 {plan && <section className="space-y-4">
                     <h2 ref={stageHeading} tabIndex={-1} className="text-base font-semibold text-primary focus-visible:outline-2 focus-visible:outline-focus-ring">{t(connected ? "ssh.connected" : result?.status === "needs_attention" ? "ssh.attention" : "ssh.plan")}</h2>
@@ -161,13 +177,14 @@ export function SSHConnect({ onClose, onChanged }: { onClose: () => void; onChan
                         {!!plan.script && <details className="rounded-lg bg-secondary p-3"><summary className="text-xs text-tertiary">{t("ssh.script")}</summary><pre className="mt-3 max-h-64 overflow-auto whitespace-pre-wrap break-words font-mono text-xs text-secondary [overflow-wrap:anywhere]">{plan.script}</pre></details>}
                         <p className="text-xs text-quaternary">{t("ssh.expires", { time: dateTime(plan.expires_at, locale, { dateStyle: "short", timeStyle: "short" }) })}</p>
                         {(!plan.ready || expired) && <p role="status" className="text-sm text-error-primary">{t(expired ? "ssh.expired" : "ssh.blocked")}</p>}
-                        <div className="flex flex-wrap gap-2"><Button size="md" isDisabled={!plan.ready || expired || !!busy} onClick={() => void install()}>{t("ssh.install")}</Button><Button size="md" color="secondary" isDisabled={!!busy} onClick={() => { setError(""); save({ request: plan.request, check: plan.check }); }}>{t("ssh.edit")}</Button></div>
+                        <div className="flex flex-wrap gap-2"><Button size="md" isDisabled={!plan.ready || expired || !!busy} onClick={() => void install()}>{t("ssh.install")}</Button><Button size="md" color="secondary" isDisabled={!!busy} onClick={() => { setError(""); save({ request: plan.request, check: usableCheck(plan.check) }); }}>{t("ssh.edit")}</Button></div>
                     </> : <>
-                        <p role="status" className="text-sm font-medium text-secondary">{t(busy ? "ssh.installing" : connected ? "ssh.connectedHint" : result?.status === "installing" ? "ssh.waitingForResult" : result?.status === "needs_attention" ? result.registered ? "ssh.registered" : "ssh.unregistered" : "ssh.unconfirmed")}</p>
+                        <p role="status" className="text-sm font-medium text-secondary">{t(busy ? canResumeRegistration ? "ssh.recheckingConnection" : "ssh.installing" : connected ? "ssh.connectedHint" : result?.status === "installing" ? "ssh.waitingForResult" : result?.status === "needs_attention" ? result.registered ? "ssh.registered" : "ssh.unregistered" : "ssh.unconfirmed")}</p>
                         {result && <SSHSteps steps={result.steps} />}
+                        {canResumeRegistration && <p className="text-sm leading-6 text-secondary">{t("ssh.resumeHint")}</p>}
                         {result?.registered && !connected && <p className="text-sm leading-6 text-tertiary">{t("ssh.attentionHint")}</p>}
                         <p className="break-all text-xs text-quaternary">{t("ssh.planId")}: <span className="font-mono">{plan.id}</span></p>
-                        <div className="flex flex-wrap gap-2">{!terminal && <Button size="md" isLoading={busy === "install"} onClick={() => void install()}>{t("ssh.checkInstallation")}</Button>}<Button size="md" color={connected ? "primary" : "secondary"} isDisabled={!!busy} onClick={close}>{t(connected ? "ssh.done" : "ssh.backToResources")}</Button>{connected && <Button size="md" color="secondary" onClick={() => setEnrolling(true)}>{t("nodeAgents.entry")}</Button>}{terminal && <Button size="md" color="tertiary" onClick={() => { setError(""); save({ request: initialRequest }); }}>{t("ssh.connectAnother")}</Button>}</div>
+                        <div className="flex flex-wrap gap-2">{(!terminal || canResumeRegistration) && <Button size="md" isLoading={busy === "install"} onClick={() => void install()}>{t(canResumeRegistration ? "ssh.resumeRegistration" : "ssh.checkInstallation")}</Button>}<Button size="md" color={connected ? "primary" : "secondary"} isDisabled={!!busy} onClick={close}>{t(connected ? "ssh.done" : "ssh.backToResources")}</Button>{connected && <Button size="md" color="secondary" onClick={() => setEnrolling(true)}>{t("nodeAgents.entry")}</Button>}{terminal && <Button size="md" color="tertiary" isDisabled={!!busy} onClick={() => { setError(""); save({ request: initialRequest }); }}>{t("ssh.connectAnother")}</Button>}</div>
                     </>}
                 </section>}
                 {busy && busy !== "install" && <p role="status" className="mt-3 text-sm text-tertiary">{t(busy === "check" ? "ssh.checking" : "ssh.planning")}</p>}
@@ -184,4 +201,11 @@ function SSHSteps({ steps }: { steps: SSHStep[] }) {
         {step.status === "ready" ? <CheckCircle className="mt-0.5 size-4 shrink-0 text-fg-success-primary" aria-hidden="true" /> : <XCircle className="mt-0.5 size-4 shrink-0 text-fg-error-primary" aria-hidden="true" />}
         <div className="min-w-0"><p className="break-words text-sm text-secondary">{step.message}</p>{step.suggestion && <p className="mt-1 break-words text-xs leading-5 text-tertiary">{step.suggestion}</p>}</div>
     </li>)}</ul>;
+}
+
+export function ExecutionDataLevel({ value, onChange, isDisabled = false }: { value: string; onChange: (value: string) => void; isDisabled?: boolean }) {
+    const { t } = useI18n();
+    const descriptions = { public: "ssh.levelPublic", internal: "ssh.levelInternal", restricted: "ssh.levelRestricted", sealed: "ssh.levelSealed" } as const;
+    const items = (Object.keys(descriptions) as (keyof typeof descriptions)[]).map((id) => ({ id, label: t(descriptions[id]) }));
+    return <Select size="sm" label={t("ssh.executorLevel")} hint={t("ssh.executorLevelHint")} selectedKey={value} isDisabled={isDisabled} onSelectionChange={(key) => key && onChange(String(key))} items={items}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select>;
 }

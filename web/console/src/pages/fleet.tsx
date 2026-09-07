@@ -1,7 +1,7 @@
 import { NodeAgentEnrollment } from "@/components/steve/node-agent-enrollment";
 import { CoordinationPanel } from "@/components/steve/coordination-panel";
-import { SSHConnect } from "@/components/steve/ssh-connect";
-import { useState } from "react";
+import { ExecutionDataLevel, SSHConnect } from "@/components/steve/ssh-connect";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "@/providers/locale-provider";
 import type { Translator } from "@/lib/i18n";
 import { levelName } from "@/lib/workspaces";
@@ -158,12 +158,12 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
 // AddMachine is a dialog, not a snippet: the hub registers the machine
 // and writes its own config; what comes back is the one command to run
 // on that machine. An agent can be added the same way.
-function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; harnesses: string[]; nodes: string[]; onClose: () => void; onDone: () => void }) {
+function AddMachine({ hub, harnesses, nodes, executor, onClose, onDone }: { hub: string; harnesses: string[]; nodes: string[]; executor?: { name: string; addr: string; level: string }; onClose: () => void; onDone: () => void }) {
     const { t: tr, locale } = useI18n();
     const [mode, setMode] = useState<"machine" | "agent">("machine");
-    const [name, setName] = useState("");
-    const [addr, setAddr] = useState("");
-    const [level, setLevel] = useState("internal");
+    const [name, setName] = useState(executor?.name || "");
+    const [addr, setAddr] = useState(executor?.addr || "");
+    const [level, setLevel] = useState(executor?.level || "internal");
     const [agent, setAgent] = useState("");
     const [harness, setHarness] = useState(harnesses[0] || "codex");
     const [node, setNode] = useState("");
@@ -187,11 +187,11 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
             <Modal className="max-w-xl">
                 <Dialog aria-label={mode === "machine" ? tr("fleet.addMachine") : tr("fleet.addAgent")}>
-                    <div className="flex w-full flex-col gap-4 rounded-2xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
+                    <div className="flex max-h-[85dvh] w-full flex-col gap-4 overflow-y-auto overscroll-contain rounded-2xl bg-primary p-6 shadow-xl ring-1 ring-secondary">
                         <div className="flex items-start gap-3">
                             <div className="min-w-0 flex-1">
                                 <div className="text-base font-semibold text-primary">{tr(mode === "machine" ? "fleet.addMachine" : "fleet.addAgent")}</div>
-                                <div className="mt-0.5 text-xs text-tertiary">{mode === "machine" ? tr("fleet.addMachineHint") : tr("fleet.addAgentHint")}</div>
+                                <div className="mt-0.5 text-xs text-tertiary">{mode === "machine" ? tr(executor ? "ssh.manualExecutorHint" : "fleet.addMachineHint") : tr("fleet.addAgentHint")}</div>
                             </div>
                             <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label={tr("common.close")} />
                         </div>
@@ -204,9 +204,9 @@ function AddMachine({ hub, harnesses, nodes, onClose, onDone }: { hub: string; h
                             <div className="grid grid-cols-1 gap-4">
                                 <Input size="sm" label={tr("fleet.name")} placeholder="node-c" value={name} onChange={setName} autoFocus hint={tr("fleet.nameHint")} />
                                 <Input size="sm" label={tr("fleet.address")} placeholder="10.0.0.5:7701" value={addr} onChange={setAddr} hint={tr("fleet.addressHint")} />
-                                <Select size="sm" label={tr("fleet.classification")} hint={tr("fleet.levelHint")} selectedKey={level} onSelectionChange={(k) => k && setLevel(String(k))} items={["public", "internal", "restricted", "sealed"].map((l) => ({ id: l, label: `${levelName(l, locale)}（${l}）` }))}>
+                                {executor ? <ExecutionDataLevel value={level} onChange={setLevel} isDisabled={busy} /> : <Select size="sm" label={tr("fleet.classification")} hint={tr("fleet.levelHint")} selectedKey={level} onSelectionChange={(k) => k && setLevel(String(k))} items={["public", "internal", "restricted", "sealed"].map((l) => ({ id: l, label: `${levelName(l, locale)}（${l}）` }))}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
-                                </Select>
+                                </Select>}
                             </div>
                         )}
                         {mode === "machine" && result && (
@@ -375,18 +375,26 @@ export function FleetPage() {
     const up = snap.nodes.filter((n) => n.up).length;
     const [adding, setAdding] = useState(false);
     const [sshOpen, setSSHOpen] = useState(false);
+    const [executor, setExecutor] = useState<{ name: string; addr: string; level: string }>();
+    const [focusMachines, setFocusMachines] = useState(false);
+    const machineSection = useRef<HTMLDivElement>(null);
+    useLayoutEffect(() => {
+        if (sshOpen || !focusMachines) return;
+        const frame = requestAnimationFrame(() => { machineSection.current?.focus({ preventScroll: true }); machineSection.current?.scrollIntoView({ block: "start" }); setFocusMachines(false); });
+        return () => cancelAnimationFrame(frame);
+    }, [sshOpen, focusMachines]);
     const [opened, setOpened] = useState<string | null>(null);
     const [openedAgent, setOpenedAgent] = useState<string | null>(null);
     const hubHarnesses = Array.from(new Set(snap.agents.map((a) => a.harness).filter(Boolean))) as string[];
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title={tr("fleet.title")} description={tr("fleet.description")}
-                actions={<><Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => setAdding(true)}>{tr("fleet.addResource")}</Button></>} />
+                actions={<><Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => { setExecutor(undefined); setAdding(true); }}>{tr("fleet.addResource")}</Button></>} />
             <PageBody>
             <CoordinationPanel />
-            {sshOpen && <SSHConnect onClose={() => setSSHOpen(false)} onChanged={refresh} />}
-            {adding && <AddMachine hub={snap.hub.node} harnesses={hubHarnesses.length ? hubHarnesses : ["codex", "claude-code", "grok", "kimi"]} nodes={snap.nodes.filter((n) => n.role !== "hub").map((n) => n.name)} onClose={() => setAdding(false)} onDone={() => refresh()} />}
-            <TableCard.Root size="sm" className="workbench-table min-w-0">
+            {sshOpen && <SSHConnect onClose={() => setSSHOpen(false)} onChanged={refresh} onViewMachines={() => { setSSHOpen(false); setFocusMachines(true); }} onAddExecutor={(request) => { setExecutor(request); setSSHOpen(false); setAdding(true); }} />}
+            {adding && <AddMachine executor={executor} hub={snap.hub.node} harnesses={hubHarnesses.length ? hubHarnesses : ["codex", "claude-code", "grok", "kimi"]} nodes={snap.nodes.filter((n) => n.role !== "hub").map((n) => n.name)} onClose={() => setAdding(false)} onDone={() => refresh()} />}
+            <div id="fleet-machines" ref={machineSection} tabIndex={-1} className="min-w-0 scroll-mt-4 rounded-xl focus-visible:outline-2 focus-visible:outline-focus-ring"><TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title={tr("fleet.machine")} badge={tr("fleet.online", { online: up, total: snap.nodes.length })} />
                 {snap.nodes.length === 0 ? <Nothing icon={Server01} title={tr("fleet.noMachines")}>{tr("fleet.noMachinesHint")}</Nothing> : (
                     <Table aria-label={tr("fleet.machine")} size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
@@ -428,7 +436,7 @@ export function FleetPage() {
                         </Table.Body>
                     </Table>
                 )}
-            </TableCard.Root>
+            </TableCard.Root></div>
             {opened && snap.nodes.find((n) => n.name === opened) && <MachineDrawer n={snap.nodes.find((n) => n.name === opened)!} onClose={() => setOpened(null)} onChanged={() => refresh()} />}
 
             <TableCard.Root size="sm" className="workbench-table min-w-0">
