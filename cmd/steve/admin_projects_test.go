@@ -11,8 +11,39 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/platformconfig"
 	"github.com/gopact-ai/steve/internal/project"
 )
+
+func TestSharedProjectRegistrationResolvesCoordinatorToPhysicalNode(t *testing.T) {
+	t.Setenv("STEVE_NODE", "node-a")
+	for _, requestedNode := range []string{"", "hub", "node-a"} {
+		t.Run("node="+requestedNode, func(t *testing.T) {
+			a, _, book, _ := sharedSettingsFixture(t)
+			a.projects = project.Open(book)
+			if err := (config.ProjectController{Store: a.projects}).Reconcile(t.Context(), a.cfg); err != nil {
+				t.Fatal(err)
+			}
+			req := consoleapi.AddProjectRequest{ID: "new", Node: requestedNode, Path: t.TempDir(), Level: "internal", Repo: "inplace"}
+			for range 2 {
+				if err := a.AddProject(t.Context(), req); err != nil {
+					t.Fatalf("register/retry project on coordinator: %v", err)
+				}
+			}
+			stored, found, err := platformconfig.New(book).Load()
+			if err != nil || !found {
+				t.Fatalf("load shared configuration: found=%v err=%v", found, err)
+			}
+			if home := stored.Projects[req.ID].Home; home.Node != "node-a" || home.Path != req.Path {
+				t.Fatalf("persisted project lost physical home: %+v", home)
+			}
+			p, found, err := a.projects.Get(t.Context(), req.ID)
+			if err != nil || !found || p.Home.Node != "node-a" || p.Home.Path != req.Path {
+				t.Fatalf("project projection disagrees with shared declaration: found=%v home=%+v err=%v", found, p.Home, err)
+			}
+		})
+	}
+}
 
 func projectAdminFixture(t *testing.T) (*fleetAdmin, *ledger.Ledger) {
 	t.Helper()

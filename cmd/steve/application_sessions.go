@@ -138,14 +138,40 @@ func sessionCleanupRecord(ctx context.Context, active cluster.Activation, place 
 }
 
 func (p *clusterPeer) AuthorizeNodeSession(ctx context.Context, authenticatedNode string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action string) error {
-	if authenticatedNode != authority.CoordinatorNodeID || authority.ClusterID != p.config.ClusterID || binding.NodeID != p.config.NodeID {
+	if authenticatedNode != authority.CoordinatorNodeID {
+		return errors.New("node session coordinator differs from the authenticated peer")
+	}
+	return p.authorizeSessionExecution(ctx, p.config.NodeID, authority, binding, action)
+}
+
+func (p *clusterPeer) applicationSessionAuthorizer(active cluster.Activation) func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, string) error {
+	return func(ctx context.Context, node string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action string) error {
+		if err := active.Context.Err(); err != nil {
+			return err
+		}
+		if authority.CoordinatorNodeID != active.NodeID || authority.CoordinatorEpoch != active.Assignment.Epoch || authority.WriterGeneration != active.WriterGeneration {
+			return coordination.ErrStaleEpoch
+		}
+		ctx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		stop := context.AfterFunc(active.Context, cancel)
+		defer stop()
+		if err := p.authorizeSessionExecution(ctx, node, authority, binding, action); err != nil {
+			return err
+		}
+		return active.Context.Err()
+	}
+}
+
+func (p *clusterPeer) authorizeSessionExecution(ctx context.Context, node string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action string) error {
+	if authority.ClusterID != p.config.ClusterID || binding.NodeID != node {
 		return errors.New("node session belongs to another cluster or machine")
 	}
 	var observation, stopping bool
 	switch action {
-	case "open", "attach", "poll", "settings":
+	case "open", "attach", "poll", "settings", "inspect-open":
 		observation = true
-	case "cancel", "abort", "close":
+	case "cancel", "abort", "close", "cancel-open":
 		stopping = true
 	case "start", "prompt", "answer", "option", "capabilities":
 	default:

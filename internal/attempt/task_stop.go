@@ -67,8 +67,14 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 			return errors.New("native stop receipt belongs to another execution")
 		}
 		kind := "native-command-settled"
+		if next.Session == "" {
+			next.Session = st.ID
+		}
 		if st.ProcessStopped {
 			kind = "native-process-stopped"
+			if st.OpenReceipt != nil && st.OpenReceipt.CancelledBeforeOpen {
+				kind = "native-open-cancelled"
+			}
 		} else if st.Command == nil || !st.Command.Settled || (st.Command.State != "completed" && st.Command.State != "cancelled") {
 			return ErrStopConfirmationRequired
 		}
@@ -109,7 +115,7 @@ func taskStopAlreadySettled(r Record) bool {
 }
 
 func stoppedTaskTx(tx *ledger.Tx, r Record) (task.Task, error) {
-	if r.State == Superseded || r.Execution == nil || r.Execution.TaskID != r.TaskID || !strings.HasPrefix(r.Session, "ns_") {
+	if r.State == Superseded || r.Execution == nil || r.Execution.TaskID != r.TaskID || (!strings.HasPrefix(r.Session, "ns_") && !PendingSessionOpen(r)) {
 		return task.Task{}, errors.New("task stop requires an original node-owned execution")
 	}
 	raw, ok, err := tx.LoadDocument("tasks")
@@ -134,10 +140,24 @@ func stoppedTaskTx(tx *ledger.Tx, r Record) (task.Task, error) {
 }
 
 func matchesStoppedSession(r Record, tracked task.Task, st nodewire.SessionState) bool {
-	if st.ID != r.Session || st.Harness != r.Harness || st.Binding.ProjectID != r.Project || st.Binding.NodeID != r.Node || st.Binding.TaskID != r.TaskID || st.Binding.AttemptID != r.ID || st.Binding.ExecutionEpoch != SessionExecutionEpoch(r) || st.Binding.TaskEpoch != r.Execution.Epoch || st.Binding.SessionID != RetainedSessionID(tracked.Channel, tracked.ID, r.Agent) {
+	if st.Harness != r.Harness || st.Binding.ProjectID != r.Project || st.Binding.NodeID != r.Node || st.Binding.TaskID != r.TaskID || st.Binding.AttemptID != r.ID || st.Binding.ExecutionEpoch != SessionExecutionEpoch(r) || st.Binding.TaskEpoch != r.Execution.Epoch || st.Binding.SessionID != RetainedSessionID(tracked.Channel, tracked.ID, r.Agent) {
+		return false
+	}
+	if r.Session == "" {
+		proof := st.OpenReceipt
+		if !PendingSessionOpen(r) || proof == nil || proof.Action != "cancel-open" || proof.CommandID != InputCommandID(r)+"/open" || proof.Authority.ClusterID == "" || proof.Authority.CoordinatorNodeID == "" || proof.Authority.CoordinatorEpoch == 0 || proof.Authority.WriterGeneration == 0 || !st.ProcessStopped || st.State != "closed" || st.ID != nodewire.SessionOpenID(proof.Authority.ClusterID, r.Node, r.ID, proof.CommandID, r.Harness) {
+			return false
+		}
+	} else if st.ID != r.Session {
 		return false
 	}
 	return st.Command == nil && st.ProcessStopped || st.Command != nil && st.Command.ID == InputCommandID(r) && st.Command.InputSequence > 0 && st.Command.InputSequence <= st.InputAccepted
+}
+
+// PendingSessionOpen has a committed preparation whose native receipt was
+// lost. Its absent session ID proves neither native creation nor cancellation.
+func PendingSessionOpen(r Record) bool {
+	return retainedKind(r.Kind) && r.Execution != nil && r.Node != "" && r.Unsettled && r.Session == "" && (r.State == Leased || r.State == Prepared)
 }
 
 // TaskStopPending keeps lack of a native receipt visible without interpreting

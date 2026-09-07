@@ -21,6 +21,10 @@ type applicationStopSessions interface {
 	AttachRetainedSession(context.Context, harness.Placement, string, string) (harness.ResumableRunner, error)
 }
 
+type applicationOpenRecovery interface {
+	ReconcileNodeOpen(context.Context, harness.Placement, string, bool) (nodewire.SessionState, error)
+}
+
 type applicationStops struct {
 	mu       sync.Mutex
 	attempts *attempt.Service
@@ -57,7 +61,7 @@ func (s *applicationStops) Reconcile(parent context.Context) error {
 	seen := map[string]bool{}
 	var pending []attempt.Record
 	for _, r := range append(live, closed...) {
-		if seen[r.ID] || r.State == attempt.Superseded || !strings.HasPrefix(r.Session, "ns_") || r.Node == "" || r.Execution == nil {
+		if seen[r.ID] || r.State == attempt.Superseded || (!strings.HasPrefix(r.Session, "ns_") && !attempt.PendingSessionOpen(r)) || r.Node == "" || r.Execution == nil {
 			continue
 		}
 		seen[r.ID] = true
@@ -117,6 +121,21 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 			log.Printf("steve: native stop pending task=%s attempt=%s node=%s: %v", r.TaskID, r.ID, r.Node, cause)
 		}
 		return nil
+	}
+	if attempt.PendingSessionOpen(r) {
+		recovery, ok := s.sessions.(applicationOpenRecovery)
+		if !ok {
+			return failed(errors.New("node cannot reconcile the original session open"))
+		}
+		state, err := recovery.ReconcileNodeOpen(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Workspace.Path, true)
+		if err != nil {
+			return failed(err)
+		}
+		stopped, err := s.attempts.ConfirmTaskStopped(ctx, r.ID, "task-stop-recovery", attempt.RetainedEvidence{ObservedAt: time.Now().UTC(), Session: state})
+		if err != nil {
+			return failed(err)
+		}
+		return s.projectStopped(stopped)
 	}
 	runner, err := s.sessions.AttachRetainedSession(ctx, harness.Placement{Node: r.Node, Harness: r.Harness}, r.Session, r.Workspace.Path)
 	if err != nil {

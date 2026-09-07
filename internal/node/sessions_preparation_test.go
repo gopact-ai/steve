@@ -19,6 +19,26 @@ type lostPreparationReply struct {
 	native  string
 }
 
+func TestNodePreparationUnsupportedNodeDoesNotClaimNativeOpenWasDispatched(t *testing.T) {
+	server := startNode(t, ServerConfig{Name: "worker", Token: "unsupported-session", StateDir: t.TempDir()})
+	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "unsupported-session"}})
+	defer registry.Close()
+	manager, _ := harness.NewManager(nil)
+	manager.SetTransports(registry)
+	defer manager.Stop()
+	request := nodeSessionRequest("open")
+	ctx := harness.WithNodeSession(t.Context(), harness.NodeSessionContext{Authority: request.Authority, Binding: request.Binding, CommandID: "never-dispatched"})
+	_, err := manager.OpenSession(ctx, harness.Placement{Node: "worker", Harness: "mock"}, "", t.TempDir(), nil)
+	var uncertain *harness.NodeSessionOpenUncertain
+	if err == nil || errors.As(err, &uncertain) || errors.Is(err, harness.ErrStopUnconfirmed) {
+		t.Fatalf("unsupported capability falsely quarantined an execution that never opened: %v", err)
+	}
+	_, err = manager.OpenSession(ctx, harness.Placement{Node: "worker", Harness: "mock"}, "ns_"+strings.Repeat("0", 64), t.TempDir(), nil)
+	if !errors.As(err, &uncertain) || !errors.Is(err, harness.ErrStopUnconfirmed) {
+		t.Fatalf("unsupported capability invented safety for a previously existing native session: %v", err)
+	}
+}
+
 func (r *lostPreparationReply) NodeSession(ctx context.Context, node string, request nodewire.SessionRequest) (nodewire.SessionState, error) {
 	state, err := r.Registry.NodeSession(ctx, node, request)
 	if err == nil && request.Action == "open" && !r.dropped {

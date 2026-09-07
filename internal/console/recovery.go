@@ -203,6 +203,17 @@ func (s *Service) findRetained(ctx context.Context, driver RetainedChatDriver, e
 
 func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver RetainedChatDriver) {
 	s.mu.Lock()
+	if e.RecoveryStop != nil {
+		reply := *e.RecoveryStop
+		s.mu.Unlock()
+		s.finish(e, reply, nil)
+		return
+	}
+	if e.RecoveryStopPending != "" {
+		s.mu.Unlock()
+		s.waitRecoveryStop(e)
+		return
+	}
 	exchange := copyExchange(e.Exchange)
 	work := newProcess()
 	if s.processes == nil {
@@ -385,6 +396,12 @@ func isRecoveryBlocked(err error) bool {
 
 func (s *Service) detachRecovery(e *queuedExchange, err error) {
 	s.mu.Lock()
+	if e.RecoveryStop != nil {
+		reply := *e.RecoveryStop
+		s.mu.Unlock()
+		s.finish(e, reply, nil)
+		return
+	}
 	defer s.mu.Unlock()
 	s.detachRecoveryLocked(e, err)
 }

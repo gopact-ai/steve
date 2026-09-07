@@ -504,6 +504,7 @@ func (p *clusterPeer) startApplication(ctx context.Context, activation cluster.A
 	environment.WriteConfigContext = stateConfig.SaveContext
 	environment.ConfigurationRevision = stateConfig.Revision
 	environment.SessionBinder = newApplicationSessionBinder(activation)
+	environment.SessionAuthorizer = p.applicationSessionAuthorizer(activation)
 	environment.Content = content
 	environment.Fail = func(err error) { p.applicationStoreFailure(activation, err) }
 	go func() {

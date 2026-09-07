@@ -114,7 +114,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	}
 	c.rememberMode(req)
 	if pendingChatOpen(record) {
-		return Result{}, retainedBlocked("native-open", "按原执行标识向节点请求建立会话", "原节点没有返回会话创建的确认。", "会话可能已在节点创建；不能凭连接中断另建执行或重新发送任务。", "建议恢复原节点连接并核对这次会话创建记录，再继续原任务。", harness.ErrStopUnconfirmed)
+		return Result{}, c.inspectPendingOpen(parent, record)
 	}
 	if !strings.HasPrefix(record.Session, "ns_") {
 		return Result{}, retainedBlocked("native-identity", "检查原节点会话标识", "尚未取得可接续的原生会话。", "恢复准备可能在建立会话前中断。", "建议重新检查已确认的恢复准备。", nil)

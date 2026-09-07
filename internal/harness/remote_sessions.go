@@ -122,6 +122,10 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 	request := nodewire.SessionRequest{Action: "open", Authority: binding.Authority, Binding: binding.Binding, ID: upstreamID, Harness: at.Harness, Workdir: workdir, MCPServers: servers, Permission: policy, CommandID: binding.CommandID + "/open"}
 	state, err := transport.NodeSession(ctx, node, request)
 	if err != nil {
+		var notSent *nodewire.SessionNotDispatched
+		if upstreamID == "" && errors.As(err, &notSent) {
+			return nil, true, fmt.Errorf("node-owned session was not opened: %w", err)
+		}
 		return nil, true, &NodeSessionOpenUncertain{Binding: binding.Binding, OpenCommandID: request.CommandID, SessionID: upstreamID, Cause: err}
 	}
 	for state.State == "opening" {

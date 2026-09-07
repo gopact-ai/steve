@@ -171,6 +171,12 @@ func Bootstrap(options Options) (*Installation, error) {
 	if err := localURL(address, true); err != nil {
 		return nil, fmt.Errorf("desktop endpoint: %w", err)
 	}
+	// Shared profile contents live in the ledger, but home conversations still
+	// need a local workspace for execution and snapshots. Ensure the desktop's
+	// directory also exists when reopening an installation.
+	if err := privateDirectory(filepath.Join(root, "home")); err != nil {
+		return nil, fmt.Errorf("prepare desktop home workspace: %w", err)
+	}
 	return &Installation{Paths: paths, NodeID: saved.NodeID, URL: address, Token: string(token)}, nil
 }
 

@@ -1,12 +1,22 @@
 package nodewire
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"time"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/view"
 )
+
+// SessionOpenID is the stable native identity of one admitted open command.
+func SessionOpenID(cluster, node, attempt, command, harness string) string {
+	raw, _ := json.Marshal([]string{cluster, node, attempt, command, harness})
+	hash := sha256.Sum256(raw)
+	return "ns_" + hex.EncodeToString(hash[:])
+}
 
 const FeatureNodeSessions = "node_sessions.v1"
 const StreamNodeSessions = "node_sessions"
@@ -95,24 +105,49 @@ type SessionCommand struct {
 }
 
 type SessionState struct {
-	ID              string            `json:"id"`
-	Binding         SessionBinding    `json:"binding"`
-	Harness         string            `json:"harness"`
-	State           string            `json:"state"`
-	Sequence        uint64            `json:"sequence"`
-	InputAccepted   uint64            `json:"input_accepted"`
-	Settings        view.Settings     `json:"settings"`
-	ModelOption     string            `json:"model_option,omitempty"`
-	ModelChoices    []view.Choice     `json:"model_choices,omitempty"`
-	SupportsHTTPMCP bool              `json:"supports_http_mcp"`
-	Progress        view.Progress     `json:"progress"`
-	Command         *SessionCommand   `json:"command,omitempty"`
-	Questions       []SessionQuestion `json:"questions"`
-	ProcessStopped  bool              `json:"process_stopped"`
+	OpenReceipt     *SessionOpenReceipt `json:"open_receipt,omitempty"`
+	ID              string              `json:"id"`
+	Binding         SessionBinding      `json:"binding"`
+	Harness         string              `json:"harness"`
+	State           string              `json:"state"`
+	Sequence        uint64              `json:"sequence"`
+	InputAccepted   uint64              `json:"input_accepted"`
+	Settings        view.Settings       `json:"settings"`
+	ModelOption     string              `json:"model_option,omitempty"`
+	ModelChoices    []view.Choice       `json:"model_choices,omitempty"`
+	SupportsHTTPMCP bool                `json:"supports_http_mcp"`
+	Progress        view.Progress       `json:"progress"`
+	Command         *SessionCommand     `json:"command,omitempty"`
+	Questions       []SessionQuestion   `json:"questions"`
+	ProcessStopped  bool                `json:"process_stopped"`
+}
+
+// SessionOpenReceipt binds a fresh inspect/cancel result to the original open.
+// Only CancelledBeforeOpen proves that a missing open was durably fenced.
+type SessionOpenReceipt struct {
+	Action              string           `json:"action"`
+	Authority           SessionAuthority `json:"authority"`
+	CommandID           string           `json:"command_id"`
+	CancelledBeforeOpen bool             `json:"cancelled_before_open,omitempty"`
 }
 
 type SessionReply struct {
-	State     *SessionState `json:"state,omitempty"`
-	ErrorCode string        `json:"error_code,omitempty"`
-	Error     string        `json:"error,omitempty"`
+	AuthorizeAction string        `json:"authorize_action,omitempty"`
+	State           *SessionState `json:"state,omitempty"`
+	ErrorCode       string        `json:"error_code,omitempty"`
+	Error           string        `json:"error,omitempty"`
 }
+
+// SessionAuthorization is a reply on the same authenticated RPC stream. It is
+// never transferable to a different request or reusable as a bearer grant.
+type SessionAuthorization struct {
+	Allowed bool   `json:"allowed"`
+	Error   string `json:"error,omitempty"`
+}
+
+// SessionNotDispatched reports failure before any session request bytes were
+// sent. It makes no claim about an already existing native session.
+type SessionNotDispatched struct{ Cause error }
+
+func (e *SessionNotDispatched) Error() string { return e.Cause.Error() }
+func (e *SessionNotDispatched) Unwrap() error { return e.Cause }

@@ -435,6 +435,7 @@ type applicationEnvironment struct {
 	WriteConfigContext    func(context.Context, string, *config.Config) error
 	ConfigureNodes        func(map[string]node.Config) error
 	SessionBinder         func(context.Context, harness.Placement, string, string) (context.Context, error)
+	SessionAuthorizer     func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, string) error
 	Fail                  func(error)
 	ConfigurationRevision func() string
 	Configure             func(*config.Config) error
@@ -571,6 +572,9 @@ func serveApplication(parent context.Context, args []string, environment *applic
 		}
 	}
 	nodes := node.NewRegistry(cfg.Gateway.HubID, nodeConfigs)
+	if environment != nil {
+		nodes.SetSessionAuthorizer(environment.SessionAuthorizer)
+	}
 	defer nodes.Close()
 	manager.SetTransports(nodes)
 

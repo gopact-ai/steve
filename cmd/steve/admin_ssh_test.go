@@ -141,6 +141,9 @@ func TestManualBootstrapKeepsExplicitAdapterPortable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if !strings.Contains(registration.Note, "~/steve-bin/steve-node") || !strings.Contains(registration.Note, "先移除此未接入的机器登记") || !strings.Contains(registration.Note, "“通过 SSH 接入”重新添加") || strings.Contains(registration.Note, "hub") {
+		t.Fatalf("manual enrollment lacks actionable installation guidance: %q", registration.Note)
+	}
 	script, ok := admin.Bootstrap("remote", registration.Token)
 	if !ok || !strings.Contains(script, `"adapter": "codex-acp"`) || strings.Contains(script, "/coordinator-only/adapter") {
 		t.Fatal("manual bootstrap copied a coordinator-only adapter path")

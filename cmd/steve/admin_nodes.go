@@ -249,7 +249,7 @@ func (a *fleetAdmin) AddNode(ctx context.Context, req consoleapi.AddNodeRequest)
 	out := consoleapi.AddNodeResult{Name: name, Token: token,
 		Command: fmt.Sprintf("curl -fsSL '%s/bootstrap/%s?token=%s' | bash -l", req.HubURL, name, token)}
 	if binary == "" {
-		out.Note = "hub 没有配置 gateway.node_binary，脚本不会下载 steve-node：先把它放到那台机器的 ~/steve-bin/steve-node。"
+		out.Note = "协调节点尚未配置手动安装包。请先将 steve-node 放到目标机器的 ~/steve-bin/steve-node。如需改用 SSH 自动安装，请先移除此未接入的机器登记，再从“通过 SSH 接入”重新添加。"
 	}
 	return out, saveErr
 }

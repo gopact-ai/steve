@@ -22,13 +22,16 @@ type queuedExchange struct {
 	Exchange
 	// Submission identity survives edits/steering. A keyed exchange's result
 	// outlives the bounded transcript projection so restart retries can reply.
-	PayloadHash  string            `json:"payload_hash,omitempty"`
-	QuoteAliases map[string]string `json:"quote_aliases,omitempty"`
-	Receipt      *consoleapi.Reply `json:"receipt,omitempty"`
-	ctx          context.Context
-	cancel       context.CancelFunc
-	done         chan struct{}
-	outcome      outcome
+	PayloadHash         string            `json:"payload_hash,omitempty"`
+	QuoteAliases        map[string]string `json:"quote_aliases,omitempty"`
+	Receipt             *consoleapi.Reply `json:"receipt,omitempty"`
+	RecoveryStop        *consoleapi.Reply `json:"recovery_stop,omitempty"`
+	RecoveryStopPending string            `json:"recovery_stop_pending,omitempty"`
+	recoveryStopping    chan struct{}
+	ctx                 context.Context
+	cancel              context.CancelFunc
+	done                chan struct{}
+	outcome             outcome
 }
 
 func conversationID(conversation string) string {
@@ -393,6 +396,15 @@ func (s *Service) startNextLocked(conversation string) error {
 		return nil
 	}
 	for _, e := range s.exchanges[conversation] {
+		if e.State == "recovering" || e.State == "awaiting-user" {
+			err := s.save()
+			if err == nil {
+				s.publishQueue(conversation)
+			}
+			return err
+		}
+	}
+	for _, e := range s.exchanges[conversation] {
 		if e.State == "queued" {
 			return s.startLocked(e)
 		}
@@ -402,10 +414,28 @@ func (s *Service) startNextLocked(conversation string) error {
 
 func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	s.mu.Lock()
+	for e.recoveryStopping != nil {
+		done := e.recoveryStopping
+		s.mu.Unlock()
+		<-done
+		s.mu.Lock()
+	}
+	if terminalExchange(e.State) {
+		s.mu.Unlock()
+		return
+	}
 	if s.recoveryStoppedLocked() {
 		s.detachRecoveryLocked(e, context.Canceled)
 		s.mu.Unlock()
 		return
+	}
+	if e.RecoveryStop == nil && e.RecoveryStopPending != "" {
+		s.mu.Unlock()
+		s.waitRecoveryStop(e)
+		return
+	}
+	if e.RecoveryStop != nil {
+		reply, err = *e.RecoveryStop, nil
 	}
 	var interrupted []consoleapi.PendingQuestion
 	for id, q := range s.questions {
@@ -432,6 +462,9 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	}
 	reply = s.recordLocked(reply)
 	e.ReplyID, e.State = reply.ID, "done"
+	if e.RecoveryStop != nil {
+		e.State = "cancelled"
+	}
 	if err != nil {
 		e.State = "failed"
 	}
@@ -507,7 +540,8 @@ func (s *Service) restoreQueueLocked() error {
 	for conversation, list := range s.exchanges {
 		for _, e := range list {
 			e.ctx, e.done = s.exchangeContext(context.Background()), make(chan struct{})
-			if s.recoveryLifetime != nil && (e.State == "running" || e.State == "recovering" || e.State == "awaiting-user") {
+			_, parsed := s.parseInput(e.Input)
+			if s.recoveryLifetime != nil && !parsed.Control() && (e.State == "running" || e.State == "recovering" || e.State == "awaiting-user") {
 				e.State = "recovering"
 				s.running[conversation]++
 				continue

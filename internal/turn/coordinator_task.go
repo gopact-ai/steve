@@ -36,6 +36,10 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 	if strings.HasPrefix(req.ConversationID, onboard.PendingPrefix) {
 		return "", nil
 	}
+	executionNode := selected.Node
+	if executionNode == "" {
+		executionNode = c.node
+	}
 	tracked, ok := c.tasks.Active(req.ConversationID, selected.ID, req.Origin)
 	if ok && tracked.ProjectID != "" && binding.ProjectID != "" && tracked.ProjectID != binding.ProjectID {
 		// The binding moved under a task that was never closed (an older
@@ -53,7 +57,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 			Requester: req.SenderOpenID,
 			Channel:   req.ConversationID,
 			Member:    selected.ID,
-			Node:      c.node,
+			Node:      executionNode,
 			Origin:    req.Origin,
 			ProjectID: binding.ProjectID,
 			Workspace: workspace,
@@ -65,7 +69,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		}
 		tracked = created
 	}
-	if _, err := c.tasks.Begin(tracked.ID, selected.ID, c.node, ""); err != nil {
+	if _, err := c.tasks.Begin(tracked.ID, selected.ID, executionNode, ""); err != nil {
 		if text, spent := c.budgetStop(tracked); spent {
 			return "", UserError{Text: text}
 		}
@@ -411,11 +415,16 @@ func (c *Coordinator) taskTarget(conversationID, id string, verb taskVerb) (task
 // turn that happens to finish during the stop cannot flip the task back to
 // running, then stop the turn that is actually burning time.
 func (c *Coordinator) taskSetAside(ctx context.Context, title string, tracked task.Task, to task.State) Result {
+	result, _ := c.setTaskAside(ctx, title, tracked, to, false)
+	return result
+}
+
+func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked task.Task, to task.State, confirmSettlement bool) (Result, error) {
 	var stopErr error
 	if c.executions != nil {
 		ids, err := c.tasks.SetAside(tracked.ID, to)
 		if err != nil {
-			return Result{Title: title, Text: err.Error()}
+			return Result{Title: title, Text: err.Error()}, err
 		}
 		if c.attempts != nil {
 			for _, id := range ids {
@@ -439,7 +448,7 @@ func (c *Coordinator) taskSetAside(ctx context.Context, title string, tracked ta
 					continue
 				}
 				for _, record := range records {
-					if record.Unsettled {
+					if record.Unsettled || (confirmSettlement && !record.State.Terminal()) {
 						stopErr = errors.Join(stopErr, fmt.Errorf("attempt %s writer is quarantined until physically confirmed stopped", record.ID))
 					}
 				}
@@ -447,13 +456,13 @@ func (c *Coordinator) taskSetAside(ctx context.Context, title string, tracked ta
 		}
 	} else {
 		if _, err := c.tasks.Advance(tracked.ID, to); err != nil {
-			return Result{Title: title, Text: c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))}
+			return Result{Title: title, Text: c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))}, err
 		}
 		c.stopTurnFor(ctx, tracked)
 	}
 	moved, _ := c.tasks.Get(tracked.ID)
 	if stopErr != nil {
-		return Result{Title: title, Text: fmt.Sprintf("task #%s: stop recorded, execution has not confirmed stopping: %v", tracked.ID, stopErr)}
+		return Result{Title: title, Text: fmt.Sprintf("task #%s: stop recorded, execution has not confirmed stopping: %v", tracked.ID, stopErr)}, stopErr
 	}
 	// Re-read: the stopped turn closes its own attempt, and the detail is
 	// only worth showing if it reflects that.
@@ -461,9 +470,9 @@ func (c *Coordinator) taskSetAside(ctx context.Context, title string, tracked ta
 		moved = latest
 	}
 	if to == task.StatePaused {
-		return Result{Title: title, Text: c.text.T(i18n.TaskPaused, moved.ID, protocol.CommandTasks) + "\n\n" + c.taskDetail(moved)}
+		return Result{Title: title, Text: c.text.T(i18n.TaskPaused, moved.ID, protocol.CommandTasks) + "\n\n" + c.taskDetail(moved)}, nil
 	}
-	return Result{Title: title, Text: c.text.T(i18n.TaskCancelled, moved.ID) + "\n\n" + c.taskDetail(moved)}
+	return Result{Title: title, Text: c.text.T(i18n.TaskCancelled, moved.ID) + "\n\n" + c.taskDetail(moved)}, nil
 }
 
 // stopTurnFor stops the turn a task is running through, if any. The task's own

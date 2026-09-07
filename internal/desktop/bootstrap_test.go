@@ -33,7 +33,7 @@ func TestBootstrapCreatesPrivateUsableLocalInstallation(t *testing.T) {
 	if len(installed.Token) < 40 || cfg.Gateway.ReadModelToken != installed.Token || !strings.HasPrefix(installed.URL, "http://127.0.0.1:") {
 		t.Fatal("first launch did not establish authenticated loopback access")
 	}
-	for path, mode := range map[string]os.FileMode{root: 0o700, installed.Paths.Config: 0o600, installed.Paths.Profile: 0o600, installed.Paths.Identity: 0o600, installed.Paths.Token: 0o600} {
+	for path, mode := range map[string]os.FileMode{root: 0o700, cfg.Gateway.HomePath: 0o700, cfg.Projects["workspace"].Home.Path: 0o700, installed.Paths.Config: 0o600, installed.Paths.Profile: 0o600, installed.Paths.Identity: 0o600, installed.Paths.Token: 0o600} {
 		info, err := os.Stat(path)
 		if err != nil || info.Mode().Perm() != mode {
 			t.Fatalf("private path %s: info=%v, error=%v", filepath.Base(path), info, err)
@@ -48,6 +48,55 @@ func TestBootstrapCreatesPrivateUsableLocalInstallation(t *testing.T) {
 	encoded, _ := json.Marshal(installed)
 	if strings.Contains(string(encoded), installed.Token) {
 		t.Fatal("normal installation serialization disclosed its token")
+	}
+}
+
+func TestBootstrapRestoresMissingHomeWorkspace(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "Steve")
+	installed, err := Bootstrap(Options{StateDir: root})
+	if err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(root, "home")
+	if err := os.RemoveAll(home); err != nil {
+		t.Fatal(err)
+	}
+	wantConfig, err := os.ReadFile(installed.Paths.Config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Bootstrap(Options{StateDir: root}); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Lstat(home)
+	if err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
+		t.Fatalf("home conversation has no private workspace after relaunch: info=%v, error=%v", info, err)
+	}
+	gotConfig, err := os.ReadFile(installed.Paths.Config)
+	if err != nil || string(gotConfig) != string(wantConfig) {
+		t.Fatal("restoring the desktop workspace changed configuration")
+	}
+}
+
+func TestBootstrapRejectsLinkedHomeWorkspace(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "Steve")
+	if _, err := Bootstrap(Options{StateDir: root}); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(root, "home")
+	if err := os.Remove(home); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.Symlink(outside, home); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Bootstrap(Options{StateDir: root}); err == nil {
+		t.Fatal("bootstrap accepted a home workspace outside the installation")
+	}
+	entries, err := os.ReadDir(outside)
+	if err != nil || len(entries) != 0 {
+		t.Fatal("bootstrap modified the linked directory")
 	}
 }
 

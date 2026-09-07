@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/acp"
@@ -18,6 +19,19 @@ type uncertainOpenManager struct {
 	*fakeManager
 	attempts *attempt.Service
 	calls    int
+}
+
+type inspectingOpenManager struct {
+	*uncertainOpenManager
+	inspections int
+}
+
+func (m *inspectingOpenManager) ReconcileNodeOpen(ctx context.Context, _ harness.Placement, _ string, cancelOpen bool) (nodewire.SessionState, error) {
+	if cancelOpen {
+		return nodewire.SessionState{}, errors.New("resume must not cancel the original open")
+	}
+	m.inspections++
+	return nodewire.SessionState{ID: "ns_original", State: "idle", OpenReceipt: &nodewire.SessionOpenReceipt{Action: "inspect-open"}}, nil
 }
 
 func (m *uncertainOpenManager) OpenSession(ctx context.Context, place harness.Placement, upstream, workspace string, servers []acp.MCPServer) (harness.Runner, error) {
@@ -72,6 +86,13 @@ func TestLostFreshNodeOpenKeepsOriginalTaskUnsettledWhileObserverCanExit(t *test
 	}
 	if _, err := c.ResumeRetainedChat(lifetime, record.ID, req); err == nil || manager.calls != 1 {
 		t.Fatal("missing native identity silently replayed original task")
+	}
+	inspector := &inspectingOpenManager{uncertainOpenManager: manager}
+	c.runtime = inspector
+	_, err = c.ResumeRetainedChat(lifetime, record.ID, req)
+	var question *RecoveryBlocked
+	if !errors.As(err, &question) || !strings.Contains(question.Question.Message, "已找到原会话") || !strings.Contains(question.Question.Message, "停止") || inspector.inspections != 1 || manager.calls != 1 {
+		t.Fatalf("found preparation did not ask for safe cancellation without re-opening: inspections=%d opens=%d err=%v", inspector.inspections, manager.calls, err)
 	}
 	if err := c.executions.Stop([]string{record.TaskID}, task.ErrExecutionStopped).Wait(t.Context()); err == nil {
 		t.Fatal("explicit stop claimed unknown node process was stopped")

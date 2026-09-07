@@ -117,7 +117,8 @@ func (a *fleetAdmin) AddProject(ctx context.Context, req consoleapi.AddProjectRe
 	if path == "" || !(strings.HasPrefix(path, "/") || strings.HasPrefix(path, "~")) {
 		return errors.New("目录要写绝对路径")
 	}
-	if req.Node == "" && strings.HasPrefix(path, "~") {
+	nodeKey := a.nodeKey(req.Node)
+	if (nodeKey == "" || a.clusterMode && nodeKey == nodeName()) && strings.HasPrefix(path, "~") {
 		if home, err := os.UserHomeDir(); err == nil {
 			path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
 		}
@@ -127,7 +128,7 @@ func (a *fleetAdmin) AddProject(ctx context.Context, req consoleapi.AddProjectRe
 	if repo == "" {
 		repo = project.RepoInPlace
 	}
-	item := config.Project{Home: config.ProjectHome{Node: req.Node, Path: path}, Level: string(level), Repo: string(repo)}
+	item := config.Project{Home: config.ProjectHome{Node: nodeKey, Path: path}, Level: string(level), Repo: string(repo)}
 	return a.changeProjects(ctx, func(candidate *config.Config) error {
 		if old, exists := candidate.Projects[id]; exists {
 			if reflect.DeepEqual(old, item) {

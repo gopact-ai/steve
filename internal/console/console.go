@@ -586,6 +586,11 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 	} else if address != "" && block != "" {
 		prompt = address + " " + block + parsed.Prompt
 	}
+	if parsed.Command == protocol.CommandCancel && address == "" {
+		if result, handled, stopErr := s.stopRecovering(ctx, exchange, requester); handled {
+			return s.resultReply(ctx, exchange, newProcess(), result, stopErr), stopErr
+		}
+	}
 	if err := ctx.Err(); err != nil {
 		return consoleapi.Reply{Text: err.Error(), Error: err.Error()}, err
 	}

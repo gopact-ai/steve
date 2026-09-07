@@ -9,13 +9,33 @@ import (
 
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
 func TestNodeSessionWireReattachesAfterOwningManagerAndConnectionClose(t *testing.T) {
+	testNodeSessionReattachment(t, false)
+}
+
+func TestStandaloneNodeSessionReattachesQuestionAndFencesOldCoordinator(t *testing.T) {
+	testNodeSessionReattachment(t, true)
+}
+
+func testNodeSessionReattachment(t *testing.T, standalone bool) {
 	authority := &sessionAuthorityTest{epoch: 1, writer: 1}
-	server := startNode(t, ServerConfig{Name: "worker", Token: "session-test", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: authority})
+	var verifier SessionAuthorizer = authority
+	if standalone {
+		verifier = CoordinatorSessionAuthorizer{}
+	}
+	server := startNode(t, ServerConfig{Name: "worker", Token: "session-test", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: verifier})
 	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "session-test"}})
+	verify := func(ctx context.Context, node string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action string) error {
+		if node != "worker" {
+			return errors.New("wrong authenticated node")
+		}
+		return authority.AuthorizeNodeSession(ctx, "cluster-1", a, b, action)
+	}
+	registry.SetSessionAuthorizer(verify)
 	first, err := harness.NewManager(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -66,6 +86,7 @@ func TestNodeSessionWireReattachesAfterOwningManagerAndConnectionClose(t *testin
 	binding.Authority.WriterGeneration = 2
 	binding.Authority.CoordinatorNodeID = "hub-b"
 	nextRegistry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "session-test"}})
+	nextRegistry.SetSessionAuthorizer(verify)
 	defer nextRegistry.Close()
 	next, _ := harness.NewManager(nil)
 	next.SetTransports(nextRegistry)
@@ -87,6 +108,22 @@ func TestNodeSessionWireReattachesAfterOwningManagerAndConnectionClose(t *testin
 	}, nil)
 	if err != nil || !strings.Contains(output, "accept:Blue") {
 		t.Fatalf("reattach result %q: %v", output, err)
+	}
+	stale := req
+	stale.Action, stale.ID = "attach", runner.ID()
+	if _, err := nextRegistry.NodeSession(nextCtx, "worker", stale); err == nil {
+		t.Fatal("old coordinator activation could still observe the retained execution")
+	}
+	if standalone {
+		// Even a delayed affirmative authorization cannot undo the newer
+		// coordinator activation already recorded by this native session.
+		nextRegistry.SetSessionAuthorizer(func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, string) error {
+			return nil
+		})
+		if _, err := nextRegistry.NodeSession(nextCtx, "worker", stale); err == nil {
+			t.Fatal("delayed grant bypassed durable coordinator generation fencing")
+		}
+		nextRegistry.SetSessionAuthorizer(verify)
 	}
 	if err := next.CloseSession(nextCtx, harness.Placement{Node: "worker", Harness: "mock"}, attached.ID()); err != nil {
 		t.Fatal(err)

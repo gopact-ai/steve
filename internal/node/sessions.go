@@ -43,14 +43,16 @@ type SessionService struct {
 }
 
 type ownedSession struct {
-	service *SessionService
-	mu      sync.Mutex
-	record  sessionRecord
-	host    *acphost.Host
-	changed chan struct{}
-	waiters map[string]chan struct{}
-	runDone chan struct{}
-	failure error
+	service    *SessionService
+	mu         sync.Mutex
+	record     sessionRecord
+	host       *acphost.Host
+	changed    chan struct{}
+	waiters    map[string]chan struct{}
+	runDone    chan struct{}
+	openDone   chan struct{}
+	openCancel context.CancelFunc
+	failure    error
 }
 
 type sessionRecord struct {
@@ -58,6 +60,7 @@ type sessionRecord struct {
 	ClusterID      string                             `json:"cluster_id"`
 	Authority      nodewire.SessionAuthority          `json:"authority"`
 	OpenID         string                             `json:"open_id"`
+	OpenCancelled  bool                               `json:"open_cancelled,omitempty"`
 	OpenHash       string                             `json:"open_hash"`
 	ConfigHash     string                             `json:"config_hash"`
 	UpstreamID     string                             `json:"upstream_id"`
@@ -167,6 +170,9 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 	s.mu.Unlock()
 	if closed {
 		return nodewire.SessionState{}, sessionError("closed", "node session service is closed")
+	}
+	if req.Action == "inspect-open" || req.Action == "cancel-open" {
+		return s.reconcileOpen(ctx, req)
 	}
 	if req.Action == "capabilities" {
 		spec, ok := s.server.conf().Harnesses[req.Harness]
@@ -318,7 +324,7 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		Harness, Workdir, Permission string
 		Servers                      []acp.MCPServer
 	}{req.Binding, req.Harness, req.Workdir, permissionName, req.MCPServers})
-	id := "ns_" + sessionHash([]string{req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness})
+	id := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness)
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
@@ -341,6 +347,9 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		return nodewire.SessionState{}, err
 	} else if exists {
 		s.mu.Unlock()
+		if closed.OpenCancelled {
+			return nodewire.SessionState{}, sessionError("cancelled", "the original native open was durably cancelled before creation")
+		}
 		if closed.OpenHash != hash {
 			return nodewire.SessionState{}, sessionError("conflict", "open command already used with different input")
 		}
@@ -374,14 +383,16 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		host.Close()
 		return nodewire.SessionState{}, err
 	}
+	openCtx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
+	one.openCancel, one.openDone = cancel, make(chan struct{})
+	defer cancel()
+	defer close(one.openDone)
 	s.sessions[id] = one
 	s.wg.Add(1)
 	s.mu.Unlock()
 	defer s.wg.Done()
 	// The durable open belongs to the node. A lost caller response must not
 	// kill a successfully created agent or make an identical retry start twice.
-	openCtx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
-	defer cancel()
 	native, generation, openErr := host.OpenSession(openCtx, "", acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
 	httpMCP := false
 	if openErr == nil {
@@ -565,6 +576,7 @@ func (one *ownedSession) stop(ctx context.Context, req nodewire.SessionRequest) 
 	}
 	host, id, generation := one.host, one.record.UpstreamID, one.record.Generation
 	runDone := one.runDone
+	openCancel, openDone := one.openCancel, one.openDone
 	running := one.runningLocked()
 	if req.CommandID == "" {
 		req.CommandID = one.record.CurrentCommand
@@ -607,7 +619,17 @@ func (one *ownedSession) stop(ctx context.Context, req nodewire.SessionRequest) 
 	}
 	one.mu.Unlock()
 	if req.Action != "cancel" {
+		if openCancel != nil {
+			openCancel()
+		}
 		host.Close()
+		if openDone != nil {
+			select {
+			case <-openDone:
+			case <-ctx.Done():
+				return one.state(req.CommandID), fmt.Errorf("%w: %w", acphost.ErrStopUnconfirmed, ctx.Err())
+			}
+		}
 		if runDone != nil {
 			select {
 			case <-runDone:

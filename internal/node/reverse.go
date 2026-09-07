@@ -88,8 +88,11 @@ func (s *Server) forwardMCP(listener net.Listener) {
 	transport := &http.Transport{
 		// Each request gets one stream. In particular, failed writes are
 		// never retried on a reused HTTP connection: tools may have effects.
-		DisableKeepAlives:     true,
-		ResponseHeaderTimeout: 15 * time.Second,
+		DisableKeepAlives: true,
+		// Tool calls may wait for delegated work or user input before
+		// writing headers. The caller owns their lifetime; a proxy header
+		// timeout would misreport a healthy hub and leave accepted work
+		// running after the caller sees a failure.
 		DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 			mux, err := s.awaitHub(ctx)
 			if err != nil {
@@ -136,7 +139,7 @@ func (s *Server) forwardMCP(listener net.Listener) {
 	_ = server.Serve(listener)
 }
 
-// HTTP owns request cancellation and the header timer. Mux bounds socket
+// HTTP owns request cancellation. Mux bounds socket
 // writes; a stream has no independent socket deadline to overwrite.
 type streamConn struct{ *nodewire.Stream }
 

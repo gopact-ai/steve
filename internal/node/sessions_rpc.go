@@ -4,10 +4,54 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
+
+type sessionAuthorizationStreamKey struct{}
+
+// CoordinatorSessionAuthorizer lets an execution-only node consult its owning
+// cluster through the authenticated session RPC. A full peer instead verifies
+// authority against its own replicated consensus state.
+type CoordinatorSessionAuthorizer struct{}
+
+func (CoordinatorSessionAuthorizer) AuthorizeNodeSession(ctx context.Context, principal string, authority nodewire.SessionAuthority, _ nodewire.SessionBinding, action string) error {
+	if principal == "" || principal != authority.ClusterID {
+		return errors.New("authenticated owner differs from the session cluster")
+	}
+	stream, ok := ctx.Value(sessionAuthorizationStreamKey{}).(*nodewire.Stream)
+	if !ok || ctx.Err() != nil {
+		return errors.New("session authority requires a live authenticated request")
+	}
+	if err := writeSessionMessage(stream, nodewire.SessionReply{AuthorizeAction: action}); err != nil {
+		return err
+	}
+	var reply nodewire.SessionAuthorization
+	if err := readSessionMessage(stream, &reply); err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if !reply.Allowed {
+		if reply.Error != "" {
+			return fmt.Errorf("coordinator rejected session authority: %s", reply.Error)
+		}
+		return errors.New("coordinator rejected session authority")
+	}
+	return nil
+}
+
+// SetSessionAuthorizer installs the current coordinator activation's committed
+// execution verifier. The target name comes from this registry's connection,
+// not from claims supplied by the worker.
+func (r *Registry) SetSessionAuthorizer(authorize func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, string) error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.sessionAuthority = authorize
+}
 
 func readSessionMessage(reader io.Reader, value any) error {
 	size, err := nodewire.ReadSize(reader)
@@ -42,6 +86,7 @@ func (s *Server) sessionStream(parent context.Context, principal string, stream 
 	defer stream.Close()
 	ctx, cancel := context.WithCancel(parent)
 	defer cancel()
+	ctx = context.WithValue(ctx, sessionAuthorizationStreamKey{}, stream)
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
@@ -79,14 +124,14 @@ func (s *Server) sessionStream(parent context.Context, principal string, stream 
 func (r *Registry) NodeSession(ctx context.Context, node string, request nodewire.SessionRequest) (nodewire.SessionState, error) {
 	conn, err := r.connect(ctx, node)
 	if err != nil {
-		return nodewire.SessionState{}, err
+		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: err}
 	}
 	if !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeatureNodeSessions) {
-		return nodewire.SessionState{}, sessionError("unavailable", "node does not support node-owned sessions")
+		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node does not support node-owned sessions")}
 	}
 	stream, err := conn.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamNodeSessions})
 	if err != nil {
-		return nodewire.SessionState{}, err
+		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: err}
 	}
 	defer stream.Close()
 	stop := context.AfterFunc(ctx, func() { _ = stream.Close() })
@@ -95,8 +140,35 @@ func (r *Registry) NodeSession(ctx context.Context, node string, request nodewir
 		return nodewire.SessionState{}, err
 	}
 	var reply nodewire.SessionReply
-	if err := readSessionMessage(stream, &reply); err != nil {
-		return nodewire.SessionState{}, err
+	for challenges := 0; ; challenges++ {
+		reply = nodewire.SessionReply{}
+		if err := readSessionMessage(stream, &reply); err != nil {
+			return nodewire.SessionState{}, err
+		}
+		if reply.AuthorizeAction == "" {
+			break
+		}
+		if challenges >= 2 || (reply.AuthorizeAction != request.Action && !(request.Action == "open" && reply.AuthorizeAction == "start")) {
+			return nodewire.SessionState{}, errors.New("node requested unrelated session authorization")
+		}
+		r.mu.Lock()
+		authorize := r.sessionAuthority
+		r.mu.Unlock()
+		answer := nodewire.SessionAuthorization{}
+		if authorize == nil {
+			err = errors.New("coordinator has no active session authority verifier")
+		} else if request.Binding.NodeID != node {
+			err = errors.New("session binding differs from authenticated node connection")
+		} else {
+			err = authorize(ctx, node, request.Authority, request.Binding, reply.AuthorizeAction)
+		}
+		answer.Allowed = err == nil
+		if err != nil {
+			answer.Error = fmt.Sprint(err)
+		}
+		if err := writeSessionMessage(stream, answer); err != nil {
+			return nodewire.SessionState{}, err
+		}
 	}
 	if reply.ErrorCode != "" || reply.Error != "" {
 		return nodewire.SessionState{}, sessionError(reply.ErrorCode, reply.Error)

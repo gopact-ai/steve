@@ -1,7 +1,7 @@
 // Command steve-node runs agents on one machine on behalf of a Steve hub.
 //
-// The hub owns tasks and ACP sessions. The node owns harness processes and
-// bounded journals so a lost hub socket need not end those processes.
+// The coordinator owns tasks. The node owns ACP sessions, harness processes,
+// and durable receipts so a lost coordinator socket need not end execution.
 package main
 
 import (
@@ -77,6 +77,7 @@ func run(args []string) error {
 	if err := prepareAdapters(ctx, &cfg); err != nil {
 		return err
 	}
+	cfg.SessionAuthorizer = node.CoordinatorSessionAuthorizer{}
 	server := node.NewServer(cfg)
 	if processrestart.Supported() {
 		server.SetRestartCheck(func() error { return checkRestartConfig(cfg, *listen) })

@@ -3,6 +3,7 @@ package node
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -13,6 +14,90 @@ import (
 
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
+
+func TestReverseMCPWaitsForToolResponseAndPropagatesCancellation(t *testing.T) {
+	started := make(chan struct{}, 1)
+	canceled := make(chan struct{}, 1)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.Copy(io.Discard, r.Body)
+		switch r.URL.Query().Get("wait") {
+		case "tool":
+			// Delegation waits 20 seconds and await may wait 50 seconds before
+			// writing response headers. Neither is an unreachable hub.
+			select {
+			case <-time.After(16 * time.Second):
+			case <-r.Context().Done():
+				return
+			}
+		case "cancel":
+			started <- struct{}{}
+			<-r.Context().Done()
+			canceled <- struct{}{}
+			return
+		}
+		_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":1,"result":{"state":"running"}}`))
+	}))
+	t.Cleanup(upstream.Close)
+	s := startNode(t, ServerConfig{Name: "n", Token: "token", StateDir: t.TempDir(), Harnesses: map[string]HarnessSpec{"cat": {Command: "/bin/cat"}}})
+	r := NewRegistry("hub", map[string]Config{"n": {Addr: s.Addr(), Token: "token"}})
+	t.Cleanup(r.Close)
+	r.SetMCPDialer(func(ctx context.Context) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "tcp", strings.TrimPrefix(upstream.URL, "http://"))
+	})
+	endpoint, err := r.MCPEndpoint(t.Context(), "n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitTunnel(t, endpoint)
+	client := &http.Client{Timeout: 25 * time.Second}
+	t.Cleanup(client.CloseIdleConnections)
+	t.Run("long tool call", func(t *testing.T) {
+		resp, err := client.Post(endpoint+"?wait=tool", "application/json", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call"}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil || resp.StatusCode != http.StatusOK || !strings.Contains(string(body), `"state":"running"`) {
+			t.Fatalf("long tool call: status=%d body=%s err=%v", resp.StatusCode, body, err)
+		}
+	})
+	t.Run("caller cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint+"?wait=cancel", strings.NewReader(`{}`))
+		if err != nil {
+			t.Fatal(err)
+		}
+		result := make(chan error, 1)
+		go func() {
+			resp, err := client.Do(req)
+			if resp != nil {
+				resp.Body.Close()
+			}
+			result <- err
+		}()
+		select {
+		case <-started:
+		case <-time.After(5 * time.Second):
+			t.Fatal("request did not reach upstream")
+		}
+		cancel()
+		select {
+		case err := <-result:
+			if !errors.Is(err, context.Canceled) {
+				t.Fatalf("caller cancellation = %v", err)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatal("caller cancellation did not finish the request")
+		}
+		select {
+		case <-canceled:
+		case <-time.After(5 * time.Second):
+			t.Fatal("caller cancellation did not release upstream")
+		}
+	})
+}
 
 func TestMCPListenerStaysPutAndReturnsRetryableErrorDuringOutage(t *testing.T) {
 	requestStarted := make(chan struct{}, 1)
