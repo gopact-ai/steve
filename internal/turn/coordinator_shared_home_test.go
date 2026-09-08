@@ -79,6 +79,16 @@ func TestProfileFollowupWritesSharedIdentityWithoutScanningLocalHistory(t *testi
 			if !fail && !strings.Contains(files[home.FileUser], "李工") {
 				t.Fatal("generated profile did not reach shared ledger")
 			}
+			if !fail {
+				runner.reply = "可以一起维护项目。"
+				next, err := coordinator.Handle(t.Context(), Request{ConversationID: "dm", Input: "你能做什么", SenderOpenID: "owner", ChatType: protocol.ChatP2P})
+				if err != nil {
+					t.Fatalf("shared identity followup: %v", err)
+				}
+				if next.Injected.NewSession || next.Injected.Session != result.Injected.Session || !next.Injected.InstructionsSent || !strings.Contains(next.Injected.Instructions, "李工") {
+					t.Fatal("shared identity did not refresh the existing conversation")
+				}
+			}
 		})
 	}
 }

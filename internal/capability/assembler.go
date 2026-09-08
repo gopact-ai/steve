@@ -31,6 +31,9 @@ type Capabilities struct {
 	Instructions string
 	MCPServers   []acp.MCPServer
 	Fingerprint  string
+	// SessionFingerprint excludes editable home identity text. MCP connections,
+	// skills and visibility remain fixed for the lifetime of a session.
+	SessionFingerprint string
 }
 
 type skillFingerprinter interface {
@@ -180,7 +183,15 @@ func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras [
 	if err != nil {
 		return Capabilities{}, err
 	}
-	return Capabilities{Instructions: instructions, MCPServers: servers, Fingerprint: fp}, nil
+	sessionParts := parts
+	if snap.Identity != "" {
+		sessionParts = parts[1:]
+	}
+	sessionFP, err := fingerprint(strings.Join(sessionParts, "\n\n"), servers, hashMode, skillsHash)
+	if err != nil {
+		return Capabilities{}, err
+	}
+	return Capabilities{Instructions: instructions, MCPServers: servers, Fingerprint: fp, SessionFingerprint: sessionFP}, nil
 }
 
 func makeMCPServer(name string, cfg MCPServer) (acp.MCPServer, error) {

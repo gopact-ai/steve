@@ -37,6 +37,7 @@ func ExportProject(doc ledger.Doc, project string, ids []string) (ProjectTransfe
 			s.AgentToken = ""
 			s.UpstreamID = ""
 			s.CapabilityHash = ""
+			s.SessionConfigHash = ""
 			s.InstructionsApplied = false
 			s.Tainted = true
 			c.Sessions[key] = s

@@ -117,8 +117,8 @@ type Injected struct {
 	Session                     string
 	NewSession                  bool
 	// InstructionsSent says the assembled instructions (identity, skills,
-	// memory) went in front of this turn's prompt; they go once per
-	// session. Instructions holds the text only when sent.
+	// memory) went in front of this turn's prompt: at session start or
+	// after an identity change. Instructions holds the text only when sent.
 	InstructionsSent  bool
 	Instructions      string
 	InstructionsBytes int
@@ -544,8 +544,14 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if saved.Tainted {
 		return Result{}, UserError{Text: c.text.T(i18n.Tainted, protocol.CommandNew)}
 	}
-	if saved.HarnessID != "" && saved.CapabilityHash != capabilities.Fingerprint {
-		return Result{}, UserError{Text: c.text.T(i18n.CapabilityDrift, protocol.CommandNew)}
+	contextChanged := saved.HarnessID != "" && saved.CapabilityHash != capabilities.Fingerprint
+	if contextChanged {
+		// Only editable identity can change in place. A missing baseline cannot
+		// prove that MCP connections, skills and visibility stayed the same.
+		if saved.SessionConfigHash == "" || saved.SessionConfigHash != capabilities.SessionFingerprint {
+			return Result{}, UserError{Text: c.text.T(i18n.CapabilityDrift, protocol.CommandNew)}
+		}
+		saved.InstructionsApplied = false
 	}
 	if saved.HarnessID != "" && sessionDrifted(saved, binding, workspace.Path) {
 		return Result{}, UserError{Text: c.text.T(i18n.WorkspaceDrift, protocol.CommandNew)}
@@ -622,6 +628,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		NodeID:     selected.Node,
 		UpstreamID: runner.ID(), Workspace: workspace.Path, CapabilityHash: capabilities.Fingerprint,
 		ProjectID: binding.ProjectID, ProjectVersion: binding.Version,
+		SessionConfigHash:   capabilities.SessionFingerprint,
 		InstructionsApplied: saved.InstructionsApplied, Tainted: true,
 		AgentToken: saved.AgentToken,
 	}
@@ -667,10 +674,15 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	for _, srv := range servers {
 		injected.MCPServers = append(injected.MCPServers, srv.Name)
 	}
-	if !session.InstructionsApplied && capabilities.Instructions != "" {
-		user = capabilities.Instructions + "\n\n" + user
+	if !session.InstructionsApplied && (capabilities.Instructions != "" || contextChanged) {
+		instructions := capabilities.Instructions
+		if contextChanged {
+			instructions = "[steve: context update]\nThe following is the current context. It replaces the previously supplied identity and profile. Keep the conversation history and continue with the user's message below.\n\n" + instructions
+		}
+		user = instructions + "\n\n" + user
 		injected.InstructionsSent = true
-		injected.Instructions = capabilities.Instructions
+		injected.Instructions = instructions
+		injected.InstructionsBytes = len(instructions)
 	}
 	prompt = user
 	c.setRunner(conversationID, selected.ID, runner)

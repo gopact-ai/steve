@@ -505,7 +505,7 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 		if err != nil {
 			return Result{}, err
 		}
-		frozen = attempt.RelocationSessionConfig{MCPServers: append(append([]acp.MCPServer(nil), capabilities.MCPServers...), roster.ToMCP(bindings)...), AgentToken: agentToken, Fingerprint: capabilities.Fingerprint, Instructions: capabilities.Instructions}
+		frozen = attempt.RelocationSessionConfig{MCPServers: append(append([]acp.MCPServer(nil), capabilities.MCPServers...), roster.ToMCP(bindings)...), AgentToken: agentToken, Fingerprint: capabilities.Fingerprint, SessionConfigHash: capabilities.SessionFingerprint, Instructions: capabilities.Instructions}
 		if err := c.attempts.RecordRelocationSession(turnCtx, r.ID, frozen); err != nil {
 			return Result{}, err
 		}
@@ -522,7 +522,7 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 			return Result{}, err
 		}
 	}
-	session := state.Session{ConversationID: req.ConversationID, AgentID: r.Agent, HarnessID: r.Harness, NodeID: r.Node, UpstreamID: r.Session, Workspace: r.Workspace.Path, ProjectID: r.Project, ProjectVersion: binding.Version, CapabilityHash: frozen.Fingerprint, AgentToken: frozen.AgentToken, Tainted: true}
+	session := state.Session{ConversationID: req.ConversationID, AgentID: r.Agent, HarnessID: r.Harness, NodeID: r.Node, UpstreamID: r.Session, Workspace: r.Workspace.Path, ProjectID: r.Project, ProjectVersion: binding.Version, CapabilityHash: frozen.Fingerprint, SessionConfigHash: frozen.SessionConfigHash, AgentToken: frozen.AgentToken, Tainted: true}
 	if err := c.store.SaveSession(session); err != nil {
 		return Result{}, err
 	}

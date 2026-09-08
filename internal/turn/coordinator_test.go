@@ -381,6 +381,7 @@ func TestCoordinatorRejectsCapabilityDrift(t *testing.T) {
 	conversation := store.Conversation("chat")
 	session := conversation.Sessions["codex"]
 	session.CapabilityHash = "stale"
+	session.SessionConfigHash = "changed-session-configuration"
 	if err := store.DeleteSession("chat", "codex"); err != nil {
 		t.Fatal(err)
 	}

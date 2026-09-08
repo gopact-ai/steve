@@ -17,10 +17,11 @@ const relocationSessionKind = "relocation-session-config"
 // contain receiver-owned binding IDs, so a retry must not rebuild them from a
 // fresh admission. Like state.Session, its bearer stays in the private ledger.
 type RelocationSessionConfig struct {
-	MCPServers   []acp.MCPServer `json:"mcp_servers"`
-	AgentToken   string          `json:"agent_token,omitempty"`
-	Fingerprint  string          `json:"fingerprint"`
-	Instructions string          `json:"instructions"`
+	MCPServers        []acp.MCPServer `json:"mcp_servers"`
+	AgentToken        string          `json:"agent_token,omitempty"`
+	Fingerprint       string          `json:"fingerprint"`
+	SessionConfigHash string          `json:"session_config_hash,omitempty"`
+	Instructions      string          `json:"instructions"`
 }
 
 func (s *Service) RelocationSession(ctx context.Context, id string) (RelocationSessionConfig, bool, error) {

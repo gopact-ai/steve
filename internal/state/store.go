@@ -29,9 +29,11 @@ type Session struct {
 	// binding this session was opened under. A session is bound to one
 	// binding: when the conversation moves to another project, or the same
 	// project is re-bound, the session is stale and a new one is opened.
-	ProjectID           string `json:"project_id,omitempty"`
-	ProjectVersion      int64  `json:"project_version,omitempty"`
-	CapabilityHash      string `json:"capability_hash"`
+	ProjectID      string `json:"project_id,omitempty"`
+	ProjectVersion int64  `json:"project_version,omitempty"`
+	CapabilityHash string `json:"capability_hash"`
+	// SessionConfigHash fences identity refreshes to unchanged session capabilities.
+	SessionConfigHash   string `json:"session_config_hash,omitempty"`
 	InstructionsApplied bool   `json:"instructions_applied,omitempty"`
 	Tainted             bool   `json:"tainted,omitempty"`
 	// AgentToken authenticates this session to the built-in messaging MCP

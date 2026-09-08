@@ -211,3 +211,51 @@ func TestAssembleExtraInjectsServerAndInstructions(t *testing.T) {
 		t.Fatal("token rotation did not change the fingerprint")
 	}
 }
+
+func TestSessionFingerprintKeepsConfigurationSeparateFromIdentity(t *testing.T) {
+	dir := t.TempDir()
+	if err := home.Bootstrap(dir, "owner"); err != nil {
+		t.Fatal(err)
+	}
+	live := &fakeSkills{hash: "original"}
+	a := NewAssembler(map[string]MCPServer{"tool": {Type: "http", URL: "http://localhost:1234/mcp"}}).SetHome(home.Dir{Path: dir}).SetSkills(live)
+	selected := agent.Agent{ID: "agent", Config: agent.Config{MCPServers: []string{"tool"}}}
+	first, err := a.AssembleMode(selected, home.ModeOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := home.WriteIdentity(dir, "updated soul", "updated user"); err != nil {
+		t.Fatal(err)
+	}
+	next, err := a.AssembleMode(selected, home.ModeOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Fingerprint == next.Fingerprint || first.SessionFingerprint != next.SessionFingerprint {
+		t.Fatal("identity mixed with session configuration")
+	}
+	guest, err := a.AssembleMode(selected, home.ModeGuest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.SessionFingerprint == guest.SessionFingerprint {
+		t.Fatal("visibility change could leak prior private context")
+	}
+	live.hash = "different"
+	skill, err := a.AssembleMode(selected, home.ModeOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if skill.SessionFingerprint == next.SessionFingerprint {
+		t.Fatal("runtime skill change ignored")
+	}
+	live.hash = "original"
+	a.SetServers(map[string]MCPServer{"tool": {Type: "http", URL: "http://localhost:5678/mcp"}})
+	mcp, err := a.AssembleMode(selected, home.ModeOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if mcp.SessionFingerprint == next.SessionFingerprint {
+		t.Fatal("MCP connection change ignored")
+	}
+}
