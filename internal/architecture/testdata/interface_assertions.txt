@@ -4,7 +4,7 @@ internal/acphost/host.go:988
 internal/agentmcp/message.go:315
 internal/agentmcp/server.go:928
 internal/artifact/content_replication.go:67
-internal/artifact/facts.go:138
+internal/artifact/facts.go:140
 internal/console/console.go:457
 internal/console/console.go:489
 internal/console/console.go:504
@@ -14,9 +14,9 @@ internal/coordination/failover.go:30
 internal/delegate/recovery.go:438
 internal/exec/agent_runner.go:107
 internal/exec/agent_runner.go:276
-internal/exec/compile.go:842
+internal/exec/compile.go:848
 internal/exec/retained_step.go:176
-internal/exec/supervisor.go:106
+internal/exec/supervisor.go:108
 internal/gateway/resume.go:210
 internal/harness/manager.go:398
 internal/httpapi/server.go:1104

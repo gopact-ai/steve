@@ -129,6 +129,8 @@ func (l *Ledger) replaceEffectsJournal() error {
 	if err != nil {
 		return err
 	}
+	// The old handle points at the replaced file, whose content Save has
+	// already synced; nothing it could report changes the journal.
 	_ = j.file.Close()
 	j.file, j.seq = file, 0
 	if len(entries) > 0 {

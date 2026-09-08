@@ -17,18 +17,29 @@ type landingDriver struct {
 	done      chan struct{}
 }
 
+// renewTicks paces a driver's lease renewals; the default is a real ticker
+// at a third of the TTL, tests hand over a channel they drive themselves.
+func renewTicks(every time.Duration) (<-chan time.Time, func()) {
+	ticker := time.NewTicker(every)
+	return ticker.C, ticker.Stop
+}
+
 func (s *Store) startLandingDriver(parent context.Context, lease ledger.Lease, ttl time.Duration) (context.Context, func()) {
 	lifetime, cancel := context.WithCancelCause(context.WithoutCancel(parent))
 	d := &landingDriver{lease: lease, ctx: lifetime, done: make(chan struct{})}
+	ticks := s.renewTicks
+	if ticks == nil {
+		ticks = renewTicks
+	}
 	go func() {
 		defer close(d.done)
-		ticker := time.NewTicker(ttl / 3)
-		defer ticker.Stop()
+		tick, stop := ticks(ttl / 3)
+		defer stop()
 		for {
 			select {
 			case <-lifetime.Done():
 				return
-			case <-ticker.C:
+			case <-tick:
 				if _, err := s.ledger.Renew(lifetime, lease, ttl); err != nil {
 					cancel(err)
 					return
@@ -51,6 +62,9 @@ func (s *Store) startLandingDriver(parent context.Context, lease ledger.Lease, t
 		<-d.done
 		stopWatch()
 		stopWork(context.Canceled)
+		// The driver lease only fences this landing; once its goroutine has
+		// stopped, a release that fails (already expired or invalidated)
+		// leaves nothing to reclaim.
 		_ = s.ledger.Release(context.WithoutCancel(parent), lease)
 	}
 }

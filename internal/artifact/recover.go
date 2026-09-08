@@ -57,7 +57,7 @@ func (s *Store) RecoverLandings(ctx context.Context) ([]Landing, error) {
 				continue
 			}
 			land.Lease = nil
-			_ = s.fail(ctx, &land, op.State, LandMergeConflicted, "interrupted before apply; nothing was written", nil)
+			s.failed(ctx, &land, op.State, LandMergeConflicted, "interrupted before apply; nothing was written", nil)
 			out = append(out, land)
 		case LandApplying, LandRecoveryPending:
 			recovered, err := s.recoverLanding(ctx, land)
@@ -93,6 +93,8 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		return land, fmt.Errorf("landing %s: %w", land.ID, err)
 	}
 	land.Lease = &lease
+	// The lock falls to its TTL when the release fails; the recovery's own
+	// result stands either way.
 	defer func() { _ = s.ledger.ReleaseAny(context.WithoutCancel(ctx), lease) }()
 	defer trackLandingLease(ctx, lease)()
 
@@ -123,7 +125,7 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		}
 	}
 	if len(conflicted) > 0 {
-		_ = s.fail(ctx, &land, LandRecoveryPending, LandApplyConflicted, "recovery: paths changed underneath", conflicted)
+		s.failed(ctx, &land, LandRecoveryPending, LandApplyConflicted, "recovery: paths changed underneath", conflicted)
 		return land, nil
 	}
 	current, _, _ := s.ledger.Name(ctx, CanonicalRef(p.ID))
@@ -140,7 +142,7 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 			return tx.SetData(op, land)
 		})
 	if err != nil {
-		_ = s.fail(ctx, &land, LandRecoveryPending, LandCommitConflict, err.Error(), land.Paths)
+		s.failed(ctx, &land, LandRecoveryPending, LandCommitConflict, err.Error(), land.Paths)
 		return land, nil
 	}
 	if _, err := s.receipt(ctx, p, Manifest{ID: land.Merged, Project: p.ID, Parent: land.Now, Label: p.Level, By: land.ID, Message: "landed " + short(land.Artifact) + " (recovered)", Canonical: true}); err != nil {

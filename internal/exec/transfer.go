@@ -67,7 +67,11 @@ func RemapTransfer(f *ledger.TransferFacts, m ledger.TransferIDs, target project
 				run.Sinks[j].Source.Execution.TaskID = m.Task(run.Sinks[j].Source.Execution.TaskID)
 			}
 		}
-		op.Data, _ = json.Marshal(run)
+		data, err := json.Marshal(run)
+		if err != nil {
+			return err
+		}
+		op.Data = data
 	}
 	f.RemapEnvelopes(m)
 	return nil
@@ -90,8 +94,16 @@ func RemapAttemptOutputs(f *ledger.TransferFacts, m ledger.TransferIDs) error {
 		}
 		out.PlanID = m.Plan(out.PlanID)
 		plan.RemapResult(&out.Result, m)
-		record.Result.Output, _ = json.Marshal(out)
-		op.Data, _ = json.Marshal(record)
+		output, err := json.Marshal(out)
+		if err != nil {
+			return err
+		}
+		record.Result.Output = output
+		data, err := json.Marshal(record)
+		if err != nil {
+			return err
+		}
+		op.Data = data
 	}
 	return nil
 }

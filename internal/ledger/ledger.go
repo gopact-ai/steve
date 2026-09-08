@@ -841,9 +841,32 @@ func (l *Ledger) Operation(ctx context.Context, id string) (Operation, bool, err
 	}
 	op.ID = id
 	op.Data = json.RawMessage(data)
-	op.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-	op.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+	if op.CreatedAt, op.UpdatedAt, err = stamps(created, updated); err != nil {
+		return Operation{}, false, err
+	}
 	return op, true, nil
+}
+
+// stamp parses a timestamp the ledger wrote itself; anything else is a
+// corrupt row, not a zero time.
+func stamp(text string) (time.Time, error) {
+	at, err := time.Parse(time.RFC3339Nano, text)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("ledger: bad timestamp %q: %w", text, err)
+	}
+	return at, nil
+}
+
+func stamps(created, updated string) (time.Time, time.Time, error) {
+	from, err := stamp(created)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	to, err := stamp(updated)
+	if err != nil {
+		return time.Time{}, time.Time{}, err
+	}
+	return from, to, nil
 }
 
 // Operations lists operations of a kind, optionally in a state, newest first.
@@ -879,8 +902,9 @@ func readOperations(ctx context.Context, source interface {
 			return nil, err
 		}
 		op.Data = json.RawMessage(data)
-		op.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
-		op.UpdatedAt, _ = time.Parse(time.RFC3339Nano, updated)
+		if op.CreatedAt, op.UpdatedAt, err = stamps(created, updated); err != nil {
+			return nil, err
+		}
 		out = append(out, op)
 	}
 	return out, rows.Err()
@@ -910,9 +934,13 @@ func (l *Ledger) RecentEvents(ctx context.Context, before int64, limit int) ([]E
 		if err := rows.Scan(&ev.Seq, &ev.OperationID, &ev.Revision, &ev.Incarnation, &ev.From, &ev.To, &ev.Actor, &fencings, &effects, &at); err != nil {
 			return nil, err
 		}
-		_ = json.Unmarshal([]byte(fencings), &ev.Fencings)
+		if err := json.Unmarshal([]byte(fencings), &ev.Fencings); err != nil {
+			return nil, fmt.Errorf("ledger: event %d fencings: %w", ev.Seq, err)
+		}
 		ev.Effects = effects
-		ev.At, _ = time.Parse(rfc3339nano, at)
+		if ev.At, err = stamp(at); err != nil {
+			return nil, err
+		}
 		out = append(out, ev)
 	}
 	return out, rows.Err()
@@ -932,9 +960,13 @@ func (l *Ledger) Events(ctx context.Context, operationID string) ([]Event, error
 			return nil, err
 		}
 		ev.OperationID = operationID
-		_ = json.Unmarshal([]byte(fencings), &ev.Fencings)
+		if err := json.Unmarshal([]byte(fencings), &ev.Fencings); err != nil {
+			return nil, fmt.Errorf("ledger: event %d fencings: %w", ev.Seq, err)
+		}
 		ev.Effects = json.RawMessage(effects)
-		ev.At, _ = time.Parse(time.RFC3339Nano, at)
+		if ev.At, err = stamp(at); err != nil {
+			return nil, err
+		}
 		out = append(out, ev)
 	}
 	return out, rows.Err()
@@ -960,7 +992,9 @@ func (l *Ledger) Name(ctx context.Context, name string) (NamedRef, bool, error) 
 		return NamedRef{}, false, err
 	}
 	ref.Name = name
-	ref.UpdatedAt, _ = time.Parse(time.RFC3339Nano, at)
+	if ref.UpdatedAt, err = stamp(at); err != nil {
+		return NamedRef{}, false, err
+	}
 	return ref, true, nil
 }
 
@@ -978,7 +1012,9 @@ func (l *Ledger) Names(ctx context.Context, prefix string) ([]NamedRef, error) {
 		if err := rows.Scan(&ref.Name, &ref.Version, &ref.Artifact, &at); err != nil {
 			return nil, err
 		}
-		ref.UpdatedAt, _ = time.Parse(time.RFC3339Nano, at)
+		if ref.UpdatedAt, err = stamp(at); err != nil {
+			return nil, err
+		}
 		out = append(out, ref)
 	}
 	return out, rows.Err()
@@ -1057,7 +1093,9 @@ func (l *Ledger) LeaseOf(ctx context.Context, key string) (Lease, bool, error) {
 		return Lease{}, false, err
 	}
 	lease.Key = key
-	lease.ExpiresAt, _ = time.Parse(time.RFC3339Nano, expires)
+	if lease.ExpiresAt, err = stamp(expires); err != nil {
+		return Lease{}, false, err
+	}
 	return lease, true, nil
 }
 

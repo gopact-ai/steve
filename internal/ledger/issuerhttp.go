@@ -46,6 +46,8 @@ func IssuerHandler(l *Ledger, token string) http.Handler {
 	}
 	respond := func(w http.ResponseWriter, lease Lease, err error) {
 		w.Header().Set("Content-Type", "application/json")
+		// A body that cannot be written means the client has gone; the
+		// lease decision itself is already committed either way.
 		if err != nil {
 			code := http.StatusConflict
 			if errors.Is(err, ErrStale) {
@@ -147,7 +149,11 @@ func (h *HTTPIssuer) call(ctx context.Context, path string, body any) (Lease, er
 		Error string `json:"error"`
 		Kind  string `json:"kind"`
 	}
-	_ = json.Unmarshal(payload, &out)
+	// An error body may be plain text from http.Error; a success body must
+	// carry the lease.
+	if err := json.Unmarshal(payload, &out); err != nil && resp.StatusCode == http.StatusOK {
+		return Lease{}, fmt.Errorf("region issuer %s: %w", h.URL, err)
+	}
 	if resp.StatusCode != http.StatusOK {
 		msg := out.Error
 		if msg == "" {

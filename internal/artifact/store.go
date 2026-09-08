@@ -82,15 +82,17 @@ type Nodes interface {
 type Store struct {
 	Review           ReviewLimits
 	landingDriverTTL time.Duration
-	executions       *execution.Registry
-	Dir              string
-	Limits           Limits
-	ledger           *ledger.Ledger
-	projects         *project.Store
-	nodes            Nodes
-	now              func() time.Time
-	replication      contentreplica.Replicator
-	contentState     contentReplicationState
+	// renewTicks paces landing-driver renewals; nil means a real ticker.
+	renewTicks   func(time.Duration) (<-chan time.Time, func())
+	executions   *execution.Registry
+	Dir          string
+	Limits       Limits
+	ledger       *ledger.Ledger
+	projects     *project.Store
+	nodes        Nodes
+	now          func() time.Time
+	replication  contentreplica.Replicator
+	contentState contentReplicationState
 	// ContentLimits bounds verification of a complete replicated history,
 	// independently of Limits, which bounds the current workspace snapshot.
 	ContentLimits ContentLimits
@@ -518,6 +520,8 @@ func (s *Store) push(ctx context.Context, node, bare string, hub *Repo, sha stri
 	if _, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Unbundle, Repo: bare, Path: remote}); err != nil {
 		return fmt.Errorf("unbundle on %s: %w", node, err)
 	}
+	// The bundle has been unpacked; one left behind costs disk, not
+	// correctness, so its removal does not fail the push.
 	_, _ = s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Remove, Path: remote})
 	return nil
 }
@@ -544,6 +548,8 @@ func (s *Store) pull(ctx context.Context, node, bare string, hub *Repo, sha stri
 		return err
 	}
 	temp.Close()
+	// The bundle has been fetched; one left behind costs disk, not
+	// correctness, so its removal does not fail the pull.
 	_, _ = s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Remove, Path: remote})
 	return hub.Unbundle(ctx, path)
 }
@@ -662,6 +668,8 @@ func (s *Store) Publish(ctx context.Context, ws project.Workspace, parent, by, m
 		// inside it is flattened so the files come through.
 		sha, changed, err = hub.Snapshot(ctx, ws.Path, parent, message, ws.Kind == project.KindWorktree)
 	} else {
+		// Like dropInputs on the hub: inputs are dropped when possible so
+		// they do not enter the snapshot, and a leftover is not an error.
 		_, _ = s.nodes.Artifact(ctx, ws.Node, ops.Request{Op: ops.Remove, Path: filepath.Join(ws.Path, "inputs")})
 		sha, changed, err = s.snapshotOnNode(ctx, ws.Node, p, ws.Path, parent, message, hub, ws.Kind == project.KindWorktree)
 	}
@@ -681,6 +689,9 @@ func (s *Store) Publish(ctx context.Context, ws project.Workspace, parent, by, m
 	return m, changed, err
 }
 
+// dropInputs clears a workspace's inputs before a snapshot. There may be
+// none, and a directory that cannot be removed is flattened into the
+// snapshot as any other file would be.
 func (s *Store) dropInputs(dir string) {
 	_ = os.RemoveAll(filepath.Join(dir, "inputs"))
 }
@@ -797,6 +808,8 @@ func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, 
 			return out, err
 		}
 		out = append(out, land)
+		// The landing is committed under its durable identity; a pending
+		// record that survives is answered from that identity next sweep.
 		_ = s.ledger.DeleteBinding(ctx, pendingKind, item.Project+"/"+item.Artifact)
 	}
 	return out, nil

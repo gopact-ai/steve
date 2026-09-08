@@ -71,7 +71,14 @@ func (n *localNode) Level(_ context.Context, node string) (string, error) {
 
 func newStore(t *testing.T, node *localNode, home project.Home) (*Store, project.Project) {
 	t.Helper()
-	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	return newStoreWith(t, node, home, ledger.Options{})
+}
+
+// newStoreWith opens the store on a ledger tuned by opts, so a test can
+// run leases against a clock it moves itself.
+func newStoreWith(t *testing.T, node *localNode, home project.Home, opts ledger.Options) (*Store, project.Project) {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -112,7 +112,9 @@ func (s *Store) replica(ctx context.Context, artifactID, node string) (Replica, 
 
 func (s *Store) setReplica(ctx context.Context, artifactID, node string, generation int64, state, note string) {
 	r := Replica{Artifact: artifactID, Node: node, Generation: generation, State: state, At: s.now().UTC(), Note: note}
-	_ = s.ledger.PutBinding(ctx, replicaKind, artifactID+"@"+node, r)
+	if err := s.ledger.PutBinding(ctx, replicaKind, artifactID+"@"+node, r); err != nil {
+		log.Printf("artifact: replica %s@%s not recorded as %s: %v", short(artifactID), node, state, err)
+	}
 }
 
 // Replicas lists every replica record, optionally of one artifact.
@@ -283,10 +285,14 @@ func (s *Store) fetchDirect(ctx context.Context, p project.Project, source, targ
 		return fmt.Errorf("bundle on %s: %w", source, err)
 	}
 	defer func() {
+		// The bundle is a temporary blob; one left behind costs disk, not
+		// correctness, and the transfer's own error is what matters.
 		_, _ = s.nodes.Artifact(ctx, source, ops.Request{Op: ops.Remove, Path: sourceBlob})
 	}()
 	var raw [16]byte
-	_, _ = rand.Read(raw[:])
+	if _, err := rand.Read(raw[:]); err != nil {
+		return err
+	}
 	token := hex.EncodeToString(raw[:])
 	if err := direct.Grant(ctx, source, token, name, 2*time.Minute); err != nil {
 		return fmt.Errorf("grant on %s: %w", source, err)
@@ -300,6 +306,7 @@ func (s *Store) fetchDirect(ctx context.Context, p project.Project, source, targ
 	}
 	targetBlob := filepath.Join(targetState, "blobs", name)
 	defer func() {
+		// Same as the source blob: temporary, and never worth failing over.
 		_, _ = s.nodes.Artifact(ctx, target, ops.Request{Op: ops.Remove, Path: targetBlob})
 	}()
 	if _, err := s.nodes.Artifact(ctx, target, ops.Request{Op: ops.Unbundle, Repo: targetBare, Path: targetBlob}); err != nil {
