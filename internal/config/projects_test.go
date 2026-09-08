@@ -148,7 +148,10 @@ func TestConfigRejectsManualEditFromLoadAndKeepsAdapterDeclarative(t *testing.T)
 	if err := Save(path, loaded); !errors.Is(err, ErrFileChanged) {
 		t.Fatalf("online write overwrote manual edit: %v", err)
 	}
-	after, _ := os.ReadFile(path)
+	after, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if string(after) != string(raw) {
 		t.Fatal("failed version check changed operator file")
 	}
@@ -160,7 +163,9 @@ func TestConfigRejectsManualEditFromLoadAndKeepsAdapterDeclarative(t *testing.T)
 	if err := Save(path, fresh); err != nil {
 		t.Fatal(err)
 	}
-	raw, _ = os.ReadFile(path)
+	if raw, err = os.ReadFile(path); err != nil {
+		t.Fatal(err)
+	}
 	if strings.Contains(string(raw), "/derived/runtime/adapter") {
 		t.Fatal("saved runtime adapter command as an operator declaration")
 	}
