@@ -3,7 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os/exec"
 	"path/filepath"
@@ -240,7 +240,7 @@ func (s *Server) Serve(ctx context.Context) error {
 		s.backgroundWG.Wait()
 	}()
 	s.backgroundWG.Go(func() { s.pruneStreams(ctx) })
-	log.Printf("steve-node: %s listening on %s", s.conf().Name, listener.Addr())
+	slog.Info(fmt.Sprintf("steve-node: %s listening on %s", s.conf().Name, listener.Addr()), "node", s.conf().Name)
 	go func() {
 		<-ctx.Done()
 		// Closing unblocks Accept, which reports the end through ctx.
@@ -258,7 +258,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	}
 	if hash := s.currentSkills(); hash != "" {
 		if err := s.materializeSkills(hash); err != nil {
-			log.Printf("steve-node: skills %s from last run could not be materialized: %v", hash[:12], err)
+			slog.Warn(fmt.Sprintf("steve-node: skills %s from last run could not be materialized: %v", hash[:12], err), "skills", hash)
 		}
 	}
 	s.backgroundWG.Go(func() { s.launch.Run(ctx, s.commands) })
@@ -328,7 +328,7 @@ func (s *Server) runCommand(ctx context.Context, stream *nodewire.Stream) {
 			code = exit.ExitCode()
 		}
 	}
-	log.Printf("steve-node: verify %q in %s -> exit %d", req.Command, dir, code)
+	slog.Info(fmt.Sprintf("steve-node: verify %q in %s -> exit %d", req.Command, dir, code), "command", req.Command)
 	closeStream(stream, fmt.Sprintf("%s%d", nodewire.ExitPrefix, code))
 }
 

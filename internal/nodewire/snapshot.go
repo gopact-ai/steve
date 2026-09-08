@@ -2,7 +2,8 @@ package nodewire
 
 import (
 	"encoding/json"
-	"log"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
@@ -198,7 +199,7 @@ func Synthesize(adv Advert, now time.Time) *ability.Snapshot {
 		s.Node = "hub"
 	}
 	if err := ability.Validate(s); err != nil {
-		log.Printf("nodewire: snapshot from %s advert invalid: %v", s.Node, err)
+		slog.Warn(fmt.Sprintf("nodewire: snapshot from %s advert invalid: %v", s.Node, err), "node", s.Node)
 	}
 	return s
 }

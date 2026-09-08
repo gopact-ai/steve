@@ -8,7 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -176,7 +176,7 @@ func (r *Registry) Configure(ctx context.Context, name string, set nodewire.Sett
 		return out, err
 	}
 	if _, err := r.Refresh(ctx, name); err != nil {
-		log.Printf("node: %s: refresh after configure: %v", name, err)
+		slog.Warn(fmt.Sprintf("node: %s: refresh after configure: %v", name, err), "node", name)
 	}
 	return out, err
 }
@@ -281,11 +281,11 @@ func (r *Registry) PushSkills(ctx context.Context, name string, b skills.Bundle)
 	}
 	adv.Skills = b.Hash
 	c.setAdvert(adv)
-	log.Printf("node: %s materialized skills %s (%d skills)", name, b.Hash[:12], len(b.Skills))
+	slog.Info(fmt.Sprintf("node: %s materialized skills %s (%d skills)", name, b.Hash[:12], len(b.Skills)), "node", name, "skills", b.Hash)
 	// The snapshot the hub holds predates the skills; ask for a new one
 	// now rather than at the next tick, so placement sees them at once.
 	if _, err := r.Refresh(ctx, name); err != nil {
-		log.Printf("node: %s: refresh after skills: %v", name, err)
+		slog.Warn(fmt.Sprintf("node: %s: refresh after skills: %v", name, err), "node", name)
 	}
 	return nil
 }

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -195,7 +195,7 @@ func (s *Server) enrollAgentWith(ctx context.Context, req agenttools.InstallRequ
 	s.settingsFileRevision, _ = nodeSettingsFileRevision(next.Source)
 	s.cfg.Store(&next)
 	s.launch.Wake()
-	log.Printf("steve-node: selected tool registered candidate=%s harness=%s adapter=%s", req.CandidateID, canonical.Harness, h.Adapter)
+	slog.Info(fmt.Sprintf("steve-node: selected tool registered candidate=%s harness=%s adapter=%s", req.CandidateID, canonical.Harness, h.Adapter), "candidate", req.CandidateID, "harness", canonical.Harness)
 	return agenttools.Enrollment{CandidateID: req.CandidateID, Harness: canonical.Harness, Revision: s.settings().Revision}, writeErr
 }
 
@@ -267,7 +267,7 @@ func (s *Server) configureAgentTools(stream *nodewire.Stream) {
 		}
 	}
 	if err := json.NewEncoder(stream).Encode(out); err != nil {
-		log.Printf("steve-node: agent tools reply: %v", err)
+		slog.Error(fmt.Sprintf("steve-node: agent tools reply: %v", err))
 	}
 }
 

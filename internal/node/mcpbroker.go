@@ -10,7 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -106,7 +106,7 @@ func NewBroker(cfg BrokerConfig) *Broker {
 // Serve listens on the socket and the loopback proxy until ctx ends.
 func (b *Broker) Serve(ctx context.Context) error {
 	if err := b.serveProxy(ctx); err != nil {
-		log.Printf("steve-node: %v", err)
+		slog.Error(fmt.Sprintf("steve-node: %v", err))
 	}
 	sock := b.cfg.Socket
 	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
@@ -131,7 +131,7 @@ func (b *Broker) Serve(ctx context.Context) error {
 		<-ctx.Done()
 		listener.Close()
 	}()
-	log.Printf("steve-node: mcp broker on %s: %d server(s)", sock, len(b.List()))
+	slog.Info(fmt.Sprintf("steve-node: mcp broker on %s: %d server(s)", sock, len(b.List())))
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
@@ -236,7 +236,7 @@ func (b *Broker) Release(attempt string) int {
 		}
 		if nb.running != nil {
 			if err := killProcessGroup(nb.running); err != nil {
-				log.Printf("steve-node: mcp %s for attempt %s: kill: %v", nb.mcp, attempt, err)
+				slog.Error(fmt.Sprintf("steve-node: mcp %s for attempt %s: kill: %v", nb.mcp, attempt, err), "mcp", nb.mcp, "attempt", attempt)
 			}
 		}
 		delete(b.bindings, id)
@@ -337,12 +337,12 @@ func (b *Broker) conn(ctx context.Context, c net.Conn) {
 func (b *Broker) launch(ctx context.Context, c net.Conn, reader io.Reader, id string) {
 	nb, ok := b.binding(id)
 	if !ok {
-		log.Printf("steve-node: mcp broker: unknown or expired binding")
+		slog.Warn("steve-node: mcp broker: unknown or expired binding")
 		return
 	}
 	spec, ok := b.server(nb.mcp)
 	if !ok || (spec.Type != "stdio" && spec.Type != "") {
-		log.Printf("steve-node: mcp broker: %s is not a stdio server here", nb.mcp)
+		slog.Warn(fmt.Sprintf("steve-node: mcp broker: %s is not a stdio server here", nb.mcp), "mcp", nb.mcp)
 		return
 	}
 	cmd := exec.CommandContext(ctx, spec.Command, spec.Args...)
@@ -366,11 +366,11 @@ func (b *Broker) launch(ctx context.Context, c net.Conn, reader io.Reader, id st
 	}
 	cmd.Stderr = prefixedLog{prefix: "steve-node: mcp " + nb.mcp + ": "}
 	if err := cmd.Start(); err != nil {
-		log.Printf("steve-node: mcp broker: start %s: %v", nb.mcp, err)
+		slog.Error(fmt.Sprintf("steve-node: mcp broker: start %s: %v", nb.mcp, err), "mcp", nb.mcp, "attempt", nb.attempt)
 		return
 	}
 	b.attach(nb.id, cmd)
-	log.Printf("steve-node: mcp %s started for attempt %s (%s)", nb.mcp, nb.attempt, nb.harness)
+	slog.Info(fmt.Sprintf("steve-node: mcp %s started for attempt %s (%s)", nb.mcp, nb.attempt, nb.harness), "mcp", nb.mcp, "attempt", nb.attempt, "harness", nb.harness)
 	// The session lasts as long as either pump: when one side ends the
 	// server is torn down whole, and its exit status is not the
 	// session's to report.
@@ -384,7 +384,7 @@ func (b *Broker) launch(ctx context.Context, c net.Conn, reader io.Reader, id st
 	_ = killProcessGroup(cmd)
 	_ = cmd.Wait()
 	<-done
-	log.Printf("steve-node: mcp %s for attempt %s ended", nb.mcp, nb.attempt)
+	slog.Info(fmt.Sprintf("steve-node: mcp %s for attempt %s ended", nb.mcp, nb.attempt), "mcp", nb.mcp, "attempt", nb.attempt)
 }
 
 // serveProxy listens on the loopback for http/sse servers: a binding's
@@ -408,7 +408,7 @@ func (b *Broker) serveProxy(ctx context.Context) error {
 	b.mu.Unlock()
 	if b.cfg.PortFile != "" {
 		if err := os.WriteFile(b.cfg.PortFile, []byte(strconv.Itoa(port)), 0o600); err != nil {
-			log.Printf("steve-node: mcp proxy: remember port: %v", err)
+			slog.Error(fmt.Sprintf("steve-node: mcp proxy: remember port: %v", err))
 		}
 	}
 	server := &http.Server{Handler: http.HandlerFunc(b.proxy), ReadHeaderTimeout: 10 * time.Second}
@@ -419,7 +419,7 @@ func (b *Broker) serveProxy(ctx context.Context) error {
 	}()
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("steve-node: mcp proxy: %v", err)
+			slog.Error(fmt.Sprintf("steve-node: mcp proxy: %v", err))
 		}
 	}()
 	return nil
@@ -511,7 +511,7 @@ type prefixedLog struct{ prefix string }
 func (p prefixedLog) Write(b []byte) (int, error) {
 	for _, line := range strings.Split(strings.TrimRight(string(b), "\n"), "\n") {
 		if strings.TrimSpace(line) != "" {
-			log.Printf("%s%s", p.prefix, line)
+			slog.Info(p.prefix + line)
 		}
 	}
 	return len(b), nil

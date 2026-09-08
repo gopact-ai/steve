@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -92,6 +92,6 @@ func (s *Server) runArtifact(ctx context.Context, stream *nodewire.Stream) {
 		reply.Result, reply.Error = result, artifact.EncodeFailure(err)
 	}
 	if err := json.NewEncoder(stream).Encode(reply); err != nil {
-		log.Printf("steve-node: artifact reply: %v", err)
+		slog.Error(fmt.Sprintf("steve-node: artifact reply: %v", err))
 	}
 }

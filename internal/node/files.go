@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -41,7 +41,7 @@ func (s *Server) runFiles(ctx context.Context, stream *nodewire.Stream) {
 		reply.Data, reply.Error = data, artifact.EncodeFailure(err)
 	}
 	if err := json.NewEncoder(stream).Encode(reply); err != nil {
-		log.Printf("steve-node: files reply: %v", err)
+		slog.Error(fmt.Sprintf("steve-node: files reply: %v", err))
 	}
 }
 

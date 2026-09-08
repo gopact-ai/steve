@@ -3,7 +3,7 @@ package node
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/idle"
@@ -72,7 +72,7 @@ func (r *Registry) down(c *conn) {
 	r.clocksLocked(c.name, false)
 	observe := r.observe
 	r.mu.Unlock()
-	log.Printf("node: %s disconnected (connection %d)", c.name, c.generation)
+	slog.Warn(fmt.Sprintf("node: %s disconnected (connection %d)", c.name, c.generation), "node", c.name)
 	if observe != nil {
 		observe(down)
 	}
