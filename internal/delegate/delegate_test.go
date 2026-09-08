@@ -30,7 +30,7 @@ import (
 
 type fakeNodes struct{ statuses []node.Status }
 
-func (f fakeNodes) Statuses() []node.Status         { return f.statuses }
+func (f fakeNodes) Statuses() []node.Status                    { return f.statuses }
 func (f fakeNodes) EnsureConnected(context.Context, ...string) {}
 
 type fakeSessions struct {
