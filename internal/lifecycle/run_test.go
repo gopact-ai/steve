@@ -615,6 +615,26 @@ func TestRunQuarantinesAManagedSessionWhoseCloseIsUnconfirmed(t *testing.T) {
 	}
 }
 
+func TestRunMarksAHubSessionSettledBeforeAFailureItCannotWrite(t *testing.T) {
+	// The hub session was closed and its prompt settled, so the marker is
+	// truthful; written before the transition, it stays on a record whose
+	// failure could not be written — which a takeover or a sweep may then
+	// read without a stop confirmation.
+	w := newWorld("s1")
+	w.runner.err = harness.ErrTurnCanceled
+	w.attempts.failAt = attempt.Failed
+	res, err := Run(t.Context(), w.options())
+	if !errors.Is(err, harness.ErrTurnCanceled) || res.Record.State != attempt.Running || res.Unsettled || res.Record.Unsettled || res.Durable {
+		t.Fatalf("failure the ledger refused: %+v err=%v", res, err)
+	}
+	if want := "open admit prepared/test arm/test-open session running/test close settled/test failed/test"; w.attempts.history() != want {
+		t.Fatalf("order = %s", w.attempts.history())
+	}
+	if len(w.sessions.closed) != 1 || w.workspaces.discarded != 0 {
+		t.Fatalf("closed=%v discarded=%d", w.sessions.closed, w.workspaces.discarded)
+	}
+}
+
 func TestRunLeavesAFailedCloseToTheCallersRecoveryWhenAsked(t *testing.T) {
 	// The completion is on the record and the close did not confirm the
 	// process exited, but the caller's own recovery closes the session
