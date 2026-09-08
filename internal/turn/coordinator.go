@@ -465,9 +465,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if c.consumePendingCancel(sessionKey(conversationID, selected.ID)) {
 		return Result{}, context.Canceled
 	}
-	var runningScope *execution.Scope
-	var managedAttemptID, managedSessionID string
-	var openingAttempt attempt.Record
+	t := &chatTurn{c: c, req: req, selected: selected, clock: clock, prompt: prompt}
 	if c.executions != nil {
 		taskID := ""
 		if c.tasks != nil {
@@ -479,19 +477,8 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		if scopeErr != nil {
 			return Result{}, scopeErr
 		}
-		runningScope = scope
-		defer func() {
-			var unresolved error
-			if errors.Is(err, harness.ErrStopUnconfirmed) {
-				unresolved = err
-				if managedAttemptID != "" && managedSessionID != "" && selected.Node != "" {
-					unresolved = &execution.RetainedObserverDetached{AttemptID: managedAttemptID, NodeID: selected.Node, SessionID: managedSessionID, Cause: err}
-				} else if pending := pendingNodeOpen(openingAttempt, err); pending != nil {
-					unresolved = pending
-				}
-			}
-			scope.Finish(unresolved)
-		}()
+		t.scope = scope
+		defer func() { scope.Finish(t.unresolved(err)) }()
 		ctx = scope.Context()
 	}
 	// The directory is settled before the task opens: a turn that has
@@ -513,18 +500,18 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	// report's usage is what the task's attempt is charged.
 	spent := &turnSpend{touch: touch}
 	req.OnProgress = spent.wrap(req.OnProgress, selected.ID)
-	managedExecution := false
+	t.req, t.spent, t.tracked, t.binding, t.workspace = req, spent, tracked, binding, workspace
 	if tracked != "" {
 		defer func() {
-			if managedExecution && errors.Is(err, harness.ErrStopUnconfirmed) {
+			if t.managed && errors.Is(err, harness.ErrStopUnconfirmed) {
 				return
 			}
 			c.finishTask(tracked, err, spent.tokens(), spent.model())
 			c.offlineReminder(req, tracked, started, err)
 		}()
 	}
-	if runningScope != nil {
-		if bindErr := runningScope.BindTask(tracked); bindErr != nil {
+	if t.scope != nil {
+		if bindErr := t.scope.BindTask(tracked); bindErr != nil {
 			return Result{}, bindErr
 		}
 	}
@@ -558,210 +545,19 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if saved.HarnessID != "" && sessionDrifted(saved, binding, workspace.Path) {
 		return Result{}, UserError{Text: c.text.T(i18n.WorkspaceDrift, protocol.CommandNew)}
 	}
+	t.saved, t.capabilities, t.contextChanged = saved, capabilities, contextChanged
 	// The turn is an attempt from here: leased on the project's canonical
 	// workspace, renewed while it runs, and closed with whatever happened.
-	// A lost lease cancels the turn, because nothing done after it could
-	// be recorded.
-	att, bound, err := c.openAttempt(ctx, req, selected, tracked, binding, workspace, clock)
+	spec, candidate, err := c.turnSpec(ctx, req, selected, tracked, binding, workspace)
 	if err != nil {
 		return Result{}, err
 	}
-	openingAttempt = att
-	if runningScope != nil {
-		runningScope.SetAttempt(att.ID)
+	run, runErr := lifecycle.Run(ctx, t.options(spec, candidate))
+	result, err = t.settle(parent, run, runErr)
+	if run.Record.ID != "" {
+		log.Printf("turn: timing attempt=%s %s", run.Record.ID, clock)
 	}
-	if req.OnTurnReady != nil {
-		req.OnTurnReady(tracked, att.ID)
-	}
-	servers := append(append([]acp.MCPServer(nil), capabilities.MCPServers...), bound...)
-	defer lifecycle.Keep(ctx, c.attempts, att.ID, func() {
-		log.Printf("turn: attempt %s lost its lease; cancelling the turn", att.ID)
-		cancel()
-	})()
-	defer func() {
-		if closeErr := c.closeAttempt(parent, att.ID, result, err, spent, clock); closeErr != nil {
-			log.Printf("turn: completion: %v", closeErr)
-			err = errors.Join(err, closeErr)
-		}
-		log.Printf("turn: timing attempt=%s %s", att.ID, clock)
-	}()
-	req.phase(view.PhaseWaking)
-	runner, err := c.open(ctx, saved, selected, workspace.Path, servers)
-	if err != nil && saved.UpstreamID != "" && !strings.HasPrefix(saved.UpstreamID, "ns_") && !errors.Is(err, harness.ErrNodeSessionUnavailable) {
-		// The saved upstream session could not be reopened; drop it and
-		// start a fresh session in this same turn instead of failing once
-		// and waiting for the user to send again.
-		if stateErr := c.store.DeleteSession(conversationID, selected.ID); stateErr != nil {
-			log.Printf("turn: delete unreopenable session state: %v", stateErr)
-		}
-		saved.UpstreamID = ""
-		saved.InstructionsApplied = false
-		runner, err = c.open(ctx, saved, selected, workspace.Path, servers)
-	}
-	clock.mark("session")
-	if err != nil {
-		if pendingNodeOpen(att, err) != nil {
-			managedExecution = true
-		}
-		return Result{}, err
-	}
-	managedExecution = strings.HasPrefix(runner.ID(), "ns_")
-	if managedExecution {
-		managedAttemptID, managedSessionID = att.ID, runner.ID()
-	}
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		c.discard(parent, selected, runner)
-		return Result{}, ctxErr
-	}
-	if att.State == attempt.Leased {
-		admission := att.Admission
-		if _, err := c.attempts.Advance(ctx, att.ID, attempt.Prepared, "turn", func(r *attempt.Record) { r.Admission = admission }); err != nil {
-			log.Printf("turn: attempt %s → prepared: %v", att.ID, err)
-		}
-	}
-	req.phase(view.PhaseRunning)
-	session := state.Session{
-		ConversationID: conversationID, AgentID: selected.ID, HarnessID: selected.Harness,
-		NodeID:     selected.Node,
-		UpstreamID: runner.ID(), Workspace: workspace.Path, CapabilityHash: capabilities.Fingerprint,
-		ProjectID: binding.ProjectID, ProjectVersion: binding.Version,
-		SessionConfigHash:   capabilities.SessionFingerprint,
-		InstructionsApplied: saved.InstructionsApplied, Tainted: true,
-		AgentToken: saved.AgentToken,
-	}
-	if err := c.store.SaveSession(session); err != nil {
-		c.discard(parent, selected, runner)
-		return Result{}, err
-	}
-	user := prompt
-	if req.SenderOpenID != "" || req.ChatType != "" {
-		speaker := req.SenderOpenID
-		if speaker == "" {
-			speaker = "-"
-		}
-		ownerFlag := "false"
-		if req.SenderOpenID != "" && req.SenderOpenID == c.ownerOpenID {
-			ownerFlag = "true"
-		}
-		user = fmt.Sprintf("[steve: speaker=%s owner=%s chat=%s]\n%s", speaker, ownerFlag, req.ChatType, prompt)
-	}
-	if prefix := c.listenPrefix(req); prefix != "" {
-		user = prefix + user
-	}
-	building := false
-	if binding.ProjectID == c.homeProject {
-		building, err = c.buildingProfile(req)
-		if err != nil {
-			return Result{}, err
-		}
-	}
-	if building {
-		if _, shared := c.home.(home.IdentityEditor); shared {
-			user = onboard.ContinueShared(c.text.Locale()) + "\n\n" + user
-		} else {
-			user = onboard.Continue(c.text.Locale(), c.homePath) + "\n\n" + user
-		}
-	}
-	injected := &Injected{
-		Project: binding.ProjectID, Workspace: workspace.Path,
-		Agent: selected.ID, Node: selected.Node, Harness: selected.Harness, Model: selected.Model, Options: selected.Options,
-		Session: runner.ID(), NewSession: saved.UpstreamID == "", Fingerprint: capabilities.Fingerprint,
-		InstructionsBytes: len(capabilities.Instructions), Prompt: user,
-	}
-	for _, srv := range servers {
-		injected.MCPServers = append(injected.MCPServers, srv.Name)
-	}
-	if !session.InstructionsApplied && (capabilities.Instructions != "" || contextChanged) {
-		instructions := capabilities.Instructions
-		if contextChanged {
-			instructions = "[steve: context update]\nThe following is the current context. It replaces the previously supplied Steve context, identity and profile. Keep the conversation history and continue with the user's message below.\n\n" + instructions
-		}
-		user = instructions + "\n\n" + user
-		injected.InstructionsSent = true
-		injected.Instructions = instructions
-		injected.InstructionsBytes = len(instructions)
-	}
-	prompt = user
-	c.setRunner(conversationID, selected.ID, runner)
-	if _, armErr := c.attempts.Advance(ctx, att.ID, attempt.Running, "turn", func(record *attempt.Record) {
-		record.Session = runner.ID()
-		record.Preferences = sessionPreferences(runner)
-	}); armErr != nil {
-		return Result{}, fmt.Errorf("arm prompt execution: %w", armErr)
-	}
-	if err := c.bindExecutionGate(ctx, conversationID, att.ID); err != nil {
-		return Result{}, err
-	}
-	clock.mark("arm")
-	out, activity, err := promptTurn(ctx, runner, prompt, req)
-	clock.mark("prompt")
-	if acphost.PromptSettled(err) {
-		req.phase(view.PhaseFinishing)
-	}
-	if acphost.PromptSettled(err) {
-		settledCtx, finishSettle := lifecycle.Cleanup(ctx)
-		if settleErr := c.attempts.MarkSessionSettled(settledCtx, att.ID, "turn"); settleErr != nil {
-			err = errors.Join(err, fmt.Errorf("record prompt settlement: %w", settleErr))
-		}
-		finishSettle()
-		clock.mark("settle")
-	}
-	if err == nil && ctx.Err() != nil {
-		err = ctx.Err()
-	}
-	if err != nil {
-		if errors.Is(err, harness.ErrStopUnconfirmed) {
-			if stateErr := func() error {
-				if managedExecution {
-					return nil
-				}
-				return c.store.DeleteSession(conversationID, selected.ID)
-			}(); stateErr != nil {
-				log.Printf("turn: delete unconfirmed session: %v", stateErr)
-			}
-			return Result{}, err
-		}
-		if errors.Is(err, harness.ErrTurnCanceled) {
-			// The agent stopped the turn itself (e.g. a permission request
-			// was rejected); the session stays consistent, so keep it and
-			// clear the taint instead of tearing the process down.
-			session.Tainted = false
-			session.InstructionsApplied = true
-			if stateErr := c.store.SaveSession(session); stateErr != nil {
-				log.Printf("turn: save canceled session state: %v", stateErr)
-			}
-			return Result{}, err
-		}
-		// A failed/expired turn does not authorize killing the shared host.
-		// Unknown physical writers were classified above and quarantined;
-		// confirmed responses only invalidate this conversation's session.
-		if stateErr := c.store.DeleteSession(conversationID, selected.ID); stateErr != nil {
-			log.Printf("turn: delete failed session state: %v", stateErr)
-		}
-		return Result{}, err
-	}
-	session.Tainted = false
-	session.InstructionsApplied = true
-	if err := c.store.SaveSession(session); err != nil {
-		log.Printf("turn: save completed session state: %v", err)
-		out += "\n\n" + c.text.T(i18n.StateSaveFailed, protocol.CommandNew)
-	}
-	clock.mark("save")
-	if building {
-		var reply string
-		var applyErr error
-		if editor, shared := c.home.(home.IdentityEditor); shared {
-			reply, _, applyErr = onboard.ApplyWith(out, func(soul, user string) error { return editor.WriteIdentity(ctx, soul, user) })
-		} else {
-			reply, _, applyErr = onboard.Apply(c.homePath, out)
-		}
-		if applyErr != nil {
-			return Result{}, fmt.Errorf("save generated identity: %w", applyErr)
-		} else {
-			out = reply
-		}
-	}
-	return Result{AgentID: selected.ID, Text: out, Activity: activity, Injected: injected, Attempt: att.ID}, nil
+	return result, err
 }
 
 func (c *Coordinator) buildingProfile(req Request) (bool, error) {
@@ -773,14 +569,6 @@ func (c *Coordinator) buildingProfile(req Request) (bool, error) {
 		return editor.NeedsInit()
 	}
 	return c.homePath != "" && home.NeedsInit(c.homePath), nil
-}
-
-func (c *Coordinator) discard(parent context.Context, selected agent.Agent, runner harness.Runner) {
-	ctx, cancel := lifecycle.Cleanup(parent)
-	defer cancel()
-	if err := c.runtime.CloseSession(ctx, placement(selected), runner.ID()); err != nil {
-		runner.Abort()
-	}
 }
 
 func (c *Coordinator) open(ctx context.Context, saved state.Session, selected agent.Agent, workspace string, servers []acp.MCPServer) (harness.Runner, error) {

@@ -8,7 +8,7 @@ internal/console/console.go:498
 internal/console/questions.go:285
 internal/console/queue.go:62
 internal/coordination/failover.go:30
-internal/delegate/recovery.go:438
+internal/delegate/recovery.go:449
 internal/exec/agent_runner.go:107
 internal/exec/agent_runner.go:276
 internal/exec/compile.go:848

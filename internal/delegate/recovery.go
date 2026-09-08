@@ -410,19 +410,30 @@ func (s *Service) detachChild(spawned task.Task, entry *child, detached *executi
 	log.Printf("delegate: retained observer detached task=%s attempt=%s node=%s", spawned.ID, detached.AttemptID, detached.NodeID)
 }
 
-func (s *Service) failRetainedResult(ctx context.Context, record attempt.Record, result agentmcp.DelegateResult, cause error, usage *attempt.Usage) (attempt.Record, error) {
-	result.TaskID, result.Agent, result.Node, result.Outcome = record.TaskID, record.Agent, record.Node, outcomeOf(cause)
+// retainedFailure is a node-owned execution's answer kept with its
+// failure, so a recovered observer reports it without running the child
+// again.
+func retainedFailure(record attempt.Record, answer string, cause error) (*attempt.Result, error) {
+	result := agentmcp.DelegateResult{TaskID: record.TaskID, Agent: record.Agent, Node: record.Node, Outcome: outcomeOf(cause), Answer: answer}
 	if result.Answer == "" {
 		result.Answer = cause.Error()
 	}
 	output, err := json.Marshal(result)
+	if err != nil {
+		return nil, err
+	}
+	return &attempt.Result{Summary: clipRunes(result.Answer, 200), Output: output}, nil
+}
+
+func (s *Service) failRetainedResult(ctx context.Context, record attempt.Record, result agentmcp.DelegateResult, cause error, usage *attempt.Usage) (attempt.Record, error) {
+	failed, err := retainedFailure(record, result.Answer, cause)
 	if err != nil {
 		return attempt.Record{}, err
 	}
 	return s.attempts.Advance(ctx, record.ID, attempt.Failed, "delegate", func(r *attempt.Record) {
 		r.Error = cause.Error()
 		r.Usage = usage
-		r.Result = &attempt.Result{Summary: clipRunes(result.Answer, 200), Output: output}
+		r.Result = failed
 	})
 }
 

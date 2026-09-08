@@ -85,7 +85,10 @@ type Drive struct {
 	// Turn routes the harness's permission and user questions through Ask
 	// and AskUser, which needs a TurnRunner; a chat turn and a node-owned
 	// session want that. Without it the plain Prompt is used.
-	Turn    bool
+	Turn bool
+	// Resume follows a command the node already accepted instead of
+	// sending Prompt; the session must be a ResumableRunner.
+	Resume  bool
 	Ask     permission.AskFunc
 	AskUser acphost.AskUserFunc
 	Observe func(view.Progress)
@@ -111,16 +114,27 @@ func (o Outcome) Settled() bool { return o.PromptSettled || o.Stopped }
 func (d Drive) Run(ctx context.Context) Outcome {
 	var mu sync.Mutex
 	var last view.Progress
+	// model is the last model any report named: a final report without
+	// one does not make the spend nobody's.
+	model := ""
 	observe := func(p view.Progress) {
 		mu.Lock()
 		last = p
+		if p.Settings.Model != "" {
+			model = p.Settings.Model
+		}
 		mu.Unlock()
 		if d.Observe != nil {
 			d.Observe(p)
 		}
 	}
 	var out Outcome
-	if turn, ok := d.Session.(harness.TurnRunner); ok && d.Turn {
+	resumable, canResume := d.Session.(harness.ResumableRunner)
+	if turn, ok := d.Session.(harness.TurnRunner); d.Resume && canResume {
+		out.Answer, out.Activity, out.Err = resumable.ResumeTurn(ctx, d.Ask, d.AskUser, observe)
+	} else if d.Resume {
+		out.Err = errors.New("session cannot resume an accepted command")
+	} else if ok && d.Turn {
 		out.Answer, out.Activity, out.Err = turn.PromptTurn(ctx, d.Prompt, d.Media, d.Ask, d.AskUser, observe)
 	} else {
 		out.Answer, out.Activity, out.Err = d.Session.Prompt(ctx, d.Prompt, observe)
@@ -129,6 +143,9 @@ func (d Drive) Run(ctx context.Context) Outcome {
 	out.Stopped = Stopped(d.Session)
 	mu.Lock()
 	out.Last = last
+	if out.Last.Settings.Model == "" {
+		out.Last.Settings.Model = model
+	}
 	mu.Unlock()
 	return out
 }
@@ -143,15 +160,15 @@ func Usage(last view.Progress) *attempt.Usage {
 	}
 }
 
-// Sessions closes sessions where they run.
-type Sessions interface {
+// Closer closes sessions where they run.
+type Closer interface {
 	CloseSession(ctx context.Context, at harness.Placement, id string) error
 }
 
 // Close ends a session on a cleanup context. A close that fails on a
 // process not known to have stopped is an unconfirmed stop: the caller
 // must keep the workspace and the slot until someone verifies the exit.
-func Close(parent context.Context, sessions Sessions, at harness.Placement, session harness.Runner) error {
+func Close(parent context.Context, sessions Closer, at harness.Placement, session harness.Runner) error {
 	ctx, cancel := Cleanup(parent)
 	defer cancel()
 	if err := sessions.CloseSession(ctx, at, session.ID()); err != nil && !Stopped(session) {

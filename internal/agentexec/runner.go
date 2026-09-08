@@ -147,256 +147,294 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 		return out, err
 	}
 	var unresolved error
-	var invalid error
-	validationReady := false
-	defer func() {
-		if validationReady {
-			runErr = &ValidationError{Cause: invalid}
-		}
-		scope.Finish(unresolved)
-	}()
+	defer func() { scope.Finish(unresolved) }()
 	ctx = scope.Context()
-	var selected roster.Candidate
-	found := false
-	for _, c := range r.roster.All(ctx) {
-		if c.Agent.ID == spec.Agent {
-			selected, found = c, true
-			break
-		}
-	}
-	if !found {
-		return out, fmt.Errorf("agent %s is not in the roster", spec.Agent)
-	}
-	if !selected.Eligible {
-		return out, fmt.Errorf("agent %s cannot run: %s", spec.Agent, selected.Why)
+	selected, err := r.candidate(ctx, spec.Agent)
+	if err != nil {
+		return out, err
 	}
 	workspace, err := r.workspaces.Materialize(ctx, project.Request{Project: spec.Project, Node: selected.Node, Isolated: true, Base: spec.Base, Owner: id})
 	if err != nil {
 		return out, fmt.Errorf("materialize %s: %w", spec.Kind, err)
 	}
-	keepWorkspace := false
-	defer func() {
-		if keepWorkspace {
-			return
-		}
-		cleanup, stop := lifecycle.Cleanup(ctx)
-		defer stop()
-		if err := r.workspaces.Discard(cleanup, workspace); err != nil {
-			validationReady = false
-			runErr = errors.Join(runErr, fmt.Errorf("discard %s: %w", id, err))
-		}
-	}()
 	if workspace.Kind != project.KindWorktree {
-		keepWorkspace = true
 		return out, errors.New("agentexec requires an isolated worktree")
 	}
-	request := attempt.Spec{WorkID: identity, ID: id, TaskID: spec.TaskID, TurnID: spec.TurnID, Kind: spec.Kind, Execution: execution.Token(ctx), Project: spec.Project,
-		Node: selected.Node, Harness: selected.Harness, Agent: selected.Agent.ID, Slots: selected.Slots, Region: selected.Region,
-		Workspace: workspace, Scope: attempt.ScopeNone, Base: workspace.Base, By: "agentexec", Requires: selected.Agent.Requires}
-	for {
-		out.Attempt, err = r.attempts.Open(ctx, request)
-		var full attempt.NoSlot
-		if !errors.As(err, &full) {
-			break
-		}
-		timer := time.NewTimer(r.slotPoll)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return out, ctx.Err()
-		case <-timer.C:
-		}
-	}
-	if err != nil {
-		return out, err
-	}
-	ctx, stopRun := context.WithCancel(ctx)
-	defer stopRun()
-	defer lifecycle.Keep(ctx, r.attempts, id, stopRun)()
-	_, deadline, reserveErr := ReserveBudget(r.budget, out.Attempt)
-	if reserveErr != nil {
-		cleanup, stop := lifecycle.Cleanup(ctx)
-		defer stop()
-		failed, settleErr := r.attempts.FailWith(cleanup, id, "agentexec", reserveErr.Error(), nil)
-		if settleErr != nil {
-			keepWorkspace = true
-		} else {
-			out.Attempt = failed
-		}
-		return out, errors.Join(reserveErr, settleErr)
-	}
-	if !deadline.IsZero() {
-		var cancelBudget context.CancelFunc
-		ctx, cancelBudget = context.WithDeadline(ctx, deadline)
-		defer cancelBudget()
-	}
-	at := harness.Placement{Node: selected.Node, Harness: selected.Harness}
-	var promptSettled bool
-	var session harness.Runner
-	var releaseBindings bool
-	defer func() {
-		if session != nil && lifecycle.Managed(session) || !out.Attempt.State.Terminal() || out.Attempt.Unsettled {
-			return
-		}
-		if err := SettleBudget(r.budget, out.Attempt, runErr); err != nil {
-			validationReady = false
-			runErr = Blocked(out.Attempt, "accounting", "保存原执行的用量与预算", "执行结果已保存，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", err)
-		}
-	}()
-	defer func() {
-		if session != nil && lifecycle.Managed(session) {
-			keepWorkspace = true
-			if out.Attempt.Session == "" {
-				// The node returned a real session, but publishing that identity
-				// failed before any prompt. Preserve the admitted preparation;
-				// this observer may leave without claiming native process exit.
-				cleanup, cancel := lifecycle.Cleanup(ctx)
-				defer cancel()
-				markerErr := r.attempts.MarkUnsettled(cleanup, out.Attempt.ID, "agentexec-open", errors.Join(harness.ErrStopUnconfirmed, runErr), out.Usage)
-				unresolved = &execution.NodePreparationObserverDetached{AttemptID: out.Attempt.ID, NodeID: out.Attempt.Node, OpenCommandID: attempt.InputCommandID(out.Attempt) + "/open", Cause: errors.Join(harness.ErrStopUnconfirmed, runErr, markerErr)}
-				runErr = Blocked(out.Attempt, "session-record", "保存原节点已返回的会话标识", "节点已经打开会话，但会话标识尚未写入执行记录；原始任务输入还未发送。", "建议恢复存储后核对原节点的打开回执，不重新打开会话。", unresolved)
-				return
-			}
-			out, runErr, unresolved = r.finishManaged(ctx, out, runErr, invalid, promptSettled)
-			return
-		}
-		cleanup, stop := lifecycle.Cleanup(ctx)
-		defer stop()
-		if !errors.Is(runErr, harness.ErrStopUnconfirmed) && session != nil {
-			if err := lifecycle.Close(cleanup, r.sessions, at, session); err != nil {
-				runErr = errors.Join(runErr, err)
-			}
-		}
-		if errors.Is(runErr, harness.ErrStopUnconfirmed) {
-			keepWorkspace = true
-			quarantine := r.attempts.MarkUnsettled(cleanup, id, "agentexec", runErr, out.Usage)
-			unresolved = &UnsettledError{AttemptID: id, Cause: errors.Join(runErr, quarantine)}
-			if pending := PendingNodeOpen(out.Attempt, runErr); pending != nil {
-				unresolved = pending
-			}
-			runErr = unresolved
-			if record, err := r.attempts.Get(cleanup, id); err == nil {
-				out.Attempt = record
-			}
-			if PendingOpen(out.Attempt) {
-				runErr = Blocked(out.Attempt, "open", "按原执行标识请求打开节点会话", "原节点未返回完整的打开回执，会话可能已经创建。", "建议恢复原节点连接后核对打开记录，保留原任务等待处理。", unresolved)
-			}
-			return
-		}
-		if session != nil {
-			if promptSettled || lifecycle.Stopped(session) {
-				if err := r.attempts.MarkSessionSettled(cleanup, id, "agentexec"); err != nil {
-					keepWorkspace = true
-					runErr = errors.Join(runErr, err)
-					return
-				}
-			}
-		}
-		if releaseBindings {
-			r.roster.Release(cleanup, selected.Node, id)
-		}
-		if runErr == nil && ctx.Err() != nil {
-			runErr = ctx.Err()
-		}
-		if runErr != nil {
-			failed, err := r.attempts.FailWith(cleanup, id, "agentexec", runErr.Error(), out.Usage)
-			if err != nil {
-				keepWorkspace = true
-				runErr = errors.Join(runErr, fmt.Errorf("settle %s: %w", id, err))
-				return
-			}
-			out.Attempt = failed
-			validationReady = invalid != nil
-			return
-		}
-		summary := []rune(out.Answer)
-		if len(summary) > 200 {
-			summary = summary[:200]
-		}
-		completion := attempt.Completion{Result: attempt.Result{Summary: string(summary)}, Usage: out.Usage}
-		completed, err := r.attempts.FinishCompletion(ctx, id, "agentexec", completion)
-		if err != nil {
-			keepWorkspace = true
-			runErr = r.attempts.RejectCompletion(cleanup, id, "agentexec", completion, err)
-			if record, err := r.attempts.Get(cleanup, id); err == nil {
-				out.Attempt = record
-			}
-			return
-		}
-		out.Attempt = completed
-	}()
-	admission, bindings, err := r.roster.Admit(ctx, selected, selected.Agent.Requires, selected.Agent.MCPServers, id)
-	if err != nil {
-		return out, fmt.Errorf("admit %s: %w", spec.Agent, err)
-	}
-	if !admission.OK() {
-		return out, fmt.Errorf("admit %s: %s", spec.Agent, admission.Unmet())
-	}
-	releaseBindings = len(bindings) > 0
-	var servers []acp.MCPServer
-	if r.capabilities != nil {
-		instructions, configured, err := r.capabilities.Assemble(selected)
-		if err != nil {
-			return out, fmt.Errorf("assemble %s: %w", spec.Agent, err)
-		}
-		servers = configured
-		if instructions != "" {
-			prompt = instructions + "\n\n" + prompt
-		}
-	} else if selected.Node == "" && len(selected.Agent.MCPServers) > 0 {
-		return out, errors.New("hub MCP capabilities are not configured for agentexec")
-	}
-	input, encodeErr := json.Marshal(auxiliaryOutput{WorkID: identity, Input: &original})
-	if encodeErr != nil {
-		return out, encodeErr
-	}
-	out.Attempt, err = r.attempts.Advance(ctx, id, attempt.Prepared, "agentexec", func(record *attempt.Record) {
-		record.Admission = &admission
-		record.Result = &attempt.Result{Output: input}
-	})
-	if err != nil {
-		return out, err
-	}
-	if err := r.attempts.ArmSession(ctx, id, "agentexec-open"); err != nil {
-		return out, err
-	}
-	session, err = r.sessions.OpenSession(ctx, at, "", workspace.Path, append(servers, roster.ToMCP(bindings)...))
-	if err != nil {
-		if !errors.Is(err, harness.ErrStopUnconfirmed) {
-			if markerErr := r.attempts.MarkSessionSettled(ctx, id, "agentexec-open-rejected"); markerErr != nil {
-				return out, errors.Join(err, markerErr)
-			}
-		}
-		return out, fmt.Errorf("open %s: %w", spec.Agent, err)
-	}
-	harness.ApplyPreferences(ctx, session, selected.Agent.ID, selected.Agent.Model, selected.Agent.Options)
-	running, err := r.attempts.Advance(ctx, id, attempt.Running, "agentexec", func(record *attempt.Record) { record.Session = session.ID() })
-	if err != nil {
-		return out, err
-	}
-	out.Attempt = running
-	ask, askUser, observe := r.callbacks()
-	driven := lifecycle.Drive{Session: session, Prompt: prompt, Turn: lifecycle.Managed(session), Ask: ask, AskUser: askUser, Observe: func(p view.Progress) {
-		EmitProgress(ctx, p)
-		if observe != nil {
-			observe(out.Attempt, p)
-		}
-	}}.Run(ctx)
-	out.Answer, runErr = driven.Answer, driven.Err
-	promptSettled = driven.Settled()
-	if !promptSettled {
-		runErr = errors.Join(runErr, harness.ErrStopUnconfirmed)
-	}
-	out.Usage = lifecycle.Usage(driven.Last)
-	if !lifecycle.Managed(session) {
+	work := &auxiliary{runner: r, spec: spec, selected: selected, identity: identity, input: original, validate: validate}
+	defer work.stop()
+	run, err := lifecycle.Run(ctx, work.options(ctx, id, workspace))
+	out.Attempt, out.Usage, out.Answer = run.Record, run.Usage, run.Answer
+	if !run.Managed {
 		out.Answer = strings.TrimSpace(out.Answer)
 	}
-	if runErr == nil && ctx.Err() != nil {
-		runErr = ctx.Err()
-	}
-	if runErr == nil && validate != nil {
-		invalid = validate(out.Answer)
-		runErr = invalid
-	}
+	runErr, unresolved = work.settle(run, err)
 	return out, runErr
+}
+
+// candidate is the roster's word on the agent the caller named.
+func (r *Runner) candidate(ctx context.Context, agentID string) (roster.Candidate, error) {
+	for _, c := range r.roster.All(ctx) {
+		if c.Agent.ID == agentID {
+			if !c.Eligible {
+				return c, fmt.Errorf("agent %s cannot run: %s", agentID, c.Why)
+			}
+			return c, nil
+		}
+	}
+	return roster.Candidate{}, fmt.Errorf("agent %s is not in the roster", agentID)
+}
+
+// auxiliary is one planning or verification prompt's side of the
+// lifecycle: what it prepares, how it checks the answer, what it records,
+// and how it reads the end.
+type auxiliary struct {
+	runner   *Runner
+	spec     Spec
+	selected roster.Candidate
+	identity string
+	input    auxiliaryInput
+	validate func(string) error
+
+	mu       sync.Mutex
+	running  attempt.Record
+	reserved bool
+	invalid  error
+	deadline context.CancelFunc
+}
+
+func (a *auxiliary) options(ctx context.Context, id string, workspace project.Workspace) lifecycle.Options {
+	r, selected, spec := a.runner, a.selected, a.spec
+	ask, askUser, observe := r.callbacks()
+	return lifecycle.Options{
+		Attempts: r.attempts, Roster: r.roster, Sessions: r.sessions, Workspaces: r.workspaces,
+		Actor: "agentexec", SlotPoll: r.slotPoll,
+		Spec: attempt.Spec{WorkID: a.identity, ID: id, TaskID: spec.TaskID, TurnID: spec.TurnID, Kind: spec.Kind, Execution: execution.Token(ctx), Project: spec.Project,
+			Node: selected.Node, Harness: selected.Harness, Agent: selected.Agent.ID, Slots: selected.Slots, Region: selected.Region,
+			Workspace: workspace, Scope: attempt.ScopeNone, Base: workspace.Base, By: "agentexec", Requires: selected.Agent.Requires},
+		Candidate: selected, Requires: selected.Agent.Requires, Uses: selected.Agent.MCPServers,
+		ArmActor: "agentexec-open",
+		At:       harness.Placement{Node: selected.Node, Harness: selected.Harness}, Workdir: workspace.Path,
+		Model: selected.Agent.Model, ModelOptions: selected.Agent.Options,
+		Prompt: a.input.Prompt, Ask: ask, AskUser: askUser,
+		Observe: func(p view.Progress) {
+			EmitProgress(ctx, p)
+			if observe != nil {
+				a.mu.Lock()
+				record := a.running
+				a.mu.Unlock()
+				observe(record, p)
+			}
+		},
+		Leased: a.reserve, Prepare: a.prepare, Started: a.started, Validate: a.check, Finish: a.finish, Failed: a.failed, Wrap: a.wrap,
+		// A planning or verification prompt is its own writer: an end it
+		// cannot prove is an unconfirmed stop, and a node-owned session it
+		// can no longer observe is the node's to finish.
+		Settlement: auxiliarySettlement,
+	}
+}
+
+// auxiliarySettlement: a planning or verification prompt is its own
+// writer. An end it cannot prove is an unconfirmed stop; a node-owned
+// session it can no longer observe, or was cancelled away from, is the
+// node's to finish, and the record is left as it is for the observer
+// that comes back.
+var auxiliarySettlement = lifecycle.Settlement{StoppedSettles: true, Quarantine: lifecycle.QuarantineAlways, DetachManaged: true, Detachment: lifecycle.DetachSilently, CancelDetaches: true, QuarantineUnpublished: true}
+
+// reserve charges the task's budget once the attempt is leased, and bounds
+// the run by the budget's deadline when it has one.
+func (a *auxiliary) reserve(ctx context.Context, e *lifecycle.Execution) (context.Context, error) {
+	_, deadline, err := ReserveBudget(a.runner.budget, e.Record)
+	if err != nil {
+		return ctx, err
+	}
+	a.reserved = true
+	if !deadline.IsZero() {
+		ctx, a.deadline = context.WithDeadline(ctx, deadline)
+	}
+	return ctx, nil
+}
+
+func (a *auxiliary) stop() {
+	if a.deadline != nil {
+		a.deadline()
+	}
+}
+
+// prepare assembles the guest's instructions and servers and keeps the
+// original request on the record, so a retained execution can prove
+// later what it was asked.
+func (a *auxiliary) prepare(_ context.Context, e *lifecycle.Execution) (func(*attempt.Record), error) {
+	r := a.runner
+	if r.capabilities != nil {
+		instructions, configured, err := r.capabilities.Assemble(a.selected)
+		if err != nil {
+			return nil, fmt.Errorf("assemble %s: %w", a.spec.Agent, err)
+		}
+		e.Servers = configured
+		if instructions != "" {
+			e.Prompt = instructions + "\n\n" + e.Prompt
+		}
+	} else if a.selected.Node == "" && len(a.selected.Agent.MCPServers) > 0 {
+		return nil, errors.New("hub MCP capabilities are not configured for agentexec")
+	}
+	input, err := json.Marshal(auxiliaryOutput{WorkID: a.identity, Input: &a.input})
+	if err != nil {
+		return nil, err
+	}
+	return func(record *attempt.Record) { record.Result = &attempt.Result{Output: input} }, nil
+}
+
+func (a *auxiliary) started(_ context.Context, e *lifecycle.Execution) error {
+	a.mu.Lock()
+	a.running = e.Record
+	a.mu.Unlock()
+	return nil
+}
+
+// answer is the harness's reply as the caller sees it: a hub session's is
+// trimmed, a node-owned session's kept verbatim for its record.
+func (a *auxiliary) answer(e *lifecycle.Execution) string {
+	if e.Managed {
+		return e.Outcome.Answer
+	}
+	return strings.TrimSpace(e.Outcome.Answer)
+}
+
+func (a *auxiliary) check(e *lifecycle.Execution) error {
+	if a.validate == nil {
+		return nil
+	}
+	a.invalid = a.validate(a.answer(e))
+	return a.invalid
+}
+
+func (a *auxiliary) finish(_ context.Context, e *lifecycle.Execution) (attempt.Completion, error) {
+	answer := a.answer(e)
+	result := attempt.Result{Summary: clipAnswer(answer)}
+	if e.Managed {
+		output, err := a.output(e.Record, answer, nil)
+		if err != nil {
+			return attempt.Completion{}, err
+		}
+		result.Output = output
+	}
+	return attempt.Completion{Result: result, Usage: e.Usage}, nil
+}
+
+// failed keeps a node-owned session's answer and error with the record: a
+// retained execution rebuilds its result from there.
+func (a *auxiliary) failed(e *lifecycle.Execution, cause error) (*attempt.Result, error) {
+	if !e.Managed {
+		return nil, nil
+	}
+	answer := a.answer(e)
+	output, err := a.output(e.Record, answer, cause)
+	if err != nil {
+		return nil, err
+	}
+	return &attempt.Result{Summary: clipAnswer(answer), Output: output}, nil
+}
+
+var (
+	errOriginalInput = errors.New("original auxiliary input")
+	errOutput        = errors.New("auxiliary output")
+)
+
+func (a *auxiliary) output(record attempt.Record, answer string, cause error) ([]byte, error) {
+	input, err := originalInput(record)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errOriginalInput, err)
+	}
+	saved := auxiliaryOutput{Input: &input, WorkID: record.WorkID, Answer: answer, Validation: a.invalid != nil}
+	if cause != nil {
+		saved.Error = cause.Error()
+	}
+	output, err := json.Marshal(saved)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", errOutput, err)
+	}
+	return output, nil
+}
+
+// wrap names the agent in a failed admission or open, as the record and
+// the caller both see it.
+func (a *auxiliary) wrap(step lifecycle.Step, _ *lifecycle.Execution, err error) error {
+	switch step {
+	case lifecycle.StepAdmit:
+		var refused *lifecycle.Refused
+		if errors.As(err, &refused) {
+			return fmt.Errorf("admit %s: %s", a.spec.Agent, refused.Admission.Unmet())
+		}
+		return fmt.Errorf("admit %s: %w", a.spec.Agent, err)
+	case lifecycle.StepSession:
+		return fmt.Errorf("open %s: %w", a.spec.Agent, err)
+	}
+	return err
+}
+
+// settle reads how the run ended into this caller's words: what it
+// returns, and what stays unresolved for the execution scope.
+func (a *auxiliary) settle(run lifecycle.Result, err error) (runErr, unresolved error) {
+	record := run.Record
+	var step *lifecycle.StepError
+	errors.As(err, &step)
+	var detached *execution.RetainedObserverDetached
+	switch {
+	case run.Unsettled && run.Managed && !run.Driven:
+		// The node returned a real session, but publishing that identity
+		// failed before any prompt. Preserve the admitted preparation;
+		// this observer may leave without claiming native process exit.
+		unresolved = &execution.NodePreparationObserverDetached{AttemptID: record.ID, NodeID: record.Node, OpenCommandID: attempt.InputCommandID(record) + "/open", Cause: err}
+		return Blocked(record, "session-record", "保存原节点已返回的会话标识", "节点已经打开会话，但会话标识尚未写入执行记录；原始任务输入还未发送。", "建议恢复存储后核对原节点的打开回执，不重新打开会话。", unresolved), unresolved
+	case run.Unsettled && record.State.Terminal():
+		// The result is committed, but the close did not confirm the
+		// process exited: the worktree, the slot and the budget wait for
+		// someone who can.
+		unresolved = &UnsettledError{AttemptID: record.ID, Cause: errors.Join(err, run.CleanupErr)}
+		return Blocked(record, "cleanup", "释放已结束执行的工作区", "执行结果已保存，但原进程未确认退出，工作区尚未释放。", "建议核对原节点与进程，确认停止后重新检查。", unresolved), unresolved
+	case run.Unsettled:
+		unresolved = &UnsettledError{AttemptID: record.ID, Cause: err}
+		if pending := PendingNodeOpen(record, err); pending != nil {
+			unresolved = pending
+		}
+		if PendingOpen(record) {
+			return Blocked(record, "open", "按原执行标识请求打开节点会话", "原节点未返回完整的打开回执，会话可能已经创建。", "建议恢复原节点连接后核对打开记录，保留原任务等待处理。", unresolved), unresolved
+		}
+		return unresolved, unresolved
+	case errors.As(err, &detached):
+		code := "observer"
+		switch {
+		case step != nil && step.Step == lifecycle.StepSettle:
+			code = "marker"
+		case step != nil && step.Step == lifecycle.StepFinish:
+			code = "completion"
+			if errors.Is(err, errOriginalInput) {
+				code = "input"
+			} else if errors.Is(err, errOutput) {
+				code = "output"
+			}
+		}
+		return Blocked(record, code, "保存原规划或验证执行的结果", "原执行或其结果尚未完整确认。", "建议恢复节点与存储后检查同一次执行。", detached), detached
+	}
+	if !record.State.Terminal() {
+		return err, nil
+	}
+	if a.reserved {
+		if budgetErr := SettleBudget(a.runner.budget, record, err); budgetErr != nil {
+			return Blocked(record, "accounting", "保存原执行的用量与预算", "执行结果已保存，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", budgetErr), nil
+		}
+	}
+	if run.CleanupErr != nil {
+		if run.Managed {
+			return Blocked(record, "cleanup", "释放已结束执行的工作区", "执行结果已保存，但原工作区尚未释放。", "建议恢复节点连接后重新检查。", run.CleanupErr), nil
+		}
+		return errors.Join(err, run.CleanupErr), nil
+	}
+	if a.invalid != nil && errors.Is(err, a.invalid) && run.Durable {
+		// Invalid model output is durably settled: the caller may ask for
+		// a correction without retrying an execution whose cleanup or
+		// completion failed.
+		return &ValidationError{Cause: a.invalid}, nil
+	}
+	return err, nil
 }

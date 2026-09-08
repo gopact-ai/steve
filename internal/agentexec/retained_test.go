@@ -3,6 +3,7 @@ package agentexec
 import (
 	"context"
 	"errors"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -36,6 +37,7 @@ type retainedAuxSessions struct {
 	prompted, resumed, closed int
 	answer                    string
 	inspectErr                error
+	closeErr                  error
 }
 
 func (s *retainedAuxSessions) ID() string { return "ns_aux-original" }
@@ -46,7 +48,7 @@ func (s *retainedAuxSessions) CloseSession(context.Context, harness.Placement, s
 	s.mu.Lock()
 	s.closed++
 	s.mu.Unlock()
-	return nil
+	return s.closeErr
 }
 func (s *retainedAuxSessions) AttachRetainedSession(context.Context, harness.Placement, string, string) (harness.ResumableRunner, error) {
 	return s, nil
@@ -198,6 +200,55 @@ func TestAuxiliaryRetainedPromptResumesWithoutSecondInputOrBudgetCharge(t *testi
 		t.Fatalf("input repeated: prompt=%d resume=%d", sessions.prompted, sessions.resumed)
 	}
 }
+func TestAuxiliaryRetainedUnconfirmedCloseKeepsTheQuarantinedWorkspace(t *testing.T) {
+	// The result is committed, but the node did not confirm the process
+	// exited: the worktree stays, the record is quarantined, the budget
+	// waits, and the caller is told the cleanup is what is left. Once
+	// someone confirms the stop, a retry cleans up without a second prompt.
+	w, sessions, spec := retainedAuxFixture(t)
+	sessions.closeErr = errors.New("node away")
+	registry := execution.New(t.Context(), w.tasks)
+	next := New(sessions, w.runner.roster, w.runner.workspaces, w.attempts, registry, w.runner.budget)
+	out, err := next.Prompt(t.Context(), spec, "verify original work", nil)
+	var blocked *RecoveryBlocked
+	if !errors.As(err, &blocked) || !strings.HasSuffix(blocked.Question.RequestID, "/cleanup") || !errors.Is(err, harness.ErrStopUnconfirmed) {
+		t.Fatalf("unconfirmed close = %v", err)
+	}
+	if out.Attempt.State != attempt.Bound || !out.Attempt.Unsettled || out.Answer != sessions.answer {
+		t.Fatalf("committed result was not quarantined: %+v", out.Attempt)
+	}
+	if _, err := os.Stat(out.Attempt.Workspace.Path); err != nil {
+		t.Fatal("discarded the workspace of an unconfirmed writer:", err)
+	}
+	tracked, _ := w.tasks.Get(w.work.ID)
+	if len(tracked.Attempts) == 0 || !tracked.Attempts[len(tracked.Attempts)-1].Open() {
+		t.Fatalf("budget was settled for an unconfirmed writer: %+v", tracked.Attempts)
+	}
+	if err := registry.Stop([]string{w.work.ID}, context.Canceled).Wait(t.Context()); !errors.Is(err, harness.ErrStopUnconfirmed) {
+		t.Fatalf("scope claimed quiescence over an unconfirmed writer: %v", err)
+	}
+	if _, err := w.attempts.ConfirmStopped(t.Context(), out.Attempt.ID, "test", "test executor process exited"); err != nil {
+		t.Fatal(err)
+	}
+	sessions.closeErr = nil
+	again, err := next.Prompt(t.Context(), spec, "verify original work", nil)
+	if err != nil || again.Attempt.ID != out.Attempt.ID || again.Answer != sessions.answer {
+		t.Fatalf("confirmed stop did not clean up on retry: %+v %v", again, err)
+	}
+	if _, err := os.Stat(out.Attempt.Workspace.Path); !os.IsNotExist(err) {
+		t.Fatalf("workspace kept after a confirmed stop: %v", err)
+	}
+	tracked, _ = w.tasks.Get(w.work.ID)
+	if tracked.Attempts[len(tracked.Attempts)-1].Open() {
+		t.Fatalf("budget was not settled after the confirmed stop: %+v", tracked.Attempts)
+	}
+	sessions.mu.Lock()
+	defer sessions.mu.Unlock()
+	if sessions.closed != 2 || sessions.resumed != 1 {
+		t.Fatalf("close=%d resume=%d", sessions.closed, sessions.resumed)
+	}
+}
+
 func TestAuxiliaryRetainedChangedInputIsBlockedWithoutReplay(t *testing.T) {
 	w, sessions, spec := retainedAuxFixture(t)
 	next := New(sessions, w.runner.roster, w.runner.workspaces, w.attempts, execution.New(t.Context(), w.tasks), w.runner.budget)
