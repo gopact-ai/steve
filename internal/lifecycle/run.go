@@ -206,9 +206,10 @@ type Settlement struct {
 	CommitAsGiven bool
 	// QuarantineFinish: a hub session's completion that ends in an
 	// unconfirmed stop — a verifier whose exit nobody saw — quarantines the
-	// attempt, its workspace and slot kept, instead of failing it (plan
-	// steps). A node-owned session's detaches, as for any completion that
-	// could not be made.
+	// attempt, its workspace, slot and bindings kept, instead of failing
+	// it (plan steps); the bindings go back once the finish has decided,
+	// not before it. A node-owned session's detaches, as for any
+	// completion that could not be made.
 	QuarantineFinish bool
 	// RetryCleanup: a node-owned session whose close fails after the
 	// terminal transition is not quarantined — the record stands as it
@@ -669,7 +670,18 @@ func (e *Execution) close(ctx context.Context, err error) error {
 			err = errors.Join(err, fmt.Errorf("record prompt settlement: %w", markErr))
 		}
 	}
-	e.release(ctx)
+	// The bindings go back before the transition — unless the finish may
+	// quarantine the attempt, in which case they stay with the workspace
+	// and the slot until it has decided.
+	if o.Settlement.QuarantineFinish {
+		defer func() {
+			if !e.unsettled {
+				e.release(ctx)
+			}
+		}()
+	} else {
+		e.release(ctx)
+	}
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}

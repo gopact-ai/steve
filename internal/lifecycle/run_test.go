@@ -1022,12 +1022,26 @@ func TestRunQuarantinesAHubCompletionThatEndsUnconfirmed(t *testing.T) {
 		return attempt.Completion{}, unconfirmed
 	}
 	w := newWorld("s1")
+	w.roster.bindings = []ability.Binding{{Name: "tool"}}
 	o := w.options()
 	o.Settlement.QuarantineFinish = true
 	o.Finish = unseen
 	res, err := Run(t.Context(), o)
-	if !errors.Is(err, harness.ErrStopUnconfirmed) || !res.Unsettled || !res.Record.Unsettled || res.Record.State != attempt.Running || res.Durable || w.workspaces.discarded != 0 {
-		t.Fatalf("unconfirmed completion was not quarantined: %+v err=%v discarded=%d", res, err, w.workspaces.discarded)
+	if !errors.Is(err, harness.ErrStopUnconfirmed) || !res.Unsettled || !res.Record.Unsettled || res.Record.State != attempt.Running || res.Durable || w.workspaces.discarded != 0 || len(w.roster.released) != 0 {
+		t.Fatalf("unconfirmed completion was not quarantined, or gave its bindings back: %+v err=%v discarded=%d released=%v", res, err, w.workspaces.discarded, w.roster.released)
+	}
+	// Under the rule the bindings wait for the finish to decide, and go
+	// back after the transition; without it they go back before.
+	decided := newWorld("s1")
+	decided.roster.bindings = []ability.Binding{{Name: "tool"}}
+	o = decided.options()
+	o.Settlement.QuarantineFinish = true
+	res, err = Run(t.Context(), o)
+	if err != nil || res.Record.State != attempt.Bound || len(decided.roster.released) != 1 {
+		t.Fatalf("a decided completion kept its bindings: %+v err=%v released=%v", res, err, decided.roster.released)
+	}
+	if want := "open admit prepared/test arm/test-open session running/test close settled/test finish bound/test discard release"; decided.attempts.history() != want {
+		t.Fatalf("order = %s", decided.attempts.history())
 	}
 	// Without it a hub completion's unconfirmed stop fails the attempt.
 	plain := newWorld("s1")
