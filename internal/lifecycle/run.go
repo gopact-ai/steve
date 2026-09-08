@@ -711,6 +711,8 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 			return e.detach(ctx, StepSettle, markErr, false)
 		}
 	}
+	// record is the context the terminal transition is written on.
+	record := ctx
 	if err == nil {
 		err = e.commitManaged(ctx)
 		var failure *Failure
@@ -719,8 +721,13 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 		case err == nil:
 		case errors.As(err, &failure):
 			// The caller refused the work: the attempt fails on its cause,
-			// as on a prompt that failed.
+			// as on a prompt that failed — on a context of its own, since
+			// the judgement took its time and a cancellation on its heels
+			// does not unmake it.
 			err = failure.Cause
+			var stop context.CancelFunc
+			record, stop = Cleanup(ctx)
+			defer stop()
 		case errors.As(err, &deferred):
 			// The completion is another execution's to finish: the record,
 			// the session and the workspace wait for it; the bindings, which
@@ -732,7 +739,7 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 		}
 	}
 	if err != nil {
-		terminal, transition := e.failure(ctx, err)
+		terminal, transition := e.failure(record, err)
 		if transition != nil {
 			if o.Settlement.RejectManaged {
 				return e.closeRetained(ctx, errors.Join(err, fmt.Errorf("settle %s: %w", id, transition)))

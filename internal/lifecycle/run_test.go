@@ -36,6 +36,9 @@ type fakeAttempts struct {
 	failAt       attempt.State
 	// unsettledErr fails the quarantine marker.
 	unsettledErr error
+	// refusesDone refuses a transition on a done context, as the ledger
+	// does.
+	refusesDone bool
 	// ttl, when set, makes the lease real: Heartbeat renews it every
 	// ttl/3, and a transition on an expired lease is lost.
 	ttl      time.Duration
@@ -128,10 +131,13 @@ func (f *fakeAttempts) Get(context.Context, string) (attempt.Record, error) {
 	defer f.mu.Unlock()
 	return f.record, nil
 }
-func (f *fakeAttempts) Advance(_ context.Context, _ string, to attempt.State, actor string, mutate func(*attempt.Record)) (attempt.Record, error) {
+func (f *fakeAttempts) Advance(ctx context.Context, _ string, to attempt.State, actor string, mutate func(*attempt.Record)) (attempt.Record, error) {
 	f.log(string(to) + "/" + actor)
 	if to == f.failAt {
 		return attempt.Record{}, errors.New("ledger refused " + string(to))
+	}
+	if f.refusesDone && ctx.Err() != nil {
+		return attempt.Record{}, fmt.Errorf("ledger refused %s: %w", to, ctx.Err())
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -961,6 +967,22 @@ func TestRunFailsWhatFinishRefused(t *testing.T) {
 	}
 	if want := "open admit prepared/test arm/test-open session running/test settled/test failed/test close release discard"; m.attempts.history() != want {
 		t.Fatalf("managed refusal order = %s", m.attempts.history())
+	}
+	// The judgement took its time: a cancellation on its heels does not
+	// unmake it, and the failure is recorded on a context of its own.
+	late := newWorld("ns_1")
+	late.attempts.refusesDone = true
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	o = late.options()
+	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantines}
+	o.Finish = func(ctx context.Context, e *Execution) (attempt.Completion, error) {
+		cancel()
+		return refuse(ctx, e)
+	}
+	res, err = Run(ctx, o)
+	if err != refused || errors.As(err, &detached) || res.Record.State != attempt.Failed || res.Unsettled || !res.Durable {
+		t.Fatalf("managed refusal under a late cancellation: %+v err=%v", res, err)
 	}
 }
 
