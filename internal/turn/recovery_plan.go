@@ -31,9 +31,7 @@ func (c *Coordinator) SetPlanRecoveryOwner(owned func(task.Task) bool) {
 }
 
 func (c *Coordinator) retainedPlanRuns(ctx context.Context) ([]exec.RunRecord, error) {
-	if reader, ok := c.supervisor.(interface {
-		RetainedRuns(context.Context) ([]exec.RunRecord, error)
-	}); ok {
+	if reader, ok := c.supervisor.(retainedRunReader); ok {
 		return reader.RetainedRuns(ctx)
 	}
 	return c.supervisor.OpenRuns(ctx)
@@ -205,9 +203,7 @@ func (c *Coordinator) ResumeRetainedPlan(parent context.Context, identity Retain
 		if tracked.PreparedPlan != nil {
 			proposed, err = preparedTaskPlan(tracked)
 		} else {
-			planner, ok := c.supervisor.(interface {
-				ResumePlanning(context.Context, string) (plan.Plan, error)
-			})
+			planner, ok := c.supervisor.(retainedPlanner)
 			if !ok || identity.AttemptID == "" {
 				return Result{}, errors.New("retained planning consumer unavailable")
 			}

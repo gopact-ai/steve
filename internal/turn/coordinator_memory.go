@@ -3,7 +3,8 @@ package turn
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/capability"
@@ -69,7 +70,7 @@ func (c *Coordinator) projectMemory(ctx context.Context, conversationID string, 
 	}
 	text, err := svc.Snapshot(ctx, memory.ProjectScope(id))
 	if err != nil {
-		log.Printf("turn: project %s memory: %v", id, err)
+		slog.Error(fmt.Sprintf("turn: project %s memory: %v", id, err), "conversation", conversationID, "project", id)
 		return nil
 	}
 	if text == "" {

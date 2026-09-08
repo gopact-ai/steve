@@ -158,7 +158,7 @@ func TestRulePlanStoreFailureRecoversFrozenPlanInOriginalTask(t *testing.T) {
 				t.Fatal(err)
 			}
 			req := Request{Channel: "console", ConversationID: "console:rule", MessageID: "web-rule-original", ChatID: "console", SenderOpenID: "owner", ExpectedProject: "p"}
-			_, err = c.planCmd(t.Context(), req, "release original goal")
+			_, err = c.commands().planCmd(t.Context(), req, "release original goal")
 			var blocked *RecoveryBlocked
 			if !errors.As(err, &blocked) {
 				t.Fatalf("plan store failure did not preserve recovery: %v", err)
