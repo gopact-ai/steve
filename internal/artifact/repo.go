@@ -50,12 +50,15 @@ func Open(ctx context.Context, dir string) (*Repo, error) {
 		return nil, err
 	}
 	r := &Repo{Dir: dir}
-	// Snapshots must not depend on who runs the hub.
-	if _, err := r.git(ctx, nil, "config", "user.name", "steve"); err != nil {
-		return nil, err
-	}
-	if _, err := r.git(ctx, nil, "config", "user.email", "steve@localhost"); err != nil {
-		return nil, err
+	// Snapshots must not depend on who runs the hub, and nothing may keep
+	// working in a shadow repository after the operation that used it
+	// returned: git's automatic maintenance detaches into the background,
+	// which is a process nobody waits for and a directory that is not
+	// free when its owner removes it.
+	for _, setting := range [][2]string{{"user.name", "steve"}, {"user.email", "steve@localhost"}, {"gc.auto", "0"}, {"gc.autoDetach", "false"}, {"maintenance.auto", "false"}} {
+		if _, err := r.git(ctx, nil, "config", setting[0], setting[1]); err != nil {
+			return nil, err
+		}
 	}
 	return r, nil
 }
