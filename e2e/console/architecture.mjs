@@ -232,7 +232,7 @@ if (process.env.PURE_ONLY !== "1") {
         async "uncertain-retry-rejection"(f) {
             const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             f.hideQueue = true; f.resetAfterAccept = true;
-            await box.fill("One durable operation"); await box.press("Enter");
+            await box.fill("One durable operation"); await box.press("Shift+Enter");
             const retry = f.page.getByRole("button", { name: "重试这次发送", exact: true });
             await retry.waitFor(); await box.fill("Newer unsent work");
             const id = f.posts[0].command_id;
@@ -341,9 +341,9 @@ if (process.env.PURE_ONLY !== "1") {
         async "uncertain-submission"(f) {
             const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             f.resetAfterAccept = true; f.hideQueue = true;
-            await box.fill("Perform once"); await box.press("Enter");
+            await box.fill("Perform once"); await box.press("Shift+Enter");
             await f.page.getByRole("button", { name: "重试这次发送", exact: true }).waitFor();
-            await box.fill("Newer draft"); await box.press("Enter");
+            await box.fill("Newer draft"); await box.press("Shift+Enter");
             assert.equal(f.posts.length, 1, "Uncertain receipt must block a fresh submission");
             const persisted = await f.page.evaluate(() => JSON.parse(localStorage.getItem("steve.console.drafts")));
             assert.equal(persisted.submissions[A].id, f.posts[0].command_id, "The operation identity is durable before sending");
@@ -370,7 +370,7 @@ if (process.env.PURE_ONLY !== "1") {
             await eventually(async () => !(await status.innerText()).includes("部分数据不可用"), "transport recovery clears the matching error");
             f.reject = 400;
             const box = f.page.getByRole("textbox", { name: "消息", exact: true });
-            await box.fill("Keep the action error"); await box.press("Enter");
+            await box.fill("Keep the action error"); await box.press("Shift+Enter");
             await eventually(async () => (await status.innerText()) === "Submission rejected", "explicit action error is shown");
             await f.page.clock.fastForward(10000);
             assert.equal(await status.innerText(), "Submission rejected", "successful background reads preserve action feedback");
@@ -378,7 +378,7 @@ if (process.env.PURE_ONLY !== "1") {
         async "submission-reload-reconciliation"(f) {
             f.resetAfterAccept = true; f.hideQueue = true;
             const box = f.page.getByRole("textbox", { name: "消息", exact: true });
-            await box.fill("Accepted before reload"); await box.press("Enter");
+            await box.fill("Accepted before reload"); await box.press("Shift+Enter");
             await f.page.getByRole("button", { name: "重试这次发送", exact: true }).waitFor();
             await box.fill("Draft survives reconciliation");
             const pending = await f.page.evaluate(() => JSON.parse(localStorage.getItem("steve.console.drafts")).submissions["console:architecture-a"]);
@@ -395,12 +395,12 @@ if (process.env.PURE_ONLY !== "1") {
         async "submission-rejection-conflict"(f) {
             const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             f.reject = 400;
-            await box.fill("Rejected work"); await box.press("Enter");
+            await box.fill("Rejected work"); await box.press("Shift+Enter");
             await eventually(async () => f.posts.length === 1 && await box.inputValue() === "Rejected work" && await f.page.evaluate(() => !JSON.parse(localStorage.getItem("steve.console.drafts")).submissions["console:architecture-a"]), "Explicit rejection restores the draft after the response is persisted");
-            f.reject = 409; await box.press("Enter");
+            f.reject = 409; await box.press("Shift+Enter");
             await f.page.getByText("这次发送的标识与服务器记录冲突，请核对会话记录，不要直接重新发送。", { exact: true }).waitFor();
             assert.equal(await f.page.getByRole("button", { name: "重试这次发送", exact: true }).count(), 0);
-            await box.fill("Newer draft after conflict"); await box.press("Enter");
+            await box.fill("Newer draft after conflict"); await box.press("Shift+Enter");
             assert.equal(f.posts.length, 2, "A conflict cannot silently generate a replacement key");
         },
         async "stop-remount"(f) {

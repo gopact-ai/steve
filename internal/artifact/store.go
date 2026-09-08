@@ -6,10 +6,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
@@ -98,6 +100,10 @@ type Store struct {
 	// Direct lets a node fetch an artifact from another node that holds
 	// it, the hub granting the transfer, instead of relaying the bytes.
 	Direct bool
+	// shadows names the shadow repositories known to be initialised on a
+	// node, by the node generation that was asked.
+	shadowMu sync.Mutex
+	shadows  map[string]int64
 }
 
 func (s *Store) SetExecution(r *execution.Registry) { s.executions = r }
@@ -384,37 +390,97 @@ func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Proje
 		return "", false, err
 	}
 	bare := nodeBare(state, p.ID)
-	if _, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Init, Repo: bare}); err != nil {
-		return "", false, fmt.Errorf("init shadow repo on %s: %w", node, err)
+	sha, changed, trusted, err := s.snapshotOnNodeWith(ctx, node, p, dir, parent, message, hub, flatten, bare, true)
+	if err == nil || !trusted || ctx.Err() != nil {
+		return sha, changed, err
 	}
-	if parent != "" && !s.nodeHas(ctx, node, bare, parent) {
-		if err := s.push(ctx, node, bare, hub, parent, nil); err != nil {
-			return "", false, err
+	var tooLarge TooLarge
+	if errors.As(err, &tooLarge) {
+		return "", false, err
+	}
+	// What was trusted — the shadow repository, the parent's replica — may
+	// be gone from the node after all: look, and take the snapshot again.
+	log.Printf("artifact: snapshot on %s failed after trusting its state (%v); checking the node", node, err)
+	s.forgetShadow(node, bare)
+	sha, changed, _, err = s.snapshotOnNodeWith(ctx, node, p, dir, parent, message, hub, flatten, bare, false)
+	return sha, changed, err
+}
+
+// snapshotOnNodeWith takes the snapshot on the node. With trust, the shadow
+// repository this generation already initialised and a parent whose
+// replica is verified there are not asked about again: on a distant node
+// each question is a round trip, and an unchanged snapshot used to cost
+// three of them. trusted reports whether anything was skipped that way.
+func (s *Store) snapshotOnNodeWith(ctx context.Context, node string, p project.Project, dir, parent, message string, hub *Repo, flatten bool, bare string, trust bool) (sha string, changed, trusted bool, err error) {
+	gen := s.generationOf(ctx, node)
+	if trust && s.shadowKnown(node, bare, gen) {
+		trusted = true
+	} else {
+		if _, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Init, Repo: bare}); err != nil {
+			return "", false, trusted, fmt.Errorf("init shadow repo on %s: %w", node, err)
+		}
+		s.rememberShadow(node, bare, gen)
+	}
+	if parent != "" {
+		if r, ok := s.replica(ctx, parent, node); ok && r.State == ReplicaVerified && r.Generation == gen {
+			if trust {
+				trusted = true
+			} else {
+				// The record said the node had it; the snapshot said otherwise.
+				s.setReplica(ctx, parent, node, gen, ReplicaQuarantined, "not found by a snapshot")
+			}
+		}
+		if err := s.ensureOnNode(ctx, p, node, bare, hub, parent); err != nil {
+			return "", false, trusted, err
 		}
 	}
 	result, err := s.nodes.Artifact(ctx, node, ops.Request{Op: ops.Snapshot, Repo: bare, WorkTree: dir, Parent: parent, Message: message, Flatten: flatten, Limits: ops.Limits(s.Limits)})
 	if err != nil {
 		var tooLarge TooLarge
 		if errors.As(err, &tooLarge) {
-			return "", false, tooLarge
+			return "", false, trusted, tooLarge
 		}
-		return "", false, fmt.Errorf("snapshot %s on %s: %w", dir, node, err)
+		return "", false, trusted, fmt.Errorf("snapshot %s on %s: %w", dir, node, err)
 	}
-	sha := result.Commit
+	sha = result.Commit
 	if !shaPattern.MatchString(sha) {
-		return "", false, fmt.Errorf("snapshot on %s returned %q", node, sha)
+		return "", false, trusted, fmt.Errorf("snapshot on %s returned %q", node, sha)
 	}
 	if !result.Changed {
-		return sha, false, nil
+		return sha, false, trusted, nil
 	}
-	s.setReplica(ctx, sha, node, s.generationOf(ctx, node), ReplicaVerified, "made here")
+	s.setReplica(ctx, sha, node, gen, ReplicaVerified, "made here")
 	if metadataOnly(p) {
-		return sha, true, nil
+		return sha, true, trusted, nil
 	}
 	if err := s.pull(ctx, node, bare, hub, sha, []string{parent}); err != nil {
-		return "", false, err
+		return "", false, trusted, err
 	}
-	return sha, true, nil
+	return sha, true, trusted, nil
+}
+
+// shadowKnown reports whether the node's shadow repository was initialised
+// by this hub process while the node ran this generation.
+func (s *Store) shadowKnown(node, bare string, gen int64) bool {
+	s.shadowMu.Lock()
+	defer s.shadowMu.Unlock()
+	known, ok := s.shadows[node+"\x00"+bare]
+	return ok && known == gen
+}
+
+func (s *Store) rememberShadow(node, bare string, gen int64) {
+	s.shadowMu.Lock()
+	defer s.shadowMu.Unlock()
+	if s.shadows == nil {
+		s.shadows = map[string]int64{}
+	}
+	s.shadows[node+"\x00"+bare] = gen
+}
+
+func (s *Store) forgetShadow(node, bare string) {
+	s.shadowMu.Lock()
+	defer s.shadowMu.Unlock()
+	delete(s.shadows, node+"\x00"+bare)
 }
 
 func (s *Store) nodeHas(ctx context.Context, node, bare, sha string) bool {

@@ -8,7 +8,7 @@
         "build": "tsc -b && vite build",
         "preview": "vite preview",
         "test:boundaries": "node --test ../../e2e/console/architecture-boundaries.mjs",
-        "test:unit": "node --test ../../e2e/console/diff-parser.mjs ../../e2e/console/settings-draft.mjs ../../e2e/console/i18n.mjs && PURE_ONLY=1 node ../../e2e/console/settings-page.mjs && node ../../e2e/console/material-drafts.mjs",
+        "test:unit": "node --test ../../e2e/console/diff-parser.mjs ../../e2e/console/settings-draft.mjs ../../e2e/console/i18n.mjs ../../e2e/console/live.mjs && PURE_ONLY=1 node ../../e2e/console/settings-page.mjs && node ../../e2e/console/material-drafts.mjs",
         "test:ui": "node ../../e2e/console/interactions.mjs",
         "test:architecture": "node ../../e2e/console/architecture.mjs",
         "test:settings": "node ../../e2e/console/settings-page.mjs",

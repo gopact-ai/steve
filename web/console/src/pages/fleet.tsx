@@ -1,7 +1,7 @@
 import { NodeAgentEnrollment } from "@/components/steve/node-agent-enrollment";
 import { CoordinationPanel } from "@/components/steve/coordination-panel";
 import { ExecutionDataLevel, SSHConnect } from "@/components/steve/ssh-connect";
-import { useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "@/providers/locale-provider";
 import type { Translator } from "@/lib/i18n";
 import { levelName } from "@/lib/workspaces";
@@ -17,7 +17,8 @@ import { Button } from "@/components/base/buttons/button";
 import { removeNode } from "@/lib/api/fleet";
 import { number, relative, when } from "@/lib/format";
 import { addAgent, addNode, removeAgent, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
-import { useFleet, useIntent } from "@/lib/fleet";
+import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
+import { applyActivity, withLiveActivity, type LiveActivity } from "@/lib/live";
 import type { AbilitySnapshot, Agent, Attempt, Capability, Condition, Node as NodeT } from "@/lib/types";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
 import { Chips, KeyValue, PageBody, PageHeader } from "@/components/steve/page";
@@ -55,7 +56,7 @@ function selectorName(a: Agent, id: string): string {
 // runs, with which AI tool and model, what its machine must offer, which
 // MCP servers it uses. Saved changes reach the running catalog at once
 // and the config file with it.
-function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void; onChanged: () => void }) {
+function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveActivity; onClose: () => void; onChanged: () => void }) {
     const { t: tr, locale } = useI18n();
     const { snap } = useFleet();
     const { fill } = useIntent();
@@ -104,7 +105,7 @@ function AgentDrawer({ a, onClose, onChanged }: { a: Agent; onClose: () => void;
                             </details>
                         ) : null}
                         <DrawerSection title={tr("fleet.activity")}>
-                            {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="text-xs text-secondary">#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since, locale)}{x.detail ? ` · ${x.detail}` : ""}</div>) : <div className="text-xs text-quaternary">{a.activity_known === false ? tr("fleet.activityUnknown") : tr("fleet.idle")}</div>}
+                            {withLiveActivity(a.activities, live).length ? withLiveActivity(a.activities, live).map((x) => <div key={x.attempt_id} className="text-xs text-secondary">#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since, locale)}{x.detail ? ` · ${x.detail}` : ""}</div>) : <div className="text-xs text-quaternary">{a.activity_known === false ? tr("fleet.activityUnknown") : tr("fleet.idle")}</div>}
                         </DrawerSection>
                         <section className="rounded-lg bg-secondary/40 p-3">
                             <div className="flex min-w-0 flex-wrap items-center gap-3">
@@ -371,6 +372,18 @@ function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
 export function FleetPage() {
     const { t: tr, locale } = useI18n();
     const { snap, refresh } = useFleet();
+    // Streamed progress keeps the activity column current between the
+    // snapshot re-reads; the buffer is trimmed from the front, so the
+    // cursor is an arrival number, not an index.
+    const consoleEvents = useConsoleEvents();
+    const [liveActivity, setLiveActivity] = useState<Record<string, LiveActivity>>({});
+    const seenEvent = useRef(0);
+    useEffect(() => {
+        const fresh = consoleEvents.filter((ev) => (ev.n ?? 0) > seenEvent.current);
+        if (!fresh.length) return;
+        seenEvent.current = fresh[fresh.length - 1].n ?? seenEvent.current;
+        setLiveActivity((current) => fresh.reduce(applyActivity, current));
+    }, [consoleEvents]);
     const { act } = useIntent();
     const up = snap.nodes.filter((n) => n.up).length;
     const [adding, setAdding] = useState(false);
@@ -449,7 +462,7 @@ export function FleetPage() {
                         <Table.Head id="where" label={tr("fleet.environment")} className="w-[20%]" />
                         <Table.Head id="model" label={tr("fleet.model")} className="w-[23%]" />
                     </Table.Header>
-                    <Table.Body items={snap.agents}>
+                    <Table.Body items={snap.agents} dependencies={[liveActivity]}>
                         {(a) => (
                             <Table.Row id={a.id} className="cursor-pointer">
                                 <Table.Cell>
@@ -463,7 +476,7 @@ export function FleetPage() {
                                 </Table.Cell>
                                 <Table.Cell><div className="flex min-w-0 flex-col gap-1"><div><StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />{a.busy ? <span className="ml-1 text-xs text-tertiary">{a.busy}{a.slots ? `/${a.slots}` : ""}</span> : null}</div>{a.why && <span className="truncate text-xs text-error-primary" title={a.why}>{a.why}</span>}{a.repair && <Button size="sm" color="link-color" onClick={(e: React.MouseEvent) => { e.stopPropagation(); act(`/repair ${a.id}`); }}>{tr("fleet.repairAgent", { agent: a.repair })}</Button>}</div></Table.Cell>
                                 <Table.Cell>
-                                    {(a.activities || []).length ? (a.activities || []).map((x) => <div key={x.attempt_id} className="truncate text-xs text-secondary" title={x.detail}>#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since, locale)}</div>) : <span className="text-xs text-quaternary">{a.activity_known === false ? tr("fleet.activityUnknown") : tr("fleet.idle")}</span>}
+                                    {withLiveActivity(a.activities, liveActivity[a.id]).length ? withLiveActivity(a.activities, liveActivity[a.id]).map((x) => <div key={x.attempt_id} className="truncate text-xs text-secondary" title={x.detail}>#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since, locale)}</div>) : <span className="text-xs text-quaternary">{a.activity_known === false ? tr("fleet.activityUnknown") : tr("fleet.idle")}</span>}
                                 </Table.Cell>
                                 <Table.Cell><div className="flex min-w-0 flex-col gap-1"><span className="truncate text-xs text-secondary" title={a.node || snap.hub.node}>{a.node || snap.hub.node}</span><span className="truncate text-xs text-tertiary">{a.harness}</span></div></Table.Cell>
                                 <Table.Cell>
@@ -479,7 +492,7 @@ export function FleetPage() {
                 </Table>
                 {snap.agents.length === 0 && <Nothing icon={Users01} title={tr("fleet.noAgents")} />}
             </TableCard.Root>
-            {openedAgent && snap.agents.find((a) => a.id === openedAgent) && <AgentDrawer a={snap.agents.find((a) => a.id === openedAgent)!} onClose={() => setOpenedAgent(null)} onChanged={() => refresh()} />}
+            {openedAgent && snap.agents.find((a) => a.id === openedAgent) && <AgentDrawer a={snap.agents.find((a) => a.id === openedAgent)!} live={liveActivity[openedAgent]} onClose={() => setOpenedAgent(null)} onChanged={() => refresh()} />}
 
             <TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title={tr("fleet.runningExecutions")} badge={`${snap.attempts.length}`} description={tr("fleet.leaseHint")} />

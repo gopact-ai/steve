@@ -20,7 +20,7 @@ import { ThinkingFold } from "./thinking-fold";
 export function UserMessage({ text }: { text: string }) {
     return (
         <div className="message-user">
-            <div className="message-user-body">{text}</div>
+            <div className="message-user-body"><Md text={text} /></div>
         </div>
     );
 }

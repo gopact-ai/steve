@@ -580,7 +580,7 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 	if settled {
 		runErr, cleanupFailure = c.settleRetained(turnCtx, r, result, runErr, spent)
 	} else {
-		cleanupFailure = c.closeAttempt(turnCtx, r.ID, result, runErr, spent)
+		cleanupFailure = c.closeAttempt(turnCtx, r.ID, result, runErr, spent, nil)
 	}
 	if cleanupFailure != nil {
 		return Result{}, cleanupFailure

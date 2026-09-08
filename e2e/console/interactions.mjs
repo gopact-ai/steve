@@ -212,7 +212,7 @@ const checks = {
         await f.page.getByRole("button", { name: "新会话", exact: true }).click();
         await eventually(() => f.calls.some((c) => c.input === "/project use scratch"), "Generic new conversation must bind the current project");
         await f.box.fill("First work");
-        await f.box.press("Enter");
+        await f.box.press("Shift+Enter");
         await eventually(() => f.queued().length === 1, "First work must be accepted after binding");
         assert.equal(f.queued()[0].projectAtEnqueue, "scratch");
     },
@@ -220,12 +220,12 @@ const checks = {
         const release = f.hold("binding");
         await f.page.getByRole("button", { name: "在 scratch 下新会话", exact: true }).click();
         await eventually(() => f.calls.some((c) => c.input === "/project use scratch"), "Project binding must begin");
-        if (await f.box.isEnabled()) { await f.box.fill("First work during binding"); await f.box.press("Enter"); }
+        if (await f.box.isEnabled()) { await f.box.fill("First work during binding"); await f.box.press("Shift+Enter"); }
         await delay(150);
         assert.equal(f.queued().length, 0, "Work must not be submitted before project binding returns");
         release();
         await eventually(() => f.box.isEnabled(), "Composer must recover when binding completes");
-        if (!f.queued().length) { await f.box.fill("First work after binding"); await f.box.press("Enter"); }
+        if (!f.queued().length) { await f.box.fill("First work after binding"); await f.box.press("Shift+Enter"); }
         await eventually(() => f.queued().length === 1, "Work should be accepted after binding");
         assert.equal(f.queued()[0].projectAtEnqueue, "scratch");
     },
@@ -240,7 +240,7 @@ const checks = {
         await f.page.reload();
         await f.box.waitFor();
         await f.page.locator("main header").getByText("Conversation A", { exact: true }).waitFor();
-        await f.box.press("Enter");
+        await f.box.press("Shift+Enter");
         await eventually(() => f.queued().length === 1, "Original draft remains usable after failed creation and reload");
         assert.equal(f.queued()[0].conversation, A, "Reload must not activate an unbound new conversation");
         assert.equal(f.queued()[0].projectAtEnqueue, "scratch");
@@ -268,7 +268,7 @@ const checks = {
     async "send-continuation"(f) {
         const release = f.hold("enqueue");
         await f.box.fill("First instruction");
-        await f.box.press("Enter");
+        await f.box.press("Shift+Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.box.pressSequentially("Next draft");
         assert.equal(await f.box.inputValue(), "Next draft", "Typing during a slow enqueue must begin a fresh draft");
@@ -281,7 +281,7 @@ const checks = {
         const release = f.hold("enqueue");
         f.failEnqueue = true;
         await f.box.fill("Unsent first instruction");
-        await f.box.press("Enter");
+        await f.box.press("Shift+Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.box.pressSequentially("New draft typed during submission");
         release();
@@ -292,7 +292,7 @@ const checks = {
     async "send-switch"(f) {
         const release = f.hold("enqueue");
         await f.box.fill("A instruction");
-        await f.box.press("Enter");
+        await f.box.press("Shift+Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.pick("B");
         await f.box.fill("B unsent draft");
@@ -306,7 +306,7 @@ const checks = {
         const release = f.hold("enqueue");
         f.failEnqueue = true;
         await f.box.fill("Original instruction");
-        await f.box.press("Enter");
+        await f.box.press("Shift+Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.page.locator('a[href="#/projects"]').click();
         await f.page.getByRole("button", { name: "添加项目", exact: true }).waitFor();
@@ -324,7 +324,7 @@ const checks = {
     async "send-reload-pending"(f) {
         const release = f.hold("enqueue");
         await f.box.fill("Instruction before network delivery");
-        await f.box.press("Enter");
+        await f.box.press("Shift+Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.box.fill("Newer unsent draft");
         await f.page.reload();
@@ -333,7 +333,7 @@ const checks = {
         assert.equal(await f.page.getByText("Instruction before network delivery", { exact: true }).count(), 1, "Recovery must show the original unacknowledged instruction");
         assert.equal(await f.box.inputValue(), "Newer unsent draft", "Reload must keep new typing separate from an uncertain submission");
         assert.equal(f.queued().length, 1, "Reload must not resend an instruction that may already have been accepted");
-        await f.box.press("Enter");
+        await f.box.press("Shift+Enter");
         await delay(150);
         assert.equal(f.queued().length, 1, "Enter must not bypass unresolved submission recovery");
         assert.equal(await f.box.inputValue(), "Newer unsent draft");
@@ -348,7 +348,7 @@ const checks = {
     async "recovery-storage-failure"(f) {
         f.hold("enqueue");
         await f.box.fill("Original uncertain instruction");
-        await f.box.press("Enter");
+        await f.box.press("Shift+Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.box.fill("Newer persisted draft");
         await f.page.reload();
@@ -370,7 +370,7 @@ const checks = {
         f.failEnqueue = true;
         await f.page.getByRole("button", { name: "引用", exact: true }).click();
         await f.box.fill("Question about this quote");
-        await f.box.press("Enter");
+        await f.box.press("Shift+Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         assert.deepEqual(f.queued()[0].quotes, [{ conversation: A, reply_id: `${A}-0` }]);
         await f.page.locator('a[href="#/projects"]').click();
@@ -385,9 +385,9 @@ const checks = {
     async "repeat-enter"(f) {
         f.hold("enqueue");
         await f.box.fill("Only once");
-        await f.box.press("Enter");
-        await f.box.press("Enter");
-        await f.box.press("Enter");
+        await f.box.press("Shift+Enter");
+        await f.box.press("Shift+Enter");
+        await f.box.press("Shift+Enter");
         await delay(150);
         assert.equal(f.queued().length, 1, "Repeated Enter must enqueue the instruction only once");
     },
@@ -407,7 +407,7 @@ const checks = {
         await f.page.getByRole("button", { name: "停止", exact: true }).click();
         await f.box.fill("New instruction during cancellation");
         assert.equal(await f.page.locator('button[aria-label="排队"]').isDisabled(), true, "Send must be disabled while cancellation is pending");
-        await f.box.press("Enter");
+        await f.box.press("Shift+Enter");
         await delay(150);
         assert.equal(f.queued().length, 0, "Enter must obey the same pending-cancel guard as the send button");
         assert.equal(await f.box.inputValue(), "New instruction during cancellation", "A blocked Enter must preserve the draft");
@@ -1251,6 +1251,39 @@ checks["readmodel-unknown"] = async (f) => {
     assert.equal(await f.page.getByText("暂无待处理请求", { exact: true }).count(), 0, "Unavailable attention cannot be presented as no requests");
     await f.page.getByRole("link", { name: "资源", exact: true }).click();
     await f.page.getByText("活动状态未知", { exact: true }).waitFor();
+};
+
+checks["composer-keys"] = async (f) => {
+    // Enter is the key an input method confirms a candidate with, and a
+    // newline; only Shift+Enter sends. What was typed renders as Markdown.
+    await f.box.fill("first line");
+    await f.box.press("Enter");
+    assert.equal(f.queued().length, 0, "Enter must not send");
+    assert.equal(await f.box.inputValue(), "first line\n", "Enter inserts a newline");
+    await f.box.type("**second** line");
+    await f.box.press("Shift+Enter");
+    await eventually(() => f.queued().length === 1, "Shift+Enter sends");
+    assert.equal(f.queued()[0].input, "first line\n**second** line", "The whole multi-line draft is sent");
+    f.replies[A].push({ id: "sent-md", kind: "sent", conversation: A, at, input: "first line\n**second** line", text: "" });
+    await f.emit({ kind: "console.sent", exchange_id: "md-turn", reply_id: "sent-md", text: "first line\n**second** line" });
+    await f.page.locator(".message-user-body strong", { hasText: "second" }).waitFor();
+};
+
+checks["fleet-live-activity"] = async (f) => {
+    // The activity column follows streamed progress, ahead of the 10 s
+    // snapshot floor, and without re-reading /state per chunk.
+    const state = { ...usageState(usageFixture()), tasks: [task("11", A, "scratch")], agents: [{ id: "test-agent", harness: "mock", eligible: true, busy: 1, activities: [] }] };
+    let stateReads = 0;
+    await f.page.route("**/state", (route) => { stateReads++; return route.fulfill({ json: state }); });
+    await f.page.goto(`${app.url}/#/fleet`); await f.page.reload();
+    await f.page.getByText("test-agent", { exact: true }).first().waitFor();
+    await f.page.getByText("空闲", { exact: true }).first().waitFor();
+    const reads = stateReads;
+    await f.emit({ kind: "console.progress", task_id: "11", progress: { agent: "test-agent", tools: [{ id: "t1", kind: "shell", name: "go test ./...", status: "running" }] } });
+    await f.page.getByText(/#11 .*shell/).first().waitFor();
+    await f.emit({ kind: "console.progress", task_id: "11", progress: { agent: "test-agent", tools: [{ id: "t1", kind: "shell", name: "go test ./...", status: "completed" }, { id: "t2", kind: "read", name: "Read README", status: "running" }] } });
+    await f.page.getByText(/#11 .*read/).first().waitFor();
+    assert.equal(stateReads, reads, "Streamed progress must update the activity column without re-reading /state");
 };
 
 checks["usage-dashboard-ranges"] = async (f) => {

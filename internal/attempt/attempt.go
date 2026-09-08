@@ -324,11 +324,10 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 		return Record{}, errors.New("attempt: unrestricted scope is only allowed in place")
 	}
 	var held []ledger.Lease
-	release := func() {
-		for _, lease := range held {
-			_ = s.l.ReleaseAny(ctx, lease)
-		}
-	}
+	// A refused or abandoned open gives back what it took even when the
+	// caller has already gone: released on a detached context, or a turn
+	// cancelled mid-open would keep the project locked until the TTL ran out.
+	release := func() { s.releaseAll(ctx, held) }
 	take := func(region, key string) error {
 		lease, err := s.l.AcquireIn(ctx, region, key, spec.ID, s.TTL)
 		if err != nil {
@@ -464,11 +463,30 @@ func (s *Service) advance(ctx context.Context, id string, to State, actor string
 		return Record{}, err
 	}
 	if to.Terminal() && !next.Unsettled {
-		for _, lease := range next.Leases {
-			_ = s.l.ReleaseAny(ctx, lease)
-		}
+		// The transition is committed; the leases are cleanup, and cleanup
+		// does not answer to a context that has since been cancelled.
+		s.releaseAll(ctx, next.Leases)
 	}
 	return next, nil
+}
+
+// releaseTimeout bounds giving leases back once their refusal or terminal
+// transition is already a fact.
+const releaseTimeout = 15 * time.Second
+
+// releaseAll gives leases back on a context detached from the caller's
+// cancellation: a caller that gave up is no reason to hold a project or a
+// slot until the TTL runs out. A release that still fails leaves the
+// lease to its TTL, as before.
+func (s *Service) releaseAll(parent context.Context, leases []ledger.Lease) {
+	if len(leases) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), releaseTimeout)
+	defer cancel()
+	for _, lease := range leases {
+		_ = s.l.ReleaseAny(ctx, lease)
+	}
 }
 
 // NameBinding is the result name this completion may move, at the version
