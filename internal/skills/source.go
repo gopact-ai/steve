@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -143,7 +144,7 @@ func (m *Map) AddSource(ctx context.Context, spec string) (Source, error) {
 		return Source{}, err
 	}
 	data.Sources = append(data.Sources, s)
-	if !contains(data.SearchPaths, s.Root) {
+	if !slices.Contains(data.SearchPaths, s.Root) {
 		data.SearchPaths = append(data.SearchPaths, s.Root)
 	}
 	return s, m.writeLocked(data)

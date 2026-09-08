@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -65,7 +66,7 @@ func (m *Map) Ensure(defaultSearch string) error {
 		if err := os.MkdirAll(defaultSearch, 0o700); err != nil {
 			return fmt.Errorf("create skills directory: %w", err)
 		}
-		if !contains(data.SearchPaths, defaultSearch) {
+		if !slices.Contains(data.SearchPaths, defaultSearch) {
 			data.SearchPaths = append([]string{defaultSearch}, data.SearchPaths...)
 		}
 	}
@@ -91,7 +92,7 @@ func (m *Map) EnsureBuiltins(root string, names []string) error {
 		data.SearchPaths = next
 	}
 	data.BuiltinRoot = root
-	if !contains(data.SearchPaths, root) {
+	if !slices.Contains(data.SearchPaths, root) {
 		data.SearchPaths = append(data.SearchPaths, root)
 	}
 	// A shipped skill that no longer ships, and that nothing else
@@ -99,7 +100,7 @@ func (m *Map) EnsureBuiltins(root string, names []string) error {
 	// to start over a skill its last version had.
 	kept := data.Builtins[:0]
 	for _, name := range data.Builtins {
-		if contains(names, name) {
+		if slices.Contains(names, name) {
 			kept = append(kept, name)
 			continue
 		}
@@ -117,11 +118,11 @@ func (m *Map) EnsureBuiltins(root string, names []string) error {
 	}
 	data.Builtins = kept
 	for _, name := range names {
-		if contains(data.Builtins, name) {
+		if slices.Contains(data.Builtins, name) {
 			continue
 		}
 		data.Builtins = append(data.Builtins, name)
-		if !contains(data.Enabled, name) {
+		if !slices.Contains(data.Enabled, name) {
 			data.Enabled = append(data.Enabled, name)
 		}
 	}
@@ -209,7 +210,7 @@ func (m *Map) AddPath(path string) error {
 	if err != nil {
 		return err
 	}
-	if !contains(data.SearchPaths, resolved) {
+	if !slices.Contains(data.SearchPaths, resolved) {
 		data.SearchPaths = append(data.SearchPaths, resolved)
 	}
 	return m.writeLocked(data)
@@ -479,15 +480,6 @@ func enabledMatch(item, name string, data fileData, m *Map) bool {
 func hasSkill(dir string) bool {
 	info, err := os.Stat(filepath.Join(dir, "SKILL.md"))
 	return err == nil && !info.IsDir()
-}
-
-func contains(items []string, want string) bool {
-	for _, item := range items {
-		if item == want {
-			return true
-		}
-	}
-	return false
 }
 
 func abs(path string) (string, error) {
