@@ -65,6 +65,14 @@ func (s *Server) consoleEnqueue(w http.ResponseWriter, r *http.Request) {
 	queueResponse(w, exchange, err)
 }
 
+// submissionCapabilities is a console that says which optional submission
+// fields it honours — material references and interactive requests — so
+// the page can tell a hub that preserves them from one that only accepts
+// them. A console without the method advertises neither.
+type submissionCapabilities interface {
+	SubmissionCapabilities() (materialRefs, interactiveRequests bool)
+}
+
 func (s *Server) consoleQueue(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-store")
 	if !s.queueEnabled(w) {
@@ -81,7 +89,7 @@ func (s *Server) consoleQueue(w http.ResponseWriter, r *http.Request) {
 	// Clients must confirm support before submitting or retrying a command ID;
 	// older hubs accepted the field but did not preserve its identity.
 	response := map[string]any{"queue": list, "submission_keys": true}
-	if capabilities, ok := s.console.(interface{ SubmissionCapabilities() (bool, bool) }); ok {
+	if capabilities, ok := s.console.(submissionCapabilities); ok {
 		materialRefs, interactiveRequests := capabilities.SubmissionCapabilities()
 		response["material_refs"], response["interactive_requests"] = materialRefs, interactiveRequests
 	}

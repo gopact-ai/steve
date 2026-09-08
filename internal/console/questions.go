@@ -11,7 +11,6 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/readmodel"
-	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -282,9 +281,7 @@ func (s *Service) askUser(ctx context.Context, base consoleapi.PendingQuestion, 
 }
 
 func (s *Service) VerbsFor(ctx context.Context) []consoleapi.Verb {
-	if aware, ok := s.handler.(interface {
-		VerbsFor(context.Context) []turn.Verb
-	}); ok {
+	if aware, ok := s.handler.(localizedVerbLister); ok {
 		out := []consoleapi.Verb{}
 		for _, v := range aware.VerbsFor(ctx) {
 			out = append(out, consoleapi.Verb{Command: v.Command, Args: v.Args, Summary: v.Summary})

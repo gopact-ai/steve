@@ -448,9 +448,7 @@ func (s *Service) Context(ctx context.Context, conversation string) (consoleapi.
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	aware, ok := s.handler.(interface {
-		Context(ctx context.Context, conversationID string) (turn.Context, error)
-	})
+	aware, ok := s.handler.(contextProvider)
 	if !ok {
 		return consoleapi.Context{Conversation: conversation, Agents: []consoleapi.AgentChoice{}}, nil
 	}
@@ -480,9 +478,7 @@ func (s *Service) Suggest(ctx context.Context, conversation, line string) []cons
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	aware, ok := s.handler.(interface {
-		Suggest(ctx context.Context, conversationID, line string) []turn.Suggestion
-	})
+	aware, ok := s.handler.(suggester)
 	if !ok {
 		return nil
 	}
@@ -495,7 +491,7 @@ func (s *Service) Suggest(ctx context.Context, conversation, line string) []cons
 
 // Verbs is what the console can be told, with help, from the coordinator.
 func (s *Service) Verbs() []consoleapi.Verb {
-	aware, ok := s.handler.(interface{ Verbs() []turn.Verb })
+	aware, ok := s.handler.(verbLister)
 	if !ok {
 		return nil
 	}
