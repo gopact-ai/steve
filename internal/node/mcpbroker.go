@@ -381,6 +381,8 @@ func (b *Broker) launch(ctx context.Context, c net.Conn, reader io.Reader, id st
 		_ = stdin.Close()
 	}()
 	_, _ = io.Copy(c, stdout)
+	// Killing our own child's group can only fail with ESRCH once the
+	// server has exited on its own, and Wait then returns at once.
 	_ = killProcessGroup(cmd)
 	_ = cmd.Wait()
 	<-done

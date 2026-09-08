@@ -19,6 +19,7 @@ func killProcessGroup(cmd *exec.Cmd) {
 	if cmd == nil || cmd.Process == nil {
 		return
 	}
-	// ESRCH means the group is already gone; ignore it.
+	// Killing our own child's group can only fail with ESRCH, the group
+	// already gone, which is the state a kill wants.
 	_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 }
