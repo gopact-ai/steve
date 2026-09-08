@@ -2,13 +2,112 @@
 
 [中文](README.md)
 
-Steve is a personal platform for agent work across machines. Its desktop app and Web console (with Feishu/Lark as an optional interaction channel) manage projects, conversations and tasks, place and delegate work according to machine capabilities, and record progress, artifacts, approvals and recovery state.
+Steve is a personal platform for agent work across machines. It takes the coding agents you already use and are already signed in to — Codex, Claude Code, Kimi Code, Grok — and turns them into a team that works across your computers. Its desktop app and Web console (with Feishu/Lark as an optional channel) manage projects, conversations and tasks, place and delegate work according to machine capabilities, and record progress, artifacts, approvals and recovery state.
 
 Steve makes three structural commitments:
 
 - **The platform handles delivery**: it renders and records replies, persists delegation results and sends them back to the parent conversation with their actual landing status.
 - **Execution has explicit boundaries**: admission uses machine observations, project access and data levels constrain placement, built-in MCP uses conversation-bound tokens, and policies handle tool permissions.
 - **Work leaves a record**: tasks, attempts, artifacts and landing states enter the ledger. Recovery rules determine whether interrupted work continues or records a failure, with approvals and external-effect reconciliation available for inspection.
+
+## What it does
+
+- **One sentence, several machines.** Tell the coordinating agent "create kvtool: builder on node-a writes the code, shipper on node-b writes the tests, review once it has landed" — it looks the fleet up, splits the work, delegates in parallel, and builds and tests the delivered result locally.
+- **Your own agents, your own logins.** No model API is re-implemented and no tool is replaced. Codex / Claude Code / Kimi / Grok on each machine speak [ACP](https://agentclientprotocol.com) (Agent Client Protocol) and run in an isolated home Steve prepares, referencing only your credentials.
+- **Every turn leaves a reviewable change.** The working directory is snapshotted before and after each turn; a change card sits under the reply, opening into a file tree, source and diff. Changes made on another machine merge back into the canonical directory.
+- **Interrupted work resumes.** A flaky network, a coordinator restart, or another computer taking over coordination leaves the running agent process on its machine, reattached by input receipts and output sequence numbers. What cannot be reattached says so — the prompt is never replayed.
+- **Who is doing what, at what cost.** Resources shows live activity per machine and agent, the task board shows progress and blockers, usage shows tokens / TPM / duration, history shows ledger events and audit records.
+- **Where you already are.** The macOS app, the browser console and Feishu/Lark DMs and groups share one set of projects, tasks and one ledger.
+
+## Screens
+
+Workbench: the coordinating agent delegates one job to shipper on node-b; the child finishes, the file lands in the canonical directory, and the net change sits under the reply.
+
+![Workbench: cross-machine delegation, trace fold and change card](docs/images/workbench-en.png)
+
+Resources: three machines, seven agents — who is online, who is busy, which model they used last.
+
+![Resources](docs/images/fleet-en.png)
+
+Task board and Review: tasks by running / needs attention / ended; Review opens the read-only snapshot taken when the execution ended.
+
+![Task board](docs/images/board-en.png)
+
+![Review changes](docs/images/review-en.png)
+
+History and audit: every attempt state transition, node connection and skill sync is in the ledger.
+
+![History and audit](docs/images/history-en.png)
+
+## Architecture and what it buys you
+
+```mermaid
+flowchart LR
+    subgraph clients[Entry points]
+        app[Desktop app]
+        web[Web console]
+        im[Feishu / Lark]
+    end
+    subgraph hub[Coordinator]
+        console[Console service<br/>SSE events · idempotent submissions]
+        turn[Turn / delegation / plan orchestration]
+        ledger[(Ledger<br/>tasks · attempts · leases · audit)]
+        store[(Artifact store<br/>shadow Git repositories)]
+        mcp[Platform MCP server steve_*]
+    end
+    subgraph nodeA[Execution node node-a]
+        na[steve-node] --> ha[ACP adapter → Codex]
+        sa[(node shadow repo)]
+    end
+    subgraph nodeB[Execution node node-b]
+        nb[steve-node] --> hb[ACP adapter → Kimi]
+        sb[(node shadow repo)]
+    end
+    clients --> console --> turn
+    turn --> ledger
+    turn --> store
+    turn <-->|one authenticated connection · multiplexed streams| na
+    turn <-->|one authenticated connection · multiplexed streams| nb
+    ha -.->|MCP back-channel| mcp
+    hb -.->|MCP back-channel| mcp
+    store <-->|bundle| sa
+    store <-->|bundle| sb
+    sa <-.->|direct transfer under hub grant| sb
+```
+
+- **The coordinator** (still `hub` internally) schedules, keeps the ledger and artifact store, and serves the console. One machine is a coordinator on its own; in the desktop app's multi-machine mode every full node holds a ledger replica and votes, coordination can be handed over, and automatic failover counts physical failure domains.
+- **An execution node** needs one `steve-node` binary and one port. It advertises its tools, harnesses, skills, MCP servers and health, and starts and owns the agent processes itself — they survive the coordinator disconnecting or changing.
+- **An agent is configuration, not a process**: machine + harness + preferred model + requirements + skills + MCP. Directories belong to projects, not agents; a project can have its canonical directory on one machine and copies on others.
+- **Everything passes through the ledger**: task-tree budgets, the attempt state machine (leased → prepared → running → … → bound), leases, approvals and external effects commit inside one transaction boundary. The UI is a projection.
+
+## How communication and sharing work, and why
+
+| Concern | How | Why this way |
+|---|---|---|
+| Attaching agents | Each tool's official ACP adapter runs as a stdio child process; Steve prepares an isolated home per harness (`runtimes/<harness>`) that only links credentials and copies a filtered model/provider config. | Reuse the tools and model quota you are already signed in to instead of re-doing API integration; the isolated home keeps the hooks, skill directories and MCP lists of your terminal out of an unattended server. |
+| Coordinator ↔ node | The coordinator dials out; one token-authenticated TCP connection multiplexes streams (sessions, process streams, artifact operations, files, MCP probes, restarts); on connect the node's advert and feature list are exchanged (`process_journal.v1`, `artifact_ops.v1`, `node_config_revision.v1` …). | A node opens one port; old and new versions coexist by feature negotiation, and a missing capability says "node needs an upgrade" instead of degrading silently. |
+| Reattaching after a drop | The node keeps the agent process and a bounded input/output journal; on reconnect the stream resumes by stream ID, read output position and acknowledged input, with a default grace of 10 minutes. | A network blip or a coordinator restart must not kill an agent mid-edit; resumption is based on receipts and sequence numbers, never on sending the prompt again. |
+| Node-owned sessions | The node persists sessions, a receipt per input and the execution authority; a new coordinator instance verifies the original records before reattaching the same execution, and `inspect-open` / `cancel-open` cover a lost creation receipt. | Handing over coordination is not stopping the task; an absent record does not prove nothing was created — only a durable cancel tombstone proves it will not start. |
+| Platform capabilities | Steve is itself an MCP server (`steve_delegate` / `steve_await` / `steve_remember` / `steve_projects` …) with per-session tokens; agents on a node reach it through the node's back-channel. | "How to collaborate" lives in server-side tools, so control stays with the platform rather than in prompt text; per-session tokens make delegation and memory writes attributable. |
+| External MCP and secrets | MCP definitions and secrets stay on the execution node (or in a separate broker process); an agent only receives a bound loopback address or launcher command. | Secrets never enter prompts, pass through the coordinator, or reach logs. |
+| Artifacts and sharing | One shadow bare Git repository per project; a snapshot before and after every turn (uncommitted files included, nested repositories skipped, size-limited); snapshots taken on a node travel to the coordinator as bundles and replica records enter the ledger; with `direct_transfer` nodes exchange bundles directly under the coordinator's grant. | Git is the most reliable content-addressed diff and packaging tool available, so no format is invented; the shadow repository never touches your repository or branches; replica records make "which machine has which version" answerable and let a returning node be filled in. |
+| Landing | Isolated executions (delegations, plan steps) publish their result as an artifact first, then merge and land into the project's canonical directory; queued, conflicted and landed are distinct states. | "The child finished" and "the files reached the canonical directory" are two facts; a held canonical lock means queueing, not overwriting. |
+| Who may write a directory | The canonical directory, copies and endpoint slots carry leases; every attempt transition is fenced by the leases it holds, and losing one cancels the turn. | Two agents cannot edit one directory at once; an execution that lost its lease cannot commit over a newer one. |
+| Ledger | SQLite on a single machine; in the desktop multi-machine mode the ledger is replicated with Raft to full nodes, only a majority can write, and voters must be in different physical failure domains. | Handover and failover rest on a real majority; three processes on one machine do not make three nodes. |
+| Where data may go | Projects and machines carry data levels (public / internal / restricted / sealed), compared at admission; sealed content never leaves its home machine. Leases are issued per region. | "May this code go to that machine" becomes a scheduling constraint instead of something a person remembers. |
+| Console | A read model plus an SSE event stream; streamed progress is coalesced at 100 ms and a turn shows its preparing / processing / finishing / saving phases; submissions carry an idempotent `command_id` and drafts persist locally. | A retry after a dropped connection cannot create a second piece of work; nothing is reported done before it is durable; a token does not rewrite the whole conversation. |
+| Duplex delegation | A child's result is persisted and delivered back into the parent conversation by the platform, which then continues the parent; no polling. | Ending the parent turn and waiting is cheaper and more reliable than looping on `steve_await`. |
+
+## What it avoids
+
+- Two agents editing the same directory → directory leases; the second one queues or picks another project.
+- A coordinator restart killing running work → processes live on execution nodes and reattach through the journal; what cannot reattach is quarantined for verification rather than guessed from a TTL.
+- "Send it again" after a drop running the work twice → input receipts, `command_id` idempotency, cancel tombstones.
+- Carrying your terminal's hooks / skills / MCP lists into an unattended server → isolated homes that copy only model access configuration.
+- Secrets in prompts or logs → broker bindings; agents see a loopback address only.
+- Confusing "done" with "landed" → artifact, landing and delivery are three separately recorded states.
+- Unreported tokens counted as zero usage → charts plot 0 but report coverage separately, and "reported zero" is distinct from "not reported".
+- Fake failover → full nodes are counted by physical failure domain, and new nodes may not take over automatically by default.
 
 ## Start with the desktop app
 
@@ -49,7 +148,7 @@ Prepare Go 1.27+, Git, Node.js with npm, and an authenticated coding agent. Stev
    ./steve dash
    ```
 
-   The default address is `http://127.0.0.1:7710`. Send `/project use workspace`, then `@codex List this project's files and explain their purpose`. When a tool asks for permissions beyond the `read` policy, approve or decline the request within the current turn; see the [permission reference](docs/operations.md#harnessesname).
+   The default address is `http://127.0.0.1:7710`. Send `/project use workspace`, then `@codex List this project's files and explain their purpose`. In the composer, Enter inserts a newline and **Shift+Enter sends**. When a tool asks for permissions beyond the `read` policy, approve or decline the request within the current turn; see the [permission reference](docs/operations.md#harnessesname).
 
 For Feishu/Lark, `./steve setup` accepts an existing application and `./steve setup -create-app` uses the official device flow. Confirm your application-scoped `open_id`. Once configured, Feishu/Lark and the console can be used together. See [console access and credentials](docs/operations.md#控制台与凭据) for remote access, custom addresses and tokens.
 
@@ -85,6 +184,8 @@ Add a machine from the console's resources page using its name, data level and a
 The target needs Git, authenticated harnesses and a `steve-node` binary matching its OS and CPU architecture. The hub can serve a binary built with `CGO_ENABLED=0` through `gateway.node_binary`, or you can copy it with `scp`; see [node deployment](docs/operations.md#部署-node). The hub URL in the bootstrap command must be reachable from the node. Bootstrap copies only harness `command` / `args`, not authentication, environment or other harness settings, and it does not update an existing executable. Start nodes and locally provided wrappers such as `nodectl` from a login shell.
 
 After negotiating **`process_journal.v1`**, a dropped connection leaves the node process alive. The hub reattaches using acknowledged input and output sequence numbers, with a default **10-minute** grace period. Legacy nodes, expired grace, unavailable replay logs or a lost node process still cause failure. A Hub restart first quarantines executions without proof that they stopped, then recovers settled attempts and eligible tasks. This is separate from reattaching the original process stream.
+
+On a remote node the platform's share of a turn is almost entirely round trips: admission and the two snapshots around the turn are one trip each. The hub logs one `turn: timing` line per turn with every phase's duration.
 
 ## Duplex delegation
 
