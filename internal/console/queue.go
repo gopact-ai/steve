@@ -208,7 +208,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
 			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject,
 			Refs: copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
-			Quotes: append([]QuoteRef(nil), quotes...), State: "queued", EnqueuedAt: time.Now().UTC()},
+			Quotes: append([]QuoteRef(nil), quotes...), State: consoleapi.ExchangeQueued, EnqueuedAt: time.Now().UTC()},
 		PayloadHash: hash, ctx: s.exchangeContext(ctx), done: make(chan struct{}),
 	}
 	if !strings.HasPrefix(key, "client:") {
@@ -218,7 +218,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	at := len(list)
 	if front {
 		for i, other := range list {
-			if other.State == "queued" {
+			if other.State == consoleapi.ExchangeQueued {
 				at = i
 				break
 			}
@@ -255,7 +255,7 @@ func (s *Service) Queue(conversation string) []Exchange {
 	remaining := keep
 	for i := len(list) - 1; i >= 0; i-- {
 		e := list[i]
-		if terminalExchange(e.State) {
+		if e.State.Terminal() {
 			if remaining == 0 {
 				continue
 			}
@@ -273,7 +273,7 @@ func (s *Service) queuedLocked(id string) (*queuedExchange, int, error) {
 	for _, list := range s.exchanges {
 		for i, e := range list {
 			if e.ID == id {
-				if e.State != "queued" {
+				if e.State != consoleapi.ExchangeQueued {
 					return nil, 0, consoleapi.ErrExchangeNotQueued
 				}
 				return e, i, nil
@@ -293,7 +293,7 @@ func (s *Service) DeleteQueued(id string) error {
 	list := s.exchanges[e.Conversation]
 	if e.Key != "" {
 		previousState, previousReceipt := e.State, e.Receipt
-		e.State = "cancelled"
+		e.State = consoleapi.ExchangeCancelled
 		r := consoleapi.Reply{Conversation: e.Conversation, ExchangeID: e.ID, Kind: "reply", Text: "queued exchange cancelled", Error: "queued exchange cancelled"}
 		e.Receipt = &r
 		if err := s.save(); err != nil {
@@ -364,11 +364,11 @@ func (s *Service) startLocked(e *queuedExchange) error {
 	s.bindRecoveryStopTargetLocked(e)
 	conversation := e.Conversation
 	previous := s.replies[conversation]
-	e.State, e.StartedAt = "running", time.Now().UTC()
+	e.State, e.StartedAt = consoleapi.ExchangeRunning, time.Now().UTC()
 	s.running[conversation]++
 	sent := s.recordLocked(consoleapi.Reply{At: e.StartedAt, Conversation: conversation, ProjectID: e.ExpectedProject, ExchangeID: e.ID, Input: e.Input, Kind: "sent", Refs: copyRefs(e.Refs), Materials: copyMaterials(e.Materials)})
 	if err := s.save(); err != nil {
-		e.State, e.StartedAt = "queued", time.Time{}
+		e.State, e.StartedAt = consoleapi.ExchangeQueued, time.Time{}
 		s.running[conversation]--
 		s.replies[conversation] = previous
 		return err
@@ -377,7 +377,7 @@ func (s *Service) startLocked(e *queuedExchange) error {
 		// Also cancel a reserved turn that has not entered Handle yet. The
 		// prefix still makes the coordinator interrupt any active session.
 		for _, active := range s.exchanges[conversation] {
-			if active != e && active.State == "running" && active.cancel != nil {
+			if active != e && active.State == consoleapi.ExchangeRunning && active.cancel != nil {
 				active.cancel()
 			}
 		}
@@ -408,7 +408,7 @@ func (s *Service) startNextLocked(conversation string) error {
 		return nil
 	}
 	for _, e := range s.exchanges[conversation] {
-		if e.State == "recovering" || e.State == "awaiting-user" {
+		if e.State == consoleapi.ExchangeRecovering || e.State == consoleapi.ExchangeAwaitingUser {
 			err := s.save()
 			if err == nil {
 				s.publishQueue(conversation)
@@ -417,7 +417,7 @@ func (s *Service) startNextLocked(conversation string) error {
 		}
 	}
 	for _, e := range s.exchanges[conversation] {
-		if e.State == "queued" {
+		if e.State == consoleapi.ExchangeQueued {
 			return s.startLocked(e)
 		}
 	}
@@ -432,7 +432,7 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 		<-done
 		s.mu.Lock()
 	}
-	if terminalExchange(e.State) {
+	if e.State.Terminal() {
 		s.mu.Unlock()
 		return
 	}
@@ -473,12 +473,12 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 		}
 	}
 	reply = s.recordLocked(reply)
-	e.ReplyID, e.State = reply.ID, "done"
+	e.ReplyID, e.State = reply.ID, consoleapi.ExchangeDone
 	if e.RecoveryStop != nil {
-		e.State = "cancelled"
+		e.State = consoleapi.ExchangeCancelled
 	}
 	if err != nil {
-		e.State = "failed"
+		e.State = consoleapi.ExchangeFailed
 	}
 	e.outcome = outcome{reply: reply, err: err}
 	if e.Key != "" {
@@ -525,7 +525,7 @@ func (s *Service) trimExchangesLocked(conversation string) {
 	out := make([]*queuedExchange, 0, len(list))
 	for i := len(list) - 1; i >= 0; i-- {
 		e := list[i]
-		if terminalExchange(e.State) && e.Key == "" {
+		if e.State.Terminal() && e.Key == "" {
 			if remaining == 0 {
 				continue
 			}
@@ -553,20 +553,20 @@ func (s *Service) restoreQueueLocked() error {
 		for _, e := range list {
 			e.ctx, e.done = s.exchangeContext(context.Background()), make(chan struct{})
 			_, parsed := s.parseInput(e.Input)
-			if s.recoveryLifetime != nil && !parsed.Control() && (e.State == "running" || e.State == "recovering" || e.State == "awaiting-user") {
-				e.State = "recovering"
+			if s.recoveryLifetime != nil && !parsed.Control() && (e.State == consoleapi.ExchangeRunning || e.State == consoleapi.ExchangeRecovering || e.State == consoleapi.ExchangeAwaitingUser) {
+				e.State = consoleapi.ExchangeRecovering
 				s.running[conversation]++
 				continue
 			}
-			if e.State == "running" {
+			if e.State == consoleapi.ExchangeRunning {
 				err := errors.New("console restarted before this exchange completed")
 				r := s.recordLocked(consoleapi.Reply{At: time.Now().UTC(), Conversation: conversation, ExchangeID: e.ID, Kind: "reply", Text: err.Error(), Error: err.Error()})
-				e.State, e.ReplyID = "failed", r.ID
+				e.State, e.ReplyID = consoleapi.ExchangeFailed, r.ID
 				if e.Key != "" {
 					e.Receipt = &r
 				}
 			}
-			if terminalExchange(e.State) {
+			if e.State.Terminal() {
 				if e.Receipt != nil {
 					e.outcome = replyOutcome(*e.Receipt)
 				} else {

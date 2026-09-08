@@ -32,7 +32,7 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	}
 	var target *queuedExchange
 	for _, e := range s.exchanges[control.Conversation] {
-		if e.ID == control.ID || (bound != nil && e.ID != bound.ExchangeID) || (bound == nil && e.State != "recovering" && e.State != "awaiting-user") {
+		if e.ID == control.ID || (bound != nil && e.ID != bound.ExchangeID) || (bound == nil && e.State != consoleapi.ExchangeRecovering && e.State != consoleapi.ExchangeAwaitingUser) {
 			continue
 		}
 		if target != nil {
@@ -58,7 +58,7 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 		s.mu.Unlock()
 		return turn.Result{Text: reply.Text, Title: reply.Title}, true, nil
 	}
-	if terminalExchange(target.State) {
+	if target.State.Terminal() {
 		s.mu.Unlock()
 		return turn.Result{}, true, errors.New("original stop target has already finished without a stop receipt")
 	}
@@ -127,7 +127,7 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	}
 	reply := consoleapi.Reply{Text: result.Text, Title: result.Title}
 	s.mu.Lock()
-	if terminalExchange(target.State) {
+	if target.State.Terminal() {
 		s.mu.Unlock()
 		return result, true, nil
 	}
@@ -178,7 +178,7 @@ func (s *Service) waitRecoveryStop(e *queuedExchange) {
 		return
 	}
 	ctx := e.ctx
-	e.State = "awaiting-user"
+	e.State = consoleapi.ExchangeAwaitingUser
 	message := e.RecoveryStopPending
 	saveErr := s.save()
 	s.publishQueue(e.Conversation)

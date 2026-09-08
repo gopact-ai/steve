@@ -121,14 +121,14 @@ func (s *managedSession) reconcileStop(request nodewire.SessionRequest, output *
 	if command := state.Command; command != nil && command.ID == request.CommandID {
 		if command.Settled {
 			switch command.State {
-			case "completed":
+			case nodewire.SessionCommandCompleted:
 				*output, *activity, *runErr = command.Output, command.Activity, nil
 				if command.Error != "" {
 					*runErr = managedPromptError{command.Error}
 				} else if done != nil && stopReceiptMatches(stopped, request) {
 					*runErr = ErrTurnCanceled
 				}
-			case "cancelled":
+			case nodewire.SessionCommandCancelled:
 				*output, *activity, *runErr = command.Output, command.Activity, ErrTurnCanceled
 			}
 			return

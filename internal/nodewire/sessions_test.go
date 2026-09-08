@@ -69,3 +69,35 @@ func TestSessionActionsKeepLegacyJSON(t *testing.T) {
 		})
 	}
 }
+
+func TestSessionStatesKeepLegacyReceipts(t *testing.T) {
+	for _, session := range []string{"opening", "idle", "running", "configuring", "closing", "closed", "interrupted", "future-state", ""} {
+		for _, command := range []string{"accepted", "running", "completed", "cancelled", "uncertain", "future-state", ""} {
+			t.Run(session+"/"+command, func(t *testing.T) {
+				var state SessionState
+				if err := json.Unmarshal([]byte(`{"state":"`+session+`","command":{"state":"`+command+`"}}`), &state); err != nil {
+					t.Fatal(err)
+				}
+				if state.State.Unavailable() != (session == "closed" || session == "interrupted") {
+					t.Fatalf("session availability changed: %q", session)
+				}
+				if state.Command.State.Active() != (command == "accepted" || command == "running") {
+					t.Fatalf("command activity changed: %q", command)
+				}
+				raw, err := json.Marshal(state)
+				if err != nil {
+					t.Fatal(err)
+				}
+				var legacy struct {
+					State   string `json:"state"`
+					Command struct {
+						State string `json:"state"`
+					} `json:"command"`
+				}
+				if err := json.Unmarshal(raw, &legacy); err != nil || legacy.State != session || legacy.Command.State != command {
+					t.Fatalf("legacy receipt changed: %s, %v", raw, err)
+				}
+			})
+		}
+	}
+}

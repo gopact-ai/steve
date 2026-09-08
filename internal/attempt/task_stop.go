@@ -75,7 +75,7 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 			if st.OpenReceipt != nil && st.OpenReceipt.CancelledBeforeOpen {
 				kind = "native-open-cancelled"
 			}
-		} else if st.Command == nil || !st.Command.Settled || (st.Command.State != "completed" && st.Command.State != "cancelled") {
+		} else if st.Command == nil || !st.Command.Settled || (st.Command.State != nodewire.SessionCommandCompleted && st.Command.State != nodewire.SessionCommandCancelled) {
 			return ErrStopConfirmationRequired
 		}
 		if err := tx.PutBinding(taskStopReceiptKind, next.ID, TaskStopReceipt{AttemptID: next.ID, Kind: kind, Evidence: proof}); err != nil {
@@ -145,7 +145,7 @@ func matchesStoppedSession(r Record, tracked task.Task, st nodewire.SessionState
 	}
 	if r.Session == "" {
 		proof := st.OpenReceipt
-		if !PendingSessionOpen(r) || proof == nil || proof.Action != "cancel-open" || proof.CommandID != InputCommandID(r)+"/open" || proof.Authority.ClusterID == "" || proof.Authority.CoordinatorNodeID == "" || proof.Authority.CoordinatorEpoch == 0 || proof.Authority.WriterGeneration == 0 || !st.ProcessStopped || st.State != "closed" || st.ID != nodewire.SessionOpenID(proof.Authority.ClusterID, r.Node, r.ID, proof.CommandID, r.Harness) {
+		if !PendingSessionOpen(r) || proof == nil || proof.Action != nodewire.SessionActionCancelOpen || proof.CommandID != InputCommandID(r)+"/open" || proof.Authority.ClusterID == "" || proof.Authority.CoordinatorNodeID == "" || proof.Authority.CoordinatorEpoch == 0 || proof.Authority.WriterGeneration == 0 || !st.ProcessStopped || st.State != nodewire.SessionClosed || st.ID != nodewire.SessionOpenID(proof.Authority.ClusterID, r.Node, r.ID, proof.CommandID, r.Harness) {
 			return false
 		}
 	} else if st.ID != r.Session {

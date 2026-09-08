@@ -39,7 +39,7 @@ func (m *Manager) ReconcileNodeOpen(ctx context.Context, at Placement, workdir s
 	if state.ID != expected || state.Binding != req.Binding || state.Harness != at.Harness || proof == nil || proof.Action != action || proof.Authority != req.Authority || proof.CommandID != req.CommandID {
 		return nodewire.SessionState{}, errors.New("node open receipt differs from the original execution or current coordinator")
 	}
-	if cancelOpen && (!state.ProcessStopped || state.State != "closed") {
+	if cancelOpen && (!state.ProcessStopped || state.State != nodewire.SessionClosed) {
 		return nodewire.SessionState{}, ErrStopUnconfirmed
 	}
 	return state, nil

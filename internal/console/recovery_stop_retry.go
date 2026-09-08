@@ -29,7 +29,7 @@ func (s *Service) retryRecoveryStopLocked(e *queuedExchange) (*queuedExchange, e
 	if index < 0 {
 		return nil, consoleapi.ErrExchangeNotFound
 	}
-	if e.State != "failed" || e.Key == "" {
+	if e.State != consoleapi.ExchangeFailed || e.Key == "" {
 		return e, nil
 	}
 	address, parsed := s.parseInput(e.Input)
@@ -78,7 +78,7 @@ func (s *Service) retryRecoveryStopLocked(e *queuedExchange) (*queuedExchange, e
 	e = &next
 	s.exchanges[e.Conversation][index] = e
 	ctx, cancel := context.WithCancel(s.exchangeContext(context.Background()))
-	e.State, e.ctx, e.cancel, e.done = "running", ctx, cancel, make(chan struct{})
+	e.State, e.ctx, e.cancel, e.done = consoleapi.ExchangeRunning, ctx, cancel, make(chan struct{})
 	s.running[e.Conversation]++
 	if err := s.save(); err != nil {
 		s.exchanges[e.Conversation][index] = old
@@ -110,7 +110,7 @@ func (s *Service) bindRecoveryStopTargetLocked(control *queuedExchange) {
 	}
 	var target *queuedExchange
 	for _, e := range s.exchanges[control.Conversation] {
-		if e.ID == control.ID || (e.State != "recovering" && e.State != "awaiting-user") {
+		if e.ID == control.ID || (e.State != consoleapi.ExchangeRecovering && e.State != consoleapi.ExchangeAwaitingUser) {
 			continue
 		}
 		if target != nil {

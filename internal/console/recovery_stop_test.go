@@ -83,7 +83,7 @@ func TestStopRecoveryTargetsOriginalTaskAndPersistsSettlement(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				if got := awaitExchange(t, s, "e1"); !terminalExchange(got.State) {
+				if got := awaitExchange(t, s, "e1"); !got.State.Terminal() {
 					t.Fatalf("original exchange not settled: %+v", got)
 				}
 				for _, q := range s.Questions("main") {
@@ -109,10 +109,10 @@ func TestStopRecoveryTargetsOriginalTaskAndPersistsSettlement(t *testing.T) {
 				t.Fatal(err)
 			}
 			got := restored.Queue("main")[0]
-			if uncertain && terminalExchange(got.State) {
+			if uncertain && got.State.Terminal() {
 				t.Fatal("restart lost uncertainty")
 			}
-			if !uncertain && !terminalExchange(got.State) {
+			if !uncertain && !got.State.Terminal() {
 				t.Fatal("restart resurrected stopped task")
 			}
 		})
@@ -307,7 +307,7 @@ func TestDetachedUnconfirmedRecoveryDoesNotReleaseQueuedInstructions(t *testing.
 	if _, err := s.SendCommand(t.Context(), "main", "/cancel", "stop-detached-unknown"); err == nil {
 		t.Fatal("unknown stop reported success")
 	}
-	if got := s.Queue("main"); terminalExchange(got[0].State) || got[1].State != "queued" {
+	if got := s.Queue("main"); got[0].State.Terminal() || got[1].State != "queued" {
 		t.Fatalf("detached uncertainty released queue: %+v", got)
 	}
 }

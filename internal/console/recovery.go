@@ -83,7 +83,7 @@ func (s *Service) RecoverChats(ctx context.Context, driver RetainedChatDriver) e
 	s.recoveryDriver = driver
 	for _, list := range s.exchanges {
 		for _, e := range list {
-			if (e.State != "recovering" && e.State != "awaiting-user") || e.cancel != nil {
+			if (e.State != consoleapi.ExchangeRecovering && e.State != consoleapi.ExchangeAwaitingUser) || e.cancel != nil {
 				continue
 			}
 			ctx, cancel := context.WithCancel(s.exchangeContext(ctx))
@@ -153,7 +153,7 @@ func (s *Service) continueDetached(e *queuedExchange, err error) bool {
 	}
 	ctx, cancel := context.WithCancel(s.exchangeContext(e.ctx))
 	e.ctx, e.cancel = ctx, cancel
-	e.State = "recovering"
+	e.State = consoleapi.ExchangeRecovering
 	if err := s.save(); err != nil {
 		s.detachRecoveryLocked(e, err)
 		s.mu.Unlock()
@@ -274,7 +274,7 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 		}
 		if found && lookupErr == nil {
 			s.mu.Lock()
-			e.State = "recovering"
+			e.State = consoleapi.ExchangeRecovering
 			saveErr := s.save()
 			s.publishQueue(e.Conversation)
 			s.mu.Unlock()
@@ -316,7 +316,7 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 						choice := s.approvedRelocation(questionBase(), plan.ID)
 						if !plan.Automatic && !plan.Approved && choice == "" {
 							s.mu.Lock()
-							e.State = "awaiting-user"
+							e.State = consoleapi.ExchangeAwaitingUser
 							saveErr := s.save()
 							s.publishQueue(e.Conversation)
 							s.mu.Unlock()
@@ -360,7 +360,7 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 			blocked = &turn.RecoveryBlocked{Cause: cause, Question: view.Question{Kind: "recovery", Title: "原执行需要核实", Message: "已检查这条会话的执行记录。\n\n暂时找不到可以安全接回的原执行或完整结果。\n\n原任务可能仍在节点上运行，重新发送任务可能造成重复操作。\n\n建议检查原机器和执行记录，确认后重新检查；也可以保留任务等待处理。", Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查原执行"}, {Value: "wait", Label: "暂时等待"}}}}
 		}
 		s.mu.Lock()
-		e.State = "awaiting-user"
+		e.State = consoleapi.ExchangeAwaitingUser
 		saveErr := s.save()
 		s.publishQueue(e.Conversation)
 		s.mu.Unlock()

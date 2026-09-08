@@ -669,7 +669,7 @@ type Exchange struct {
 	Refs       []material.Ref    `json:"refs,omitempty"`
 	Materials  []material.Frozen `json:"materials,omitempty"`
 	Locale     string            `json:"locale,omitempty"`
-	State      string            `json:"state"` // queued | running | done | failed | cancelled
+	State      ExchangeState     `json:"state"`
 	EnqueuedAt time.Time         `json:"enqueued_at"`
 	StartedAt  time.Time         `json:"started_at,omitzero"`
 	ReplyID    string            `json:"reply_id,omitempty"`

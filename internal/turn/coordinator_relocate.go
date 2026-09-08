@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/checkpoint"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/state"
@@ -99,7 +100,7 @@ func undispatchedStopped(r attempt.Record, p *attempt.RetainedEvidence, logicalS
 		r.Execution != nil && s.Binding.TaskEpoch == r.Execution.Epoch && s.Binding.ExecutionEpoch == attempt.SessionExecutionEpoch(r) &&
 		s.ProcessStopped && cmd.ProcessStopped && cmd.ID == attempt.InputCommandID(r) &&
 		cmd.DispatchState == "not-dispatched" && cmd.InputSequence > 0 && cmd.InputSequence <= s.InputAccepted &&
-		!cmd.Settled && !cmd.CancelRequested && cmd.State != "cancelled"
+		!cmd.Settled && !cmd.CancelRequested && cmd.State != nodewire.SessionCommandCancelled
 }
 
 func (c *Coordinator) relocationTarget(ctx context.Context, original attempt.Record, nodeID string) (agent.Agent, roster.Candidate, error) {
@@ -215,7 +216,7 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 		return RelocationPlan{ID: p.ID, AttemptID: p.SourceID, TargetNodeID: r.Node, Checkpoint: p.Checkpoint, Approved: true}, nil
 	}
 	proof, probeErr := c.inspectRelocation(ctx, r)
-	if proof != nil && proof.Session.Command != nil && (proof.Session.Command.Settled || proof.Session.State == "running") && !proof.Session.ProcessStopped {
+	if proof != nil && proof.Session.Command != nil && (proof.Session.Command.Settled || proof.Session.State == nodewire.SessionRunning) && !proof.Session.ProcessStopped {
 		return RelocationPlan{}, retainedBlocked("still-live", "检查原节点执行状态", "原执行仍然可以接续或已经有结果。", "没有必要创建新的执行。", "建议重新接回原执行。", nil)
 	}
 	base := r.Base
@@ -373,7 +374,7 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 	if admitted == nil {
 		proof, _ = c.inspectRelocation(ctx, old)
 	}
-	if proof != nil && proof.Session.Command != nil && !proof.Session.ProcessStopped && (proof.Session.State == "running" || proof.Session.Command.Settled) {
+	if proof != nil && proof.Session.Command != nil && !proof.Session.ProcessStopped && (proof.Session.State == nodewire.SessionRunning || proof.Session.Command.Settled) {
 		return Result{}, errors.New("original execution is live or settled; reattach it instead of replacing it")
 	}
 	approval := attempt.RelocationApproval{PlanID: p.ID, Actor: req.SenderOpenID, ChoiceID: choice, Node: proof}

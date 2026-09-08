@@ -85,12 +85,12 @@ func (one *ownedSession) option(ctx context.Context, req nodewire.SessionRequest
 		return nodewire.SessionState{}, err
 	}
 	host, id, generation := one.host, one.record.UpstreamID, one.record.Generation
-	if host == nil || one.record.State.State != "idle" || one.runningLocked() {
+	if host == nil || one.record.State.State != nodewire.SessionIdle || one.runningLocked() {
 		one.mu.Unlock()
 		return nodewire.SessionState{}, sessionError("busy", "settings require an idle live session")
 	}
 	next := one.copyLocked()
-	next.State.State = "configuring"
+	next.State.State = nodewire.SessionConfiguring
 	if err := one.commitLocked(next); err != nil {
 		one.mu.Unlock()
 		return nodewire.SessionState{}, err
@@ -100,10 +100,10 @@ func (one *ownedSession) option(ctx context.Context, req nodewire.SessionRequest
 	one.mu.Lock()
 	next = one.copyLocked()
 	next.State.Settings = host.Settings(acp.SessionID(id))
-	if next.State.State == "configuring" {
-		next.State.State = "idle"
+	if next.State.State == nodewire.SessionConfiguring {
+		next.State.State = nodewire.SessionIdle
 		if host.ProcessStopped(generation) {
-			next.State.State = "interrupted"
+			next.State.State = nodewire.SessionInterrupted
 			next.State.ProcessStopped = true
 		}
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -215,7 +216,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	if err != nil {
 		return Result{}, retainedBlocked("node-state", "读取节点持有的输入回执和执行状态", "暂时无法核实原执行状态。", "连接失败不能证明原执行停止。", "建议等原节点恢复后重新检查。", err)
 	}
-	if observed.Command != nil && observed.Command.State == "uncertain" {
+	if observed.Command != nil && observed.Command.State == nodewire.SessionCommandUncertain {
 		return Result{}, retainedBlocked("native-interrupted", "节点返回原输入回执和中断记录", "原执行已经没有可直接接回的运行现场。", "节点服务可能重启过，部分外部操作的结果仍未确认。", "建议核对已完成操作与保存的检查点；确认恢复方式前，原任务保持待处理。", harness.ErrStopUnconfirmed)
 	}
 	record, err = c.attempts.RecoverRetained(ctx, record.ID, attempt.RetainedEvidence{ObservedAt: time.Now(), Session: observed})
@@ -235,7 +236,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	if err := c.bindExecutionGate(ctx, req.ConversationID, record.ID); err != nil {
 		return Result{}, err
 	}
-	settled = observed.Command != nil && observed.Command.Settled && (observed.Command.State == "completed" || observed.Command.State == "cancelled")
+	settled = observed.Command != nil && observed.Command.Settled && (observed.Command.State == nodewire.SessionCommandCompleted || observed.Command.State == nodewire.SessionCommandCancelled)
 	scope.AdoptRetained()
 	c.setRunner(req.ConversationID, record.Agent, runner)
 	beat, stop := context.WithCancel(ctx)

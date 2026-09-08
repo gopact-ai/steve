@@ -199,8 +199,8 @@ func ImportProject(doc ledger.Doc, in ProjectTransfer) error {
 					return errors.New("imported material crosses project boundary")
 				}
 			}
-			if e.State == "running" {
-				e.State = "failed"
+			if e.State == consoleapi.ExchangeRunning {
+				e.State = consoleapi.ExchangeFailed
 				if e.Receipt == nil {
 					e.ReplyID = "r-transfer-" + e.ID
 					e.Receipt = &consoleapi.Reply{ID: e.ReplyID, At: e.StartedAt, Conversation: conversation, ProjectID: in.Project, ExchangeID: e.ID, Kind: "reply", Text: "execution interrupted by transfer", Error: "execution interrupted by transfer"}

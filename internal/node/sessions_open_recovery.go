@@ -30,7 +30,7 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 				return nodewire.SessionState{}, sessionError("unavailable", "original open is not recorded; absence alone does not confirm cancellation")
 			}
 			one = &ownedSession{service: s, changed: make(chan struct{})}
-			record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenCancelled: true, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}, State: nodewire.SessionState{ID: id, Binding: req.Binding, Harness: req.Harness, State: "closed", ProcessStopped: true, Questions: []nodewire.SessionQuestion{}}}
+			record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenCancelled: true, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}, State: nodewire.SessionState{ID: id, Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionClosed, ProcessStopped: true, Questions: []nodewire.SessionQuestion{}}}
 			if err := one.commitLocked(record); err != nil {
 				return nodewire.SessionState{}, err
 			}
@@ -48,9 +48,9 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 		if req.Action == nodewire.SessionActionCancelOpen && !one.record.State.ProcessStopped {
 			return nodewire.SessionState{}, sessionError("uncertain", "original native process stop is not confirmed")
 		}
-		if req.Action == nodewire.SessionActionCancelOpen && one.record.State.State != "closed" {
+		if req.Action == nodewire.SessionActionCancelOpen && one.record.State.State != nodewire.SessionClosed {
 			next := one.copyLocked()
-			next.State.State = "closed"
+			next.State.State = nodewire.SessionClosed
 			if err := one.commitLocked(next); err != nil {
 				return nodewire.SessionState{}, err
 			}

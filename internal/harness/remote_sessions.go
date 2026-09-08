@@ -128,7 +128,7 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 		}
 		return nil, true, &NodeSessionOpenUncertain{Binding: binding.Binding, OpenCommandID: request.CommandID, SessionID: upstreamID, Cause: err}
 	}
-	for state.State == "opening" {
+	for state.State == nodewire.SessionOpening {
 		poll := request
 		poll.Action = nodewire.SessionActionPoll
 		poll.ID = state.ID
@@ -139,7 +139,7 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 			return nil, true, &NodeSessionOpenUncertain{Binding: binding.Binding, OpenCommandID: request.CommandID, SessionID: poll.ID, Cause: err}
 		}
 	}
-	if state.State == "interrupted" || state.State == "closed" {
+	if state.State.Unavailable() {
 		return nil, true, fmt.Errorf("%w: native session is %s", ErrNodeSessionUnavailable, state.State)
 	}
 	session := &managedSession{at: Placement{Node: node, Harness: at.Harness}, transport: transport, base: binding, id: state.ID, state: state, observe: observe, answers: map[string]nodewire.SessionAnswer{}}
@@ -301,14 +301,14 @@ observe:
 		if state.Command != nil && state.Command.ID == request.CommandID {
 			command := state.Command
 			switch command.State {
-			case "completed":
+			case nodewire.SessionCommandCompleted:
 				if command.Error != "" {
 					return command.Output, command.Activity, managedPromptError{command.Error}
 				}
 				return command.Output, command.Activity, nil
-			case "cancelled":
+			case nodewire.SessionCommandCancelled:
 				return command.Output, command.Activity, ErrTurnCanceled
-			case "uncertain":
+			case nodewire.SessionCommandUncertain:
 				return command.Output, command.Activity, fmt.Errorf("%w: %s", ErrStopUnconfirmed, command.Error)
 			}
 		}
@@ -446,7 +446,7 @@ func (s *managedSession) collectAnswer(ctx context.Context, request nodewire.Ses
 					break
 				}
 			}
-			if !pending || state.Command == nil || state.Command.ID != request.CommandID || (state.Command.State != "accepted" && state.Command.State != "running") {
+			if !pending || state.Command == nil || state.Command.ID != request.CommandID || !state.Command.State.Active() {
 				cancelQuestion()
 				done <- nil
 				return

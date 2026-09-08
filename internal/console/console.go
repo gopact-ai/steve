@@ -731,7 +731,7 @@ func (s *Service) UpdateStep(conversation, taskID string, step consoleapi.StepPr
 	var current *queuedExchange
 	for _, exchange := range s.exchanges[conversation] {
 		work := s.processes[exchange.ID]
-		if exchange.State != "running" || work == nil {
+		if exchange.State != consoleapi.ExchangeRunning || work == nil {
 			continue
 		}
 		work.mu.Lock()

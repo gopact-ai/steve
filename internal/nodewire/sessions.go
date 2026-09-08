@@ -109,10 +109,10 @@ type SessionQuestion struct {
 }
 
 type SessionCommand struct {
-	ID              string `json:"id"`
-	InputSequence   uint64 `json:"input_sequence"`
-	State           string `json:"state"` // accepted | running | completed | cancelled | uncertain
-	CancelRequested bool   `json:"cancel_requested,omitempty"`
+	ID              string              `json:"id"`
+	InputSequence   uint64              `json:"input_sequence"`
+	State           SessionCommandState `json:"state"`
+	CancelRequested bool                `json:"cancel_requested,omitempty"`
 	// Missing means unknown. Only explicit not-dispatched proves that the
 	// task prompt has not been submitted to the native client.
 	DispatchState string   `json:"dispatch_state,omitempty"` // not-dispatched | dispatched
@@ -130,7 +130,7 @@ type SessionState struct {
 	ID              string              `json:"id"`
 	Binding         SessionBinding      `json:"binding"`
 	Harness         string              `json:"harness"`
-	State           string              `json:"state"`
+	State           SessionStatus       `json:"state"`
 	Sequence        uint64              `json:"sequence"`
 	InputAccepted   uint64              `json:"input_accepted"`
 	Settings        view.Settings       `json:"settings"`
