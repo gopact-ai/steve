@@ -30,9 +30,15 @@ type fakeAttempts struct {
 	events  []string
 	lost    chan struct{}
 	openErr error
-	failAt  attempt.State
+	// openErrs are answered one per open, before openErr.
+	openErrs     []error
+	supersedeErr error
+	failAt       attempt.State
 	// unsettledErr fails the quarantine marker.
 	unsettledErr error
+	// refusesDone refuses a transition on a done context, as the ledger
+	// does.
+	refusesDone bool
 	// ttl, when set, makes the lease real: Heartbeat renews it every
 	// ttl/3, and a transition on an expired lease is lost.
 	ttl      time.Duration
@@ -100,7 +106,13 @@ func (f *fakeAttempts) renewed() int {
 }
 func (f *fakeAttempts) Open(_ context.Context, spec attempt.Spec) (attempt.Record, error) {
 	f.log("open")
-	if f.openErr != nil {
+	if len(f.openErrs) > 0 {
+		err := f.openErrs[0]
+		f.openErrs = f.openErrs[1:]
+		if err != nil {
+			return attempt.Record{}, err
+		}
+	} else if f.openErr != nil {
 		return attempt.Record{}, f.openErr
 	}
 	f.mu.Lock()
@@ -119,10 +131,13 @@ func (f *fakeAttempts) Get(context.Context, string) (attempt.Record, error) {
 	defer f.mu.Unlock()
 	return f.record, nil
 }
-func (f *fakeAttempts) Advance(_ context.Context, _ string, to attempt.State, actor string, mutate func(*attempt.Record)) (attempt.Record, error) {
+func (f *fakeAttempts) Advance(ctx context.Context, _ string, to attempt.State, actor string, mutate func(*attempt.Record)) (attempt.Record, error) {
 	f.log(string(to) + "/" + actor)
 	if to == f.failAt {
 		return attempt.Record{}, errors.New("ledger refused " + string(to))
+	}
+	if f.refusesDone && ctx.Err() != nil {
+		return attempt.Record{}, fmt.Errorf("ledger refused %s: %w", to, ctx.Err())
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -162,7 +177,34 @@ func (f *fakeAttempts) MarkUnsettled(_ context.Context, _, actor string, cause e
 }
 func (f *fakeAttempts) FinishCompletion(ctx context.Context, id, actor string, completion attempt.Completion) (attempt.Record, error) {
 	f.log("finish")
+	// As the ledger's: a record already bind-ready commits the result it
+	// carries, not the one it was handed.
+	f.mu.Lock()
+	if f.record.State == attempt.BindReady && f.record.Result != nil {
+		completion.Result = *f.record.Result
+	}
+	f.mu.Unlock()
+	return f.bind(ctx, id, actor, completion)
+}
+func (f *fakeAttempts) Complete(ctx context.Context, id, actor string, completion attempt.Completion) (attempt.Record, error) {
+	f.log("complete")
+	return f.bind(ctx, id, actor, completion)
+}
+func (f *fakeAttempts) bind(ctx context.Context, id, actor string, completion attempt.Completion) (attempt.Record, error) {
 	return f.Advance(ctx, id, attempt.Bound, actor, func(r *attempt.Record) { r.Result = &completion.Result; r.Usage = completion.Usage })
+}
+func (f *fakeAttempts) Supersede(_ context.Context, oldID string, spec attempt.Spec, _ string) (attempt.Record, error) {
+	f.log("supersede/" + oldID)
+	if f.supersedeErr != nil {
+		return attempt.Record{}, f.supersedeErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.record = attempt.Record{Spec: spec, State: attempt.Leased}
+	if f.record.ID == "" {
+		f.record.ID = "a1"
+	}
+	return f.record, nil
 }
 func (f *fakeAttempts) RejectCompletion(ctx context.Context, id, actor string, completion attempt.Completion, cause error) error {
 	f.log("reject")
@@ -573,6 +615,52 @@ func TestRunQuarantinesAManagedSessionWhoseCloseIsUnconfirmed(t *testing.T) {
 	}
 }
 
+func TestRunMarksAHubSessionSettledBeforeAFailureItCannotWrite(t *testing.T) {
+	// The hub session was closed and its prompt settled, so the marker is
+	// truthful; written before the transition, it stays on a record whose
+	// failure could not be written — which a takeover or a sweep may then
+	// read without a stop confirmation.
+	w := newWorld("s1")
+	w.runner.err = harness.ErrTurnCanceled
+	w.attempts.failAt = attempt.Failed
+	res, err := Run(t.Context(), w.options())
+	if !errors.Is(err, harness.ErrTurnCanceled) || res.Record.State != attempt.Running || res.Unsettled || res.Record.Unsettled || res.Durable {
+		t.Fatalf("failure the ledger refused: %+v err=%v", res, err)
+	}
+	if want := "open admit prepared/test arm/test-open session running/test close settled/test failed/test"; w.attempts.history() != want {
+		t.Fatalf("order = %s", w.attempts.history())
+	}
+	if len(w.sessions.closed) != 1 || w.workspaces.discarded != 0 {
+		t.Fatalf("closed=%v discarded=%d", w.sessions.closed, w.workspaces.discarded)
+	}
+}
+
+func TestRunLeavesAFailedCloseToTheCallersRecoveryWhenAsked(t *testing.T) {
+	// The completion is on the record and the close did not confirm the
+	// process exited, but the caller's own recovery closes the session
+	// again: the record is not quarantined, and nothing is given back yet.
+	o := newWorld("ns_1").options()
+	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantines, RetryCleanup: true}
+	for _, failed := range []bool{false, true} {
+		w := newWorld("ns_1")
+		w.roster.bindings = []ability.Binding{{Name: "tool"}}
+		w.sessions.closeErr = errors.New("node away")
+		state, want := attempt.Bound, error(nil)
+		if failed {
+			// A settled failure: the prompt ended, and the attempt fails on it.
+			w.runner.err = harness.ErrTurnCanceled
+			state, want = attempt.Failed, w.runner.err
+		}
+		res, err := Run(t.Context(), o.withWorld(w))
+		if err != want || res.Record.State != state || res.Durable || res.Unsettled || res.Record.Unsettled || !errors.Is(res.CleanupErr, harness.ErrStopUnconfirmed) {
+			t.Fatalf("failed=%v: %+v err=%v", failed, res, err)
+		}
+		if h := w.attempts.history(); w.workspaces.discarded != 0 || len(w.roster.released) != 0 || len(w.sessions.closed) != 1 || strings.Contains(h, "unsettled") {
+			t.Fatalf("failed=%v: an unconfirmed writer's things were given back, or the record quarantined: discarded=%d released=%v closed=%v history=%s", failed, w.workspaces.discarded, w.roster.released, w.sessions.closed, h)
+		}
+	}
+}
+
 func TestRunKeepsAConversationsSessionAndRejectsAnUnfinishedCompletion(t *testing.T) {
 	w := newWorld("s1")
 	o := w.options()
@@ -692,7 +780,7 @@ func TestReattachRecordsAnExplicitStopOfASettledPromptAsCancelled(t *testing.T) 
 		o.Resume, o.Settlement, o.Failed = true, tc.settlement, tc.failed
 		res, err := Reattach(scope.Context(), o, running, w.runner)
 		scope.Finish(nil)
-		if !errors.Is(err, harness.ErrTurnCanceled) || res.Record.State != attempt.Failed || !strings.Contains(res.Record.Error, harness.ErrTurnCanceled.Error()) || !res.Durable {
+		if !errors.Is(err, harness.ErrTurnCanceled) || !errors.Is(res.Err, harness.ErrTurnCanceled) || res.Record.State != attempt.Failed || !strings.Contains(res.Record.Error, harness.ErrTurnCanceled.Error()) || !res.Durable {
 			t.Fatalf("%s: explicit stop of a settled prompt: %+v err=%v", tc.name, res, err)
 		}
 		if h := w.attempts.history(); !strings.Contains(h, "settled/test failed/test") {
@@ -805,5 +893,182 @@ func TestReattachReleasesARetainedSessionsBindingsOnEveryTerminalTransition(t *t
 		if len(w.sessions.closed) != 0 {
 			t.Fatalf("%s: a kept session was closed: %v", tc.name, w.sessions.closed)
 		}
+	}
+}
+
+func TestRunTakesOverThePreviousAttemptAndOpensAfterAFullSlot(t *testing.T) {
+	w := newWorld("s1")
+	o := w.options()
+	o.Supersede = "a0"
+	res, err := Run(t.Context(), o)
+	if h := w.attempts.history(); err != nil || res.Record.State != attempt.Bound || !strings.HasPrefix(h, "supersede/a0 admit") {
+		t.Fatalf("takeover: %+v err=%v history=%s", res, err, h)
+	}
+	// A takeover refused for want of a slot is on record; the wait that
+	// follows opens in the attempt's own name and is reported.
+	full := newWorld("s1")
+	full.attempts.supersedeErr = attempt.NoSlot{Endpoint: "endpoint:n1/h", Slots: 1}
+	o = full.options()
+	o.Supersede, o.SlotPoll = "a0", 5*time.Millisecond
+	var waited []attempt.NoSlot
+	o.Waiting = func(f attempt.NoSlot) { waited = append(waited, f) }
+	res, err = Run(t.Context(), o)
+	if h := full.attempts.history(); err != nil || res.Record.State != attempt.Bound || len(waited) != 1 || waited[0].Endpoint != "endpoint:n1/h" || !strings.HasPrefix(h, "supersede/a0 open admit") {
+		t.Fatalf("takeover without a slot: %+v err=%v waited=%v history=%s", res, err, waited, h)
+	}
+	// A wait cut short fails the open on the context, workspace given back.
+	cut, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	stuck := newWorld("s1")
+	stuck.attempts.openErr = attempt.NoSlot{Endpoint: "endpoint:n1/h", Slots: 1}
+	o = stuck.options()
+	o.SlotPoll = time.Hour
+	o.Waiting = func(attempt.NoSlot) { cancel() }
+	_, err = Run(cut, o)
+	var step *StepError
+	if !errors.As(err, &step) || step.Step != StepOpen || !errors.Is(err, context.Canceled) || stuck.workspaces.discarded != 1 {
+		t.Fatalf("cut wait = %v discarded=%d", err, stuck.workspaces.discarded)
+	}
+}
+
+func TestRunCommitsACompletionAsGiven(t *testing.T) {
+	// Finish walks the record to bind-ready with a checkpoint of the work
+	// on it: FinishCompletion commits the checkpoint, Complete the
+	// completion the caller gave.
+	for _, asGiven := range []bool{false, true} {
+		w := newWorld("s1")
+		o := w.options()
+		o.Settlement.CommitAsGiven = asGiven
+		o.Finish = func(ctx context.Context, e *Execution) (attempt.Completion, error) {
+			if _, err := w.attempts.Advance(ctx, e.Record.ID, attempt.BindReady, "test", func(r *attempt.Record) {
+				r.Result = &attempt.Result{Summary: "checkpoint"}
+			}); err != nil {
+				return attempt.Completion{}, err
+			}
+			return attempt.Completion{Result: attempt.Result{Summary: "candidate"}}, nil
+		}
+		res, err := Run(t.Context(), o)
+		want := "checkpoint"
+		if asGiven {
+			want = "candidate"
+		}
+		if err != nil || res.Record.State != attempt.Bound || res.Record.Result.Summary != want || !res.Durable {
+			t.Fatalf("asGiven=%v: %+v err=%v", asGiven, res.Record, err)
+		}
+		if h := w.attempts.history(); strings.Contains(h, "finish") == asGiven {
+			t.Fatalf("asGiven=%v: history = %s", asGiven, h)
+		}
+	}
+}
+
+func TestRunFailsWhatFinishRefused(t *testing.T) {
+	refused := errors.New("wrote outside its declared paths")
+	refuse := func(context.Context, *Execution) (attempt.Completion, error) {
+		return attempt.Completion{}, &Failure{Cause: refused}
+	}
+	w := newWorld("s1")
+	o := w.options()
+	o.Finish = refuse
+	res, err := Run(t.Context(), o)
+	if err != refused || res.Record.State != attempt.Failed || res.Record.Error != refused.Error() || !res.Durable || w.workspaces.discarded != 1 {
+		t.Fatalf("hub refusal: %+v err=%v discarded=%d", res, err, w.workspaces.discarded)
+	}
+	// A node-owned session's refusal is recorded too, not left to an
+	// observer, and cleanup follows the transition.
+	m := newWorld("ns_1")
+	m.roster.bindings = []ability.Binding{{Name: "tool"}}
+	o = m.options()
+	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantines}
+	o.Finish = refuse
+	res, err = Run(t.Context(), o)
+	var detached *execution.RetainedObserverDetached
+	if err != refused || errors.As(err, &detached) || res.Record.State != attempt.Failed || res.Unsettled || !res.Durable {
+		t.Fatalf("managed refusal: %+v err=%v", res, err)
+	}
+	if want := "open admit prepared/test arm/test-open session running/test settled/test failed/test close release discard"; m.attempts.history() != want {
+		t.Fatalf("managed refusal order = %s", m.attempts.history())
+	}
+	// The judgement took its time: a cancellation on its heels does not
+	// unmake it, and the failure is recorded on a context of its own.
+	late := newWorld("ns_1")
+	late.attempts.refusesDone = true
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	o = late.options()
+	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantines}
+	o.Finish = func(ctx context.Context, e *Execution) (attempt.Completion, error) {
+		cancel()
+		return refuse(ctx, e)
+	}
+	res, err = Run(ctx, o)
+	if err != refused || errors.As(err, &detached) || res.Record.State != attempt.Failed || res.Unsettled || !res.Durable {
+		t.Fatalf("managed refusal under a late cancellation: %+v err=%v", res, err)
+	}
+}
+
+func TestRunLeavesADeferredCompletionToTheObserverThatComesBack(t *testing.T) {
+	waiting := errors.New("the verifier's own execution is retained")
+	wait := func(context.Context, *Execution) (attempt.Completion, error) {
+		return attempt.Completion{}, &Deferred{Cause: waiting}
+	}
+	m := newWorld("ns_1")
+	m.roster.bindings = []ability.Binding{{Name: "tool"}}
+	o := m.options()
+	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantines}
+	o.Finish = wait
+	res, err := Run(t.Context(), o)
+	var deferred *Deferred
+	if !errors.As(err, &deferred) || deferred.Cause != waiting || res.Record.State != attempt.Running || res.Unsettled || res.Durable {
+		t.Fatalf("deferred: %+v err=%v", res, err)
+	}
+	// The session and the workspace wait for the observer that comes back;
+	// the bindings, which the finish was done with, go back now.
+	if h := m.attempts.history(); len(m.sessions.closed) != 0 || len(m.roster.released) != 1 || m.workspaces.discarded != 0 || !strings.HasSuffix(h, "settled/test release") {
+		t.Fatalf("a deferred completion kept its bindings or gave more back: closed=%v released=%v discarded=%d history=%s", m.sessions.closed, m.roster.released, m.workspaces.discarded, h)
+	}
+	// Nobody comes back for a hub session: the attempt fails on the cause.
+	h := newWorld("s1")
+	o = h.options()
+	o.Finish = wait
+	res, err = Run(t.Context(), o)
+	if err != waiting || res.Record.State != attempt.Failed || h.workspaces.discarded != 1 {
+		t.Fatalf("hub deferral: %+v err=%v", res, err)
+	}
+}
+
+func TestRunQuarantinesAHubCompletionThatEndsUnconfirmed(t *testing.T) {
+	unconfirmed := errors.Join(harness.ErrStopUnconfirmed, errors.New("the verifier's exit was not seen"))
+	unseen := func(context.Context, *Execution) (attempt.Completion, error) {
+		return attempt.Completion{}, unconfirmed
+	}
+	w := newWorld("s1")
+	w.roster.bindings = []ability.Binding{{Name: "tool"}}
+	o := w.options()
+	o.Settlement.QuarantineFinish = true
+	o.Finish = unseen
+	res, err := Run(t.Context(), o)
+	if !errors.Is(err, harness.ErrStopUnconfirmed) || !res.Unsettled || !res.Record.Unsettled || res.Record.State != attempt.Running || res.Durable || w.workspaces.discarded != 0 || len(w.roster.released) != 0 {
+		t.Fatalf("unconfirmed completion was not quarantined, or gave its bindings back: %+v err=%v discarded=%d released=%v", res, err, w.workspaces.discarded, w.roster.released)
+	}
+	// Under the rule the bindings wait for the finish to decide, and go
+	// back after the transition; without it they go back before.
+	decided := newWorld("s1")
+	decided.roster.bindings = []ability.Binding{{Name: "tool"}}
+	o = decided.options()
+	o.Settlement.QuarantineFinish = true
+	res, err = Run(t.Context(), o)
+	if err != nil || res.Record.State != attempt.Bound || len(decided.roster.released) != 1 {
+		t.Fatalf("a decided completion kept its bindings: %+v err=%v released=%v", res, err, decided.roster.released)
+	}
+	if want := "open admit prepared/test arm/test-open session running/test close settled/test finish bound/test discard release"; decided.attempts.history() != want {
+		t.Fatalf("order = %s", decided.attempts.history())
+	}
+	// Without it a hub completion's unconfirmed stop fails the attempt.
+	plain := newWorld("s1")
+	o = plain.options()
+	o.Finish = unseen
+	res, err = Run(t.Context(), o)
+	if !errors.Is(err, harness.ErrStopUnconfirmed) || res.Unsettled || res.Record.State != attempt.Failed || plain.workspaces.discarded != 1 {
+		t.Fatalf("unconfirmed completion without the rule: %+v err=%v", res, err)
 	}
 }

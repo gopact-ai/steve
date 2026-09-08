@@ -151,6 +151,15 @@ func (s *Service) RecoverRetained(ctx context.Context) error {
 	return nil
 }
 
+// recoveryPending reports one way a child could not be joined: a question
+// to the parent's conversation, and the child left detached.
+type recoveryPending func(code, attempted, problem, reason, recommendation string, cause error)
+
+// recoverChild joins a delegated child's node-owned execution again. What
+// the attempt already committed is delivered from the record; a running
+// one is attached, reconciled against the node's evidence, and reattached
+// from the prompt on. Every way it cannot be joined is a recovery question
+// to the parent, never a second prompt.
 func (s *Service) recoverChild(ctx context.Context, parent, tracked task.Task, record attempt.Record, entry *child) {
 	binding := questionBinding(parent, tracked, record)
 	pending := func(code, attempted, problem, reason, recommendation string, cause error) {
@@ -168,147 +177,162 @@ func (s *Service) recoverChild(ctx context.Context, parent, tracked task.Task, r
 	}
 	entry.scope = scope
 	ctx = scope.Context()
+	if s.deliverRecovered(ctx, parent, tracked, record, entry, pending) {
+		return
+	}
+	runner, ask, askUser, ok := s.attachChild(ctx, parent, tracked, &record, scope, binding, pending)
+	if !ok {
+		return
+	}
+	s.clearRecovery(record.ID)
+	d := &delegation{service: s, parent: parent, child: tracked, at: harness.Placement{Node: record.Node, Harness: record.Harness}, binding: binding}
+	run, runErr := lifecycle.Reattach(ctx, lifecycle.Options{
+		Attempts: s.attempts, Roster: s.roster, Sessions: s.sessions, Workspaces: s.artifacts, Actor: "delegate-recovery",
+		Spec: record.Spec, At: d.at, Resume: true, Ask: ask, AskUser: askUser,
+		Observe: func(progress view.Progress) {
+			s.report(Child{Conversation: parent.Channel, ParentTask: parent.ID, Task: tracked.ID, Agent: record.Agent, Node: record.Node, Goal: tracked.Goal, State: task.StateRunning, Since: record.StartedAt, Elapsed: time.Since(record.StartedAt), Attempt: record.ID}, progress)
+		},
+		Finish: d.finish, Failed: d.failed,
+		// The node keeps the session. An observer that cannot vouch for
+		// the end, or was cancelled, leaves the record as it is and asks:
+		// the question is what quarantines it. The completion publish
+		// prepared is committed as given, as completeResult did.
+		Settlement: lifecycle.Settlement{Quarantine: lifecycle.QuarantineManaged, DetachManaged: true, Detachment: lifecycle.DetachSilently, CancelDetaches: true, CommitAsGiven: true},
+	}, record, runner)
+	s.settleRecovered(ctx, parent, tracked, record, entry, d, run, runErr, pending)
+}
+
+// deliverRecovered delivers what an attempt that already ended committed —
+// its result, or its failure — and asks about one that is neither over nor
+// running. An ended attempt is a delivery fact; it cannot authorize
+// replaying the original prompt.
+func (s *Service) deliverRecovered(ctx context.Context, parent, tracked task.Task, record attempt.Record, entry *child, pending recoveryPending) bool {
 	if record.State == attempt.Bound {
 		var result agentmcp.DelegateResult
 		if record.Result == nil || len(record.Result.Output) == 0 || json.Unmarshal(record.Result.Output, &result) != nil || result.TaskID != tracked.ID || result.Agent != record.Agent || result.Node != record.Node {
 			pending("result", "读取原子任务已提交的完整结果", "原执行已完成，但完整回复记录不可用。", "重新执行可能重复已完成的操作。", "建议核对已保存的产物和原执行记录。", nil)
-			return
+			return true
 		}
 		s.clearRecovery(record.ID)
 		if record.Result.Artifact != "" && hasArtifactRef(result.Refs, record.Result.Artifact) {
 			if err := s.artifacts.Defer(ctx, record.Project, record.Result.Artifact, "task #"+tracked.ID, artifact.SourceOf(ctx, record.ID)...); err != nil {
 				pending("landing", "恢复已提交产物的落地记录", "子任务的回复已保存，但产物落地尚未恢复。", "项目可能暂时不可用，不能声称文件已经落地。", "建议恢复项目连接后重新检查。", err)
-				return
+				return true
 			}
 		}
 		s.completeChild(ctx, parent.Channel, parent, tracked, tracked.Goal, entry, result, nil, view.Progress{})
-		return
+		return true
 	}
 	if record.State.Terminal() && !record.Unsettled && record.Error != "" {
 		result := agentmcp.DelegateResult{TaskID: tracked.ID, Agent: record.Agent, Node: record.Node, Answer: record.Error}
 		if record.Result != nil && len(record.Result.Output) > 0 {
 			if json.Unmarshal(record.Result.Output, &result) != nil || result.TaskID != tracked.ID || result.Agent != record.Agent || result.Node != record.Node {
 				pending("failed-output", "读取已结束子任务的完整答复", "执行已结束，但答复记录不完整。", "不能通过重新执行来补一份失败答复。", "建议核对原执行记录后继续。", nil)
-				return
+				return true
 			}
 		}
 		s.completeChild(ctx, parent.Channel, parent, tracked, tracked.Goal, entry, result, errors.New(record.Error), view.Progress{})
-		return
+		return true
 	}
 	if record.State != attempt.Running {
 		pending("state", "核对原子任务的持久执行阶段", "原执行目前不能直接接续。", "它没有停留在可核对的运行阶段，或仍缺少明确的停止证据。", "建议检查原节点、产物与执行记录后再决定恢复方式。", nil)
-		return
+		return true
 	}
+	return false
+}
+
+// attachChild joins the child's node-owned session: the node's evidence is
+// checked against the record in one ledger transaction, the child's tool
+// authorization is bound again, and its pending questions must have
+// someone to answer them before the observer takes over.
+func (s *Service) attachChild(ctx context.Context, parent, tracked task.Task, record *attempt.Record, scope *execution.Scope, binding QuestionBinding, pending recoveryPending) (harness.ResumableRunner, permission.AskFunc, acphost.AskUserFunc, bool) {
 	manager, ok := s.sessions.(retainedRuntime)
 	if !ok {
 		pending("runtime", "检查保留会话的接续接口", "当前服务无法接回原执行。", "节点会话接续接口不可用。", "建议更新并恢复原节点连接后重试。", nil)
-		return
+		return nil, nil, nil, false
 	}
 	runner, err := manager.AttachRetainedSession(ctx, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Session, record.Workspace.Path)
 	if err != nil {
 		pending("attach", "按原任务和会话标识连接执行节点", "暂时无法接回原子任务。", "节点可能离线；连接失败不能证明原执行已停止。", "建议恢复该节点连接后重新检查，保留原任务和已有进度。", err)
-		return
+		return nil, nil, nil, false
 	}
 	inspector, ok := runner.(harness.RetainedSessionInspector)
 	if !ok {
 		pending("evidence", "读取原节点的执行回执", "节点没有提供可验证的执行状态。", "没有绑定及输入回执就不能继续结算该执行。", "建议核对节点服务后重新检查。", nil)
-		return
+		return nil, nil, nil, false
 	}
 	state, err := inspector.InspectRetained(ctx)
 	if err != nil {
 		pending("inspect", "读取原节点持有的命令与执行状态", "暂时无法核实原子任务。", "原节点当前不可达，执行不能被重放。", "建议恢复原节点后重新检查。", err)
-		return
+		return nil, nil, nil, false
 	}
 	recovered, err := s.attempts.RecoverRetained(ctx, record.ID, attempt.RetainedEvidence{ObservedAt: time.Now(), Session: state})
 	if err != nil {
 		pending("reconcile", "核对原命令回执、任务授权和同一持有者的写入租约", "原子任务暂时不能安全接续。", "节点证据不匹配、原授权已改变，或原生执行状态仍不确定。", "建议核对原节点和执行记录，明确后再继续。", err)
-		return
+		return nil, nil, nil, false
 	}
-	record = recovered
-	if err := s.bindDelegatedExecution(ctx, parent, tracked, record); err != nil {
+	*record = recovered
+	if err := s.bindDelegatedExecution(ctx, parent, tracked, *record); err != nil {
 		pending("messaging", "核对原子任务的工具授权", "原工具授权暂时无法恢复。", "只能使用同一任务和原生会话的授权，不能悄悄换一个工具 token。", "建议恢复原协作服务后重新检查。", err)
-		return
+		return nil, nil, nil, false
 	}
 	scope.AdoptRetained()
 	ask, askUser := s.nodeQuestionHandlers(binding)
 	for _, q := range state.Questions {
 		if q.State == "pending" && ((q.Permission != nil && ask == nil) || (q.Permission == nil && askUser == nil)) {
 			pending("question", "读取原节点保留的待答问题", "原子任务正在等待一个真实的 Agent 问题。", "当前服务尚未接通该原生问答，平台恢复问题不能替代工具授权。", "建议接通原会话问答后继续，原执行会保持等待。", nil)
-			return
+			return nil, nil, nil, false
 		}
 	}
-	s.clearRecovery(record.ID)
-	runCtx, stopRun := context.WithCancel(ctx)
-	defer stopRun()
-	beat, stopBeat := context.WithCancel(runCtx)
-	defer stopBeat()
-	lost := s.attempts.Heartbeat(beat, record.ID)
-	go func() {
-		select {
-		case <-lost:
-			stopRun()
-		case <-beat.Done():
-		}
-	}()
-	var last view.Progress
-	answer, _, runErr := runner.ResumeTurn(runCtx, ask, askUser, func(progress view.Progress) {
-		last = progress
-		s.report(Child{Conversation: parent.Channel, ParentTask: parent.ID, Task: tracked.ID, Agent: record.Agent, Node: record.Node, Goal: tracked.Goal, State: task.StateRunning, Since: record.StartedAt, Elapsed: time.Since(record.StartedAt), Attempt: record.ID}, progress)
-	})
-	if s.canSettleStopped(runCtx, runErr) {
-		if runErr == nil {
-			runErr = harness.ErrTurnCanceled
-		}
-		var finishCleanup context.CancelFunc
-		runCtx, finishCleanup = lifecycle.Cleanup(runCtx)
-		defer finishCleanup()
-		ctx = runCtx
-	}
-	if runCtx.Err() != nil || errors.Is(runErr, harness.ErrStopUnconfirmed) || !acphost.PromptSettled(runErr) {
-		pending("observer", "接续并观察原子任务的进度", "观察连接再次中断。", "尚未确认原执行的最终结果，原任务和预算保持未决。", "建议恢复连接后重新检查同一次执行。", errors.Join(runErr, runCtx.Err()))
-		return
-	}
-	if err := s.attempts.MarkSessionSettled(runCtx, record.ID, "delegate-recovery"); err != nil {
-		pending("settlement", "保存节点的原命令结算回执", "节点已给出结果，但协调记录尚未保存。", "保留同一命令，避免重新执行。", "建议恢复协调服务后重新核对。", err)
-		return
-	}
-	s.spent(tracked.ID, last)
-	usage := attemptUsage(last)
-	failAttempt := func(cause error) {
-		if _, err := s.attempts.FailWith(runCtx, record.ID, "delegate-recovery", cause.Error(), usage); err != nil {
-			log.Printf("delegate: failure not committed task=%s attempt=%s error=%v", tracked.ID, record.ID, err)
-			return
-		}
-		_ = s.artifacts.Discard(context.WithoutCancel(runCtx), record.Workspace)
-	}
-	result := agentmcp.DelegateResult{TaskID: tracked.ID, Agent: record.Agent, Node: record.Node, Answer: answer}
-	if runErr != nil {
-		if _, err := s.failRetainedResult(runCtx, record, result, runErr, usage); err != nil {
-			pending("failed-result", "保存原执行的错误与完整答复", "失败结果尚未完整保存。", "原命令已经结束，但不能提前向父任务结算。", "建议恢复存储后重新核对原结果。", err)
-			return
-		}
-		s.finish(tracked.ID, outcomeOf(runErr))
-	} else {
-		result, runErr = s.completeResult(runCtx, parent, tracked, record, answer, usage, stopBeat, failAttempt)
-	}
+	return runner, ask, askUser, true
+}
+
+// settleRecovered reads how the reattached run ended for the child and its
+// parent: a detached observer asks, a recorded end is delivered.
+func (s *Service) settleRecovered(ctx context.Context, parent, tracked task.Task, record attempt.Record, entry *child, d *delegation, run lifecycle.Result, runErr error, pending recoveryPending) {
+	var step *lifecycle.StepError
+	errors.As(runErr, &step)
 	var detached *execution.RetainedObserverDetached
 	if errors.As(runErr, &detached) {
+		// Finish ran when a publication, or its failure, is on the delegation.
+		finished := d.publishErr != nil || d.published.result.TaskID != ""
+		switch {
+		case step != nil && step.Step == lifecycle.StepSettle:
+			pending("settlement", "保存节点的原命令结算回执", "节点已给出结果，但协调记录尚未保存。", "保留同一命令，避免重新执行。", "建议恢复协调服务后重新核对。", runErr)
+		case step != nil && step.Step == lifecycle.StepFinish && !finished:
+			s.spent(tracked.ID, run.Last)
+			pending("failed-result", "保存原执行的错误与完整答复", "失败结果尚未完整保存。", "原命令已经结束，但不能提前向父任务结算。", "建议恢复存储后重新核对原结果。", runErr)
+		case step != nil && step.Step == lifecycle.StepFinish:
+			s.spent(tracked.ID, run.Last)
+			pending("completion", "保存原子任务的产物和结算记录", "原命令已经返回，但产物或结果尚未完整提交。", "节点或存储可能暂时不可用，不能重复执行原任务来补结果。", "建议恢复节点与存储后重新核对原命令和产物。", runErr)
+		default:
+			pending("observer", "接续并观察原子任务的进度", "观察连接再次中断。", "尚未确认原执行的最终结果，原任务和预算保持未决。", "建议恢复连接后重新检查同一次执行。", errors.Join(runErr, ctx.Err()))
+		}
+		return
+	}
+	s.spent(tracked.ID, run.Last)
+	if s.canSettleStopped(ctx, runErr) {
+		// An explicit stop of a settled command is delivered on a context
+		// the stop did not cancel.
+		var cancel context.CancelFunc
+		ctx, cancel = lifecycle.Cleanup(ctx)
+		defer cancel()
+	}
+	result := agentmcp.DelegateResult{TaskID: tracked.ID, Agent: record.Agent, Node: record.Node, Answer: run.Answer}
+	if runErr != nil {
+		s.finish(tracked.ID, outcomeOf(runErr))
+	} else if result, runErr = s.land(ctx, parent, tracked, record, d.published); errors.As(runErr, &detached) {
 		pending("completion", "保存原子任务的产物和结算记录", "原命令已经返回，但产物或结果尚未完整提交。", "节点或存储可能暂时不可用，不能重复执行原任务来补结果。", "建议恢复节点与存储后重新核对原命令和产物。", runErr)
 		return
 	}
-	if runCtx.Err() != nil {
-		pending("commit", "保存原子任务的执行结果", "协调连接在结果保存期间中断。", "已保存的节点结果仍属于原命令，不能重发任务。", "建议恢复连接后核对同一次执行。", errors.Join(runErr, runCtx.Err()))
+	if ctx.Err() != nil {
+		pending("commit", "保存原子任务的执行结果", "协调连接在结果保存期间中断。", "已保存的节点结果仍属于原命令，不能重发任务。", "建议恢复连接后核对同一次执行。", errors.Join(runErr, ctx.Err()))
 		return
 	}
-	if current, readErr := s.attempts.Get(runCtx, record.ID); readErr == nil && current.State.Terminal() && !current.Unsettled {
-		closeCtx, cancel := lifecycle.Cleanup(runCtx)
-		if err := s.sessions.CloseSession(closeCtx, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Session); err != nil {
-			log.Printf("delegate: retained session cleanup task=%s attempt=%s error=%v", tracked.ID, record.ID, err)
-		}
-		cancel()
-		s.roster.Release(context.WithoutCancel(runCtx), record.Node, record.ID)
+	if run.CleanupErr != nil {
+		log.Printf("delegate: retained session cleanup task=%s attempt=%s error=%v", tracked.ID, record.ID, run.CleanupErr)
 	}
-	s.completeChild(runCtx, parent.Channel, parent, tracked, tracked.Goal, entry, result, runErr, last)
+	s.completeChild(ctx, parent.Channel, parent, tracked, tracked.Goal, entry, result, runErr, run.Last)
 }
 
 func (s *Service) finishFromRecord(record attempt.Record, outcome task.Outcome) error {

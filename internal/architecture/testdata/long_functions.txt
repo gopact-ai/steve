@@ -5,9 +5,6 @@ internal/attempt.Service.OpenRelocation 175
 internal/config.Load 166
 internal/console.Service.recoverExchange 199
 internal/coordination.machine.Apply 261
-internal/delegate.Service.recoverChild 159
-internal/exec.finishStep 182
-internal/exec.runStep 256
 internal/readmodel.Model.Snapshot 256
 internal/transfer.exportProject 239
 internal/transfer.importProject 309

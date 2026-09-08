@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -103,11 +104,8 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 		// process's session state on whichever machine it lives.
 		closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		defer closeCancel()
-		if err := a.sessions.CloseSession(closeCtx, at, session.ID()); err != nil {
-			stopped, ok := session.(interface{ Stopped() bool })
-			if !ok || !stopped.Stopped() {
-				runErr = errors.Join(runErr, harness.ErrStopUnconfirmed, err)
-			}
+		if err := a.sessions.CloseSession(closeCtx, at, session.ID()); err != nil && !lifecycle.Stopped(session) {
+			runErr = errors.Join(runErr, harness.ErrStopUnconfirmed, err)
 		}
 	}()
 
@@ -176,8 +174,7 @@ func (s *stepSpend) wrap(next func(view.Progress), agentID string) func(view.Pro
 func (s *stepSpend) usage() *plan.Usage {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	u := s.last.Usage
-	return &plan.Usage{Model: s.last.Settings.Model, Input: int64(u.InputTokens), Output: int64(u.OutputTokens), CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens), Context: int64(u.ContextTokens), Reported: u.TokensReported()}
+	return spendOf(s.last)
 }
 
 func (a *AgentRunner) find(ctx context.Context, id string) (roster.Candidate, bool) {
@@ -272,37 +269,51 @@ func (a *AgentRunner) SetQuestionHandlers(ask permission.AskFunc, askUser acphos
 	a.ask, a.askUser = ask, askUser
 	a.mu.Unlock()
 }
-func (a *AgentRunner) ResumeStep(ctx context.Context, req StepRequest, record attempt.Record, attached func(nodewire.SessionState) error) (plan.StepResult, error) {
-	manager, ok := a.sessions.(interface {
-		AttachRetainedSession(context.Context, harness.Placement, string, string) (harness.ResumableRunner, error)
-	})
+
+// RetainedStep is a step's node-owned session joined again: the session to
+// resume, what the node says about it, who answers its questions and who
+// sees its progress.
+type RetainedStep struct {
+	Session harness.ResumableRunner
+	State   nodewire.SessionState
+	Ask     permission.AskFunc
+	AskUser acphost.AskUserFunc
+	Observe func(view.Progress)
+}
+
+// retainedSessions is a session manager that can join a node-owned
+// session by its identity.
+type retainedSessions interface {
+	AttachRetainedSession(context.Context, harness.Placement, string, string) (harness.ResumableRunner, error)
+}
+
+// AttachStep joins the step's node-owned session and reads its state; the
+// session is then the step's to resume.
+func (a *AgentRunner) AttachStep(ctx context.Context, req StepRequest, record attempt.Record) (RetainedStep, error) {
+	manager, ok := a.sessions.(retainedSessions)
 	if !ok {
-		return plan.StepResult{}, errors.New("retained step session interface unavailable")
+		return RetainedStep{}, errors.New("retained step session interface unavailable")
 	}
 	session, err := manager.AttachRetainedSession(ctx, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Session, record.Workspace.Path)
 	if err != nil {
-		return plan.StepResult{}, err
+		return RetainedStep{}, err
 	}
 	inspector, ok := session.(harness.RetainedSessionInspector)
 	if !ok {
-		return plan.StepResult{}, errors.New("retained step evidence unavailable")
+		return RetainedStep{}, errors.New("retained step evidence unavailable")
 	}
 	state, err := inspector.InspectRetained(ctx)
 	if err != nil {
-		return plan.StepResult{}, err
-	}
-	if err := attached(state); err != nil {
-		return plan.StepResult{}, err
-	}
-	if record.State != attempt.Running {
-		return plan.StepResult{}, nil
+		return RetainedStep{}, err
 	}
 	a.mu.Lock()
 	ask, askUser := a.ask, a.askUser
 	a.mu.Unlock()
-	var spent stepSpend
-	answer, _, err := session.ResumeTurn(ctx, ask, askUser, spent.wrap(a.progress(ctx, req), record.Agent))
-	return plan.StepResult{Answer: answer, Refs: ParseRefs(answer), Findings: parseFindings(answer), Usage: spent.usage()}, err
+	observe, agent := a.progress(ctx, req), record.Agent
+	return RetainedStep{Session: session, State: state, Ask: ask, AskUser: askUser, Observe: func(p view.Progress) {
+		p.Agent = agent
+		observe(p)
+	}}, nil
 }
 func (a *AgentRunner) CloseRetainedStep(ctx context.Context, record attempt.Record) error {
 	return a.sessions.CloseSession(ctx, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Session)
