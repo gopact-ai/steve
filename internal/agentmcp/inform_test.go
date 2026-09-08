@@ -2,8 +2,19 @@ package agentmcp
 
 import (
 	"context"
+	"strings"
 	"testing"
 )
+
+func TestPlatformOverviewIsAvailableThroughMCP(t *testing.T) {
+	server, _ := startServer(t)
+	server.SetInformer(&taskInformer{})
+	server.Extras("chat", "agent", "token", "")
+	out, bad := callTool(t, server.URL(), "token", "steve_help", map[string]any{"topic": "overview"})
+	if bad || !strings.Contains(out, "steve_context") || !strings.Contains(out, "steve_projects") || !strings.Contains(out, "steve_delegate") {
+		t.Fatalf("platform overview is unavailable via MCP: %s", out)
+	}
+}
 
 type nodeAddCall struct{ name, address, level, hubURL string }
 

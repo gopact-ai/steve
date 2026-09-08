@@ -102,8 +102,11 @@ func TestDesktopEnrollmentPersistsOnlyChosenToolsAndReplaysSafely(t *testing.T) 
 			t.Fatalf("unselected runtime prepared: %s, %v", unselected, err)
 		}
 	}
-	if _, err := os.Stat(filepath.Join(runtime.GrokHome(stateDir), "skills", "steve", "SKILL.md")); err != nil {
-		t.Fatalf("selected runtime did not receive Steve skills: %v", err)
+	if _, err := os.Stat(filepath.Join(runtime.GrokHome(stateDir), "skills", "skill-creator", "SKILL.md")); err != nil {
+		t.Fatalf("selected runtime did not receive enabled skills: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(runtime.GrokHome(stateDir), "skills", "steve")); !os.IsNotExist(err) {
+		t.Fatalf("platform MCP must not be installed as a skill: %v", err)
 	}
 	saved, err := config.Load(admin.path)
 	if err != nil || !reflect.DeepEqual(saved.Agents, admin.cfg.Agents) || len(saved.Harnesses) != 1 {

@@ -14,7 +14,7 @@ func TestSetupShipsBuiltinsOnByDefaultButRemembersADisable(t *testing.T) {
 		t.Fatal(err)
 	}
 	names, _ := BuiltinNames()
-	for _, want := range []string{"skill-creator", "steve"} {
+	for _, want := range []string{"skill-creator"} {
 		if !contains(names, want) {
 			t.Fatalf("builtin %s missing from %v", want, names)
 		}
@@ -52,6 +52,53 @@ func TestSetupShipsBuiltinsOnByDefaultButRemembersADisable(t *testing.T) {
 	}
 	if m2.BuiltinRootPath() != BuiltinRoot(stateDir) {
 		t.Fatalf("builtin root = %q", m2.BuiltinRootPath())
+	}
+}
+
+func TestPlatformSkillIsNotShippedOrRetainedInRuntimes(t *testing.T) {
+	stateDir := t.TempDir()
+	root := BuiltinRoot(stateDir)
+	legacy := filepath.Join(root, "steve")
+	writeSkill(t, root, "steve", "---\nname: steve\ndescription: old platform overview\n---\n# Steve\n")
+	m, err := Open(DefaultPath(stateDir))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.EnsureBuiltins(root, []string{"steve"}); err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(stateDir, "runtime", "skills")
+	if err := m.Materialize(dest); err != nil {
+		t.Fatal(err)
+	}
+	m, err = Setup(stateDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := (&Live{Map: m, Dests: []string{dest}}).Apply(); err != nil {
+		t.Fatal(err)
+	}
+	names, err := BuiltinNames()
+	if err != nil || contains(names, "steve") || contains(m.EnabledNames(), "steve") {
+		t.Fatalf("platform skill remains shipped or enabled: %v, %v", names, err)
+	}
+	for _, old := range []string{legacy, filepath.Join(dest, "steve")} {
+		if _, err := os.Lstat(old); !os.IsNotExist(err) {
+			t.Fatalf("retired platform skill remains at %s: %v", old, err)
+		}
+	}
+	refs, err := m.Enabled()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := Pack(refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range bundle.Skills {
+		if entry.Name == "steve" {
+			t.Fatal("platform skill still distributed to nodes")
+		}
 	}
 }
 

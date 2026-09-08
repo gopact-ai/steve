@@ -10,10 +10,10 @@ import (
 	"strings"
 )
 
-// The skills that ship inside the binary: Anthropic's skill-creator, and
-// the steve suite that tells an agent how this system works. They are
-// written under the state directory at boot, fresh each time, so an
-// upgrade brings new text; the map lists that directory last, so a skill
+// The skills that ship inside the binary include Anthropic's skill-creator.
+// Platform capabilities and their guidance belong to the Steve MCP server.
+// Shipped skills are written fresh under the state directory at boot, so an
+// upgrade brings new text. The map lists that directory last, so a skill
 // of the same name in the user's own directories wins.
 //
 //go:embed all:builtin
