@@ -104,12 +104,17 @@ func (s *Server) applySkills(stream *nodewire.Stream) {
 		fail("1", err)
 		return
 	}
-	// The bundle is unpacked and current; the tarball and the bundles it
-	// replaces are only disk now, and the next apply clears what stays.
-	_ = os.Remove(blob)
+	// The bundle is unpacked and current, so the tarball and the bundles
+	// it replaces are only disk now. Nothing else clears the tarball, so
+	// a failure here is the only notice of it.
+	if err := os.Remove(blob); err != nil {
+		slog.Warn(fmt.Sprintf("steve-node: skills %s: remove bundle blob: %v", hash[:12], err), "skills", hash)
+	}
 	if old, err := os.ReadDir(s.SkillsDir()); err == nil {
 		for _, e := range old {
 			if e.IsDir() && e.Name() != hash {
+				// A bundle that will not go is retried by the next apply,
+				// which removes every directory but its own.
 				_ = os.RemoveAll(filepath.Join(s.SkillsDir(), e.Name()))
 			}
 		}
