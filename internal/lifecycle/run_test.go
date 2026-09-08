@@ -257,7 +257,8 @@ func (f *fakeSessions) CloseSession(_ context.Context, _ harness.Placement, id s
 }
 
 type fakeWorkspaces struct {
-	discarded int
+	discarded  int
+	discardErr error
 	// live says the last discard's context was not cancelled; remaining
 	// is how much of its deadline it had.
 	live      bool
@@ -272,7 +273,7 @@ func (f *fakeWorkspaces) Discard(ctx context.Context, _ project.Workspace) error
 	if deadline, ok := ctx.Deadline(); ok {
 		f.remaining = time.Until(deadline)
 	}
-	return nil
+	return f.discardErr
 }
 
 type world struct {
@@ -546,6 +547,30 @@ func TestRunCleansUpOnAWindowMintedAfterTheCallersHooks(t *testing.T) {
 	}
 	if unopened.workspaces.discarded != 1 || !unopened.workspaces.live {
 		t.Fatalf("an unopened attempt's workspace was discarded on the cancelled run: discarded=%d live=%v", unopened.workspaces.discarded, unopened.workspaces.live)
+	}
+}
+
+func TestRunNamesADiscardFailureByTheAttemptTheLedgerAssigned(t *testing.T) {
+	// A chat turn opens without an id of its own and the ledger assigns
+	// one; a workspace that could not be given back is reported under
+	// that id, not the empty one the spec had.
+	w := newWorld("s1")
+	w.workspaces.discardErr = errors.New("busy")
+	o := w.options()
+	o.Spec.ID = ""
+	res, err := Run(t.Context(), o)
+	if err != nil || res.Durable || res.CleanupErr == nil || !strings.Contains(res.CleanupErr.Error(), "discard a1: busy") {
+		t.Fatalf("discard failure = %v durable=%v err=%v", res.CleanupErr, res.Durable, err)
+	}
+	// Before there is an attempt at all, the workspace itself is named.
+	unopened := newWorld("s1")
+	unopened.workspaces.discardErr = errors.New("busy")
+	unopened.attempts.openErr = errors.New("no lease")
+	o = unopened.options()
+	o.Spec.ID = ""
+	res, _ = Run(t.Context(), o)
+	if res.CleanupErr == nil || !strings.Contains(res.CleanupErr.Error(), "discard workspace ws: busy") {
+		t.Fatalf("unopened discard failure = %v", res.CleanupErr)
 	}
 }
 

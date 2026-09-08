@@ -899,8 +899,22 @@ func (e *Execution) discard(ctx context.Context) {
 	cleanup, stop := Cleanup(ctx)
 	defer stop()
 	if err := e.o.Workspaces.Discard(cleanup, e.o.Spec.Workspace); err != nil {
-		e.cleanup, e.durable = errors.Join(e.cleanup, fmt.Errorf("discard %s: %w", e.o.Spec.ID, err)), false
+		e.cleanup, e.durable = errors.Join(e.cleanup, fmt.Errorf("discard %s: %w", e.name(), err)), false
 	}
+}
+
+// name says which attempt a cleanup failure is about: the record's id
+// once the ledger has assigned one — a chat turn's spec has none until
+// then — else the spec's, and before there is an attempt at all, the
+// workspace.
+func (e *Execution) name() string {
+	switch {
+	case e.Record.ID != "":
+		return e.Record.ID
+	case e.o.Spec.ID != "":
+		return e.o.Spec.ID
+	}
+	return "workspace " + e.o.Spec.Workspace.ID
 }
 
 // failure records a failed attempt with what it cost and, when the caller
