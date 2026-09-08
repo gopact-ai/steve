@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/text"
 )
 
 // A parent does not wait for its children: when one ends, its result is
@@ -68,7 +69,7 @@ func (d Delivery) Prompt() string {
 	for _, c := range d.Children {
 		fmt.Fprintf(&b, "\n## 子任务 #%s · %s@%s · %s · 用时 %s\n", c.Task, c.Agent, nodeLabel(c.Node), stateWord(c.State), c.Elapsed.Round(time.Second))
 		if g := strings.TrimSpace(c.Goal); g != "" {
-			fmt.Fprintf(&b, "目标：%s\n", clipRunes(g, 300))
+			fmt.Fprintf(&b, "目标：%s\n", text.Clip(g, 300))
 		}
 		if c.Landing != "" {
 			fmt.Fprintf(&b, "改动：%s\n", c.Landing)
@@ -77,7 +78,7 @@ func (d Delivery) Prompt() string {
 			fmt.Fprintf(&b, "refs：%s\n", strings.Join(c.Refs, "；"))
 		}
 		if a := strings.TrimSpace(c.Answer); a != "" {
-			fmt.Fprintf(&b, "回答：\n%s\n", clipRunes(a, 4000))
+			fmt.Fprintf(&b, "回答：\n%s\n", text.Clip(a, 4000))
 		}
 	}
 	b.WriteString("\n继续你的任务。还在跑的子任务结束后会再送来，不必用 steve_await 等；都齐了就汇总回复。")
@@ -89,14 +90,6 @@ func stateWord(state task.State) string {
 		return "失败"
 	}
 	return "完成"
-}
-
-func clipRunes(text string, limit int) string {
-	r := []rune(text)
-	if len(r) <= limit {
-		return text
-	}
-	return string(r[:limit]) + "…"
 }
 
 // SetDeliverer installs the channel that carries deliveries: the console

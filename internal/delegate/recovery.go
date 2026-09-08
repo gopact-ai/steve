@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -18,6 +19,7 @@ import (
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/text"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -214,7 +216,7 @@ func (s *Service) deliverRecovered(ctx context.Context, parent, tracked task.Tas
 			return true
 		}
 		s.clearRecovery(record.ID)
-		if record.Result.Artifact != "" && hasArtifactRef(result.Refs, record.Result.Artifact) {
+		if record.Result.Artifact != "" && slices.Contains(result.Refs, "artifact "+record.Result.Artifact) {
 			if err := s.artifacts.Defer(ctx, record.Project, record.Result.Artifact, "task #"+tracked.ID, artifact.SourceOf(ctx, record.ID)...); err != nil {
 				pending("landing", "恢复已提交产物的落地记录", "子任务的回复已保存，但产物落地尚未恢复。", "项目可能暂时不可用，不能声称文件已经落地。", "建议恢复项目连接后重新检查。", err)
 				return true
@@ -354,14 +356,6 @@ func (s *Service) finishFromRecord(record attempt.Record, outcome task.Outcome) 
 	}
 	return errors.New("retained delegate receipt has no exact task accounting row")
 }
-func hasArtifactRef(refs []string, id string) bool {
-	for _, ref := range refs {
-		if ref == "artifact "+id {
-			return true
-		}
-	}
-	return false
-}
 
 func (s *Service) clearRecovery(id string) {
 	s.mu.Lock()
@@ -457,7 +451,7 @@ func retainedFailure(record attempt.Record, answer string, cause error) (*attemp
 	if err != nil {
 		return nil, err
 	}
-	return &attempt.Result{Summary: clipRunes(result.Answer, 200), Output: output}, nil
+	return &attempt.Result{Summary: text.Clip(result.Answer, 200), Output: output}, nil
 }
 
 func (s *Service) failRetainedResult(ctx context.Context, record attempt.Record, result agentmcp.DelegateResult, cause error, usage *attempt.Usage) (attempt.Record, error) {

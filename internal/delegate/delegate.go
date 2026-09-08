@@ -41,6 +41,7 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/text"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -945,7 +946,7 @@ func (s *Service) publish(ctx context.Context, child task.Task, record attempt.R
 		return p, err
 	}
 	p.published, p.changed = published, changed
-	p.completion = attempt.Completion{Result: attempt.Result{Artifact: published.ID, Summary: clipRunes(p.result.Answer, 200), Refs: p.result.Refs, Output: output}, Usage: observed,
+	p.completion = attempt.Completion{Result: attempt.Result{Artifact: published.ID, Summary: text.Clip(p.result.Answer, 200), Refs: p.result.Refs, Output: output}, Usage: observed,
 		Binding: &attempt.NameBinding{Name: name, ExpectedVersion: current.Version}}
 	return p, nil
 }
@@ -1167,15 +1168,10 @@ func ctxErr(err, target error) bool {
 
 const goalLimit = 120
 
-func goal(text string) string {
-	trimmed := strings.TrimSpace(text)
-	if line, _, found := strings.Cut(trimmed, "\n"); found {
-		trimmed = strings.TrimSpace(line)
-	}
-	if len([]rune(trimmed)) <= goalLimit {
-		return trimmed
-	}
-	return string([]rune(trimmed)[:goalLimit]) + "…"
+// goal is the first line of the request, cut to fit a task listing.
+func goal(request string) string {
+	line := strings.TrimSpace(text.FirstLine(strings.TrimSpace(request)))
+	return text.Clip(line, goalLimit)
 }
 
 func newToken() (string, error) {
