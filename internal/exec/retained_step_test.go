@@ -311,16 +311,22 @@ type settledFailedStep struct {
 	sessions *retainedStepSessions
 }
 
-func (r settledFailedStep) ResumeStep(ctx context.Context, _ StepRequest, _ attempt.Record, attached func(nodewire.SessionState) error) (plan.StepResult, error) {
-	state, err := r.sessions.InspectRetained(ctx)
+// AttachStep finds the original command cancelled and settled on the node.
+func (r settledFailedStep) AttachStep(ctx context.Context, req StepRequest, record attempt.Record) (RetainedStep, error) {
+	joined, err := r.AgentRunner.AttachStep(ctx, req, record)
 	if err != nil {
-		return plan.StepResult{}, err
+		return joined, err
 	}
-	state.Command.Settled, state.Command.State, state.State = true, "cancelled", "idle"
-	if err := attached(state); err != nil {
-		return plan.StepResult{}, err
-	}
-	return plan.StepResult{}, harness.ErrTurnCanceled
+	joined.State.Command.Settled, joined.State.Command.State, joined.State.State = true, "cancelled", "idle"
+	joined.Session = cancelledStep{r.sessions}
+	return joined, nil
+}
+
+// cancelledStep is the original session whose command the node cancelled.
+type cancelledStep struct{ *retainedStepSessions }
+
+func (cancelledStep) ResumeTurn(context.Context, permission.AskFunc, acphost.AskUserFunc, func(view.Progress)) (string, []string, error) {
+	return "", nil, harness.ErrTurnCanceled
 }
 
 func TestRetainedSettledFailureReleasesOriginalNodeSession(t *testing.T) {
