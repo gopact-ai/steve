@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -330,9 +331,13 @@ type auditLine struct {
 }
 
 // audit appends one line; the fact's text is not in it, only its size.
+// The write it describes has already happened, so a line that cannot be
+// kept is logged rather than turned into the caller's failure.
 func (s *Service) audit(line auditLine) {
 	if sink, ok := s.store.(auditSink); ok {
-		_ = sink.recordAudit(line)
+		if err := sink.recordAudit(line); err != nil {
+			slog.Error(fmt.Sprintf("memory: audit %s: %v", line.Op, err), "op", line.Op, "scope", line.Scope.String())
+		}
 		return
 	}
 	if s.auditPath == "" {
@@ -341,17 +346,32 @@ func (s *Service) audit(line auditLine) {
 	line.At = time.Now().UTC().Format(time.RFC3339)
 	raw, err := json.Marshal(line)
 	if err != nil {
+		slog.Error(fmt.Sprintf("memory: audit %s: %v", line.Op, err), "op", line.Op, "scope", line.Scope.String())
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = os.MkdirAll(filepath.Dir(s.auditPath), 0o700)
+	if err := s.appendAuditLine(raw); err != nil {
+		slog.Error(fmt.Sprintf("memory: audit %s: %v", line.Op, err), "op", line.Op, "scope", line.Scope.String(), "path", s.auditPath)
+	}
+}
+
+// appendAuditLine adds one encoded line to the audit file, creating the
+// file and its directory on the first write. A close that fails counts
+// as a failed write: the line may not be on disk.
+func (s *Service) appendAuditLine(raw []byte) error {
+	if err := os.MkdirAll(filepath.Dir(s.auditPath), 0o700); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(s.auditPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return
+		return err
 	}
-	defer f.Close()
-	_, _ = f.Write(append(raw, '\n'))
+	_, err = f.Write(append(raw, '\n'))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 func errText(err error) string {
@@ -726,6 +746,8 @@ func idComment(id string) string { return "<!-- m:" + id + " -->" }
 
 func newID() string {
 	var raw [6]byte
+	// crypto/rand.Read never returns an error; it aborts the program
+	// instead when the platform cannot supply randomness.
 	_, _ = rand.Read(raw[:])
 	return hex.EncodeToString(raw[:])
 }

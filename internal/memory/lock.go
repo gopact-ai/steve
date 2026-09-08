@@ -21,6 +21,8 @@ func acquire(path string) (func(), error) {
 		err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
 		if err == nil {
 			return func() {
+				// Closing the descriptor drops the flock whether or not the
+				// explicit unlock succeeded, so a failure here loses nothing.
 				_ = syscall.Flock(int(f.Fd()), syscall.LOCK_UN)
 				f.Close()
 			}, nil
