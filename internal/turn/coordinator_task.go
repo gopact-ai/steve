@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"github.com/gopact-ai/steve/internal/text"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -45,9 +46,9 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		// The binding moved under a task that was never closed (an older
 		// switch, a crash between the two): the task stays with its
 		// project, and this turn opens its own.
-		log.Printf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, binding.ProjectID)
+		slog.Warn(fmt.Sprintf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, binding.ProjectID), "task", tracked.ID, "conversation", req.ConversationID, "project", binding.ProjectID)
 		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
-			log.Printf("turn: close task %s: %v", tracked.ID, err)
+			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
 		}
 		ok = false
 	}
@@ -64,7 +65,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		})
 		if err != nil {
 			// Losing the task record must not cost the user their turn.
-			log.Printf("turn: create task: %v", err)
+			slog.Error(fmt.Sprintf("turn: create task: %v", err), "conversation", req.ConversationID, "agent", selected.ID, "node", executionNode)
 			return "", nil
 		}
 		tracked = created
@@ -73,7 +74,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		if text, spent := c.budgetStop(tracked); spent {
 			return "", UserError{Text: text}
 		}
-		log.Printf("turn: begin task %s: %v", tracked.ID, err)
+		slog.Error(fmt.Sprintf("turn: begin task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID, "node", executionNode)
 		return "", nil
 	}
 	// The anchor is what a restarted gateway replies to when it resumes
@@ -81,7 +82,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 	// exchange (and inside the right topic).
 	if req.MessageID != "" {
 		if err := c.tasks.SetAnchor(tracked.ID, req.ChatID, req.MessageID, string(req.ChatType), req.CardID); err != nil {
-			log.Printf("turn: anchor task %s: %v", tracked.ID, err)
+			slog.Error(fmt.Sprintf("turn: anchor task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
 		}
 	}
 	return tracked.ID, nil
@@ -94,7 +95,7 @@ func (c *Coordinator) finishTask(id string, turnErr error, tokens task.Tokens, m
 		return
 	}
 	if _, err := c.tasks.FinishAs(id, outcome(turnErr), tokens, 0, model); err != nil {
-		log.Printf("turn: finish task %s: %v", id, err)
+		slog.Error(fmt.Sprintf("turn: finish task %s: %v", id, err), "task", id)
 	}
 }
 
@@ -109,7 +110,7 @@ func (c *Coordinator) closeTask(conversationID, agentID string) {
 	}
 	for _, tracked := range c.tasks.Holding(conversationID, agentID) {
 		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
-			log.Printf("turn: close task %s: %v", tracked.ID, err)
+			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", conversationID, "agent", agentID)
 		}
 	}
 }
@@ -128,14 +129,8 @@ func outcome(err error) task.Outcome {
 }
 
 func goal(prompt string) string {
-	trimmed := strings.TrimSpace(prompt)
-	if line, _, found := strings.Cut(trimmed, "\n"); found {
-		trimmed = strings.TrimSpace(line)
-	}
-	if len([]rune(trimmed)) <= goalLimit {
-		return trimmed
-	}
-	return string([]rune(trimmed)[:goalLimit]) + "…"
+	line := strings.TrimSpace(text.FirstLine(strings.TrimSpace(prompt)))
+	return text.Clip(line, goalLimit)
 }
 
 // budgetStop names the limit that stopped the task and shows where the work
@@ -278,9 +273,6 @@ func (c *Coordinator) offlineReminder(req Request, id string, started time.Time,
 	})
 }
 
-// taskVerb is what the user asked to do to a task.
-type taskVerb int
-
 const (
 	taskList taskVerb = iota
 	taskShow
@@ -288,136 +280,6 @@ const (
 	taskResume
 	taskCancel
 )
-
-// taskVerbs maps chat words to verbs. The Chinese aliases are not a nicety:
-// the surface is Chinese by default, and a verb that only answers to English
-// would make half of it untypable.
-var taskVerbs = map[string]taskVerb{
-	"pause": taskPause, "暂停": taskPause,
-	"resume": taskResume, "继续": taskResume, "恢复": taskResume,
-	"cancel": taskCancel, "取消": taskCancel, "结束": taskCancel,
-	"show": taskShow, "详情": taskShow,
-}
-
-// parseTaskArgs reads "pause 12", "12 pause", "12" or "pause", so nobody has
-// to remember which half comes first. An unrecognised word is a usage error
-// rather than a guess: acting on the wrong task is worse than asking again.
-func parseTaskArgs(rest string) (taskVerb, string, bool) {
-	verb, id := taskList, ""
-	for _, field := range strings.Fields(rest) {
-		if trimmed := strings.TrimPrefix(field, "#"); isTaskID(trimmed) {
-			id = trimmed
-			if verb == taskList {
-				verb = taskShow
-			}
-			continue
-		}
-		found, ok := taskVerbs[strings.ToLower(field)]
-		if !ok {
-			return taskList, "", false
-		}
-		verb = found
-	}
-	return verb, id, true
-}
-
-func isTaskID(s string) bool {
-	if prefix, tail, ok := strings.Cut(s, "~"); ok {
-		if len(prefix) != 13 || prefix[0] != 'h' {
-			return false
-		}
-		for _, r := range prefix[1:] {
-			if !(r >= '0' && r <= '9' || r >= 'a' && r <= 'f') {
-				return false
-			}
-		}
-		s = tail
-	}
-	if s == "" {
-		return false
-	}
-	for _, r := range s {
-		if r < '0' || r > '9' {
-			return false
-		}
-	}
-	return true
-}
-
-// tasksCmd is everything the user can do to a task from the chat. Listing was
-// never the point on its own: a task that outlives its turn is only useful if
-// the person who started it can look inside it, set it down, and pick it back
-// up without leaving the conversation.
-func (c *Coordinator) tasksCmd(ctx context.Context, req Request, rest string) Result {
-	title := c.text.T(i18n.CardTasks)
-	if c.tasks == nil {
-		return Result{Title: title, Text: c.text.T(i18n.TasksEmpty)}
-	}
-	verb, id, ok := parseTaskArgs(rest)
-	if !ok {
-		return Result{Title: title, Text: c.text.T(i18n.TasksUsage, protocol.CommandTasks)}
-	}
-	if verb == taskList {
-		return c.tasksList(req, title)
-	}
-	tracked, found := c.taskTarget(req.ConversationID, id, verb)
-	if !found {
-		switch {
-		case id != "":
-			return Result{Title: title, Text: c.text.T(i18n.TaskUnknown, id)}
-		case verb == taskResume:
-			return Result{Title: title, Text: c.text.T(i18n.TaskNonePaused, protocol.CommandTasks)}
-		default:
-			return Result{Title: title, Text: c.text.T(i18n.TaskNone)}
-		}
-	}
-	switch verb {
-	case taskShow:
-		return Result{Title: title, Text: c.taskDetail(tracked)}
-	case taskPause:
-		return c.taskSetAside(ctx, title, tracked, task.StatePaused)
-	case taskCancel:
-		return c.taskSetAside(ctx, title, tracked, task.StateCancelled)
-	case taskResume:
-		return c.taskPickUp(title, tracked)
-	}
-	return Result{Title: title, Text: c.text.T(i18n.TasksUsage, protocol.CommandTasks)}
-}
-
-// taskTarget resolves which task the user meant. An explicit id is scoped to
-// this conversation on purpose: task ids are short and guessable, and one chat
-// must not be able to reach into another's work.
-func (c *Coordinator) taskTarget(conversationID, id string, verb taskVerb) (task.Task, bool) {
-	if id != "" {
-		tracked, ok := c.tasks.Get(id)
-		if !ok || tracked.Channel != conversationID {
-			return task.Task{}, false
-		}
-		return tracked, true
-	}
-	// List is newest first, so the bare verb acts on what the user most
-	// plausibly has in mind — the thing they were just talking about.
-	for _, candidate := range c.tasks.List(conversationID) {
-		if verb == taskResume {
-			if candidate.State == task.StatePaused {
-				return candidate, true
-			}
-			continue
-		}
-		if !candidate.State.Terminal() {
-			return candidate, true
-		}
-	}
-	return task.Task{}, false
-}
-
-// taskSetAside pauses or cancels, in that order: move the record first so a
-// turn that happens to finish during the stop cannot flip the task back to
-// running, then stop the turn that is actually burning time.
-func (c *Coordinator) taskSetAside(ctx context.Context, title string, tracked task.Task, to task.State) Result {
-	result, _ := c.setTaskAside(ctx, title, tracked, to, false)
-	return result
-}
 
 func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked task.Task, to task.State, confirmSettlement bool) (Result, error) {
 	var stopErr error
@@ -490,32 +352,15 @@ func (c *Coordinator) stopTurnFor(ctx context.Context, tracked task.Task) {
 		return
 	}
 	if _, err := c.cancel(ctx, tracked.Channel, member); err != nil {
-		log.Printf("turn: stop turn for task %s: %v", tracked.ID, err)
+		slog.Error(fmt.Sprintf("turn: stop turn for task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", tracked.Channel, "agent", member.ID)
 	}
 }
 
-// taskPickUp puts a set-aside task back in play. The state moves before the
-// re-entry so the replayed message finds it as this conversation's active task
-// instead of opening a second task for the same work.
-func (c *Coordinator) taskPickUp(title string, tracked task.Task) Result {
-	moved, err := c.tasks.Advance(tracked.ID, task.StateRunning)
-	if err != nil {
-		return Result{Title: title, Text: c.text.T(i18n.TaskStuck, tracked.ID, statusMark(tracked.State))}
+func (c *Coordinator) advanceExecution(ctx context.Context, id string, to task.State) (task.Task, error) {
+	if token := execution.Token(ctx); token != nil {
+		return c.tasks.AdvanceExecution(*token, to)
 	}
-	if c.resumer == nil || moved.AnchorMessage == "" || moved.Member == "" {
-		// Nothing can replay a message here; the task is live again, so
-		// the user's next message continues it.
-		return Result{Title: title, Text: c.text.T(i18n.TaskResumed, moved.ID)}
-	}
-	c.resumer(TaskResume{
-		TaskID: moved.ID, Goal: moved.Goal, Member: moved.Member,
-		ConversationID: moved.Channel, ChatID: moved.ChatID,
-		MessageID: moved.AnchorMessage, Requester: moved.Requester,
-		ChatType: moved.ChatType,
-	})
-	// The re-entry announces itself at the anchor, so this card carries the
-	// detail instead of repeating the announcement.
-	return Result{Title: title, Text: c.taskDetail(moved)}
+	return c.tasks.Advance(id, to)
 }
 
 // taskDetail is the progress view. The attempt trail is the honest part: it
@@ -557,37 +402,6 @@ func attemptTrail(attempts []task.Attempt) string {
 	return strings.Join(marks, " · ")
 }
 
-// tasksList is what this conversation has been working on. The listing is the
-// whole point of a task outliving its turn, so it is a command rather than
-// something only the debug API can see.
-func (c *Coordinator) tasksList(req Request, title string) Result {
-	all := c.tasks.List(req.ConversationID)
-	if len(all) == 0 {
-		return Result{Title: title, Text: c.text.T(i18n.TasksEmpty)}
-	}
-	var b strings.Builder
-	for i, tracked := range all {
-		if i >= tasksListed {
-			fmt.Fprintf(&b, "\n… %d more", len(all)-tasksListed)
-			break
-		}
-		if i > 0 {
-			b.WriteString("\n")
-		}
-		fmt.Fprintf(&b, "**#%s** %s · %s · %s turns · %s",
-			tracked.ID, statusMark(tracked.State), tracked.Member,
-			budgetTurns(tracked.Budget),
-			tracked.Budget.Elapsed.Round(time.Second))
-		if tracked.Goal != "" {
-			fmt.Fprintf(&b, "\n%s", tracked.Goal)
-		}
-	}
-	return Result{Title: title, Text: b.String()}
-}
-
-// tasksListed keeps the card inside its byte budget; the rest are a count.
-const tasksListed = 8
-
 func statusMark(state task.State) string {
 	switch state {
 	case task.StateRunning:
@@ -607,11 +421,4 @@ func statusMark(state task.State) string {
 	default:
 		return string(state)
 	}
-}
-
-func (c *Coordinator) advanceExecution(ctx context.Context, id string, to task.State) (task.Task, error) {
-	if token := execution.Token(ctx); token != nil {
-		return c.tasks.AdvanceExecution(*token, to)
-	}
-	return c.tasks.Advance(id, to)
 }

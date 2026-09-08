@@ -8,4 +8,3 @@ internal/coordination.machine.Apply 250
 internal/readmodel.Model.Snapshot 250
 internal/transfer.exportProject 200
 internal/transfer.importProject 300
-internal/turn.Coordinator.Suggest 150

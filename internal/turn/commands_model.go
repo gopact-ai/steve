@@ -1,22 +1,22 @@
+// The /model command: choosing the model a live session answers with.
 package turn
 
 import (
 	"context"
 	"fmt"
-	"strings"
-
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/view"
+	"strings"
 )
 
 // modelCmd shows or changes the model behind the current agent. It opens the
 // session the same way a prompt does, because the model selector is a
 // property of a live session: the agent only reports its options once one is
 // open, and a change has to land on the session the next turn will use.
-func (c *Coordinator) modelCmd(parent context.Context, req Request, selected agent.Agent, want string) (Result, error) {
+func (c commands) modelCmd(parent context.Context, req Request, selected agent.Agent, want string) (Result, error) {
 	conversationID := req.ConversationID
 	ctx, cancel := context.WithTimeout(parent, c.timeout)
 	// Take the turn lock: switching model under a running turn would change
@@ -63,35 +63,6 @@ func (c *Coordinator) modelCmd(parent context.Context, req Request, selected age
 	return Result{AgentID: selected.ID, Text: c.text.T(i18n.ModelSwitched, settled)}, nil
 }
 
-// openForCommand gets the conversation's session without any of the
-// turn-taking a prompt does: no task budget is spent and nothing is marked
-// tainted, because a command that only reads or sets a selector is not a
-// turn.
-func (c *Coordinator) openForCommand(ctx context.Context, req Request, selected agent.Agent) (harness.Runner, error) {
-	capabilities, err := c.assemble(selected, req, nil)
-	if err != nil {
-		return nil, err
-	}
-	saved := c.store.Conversation(req.ConversationID).Sessions[selected.ID]
-	saved.ConversationID = req.ConversationID
-	_, workspace, err := c.resolveWorkspace(ctx, req, selected)
-	if err != nil {
-		return nil, err
-	}
-	runner, err := c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
-	if err != nil && saved.UpstreamID != "" && !strings.HasPrefix(saved.UpstreamID, "ns_") {
-		// Same fallback as a prompt: a session the agent no longer holds is
-		// replaced rather than reported as a failure.
-		saved.UpstreamID = ""
-		saved.InstructionsApplied = false
-		runner, err = c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
-	}
-	return runner, err
-}
-
-var errModelUnknown = fmt.Errorf("no such model")
-var errModelAmbiguous = fmt.Errorf("several models match")
-
 // matchModel resolves what a person typed. An exact id or label wins
 // outright; otherwise a unique case-insensitive substring does, so "sol" or
 // "opus" is enough without pasting "gpt-5.6-sol".
@@ -120,7 +91,7 @@ func matchModel(choices []view.Choice, want string) (view.Choice, error) {
 	}
 }
 
-func (c *Coordinator) modelMatchError(err error, choices []view.Choice, want string) error {
+func (c commands) modelMatchError(err error, choices []view.Choice, want string) error {
 	if err == errModelAmbiguous {
 		var hits []string
 		folded := strings.ToLower(want)
@@ -153,3 +124,7 @@ func modelList(choices []view.Choice, current string) string {
 	}
 	return strings.Join(lines, "\n")
 }
+
+var errModelUnknown = fmt.Errorf("no such model")
+
+var errModelAmbiguous = fmt.Errorf("several models match")

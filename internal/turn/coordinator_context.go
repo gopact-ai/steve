@@ -3,6 +3,7 @@ package turn
 import (
 	"context"
 	"errors"
+	"github.com/gopact-ai/steve/internal/text"
 	"regexp"
 	"sort"
 	"strings"
@@ -75,157 +76,189 @@ func (c *Coordinator) Suggest(ctx context.Context, conversationID, line string) 
 	}
 	if at := atMention.FindStringSubmatch(line); at != nil {
 		head := line[:len(line)-len(at[2])-1]
-		context, err := c.Context(ctx, conversationID)
-		if err != nil {
-			return nil
-		}
-		var out []Suggestion
-		for _, a := range context.Agents {
-			if !strings.HasPrefix(a.ID, at[2]) {
-				continue
-			}
-			detail := a.Node + " · " + a.Harness
-			if a.Model != "" {
-				detail += " · " + a.Model
-			}
-			if a.Usable {
-				detail += " · " + c.text.T(i18n.SuggestUsable)
-			} else {
-				detail += " · " + a.Because
-			}
-			out = append(out, Suggestion{Label: "@" + a.ID, Detail: detail, Insert: head + "@" + a.ID + " ", Muted: !a.Usable})
-		}
-		return out
+		return c.suggestMentions(ctx, conversationID, head, at[2])
 	}
 	if !strings.HasPrefix(line, "/") {
 		return nil
 	}
 	verb, rest, hasSpace := strings.Cut(line, " ")
 	if !hasSpace {
-		var out []Suggestion
-		for _, v := range c.Verbs() {
-			if strings.HasPrefix(v.Command, verb) {
-				insert := v.Command
-				if v.Args != "" {
-					insert += " "
-				}
-				out = append(out, Suggestion{Label: v.Command, Args: v.Args, Detail: v.Summary, Insert: insert})
-			}
-		}
-		return out
+		return c.suggestVerbs(verb)
 	}
 	rest = strings.TrimLeft(rest, " ")
 	switch protocol.Command(verb) {
 	case protocol.CommandProject:
-		if !strings.HasPrefix(rest, "use") {
-			return []Suggestion{{Label: "/project use", Args: "<id>", Detail: c.text.T(i18n.VerbProject), Insert: "/project use "}}
-		}
-		want := strings.TrimSpace(strings.TrimPrefix(rest, "use"))
-		if c.projects == nil {
-			return nil
-		}
-		all, err := c.projects.List(ctx)
-		if err != nil {
-			return nil
-		}
-		sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
-		var out []Suggestion
-		for _, p := range all {
-			if !strings.HasPrefix(p.ID, want) {
-				continue
-			}
-			out = append(out, Suggestion{Label: p.ID, Detail: nodewire.Place(p.Home.Node) + " · " + p.Home.Path + " · " + string(p.Level.OrDefault()) + " · " + string(p.Repo), Insert: "/project use " + p.ID})
-		}
-		return out
+		return c.suggestProjects(ctx, rest)
 	case protocol.CommandUse, protocol.CommandRepair:
-		context, err := c.Context(ctx, conversationID)
-		if err != nil {
-			return nil
-		}
-		var out []Suggestion
-		for _, a := range context.Agents {
-			if !strings.HasPrefix(a.ID, rest) {
-				continue
-			}
-			if protocol.Command(verb) == protocol.CommandRepair {
-				if a.Ready {
-					continue
-				}
-				if _, err := c.fleet.Repair(ctx, a.ID); err != nil {
-					continue
-				}
-			}
-			detail := a.Node + " · " + a.Harness
-			if a.Because != "" {
-				detail += " · " + a.Because
-			}
-			out = append(out, Suggestion{Label: a.ID, Detail: detail, Insert: verb + " " + a.ID, Muted: protocol.Command(verb) == protocol.CommandUse && !a.Usable})
-		}
-		return out
+		return c.suggestAgents(ctx, conversationID, verb, rest)
 	case protocol.CommandTasks:
-		if c.tasks == nil {
-			return nil
-		}
-		op, want := "", rest
-		for _, o := range []string{"pause", "resume", "cancel"} {
-			if strings.HasPrefix(rest, o+" ") {
-				op, want = o, strings.TrimSpace(strings.TrimPrefix(rest, o))
-			}
-		}
-		var out []Suggestion
-		if op == "" {
-			for _, o := range []string{"pause", "resume", "cancel"} {
-				if strings.HasPrefix(o, rest) {
-					out = append(out, Suggestion{Label: o, Args: "<id>", Insert: "/tasks " + o + " "})
-				}
-			}
-		}
-		// Only this conversation's tasks: the verb refuses any other.
-		list := c.tasks.List(conversationID)
-		for i := len(list) - 1; i >= 0 && len(out) < 15; i-- {
-			t := list[i]
-			if !strings.HasPrefix(t.ID, want) {
-				continue
-			}
-			insert := "/tasks " + t.ID
-			if op != "" {
-				insert = "/tasks " + op + " " + t.ID
-			}
-			out = append(out, Suggestion{Label: "#" + t.ID, Detail: string(t.State) + " · " + t.Member + " · " + clip(t.Goal, 80), Insert: insert})
-		}
-		return out
+		return c.suggestTasks(conversationID, rest)
 	case protocol.CommandApprove, protocol.CommandDeny:
-		if c.projects == nil {
-			return nil
-		}
-		pending, err := c.projects.PendingDisclosures(ctx)
-		if err != nil {
-			return nil
-		}
-		var out []Suggestion
-		for _, d := range pending {
-			if strings.HasPrefix(d.ID, rest) {
-				out = append(out, Suggestion{Label: d.ID, Detail: d.Project + " · " + d.Requester, Insert: verb + " " + d.ID})
-			}
-		}
-		return out
+		return c.suggestDisclosures(ctx, verb, rest)
 	case protocol.CommandEffects:
-		if c.intents == nil {
-			return nil
-		}
-		unresolved, err := c.intents.Unresolved(ctx)
-		if err != nil {
-			return nil
-		}
-		var out []Suggestion
-		for _, e := range unresolved {
-			if strings.HasPrefix(e.ID, rest) {
-				out = append(out, Suggestion{Label: e.ID, Detail: e.Tool + " · task #" + e.TaskID, Insert: "/effects " + e.ID + " "})
-			}
-		}
-		return out
+		return c.suggestEffects(ctx, rest)
 	}
 	return nil
+}
+
+// suggestMentions completes an @agent anywhere in the line; head is the
+// line up to the @.
+func (c *Coordinator) suggestMentions(ctx context.Context, conversationID, head, prefix string) []Suggestion {
+	context, err := c.Context(ctx, conversationID)
+	if err != nil {
+		return nil
+	}
+	var out []Suggestion
+	for _, a := range context.Agents {
+		if !strings.HasPrefix(a.ID, prefix) {
+			continue
+		}
+		detail := a.Node + " · " + a.Harness
+		if a.Model != "" {
+			detail += " · " + a.Model
+		}
+		if a.Usable {
+			detail += " · " + c.text.T(i18n.SuggestUsable)
+		} else {
+			detail += " · " + a.Because
+		}
+		out = append(out, Suggestion{Label: "@" + a.ID, Detail: detail, Insert: head + "@" + a.ID + " ", Muted: !a.Usable})
+	}
+	return out
+}
+
+func (c *Coordinator) suggestVerbs(verb string) []Suggestion {
+	var out []Suggestion
+	for _, v := range c.Verbs() {
+		if strings.HasPrefix(v.Command, verb) {
+			insert := v.Command
+			if v.Args != "" {
+				insert += " "
+			}
+			out = append(out, Suggestion{Label: v.Command, Args: v.Args, Detail: v.Summary, Insert: insert})
+		}
+	}
+	return out
+}
+
+func (c *Coordinator) suggestProjects(ctx context.Context, rest string) []Suggestion {
+	if !strings.HasPrefix(rest, "use") {
+		return []Suggestion{{Label: "/project use", Args: "<id>", Detail: c.text.T(i18n.VerbProject), Insert: "/project use "}}
+	}
+	want := strings.TrimSpace(strings.TrimPrefix(rest, "use"))
+	if c.projects == nil {
+		return nil
+	}
+	all, err := c.projects.List(ctx)
+	if err != nil {
+		return nil
+	}
+	sort.Slice(all, func(i, j int) bool { return all[i].ID < all[j].ID })
+	var out []Suggestion
+	for _, p := range all {
+		if !strings.HasPrefix(p.ID, want) {
+			continue
+		}
+		out = append(out, Suggestion{Label: p.ID, Detail: nodewire.Place(p.Home.Node) + " · " + p.Home.Path + " · " + string(p.Level.OrDefault()) + " · " + string(p.Repo), Insert: "/project use " + p.ID})
+	}
+	return out
+}
+
+// suggestAgents completes the agent argument of /use and /repair; /repair
+// offers only agents that are broken and have a helper.
+func (c *Coordinator) suggestAgents(ctx context.Context, conversationID, verb, rest string) []Suggestion {
+	context, err := c.Context(ctx, conversationID)
+	if err != nil {
+		return nil
+	}
+	var out []Suggestion
+	for _, a := range context.Agents {
+		if !strings.HasPrefix(a.ID, rest) {
+			continue
+		}
+		if protocol.Command(verb) == protocol.CommandRepair {
+			if a.Ready {
+				continue
+			}
+			if _, err := c.fleet.Repair(ctx, a.ID); err != nil {
+				continue
+			}
+		}
+		detail := a.Node + " · " + a.Harness
+		if a.Because != "" {
+			detail += " · " + a.Because
+		}
+		out = append(out, Suggestion{Label: a.ID, Detail: detail, Insert: verb + " " + a.ID, Muted: protocol.Command(verb) == protocol.CommandUse && !a.Usable})
+	}
+	return out
+}
+
+func (c *Coordinator) suggestTasks(conversationID, rest string) []Suggestion {
+	if c.tasks == nil {
+		return nil
+	}
+	op, want := "", rest
+	for _, o := range []string{"pause", "resume", "cancel"} {
+		if strings.HasPrefix(rest, o+" ") {
+			op, want = o, strings.TrimSpace(strings.TrimPrefix(rest, o))
+		}
+	}
+	var out []Suggestion
+	if op == "" {
+		for _, o := range []string{"pause", "resume", "cancel"} {
+			if strings.HasPrefix(o, rest) {
+				out = append(out, Suggestion{Label: o, Args: "<id>", Insert: "/tasks " + o + " "})
+			}
+		}
+	}
+	// Only this conversation's tasks: the verb refuses any other.
+	list := c.tasks.List(conversationID)
+	for i := len(list) - 1; i >= 0 && len(out) < 15; i-- {
+		t := list[i]
+		if !strings.HasPrefix(t.ID, want) {
+			continue
+		}
+		insert := "/tasks " + t.ID
+		if op != "" {
+			insert = "/tasks " + op + " " + t.ID
+		}
+		out = append(out, Suggestion{Label: "#" + t.ID, Detail: string(t.State) + " · " + t.Member + " · " + text.Clip(t.Goal, 80), Insert: insert})
+	}
+	return out
+}
+
+func (c *Coordinator) suggestDisclosures(ctx context.Context, verb, rest string) []Suggestion {
+	if c.projects == nil {
+		return nil
+	}
+	pending, err := c.projects.PendingDisclosures(ctx)
+	if err != nil {
+		return nil
+	}
+	var out []Suggestion
+	for _, d := range pending {
+		if strings.HasPrefix(d.ID, rest) {
+			out = append(out, Suggestion{Label: d.ID, Detail: d.Project + " · " + d.Requester, Insert: verb + " " + d.ID})
+		}
+	}
+	return out
+}
+
+func (c *Coordinator) suggestEffects(ctx context.Context, rest string) []Suggestion {
+	if c.intents == nil {
+		return nil
+	}
+	unresolved, err := c.intents.Unresolved(ctx)
+	if err != nil {
+		return nil
+	}
+	var out []Suggestion
+	for _, e := range unresolved {
+		if strings.HasPrefix(e.ID, rest) {
+			out = append(out, Suggestion{Label: e.ID, Detail: e.Tool + " · task #" + e.TaskID, Insert: "/effects " + e.ID + " "})
+		}
+	}
+	return out
 }
 
 var atMention = regexp.MustCompile(`(^|\s)@([\w-]*)$`)

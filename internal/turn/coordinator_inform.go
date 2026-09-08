@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/home"
-	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
 )
@@ -149,5 +148,3 @@ func repoWord(mode project.RepoMode) string {
 	}
 	return "直接修改主目录"
 }
-
-var _ = nodewire.Place

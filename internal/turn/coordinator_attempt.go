@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"github.com/gopact-ai/steve/internal/text"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -23,7 +24,7 @@ func (c *Coordinator) completion(ctx context.Context, record attempt.Record, res
 	if err != nil {
 		return attempt.Completion{}, nil, err
 	}
-	outcome := attempt.Result{Summary: clip(result.Text, 200), Output: output}
+	outcome := attempt.Result{Summary: text.Clip(result.Text, 200), Output: output}
 	var binding *attempt.NameBinding
 	var pending *project.Project
 	reject := func(cause error) (attempt.Completion, *project.Project, error) {
@@ -43,7 +44,7 @@ func (c *Coordinator) completion(ctx context.Context, record attempt.Record, res
 		after, changed, serr := c.snapshot(ctx, p, record.Workspace, record.Base, record.ID, "after turn "+record.TurnID)
 		clock.mark("after")
 		if serr != nil {
-			log.Printf("turn: attempt %s after-snapshot: %v", record.ID, serr)
+			slog.Error(fmt.Sprintf("turn: attempt %s after-snapshot: %v", record.ID, serr), "attempt", record.ID, "task", record.TaskID, "project", record.Project)
 			outcome.CaptureError = serr.Error()
 		} else if changed {
 			outcome.Artifact = after.ID
@@ -86,22 +87,14 @@ func (c *Coordinator) afterCompletion(ctx context.Context, record attempt.Record
 	return nil
 }
 
-func clip(text string, limit int) string {
-	runes := []rune(text)
-	if len(runes) <= limit {
-		return text
-	}
-	return string(runes[:limit]) + "…"
-}
-
 // landPending lands what delegations left queued for the project.
 func (c *Coordinator) landPending(ctx context.Context, p project.Project) {
 	landed, err := c.artifacts.LandPending(ctx, p)
 	if err != nil {
-		log.Printf("turn: land pending for %s: %v", p.ID, err)
+		slog.Error(fmt.Sprintf("turn: land pending for %s: %v", p.ID, err), "project", p.ID)
 	}
 	for _, l := range landed {
-		log.Printf("turn: landing %s of %s into %s: %s (%d paths)", l.ID, l.Artifact, p.ID, l.State, len(l.Paths))
+		slog.Info(fmt.Sprintf("turn: landing %s of %s into %s: %s (%d paths)", l.ID, l.Artifact, p.ID, l.State, len(l.Paths)), "landing", l.ID, "artifact", l.Artifact, "project", p.ID)
 	}
 }
 
@@ -135,7 +128,7 @@ func (c *Coordinator) recordDisclosure(ctx context.Context, record attempt.Recor
 	d := Disclosure{Project: p.ID, Level: string(p.Level), TaskID: record.TaskID, Attempt: record.ID, Turn: record.TurnID,
 		Channel: "feishu", Bytes: len(result.Text), By: record.By, At: time.Now().UTC()}
 	if err := c.projects.Disclose(ctx, record.ID, d); err != nil {
-		log.Printf("turn: record disclosure for %s: %v", record.ID, err)
+		slog.Error(fmt.Sprintf("turn: record disclosure for %s: %v", record.ID, err), "attempt", record.ID, "task", record.TaskID, "project", p.ID)
 	}
 }
 

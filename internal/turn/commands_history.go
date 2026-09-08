@@ -15,7 +15,7 @@ import (
 // historyCmd lists the sessions /clear archived, and puts one back. Clearing
 // ends the agent's context but leaves its session on the agent's side, so an
 // archived record is a live handle rather than a receipt.
-func (c *Coordinator) historyCmd(req Request, selected agent.Agent, rest string) (Result, error) {
+func (c commands) historyCmd(req Request, selected agent.Agent, rest string) (Result, error) {
 	conversationID := req.ConversationID
 	archived := c.store.ArchivedSessions(conversationID, selected.ID)
 	rest = strings.TrimSpace(rest)
