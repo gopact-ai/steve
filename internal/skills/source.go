@@ -3,6 +3,7 @@ package skills
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
@@ -133,6 +134,9 @@ func (m *Map) AddSource(ctx context.Context, spec string) (Source, error) {
 		return Source{}, err
 	}
 	if err := m.refreshSource(&s); err != nil {
+		// The source is not recorded, so the clone and its root are only
+		// disk: the refresh error is the answer, and the next install of
+		// the same source clears whatever a failed remove leaves.
 		_ = os.RemoveAll(s.Dir)
 		_ = os.RemoveAll(s.Root)
 		return Source{}, err
@@ -210,8 +214,15 @@ func (m *Map) RemoveSource(slug string) error {
 		}
 	}
 	data.SearchPaths = paths
-	_ = os.RemoveAll(gone.Root)
-	_ = os.RemoveAll(gone.Dir)
+	// The source is forgotten either way; a clone that will not go is only
+	// disk, but the owner asked for it to be gone, so say so. Both removes
+	// precede the enabled filter below because a skill enabled by absolute
+	// path into the clone is resolved on the filesystem.
+	for _, dir := range []string{gone.Root, gone.Dir} {
+		if err := os.RemoveAll(dir); err != nil {
+			slog.Warn(fmt.Sprintf("skills: remove source %s: %v", slug, err), "source", slug, "dir", dir)
+		}
+	}
 	enabled := data.Enabled[:0]
 	for _, name := range data.Enabled {
 		if _, err := m.resolveLocked(data, name); err == nil {
@@ -293,8 +304,12 @@ func gitClone(ctx context.Context, s Source) error {
 		args = append(args, "--branch", s.Ref)
 	}
 	args = append(args, "--", s.URL, s.Dir)
+	// Leftovers of an earlier clone: if they will not go, git refuses to
+	// clone into the non-empty directory and reports it.
 	_ = os.RemoveAll(s.Dir)
 	if out, err := gitRun(ctx, "", args...); err != nil {
+		// The clone error is the answer; the next clone clears what a
+		// failed remove leaves.
 		_ = os.RemoveAll(s.Dir)
 		return fmt.Errorf("clone %s: %s", s.URL, strings.TrimSpace(out))
 	}
