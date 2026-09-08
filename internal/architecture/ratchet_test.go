@@ -152,7 +152,7 @@ func TestLongFunctionsOnlyShrink(t *testing.T) {
 			}
 			lines := fset.Position(fd.End()).Line - fset.Position(fd.Pos()).Line + 1
 			if lines > longFunction {
-				offenders = append(offenders, fmt.Sprintf("%s %d", funcName(rel, fd), lines/50*50))
+				offenders = append(offenders, fmt.Sprintf("%s %d", funcName(rel, fd), lines))
 			}
 		}
 	}

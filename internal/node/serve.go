@@ -240,7 +240,8 @@ func (s *Server) Serve(ctx context.Context) error {
 		s.backgroundWG.Wait()
 	}()
 	s.backgroundWG.Go(func() { s.pruneStreams(ctx) })
-	slog.Info(fmt.Sprintf("steve-node: %s listening on %s", s.conf().Name, listener.Addr()), "node", s.conf().Name)
+	name := s.conf().Name
+	slog.Info(fmt.Sprintf("steve-node: %s listening on %s", name, listener.Addr()), "node", name)
 	go func() {
 		<-ctx.Done()
 		// Closing unblocks Accept, which reports the end through ctx.

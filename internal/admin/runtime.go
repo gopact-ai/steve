@@ -26,10 +26,10 @@ type LocalObservation struct {
 	Skills atomic.Pointer[SkillShipper]
 }
 
-// homeProjectID names Steve's home directory as a project.
+// HomeProjectID names Steve's home directory as a project.
 const HomeProjectID = config.ReservedHomeProject
 
-// harnessSummary renders a node's runtimes for one log line, marking the
+// HarnessSummary renders a node's runtimes for one log line, marking the
 // ones it cannot actually start.
 func HarnessSummary(advert nodewire.Advert) string {
 	if len(advert.Harnesses) == 0 {
@@ -81,7 +81,9 @@ func ObservedHubAdvert(cfg *config.Config, observation *LocalObservation) nodewi
 	var launch func(string) (node.LaunchResult, bool)
 	if observation != nil {
 		shipper = observation.Skills.Load()
-		launch = observation.Launch.Lookup
+		if observation.Launch != nil {
+			launch = observation.Launch.Lookup
+		}
 	}
 	entries, known := shipper.entries()
 	adv.Snapshot = node.Snapshot(NodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: launch, Skills: entries, SkillsKnown: known})

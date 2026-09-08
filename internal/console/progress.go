@@ -19,6 +19,7 @@ type progressStream struct {
 	mu         sync.Mutex
 	work       *process
 	publish    func(consoleapi.Progress)
+	taskID     string
 	latest     consoleapi.Progress
 	published  consoleapi.Progress
 	last       time.Time
@@ -29,11 +30,22 @@ type progressStream struct {
 }
 
 func (s *Service) progress(conversation, exchangeID string, work *process) *progressStream {
-	return &progressStream{work: work, publish: func(p consoleapi.Progress) {
+	stream := &progressStream{work: work}
+	stream.publish = func(p consoleapi.Progress) {
 		if s.model != nil {
-			s.model.Publish(readmodel.Event{Kind: "console.progress", Conversation: conversation, ExchangeID: exchangeID, Progress: &p})
+			s.model.Publish(readmodel.Event{Kind: "console.progress", Conversation: conversation, ExchangeID: exchangeID, TaskID: stream.taskID, Progress: &p})
 		}
-	}}
+	}
+	return stream
+}
+
+// Bind names the task the exchange turned out to be, once the turn has
+// leased its attempt, so every progress event from then on says which
+// task's activity it is rather than leaving the page to guess by agent.
+func (s *progressStream) Bind(taskID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.taskID = taskID
 }
 
 func (s *progressStream) Update(p view.Progress) {

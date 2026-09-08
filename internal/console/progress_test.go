@@ -112,6 +112,24 @@ func TestProgressCloseFlushesBeforeReplyAndRejectsLateCallbacks(t *testing.T) {
 	}
 }
 
+func TestProgressCarriesTheTaskOnceBound(t *testing.T) {
+	model := readmodel.New(readmodel.Sources{})
+	events, stop := model.Subscribe(context.Background())
+	defer stop()
+	stream := New(nil, "owner", model).progress("console:test", "exchange", newProcess())
+	defer stream.Close()
+	stream.Update(view.Progress{Answer: "before"})
+	if ev := requireProgress(t, events, 30*time.Millisecond); ev.TaskID != "" {
+		t.Fatalf("task before the turn is ready = %q", ev.TaskID)
+	}
+	stream.Bind("12")
+	stream.Update(view.Progress{Answer: "after"})
+	stream.Close()
+	if ev := requireProgress(t, events, 30*time.Millisecond); ev.TaskID != "12" || ev.Progress.Answer != "after" {
+		t.Fatalf("bound progress = %+v", ev)
+	}
+}
+
 func TestProgressFinishingFlushesLatestContentBeforeSlowSave(t *testing.T) {
 	model := readmodel.New(readmodel.Sources{})
 	events, stop := model.Subscribe(context.Background())

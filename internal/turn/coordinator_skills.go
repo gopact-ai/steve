@@ -1,7 +1,5 @@
 package turn
 
-import ()
-
 func (c *Coordinator) lockSkills() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
