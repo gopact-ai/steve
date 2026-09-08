@@ -599,7 +599,6 @@ func (e *Execution) close(ctx context.Context, err error) error {
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}
-	e.stopBeat()
 	if err != nil {
 		return e.fail(cleanup, err)
 	}
@@ -637,7 +636,6 @@ func (e *Execution) closeManaged(ctx, cleanup context.Context, err error) error 
 		}
 	}
 	e.release(cleanup)
-	e.stopBeat()
 	if err != nil {
 		terminal, transition := e.failure(ctx, err)
 		if transition != nil {
@@ -682,6 +680,7 @@ func (e *Execution) commitManaged(ctx, cleanup context.Context) error {
 	if completion.Usage == nil {
 		completion.Usage = e.Usage
 	}
+	e.stopBeat()
 	completed, err := o.Attempts.FinishCompletion(ctx, e.Record.ID, o.Actor, completion)
 	if err != nil {
 		if o.Settlement.RejectManaged {
@@ -743,7 +742,9 @@ func (e *Execution) discard(cleanup context.Context) {
 }
 
 // failure records a failed attempt with what it cost and, when the caller
-// has one, the result it produced anyway.
+// has one, the result it produced anyway. The lease is renewed until the
+// caller's hook has returned: the terminal transition is the last thing
+// the lease fences, and the hook may outlive what the lease has left.
 func (e *Execution) failure(ctx context.Context, cause error) (attempt.Record, error) {
 	o := e.o
 	var result *attempt.Result
@@ -753,6 +754,7 @@ func (e *Execution) failure(ctx context.Context, cause error) (attempt.Record, e
 			return attempt.Record{}, err
 		}
 	}
+	e.stopBeat()
 	if result == nil {
 		return o.Attempts.FailWith(ctx, e.Record.ID, o.Actor, cause.Error(), e.Usage)
 	}
@@ -779,7 +781,8 @@ func (e *Execution) fail(cleanup context.Context, cause error) error {
 }
 
 // finish commits the caller's completion; a rejected completion keeps the
-// workspace for review.
+// workspace for review. The lease is renewed through the caller's hook
+// and stops just before the terminal transition it fences.
 func (e *Execution) finish(ctx, cleanup context.Context) error {
 	o := e.o
 	id := e.Record.ID
@@ -803,6 +806,7 @@ func (e *Execution) finish(ctx, cleanup context.Context) error {
 	if completion.Usage == nil {
 		completion.Usage = e.Usage
 	}
+	e.stopBeat()
 	completed, err := o.Attempts.FinishCompletion(commit, id, o.Actor, completion)
 	if err != nil {
 		return e.reject(cleanup, completion, err)
@@ -813,7 +817,11 @@ func (e *Execution) finish(ctx, cleanup context.Context) error {
 	return nil
 }
 
+// reject closes the attempt on a completion that could not be committed;
+// like every terminal transition, it is the first thing after the lease
+// stops being renewed.
 func (e *Execution) reject(cleanup context.Context, completion attempt.Completion, cause error) error {
+	e.stopBeat()
 	err := e.o.Attempts.RejectCompletion(cleanup, e.Record.ID, e.o.Actor, completion, cause)
 	e.refresh(cleanup)
 	return e.step(StepFinish, err)

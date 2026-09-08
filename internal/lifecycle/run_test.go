@@ -3,6 +3,7 @@ package lifecycle
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -28,6 +29,16 @@ type fakeAttempts struct {
 	lost    chan struct{}
 	openErr error
 	failAt  attempt.State
+	// ttl, when set, makes the lease real: Heartbeat renews it every
+	// ttl/3, and a transition on an expired lease is lost.
+	ttl      time.Duration
+	expires  time.Time
+	renewals int
+	// beat is the heartbeat's context, so a transition can tell whether
+	// the lease was still being renewed when it ran; terminal transitions
+	// that found it so are kept in beating.
+	beat    context.Context
+	beating []attempt.State
 }
 
 func (f *fakeAttempts) log(event string) {
@@ -40,7 +51,49 @@ func (f *fakeAttempts) history() string {
 	defer f.mu.Unlock()
 	return strings.Join(f.events, " ")
 }
-func (f *fakeAttempts) Heartbeat(context.Context, string) <-chan struct{} { return f.lost }
+func (f *fakeAttempts) Heartbeat(ctx context.Context, _ string) <-chan struct{} {
+	f.mu.Lock()
+	f.beat = ctx
+	ttl := f.ttl
+	f.mu.Unlock()
+	if ttl > 0 {
+		go func() {
+			ticker := time.NewTicker(ttl / 3)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-ticker.C:
+					f.mu.Lock()
+					f.expires = time.Now().Add(ttl)
+					f.renewals++
+					f.mu.Unlock()
+				}
+			}
+		}()
+	}
+	return f.lost
+}
+
+// renewing says the heartbeat is still running.
+func (f *fakeAttempts) renewing() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.beat != nil && f.beat.Err() == nil
+}
+
+// held says the lease has not expired.
+func (f *fakeAttempts) held() bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.ttl > 0 && time.Now().Before(f.expires)
+}
+func (f *fakeAttempts) renewed() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.renewals
+}
 func (f *fakeAttempts) Open(_ context.Context, spec attempt.Spec) (attempt.Record, error) {
 	f.log("open")
 	if f.openErr != nil {
@@ -51,6 +104,9 @@ func (f *fakeAttempts) Open(_ context.Context, spec attempt.Spec) (attempt.Recor
 	f.record = attempt.Record{Spec: spec, State: attempt.Leased}
 	if f.record.ID == "" {
 		f.record.ID = "a1"
+	}
+	if f.ttl > 0 {
+		f.expires = time.Now().Add(f.ttl)
 	}
 	return f.record, nil
 }
@@ -66,6 +122,12 @@ func (f *fakeAttempts) Advance(_ context.Context, _ string, to attempt.State, ac
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.ttl > 0 && time.Now().After(f.expires) {
+		return attempt.Record{}, fmt.Errorf("%w: lease expired before %s", attempt.ErrLost, to)
+	}
+	if to.Terminal() && f.beat != nil && f.beat.Err() == nil {
+		f.beating = append(f.beating, to)
+	}
 	next := f.record
 	next.State = to
 	if mutate != nil {
@@ -307,6 +369,60 @@ func TestRunCancelsTheWorkWhenTheLeaseIsLost(t *testing.T) {
 	}
 	if !strings.Contains(res.Record.Error, context.Canceled.Error()) {
 		t.Fatalf("recorded cause = %q", res.Record.Error)
+	}
+}
+
+func TestRunRenewsTheLeaseUntilTheTerminalTransition(t *testing.T) {
+	// The caller's completion may take longer than the lease has left;
+	// the lease is renewed through it and stops only for the transition
+	// it fences.
+	const ttl = 150 * time.Millisecond
+	w := newWorld("s1")
+	w.attempts.ttl = ttl
+	o := w.options()
+	var renewing, held bool
+	o.Finish = func(_ context.Context, e *Execution) (attempt.Completion, error) {
+		renewing = w.attempts.renewing()
+		time.Sleep(4 * ttl)
+		held = w.attempts.held()
+		return attempt.Completion{Result: attempt.Result{Summary: e.Outcome.Answer}}, nil
+	}
+	res, err := Run(t.Context(), o)
+	if err != nil || res.Record.State != attempt.Bound || !res.Durable {
+		t.Fatalf("a slow completion lost its lease: %+v err=%v", res, err)
+	}
+	if !renewing || !held || w.attempts.renewed() < 2 {
+		t.Fatalf("the lease was not renewed through the completion: renewing=%v held=%v renewals=%d", renewing, held, w.attempts.renewed())
+	}
+	if len(w.attempts.beating) != 0 || w.attempts.renewing() {
+		t.Fatalf("the heartbeat outlived the terminal transition: %v", w.attempts.beating)
+	}
+	failed := newWorld("s1")
+	failed.attempts.ttl = ttl
+	failed.runner.err = errors.New("boom")
+	o = failed.options()
+	o.Failed = func(*Execution, error) (*attempt.Result, error) {
+		time.Sleep(4 * ttl)
+		return &attempt.Result{Summary: "partial"}, nil
+	}
+	res, err = Run(t.Context(), o)
+	if !errors.Is(err, failed.runner.err) || res.Record.State != attempt.Failed || res.Record.Result == nil || res.Record.Result.Summary != "partial" {
+		t.Fatalf("a slow failure hook lost its lease: %+v err=%v", res, err)
+	}
+	if len(failed.attempts.beating) != 0 || failed.attempts.renewed() < 2 {
+		t.Fatalf("the heartbeat outlived the failure: beating=%v renewals=%d", failed.attempts.beating, failed.attempts.renewed())
+	}
+	managed := newWorld("ns_1")
+	managed.attempts.ttl = ttl
+	o = managed.options()
+	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true}
+	o.Finish = func(_ context.Context, e *Execution) (attempt.Completion, error) {
+		time.Sleep(4 * ttl)
+		return attempt.Completion{Result: attempt.Result{Summary: e.Outcome.Answer}}, nil
+	}
+	res, err = Run(t.Context(), o)
+	if err != nil || res.Record.State != attempt.Bound || len(managed.attempts.beating) != 0 {
+		t.Fatalf("a node-owned session's slow completion: %+v err=%v beating=%v", res, err, managed.attempts.beating)
 	}
 }
 
