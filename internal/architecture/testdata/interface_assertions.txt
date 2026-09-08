@@ -1,5 +1,3 @@
-internal/agentmcp/message.go:315
-internal/agentmcp/server.go:928
 internal/artifact/content_replication.go:67
 internal/artifact/facts.go:140
 internal/console/console.go:451

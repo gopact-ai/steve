@@ -898,6 +898,20 @@ type Intents interface {
 	Lost(ctx context.Context, id string, cause error) error
 }
 
+// ExecutionClaims is the optional side of Intents a fixed-scope grant
+// needs: a claim bound to the attempt the grant names, not only its task.
+// A ledger without it cannot serve fixed grants.
+type ExecutionClaims interface {
+	ClaimExecution(ctx context.Context, taskID, attemptID, tool string, args []byte) (string, error)
+}
+
+// OutcomeReader is the optional side of Intents that reconciliation reads
+// through: whether an intent an earlier attempt dispatched settled. A
+// ledger without it blocks the repeated operation instead of guessing.
+type OutcomeReader interface {
+	Outcome(ctx context.Context, id string) (string, error)
+}
+
 // SetIntents wires the side-effect ledger.
 func (s *Server) SetIntents(i Intents) { s.mu.Lock(); defer s.mu.Unlock(); s.intents = i }
 
@@ -925,9 +939,7 @@ func (s *Server) effect(ctx context.Context, bind binding, tool string, args jso
 	var id string
 	var err error
 	if scope, fixed := ScopeFromContext(ctx); fixed {
-		claims, ok := intents.(interface {
-			ClaimExecution(context.Context, string, string, string, []byte) (string, error)
-		})
+		claims, ok := intents.(ExecutionClaims)
 		if !ok || scope.TaskID != bind.taskID {
 			return "", errors.New("fixed execution intent claims are unavailable")
 		}
