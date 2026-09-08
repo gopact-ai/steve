@@ -74,7 +74,11 @@ func (r *Repo) Tree(ctx context.Context, commit, dir string) ([]Entry, bool, err
 			e.Kind = "link"
 		default:
 			e.Kind = "file"
-			e.Size, _ = strconv.ParseInt(fields[3], 10, 64)
+			size, err := strconv.ParseInt(fields[3], 10, 64)
+			if err != nil {
+				return nil, false, fmt.Errorf("ls-tree size of %s: %w", e.Path, err)
+			}
+			e.Size = size
 		}
 		entries = append(entries, e)
 	}
@@ -105,7 +109,9 @@ func (r *Repo) File(ctx context.Context, commit, path string) (text string, size
 	if err != nil {
 		return "", 0, false, false, err
 	}
-	size, _ = strconv.ParseInt(strings.TrimSpace(sizeText), 10, 64)
+	if size, err = strconv.ParseInt(strings.TrimSpace(sizeText), 10, 64); err != nil {
+		return "", 0, false, false, fmt.Errorf("size of %s: %w", path, err)
+	}
 	raw, err := r.gitBytes(ctx, r.Review.defaults().MaxFileBytes+1, "cat-file", "-p", spec)
 	if err != nil {
 		return "", size, false, false, err

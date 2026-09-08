@@ -96,6 +96,8 @@ func (s *Store) verifyContentCommitWith(ctx context.Context, repo *Repo, commit 
 	waited := false
 	defer func() {
 		if !waited {
+			// Abandoning a failed verification: the process is cancelled and
+			// collected; its exit status adds nothing to the integrity error.
 			cancel()
 			_ = output.Close()
 			_ = cmd.Wait()
@@ -133,6 +135,7 @@ func (s *Store) verifyContentCommitWith(ctx context.Context, repo *Repo, commit 
 		} else {
 			digest = sha256.New()
 		}
+		// A hash never fails to write.
 		_, _ = fmt.Fprintf(digest, "%s %d%c", fields[1], size, byte(0))
 		if _, err := io.CopyN(digest, reader, size); err != nil {
 			return nil, contentreplica.ErrIntegrity

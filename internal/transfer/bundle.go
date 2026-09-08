@@ -534,7 +534,9 @@ func importProject(ctx context.Context, o ImportOptions, syncFile func(*os.File)
 				occupied.Copies[node] = copy
 			}
 		}
-		raw, _ = json.Marshal(occupied)
+		if raw, err = json.Marshal(occupied); err != nil {
+			return empty, err
+		}
 		if err := stageBook.PutBinding(ctx, "project", id, raw); err != nil {
 			return empty, err
 		}

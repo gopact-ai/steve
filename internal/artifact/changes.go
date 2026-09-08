@@ -63,8 +63,15 @@ func (r *Repo) Changes(ctx context.Context, from, to string) ([]Change, bool, er
 		if parts[0] == "-" || parts[1] == "-" {
 			c.Binary = true
 		} else {
-			c.Added, _ = strconv.Atoi(parts[0])
-			c.Deleted, _ = strconv.Atoi(parts[1])
+			added, err := strconv.Atoi(parts[0])
+			if err != nil {
+				return nil, false, fmt.Errorf("numstat of %s: %w", c.Path, err)
+			}
+			deleted, err := strconv.Atoi(parts[1])
+			if err != nil {
+				return nil, false, fmt.Errorf("numstat of %s: %w", c.Path, err)
+			}
+			c.Added, c.Deleted = added, deleted
 		}
 		counts[c.Path] = c
 	}
@@ -125,6 +132,8 @@ func runBounded(ctx context.Context, gitDir string, max int, args ...string) ([]
 	truncated := len(raw) > max
 	if truncated {
 		raw = raw[:max]
+		// Past the limit the rest of the output is unwanted; Wait below
+		// collects the process whether or not the kill was delivered.
 		_ = cmd.Process.Kill()
 	}
 	waitErr := cmd.Wait()

@@ -125,6 +125,8 @@ func (l *Ledger) RestoreReplica(raw []byte) error {
 		_, stepErr := backup.Step(-1)
 		return errors.Join(stepErr, backup.Finish())
 	})
+	// The connection only carried the restore; returning it to the pool
+	// cannot change what the restore did.
 	_ = conn.Close()
 	if err != nil {
 		return l.failReplica(fmt.Errorf("restore ledger: %w", err))
@@ -246,6 +248,8 @@ func (l *Ledger) replicaTemp(data []byte) (string, func(), error) {
 		return "", nil, err
 	}
 	path := file.Name()
+	// The staging database and its sidecars are scratch; a leftover is
+	// overwritten by the next CreateTemp and never read.
 	cleanup := func() {
 		_ = os.Remove(path)
 		_ = os.Remove(path + "-wal")
@@ -253,6 +257,7 @@ func (l *Ledger) replicaTemp(data []byte) (string, func(), error) {
 		_ = os.Remove(path + "-journal")
 	}
 	if _, err := file.Write(data); err != nil {
+		// The write failure is the finding; the handle is only let go.
 		_ = file.Close()
 		cleanup()
 		return "", nil, err
