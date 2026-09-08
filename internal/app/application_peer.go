@@ -9,10 +9,11 @@ import (
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/httpapi"
+	"github.com/gopact-ai/steve/internal/logs"
 )
 
 func OpenClusterPeer(ctx context.Context, options cluster.PeerOptions) (*cluster.Peer, error) {
-	configureLogging()
+	logs.Install()
 	options.StartApplication = startPeerApplication
 	options.SSHHandler = func(service cluster.SSHControl, token, origin string) (http.Handler, error) {
 		return httpapi.SSHHandler(service, token, origin)
