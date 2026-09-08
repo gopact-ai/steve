@@ -1,4 +1,4 @@
-package main
+package cluster
 
 import (
 	"context"
@@ -13,25 +13,24 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
-	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 type contentRepairReport struct{ Examined, Healthy, Repaired, Degraded, Unavailable, Skipped int }
-type contentRepairObservation func(kind, subject, text string)
+type ContentRepairObservation func(kind, subject, text string)
 type contentRepairWorker struct {
-	peer           *clusterPeer
-	active         cluster.Activation
+	peer           *Peer
+	active         Activation
 	client         contentreplica.Replicator
-	observe        contentRepairObservation
+	observe        ContentRepairObservation
 	previous       map[string]string
 	noticeSequence uint64
 }
 
-func (p *clusterPeer) newContentRepair(active cluster.Activation, observe contentRepairObservation) (*contentRepairWorker, error) {
-	client, err := p.contentReplicator(active)
+func (p *Peer) newContentRepair(active Activation, observe ContentRepairObservation) (*contentRepairWorker, error) {
+	client, err := p.ContentReplicator(active)
 	if err != nil {
 		return nil, err
 	}
@@ -40,7 +39,7 @@ func (p *clusterPeer) newContentRepair(active cluster.Activation, observe conten
 
 // Repair belongs to one business generation. Stopping it joins the goroutine
 // before that generation's ledger and read model may be retired.
-func (p *clusterPeer) startContentRepair(active cluster.Activation, observe contentRepairObservation) func() {
+func (p *Peer) StartContentRepair(active Activation, observe ContentRepairObservation) func() {
 	worker, err := p.newContentRepair(active, observe)
 	if err != nil {
 		log.Printf("content repair could not start: %v", err)
@@ -48,7 +47,7 @@ func (p *clusterPeer) startContentRepair(active cluster.Activation, observe cont
 	}
 	ctx, cancel := context.WithCancel(active.Context)
 	done := make(chan struct{})
-	interval := p.options.ContentRepairInterval
+	interval := p.Options.ContentRepairInterval
 	if interval <= 0 {
 		interval = time.Minute
 	}
@@ -141,7 +140,7 @@ func (w *contentRepairWorker) sweep(ctx context.Context) (contentRepairReport, e
 		if ctx.Err() != nil {
 			return report, ctx.Err()
 		}
-		if err != nil && (errors.Is(err, cluster.ErrInactive) || errors.Is(err, coordination.ErrStaleEpoch) || errors.Is(err, coordination.ErrStaleWriter)) {
+		if err != nil && (errors.Is(err, ErrInactive) || errors.Is(err, coordination.ErrStaleEpoch) || errors.Is(err, coordination.ErrStaleWriter)) {
 			return report, err
 		}
 		if err != nil && w.noticeSequence == beforeNotice {
@@ -178,8 +177,8 @@ func (w *contentRepairWorker) reachableDomains(ctx context.Context, manifest con
 		}
 		up, known := cache[receipt.NodeID]
 		if !known {
-			if receipt.NodeID == w.peer.config.NodeID {
-				up = w.peer.runtime.Load().Status().Healthy
+			if receipt.NodeID == w.peer.Config.NodeID {
+				up = w.peer.Runtime.Load().Status().Healthy
 			} else {
 				probeCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 				progress, err := w.peer.client.Probe(probeCtx, member)
@@ -199,7 +198,7 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 	id := manifest.ID
 	label := fmt.Sprintf("项目 %s 的内容 %s", manifest.Object.Scope.ProjectID, id[:12])
 	scope, err := w.client.CheckLocal(ctx, manifest.Object.Scope.ProjectID)
-	if err != nil || scope != manifest.Object.Scope || scope.Level == "sealed" && scope.HomeNodeID != w.peer.config.NodeID {
+	if err != nil || scope != manifest.Object.Scope || scope.Level == "sealed" && scope.HomeNodeID != w.peer.Config.NodeID {
 		w.notice(ctx, id, "placement_blocked", label+" 的当前存储授权与原记录不一致，已停止补副本。")
 		return "placement_blocked", errors.Join(contentreplica.ErrPlacement, err)
 	}
@@ -228,10 +227,10 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 		w.notice(ctx, id, "healthy", "")
 		return "healthy", nil
 	}
-	if err := os.MkdirAll(filepath.Join(w.peer.config.DataDir, "content-repair"), 0o700); err != nil {
+	if err := os.MkdirAll(filepath.Join(w.peer.Config.DataDir, "content-repair"), 0o700); err != nil {
 		return "degraded", err
 	}
-	file, err := os.CreateTemp(filepath.Join(w.peer.config.DataDir, "content-repair"), "repair-*")
+	file, err := os.CreateTemp(filepath.Join(w.peer.Config.DataDir, "content-repair"), "repair-*")
 	if err != nil {
 		return "degraded", err
 	}
@@ -256,7 +255,7 @@ func (w *contentRepairWorker) repairOne(ctx context.Context, manifest contentrep
 			return "degraded", err
 		}
 	}
-	availability[w.peer.config.NodeID] = true
+	availability[w.peer.Config.NodeID] = true
 	live, err = w.reachableDomains(ctx, available, availability)
 	if err != nil {
 		return "degraded", err

@@ -18,27 +18,28 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/hashicorp/raft"
 )
 
 type enrollmentChildCommand struct {
-	Action    string                `json:"action"`
-	ID        string                `json:"id,omitempty"`
-	Request   PeerEnrollmentRequest `json:"request"`
-	Address   NetworkAddressRequest `json:"address"`
-	ReplyPath string                `json:"reply_path"`
+	Action    string                        `json:"action"`
+	ID        string                        `json:"id,omitempty"`
+	Request   cluster.PeerEnrollmentRequest `json:"request"`
+	Address   cluster.NetworkAddressRequest `json:"address"`
+	ReplyPath string                        `json:"reply_path"`
 }
 type enrollmentChildReply struct {
-	Error      string               `json:"error,omitempty"`
-	Plan       PeerEnrollmentPlan   `json:"plan"`
-	Payload    []byte               `json:"payload,omitempty"`
-	NodeID     string               `json:"node_id,omitempty"`
-	Result     PeerEnrollmentResult `json:"result"`
-	State      coordination.State   `json:"state"`
-	Worker     peerWorkerDescriptor `json:"worker"`
-	Generation uint64               `json:"generation"`
+	Error      string                       `json:"error,omitempty"`
+	Plan       cluster.PeerEnrollmentPlan   `json:"plan"`
+	Payload    []byte                       `json:"payload,omitempty"`
+	NodeID     string                       `json:"node_id,omitempty"`
+	Result     cluster.PeerEnrollmentResult `json:"result"`
+	State      coordination.State           `json:"state"`
+	Worker     cluster.PeerWorkerDescriptor `json:"worker"`
+	Generation uint64                       `json:"generation"`
 }
 
 // The control pipe models owner-confirmed local actions. Replication,
@@ -49,7 +50,7 @@ func TestClusterEnrollmentPeerProcess(t *testing.T) {
 		return
 	}
 	configPath := os.Getenv("STEVE_ENROLLMENT_TEST_CONFIG")
-	settings, err := loadClusterPeerConfig(defaultClusterConfigPath(configPath))
+	settings, err := cluster.LoadClusterPeerConfig(cluster.DefaultClusterConfigPath(configPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,7 +61,7 @@ func TestClusterEnrollmentPeerProcess(t *testing.T) {
 	raftConfig.CommitTimeout = 10 * time.Millisecond
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-	peer, err := openClusterPeer(ctx, clusterPeerOptions{ConfigPath: configPath, RaftConfig: raftConfig, PollInterval: 25 * time.Millisecond, TestFailureDomain: func() (string, error) { return "test-process-machine-" + settings.NodeID, nil }})
+	peer, err := openClusterPeer(ctx, cluster.PeerOptions{ConfigPath: configPath, RaftConfig: raftConfig, PollInterval: 25 * time.Millisecond, TestFailureDomain: func() (string, error) { return "test-process-machine-" + settings.NodeID, nil }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,13 +77,13 @@ func TestClusterEnrollmentPeerProcess(t *testing.T) {
 		switch command.Action {
 		case "ready":
 			var activeErr error
-			_, activeErr = peer.runtime.Load().WaitReady(callCtx)
+			_, activeErr = peer.Runtime.Load().WaitReady(callCtx)
 			err = activeErr
 		case "preview":
-			result.Plan, err = peer.previewPeerEnrollment(callCtx, command.Request, true)
+			result.Plan, err = peer.PreviewEnrollment(callCtx, command.Request, true)
 		case "prepare":
-			var prepared PeerEnrollmentPackage
-			prepared, err = peer.preparePeerEnrollment(callCtx, command.Request, command.ID, true)
+			var prepared cluster.PeerEnrollmentPackage
+			prepared, err = peer.PrepareEnrollment(callCtx, command.Request, command.ID, true)
 			result.NodeID, result.Payload = prepared.NodeID, prepared.Payload
 			result.Plan = prepared.Plan
 		case "complete":
@@ -90,7 +91,7 @@ func TestClusterEnrollmentPeerProcess(t *testing.T) {
 		case "address":
 			_, err = peer.SetNetworkAddress(callCtx, command.Address)
 		case "state":
-			result.State, err = peer.runtime.Load().ReadState(callCtx)
+			result.State, err = peer.Runtime.Load().ReadState(callCtx)
 		default:
 			err = errors.New("unknown test command")
 		}
@@ -99,8 +100,8 @@ func TestClusterEnrollmentPeerProcess(t *testing.T) {
 			result.Error = err.Error()
 		}
 		result.Worker = peer.Worker()
-		result.Generation = peer.runtime.Load().Status().Generation
-		if err := saveClusterJSON(command.ReplyPath, result, false); err != nil {
+		result.Generation = peer.Runtime.Load().Status().Generation
+		if err := cluster.SaveClusterJSON(command.ReplyPath, result, false); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -163,7 +164,7 @@ func (p *enrollmentProcess) call(command enrollmentChildCommand) enrollmentChild
 	}
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		data, err := readClusterPrivate(command.ReplyPath)
+		data, err := cluster.ReadClusterPrivate(command.ReplyPath)
 		if err == nil {
 			var result enrollmentChildReply
 			if err := json.Unmarshal(data, &result); err != nil {
@@ -182,7 +183,7 @@ func (p *enrollmentProcess) call(command enrollmentChildCommand) enrollmentChild
 	return enrollmentChildReply{}
 }
 
-func freeEnrollmentPorts(t *testing.T) (string, string) {
+func FreeEnrollmentPorts(t *testing.T) (string, string) {
 	t.Helper()
 	first, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -199,11 +200,11 @@ func freeEnrollmentPorts(t *testing.T) (string, string) {
 
 func waitEnrollmentStatus(t *testing.T, sourceConfig string, targetConfig string) {
 	t.Helper()
-	source, err := loadClusterPeerConfig(defaultClusterConfigPath(sourceConfig))
+	source, err := cluster.LoadClusterPeerConfig(cluster.DefaultClusterConfigPath(sourceConfig))
 	if err != nil {
 		t.Fatal(err)
 	}
-	identity, err := source.tlsOptions()
+	identity, err := source.TlsOptions()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +215,7 @@ func waitEnrollmentStatus(t *testing.T, sourceConfig string, targetConfig string
 	defer client.Close()
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
-		target, err := loadClusterPeerConfig(defaultClusterConfigPath(targetConfig))
+		target, err := cluster.LoadClusterPeerConfig(cluster.DefaultClusterConfigPath(targetConfig))
 		if err == nil {
 			status, err := client.Status(context.Background(), coordination.Member{NodeID: target.NodeID, APIAddress: target.PeerURL})
 			if err == nil && status.Healthy {
@@ -227,15 +228,15 @@ func waitEnrollmentStatus(t *testing.T, sourceConfig string, targetConfig string
 }
 
 func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
-	root := clusterPeerTestDir(t)
+	root := ClusterPeerTestDir(t)
 	options, _ := testPeerOptions(t, filepath.Join(root, "source"), nil)
-	settings, err := loadClusterPeerConfig(options.ClusterPath)
+	settings, err := cluster.LoadClusterPeerConfig(options.ClusterPath)
 	if err != nil {
 		t.Fatal(err)
 	}
 	settings.RaftBindAddress = "0.0.0.0:0"
 	settings.PeerBindAddress = "0.0.0.0:0"
-	if err := saveClusterJSON(options.ClusterPath, settings, false); err != nil {
+	if err := cluster.SaveClusterJSON(options.ClusterPath, settings, false); err != nil {
 		t.Fatal(err)
 	}
 	source := startEnrollmentProcess(t, options.ConfigPath)
@@ -253,7 +254,7 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 		if latest.Error != "" {
 			t.Fatal(latest.Error)
 		}
-		changed = source.call(enrollmentChildCommand{Action: "address", Address: NetworkAddressRequest{ID: fmt.Sprintf("source-verified-address-%d", attempt), ExpectedRevision: latest.State.Revision, Host: "localhost"}})
+		changed = source.call(enrollmentChildCommand{Action: "address", Address: cluster.NetworkAddressRequest{ID: fmt.Sprintf("source-verified-address-%d", attempt), ExpectedRevision: latest.State.Revision, Host: "localhost"}})
 		if !strings.Contains(changed.Error, coordination.ErrConflict.Error()) {
 			break
 		}
@@ -264,11 +265,11 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 	if changed.Worker != ready.Worker || changed.Generation != ready.Generation {
 		t.Fatal("address update restarted the worker or business application")
 	}
-	var importedNodes []peerImportResult
+	var importedNodes []cluster.PeerImportResult
 	var importedProcesses []*enrollmentProcess
 	for index, name := range []string{"peer-alpha", "peer-beta"} {
-		peerAddress, raftAddress := freeEnrollmentPorts(t)
-		request := PeerEnrollmentRequest{Alias: name, Name: name, PeerAddress: peerAddress, RaftAddress: raftAddress, SourceHost: "localhost", Level: "restricted"}
+		peerAddress, raftAddress := FreeEnrollmentPorts(t)
+		request := cluster.PeerEnrollmentRequest{Alias: name, Name: name, PeerAddress: peerAddress, RaftAddress: raftAddress, SourceHost: "localhost", Level: "restricted"}
 		preview := source.call(enrollmentChildCommand{Action: "preview", Request: request})
 		if preview.Error != "" {
 			t.Fatal(preview.Error)
@@ -280,25 +281,25 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 		if prepared.Error != "" {
 			t.Fatal(prepared.Error)
 		}
-		var bundle peerJoinPackage
+		var bundle cluster.PeerJoinPackage
 		if err := json.Unmarshal(prepared.Payload, &bundle); err != nil {
 			t.Fatal(err)
 		}
 		if len(bundle.PrivateKey) == 0 || len(bundle.CA) == 0 || bundle.NodeID == "" || bundle.ClusterID != before.State.ClusterID {
 			t.Fatal("private enrollment did not produce a complete node identity")
 		}
-		imported, err := importPeerPackage(prepared.Payload, filepath.Join(root, name))
+		imported, err := cluster.ImportPeerPackage(prepared.Payload, filepath.Join(root, name))
 		if err != nil {
 			t.Fatal(err)
 		}
-		repeated, err := importPeerPackage(prepared.Payload, filepath.Join(root, name))
+		repeated, err := cluster.ImportPeerPackage(prepared.Payload, filepath.Join(root, name))
 		if err != nil || repeated != imported {
 			t.Fatal("same operation import was not idempotent")
 		}
 		modified := bundle
 		modified.Name = "changed-name"
 		different, _ := json.Marshal(modified)
-		if _, err := importPeerPackage(different, filepath.Join(root, name)); err == nil {
+		if _, err := cluster.ImportPeerPackage(different, filepath.Join(root, name)); err == nil {
 			t.Fatal("same import ID accepted a different enrollment package")
 		}
 		if _, err := os.Stat(filepath.Join(root, name, "cluster", "ca-key.pem")); !errors.Is(err, os.ErrNotExist) {
@@ -333,7 +334,7 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	saved, err := loadClusterPeerConfig(defaultClusterConfigPath(source.configPath))
+	saved, err := cluster.LoadClusterPeerConfig(cluster.DefaultClusterConfigPath(source.configPath))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,39 +355,5 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 	}
 	if activated := importedProcesses[0].call(enrollmentChildCommand{Action: "ready"}); activated.Error != "" {
 		t.Fatalf("selected peer did not activate its full application: %s", activated.Error)
-	}
-}
-
-func TestPeerEnrollmentReviewChangesFailBeforeIssuingIdentity(t *testing.T) {
-	options, _ := testPeerOptions(t, clusterPeerTestDir(t), nil)
-	var starts atomic.Int32
-	options.Activate = testPeerApplication(t, &starts)
-	peer := startTestPeer(t, options)
-	waitPeerReady(t, peer)
-	peerAddress, raftAddress := freeEnrollmentPorts(t)
-	request := PeerEnrollmentRequest{Name: "reviewed-peer", PeerAddress: peerAddress, RaftAddress: raftAddress, SourceHost: "127.0.0.1", Level: "restricted"}
-	plan, err := peer.previewPeerEnrollment(t.Context(), request, true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request = plan.Request
-	request.ExpectedPlanHash = plan.ReviewID
-	request.Level = "sealed"
-	if _, err := peer.preparePeerEnrollment(t.Context(), request, "changed-plan", true); !errors.Is(err, coordination.ErrConflict) {
-		t.Fatalf("unreviewed plan change accepted: %v", err)
-	}
-	if _, err := peer.loadEnrollment("changed-plan"); !errors.Is(err, os.ErrNotExist) {
-		t.Fatal("unreviewed change created a node identity")
-	}
-}
-
-func TestPeerEnrollmentPhysicalIdentityIsStableAndNotInstallationSpecific(t *testing.T) {
-	first, err := physicalFailureDomain()
-	if err != nil {
-		t.Skip("OS machine identity unavailable")
-	}
-	second, err := physicalFailureDomain()
-	if err != nil || first != second || len(first) != len("machine-")+64 {
-		t.Fatal("physical failure domain is not a stable opaque machine hash")
 	}
 }

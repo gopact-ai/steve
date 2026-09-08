@@ -1,4 +1,4 @@
-package main
+package cluster
 
 import (
 	"bufio"
@@ -7,16 +7,13 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
 	"os"
-	"os/signal"
 	"path"
 	"path/filepath"
 	"sort"
@@ -24,18 +21,15 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/adapter"
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
-	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/desktop"
-	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	webassets "github.com/gopact-ai/steve/internal/readmodel/web"
@@ -50,27 +44,33 @@ const clusterWorkerPath = "/cluster/worker"
 
 const clusterContentPath = "/cluster/content"
 
-type peerApplicationEndpoint struct {
+type PeerApplicationEndpoint struct {
 	URL, Token string
 	Generation uint64
 	Admin      *adminsvc.Service
 }
 
-type peerWorkerDescriptor struct {
+type PeerWorkerDescriptor struct {
 	Name    string `json:"name"`
 	Address string `json:"address"`
 	Token   string `json:"token"`
 }
 
-type clusterPeerOptions struct {
-	ConfigPath  string
-	ClusterPath string
+type ApplicationServer interface {
+	URL() string
+}
+
+type PeerOptions struct {
+	StartApplication func(context.Context, *Peer, Activation, func(PeerApplicationEndpoint) error) (Deactivate, error)
+	SSHHandler       func(SSHControl, string, string) (http.Handler, error)
+	ConfigPath       string
+	ClusterPath      string
 	// Activate is injectable for integration tests and alternate application
 	// runners. The endpoint must be loopback and stop must join every user of
 	// the activation's ledger before returning.
-	Activate             func(context.Context, cluster.Activation, func(peerApplicationEndpoint) error) (cluster.Deactivate, error)
-	ConfigureApplication func(*config.Config, cluster.Activation) error
-	ApplicationReady     func(*adminsvc.Service, *httpapi.Server, cluster.Activation) error
+	Activate             func(context.Context, Activation, func(PeerApplicationEndpoint) error) (Deactivate, error)
+	ConfigureApplication func(*config.Config, Activation) error
+	ApplicationReady     func(*adminsvc.Service, ApplicationServer, Activation) error
 	RaftConfig           *raft.Config
 	PollInterval         time.Duration
 	AllowAutoFailover    bool
@@ -79,21 +79,21 @@ type clusterPeerOptions struct {
 	ContentRepairInterval time.Duration
 }
 
-type clusterPeer struct {
+type Peer struct {
 	localSSH          *sshconnect.Service
-	options           clusterPeerOptions
-	config            clusterPeerConfig
-	runtime           atomic.Pointer[cluster.Runtime]
+	Options           PeerOptions
+	Config            PeerConfig
+	Runtime           atomic.Pointer[Runtime]
 	client            *coordination.Client
 	identity          coordination.TLSOptions
-	ownerToken        string
-	uiToken           string
-	uiURL             string
+	OwnerToken        string
+	UIToken           string
+	UiURL             string
 	peerServer        *http.Server
 	uiServer          *http.Server
 	localTransport    *http.Transport
-	mu                sync.RWMutex
-	application       *peerApplicationEndpoint
+	Mu                sync.RWMutex
+	Application       *PeerApplicationEndpoint
 	peerTransports    map[string]*http.Transport
 	ctx               context.Context
 	cancel            context.CancelFunc
@@ -101,10 +101,10 @@ type clusterPeer struct {
 	closeErr          error
 	unpublish         func()
 	unlock            func()
-	errors            chan error
+	Errors            chan error
 	worker            *node.Server
 	workerDone        chan error
-	workerDescriptor  peerWorkerDescriptor
+	WorkerDescriptor  PeerWorkerDescriptor
 	workerListener    net.Listener
 	tunnels           sync.WaitGroup
 	closing           bool
@@ -118,59 +118,11 @@ type clusterPeer struct {
 	contentOps        sync.WaitGroup
 }
 
-func maybeManagedPeer(args []string) (bool, error) {
-	flags := flag.NewFlagSet("run", flag.ContinueOnError)
-	flags.SetOutput(io.Discard)
-	configPath := flags.String("config", "config.json", "configuration")
-	if err := flags.Parse(args); err != nil {
-		return false, nil
-	}
-	path := defaultClusterConfigPath(*configPath)
-	_, err := os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		if !desktop.IsManagedConfig(*configPath) {
-			return false, nil
-		}
-		path, err = prepareDesktopCluster(*configPath)
-	}
-	if err != nil {
-		return true, err
-	}
-	return true, peerCmd([]string{"--config", *configPath, "--cluster-config", path})
-}
-
-func peerCmd(args []string) error {
-	flags := flag.NewFlagSet("peer", flag.ContinueOnError)
-	configPath := flags.String("config", "config.json", "application configuration")
-	clusterPath := flags.String("cluster-config", "", "private cluster configuration sidecar")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() != 0 {
-		return errors.New("unexpected peer arguments")
-	}
-	if *clusterPath == "" {
-		*clusterPath = defaultClusterConfigPath(*configPath)
-	}
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	peer, err := openClusterPeer(ctx, clusterPeerOptions{ConfigPath: *configPath, ClusterPath: *clusterPath, AllowAutoFailover: true})
-	if err != nil {
-		return err
-	}
-	log.Printf("steve: cluster peer %s UI available at %s", peer.config.NodeID, peer.uiURL)
-	select {
-	case <-ctx.Done():
-	case err = <-peer.errors:
-	}
-	return errors.Join(err, peer.Close())
-}
-
-func openClusterPeer(parent context.Context, options clusterPeerOptions) (peer *clusterPeer, runErr error) {
+func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr error) {
 	if options.ClusterPath == "" {
-		options.ClusterPath = defaultClusterConfigPath(options.ConfigPath)
+		options.ClusterPath = DefaultClusterConfigPath(options.ConfigPath)
 	}
-	settings, err := loadClusterPeerConfig(options.ClusterPath)
+	settings, err := LoadClusterPeerConfig(options.ClusterPath)
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +148,7 @@ func openClusterPeer(parent context.Context, options clusterPeerOptions) (peer *
 	if len(application.Gateway.ReadModelToken) < 32 {
 		return nil, errors.New("cluster UI requires a private access token of at least 32 characters")
 	}
-	owner, err := readClusterPrivate(settings.OwnerTokenFile)
+	owner, err := ReadClusterPrivate(settings.OwnerTokenFile)
 	if err != nil {
 		return nil, err
 	}
@@ -208,7 +160,7 @@ func openClusterPeer(parent context.Context, options clusterPeerOptions) (peer *
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	p := &clusterPeer{options: options, config: settings, ownerToken: string(owner), uiToken: application.Gateway.ReadModelToken, ctx: ctx, cancel: cancel, unlock: unlock, errors: make(chan error, 1), peerTransports: map[string]*http.Transport{}, localTransport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, IdleConnTimeout: 30 * time.Second}}
+	p := &Peer{Options: options, Config: settings, OwnerToken: string(owner), UIToken: application.Gateway.ReadModelToken, ctx: ctx, cancel: cancel, unlock: unlock, Errors: make(chan error, 1), peerTransports: map[string]*http.Transport{}, localTransport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, IdleConnTimeout: 30 * time.Second}}
 	p.workerPrincipals = map[string]*workerPrincipal{}
 	defer func() {
 		if runErr != nil {
@@ -245,37 +197,37 @@ func openClusterPeer(parent context.Context, options clusterPeerOptions) (peer *
 			uiListener.Close()
 		}
 	}()
-	p.config.RaftBindAddress = raftListener.Addr().String()
-	p.config.PeerBindAddress = peerListener.Addr().String()
-	p.config.RaftAddress = boundAdvertiseAddress(settings.RaftAddress, raftListener.Addr().String())
-	p.config.PeerAddress = boundAdvertiseAddress(settings.PeerAddress, peerListener.Addr().String())
-	p.config.UIAddress = uiListener.Addr().String()
-	if p.config.PeerURL == "" {
-		p.config.PeerURL = "https://" + p.config.PeerAddress
-	} else if advertised, err := url.Parse(p.config.PeerURL); err == nil && advertised.Port() == "0" {
-		_, port, _ := net.SplitHostPort(p.config.PeerAddress)
+	p.Config.RaftBindAddress = raftListener.Addr().String()
+	p.Config.PeerBindAddress = peerListener.Addr().String()
+	p.Config.RaftAddress = boundAdvertiseAddress(settings.RaftAddress, raftListener.Addr().String())
+	p.Config.PeerAddress = boundAdvertiseAddress(settings.PeerAddress, peerListener.Addr().String())
+	p.Config.UIAddress = uiListener.Addr().String()
+	if p.Config.PeerURL == "" {
+		p.Config.PeerURL = "https://" + p.Config.PeerAddress
+	} else if advertised, err := url.Parse(p.Config.PeerURL); err == nil && advertised.Port() == "0" {
+		_, port, _ := net.SplitHostPort(p.Config.PeerAddress)
 		advertised.Host = net.JoinHostPort(advertised.Hostname(), port)
-		p.config.PeerURL = advertised.String()
+		p.Config.PeerURL = advertised.String()
 	}
-	p.raftAdvertisement.Store(p.config.RaftAddress)
-	p.peerAdvertisement.Store(p.config.PeerURL)
-	p.uiURL = "http://" + p.config.UIAddress
-	if err := saveClusterJSON(options.ClusterPath, p.config, false); err != nil {
+	p.raftAdvertisement.Store(p.Config.RaftAddress)
+	p.peerAdvertisement.Store(p.Config.PeerURL)
+	p.UiURL = "http://" + p.Config.UIAddress
+	if err := SaveClusterJSON(options.ClusterPath, p.Config, false); err != nil {
 		return nil, err
 	}
-	if err := desktop.PinAddress(options.ConfigPath, application, p.uiURL); err != nil {
+	if err := desktop.PinAddress(options.ConfigPath, application, p.UiURL); err != nil {
 		return nil, err
 	}
-	identity, err := p.config.tlsOptions()
+	identity, err := p.Config.TlsOptions()
 	if err != nil {
 		return nil, err
 	}
 	identity.AuthorizePeer = p.authorizedRaftPeer
 	p.identity = identity
-	seeds := append([]coordination.Member(nil), p.config.Seeds...)
-	seeds = append(seeds, coordination.Member{NodeID: p.config.NodeID, Address: p.config.RaftAddress, APIAddress: p.config.PeerURL, Name: p.config.Name})
+	seeds := append([]coordination.Member(nil), p.Config.Seeds...)
+	seeds = append(seeds, coordination.Member{NodeID: p.Config.NodeID, Address: p.Config.RaftAddress, APIAddress: p.Config.PeerURL, Name: p.Config.Name})
 	p.client, err = coordination.NewClient(coordination.ClientConfig{TLS: identity, Members: seeds, ControlHeaders: func(context.Context, string) (http.Header, error) {
-		return http.Header{"Authorization": []string{"Bearer " + p.ownerToken}}, nil
+		return http.Header{"Authorization": []string{"Bearer " + p.OwnerToken}}, nil
 	}})
 	if err != nil {
 		return nil, err
@@ -284,11 +236,11 @@ func openClusterPeer(parent context.Context, options clusterPeerOptions) (peer *
 	if err != nil {
 		return nil, err
 	}
-	runtime, err := cluster.Open(cluster.Config{LedgerDir: filepath.Dir(application.Gateway.StatePath), Coordination: coordination.Config{ClusterID: p.config.ClusterID, NodeID: p.config.NodeID, FailureDomain: p.config.FailureDomain, StorageLevel: p.config.StorageLevel, DataDir: filepath.Join(p.config.DataDir, "raft"), APIAddress: p.config.PeerURL, Name: p.config.Name, Bootstrap: p.config.Bootstrap, StreamLayer: stream, Probe: p.client.Probe, ValidateJoin: p.validateJoiningNetwork, ValidateAddress: p.validateMemberAddress, AuthorizeReplica: p.authorizeLedgerReplica, RaftConfig: options.RaftConfig}, Client: p.client, Activate: p.activate, PollInterval: options.PollInterval})
+	runtime, err := Open(Config{LedgerDir: filepath.Dir(application.Gateway.StatePath), Coordination: coordination.Config{ClusterID: p.Config.ClusterID, NodeID: p.Config.NodeID, FailureDomain: p.Config.FailureDomain, StorageLevel: p.Config.StorageLevel, DataDir: filepath.Join(p.Config.DataDir, "raft"), APIAddress: p.Config.PeerURL, Name: p.Config.Name, Bootstrap: p.Config.Bootstrap, StreamLayer: stream, Probe: p.client.Probe, ValidateJoin: p.validateJoiningNetwork, ValidateAddress: p.validateMemberAddress, AuthorizeReplica: p.authorizeLedgerReplica, RaftConfig: options.RaftConfig}, Client: p.client, Activate: p.activate, PollInterval: options.PollInterval})
 	if err != nil {
 		return nil, err
 	}
-	p.runtime.Store(runtime)
+	p.Runtime.Store(runtime)
 	serverTLS, err := identity.ServerConfig()
 	if err != nil {
 		return nil, err
@@ -305,31 +257,31 @@ func openClusterPeer(parent context.Context, options clusterPeerOptions) (peer *
 	p.uiServer = &http.Server{Handler: http.HandlerFunc(p.serveUI), ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
 	go p.serve(p.peerServer, tls.NewListener(peerListener, serverTLS))
 	go p.serve(p.uiServer, uiListener)
-	p.unpublish, err = desktop.PublishEndpoint(options.ConfigPath, p.uiURL)
+	p.unpublish, err = desktop.PublishEndpoint(options.ConfigPath, p.UiURL)
 	if err != nil {
 		return nil, err
 	}
 	return p, nil
 }
 
-func (p *clusterPeer) serve(server *http.Server, listener net.Listener) {
+func (p *Peer) serve(server *http.Server, listener net.Listener) {
 	if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		select {
-		case p.errors <- err:
+		case p.Errors <- err:
 		default:
 		}
 	}
 }
 
-func (p *clusterPeer) Close() error {
+func (p *Peer) Close() error {
 	p.closeOnce.Do(func() {
-		p.mu.Lock()
+		p.Mu.Lock()
 		p.closing = true
 		var workerConnections []*authenticatedWorkerConnection
 		for _, principal := range p.workerPrincipals {
 			workerConnections = append(workerConnections, principal.Connection)
 		}
-		p.mu.Unlock()
+		p.Mu.Unlock()
 		p.cancel()
 		for _, connection := range workerConnections {
 			connection.Close()
@@ -337,17 +289,17 @@ func (p *clusterPeer) Close() error {
 		if p.uiServer != nil {
 			p.closeErr = errors.Join(p.closeErr, p.uiServer.Close())
 		}
-		p.mu.Lock()
+		p.Mu.Lock()
 		sshService := p.localSSH
 		p.localSSH = nil
-		p.mu.Unlock()
+		p.Mu.Unlock()
 		if sshService != nil {
 			p.closeErr = errors.Join(p.closeErr, sshService.Close())
 		}
 		if p.peerServer != nil {
 			p.closeErr = errors.Join(p.closeErr, p.peerServer.Close())
 		}
-		if runtime := p.runtime.Load(); runtime != nil {
+		if runtime := p.Runtime.Load(); runtime != nil {
 			p.closeErr = errors.Join(p.closeErr, runtime.Close())
 		}
 		if p.workerDone != nil {
@@ -362,11 +314,11 @@ func (p *clusterPeer) Close() error {
 			p.client.Close()
 		}
 		p.localTransport.CloseIdleConnections()
-		p.mu.Lock()
+		p.Mu.Lock()
 		for _, transport := range p.peerTransports {
 			transport.CloseIdleConnections()
 		}
-		p.mu.Unlock()
+		p.Mu.Unlock()
 		if p.unpublish != nil {
 			p.unpublish()
 		}
@@ -377,21 +329,21 @@ func (p *clusterPeer) Close() error {
 	return p.closeErr
 }
 
-func (p *clusterPeer) authorizedRaftPeer(identity coordination.Identity) bool {
-	if identity.ClusterID != p.config.ClusterID {
+func (p *Peer) authorizedRaftPeer(identity coordination.Identity) bool {
+	if identity.ClusterID != p.Config.ClusterID {
 		return false
 	}
-	if runtime := p.runtime.Load(); runtime != nil {
+	if runtime := p.Runtime.Load(); runtime != nil {
 		peers := runtime.TransportPeers()
 		if len(peers) > 0 {
 			_, ok := peers[identity.NodeID]
 			return ok
 		}
 	}
-	if identity.NodeID == p.config.NodeID {
+	if identity.NodeID == p.Config.NodeID {
 		return true
 	}
-	for _, seed := range p.config.Seeds {
+	for _, seed := range p.Config.Seeds {
 		if seed.NodeID == identity.NodeID {
 			return true
 		}
@@ -399,8 +351,8 @@ func (p *clusterPeer) authorizedRaftPeer(identity coordination.Identity) bool {
 	return false
 }
 
-func (p *clusterPeer) resolveRaftPeer(address raft.ServerAddress) string {
-	if runtime := p.runtime.Load(); runtime != nil {
+func (p *Peer) resolveRaftPeer(address raft.ServerAddress) string {
+	if runtime := p.Runtime.Load(); runtime != nil {
 		for id, peerAddress := range runtime.TransportPeers() {
 			if peerAddress == string(address) {
 				return id
@@ -410,20 +362,20 @@ func (p *clusterPeer) resolveRaftPeer(address raft.ServerAddress) string {
 	return p.client.PeerID(address)
 }
 
-func (p *clusterPeer) authorizeControl(r *http.Request, identity coordination.Identity, _ string) (string, error) {
-	if identity.ClusterID != p.config.ClusterID || !constantToken(r.Header.Get("Authorization"), p.ownerToken) {
+func (p *Peer) authorizeControl(r *http.Request, identity coordination.Identity, _ string) (string, error) {
+	if identity.ClusterID != p.Config.ClusterID || !ConstantToken(r.Header.Get("Authorization"), p.OwnerToken) {
 		return "", errors.New("owner authorization denied")
 	}
 	return "owner", nil
 }
 
-func constantToken(header, want string) bool {
+func ConstantToken(header, want string) bool {
 	prefix := "Bearer "
 	return strings.HasPrefix(header, prefix) && subtle.ConstantTimeCompare([]byte(strings.TrimPrefix(header, prefix)), []byte(want)) == 1
 }
 
-func (p *clusterPeer) activate(ctx context.Context, activation cluster.Activation) (cluster.Deactivate, error) {
-	ready := func(endpoint peerApplicationEndpoint) error {
+func (p *Peer) activate(ctx context.Context, activation Activation) (Deactivate, error) {
+	ready := func(endpoint PeerApplicationEndpoint) error {
 		parsed, err := url.Parse(endpoint.URL)
 		if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Path != "" || len(endpoint.Token) < 32 {
 			return errors.New("business application must expose a private loopback endpoint")
@@ -432,24 +384,24 @@ func (p *clusterPeer) activate(ctx context.Context, activation cluster.Activatio
 			return err
 		}
 		endpoint.Generation = activation.Generation
-		p.mu.Lock()
-		p.application = &endpoint
-		p.mu.Unlock()
+		p.Mu.Lock()
+		p.Application = &endpoint
+		p.Mu.Unlock()
 		return nil
 	}
-	var stop cluster.Deactivate
+	var stop Deactivate
 	var err error
-	if p.options.Activate != nil {
-		stop, err = p.options.Activate(ctx, activation, ready)
+	if p.Options.Activate != nil {
+		stop, err = p.Options.Activate(ctx, activation, ready)
 	} else {
-		stop, err = p.startApplication(ctx, activation, ready)
+		stop, err = p.Options.StartApplication(ctx, p, activation, ready)
 	}
 	return func(stopCtx context.Context) error {
-		p.mu.Lock()
-		if p.application != nil && p.application.Generation == activation.Generation {
-			p.application = nil
+		p.Mu.Lock()
+		if p.Application != nil && p.Application.Generation == activation.Generation {
+			p.Application = nil
 		}
-		p.mu.Unlock()
+		p.Mu.Unlock()
 		if stop != nil {
 			return stop(stopCtx)
 		}
@@ -457,116 +409,17 @@ func (p *clusterPeer) activate(ctx context.Context, activation cluster.Activatio
 	}, err
 }
 
-func (p *clusterPeer) startApplication(ctx context.Context, activation cluster.Activation, ready func(peerApplicationEndpoint) error) (cluster.Deactivate, error) {
-	token, err := clusterRandomToken()
-	if err != nil {
-		return nil, err
-	}
-	started := make(chan struct{})
-	done := make(chan struct{})
-	var runErr error
-	stopRepair := func() {}
-	var repairObserve contentRepairObservation
-	stateConfig := newApplicationConfiguration(ctx, activation, p.Worker())
-	content, err := p.contentReplicator(activation)
-	if err != nil {
-		return nil, err
-	}
-	environment := &applicationEnvironment{Ledger: activation.Ledger, NodeID: activation.NodeID, Coordination: p, Configure: func(cfg *config.Config) error {
-		cfg.Gateway.HubID = p.config.ClusterID
-		cfg.Harnesses = map[string]config.Harness{}
-		if cfg.Nodes == nil {
-			cfg.Nodes = map[string]config.Node{}
-		}
-		cfg.Nodes[p.workerDescriptor.Name] = config.Node{Addr: p.workerDescriptor.Address, Token: p.workerDescriptor.Token}
-		if err := stateConfig.Configure(cfg); err != nil {
-			return err
-		}
-		if p.options.ConfigureApplication != nil {
-			return p.options.ConfigureApplication(cfg, activation)
-		}
-		return nil
-	}, Ready: func(admin *adminsvc.Service, dashboard *httpapi.Server) error {
-		if admin.View != nil {
-			repairObserve = admin.View.Observe
-		}
-		if p.options.ApplicationReady != nil {
-			if err := p.options.ApplicationReady(admin, dashboard, activation); err != nil {
-				return err
-			}
-		}
-		if err := ready(peerApplicationEndpoint{URL: dashboard.URL(), Token: token, Admin: admin}); err != nil {
-			return err
-		}
-		close(started)
-		return nil
-	}}
-	environment.HTTPConfig = &httpapi.ServerConfig{Addr: "127.0.0.1:0", Token: token}
-	environment.ConfigureNodes = p.ConfigureNodes
-	environment.WriteConfig = stateConfig.Save
-	environment.WriteConfigContext = stateConfig.SaveContext
-	environment.ConfigurationRevision = stateConfig.Revision
-	environment.SessionBinder = newApplicationSessionBinder(activation)
-	environment.SessionAuthorizer = p.applicationSessionAuthorizer(activation)
-	environment.Content = content
-	environment.Fail = func(err error) { p.applicationStoreFailure(activation, err) }
-	go func() {
-		runErr = serveApplication(ctx, []string{"--config", p.options.ConfigPath}, environment)
-		if ctx.Err() != nil && applicationAuthorityError(runErr) {
-			runErr = ctx.Err()
-		}
-		var restart *adminsvc.RestartExit
-		expectedRestart := errors.As(runErr, &restart)
-		if expectedRestart && ctx.Err() == nil {
-			runErr = activation.Runtime.RestartGeneration(activation.Generation)
-		} else if expectedRestart {
-			runErr = nil
-		}
-		if runErr == nil && ctx.Err() == nil && !expectedRestart {
-			runErr = errors.New("business application exited unexpectedly")
-		}
-		close(done)
-		if ctx.Err() == nil && !expectedRestart {
-			if applicationAuthorityError(runErr) {
-				_ = activation.Runtime.RequestRebuild(activation.Generation, runErr)
-			} else {
-				activation.Runtime.FailGeneration(activation.Generation, runErr)
-			}
-		}
-	}()
-	stop := func(context.Context) error {
-		stopRepair()
-		<-done
-		var restart *adminsvc.RestartExit
-		if errors.Is(runErr, context.Canceled) || errors.As(runErr, &restart) || ctx.Err() != nil && applicationAuthorityError(runErr) {
-			return nil
-		}
-		return runErr
-	}
-	select {
-	case <-started:
-		if ctx.Err() == nil {
-			stopRepair = p.startContentRepair(activation, repairObserve)
-		}
-		return stop, nil
-	case <-done:
-		return stop, runErr
-	case <-ctx.Done():
-		return stop, ctx.Err()
-	}
-}
-
-func (p *clusterPeer) applicationStoreFailure(active cluster.Activation, cause error) {
+func (p *Peer) ApplicationStoreFailure(active Activation, cause error) {
 	if cause != nil {
 		_ = active.Runtime.RequestRebuild(active.Generation, cause)
 	}
 }
 
-func applicationAuthorityError(err error) bool {
-	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, cluster.ErrInactive) || errors.Is(err, coordination.ErrUnavailable) || errors.Is(err, coordination.ErrNotLeader) || errors.Is(err, coordination.ErrNotCoordinator) || errors.Is(err, coordination.ErrConflict) || errors.Is(err, coordination.ErrStaleEpoch) || errors.Is(err, coordination.ErrStaleWriter)
+func ApplicationAuthorityError(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, ErrInactive) || errors.Is(err, coordination.ErrUnavailable) || errors.Is(err, coordination.ErrNotLeader) || errors.Is(err, coordination.ErrNotCoordinator) || errors.Is(err, coordination.ErrConflict) || errors.Is(err, coordination.ErrStaleEpoch) || errors.Is(err, coordination.ErrStaleWriter)
 }
 
-func (p *clusterPeer) serveUI(w http.ResponseWriter, r *http.Request) {
+func (p *Peer) serveUI(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/cluster/") || strings.HasPrefix(r.URL.Path, coordination.RPCPath) {
 		http.NotFound(w, r)
 		return
@@ -575,12 +428,12 @@ func (p *clusterPeer) serveUI(w http.ResponseWriter, r *http.Request) {
 		p.staticPage(w, r)
 		return
 	}
-	if !constantToken(r.Header.Get("Authorization"), p.uiToken) && subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("token")), []byte(p.uiToken)) != 1 {
+	if !ConstantToken(r.Header.Get("Authorization"), p.UIToken) && subtle.ConstantTimeCompare([]byte(r.URL.Query().Get("token")), []byte(p.UIToken)) != 1 {
 		http.Error(w, "unauthorized", http.StatusUnauthorized)
 		return
 	}
 	if r.URL.Path == "/console/versions" && r.Method == http.MethodGet {
-		writePeerJSON(w, consoleapi.Versions{Hub: nodewire.Version(), HubID: p.config.NodeID, ProtocolMin: nodewire.ProtocolMin, ProtocolMax: nodewire.ProtocolVersion, Nodes: []consoleapi.VersionNode{}, Peers: []consoleapi.HubPeerInfo{}})
+		WriteJSON(w, consoleapi.Versions{Hub: nodewire.Version(), HubID: p.Config.NodeID, ProtocolMin: nodewire.ProtocolMin, ProtocolMax: nodewire.ProtocolVersion, Nodes: []consoleapi.VersionNode{}, Peers: []consoleapi.HubPeerInfo{}})
 		return
 	}
 	if strings.HasPrefix(r.URL.Path, "/console/coordination") {
@@ -599,7 +452,7 @@ func (p *clusterPeer) serveUI(w http.ResponseWriter, r *http.Request) {
 		p.staticPage(w, r)
 		return
 	}
-	runtime := p.runtime.Load()
+	runtime := p.Runtime.Load()
 	if runtime == nil {
 		http.Error(w, "coordination is starting", http.StatusServiceUnavailable)
 		return
@@ -608,27 +461,27 @@ func (p *clusterPeer) serveUI(w http.ResponseWriter, r *http.Request) {
 	state, err := runtime.ReadState(ctx)
 	cancel()
 	if err != nil {
-		peerHTTPError(w, err)
+		HTTPError(w, err)
 		return
 	}
-	if state.Coordinator.NodeID == p.config.NodeID {
+	if state.Coordinator.NodeID == p.Config.NodeID {
 		p.proxyLocalApplication(w, r, state.Coordinator.Epoch)
 		return
 	}
 	member, ok := state.Members[state.Coordinator.NodeID]
 	if !ok {
-		peerHTTPError(w, coordination.ErrUnavailable)
+		HTTPError(w, coordination.ErrUnavailable)
 		return
 	}
 	transport, origin, err := p.remoteTransport(member)
 	if err != nil {
-		peerHTTPError(w, err)
+		HTTPError(w, err)
 		return
 	}
-	p.proxy(w, r, origin, clusterApplicationPath, p.ownerToken, state.Coordinator.Epoch, transport)
+	p.proxy(w, r, origin, clusterApplicationPath, p.OwnerToken, state.Coordinator.Epoch, transport)
 }
 
-func (p *clusterPeer) servePeerApplication(w http.ResponseWriter, r *http.Request) {
+func (p *Peer) servePeerApplication(w http.ResponseWriter, r *http.Request) {
 	if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.PeerCertificates) == 0 {
 		http.Error(w, "mutual TLS is required", http.StatusUnauthorized)
 		return
@@ -653,38 +506,38 @@ func (p *clusterPeer) servePeerApplication(w http.ResponseWriter, r *http.Reques
 	p.proxyLocalApplication(w, request, epoch)
 }
 
-func (p *clusterPeer) proxyLocalApplication(w http.ResponseWriter, r *http.Request, epoch uint64) {
-	runtime := p.runtime.Load()
+func (p *Peer) proxyLocalApplication(w http.ResponseWriter, r *http.Request, epoch uint64) {
+	runtime := p.Runtime.Load()
 	if runtime == nil {
-		peerHTTPError(w, coordination.ErrUnavailable)
+		HTTPError(w, coordination.ErrUnavailable)
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
 	active, err := runtime.WaitReady(ctx)
 	cancel()
 	if err != nil {
-		peerHTTPError(w, err)
+		HTTPError(w, err)
 		return
 	}
 	if active.Assignment.Epoch != epoch {
-		peerHTTPError(w, coordination.ErrStaleEpoch)
+		HTTPError(w, coordination.ErrStaleEpoch)
 		return
 	}
-	p.mu.RLock()
-	var target peerApplicationEndpoint
-	if p.application != nil {
-		target = *p.application
+	p.Mu.RLock()
+	var target PeerApplicationEndpoint
+	if p.Application != nil {
+		target = *p.Application
 	}
-	p.mu.RUnlock()
+	p.Mu.RUnlock()
 	if target.URL == "" || target.Generation != active.Generation {
-		peerHTTPError(w, coordination.ErrUnavailable)
+		HTTPError(w, coordination.ErrUnavailable)
 		return
 	}
 	origin, _ := url.Parse(target.URL)
 	p.proxy(w, r, origin, "", target.Token, epoch, p.localTransport)
 }
 
-func (p *clusterPeer) proxy(w http.ResponseWriter, r *http.Request, origin *url.URL, prefix, token string, epoch uint64, transport http.RoundTripper) {
+func (p *Peer) proxy(w http.ResponseWriter, r *http.Request, origin *url.URL, prefix, token string, epoch uint64, transport http.RoundTripper) {
 	proxy := httputil.ReverseProxy{Transport: transport, FlushInterval: -1, Rewrite: func(request *httputil.ProxyRequest) {
 		query := request.In.URL.Query()
 		query.Del("token")
@@ -709,13 +562,13 @@ func (p *clusterPeer) proxy(w http.ResponseWriter, r *http.Request, origin *url.
 	proxy.ServeHTTP(w, r)
 }
 
-func (p *clusterPeer) remoteTransport(member coordination.Member) (*http.Transport, *url.URL, error) {
+func (p *Peer) remoteTransport(member coordination.Member) (*http.Transport, *url.URL, error) {
 	origin, err := url.Parse(member.APIAddress)
 	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
 		return nil, nil, errors.New("coordinator has no valid HTTPS peer endpoint")
 	}
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	p.Mu.Lock()
+	defer p.Mu.Unlock()
 	key := member.NodeID + "\x00" + member.APIAddress
 	transport := p.peerTransports[key]
 	if transport == nil {
@@ -729,7 +582,7 @@ func (p *clusterPeer) remoteTransport(member coordination.Member) (*http.Transpo
 	return transport, origin, nil
 }
 
-func (p *clusterPeer) staticPage(w http.ResponseWriter, r *http.Request) {
+func (p *Peer) staticPage(w http.ResponseWriter, r *http.Request) {
 	root, err := webassets.Files()
 	if err != nil {
 		http.Error(w, "console not built", http.StatusServiceUnavailable)
@@ -755,12 +608,12 @@ func (p *clusterPeer) staticPage(w http.ResponseWriter, r *http.Request) {
 	http.ServeFileFS(w, r, root, name)
 }
 
-func (p *clusterPeer) Join(ctx context.Context, request coordination.JoinRequest) (coordination.Result, error) {
-	return p.runtime.Load().Join(ctx, request)
+func (p *Peer) Join(ctx context.Context, request coordination.JoinRequest) (coordination.Result, error) {
+	return p.Runtime.Load().Join(ctx, request)
 }
 
-func (p *clusterPeer) Coordination(ctx context.Context) (consoleapi.CoordinationView, error) {
-	runtime := p.runtime.Load()
+func (p *Peer) Coordination(ctx context.Context) (consoleapi.CoordinationView, error) {
+	runtime := p.Runtime.Load()
 	if runtime == nil {
 		return consoleapi.CoordinationView{}, coordination.ErrUnavailable
 	}
@@ -769,7 +622,7 @@ func (p *clusterPeer) Coordination(ctx context.Context) (consoleapi.Coordination
 	if err != nil {
 		state = runtime.Status().State
 	}
-	view := consoleapi.CoordinationView{Enabled: true, ClusterID: state.ClusterID, NodeID: p.config.NodeID, CoordinatorID: state.Coordinator.NodeID, Epoch: state.Coordinator.Epoch, Revision: state.Revision, Authoritative: authoritative, ObservedAt: time.Now().UTC(), AutoFailover: state.AutoFailover, Nodes: []consoleapi.CoordinatorNode{}, Events: []consoleapi.CoordinatorEvent{}}
+	view := consoleapi.CoordinationView{Enabled: true, ClusterID: state.ClusterID, NodeID: p.Config.NodeID, CoordinatorID: state.Coordinator.NodeID, Epoch: state.Coordinator.Epoch, Revision: state.Revision, Authoritative: authoritative, ObservedAt: time.Now().UTC(), AutoFailover: state.AutoFailover, Nodes: []consoleapi.CoordinatorNode{}, Events: []consoleapi.CoordinatorEvent{}}
 	if !authoritative {
 		view.Reason = "暂时无法与多数节点确认状态，显示本机最后同步的记录。"
 	}
@@ -780,7 +633,7 @@ func (p *clusterPeer) Coordination(ctx context.Context) (consoleapi.Coordination
 	sort.Strings(ids)
 	for _, id := range ids {
 		member := state.Members[id]
-		item := consoleapi.CoordinatorNode{ID: id, Name: member.Name, Local: id == p.config.NodeID, Voter: state.Voters[id] != "", AutoEligible: member.AutoEligible}
+		item := consoleapi.CoordinatorNode{ID: id, Name: member.Name, Local: id == p.Config.NodeID, Voter: state.Voters[id] != "", AutoEligible: member.AutoEligible}
 		if item.Name == "" {
 			item.Name = id
 		}
@@ -817,7 +670,7 @@ func (p *clusterPeer) Coordination(ctx context.Context) (consoleapi.Coordination
 		}
 	}
 	view.Ready = authoritative && state.CanAutoFailover() && live >= len(state.Voters)/2+1 && eligibleTarget
-	if !p.options.AllowAutoFailover {
+	if !p.Options.AllowAutoFailover {
 		view.Ready = false
 		if view.Reason == "" {
 			view.Reason = "任务续跑准备尚未完成，自动容灾暂不可用。"
@@ -829,35 +682,35 @@ func (p *clusterPeer) Coordination(ctx context.Context) (consoleapi.Coordination
 	return view, nil
 }
 
-func (p *clusterPeer) TransferCoordinator(ctx context.Context, request consoleapi.CoordinatorTransfer) (consoleapi.CoordinationView, error) {
-	_, err := p.runtime.Load().Transfer(ctx, coordination.TransferRequest{ID: request.CommandID, Actor: "owner", ExpectedEpoch: request.ExpectedEpoch, TargetNodeID: request.TargetNodeID, Reason: "user_request"})
+func (p *Peer) TransferCoordinator(ctx context.Context, request consoleapi.CoordinatorTransfer) (consoleapi.CoordinationView, error) {
+	_, err := p.Runtime.Load().Transfer(ctx, coordination.TransferRequest{ID: request.CommandID, Actor: "owner", ExpectedEpoch: request.ExpectedEpoch, TargetNodeID: request.TargetNodeID, Reason: "user_request"})
 	if err != nil {
 		return consoleapi.CoordinationView{}, err
 	}
 	return p.Coordination(ctx)
 }
 
-func (p *clusterPeer) SetAutoFailover(ctx context.Context, request consoleapi.CoordinatorPolicy) (consoleapi.CoordinationView, error) {
-	if request.Enabled && !p.options.AllowAutoFailover {
+func (p *Peer) SetAutoFailover(ctx context.Context, request consoleapi.CoordinatorPolicy) (consoleapi.CoordinationView, error) {
+	if request.Enabled && !p.Options.AllowAutoFailover {
 		return consoleapi.CoordinationView{}, fmt.Errorf("%w: 任务续跑准备尚未完成", coordination.ErrNotReady)
 	}
-	_, err := p.runtime.Load().SetAutoFailover(ctx, coordination.PolicyRequest{ID: request.CommandID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, Enabled: request.Enabled})
+	_, err := p.Runtime.Load().SetAutoFailover(ctx, coordination.PolicyRequest{ID: request.CommandID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, Enabled: request.Enabled})
 	if err != nil {
 		return consoleapi.CoordinationView{}, err
 	}
 	return p.Coordination(ctx)
 }
 
-func (p *clusterPeer) startWorker(workspaceRoot string) error {
+func (p *Peer) startWorker(workspaceRoot string) error {
 	var cfg node.ServerConfig
-	raw, err := readClusterPrivate(p.config.WorkerConfigFile)
+	raw, err := ReadClusterPrivate(p.Config.WorkerConfigFile)
 	if errors.Is(err, os.ErrNotExist) {
-		token, err := clusterRandomToken()
+		token, err := ClusterRandomToken()
 		if err != nil {
 			return err
 		}
-		cfg = node.ServerConfig{Name: p.config.NodeID, Listen: "127.0.0.1:0", Token: token, Hubs: map[string]string{p.config.ClusterID: token}, Harnesses: map[string]node.HarnessSpec{}, StateDir: filepath.Join(p.config.DataDir, "node"), WorkspaceRoot: workspaceRoot}
-		if err := saveClusterJSON(p.config.WorkerConfigFile, cfg, true); err != nil {
+		cfg = node.ServerConfig{Name: p.Config.NodeID, Listen: "127.0.0.1:0", Token: token, Hubs: map[string]string{p.Config.ClusterID: token}, Harnesses: map[string]node.HarnessSpec{}, StateDir: filepath.Join(p.Config.DataDir, "node"), WorkspaceRoot: workspaceRoot}
+		if err := SaveClusterJSON(p.Config.WorkerConfigFile, cfg, true); err != nil {
 			return err
 		}
 	} else if err != nil {
@@ -865,7 +718,7 @@ func (p *clusterPeer) startWorker(workspaceRoot string) error {
 	} else if err := json.Unmarshal(raw, &cfg); err != nil {
 		return err
 	}
-	if cfg.Name != p.config.NodeID || len(cfg.Token) < 32 {
+	if cfg.Name != p.Config.NodeID || len(cfg.Token) < 32 {
 		return errors.New("worker configuration does not match this physical node identity")
 	}
 	if err := requireClusterLoopback(cfg.Listen); err != nil {
@@ -876,11 +729,11 @@ func (p *clusterPeer) startWorker(workspaceRoot string) error {
 		return err
 	}
 	cfg.Listen = listener.Addr().String()
-	if err := saveClusterJSON(p.config.WorkerConfigFile, cfg, false); err != nil {
+	if err := SaveClusterJSON(p.Config.WorkerConfigFile, cfg, false); err != nil {
 		listener.Close()
 		return err
 	}
-	cfg.Source = p.config.WorkerConfigFile
+	cfg.Source = p.Config.WorkerConfigFile
 	cfg.Listener = listener
 	cfg.SessionAuthorizer = p
 	cfg.AuthenticatedPeer = p.authenticatedWorkerPeer
@@ -896,19 +749,19 @@ func (p *clusterPeer) startWorker(workspaceRoot string) error {
 				err = errors.New("local worker stopped unexpectedly")
 			}
 			select {
-			case p.errors <- err:
+			case p.Errors <- err:
 			default:
 			}
 		}
 	}()
-	p.workerDescriptor = peerWorkerDescriptor{Name: cfg.Name, Address: cfg.Listen, Token: cfg.Token}
+	p.WorkerDescriptor = PeerWorkerDescriptor{Name: cfg.Name, Address: cfg.Listen, Token: cfg.Token}
 	return nil
 }
 
-func (p *clusterPeer) Worker() peerWorkerDescriptor { return p.workerDescriptor }
+func (p *Peer) Worker() PeerWorkerDescriptor { return p.WorkerDescriptor }
 
-func (p *clusterPeer) ConfigureNodes(nodes map[string]node.Config) error {
-	runtime := p.runtime.Load()
+func (p *Peer) ConfigureNodes(nodes map[string]node.Config) error {
+	runtime := p.Runtime.Load()
 	if runtime == nil {
 		return coordination.ErrUnavailable
 	}
@@ -924,8 +777,8 @@ func (p *clusterPeer) ConfigureNodes(nodes map[string]node.Config) error {
 
 // DialWorker establishes an authenticated stream to a peer's own loopback
 // worker. The connection's lifetime is independent of the setup context.
-func (p *clusterPeer) DialWorker(parent context.Context, nodeID string) (net.Conn, error) {
-	runtime := p.runtime.Load()
+func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, error) {
+	runtime := p.Runtime.Load()
 	if runtime == nil {
 		return nil, coordination.ErrUnavailable
 	}
@@ -935,15 +788,15 @@ func (p *clusterPeer) DialWorker(parent context.Context, nodeID string) (net.Con
 	if err != nil {
 		return nil, err
 	}
-	if state.Coordinator.NodeID != p.config.NodeID {
+	if state.Coordinator.NodeID != p.Config.NodeID {
 		return nil, coordination.ErrNotCoordinator
 	}
 	member, ok := state.Members[nodeID]
 	if !ok {
 		return nil, coordination.ErrInvalid
 	}
-	if nodeID == p.config.NodeID {
-		connection, err := p.openLocalWorker(ctx, p.config.NodeID)
+	if nodeID == p.Config.NodeID {
+		connection, err := p.openLocalWorker(ctx, p.Config.NodeID)
 		if err != nil {
 			return nil, err
 		}
@@ -968,7 +821,7 @@ func (p *clusterPeer) DialWorker(parent context.Context, nodeID string) (net.Con
 			connection.Close()
 		}
 	}()
-	request := &http.Request{Method: http.MethodConnect, URL: &url.URL{Path: clusterWorkerPath}, Host: origin.Host, Header: http.Header{"Authorization": []string{"Bearer " + p.ownerToken}, "X-Steve-Coordinator-Epoch": []string{strconv.FormatUint(state.Coordinator.Epoch, 10)}}}
+	request := &http.Request{Method: http.MethodConnect, URL: &url.URL{Path: clusterWorkerPath}, Host: origin.Host, Header: http.Header{"Authorization": []string{"Bearer " + p.OwnerToken}, "X-Steve-Coordinator-Epoch": []string{strconv.FormatUint(state.Coordinator.Epoch, 10)}}}
 	request.Header.Set("X-Steve-Writer-Generation", strconv.FormatUint(state.WriterGeneration, 10))
 	if err := request.Write(connection); err != nil {
 		connection.Close()
@@ -999,7 +852,7 @@ type bufferedWorkerConnection struct {
 
 func (c *bufferedWorkerConnection) Read(buffer []byte) (int, error) { return c.reader.Read(buffer) }
 
-func (p *clusterPeer) serveWorkerTunnel(w http.ResponseWriter, r *http.Request) {
+func (p *Peer) serveWorkerTunnel(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodConnect {
 		http.Error(w, "CONNECT required", http.StatusMethodNotAllowed)
 		return
@@ -1018,25 +871,25 @@ func (p *clusterPeer) serveWorkerTunnel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-	state, err := p.runtime.Load().ReadState(ctx)
+	state, err := p.Runtime.Load().ReadState(ctx)
 	cancel()
 	if err != nil {
-		peerHTTPError(w, err)
+		HTTPError(w, err)
 		return
 	}
 	epoch, err := strconv.ParseUint(r.Header.Get("X-Steve-Coordinator-Epoch"), 10, 64)
 	if err != nil || state.Coordinator.NodeID != identity.NodeID || state.Coordinator.Epoch != epoch {
-		peerHTTPError(w, coordination.ErrStaleEpoch)
+		HTTPError(w, coordination.ErrStaleEpoch)
 		return
 	}
 	writer, err := strconv.ParseUint(r.Header.Get("X-Steve-Writer-Generation"), 10, 64)
 	if err != nil || state.WriterGeneration != writer {
-		peerHTTPError(w, coordination.ErrStaleEpoch)
+		HTTPError(w, coordination.ErrStaleEpoch)
 		return
 	}
 	worker, err := p.openLocalWorker(r.Context(), identity.NodeID)
 	if err != nil {
-		peerHTTPError(w, coordination.ErrUnavailable)
+		HTTPError(w, coordination.ErrUnavailable)
 		return
 	}
 	hijacker, ok := w.(http.Hijacker)
@@ -1050,15 +903,15 @@ func (p *clusterPeer) serveWorkerTunnel(w http.ResponseWriter, r *http.Request) 
 		worker.Close()
 		return
 	}
-	p.mu.Lock()
+	p.Mu.Lock()
 	if p.closing {
-		p.mu.Unlock()
+		p.Mu.Unlock()
 		connection.Close()
 		worker.Close()
 		return
 	}
 	p.tunnels.Add(1)
-	p.mu.Unlock()
+	p.Mu.Unlock()
 	defer p.tunnels.Done()
 	defer connection.Close()
 	defer worker.Close()
@@ -1112,35 +965,35 @@ func (c *authenticatedWorkerConnection) Close() error {
 	return c.err
 }
 
-func (p *clusterPeer) openLocalWorker(ctx context.Context, nodeID string) (net.Conn, error) {
-	connection, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", p.workerDescriptor.Address)
+func (p *Peer) openLocalWorker(ctx context.Context, nodeID string) (net.Conn, error) {
+	connection, err := (&net.Dialer{Timeout: time.Second}).DialContext(ctx, "tcp", p.WorkerDescriptor.Address)
 	if err != nil {
 		return nil, err
 	}
 	key := connection.LocalAddr().String()
 	principal := &workerPrincipal{NodeID: nodeID}
 	wrapped := &authenticatedWorkerConnection{Conn: connection, done: make(chan struct{}), closed: func() {
-		p.mu.Lock()
+		p.Mu.Lock()
 		if p.workerPrincipals[key] == principal {
 			delete(p.workerPrincipals, key)
 		}
-		p.mu.Unlock()
+		p.Mu.Unlock()
 	}}
 	principal.Connection = wrapped
-	p.mu.Lock()
+	p.Mu.Lock()
 	if p.closing {
-		p.mu.Unlock()
+		p.Mu.Unlock()
 		connection.Close()
 		return nil, net.ErrClosed
 	}
 	p.workerPrincipals[key] = principal
-	p.mu.Unlock()
+	p.Mu.Unlock()
 	return wrapped, nil
 }
 
-func (p *clusterPeer) authenticatedWorkerPeer(connection net.Conn) (string, bool) {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
+func (p *Peer) authenticatedWorkerPeer(connection net.Conn) (string, bool) {
+	p.Mu.RLock()
+	defer p.Mu.RUnlock()
 	principal, ok := p.workerPrincipals[connection.RemoteAddr().String()]
 	if !ok {
 		return "", false
@@ -1148,7 +1001,7 @@ func (p *clusterPeer) authenticatedWorkerPeer(connection net.Conn) (string, bool
 	return principal.NodeID, true
 }
 
-func (p *clusterPeer) watchWorkerAuthority(ctx context.Context, assignment coordination.Assignment, writer uint64, done <-chan struct{}, closeConnection func()) {
+func (p *Peer) watchWorkerAuthority(ctx context.Context, assignment coordination.Assignment, writer uint64, done <-chan struct{}, closeConnection func()) {
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
 	lastQuorum := time.Now()
@@ -1160,7 +1013,7 @@ func (p *clusterPeer) watchWorkerAuthority(ctx context.Context, assignment coord
 			return
 		case <-ticker.C:
 		}
-		runtime := p.runtime.Load()
+		runtime := p.Runtime.Load()
 		if runtime == nil {
 			closeConnection()
 			return
@@ -1184,7 +1037,7 @@ func (p *clusterPeer) watchWorkerAuthority(ctx context.Context, assignment coord
 	}
 }
 
-func (p *clusterPeer) serveWorkerDescriptor(w http.ResponseWriter, r *http.Request) {
+func (p *Peer) serveWorkerDescriptor(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "GET required", http.StatusMethodNotAllowed)
 		return
@@ -1202,50 +1055,50 @@ func (p *clusterPeer) serveWorkerDescriptor(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "owner authorization denied", http.StatusForbidden)
 		return
 	}
-	writePeerJSON(w, p.Worker())
+	WriteJSON(w, p.Worker())
 }
 
-func (p *clusterPeer) FetchWorker(ctx context.Context, member coordination.Member) (peerWorkerDescriptor, error) {
+func (p *Peer) FetchWorker(ctx context.Context, member coordination.Member) (PeerWorkerDescriptor, error) {
 	transport, origin, err := p.remoteTransport(member)
 	if err != nil {
-		return peerWorkerDescriptor{}, err
+		return PeerWorkerDescriptor{}, err
 	}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, origin.String()+clusterWorkerPath+"/descriptor", nil)
 	if err != nil {
-		return peerWorkerDescriptor{}, err
+		return PeerWorkerDescriptor{}, err
 	}
-	request.Header.Set("Authorization", "Bearer "+p.ownerToken)
+	request.Header.Set("Authorization", "Bearer "+p.OwnerToken)
 	client := &http.Client{Transport: transport, Timeout: 5 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
 	response, err := client.Do(request)
 	if err != nil {
-		return peerWorkerDescriptor{}, err
+		return PeerWorkerDescriptor{}, err
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
-		return peerWorkerDescriptor{}, fmt.Errorf("worker descriptor unavailable: HTTP %d", response.StatusCode)
+		return PeerWorkerDescriptor{}, fmt.Errorf("worker descriptor unavailable: HTTP %d", response.StatusCode)
 	}
-	var worker peerWorkerDescriptor
+	var worker PeerWorkerDescriptor
 	if err := json.NewDecoder(io.LimitReader(response.Body, 1<<20)).Decode(&worker); err != nil {
 		return worker, err
 	}
 	if worker.Name != member.NodeID || len(worker.Token) < 32 {
-		return peerWorkerDescriptor{}, errors.New("worker descriptor identity differs from authenticated peer")
+		return PeerWorkerDescriptor{}, errors.New("worker descriptor identity differs from authenticated peer")
 	}
 	if err := requireClusterLoopback(worker.Address); err != nil {
-		return peerWorkerDescriptor{}, err
+		return PeerWorkerDescriptor{}, err
 	}
 	return worker, nil
 }
 
-func (p *clusterPeer) SetCoordinatorEligibility(ctx context.Context, request consoleapi.CoordinatorEligibility) (consoleapi.CoordinationView, error) {
-	_, err := p.runtime.Load().SetEligibility(ctx, coordination.EligibilityRequest{ID: request.CommandID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, NodeID: request.NodeID, Eligible: request.Eligible})
+func (p *Peer) SetCoordinatorEligibility(ctx context.Context, request consoleapi.CoordinatorEligibility) (consoleapi.CoordinationView, error) {
+	_, err := p.Runtime.Load().SetEligibility(ctx, coordination.EligibilityRequest{ID: request.CommandID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, NodeID: request.NodeID, Eligible: request.Eligible})
 	if err != nil {
 		return consoleapi.CoordinationView{}, err
 	}
 	return p.Coordination(ctx)
 }
 
-func (p *clusterPeer) serveCoordination(w http.ResponseWriter, r *http.Request) {
+func (p *Peer) serveCoordination(w http.ResponseWriter, r *http.Request) {
 	var view consoleapi.CoordinationView
 	var err error
 	decode := func(target any) bool {
@@ -1284,19 +1137,19 @@ func (p *clusterPeer) serveCoordination(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	if err != nil {
-		peerHTTPError(w, err)
+		HTTPError(w, err)
 		return
 	}
-	writePeerJSON(w, view)
+	WriteJSON(w, view)
 }
 
-func writePeerJSON(w http.ResponseWriter, value any) {
+func WriteJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(value)
 }
 
-func peerHTTPError(w http.ResponseWriter, err error) {
+func HTTPError(w http.ResponseWriter, err error) {
 	status := http.StatusServiceUnavailable
 	if errors.Is(err, coordination.ErrConflict) || errors.Is(err, coordination.ErrStaleEpoch) || errors.Is(err, coordination.ErrCommandConflict) {
 		status = http.StatusConflict

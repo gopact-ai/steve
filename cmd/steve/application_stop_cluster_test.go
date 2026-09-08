@@ -11,6 +11,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/node"
@@ -34,53 +35,53 @@ func (c interruptedStopConnection) NodeSession(ctx context.Context, node string,
 }
 
 func TestClusterCoordinatorCompletesStopPersistedByPreviousGeneration(t *testing.T) {
-	dir := clusterPeerTestDir(t)
+	dir := ClusterPeerTestDir(t)
 	bin := filepath.Join(dir, "mockagent")
 	if out, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
 		t.Fatalf("build isolated agent: %v %s", err, out)
 	}
 	options, installed := testPeerOptions(t, filepath.Join(dir, "first"), nil)
 	installRecoveryWorker(t, options, installed.Paths.Root, bin)
-	first := startTestPeer(t, options)
-	active := waitPeerReady(t, first)
+	first := StartTestPeer(t, options)
+	active := WaitPeerReady(t, first)
 	secondOptions, _ := testPeerOptions(t, filepath.Join(dir, "second"), first)
-	second := startTestPeer(t, secondOptions)
+	second := StartTestPeer(t, secondOptions)
 	thirdOptions, _ := testPeerOptions(t, filepath.Join(dir, "third"), first)
-	third := startTestPeer(t, thirdOptions)
-	for _, peer := range []*clusterPeer{second, third} {
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-stop-" + peer.config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.config.NodeID, Address: peer.config.RaftAddress, APIAddress: peer.config.PeerURL}}); err != nil {
+	third := StartTestPeer(t, thirdOptions)
+	for _, peer := range []*cluster.Peer{second, third} {
+		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-stop-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL}}); err != nil {
 			t.Fatal(err)
 		}
-		if err := first.registerEnrolledWorker(t.Context(), peer.config.NodeID, "restricted"); err != nil {
+		if err := first.RegisterEnrolledWorker(t.Context(), peer.Config.NodeID, "restricted"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	status, body := peerRequest(t, first, http.MethodPost, "/console/agents", consoleapi.AddAgentRequest{ID: "worker", Harness: "mock", Node: first.config.NodeID})
+	status, body := PeerRequest(t, first, http.MethodPost, "/console/agents", consoleapi.AddAgentRequest{ID: "worker", Harness: "mock", Node: first.Config.NodeID})
 	if status != http.StatusOK {
 		t.Fatalf("register test worker: %d %s", status, body)
 	}
 	conversation := "console:durable-stop"
-	status, body = peerRequest(t, first, http.MethodPost, "/console/send", consoleapi.Submission{Conversation: conversation, Input: "/project use workspace", CommandID: "stop-project"})
+	status, body = PeerRequest(t, first, http.MethodPost, "/console/send", consoleapi.Submission{Conversation: conversation, Input: "/project use workspace", CommandID: "stop-project"})
 	if status != http.StatusOK {
 		t.Fatalf("bind test project: %d %s", status, body)
 	}
-	status, body = peerRequest(t, first, http.MethodPost, "/console/queue", consoleapi.Submission{Conversation: conversation, Input: "@worker askme original input", CommandID: "durable-stop-input"})
+	status, body = PeerRequest(t, first, http.MethodPost, "/console/queue", consoleapi.Submission{Conversation: conversation, Input: "@worker askme original input", CommandID: "durable-stop-input"})
 	if status != http.StatusOK {
 		t.Fatalf("start isolated input: %d %s", status, body)
 	}
 	original := awaitPeerQuestion(t, first, conversation, "")
-	first.mu.RLock()
-	admin := first.application.Admin
-	first.mu.RUnlock()
+	first.Mu.RLock()
+	admin := first.Application.Admin
+	first.Mu.RUnlock()
 	admin.Manager.SetTransports(interruptedStopConnection{nodes: admin.Nodes})
 	if _, err := admin.Tasks.SetAside(original.TaskID, task.StatePaused); err != nil {
 		t.Fatal(err)
 	}
 	// No Registry.Stop call follows SetAside in this generation.
-	if _, err := first.runtime.Load().Transfer(t.Context(), coordination.TransferRequest{ID: "move-after-stop-intent", Actor: "owner", ExpectedEpoch: active.Assignment.Epoch, TargetNodeID: second.config.NodeID}); err != nil {
+	if _, err := first.Runtime.Load().Transfer(t.Context(), coordination.TransferRequest{ID: "move-after-stop-intent", Actor: "owner", ExpectedEpoch: active.Assignment.Epoch, TargetNodeID: second.Config.NodeID}); err != nil {
 		t.Fatal(err)
 	}
-	next := waitPeerReady(t, second)
+	next := WaitPeerReady(t, second)
 	attempts := attempt.New(next.Ledger)
 	var receipt attempt.TaskStopReceipt
 	for deadline := time.Now().Add(20 * time.Second); ; {

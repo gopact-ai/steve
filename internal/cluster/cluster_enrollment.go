@@ -1,4 +1,4 @@
-package main
+package cluster
 
 import (
 	"bytes"
@@ -11,7 +11,6 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"errors"
-	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -63,7 +62,7 @@ type PeerEnrollmentPackage struct {
 	Plan    PeerEnrollmentPlan `json:"-"`
 }
 
-type peerJoinPackage struct {
+type PeerJoinPackage struct {
 	Version       int                   `json:"version"`
 	OperationID   string                `json:"operation_id"`
 	ClusterID     string                `json:"cluster_id"`
@@ -186,11 +185,11 @@ func validPeerEndpoint(address string, allowLoopback bool) error {
 	return nil
 }
 
-func (p *clusterPeer) PreviewPeerEnrollment(ctx context.Context, request PeerEnrollmentRequest) (PeerEnrollmentPlan, error) {
-	return p.previewPeerEnrollment(ctx, request, false)
+func (p *Peer) PreviewPeerEnrollment(ctx context.Context, request PeerEnrollmentRequest) (PeerEnrollmentPlan, error) {
+	return p.PreviewEnrollment(ctx, request, false)
 }
 
-func (p *clusterPeer) previewPeerEnrollment(ctx context.Context, request PeerEnrollmentRequest, allowLoopback bool) (PeerEnrollmentPlan, error) {
+func (p *Peer) PreviewEnrollment(ctx context.Context, request PeerEnrollmentRequest, allowLoopback bool) (PeerEnrollmentPlan, error) {
 	request.ExpectedPlanHash = ""
 	request.Name = strings.TrimSpace(request.Name)
 	request.SourceHost = strings.TrimSpace(request.SourceHost)
@@ -222,7 +221,7 @@ func (p *clusterPeer) previewPeerEnrollment(ctx context.Context, request PeerEnr
 	if request.Level != "restricted" && request.Level != "sealed" {
 		return PeerEnrollmentPlan{}, errors.New("完整机群节点会保存私有任务、会话和记忆账本，需要明确选择 restricted 或 sealed 保存授权；低等级节点只能使用独立执行节点入口")
 	}
-	runtime := p.runtime.Load()
+	runtime := p.Runtime.Load()
 	if runtime == nil {
 		return PeerEnrollmentPlan{}, coordination.ErrUnavailable
 	}
@@ -233,7 +232,7 @@ func (p *clusterPeer) previewPeerEnrollment(ctx context.Context, request PeerEnr
 	if err := p.authorizeLedgerReplica(ctx, coordination.Member{StorageLevel: request.Level}); err != nil {
 		return PeerEnrollmentPlan{}, err
 	}
-	source, ok := state.Members[p.config.NodeID]
+	source, ok := state.Members[p.Config.NodeID]
 	if !ok {
 		return PeerEnrollmentPlan{}, errors.New("本机尚未加入机群")
 	}
@@ -256,7 +255,7 @@ func (p *clusterPeer) previewPeerEnrollment(ctx context.Context, request PeerEnr
 	if err := validPeerEndpoint(proposed.Address, allowLoopback); err != nil {
 		return PeerEnrollmentPlan{}, err
 	}
-	if p.config.CAKeyFile == "" {
+	if p.Config.CAKeyFile == "" {
 		return PeerEnrollmentPlan{}, errors.New("请从保管机群签发密钥的原始 App 接入新节点")
 	}
 	plan := PeerEnrollmentPlan{Request: request, ClusterID: state.ClusterID, Source: proposed, PreviousSource: source, UpdateSourceAddress: source.Address != proposed.Address || source.APIAddress != proposed.APIAddress}
@@ -270,7 +269,7 @@ func (p *clusterPeer) previewPeerEnrollment(ctx context.Context, request PeerEnr
 		if state.Voters[id] == "" {
 			continue
 		}
-		if id == p.config.NodeID {
+		if id == p.Config.NodeID {
 			member = proposed
 		}
 		if err := validPeerEndpoint(member.Address, allowLoopback); err != nil {
@@ -302,11 +301,11 @@ func (plan PeerEnrollmentPlan) reviewHash() string {
 	return hex.EncodeToString(digest[:])
 }
 
-func (p *clusterPeer) PreparePeerEnrollment(ctx context.Context, request PeerEnrollmentRequest, id string) (PeerEnrollmentPackage, error) {
-	return p.preparePeerEnrollment(ctx, request, id, false)
+func (p *Peer) PreparePeerEnrollment(ctx context.Context, request PeerEnrollmentRequest, id string) (PeerEnrollmentPackage, error) {
+	return p.PrepareEnrollment(ctx, request, id, false)
 }
 
-func (p *clusterPeer) preparePeerEnrollment(ctx context.Context, request PeerEnrollmentRequest, id string, allowLoopback bool) (PeerEnrollmentPackage, error) {
+func (p *Peer) PrepareEnrollment(ctx context.Context, request PeerEnrollmentRequest, id string, allowLoopback bool) (PeerEnrollmentPackage, error) {
 	p.enrollmentMu.Lock()
 	defer p.enrollmentMu.Unlock()
 	if strings.TrimSpace(id) == "" {
@@ -326,14 +325,14 @@ func (p *clusterPeer) preparePeerEnrollment(ctx context.Context, request PeerEnr
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return PeerEnrollmentPackage{}, err
 	}
-	plan, err := p.previewPeerEnrollment(ctx, request, allowLoopback)
+	plan, err := p.PreviewEnrollment(ctx, request, allowLoopback)
 	if err != nil {
 		return PeerEnrollmentPackage{}, err
 	}
 	if request.ExpectedPlanHash == "" || request.ExpectedPlanHash != plan.ReviewID {
 		return PeerEnrollmentPackage{}, fmt.Errorf("%w: 接入网络计划已改变，请重新审阅", coordination.ErrConflict)
 	}
-	caPEM, err := readClusterPrivate(p.config.CACertFile)
+	caPEM, err := ReadClusterPrivate(p.Config.CACertFile)
 	if err != nil {
 		return PeerEnrollmentPackage{}, err
 	}
@@ -345,7 +344,7 @@ func (p *clusterPeer) preparePeerEnrollment(ctx context.Context, request PeerEnr
 	if err != nil {
 		return PeerEnrollmentPackage{}, err
 	}
-	keyPEM, err := readClusterPrivate(p.config.CAKeyFile)
+	keyPEM, err := ReadClusterPrivate(p.Config.CAKeyFile)
 	if err != nil {
 		return PeerEnrollmentPackage{}, err
 	}
@@ -365,17 +364,17 @@ func (p *clusterPeer) preparePeerEnrollment(ctx context.Context, request PeerEnr
 	if err != nil {
 		return PeerEnrollmentPackage{}, err
 	}
-	certificate, leafKey, err := issueClusterNodeCertificate(ca, privateKey, p.config.ClusterID, nodeID)
+	certificate, leafKey, err := IssueNodeCertificate(ca, privateKey, p.Config.ClusterID, nodeID)
 	if err != nil {
 		return PeerEnrollmentPackage{}, err
 	}
-	workerToken, err := clusterRandomToken()
+	workerToken, err := ClusterRandomToken()
 	if err != nil {
 		return PeerEnrollmentPackage{}, err
 	}
 	_, peerPort, _ := net.SplitHostPort(plan.Request.PeerAddress)
 	_, raftPort, _ := net.SplitHostPort(plan.Request.RaftAddress)
-	bundle := peerJoinPackage{Version: 1, OperationID: id, ClusterID: p.config.ClusterID, NodeID: nodeID, StorageLevel: plan.Request.Level, Name: plan.Request.Name, PeerListen: net.JoinHostPort("0.0.0.0", peerPort), PeerAdvertise: plan.Request.PeerAddress, RaftListen: net.JoinHostPort("0.0.0.0", raftPort), RaftAdvertise: plan.Request.RaftAddress, CA: caPEM, Certificate: certificate, PrivateKey: leafKey, OwnerToken: p.ownerToken, WorkerToken: workerToken, Seeds: plan.Seeds}
+	bundle := PeerJoinPackage{Version: 1, OperationID: id, ClusterID: p.Config.ClusterID, NodeID: nodeID, StorageLevel: plan.Request.Level, Name: plan.Request.Name, PeerListen: net.JoinHostPort("0.0.0.0", peerPort), PeerAdvertise: plan.Request.PeerAddress, RaftListen: net.JoinHostPort("0.0.0.0", raftPort), RaftAdvertise: plan.Request.RaftAddress, CA: caPEM, Certificate: certificate, PrivateKey: leafKey, OwnerToken: p.OwnerToken, WorkerToken: workerToken, Seeds: plan.Seeds}
 	payload, err := json.Marshal(bundle)
 	if err != nil {
 		return PeerEnrollmentPackage{}, err
@@ -390,7 +389,7 @@ func (p *clusterPeer) preparePeerEnrollment(ctx context.Context, request PeerEnr
 	return PeerEnrollmentPackage{NodeID: nodeID, Payload: payload, Plan: plan}, nil
 }
 
-func (p *clusterPeer) prepareSourceNetwork(ctx context.Context, record *peerEnrollmentRecord) error {
+func (p *Peer) prepareSourceNetwork(ctx context.Context, record *peerEnrollmentRecord) error {
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
 		err = p.prepareSourceNetworkOnce(ctx, record)
@@ -401,15 +400,15 @@ func (p *clusterPeer) prepareSourceNetwork(ctx context.Context, record *peerEnro
 	return err
 }
 
-func (p *clusterPeer) prepareSourceNetworkOnce(ctx context.Context, record *peerEnrollmentRecord) error {
+func (p *Peer) prepareSourceNetworkOnce(ctx context.Context, record *peerEnrollmentRecord) error {
 	if record.SourceReady {
 		return nil
 	}
-	state, err := p.runtime.Load().ReadState(ctx)
+	state, err := p.Runtime.Load().ReadState(ctx)
 	if err != nil {
 		return err
 	}
-	current := state.Members[p.config.NodeID]
+	current := state.Members[p.Config.NodeID]
 	wanted := record.Plan.Source
 	if current.Address == wanted.Address && current.APIAddress == wanted.APIAddress {
 		if err := p.persistAdvertisement(current.Address, current.APIAddress); err != nil {
@@ -421,18 +420,18 @@ func (p *clusterPeer) prepareSourceNetworkOnce(ctx context.Context, record *peer
 	if current.Address != record.Plan.PreviousSource.Address || current.APIAddress != record.Plan.PreviousSource.APIAddress {
 		return fmt.Errorf("%w: 本机地址已由另一操作改变，请重新审阅", coordination.ErrConflict)
 	}
-	pending, hasPending := state.PendingAddresses[p.config.NodeID]
+	pending, hasPending := state.PendingAddresses[p.Config.NodeID]
 	if hasPending && (record.SourceRequest == nil || pending.ID != record.SourceRequest.ID) {
 		return fmt.Errorf("%w: 本机另一个地址更新尚未完成", coordination.ErrConflict)
 	}
 	if !hasPending {
 		record.SourceAttempts++
-		record.SourceRequest = &coordination.MemberAddressRequest{ID: fmt.Sprintf("%s/source-address/%d", record.OperationID, record.SourceAttempts), Actor: "owner", ExpectedRevision: state.Revision, NodeID: p.config.NodeID, Address: wanted.Address, APIAddress: wanted.APIAddress}
+		record.SourceRequest = &coordination.MemberAddressRequest{ID: fmt.Sprintf("%s/source-address/%d", record.OperationID, record.SourceAttempts), Actor: "owner", ExpectedRevision: state.Revision, NodeID: p.Config.NodeID, Address: wanted.Address, APIAddress: wanted.APIAddress}
 		if err := p.saveEnrollment(*record); err != nil {
 			return err
 		}
 	}
-	_, err = p.runtime.Load().UpdateMemberAddress(ctx, *record.SourceRequest)
+	_, err = p.Runtime.Load().UpdateMemberAddress(ctx, *record.SourceRequest)
 	if err == nil {
 		err = p.persistAdvertisement(wanted.Address, wanted.APIAddress)
 	}
@@ -449,14 +448,14 @@ func (p *clusterPeer) prepareSourceNetworkOnce(ctx context.Context, record *peer
 	return p.saveEnrollment(*record)
 }
 
-func (p *clusterPeer) enrollmentPath(id string) string {
+func (p *Peer) enrollmentPath(id string) string {
 	digest := sha256.Sum256([]byte(id))
-	return filepath.Join(p.config.DataDir, "enrollments", hex.EncodeToString(digest[:])+".json")
+	return filepath.Join(p.Config.DataDir, "enrollments", hex.EncodeToString(digest[:])+".json")
 }
 
-func (p *clusterPeer) loadEnrollment(id string) (peerEnrollmentRecord, error) {
+func (p *Peer) loadEnrollment(id string) (peerEnrollmentRecord, error) {
 	var record peerEnrollmentRecord
-	data, err := readClusterPrivate(p.enrollmentPath(id))
+	data, err := ReadClusterPrivate(p.enrollmentPath(id))
 	if err != nil {
 		return record, err
 	}
@@ -467,14 +466,14 @@ func (p *clusterPeer) loadEnrollment(id string) (peerEnrollmentRecord, error) {
 	return record, err
 }
 
-func (p *clusterPeer) saveEnrollment(record peerEnrollmentRecord) error {
+func (p *Peer) saveEnrollment(record peerEnrollmentRecord) error {
 	if err := os.MkdirAll(filepath.Dir(p.enrollmentPath(record.OperationID)), 0o700); err != nil {
 		return err
 	}
-	return saveClusterJSON(p.enrollmentPath(record.OperationID), record, false)
+	return SaveClusterJSON(p.enrollmentPath(record.OperationID), record, false)
 }
 
-func (p *clusterPeer) CompletePeerEnrollment(ctx context.Context, id string) (PeerEnrollmentResult, error) {
+func (p *Peer) CompletePeerEnrollment(ctx context.Context, id string) (PeerEnrollmentResult, error) {
 	p.enrollmentMu.Lock()
 	defer p.enrollmentMu.Unlock()
 	record, err := p.loadEnrollment(id)
@@ -506,14 +505,14 @@ func (p *clusterPeer) CompletePeerEnrollment(ctx context.Context, id string) (Pe
 	if !status.Healthy {
 		return finish("awaiting_peer", coordination.ErrNotReady)
 	}
-	_, err = p.runtime.Load().Join(ctx, coordination.JoinRequest{ID: id + "/join", Actor: "owner", Member: member})
+	_, err = p.Runtime.Load().Join(ctx, coordination.JoinRequest{ID: id + "/join", Actor: "owner", Member: member})
 	if err != nil {
 		return finish("synchronizing", err)
 	}
 	if _, err := finish("joined", nil); err != nil {
 		return record.PeerEnrollmentResult, err
 	}
-	state, err := p.runtime.Load().ReadState(ctx)
+	state, err := p.Runtime.Load().ReadState(ctx)
 	if err != nil {
 		return finish("registering_worker", err)
 	}
@@ -531,7 +530,7 @@ func (p *clusterPeer) CompletePeerEnrollment(ctx context.Context, id string) (Pe
 		}
 		return finish("registering_worker", err)
 	}
-	state, err = p.runtime.Load().ReadState(ctx)
+	state, err = p.Runtime.Load().ReadState(ctx)
 	if err != nil {
 		return finish("synchronizing", err)
 	}
@@ -550,7 +549,7 @@ func (p *clusterPeer) CompletePeerEnrollment(ctx context.Context, id string) (Pe
 	return finish("ready", nil)
 }
 
-func (p *clusterPeer) PeerEnrollmentStatus(_ context.Context, id string) (PeerEnrollmentResult, error) {
+func (p *Peer) PeerEnrollmentStatus(_ context.Context, id string) (PeerEnrollmentResult, error) {
 	p.enrollmentMu.Lock()
 	defer p.enrollmentMu.Unlock()
 	record, err := p.loadEnrollment(id)
@@ -563,11 +562,11 @@ type NetworkAddressRequest struct {
 	Host             string `json:"host"`
 }
 
-func (p *clusterPeer) SetNetworkAddress(ctx context.Context, request NetworkAddressRequest) (coordination.Result, error) {
+func (p *Peer) SetNetworkAddress(ctx context.Context, request NetworkAddressRequest) (coordination.Result, error) {
 	if request.ID == "" || request.Host == "" || strings.ContainsAny(request.Host, "/\\\x00\r\n\t ") {
 		return coordination.Result{}, coordination.ErrInvalid
 	}
-	boundHost, _, _ := net.SplitHostPort(p.config.RaftBindAddress)
+	boundHost, _, _ := net.SplitHostPort(p.Config.RaftBindAddress)
 	boundIP := net.ParseIP(boundHost)
 	if boundIP == nil || !boundIP.IsUnspecified() {
 		return coordination.Result{}, errors.New("当前共识监听绑定到单一地址，需要先完成明确的监听配置变更")
@@ -588,11 +587,11 @@ func (p *clusterPeer) SetNetworkAddress(ctx context.Context, request NetworkAddr
 	if net.ParseIP(request.Host).IsUnspecified() {
 		return coordination.Result{}, errors.New("请选择本机网络接口上实际存在的地址")
 	}
-	state, err := p.runtime.Load().ReadState(ctx)
+	state, err := p.Runtime.Load().ReadState(ctx)
 	if err != nil {
 		return coordination.Result{}, err
 	}
-	member := state.Members[p.config.NodeID]
+	member := state.Members[p.Config.NodeID]
 	_, raftPort, _ := net.SplitHostPort(member.Address)
 	peerURL, _ := url.Parse(member.APIAddress)
 	if peerURL == nil {
@@ -600,33 +599,33 @@ func (p *clusterPeer) SetNetworkAddress(ctx context.Context, request NetworkAddr
 	}
 	newRaft := net.JoinHostPort(request.Host, raftPort)
 	newAPI := "https://" + net.JoinHostPort(request.Host, peerURL.Port())
-	result, err := p.runtime.Load().UpdateMemberAddress(ctx, coordination.MemberAddressRequest{ID: request.ID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, NodeID: p.config.NodeID, Address: newRaft, APIAddress: newAPI})
+	result, err := p.Runtime.Load().UpdateMemberAddress(ctx, coordination.MemberAddressRequest{ID: request.ID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, NodeID: p.Config.NodeID, Address: newRaft, APIAddress: newAPI})
 	if err != nil {
 		return result, err
 	}
 	return result, p.persistAdvertisement(newRaft, newAPI)
 }
 
-func (p *clusterPeer) persistAdvertisement(newRaft, newAPI string) error {
+func (p *Peer) persistAdvertisement(newRaft, newAPI string) error {
 	p.raftAdvertisement.Store(newRaft)
 	p.peerAdvertisement.Store(newAPI)
 	endpoint, err := url.Parse(newAPI)
 	if err != nil {
 		return err
 	}
-	p.mu.Lock()
-	saved := p.config
+	p.Mu.Lock()
+	saved := p.Config
 	saved.RaftAddress = newRaft
 	saved.PeerAddress = endpoint.Host
 	saved.PeerURL = newAPI
-	err = saveClusterJSON(p.options.ClusterPath, saved, false)
-	p.mu.Unlock()
-	p.client.RememberMembers([]coordination.Member{{NodeID: p.config.NodeID, Name: p.config.Name, Address: newRaft, APIAddress: newAPI}})
+	err = SaveClusterJSON(p.Options.ClusterPath, saved, false)
+	p.Mu.Unlock()
+	p.client.RememberMembers([]coordination.Member{{NodeID: p.Config.NodeID, Name: p.Config.Name, Address: newRaft, APIAddress: newAPI}})
 	return err
 }
 
-func (p *clusterPeer) validateJoiningNetwork(ctx context.Context, candidate coordination.Member) error {
-	state := p.runtime.Load().Status().State
+func (p *Peer) validateJoiningNetwork(ctx context.Context, candidate coordination.Member) error {
+	state := p.Runtime.Load().Status().State
 	peers := make([]coordination.Member, 0, len(state.Voters)+1)
 	for id, member := range state.Members {
 		if state.Voters[id] != "" || id == candidate.NodeID {
@@ -636,11 +635,11 @@ func (p *clusterPeer) validateJoiningNetwork(ctx context.Context, candidate coor
 	return p.validatePeerMesh(ctx, peers)
 }
 
-func (p *clusterPeer) authorizeLedgerReplica(ctx context.Context, candidate coordination.Member) error {
+func (p *Peer) authorizeLedgerReplica(ctx context.Context, candidate coordination.Member) error {
 	if candidate.StorageLevel != "restricted" && candidate.StorageLevel != "sealed" {
 		return errors.New("完整节点没有获准保存私有协作账本")
 	}
-	runtime := p.runtime.Load()
+	runtime := p.Runtime.Load()
 	if runtime == nil {
 		return coordination.ErrUnavailable
 	}
@@ -669,7 +668,7 @@ func (p *clusterPeer) authorizeLedgerReplica(ctx context.Context, candidate coor
 	if !found {
 		// Before the first application publishes shared declarations, only
 		// the explicit local configuration can establish the ledger boundary.
-		local, err := config.Load(p.options.ConfigPath)
+		local, err := config.Load(p.Options.ConfigPath)
 		if err != nil {
 			return err
 		}
@@ -688,8 +687,8 @@ func (p *clusterPeer) authorizeLedgerReplica(ctx context.Context, candidate coor
 	return nil
 }
 
-func (p *clusterPeer) validateMemberAddress(ctx context.Context, proposed coordination.Member) error {
-	state := p.runtime.Load().Status().State
+func (p *Peer) validateMemberAddress(ctx context.Context, proposed coordination.Member) error {
+	state := p.Runtime.Load().Status().State
 	var peers []coordination.Member
 	for id, member := range state.Members {
 		if state.Voters[id] == "" {
@@ -703,7 +702,7 @@ func (p *clusterPeer) validateMemberAddress(ctx context.Context, proposed coordi
 	return p.validatePeerMesh(ctx, peers)
 }
 
-func (p *clusterPeer) validatePeerMesh(ctx context.Context, peers []coordination.Member) error {
+func (p *Peer) validatePeerMesh(ctx context.Context, peers []coordination.Member) error {
 	for _, source := range peers {
 		for {
 			var result networkCheckResult
@@ -738,7 +737,7 @@ type networkCheckResult struct {
 	Synchronizing bool   `json:"synchronizing,omitempty"`
 }
 
-func (p *clusterPeer) serveNetworkCheck(w http.ResponseWriter, r *http.Request) {
+func (p *Peer) serveNetworkCheck(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !p.authorizedPeerRequest(r, "network-check") {
 		http.Error(w, "owner authorization required", http.StatusForbidden)
 		return
@@ -748,14 +747,14 @@ func (p *clusterPeer) serveNetworkCheck(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "invalid request", http.StatusBadRequest)
 		return
 	}
-	state := p.runtime.Load().Status().State
-	transportPeers := p.runtime.Load().TransportPeers()
+	state := p.Runtime.Load().Status().State
+	transportPeers := p.Runtime.Load().TransportPeers()
 	for _, member := range request.Peers {
 		known, ok := state.Members[member.NodeID]
 		pending, preparing := state.PendingAddresses[member.NodeID]
 		proposed := preparing && pending.Address == member.Address && pending.APIAddress == member.APIAddress
 		if !ok || !proposed && (known.Address != member.Address || known.APIAddress != member.APIAddress || transportPeers[member.NodeID] != member.Address) {
-			writePeerJSON(w, networkCheckResult{Error: "成员地址尚未同步", Synchronizing: true})
+			WriteJSON(w, networkCheckResult{Error: "成员地址尚未同步", Synchronizing: true})
 			return
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 3*time.Second)
@@ -773,14 +772,14 @@ func (p *clusterPeer) serveNetworkCheck(w http.ResponseWriter, r *http.Request) 
 		}
 		cancel()
 		if err != nil {
-			writePeerJSON(w, networkCheckResult{Error: "无法独立连接节点 " + member.NodeID})
+			WriteJSON(w, networkCheckResult{Error: "无法独立连接节点 " + member.NodeID})
 			return
 		}
 	}
-	writePeerJSON(w, networkCheckResult{Ready: true})
+	WriteJSON(w, networkCheckResult{Ready: true})
 }
 
-func (p *clusterPeer) authorizedPeerRequest(r *http.Request, action string) bool {
+func (p *Peer) authorizedPeerRequest(r *http.Request, action string) bool {
 	if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.PeerCertificates) == 0 {
 		return false
 	}
@@ -792,7 +791,7 @@ func (p *clusterPeer) authorizedPeerRequest(r *http.Request, action string) bool
 	return err == nil
 }
 
-func (p *clusterPeer) peerJSON(ctx context.Context, member coordination.Member, method, path string, input, output any) error {
+func (p *Peer) peerJSON(ctx context.Context, member coordination.Member, method, path string, input, output any) error {
 	transport, origin, err := p.remoteTransport(member)
 	if err != nil {
 		return err
@@ -809,7 +808,7 @@ func (p *clusterPeer) peerJSON(ctx context.Context, member coordination.Member, 
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+p.ownerToken)
+	request.Header.Set("Authorization", "Bearer "+p.OwnerToken)
 	request.Header.Set("Content-Type", "application/json")
 	response, err := (&http.Client{Transport: transport, Timeout: 15 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}).Do(request)
 	if err != nil {
@@ -823,7 +822,7 @@ func (p *clusterPeer) peerJSON(ctx context.Context, member coordination.Member, 
 	return json.NewDecoder(io.LimitReader(response.Body, 8<<20)).Decode(output)
 }
 
-func (p *clusterPeer) servePeerEnrollment(w http.ResponseWriter, r *http.Request) {
+func (p *Peer) servePeerEnrollment(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost || !p.authorizedPeerRequest(r, "enrollment") {
 		http.Error(w, "owner authorization required", http.StatusForbidden)
 		return
@@ -841,10 +840,10 @@ func (p *clusterPeer) servePeerEnrollment(w http.ResponseWriter, r *http.Request
 		}
 		bundle, err := p.PreparePeerEnrollment(r.Context(), request.Request, request.ID)
 		if err != nil {
-			peerHTTPError(w, err)
+			HTTPError(w, err)
 			return
 		}
-		writePeerJSON(w, struct {
+		WriteJSON(w, struct {
 			NodeID  string `json:"node_id"`
 			Payload []byte `json:"payload"`
 		}{bundle.NodeID, bundle.Payload})
@@ -858,10 +857,10 @@ func (p *clusterPeer) servePeerEnrollment(w http.ResponseWriter, r *http.Request
 		}
 		result, err := p.CompletePeerEnrollment(r.Context(), request.ID)
 		if err != nil {
-			peerHTTPError(w, err)
+			HTTPError(w, err)
 			return
 		}
-		writePeerJSON(w, result)
+		WriteJSON(w, result)
 	case "register-worker":
 		var request struct {
 			ID     string `json:"operation_id"`
@@ -872,22 +871,22 @@ func (p *clusterPeer) servePeerEnrollment(w http.ResponseWriter, r *http.Request
 			http.Error(w, "invalid request", http.StatusBadRequest)
 			return
 		}
-		if err := p.registerEnrolledWorker(r.Context(), request.NodeID, request.Level); err != nil {
-			peerHTTPError(w, err)
+		if err := p.RegisterEnrolledWorker(r.Context(), request.NodeID, request.Level); err != nil {
+			HTTPError(w, err)
 			return
 		}
-		writePeerJSON(w, map[string]bool{"ok": true})
+		WriteJSON(w, map[string]bool{"ok": true})
 	default:
 		http.NotFound(w, r)
 	}
 }
 
-func (p *clusterPeer) registerEnrolledWorker(ctx context.Context, nodeID, level string) error {
-	active, err := p.runtime.Load().WaitReady(ctx)
+func (p *Peer) RegisterEnrolledWorker(ctx context.Context, nodeID, level string) error {
+	active, err := p.Runtime.Load().WaitReady(ctx)
 	if err != nil {
 		return err
 	}
-	state, err := p.runtime.Load().ReadState(ctx)
+	state, err := p.Runtime.Load().ReadState(ctx)
 	if err != nil {
 		return err
 	}
@@ -899,12 +898,12 @@ func (p *clusterPeer) registerEnrolledWorker(ctx context.Context, nodeID, level 
 	if err != nil {
 		return err
 	}
-	p.mu.RLock()
+	p.Mu.RLock()
 	var admin *adminsvc.Service
-	if p.application != nil && p.application.Generation == active.Generation {
-		admin = p.application.Admin
+	if p.Application != nil && p.Application.Generation == active.Generation {
+		admin = p.Application.Admin
 	}
-	p.mu.RUnlock()
+	p.Mu.RUnlock()
 	if admin == nil {
 		return coordination.ErrNotReady
 	}
@@ -942,84 +941,63 @@ func (p *clusterPeer) registerEnrolledWorker(ctx context.Context, nodeID, level 
 	return err
 }
 
-func peerImportCmd(args []string) error {
-	flags := flag.NewFlagSet("peer-import", flag.ContinueOnError)
-	packagePath := flags.String("package", "", "private enrollment package")
-	stateDir := flags.String("state-dir", "", "new peer state directory")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if *packagePath == "" || *stateDir == "" || flags.NArg() != 0 {
-		return errors.New("peer-import requires --package and --state-dir")
-	}
-	data, err := readClusterPrivate(*packagePath)
-	if err != nil {
-		return err
-	}
-	result, err := importPeerPackage(data, *stateDir)
-	if err != nil {
-		return err
-	}
-	return json.NewEncoder(os.Stdout).Encode(result)
-}
-
-type peerImportResult struct {
+type PeerImportResult struct {
 	NodeID      string `json:"node_id"`
 	ConfigPath  string `json:"config_path"`
 	ClusterPath string `json:"cluster_path"`
 }
 
-func importPeerPackage(data []byte, stateDir string) (peerImportResult, error) {
-	var bundle peerJoinPackage
+func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
+	var bundle PeerJoinPackage
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&bundle); err != nil {
-		return peerImportResult{}, err
+		return PeerImportResult{}, err
 	}
 	if err := decoder.Decode(new(any)); err != io.EOF {
-		return peerImportResult{}, errors.New("enrollment package must contain one object")
+		return PeerImportResult{}, errors.New("enrollment package must contain one object")
 	}
 	canonical, _ := json.Marshal(bundle)
 	digest := sha256.Sum256(canonical)
 	packageHash := hex.EncodeToString(digest[:])
 	if bundle.Version != 1 || bundle.OperationID == "" || bundle.ClusterID == "" || bundle.NodeID == "" || len(bundle.OwnerToken) < 32 || len(bundle.WorkerToken) < 32 || len(bundle.Seeds) == 0 {
-		return peerImportResult{}, errors.New("incomplete peer enrollment package")
+		return PeerImportResult{}, errors.New("incomplete peer enrollment package")
 	}
 	if bundle.StorageLevel != "restricted" && bundle.StorageLevel != "sealed" {
-		return peerImportResult{}, errors.New("入组包没有明确授权私有协作账本存储")
+		return PeerImportResult{}, errors.New("入组包没有明确授权私有协作账本存储")
 	}
 	if err := validPeerEndpoint(bundle.PeerAdvertise, true); err != nil {
-		return peerImportResult{}, err
+		return PeerImportResult{}, err
 	}
 	if err := validPeerEndpoint(bundle.RaftAdvertise, true); err != nil {
-		return peerImportResult{}, err
+		return PeerImportResult{}, err
 	}
 	pair, err := tls.X509KeyPair(bundle.Certificate, bundle.PrivateKey)
 	if err != nil {
-		return peerImportResult{}, err
+		return PeerImportResult{}, err
 	}
 	roots := x509.NewCertPool()
 	if !roots.AppendCertsFromPEM(bundle.CA) {
-		return peerImportResult{}, errors.New("invalid cluster CA")
+		return PeerImportResult{}, errors.New("invalid cluster CA")
 	}
 	leaf, err := x509.ParseCertificate(pair.Certificate[0])
 	if err != nil {
-		return peerImportResult{}, err
+		return PeerImportResult{}, err
 	}
 	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}}); err != nil {
-		return peerImportResult{}, err
+		return PeerImportResult{}, err
 	}
 	identity, err := coordination.CertificateIdentity(leaf)
 	if err != nil || identity != (coordination.Identity{ClusterID: bundle.ClusterID, NodeID: bundle.NodeID}) {
-		return peerImportResult{}, errors.New("peer certificate identity differs from enrollment")
+		return PeerImportResult{}, errors.New("peer certificate identity differs from enrollment")
 	}
 	root, err := filepath.Abs(stateDir)
 	if err != nil {
-		return peerImportResult{}, err
+		return PeerImportResult{}, err
 	}
 	configPath := filepath.Join(root, "config.json")
-	clusterPath := defaultClusterConfigPath(configPath)
-	result := peerImportResult{NodeID: bundle.NodeID, ConfigPath: configPath, ClusterPath: clusterPath}
+	clusterPath := DefaultClusterConfigPath(configPath)
+	result := PeerImportResult{NodeID: bundle.NodeID, ConfigPath: configPath, ClusterPath: clusterPath}
 	markerPath := filepath.Join(root, "join-operation.json")
 	if _, err := os.Lstat(root); err == nil {
 		var marker struct {
@@ -1028,14 +1006,14 @@ func importPeerPackage(data []byte, stateDir string) (peerImportResult, error) {
 			NodeID      string `json:"node_id"`
 			PackageHash string `json:"package_hash"`
 		}
-		raw, err := readClusterPrivate(markerPath)
+		raw, err := ReadClusterPrivate(markerPath)
 		if err != nil {
 			return result, errors.New("target already contains a different installation")
 		}
 		if json.Unmarshal(raw, &marker) != nil || marker.ID != bundle.OperationID || marker.ClusterID != bundle.ClusterID || marker.NodeID != bundle.NodeID || marker.PackageHash != packageHash {
 			return result, errors.New("target belongs to a different enrollment operation")
 		}
-		if _, err := loadClusterPeerConfig(clusterPath); err != nil {
+		if _, err := LoadClusterPeerConfig(clusterPath); err != nil {
 			return result, err
 		}
 		return result, nil
@@ -1051,13 +1029,13 @@ func importPeerPackage(data []byte, stateDir string) (peerImportResult, error) {
 	}
 	defer os.RemoveAll(staging)
 	clusterDir := filepath.Join(root, "cluster")
-	settings := clusterPeerConfig{Version: 1, ClusterID: bundle.ClusterID, NodeID: bundle.NodeID, StorageLevel: bundle.StorageLevel, Name: bundle.Name, DataDir: clusterDir, RaftAddress: bundle.RaftAdvertise, PeerAddress: bundle.PeerAdvertise, RaftBindAddress: bundle.RaftListen, PeerBindAddress: bundle.PeerListen, PeerURL: "https://" + bundle.PeerAdvertise, UIAddress: "127.0.0.1:0", CACertFile: filepath.Join(clusterDir, "ca.pem"), CertFile: filepath.Join(clusterDir, "node.pem"), KeyFile: filepath.Join(clusterDir, "node-key.pem"), OwnerTokenFile: filepath.Join(clusterDir, "owner-control-token"), WorkerConfigFile: filepath.Join(clusterDir, "node.json"), Seeds: bundle.Seeds}
-	uiToken, err := clusterRandomToken()
+	settings := PeerConfig{Version: 1, ClusterID: bundle.ClusterID, NodeID: bundle.NodeID, StorageLevel: bundle.StorageLevel, Name: bundle.Name, DataDir: clusterDir, RaftAddress: bundle.RaftAdvertise, PeerAddress: bundle.PeerAdvertise, RaftBindAddress: bundle.RaftListen, PeerBindAddress: bundle.PeerListen, PeerURL: "https://" + bundle.PeerAdvertise, UIAddress: "127.0.0.1:0", CACertFile: filepath.Join(clusterDir, "ca.pem"), CertFile: filepath.Join(clusterDir, "node.pem"), KeyFile: filepath.Join(clusterDir, "node-key.pem"), OwnerTokenFile: filepath.Join(clusterDir, "owner-control-token"), WorkerConfigFile: filepath.Join(clusterDir, "node.json"), Seeds: bundle.Seeds}
+	UIToken, err := ClusterRandomToken()
 	if err != nil {
 		return result, err
 	}
 	disabled := false
-	app := config.Config{Agents: map[string]config.Agent{}, Harnesses: map[string]config.Harness{}, MCPServers: map[string]config.MCPServer{}, Projects: map[string]config.Project{"workspace": {Home: config.ProjectHome{Path: filepath.Join(root, "workspace")}}}, Feishu: config.Feishu{Enabled: &disabled}, Gateway: config.Gateway{HubID: bundle.NodeID, OwnerID: "owner-" + bundle.NodeID, Locale: "zh", DefaultChannel: "console", StatePath: filepath.Join(root, "state.json"), HomePath: filepath.Join(root, "home"), ReadModelAddr: "127.0.0.1:0", ReadModelToken: uiToken, PromptTimeout: config.Duration(10 * time.Minute)}}
+	app := config.Config{Agents: map[string]config.Agent{}, Harnesses: map[string]config.Harness{}, MCPServers: map[string]config.MCPServer{}, Projects: map[string]config.Project{"workspace": {Home: config.ProjectHome{Path: filepath.Join(root, "workspace")}}}, Feishu: config.Feishu{Enabled: &disabled}, Gateway: config.Gateway{HubID: bundle.NodeID, OwnerID: "owner-" + bundle.NodeID, Locale: "zh", DefaultChannel: "console", StatePath: filepath.Join(root, "state.json"), HomePath: filepath.Join(root, "home"), ReadModelAddr: "127.0.0.1:0", ReadModelToken: UIToken, PromptTimeout: config.Duration(10 * time.Minute)}}
 	worker := node.ServerConfig{Name: bundle.NodeID, Listen: "127.0.0.1:0", Token: bundle.WorkerToken, Hubs: map[string]string{bundle.ClusterID: bundle.WorkerToken}, StateDir: filepath.Join(clusterDir, "node"), WorkspaceRoot: root, Harnesses: map[string]node.HarnessSpec{}}
 	for _, dir := range []string{"cluster", "workspace", "home"} {
 		if err := os.MkdirAll(filepath.Join(staging, dir), 0o700); err != nil {
@@ -1068,7 +1046,7 @@ func importPeerPackage(data []byte, stateDir string) (peerImportResult, error) {
 		name string
 		data []byte
 	}{{"cluster/ca.pem", bundle.CA}, {"cluster/node.pem", bundle.Certificate}, {"cluster/node-key.pem", bundle.PrivateKey}, {"cluster/owner-control-token", []byte(bundle.OwnerToken)}} {
-		if err := writeClusterPrivate(filepath.Join(staging, file.name), file.data, true); err != nil {
+		if err := WritePrivate(filepath.Join(staging, file.name), file.data, true); err != nil {
 			return result, err
 		}
 	}
@@ -1076,7 +1054,7 @@ func importPeerPackage(data []byte, stateDir string) (peerImportResult, error) {
 		name  string
 		value any
 	}{{"config.json", app}, {"config.json.cluster.json", settings}, {"cluster/node.json", worker}, {"join-operation.json", map[string]string{"id": bundle.OperationID, "cluster_id": bundle.ClusterID, "node_id": bundle.NodeID, "package_hash": packageHash}}} {
-		if err := saveClusterJSON(filepath.Join(staging, file.name), file.value, true); err != nil {
+		if err := SaveClusterJSON(filepath.Join(staging, file.name), file.value, true); err != nil {
 			return result, err
 		}
 	}

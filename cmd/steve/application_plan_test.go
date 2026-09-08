@@ -27,7 +27,7 @@ func TestPlanningCallHandoverPreservesOriginalRequestAndExecutesItsPlan(t *testi
 }
 
 func testPlanHandover(t *testing.T, llm bool) {
-	dir := clusterPeerTestDir(t)
+	dir := ClusterPeerTestDir(t)
 	bin := filepath.Join(dir, "mockagent")
 	if output, err := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent").CombinedOutput(); err != nil {
 		t.Fatalf("build isolated agent: %v %s", err, output)
@@ -41,11 +41,11 @@ func testPlanHandover(t *testing.T, llm bool) {
 			return nil
 		}
 	}
-	peerConfig, err := loadClusterPeerConfig(options.ClusterPath)
+	peerConfig, err := cluster.LoadClusterPeerConfig(options.ClusterPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	token, err := clusterRandomToken()
+	token, err := cluster.ClusterRandomToken()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,37 +54,37 @@ func testPlanHandover(t *testing.T, llm bool) {
 		worker.Capabilities = []string{"gpu", "internal-net", "prod-cred"}
 		worker.Harnesses["mock"] = node.HarnessSpec{Command: bin, Slots: 4}
 	}
-	if err := saveClusterJSON(peerConfig.WorkerConfigFile, worker, true); err != nil {
+	if err := cluster.SaveClusterJSON(peerConfig.WorkerConfigFile, worker, true); err != nil {
 		t.Fatal(err)
 	}
-	first := startTestPeer(t, options)
-	waitPeerReady(t, first)
+	first := StartTestPeer(t, options)
+	WaitPeerReady(t, first)
 	secondOptions, _ := testPeerOptions(t, filepath.Join(dir, "second"), first)
 	secondOptions.ConfigureApplication = options.ConfigureApplication
-	second := startTestPeer(t, secondOptions)
+	second := StartTestPeer(t, secondOptions)
 	thirdOptions, _ := testPeerOptions(t, filepath.Join(dir, "third"), first)
 	thirdOptions.ConfigureApplication = options.ConfigureApplication
-	third := startTestPeer(t, thirdOptions)
-	for _, peer := range []*clusterPeer{second, third} {
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-plan-" + peer.config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.config.NodeID, Address: peer.config.RaftAddress, APIAddress: peer.config.PeerURL}}); err != nil {
+	third := StartTestPeer(t, thirdOptions)
+	for _, peer := range []*cluster.Peer{second, third} {
+		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-plan-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL}}); err != nil {
 			t.Fatal(err)
 		}
-		if err := first.registerEnrolledWorker(t.Context(), peer.config.NodeID, "restricted"); err != nil {
+		if err := first.RegisterEnrolledWorker(t.Context(), peer.Config.NodeID, "restricted"); err != nil {
 			t.Fatal(err)
 		}
 	}
-	status, body := peerRequest(t, first, http.MethodPost, "/console/agents", consoleapi.AddAgentRequest{ID: "worker", Harness: "mock", Node: first.config.NodeID})
+	status, body := PeerRequest(t, first, http.MethodPost, "/console/agents", consoleapi.AddAgentRequest{ID: "worker", Harness: "mock", Node: first.Config.NodeID})
 	if status != http.StatusOK {
 		t.Fatalf("register plan agent: %d %s", status, body)
 	}
 	if llm {
-		previous := waitPeerReady(t, first)
-		status, body = peerRequest(t, first, http.MethodPost, "/console/services/hub/restart", consoleapi.RestartRequest{CommandID: "apply-planner"})
+		previous := WaitPeerReady(t, first)
+		status, body = PeerRequest(t, first, http.MethodPost, "/console/services/hub/restart", consoleapi.RestartRequest{CommandID: "apply-planner"})
 		if status != http.StatusOK {
 			t.Fatalf("activate registered planning agent: %d %s", status, body)
 		}
 		for deadline := time.Now().Add(15 * time.Second); ; {
-			current := waitPeerReady(t, first)
+			current := WaitPeerReady(t, first)
 			if current.Generation > previous.Generation {
 				break
 			}
@@ -95,11 +95,11 @@ func testPlanHandover(t *testing.T, llm bool) {
 		}
 	}
 	conversation := "console:plan-handover"
-	status, body = peerRequest(t, first, http.MethodPost, "/console/send", consoleapi.Submission{Conversation: conversation, Input: "/project use workspace", CommandID: "plan-project"})
+	status, body = PeerRequest(t, first, http.MethodPost, "/console/send", consoleapi.Submission{Conversation: conversation, Input: "/project use workspace", CommandID: "plan-project"})
 	if status != http.StatusOK {
 		t.Fatalf("bind plan project: %d %s", status, body)
 	}
-	status, body = peerRequest(t, first, http.MethodPost, "/console/queue", consoleapi.Submission{Conversation: conversation, Input: "/plan askme finish one inspected step", CommandID: "plan-original-input"})
+	status, body = PeerRequest(t, first, http.MethodPost, "/console/queue", consoleapi.Submission{Conversation: conversation, Input: "/plan askme finish one inspected step", CommandID: "plan-original-input"})
 	if status != http.StatusOK {
 		t.Fatalf("submit plan: %d %s", status, body)
 	}
@@ -107,21 +107,21 @@ func testPlanHandover(t *testing.T, llm bool) {
 	if original.Kind == "recovery" || original.TaskID == "" || original.AttemptID == "" || !strings.HasPrefix(original.SessionID, "ns_") {
 		t.Fatalf("plan lacks exact native question binding: %+v", original)
 	}
-	if _, err := first.runtime.Load().Transfer(t.Context(), coordination.TransferRequest{ID: "plan-handover", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: second.config.NodeID}); err != nil {
+	if _, err := first.Runtime.Load().Transfer(t.Context(), coordination.TransferRequest{ID: "plan-handover", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: second.Config.NodeID}); err != nil {
 		t.Fatal(err)
 	}
-	waitPeerReady(t, second)
+	WaitPeerReady(t, second)
 	resumed := awaitPeerQuestion(t, first, conversation, original.AttemptID)
 	if resumed.Kind == "recovery" || resumed.SessionID != original.SessionID || resumed.TaskID != original.TaskID || resumed.ExchangeID != original.ExchangeID {
 		t.Fatalf("plan changed execution or exchange: %+v -> %+v", original, resumed)
 	}
-	status, body = peerRequest(t, first, http.MethodPost, "/console/questions/"+resumed.ID+"/answer", consoleapi.QuestionAnswer{CommandID: "plan-answer", Decision: "accept", Choice: "Blue"})
+	status, body = PeerRequest(t, first, http.MethodPost, "/console/questions/"+resumed.ID+"/answer", consoleapi.QuestionAnswer{CommandID: "plan-answer", Decision: "accept", Choice: "Blue"})
 	if status != http.StatusOK {
 		t.Fatalf("answer original step: %d %s", status, body)
 	}
 	for deadline := time.Now().Add(2 * time.Minute); ; {
 		if llm {
-			qStatus, qBody := peerRequest(t, first, http.MethodGet, "/console/questions?conversation="+conversation, nil)
+			qStatus, qBody := PeerRequest(t, first, http.MethodGet, "/console/questions?conversation="+conversation, nil)
 			var questions struct {
 				Questions []consoleapi.PendingQuestion `json:"questions"`
 			}
@@ -130,14 +130,14 @@ func testPlanHandover(t *testing.T, llm bool) {
 					if question.State != "pending" || question.Kind == "recovery" {
 						continue
 					}
-					qStatus, qBody = peerRequest(t, first, http.MethodPost, "/console/questions/"+question.ID+"/answer", consoleapi.QuestionAnswer{CommandID: "answer-" + question.ID, Decision: "accept", Choice: "Blue"})
+					qStatus, qBody = PeerRequest(t, first, http.MethodPost, "/console/questions/"+question.ID+"/answer", consoleapi.QuestionAnswer{CommandID: "answer-" + question.ID, Decision: "accept", Choice: "Blue"})
 					if qStatus != http.StatusOK {
 						t.Fatalf("answer resulting step: %d %s", qStatus, qBody)
 					}
 				}
 			}
 		}
-		status, body = peerRequest(t, first, http.MethodGet, "/console/queue?conversation="+conversation, nil)
+		status, body = PeerRequest(t, first, http.MethodGet, "/console/queue?conversation="+conversation, nil)
 		var list struct {
 			Queue []consoleapi.Exchange `json:"queue"`
 		}
@@ -157,7 +157,7 @@ func testPlanHandover(t *testing.T, llm bool) {
 		}
 		time.Sleep(25 * time.Millisecond)
 	}
-	active := waitPeerReady(t, second)
+	active := WaitPeerReady(t, second)
 	records, err := attempt.New(active.Ledger).ForTask(t.Context(), original.TaskID)
 	wantCount, wantKind, replyText := 1, attempt.KindStep, "accept:Blue"
 	if llm {
@@ -183,7 +183,7 @@ func testPlanHandover(t *testing.T, llm bool) {
 	if !ok || tracked.Budget.Turns != wantCount || tracked.State != task.StateDone {
 		t.Fatalf("plan budget or task state differs: %+v", tracked)
 	}
-	status, body = peerRequest(t, first, http.MethodGet, "/console/replies?conversation="+conversation, nil)
+	status, body = PeerRequest(t, first, http.MethodGet, "/console/replies?conversation="+conversation, nil)
 	if status != http.StatusOK || !strings.Contains(string(body), replyText) {
 		t.Fatalf("plan reply lacks original step output: %d %s", status, body)
 	}

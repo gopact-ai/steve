@@ -1,4 +1,4 @@
-package main
+package cluster
 
 import (
 	"bufio"
@@ -18,7 +18,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
-	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/coordination"
@@ -27,29 +26,29 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 )
 
-func contentPeers(t *testing.T) ([]*clusterPeer, cluster.Activation) {
+func contentPeers(t *testing.T) ([]*Peer, Activation) {
 	t.Helper()
-	root := clusterPeerTestDir(t)
-	var peers []*clusterPeer
+	root := ClusterPeerTestDir(t)
+	var peers []*Peer
 	for i := 0; i < 3; i++ {
-		var source *clusterPeer
+		var source *Peer
 		if i > 0 {
 			source = peers[0]
 		}
 		options, _ := testPeerOptions(t, filepath.Join(root, string(rune('a'+i))), source)
-		options.Activate = func(context.Context, cluster.Activation, func(peerApplicationEndpoint) error) (cluster.Deactivate, error) {
+		options.Activate = func(context.Context, Activation, func(PeerApplicationEndpoint) error) (Deactivate, error) {
 			return nil, nil
 		}
-		peer := startTestPeer(t, options)
+		peer := StartTestPeer(t, options)
 		peers = append(peers, peer)
 		if i == 0 {
-			waitPeerReady(t, peer)
-		} else if _, err := source.Join(t.Context(), coordination.JoinRequest{ID: "content-join-" + peer.config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.config.NodeID, Name: peer.config.Name, Address: peer.config.RaftAddress, APIAddress: peer.config.PeerURL}}); err != nil {
+			WaitPeerReady(t, peer)
+		} else if _, err := source.Join(t.Context(), coordination.JoinRequest{ID: "content-join-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Name: peer.Config.Name, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL}}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	active := waitPeerReady(t, peers[0])
-	declaration := platformconfig.Declaration{Settings: (&config.Config{Gateway: config.Gateway{OwnerID: "test-owner"}}).SettingsValues(), Channels: (&config.Config{Gateway: config.Gateway{OwnerID: "test-owner"}}).ChannelSettings(), Home: config.ProjectHome{Node: peers[0].config.NodeID, Path: "/fixture/home"}, Nodes: map[string]config.Node{}, Projects: map[string]config.Project{"workspace": {Level: "internal", Home: config.ProjectHome{Node: peers[0].config.NodeID, Path: "/fixture/workspace"}}}}
+	active := WaitPeerReady(t, peers[0])
+	declaration := platformconfig.Declaration{Settings: (&config.Config{Gateway: config.Gateway{OwnerID: "test-owner"}}).SettingsValues(), Channels: (&config.Config{Gateway: config.Gateway{OwnerID: "test-owner"}}).ChannelSettings(), Home: config.ProjectHome{Node: peers[0].Config.NodeID, Path: "/fixture/home"}, Nodes: map[string]config.Node{}, Projects: map[string]config.Project{"workspace": {Level: "internal", Home: config.ProjectHome{Node: peers[0].Config.NodeID, Path: "/fixture/workspace"}}}}
 	for _, peer := range peers {
 		worker := peer.Worker()
 		declaration.Nodes[worker.Name] = config.Node{Addr: worker.Address, Token: worker.Token, Level: "restricted"}
@@ -62,7 +61,7 @@ func contentPeers(t *testing.T) ([]*clusterPeer, cluster.Activation) {
 		t.Fatal(err)
 	}
 	projects := project.Open(active.Ledger)
-	projects.SetHubID(peers[0].config.ClusterID)
+	projects.SetHubID(peers[0].Config.ClusterID)
 	if err := (config.ProjectController{Store: projects}).Reconcile(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +70,7 @@ func contentPeers(t *testing.T) ([]*clusterPeer, cluster.Activation) {
 
 func TestContentPeerCopiesSurviveOriginalCoordinatorLoss(t *testing.T) {
 	peers, active := contentPeers(t)
-	client, err := peers[0].contentReplicator(active)
+	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -91,7 +90,7 @@ func TestContentPeerCopiesSurviveOriginalCoordinatorLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	for deadline := time.Now().Add(5 * time.Second); ; {
-		state, err := peers[1].runtime.Load().ReadState(t.Context())
+		state, err := peers[1].Runtime.Load().ReadState(t.Context())
 		if err == nil && state.Coordinator == active.Assignment {
 			break
 		}
@@ -100,15 +99,15 @@ func TestContentPeerCopiesSurviveOriginalCoordinatorLoss(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if _, err := peers[1].runtime.Load().Transfer(t.Context(), coordination.TransferRequest{ID: "content-transfer", Actor: "owner", ExpectedEpoch: active.Assignment.Epoch, TargetNodeID: peers[1].config.NodeID, Reason: "test source machine loss"}); err != nil {
+	if _, err := peers[1].Runtime.Load().Transfer(t.Context(), coordination.TransferRequest{ID: "content-transfer", Actor: "owner", ExpectedEpoch: active.Assignment.Epoch, TargetNodeID: peers[1].Config.NodeID, Reason: "test source machine loss"}); err != nil {
 		t.Fatal(err)
 	}
-	next := waitPeerReady(t, peers[1])
+	next := WaitPeerReady(t, peers[1])
 	stored, ok, err := contentreplica.Lookup(t.Context(), next.Ledger, manifest.ID)
 	if err != nil || !ok {
 		t.Fatalf("replica manifest missing: %t %v", ok, err)
 	}
-	restoredClient, err := peers[1].contentReplicator(next)
+	restoredClient, err := peers[1].ContentReplicator(next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +120,7 @@ func TestContentPeerCopiesSurviveOriginalCoordinatorLoss(t *testing.T) {
 
 func TestContentPeerRejectsUnclassifiedAndForgedScope(t *testing.T) {
 	peers, active := contentPeers(t)
-	client, err := peers[0].contentReplicator(active)
+	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -130,15 +129,15 @@ func TestContentPeerRejectsUnclassifiedAndForgedScope(t *testing.T) {
 	if _, err := client.Prepare(t.Context(), "", contentreplica.Material, ref.SHA256, ref, bytes.NewReader(data)); !errors.Is(err, contentreplica.ErrPlacement) {
 		t.Fatalf("unclassified material accepted: %v", err)
 	}
-	object := contentreplica.Object{Scope: contentreplica.Scope{ProjectID: "workspace", Level: "public", HomeNodeID: peers[0].config.NodeID}, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}
-	if _, err := (peerContentTransport{peer: peers[0], active: active}).Put(t.Context(), peers[1].config.NodeID, object, bytes.NewReader(data)); !errors.Is(err, contentreplica.ErrPlacement) {
+	object := contentreplica.Object{Scope: contentreplica.Scope{ProjectID: "workspace", Level: "public", HomeNodeID: peers[0].Config.NodeID}, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}
+	if _, err := (peerContentTransport{peer: peers[0], active: active}).Put(t.Context(), peers[1].Config.NodeID, object, bytes.NewReader(data)); !errors.Is(err, contentreplica.ErrPlacement) {
 		t.Fatalf("sender-chosen classification accepted: %v", err)
 	}
 }
 
 func TestContentReceiverDoesNotTreatCoordinatorRoleAsDataPermission(t *testing.T) {
 	peers, active := contentPeers(t)
-	client, err := peers[0].contentReplicator(active)
+	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,13 +152,13 @@ func TestContentReceiverDoesNotTreatCoordinatorRoleAsDataPermission(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	source := d.Nodes[peers[0].config.NodeID]
+	source := d.Nodes[peers[0].Config.NodeID]
 	source.Level = "public"
-	d.Nodes[peers[0].config.NodeID] = source
+	d.Nodes[peers[0].Config.NodeID] = source
 	if _, err := declarations.Save(t.Context(), d.Revision, d); err != nil {
 		t.Fatal(err)
 	}
-	state, err := peers[0].runtime.Load().ReadState(t.Context())
+	state, err := peers[0].Runtime.Load().ReadState(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,7 +188,7 @@ func TestContentReceiverDoesNotTreatCoordinatorRoleAsDataPermission(t *testing.T
 
 func TestContentClientCannotBorrowAuthorityFromReplacementGeneration(t *testing.T) {
 	peers, active := contentPeers(t)
-	client, err := peers[0].contentReplicator(active)
+	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -202,15 +201,15 @@ func TestContentClientCannotBorrowAuthorityFromReplacementGeneration(t *testing.
 	if err := active.Runtime.RestartGeneration(active.Generation); err != nil {
 		t.Fatal(err)
 	}
-	next := waitPeerReady(t, peers[0])
+	next := WaitPeerReady(t, peers[0])
 	if next.WriterGeneration <= active.WriterGeneration {
 		t.Fatal("writer generation did not advance")
 	}
-	if _, err := client.Prepare(context.Background(), "workspace", contentreplica.Material, ref.SHA256, ref, bytes.NewReader(data)); !errors.Is(err, cluster.ErrInactive) {
+	if _, err := client.Prepare(context.Background(), "workspace", contentreplica.Material, ref.SHA256, ref, bytes.NewReader(data)); !errors.Is(err, ErrInactive) {
 		t.Fatalf("old client acquired replacement writer: %v", err)
 	}
 	var output bytes.Buffer
-	if _, err := client.Read(context.Background(), manifest, &output); !errors.Is(err, cluster.ErrInactive) || output.Len() != 0 {
+	if _, err := client.Read(context.Background(), manifest, &output); !errors.Is(err, ErrInactive) || output.Len() != 0 {
 		t.Fatalf("old client read after replacement: %q %v", output.Bytes(), err)
 	}
 }
@@ -229,7 +228,7 @@ func TestContentUploadDeadlineReleasesHalfOpenRequest(t *testing.T) {
 	}
 	server.StartTLS()
 	defer server.Close()
-	tlsConfig, err := peers[0].identity.ClientConfig(peers[1].config.NodeID)
+	tlsConfig, err := peers[0].identity.ClientConfig(peers[1].Config.NodeID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +241,7 @@ func TestContentUploadDeadlineReleasesHalfOpenRequest(t *testing.T) {
 		t.Fatal(err)
 	}
 	ref := checkpoint.Reference(bytes.Repeat([]byte("x"), 4096))
-	object := contentreplica.Object{Scope: contentreplica.Scope{ProjectID: "workspace", Level: "internal", HomeNodeID: peers[0].config.NodeID}, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}
+	object := contentreplica.Object{Scope: contentreplica.Scope{ProjectID: "workspace", Level: "internal", HomeNodeID: peers[0].Config.NodeID}, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}
 	raw, _ := json.Marshal(object)
 	if _, err := fmt.Fprintf(connection, "PUT %s HTTP/1.1\r\nHost: localhost\r\nContent-Length: 4096\r\n%s: %s\r\nX-Steve-Coordinator-Epoch: %d\r\nX-Steve-Writer-Generation: %d\r\nConnection: close\r\n\r\nx", clusterContentPath, contentObjectHeader, base64.RawURLEncoding.EncodeToString(raw), active.Assignment.Epoch, active.WriterGeneration); err != nil {
 		t.Fatal(err)

@@ -60,6 +60,8 @@ Open(spec) → Admit → Prepare(workspace, base) → OpenSession → Arm(runnin
 
 M2 阶段 1：控制台管理服务及其单元测试迁入 `internal/admin`，连同共享配置锁、仓库缓存、技能分发、节点观测和运行时配置辅助类型。`cmd/steve` 从 11,446 行 / 64 个内部依赖降到 7,403 行 / 61 个；共享配置与项目登记的组合测试暂留在命令包，随阶段 3 的应用装配迁移。HTTP、JSON、配置格式和日志文本不变。
 
+M2 阶段 2：成员接入、内容复制与修复、桌面与 SSH 服务并入已有的 `internal/cluster`；应用启动和 SSH HTTP handler 通过注入保持依赖方向。`cmd/steve` 降到 3,366 行 / 55 个内部依赖。纯集群测试随实现迁移；真实应用启动、多进程接入及命令行测试仍在命令包，阶段 3 再迁移应用集成部分。
+
 ### 状态与动作是类型
 
 - `nodewire.SessionAction` 常量与 `SessionService` 的按动作分发表，替换 `Do` 里的字符串 switch。

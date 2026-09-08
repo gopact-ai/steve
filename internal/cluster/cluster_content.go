@@ -1,4 +1,4 @@
-package main
+package cluster
 
 import (
 	"bytes"
@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
-	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/coordination"
@@ -27,7 +26,7 @@ const contentObjectHeader = "X-Steve-Content-Object"
 
 // Each content operation rechecks the committed project declaration and local
 // replica position. An incoming object's classification is never authoritative.
-type peerContentPolicy struct{ peer *clusterPeer }
+type peerContentPolicy struct{ peer *Peer }
 
 type contentPlacementState struct {
 	state       coordination.State
@@ -35,8 +34,8 @@ type contentPlacementState struct {
 	project     project.Project
 }
 
-func (p *clusterPeer) contentState(ctx context.Context, projectID string) (contentPlacementState, error) {
-	runtime := p.runtime.Load()
+func (p *Peer) contentState(ctx context.Context, projectID string) (contentPlacementState, error) {
+	runtime := p.Runtime.Load()
 	if runtime == nil || projectID == "" {
 		return contentPlacementState{}, contentreplica.ErrPlacement
 	}
@@ -68,7 +67,7 @@ func (p *clusterPeer) contentState(ctx context.Context, projectID string) (conte
 			return contentPlacementState{}, err
 		}
 		projects := project.Open(runtime.Ledger())
-		projects.SetHubID(p.config.ClusterID)
+		projects.SetHubID(p.Config.ClusterID)
 		projects.RequireDeclaration(declarationHash)
 		item, found, lookupErr := projects.Get(ctx, projectID)
 		after, err := runtime.Ledger().ReplicaVersion()
@@ -121,7 +120,7 @@ func (policy peerContentPolicy) CheckpointPlacement(ctx context.Context, scope c
 	if domain == "" {
 		// An offline first installation can store one local copy even when
 		// the OS has no machine identifier. It cannot claim independent copies.
-		if len(current.state.Members) != 1 || nodeID != policy.peer.config.NodeID {
+		if len(current.state.Members) != 1 || nodeID != policy.peer.Config.NodeID {
 			return contentreplica.Placement{}, contentreplica.ErrPlacement
 		}
 		domain = "single-node:" + nodeID
@@ -129,12 +128,12 @@ func (policy peerContentPolicy) CheckpointPlacement(ctx context.Context, scope c
 	return contentreplica.Placement{FailureDomain: domain}, nil
 }
 
-func (p *clusterPeer) contentReplicator(active cluster.Activation) (contentreplica.Replicator, error) {
-	if active.NodeID != p.config.NodeID || active.Runtime == nil {
+func (p *Peer) ContentReplicator(active Activation) (contentreplica.Replicator, error) {
+	if active.NodeID != p.Config.NodeID || active.Runtime == nil {
 		return nil, contentreplica.ErrPlacement
 	}
 	client, err := contentreplica.New(contentreplica.Config{
-		NodeID: p.config.NodeID, Local: peerLocalContent{peer: p}, Remote: peerContentTransport{peer: p, active: active}, Policy: peerContentPolicy{peer: p},
+		NodeID: p.Config.NodeID, Local: peerLocalContent{peer: p}, Remote: peerContentTransport{peer: p, active: active}, Policy: peerContentPolicy{peer: p},
 		Scope: func(ctx context.Context, id string) (contentreplica.Scope, error) {
 			current, err := p.contentState(ctx, id)
 			if err != nil {
@@ -162,21 +161,21 @@ func (p *clusterPeer) contentReplicator(active cluster.Activation) (contentrepli
 
 type generationContent struct {
 	client *contentreplica.Client
-	active cluster.Activation
+	active Activation
 }
 
 func (c generationContent) MaxObjectBytes() int64 { return c.client.MaxObjectBytes() }
 
-func contentGenerationState(ctx context.Context, active cluster.Activation) (coordination.State, error) {
+func contentGenerationState(ctx context.Context, active Activation) (coordination.State, error) {
 	if active.Context == nil || active.Context.Err() != nil || active.Runtime == nil {
-		return coordination.State{}, cluster.ErrInactive
+		return coordination.State{}, ErrInactive
 	}
 	state, err := active.Runtime.ReadState(ctx)
 	if err != nil {
 		return coordination.State{}, err
 	}
 	if state.Coordinator != active.Assignment || state.WriterGeneration != active.WriterGeneration {
-		return coordination.State{}, cluster.ErrInactive
+		return coordination.State{}, ErrInactive
 	}
 	return state, active.Context.Err()
 }
@@ -240,16 +239,16 @@ func (c generationContent) Read(parent context.Context, manifest contentreplica.
 	return updated, nil
 }
 
-func (p *clusterPeer) acquireContent() (*contentreplica.Store, func(), error) {
-	p.mu.Lock()
+func (p *Peer) acquireContent() (*contentreplica.Store, func(), error) {
+	p.Mu.Lock()
 	if p.closing {
-		p.mu.Unlock()
-		return nil, nil, cluster.ErrInactive
+		p.Mu.Unlock()
+		return nil, nil, ErrInactive
 	}
 	p.contentOps.Add(1)
-	p.mu.Unlock()
+	p.Mu.Unlock()
 	p.contentOnce.Do(func() {
-		p.content, p.contentErr = contentreplica.Open(contentreplica.StoreConfig{Dir: filepath.Join(p.config.DataDir, "content"), NodeID: p.config.NodeID, Policy: peerContentPolicy{peer: p}})
+		p.content, p.contentErr = contentreplica.Open(contentreplica.StoreConfig{Dir: filepath.Join(p.Config.DataDir, "content"), NodeID: p.Config.NodeID, Policy: peerContentPolicy{peer: p}})
 	})
 	if p.contentErr != nil {
 		p.contentOps.Done()
@@ -258,7 +257,7 @@ func (p *clusterPeer) acquireContent() (*contentreplica.Store, func(), error) {
 	return p.content, p.contentOps.Done, nil
 }
 
-func (p *clusterPeer) closeContent() error {
+func (p *Peer) closeContent() error {
 	p.contentOps.Wait()
 	if p.content != nil {
 		return p.content.Close()
@@ -266,7 +265,7 @@ func (p *clusterPeer) closeContent() error {
 	return nil
 }
 
-type peerLocalContent struct{ peer *clusterPeer }
+type peerLocalContent struct{ peer *Peer }
 
 func (local peerLocalContent) Put(ctx context.Context, object contentreplica.Object, source io.Reader) (contentreplica.Receipt, error) {
 	store, release, err := local.peer.acquireContent()
@@ -287,8 +286,8 @@ func (local peerLocalContent) Get(ctx context.Context, object contentreplica.Obj
 }
 
 type peerContentTransport struct {
-	peer   *clusterPeer
-	active cluster.Activation
+	peer   *Peer
+	active Activation
 }
 
 func (transport peerContentTransport) request(ctx context.Context, method, nodeID string, object contentreplica.Object, source io.Reader) (*http.Response, error) {
@@ -303,7 +302,7 @@ func (transport peerContentTransport) request(ctx context.Context, method, nodeI
 	if err != nil {
 		return nil, err
 	}
-	if state.Coordinator.NodeID != p.config.NodeID {
+	if state.Coordinator.NodeID != p.Config.NodeID {
 		return nil, coordination.ErrNotCoordinator
 	}
 	member, ok := state.Members[nodeID]
@@ -411,17 +410,17 @@ func (transport peerContentTransport) Get(ctx context.Context, nodeID string, ob
 	return ctx.Err()
 }
 
-func (p *clusterPeer) contentAuthority(r *http.Request) error {
+func (p *Peer) contentAuthority(r *http.Request) error {
 	if r.TLS == nil || len(r.TLS.VerifiedChains) == 0 || len(r.TLS.PeerCertificates) == 0 {
 		return contentreplica.ErrPlacement
 	}
 	identity, err := coordination.CertificateIdentity(r.TLS.PeerCertificates[0])
-	if err != nil || identity.ClusterID != p.config.ClusterID {
+	if err != nil || identity.ClusterID != p.Config.ClusterID {
 		return contentreplica.ErrPlacement
 	}
-	runtime := p.runtime.Load()
+	runtime := p.Runtime.Load()
 	if runtime == nil {
-		return cluster.ErrInactive
+		return ErrInactive
 	}
 	state, err := runtime.ReadState(r.Context())
 	if err != nil {
@@ -438,7 +437,7 @@ func (p *clusterPeer) contentAuthority(r *http.Request) error {
 	return nil
 }
 
-func (p *clusterPeer) serveContent(w http.ResponseWriter, r *http.Request) {
+func (p *Peer) serveContent(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Minute)
 	defer cancel()
 	r = r.WithContext(ctx)
@@ -513,7 +512,7 @@ func (p *clusterPeer) serveContent(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "content placement changed", http.StatusForbidden)
 			return
 		}
-		writePeerJSON(w, receipt)
+		WriteJSON(w, receipt)
 		return
 	}
 	file, err := os.CreateTemp("", "steve-content-download-*")
@@ -567,7 +566,7 @@ func writeContentError(w http.ResponseWriter, err error) {
 	}{Code: code})
 }
 
-func (p *clusterPeer) contentRequestPlacement(r *http.Request, object contentreplica.Object) error {
+func (p *Peer) contentRequestPlacement(r *http.Request, object contentreplica.Object) error {
 	if r.TLS == nil || len(r.TLS.PeerCertificates) == 0 {
 		return contentreplica.ErrPlacement
 	}
@@ -579,6 +578,6 @@ func (p *clusterPeer) contentRequestPlacement(r *http.Request, object contentrep
 	if _, err := policy.CheckpointPlacement(r.Context(), object.Scope, identity.NodeID); err != nil {
 		return err
 	}
-	_, err = policy.CheckpointPlacement(r.Context(), object.Scope, p.config.NodeID)
+	_, err = policy.CheckpointPlacement(r.Context(), object.Scope, p.Config.NodeID)
 	return err
 }
