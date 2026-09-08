@@ -18,6 +18,20 @@ type replicaSnapshot struct {
 	Database    []byte `json:"database"`
 }
 
+// backupSource is the side of a driver connection that copies the open
+// database into another file through SQLite's online backup API. modernc's
+// connection offers it; the driver interface itself does not promise it,
+// so the snapshot asks and refuses rather than assumes.
+type backupSource interface {
+	NewBackup(destination string) (*sqlite.Backup, error)
+}
+
+// restoreTarget is the reverse direction on the same connection: replacing
+// the open database with another file's content.
+type restoreTarget interface {
+	NewRestore(source string) (*sqlite.Backup, error)
+}
+
 // SnapshotReplica captures an entire SQLite database at one committed
 // boundary, including store tables, effects, sequences and replay receipts.
 // SQLite's online backup API includes WAL contents and preserves SQL types.
@@ -45,9 +59,7 @@ func (l *Ledger) SnapshotReplica() ([]byte, error) {
 		return nil, err
 	}
 	if err := conn.Raw(func(raw any) error {
-		provider, ok := raw.(interface {
-			NewBackup(string) (*sqlite.Backup, error)
-		})
+		provider, ok := raw.(backupSource)
 		if !ok {
 			return errors.New("ledger: SQLite online backup unavailable")
 		}
@@ -112,9 +124,7 @@ func (l *Ledger) RestoreReplica(raw []byte) error {
 		return l.failReplica(err)
 	}
 	err = conn.Raw(func(raw any) error {
-		provider, ok := raw.(interface {
-			NewRestore(string) (*sqlite.Backup, error)
-		})
+		provider, ok := raw.(restoreTarget)
 		if !ok {
 			return errors.New("ledger: SQLite online restore unavailable")
 		}
