@@ -8,7 +8,6 @@ internal/console/console.go:498
 internal/console/questions.go:285
 internal/console/queue.go:62
 internal/coordination/failover.go:30
-internal/delegate/recovery.go:473
 internal/exec/supervisor.go:108
 internal/gateway/resume.go:210
 internal/httpapi/server.go:1106

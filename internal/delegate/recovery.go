@@ -477,13 +477,19 @@ func (s *Service) canSettleStopped(ctx context.Context, cause error) bool {
 	return token != nil && acphost.PromptSettled(cause) && errors.Is(s.tasks.CheckExecution(*token), task.ErrExecutionStopped)
 }
 
+// executionBinder is a gate that can bind a recovered child's tool
+// authorization to the task epoch, attempt and node session it already
+// runs under, so the child keeps its token instead of being minted a
+// new one. A gate without it cannot recover a retained child.
+type executionBinder interface {
+	BindExecution(context.Context, agentmcp.Binding, agentmcp.GrantScope) error
+}
+
 func (s *Service) bindDelegatedExecution(ctx context.Context, parent, child task.Task, record attempt.Record) error {
 	if s.gate == nil {
 		return nil
 	}
-	binder, ok := s.gate.(interface {
-		BindExecution(context.Context, agentmcp.Binding, agentmcp.GrantScope) error
-	})
+	binder, ok := s.gate.(executionBinder)
 	if !ok || record.Execution == nil {
 		return errors.New("delegated tool execution binding is unavailable")
 	}
