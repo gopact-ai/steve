@@ -16,6 +16,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
@@ -178,7 +179,7 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 		if keepWorkspace {
 			return
 		}
-		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		cleanup, stop := lifecycle.Cleanup(ctx)
 		defer stop()
 		if err := r.workspaces.Discard(cleanup, workspace); err != nil {
 			validationReady = false
@@ -211,18 +212,10 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 	}
 	ctx, stopRun := context.WithCancel(ctx)
 	defer stopRun()
-	heartbeatCtx := ctx
-	lost := r.attempts.Heartbeat(heartbeatCtx, id)
-	go func() {
-		select {
-		case <-lost:
-			stopRun()
-		case <-heartbeatCtx.Done():
-		}
-	}()
+	defer lifecycle.Keep(ctx, r.attempts, id, stopRun)()
 	_, deadline, reserveErr := ReserveBudget(r.budget, out.Attempt)
 	if reserveErr != nil {
-		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		cleanup, stop := lifecycle.Cleanup(ctx)
 		defer stop()
 		failed, settleErr := r.attempts.FailWith(cleanup, id, "agentexec", reserveErr.Error(), nil)
 		if settleErr != nil {
@@ -242,7 +235,7 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 	var session harness.Runner
 	var releaseBindings bool
 	defer func() {
-		if session != nil && strings.HasPrefix(session.ID(), "ns_") || !out.Attempt.State.Terminal() || out.Attempt.Unsettled {
+		if session != nil && lifecycle.Managed(session) || !out.Attempt.State.Terminal() || out.Attempt.Unsettled {
 			return
 		}
 		if err := SettleBudget(r.budget, out.Attempt, runErr); err != nil {
@@ -251,13 +244,13 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 		}
 	}()
 	defer func() {
-		if session != nil && strings.HasPrefix(session.ID(), "ns_") {
+		if session != nil && lifecycle.Managed(session) {
 			keepWorkspace = true
 			if out.Attempt.Session == "" {
 				// The node returned a real session, but publishing that identity
 				// failed before any prompt. Preserve the admitted preparation;
 				// this observer may leave without claiming native process exit.
-				cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+				cleanup, cancel := lifecycle.Cleanup(ctx)
 				defer cancel()
 				markerErr := r.attempts.MarkUnsettled(cleanup, out.Attempt.ID, "agentexec-open", errors.Join(harness.ErrStopUnconfirmed, runErr), out.Usage)
 				unresolved = &execution.NodePreparationObserverDetached{AttemptID: out.Attempt.ID, NodeID: out.Attempt.Node, OpenCommandID: attempt.InputCommandID(out.Attempt) + "/open", Cause: errors.Join(harness.ErrStopUnconfirmed, runErr, markerErr)}
@@ -267,14 +260,11 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 			out, runErr, unresolved = r.finishManaged(ctx, out, runErr, invalid, promptSettled)
 			return
 		}
-		cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		cleanup, stop := lifecycle.Cleanup(ctx)
 		defer stop()
 		if !errors.Is(runErr, harness.ErrStopUnconfirmed) && session != nil {
-			if err := r.sessions.CloseSession(cleanup, at, session.ID()); err != nil {
-				stopped, ok := session.(interface{ Stopped() bool })
-				if !ok || !stopped.Stopped() {
-					runErr = errors.Join(runErr, harness.ErrStopUnconfirmed, err)
-				}
+			if err := lifecycle.Close(cleanup, r.sessions, at, session); err != nil {
+				runErr = errors.Join(runErr, err)
 			}
 		}
 		if errors.Is(runErr, harness.ErrStopUnconfirmed) {
@@ -294,8 +284,7 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 			return
 		}
 		if session != nil {
-			stopped, ok := session.(interface{ Stopped() bool })
-			if promptSettled || (ok && stopped.Stopped()) {
+			if promptSettled || lifecycle.Stopped(session) {
 				if err := r.attempts.MarkSessionSettled(cleanup, id, "agentexec"); err != nil {
 					keepWorkspace = true
 					runErr = errors.Join(runErr, err)
@@ -386,35 +375,20 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 		return out, err
 	}
 	out.Attempt = running
-	var mu sync.Mutex
-	var last view.Progress
 	ask, askUser, observe := r.callbacks()
-	progress := func(p view.Progress) {
+	driven := lifecycle.Drive{Session: session, Prompt: prompt, Turn: lifecycle.Managed(session), Ask: ask, AskUser: askUser, Observe: func(p view.Progress) {
 		EmitProgress(ctx, p)
-		mu.Lock()
-		last = p
-		mu.Unlock()
 		if observe != nil {
 			observe(out.Attempt, p)
 		}
-	}
-	if turn, ok := session.(harness.TurnRunner); ok && strings.HasPrefix(session.ID(), "ns_") {
-		out.Answer, _, runErr = turn.PromptTurn(ctx, prompt, nil, ask, askUser, progress)
-	} else {
-		out.Answer, _, runErr = session.Prompt(ctx, prompt, progress)
-	}
-	promptSettled = acphost.PromptSettled(runErr)
-	if stopped, ok := session.(interface{ Stopped() bool }); ok && stopped.Stopped() {
-		promptSettled = true
-	}
+	}}.Run(ctx)
+	out.Answer, runErr = driven.Answer, driven.Err
+	promptSettled = driven.Settled()
 	if !promptSettled {
 		runErr = errors.Join(runErr, harness.ErrStopUnconfirmed)
 	}
-	mu.Lock()
-	u := last.Usage
-	out.Usage = &attempt.Usage{Model: last.Settings.Model, Input: int64(u.InputTokens), Output: int64(u.OutputTokens), CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens), Context: int64(u.ContextTokens), Reported: u.TokensReported()}
-	mu.Unlock()
-	if !strings.HasPrefix(session.ID(), "ns_") {
+	out.Usage = lifecycle.Usage(driven.Last)
+	if !lifecycle.Managed(session) {
 		out.Answer = strings.TrimSpace(out.Answer)
 	}
 	if runErr == nil && ctx.Err() != nil {

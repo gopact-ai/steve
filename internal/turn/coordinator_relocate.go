@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/checkpoint"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
@@ -412,7 +413,7 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 	releaseUnstarted := !hasFrozen
 	defer func() {
 		if releaseUnstarted {
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+			cleanup, cancel := lifecycle.Cleanup(ctx)
 			defer cancel()
 			c.fleet.Release(cleanup, p.Target.Node, p.Target.ID)
 		}
@@ -556,16 +557,7 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 		return Result{}, err
 	}
 	c.setRunner(req.ConversationID, r.Agent, runner)
-	beat, stop := context.WithCancel(turnCtx)
-	defer stop()
-	lost := c.attempts.Heartbeat(beat, r.ID)
-	go func() {
-		select {
-		case <-lost:
-			cancel()
-		case <-beat.Done():
-		}
-	}()
+	defer lifecycle.Keep(turnCtx, c.attempts, r.ID, cancel)()
 	spent := &turnSpend{}
 	req.OnProgress = spent.wrap(req.OnProgress, r.Agent)
 	prompt := frozen.Instructions + "\n\n" + p.Prompt

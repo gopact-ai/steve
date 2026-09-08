@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
@@ -244,7 +245,7 @@ func (r *Runner) finishManaged(parent context.Context, out Result, cause, invali
 	var cancel context.CancelFunc
 	explicitStop := settled && errors.Is(execution.CheckExecution(ctx), task.ErrExecutionStopped)
 	if explicitStop {
-		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		ctx, cancel = lifecycle.Cleanup(ctx)
 		defer cancel()
 		if cause == nil {
 			cause = harness.ErrTurnCanceled
@@ -296,7 +297,7 @@ func (r *Runner) finishManaged(parent context.Context, out Result, cause, invali
 }
 
 func (r *Runner) cleanupAuxiliary(ctx context.Context, record attempt.Record) error {
-	cleanup, stop := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+	cleanup, stop := lifecycle.Cleanup(ctx)
 	defer stop()
 	if err := r.sessions.CloseSession(cleanup, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Session); err != nil {
 		return fmt.Errorf("close settled auxiliary session: %w", err)

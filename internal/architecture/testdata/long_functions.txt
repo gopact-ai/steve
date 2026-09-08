@@ -8,7 +8,7 @@ internal/config.Load 150
 internal/console.Service.recoverExchange 150
 internal/coordination.machine.Apply 250
 internal/delegate.Service.recoverChild 150
-internal/delegate.Service.run 300
+internal/delegate.Service.run 250
 internal/exec.finishStep 150
 internal/exec.runStep 250
 internal/node.Server.handle 150
@@ -18,4 +18,4 @@ internal/transfer.importProject 300
 internal/turn.Coordinator.RelocateChat 250
 internal/turn.Coordinator.Suggest 150
 internal/turn.Coordinator.prompt 300
-internal/turn.Coordinator.resumeRetainedChat 200
+internal/turn.Coordinator.resumeRetainedChat 150

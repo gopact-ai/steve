@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -16,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
@@ -108,7 +108,7 @@ func (s *Service) RecoverRetained(ctx context.Context) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		if seen[record.ID] || record.Kind != attempt.KindDelegate || (!strings.HasPrefix(record.Session, "ns_") && !pendingDelegatePreparation(record)) {
+		if seen[record.ID] || record.Kind != attempt.KindDelegate || (!lifecycle.IsManaged(record.Session) && !pendingDelegatePreparation(record)) {
 			continue
 		}
 		seen[record.ID] = true
@@ -260,7 +260,7 @@ func (s *Service) recoverChild(ctx context.Context, parent, tracked task.Task, r
 			runErr = harness.ErrTurnCanceled
 		}
 		var finishCleanup context.CancelFunc
-		runCtx, finishCleanup = context.WithTimeout(context.WithoutCancel(runCtx), 15*time.Second)
+		runCtx, finishCleanup = lifecycle.Cleanup(runCtx)
 		defer finishCleanup()
 		ctx = runCtx
 	}
@@ -301,7 +301,7 @@ func (s *Service) recoverChild(ctx context.Context, parent, tracked task.Task, r
 		return
 	}
 	if current, readErr := s.attempts.Get(runCtx, record.ID); readErr == nil && current.State.Terminal() && !current.Unsettled {
-		closeCtx, cancel := context.WithTimeout(context.WithoutCancel(runCtx), 15*time.Second)
+		closeCtx, cancel := lifecycle.Cleanup(runCtx)
 		if err := s.sessions.CloseSession(closeCtx, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Session); err != nil {
 			log.Printf("delegate: retained session cleanup task=%s attempt=%s error=%v", tracked.ID, record.ID, err)
 		}
