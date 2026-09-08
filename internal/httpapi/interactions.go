@@ -17,7 +17,7 @@ func (s *Server) consoleQuestions(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"questions": service.Questions(r.URL.Query().Get("conversation"))})
+	writeJSON(w, map[string]any{"questions": service.Questions(r.URL.Query().Get("conversation"))})
 }
 
 func (s *Server) consoleAnswer(w http.ResponseWriter, r *http.Request) {
@@ -53,8 +53,8 @@ func (s *Server) consoleAnswer(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusForbidden
 		}
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		writeJSON(w, map[string]string{"error": err.Error()})
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"question": question})
+	writeJSON(w, map[string]any{"question": question})
 }

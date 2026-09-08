@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -344,7 +345,11 @@ func (transport peerContentTransport) request(ctx context.Context, method, nodeI
 		var failure struct {
 			Code string `json:"code"`
 		}
-		_ = json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&failure)
+		if err := json.NewDecoder(io.LimitReader(response.Body, 4096)).Decode(&failure); err != nil {
+			// The status alone still maps to an error below; only the
+			// finer code is lost, which is worth knowing about.
+			slog.Warn(fmt.Sprintf("cluster: content reply from %s: HTTP %d with unreadable body: %v", nodeID, response.StatusCode, err), "node", nodeID)
+		}
 		switch failure.Code {
 		case "placement":
 			return nil, contentreplica.ErrPlacement
@@ -561,9 +566,13 @@ func writeContentError(w http.ResponseWriter, err error) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(struct {
+	if err := json.NewEncoder(w).Encode(struct {
 		Code string `json:"code"`
-	}{Code: code})
+	}{Code: code}); err != nil {
+		// The status has gone out; the peer falls back to it and logs the
+		// missing code on its side, so this is only a hint that it left.
+		slog.Warn(fmt.Sprintf("cluster: content reply %s: %v", code, err))
+	}
 }
 
 func (p *Peer) contentRequestPlacement(r *http.Request, object contentreplica.Object) error {

@@ -44,7 +44,7 @@ func serviceError(w http.ResponseWriter, err error) {
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"code": code, "error": err.Error()})
+	writeJSON(w, map[string]string{"code": code, "error": err.Error()})
 }
 func (s *Server) consoleServices(w http.ResponseWriter, r *http.Request) {
 	if s.services == nil {
@@ -57,7 +57,7 @@ func (s *Server) consoleServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(view)
+	writeJSON(w, view)
 }
 func (s *Server) consoleRestart(w http.ResponseWriter, r *http.Request) {
 	if s.services == nil {

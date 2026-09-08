@@ -13,6 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"maps"
 	"net"
 	"net/http"
@@ -132,7 +133,11 @@ func boundAdvertiseAddress(configured, bound string) string {
 		return bound
 	}
 	if port == "0" {
-		_, port, _ = net.SplitHostPort(bound)
+		_, boundPort, err := net.SplitHostPort(bound)
+		if err != nil {
+			return bound
+		}
+		port = boundPort
 	}
 	return net.JoinHostPort(host, port)
 }
@@ -237,7 +242,11 @@ func (p *Peer) PreviewEnrollment(ctx context.Context, request PeerEnrollmentRequ
 		return PeerEnrollmentPlan{}, errors.New("本机尚未加入机群")
 	}
 	if request.SourceHost == "" {
-		request.SourceHost, _, _ = net.SplitHostPort(source.Address)
+		host, _, err := net.SplitHostPort(source.Address)
+		if err != nil {
+			return PeerEnrollmentPlan{}, fmt.Errorf("本机登记的地址 %q 无法解析: %w", source.Address, err)
+		}
+		request.SourceHost = host
 		if !allowLoopback && net.ParseIP(request.SourceHost).IsLoopback() {
 			if choices := localAdvertiseAddresses(); len(choices) > 0 {
 				request.SourceHost = choices[0]
@@ -438,7 +447,9 @@ func (p *Peer) prepareSourceNetworkOnce(ctx context.Context, record *peerEnrollm
 	if err != nil {
 		record.Phase = "source_network"
 		record.Error = err.Error()
-		_ = p.saveEnrollment(*record)
+		if saveErr := p.saveEnrollment(*record); saveErr != nil {
+			slog.Warn(fmt.Sprintf("cluster: enrollment %s: source_network failure not recorded: %v", record.OperationID, saveErr), "operation", record.OperationID)
+		}
 		return err
 	}
 	record.SourceReady = true

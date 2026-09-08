@@ -47,8 +47,7 @@ func (a *Service) SetNodeSettings(ctx context.Context, name string, set nodewire
 }
 
 // setNodeSettingsLocked is SetNodeSettings for the hub with a.mu held.
-func (a *Service) setNodeSettingsLocked(ctx context.Context, name string, set nodewire.Settings) (nodewire.Settings, error) {
-	_ = ctx
+func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set nodewire.Settings) (nodewire.Settings, error) {
 	if set.Revision == "" || set.Revision != a.hubSettings().Revision {
 		return nodewire.Settings{}, nodewire.ErrSettingsRevisionConflict
 	}
