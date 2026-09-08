@@ -39,6 +39,8 @@ Open(spec) → Admit → Prepare(workspace, base) → OpenSession → Arm(runnin
   → Drive(prompt, progress) → Settle → Close(finish | fail | unsettled)
 ```
 
+第一片已落地为 `internal/lifecycle`：`Keep`（租约心跳与丢失取消）、`Drive`（发 prompt、分清已结束与未确认停止）、`Usage`（最后一次报告换算成用量）、`Close`（带停止证据的关会话）、`Cleanup`（脱离取消的有界清理 ctx）；五个调用方已改用它们，各自的编排顺序仍在原处，是下一片要收敛的对象。
+
 调用方只提供三件事：**怎么拿工作区**（主目录 / 副本 / 隔离工作树）、**怎么驱动**（prompt 文本与进度回调）、**结束后做什么**（聊天回合：after-snapshot + 回复；委派：发布产物 + 投递；规划/验证：校验输出）。心跳、租约丢失取消、`ErrStopUnconfirmed` 隔离、settle、脱离取消的清理 ctx、超时常量，全部只在 `Run` 里出现一次。
 
 五个调用方收敛为 `Run` 的薄包装：`turn.prompt`、`turn.RelocateChat`、`turn.resumeRetainedChat`、`delegate.run`、`agentexec.Runner.Prompt`。接回原执行（resume / relocate）是 `Run` 的另一个入口 `Reattach`，不是另一份实现。

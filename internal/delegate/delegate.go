@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
-	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -36,6 +35,7 @@ import (
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plan"
 	"github.com/gopact-ai/steve/internal/project"
@@ -456,7 +456,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 	s.mu.Unlock()
 	if strings.HasPrefix(managedSession, "ns_") && s.canSettleStopped(ctx, runErr) {
 		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		ctx, cancel = lifecycle.Cleanup(ctx)
 		defer cancel()
 	}
 	var retainedRecord attempt.Record
@@ -696,9 +696,13 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
 		return result, fmt.Errorf("lease delegation: %w", errors.Join(err, accountingErr))
 	}
-	beat, stopBeat := context.WithCancel(ctx)
+	runCtx, stopRun := context.WithCancel(ctx)
+	defer stopRun()
+	stopBeat := lifecycle.Keep(runCtx, s.attempts, record.ID, func() {
+		log.Printf("delegate: attempt %s lost its lease; cancelling task #%s", record.ID, child.ID)
+		stopRun()
+	})
 	defer stopBeat()
-	lost := s.attempts.Heartbeat(beat, record.ID)
 	var observed *attempt.Usage
 	failAttempt := func(cause error) {
 		if errors.Is(cause, harness.ErrStopUnconfirmed) {
@@ -756,7 +760,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		return result, fmt.Errorf("open session on %s: %w", at, err)
 	}
 	unsettled, sessionClosed := false, false
-	managed := strings.HasPrefix(session.ID(), "ns_")
+	managed := lifecycle.Managed(session)
 	record.Session = session.ID()
 	s.mu.Lock()
 	if entry := s.pending[child.ID]; entry != nil {
@@ -768,15 +772,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 			return nil
 		}
 		sessionClosed = true
-		closeCtx, closeCancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
-		defer closeCancel()
-		if err := s.sessions.CloseSession(closeCtx, at, session.ID()); err != nil {
-			stopped, ok := session.(interface{ Stopped() bool })
-			if !ok || !stopped.Stopped() {
-				return errors.Join(harness.ErrStopUnconfirmed, err)
-			}
-		}
-		return nil
+		return lifecycle.Close(ctx, s.sessions, at, session)
 	}
 	defer func() {
 		if unsettled || sessionClosed {
@@ -819,47 +815,28 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 			return result, fmt.Errorf("bind delegated tools: %w", err)
 		}
 	}
-	runCtx, stopRun := context.WithCancel(ctx)
-	defer stopRun()
-	go func() {
-		select {
-		case <-lost:
-			if beat.Err() != nil {
-				return
-			}
-			log.Printf("delegate: attempt %s lost its lease; cancelling task #%s", record.ID, child.ID)
-			stopRun()
-		case <-beat.Done():
-		}
-	}()
 	ctx = runCtx
 
 	prompt := payload.Render() + exec.ReportingContract + worktreeContract
 	if caps.Instructions != "" {
 		prompt = caps.Instructions + "\n\n" + prompt
 	}
-	var last view.Progress
-	observe := func(p view.Progress) {
-		last = p
+	ask, askUser := s.nodeQuestionHandlers(questionBinding(parent, child, record))
+	driven := lifecycle.Drive{Session: session, Prompt: prompt, Turn: managed, Ask: ask, AskUser: askUser, Observe: func(p view.Progress) {
 		touch()
 		if progress != nil {
 			progress(p)
 		}
-	}
-	var answer string
-	if turn, ok := session.(harness.TurnRunner); ok && managed {
-		ask, askUser := s.nodeQuestionHandlers(questionBinding(parent, child, record))
-		answer, _, err = turn.PromptTurn(ctx, prompt, nil, ask, askUser, observe)
-	} else {
-		answer, _, err = session.Prompt(ctx, prompt, observe)
-	}
-	promptSettled := acphost.PromptSettled(err)
+	}}.Run(ctx)
+	answer, last := driven.Answer, driven.Last
+	err = driven.Err
+	promptSettled := driven.PromptSettled
 	if managed && s.canSettleStopped(ctx, err) {
 		if err == nil {
 			err = harness.ErrTurnCanceled
 		}
 		var finishCleanup context.CancelFunc
-		ctx, finishCleanup = context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		ctx, finishCleanup = lifecycle.Cleanup(ctx)
 		defer finishCleanup()
 	}
 	if managed && (ctx.Err() != nil || errors.Is(err, harness.ErrStopUnconfirmed) || !promptSettled) {
@@ -877,7 +854,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	}
 	unsettled = errors.Is(err, harness.ErrStopUnconfirmed)
 	if promptSettled && !unsettled {
-		settledCtx, finishSettle := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		settledCtx, finishSettle := lifecycle.Cleanup(ctx)
 		if settleErr := s.attempts.MarkSessionSettled(settledCtx, record.ID, "delegate"); settleErr != nil {
 			if managed {
 				finishSettle()
@@ -912,7 +889,7 @@ func (s *Service) completeResult(ctx context.Context, parent, child task.Task, r
 	result = agentmcp.DelegateResult{TaskID: child.ID, Agent: record.Agent, Node: record.Node}
 	workspace, base := record.Workspace, record.Base
 	fail := func(cause error) error {
-		if strings.HasPrefix(record.Session, "ns_") {
+		if lifecycle.IsManaged(record.Session) {
 			return retainedDetached(record, cause)
 		}
 		s.finish(child.ID, task.OutcomeError)
@@ -954,14 +931,14 @@ func (s *Service) completeResult(ctx context.Context, parent, child task.Task, r
 		Binding: &attempt.NameBinding{Name: name, ExpectedVersion: current.Version}}
 	stopBeat()
 	if _, err := s.attempts.Complete(ctx, record.ID, "delegate", completion); err != nil {
-		if strings.HasPrefix(record.Session, "ns_") {
+		if lifecycle.IsManaged(record.Session) {
 			return result, retainedDetached(record, err)
 		}
 		err = s.attempts.RejectCompletion(ctx, record.ID, "delegate", completion, err)
 		s.finish(child.ID, task.OutcomeError)
 		return result, fmt.Errorf("complete delegation result: %w", err)
 	}
-	if strings.HasPrefix(record.Session, "ns_") && ctx.Err() != nil {
+	if lifecycle.IsManaged(record.Session) && ctx.Err() != nil {
 		return result, retainedDetached(record, ctx.Err())
 	}
 	_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
@@ -985,7 +962,7 @@ func (s *Service) completeResult(ctx context.Context, parent, child task.Task, r
 			}
 		}
 		if err := s.artifacts.Defer(ctx, parent.ProjectID, published.ID, "task #"+child.ID, artifact.SourceOf(ctx, record.ID)...); err != nil {
-			if strings.HasPrefix(record.Session, "ns_") {
+			if lifecycle.IsManaged(record.Session) {
 				return result, retainedDetached(record, err)
 			}
 			s.finish(child.ID, task.OutcomeError)
@@ -1312,11 +1289,7 @@ func (s *Service) Fleet(ctx context.Context, _ string, caller string, requires [
 	return b.String(), nil
 }
 
-func attemptUsage(p view.Progress) *attempt.Usage {
-	u := p.Usage
-	return &attempt.Usage{Model: p.Settings.Model, Input: int64(u.InputTokens), Output: int64(u.OutputTokens), CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens), Context: int64(u.ContextTokens),
-		Reported: u.TokensReported()}
-}
+func attemptUsage(p view.Progress) *attempt.Usage { return lifecycle.Usage(p) }
 
 func (s *Service) advanceExecution(ctx context.Context, id string, to task.State) (task.Task, error) {
 	if tracked, ok := s.tasks.Get(id); ok && tracked.State == to {

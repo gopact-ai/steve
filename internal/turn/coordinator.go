@@ -23,6 +23,7 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/idle"
 	"github.com/gopact-ai/steve/internal/intent"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/models"
 	"github.com/gopact-ai/steve/internal/onboard"
@@ -573,17 +574,10 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		req.OnTurnReady(tracked, att.ID)
 	}
 	servers := append(append([]acp.MCPServer(nil), capabilities.MCPServers...), bound...)
-	beat, stopBeat := context.WithCancel(ctx)
-	defer stopBeat()
-	lost := c.attempts.Heartbeat(beat, att.ID)
-	go func() {
-		select {
-		case <-lost:
-			log.Printf("turn: attempt %s lost its lease; cancelling the turn", att.ID)
-			cancel()
-		case <-beat.Done():
-		}
-	}()
+	defer lifecycle.Keep(ctx, c.attempts, att.ID, func() {
+		log.Printf("turn: attempt %s lost its lease; cancelling the turn", att.ID)
+		cancel()
+	})()
 	defer func() {
 		if closeErr := c.closeAttempt(parent, att.ID, result, err, spent, clock); closeErr != nil {
 			log.Printf("turn: completion: %v", closeErr)
@@ -705,7 +699,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		req.phase(view.PhaseFinishing)
 	}
 	if acphost.PromptSettled(err) {
-		settledCtx, finishSettle := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		settledCtx, finishSettle := lifecycle.Cleanup(ctx)
 		if settleErr := c.attempts.MarkSessionSettled(settledCtx, att.ID, "turn"); settleErr != nil {
 			err = errors.Join(err, fmt.Errorf("record prompt settlement: %w", settleErr))
 		}
@@ -782,7 +776,7 @@ func (c *Coordinator) buildingProfile(req Request) (bool, error) {
 }
 
 func (c *Coordinator) discard(parent context.Context, selected agent.Agent, runner harness.Runner) {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 15*time.Second)
+	ctx, cancel := lifecycle.Cleanup(parent)
 	defer cancel()
 	if err := c.runtime.CloseSession(ctx, placement(selected), runner.ID()); err != nil {
 		runner.Abort()
@@ -1177,10 +1171,8 @@ func (t *turnSpend) model() string {
 }
 
 func promptTurn(ctx context.Context, runner harness.Runner, prompt string, req Request) (string, []string, error) {
-	if turn, ok := runner.(harness.TurnRunner); ok {
-		return turn.PromptTurn(ctx, prompt, req.Images, req.OnAsk, req.OnAskUser, req.OnProgress)
-	}
-	return runner.Prompt(ctx, prompt, req.OnProgress)
+	out := lifecycle.Drive{Session: runner, Prompt: prompt, Media: req.Images, Turn: true, Ask: req.OnAsk, AskUser: req.OnAskUser, Observe: req.OnProgress}.Run(ctx)
+	return out.Answer, out.Activity, out.Err
 }
 
 func sessionKey(conversationID, agentID string) string { return conversationID + "\x00" + agentID }

@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -238,16 +239,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	settled = observed.Command != nil && observed.Command.Settled && (observed.Command.State == "completed" || observed.Command.State == "cancelled")
 	scope.AdoptRetained()
 	c.setRunner(req.ConversationID, record.Agent, runner)
-	beat, stop := context.WithCancel(ctx)
-	defer stop()
-	lost := c.attempts.Heartbeat(beat, record.ID)
-	go func() {
-		select {
-		case <-lost:
-			cancel()
-		case <-beat.Done():
-		}
-	}()
+	defer lifecycle.Keep(ctx, c.attempts, record.ID, cancel)()
 	spent := &turnSpend{}
 	progress := spent.wrap(req.OnProgress, record.Agent)
 	req.phase(view.PhaseRunning)
