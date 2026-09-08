@@ -2,7 +2,7 @@ package node
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"net/url"
 	"os"
 	"os/exec"
@@ -139,7 +139,7 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 	if err := ability.Validate(s); err != nil {
 		// A snapshot this machine cannot even validate is not reported; the
 		// hub sees an old-style advert and treats coverage as partial.
-		log.Printf("steve-node: snapshot invalid, not reported: %v", err)
+		slog.Error(fmt.Sprintf("steve-node: snapshot invalid, not reported: %v", err))
 		return nil
 	}
 	return s

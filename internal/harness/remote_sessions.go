@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -211,7 +211,7 @@ func (s *managedSession) Abort() {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
 	if _, err := s.call(ctx, s.request(ctx, nodewire.SessionActionAbort)); err != nil {
-		log.Printf("harness: abort node session on %s: %v", s.at.Node, err)
+		slog.Error(fmt.Sprintf("harness: abort node session on %s: %v", s.at.Node, err), "node", s.at.Node)
 	}
 }
 func (s *managedSession) Stopped() bool {

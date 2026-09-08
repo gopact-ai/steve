@@ -1,4 +1,5 @@
-package app
+// Package logs installs the slog handler both steve binaries log through.
+package logs
 
 import (
 	"context"
@@ -11,7 +12,7 @@ import (
 	"time"
 )
 
-// The hub logs through log/slog. logHandler keeps the line shape log.Printf
+// Both binaries log through log/slog. handler keeps the line shape log.Printf
 // produced — the standard log date and time prefix, then the message text
 // unchanged — and appends the record's attributes as key=value fields. The
 // troubleshooting table in docs/operations.md and greps over the hub log
@@ -22,28 +23,29 @@ import (
 // Installing the handler as slog's default also routes the log package's
 // default logger through it, so packages that still call log.Printf write
 // the same prefix to the same writer.
-type logHandler struct {
+type handler struct {
 	out    io.Writer
 	mu     *sync.Mutex
 	attrs  string
 	groups []string
 }
 
-func newLogHandler(out io.Writer) *logHandler {
-	return &logHandler{out: out, mu: &sync.Mutex{}}
+// NewHandler returns a handler writing the log.Printf line shape to out.
+func NewHandler(out io.Writer) slog.Handler {
+	return &handler{out: out, mu: &sync.Mutex{}}
 }
 
-// configureLogging installs the handler once, on the writer log.Printf was
-// using at the time, so every entry point of the package logs alike.
-var configureLogging = sync.OnceFunc(func() {
-	slog.SetDefault(slog.New(newLogHandler(log.Writer())))
+// Install installs the handler once, on the writer log.Printf was using at
+// the time, so every entry point of a binary logs alike.
+var Install = sync.OnceFunc(func() {
+	slog.SetDefault(slog.New(NewHandler(log.Writer())))
 })
 
-func (h *logHandler) Enabled(_ context.Context, level slog.Level) bool {
+func (h *handler) Enabled(_ context.Context, level slog.Level) bool {
 	return level >= slog.LevelInfo
 }
 
-func (h *logHandler) Handle(_ context.Context, r slog.Record) error {
+func (h *handler) Handle(_ context.Context, r slog.Record) error {
 	var b strings.Builder
 	b.Grow(24 + len(r.Message) + len(h.attrs))
 	at := r.Time
@@ -68,7 +70,7 @@ func (h *logHandler) Handle(_ context.Context, r slog.Record) error {
 	return err
 }
 
-func (h *logHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
+func (h *handler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	var b strings.Builder
 	b.WriteString(h.attrs)
 	for _, a := range attrs {
@@ -79,7 +81,7 @@ func (h *logHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
 	return &next
 }
 
-func (h *logHandler) WithGroup(name string) slog.Handler {
+func (h *handler) WithGroup(name string) slog.Handler {
 	if name == "" {
 		return h
 	}

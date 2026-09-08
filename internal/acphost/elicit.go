@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"slices"
 	"strings"
 
@@ -130,7 +130,7 @@ func (ch *clientHandler) decideMCPToolApproval(req *acp.CreateElicitationRequest
 		return nil, false
 	}
 	if !broker.Allow(acp.ToolKindExecute) {
-		log.Printf("acphost: mcp tool approval declined by policy")
+		slog.Warn("acphost: mcp tool approval declined by policy")
 		resp := acp.DeclineCreateElicitationResponse()
 		return &resp, true
 	}
@@ -139,7 +139,7 @@ func (ch *clientHandler) decideMCPToolApproval(req *acp.CreateElicitationRequest
 		content := map[string]acp.ElicitationContentValue{"persist": value}
 		resp.Content = &content
 	}
-	log.Printf("acphost: mcp tool approval accepted by policy")
+	slog.Info("acphost: mcp tool approval accepted by policy")
 	return &resp, true
 }
 

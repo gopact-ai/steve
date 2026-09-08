@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os/exec"
 	"sync"
 	"time"
@@ -110,7 +110,7 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	if req.Stream != "" {
 		p.journal, err = journal.New(s.conf().StateDir, req.Stream, journal.Options{})
 		if err != nil {
-			log.Printf("steve-node: stream %s not resumable: %v", req.Stream, err)
+			slog.Warn(fmt.Sprintf("steve-node: stream %s not resumable: %v", req.Stream, err), "stream", req.Stream)
 		}
 	}
 	// Publish only after the initial attachment exists, so an immediate
@@ -124,7 +124,7 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	s.processes[key] = p
 	s.processWG.Add(1)
 	s.processMu.Unlock()
-	log.Printf("steve-node: process stream %s started on %s", key, req.Harness)
+	slog.Info(fmt.Sprintf("steve-node: process stream %s started on %s", key, req.Harness), "stream", key, "harness", req.Harness)
 	// Start draining only after publication; an immediately exiting process
 	// must still deliver its last lines and close reason to its attachment.
 	if err != nil {
@@ -232,7 +232,7 @@ func (p *agentProcess) serveAttachment(a *attachment, req nodewire.OpenRequest) 
 			}
 			p.mu.Unlock()
 		}
-		log.Printf("steve-node: reattached stream %s, replayed %d lines", p.id, after-req.AfterOut)
+		slog.Info(fmt.Sprintf("steve-node: reattached stream %s, replayed %d lines", p.id, after-req.AfterOut), "stream", p.id)
 	}
 	for {
 		p.mu.Lock()
@@ -423,7 +423,7 @@ func (p *agentProcess) run(ctx context.Context) {
 	}
 	if p.journal != nil {
 		if err := p.journal.Finish(code); err != nil {
-			log.Printf("steve-node: stream %s: record exit: %v", p.id, err)
+			slog.Error(fmt.Sprintf("steve-node: stream %s: record exit: %v", p.id, err), "stream", p.id)
 		}
 		// The journal is finished; closing releases its files.
 		_ = p.journal.Close()
@@ -433,7 +433,7 @@ func (p *agentProcess) run(ctx context.Context) {
 	}
 	p.mu.Unlock()
 	p.emit(outputLine{exit: fmt.Sprintf("exit %d", code)}, true)
-	log.Printf("steve-node: stream %s ended: exit %d", p.id, code)
+	slog.Info(fmt.Sprintf("steve-node: stream %s ended: exit %d", p.id, code), "stream", p.id)
 }
 
 type writerFunc func([]byte) (int, error)
@@ -528,7 +528,7 @@ func (s *Server) pruneStreams(ctx context.Context) {
 	defer ticker.Stop()
 	for {
 		if err := journal.Prune(s.conf().StateDir, time.Now()); err != nil {
-			log.Printf("steve-node: prune stream journals: %v", err)
+			slog.Error(fmt.Sprintf("steve-node: prune stream journals: %v", err))
 		}
 		s.processMu.Lock()
 		for id, p := range s.processes {
@@ -557,7 +557,7 @@ func (s *Server) injectDrop(ctx context.Context, mux *nodewire.Mux) {
 				select {
 				case <-ctx.Done():
 				case <-timer.C:
-					log.Printf("steve-node: fault injection: drop hub once")
+					slog.Warn("steve-node: fault injection: drop hub once")
 					// The drop is the point; its close error is not.
 					_ = mux.Close()
 				}

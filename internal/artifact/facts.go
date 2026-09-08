@@ -6,7 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"sort"
 	"time"
@@ -113,7 +113,7 @@ func (s *Store) replica(ctx context.Context, artifactID, node string) (Replica, 
 func (s *Store) setReplica(ctx context.Context, artifactID, node string, generation int64, state, note string) {
 	r := Replica{Artifact: artifactID, Node: node, Generation: generation, State: state, At: s.now().UTC(), Note: note}
 	if err := s.ledger.PutBinding(ctx, replicaKind, artifactID+"@"+node, r); err != nil {
-		log.Printf("artifact: replica %s@%s not recorded as %s: %v", short(artifactID), node, state, err)
+		slog.Error(fmt.Sprintf("artifact: replica %s@%s not recorded as %s: %v", short(artifactID), node, state, err), "artifact", artifactID, "node", node)
 	}
 }
 
@@ -176,7 +176,7 @@ func (s *Store) ensureOnNode(ctx context.Context, p project.Project, node, bare 
 			if err := s.fetchDirect(ctx, p, source, node, bare, sha); err == nil {
 				via = "direct from " + source
 			} else {
-				log.Printf("artifact: direct transfer of %s %s → %s failed (%v); relaying through the hub", short(sha), source, node, err)
+				slog.Warn(fmt.Sprintf("artifact: direct transfer of %s %s → %s failed (%v); relaying through the hub", short(sha), source, node, err), "artifact", sha, "node", node, "project", p.ID)
 			}
 		}
 	}

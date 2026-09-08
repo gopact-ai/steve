@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -34,7 +34,7 @@ func (s *Server) mcpProbe(ctx context.Context, stream *nodewire.Stream) {
 	name := strings.TrimSpace(stream.Request().Command)
 	reply := func(r nodewire.MCPProbeReply) {
 		if err := json.NewEncoder(stream).Encode(r); err != nil {
-			log.Printf("steve-node: mcp probe reply: %v", err)
+			slog.Error(fmt.Sprintf("steve-node: mcp probe reply: %v", err))
 		}
 	}
 	if name == "" {
@@ -57,7 +57,7 @@ func (s *Server) mcpProbe(ctx context.Context, stream *nodewire.Stream) {
 	}
 	defer func() {
 		if _, err := s.broker.Release(context.Background(), attempt); err != nil {
-			log.Printf("steve-node: mcp probe: release %s: %v", name, err)
+			slog.Error(fmt.Sprintf("steve-node: mcp probe: release %s: %v", name, err), "mcp", name)
 		}
 	}()
 	result, err := mcpprobe.Probe(ctx, mcpprobe.Server{Type: binding.Transport, Command: binding.Command, Args: binding.Args, URL: binding.URL})
@@ -103,7 +103,7 @@ func (s *Server) rememberPort(port int) {
 		return
 	}
 	if err := os.WriteFile(path, []byte(strconv.Itoa(port)+"\n"), 0o600); err != nil {
-		log.Printf("steve-node: remember MCP port: %v", err)
+		slog.Error(fmt.Sprintf("steve-node: remember MCP port: %v", err))
 	}
 }
 
@@ -216,12 +216,12 @@ func (s *Server) releaseAttempt(stream *nodewire.Stream) {
 	}
 	n, err := s.broker.Release(context.Background(), attempt)
 	if err != nil {
-		log.Printf("steve-node: release %s: %v", attempt, err)
+		slog.Error(fmt.Sprintf("steve-node: release %s: %v", attempt, err), "attempt", attempt)
 		closeStream(stream, nodewire.ExitPrefix+"1")
 		return
 	}
 	if n > 0 {
-		log.Printf("steve-node: released %d MCP binding(s) of attempt %s", n, attempt)
+		slog.Info(fmt.Sprintf("steve-node: released %d MCP binding(s) of attempt %s", n, attempt), "attempt", attempt)
 	}
 	closeStream(stream, nodewire.ExitPrefix+"0")
 }

@@ -3,7 +3,8 @@ package node
 import (
 	"context"
 	"encoding/json"
-	"log"
+	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -115,7 +116,7 @@ func (s *Server) inspect(ctx context.Context, stream *nodewire.Stream) {
 	path := strings.TrimSpace(stream.Request().Command)
 	if path == "" {
 		if err := json.NewEncoder(stream).Encode(nodewire.InspectReply{Error: "a path is required"}); err != nil {
-			log.Printf("steve-node: inspect reply: %v", err)
+			slog.Error(fmt.Sprintf("steve-node: inspect reply: %v", err))
 		}
 		return
 	}
@@ -124,6 +125,6 @@ func (s *Server) inspect(ctx context.Context, stream *nodewire.Stream) {
 		repos = []nodewire.Repo{}
 	}
 	if err := json.NewEncoder(stream).Encode(nodewire.InspectReply{Repos: repos}); err != nil {
-		log.Printf("steve-node: inspect reply: %v", err)
+		slog.Error(fmt.Sprintf("steve-node: inspect reply: %v", err))
 	}
 }

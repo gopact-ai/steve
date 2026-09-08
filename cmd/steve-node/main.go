@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -21,12 +22,14 @@ import (
 
 	"github.com/gopact-ai/steve/internal/adapter"
 	"github.com/gopact-ai/steve/internal/agenttools"
+	"github.com/gopact-ai/steve/internal/logs"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/processrestart"
 )
 
 func main() {
 	log.SetFlags(log.LstdFlags)
+	logs.Install()
 	if err := agenttools.InitializePath(); err != nil {
 		log.Fatal(err)
 	}
@@ -126,7 +129,7 @@ func broker(args []string) error {
 	cfg.PortFile = absolute(cfg.PortFile)
 	cfg.WorkspaceRoot = absolute(cfg.WorkspaceRoot)
 	if info, err := os.Stat(*configPath); err == nil && info.Mode().Perm()&0o077 != 0 {
-		log.Printf("steve-node: %s is readable by others (mode %o); the secrets in it are not only yours", *configPath, info.Mode().Perm())
+		slog.Warn(fmt.Sprintf("steve-node: %s is readable by others (mode %o); the secrets in it are not only yours", *configPath, info.Mode().Perm()))
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -236,7 +239,7 @@ func prepareAdapters(ctx context.Context, cfg *node.ServerConfig) error {
 			return fmt.Errorf("harness %q: %w", id, err)
 		}
 		if !got.Cached {
-			log.Printf("steve-node: installed %s@%s for harness %s", got.Package, got.Version, id)
+			slog.Info(fmt.Sprintf("steve-node: installed %s@%s for harness %s", got.Package, got.Version, id), "harness", id)
 		}
 		spec.Command = got.Command
 		cfg.Harnesses[id] = spec

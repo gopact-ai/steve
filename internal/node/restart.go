@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sync"
@@ -251,7 +251,7 @@ func (s *Server) restartStream(hub string, stream *nodewire.Stream) {
 	var req nodewire.RestartRequest
 	if err := json.NewDecoder(io.LimitReader(stream, 4096)).Decode(&req); err != nil {
 		if err := json.NewEncoder(stream).Encode(nodewire.RestartReply{ErrorCode: "invalid", Error: "invalid restart request"}); err != nil {
-			log.Printf("steve-node: restart reply: %v", err)
+			slog.Error(fmt.Sprintf("steve-node: restart reply: %v", err))
 		}
 		return
 	}
@@ -259,7 +259,7 @@ func (s *Server) restartStream(hub string, stream *nodewire.Stream) {
 	// Stream.Write flushes each frame synchronously to the socket. Even if
 	// the peer loses the reply, its durable command receipt prevents reexec.
 	if err := json.NewEncoder(stream).Encode(reply); err != nil {
-		log.Printf("steve-node: restart reply: %v", err)
+		slog.Error(fmt.Sprintf("steve-node: restart reply: %v", err))
 	}
 	// The reply is complete before the restart proceeds; the close only
 	// hands the stream back early.

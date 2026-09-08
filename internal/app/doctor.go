@@ -14,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/home"
+	"github.com/gopact-ai/steve/internal/logs"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
@@ -21,7 +22,7 @@ import (
 )
 
 func Doctor(configPath string, timeout time.Duration) error {
-	configureLogging()
+	logs.Install()
 	cfg, catalog, manager, live, err := load(configPath)
 	if err != nil {
 		return err

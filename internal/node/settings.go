@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -147,12 +147,12 @@ func (s *Server) applySettings(set nodewire.Settings) error {
 	case nil:
 		if len(next.MCPServers) > 0 {
 			if err := s.startBroker(); err != nil {
-				log.Printf("steve-node: %v", err)
+				slog.Error(fmt.Sprintf("steve-node: %v", err))
 			}
 		}
 	}
-	log.Printf("steve-node: settings applied from the hub: %d harnesses, %d tools, %d mcp, %d declares, %d tags",
-		len(next.Harnesses), len(next.Tools), len(next.MCPServers), len(next.Declares), len(next.Capabilities))
+	slog.Info(fmt.Sprintf("steve-node: settings applied from the hub: %d harnesses, %d tools, %d mcp, %d declares, %d tags",
+		len(next.Harnesses), len(next.Tools), len(next.MCPServers), len(next.Declares), len(next.Capabilities)))
 	return writeErr
 }
 
@@ -172,7 +172,7 @@ func (s *Server) startBroker() error {
 		s.broker = localBroker{b}
 		s.backgroundWG.Go(func() {
 			if err := b.Serve(s.ctx); err != nil {
-				log.Printf("steve-node: %v", err)
+				slog.Error(fmt.Sprintf("steve-node: %v", err))
 			}
 		})
 	}
@@ -266,7 +266,7 @@ func (s *Server) configure(stream *nodewire.Stream) {
 			}
 		}
 		if err := json.NewEncoder(stream).Encode(out); err != nil {
-			log.Printf("steve-node: config reply: %v", err)
+			slog.Error(fmt.Sprintf("steve-node: config reply: %v", err))
 		}
 	}
 	switch verb {

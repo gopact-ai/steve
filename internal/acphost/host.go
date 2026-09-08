@@ -9,7 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -255,7 +255,7 @@ var unhandledUpdates sync.Map
 
 func noteUnhandled(kind acp.SessionUpdateType) {
 	if _, seen := unhandledUpdates.LoadOrStore(kind, struct{}{}); !seen {
-		log.Printf("acphost: ignoring session update %q", kind)
+		slog.Warn(fmt.Sprintf("acphost: ignoring session update %q", kind))
 	}
 }
 
@@ -588,15 +588,15 @@ func (ch *clientHandler) RequestPermission(ctx context.Context, req *acp.Request
 			Options:  req.Options,
 		})
 		if err != nil {
-			log.Printf("acphost: permission ask %q: %v", title, err)
+			slog.Error(fmt.Sprintf("acphost: permission ask %q: %v", title, err))
 			outcome = permission.Choose(false, req.Options)
 		}
-		log.Printf("acphost: permission request %q -> %s (asked)", title, outcome.Outcome)
+		slog.Info(fmt.Sprintf("acphost: permission request %q -> %s (asked)", title, outcome.Outcome))
 		return &acp.RequestPermissionResponse{Outcome: outcome}, nil
 	}
 
 	outcome := broker.Decide(kind, req.Options)
-	log.Printf("acphost: permission request %q -> %s", title, outcome.Outcome)
+	slog.Info(fmt.Sprintf("acphost: permission request %q -> %s", title, outcome.Outcome))
 	return &acp.RequestPermissionResponse{Outcome: outcome}, nil
 }
 
@@ -683,9 +683,9 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		}
 		h.mu.Unlock()
 		if connErr != nil && !errors.Is(connErr, io.EOF) {
-			log.Printf("acphost: connection closed: %v", connErr)
+			slog.Error(fmt.Sprintf("acphost: connection closed: %v", connErr))
 		} else {
-			log.Printf("acphost: agent process exited")
+			slog.Info("acphost: agent process exited")
 		}
 	}()
 
@@ -712,7 +712,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	// The lock is already held here: this runs inside ensureStarted.
 	h.capabilities = resp.AgentCapabilities
 	h.adapter = name
-	log.Printf("acphost: connected to agent %s (protocol v%d)", name, resp.ProtocolVersion)
+	slog.Info(fmt.Sprintf("acphost: connected to agent %s (protocol v%d)", name, resp.ProtocolVersion))
 	return nil
 }
 
@@ -808,7 +808,7 @@ func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.S
 	for _, mode := range modes.AvailableModes {
 		ids = append(ids, string(mode.ID))
 	}
-	log.Printf("acphost: session modes current=%s available=%s", modes.CurrentModeID, strings.Join(ids, ","))
+	slog.Info(fmt.Sprintf("acphost: session modes current=%s available=%s", modes.CurrentModeID, strings.Join(ids, ",")))
 	wanted := h.cfg.Permission.SessionMode(ids)
 	if wanted == "" || wanted == string(modes.CurrentModeID) {
 		return modes.CurrentModeID
@@ -816,10 +816,10 @@ func (h *Host) applyMode(ctx context.Context, caller *acp.AgentCaller, sid acp.S
 	if _, err := caller.SetSessionMode(ctx, &acp.SetSessionModeRequest{
 		SessionID: sid, ModeID: acp.SessionModeID(wanted),
 	}); err != nil {
-		log.Printf("acphost: set session mode %q: %v", wanted, err)
+		slog.Error(fmt.Sprintf("acphost: set session mode %q: %v", wanted, err))
 		return modes.CurrentModeID
 	}
-	log.Printf("acphost: session mode set to %q", wanted)
+	slog.Info(fmt.Sprintf("acphost: session mode set to %q", wanted))
 	return acp.SessionModeID(wanted)
 }
 
@@ -909,14 +909,14 @@ func (h *Host) PromptTurn(
 		err := caller.Cancel(notifyCtx, &acp.CancelNotification{SessionID: sid})
 		stop()
 		if err != nil {
-			log.Printf("acphost: cancel notify: %v", err)
+			slog.Error(fmt.Sprintf("acphost: cancel notify: %v", err))
 		}
 		select {
 		case <-settled:
 		case <-time.After(cancelSettleTimeout):
 			// The agent did not end the turn. Give up on a clean stop; the
 			// distinct error tells the caller it cannot prove writer quiescence.
-			log.Printf("acphost: agent did not settle a cancelled turn in %s", cancelSettleTimeout)
+			slog.Warn(fmt.Sprintf("acphost: agent did not settle a cancelled turn in %s", cancelSettleTimeout))
 			abandoned.Store(true)
 			abandon()
 		}
@@ -1144,7 +1144,7 @@ func (h *Host) shutdownLocked() {
 		select {
 		case <-exited:
 		case <-time.After(5 * time.Second):
-			log.Printf("acphost: process did not exit after kill")
+			slog.Error("acphost: process did not exit after kill")
 		}
 	}
 	h.mu.Lock()

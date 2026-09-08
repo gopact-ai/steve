@@ -12,7 +12,7 @@ package node
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"math/rand/v2"
 	"net"
 	"sort"
@@ -111,7 +111,7 @@ func (r *Registry) accept(name string, adv *nodewire.Advert) {
 	snap := *adv.Snapshot
 	snap.ReceivedAt = now
 	if err := ability.Validate(&snap); err != nil {
-		log.Printf("node: %s: snapshot rejected: %v", name, err)
+		slog.Warn(fmt.Sprintf("node: %s: snapshot rejected: %v", name, err), "node", name)
 		adv.Snapshot = nil
 		adv.Capabilities = append(adv.Capabilities, "snapshot-rejected")
 		return
@@ -121,7 +121,7 @@ func (r *Registry) accept(name string, adv *nodewire.Advert) {
 		prev := last.Advert.Snapshot
 		if prev.Generation == snap.Generation && prev.Sequence > snap.Sequence {
 			r.mu.Unlock()
-			log.Printf("node: %s: snapshot %d/%d is older than %d/%d on record; ignored", name, snap.Generation, snap.Sequence, prev.Generation, prev.Sequence)
+			slog.Warn(fmt.Sprintf("node: %s: snapshot %d/%d is older than %d/%d on record; ignored", name, snap.Generation, snap.Sequence, prev.Generation, prev.Sequence), "node", name)
 			adv.Snapshot = prev
 			return
 		}
@@ -249,7 +249,7 @@ func (r *Registry) Add(name string, cfg Config) {
 		ctx, cancel := context.WithTimeout(context.Background(), defaultDialTimeout)
 		defer cancel()
 		if _, err := r.connect(ctx, name); err != nil {
-			log.Printf("node: %s added; not reachable yet: %v", name, err)
+			slog.Warn(fmt.Sprintf("node: %s added; not reachable yet: %v", name, err), "node", name)
 		}
 	}()
 }
@@ -339,7 +339,7 @@ func (r *Registry) Statuses() []Status {
 func (r *Registry) Probe(ctx context.Context) []Status {
 	for _, name := range r.Names() {
 		if _, err := r.connect(ctx, name); err != nil {
-			log.Printf("node: probe %s: %v", name, err)
+			slog.Warn(fmt.Sprintf("node: probe %s: %v", name, err), "node", name)
 		}
 	}
 	return r.Statuses()
@@ -417,7 +417,7 @@ func (r *Registry) Start(ctx context.Context) {
 						refreshCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
 						defer cancel()
 						if _, err := r.Refresh(refreshCtx, name); err != nil {
-							log.Printf("node: refresh %s: %v", name, err)
+							slog.Warn(fmt.Sprintf("node: refresh %s: %v", name, err), "node", name)
 						}
 					}(name)
 				}

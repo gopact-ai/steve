@@ -3,7 +3,8 @@ package node
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -81,7 +82,9 @@ func (p *LaunchProbe) Wake() {
 func (p *LaunchProbe) pass(ctx context.Context, commands []string) {
 	seen := map[string]bool{}
 	checked, started := 0, 0
-	defer func() { log.Printf("steve-node: launch probe: %d binaries checked, %d start", checked, started) }()
+	defer func() {
+		slog.Info(fmt.Sprintf("steve-node: launch probe: %d binaries checked, %d start", checked, started))
+	}()
 	for _, command := range commands {
 		if command == "" {
 			continue
@@ -107,7 +110,7 @@ func (p *LaunchProbe) pass(ctx context.Context, commands []string) {
 		p.results[path] = r
 		p.mu.Unlock()
 		if !r.OK {
-			log.Printf("steve-node: %s does not launch: %s", path, r.Result)
+			slog.Warn(fmt.Sprintf("steve-node: %s does not launch: %s", path, r.Result), "command", path)
 		}
 	}
 }
