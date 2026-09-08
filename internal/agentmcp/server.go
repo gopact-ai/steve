@@ -229,7 +229,11 @@ func (s *Server) Start(ctx context.Context) error {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_ = s.srv.Shutdown(shutdown)
+		if err := s.srv.Shutdown(shutdown); err != nil {
+			// Serve still returns cleanly; what did not drain in time is
+			// worth a line since a stuck tool call is what it points to.
+			slog.Warn(fmt.Sprintf("agentmcp: shutdown: %v", err))
+		}
 	}()
 	if err := s.srv.Serve(s.listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("agentmcp: serve: %w", err)
@@ -298,6 +302,8 @@ func (s *Server) Anchor(conversationID string, address channel.Address) {
 	a.address = address
 	a.epoch++
 	s.interims[conversationID] = false
+	// A store failure latches in failLocked and reaches the owner through
+	// onFailure; Anchor itself has no caller to hand it to.
 	_ = s.saveConversationLocked(context.Background(), conversationID)
 }
 
@@ -344,6 +350,8 @@ func (s *Server) Delegated(conversationID, agentID, taskID, delegatedBy, token, 
 func (s *Server) Revoke(token string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// A store failure latches in failLocked, after which every request
+	// is refused; Revoke itself has no caller to hand it to.
 	_ = s.revokeLocked(token)
 }
 
@@ -370,6 +378,8 @@ func (s *Server) SetStyle(conversationID, style string) {
 	} else {
 		s.styles[conversationID] = style
 	}
+	// As in Anchor: a store failure latches in failLocked and reaches the
+	// owner through onFailure.
 	_ = s.saveConversationLocked(context.Background(), conversationID)
 }
 
@@ -496,6 +506,8 @@ func initializeResult(params json.RawMessage) map[string]any {
 	var requested struct {
 		ProtocolVersion string `json:"protocolVersion"`
 	}
+	// Unreadable params state no preference: the client gets the latest
+	// protocol, as it would with the field absent.
 	_ = json.Unmarshal(params, &requested)
 	version := latestProtocol
 	switch requested.ProtocolVersion {
