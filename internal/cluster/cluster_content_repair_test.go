@@ -113,6 +113,18 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 		eventMu.Unlock()
 	})
 	defer stop()
+	// The repair loop reports under eventMu; scanning the slice keeps the
+	// check cheap so the loop is not held up by its own observer.
+	observed := func(marker string) bool {
+		eventMu.Lock()
+		defer eventMu.Unlock()
+		for _, event := range events {
+			if strings.Contains(event, marker) {
+				return true
+			}
+		}
+		return false
+	}
 	var latest contentreplica.Manifest
 	deadline := time.Now().Add(8 * time.Second)
 	for time.Now().Before(deadline) {
@@ -127,10 +139,7 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 		}
 		// The receipt lands before the repair loop reports it; stopping
 		// the loop on the receipt alone can cut the observation off.
-		eventMu.Lock()
-		notified := strings.Contains(strings.Join(events, "\n"), "content.repaired")
-		eventMu.Unlock()
-		if ok && copied && notified {
+		if ok && copied && observed("content.repaired") {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -143,10 +152,7 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 	if !found {
 		t.Fatal("background repair did not add the third node's durable receipt")
 	}
-	eventMu.Lock()
-	notified := strings.Contains(strings.Join(events, "\n"), "content.repaired")
-	eventMu.Unlock()
-	if !notified {
+	if !observed("content.repaired") {
 		t.Fatal("repair completion was not visible in observations")
 	}
 	if len(source.Runtime.Load().Status().Voters) != 3 {
