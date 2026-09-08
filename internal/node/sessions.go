@@ -23,7 +23,7 @@ import (
 // SessionAuthorizer checks the authenticated connection principal and committed
 // coordinator/execution authority. Request fields are claims, never credentials.
 type SessionAuthorizer interface {
-	AuthorizeNodeSession(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, string) error
+	AuthorizeNodeSession(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error
 }
 
 type SessionError struct{ Code, Message string }
@@ -226,31 +226,15 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 	if closed {
 		return nodewire.SessionState{}, sessionError("closed", "node session service is closed")
 	}
-	if req.Action == "inspect-open" || req.Action == "cancel-open" {
-		return s.reconcileOpen(ctx, req)
+	switch req.Action {
+	case nodewire.SessionActionInspectOpen:
+		return s.inspectOpen(ctx, req)
+	case nodewire.SessionActionCancelOpen:
+		return s.cancelOpen(ctx, req)
+	case nodewire.SessionActionCapabilities:
+		return s.probeCapabilities(ctx, req)
 	}
-	if req.Action == "capabilities" {
-		spec, ok := s.server.conf().Harnesses[req.Harness]
-		if !ok {
-			return nodewire.SessionState{}, sessionError("unavailable", "harness is not registered on this node")
-		}
-		broker, _ := permission.New(permission.PolicyRead)
-		cfg := s.hostConfig(req.Harness, spec, broker)
-		key := capabilityKey(cfg)
-		if cached, ok := s.cachedCapabilities(req.Harness, key); ok {
-			return nodewire.SessionState{Binding: req.Binding, Harness: req.Harness, SupportsHTTPMCP: cached.supportsHTTPMCP}, nil
-		}
-		// Starting the adapter once says what its agent accepts; the answer
-		// is kept so the next turn does not pay for a process of its own.
-		host := acphost.New(cfg)
-		defer host.Close()
-		supported, err := host.SupportsHTTPMCP(ctx)
-		if err == nil {
-			s.rememberCapabilities(req.Harness, key, supported)
-		}
-		return nodewire.SessionState{Binding: req.Binding, Harness: req.Harness, SupportsHTTPMCP: supported}, err
-	}
-	if req.Action == "open" && req.ID == "" {
+	if req.Action == nodewire.SessionActionOpen && req.ID == "" {
 		return s.open(ctx, principal, req)
 	}
 	if !sessionIDValid(req.ID) {
@@ -269,69 +253,29 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 	}
 	one.mu.Unlock()
 	switch req.Action {
-	case "open", "attach", "settings":
-		return one.state(req.CommandID), nil
-	case "poll":
-		if req.WaitMS < 0 || req.WaitMS > 25000 {
-			return nodewire.SessionState{}, sessionError("invalid", "poll wait exceeds limit")
-		}
-		one.mu.Lock()
-		changed, sequence := one.changed, one.record.State.Sequence
-		one.mu.Unlock()
-		if sequence <= req.After && req.WaitMS > 0 {
-			timer := time.NewTimer(time.Duration(req.WaitMS) * time.Millisecond)
-			defer timer.Stop()
-			select {
-			case <-changed:
-			case <-timer.C:
-			case <-ctx.Done():
-				return nodewire.SessionState{}, ctx.Err()
-			case <-s.ctx.Done():
-				return nodewire.SessionState{}, sessionError("closed", "node session service closed")
-			}
-		}
-		if err := s.authorize(ctx, principal, req); err != nil {
-			return nodewire.SessionState{}, err
-		}
-		return one.state(req.CommandID), nil
-	case "prompt":
+	case nodewire.SessionActionOpen:
+		return one.open(req)
+	case nodewire.SessionActionAttach:
+		return one.attach(req)
+	case nodewire.SessionActionSettings:
+		return one.settings(req)
+	case nodewire.SessionActionPoll:
+		return one.poll(ctx, principal, req)
+	case nodewire.SessionActionPrompt:
 		return one.prompt(req)
-	case "answer":
+	case nodewire.SessionActionAnswer:
 		return one.answer(req)
-	case "option":
-		one.mu.Lock()
-		if err := one.admitLocked(req); err != nil {
-			one.mu.Unlock()
-			return nodewire.SessionState{}, err
-		}
-		host, id, generation := one.host, one.record.UpstreamID, one.record.Generation
-		if host == nil || one.record.State.State != "idle" || one.runningLocked() {
-			one.mu.Unlock()
-			return nodewire.SessionState{}, sessionError("busy", "settings require an idle live session")
-		}
-		next := one.copyLocked()
-		next.State.State = "configuring"
-		if err := one.commitLocked(next); err != nil {
-			one.mu.Unlock()
-			return nodewire.SessionState{}, err
-		}
-		one.mu.Unlock()
-		optionErr := host.SetOption(ctx, acp.SessionID(id), generation, acp.SessionConfigID(req.OptionID), req.OptionValue)
-		one.mu.Lock()
-		next = one.copyLocked()
-		next.State.Settings = host.Settings(acp.SessionID(id))
-		if next.State.State == "configuring" {
-			next.State.State = "idle"
-			if host.ProcessStopped(generation) {
-				next.State.State = "interrupted"
-				next.State.ProcessStopped = true
-			}
-		}
-		saveErr := one.commitLocked(next)
-		one.mu.Unlock()
-		return one.state(req.CommandID), errors.Join(optionErr, saveErr)
-	case "cancel", "abort", "close":
-		return one.stop(ctx, req)
+	case nodewire.SessionActionOption:
+		return one.option(ctx, req)
+	case nodewire.SessionActionCancel:
+		return one.cancel(ctx, req)
+	case nodewire.SessionActionAbort:
+		return one.abort(ctx, req)
+	case nodewire.SessionActionClose:
+		return one.close(ctx, req)
+	case nodewire.SessionActionStart:
+		// Only open may issue the start authorization challenge.
+		return nodewire.SessionState{}, sessionError("invalid", "unknown node session action")
 	default:
 		return nodewire.SessionState{}, sessionError("invalid", "unknown node session action")
 	}
@@ -355,12 +299,12 @@ func (one *ownedSession) admitLocked(req nodewire.SessionRequest) error {
 		return sessionError("forbidden", "coordinator identity differs at the same epoch")
 	}
 	next := one.copyLocked()
-	if req.Action == "open" && sessionConfigHash(req) != next.ConfigHash {
+	if req.Action == nodewire.SessionActionOpen && sessionConfigHash(req) != next.ConfigHash {
 		return sessionError("conflict", "native session configuration changed")
 	}
 	if req.Binding != next.State.Binding {
 		before, after := next.State.Binding, req.Binding
-		if req.Action != "open" || one.runningLocked() || before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || one.host == nil || next.State.State != "idle" {
+		if req.Action != nodewire.SessionActionOpen || one.runningLocked() || before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || one.host == nil || next.State.State != "idle" {
 			return sessionError("conflict", "session belongs to another execution")
 		}
 		next.State.Binding = req.Binding
@@ -435,7 +379,7 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 	// Observing a previously accepted open is permitted during reconciliation;
 	// creating a native process requires a fresh execution admission as well.
 	start := req
-	start.Action = "start"
+	start.Action = nodewire.SessionActionStart
 	if err := s.authorize(ctx, principal, start); err != nil {
 		s.mu.Unlock()
 		return nodewire.SessionState{}, err
@@ -652,7 +596,7 @@ func (one *ownedSession) stop(ctx context.Context, req nodewire.SessionRequest) 
 		one.mu.Unlock()
 		return nodewire.SessionState{}, sessionError("conflict", "cancellation targets another command")
 	}
-	if req.Action == "cancel" && running {
+	if req.Action == nodewire.SessionActionCancel && running {
 		next := one.copyLocked()
 		command := next.Commands[next.CurrentCommand]
 		command.CancelRequested = true
@@ -672,11 +616,11 @@ func (one *ownedSession) stop(ctx context.Context, req nodewire.SessionRequest) 
 		one.mu.Unlock()
 		return one.state(req.CommandID), sessionError("unavailable", "original native process cannot be contacted")
 	}
-	if req.Action == "close" && (running || one.record.State.State == "configuring" || one.record.State.State == "opening") {
+	if req.Action == nodewire.SessionActionClose && (running || one.record.State.State == "configuring" || one.record.State.State == "opening") {
 		one.mu.Unlock()
 		return one.state(req.CommandID), sessionError("busy", "close cannot terminate a running prompt")
 	}
-	if req.Action == "close" || req.Action == "abort" {
+	if req.Action == nodewire.SessionActionClose || req.Action == nodewire.SessionActionAbort {
 		next := one.copyLocked()
 		next.State.State = "closing"
 		if err := one.commitLocked(next); err != nil {
@@ -685,7 +629,7 @@ func (one *ownedSession) stop(ctx context.Context, req nodewire.SessionRequest) 
 		}
 	}
 	one.mu.Unlock()
-	if req.Action != "cancel" {
+	if req.Action != nodewire.SessionActionCancel {
 		if openCancel != nil {
 			openCancel()
 		}
@@ -705,7 +649,7 @@ func (one *ownedSession) stop(ctx context.Context, req nodewire.SessionRequest) 
 			}
 		}
 	}
-	if req.Action == "cancel" {
+	if req.Action == nodewire.SessionActionCancel {
 		// A cancel can arrive after acceptance but before the agent has consumed
 		// session/prompt. Retry the notification while this exact command remains
 		// active; never let a late retry cancel the session's next command.
@@ -738,7 +682,7 @@ func (one *ownedSession) stop(ctx context.Context, req nodewire.SessionRequest) 
 	one.mu.Lock()
 	next := one.copyLocked()
 	next.State.ProcessStopped = host.ProcessStopped(generation)
-	if req.Action == "close" || req.Action == "abort" {
+	if req.Action == nodewire.SessionActionClose || req.Action == nodewire.SessionActionAbort {
 		next.State.ProcessStopped = host.AllProcessesStopped()
 	}
 	if next.State.ProcessStopped {
@@ -748,8 +692,8 @@ func (one *ownedSession) stop(ctx context.Context, req nodewire.SessionRequest) 
 		}
 	}
 	command, hasCommand := next.Commands[req.CommandID]
-	confirmed := next.State.ProcessStopped || (req.Action == "cancel" && (!hasCommand || command.Settled))
-	if req.Action == "close" || req.Action == "abort" {
+	confirmed := next.State.ProcessStopped || (req.Action == nodewire.SessionActionCancel && (!hasCommand || command.Settled))
+	if req.Action == nodewire.SessionActionClose || req.Action == nodewire.SessionActionAbort {
 		if confirmed {
 			next.State.State = "closed"
 		} else {

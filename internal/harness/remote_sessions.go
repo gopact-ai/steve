@@ -119,7 +119,7 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 	if policy == "" {
 		policy = permission.PolicyRead
 	}
-	request := nodewire.SessionRequest{Action: "open", Authority: binding.Authority, Binding: binding.Binding, ID: upstreamID, Harness: at.Harness, Workdir: workdir, MCPServers: servers, Permission: policy, CommandID: binding.CommandID + "/open"}
+	request := nodewire.SessionRequest{Action: nodewire.SessionActionOpen, Authority: binding.Authority, Binding: binding.Binding, ID: upstreamID, Harness: at.Harness, Workdir: workdir, MCPServers: servers, Permission: policy, CommandID: binding.CommandID + "/open"}
 	state, err := transport.NodeSession(ctx, node, request)
 	if err != nil {
 		var notSent *nodewire.SessionNotDispatched
@@ -130,7 +130,7 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 	}
 	for state.State == "opening" {
 		poll := request
-		poll.Action = "poll"
+		poll.Action = nodewire.SessionActionPoll
 		poll.ID = state.ID
 		poll.After = state.Sequence
 		poll.WaitMS = 1000
@@ -159,7 +159,7 @@ func (s *managedSession) current(ctx context.Context) NodeSessionContext {
 	}
 	return s.base
 }
-func (s *managedSession) request(ctx context.Context, action string) nodewire.SessionRequest {
+func (s *managedSession) request(ctx context.Context, action nodewire.SessionAction) nodewire.SessionRequest {
 	current := s.current(ctx)
 	return nodewire.SessionRequest{Action: action, ID: s.id, Authority: current.Authority, Binding: current.Binding, CommandID: current.CommandID, InputSequence: current.InputSequence}
 }
@@ -196,20 +196,20 @@ func (s *managedSession) SetModel(ctx context.Context, id, value string) error {
 	return s.SetOption(ctx, id, value)
 }
 func (s *managedSession) SetOption(ctx context.Context, id, value string) error {
-	request := s.request(ctx, "option")
+	request := s.request(ctx, nodewire.SessionActionOption)
 	request.OptionID = id
 	request.OptionValue = value
 	_, err := s.call(ctx, request)
 	return err
 }
 func (s *managedSession) Cancel(ctx context.Context) error {
-	_, err := s.call(ctx, s.request(ctx, "cancel"))
+	_, err := s.call(ctx, s.request(ctx, nodewire.SessionActionCancel))
 	return err
 }
 func (s *managedSession) Abort() {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	_, _ = s.call(ctx, s.request(ctx, "abort"))
+	_, _ = s.call(ctx, s.request(ctx, nodewire.SessionActionAbort))
 }
 func (s *managedSession) Stopped() bool {
 	s.mu.Lock()
@@ -226,7 +226,7 @@ func (e managedPromptError) Error() string       { return e.message }
 func (e managedPromptError) PromptSettled() bool { return true }
 
 func (s *managedSession) PromptTurn(ctx context.Context, text string, media []Media, ask permission.AskFunc, askUser acphost.AskUserFunc, progress func(view.Progress)) (output string, activity []string, runErr error) {
-	request := s.request(ctx, "prompt")
+	request := s.request(ctx, nodewire.SessionActionPrompt)
 	defer s.reconcileStop(request, &output, &activity, &runErr)
 	s.mu.Lock()
 	stopping := s.stopDone != nil
@@ -239,7 +239,7 @@ func (s *managedSession) PromptTurn(ctx context.Context, text string, media []Me
 		request.Media = append(request.Media, nodewire.SessionMedia{MIME: item.MIME, Data: item.Data, URI: item.URI})
 	}
 	if request.InputSequence == 0 {
-		attached, err := s.call(ctx, s.request(ctx, "attach"))
+		attached, err := s.call(ctx, s.request(ctx, nodewire.SessionActionAttach))
 		if err != nil {
 			return "", nil, fmt.Errorf("%w: %w", ErrStopUnconfirmed, err)
 		}
@@ -268,11 +268,11 @@ type RetainedSessionInspector interface {
 }
 
 func (s *managedSession) InspectRetained(ctx context.Context) (nodewire.SessionState, error) {
-	return s.call(ctx, s.request(ctx, "attach"))
+	return s.call(ctx, s.request(ctx, nodewire.SessionActionAttach))
 }
 
 func (s *managedSession) ResumeTurn(ctx context.Context, ask permission.AskFunc, askUser acphost.AskUserFunc, progress func(view.Progress)) (output string, activity []string, runErr error) {
-	request := s.request(ctx, "attach")
+	request := s.request(ctx, nodewire.SessionActionAttach)
 	defer s.reconcileStop(request, &output, &activity, &runErr)
 	state, err := s.call(ctx, request)
 	if err != nil {
@@ -326,7 +326,7 @@ observe:
 					return "", nil, err
 				}
 				if changed {
-					state, err = s.call(ctx, s.request(ctx, "attach"))
+					state, err = s.call(ctx, s.request(ctx, nodewire.SessionActionAttach))
 					if err != nil {
 						return "", nil, fmt.Errorf("%w: %w", ErrStopUnconfirmed, err)
 					}
@@ -340,7 +340,7 @@ observe:
 				s.mu.Unlock()
 			}
 			response := request
-			response.Action = "answer"
+			response.Action = nodewire.SessionActionAnswer
 			response.QuestionID = q.ID
 			response.Answer = &answer
 			response.Text = ""
@@ -350,7 +350,7 @@ observe:
 			}
 		}
 		poll := request
-		poll.Action = "poll"
+		poll.Action = nodewire.SessionActionPoll
 		poll.Text = ""
 		poll.Media = nil
 		poll.After = state.Sequence
@@ -404,7 +404,7 @@ func (m *Manager) AttachRetainedSession(ctx context.Context, at Placement, upstr
 	if !ok || stopped {
 		return nil, ErrNodeSessionUnavailable
 	}
-	state, err := transport.NodeSession(ctx, node, nodewire.SessionRequest{Action: "attach", ID: upstreamID, Authority: binding.Authority, Binding: binding.Binding, CommandID: binding.CommandID})
+	state, err := transport.NodeSession(ctx, node, nodewire.SessionRequest{Action: nodewire.SessionActionAttach, ID: upstreamID, Authority: binding.Authority, Binding: binding.Binding, CommandID: binding.CommandID})
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrNodeSessionUnavailable, err)
 	}
@@ -428,7 +428,7 @@ func (s *managedSession) collectAnswer(ctx context.Context, request nodewire.Ses
 		var after uint64
 		for {
 			poll := request
-			poll.Action = "poll"
+			poll.Action = nodewire.SessionActionPoll
 			poll.Text = ""
 			poll.Media = nil
 			poll.After = after

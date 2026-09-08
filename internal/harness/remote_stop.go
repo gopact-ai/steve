@@ -65,7 +65,7 @@ func (s *managedSession) stopExecution(ctx context.Context) (stopErr error) {
 		s.stopErr = stopErr
 		close(s.stopDone)
 	}()
-	request := s.request(ctx, "cancel")
+	request := s.request(ctx, nodewire.SessionActionCancel)
 	cancelCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	state, cancelErr := s.call(cancelCtx, request)
 	cancel()
@@ -78,7 +78,7 @@ func (s *managedSession) stopExecution(ctx context.Context) (stopErr error) {
 	// An idle session without this input receipt can still have an authorized
 	// Prompt waiting to enter its lock. Closing the native process fences that
 	// delayed request; absence of an accepted command alone is not stop proof.
-	request.Action = "abort"
+	request.Action = nodewire.SessionActionAbort
 	state, abortErr := s.call(ctx, request)
 	if abortErr == nil && stopReceiptMatches(state, request) && state.ProcessStopped {
 		s.mu.Lock()

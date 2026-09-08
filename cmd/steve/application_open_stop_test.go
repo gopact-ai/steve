@@ -73,7 +73,7 @@ func TestApplicationCancelsUnreceiptedOpenUsingNativeProof(t *testing.T) {
 			connections := node.NewRegistry("stop-cluster", map[string]node.Config{"worker": {Addr: server.Addr(), Token: "unreceipted-open"}})
 			defer connections.Close()
 			authority := &applicationStopAuthority{epoch: 1}
-			connections.SetSessionAuthorizer(func(ctx context.Context, target string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action string) error {
+			connections.SetSessionAuthorizer(func(ctx context.Context, target string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action nodewire.SessionAction) error {
 				if target != "worker" {
 					return errors.New("wrong target")
 				}

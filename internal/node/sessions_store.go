@@ -192,14 +192,14 @@ func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.Sess
 		state.Command = &command
 	}
 	switch req.Action {
-	case "open", "attach", "poll", "settings":
+	case nodewire.SessionActionOpen, nodewire.SessionActionAttach, nodewire.SessionActionPoll, nodewire.SessionActionSettings:
 		return state, nil
-	case "close", "cancel", "abort":
+	case nodewire.SessionActionClose, nodewire.SessionActionCancel, nodewire.SessionActionAbort:
 		if !state.ProcessStopped {
 			return state, sessionError("uncertain", "native process stop is not confirmed")
 		}
 		return state, nil
-	case "prompt":
+	case nodewire.SessionActionPrompt:
 		hash := sessionHash(struct {
 			Binding  nodewire.SessionBinding
 			Sequence uint64
@@ -210,7 +210,7 @@ func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.Sess
 			return nodewire.SessionState{}, sessionError("conflict", "closed native session cannot accept another input")
 		}
 		return state, nil
-	case "answer":
+	case nodewire.SessionActionAnswer:
 		for _, q := range state.Questions {
 			if q.ID == req.QuestionID && q.Answer != nil && req.Answer != nil && *q.Answer == *req.Answer {
 				return state, nil

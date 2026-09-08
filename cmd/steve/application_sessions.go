@@ -137,15 +137,15 @@ func sessionCleanupRecord(ctx context.Context, active cluster.Activation, place 
 	return latest, nil
 }
 
-func (p *clusterPeer) AuthorizeNodeSession(ctx context.Context, authenticatedNode string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action string) error {
+func (p *clusterPeer) AuthorizeNodeSession(ctx context.Context, authenticatedNode string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action nodewire.SessionAction) error {
 	if authenticatedNode != authority.CoordinatorNodeID {
 		return errors.New("node session coordinator differs from the authenticated peer")
 	}
 	return p.authorizeSessionExecution(ctx, p.config.NodeID, authority, binding, action)
 }
 
-func (p *clusterPeer) applicationSessionAuthorizer(active cluster.Activation) func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, string) error {
-	return func(ctx context.Context, node string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action string) error {
+func (p *clusterPeer) applicationSessionAuthorizer(active cluster.Activation) func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error {
+	return func(ctx context.Context, node string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action nodewire.SessionAction) error {
 		if err := active.Context.Err(); err != nil {
 			return err
 		}
@@ -163,17 +163,17 @@ func (p *clusterPeer) applicationSessionAuthorizer(active cluster.Activation) fu
 	}
 }
 
-func (p *clusterPeer) authorizeSessionExecution(ctx context.Context, node string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action string) error {
+func (p *clusterPeer) authorizeSessionExecution(ctx context.Context, node string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action nodewire.SessionAction) error {
 	if authority.ClusterID != p.config.ClusterID || binding.NodeID != node {
 		return errors.New("node session belongs to another cluster or machine")
 	}
 	var observation, stopping bool
 	switch action {
-	case "open", "attach", "poll", "settings", "inspect-open":
+	case nodewire.SessionActionOpen, nodewire.SessionActionAttach, nodewire.SessionActionPoll, nodewire.SessionActionSettings, nodewire.SessionActionInspectOpen:
 		observation = true
-	case "cancel", "abort", "close", "cancel-open":
+	case nodewire.SessionActionCancel, nodewire.SessionActionAbort, nodewire.SessionActionClose, nodewire.SessionActionCancelOpen:
 		stopping = true
-	case "start", "prompt", "answer", "option", "capabilities":
+	case nodewire.SessionActionStart, nodewire.SessionActionPrompt, nodewire.SessionActionAnswer, nodewire.SessionActionOption, nodewire.SessionActionCapabilities:
 	default:
 		return errors.New("unsupported node session action")
 	}
@@ -223,10 +223,10 @@ func (p *clusterPeer) authorizeSessionExecution(ctx context.Context, node string
 		if record.State.Terminal() || record.Unsettled {
 			return fmt.Errorf("execution %s cannot start more work", record.ID)
 		}
-		if action == "prompt" && record.State != attempt.Running {
+		if action == nodewire.SessionActionPrompt && record.State != attempt.Running {
 			return errors.New("native input requires a committed running attempt")
 		}
-		if action == "start" && record.State != attempt.Leased && record.State != attempt.Prepared && record.State != attempt.Running {
+		if action == nodewire.SessionActionStart && record.State != attempt.Leased && record.State != attempt.Prepared && record.State != attempt.Running {
 			return errors.New("native session creation is outside the execution preparation phase")
 		}
 		if err := tasks.CheckExecution(*record.Execution); err != nil {

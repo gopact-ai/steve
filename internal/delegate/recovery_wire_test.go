@@ -28,7 +28,7 @@ type delegateNodeAuthority struct {
 	epoch uint64
 }
 
-func (a *delegateNodeAuthority) AuthorizeNodeSession(_ context.Context, principal string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, _ string) error {
+func (a *delegateNodeAuthority) AuthorizeNodeSession(_ context.Context, principal string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, _ nodewire.SessionAction) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if principal != "delegate-cluster" || authority.ClusterID != principal || authority.CoordinatorEpoch != a.epoch || authority.WriterGeneration != a.epoch || binding.NodeID != "node-a" {

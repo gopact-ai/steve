@@ -29,7 +29,7 @@ func testNodeSessionReattachment(t *testing.T, standalone bool) {
 	}
 	server := startNode(t, ServerConfig{Name: "worker", Token: "session-test", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), Harnesses: map[string]HarnessSpec{"mock": {Command: buildMockAgent(t)}}, SessionAuthorizer: verifier})
 	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "session-test"}})
-	verify := func(ctx context.Context, node string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action string) error {
+	verify := func(ctx context.Context, node string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action nodewire.SessionAction) error {
 		if node != "worker" {
 			return errors.New("wrong authenticated node")
 		}
@@ -117,7 +117,7 @@ func testNodeSessionReattachment(t *testing.T, standalone bool) {
 	if standalone {
 		// Even a delayed affirmative authorization cannot undo the newer
 		// coordinator activation already recorded by this native session.
-		nextRegistry.SetSessionAuthorizer(func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, string) error {
+		nextRegistry.SetSessionAuthorizer(func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error {
 			return nil
 		})
 		if _, err := nextRegistry.NodeSession(nextCtx, "worker", stale); err == nil {

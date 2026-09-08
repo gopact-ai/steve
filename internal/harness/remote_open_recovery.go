@@ -25,9 +25,9 @@ func (m *Manager) ReconcileNodeOpen(ctx context.Context, at Placement, workdir s
 	if !ok || stopped {
 		return nodewire.SessionState{}, ErrNodeSessionUnavailable
 	}
-	action := "inspect-open"
+	action := nodewire.SessionActionInspectOpen
 	if cancelOpen {
-		action = "cancel-open"
+		action = nodewire.SessionActionCancelOpen
 	}
 	req := nodewire.SessionRequest{Action: action, Authority: binding.Authority, Binding: binding.Binding, Harness: at.Harness, CommandID: binding.CommandID + "/open"}
 	state, err := transport.NodeSession(ctx, at.Node, req)

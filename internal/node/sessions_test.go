@@ -16,7 +16,7 @@ type sessionAuthorityTest struct {
 	denyStart     bool
 }
 
-func (a *sessionAuthorityTest) AuthorizeNodeSession(_ context.Context, principal string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action string) error {
+func (a *sessionAuthorityTest) AuthorizeNodeSession(_ context.Context, principal string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action nodewire.SessionAction) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if action == "start" && a.denyStart {
@@ -28,7 +28,7 @@ func (a *sessionAuthorityTest) AuthorizeNodeSession(_ context.Context, principal
 	return nil
 }
 
-func nodeSessionRequest(action string) nodewire.SessionRequest {
+func nodeSessionRequest(action nodewire.SessionAction) nodewire.SessionRequest {
 	return nodewire.SessionRequest{Action: action, Authority: nodewire.SessionAuthority{ClusterID: "cluster-1", CoordinatorNodeID: "hub-a", CoordinatorEpoch: 1, WriterGeneration: 1}, Binding: nodewire.SessionBinding{ProjectID: "p", SessionID: "conversation-1", TaskID: "task-1", AttemptID: "attempt-1", NodeID: "worker", ExecutionEpoch: 1, TaskEpoch: 1}}
 }
 

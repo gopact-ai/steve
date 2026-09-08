@@ -49,8 +49,29 @@ type SessionMedia struct {
 	URI  string `json:"uri,omitempty"`
 }
 
+// SessionAction names a node session operation without changing its JSON value.
+type SessionAction string
+
+const (
+	SessionActionOpen         SessionAction = "open"
+	SessionActionClose        SessionAction = "close"
+	SessionActionPrompt       SessionAction = "prompt"
+	SessionActionPoll         SessionAction = "poll"
+	SessionActionAttach       SessionAction = "attach"
+	SessionActionCapabilities SessionAction = "capabilities"
+	SessionActionInspectOpen  SessionAction = "inspect-open"
+	SessionActionCancelOpen   SessionAction = "cancel-open"
+	SessionActionSettings     SessionAction = "settings"
+	SessionActionAnswer       SessionAction = "answer"
+	SessionActionOption       SessionAction = "option"
+	SessionActionCancel       SessionAction = "cancel"
+	SessionActionAbort        SessionAction = "abort"
+	// Start is an authorization challenge inside open, not a client operation.
+	SessionActionStart SessionAction = "start"
+)
+
 type SessionRequest struct {
-	Action        string           `json:"action"` // open | attach | prompt | poll | answer | settings | option | cancel | abort | close
+	Action        SessionAction    `json:"action"`
 	Authority     SessionAuthority `json:"authority"`
 	Binding       SessionBinding   `json:"binding"`
 	ID            string           `json:"id,omitempty"`
@@ -125,14 +146,14 @@ type SessionState struct {
 // SessionOpenReceipt binds a fresh inspect/cancel result to the original open.
 // Only CancelledBeforeOpen proves that a missing open was durably fenced.
 type SessionOpenReceipt struct {
-	Action              string           `json:"action"`
+	Action              SessionAction    `json:"action"`
 	Authority           SessionAuthority `json:"authority"`
 	CommandID           string           `json:"command_id"`
 	CancelledBeforeOpen bool             `json:"cancelled_before_open,omitempty"`
 }
 
 type SessionReply struct {
-	AuthorizeAction string        `json:"authorize_action,omitempty"`
+	AuthorizeAction SessionAction `json:"authorize_action,omitempty"`
 	State           *SessionState `json:"state,omitempty"`
 	ErrorCode       string        `json:"error_code,omitempty"`
 	Error           string        `json:"error,omitempty"`

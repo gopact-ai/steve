@@ -26,7 +26,7 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 			return nodewire.SessionState{}, err
 		}
 		if !exists {
-			if req.Action != "cancel-open" {
+			if req.Action != nodewire.SessionActionCancelOpen {
 				return nodewire.SessionState{}, sessionError("unavailable", "original open is not recorded; absence alone does not confirm cancellation")
 			}
 			one = &ownedSession{service: s, changed: make(chan struct{})}
@@ -41,14 +41,14 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 		}
 		one = &ownedSession{service: s, record: record, changed: make(chan struct{})}
 		check := req
-		check.ID, check.Action = id, "attach"
+		check.ID, check.Action = id, nodewire.SessionActionAttach
 		if err := one.admitLocked(check); err != nil {
 			return nodewire.SessionState{}, err
 		}
-		if req.Action == "cancel-open" && !one.record.State.ProcessStopped {
+		if req.Action == nodewire.SessionActionCancelOpen && !one.record.State.ProcessStopped {
 			return nodewire.SessionState{}, sessionError("uncertain", "original native process stop is not confirmed")
 		}
-		if req.Action == "cancel-open" && one.record.State.State != "closed" {
+		if req.Action == nodewire.SessionActionCancelOpen && one.record.State.State != "closed" {
 			next := one.copyLocked()
 			next.State.State = "closed"
 			if err := one.commitLocked(next); err != nil {
@@ -64,15 +64,15 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 		return nodewire.SessionState{}, sessionError("forbidden", "open receipt belongs to another execution")
 	}
 	check := req
-	check.ID, check.Action = id, "attach"
+	check.ID, check.Action = id, nodewire.SessionActionAttach
 	if err := one.admitLocked(check); err != nil {
 		one.mu.Unlock()
 		return nodewire.SessionState{}, err
 	}
 	state := one.stateLocked("")
 	one.mu.Unlock()
-	if req.Action == "cancel-open" {
-		check.Action, check.CommandID = "abort", ""
+	if req.Action == nodewire.SessionActionCancelOpen {
+		check.Action, check.CommandID = nodewire.SessionActionAbort, ""
 		var err error
 		state, err = one.stop(ctx, check)
 		if err != nil {
