@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -399,7 +399,7 @@ func (s *Store) fail(ctx context.Context, land *Landing, from, to, cause string,
 // logged rather than allowed to hide the cause.
 func (s *Store) failed(ctx context.Context, land *Landing, from, to, cause string, paths []string) {
 	if err := s.fail(ctx, land, from, to, cause, paths); err != nil {
-		log.Printf("artifact: landing %s: %s not recorded: %v", land.ID, to, err)
+		slog.Error(fmt.Sprintf("artifact: landing %s: %s not recorded: %v", land.ID, to, err), "landing", land.ID, "artifact", land.Artifact, "project", land.Project)
 	}
 }
 

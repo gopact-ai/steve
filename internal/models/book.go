@@ -10,7 +10,7 @@ package models
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"sync"
 	"time"
@@ -93,7 +93,7 @@ func (b *Book) Observe(o Observation) {
 	if b.doc != nil {
 		if raw, err := json.Marshal(b.all()); err == nil {
 			if err := b.doc.Save(raw); err != nil {
-				log.Printf("models: save: %v", err)
+				slog.Error(fmt.Sprintf("models: save: %v", err))
 			}
 		}
 	}

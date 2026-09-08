@@ -22,6 +22,7 @@ import (
 	"github.com/gopact-ai/steve/internal/mcpscan"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/text"
 )
 
 type mcpProbeEntry struct {
@@ -219,7 +220,7 @@ func (a *Service) ProbeMCP(ctx context.Context, machine, name string) (consoleap
 		a.probes = map[string]mcpProbeEntry{}
 	}
 	if reply.Error != "" {
-		view.Error = Clip(reply.Error, 600)
+		view.Error = text.Clip(reply.Error, 600)
 		if prev, had := a.probes[place+"/"+name]; had && prev.view.OK {
 			view.Tools, view.Digest, view.Stale = prev.view.Tools, prev.view.Digest, true
 			view.ServerName, view.ServerVersion = prev.view.ServerName, prev.view.ServerVersion

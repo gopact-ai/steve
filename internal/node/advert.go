@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os/exec"
 	"runtime"
 	"sort"
@@ -88,7 +88,7 @@ func (s *Server) snapshot() *ability.Snapshot {
 		defer cancel()
 		listed, err := rb.List(ctx)
 		if err != nil {
-			log.Printf("steve-node: mcp broker: %v", err)
+			slog.Error(fmt.Sprintf("steve-node: mcp broker: %v", err))
 			o.MCPError = err.Error()
 		} else {
 			o.MCPListed = listed
@@ -149,7 +149,7 @@ func (s *Server) admit(stream *nodewire.Stream) {
 	if adm.Verdict != ability.True {
 		bindings, adm.Bound = nil, nil
 	}
-	log.Printf("steve-node: admission for attempt %s (%s): %s at %d/%d, bound %v", req.Attempt, req.Harness, adm.Verdict, snap.Generation, snap.Sequence, adm.Bound)
+	slog.Info(fmt.Sprintf("steve-node: admission for attempt %s (%s): %s at %d/%d, bound %v", req.Attempt, req.Harness, adm.Verdict, snap.Generation, snap.Sequence, adm.Bound), "attempt", req.Attempt, "harness", req.Harness)
 	s.admitReply(stream, nodewire.AdmitReply{Admission: adm, Bindings: bindings, Nonce: req.Nonce})
 }
 
@@ -157,7 +157,7 @@ func (s *Server) admit(stream *nodewire.Stream) {
 // since the attempt it placed here will not run without it.
 func (s *Server) admitReply(stream *nodewire.Stream, reply nodewire.AdmitReply) {
 	if err := json.NewEncoder(stream).Encode(reply); err != nil {
-		log.Printf("steve-node: admission reply: %v", err)
+		slog.Error(fmt.Sprintf("steve-node: admission reply: %v", err))
 	}
 }
 
@@ -197,7 +197,7 @@ func (s *Server) sendAdvert(stream *nodewire.Stream) {
 	defer stream.Close()
 	s.touchOwner()
 	if err := json.NewEncoder(stream).Encode(s.advert()); err != nil {
-		log.Printf("steve-node: send advert: %v", err)
+		slog.Error(fmt.Sprintf("steve-node: send advert: %v", err))
 	}
 }
 

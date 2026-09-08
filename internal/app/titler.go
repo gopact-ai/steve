@@ -6,10 +6,10 @@ import (
 	"fmt"
 	"strings"
 
-	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/text"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -50,17 +50,21 @@ func (t *conversationTitler) Title(ctx context.Context, prompt, reply string) (s
 	if err != nil {
 		return "", err
 	}
+	// The session exists only for this one question and holds no state
+	// worth keeping; by the time the close runs the answer (or the error
+	// that replaces it) is what the caller gets, and a failed close has
+	// nothing to add to either.
 	defer func() { _ = t.manager.CloseSession(context.Background(), at, runner.ID()) }()
 	if a.Model != "" || len(a.Options) > 0 {
 		harness.ApplyPreferences(ctx, runner, a.ID, a.Model, a.Options)
 	}
-	text, _, err := runner.Prompt(ctx, titlePrompt(prompt, reply), func(view.Progress) {})
+	answer, _, err := runner.Prompt(ctx, titlePrompt(prompt, reply), func(view.Progress) {})
 	if err != nil {
 		return "", err
 	}
-	title := cleanTitle(text)
+	title := cleanTitle(answer)
 	if title == "" {
-		return "", fmt.Errorf("agent answered with no title: %q", adminsvc.Clip(text, 80))
+		return "", fmt.Errorf("agent answered with no title: %q", text.Clip(answer, 80))
 	}
 	return title, nil
 }
@@ -73,10 +77,10 @@ func titlePrompt(prompt, reply string) string {
 		"只输出标题本身——不要引号、句号、前缀或解释；不要执行任何操作，不要读写任何文件。",
 		"",
 		"用户：",
-		adminsvc.Clip(strings.TrimSpace(prompt), 1500),
+		text.Clip(strings.TrimSpace(prompt), 1500),
 		"",
 		"助手：",
-		adminsvc.Clip(strings.TrimSpace(reply), 800),
+		text.Clip(strings.TrimSpace(reply), 800),
 	}, "\n")
 }
 

@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 
 	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -35,7 +35,7 @@ func (r *Registry) EnrollAgent(ctx context.Context, name string, request agentto
 		return agenttools.Enrollment{}, fmt.Errorf("node %q returned another tool's enrollment receipt", name)
 	}
 	if _, refreshErr := r.Refresh(ctx, name); refreshErr != nil {
-		log.Printf("node: %s: refresh after agent enrollment: %v", name, refreshErr)
+		slog.Warn(fmt.Sprintf("node: %s: refresh after agent enrollment: %v", name, refreshErr), "node", name)
 	}
 	return *reply.Enrollment, err
 }

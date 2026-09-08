@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -404,7 +404,7 @@ func (p *remoteProcess) readLoop(c *conn, stream *nodewire.Stream, reader *bufio
 			}
 			p.mu.Unlock()
 			if err == nil {
-				log.Printf("node: %s reattached stream %s after %s (after output %d, accepted input %d)", p.transport.node, p.id, time.Since(start).Round(time.Millisecond), req.AfterOut, ack.HaveIn)
+				slog.Info(fmt.Sprintf("node: %s reattached stream %s after %s (after output %d, accepted input %d)", p.transport.node, p.id, time.Since(start).Round(time.Millisecond), req.AfterOut, ack.HaveIn), "node", p.transport.node, "stream", p.id)
 			}
 			break
 		}

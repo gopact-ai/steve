@@ -3,7 +3,7 @@ package models
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -68,7 +68,7 @@ func (p *Prober) Probe(ctx context.Context, ep Endpoint) (Observation, error) {
 		settings = configurable.Settings()
 	}
 	if err := p.open.CloseSession(ctx, at, runner.ID()); err != nil {
-		log.Printf("models: close probe session on %s/%s: %v", ep.Node, ep.Harness, err)
+		slog.Error(fmt.Sprintf("models: close probe session on %s/%s: %v", ep.Node, ep.Harness, err), "node", ep.Node, "harness", ep.Harness)
 	}
 	obs := Observation{
 		Node: ep.Node, Harness: ep.Harness,

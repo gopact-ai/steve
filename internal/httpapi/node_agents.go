@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 
 	"github.com/gopact-ai/steve/internal/agenttools"
@@ -19,7 +18,7 @@ func (s *Server) consoleNodeAgents(w http.ResponseWriter, r *http.Request) {
 	service, ok := s.admin.(nodeAgentService)
 	if !ok {
 		w.WriteHeader(http.StatusNotImplemented)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": "当前服务不支持节点工具登记"})
+		writeJSON(w, map[string]string{"error": "当前服务不支持节点工具登记"})
 		return
 	}
 	if r.Method == http.MethodGet {
@@ -28,7 +27,7 @@ func (s *Server) consoleNodeAgents(w http.ResponseWriter, r *http.Request) {
 			writeDesktopError(w, err, http.StatusServiceUnavailable)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(result)
+		writeJSON(w, result)
 		return
 	}
 	var request agenttools.EnrollRequest
@@ -38,11 +37,11 @@ func (s *Server) consoleNodeAgents(w http.ResponseWriter, r *http.Request) {
 	result, err := service.EnrollNodeAgent(r.Context(), r.PathValue("name"), request)
 	if err != nil {
 		if result.Registered {
-			_ = json.NewEncoder(w).Encode(result)
+			writeJSON(w, result)
 			return
 		}
 		writeDesktopError(w, err, http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(result)
+	writeJSON(w, result)
 }

@@ -125,7 +125,12 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 		for _, receipt := range latest.Receipts {
 			copied = copied || receipt.NodeID == third.Config.NodeID
 		}
-		if ok && copied {
+		// The receipt lands before the repair loop reports it; stopping
+		// the loop on the receipt alone can cut the observation off.
+		eventMu.Lock()
+		notified := strings.Contains(strings.Join(events, "\n"), "content.repaired")
+		eventMu.Unlock()
+		if ok && copied && notified {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)

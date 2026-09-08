@@ -26,6 +26,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/text"
 )
 
 const (
@@ -605,9 +606,9 @@ func (c *Channel) attachQuoted(ctx context.Context, msg *InboundMessage) {
 		}
 		// A card or other unsupported type in the middle of the chain is
 		// skipped, not treated as the end of it.
-		text, keys, _ := parseContent(deref(parent.MsgType), deref(parent.Body.Content))
-		if text != "" && budget > 0 {
-			quote := truncateRunes(text, budget)
+		parentText, keys, _ := parseContent(deref(parent.MsgType), deref(parent.Body.Content))
+		if parentText != "" && budget > 0 {
+			quote := text.Clip(parentText, budget)
 			budget -= len([]rune(quote))
 			quotes = append(quotes, quote)
 		}
@@ -659,13 +660,6 @@ func (c *Channel) fetchImages(ctx context.Context, messageID string, keys []stri
 		images = append(images, img)
 	}
 	return images
-}
-
-func truncateRunes(s string, max int) string {
-	if len([]rune(s)) <= max {
-		return s
-	}
-	return string([]rune(s)[:max]) + "…"
 }
 
 func (c *Channel) downloadImage(ctx context.Context, messageID, fileKey string) (Image, error) {

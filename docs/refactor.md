@@ -115,3 +115,5 @@ CI 的 GitHub 托管 runner 负载不稳时，以下时序敏感测试会偶发�
 M1 是收益最大的一步，也是唯一改动执行路径的一步，所以放在最前并单独验收；M2–M6 主要是搬运和替换，可以分给并行的执行者。
 
 M3 实施结果：`state_literals.txt` 从实施前的 53 条记录降到 0 条（上方现状表保留早期统计）。会话动作、会话及命令状态、交换状态和管理操作状态使用各自的类型；任务状态与结果复用 `task.State` / `task.Outcome`。动作分发保留原有授权和回执处理顺序，`start` 仍仅用于 open 内部的二次授权。JSON 字符串值及各领域原有的终态判定保持不变。
+
+M4 实施进度：`internal/logs` 持有两个可执行文件共用的 slog handler（标准日志时间前缀、消息原文、`key=value` 字段跟在后面，仅 WARN/ERROR 带 `level=`），`internal/app` 与 `cmd/steve-node` 都在入口安装它；应用层、node 与 nodewire、harness、acphost 及各领域包已改用 `slog`，标识（`task` / `attempt` / `node` / `conversation` / `stream` / `harness` / `artifact` / `landing` / `project` …）作为字段附加，消息文本原样保留。`log.Printf` 只剩 `turn` / `delegate` / `exec` 三个包，随生命周期收敛一起迁移。

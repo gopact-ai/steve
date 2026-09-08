@@ -3,7 +3,7 @@ package node
 import (
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -53,7 +53,7 @@ func (s *Server) applySkills(stream *nodewire.Stream) {
 	verb, hash, _ := strings.Cut(stream.Request().Command, " ")
 	hash = strings.TrimSpace(hash)
 	fail := func(code string, err error) {
-		log.Printf("steve-node: skills %s: %v", hash, err)
+		slog.Error(fmt.Sprintf("steve-node: skills %s: %v", hash, err), "skills", hash)
 		fmt.Fprintln(stream, err.Error())
 		closeStream(stream, nodewire.ExitPrefix+code)
 	}
@@ -114,7 +114,7 @@ func (s *Server) applySkills(stream *nodewire.Stream) {
 			}
 		}
 	}
-	log.Printf("steve-node: skills %s materialized: %d skills", hash[:12], len(entries))
+	slog.Info(fmt.Sprintf("steve-node: skills %s materialized: %d skills", hash[:12], len(entries)), "skills", hash)
 	closeStream(stream, nodewire.ExitPrefix+"0")
 }
 

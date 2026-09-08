@@ -54,10 +54,10 @@ func materialResponse(w http.ResponseWriter, value any, err error) {
 			message = err.Error()
 		}
 		w.WriteHeader(code)
-		json.NewEncoder(w).Encode(map[string]string{"error": message})
+		writeJSON(w, map[string]string{"error": message})
 		return
 	}
-	json.NewEncoder(w).Encode(value)
+	writeJSON(w, value)
 }
 func materialRequest(w http.ResponseWriter, r *http.Request, out any) bool {
 	d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2<<20))

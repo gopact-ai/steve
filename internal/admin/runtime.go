@@ -21,13 +21,6 @@ import (
 	steveview "github.com/gopact-ai/steve/internal/view"
 )
 
-func Clip(s string, n int) string {
-	if r := []rune(s); len(r) > n {
-		return string(r[:n]) + "…"
-	}
-	return s
-}
-
 type LocalObservation struct {
 	Launch *node.LaunchProbe
 	Skills atomic.Pointer[SkillShipper]

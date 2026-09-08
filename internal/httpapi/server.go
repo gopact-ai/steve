@@ -334,7 +334,7 @@ func (s *Server) consoleAddNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(out)
+	writeJSON(w, out)
 }
 
 func (s *Server) consoleRemoveNode(w http.ResponseWriter, r *http.Request) {
@@ -345,7 +345,7 @@ func (s *Server) consoleRemoveNode(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleAddProject(w http.ResponseWriter, r *http.Request) {
@@ -363,7 +363,7 @@ func (s *Server) consoleAddProject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleUpdateAgent(w http.ResponseWriter, r *http.Request) {
@@ -381,7 +381,7 @@ func (s *Server) consoleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleRemoveAgent(w http.ResponseWriter, r *http.Request) {
@@ -394,7 +394,7 @@ func (s *Server) consoleRemoveAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleRemoveProject(w http.ResponseWriter, r *http.Request) {
@@ -407,7 +407,7 @@ func (s *Server) consoleRemoveProject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleAddWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -425,7 +425,7 @@ func (s *Server) consoleAddWorkspace(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleRemoveWorkspace(w http.ResponseWriter, r *http.Request) {
@@ -442,7 +442,7 @@ func (s *Server) consoleRemoveWorkspace(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), status)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // ErrBusy is an admin action refused because something is running where
@@ -466,7 +466,7 @@ func (s *Server) consoleSkills(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(view)
+	writeJSON(w, view)
 }
 
 func (s *Server) consoleSkill(w http.ResponseWriter, r *http.Request) {
@@ -478,7 +478,7 @@ func (s *Server) consoleSkill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusNotFound)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(doc)
+	writeJSON(w, doc)
 }
 
 func (s *Server) consoleSetSkill(w http.ResponseWriter, r *http.Request) {
@@ -500,7 +500,7 @@ func (s *Server) consoleSetSkill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), status)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleAddSkillPath(w http.ResponseWriter, r *http.Request) {
@@ -518,7 +518,7 @@ func (s *Server) consoleAddSkillPath(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleRemoveSkillPath(w http.ResponseWriter, r *http.Request) {
@@ -533,7 +533,7 @@ func (s *Server) consoleRemoveSkillPath(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), status)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleMachineSkills(w http.ResponseWriter, r *http.Request) {
@@ -544,7 +544,7 @@ func (s *Server) consoleMachineSkills(w http.ResponseWriter, r *http.Request) {
 	if out == nil {
 		out = []consoleapi.MachineSkills{}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"machines": out})
+	writeJSON(w, map[string]any{"machines": out})
 }
 
 func (s *Server) consoleRefreshMachineSkills(w http.ResponseWriter, r *http.Request) {
@@ -555,7 +555,7 @@ func (s *Server) consoleRefreshMachineSkills(w http.ResponseWriter, r *http.Requ
 	if out == nil {
 		out = []consoleapi.MachineSkills{}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"machines": out})
+	writeJSON(w, map[string]any{"machines": out})
 }
 
 func (s *Server) consoleImportSkill(w http.ResponseWriter, r *http.Request) {
@@ -575,7 +575,7 @@ func (s *Server) consoleImportSkill(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "name": name})
+	writeJSON(w, map[string]any{"ok": true, "name": name})
 }
 
 func (s *Server) consoleAddSkillSource(w http.ResponseWriter, r *http.Request) {
@@ -594,7 +594,7 @@ func (s *Server) consoleAddSkillSource(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(src)
+	writeJSON(w, src)
 }
 
 func (s *Server) consoleUpdateSkillSources(w http.ResponseWriter, r *http.Request) {
@@ -613,7 +613,7 @@ func (s *Server) consoleUpdateSkillSources(w http.ResponseWriter, r *http.Reques
 	if out == nil {
 		out = []consoleapi.SkillSource{}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"sources": out})
+	writeJSON(w, map[string]any{"sources": out})
 }
 
 func (s *Server) consoleRemoveSkillSource(w http.ResponseWriter, r *http.Request) {
@@ -628,7 +628,7 @@ func (s *Server) consoleRemoveSkillSource(w http.ResponseWriter, r *http.Request
 		http.Error(w, err.Error(), status)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleMCP(w http.ResponseWriter, r *http.Request) {
@@ -640,7 +640,7 @@ func (s *Server) consoleMCP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(view)
+	writeJSON(w, view)
 }
 
 func (s *Server) consoleProbeMCP(w http.ResponseWriter, r *http.Request) {
@@ -657,7 +657,7 @@ func (s *Server) consoleProbeMCP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": probe.OK, "probe": probe})
+	writeJSON(w, map[string]any{"ok": probe.OK, "probe": probe})
 }
 
 func (s *Server) consoleAdoptMCP(w http.ResponseWriter, r *http.Request) {
@@ -673,7 +673,7 @@ func (s *Server) consoleAdoptMCP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleRemoveMCP(w http.ResponseWriter, r *http.Request) {
@@ -684,7 +684,7 @@ func (s *Server) consoleRemoveMCP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleMCPRegistry(w http.ResponseWriter, r *http.Request) {
@@ -699,7 +699,7 @@ func (s *Server) consoleMCPRegistry(w http.ResponseWriter, r *http.Request) {
 	if entries == nil {
 		entries = []consoleapi.MCPRegistryEntry{}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"entries": entries})
+	writeJSON(w, map[string]any{"entries": entries})
 }
 
 func (s *Server) consoleInstallMCP(w http.ResponseWriter, r *http.Request) {
@@ -715,7 +715,7 @@ func (s *Server) consoleInstallMCP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleHome(w http.ResponseWriter, r *http.Request) {
@@ -727,7 +727,7 @@ func (s *Server) consoleHome(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(view)
+	writeJSON(w, view)
 }
 
 func (s *Server) consoleSetHomeFile(w http.ResponseWriter, r *http.Request) {
@@ -745,7 +745,7 @@ func (s *Server) consoleSetHomeFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleSelectors(w http.ResponseWriter, r *http.Request) {
@@ -764,7 +764,7 @@ func (s *Server) consoleSelectors(w http.ResponseWriter, r *http.Request) {
 	if sel.Options == nil {
 		sel.Options = []view.Option{}
 	}
-	_ = json.NewEncoder(w).Encode(sel)
+	writeJSON(w, sel)
 }
 
 func (s *Server) consoleSetPreferences(w http.ResponseWriter, r *http.Request) {
@@ -784,7 +784,7 @@ func (s *Server) consoleSetPreferences(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true, "note": "下一轮以新会话开始"})
+	writeJSON(w, map[string]any{"ok": true, "note": "下一轮以新会话开始"})
 }
 
 // consoleTask joins one task for the page: the read model's task, plan
@@ -823,7 +823,7 @@ func (s *Server) consoleTask(w http.ResponseWriter, r *http.Request) {
 	if attempts, err := s.admin.TaskAttempts(r.Context(), id); err == nil && attempts != nil {
 		detail.Attempts = attempts
 	}
-	_ = json.NewEncoder(w).Encode(detail)
+	writeJSON(w, detail)
 }
 
 func (s *Server) consoleTaskAttempts(w http.ResponseWriter, r *http.Request) {
@@ -839,7 +839,7 @@ func (s *Server) consoleTaskAttempts(w http.ResponseWriter, r *http.Request) {
 	if attempts == nil {
 		attempts = []consoleapi.AttemptView{}
 	}
-	_ = json.NewEncoder(w).Encode(attempts)
+	writeJSON(w, attempts)
 }
 
 func (s *Server) consoleAttemptTree(w http.ResponseWriter, r *http.Request) {
@@ -855,7 +855,7 @@ func (s *Server) consoleAttemptTree(w http.ResponseWriter, r *http.Request) {
 	if tree.Entries == nil {
 		tree.Entries = []artifact.Entry{}
 	}
-	_ = json.NewEncoder(w).Encode(tree)
+	writeJSON(w, tree)
 }
 
 func (s *Server) consoleAttemptFile(w http.ResponseWriter, r *http.Request) {
@@ -868,7 +868,7 @@ func (s *Server) consoleAttemptFile(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(file)
+	writeJSON(w, file)
 }
 
 func (s *Server) consoleAttemptChanges(w http.ResponseWriter, r *http.Request) {
@@ -884,7 +884,7 @@ func (s *Server) consoleAttemptChanges(w http.ResponseWriter, r *http.Request) {
 	if index.Changes == nil {
 		index.Changes = []artifact.Change{}
 	}
-	_ = json.NewEncoder(w).Encode(index)
+	writeJSON(w, index)
 }
 
 func (s *Server) consoleAttemptDiff(w http.ResponseWriter, r *http.Request) {
@@ -897,7 +897,7 @@ func (s *Server) consoleAttemptDiff(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(diff)
+	writeJSON(w, diff)
 }
 
 func (s *Server) consoleSetProjectMemory(w http.ResponseWriter, r *http.Request) {
@@ -915,7 +915,7 @@ func (s *Server) consoleSetProjectMemory(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
@@ -945,7 +945,7 @@ func (s *Server) nodeSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"settings": out})
+	writeJSON(w, map[string]any{"settings": out})
 }
 
 func (s *Server) consoleAddAgent(w http.ResponseWriter, r *http.Request) {
@@ -963,7 +963,7 @@ func (s *Server) consoleAddAgent(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // bootstrap hands a machine its start script. The machine presents its
@@ -979,7 +979,9 @@ func (s *Server) bootstrap(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/x-shellscript; charset=utf-8")
-	_, _ = io.WriteString(w, script)
+	if _, err := io.WriteString(w, script); err != nil {
+		slog.Warn(fmt.Sprintf("httpapi: write bootstrap script for %s: %v", r.PathValue("name"), err), "node", r.PathValue("name"))
+	}
 }
 
 func (s *Server) nodeBinary(w http.ResponseWriter, r *http.Request) {
@@ -1028,26 +1030,26 @@ func (s *Server) consoleSend(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if errors.Is(err, consoleapi.ErrCommandConflict) {
 		w.WriteHeader(http.StatusConflict)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+		writeJSON(w, map[string]any{"error": err.Error()})
 		return
 	}
 	if errors.Is(err, consoleapi.ErrConsoleClosing) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		writeJSON(w, map[string]string{"error": err.Error()})
 		return
 	}
 	if err != nil {
 		w.WriteHeader(http.StatusBadGateway)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error(), "reply": reply})
+		writeJSON(w, map[string]any{"error": err.Error(), "reply": reply})
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"reply": reply})
+	writeJSON(w, map[string]any{"reply": reply})
 }
 
 func (s *Server) consoleContext(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.console == nil {
-		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false})
+		writeJSON(w, map[string]any{"enabled": false})
 		return
 	}
 	conversation := r.URL.Query().Get("conversation")
@@ -1057,13 +1059,13 @@ func (s *Server) consoleContext(w http.ResponseWriter, r *http.Request) {
 	ctx, err := s.console.Context(r.Context(), conversation)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+		writeJSON(w, map[string]any{"error": err.Error()})
 		return
 	}
 	if ctx.Agents == nil {
 		ctx.Agents = []consoleapi.AgentChoice{}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "context": ctx})
+	writeJSON(w, map[string]any{"enabled": true, "context": ctx})
 }
 
 // history pages what happened, newest first; before is the ledger
@@ -1075,13 +1077,13 @@ func (s *Server) history(w http.ResponseWriter, r *http.Request) {
 	entries, next, err := s.model.History(r.Context(), before, limit)
 	if err != nil {
 		w.WriteHeader(http.StatusInternalServerError)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": err.Error()})
+		writeJSON(w, map[string]any{"error": err.Error()})
 		return
 	}
 	if entries == nil {
 		entries = []readmodel.HistoryEntry{}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"entries": entries, "next": next})
+	writeJSON(w, map[string]any{"entries": entries, "next": next})
 }
 
 func (s *Server) consoleSuggest(w http.ResponseWriter, r *http.Request) {
@@ -1094,7 +1096,7 @@ func (s *Server) consoleSuggest(w http.ResponseWriter, r *http.Request) {
 		}
 		items = append(items, s.console.Suggest(r.Context(), conversation, r.URL.Query().Get("q"))...)
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"suggestions": items})
+	writeJSON(w, map[string]any{"suggestions": items})
 }
 
 func (s *Server) consoleVerbs(w http.ResponseWriter, r *http.Request) {
@@ -1109,20 +1111,20 @@ func (s *Server) consoleVerbs(w http.ResponseWriter, r *http.Request) {
 			verbs = append(verbs, s.console.Verbs()...)
 		}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"verbs": verbs})
+	writeJSON(w, map[string]any{"verbs": verbs})
 }
 
 func (s *Server) consoleConversations(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.console == nil {
-		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false, "conversations": []consoleapi.Conversation{}})
+		writeJSON(w, map[string]any{"enabled": false, "conversations": []consoleapi.Conversation{}})
 		return
 	}
 	list := s.console.Summaries(r.Context())
 	if list == nil {
 		list = []consoleapi.Conversation{}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "conversations": list})
+	writeJSON(w, map[string]any{"enabled": true, "conversations": list})
 }
 
 func (s *Server) consoleUpdateConversation(w http.ResponseWriter, r *http.Request) {
@@ -1140,13 +1142,13 @@ func (s *Server) consoleUpdateConversation(w http.ResponseWriter, r *http.Reques
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 func (s *Server) consoleReplies(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.console == nil {
-		_ = json.NewEncoder(w).Encode(map[string]any{"enabled": false, "replies": []consoleapi.Reply{}, "conversations": []string{}})
+		writeJSON(w, map[string]any{"enabled": false, "replies": []consoleapi.Reply{}, "conversations": []string{}})
 		return
 	}
 	conversation := r.URL.Query().Get("conversation")
@@ -1157,5 +1159,5 @@ func (s *Server) consoleReplies(w http.ResponseWriter, r *http.Request) {
 	if names == nil {
 		names = []string{}
 	}
-	_ = json.NewEncoder(w).Encode(map[string]any{"enabled": true, "replies": s.console.Replies(conversation), "conversations": names})
+	writeJSON(w, map[string]any{"enabled": true, "replies": s.console.Replies(conversation), "conversations": names})
 }

@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -52,7 +52,7 @@ func (s *Server) release(hub string, clean bool) {
 		s.hubLive--
 		if s.hubLive == 0 {
 			if err := s.writeOwner(hubOwner{Hub: hub, LastSeen: time.Now().UTC(), Released: clean}); err != nil {
-				log.Printf("node: persist owner release: %v", err)
+				slog.Error(fmt.Sprintf("node: persist owner release: %v", err))
 			}
 		}
 	}
@@ -128,7 +128,7 @@ func (s *Server) touchOwner() {
 	defer s.hubMu.Unlock()
 	if s.hubLive > 0 {
 		if err := s.writeOwner(hubOwner{Hub: s.hubName, LastSeen: time.Now().UTC()}); err != nil {
-			log.Printf("node: persist owner heartbeat: %v", err)
+			slog.Error(fmt.Sprintf("node: persist owner heartbeat: %v", err))
 		}
 	}
 }

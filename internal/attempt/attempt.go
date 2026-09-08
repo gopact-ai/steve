@@ -23,7 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"time"
@@ -615,7 +615,7 @@ func (s *Service) Heartbeat(ctx context.Context, id string) (lost <-chan struct{
 			case <-ticker.C:
 				if err := s.Renew(ctx, id); err != nil {
 					if ctx.Err() == nil {
-						log.Printf("attempt %s: heartbeat: %v", id, err)
+						slog.Error(fmt.Sprintf("attempt %s: heartbeat: %v", id, err), "attempt", id)
 					}
 					close(ch)
 					return
@@ -777,7 +777,7 @@ func (s *Service) Sweep(ctx context.Context) ([]Record, error) {
 			if err := s.MarkUnsettled(ctx, r.ID, "sweeper", cause, nil); err != nil {
 				return expired, err
 			}
-			log.Printf("attempt: quarantined %s after lease loss without stop evidence", r.ID)
+			slog.Warn(fmt.Sprintf("attempt: quarantined %s after lease loss without stop evidence", r.ID), "attempt", r.ID, "task", r.TaskID, "node", r.Node)
 			continue
 		}
 		if err := s.expireSettled(ctx, r, "sweeper", "lease expired after confirmed settlement"); err != nil {

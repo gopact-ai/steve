@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/subtle"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"path/filepath"
 	"strconv"
@@ -20,7 +20,7 @@ import (
 // logs the disconnect instead.
 func closeStream(stream *nodewire.Stream, reason string) {
 	if err := stream.CloseWithReason(reason); err != nil {
-		log.Printf("steve-node: close %v stream: %v", stream.Request().Kind, err)
+		slog.Error(fmt.Sprintf("steve-node: close %v stream: %v", stream.Request().Kind, err), "kind", stream.Request().Kind)
 	}
 }
 
@@ -57,7 +57,7 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 	if authenticate := s.conf().AuthenticatedPeer; authenticate != nil {
 		sessionPrincipal, ok = authenticate(socket)
 		if !ok || sessionPrincipal == "" {
-			log.Printf("steve-node: rejected connection without authenticated peer identity")
+			slog.Warn("steve-node: rejected connection without authenticated peer identity")
 			return
 		}
 	}
@@ -67,7 +67,7 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 		s.servePeer(ctx, socket, hello, name)
 		return
 	}
-	log.Printf("steve-node: hub %q connected from %s", hello.Hub, socket.RemoteAddr())
+	slog.Info(fmt.Sprintf("steve-node: hub %q connected from %s", hello.Hub, socket.RemoteAddr()), "hub", hello.Hub)
 	claim.clean = s.serveHub(ctx, socket, hello.Hub, sessionPrincipal)
 }
 
@@ -78,7 +78,7 @@ func (s *Server) handshake(socket net.Conn, claim *hubClaim) (nodewire.Hello, bo
 	// The deadline only bounds the handshake; the connection is long-lived
 	// afterwards and its streams carry their own timeouts.
 	if err := socket.SetDeadline(time.Now().Add(nodewire.HandshakeTimeout)); err != nil {
-		log.Printf("steve-node: handshake from %s: %v", socket.RemoteAddr(), err)
+		slog.Error(fmt.Sprintf("steve-node: handshake from %s: %v", socket.RemoteAddr(), err))
 		return nodewire.Hello{}, false
 	}
 	// The reverse listener is bound before the advert so its port can be
@@ -86,7 +86,7 @@ func (s *Server) handshake(socket net.Conn, claim *hubClaim) (nodewire.Hello, bo
 	// fingerprint, so it has to be known before any session opens.
 	mcp, err := s.listenMCP()
 	if err != nil {
-		log.Printf("steve-node: reverse MCP listener: %v — agents here lose the send primitive", err)
+		slog.Error(fmt.Sprintf("steve-node: reverse MCP listener: %v — agents here lose the send primitive", err))
 	}
 	advert := s.advert()
 	if mcp != nil {
@@ -107,7 +107,7 @@ func (s *Server) handshake(socket net.Conn, claim *hubClaim) (nodewire.Hello, bo
 		return nil
 	}, advert)
 	if err != nil {
-		log.Printf("steve-node: handshake from %s: %v", socket.RemoteAddr(), err)
+		slog.Error(fmt.Sprintf("steve-node: handshake from %s: %v", socket.RemoteAddr(), err))
 		return hello, false
 	}
 	// Clearing a deadline on a live socket cannot fail in a way the
@@ -141,7 +141,7 @@ func (s *Server) serveHub(ctx context.Context, socket net.Conn, hub, principal s
 	for {
 		stream, err := mux.Accept(ctx)
 		if err != nil {
-			log.Printf("steve-node: hub %q disconnected", hub)
+			slog.Warn(fmt.Sprintf("steve-node: hub %q disconnected", hub), "hub", hub)
 			return
 		}
 		s.dispatch(ctx, mux, hub, principal, stream)
@@ -305,7 +305,7 @@ func (s *Server) grant(stream *nodewire.Stream) {
 	}
 	s.grants[fields[0]] = peerGrant{name: fields[1], expires: time.Now().Add(time.Duration(seconds) * time.Second)}
 	s.grantsMu.Unlock()
-	log.Printf("steve-node: granted a peer %s for %ds", fields[1], seconds)
+	slog.Info(fmt.Sprintf("steve-node: granted a peer %s for %ds", fields[1], seconds), "peer", fields[1])
 	closeStream(stream, nodewire.ExitPrefix+"0")
 }
 
@@ -314,7 +314,7 @@ func (s *Server) servePeer(ctx context.Context, socket net.Conn, hello nodewire.
 	s.grantsMu.Lock()
 	delete(s.grants, hello.Token)
 	s.grantsMu.Unlock()
-	log.Printf("steve-node: peer %q connected from %s for %s", hello.Hub, socket.RemoteAddr(), name)
+	slog.Info(fmt.Sprintf("steve-node: peer %q connected from %s for %s", hello.Hub, socket.RemoteAddr(), name), "peer", hello.Hub, "blob", name)
 	mux := nodewire.NewMux(socket, false)
 	defer mux.Close()
 	stream, err := mux.Accept(ctx)

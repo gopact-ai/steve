@@ -6,7 +6,7 @@ import (
 	"errors"
 	"flag"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -77,7 +77,7 @@ func peerCmd(args []string) error {
 	if err != nil {
 		return err
 	}
-	log.Printf("steve: cluster peer %s UI available at %s", peer.Config.NodeID, peer.UiURL)
+	slog.Info("steve: cluster peer "+peer.Config.NodeID+" UI available at "+peer.UiURL, "node", peer.Config.NodeID)
 	select {
 	case <-ctx.Done():
 	case err = <-peer.Errors:

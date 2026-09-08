@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
@@ -118,7 +118,7 @@ func (s *Server) sessionStream(parent context.Context, principal string, stream 
 		}
 	}
 	if err := writeSessionMessage(stream, reply); err != nil {
-		log.Printf("steve-node: session reply: %v", err)
+		slog.Error(fmt.Sprintf("steve-node: session reply: %v", err))
 	}
 }
 

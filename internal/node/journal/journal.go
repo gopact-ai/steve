@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -109,6 +110,8 @@ func New(state, id string, opts Options) (*Journal, error) {
 	j.In, j.Out = &Log{j: j, name: "in"}, &Log{j: j, name: "out"}
 	for _, l := range []*Log{j.In, j.Out} {
 		if err := l.rotate(); err != nil {
+			// Abandoning a journal that could not open: the rotate error
+			// is the result, and the segments hold nothing yet.
 			for _, log := range []*Log{j.In, j.Out} {
 				for _, s := range log.segments {
 					_ = s.file.Close()
@@ -136,7 +139,11 @@ func (j *Journal) Disable(cause error) {
 func (j *Journal) fail(cause error) error {
 	if j.err == nil {
 		j.err = fmt.Errorf("%w: %w", ErrUnresumable, cause)
-		_ = os.WriteFile(filepath.Join(j.Dir, "unresumable"), []byte(j.err.Error()+"\n"), 0o600)
+		// The marker tells a later process not to resume from this
+		// journal; the fault itself is latched in j.err regardless.
+		if err := os.WriteFile(filepath.Join(j.Dir, "unresumable"), []byte(j.err.Error()+"\n"), 0o600); err != nil {
+			slog.Warn(fmt.Sprintf("journal: mark %s unresumable: %v", j.Dir, err))
+		}
 	}
 	return j.err
 }
@@ -257,6 +264,8 @@ func (l *Log) ReplayUntil(after, through uint64, w io.Writer) error {
 	}
 	var pieces []piece
 	defer func() {
+		// The pieces were only read; closing a read-only file cannot lose
+		// anything, and the copy below has already reported its result.
 		for _, p := range pieces {
 			_ = p.f.Close()
 		}

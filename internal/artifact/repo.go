@@ -16,7 +16,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
-	"log"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -99,7 +99,7 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, f
 			return "", false, err
 		}
 		if len(flattened) > 0 {
-			log.Printf("artifact: %s: flattened nested git repositories at %s", workTree, strings.Join(flattened, ", "))
+			slog.Info(fmt.Sprintf("artifact: %s: flattened nested git repositories at %s", workTree, strings.Join(flattened, ", ")), "worktree", workTree)
 		}
 	} else {
 		nested, err := nestedRepos(workTree)
@@ -109,7 +109,7 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, f
 		// Left alone and left out: git would otherwise record them as
 		// links, or refuse one that has no commit yet.
 		if len(nested) > 0 {
-			log.Printf("artifact: %s: nested git repositories left out of the snapshot: %s", workTree, strings.Join(nested, ", "))
+			slog.Warn(fmt.Sprintf("artifact: %s: nested git repositories left out of the snapshot: %s", workTree, strings.Join(nested, ", ")), "worktree", workTree)
 		}
 		for _, dir := range nested {
 			add = append(add, ":(exclude,literal)"+filepath.ToSlash(dir))
@@ -126,7 +126,7 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, f
 	if links, err := r.gitlinks(ctx, env); err != nil {
 		return "", false, err
 	} else if len(links) > 0 {
-		log.Printf("artifact: %s: nested git repositories left out of the snapshot: %s", workTree, strings.Join(links, ", "))
+		slog.Warn(fmt.Sprintf("artifact: %s: nested git repositories left out of the snapshot: %s", workTree, strings.Join(links, ", ")), "worktree", workTree)
 		if _, err := r.git(ctx, env, append([]string{"update-index", "--force-remove", "--"}, links...)...); err != nil {
 			return "", false, fmt.Errorf("drop gitlinks: %w", err)
 		}

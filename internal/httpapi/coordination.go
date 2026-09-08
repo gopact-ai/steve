@@ -1,7 +1,6 @@
 package httpapi
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -22,7 +21,7 @@ func (s *Server) consoleCoordination(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	if s.coordination == nil {
-		_ = json.NewEncoder(w).Encode(consoleapi.CoordinationView{Nodes: []consoleapi.CoordinatorNode{}, Events: []consoleapi.CoordinatorEvent{}})
+		writeJSON(w, consoleapi.CoordinationView{Nodes: []consoleapi.CoordinatorNode{}, Events: []consoleapi.CoordinatorEvent{}})
 		return
 	}
 	view, err := s.coordination.Coordination(r.Context())
@@ -71,13 +70,13 @@ func (s *Server) coordinationAvailable(w http.ResponseWriter) bool {
 		return true
 	}
 	w.WriteHeader(http.StatusNotImplemented)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": "当前服务尚未启用协调状态复制"})
+	writeJSON(w, map[string]string{"error": "当前服务尚未启用协调状态复制"})
 	return false
 }
 
 func (s *Server) coordinationResult(w http.ResponseWriter, view consoleapi.CoordinationView, err error) {
 	if err == nil {
-		_ = json.NewEncoder(w).Encode(view)
+		writeJSON(w, view)
 		return
 	}
 	status := http.StatusServiceUnavailable
@@ -90,5 +89,5 @@ func (s *Server) coordinationResult(w http.ResponseWriter, view consoleapi.Coord
 		status = http.StatusForbidden
 	}
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	writeJSON(w, map[string]string{"error": err.Error()})
 }

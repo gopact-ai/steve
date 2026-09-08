@@ -2,8 +2,9 @@ package node
 
 import (
 	"context"
+	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"sync"
 	"sync/atomic"
@@ -90,8 +91,8 @@ func dial(ctx context.Context, name, hub string, cfg Config, mcpDial func(contex
 
 	c := &conn{name: name, mux: nodewire.NewMux(socket, true), advert: advert}
 	c.startReverse(mcpDial)
-	log.Printf("node: %s up — %s/%s, harnesses=%d, caps=%v",
-		name, advert.OS, advert.Arch, len(advert.Harnesses), advert.Capabilities)
+	slog.Info(fmt.Sprintf("node: %s up — %s/%s, harnesses=%d, caps=%v",
+		name, advert.OS, advert.Arch, len(advert.Harnesses), advert.Capabilities), "node", name)
 	return c, nil
 }
 
@@ -140,7 +141,7 @@ func (c *conn) serveReverse(mcpDial func(context.Context) (net.Conn, error)) {
 			upstream, err := mcpDial(ctx)
 			cancel()
 			if err != nil {
-				log.Printf("node: %s reverse MCP dial: %v", c.name, err)
+				slog.Error(fmt.Sprintf("node: %s reverse MCP dial: %v", c.name, err), "node", c.name)
 				return
 			}
 			defer upstream.Close()

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -60,7 +60,7 @@ func (s *Server) transferBlob(ctx context.Context, stream *nodewire.Stream) {
 			fail("1")
 			return
 		}
-		log.Printf("steve-node: received blob %s (%d bytes)", name, n)
+		slog.Info(fmt.Sprintf("steve-node: received blob %s (%d bytes)", name, n), "blob", name)
 		fail("0")
 	case "get":
 		file, err := os.Open(path)
@@ -93,7 +93,7 @@ func (s *Server) fetch(ctx context.Context, stream *nodewire.Stream) {
 	fields := strings.Fields(stream.Request().Command)
 	fail := func(code string, err error) {
 		if err != nil {
-			log.Printf("steve-node: fetch: %v", err)
+			slog.Error(fmt.Sprintf("steve-node: fetch: %v", err))
 		}
 		closeStream(stream, nodewire.ExitPrefix+code)
 	}
@@ -157,6 +157,6 @@ func (s *Server) fetch(ctx context.Context, stream *nodewire.Stream) {
 		fail("1", err)
 		return
 	}
-	log.Printf("steve-node: fetched %s (%d bytes) from peer %s", name, n, addr)
+	slog.Info(fmt.Sprintf("steve-node: fetched %s (%d bytes) from peer %s", name, n, addr), "blob", name, "peer", addr)
 	closeStream(stream, nodewire.ExitPrefix+"0")
 }
