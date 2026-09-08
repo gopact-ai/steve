@@ -332,3 +332,53 @@ func TestCheckExposesOnlyValidatedRecordedIdentity(t *testing.T) {
 		t.Fatal("identity without existing-installation evidence was displayed")
 	}
 }
+
+func TestExistingMetadataAcceptsSymlinkHomeButRefusesLinkedSteveDirectories(t *testing.T) {
+	root := t.TempDir()
+	realHome := filepath.Join(root, "real home")
+	homeLink := filepath.Join(root, "home")
+	for _, directory := range []string{"commands", "steve-bin", ".steve-node"} {
+		if err := os.MkdirAll(filepath.Join(realHome, directory), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.Symlink(realHome, homeLink); err != nil {
+		t.Fatal(err)
+	}
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("Python 3 required for metadata fixture")
+	}
+	if err := os.Symlink(python, filepath.Join(realHome, "commands", "python3")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realHome, "steve-bin", "node.json"), []byte(`{"name":"node-a","token":"private-test-token"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(realHome, ".steve-node", "hub.json"), []byte(`{"hub":"old-workspace"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	check := func(wantName, wantOwner string) {
+		t.Helper()
+		before := fixtureFiles(t, root)
+		out, err := (probeShellRunner{home: homeLink}).Run(t.Context(), []string{"sh -s"}, probeScript)
+		if err != nil {
+			t.Fatal(err)
+		}
+		values, err := parseProbe(out.Stdout)
+		if err != nil || values["existing_node_name"] != wantName || values["existing_node_owner"] != wantOwner {
+			t.Fatalf("symlink HOME metadata = name:%q owner:%q err:%v", values["existing_node_name"], values["existing_node_owner"], err)
+		}
+		if strings.Contains(out.Stdout, "private-test-token") || !reflect.DeepEqual(before, fixtureFiles(t, root)) {
+			t.Fatal("metadata escaped read-only boundary")
+		}
+	}
+	check("node-a", "old-workspace")
+	if err := os.Rename(filepath.Join(realHome, "steve-bin"), filepath.Join(root, "outside-steve-bin")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(root, "outside-steve-bin"), filepath.Join(realHome, "steve-bin")); err != nil {
+		t.Fatal(err)
+	}
+	check("", "old-workspace")
+}

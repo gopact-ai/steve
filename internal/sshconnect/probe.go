@@ -59,7 +59,8 @@ printf 'STEVE_CHECK\texisting\t%s\n' "$existing"
 // Optional identity records help users locate the original registration. They
 // are not proof of a running service or authenticated membership. Python's
 // isolated mode avoids remote profiles/import hooks; reads remain fixed,
-// bounded, and refuse symlink files and directories without a stat/open race.
+// bounded, and refuse symlinks beneath the account's canonical home without a
+// stat/open race. Account home symlinks are common on managed hosts.
 const existingMetadataProbe = `if [ "$existing" = 1 ]; then
   python=$(command -v python3 2>/dev/null || true)
   case "$python" in
@@ -79,7 +80,7 @@ def recorded_value(directory, filename, key):
     descriptors = []
     try:
         directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        home = os.open(os.environ["HOME"], directory_flags)
+        home = os.open(os.path.realpath(os.environ["HOME"]), directory_flags)
         descriptors.append(home)
         parent = os.open(directory, directory_flags, dir_fd=home)
         descriptors.append(parent)
