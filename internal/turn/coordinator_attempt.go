@@ -23,7 +23,7 @@ import (
 // openAttempt leases a chat turn on the project's canonical workspace. A
 // project someone else is editing in place right now is refused with who
 // holds it and the two ways out.
-func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected agent.Agent, taskID string, binding project.Binding, workspace project.Workspace) (attempt.Record, []acp.MCPServer, error) {
+func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected agent.Agent, taskID string, binding project.Binding, workspace project.Workspace, clock *turnClock) (attempt.Record, []acp.MCPServer, error) {
 	if c.attempts == nil {
 		return attempt.Record{}, nil, errors.New("turn: attempts are not wired")
 	}
@@ -54,6 +54,7 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 	}
 	spec.Requires = selected.Requires
 	record, err := c.attempts.Open(ctx, spec)
+	clock.mark("lease")
 	if err == nil && c.tasks != nil && record.Execution != nil {
 		if bindErr := c.tasks.BindAttempt(*record.Execution, record.ID, record.TurnID); bindErr != nil {
 			_, closeErr := c.attempts.Fail(ctx, record.ID, "turn", "bind task accounting: "+bindErr.Error())
@@ -77,6 +78,7 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 			record.Admission = &adm
 			bound = roster.ToMCP(bindings)
 		}
+		clock.mark("admit")
 		// The before-snapshot is the precondition of running in place: what
 		// the turn changes is measured against it.
 		if workspace.Kind == project.KindWorktree {
@@ -99,6 +101,7 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 				}
 			}
 		}
+		clock.mark("before")
 		return record, bound, nil
 	}
 	var busy attempt.Busy
@@ -123,7 +126,7 @@ func (c *Coordinator) advanceAttempt(ctx context.Context, id string, to attempt.
 
 // closeAttempt records the outcome even when the turn's own context is
 // gone: a cancelled turn is still a fact.
-func (c *Coordinator) closeAttempt(parent context.Context, id string, result Result, turnErr error, spent *turnSpend) error {
+func (c *Coordinator) closeAttempt(parent context.Context, id string, result Result, turnErr error, spent *turnSpend, clock *turnClock) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Minute)
 	defer cancel()
 	// Last of all — after the attempt is closed and the queued landings
@@ -175,6 +178,7 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 				return reject(fmt.Errorf("completion project %s: %w", record.Project, project.ErrUnknown))
 			}
 			after, changed, serr := c.snapshot(ctx, p, record.Workspace, record.Base, id, "after turn "+record.TurnID)
+			clock.mark("after")
 			if serr != nil {
 				log.Printf("turn: attempt %s after-snapshot: %v", id, serr)
 				outcome.CaptureError = serr.Error()
@@ -194,6 +198,7 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 		if _, err := c.attempts.FinishCompletion(ctx, id, "turn", attempt.Completion{Result: outcome, Usage: usage, Binding: binding}); err != nil {
 			return reject(fmt.Errorf("commit attempt %s: %w", id, err))
 		}
+		clock.mark("finish")
 		if record.Workspace.Kind == project.KindWorktree && record.Execution != nil && c.tasks != nil {
 			if tracked, ok := c.tasks.Get(record.TaskID); ok && tracked.RecoveryWorkspace != nil && tracked.RecoveryWorkspace.ID == record.Workspace.ID {
 				workspace := *tracked.RecoveryWorkspace
@@ -208,6 +213,7 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 		}
 		if pending != nil {
 			c.landPending(ctx, *pending)
+			clock.mark("land")
 		}
 		c.recordDisclosure(ctx, record, result)
 		return nil

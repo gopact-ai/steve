@@ -442,6 +442,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}
 	defer c.clearActive(conversationID, selected.ID)
 	req.phase(view.PhaseWaking)
+	clock := newTurnClock()
 	defer func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -534,11 +535,13 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return Result{}, err
 	}
 	saved.AgentToken = agentToken
+	clock.mark("gate")
 	extras = append(extras, c.projectMemory(ctx, conversationID, req)...)
 	capabilities, err := c.assemble(selected, req, extras)
 	if err != nil {
 		return Result{}, err
 	}
+	clock.mark("assemble")
 	if saved.Tainted {
 		return Result{}, UserError{Text: c.text.T(i18n.Tainted, protocol.CommandNew)}
 	}
@@ -558,7 +561,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	// workspace, renewed while it runs, and closed with whatever happened.
 	// A lost lease cancels the turn, because nothing done after it could
 	// be recorded.
-	att, bound, err := c.openAttempt(ctx, req, selected, tracked, binding, workspace)
+	att, bound, err := c.openAttempt(ctx, req, selected, tracked, binding, workspace, clock)
 	if err != nil {
 		return Result{}, err
 	}
@@ -582,10 +585,11 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		}
 	}()
 	defer func() {
-		if closeErr := c.closeAttempt(parent, att.ID, result, err, spent); closeErr != nil {
+		if closeErr := c.closeAttempt(parent, att.ID, result, err, spent, clock); closeErr != nil {
 			log.Printf("turn: completion: %v", closeErr)
 			err = errors.Join(err, closeErr)
 		}
+		log.Printf("turn: timing attempt=%s %s", att.ID, clock)
 	}()
 	req.phase(view.PhaseWaking)
 	runner, err := c.open(ctx, saved, selected, workspace.Path, servers)
@@ -600,6 +604,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		saved.InstructionsApplied = false
 		runner, err = c.open(ctx, saved, selected, workspace.Path, servers)
 	}
+	clock.mark("session")
 	if err != nil {
 		if pendingNodeOpen(att, err) != nil {
 			managedExecution = true
@@ -693,7 +698,9 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if err := c.bindExecutionGate(ctx, conversationID, att.ID); err != nil {
 		return Result{}, err
 	}
+	clock.mark("arm")
 	out, activity, err := promptTurn(ctx, runner, prompt, req)
+	clock.mark("prompt")
 	if acphost.PromptSettled(err) {
 		req.phase(view.PhaseFinishing)
 	}
@@ -703,6 +710,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			err = errors.Join(err, fmt.Errorf("record prompt settlement: %w", settleErr))
 		}
 		finishSettle()
+		clock.mark("settle")
 	}
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err()
@@ -744,6 +752,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		log.Printf("turn: save completed session state: %v", err)
 		out += "\n\n" + c.text.T(i18n.StateSaveFailed, protocol.CommandNew)
 	}
+	clock.mark("save")
 	if building {
 		var reply string
 		var applyErr error

@@ -266,7 +266,7 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	if settled {
 		runErr, cleanupFailure = c.settleRetained(ctx, record, result, runErr, spent)
 	} else {
-		cleanupFailure = c.closeAttempt(ctx, record.ID, result, runErr, spent)
+		cleanupFailure = c.closeAttempt(ctx, record.ID, result, runErr, spent, nil)
 	}
 	if cleanupFailure != nil {
 		return Result{}, cleanupFailure

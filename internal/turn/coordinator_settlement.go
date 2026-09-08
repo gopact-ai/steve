@@ -19,7 +19,7 @@ func (c *Coordinator) settleRetained(parent context.Context, record attempt.Reco
 	if err := c.attempts.MarkSessionSettled(ctx, record.ID, "retained-settlement"); err != nil {
 		return runErr, err
 	}
-	if err := c.closeAttempt(ctx, record.ID, result, runErr, spent); err != nil {
+	if err := c.closeAttempt(ctx, record.ID, result, runErr, spent, nil); err != nil {
 		return runErr, err
 	}
 	return runErr, nil
