@@ -49,9 +49,9 @@ func TestManagedStopRequiresNativeReceiptAndFallsBackToActualProcessExit(t *test
 			if confirmed && err != nil || !confirmed && !errors.Is(err, ErrStopUnconfirmed) {
 				t.Fatalf("stop evidence classification: %v", err)
 			}
-			want := []nodewire.SessionAction{"cancel", "abort"}
+			want := []nodewire.SessionAction{nodewire.SessionActionCancel, nodewire.SessionActionAbort}
 			if mode == "settled" {
-				want = []nodewire.SessionAction{"cancel"}
+				want = []nodewire.SessionAction{nodewire.SessionActionCancel}
 			}
 			if !reflect.DeepEqual(actions, want) {
 				t.Fatalf("stop RPC sequence: %v", actions)

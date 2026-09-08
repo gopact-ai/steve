@@ -16,7 +16,7 @@ func TestSessionDispatchPreservesObservationAndRejectsClientStart(t *testing.T) 
 	defer server.sessions.Close()
 	req := nodeSessionRequest(nodewire.SessionActionOpen)
 	req.ID = "ns_" + strings.Repeat("a", 64)
-	state := nodewire.SessionState{ID: req.ID, Binding: req.Binding, State: "idle", Sequence: 7}
+	state := nodewire.SessionState{ID: req.ID, Binding: req.Binding, State: nodewire.SessionIdle, Sequence: 7}
 	server.sessions.sessions[req.ID] = &ownedSession{
 		service: server.sessions,
 		changed: make(chan struct{}),

@@ -23,7 +23,7 @@ func TestSessionAuthorityChallengeCannotAuthorizeUnrelatedActions(t *testing.T) 
 			delegate := CoordinatorSessionAuthorizer{}
 			verifier := sessionAuthorizerFunc(func(ctx context.Context, principal string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action nodewire.SessionAction) error {
 				if mode == "unrelated-action" {
-					return delegate.AuthorizeNodeSession(ctx, principal, a, b, "abort")
+					return delegate.AuthorizeNodeSession(ctx, principal, a, b, nodewire.SessionActionAbort)
 				}
 				for range 3 {
 					if err := delegate.AuthorizeNodeSession(ctx, principal, a, b, action); err != nil {
