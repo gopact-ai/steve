@@ -104,14 +104,18 @@ func (s *Supervisor) PrepareRulePlan(ctx context.Context, goal, projectID string
 	}
 }
 
+// planResumer is a planner that can pick its retained planning up again
+// by the attempt it was retained on. Rule planners have nothing to resume.
+type planResumer interface {
+	ResumePlan(context.Context, string) (plan.Plan, error)
+}
+
 func (s *Supervisor) ResumePlanning(ctx context.Context, attemptID string) (plan.Plan, error) {
-	planner, ok := s.planner.(interface {
-		ResumePlan(context.Context, string) (plan.Plan, error)
-	})
+	resumer, ok := s.planner.(planResumer)
 	if !ok {
 		return plan.Plan{}, fmt.Errorf("planner cannot resume retained planning")
 	}
-	return planner.ResumePlan(ctx, attemptID)
+	return resumer.ResumePlan(ctx, attemptID)
 }
 
 // Execute drives a plan to completion, revising it when execution finds the
