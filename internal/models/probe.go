@@ -63,8 +63,10 @@ func (p *Prober) Probe(ctx context.Context, ep Endpoint) (Observation, error) {
 	if err != nil {
 		return Observation{}, err
 	}
+	// An agent with no selectors is not Configurable; its observation
+	// records that nothing was reported.
 	var settings view.Settings
-	if configurable, ok := runner.(interface{ Settings() view.Settings }); ok {
+	if configurable, ok := runner.(harness.Configurable); ok {
 		settings = configurable.Settings()
 	}
 	if err := p.open.CloseSession(ctx, at, runner.ID()); err != nil {

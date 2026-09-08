@@ -40,6 +40,13 @@ func PendingID(owner string) string {
 	return PendingPrefix + owner
 }
 
+// initReporter is a home reader that knows itself whether the identity
+// still needs setting up. The shared (ledger-backed) reader is one; a
+// plain directory is judged from what it loads instead.
+type initReporter interface {
+	NeedsInit() (bool, error)
+}
+
 func Start(ctx context.Context, req Request) error {
 	if req.Owner == "" || req.Store == nil {
 		return nil
@@ -49,7 +56,7 @@ func Start(ctx context.Context, req Request) error {
 	}
 	needsInit := false
 	shared := false
-	if reader, ok := req.Reader.(interface{ NeedsInit() (bool, error) }); ok {
+	if reader, ok := req.Reader.(initReporter); ok {
 		var err error
 		needsInit, err = reader.NeedsInit()
 		if err != nil {
