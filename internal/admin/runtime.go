@@ -81,7 +81,9 @@ func ObservedHubAdvert(cfg *config.Config, observation *LocalObservation) nodewi
 	var launch func(string) (node.LaunchResult, bool)
 	if observation != nil {
 		shipper = observation.Skills.Load()
-		launch = observation.Launch.Lookup
+		if observation.Launch != nil {
+			launch = observation.Launch.Lookup
+		}
 	}
 	entries, known := shipper.entries()
 	adv.Snapshot = node.Snapshot(NodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: launch, Skills: entries, SkillsKnown: known})
