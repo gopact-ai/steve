@@ -195,8 +195,9 @@ func (s *Service) recoverChild(ctx context.Context, parent, tracked task.Task, r
 		Finish: d.finish, Failed: d.failed,
 		// The node keeps the session. An observer that cannot vouch for
 		// the end, or was cancelled, leaves the record as it is and asks:
-		// the question is what quarantines it.
-		Settlement: lifecycle.Settlement{Quarantine: lifecycle.QuarantineManaged, DetachManaged: true, Detachment: lifecycle.DetachSilently, CancelDetaches: true},
+		// the question is what quarantines it. The completion publish
+		// prepared is committed as given, as completeResult did.
+		Settlement: lifecycle.Settlement{Quarantine: lifecycle.QuarantineManaged, DetachManaged: true, Detachment: lifecycle.DetachSilently, CancelDetaches: true, CommitAsGiven: true},
 	}, record, runner)
 	s.settleRecovered(ctx, parent, tracked, record, entry, d, run, runErr, pending)
 }
