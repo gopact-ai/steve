@@ -80,8 +80,10 @@ const (
 	StepFinish
 )
 
-// StepError says which step failed. Callers put their own words on it;
-// errors.Is and errors.As see through it.
+// StepError says which of Run's own steps failed; the work failing — the
+// prompt, the caller's validation or completion — comes back as its own
+// error. Callers put their own words on it; errors.Is and errors.As see
+// through it.
 type StepError struct {
 	Step Step
 	Err  error
@@ -234,6 +236,10 @@ type Options struct {
 	// Failed adds a result to a failure's record; on a node-owned session
 	// an error here detaches the observer.
 	Failed func(e *Execution, cause error) (*attempt.Result, error)
+	// Wrap puts the caller's words on a failed step before it is recorded
+	// and returned; without it the step's own error is recorded and the
+	// caller reads the StepError afterwards.
+	Wrap func(step Step, e *Execution, err error) error
 
 	Settlement Settlement
 }
@@ -277,6 +283,8 @@ type Result struct {
 	Answer   string
 	Activity []string
 	Usage    *attempt.Usage
+	// Last is the harness's last report, which Usage was read from.
+	Last view.Progress
 	// Driven says the prompt was sent; Settled that it ended by evidence.
 	Driven  bool
 	Settled bool
@@ -301,7 +309,7 @@ func Run(ctx context.Context, o Options) (Result, error) {
 }
 
 func (e *Execution) result() Result {
-	return Result{Record: e.Record, Session: e.Session, Managed: e.Managed, Answer: e.Outcome.Answer, Activity: e.Outcome.Activity, Usage: e.Usage,
+	return Result{Record: e.Record, Session: e.Session, Managed: e.Managed, Answer: e.Outcome.Answer, Activity: e.Outcome.Activity, Usage: e.Usage, Last: e.Outcome.Last,
 		Driven: e.driven, Settled: e.settled(), Unsettled: e.unsettled, Durable: e.durable, CleanupErr: e.cleanup}
 }
 
@@ -309,7 +317,7 @@ func (e *Execution) run(ctx context.Context) error {
 	o := e.o
 	if err := e.open(ctx); err != nil {
 		e.discard(ctx)
-		return &StepError{StepOpen, err}
+		return e.step(StepOpen, err)
 	}
 	ctx, stop := context.WithCancel(ctx)
 	defer stop()
@@ -323,7 +331,7 @@ func (e *Execution) run(ctx context.Context) error {
 	if o.Leased != nil {
 		next, err := o.Leased(ctx, e)
 		if err != nil {
-			return e.close(ctx, &StepError{StepLeased, err})
+			return e.close(ctx, e.step(StepLeased, err))
 		}
 		ctx = next
 	}
@@ -360,10 +368,10 @@ func (e *Execution) start(ctx context.Context) error {
 	if o.Roster != nil {
 		admission, bindings, err := o.Roster.Admit(ctx, o.Candidate, o.Requires, o.Uses, id)
 		if err != nil {
-			return &StepError{StepAdmit, err}
+			return e.step(StepAdmit, err)
 		}
 		if admission.Refused() || (!o.AdmitUnsure && !admission.OK()) {
-			return &StepError{StepAdmit, &Refused{admission}}
+			return e.step(StepAdmit, &Refused{admission})
 		}
 		e.Admission, e.Bindings = admission, bindings
 	}
@@ -371,7 +379,7 @@ func (e *Execution) start(ctx context.Context) error {
 	if o.Prepare != nil {
 		mutate, err := o.Prepare(ctx, e)
 		if err != nil {
-			return &StepError{StepPrepare, err}
+			return e.step(StepPrepare, err)
 		}
 		prepare = mutate
 	}
@@ -385,22 +393,22 @@ func (e *Execution) start(ctx context.Context) error {
 		}
 	})
 	if err != nil {
-		return &StepError{StepPrepare, err}
+		return e.step(StepPrepare, err)
 	}
 	e.Record = prepared
 	if o.ArmActor != "" {
 		if err := o.Attempts.ArmSession(ctx, id, o.ArmActor); err != nil {
-			return &StepError{StepArm, err}
+			return e.step(StepArm, err)
 		}
 	}
 	if err := e.openSession(ctx); err != nil {
-		return &StepError{StepSession, err}
+		return e.step(StepSession, err)
 	}
 	var arm func(*attempt.Record)
 	if o.Arm != nil {
 		mutate, err := o.Arm(ctx, e)
 		if err != nil {
-			return &StepError{StepStart, err}
+			return e.step(StepStart, err)
 		}
 		arm = mutate
 	}
@@ -413,12 +421,12 @@ func (e *Execution) start(ctx context.Context) error {
 		}
 	})
 	if err != nil {
-		return &StepError{StepStart, err}
+		return e.step(StepStart, err)
 	}
 	e.Record = running
 	if o.Started != nil {
 		if err := o.Started(ctx, e); err != nil {
-			return &StepError{StepStart, err}
+			return e.step(StepStart, err)
 		}
 	}
 	return nil
@@ -497,7 +505,7 @@ func (e *Execution) close(ctx context.Context, err error) error {
 		// not this process's to close or to call stopped.
 		return e.quarantine(cleanup, errors.Join(harness.ErrStopUnconfirmed, err))
 	}
-	if e.Managed && e.Record.Session != "" && o.Settlement.DetachManaged {
+	if e.Managed && e.driven && o.Settlement.DetachManaged {
 		return e.closeManaged(ctx, cleanup, err)
 	}
 	id := e.Record.ID
@@ -541,10 +549,10 @@ func (e *Execution) closeManaged(ctx, cleanup context.Context, err error) error 
 		}
 	}
 	if !settled || errors.Is(err, harness.ErrStopUnconfirmed) || ctx.Err() != nil {
-		return e.detach(cleanup, StepDrive, errors.Join(err, ctx.Err()))
+		return e.detach(cleanup, StepDrive, errors.Join(err, ctx.Err()), ctx.Err() != nil)
 	}
 	if markErr := o.Attempts.MarkSessionSettled(ctx, id, o.Actor); markErr != nil {
-		return e.detach(cleanup, StepSettle, markErr)
+		return e.detach(cleanup, StepSettle, markErr, false)
 	}
 	e.stopBeat()
 	var terminal attempt.Record
@@ -555,7 +563,7 @@ func (e *Execution) closeManaged(ctx, cleanup context.Context, err error) error 
 		var completion attempt.Completion
 		if o.Finish != nil {
 			if completion, transition = o.Finish(ctx, e); transition != nil {
-				return e.detach(cleanup, StepFinish, transition)
+				return e.detach(cleanup, StepFinish, transition, false)
 			}
 		}
 		if completion.Usage == nil {
@@ -564,7 +572,7 @@ func (e *Execution) closeManaged(ctx, cleanup context.Context, err error) error 
 		terminal, transition = o.Attempts.FinishCompletion(ctx, id, o.Actor, completion)
 	}
 	if transition != nil {
-		return e.detach(cleanup, StepFinish, transition)
+		return e.detach(cleanup, StepFinish, transition, false)
 	}
 	e.Record = terminal
 	e.durable = true
@@ -579,14 +587,14 @@ func (e *Execution) closeManaged(ctx, cleanup context.Context, err error) error 
 }
 
 // detach reports a node-owned session this process can no longer observe.
-func (e *Execution) detach(cleanup context.Context, step Step, cause error) error {
+func (e *Execution) detach(cleanup context.Context, step Step, cause error, cancelled bool) error {
 	o := e.o
 	cause = errors.Join(harness.ErrStopUnconfirmed, cause)
 	switch o.Settlement.Detachment {
 	case DetachQuarantines:
 		e.quarantine(cleanup, cause)
 	case DetachQuarantinesUnlessCancelled:
-		if !errors.Is(cause, context.Canceled) && !errors.Is(cause, context.DeadlineExceeded) {
+		if !cancelled {
 			e.quarantine(cleanup, cause)
 		}
 	}
@@ -701,5 +709,13 @@ func (e *Execution) finish(ctx, cleanup context.Context) error {
 func (e *Execution) reject(cleanup context.Context, completion attempt.Completion, cause error) error {
 	err := e.o.Attempts.RejectCompletion(cleanup, e.Record.ID, e.o.Actor, completion, cause)
 	e.refresh(cleanup)
-	return &StepError{StepFinish, err}
+	return e.step(StepFinish, err)
+}
+
+// step is a failed step in the caller's words, when it has any.
+func (e *Execution) step(step Step, err error) error {
+	if e.o.Wrap != nil {
+		err = e.o.Wrap(step, e, err)
+	}
+	return &StepError{step, err}
 }

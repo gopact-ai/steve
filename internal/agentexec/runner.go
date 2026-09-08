@@ -225,7 +225,7 @@ func (a *auxiliary) options(ctx context.Context, id string, workspace project.Wo
 				observe(record, p)
 			}
 		},
-		Leased: a.reserve, Prepare: a.prepare, Started: a.started, Validate: a.check, Finish: a.finish, Failed: a.failed,
+		Leased: a.reserve, Prepare: a.prepare, Started: a.started, Validate: a.check, Finish: a.finish, Failed: a.failed, Wrap: a.wrap,
 		// A planning or verification prompt is its own writer: an end it
 		// cannot prove is an unconfirmed stop, and a node-owned session it
 		// can no longer observe is the node's to finish.
@@ -349,6 +349,22 @@ func (a *auxiliary) output(record attempt.Record, answer string, cause error) ([
 	return output, nil
 }
 
+// wrap names the agent in a failed admission or open, as the record and
+// the caller both see it.
+func (a *auxiliary) wrap(step lifecycle.Step, _ *lifecycle.Execution, err error) error {
+	switch step {
+	case lifecycle.StepAdmit:
+		var refused *lifecycle.Refused
+		if errors.As(err, &refused) {
+			return fmt.Errorf("admit %s: %s", a.spec.Agent, refused.Admission.Unmet())
+		}
+		return fmt.Errorf("admit %s: %w", a.spec.Agent, err)
+	case lifecycle.StepSession:
+		return fmt.Errorf("open %s: %w", a.spec.Agent, err)
+	}
+	return err
+}
+
 // settle reads how the run ended into this caller's words: what it
 // returns, and what stays unresolved for the execution scope.
 func (a *auxiliary) settle(run lifecycle.Result, err error) (runErr, unresolved error) {
@@ -386,14 +402,6 @@ func (a *auxiliary) settle(run lifecycle.Result, err error) (runErr, unresolved 
 			}
 		}
 		return Blocked(record, code, "保存原规划或验证执行的结果", "原执行或其结果尚未完整确认。", "建议恢复节点与存储后检查同一次执行。", detached), detached
-	case step != nil && step.Step == lifecycle.StepAdmit:
-		var refused *lifecycle.Refused
-		if errors.As(err, &refused) {
-			return fmt.Errorf("admit %s: %s", a.spec.Agent, refused.Admission.Unmet()), nil
-		}
-		err = fmt.Errorf("admit %s: %w", a.spec.Agent, step.Err)
-	case step != nil && step.Step == lifecycle.StepSession:
-		err = fmt.Errorf("open %s: %w", a.spec.Agent, step.Err)
 	}
 	if !record.State.Terminal() {
 		return err, nil
