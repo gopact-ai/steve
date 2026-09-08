@@ -82,8 +82,10 @@ try {
     const reads = f.stateReads;
     const start = performance.now();
     for (let index = 1; index <= 12; index++) {
-        await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { agent: "test-agent", phase: "running", answer: `Streaming answer ${index}` } });
-        await page.getByText(`Streaming answer ${index}`, { exact: true }).waitFor();
+        await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { agent: "test-agent", phase: "running", answer: `Streaming answer ${index}`, timeline: [{ kind: "text", text: `Streaming answer ${index}`, at }] } });
+        await page.getByText(`Streaming answer ${index}`, { exact: true }).first().waitFor();
+        assert.equal(await page.getByText(`Streaming answer ${index}`, { exact: true }).count(), 1, "A live answer must appear once, not again inside its timeline");
+        assert.equal(await page.locator("summary").getByText("过程", { exact: true }).count(), 0, "A plain text stream must not create an empty or duplicate process disclosure");
         await page.clock.runFor(300);
     }
     await delay(100);
@@ -96,6 +98,20 @@ try {
         assert.equal(historyParses, 0, "Streaming text must not reparse unchanged Markdown history");
         assert.equal(measurements.shellRenders, 0, "Streaming text must not rerender the fleet shell");
     }
+    const intermediate = "I will inspect the configuration.";
+    const thought = "Checking the selected workspace.";
+    const finalAnswer = "The configuration is valid.";
+    const timeline = [{ kind: "text", text: intermediate, at }, { kind: "thought", text: thought, at }, { kind: "tool", tool: "config-read", at }, { kind: "text", text: finalAnswer, at }];
+    await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { phase: "running", answer: intermediate + finalAnswer, reasoning: thought, tools: [{ id: "config-read", kind: "read", name: "Read configuration", status: "completed", output: "Configuration content" }], timeline } });
+    await page.getByText(finalAnswer, { exact: true }).waitFor();
+    assert.equal(await page.getByText(finalAnswer, { exact: true }).count(), 1, "The final narration must not be repeated in the process");
+    assert.equal(await page.getByText(intermediate, { exact: true }).count(), 1, "Earlier narration must remain once in its timeline");
+    await page.locator('[data-span-kind="thought"]').getByText(thought, { exact: true }).waitFor();
+    assert.equal(await page.locator('[data-span-kind="tool"]').count(), 1, "The tool activity remains in the process timeline");
+    assert.equal(await page.getByText(intermediate + finalAnswer, { exact: true }).count(), 0, "Do not repeat the concatenated narration beneath the timeline");
+    // A transcript-only server still sends a usable answer without timeline data.
+    await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { phase: "running", answer: "Answer without timeline" } });
+    await page.getByText("Answer without timeline", { exact: true }).waitFor();
     // Task/node lifecycle events and an SSE reconnect still invalidate state.
     for (const kind of ["task.changed", "node.updated", "console.reply", "delegate.progress"]) {
         const previous = f.stateReads;

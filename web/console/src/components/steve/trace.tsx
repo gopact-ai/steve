@@ -31,6 +31,12 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
     const phase = latest?.phase;
     const phaseLabel = t(phase === "waking" ? "consoleChrome.preparing" : phase === "finishing" ? "consoleChrome.finishing" : phase === "saving" ? "consoleChrome.saving" : latest ? "consoleChrome.processing" : "consoleChrome.placing");
     const agentLabel = latest ? [latest.agent, latest.model].filter(Boolean).join(" · ") : "";
+    // The answer snapshot concatenates every narration span. Keep earlier
+    // narration in the process and render only its last span as the live reply.
+    const finalText = live.turn ? finalTextIndex(live.turn) : undefined;
+    const answer = live.turn?.timeline?.length
+        ? (finalText === undefined ? undefined : live.turn.timeline[finalText].text)
+        : live.turn?.answer;
     if (compact) {
         const extra = live.order.filter((id) => !steps.some((s) => s.id === id));
         const group = (id: string) => {
@@ -49,16 +55,16 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
                 </div>
                 {steps.map((s) => group(s.id))}
                 {extra.map(group)}
-                {live.turn?.timeline?.length && hasTraceContent(live.turn) ? (
+                {live.turn?.timeline?.length && hasTraceContent(live.turn, finalText) ? (
                     <details open className="text-xs text-tertiary">
                         <summary className="cursor-pointer">{t("console.trace")}</summary>
-                        <Trace p={live.turn} live />
+                        <Trace p={live.turn} live omitText={finalText} />
                     </details>
                 ) : <>
                     {latest?.reasoning?.trim() && <ThinkingTail text={latest.reasoning} />}
                     {live.turn?.tools?.length ? <ToolCalls tools={live.turn.tools} /> : null}
                 </>}
-                {live.turn?.answer && <Md text={live.turn.answer} />}
+                {answer && <Md text={answer} />}
             </div>
         );
     }
@@ -87,7 +93,7 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
                             <Trace p={live.steps[id]} live />
                         </div>
                     ))}
-                {live.turn && <Trace p={live.turn} showAnswer live />}
+                {live.turn && <Trace p={{ ...live.turn, answer }} showAnswer live omitText={finalText} />}
                 {!live.turn && !live.order.length && steps.length === 0 && <span className="text-sm text-tertiary">{t("consoleChrome.placing")}</span>}
             </div>
         </Panel>
