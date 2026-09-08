@@ -112,6 +112,9 @@ try {
     // A transcript-only server still sends a usable answer without timeline data.
     await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { phase: "running", answer: "Answer without timeline" } });
     await page.getByText("Answer without timeline", { exact: true }).waitFor();
+    await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { phase: "running", answer: "Answer with empty trace", timeline: [{ kind: "thought", text: " ", at }] } });
+    await page.getByText("Answer with empty trace", { exact: true }).waitFor();
+    assert.equal(await page.getByText("Answer with empty trace", { exact: true }).count(), 1, "A trace without text spans must not hide the answer snapshot");
     // Task/node lifecycle events and an SSE reconnect still invalidate state.
     for (const kind of ["task.changed", "node.updated", "console.reply", "delegate.progress"]) {
         const previous = f.stateReads;

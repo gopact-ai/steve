@@ -1451,7 +1451,7 @@ checks["process-content"] = async (f) => {
     assert.equal(await message.getByText("empty-step", { exact: true }).count(), 0, "Empty plan steps must not leave a heading");
     await toggle.press("Enter");
     await f.startRunning();
-    await f.page.getByText("正在放置…", { exact: true }).waitFor();
+    await f.page.getByText("正在准备执行…", { exact: true }).waitFor();
     await f.emit({ kind: "console.progress", exchange_id: "design-running", progress: { agent: "test-agent", timeline: [{ kind: "thought", text: " ", at }], answer: "Streaming answer" } });
     await f.page.getByText("test-agent", { exact: true }).waitFor();
     await f.page.getByText("Streaming answer", { exact: true }).waitFor();

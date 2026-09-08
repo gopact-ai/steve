@@ -34,9 +34,7 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
     // The answer snapshot concatenates every narration span. Keep earlier
     // narration in the process and render only its last span as the live reply.
     const finalText = live.turn ? finalTextIndex(live.turn) : undefined;
-    const answer = live.turn?.timeline?.length
-        ? (finalText === undefined ? undefined : live.turn.timeline[finalText].text)
-        : live.turn?.answer;
+    const answer = finalText === undefined ? live.turn?.answer : live.turn?.timeline?.[finalText].text;
     if (compact) {
         const extra = live.order.filter((id) => !steps.some((s) => s.id === id));
         const group = (id: string) => {
