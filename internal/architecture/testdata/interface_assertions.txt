@@ -1,6 +1,3 @@
-internal/acphost/host.go:1107
-internal/acphost/host.go:671
-internal/acphost/host.go:988
 internal/agentmcp/message.go:315
 internal/agentmcp/server.go:928
 internal/artifact/content_replication.go:67
@@ -18,7 +15,6 @@ internal/exec/compile.go:848
 internal/exec/retained_step.go:176
 internal/exec/supervisor.go:108
 internal/gateway/resume.go:210
-internal/harness/manager.go:398
 internal/httpapi/server.go:1104
 internal/httpapi/server_queue.go:84
 internal/ledger/replica_snapshot.go:115
@@ -29,8 +25,6 @@ internal/memory/memory.go:258
 internal/memory/memory.go:273
 internal/memory/memory.go:307
 internal/models/probe.go:67
-internal/node/mcpbroker.go:646
-internal/nodewire/mux.go:226
 internal/onboard/onboard.go:52
 internal/turn/coordinator_plan.go:146
 internal/turn/coordinator_plan_resume.go:208

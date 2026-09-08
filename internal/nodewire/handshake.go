@@ -211,6 +211,8 @@ func AcceptClaim(conn io.ReadWriter, valid func(token string) bool, claim func(H
 	if peerMax == 0 {
 		peerMin, peerMax = hello.Version, hello.Version
 	}
+	// Each refusal below is a courtesy to the peer; the error returned is
+	// the verdict, and a peer that cannot even read it has left.
 	chosen := Negotiate(peerMin, peerMax)
 	if chosen == 0 {
 		_ = writeJSON(conn, Advert{Version: ProtocolVersion,

@@ -114,7 +114,9 @@ func (s *Server) inspect(ctx context.Context, stream *nodewire.Stream) {
 	defer stream.Close()
 	path := strings.TrimSpace(stream.Request().Command)
 	if path == "" {
-		_ = json.NewEncoder(stream).Encode(nodewire.InspectReply{Error: "a path is required"})
+		if err := json.NewEncoder(stream).Encode(nodewire.InspectReply{Error: "a path is required"}); err != nil {
+			log.Printf("steve-node: inspect reply: %v", err)
+		}
 		return
 	}
 	repos := InspectRepos(ctx, path)

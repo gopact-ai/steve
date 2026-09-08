@@ -2,7 +2,6 @@ package node
 
 import (
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -32,6 +31,5 @@ func CheckHealth(workspaceRoot, stateDir string) *nodewire.Health {
 			}
 		}
 	}
-	_ = filepath.Base
 	return h
 }

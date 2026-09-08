@@ -266,7 +266,9 @@ func (s *Server) configureAgentTools(stream *nodewire.Stream) {
 			out.ErrorCode = "settings_committed"
 		}
 	}
-	_ = json.NewEncoder(stream).Encode(out)
+	if err := json.NewEncoder(stream).Encode(out); err != nil {
+		log.Printf("steve-node: agent tools reply: %v", err)
+	}
 }
 
 func agentToolsError(reply agentToolsReply) error {

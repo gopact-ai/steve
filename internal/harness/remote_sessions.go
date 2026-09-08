@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"sync"
 	"time"
@@ -209,7 +210,9 @@ func (s *managedSession) Cancel(ctx context.Context) error {
 func (s *managedSession) Abort() {
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	_, _ = s.call(ctx, s.request(ctx, nodewire.SessionActionAbort))
+	if _, err := s.call(ctx, s.request(ctx, nodewire.SessionActionAbort)); err != nil {
+		log.Printf("harness: abort node session on %s: %v", s.at.Node, err)
+	}
 }
 func (s *managedSession) Stopped() bool {
 	s.mu.Lock()

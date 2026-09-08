@@ -71,6 +71,7 @@ func (p *relayProcess) Stdout() io.ReadCloser { return p.conn }
 func (p *relayProcess) Stdin() io.WriteCloser { return p.conn }
 func (p *relayProcess) Wait() error           { return p.inner.Wait() }
 func (p *relayProcess) Kill()                 { _ = p.conn.Close(); p.inner.Kill() }
+func (p *relayProcess) Stopped() bool         { return p.inner.Stopped() }
 
 // TestTransportSeamCarriesACPOverAStream is the acceptance test for moving an
 // agent off this machine: nothing about ACP depends on the pipes being a

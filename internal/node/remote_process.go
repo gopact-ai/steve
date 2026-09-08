@@ -115,6 +115,8 @@ func (p *remoteProcess) finish(err error) {
 	p.cancel()
 	p.wakeLocked()
 	p.mu.Unlock()
+	// A pipe's CloseWithError always returns nil, and the stream close is
+	// a release of something already finished.
 	_ = p.output.CloseWithError(err)
 	go func() { _ = stream.Close() }()
 }
@@ -122,6 +124,7 @@ func (p *remoteProcess) finish(err error) {
 func (p *remoteProcess) Close() error {
 	p.closeOnce.Do(func() {
 		p.finish(io.EOF)
+		// Releasing the read side of a finished pipe.
 		_ = p.stdout.Close()
 		// Close during an outage still means release. On the next connection
 		// send the process id explicitly, without resuming it or its sessions.
@@ -137,6 +140,7 @@ func (p *remoteProcess) Close() error {
 				if awaitExit(ctx, stream, p.transport.node) == nil {
 					p.stopped.Store(true)
 				}
+				// The release answer is in; the stream is only handed back.
 				_ = stream.Close()
 			}
 		}()
@@ -372,6 +376,8 @@ func (p *remoteProcess) readLoop(c *conn, stream *nodewire.Stream, reader *bufio
 			if p.err != nil {
 				err = p.err
 				p.mu.Unlock()
+				// The process ended while reconnecting; the new stream is
+				// handed back unused.
 				_ = stream.Close()
 				break
 			}

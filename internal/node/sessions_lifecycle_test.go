@@ -46,12 +46,6 @@ func (p *sessionGateProcess) Stdout() io.ReadCloser {
 func (p *sessionGateProcess) Stdin() io.WriteCloser {
 	return sessionGateWriter{WriteCloser: p.Process.Stdin(), gate: p.gate}
 }
-func (p *sessionGateProcess) Stopped() bool {
-	if evidence, ok := p.Process.(interface{ Stopped() bool }); ok {
-		return evidence.Stopped()
-	}
-	return false
-}
 
 type sessionGateReader struct {
 	io.ReadCloser

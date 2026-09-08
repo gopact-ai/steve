@@ -24,7 +24,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
-	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 // The MCP broker keeps the machine's MCP servers — and their credentials
@@ -113,6 +112,8 @@ func (b *Broker) Serve(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
 		return err
 	}
+	// A socket file left by an earlier broker is cleared; if it will not
+	// go, Listen reports it.
 	_ = os.Remove(sock)
 	listener, err := net.Listen("unix", sock)
 	if err != nil {
@@ -234,7 +235,9 @@ func (b *Broker) Release(attempt string) int {
 			continue
 		}
 		if nb.running != nil {
-			_ = killProcessGroup(nb.running)
+			if err := killProcessGroup(nb.running); err != nil {
+				log.Printf("steve-node: mcp %s for attempt %s: kill: %v", nb.mcp, attempt, err)
+			}
 		}
 		delete(b.bindings, id)
 		n++
@@ -270,7 +273,9 @@ func (b *Broker) conn(ctx context.Context, c net.Conn) {
 	defer c.Close()
 	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
 	defer stop()
-	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if err := c.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return
+	}
 	// The reader stays: bytes after the first line are the session's
 	// first bytes, and they may already sit in its buffer.
 	reader := bufio.NewReaderSize(c, 4096)
@@ -278,6 +283,8 @@ func (b *Broker) conn(ctx context.Context, c net.Conn) {
 	if err != nil {
 		return
 	}
+	// Clearing a deadline on a live socket cannot fail in a way the
+	// session's reads would not report.
 	_ = c.SetReadDeadline(time.Time{})
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
@@ -364,6 +371,9 @@ func (b *Broker) launch(ctx context.Context, c net.Conn, reader io.Reader, id st
 	}
 	b.attach(nb.id, cmd)
 	log.Printf("steve-node: mcp %s started for attempt %s (%s)", nb.mcp, nb.attempt, nb.harness)
+	// The session lasts as long as either pump: when one side ends the
+	// server is torn down whole, and its exit status is not the
+	// session's to report.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -397,11 +407,14 @@ func (b *Broker) serveProxy(ctx context.Context) error {
 	b.proxyPort = port
 	b.mu.Unlock()
 	if b.cfg.PortFile != "" {
-		_ = os.WriteFile(b.cfg.PortFile, []byte(strconv.Itoa(port)), 0o600)
+		if err := os.WriteFile(b.cfg.PortFile, []byte(strconv.Itoa(port)), 0o600); err != nil {
+			log.Printf("steve-node: mcp proxy: remember port: %v", err)
+		}
 	}
 	server := &http.Server{Handler: http.HandlerFunc(b.proxy), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
+		// Shutdown; Serve reports the close as ErrServerClosed.
 		_ = server.Close()
 	}()
 	go func() {
@@ -506,154 +519,3 @@ func (p prefixedLog) Write(b []byte) (int, error) {
 
 // mcpBroker is how the node reaches its broker: in-process, or over the
 // socket with the control token.
-type mcpBroker interface {
-	List(ctx context.Context) (map[string]string, error)
-	Bind(ctx context.Context, mcp, attempt, harness string) (ability.Binding, error)
-	Release(ctx context.Context, attempt string) (int, error)
-}
-
-type localBroker struct{ b *Broker }
-
-func (l localBroker) List(context.Context) (map[string]string, error) { return l.b.List(), nil }
-func (l localBroker) Bind(_ context.Context, mcp, attempt, harness string) (ability.Binding, error) {
-	return l.b.Bind(mcp, attempt, harness)
-}
-func (l localBroker) Release(_ context.Context, attempt string) (int, error) {
-	return l.b.Release(attempt), nil
-}
-
-// remoteBroker speaks the socket protocol to a broker in another process.
-type remoteBroker struct {
-	socket, token string
-}
-
-func (r remoteBroker) call(ctx context.Context, line string) (string, error) {
-	var d net.Dialer
-	c, err := d.DialContext(ctx, "unix", r.socket)
-	if err != nil {
-		return "", fmt.Errorf("mcp broker at %s: %w", r.socket, err)
-	}
-	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(15 * time.Second))
-	if _, err := io.WriteString(c, line+"\n"); err != nil {
-		return "", err
-	}
-	reply, err := bufio.NewReader(c).ReadString('\n')
-	if err != nil {
-		return "", fmt.Errorf("mcp broker: %w", err)
-	}
-	reply = strings.TrimSpace(reply)
-	if rest, ok := strings.CutPrefix(reply, "OK "); ok {
-		return rest, nil
-	}
-	if reply == "OK" {
-		return "", nil
-	}
-	why := strings.TrimPrefix(reply, "ERR ")
-	switch {
-	case strings.Contains(why, ErrNoSuchServer.Error()):
-		return "", ErrNoSuchServer
-	case strings.Contains(why, ErrUnbindable.Error()):
-		return "", fmt.Errorf("%w: %s", ErrUnbindable, why)
-	}
-	return "", errors.New("mcp broker: " + why)
-}
-
-func (r remoteBroker) List(ctx context.Context) (map[string]string, error) {
-	raw, err := r.call(ctx, "LIST "+r.token)
-	if err != nil {
-		return nil, err
-	}
-	var out map[string]string
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-func (r remoteBroker) Bind(ctx context.Context, mcp, attempt, harness string) (ability.Binding, error) {
-	for _, f := range []string{mcp, attempt, harness} {
-		if strings.ContainsAny(f, " \t\n") || f == "" {
-			return ability.Binding{}, fmt.Errorf("mcp broker: bad field %q", f)
-		}
-	}
-	raw, err := r.call(ctx, "BIND "+r.token+" "+mcp+" "+attempt+" "+harness)
-	if err != nil {
-		return ability.Binding{}, err
-	}
-	var out ability.Binding
-	if err := json.Unmarshal([]byte(raw), &out); err != nil {
-		return ability.Binding{}, err
-	}
-	return out, nil
-}
-
-func (r remoteBroker) Release(ctx context.Context, attempt string) (int, error) {
-	raw, err := r.call(ctx, "RELEASE "+r.token+" "+attempt)
-	if err != nil {
-		return 0, err
-	}
-	n, _ := strconv.Atoi(strings.TrimSpace(raw))
-	return n, nil
-}
-
-// releaseAttempt serves StreamRelease.
-func (s *Server) releaseAttempt(stream *nodewire.Stream) {
-	// Process release is explicit; an attempt only releases its own MCP
-	// bindings because other ACP sessions may share the harness process.
-	if stream.Request().Stream != "" {
-		s.releaseProcess(stream)
-		return
-	}
-	defer stream.Close()
-	attempt := strings.TrimSpace(stream.Request().Command)
-	if attempt == "" || s.broker == nil {
-		_ = stream.CloseWithReason(nodewire.ExitPrefix + "2")
-		return
-	}
-	n, err := s.broker.Release(context.Background(), attempt)
-	if err != nil {
-		log.Printf("steve-node: release %s: %v", attempt, err)
-		_ = stream.CloseWithReason(nodewire.ExitPrefix + "1")
-		return
-	}
-	if n > 0 {
-		log.Printf("steve-node: released %d MCP binding(s) of attempt %s", n, attempt)
-	}
-	_ = stream.CloseWithReason(nodewire.ExitPrefix + "0")
-}
-
-// LaunchBinding is the launcher side: it connects to the broker, names
-// its binding, and pipes stdin/stdout to the MCP server the broker starts.
-// It is what "steve-node mcp-launch" runs, and it carries no secret.
-func LaunchBinding(ctx context.Context, socket, id string, stdin io.Reader, stdout io.Writer) error {
-	if socket == "" || id == "" {
-		return errors.New("mcp-launch: socket and binding id are required")
-	}
-	var dialer net.Dialer
-	conn, err := dialer.DialContext(ctx, "unix", socket)
-	if err != nil {
-		return fmt.Errorf("mcp-launch: connect broker: %w", err)
-	}
-	defer conn.Close()
-	if _, err := io.WriteString(conn, id+"\n"); err != nil {
-		return err
-	}
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		_, _ = io.Copy(conn, stdin)
-		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
-			_ = cw.CloseWrite()
-		}
-	}()
-	_, err = io.Copy(stdout, conn)
-	select {
-	case <-done:
-	case <-ctx.Done():
-	}
-	return err
-}
-
-// SocketPath is where the node's own in-process broker listens.
-func (s *Server) SocketPath() string { return filepath.Join(s.conf().StateDir, "mcp.sock") }
