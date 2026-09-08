@@ -45,8 +45,7 @@ func (c commands) grantCmd(ctx context.Context, req Request, rest string) (Resul
 		}
 		g, err := c.projects.Grant(ctx, fields[0], fields[1], project.Role(fields[2]), req.SenderOpenID)
 		if err != nil {
-			var user UserError
-			if _, isUser := err.(UserError); isUser {
+			if user, isUser := err.(UserError); isUser {
 				return Result{}, user
 			}
 			return Result{Title: title, Text: err.Error()}, nil
