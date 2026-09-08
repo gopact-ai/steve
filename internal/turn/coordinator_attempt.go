@@ -8,124 +8,15 @@ import (
 	"log"
 	"time"
 
-	"github.com/gopact-ai/acp"
-	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
-	"github.com/gopact-ai/steve/internal/i18n"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/project"
-	"github.com/gopact-ai/steve/internal/protocol"
-	"github.com/gopact-ai/steve/internal/roster"
 )
 
-// openAttempt leases a chat turn on the project's canonical workspace. A
-// project someone else is editing in place right now is refused with who
-// holds it and the two ways out.
-func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected agent.Agent, taskID string, binding project.Binding, workspace project.Workspace, clock *turnClock) (attempt.Record, []acp.MCPServer, error) {
-	if c.attempts == nil {
-		return attempt.Record{}, nil, errors.New("turn: attempts are not wired")
-	}
-	var bound []acp.MCPServer
-	spec := attempt.Spec{Execution: execution.Token(ctx),
-		TaskID: taskID, TurnID: req.MessageID, Kind: attempt.KindChat, Project: binding.ProjectID,
-		Node: selected.Node, Harness: selected.Harness, Agent: selected.ID,
-		Workspace: workspace, Scope: attempt.ScopeUnrestricted, By: req.SenderOpenID,
-	}
-	if workspace.Kind == project.KindWorktree {
-		spec.Scope = attempt.ScopePathSet
-		spec.Base = workspace.Base
-	}
-	// The machine must qualify for the project's level; the roster knows
-	// both the machine's level and the endpoint's session cap.
-	var chosen *roster.Candidate
-	if c.fleet != nil {
-		cand := c.fleet.ForAgent(ctx, selected)
-		chosen = &cand
-		spec.Slots = cand.Slots
-		spec.Region = cand.Region
-		if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok {
-			spec.CanonicalRegion = c.fleet.RegionOf(p.Home.Node)
-			if !p.Level.OrDefault().Admits(cand.Level.OrDefault()) {
-				return attempt.Record{}, nil, UserError{Text: c.text.T(i18n.ProjectLevel, p.ID, p.Level.OrDefault(), selected.ID, placeLabel(selected.Node), cand.Level.OrDefault(), protocol.CommandProject)}
-			}
-		}
-	}
-	spec.Requires = selected.Requires
-	record, err := c.attempts.Open(ctx, spec)
-	clock.mark("lease")
-	if err == nil && c.tasks != nil && record.Execution != nil {
-		if bindErr := c.tasks.BindAttempt(*record.Execution, record.ID, record.TurnID); bindErr != nil {
-			_, closeErr := c.attempts.Fail(ctx, record.ID, "turn", "bind task accounting: "+bindErr.Error())
-			return attempt.Record{}, nil, errors.Join(bindErr, closeErr)
-		}
-	}
-	if err == nil {
-		// A chat turn is admitted like any other attempt: the machine's
-		// own word on the agent's requirements, taken now, kept on the
-		// record. A refusal ends the turn before a session is opened.
-		if chosen != nil {
-			adm, bindings, aerr := c.fleet.Admit(ctx, *chosen, selected.Requires, selected.MCPServers, record.ID)
-			if aerr != nil {
-				_, _ = c.attempts.Fail(ctx, record.ID, "turn", "admission: "+aerr.Error())
-				return attempt.Record{}, nil, fmt.Errorf("admission on %s: %w", placeLabel(selected.Node), aerr)
-			}
-			if adm.Refused() {
-				_, _ = c.attempts.Fail(ctx, record.ID, "turn", "admission refused: "+adm.Unmet())
-				return attempt.Record{}, nil, UserError{Text: c.text.T(i18n.AdmissionRefused, selected.ID, placeLabel(selected.Node), adm.Unmet())}
-			}
-			record.Admission = &adm
-			bound = roster.ToMCP(bindings)
-		}
-		clock.mark("admit")
-		// The before-snapshot is the precondition of running in place: what
-		// the turn changes is measured against it.
-		if workspace.Kind == project.KindWorktree {
-			prepared, perr := c.attempts.Advance(ctx, record.ID, attempt.Prepared, "turn", func(next *attempt.Record) { next.Base = workspace.Base; next.Admission = record.Admission })
-			if perr != nil {
-				return record, nil, perr
-			}
-			record = prepared
-		} else if c.artifacts != nil {
-			if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok {
-				before, _, serr := c.snapshot(ctx, p, workspace, "", record.ID, "before turn "+req.MessageID)
-				if serr != nil {
-					_, _ = c.attempts.Fail(ctx, record.ID, "turn", "before-snapshot: "+serr.Error())
-					return attempt.Record{}, nil, fmt.Errorf("before-snapshot: %w", serr)
-				}
-				admission := record.Admission
-				prepared, aerr := c.attempts.Advance(ctx, record.ID, attempt.Prepared, "turn", func(r *attempt.Record) { r.Base = before.ID; r.Admission = admission })
-				if aerr == nil {
-					record = prepared
-				}
-			}
-		}
-		clock.mark("before")
-		return record, bound, nil
-	}
-	var busy attempt.Busy
-	if errors.As(err, &busy) {
-		holderAgent, holderTask := busy.Holder, "?"
-		if holder, herr := c.attempts.Get(ctx, busy.Holder); herr == nil {
-			holderAgent, holderTask = holder.Agent, holder.TaskID
-		}
-		return attempt.Record{}, nil, UserError{Text: c.text.T(i18n.ProjectBusy, binding.ProjectID, holderAgent, holderTask, protocol.CommandProject)}
-	}
-	return attempt.Record{}, nil, fmt.Errorf("open attempt: %w", err)
-}
-
-// advanceAttempt moves the turn's attempt; a refusal here means the lease
-// is gone and the turn is already being cancelled, so it is logged, not
-// raised.
-func (c *Coordinator) advanceAttempt(ctx context.Context, id string, to attempt.State) {
-	if _, err := c.attempts.Advance(ctx, id, to, "turn", nil); err != nil {
-		log.Printf("turn: attempt %s → %s: %v", id, to, err)
-	}
-}
-
-// closeAttempt records the outcome even when the turn's own context is
-// gone: a cancelled turn is still a fact.
+// closeAttempt records the outcome of a retained or relocated turn even
+// when its own context is gone: a cancelled turn is still a fact.
 func (c *Coordinator) closeAttempt(parent context.Context, id string, result Result, turnErr error, spent *turnSpend, clock *turnClock) error {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Minute)
 	defer cancel()
@@ -148,79 +39,100 @@ func (c *Coordinator) closeAttempt(parent context.Context, id string, result Res
 			c.fleet.Release(ctx, record.Node, id)
 		}
 	}
-	if turnErr == nil {
-		output, err := json.Marshal(result)
-		if err != nil {
-			return err
+	if turnErr != nil {
+		if _, err := c.attempts.FailWith(ctx, id, "turn", turnErr.Error(), usage); err != nil {
+			return fmt.Errorf("record failed attempt %s: %w", id, err)
 		}
-		outcome := attempt.Result{Summary: clip(result.Text, 200), Output: output}
-		var binding *attempt.NameBinding
-		var pending *project.Project
-		reject := func(cause error) error {
-			return c.attempts.RejectCompletion(ctx, id, "turn", attempt.Completion{Result: outcome, Usage: usage, Binding: binding}, cause)
-		}
-		record, err := c.attempts.Get(ctx, id)
-		if err != nil {
-			return reject(fmt.Errorf("read attempt completion: %w", err))
-		}
-		if c.artifacts != nil && record.Base != "" {
-			// The after-snapshot: the turn's change, bound to the turn's
-			// name; then whatever delegations queued up lands under a lock
-			// this turn no longer holds.
-			if c.projects == nil {
-				return reject(errors.New("completion project source is not configured"))
-			}
-			p, ok, perr := c.projects.Get(ctx, record.Project)
-			if perr != nil {
-				return reject(fmt.Errorf("read completion project %s: %w", record.Project, perr))
-			}
-			if !ok {
-				return reject(fmt.Errorf("completion project %s: %w", record.Project, project.ErrUnknown))
-			}
-			after, changed, serr := c.snapshot(ctx, p, record.Workspace, record.Base, id, "after turn "+record.TurnID)
-			clock.mark("after")
-			if serr != nil {
-				log.Printf("turn: attempt %s after-snapshot: %v", id, serr)
-				outcome.CaptureError = serr.Error()
-			} else if changed {
-				outcome.Artifact = after.ID
-				name := "steve/" + record.TaskID + "/turn/" + record.TurnID
-				current, _, err := c.artifacts.Resolve(ctx, name)
-				if err != nil {
-					return reject(fmt.Errorf("resolve completion name: %w", err))
-				}
-				binding = &attempt.NameBinding{Name: name, ExpectedVersion: current.Version}
-			}
-			if record.Workspace.Kind == project.KindCanonical {
-				pending = &p
-			}
-		}
-		if _, err := c.attempts.FinishCompletion(ctx, id, "turn", attempt.Completion{Result: outcome, Usage: usage, Binding: binding}); err != nil {
-			return reject(fmt.Errorf("commit attempt %s: %w", id, err))
-		}
-		clock.mark("finish")
-		if record.Workspace.Kind == project.KindWorktree && record.Execution != nil && c.tasks != nil {
-			if tracked, ok := c.tasks.Get(record.TaskID); ok && tracked.RecoveryWorkspace != nil && tracked.RecoveryWorkspace.ID == record.Workspace.ID {
-				workspace := *tracked.RecoveryWorkspace
-				if outcome.Artifact != "" {
-					workspace.Base = outcome.Artifact
-				}
-				workspace.AttemptID = record.ID
-				if err := c.tasks.BindRecoveryWorkspace(*record.Execution, workspace); err != nil {
-					return err
-				}
-			}
-		}
-		if pending != nil {
-			c.landPending(ctx, *pending)
-			clock.mark("land")
-		}
-		c.recordDisclosure(ctx, record, result)
 		return nil
 	}
-	if _, err := c.attempts.FailWith(ctx, id, "turn", turnErr.Error(), usage); err != nil {
-		return fmt.Errorf("record failed attempt %s: %w", id, err)
+	record, err := c.attempts.Get(ctx, id)
+	if err != nil {
+		return c.attempts.RejectCompletion(ctx, id, "turn", attempt.Completion{Usage: usage}, fmt.Errorf("read attempt completion: %w", err))
 	}
+	completion, pending, err := c.completion(ctx, record, result, usage, clock)
+	if err != nil {
+		var rejected *lifecycle.Rejected
+		if errors.As(err, &rejected) {
+			return c.attempts.RejectCompletion(ctx, id, "turn", rejected.Completion, rejected.Cause)
+		}
+		return err
+	}
+	completed, err := c.attempts.FinishCompletion(ctx, id, "turn", completion)
+	if err != nil {
+		return c.attempts.RejectCompletion(ctx, id, "turn", completion, fmt.Errorf("commit attempt %s: %w", id, err))
+	}
+	return c.afterCompletion(ctx, completed, result, pending, clock)
+}
+
+// completion is a chat turn's result as the ledger records it: the
+// after-snapshot — the turn's change, bound to the turn's name. A
+// *lifecycle.Rejected error carries what there was when assembling it
+// failed, so the attempt closes with it.
+func (c *Coordinator) completion(ctx context.Context, record attempt.Record, result Result, usage *attempt.Usage, clock *turnClock) (attempt.Completion, *project.Project, error) {
+	output, err := json.Marshal(result)
+	if err != nil {
+		return attempt.Completion{}, nil, err
+	}
+	outcome := attempt.Result{Summary: clip(result.Text, 200), Output: output}
+	var binding *attempt.NameBinding
+	var pending *project.Project
+	reject := func(cause error) (attempt.Completion, *project.Project, error) {
+		return attempt.Completion{}, nil, &lifecycle.Rejected{Completion: attempt.Completion{Result: outcome, Usage: usage, Binding: binding}, Cause: cause}
+	}
+	if c.artifacts != nil && record.Base != "" {
+		if c.projects == nil {
+			return reject(errors.New("completion project source is not configured"))
+		}
+		p, ok, perr := c.projects.Get(ctx, record.Project)
+		if perr != nil {
+			return reject(fmt.Errorf("read completion project %s: %w", record.Project, perr))
+		}
+		if !ok {
+			return reject(fmt.Errorf("completion project %s: %w", record.Project, project.ErrUnknown))
+		}
+		after, changed, serr := c.snapshot(ctx, p, record.Workspace, record.Base, record.ID, "after turn "+record.TurnID)
+		clock.mark("after")
+		if serr != nil {
+			log.Printf("turn: attempt %s after-snapshot: %v", record.ID, serr)
+			outcome.CaptureError = serr.Error()
+		} else if changed {
+			outcome.Artifact = after.ID
+			name := "steve/" + record.TaskID + "/turn/" + record.TurnID
+			current, _, err := c.artifacts.Resolve(ctx, name)
+			if err != nil {
+				return reject(fmt.Errorf("resolve completion name: %w", err))
+			}
+			binding = &attempt.NameBinding{Name: name, ExpectedVersion: current.Version}
+		}
+		if record.Workspace.Kind == project.KindCanonical {
+			pending = &p
+		}
+	}
+	return attempt.Completion{Result: outcome, Usage: usage, Binding: binding}, pending, nil
+}
+
+// afterCompletion is what follows a committed completion: the recovery
+// workspace rebased on the after-snapshot, whatever delegations queued up
+// landing under a lock this turn no longer holds, and the disclosure.
+func (c *Coordinator) afterCompletion(ctx context.Context, record attempt.Record, result Result, pending *project.Project, clock *turnClock) error {
+	clock.mark("finish")
+	if record.Workspace.Kind == project.KindWorktree && record.Execution != nil && c.tasks != nil {
+		if tracked, ok := c.tasks.Get(record.TaskID); ok && tracked.RecoveryWorkspace != nil && tracked.RecoveryWorkspace.ID == record.Workspace.ID {
+			workspace := *tracked.RecoveryWorkspace
+			if record.Result != nil && record.Result.Artifact != "" {
+				workspace.Base = record.Result.Artifact
+			}
+			workspace.AttemptID = record.ID
+			if err := c.tasks.BindRecoveryWorkspace(*record.Execution, workspace); err != nil {
+				return err
+			}
+		}
+	}
+	if pending != nil {
+		c.landPending(ctx, *pending)
+		clock.mark("land")
+	}
+	c.recordDisclosure(ctx, record, result)
 	return nil
 }
 

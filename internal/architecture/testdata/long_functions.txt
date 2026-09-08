@@ -14,5 +14,4 @@ internal/transfer.exportProject 200
 internal/transfer.importProject 300
 internal/turn.Coordinator.RelocateChat 250
 internal/turn.Coordinator.Suggest 150
-internal/turn.Coordinator.prompt 300
 internal/turn.Coordinator.resumeRetainedChat 150
