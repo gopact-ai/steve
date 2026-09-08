@@ -10,6 +10,14 @@ import (
 	"github.com/hashicorp/raft"
 )
 
+// membershipRevoker is what the failover loop asks of a stream layer after
+// membership changed: drop pooled connections whose peer is no longer
+// authorized. TLSStreamLayer has it; a loopback-only layer need not, and
+// then nothing is revoked.
+type membershipRevoker interface {
+	RevokeUnauthorized()
+}
+
 func (s *Service) run() {
 	defer s.workers.Done()
 	ticker := time.NewTicker(s.config.ProbeInterval)
@@ -27,7 +35,7 @@ func (s *Service) run() {
 		case <-ticker.C:
 		case <-s.fsm.membershipChanged:
 		}
-		if stream, ok := s.config.StreamLayer.(interface{ RevokeUnauthorized() }); ok {
+		if stream, ok := s.config.StreamLayer.(membershipRevoker); ok {
 			stream.RevokeUnauthorized()
 		}
 		if s.raft.State() != raft.Leader {
