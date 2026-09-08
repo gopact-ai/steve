@@ -614,11 +614,15 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 			err = agentexec.Blocked(r.record, "failure", "保存原步骤的失败结果", "原命令已经返回，但结果尚未持久保存。", "建议恢复存储后检查同一次执行。", err)
 		}
 	case err != nil:
-		if step != nil && step.Step == lifecycle.StepFinish && r.rejected != nil {
+		switch {
+		case step != nil && step.Step == lifecycle.StepFinish && r.rejected != nil:
 			r.result.Error = "complete result: " + r.rejected.Error()
 			err = step.Err
-		} else {
-			prompted = step == nil && !r.refused && r.stage == ""
+		case r.stage != "":
+			// A hub session's finish stage that could not be completed is
+			// the attempt's failure, not the step result's, as before.
+		default:
+			prompted = step == nil && !r.refused
 			r.result.Error = err.Error()
 		}
 	}
