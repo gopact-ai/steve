@@ -12,6 +12,8 @@ import { HTTPError, isRejectedRequest } from "@/lib/http";
 import { refKey } from "@/lib/material-ref";
 import type { Exchange, Reply } from "@/lib/types";
 import { Md } from "./markdown";
+import { Working } from "./trace";
+import { applyLive, type Live } from "@/lib/live";
 import { QuestionPanel } from "./question-panel";
 import "@/styles/side-chat.css";
 
@@ -24,12 +26,23 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
     const text = useDraft(session.id), refs = useMaterials(session.id), pending = useSubmission(session.id), stops = useStops(), stop = stops[session.id];
     const support = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
     const [replies, setReplies] = useState<Reply[]>([]), [queue, setQueue] = useState<Exchange[]>([]), [readError, setReadError] = useState(""), [loaded, setLoaded] = useState(false);
+    const [turn, setTurn] = useState<Live | null>(null); const seen = useRef(0);
     const input = useRef<HTMLTextAreaElement>(null), transcript = useRef<HTMLDivElement>(null), follow = useRef(true);
     const load = useResourceRead(`side:${session.id}`, async (signal) => Promise.all([fetchReplies(session.id, signal), fetchQueue(session.id, signal)]), ([history, exchanges]) => { setReplies(history.replies || []); setQueue(exchanges.queue || []); reconcileSubmission(session.id, exchanges.queue || []); setReadError(""); setLoaded(true); }, (error) => { setReadError(error instanceof Error ? error.message : String(error)); setLoaded(true); });
     const event = consoleEvents.findLast((entry) => entry.conversation === session.id && !isStreamingProgress(entry))?.n;
     useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 3000); return () => window.clearInterval(timer); }, [load, live]);
     useEffect(() => { void load(); }, [event, load]);
-    useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [replies, queue]);
+    // The side conversation streams like the main one: its progress events
+    // fold into a live view that the reply replaces. The buffer is trimmed
+    // from the front, so the cursor is an arrival number, not an index.
+    useEffect(() => {
+        const fresh = consoleEvents.filter((entry) => (entry.n ?? 0) > seen.current);
+        if (!fresh.length) return;
+        seen.current = fresh[fresh.length - 1].n ?? seen.current;
+        const mine = fresh.filter((entry) => entry.conversation === session.id);
+        if (mine.length) setTurn((current) => mine.reduce(applyLive, current));
+    }, [consoleEvents, session.id]);
+    useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [replies, queue, turn]);
     useEffect(() => { if (stop && !stop.active) void load(); }, [stop, load]);
     const busy = queue.some((entry) => ["running", "recovering", "awaiting-user"].includes(entry.state));
     const blocked = support.state !== "supported" || (refs.length > 0 && !support.material_refs);
@@ -65,7 +78,7 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
             {replies.map((reply, index) => <article key={reply.id || index} className={reply.kind === "sent" ? "side-chat-user" : "side-chat-answer"}>{reply.kind === "sent" ? <p className="whitespace-pre-wrap break-words">{reply.input}</p> : reply.format === "text" ? <p className="whitespace-pre-wrap break-words">{reply.text}</p> : <Md text={reply.text} />}{reply.error && <p className="mt-1 text-xs text-error-primary">{reply.error}</p>}</article>)}
             {queue.filter((entry) => entry.state === "queued" && !replies.some((reply) => reply.exchange_id === entry.id && reply.kind === "sent")).map((entry) => <article key={entry.id} className="side-chat-user"><p className="whitespace-pre-wrap break-words">{entry.input || t("sideChat.materialCount", { count: entry.refs?.length || 0 })}</p><span className="mt-1 block text-xs text-tertiary">{t("sideChat.queued")}</span></article>)}
             {!replies.length && !queue.length && <p className="py-4 text-xs leading-5 text-tertiary">{t(loaded ? "sideChat.empty" : "sideChat.loading")}</p>}
-            {busy && <p role="status" className="text-xs text-tertiary">{t("sideChat.running")}</p>}
+            {turn ? <Working live={turn} plans={[]} compact /> : busy && <p role="status" className="text-xs text-tertiary">{t("sideChat.running")}</p>}
             {readError && <p role="alert" className="text-xs text-error-primary">{readError}<button type="button" className="ml-2 underline" onClick={() => void load()}>{t("sideChat.retry")}</button></p>}
         </div>
         {support.interactive_requests && <QuestionPanel conversation={session.id} />}
