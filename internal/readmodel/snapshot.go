@@ -19,8 +19,49 @@ import (
 // Snapshot reads every source once. It never fails: a source that is not
 // wired simply contributes nothing, because a dashboard that goes blank when
 // one subsystem is off is worse than one that shows the rest.
+//
+// The sections run in the order the page reads them, and later ones
+// depend on earlier ones: projects ask which workspaces the live attempts
+// keep busy, activities pair the attempts with the agents, and the task
+// axes at the end roll the inbox, the attempts and the plans up the tree.
 func (m *Model) Snapshot(ctx context.Context) Snapshot {
-	snap := Snapshot{At: time.Now(), Hub: m.src.Hub}
+	b := &snapshotBuilder{m: m, snap: Snapshot{At: time.Now(), Hub: m.src.Hub}}
+	b.fleet()
+	b.agents(ctx)
+	b.plansAndTasks()
+	b.sources()
+	b.schedules()
+	b.liveAttempts(ctx)
+	b.projects(ctx)
+	b.ledgerFacts(ctx)
+	b.inbox()
+	b.activities()
+	b.taskAxes()
+	return b.snap
+}
+
+// snapshotBuilder is one Snapshot in progress: the snapshot itself and
+// the facts its sections hand each other.
+type snapshotBuilder struct {
+	m    *Model
+	snap Snapshot
+	// planByTask indexes the plans by the task they belong to.
+	planByTask map[string]plan.Plan
+	// live are the ledger's attempts in flight, placed on nodes.
+	live []Attempt
+	// activityKnown says the live attempts were read completely; every
+	// ActivityKnown pointer in the snapshot points here. attentionKnown
+	// says the same for everything the inbox is made of.
+	activityKnown  bool
+	attentionKnown bool
+	// closed are the finished attempts usage is computed from.
+	closed []attempt.Record
+}
+
+// fleet lists the hub's machine first, then the workers, and fills each
+// node's harnesses with the models seen running there.
+func (b *snapshotBuilder) fleet() {
+	m, snap := b.m, &b.snap
 	if m.src.HubAdvert != nil {
 		snap.Hub.Advert = m.src.HubAdvert()
 		snap.Hub.Version = snap.Hub.Advert.BuildVersion
@@ -41,6 +82,17 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	for i := range snap.Nodes {
 		m.observedModels(&snap.Nodes[i])
 	}
+	// Absence is a fact too: every list is present, empty or not, so a
+	// renderer never has to guess whether "none" meant "not asked".
+	if snap.Nodes == nil {
+		snap.Nodes = []Node{}
+	}
+}
+
+// agents is the roster: each agent with its placement, its admission
+// verdict per requirement, and who could repair it when blocked.
+func (b *snapshotBuilder) agents(ctx context.Context) {
+	m, snap := b.m, &b.snap
 	if m.src.Roster != nil {
 		for _, c := range m.src.Roster.All(ctx) {
 			a := Agent{
@@ -63,17 +115,26 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 			snap.Agents = append(snap.Agents, a)
 		}
 	}
-	planByTask := map[string]plan.Plan{}
+	if snap.Agents == nil {
+		snap.Agents = []Agent{}
+	}
+}
+
+// plansAndTasks lists the plans, then the tasks with their plan and
+// their metadata.
+func (b *snapshotBuilder) plansAndTasks() {
+	m, snap := b.m, &b.snap
+	b.planByTask = map[string]plan.Plan{}
 	if m.src.Plans != nil {
 		for _, p := range m.src.Plans.List() {
 			snap.Plans = append(snap.Plans, convertPlan(p))
 			if p.TaskID != "" {
-				planByTask[p.TaskID] = p
+				b.planByTask[p.TaskID] = p
 			}
 		}
 	}
 	if m.src.Tasks != nil {
-		snap.Tasks = tasks(m.src.Tasks.List(""), planByTask)
+		snap.Tasks = tasks(m.src.Tasks.List(""), b.planByTask)
 		for i := range snap.Tasks {
 			t := &snap.Tasks[i]
 			meta := m.src.Tasks.MetaOf(t.ID)
@@ -83,6 +144,18 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 			}
 		}
 	}
+	if snap.Tasks == nil {
+		snap.Tasks = []Task{}
+	}
+	if snap.Plans == nil {
+		snap.Plans = []Plan{}
+	}
+}
+
+// sources declares which sources are wired; the ledger sections below
+// mark the ones that then failed to answer.
+func (b *snapshotBuilder) sources() {
+	m, snap := b.m, &b.snap
 	snap.Sources = []SourceHealth{
 		{Name: "nodes", Wired: m.src.Nodes != nil}, {Name: "roster", Wired: m.src.Roster != nil},
 		{Name: "tasks", Wired: m.src.Tasks != nil}, {Name: "plans", Wired: m.src.Plans != nil},
@@ -91,110 +164,144 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	for _, name := range []string{"ledger-live", "ledger-projects", "ledger-landings", "ledger-facts", "ledger-attention", "ledger-usage"} {
 		snap.Sources = append(snap.Sources, SourceHealth{Name: name, Wired: m.src.Ledger != nil})
 	}
+}
+
+func (b *snapshotBuilder) schedules() {
+	m, snap := b.m, &b.snap
 	snap.Schedules = []Schedule{}
 	if m.src.Schedules != nil {
 		for _, j := range m.src.Schedules.List("") {
 			snap.Schedules = append(snap.Schedules, Schedule{ID: j.ID, Conversation: j.ConversationID, Agent: j.Member, Prompt: j.Prompt, Spec: j.Spec.Text, NextAt: j.NextAt, LastAt: j.LastAt, Runs: j.Runs, State: j.State, Error: j.Error, PendingKey: j.PendingKey})
 		}
 	}
-	// Absence is a fact too: every list is present, empty or not, so a
-	// renderer never has to guess whether "none" meant "not asked".
-	if snap.Nodes == nil {
-		snap.Nodes = []Node{}
+}
+
+// liveAttempts reads the attempts in flight. A failed read is marked on
+// the live and attention sources, and whatever came back is kept: a
+// partial list is still evidence of what is busy.
+func (b *snapshotBuilder) liveAttempts(ctx context.Context) {
+	m, snap := b.m, &b.snap
+	if m.src.Ledger == nil {
+		return
 	}
-	if snap.Agents == nil {
-		snap.Agents = []Agent{}
+	var err error
+	b.live, err = m.src.Ledger.LiveAttempts(ctx)
+	b.activityKnown = err == nil
+	m.markLedgerSource(snap, "live", err)
+	if err != nil {
+		m.markSource(snap, "ledger-attention", fmt.Errorf("writers: %w", err))
 	}
-	if snap.Tasks == nil {
-		snap.Tasks = []Task{}
+	for i := range b.live {
+		b.live[i].Node = m.place(b.live[i].Node)
 	}
-	if snap.Plans == nil {
-		snap.Plans = []Plan{}
-	}
+}
+
+// projects lists each project with its workspaces: whether a live attempt
+// keeps one busy, what repositories it holds, and which eligible agents
+// the project would place there.
+func (b *snapshotBuilder) projects(ctx context.Context) {
+	m, snap := b.m, &b.snap
 	snap.Projects = []Project{}
-	var liveAttempts []Attempt
-	activityKnown := false
-	if m.src.Ledger != nil {
-		var err error
-		liveAttempts, err = m.src.Ledger.LiveAttempts(ctx)
-		activityKnown = err == nil
-		m.markLedgerSource(&snap, "live", err)
-		if err != nil {
-			m.markSource(&snap, "ledger-attention", fmt.Errorf("writers: %w", err))
+	if m.src.Ledger == nil {
+		return
+	}
+	projects, err := m.src.Ledger.ProjectList(ctx)
+	m.markLedgerSource(snap, "projects", err)
+	for _, p := range projects {
+		item := Project{
+			ID: p.ID, Node: m.place(p.Home.Node), Path: p.Home.Path,
+			Level: string(p.Level.OrDefault()), Repo: string(p.Repo), DefaultRole: string(p.DefaultRole), Agents: []string{},
+			Home: p.ID == m.src.HomeProject, Default: p.ID == m.src.DefaultProject,
 		}
-		for i := range liveAttempts {
-			liveAttempts[i].Node = m.place(liveAttempts[i].Node)
+		item.Workspaces = []Workspace{}
+		for _, ws := range p.Workspaces() {
+			w := b.workspace(p, ws)
+			for _, id := range w.Agents {
+				if !slices.Contains(item.Agents, id) {
+					item.Agents = append(item.Agents, id)
+				}
+			}
+			if ws.Kind == project.KindCanonical {
+				item.Repos = w.Repos
+			}
+			item.Workspaces = append(item.Workspaces, w)
+		}
+		snap.Projects = append(snap.Projects, item)
+	}
+	sort.Slice(snap.Projects, func(i, j int) bool { return snap.Projects[i].ID < snap.Projects[j].ID })
+}
+
+// workspace describes one of a project's workspaces: its copy state, the
+// live attempt keeping it busy, its repositories and the eligible agents
+// the project places there.
+func (b *snapshotBuilder) workspace(p project.Project, ws project.Workspace) Workspace {
+	m := b.m
+	w := Workspace{ID: ws.ID, Node: m.place(ws.Node), Path: ws.Path, Kind: string(ws.Kind), Agents: []string{}, ActivityKnown: &b.activityKnown}
+	if c, ok := p.CopyOn(ws.Node); ok {
+		w.Origin, w.Source, w.State, w.Error = string(c.Origin), c.Source, string(c.State), c.Error
+	}
+	for _, a := range b.live {
+		if a.Node == w.Node && a.Workspace == ws.Path {
+			w.Busy = true
 		}
 	}
-	if m.src.Ledger != nil {
-		projects, err := m.src.Ledger.ProjectList(ctx)
-		m.markLedgerSource(&snap, "projects", err)
-		for _, p := range projects {
-			item := Project{
-				ID: p.ID, Node: m.place(p.Home.Node), Path: p.Home.Path,
-				Level: string(p.Level.OrDefault()), Repo: string(p.Repo), DefaultRole: string(p.DefaultRole), Agents: []string{},
-				Home: p.ID == m.src.HomeProject, Default: p.ID == m.src.DefaultProject,
-			}
-			item.Workspaces = []Workspace{}
-			for _, ws := range p.Workspaces() {
-				w := Workspace{ID: ws.ID, Node: m.place(ws.Node), Path: ws.Path, Kind: string(ws.Kind), Agents: []string{}, ActivityKnown: &activityKnown}
-				if c, ok := p.CopyOn(ws.Node); ok {
-					w.Origin, w.Source, w.State, w.Error = string(c.Origin), c.Source, string(c.State), c.Error
-				}
-				for _, a := range liveAttempts {
-					if a.Node == w.Node && a.Workspace == ws.Path {
-						w.Busy = true
-					}
-				}
-				if m.src.Repos != nil {
-					w.Repos = m.src.Repos(ws.ID)
-				}
-				for _, a := range snap.Agents {
-					if a.Eligible && ws.Kind == project.KindCanonical && nodeOf(a.Node, m.src.Hub.Node) == ws.Node || a.Eligible && ws.Kind != project.KindCanonical && placed(p, nodeOf(a.Node, m.src.Hub.Node), ws.ID) {
-						w.Agents = append(w.Agents, a.ID)
-						if !slices.Contains(item.Agents, a.ID) {
-							item.Agents = append(item.Agents, a.ID)
-						}
-					}
-				}
-				if ws.Kind == project.KindCanonical {
-					item.Repos = w.Repos
-				}
-				item.Workspaces = append(item.Workspaces, w)
-			}
-			snap.Projects = append(snap.Projects, item)
-		}
-		sort.Slice(snap.Projects, func(i, j int) bool { return snap.Projects[i].ID < snap.Projects[j].ID })
+	if m.src.Repos != nil {
+		w.Repos = m.src.Repos(ws.ID)
 	}
+	for _, a := range b.snap.Agents {
+		if a.Eligible && ws.Kind == project.KindCanonical && nodeOf(a.Node, m.src.Hub.Node) == ws.Node || a.Eligible && ws.Kind != project.KindCanonical && placed(p, nodeOf(a.Node, m.src.Hub.Node), ws.ID) {
+			w.Agents = append(w.Agents, a.ID)
+		}
+	}
+	return w
+}
+
+// ledgerFacts reads the rest of the ledger: the attempts in flight become
+// the snapshot's, then the recent landings, the facts a person may want
+// at a glance, and the closed attempts usage is computed from. Attention
+// is known only when both the facts and the live attempts were read
+// completely.
+func (b *snapshotBuilder) ledgerFacts(ctx context.Context) {
+	m, snap := b.m, &b.snap
 	snap.Attempts, snap.Landings = []Attempt{}, []Landing{}
 	snap.Facts = Facts{Reservations: []Reservation{}, Attestations: []Attestation{}, Replicas: []Replica{}, Disclosures: []Disclosure{}, Effects: []Effect{}, Grants: []Grant{}}
-	var closed []attempt.Record
-	attentionKnown := false
-	if m.src.Ledger != nil {
-		if liveAttempts != nil {
-			snap.Attempts = liveAttempts
-		}
-		recent, err := m.src.Ledger.RecentLandings(ctx)
-		m.markLedgerSource(&snap, "landings", err)
-		if recent != nil {
-			snap.Landings = recent
-		}
-		snap.Facts, err = m.src.Ledger.Facts(ctx)
-		factsAttentionKnown := err == nil || snap.Facts.attentionKnown
-		attentionKnown = factsAttentionKnown && activityKnown
-		m.markLedgerSource(&snap, "facts", err)
-		if !factsAttentionKnown {
-			m.markSource(&snap, "ledger-attention", err)
-		}
-		closed, err = m.src.Ledger.ClosedAttempts(ctx)
-		m.markLedgerSource(&snap, "usage", err)
+	if m.src.Ledger == nil {
+		return
 	}
+	if b.live != nil {
+		snap.Attempts = b.live
+	}
+	recent, err := m.src.Ledger.RecentLandings(ctx)
+	m.markLedgerSource(snap, "landings", err)
+	if recent != nil {
+		snap.Landings = recent
+	}
+	snap.Facts, err = m.src.Ledger.Facts(ctx)
+	factsAttentionKnown := err == nil || snap.Facts.attentionKnown
+	b.attentionKnown = factsAttentionKnown && b.activityKnown
+	m.markLedgerSource(snap, "facts", err)
+	if !factsAttentionKnown {
+		m.markSource(snap, "ledger-attention", err)
+	}
+	b.closed, err = m.src.Ledger.ClosedAttempts(ctx)
+	m.markLedgerSource(snap, "usage", err)
+}
+
+// inbox is what only a person can settle: the ledger's disclosures,
+// effects and unsettled writers, then the pending questions.
+func (b *snapshotBuilder) inbox() {
+	snap := &b.snap
 	normalizeFacts(&snap.Facts)
-	snap.Usage = usage(closed, snap.At, snap.Tasks)
+	snap.Usage = usage(b.closed, snap.At, snap.Tasks)
 	snap.Inbox = inbox(snap.Facts, snap.Attempts)
-	snap.Inbox = append(snap.Inbox, m.pendingInteractions()...)
-	// Activities: live attempts are the truth about "busy"; the latest
-	// progress says what the attempt is doing, when it was seen at all.
+	snap.Inbox = append(snap.Inbox, b.m.pendingInteractions()...)
+}
+
+// activities pairs each agent with its attempts in flight: live attempts
+// are the truth about "busy"; the latest progress says what the attempt
+// is doing, when it was seen at all.
+func (b *snapshotBuilder) activities() {
+	m, snap := b.m, &b.snap
 	m.mu.Lock()
 	observed := make(map[string]Activity, len(m.activity))
 	for k, v := range m.activity {
@@ -215,10 +322,15 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	for i := range snap.Agents {
 		snap.Agents[i].Activities = byAgent[snap.Agents[i].ID]
 		snap.Agents[i].Busy = len(byAgent[snap.Agents[i].ID])
-		snap.Agents[i].ActivityKnown = &activityKnown
+		snap.Agents[i].ActivityKnown = &b.activityKnown
 	}
-	// Four axes per task, then each descendant's execution and attention
-	// roll up into its ancestors: a top-level card answers for its tree.
+}
+
+// taskAxes sets the four axes per task, then rolls each descendant's
+// execution and attention up into its ancestors: a top-level card answers
+// for its tree.
+func (b *snapshotBuilder) taskAxes() {
+	snap := &b.snap
 	attention := map[string]int{}
 	for _, r := range snap.Inbox {
 		if r.TaskID != "" {
@@ -240,7 +352,7 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	rolledLive, rolledUnsettled, rolledAttention := map[string]bool{}, map[string]bool{}, map[string]int{}
 	for _, t := range snap.Tasks {
 		waiting := attention[t.ID]
-		if p, ok := planByTask[t.ID]; ok {
+		if p, ok := b.planByTask[t.ID]; ok {
 			for _, s := range p.Steps {
 				if s.State == plan.StepAwaitingHuman {
 					waiting++
@@ -261,7 +373,7 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 		t := &snap.Tasks[i]
 		t.Lifecycle = t.State
 		t.Execution = ExecutionIdle
-		if !activityKnown || rolledUnsettled[t.ID] {
+		if !b.activityKnown || rolledUnsettled[t.ID] {
 			t.Execution = ExecutionUnknown
 		}
 		if rolledLive[t.ID] {
@@ -269,11 +381,10 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 		}
 		t.Attention = rolledAttention[t.ID]
 		t.Lane = lane(*t)
-		if t.Lane == "pending" && !attentionKnown {
+		if t.Lane == "pending" && !b.attentionKnown {
 			t.Lane = "unknown"
 		}
 	}
-	return snap
 }
 
 func normalizeFacts(f *Facts) {
