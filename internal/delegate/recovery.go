@@ -231,6 +231,10 @@ func (s *Service) deliverRecovered(ctx context.Context, parent, tracked task.Tas
 				return true
 			}
 		}
+		// The failure is settled from the record, like a bound result:
+		// a question raised while the node was unreachable is answered by
+		// it and must not stay open over a child that is over.
+		s.clearRecovery(record.ID)
 		s.completeChild(ctx, parent.Channel, parent, tracked, tracked.Goal, entry, result, errors.New(record.Error), view.Progress{})
 		return true
 	}
