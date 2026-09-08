@@ -143,15 +143,15 @@ func Usage(last view.Progress) *attempt.Usage {
 	}
 }
 
-// Sessions closes sessions where they run.
-type Sessions interface {
+// Closer closes sessions where they run.
+type Closer interface {
 	CloseSession(ctx context.Context, at harness.Placement, id string) error
 }
 
 // Close ends a session on a cleanup context. A close that fails on a
 // process not known to have stopped is an unconfirmed stop: the caller
 // must keep the workspace and the slot until someone verifies the exit.
-func Close(parent context.Context, sessions Sessions, at harness.Placement, session harness.Runner) error {
+func Close(parent context.Context, sessions Closer, at harness.Placement, session harness.Runner) error {
 	ctx, cancel := Cleanup(parent)
 	defer cancel()
 	if err := sessions.CloseSession(ctx, at, session.ID()); err != nil && !Stopped(session) {

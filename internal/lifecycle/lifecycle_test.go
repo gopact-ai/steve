@@ -17,22 +17,31 @@ type runner struct {
 	turns    int
 	prompts  int
 	stopped  bool
+	block    bool
 	err      error
 	progress []view.Progress
 }
 
 func (r *runner) ID() string { return r.id }
-func (r *runner) Prompt(_ context.Context, _ string, observe func(view.Progress)) (string, []string, error) {
+func (r *runner) Prompt(ctx context.Context, _ string, observe func(view.Progress)) (string, []string, error) {
 	r.prompts++
 	for _, p := range r.progress {
 		observe(p)
 	}
+	if r.block {
+		<-ctx.Done()
+		return "", nil, ctx.Err()
+	}
 	return "plain", nil, r.err
 }
-func (r *runner) PromptTurn(_ context.Context, _ string, _ []harness.Media, _ permission.AskFunc, _ acphost.AskUserFunc, observe func(view.Progress)) (string, []string, error) {
+func (r *runner) PromptTurn(ctx context.Context, _ string, _ []harness.Media, _ permission.AskFunc, _ acphost.AskUserFunc, observe func(view.Progress)) (string, []string, error) {
 	r.turns++
 	for _, p := range r.progress {
 		observe(p)
+	}
+	if r.block {
+		<-ctx.Done()
+		return "", nil, ctx.Err()
 	}
 	return "turn", []string{"did"}, r.err
 }
