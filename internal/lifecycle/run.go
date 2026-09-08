@@ -659,7 +659,12 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 	e.durable = true
 	if e.Session != nil && !o.Settlement.KeepSession {
 		if closeErr := Close(ctx, o.Sessions, o.At, e.Session); closeErr != nil {
+			// The record is terminal, but its writer is not known to have
+			// exited: the workspace, the slot and the bindings stay until
+			// someone confirms the stop, and the record says so.
 			e.cleanup, e.durable = errors.Join(e.cleanup, fmt.Errorf("close settled session: %w", closeErr)), false
+			e.quarantine(ctx, closeErr)
+			return err
 		}
 	}
 	e.release(ctx)

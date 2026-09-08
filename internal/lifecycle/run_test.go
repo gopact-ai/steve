@@ -190,11 +190,12 @@ func (f *fakeRoster) Release(_ context.Context, node, id string) {
 }
 
 type fakeSessions struct {
-	runner  *runner
-	openErr error
-	opened  int
-	closed  []string
-	log     func(string)
+	runner   *runner
+	openErr  error
+	closeErr error
+	opened   int
+	closed   []string
+	log      func(string)
 }
 
 func (f *fakeSessions) OpenSession(context.Context, harness.Placement, string, string, []acp.MCPServer) (harness.Runner, error) {
@@ -208,7 +209,7 @@ func (f *fakeSessions) OpenSession(context.Context, harness.Placement, string, s
 func (f *fakeSessions) CloseSession(_ context.Context, _ harness.Placement, id string) error {
 	f.log("close")
 	f.closed = append(f.closed, id)
-	return nil
+	return f.closeErr
 }
 
 type fakeWorkspaces struct {
@@ -242,6 +243,12 @@ func newWorld(sessionID string) *world {
 	att := &fakeAttempts{lost: make(chan struct{})}
 	r := &runner{id: sessionID, progress: []view.Progress{{Settings: view.Settings{Model: "m"}, Usage: view.Usage{InputTokens: 5, OutputTokens: 7}}}}
 	return &world{attempts: att, roster: &fakeRoster{verdict: ability.True, log: att.log}, sessions: &fakeSessions{runner: r, log: att.log}, workspaces: &fakeWorkspaces{log: att.log}, runner: r}
+}
+
+// withWorld is o against another world's fakes.
+func (o Options) withWorld(w *world) Options {
+	o.Attempts, o.Roster, o.Sessions, o.Workspaces = w.attempts, w.roster, w.sessions, w.workspaces
+	return o
 }
 
 func (w *world) options() Options {
@@ -532,6 +539,35 @@ func TestRunDetachesFromAManagedSessionItCannotVouchFor(t *testing.T) {
 	res, err = Run(t.Context(), o)
 	if !errors.Is(err, harness.ErrStopUnconfirmed) || !res.Unsettled || res.Driven || res.Record.Session != "" || len(unpublished.sessions.closed) != 0 {
 		t.Fatalf("unpublished identity was not quarantined: %+v err=%v", res, err)
+	}
+}
+
+func TestRunQuarantinesAManagedSessionWhoseCloseIsUnconfirmed(t *testing.T) {
+	// The completion is on the record, but the close did not confirm the
+	// process exited: the workspace, the slot and the bindings stay, and
+	// the record says the writer is unconfirmed.
+	w := newWorld("ns_1")
+	w.roster.bindings = []ability.Binding{{Name: "tool"}}
+	w.sessions.closeErr = errors.New("node away")
+	o := w.options()
+	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true}
+	res, err := Run(t.Context(), o)
+	if err != nil || res.Record.State != attempt.Bound || res.Durable || !res.Unsettled || !res.Record.Unsettled || !errors.Is(res.CleanupErr, harness.ErrStopUnconfirmed) {
+		t.Fatalf("unconfirmed close: %+v err=%v", res, err)
+	}
+	if w.workspaces.discarded != 0 || len(w.roster.released) != 0 || len(w.sessions.closed) != 1 {
+		t.Fatalf("an unconfirmed writer's things were given back: discarded=%d released=%v closed=%v", w.workspaces.discarded, w.roster.released, w.sessions.closed)
+	}
+	if want := "open admit prepared/test arm/test-open session running/test settled/test finish bound/test close unsettled/test"; w.attempts.history() != want {
+		t.Fatalf("order = %s", w.attempts.history())
+	}
+	stopped := newWorld("ns_1")
+	stopped.roster.bindings = []ability.Binding{{Name: "tool"}}
+	stopped.sessions.closeErr = errors.New("node away")
+	stopped.runner.stopped = true
+	res, err = Run(t.Context(), o.withWorld(stopped))
+	if err != nil || !res.Durable || res.Unsettled || stopped.workspaces.discarded != 1 || len(stopped.roster.released) != 1 {
+		t.Fatalf("a stopped process's failed close was quarantined: %+v err=%v discarded=%d released=%v", res, err, stopped.workspaces.discarded, stopped.roster.released)
 	}
 }
 

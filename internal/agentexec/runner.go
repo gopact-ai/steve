@@ -386,6 +386,12 @@ func (a *auxiliary) settle(run lifecycle.Result, err error) (runErr, unresolved 
 		// this observer may leave without claiming native process exit.
 		unresolved = &execution.NodePreparationObserverDetached{AttemptID: record.ID, NodeID: record.Node, OpenCommandID: attempt.InputCommandID(record) + "/open", Cause: err}
 		return Blocked(record, "session-record", "保存原节点已返回的会话标识", "节点已经打开会话，但会话标识尚未写入执行记录；原始任务输入还未发送。", "建议恢复存储后核对原节点的打开回执，不重新打开会话。", unresolved), unresolved
+	case run.Unsettled && record.State.Terminal():
+		// The result is committed, but the close did not confirm the
+		// process exited: the worktree, the slot and the budget wait for
+		// someone who can.
+		unresolved = &UnsettledError{AttemptID: record.ID, Cause: errors.Join(err, run.CleanupErr)}
+		return Blocked(record, "cleanup", "释放已结束执行的工作区", "执行结果已保存，但原进程未确认退出，工作区尚未释放。", "建议核对原节点与进程，确认停止后重新检查。", unresolved), unresolved
 	case run.Unsettled:
 		unresolved = &UnsettledError{AttemptID: record.ID, Cause: err}
 		if pending := PendingNodeOpen(record, err); pending != nil {
