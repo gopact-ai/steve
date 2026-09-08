@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agent"
@@ -129,4 +130,30 @@ func (c *Coordinator) ProjectOf(ctx context.Context, conversationID string) stri
 		return ""
 	}
 	return id
+}
+
+// openForCommand gets the conversation's session without any of the
+// turn-taking a prompt does: no task budget is spent and nothing is marked
+// tainted, because a command that only reads or sets a selector is not a
+// turn.
+func (c *Coordinator) openForCommand(ctx context.Context, req Request, selected agent.Agent) (harness.Runner, error) {
+	capabilities, err := c.assemble(selected, req, nil)
+	if err != nil {
+		return nil, err
+	}
+	saved := c.store.Conversation(req.ConversationID).Sessions[selected.ID]
+	saved.ConversationID = req.ConversationID
+	_, workspace, err := c.resolveWorkspace(ctx, req, selected)
+	if err != nil {
+		return nil, err
+	}
+	runner, err := c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
+	if err != nil && saved.UpstreamID != "" && !strings.HasPrefix(saved.UpstreamID, "ns_") {
+		// Same fallback as a prompt: a session the agent no longer holds is
+		// replaced rather than reported as a failure.
+		saved.UpstreamID = ""
+		saved.InstructionsApplied = false
+		runner, err = c.open(ctx, saved, selected, workspace.Path, capabilities.MCPServers)
+	}
+	return runner, err
 }
