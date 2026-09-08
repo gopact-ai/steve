@@ -84,11 +84,18 @@ func TestNodeCommandReexecutesAndKeepsDurableCommandIdentity(t *testing.T) {
 			}
 		}
 	}
-	before := wait("", func(s nodewire.RestartStatus) bool { return s.State == "idle" && s.Supported })
+	// A restart is refused while any stream is open; the registry's own
+	// exec stream is released a moment after its reply arrives, so each
+	// restart waits for the node to report no streams first.
+	quiet := func() nodewire.RestartStatus {
+		return wait("", func(s nodewire.RestartStatus) bool { return s.State == "idle" && s.Supported && s.ActiveStreams == 0 })
+	}
+	before := quiet()
 	for _, broken := range [][]byte{[]byte(`{"invalid":"disk config"`), []byte(`{"name":"child","token":"changed-secret","listen":"` + address + `","state_dir":"` + cfg.StateDir + `","harnesses":{"cat":{"command":"/bin/cat"}}}`)} {
 		if err := os.WriteFile(configPath, broken, 0600); err != nil {
 			t.Fatal(err)
 		}
+		quiet()
 		if status, err := registry.Restart(ctx, "n", "one-restart"); !errors.Is(err, nodewire.ErrRestartPreflight) || status.State == "accepted" {
 			t.Fatal("invalid or disconnected configuration accepted", status, err)
 		}
@@ -107,6 +114,7 @@ func TestNodeCommandReexecutesAndKeepsDurableCommandIdentity(t *testing.T) {
 	if err := os.WriteFile(configPath, raw, 0600); err != nil {
 		t.Fatal(err)
 	}
+	quiet()
 	accepted, err := registry.Restart(ctx, "n", "one-restart")
 	if err != nil || accepted.State != "accepted" {
 		t.Fatal("restart response lost before exec", accepted, err)
