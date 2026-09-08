@@ -982,38 +982,6 @@ func (s *Service) land(ctx context.Context, parent, child task.Task, record atte
 	return result, nil
 }
 
-// completeResult commits a recovered node-owned execution's result: the
-// same publication and landing as a live run, with the completion written
-// by the recovering observer.
-func (s *Service) completeResult(ctx context.Context, parent, child task.Task, record attempt.Record, answer string, observed *attempt.Usage, stopBeat func(), failAttempt func(error)) (result agentmcp.DelegateResult, runErr error) {
-	fail := func(cause error) error {
-		if lifecycle.IsManaged(record.Session) {
-			return retainedDetached(record, cause)
-		}
-		s.finish(child.ID, task.OutcomeError)
-		failAttempt(cause)
-		return cause
-	}
-	p, err := s.publish(ctx, child, record, answer, observed)
-	if err != nil {
-		return p.result, fail(err)
-	}
-	stopBeat()
-	if _, err := s.attempts.Complete(ctx, record.ID, "delegate", p.completion); err != nil {
-		if lifecycle.IsManaged(record.Session) {
-			return p.result, retainedDetached(record, err)
-		}
-		err = s.attempts.RejectCompletion(ctx, record.ID, "delegate", p.completion, err)
-		s.finish(child.ID, task.OutcomeError)
-		return p.result, fmt.Errorf("complete delegation result: %w", err)
-	}
-	if lifecycle.IsManaged(record.Session) && ctx.Err() != nil {
-		return p.result, retainedDetached(record, ctx.Err())
-	}
-	_ = s.artifacts.Discard(context.WithoutCancel(ctx), record.Workspace)
-	return s.land(ctx, parent, child, record, p)
-}
-
 // place picks who does the work. The caller is excluded from its own
 // delegation: handing work to yourself is a loop with extra steps.
 func (s *Service) place(ctx context.Context, caller string, req agentmcp.DelegateRequest) (roster.Candidate, error) {
