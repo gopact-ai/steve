@@ -159,6 +159,17 @@ type Settlement struct {
 	// whose identity never reached the record is quarantined, not failed:
 	// the node has a process this process cannot vouch for.
 	QuarantineUnpublished bool
+	// CancelDetaches: a cancelled run detaches from a node-owned session
+	// even when its prompt settled (planning, verification, delegations);
+	// without it a settled prompt is recorded on a detached context (chat
+	// turns).
+	CancelDetaches bool
+	// RejectManaged: a node-owned session's completion that cannot be
+	// committed is rejected, and a failure that cannot be recorded is
+	// returned, as for a hub session (chat turns); without it either
+	// detaches the observer and leaves the record for the one that comes
+	// back to it (planning, verification, delegations).
+	RejectManaged bool
 	// KeepSession: once the caller has armed it, the session is the
 	// conversation's and outlives the run; a failure before that closes it.
 	KeepSession bool
@@ -207,13 +218,18 @@ type Options struct {
 	ModelOptions map[string]string
 
 	// Prompt and its companions are what Drive sends; TurnPrompt uses the
-	// turn entry on every session, not only node-owned ones.
+	// turn entry on every session, not only node-owned ones. Resume, for
+	// Reattach, follows the command the node already accepted instead.
 	Prompt     string
 	Media      []harness.Media
 	TurnPrompt bool
-	Ask        permission.AskFunc
-	AskUser    acphost.AskUserFunc
-	Observe    func(view.Progress)
+	Resume     bool
+	// Replay, for Reattach, is an outcome the caller recovered from the
+	// record: settled without a prompt, its spend the record's.
+	Replay  *Outcome
+	Ask     permission.AskFunc
+	AskUser acphost.AskUserFunc
+	Observe func(view.Progress)
 
 	// Leased runs on the leased attempt, before admission; the context it
 	// returns is the run's from then on.
@@ -226,6 +242,9 @@ type Options struct {
 	Arm func(ctx context.Context, e *Execution) (func(*attempt.Record), error)
 	// Started runs once the attempt is running, before the prompt.
 	Started func(ctx context.Context, e *Execution) error
+	// Ended is told that the prompt has ended, however it ended, before
+	// settlement.
+	Ended func(e *Execution)
 	// Validate judges an answer the prompt ended well with; its error is
 	// what the attempt failed on.
 	Validate func(e *Execution) error
@@ -268,7 +287,10 @@ type Execution struct {
 	stopBeat func()
 	// armed says the caller's arming succeeded: with KeepSession the
 	// session is the conversation's from then on.
-	armed     bool
+	armed bool
+	// bound says the record's admission bound something on the machine,
+	// for a reattached execution whose bindings this process never saw.
+	bound     bool
 	driven    bool
 	unsettled bool
 	durable   bool
@@ -307,6 +329,38 @@ func Run(ctx context.Context, o Options) (Result, error) {
 	err := e.run(ctx)
 	return e.result(), err
 }
+
+// Reattach joins an execution already in flight from the prompt on: a
+// node-owned session this process opened and recorded, or found again by
+// its receipt. Drive, settle, the caller's completion, the terminal
+// transition and cleanup are Run's; opening, admission and the session
+// are the caller's, done or recovered before.
+func Reattach(ctx context.Context, o Options, record attempt.Record, session harness.Runner) (Result, error) {
+	e := &Execution{o: o, Record: record, Session: session, Managed: Managed(session), Prompt: o.Prompt, Servers: o.Servers, stopBeat: func() {}, armed: true}
+	e.bound = record.Admission != nil && len(record.Admission.Bound) > 0
+	ctx, stop := context.WithCancel(ctx)
+	defer stop()
+	e.stopBeat = Keep(ctx, o.Attempts, record.ID, func() {
+		stop()
+		if o.Lost != nil {
+			o.Lost()
+		}
+	})
+	defer e.stopBeat()
+	var err error
+	if o.Replay != nil {
+		e.Outcome, e.Usage, e.driven = *o.Replay, record.Usage, true
+		err = e.read(ctx)
+	} else {
+		err = e.drive(ctx)
+	}
+	err = e.close(ctx, err)
+	return e.result(), err
+}
+
+// Armed says the caller's arming succeeded, so a later failure is the
+// attempt's, not the session's.
+func (e *Execution) Armed() bool { return e.armed }
 
 func (e *Execution) result() Result {
 	return Result{Record: e.Record, Session: e.Session, Managed: e.Managed, Answer: e.Outcome.Answer, Activity: e.Outcome.Activity, Usage: e.Usage, Last: e.Outcome.Last,
@@ -468,8 +522,17 @@ func (e *Execution) openSession(ctx context.Context) error {
 func (e *Execution) drive(ctx context.Context) error {
 	o := e.o
 	e.driven = true
-	e.Outcome = Drive{Session: e.Session, Prompt: e.Prompt, Media: o.Media, Turn: o.TurnPrompt || e.Managed, Ask: o.Ask, AskUser: o.AskUser, Observe: o.Observe}.Run(ctx)
+	e.Outcome = Drive{Session: e.Session, Prompt: e.Prompt, Media: o.Media, Turn: o.TurnPrompt || e.Managed, Resume: o.Resume, Ask: o.Ask, AskUser: o.AskUser, Observe: o.Observe}.Run(ctx)
 	e.Usage = Usage(e.Outcome.Last)
+	return e.read(ctx)
+}
+
+// read is how the prompt's end reads under the caller's rules.
+func (e *Execution) read(ctx context.Context) error {
+	o := e.o
+	if o.Ended != nil {
+		o.Ended(e)
+	}
 	err := e.Outcome.Err
 	if !e.settled() && (o.Settlement.Quarantine == QuarantineAlways || o.Settlement.Quarantine == QuarantineManaged && e.Managed) {
 		err = errors.Join(err, harness.ErrStopUnconfirmed)
@@ -509,7 +572,17 @@ func (e *Execution) close(ctx context.Context, err error) error {
 		return e.closeManaged(ctx, cleanup, err)
 	}
 	id := e.Record.ID
-	if e.Session != nil && !errors.Is(err, harness.ErrStopUnconfirmed) && !(o.Settlement.KeepSession && e.armed) {
+	switch {
+	case e.Session == nil || errors.Is(err, harness.ErrStopUnconfirmed):
+	case o.Settlement.KeepSession && e.armed:
+		// The conversation's session outlives the run.
+	case o.Settlement.KeepSession:
+		// A session the conversation never took wrote nothing: tear it
+		// down as well as it can be, and the failure stands on its own.
+		if closeErr := o.Sessions.CloseSession(cleanup, o.At, e.Session.ID()); closeErr != nil {
+			e.Session.Abort()
+		}
+	default:
 		if closeErr := Close(cleanup, o.Sessions, o.At, e.Session); closeErr != nil {
 			err = errors.Join(err, closeErr)
 		}
@@ -548,42 +621,76 @@ func (e *Execution) closeManaged(ctx, cleanup context.Context, err error) error 
 			err = harness.ErrTurnCanceled
 		}
 	}
-	if !settled || errors.Is(err, harness.ErrStopUnconfirmed) || ctx.Err() != nil {
-		return e.detach(cleanup, StepDrive, errors.Join(err, ctx.Err()), ctx.Err() != nil)
+	cancelled := ctx.Err() != nil
+	quarantines := o.Settlement.Quarantine == QuarantineAlways || o.Settlement.Quarantine == QuarantineManaged
+	if errors.Is(err, harness.ErrStopUnconfirmed) || !settled && (quarantines || cancelled) || cancelled && o.Settlement.CancelDetaches {
+		return e.detach(cleanup, StepDrive, errors.Join(err, ctx.Err()), cancelled)
 	}
-	if markErr := o.Attempts.MarkSessionSettled(ctx, id, o.Actor); markErr != nil {
-		return e.detach(cleanup, StepSettle, markErr, false)
+	if o.Settlement.CommitTimeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(context.WithoutCancel(ctx), o.Settlement.CommitTimeout)
+		defer cancel()
 	}
+	if settled {
+		if markErr := o.Attempts.MarkSessionSettled(ctx, id, o.Actor); markErr != nil {
+			return e.detach(cleanup, StepSettle, markErr, false)
+		}
+	}
+	e.release(cleanup)
 	e.stopBeat()
-	var terminal attempt.Record
-	var transition error
 	if err != nil {
-		terminal, transition = e.failure(ctx, err)
-	} else {
-		var completion attempt.Completion
-		if o.Finish != nil {
-			if completion, transition = o.Finish(ctx, e); transition != nil {
-				return e.detach(cleanup, StepFinish, transition, false)
+		terminal, transition := e.failure(ctx, err)
+		if transition != nil {
+			if o.Settlement.RejectManaged {
+				return errors.Join(err, fmt.Errorf("settle %s: %w", id, transition))
 			}
+			return e.detach(cleanup, StepFinish, transition, false)
 		}
-		if completion.Usage == nil {
-			completion.Usage = e.Usage
-		}
-		terminal, transition = o.Attempts.FinishCompletion(ctx, id, o.Actor, completion)
+		e.Record = terminal
+	} else if err = e.commitManaged(ctx, cleanup); err != nil {
+		return err
 	}
-	if transition != nil {
-		return e.detach(cleanup, StepFinish, transition, false)
-	}
-	e.Record = terminal
 	e.durable = true
-	if e.Session != nil {
+	if e.Session != nil && !o.Settlement.KeepSession {
 		if closeErr := Close(cleanup, o.Sessions, o.At, e.Session); closeErr != nil {
 			e.cleanup, e.durable = errors.Join(e.cleanup, fmt.Errorf("close settled session: %w", closeErr)), false
 		}
 	}
-	e.release(cleanup)
 	e.discard(cleanup)
 	return err
+}
+
+// commitManaged commits a node-owned session's completion; what cannot be
+// committed is left for a returning observer, or rejected when the
+// caller closes its own.
+func (e *Execution) commitManaged(ctx, cleanup context.Context) error {
+	o := e.o
+	var completion attempt.Completion
+	if o.Finish != nil {
+		var err error
+		if completion, err = o.Finish(ctx, e); err != nil {
+			var rejected *Rejected
+			if o.Settlement.RejectManaged && errors.As(err, &rejected) {
+				return e.reject(cleanup, rejected.Completion, rejected.Cause)
+			}
+			if o.Settlement.RejectManaged {
+				return e.fail(cleanup, err)
+			}
+			return e.detach(cleanup, StepFinish, err, false)
+		}
+	}
+	if completion.Usage == nil {
+		completion.Usage = e.Usage
+	}
+	completed, err := o.Attempts.FinishCompletion(ctx, e.Record.ID, o.Actor, completion)
+	if err != nil {
+		if o.Settlement.RejectManaged {
+			return e.reject(cleanup, completion, err)
+		}
+		return e.detach(cleanup, StepFinish, err, false)
+	}
+	e.Record = completed
+	return nil
 }
 
 // detach reports a node-owned session this process can no longer observe.
@@ -621,7 +728,7 @@ func (e *Execution) refresh(ctx context.Context) {
 }
 
 func (e *Execution) release(cleanup context.Context) {
-	if len(e.Bindings) > 0 && e.o.Roster != nil {
+	if (len(e.Bindings) > 0 || e.bound) && e.o.Roster != nil {
 		e.o.Roster.Release(cleanup, e.o.Spec.Node, e.Record.ID)
 	}
 }

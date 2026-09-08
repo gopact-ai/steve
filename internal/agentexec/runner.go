@@ -229,9 +229,16 @@ func (a *auxiliary) options(ctx context.Context, id string, workspace project.Wo
 		// A planning or verification prompt is its own writer: an end it
 		// cannot prove is an unconfirmed stop, and a node-owned session it
 		// can no longer observe is the node's to finish.
-		Settlement: lifecycle.Settlement{StoppedSettles: true, Quarantine: lifecycle.QuarantineAlways, DetachManaged: true, Detachment: lifecycle.DetachSilently, QuarantineUnpublished: true},
+		Settlement: auxiliarySettlement,
 	}
 }
+
+// auxiliarySettlement: a planning or verification prompt is its own
+// writer. An end it cannot prove is an unconfirmed stop; a node-owned
+// session it can no longer observe, or was cancelled away from, is the
+// node's to finish, and the record is left as it is for the observer
+// that comes back.
+var auxiliarySettlement = lifecycle.Settlement{StoppedSettles: true, Quarantine: lifecycle.QuarantineAlways, DetachManaged: true, Detachment: lifecycle.DetachSilently, CancelDetaches: true, QuarantineUnpublished: true}
 
 // reserve charges the task's budget once the attempt is leased, and bounds
 // the run by the budget's deadline when it has one.

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/acphost"
@@ -17,7 +16,6 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/permission"
-	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -166,56 +164,48 @@ func (r *Runner) resumeAttempt(parent context.Context, record attempt.Record, va
 	record = refreshed
 	out.Attempt = record
 	scope.AdoptRetained()
-	runCtx, cancel := context.WithCancel(ctx)
-	defer cancel()
-	lost := r.attempts.Heartbeat(runCtx, record.ID)
-	go func() {
-		select {
-		case <-lost:
-			cancel()
-		case <-runCtx.Done():
-		}
-	}()
-	var nativeErr, invalid error
-	settled := false
+	work := &auxiliary{runner: r, spec: Spec{TaskID: record.TaskID, TurnID: record.TurnID, Kind: record.Kind, Agent: record.Agent, Project: record.Project}, identity: record.WorkID, validate: validate, running: record, reserved: true}
+	ask, askUser, observe := r.callbacks()
+	options := lifecycle.Options{
+		Attempts: r.attempts, Roster: r.roster, Sessions: r.sessions, Workspaces: r.workspaces, Actor: "agentexec",
+		Spec: record.Spec, At: harness.Placement{Node: record.Node, Harness: record.Harness},
+		Resume: true, Ask: ask, AskUser: askUser,
+		Observe: func(p view.Progress) {
+			EmitProgress(ctx, p)
+			if observe != nil {
+				observe(record, p)
+			}
+		},
+		Validate: work.check, Finish: work.finish, Failed: work.failed,
+		Settlement: auxiliarySettlement,
+	}
 	if record.State != attempt.Running && record.Result != nil && len(record.Result.Output) > 0 {
+		// The command already ended and its output is on the record: the
+		// completion is rebuilt from it, never from a second prompt.
 		var saved auxiliaryOutput
 		if json.Unmarshal(record.Result.Output, &saved) != nil || saved.WorkID != record.WorkID {
 			return retain("output", errors.New("candidate output identity differs"))
 		}
-		out.Answer, out.Usage = saved.Answer, record.Usage
-		settled = true
+		var nativeErr error
 		if saved.Error != "" {
 			nativeErr = errors.New(saved.Error)
 			if saved.Validation {
-				invalid = nativeErr
+				work.invalid = nativeErr
 			}
 		}
 		if nativeErr == nil && validate != nil {
-			if err := validate(out.Answer); err != nil {
+			if err := validate(saved.Answer); err != nil {
 				return retain("validation", err)
 			}
 		}
-	} else {
-		ask, askUser, observe := r.callbacks()
-		var spent stepUsage
-		out.Answer, _, nativeErr = session.ResumeTurn(runCtx, ask, askUser, func(p view.Progress) {
-			spent.receive(p)
-			EmitProgress(runCtx, p)
-			if observe != nil {
-				observe(record, p)
-			}
-		})
-		out.Usage = spent.usage()
-		settled = acphost.PromptSettled(nativeErr)
-		if nativeErr == nil && validate != nil {
-			invalid = validate(out.Answer)
-			nativeErr = invalid
-		}
+		options.Replay, options.Validate = &lifecycle.Outcome{Answer: saved.Answer, PromptSettled: true, Err: nativeErr}, nil
 	}
-	out, runErr, unresolved = r.finishManaged(runCtx, out, nativeErr, invalid, settled)
+	run, err := lifecycle.Reattach(ctx, options, record, session)
+	out.Attempt, out.Usage, out.Answer = run.Record, run.Usage, run.Answer
+	runErr, unresolved = work.settle(run, err)
 	return out, runErr
 }
+
 func decodeAuxiliary(record attempt.Record, validate func(string) error) (out Result, err error) {
 	out.Attempt, out.Usage = record, record.Usage
 	var saved auxiliaryOutput
@@ -239,62 +229,6 @@ func decodeAuxiliary(record attempt.Record, validate func(string) error) (out Re
 	}
 	return out, nil
 }
-func (r *Runner) finishManaged(parent context.Context, out Result, cause, invalid error, settled bool) (Result, error, error) {
-	record := out.Attempt
-	ctx := parent
-	var cancel context.CancelFunc
-	explicitStop := settled && errors.Is(execution.CheckExecution(ctx), task.ErrExecutionStopped)
-	if explicitStop {
-		ctx, cancel = lifecycle.Cleanup(ctx)
-		defer cancel()
-		if cause == nil {
-			cause = harness.ErrTurnCanceled
-		}
-	}
-	retain := func(code string, err error) (Result, error, error) {
-		detached := &execution.RetainedObserverDetached{AttemptID: record.ID, NodeID: record.Node, SessionID: record.Session, Cause: errors.Join(harness.ErrStopUnconfirmed, err)}
-		return out, Blocked(record, code, "保存原规划或验证执行的结果", "原执行或其结果尚未完整确认。", "建议恢复节点与存储后检查同一次执行。", detached), detached
-	}
-	if !settled || errors.Is(cause, harness.ErrStopUnconfirmed) || ctx.Err() != nil {
-		return retain("observer", errors.Join(cause, ctx.Err()))
-	}
-	if err := r.attempts.MarkSessionSettled(ctx, record.ID, "agentexec"); err != nil {
-		return retain("marker", err)
-	}
-	input, inputErr := originalInput(record)
-	if inputErr != nil {
-		return retain("input", inputErr)
-	}
-	saved := auxiliaryOutput{Input: &input, WorkID: record.WorkID, Answer: out.Answer, Validation: invalid != nil}
-	if cause != nil {
-		saved.Error = cause.Error()
-	}
-	output, err := json.Marshal(saved)
-	if err != nil {
-		return retain("output", err)
-	}
-	result := attempt.Result{Summary: clipAnswer(out.Answer), Output: output}
-	var completed attempt.Record
-	if cause != nil {
-		completed, err = r.attempts.Advance(ctx, record.ID, attempt.Failed, "agentexec", func(next *attempt.Record) { next.Error = cause.Error(); next.Usage = out.Usage; next.Result = &result })
-	} else {
-		completed, err = r.attempts.FinishCompletion(ctx, record.ID, "agentexec", attempt.Completion{Result: result, Usage: out.Usage})
-	}
-	if err != nil {
-		return retain("completion", err)
-	}
-	out.Attempt = completed
-	if err := SettleBudget(r.budget, completed, cause); err != nil {
-		return out, Blocked(completed, "accounting", "保存原执行的用量与预算", "执行结果已保存，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", err), nil
-	}
-	if err := r.cleanupAuxiliary(ctx, completed); err != nil {
-		return out, Blocked(completed, "cleanup", "释放已结束执行的工作区", "执行结果已保存，但原工作区尚未释放。", "建议恢复节点连接后重新检查。", err), nil
-	}
-	if invalid != nil {
-		return out, &ValidationError{Cause: invalid}, nil
-	}
-	return out, cause, nil
-}
 
 func (r *Runner) cleanupAuxiliary(ctx context.Context, record attempt.Record) error {
 	cleanup, stop := lifecycle.Cleanup(ctx)
@@ -314,19 +248,6 @@ func clipAnswer(answer string) string {
 		r = r[:200]
 	}
 	return string(r)
-}
-
-type stepUsage struct {
-	mu   sync.Mutex
-	last view.Progress
-}
-
-func (s *stepUsage) receive(p view.Progress) { s.mu.Lock(); s.last = p; s.mu.Unlock() }
-func (s *stepUsage) usage() *attempt.Usage {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	u := s.last.Usage
-	return &attempt.Usage{Model: s.last.Settings.Model, Input: int64(u.InputTokens), Output: int64(u.OutputTokens), CachedRead: int64(u.CacheReadTokens), CachedWrite: int64(u.CacheWriteTokens), Context: int64(u.ContextTokens), Reported: u.TokensReported()}
 }
 
 func originalInput(record attempt.Record) (auxiliaryInput, error) {

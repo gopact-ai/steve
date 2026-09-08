@@ -16,6 +16,7 @@ type runner struct {
 	id       string
 	turns    int
 	prompts  int
+	resumes  int
 	stopped  bool
 	block    bool
 	err      error
@@ -44,6 +45,17 @@ func (r *runner) PromptTurn(ctx context.Context, _ string, _ []harness.Media, _ 
 		return "", nil, ctx.Err()
 	}
 	return "turn", []string{"did"}, r.err
+}
+func (r *runner) ResumeTurn(ctx context.Context, _ permission.AskFunc, _ acphost.AskUserFunc, observe func(view.Progress)) (string, []string, error) {
+	r.resumes++
+	for _, p := range r.progress {
+		observe(p)
+	}
+	if r.block {
+		<-ctx.Done()
+		return "", nil, ctx.Err()
+	}
+	return "resumed", nil, r.err
 }
 func (r *runner) Cancel(context.Context) error { return nil }
 func (r *runner) Abort()                       {}

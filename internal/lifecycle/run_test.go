@@ -383,3 +383,52 @@ func TestRunKeepsAConversationsSessionAndRejectsAnUnfinishedCompletion(t *testin
 		t.Fatalf("rejected completion: %+v err=%v", res, err)
 	}
 }
+
+func TestReattachJoinsAnExecutionFromThePromptOn(t *testing.T) {
+	w := newWorld("ns_1")
+	running := attempt.Record{Spec: attempt.Spec{ID: "a1", TaskID: "t", Node: "n1", Workspace: project.Workspace{ID: "ws"}}, State: attempt.Running, Session: "ns_1", Admission: &ability.Admission{Bound: []string{"tool"}}}
+	w.attempts.record = running
+	o := w.options()
+	o.Resume = true
+	o.Settlement = Settlement{Quarantine: QuarantineAlways, DetachManaged: true, CancelDetaches: true}
+	res, err := Reattach(t.Context(), o, running, w.runner)
+	if err != nil || w.runner.resumes != 1 || w.runner.prompts != 0 || res.Record.State != attempt.Bound || res.Answer != "resumed" || !res.Durable {
+		t.Fatalf("reattach = %+v err=%v resumes=%d prompts=%d", res, err, w.runner.resumes, w.runner.prompts)
+	}
+	if want := "settled/test release finish bound/test close discard"; w.attempts.history() != want {
+		t.Fatalf("reattach order = %s", w.attempts.history())
+	}
+	replay := newWorld("ns_1")
+	ended := running
+	ended.State, ended.Usage = attempt.BindReady, &attempt.Usage{Input: 9}
+	replay.attempts.record = ended
+	o = replay.options()
+	o.Replay = &Outcome{Answer: "from the record", PromptSettled: true}
+	o.Settlement = Settlement{DetachManaged: true}
+	res, err = Reattach(t.Context(), o, ended, replay.runner)
+	if err != nil || replay.runner.resumes != 0 || replay.runner.prompts != 0 || res.Record.State != attempt.Bound || res.Record.Result.Summary != "from the record" || res.Usage.Input != 9 {
+		t.Fatalf("replay = %+v err=%v", res, err)
+	}
+	lost := newWorld("ns_1")
+	lost.attempts.record = running
+	lost.runner.err = errors.New("observer lost")
+	o = lost.options()
+	o.Resume = true
+	o.Settlement = Settlement{Quarantine: QuarantineAlways, DetachManaged: true, Detachment: DetachQuarantines}
+	res, err = Reattach(t.Context(), o, running, lost.runner)
+	var detached *execution.RetainedObserverDetached
+	if !errors.As(err, &detached) || detached.SessionID != "ns_1" || !res.Unsettled || res.Record.State != attempt.Running {
+		t.Fatalf("lost observer = %+v err=%v", res, err)
+	}
+	kept := newWorld("ns_1")
+	kept.attempts.record = running
+	kept.attempts.failAt = attempt.Bound
+	o = kept.options()
+	o.Resume = true
+	o.Settlement = Settlement{DetachManaged: true, RejectManaged: true, KeepSession: true}
+	res, err = Reattach(t.Context(), o, running, kept.runner)
+	var step *StepError
+	if !errors.As(err, &step) || step.Step != StepFinish || errors.As(err, &detached) || res.Record.State != attempt.Failed || len(kept.sessions.closed) != 0 {
+		t.Fatalf("a chat turn's uncommittable completion was not rejected: %+v err=%v", res, err)
+	}
+}
