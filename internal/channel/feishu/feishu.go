@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"path/filepath"
 	"regexp"
@@ -116,11 +116,11 @@ func (c *Channel) effect(kind, target string, payload []byte) (ledger.EffectID, 
 		return id, func(any) {}
 	}
 	if _, err := c.journal.Started(id, "", map[string]any{"target": target, "bytes": len(payload)}); err != nil {
-		log.Printf("feishu: journal %s: %v", id, err)
+		slog.Error(fmt.Sprintf("feishu: journal %s: %v", id, err), "effect", id.String())
 	}
 	return id, func(receipt any) {
 		if _, err := c.journal.Confirmed(id, receipt); err != nil {
-			log.Printf("feishu: journal confirm %s: %v", id, err)
+			slog.Error(fmt.Sprintf("feishu: journal confirm %s: %v", id, err), "effect", id.String())
 		}
 	}
 }
@@ -231,7 +231,7 @@ func normalize(event *larkim.P2MessageReceiveV1, botOpenID string, allowUnmentio
 	}
 	text, imageKeys, ok := parseContent(deref(m.MessageType), deref(m.Content))
 	if !ok {
-		log.Printf("feishu: ignoring message type %q", deref(m.MessageType))
+		slog.Warn(fmt.Sprintf("feishu: ignoring message type %q", deref(m.MessageType)), "type", deref(m.MessageType))
 		return InboundMessage{}, false
 	}
 	sender := ""
@@ -258,7 +258,7 @@ func parseContent(messageType, raw string) (string, []string, bool) {
 			Text string `json:"text"`
 		}
 		if err := json.Unmarshal([]byte(raw), &content); err != nil {
-			log.Printf("feishu: bad text content: %v", err)
+			slog.Error(fmt.Sprintf("feishu: bad text content: %v", err))
 			return "", nil, false
 		}
 		text := strings.TrimSpace(mentionToken.ReplaceAllString(content.Text, ""))
@@ -268,7 +268,7 @@ func parseContent(messageType, raw string) (string, []string, bool) {
 			ImageKey string `json:"image_key"`
 		}
 		if err := json.Unmarshal([]byte(raw), &content); err != nil || content.ImageKey == "" {
-			log.Printf("feishu: bad image content: %v", err)
+			slog.Error(fmt.Sprintf("feishu: bad image content: %v", err))
 			return "", nil, false
 		}
 		return "", []string{content.ImageKey}, true
@@ -289,7 +289,7 @@ func parsePost(raw string) (string, []string, bool) {
 		} `json:"content"`
 	}
 	if err := json.Unmarshal([]byte(raw), &content); err != nil {
-		log.Printf("feishu: bad post content: %v", err)
+		slog.Error(fmt.Sprintf("feishu: bad post content: %v", err))
 		return "", nil, false
 	}
 	var text strings.Builder
@@ -628,11 +628,11 @@ func (c *Channel) fetchMessage(ctx context.Context, messageID string) (*larkim.M
 	req := larkim.NewGetMessageReqBuilder().MessageId(messageID).Build()
 	resp, err := c.api.Im.V1.Message.Get(ctx, req)
 	if err != nil {
-		log.Printf("feishu: fetch quoted message failed: %v", err)
+		slog.Error(fmt.Sprintf("feishu: fetch quoted message failed: %v", err), "message", messageID)
 		return nil, false
 	}
 	if !resp.Success() {
-		log.Printf("feishu: fetch quoted message failed: code=%d msg=%s", resp.Code, resp.Msg)
+		slog.Error(fmt.Sprintf("feishu: fetch quoted message failed: code=%d msg=%s", resp.Code, resp.Msg), "message", messageID)
 		return nil, false
 	}
 	if resp.Data == nil || len(resp.Data.Items) == 0 {
@@ -653,7 +653,7 @@ func (c *Channel) fetchImages(ctx context.Context, messageID string, keys []stri
 	for _, key := range keys {
 		img, err := c.downloadImage(ctx, messageID, key)
 		if err != nil {
-			log.Printf("feishu: download image failed: %v", err)
+			slog.Error(fmt.Sprintf("feishu: download image failed: %v", err), "message", messageID, "image", key)
 			continue
 		}
 		images = append(images, img)
