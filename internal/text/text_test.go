@@ -14,6 +14,9 @@ func TestClip(t *testing.T) {
 		{"你好世界", 2, "你好…"},
 		{"你好", 2, "你好"},
 		{"ab", 0, "…"},
+		{"ab", -1, "…"},
+		{"", -1, ""},
+		{"a\xffb", 2, "a\xff…"},
 	} {
 		if got := Clip(tc.in, tc.limit); got != tc.want {
 			t.Errorf("Clip(%q, %d) = %q, want %q", tc.in, tc.limit, got, tc.want)
