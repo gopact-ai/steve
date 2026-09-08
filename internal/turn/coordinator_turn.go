@@ -393,6 +393,11 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 			}
 		}
 	}
+	if t.finished {
+		// The completion was assembled and not committed: what the agent
+		// said goes back with why, as it always did.
+		return t.result, err
+	}
 	return Result{}, err
 }
 
