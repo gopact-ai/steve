@@ -314,7 +314,13 @@ func (t *chatTurn) finish(ctx context.Context, e *lifecycle.Execution) (attempt.
 }
 
 func (t *chatTurn) wrap(step lifecycle.Step, e *lifecycle.Execution, err error) error {
-	if step == lifecycle.StepStart && e.Armed() && e.Record.State != attempt.Running {
+	var refused *lifecycle.Refused
+	switch {
+	case step == lifecycle.StepAdmit && !errors.As(err, &refused):
+		// The record's words for an admission that could not be judged,
+		// as they were; settle names the host for the user.
+		return fmt.Errorf("admission: %w", err)
+	case step == lifecycle.StepStart && e.Armed() && e.Record.State != attempt.Running:
 		return fmt.Errorf("arm prompt execution: %w", err)
 	}
 	return err
@@ -352,7 +358,11 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 			if errors.As(err, &refused) {
 				return Result{}, UserError{Text: c.text.T(i18n.AdmissionRefused, selected.ID, placeLabel(selected.Node), refused.Admission.Unmet())}
 			}
-			return Result{}, fmt.Errorf("admission on %s: %w", placeLabel(selected.Node), step.Err)
+			cause := step.Err
+			if unwrapped := errors.Unwrap(cause); unwrapped != nil {
+				cause = unwrapped
+			}
+			return Result{}, fmt.Errorf("admission on %s: %w", placeLabel(selected.Node), cause)
 		}
 	}
 	if err == nil {
