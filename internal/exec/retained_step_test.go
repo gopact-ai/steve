@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"sync"
 	"testing"
@@ -17,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -356,6 +358,137 @@ func TestRetainedSettledFailureReleasesOriginalNodeSession(t *testing.T) {
 	}
 }
 
+// lostObserverStep joins a step whose node still runs the command, over a
+// session whose resumed turn ends without settling.
+type lostObserverStep struct {
+	*AgentRunner
+	sessions *retainedStepSessions
+}
+
+func (r lostObserverStep) AttachStep(ctx context.Context, req StepRequest, record attempt.Record) (RetainedStep, error) {
+	joined, err := r.AgentRunner.AttachStep(ctx, req, record)
+	if err != nil {
+		return joined, err
+	}
+	joined.Session = lostStep{r.sessions}
+	return joined, nil
+}
+
+type lostStep struct{ *retainedStepSessions }
+
+func (lostStep) ResumeTurn(context.Context, permission.AskFunc, acphost.AskUserFunc, func(view.Progress)) (string, []string, error) {
+	return "", nil, io.EOF
+}
+
+// TestRetainedStepRecoveryCodesReadAsBefore pins the code on the recovery
+// question a joined step raises: a prompt the observer lost is the
+// observer's (`observer`); a settled failure whose transition could not
+// be written is the ledger's (`failure`).
+func TestRetainedStepRecoveryCodesReadAsBefore(t *testing.T) {
+	t.Run("observer", func(t *testing.T) {
+		p, work, deps, sessions, _ := retainedStepFixture(t)
+		deps.Runner = lostObserverStep{AgentRunner: deps.Runner.(*AgentRunner), sessions: sessions}
+		_, err := runStepWithRecovery(t.Context(), p, work, nil, deps)
+		var blocked *agentexec.RecoveryBlocked
+		if !errors.As(err, &blocked) || !strings.HasSuffix(blocked.Question.RequestID, "/observer") || !errors.Is(err, io.EOF) {
+			t.Fatalf("lost prompt on resume: %v", err)
+		}
+		records, err := deps.Attempts.ForTask(t.Context(), p.TaskID)
+		if err != nil || len(records) != 1 || records[0].State != attempt.Running || sessions.closes() != 0 {
+			t.Fatalf("lost observer settled the step: %+v %v closes=%d", records, err, sessions.closes())
+		}
+	})
+	t.Run("failure", func(t *testing.T) {
+		p, work, deps, sessions, _ := retainedStepFixture(t)
+		deps.Runner = settledFailedStep{AgentRunner: deps.Runner.(*AgentRunner), sessions: sessions}
+		cut := `CREATE TRIGGER cut BEFORE UPDATE OF state ON operations WHEN NEW.kind='attempt' AND NEW.state='failed' AND OLD.state!=NEW.state BEGIN SELECT RAISE(FAIL,'failure write unavailable'); END`
+		if err := sessions.book.Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec(cut); return err }); err != nil {
+			t.Fatal(err)
+		}
+		_, err := runStepWithRecovery(t.Context(), p, work, nil, deps)
+		var blocked *agentexec.RecoveryBlocked
+		if !errors.As(err, &blocked) || !strings.HasSuffix(blocked.Question.RequestID, "/failure") {
+			t.Fatalf("failure transition cut on resume: %v", err)
+		}
+		records, err := deps.Attempts.ForTask(t.Context(), p.TaskID)
+		if err != nil || len(records) != 1 || records[0].State != attempt.Running || sessions.closes() != 0 {
+			t.Fatalf("unwritten failure settled the step: %+v %v closes=%d", records, err, sessions.closes())
+		}
+	})
+}
+
+// failingBudget settles no attempt.
+type failingBudget struct{ err error }
+
+func (failingBudget) Reserve(string) (int, time.Time, error) { return 0, time.Time{}, nil }
+func (failingBudget) ReserveAttempt(attempt.Record) (int, time.Time, error) {
+	return 0, time.Time{}, nil
+}
+func (b failingBudget) SettleAttempt(attempt.Record, task.Outcome) error { return b.err }
+
+// TestStepSettlementBlocksAsBefore pins how a step reports a settlement it
+// could not finish — its budget, its node session — on each path it had
+// before Run: a prompt's own failure carries the block as a `failure`
+// question (in the live path's words, or the joined path's); a finish that
+// refused the work returns its cause and leaves the block to the execution
+// scope; a bound step's budget is its own question, and its unreleased
+// session is delivered past.
+func TestStepSettlementBlocksAsBefore(t *testing.T) {
+	prompt, refusal := errors.New("the agent gave up"), errors.New("wrote outside its declared paths")
+	closeErr := errors.Join(harness.ErrStopUnconfirmed, errors.New("node away"))
+	failed := attempt.Record{Spec: attempt.Spec{ID: "a1", TaskID: "t", Node: "n1"}, State: attempt.Failed, Session: "ns_1"}
+	bound := failed
+	bound.State = attempt.Bound
+	for _, tc := range []struct {
+		name            string
+		joined, refused bool
+		record          attempt.Record
+		budget, cleanup error
+		cause           error
+		code            string // on the returned question; "" returns the cause itself
+		scope           string // on the scope's block; "" leaves nothing unresolved
+		detached        bool   // the scope's block is a detached observer's
+	}{
+		{name: "live prompt failure, accounting", record: failed, budget: errors.New("ledger away"), cause: prompt, code: "/failure", scope: "/accounting"},
+		{name: "live prompt failure, cleanup", record: failed, cleanup: closeErr, cause: prompt, code: "/failure", scope: "/cleanup"},
+		{name: "live refusal, accounting", refused: true, record: failed, budget: errors.New("ledger away"), cause: refusal, scope: "/accounting"},
+		{name: "live refusal, cleanup", refused: true, record: failed, cleanup: closeErr, cause: refusal, scope: "/cleanup"},
+		{name: "joined prompt failure, accounting", joined: true, record: failed, budget: errors.New("ledger away"), cause: prompt, code: "/failure", scope: "/accounting", detached: true},
+		{name: "joined prompt failure, cleanup", joined: true, record: failed, cleanup: closeErr, cause: prompt, code: "/failure", scope: "/cleanup", detached: true},
+		{name: "joined refusal, cleanup", joined: true, refused: true, record: failed, cleanup: closeErr, cause: refusal, scope: "/cleanup"},
+		{name: "bound, accounting", record: bound, budget: errors.New("ledger away"), code: "/accounting"},
+		{name: "bound, cleanup", record: bound, cleanup: closeErr},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := &stepRun{deps: Deps{Budget: failingBudget{tc.budget}}, record: tc.record, reserved: true, joined: tc.joined, refused: tc.refused, managed: true, promptErr: tc.cause}
+			if tc.refused {
+				r.promptErr = nil
+			}
+			_, err, unresolved := r.settle(lifecycle.Result{Record: tc.record, Driven: true, Managed: true, CleanupErr: tc.cleanup}, tc.cause)
+			var blocked *agentexec.RecoveryBlocked
+			switch {
+			case tc.code == "" && err != tc.cause:
+				t.Fatalf("err = %v, want the cause %v", err, tc.cause)
+			case tc.code != "" && (!errors.As(err, &blocked) || !strings.HasSuffix(blocked.Question.RequestID, tc.code)):
+				t.Fatalf("err = %v, want a %s question", err, tc.code)
+			}
+			var inScope *agentexec.RecoveryBlocked
+			var observer *execution.RetainedObserverDetached
+			switch {
+			case tc.scope == "" && unresolved != nil:
+				t.Fatalf("unresolved = %v, want nothing", unresolved)
+			case tc.scope != "" && (!errors.As(unresolved, &inScope) || !strings.HasSuffix(inScope.Question.RequestID, tc.scope)):
+				t.Fatalf("unresolved = %v, want a %s block", unresolved, tc.scope)
+			case errors.As(unresolved, &observer) != tc.detached:
+				t.Fatalf("unresolved = %v, detached observer = %v", unresolved, tc.detached)
+			}
+			if tc.code != "" && tc.scope != "" && !errors.Is(err, inScope) {
+				t.Fatalf("the question %v does not carry the block %v", err, inScope)
+			}
+		})
+	}
+}
+
 // TestRetainedFailedStepWhoseCloseFailsIsCleanedUpOnRestore: the failure is
 // on record and its budget settled, but the node did not confirm the
 // session closed. The record is not quarantined — restoring the step
@@ -366,8 +499,8 @@ func TestRetainedFailedStepWhoseCloseFailsIsCleanedUpOnRestore(t *testing.T) {
 	sessions.failClose(errors.New("node away"))
 	_, err := runStepWithRecovery(t.Context(), p, work, nil, deps)
 	var blocked *agentexec.RecoveryBlocked
-	if !errors.As(err, &blocked) {
-		t.Fatalf("unconfirmed close did not ask: %v", err)
+	if !errors.As(err, &blocked) || !strings.HasSuffix(blocked.Question.RequestID, "/failure") || !errors.Is(err, harness.ErrStopUnconfirmed) {
+		t.Fatalf("unconfirmed close after a failed prompt did not ask as before: %v", err)
 	}
 	records, err := deps.Attempts.ForTask(t.Context(), p.TaskID)
 	if err != nil || len(records) != 1 || records[0].State != attempt.Failed || records[0].Unsettled || sessions.closes() != 1 {

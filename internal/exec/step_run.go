@@ -537,12 +537,12 @@ func (r *stepRun) fail(cause error) error {
 // finish. A hub session's fails, or is quarantined when the stop it waits
 // on is its own.
 func (r *stepRun) blocked(stage string, cause error) error {
+	r.stage = stage
 	if r.managed {
 		var auxiliary *agentexec.RecoveryBlocked
 		if errors.As(cause, &auxiliary) && auxiliary.AttemptID != r.record.ID {
 			return &lifecycle.Deferred{Cause: cause}
 		}
-		r.stage = stage
 		return cause
 	}
 	var owned interface{ UnsettledAttempt() string }
@@ -588,6 +588,10 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 	var detached *execution.RetainedObserverDetached
 	var deferred *lifecycle.Deferred
 	var unresolved error
+	// prompted says the error is the prompt's own — how it ended, or the
+	// cancellation on its heels — and not a step of Run's, the finish's
+	// refusal or a stage of it that could not be completed.
+	prompted := false
 	switch {
 	case !run.Driven:
 		// The step never ran: what stopped it is the result.
@@ -614,6 +618,7 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 			r.result.Error = "complete result: " + r.rejected.Error()
 			err = step.Err
 		} else {
+			prompted = step == nil && !r.refused && r.stage == ""
 			r.result.Error = err.Error()
 		}
 	}
@@ -623,7 +628,7 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 				return r.result, agentexec.Blocked(r.record, "accounting", "保存步骤的用量与预算", "步骤结果已经提交，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", budgetErr), unresolved
 			}
 			unresolved = agentexec.Blocked(r.record, "accounting", "保存原步骤的用量与预算", "失败结果已保存，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", budgetErr)
-			return r.result, unresolved, unresolved
+			return r.result, r.unresolvedFailure(err, prompted, &unresolved), unresolved
 		}
 	}
 	if run.Managed && run.CleanupErr != nil {
@@ -638,20 +643,40 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 		}
 		// A failed step's session is closed again when the step is restored.
 		unresolved = agentexec.Blocked(r.record, "cleanup", "释放已结束步骤的原会话", "失败结果已保存，但原会话或工作区尚未释放。", "建议恢复原节点后重新检查。", run.CleanupErr)
-		return r.result, unresolved, unresolved
+		return r.result, r.unresolvedFailure(err, prompted, &unresolved), unresolved
 	}
 	return r.result, err, unresolved
+}
+
+// unresolvedFailure is a failed step whose settlement — its budget, its
+// session — is unresolved, as the step reported it before: a prompt that
+// failed carries the block as a failure question, in the words of the
+// path that asked (live, or joined again, where it is a detached
+// observer's); a finish that refused the work, or a step that failed
+// before its prompt, returns its cause and leaves the block to the
+// execution scope, where the retry finds it.
+func (r *stepRun) unresolvedFailure(cause error, prompted bool, unresolved *error) error {
+	if !prompted {
+		return cause
+	}
+	if r.joined {
+		*unresolved = retainedStepDetached(r.record, *unresolved)
+		return agentexec.Blocked(r.record, "failure", "连接原步骤的节点并核对已接受命令", "原步骤暂时不能安全接续。", "建议恢复原节点或存储，再检查同一次执行。", *unresolved)
+	}
+	return agentexec.Blocked(r.record, "failure", "保存原步骤的失败结果", "原命令已经返回，但结果尚未持久保存。", "建议恢复存储后检查同一次执行。", *unresolved)
 }
 
 // detachment is a detached observer in the step's words: which stage it
 // left, and how the observer that comes back should read it.
 func (r *stepRun) detachment(step *lifecycle.StepError, detached *execution.RetainedObserverDetached) error {
-	at := lifecycle.StepDrive
+	// origin is the step of Run the observer left at; at is the stage it
+	// reads as: a failure whose own transition could not be written is
+	// not a finish stage, whatever step it surfaced at.
+	origin := lifecycle.StepDrive
 	if step != nil {
-		at = step.Step
+		origin = step.Step
 	}
-	// A failure whose own transition could not be written is not a finish
-	// stage, whatever step it surfaced at.
+	at := origin
 	if at == lifecycle.StepFinish && (r.promptErr != nil || r.refused) {
 		at = lifecycle.StepDrive
 	}
@@ -663,12 +688,18 @@ func (r *stepRun) detachment(step *lifecycle.StepError, detached *execution.Reta
 		}
 		return agentexec.Blocked(r.record, stage, "保存原步骤的产物、验证与结果", "原命令已返回，但步骤还没有完整提交。", "建议恢复原节点或存储，继续核对这次执行。", detached)
 	case r.joined:
+		// A joined observer that lost the prompt — unsettled, cancelled —
+		// is an observer's loss; only a settled end whose marker or failure
+		// could not be written is the ledger's.
 		code := "observer"
-		switch {
-		case at == lifecycle.StepSettle:
+		switch origin {
+		case lifecycle.StepSettle:
 			code = "marker"
-		case r.promptErr != nil || r.refused:
+		case lifecycle.StepFinish:
 			code = "failure"
+			if r.promptErr != nil && !r.refused {
+				r.result.Error = r.promptErr.Error()
+			}
 		}
 		return agentexec.Blocked(r.record, code, "连接原步骤的节点并核对已接受命令", "原步骤暂时不能安全接续。", "建议恢复原节点或存储，再检查同一次执行。", detached)
 	case at == lifecycle.StepSettle:
