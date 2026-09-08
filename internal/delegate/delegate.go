@@ -204,7 +204,7 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 		return agentmcp.DelegateResult{}, fmt.Errorf("workspace for %s: %w", candidate.Agent.ID, err)
 	}
 	if err := ctx.Err(); err != nil {
-		_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
+		s.discardUnused(ctx, workspace, attemptID, parent)
 		return agentmcp.DelegateResult{}, err
 	}
 	s.rememberBase(workspace.ID, workspace.Base)
@@ -225,7 +225,7 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 		spawned, err = s.tasks.Spawn(parent.ID, childSpec)
 	}
 	if err != nil {
-		_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
+		s.discardUnused(ctx, workspace, attemptID, parent)
 		return agentmcp.DelegateResult{}, err
 	}
 	slog.Info(fmt.Sprintf("delegate: %s -> %s task #%s under #%s on %s", agentID, candidate.Agent.ID, spawned.ID, parent.ID, nodeLabel(candidate.Node)),
@@ -236,7 +236,7 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 		var err error
 		scope, err = s.executions.Begin(s.executions.Detached(ctx), execution.Key{TaskID: spawned.ID, InstanceID: "delegate/" + spawned.ID, AttemptID: attemptID})
 		if err != nil {
-			_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
+			s.discardUnused(ctx, workspace, attemptID, parent)
 			return agentmcp.DelegateResult{}, err
 		}
 	}
@@ -1204,6 +1204,16 @@ func (s *Service) parentLease(ctx context.Context, parent task.Task) (ledger.Lea
 		}
 	}
 	return ledger.Lease{}, false
+}
+
+// discardUnused removes the worktree a delegation was given before it
+// was refused. The caller is already returning the refusal, which is the
+// error the agent needs; a worktree that could not be removed is disk
+// left on the node, reported here for the operator.
+func (s *Service) discardUnused(ctx context.Context, workspace project.Workspace, attemptID string, parent task.Task) {
+	if err := s.artifacts.Discard(context.WithoutCancel(ctx), workspace); err != nil {
+		slog.Warn(fmt.Sprintf("delegate: discard unused workspace %s: %v", workspace.Path, err), "attempt", attemptID, "parent", parent.ID, "node", workspace.Node, "project", workspace.Project)
+	}
 }
 
 // rememberBase keeps the base a child's worktree came from until run()

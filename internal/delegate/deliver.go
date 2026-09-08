@@ -166,7 +166,9 @@ func (s *Service) Flush(ctx context.Context, parentID string) {
 		// Nobody to continue: the results stay on the children's records;
 		// the listing shows them. Mark them so they are not retried.
 		for _, c := range waiting {
-			_ = s.tasks.SetDelivery(c.ID, task.DeliveryDelivered)
+			if err := s.tasks.SetDelivery(c.ID, task.DeliveryDelivered); err != nil {
+				slog.Error(fmt.Sprintf("delegate: mark task #%s delivered: %v", c.ID, err), "task", c.ID, "parent", parentID)
+			}
 		}
 		return
 	}

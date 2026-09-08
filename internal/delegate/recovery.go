@@ -420,7 +420,12 @@ func (s *Service) reportRecovery(ctx context.Context, binding QuestionBinding, c
 				delete(s.recoveryQuestions, binding.Attempt)
 			}
 			s.mu.Unlock()
-			_ = s.RecoverRetained(questionCtx)
+			// The answer asked for another pass; nobody is waiting on
+			// its outcome, and a pass that fails as a whole is a ledger
+			// or shutdown problem, not this child's.
+			if err := s.RecoverRetained(questionCtx); err != nil {
+				slog.Warn(fmt.Sprintf("delegate: recovery pass after answer: %v", err), "task", binding.Task, "parent", binding.ParentTask, "attempt", binding.Attempt, "conversation", binding.Conversation, "node", binding.Node, "reason", code)
+			}
 		}
 	}()
 }
