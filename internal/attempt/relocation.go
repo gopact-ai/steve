@@ -237,175 +237,264 @@ func (s *Service) RelocationWorkspaces(ctx context.Context, node string) (map[st
 func (s *Service) OpenRelocation(ctx context.Context, planID string, approval RelocationApproval) (Record, error) {
 	var created Record
 	err := s.l.Update(ctx, func(tx *ledger.Tx) error {
-		var retired string
-		if err := tx.QueryRow(`SELECT data FROM bindings WHERE kind = ? AND id = ?`, retiredRelocationKind, planID).Scan(&retired); err == nil {
-			return errors.New("relocation plan was invalidated")
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			return err
-		}
-		var raw string
-		if err := tx.QueryRow(`SELECT data FROM bindings WHERE kind = ? AND id = ?`, relocationKind, planID).Scan(&raw); err != nil {
-			return err
-		}
-		var p RelocationIntent
-		if json.Unmarshal([]byte(raw), &p) != nil || p.ID != planID || p.Fingerprint() != planID {
-			return errors.New("relocation plan changed")
-		}
-		ops, err := tx.Operations(kind, "")
+		p, err := relocationPlanTx(tx, planID)
 		if err != nil {
 			return err
 		}
-		var old Record
-		found := false
-		for _, op := range ops {
-			if op.ID == p.Target.ID {
-				existing, err := decode(op)
-				if err != nil {
-					return err
-				}
-				if existing.Recovery == nil || existing.Recovery.PlanID != p.ID {
-					return ledger.ErrConflict
-				}
-				created = existing
-				return nil
-			}
-			if op.ID == p.SourceID {
-				old, err = decode(op)
-				if err != nil {
-					return err
-				}
-				found = true
-			}
-		}
-		if !found || old.Revision != p.SourceRevision || !Relocatable(old) || old.Execution.Epoch != p.TaskEpoch {
-			return ledger.ErrConflict
-		}
-		if err := task.CheckExecutionTx(tx, old.Execution); err != nil {
-			return err
-		}
-		taskRaw, ok, err := tx.LoadDocument("tasks")
+		old, replacement, err := relocationRecordsTx(tx, p)
 		if err != nil {
 			return err
 		}
-		if !ok {
-			return errors.New("task record missing")
+		if replacement != nil {
+			created = *replacement
+			return nil
 		}
-		var taskDocument struct {
-			Tasks map[string]*task.Task `json:"tasks"`
-		}
-		if err := json.Unmarshal(taskRaw, &taskDocument); err != nil {
+		tracked, err := relocationTaskTx(tx, old, p.Owner)
+		if err != nil {
 			return err
-		}
-		tracked := taskDocument.Tasks[old.TaskID]
-		if tracked == nil || !tracked.State.Holds() || (tracked.Requester != "" && tracked.Requester != p.Owner) {
-			return errors.New("relocation task is no longer active or belongs to another requester")
 		}
 		spec := p.Target
-		if spec.TaskID != old.TaskID || spec.TurnID != old.TurnID || spec.Project != old.Project || spec.Kind != old.Kind || spec.Node == "" || spec.Node == old.Node || spec.Workspace.Node != spec.Node || spec.Workspace.Kind != project.KindWorktree || spec.Scope != ScopePathSet || spec.Base != p.Checkpoint || spec.Execution == nil || *spec.Execution != *old.Execution || spec.ExecutionGeneration != SessionExecutionEpoch(old)+1 || spec.NativeCommandID == "" || spec.NativeCommandID == InputCommandID(old) {
-			return errors.New("replacement does not match its original task and isolated workspace")
+		if err := s.checkReplacementSpec(spec, old, p); err != nil {
+			return err
 		}
-		if spec.Region != "" && spec.Region != s.l.Region() {
-			return ledger.ErrUnknownRegion
-		}
-		automatic := false
-		if proof := approval.Node; proof != nil && !proof.ObservedAt.IsZero() && !proof.ObservedAt.After(s.now().Add(time.Second)) && s.now().Sub(proof.ObservedAt) <= time.Minute {
-			st, cmd := proof.Session, proof.Session.Command
-			automatic = st.Harness == old.Harness && st.ID == old.Session && strings.HasPrefix(st.ID, "ns_") && st.Binding.AttemptID == old.ID && st.Binding.TaskID == old.TaskID && st.Binding.TaskEpoch == old.Execution.Epoch && st.Binding.NodeID == old.Node && st.Binding.ProjectID == old.Project && st.Binding.SessionID == RetainedSessionID(tracked.Channel, tracked.ID, old.Agent) && st.Binding.ExecutionEpoch == SessionExecutionEpoch(old) && st.ProcessStopped && cmd != nil && cmd.ID == InputCommandID(old) && cmd.InputSequence > 0 && cmd.InputSequence <= st.InputAccepted && cmd.DispatchState == "not-dispatched" && cmd.ProcessStopped && !cmd.CancelRequested && cmd.State != nodewire.SessionCommandCancelled && !cmd.Settled
-		}
-		manual := approval.PlanID == p.ID && approval.Actor == p.Owner && approval.ChoiceID == "confirm-stopped-and-retry:"+p.ID && approval.StoppedConfirmed && approval.EffectsReviewed
-		if !automatic && !manual {
-			return errors.New("this relocation requires explicit plan-scoped stop and effects confirmation")
-		}
-		// Checkpoint identity is the logical task session, including when a
-		// replacement failed before a native session was committed. Physical
-		// stop evidence above still requires the exact original ns_ receipt.
-		source := checkpoint.Source{TaskID: old.TaskID, SessionID: RetainedSessionID(tracked.Channel, tracked.ID, old.Agent), AttemptID: old.ID, TurnID: old.TurnID, NodeID: old.Node, ExecutionEpoch: SessionExecutionEpoch(old), TaskEpoch: old.Execution.Epoch}
-		evidence := "operator-confirmation/" + p.ID
-		if automatic {
-			evidence = "node-undispatched/" + p.ID
-		}
-		var retry *checkpoint.RetryAuthorization
-		if manual {
-			retry = &checkpoint.RetryAuthorization{PlanID: p.ID, TaskID: old.TaskID, AttemptID: old.ID, Actor: approval.Actor, DecisionID: approval.ChoiceID, TargetNodeID: spec.Node}
-		}
-		decision := checkpoint.CheckReplacement(checkpoint.ReplacementRequest{PlanID: p.ID, Source: source, Isolation: checkpoint.IsolationEvidence{AttemptID: old.ID, ExecutionEpoch: source.ExecutionEpoch, Kind: checkpoint.IsolationProcessStopped, Reference: evidence}, Reconciliation: checkpoint.ActionReconciliation{AttemptID: old.ID, ExecutionEpoch: source.ExecutionEpoch, IsolationReference: evidence, Checked: true, Results: approval.ActionResults, RetryAuthorization: retry}, UnknownActions: p.UnknownActions, Target: checkpoint.ResumeTarget{NodeID: spec.Node, ExecutionEpoch: spec.ExecutionGeneration, TaskEpoch: p.TaskEpoch, Authorized: true, AdmissionChecked: true}})
-		if decision.Action != checkpoint.ResumeStartAttempt {
-			return errors.New(decision.Question.Message())
-		}
-		if err := tx.RetireStopped(old.Leases); err != nil {
+		evidence, err := s.relocationStopEvidence(old, tracked, p, approval)
+		if err != nil {
 			return err
 		}
 		oldPhase := old.State
-		old.State = Superseded
-		old.SupersededBy = spec.ID
-		old.Unsettled = false
-		old.StopEvidence = evidence
-		settled := true
-		old.SessionSettled = &settled
-		old.Revision++
-		old.EndedAt = s.now().UTC()
-		data, err := json.Marshal(old)
+		if err := s.supersedeSourceTx(tx, &old, spec.ID, evidence); err != nil {
+			return err
+		}
+		leases, err := s.leaseReplacementTx(tx, spec)
 		if err != nil {
 			return err
-		}
-		if _, err := tx.Exec(`UPDATE operations SET state = ?, revision = ?, data = ?, updated_at = ? WHERE id = ?`, string(Superseded), old.Revision, string(data), old.EndedAt.Format(time.RFC3339Nano), old.ID); err != nil {
-			return err
-		}
-		if err := checkAdmissionTx(tx, spec); err != nil {
-			return err
-		}
-		var leases []ledger.Lease
-		for _, key := range []string{"attempt:" + spec.ID, "workspace:" + spec.Workspace.ID} {
-			lease, err := tx.AcquireLocal(key, spec.ID, s.TTL)
-			if err != nil {
-				return err
-			}
-			leases = append(leases, lease)
-		}
-		if spec.Slots > 0 {
-			selected := false
-			for slot := 1; slot <= spec.Slots; slot++ {
-				lease, err := tx.AcquireLocal(fmt.Sprintf("%s:slot:%d", endpointKey(spec.Node, spec.Harness), slot), spec.ID, s.TTL)
-				if err == nil {
-					leases = append(leases, lease)
-					selected = true
-					break
-				}
-				if !errors.Is(err, ledger.ErrHeld) {
-					return err
-				}
-			}
-			if !selected {
-				return NoSlot{Endpoint: endpointKey(spec.Node, spec.Harness), Slots: spec.Slots}
-			}
 		}
 		spec.Recovery = &RecoveryOrigin{AttemptID: old.ID, PlanID: p.ID, Checkpoint: p.Checkpoint}
+		settled := true
 		created = Record{Spec: spec, State: Leased, Revision: 1, SessionSettled: &settled, Leases: leases, StartedAt: s.now().UTC()}
-		data, err = json.Marshal(created)
-		if err != nil {
-			return err
-		}
-		stamp := created.StartedAt.Format(time.RFC3339Nano)
-		if _, err := tx.Exec(`INSERT INTO operations(id, kind, state, revision, incarnation, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, spec.ID, kind, string(Leased), 1, s.l.Incarnation(), string(data), stamp, stamp); err != nil {
-			return err
-		}
-		proof, err := json.Marshal(struct {
-			Plan     string             `json:"plan"`
-			Approval RelocationApproval `json:"approval"`
-		}{p.ID, approval})
-		if err != nil {
-			return err
-		}
-		for _, event := range []struct {
-			id       string
-			rev      int64
-			from, to State
-		}{{old.ID, old.Revision, oldPhase, Superseded}, {created.ID, 1, "", Leased}} {
-			if _, err := tx.Exec(`INSERT INTO events(operation_id, revision, incarnation, from_state, to_state, actor, fencings, effects, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, event.id, event.rev, s.l.Incarnation(), string(event.from), string(event.to), p.Owner, "[]", string(proof), stamp); err != nil {
-				return err
-			}
-		}
-		return nil
+		return s.recordRelocationTx(tx, p, approval, old, oldPhase, created)
 	})
 	return created, err
+}
+
+// relocationPlanTx loads an approved plan that has not been invalidated
+// and still matches the fingerprint it was recorded under.
+func relocationPlanTx(tx *ledger.Tx, planID string) (RelocationIntent, error) {
+	var retired string
+	if err := tx.QueryRow(`SELECT data FROM bindings WHERE kind = ? AND id = ?`, retiredRelocationKind, planID).Scan(&retired); err == nil {
+		return RelocationIntent{}, errors.New("relocation plan was invalidated")
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return RelocationIntent{}, err
+	}
+	var raw string
+	if err := tx.QueryRow(`SELECT data FROM bindings WHERE kind = ? AND id = ?`, relocationKind, planID).Scan(&raw); err != nil {
+		return RelocationIntent{}, err
+	}
+	var p RelocationIntent
+	if json.Unmarshal([]byte(raw), &p) != nil || p.ID != planID || p.Fingerprint() != planID {
+		return RelocationIntent{}, errors.New("relocation plan changed")
+	}
+	return p, nil
+}
+
+// relocationRecordsTx finds the plan's attempts among the operations. A
+// replacement an earlier call already created makes this one idempotent:
+// it comes back as is and the source is not looked at. Otherwise the
+// source must be the revision the plan was made from, still relocatable,
+// and still executing under the plan's task epoch.
+func relocationRecordsTx(tx *ledger.Tx, p RelocationIntent) (source Record, replacement *Record, err error) {
+	ops, err := tx.Operations(kind, "")
+	if err != nil {
+		return Record{}, nil, err
+	}
+	found := false
+	for _, op := range ops {
+		if op.ID == p.Target.ID {
+			existing, err := decode(op)
+			if err != nil {
+				return Record{}, nil, err
+			}
+			if existing.Recovery == nil || existing.Recovery.PlanID != p.ID {
+				return Record{}, nil, ledger.ErrConflict
+			}
+			return Record{}, &existing, nil
+		}
+		if op.ID == p.SourceID {
+			source, err = decode(op)
+			if err != nil {
+				return Record{}, nil, err
+			}
+			found = true
+		}
+	}
+	if !found || source.Revision != p.SourceRevision || !Relocatable(source) || source.Execution.Epoch != p.TaskEpoch {
+		return Record{}, nil, ledger.ErrConflict
+	}
+	if err := task.CheckExecutionTx(tx, source.Execution); err != nil {
+		return Record{}, nil, err
+	}
+	return source, nil, nil
+}
+
+// relocationTaskTx is the task the source attempt runs for, which must
+// still hold work and, when it names a requester, be the plan owner's.
+func relocationTaskTx(tx *ledger.Tx, old Record, owner string) (*task.Task, error) {
+	taskRaw, ok, err := tx.LoadDocument("tasks")
+	if err != nil {
+		return nil, err
+	}
+	if !ok {
+		return nil, errors.New("task record missing")
+	}
+	var taskDocument struct {
+		Tasks map[string]*task.Task `json:"tasks"`
+	}
+	if err := json.Unmarshal(taskRaw, &taskDocument); err != nil {
+		return nil, err
+	}
+	tracked := taskDocument.Tasks[old.TaskID]
+	if tracked == nil || !tracked.State.Holds() || (tracked.Requester != "" && tracked.Requester != owner) {
+		return nil, errors.New("relocation task is no longer active or belongs to another requester")
+	}
+	return tracked, nil
+}
+
+// checkReplacementSpec is the shape a replacement must have: the
+// original's task, turn, project and kind, on another node, in an isolated
+// worktree there, based on the plan's checkpoint, under the same execution
+// token one generation on, with a native command of its own. A region it
+// names must be this ledger's.
+func (s *Service) checkReplacementSpec(spec Spec, old Record, p RelocationIntent) error {
+	if spec.TaskID != old.TaskID || spec.TurnID != old.TurnID || spec.Project != old.Project || spec.Kind != old.Kind || spec.Node == "" || spec.Node == old.Node || spec.Workspace.Node != spec.Node || spec.Workspace.Kind != project.KindWorktree || spec.Scope != ScopePathSet || spec.Base != p.Checkpoint || spec.Execution == nil || *spec.Execution != *old.Execution || spec.ExecutionGeneration != SessionExecutionEpoch(old)+1 || spec.NativeCommandID == "" || spec.NativeCommandID == InputCommandID(old) {
+		return errors.New("replacement does not match its original task and isolated workspace")
+	}
+	if spec.Region != "" && spec.Region != s.l.Region() {
+		return ledger.ErrUnknownRegion
+	}
+	return nil
+}
+
+// relocationStopEvidence establishes that the original stopped and names
+// the evidence: the node's own receipt of its command left undispatched,
+// observed within the last minute, or the plan owner's explicit
+// plan-scoped confirmation of the stop and of the effects reviewed. The
+// checkpoint rules then decide whether that evidence, with the plan's
+// unresolved actions, admits a new attempt on the target.
+func (s *Service) relocationStopEvidence(old Record, tracked *task.Task, p RelocationIntent, approval RelocationApproval) (string, error) {
+	automatic := false
+	if proof := approval.Node; proof != nil && !proof.ObservedAt.IsZero() && !proof.ObservedAt.After(s.now().Add(time.Second)) && s.now().Sub(proof.ObservedAt) <= time.Minute {
+		st, cmd := proof.Session, proof.Session.Command
+		automatic = st.Harness == old.Harness && st.ID == old.Session && strings.HasPrefix(st.ID, "ns_") && st.Binding.AttemptID == old.ID && st.Binding.TaskID == old.TaskID && st.Binding.TaskEpoch == old.Execution.Epoch && st.Binding.NodeID == old.Node && st.Binding.ProjectID == old.Project && st.Binding.SessionID == RetainedSessionID(tracked.Channel, tracked.ID, old.Agent) && st.Binding.ExecutionEpoch == SessionExecutionEpoch(old) && st.ProcessStopped && cmd != nil && cmd.ID == InputCommandID(old) && cmd.InputSequence > 0 && cmd.InputSequence <= st.InputAccepted && cmd.DispatchState == "not-dispatched" && cmd.ProcessStopped && !cmd.CancelRequested && cmd.State != nodewire.SessionCommandCancelled && !cmd.Settled
+	}
+	manual := approval.PlanID == p.ID && approval.Actor == p.Owner && approval.ChoiceID == "confirm-stopped-and-retry:"+p.ID && approval.StoppedConfirmed && approval.EffectsReviewed
+	if !automatic && !manual {
+		return "", errors.New("this relocation requires explicit plan-scoped stop and effects confirmation")
+	}
+	// Checkpoint identity is the logical task session, including when a
+	// replacement failed before a native session was committed. Physical
+	// stop evidence above still requires the exact original ns_ receipt.
+	source := checkpoint.Source{TaskID: old.TaskID, SessionID: RetainedSessionID(tracked.Channel, tracked.ID, old.Agent), AttemptID: old.ID, TurnID: old.TurnID, NodeID: old.Node, ExecutionEpoch: SessionExecutionEpoch(old), TaskEpoch: old.Execution.Epoch}
+	evidence := "operator-confirmation/" + p.ID
+	if automatic {
+		evidence = "node-undispatched/" + p.ID
+	}
+	var retry *checkpoint.RetryAuthorization
+	if manual {
+		retry = &checkpoint.RetryAuthorization{PlanID: p.ID, TaskID: old.TaskID, AttemptID: old.ID, Actor: approval.Actor, DecisionID: approval.ChoiceID, TargetNodeID: p.Target.Node}
+	}
+	decision := checkpoint.CheckReplacement(checkpoint.ReplacementRequest{PlanID: p.ID, Source: source, Isolation: checkpoint.IsolationEvidence{AttemptID: old.ID, ExecutionEpoch: source.ExecutionEpoch, Kind: checkpoint.IsolationProcessStopped, Reference: evidence}, Reconciliation: checkpoint.ActionReconciliation{AttemptID: old.ID, ExecutionEpoch: source.ExecutionEpoch, IsolationReference: evidence, Checked: true, Results: approval.ActionResults, RetryAuthorization: retry}, UnknownActions: p.UnknownActions, Target: checkpoint.ResumeTarget{NodeID: p.Target.Node, ExecutionEpoch: p.Target.ExecutionGeneration, TaskEpoch: p.TaskEpoch, Authorized: true, AdmissionChecked: true}})
+	if decision.Action != checkpoint.ResumeStartAttempt {
+		return "", errors.New(decision.Question.Message())
+	}
+	return evidence, nil
+}
+
+// supersedeSourceTx retires the original in place: its leases are retired
+// as stopped and its record moves to superseded, one revision on, naming
+// the replacement and the evidence the stop rests on.
+func (s *Service) supersedeSourceTx(tx *ledger.Tx, old *Record, replacement, evidence string) error {
+	if err := tx.RetireStopped(old.Leases); err != nil {
+		return err
+	}
+	old.State = Superseded
+	old.SupersededBy = replacement
+	old.Unsettled = false
+	old.StopEvidence = evidence
+	settled := true
+	old.SessionSettled = &settled
+	old.Revision++
+	old.EndedAt = s.now().UTC()
+	data, err := json.Marshal(*old)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`UPDATE operations SET state = ?, revision = ?, data = ?, updated_at = ? WHERE id = ?`, string(Superseded), old.Revision, string(data), old.EndedAt.Format(time.RFC3339Nano), old.ID)
+	return err
+}
+
+// leaseReplacementTx admits the replacement and takes its leases in the
+// same transaction: its attempt and workspace keys, then one slot at its
+// endpoint when the harness counts them.
+func (s *Service) leaseReplacementTx(tx *ledger.Tx, spec Spec) ([]ledger.Lease, error) {
+	if err := checkAdmissionTx(tx, spec); err != nil {
+		return nil, err
+	}
+	var leases []ledger.Lease
+	for _, key := range []string{"attempt:" + spec.ID, "workspace:" + spec.Workspace.ID} {
+		lease, err := tx.AcquireLocal(key, spec.ID, s.TTL)
+		if err != nil {
+			return nil, err
+		}
+		leases = append(leases, lease)
+	}
+	if spec.Slots > 0 {
+		selected := false
+		for slot := 1; slot <= spec.Slots; slot++ {
+			lease, err := tx.AcquireLocal(fmt.Sprintf("%s:slot:%d", endpointKey(spec.Node, spec.Harness), slot), spec.ID, s.TTL)
+			if err == nil {
+				leases = append(leases, lease)
+				selected = true
+				break
+			}
+			if !errors.Is(err, ledger.ErrHeld) {
+				return nil, err
+			}
+		}
+		if !selected {
+			return nil, NoSlot{Endpoint: endpointKey(spec.Node, spec.Harness), Slots: spec.Slots}
+		}
+	}
+	return leases, nil
+}
+
+// recordRelocationTx writes the replacement's record and the open's two
+// events — the original superseded from the phase it was in, the
+// replacement leased — at the replacement's start, each carrying the plan
+// and the approval the open rests on.
+func (s *Service) recordRelocationTx(tx *ledger.Tx, p RelocationIntent, approval RelocationApproval, old Record, oldPhase State, created Record) error {
+	data, err := json.Marshal(created)
+	if err != nil {
+		return err
+	}
+	stamp := created.StartedAt.Format(time.RFC3339Nano)
+	if _, err := tx.Exec(`INSERT INTO operations(id, kind, state, revision, incarnation, data, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`, created.ID, kind, string(Leased), 1, s.l.Incarnation(), string(data), stamp, stamp); err != nil {
+		return err
+	}
+	proof, err := json.Marshal(struct {
+		Plan     string             `json:"plan"`
+		Approval RelocationApproval `json:"approval"`
+	}{p.ID, approval})
+	if err != nil {
+		return err
+	}
+	for _, event := range []struct {
+		id       string
+		rev      int64
+		from, to State
+	}{{old.ID, old.Revision, oldPhase, Superseded}, {created.ID, 1, "", Leased}} {
+		if _, err := tx.Exec(`INSERT INTO events(operation_id, revision, incarnation, from_state, to_state, actor, fencings, effects, at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, event.id, event.rev, s.l.Incarnation(), string(event.from), string(event.to), p.Owner, "[]", string(proof), stamp); err != nil {
+			return err
+		}
+	}
+	return nil
 }
