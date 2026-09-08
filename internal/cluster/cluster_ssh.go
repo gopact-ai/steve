@@ -1,4 +1,4 @@
-package main
+package cluster
 
 import (
 	"context"
@@ -11,15 +11,14 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/desktop"
-	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
-func (p *clusterPeer) serveSSHLocal(w http.ResponseWriter, r *http.Request) {
-	p.mu.Lock()
+func (p *Peer) serveSSHLocal(w http.ResponseWriter, r *http.Request) {
+	p.Mu.Lock()
 	if p.closing {
-		p.mu.Unlock()
+		p.Mu.Unlock()
 		http.Error(w, "本机节点正在关闭", http.StatusServiceUnavailable)
 		return
 	}
@@ -27,10 +26,10 @@ func (p *clusterPeer) serveSSHLocal(w http.ResponseWriter, r *http.Request) {
 		p.localSSH = sshconnect.New(sshconnect.Options{Backend: peerSSHBackend{peer: p}, InstallationMode: sshconnect.InstallPeer})
 	}
 	service := p.localSSH
-	p.mu.Unlock()
-	handler, err := httpapi.SSHHandler(peerSSHService{service}, p.uiToken, p.uiURL)
+	p.Mu.Unlock()
+	handler, err := p.Options.SSHHandler(peerSSHService{service}, p.UIToken, p.UiURL)
 	if err != nil {
-		peerHTTPError(w, err)
+		HTTPError(w, err)
 		return
 	}
 	handler.ServeHTTP(w, r)
@@ -59,7 +58,7 @@ type peerEnrollmentService interface {
 }
 
 type peerSSHBackend struct {
-	peer *clusterPeer
+	peer *Peer
 	// Tests supply a bounded enrollment fixture and a local verified package.
 	enrollment peerEnrollmentService
 	findBinary func(string) (string, bool)
@@ -153,7 +152,7 @@ func (b peerSSHBackend) Register(ctx context.Context, req sshconnect.InstallRequ
 	if err != nil {
 		return result, err
 	}
-	var bundle peerJoinPackage
+	var bundle PeerJoinPackage
 	if registered.Plan.ReviewID != plan.ReviewID || peerPlanHash(registered.Plan) != plan.ReviewID || json.Unmarshal(registered.Payload, &bundle) != nil || bundle.OperationID != installID || bundle.NodeID != registered.NodeID || bundle.ClusterID != plan.ClusterID || bundle.Name != plan.Request.Name || bundle.StorageLevel != plan.Request.Level || bundle.PeerAdvertise != plan.Request.PeerAddress || bundle.RaftAdvertise != plan.Request.RaftAddress || !reflect.DeepEqual(bundle.Seeds, plan.Seeds) {
 		return result, errors.New("私有入组包与已审阅网络计划不同，安装已停止")
 	}
@@ -215,4 +214,11 @@ func (b peerSSHBackend) ResumeRegistration(ctx context.Context, id string) (sshc
 	result.Connected, result.Status = true, "connected"
 	result.Steps = append(result.Steps, sshconnect.Step{ID: "peer_membership", Status: "ready", Message: "原接入操作已确认完成；节点成员、协作副本和执行服务就绪"})
 	return result, nil
+}
+
+type SSHControl interface {
+	SSHDiscover(context.Context) (sshconnect.Discovery, error)
+	SSHCheck(context.Context, string) (sshconnect.CheckResult, error)
+	SSHPlan(context.Context, sshconnect.InstallRequest) (sshconnect.InstallPlan, error)
+	SSHCommit(context.Context, string) (sshconnect.InstallResult, error)
 }

@@ -40,16 +40,16 @@ func TestCommittedSessionCleanupUsesNativeIdentityWithoutWorkdir(t *testing.T) {
 }
 
 func TestExecutorSessionAuthorityUsesCommittedExecutionAndActiveCoordinator(t *testing.T) {
-	options, _ := testPeerOptions(t, clusterPeerTestDir(t), nil)
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	activated := make(chan cluster.Activation, 1)
 	var count atomic.Int32
 	application := testPeerApplication(t, &count)
-	options.Activate = func(ctx context.Context, active cluster.Activation, ready func(peerApplicationEndpoint) error) (cluster.Deactivate, error) {
+	options.Activate = func(ctx context.Context, active cluster.Activation, ready func(cluster.PeerApplicationEndpoint) error) (cluster.Deactivate, error) {
 		stop, err := application(ctx, active, ready)
 		activated <- active
 		return stop, err
 	}
-	peer := startTestPeer(t, options)
+	peer := StartTestPeer(t, options)
 	var active cluster.Activation
 	select {
 	case active = <-activated:
@@ -85,9 +85,9 @@ func TestExecutorSessionAuthorityUsesCommittedExecutionAndActiveCoordinator(t *t
 	contextWithCancel, cancel := context.WithCancel(active.Context)
 	defer cancel()
 	active.Context = contextWithCancel
-	verify := peer.applicationSessionAuthorizer(active)
-	a := nodewire.SessionAuthority{ClusterID: peer.config.ClusterID, CoordinatorNodeID: active.NodeID, CoordinatorEpoch: active.Assignment.Epoch, WriterGeneration: active.WriterGeneration}
-	b := nodewire.SessionBinding{ProjectID: "p", SessionID: logicalAgentSession(tracked.Channel, tracked.ID, record.Agent), TaskID: tracked.ID, AttemptID: record.ID, NodeID: "worker", ExecutionEpoch: attempt.SessionExecutionEpoch(record), TaskEpoch: token.Epoch}
+	verify := peer.ApplicationSessionAuthorizer(active)
+	a := nodewire.SessionAuthority{ClusterID: peer.Config.ClusterID, CoordinatorNodeID: active.NodeID, CoordinatorEpoch: active.Assignment.Epoch, WriterGeneration: active.WriterGeneration}
+	b := nodewire.SessionBinding{ProjectID: "p", SessionID: cluster.LogicalAgentSession(tracked.Channel, tracked.ID, record.Agent), TaskID: tracked.ID, AttemptID: record.ID, NodeID: "worker", ExecutionEpoch: attempt.SessionExecutionEpoch(record), TaskEpoch: token.Epoch}
 	if err := verify(t.Context(), "worker", a, b, "start"); err != nil {
 		t.Fatalf("committed executor preparation refused: %v", err)
 	}

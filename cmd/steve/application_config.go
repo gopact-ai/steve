@@ -23,7 +23,7 @@ type applicationConfiguration struct {
 	runtime *cluster.Runtime
 }
 
-func newApplicationConfiguration(ctx context.Context, activation cluster.Activation, worker peerWorkerDescriptor) *applicationConfiguration {
+func newApplicationConfiguration(ctx context.Context, activation cluster.Activation, worker cluster.PeerWorkerDescriptor) *applicationConfiguration {
 	return &applicationConfiguration{ctx: ctx, store: platformconfig.New(activation.Ledger), runtime: activation.Runtime,
 		local: platformconfig.LocalNode{ID: activation.NodeID, Config: config.Node{Addr: worker.Address, Token: worker.Token, Level: "restricted"}}}
 }

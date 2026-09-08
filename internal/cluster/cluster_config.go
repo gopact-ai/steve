@@ -1,4 +1,4 @@
-package main
+package cluster
 
 import (
 	"context"
@@ -30,7 +30,7 @@ import (
 	"github.com/gopact-ai/steve/internal/desktop"
 )
 
-type clusterPeerConfig struct {
+type PeerConfig struct {
 	Version          int                   `json:"version"`
 	ClusterID        string                `json:"cluster_id"`
 	NodeID           string                `json:"node_id"`
@@ -54,11 +54,11 @@ type clusterPeerConfig struct {
 	Seeds            []coordination.Member `json:"seeds"`
 }
 
-func defaultClusterConfigPath(configPath string) string { return configPath + ".cluster.json" }
+func DefaultClusterConfigPath(configPath string) string { return configPath + ".cluster.json" }
 
-func loadClusterPeerConfig(path string) (clusterPeerConfig, error) {
-	var config clusterPeerConfig
-	data, err := readClusterPrivate(path)
+func LoadClusterPeerConfig(path string) (PeerConfig, error) {
+	var config PeerConfig
+	data, err := ReadClusterPrivate(path)
 	if err != nil {
 		return config, err
 	}
@@ -103,16 +103,16 @@ func loadClusterPeerConfig(path string) (clusterPeerConfig, error) {
 	return config, nil
 }
 
-func (c clusterPeerConfig) tlsOptions() (coordination.TLSOptions, error) {
-	ca, err := readClusterPrivate(c.CACertFile)
+func (c PeerConfig) TlsOptions() (coordination.TLSOptions, error) {
+	ca, err := ReadClusterPrivate(c.CACertFile)
 	if err != nil {
 		return coordination.TLSOptions{}, err
 	}
-	cert, err := readClusterPrivate(c.CertFile)
+	cert, err := ReadClusterPrivate(c.CertFile)
 	if err != nil {
 		return coordination.TLSOptions{}, err
 	}
-	key, err := readClusterPrivate(c.KeyFile)
+	key, err := ReadClusterPrivate(c.KeyFile)
 	if err != nil {
 		return coordination.TLSOptions{}, err
 	}
@@ -131,8 +131,8 @@ func (c clusterPeerConfig) tlsOptions() (coordination.TLSOptions, error) {
 	return options, nil
 }
 
-func prepareDesktopCluster(configPath string) (string, error) {
-	path := defaultClusterConfigPath(configPath)
+func PrepareDesktopCluster(configPath string) (string, error) {
+	path := DefaultClusterConfigPath(configPath)
 	if _, err := os.Lstat(path); err == nil {
 		return path, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -155,20 +155,20 @@ func prepareDesktopCluster(configPath string) (string, error) {
 		if _, err := os.Stat(filepath.Join(dir, "raft")); err == nil {
 			return "", errors.New("cluster configuration is missing for an initialized peer")
 		}
-		saved, err := loadClusterPeerConfig(filepath.Join(dir, "bootstrap.json"))
+		saved, err := LoadClusterPeerConfig(filepath.Join(dir, "bootstrap.json"))
 		if err != nil {
 			return "", fmt.Errorf("recover cluster initialization: %w", err)
 		}
 		if saved.NodeID != installed.NodeID || saved.DataDir != dir {
 			return "", errors.New("cluster initialization identity differs from the desktop")
 		}
-		if _, err := saved.tlsOptions(); err != nil {
+		if _, err := saved.TlsOptions(); err != nil {
 			return "", err
 		}
-		if _, err := readClusterPrivate(saved.OwnerTokenFile); err != nil {
+		if _, err := ReadClusterPrivate(saved.OwnerTokenFile); err != nil {
 			return "", err
 		}
-		return path, saveClusterJSON(path, saved, true)
+		return path, SaveClusterJSON(path, saved, true)
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return "", err
 	}
@@ -176,7 +176,7 @@ func prepareDesktopCluster(configPath string) (string, error) {
 	if err != nil {
 		name = installed.NodeID
 	}
-	peer := clusterPeerConfig{Version: 1, ClusterID: id, NodeID: installed.NodeID, StorageLevel: "restricted", Name: name, Bootstrap: true, DataDir: dir, RaftAddress: "127.0.0.1:0", PeerAddress: "127.0.0.1:0", UIAddress: cfg.Gateway.ReadModelAddr, CACertFile: filepath.Join(dir, "ca.pem"), CAKeyFile: filepath.Join(dir, "ca-key.pem"), CertFile: filepath.Join(dir, "node.pem"), KeyFile: filepath.Join(dir, "node-key.pem"), OwnerTokenFile: filepath.Join(dir, "owner-control-token")}
+	peer := PeerConfig{Version: 1, ClusterID: id, NodeID: installed.NodeID, StorageLevel: "restricted", Name: name, Bootstrap: true, DataDir: dir, RaftAddress: "127.0.0.1:0", PeerAddress: "127.0.0.1:0", UIAddress: cfg.Gateway.ReadModelAddr, CACertFile: filepath.Join(dir, "ca.pem"), CAKeyFile: filepath.Join(dir, "ca-key.pem"), CertFile: filepath.Join(dir, "node.pem"), KeyFile: filepath.Join(dir, "node-key.pem"), OwnerTokenFile: filepath.Join(dir, "owner-control-token")}
 	peer.RaftBindAddress = "0.0.0.0:0"
 	peer.PeerBindAddress = "0.0.0.0:0"
 	if addresses := localAdvertiseAddresses(); len(addresses) > 0 {
@@ -198,7 +198,7 @@ func prepareDesktopCluster(configPath string) (string, error) {
 	if err := createClusterAuthority(temporary); err != nil {
 		return "", err
 	}
-	if err := saveClusterJSON(filepath.Join(staging, "bootstrap.json"), peer, true); err != nil {
+	if err := SaveClusterJSON(filepath.Join(staging, "bootstrap.json"), peer, true); err != nil {
 		return "", err
 	}
 	if err := os.Rename(staging, dir); err != nil {
@@ -213,13 +213,13 @@ func prepareDesktopCluster(configPath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if err := saveClusterJSON(path, peer, true); err != nil {
+	if err := SaveClusterJSON(path, peer, true); err != nil {
 		return "", err
 	}
 	return path, nil
 }
 
-func createClusterAuthority(c clusterPeerConfig) error {
+func createClusterAuthority(c PeerConfig) error {
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return err
@@ -241,11 +241,11 @@ func createClusterAuthority(c clusterPeerConfig) error {
 	if err != nil {
 		return err
 	}
-	leaf, leafKey, err := issueClusterNodeCertificate(parsed, key, c.ClusterID, c.NodeID)
+	leaf, leafKey, err := IssueNodeCertificate(parsed, key, c.ClusterID, c.NodeID)
 	if err != nil {
 		return err
 	}
-	token, err := clusterRandomToken()
+	token, err := ClusterRandomToken()
 	if err != nil {
 		return err
 	}
@@ -253,14 +253,14 @@ func createClusterAuthority(c clusterPeerConfig) error {
 		path string
 		data []byte
 	}{{c.CACertFile, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})}, {c.CAKeyFile, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private})}, {c.CertFile, leaf}, {c.KeyFile, leafKey}, {c.OwnerTokenFile, []byte(token)}} {
-		if err := writeClusterPrivate(file.path, file.data, true); err != nil {
+		if err := WritePrivate(file.path, file.data, true); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func issueClusterNodeCertificate(ca *x509.Certificate, caKey ed25519.PrivateKey, clusterID, nodeID string) ([]byte, []byte, error) {
+func IssueNodeCertificate(ca *x509.Certificate, caKey ed25519.PrivateKey, clusterID, nodeID string) ([]byte, []byte, error) {
 	public, key, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		return nil, nil, err
@@ -288,7 +288,7 @@ func clusterRandomID(prefix string) (string, error) {
 	}
 	return prefix + hex.EncodeToString(b[:]), nil
 }
-func clusterRandomToken() (string, error) {
+func ClusterRandomToken() (string, error) {
 	var b [32]byte
 	if _, err := rand.Read(b[:]); err != nil {
 		return "", err
@@ -340,7 +340,7 @@ func requireClusterLoopback(address string) error {
 	return nil
 }
 
-func readClusterPrivate(path string) ([]byte, error) {
+func ReadClusterPrivate(path string) ([]byte, error) {
 	info, err := os.Lstat(path)
 	if err != nil {
 		return nil, err
@@ -351,15 +351,15 @@ func readClusterPrivate(path string) ([]byte, error) {
 	return os.ReadFile(path)
 }
 
-func saveClusterJSON(path string, value any, create bool) error {
+func SaveClusterJSON(path string, value any, create bool) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
 		return err
 	}
-	return writeClusterPrivate(path, append(data, '\n'), create)
+	return WritePrivate(path, append(data, '\n'), create)
 }
 
-func writeClusterPrivate(path string, data []byte, create bool) error {
+func WritePrivate(path string, data []byte, create bool) error {
 	if strings.TrimSpace(path) == "" {
 		return errors.New("cluster file path is empty")
 	}

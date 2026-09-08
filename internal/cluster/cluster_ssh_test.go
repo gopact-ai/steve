@@ -1,4 +1,4 @@
-package main
+package cluster
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
@@ -46,14 +47,16 @@ exec /bin/sh -s
 	}
 	t.Setenv("HOME", home)
 	t.Setenv("PATH", commands+":/usr/bin:/bin")
-	peer := &clusterPeer{uiToken: strings.Repeat("a", 32), uiURL: "http://127.0.0.1:7700"}
+	peer := &Peer{Options: PeerOptions{SSHHandler: func(service SSHControl, token, origin string) (http.Handler, error) {
+		return httpapi.SSHHandler(service, token, origin)
+	}}, UIToken: strings.Repeat("a", 32), UiURL: "http://127.0.0.1:7700"}
 	t.Cleanup(func() {
 		if peer.localSSH != nil {
 			_ = peer.localSSH.Close()
 		}
 	})
 	req := httptest.NewRequest(http.MethodPost, "/console/ssh/check", strings.NewReader(`{"alias":"fixture"}`))
-	req.Header.Set("Authorization", "Bearer "+peer.uiToken)
+	req.Header.Set("Authorization", "Bearer "+peer.UIToken)
 	response := httptest.NewRecorder()
 	peer.serveSSHLocal(response, req)
 	var check sshconnect.CheckResult
@@ -68,7 +71,7 @@ exec /bin/sh -s
 type sshEnrollmentFixture struct {
 	prepares, completes int
 	plan                PeerEnrollmentPlan
-	packageValue        peerJoinPackage
+	packageValue        PeerJoinPackage
 	completeResult      PeerEnrollmentResult
 	completeError       error
 	prepareError        error
@@ -107,7 +110,7 @@ func peerSSHFixture(t *testing.T) (peerSSHBackend, *sshEnrollmentFixture, sshcon
 	request := sshconnect.InstallRequest{Alias: "dev", Name: "remote", Addr: "192.0.2.5:7701", Level: "restricted"}
 	resolved := PeerEnrollmentRequest{Alias: request.Alias, Name: request.Name, PeerAddress: request.Addr, RaftAddress: "192.0.2.5:7702", SourceHost: "192.0.2.1", Level: "restricted"}
 	source := coordination.Member{NodeID: "local", Address: "192.0.2.1:7712", APIAddress: "https://192.0.2.1:7711"}
-	fixture := &sshEnrollmentFixture{plan: PeerEnrollmentPlan{Request: resolved, ClusterID: "test-cluster", Source: source, Seeds: []coordination.Member{source}, UpdateSourceAddress: true, Effects: []string{"更新本机跨机地址为192.0.2.1，随后验证所有节点独立互联"}}, packageValue: peerJoinPackage{Version: 1, ClusterID: "test-cluster", NodeID: "node-new", Name: "remote", StorageLevel: "restricted", PeerAdvertise: resolved.PeerAddress, RaftAdvertise: resolved.RaftAddress, Seeds: []coordination.Member{source}, PrivateKey: []byte("private-leaf-key"), OwnerToken: "private-owner-token", WorkerToken: "private-worker-token"}, completeResult: PeerEnrollmentResult{NodeID: "node-new", Name: "remote", Phase: "ready", Ready: true}}
+	fixture := &sshEnrollmentFixture{plan: PeerEnrollmentPlan{Request: resolved, ClusterID: "test-cluster", Source: source, Seeds: []coordination.Member{source}, UpdateSourceAddress: true, Effects: []string{"更新本机跨机地址为192.0.2.1，随后验证所有节点独立互联"}}, packageValue: PeerJoinPackage{Version: 1, ClusterID: "test-cluster", NodeID: "node-new", Name: "remote", StorageLevel: "restricted", PeerAdvertise: resolved.PeerAddress, RaftAdvertise: resolved.RaftAddress, Seeds: []coordination.Member{source}, PrivateKey: []byte("private-leaf-key"), OwnerToken: "private-owner-token", WorkerToken: "private-worker-token"}, completeResult: PeerEnrollmentResult{NodeID: "node-new", Name: "remote", Phase: "ready", Ready: true}}
 	fixture.plan.ReviewID = fixture.plan.reviewHash()
 	request.ApprovedReviewID = fixture.plan.ReviewID
 	binary := InstallBinaryFixture(t)
@@ -142,7 +145,7 @@ func TestPeerSSHPreviewAndCommitKeepEnrollmentBundlePrivate(t *testing.T) {
 		t.Fatalf("registration = %#v", registration)
 	}
 	private, err := base64.StdEncoding.DecodeString(registration.Token)
-	var decoded peerJoinPackage
+	var decoded PeerJoinPackage
 	decodeErr := json.Unmarshal(private, &decoded)
 	if err != nil || decodeErr != nil || string(decoded.PrivateKey) != "private-leaf-key" {
 		t.Fatal("registration did not carry the private package only to stdin")

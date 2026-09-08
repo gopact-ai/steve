@@ -1,4 +1,4 @@
-package main
+package cluster
 
 import (
 	"bytes"
@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/checkpoint"
-	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/coordination"
@@ -45,7 +44,7 @@ func recordRepairManifest(t *testing.T, book *ledger.Ledger, m contentreplica.Ma
 
 func TestContentRepairDoesNotReadOrRetransmitHealthyCopies(t *testing.T) {
 	peers, active := contentPeers(t)
-	client, err := peers[0].contentReplicator(active)
+	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +75,7 @@ func TestContentRepairDoesNotReadOrRetransmitHealthyCopies(t *testing.T) {
 func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 	peers, active := contentPeers(t)
 	source := peers[0]
-	client, err := source.contentReplicator(active)
+	client, err := source.ContentReplicator(active)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,11 +86,11 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	recordRepairManifest(t, active.Ledger, manifest)
-	var secondary, third *clusterPeer
+	var secondary, third *Peer
 	for _, peer := range peers[1:] {
 		has := false
 		for _, receipt := range manifest.Receipts {
-			has = has || receipt.NodeID == peer.config.NodeID
+			has = has || receipt.NodeID == peer.Config.NodeID
 		}
 		if has {
 			secondary = peer
@@ -105,10 +104,10 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 	if err := secondary.Close(); err != nil {
 		t.Fatal(err)
 	}
-	source.options.ContentRepairInterval = 25 * time.Millisecond
+	source.Options.ContentRepairInterval = 25 * time.Millisecond
 	var eventMu sync.Mutex
 	var events []string
-	stop := source.startContentRepair(active, func(kind, _, message string) {
+	stop := source.StartContentRepair(active, func(kind, _, message string) {
 		eventMu.Lock()
 		events = append(events, kind+": "+message)
 		eventMu.Unlock()
@@ -124,7 +123,7 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 		}
 		copied := false
 		for _, receipt := range latest.Receipts {
-			copied = copied || receipt.NodeID == third.config.NodeID
+			copied = copied || receipt.NodeID == third.Config.NodeID
 		}
 		if ok && copied {
 			break
@@ -134,7 +133,7 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 	stop()
 	found := false
 	for _, receipt := range latest.Receipts {
-		found = found || receipt.NodeID == third.config.NodeID
+		found = found || receipt.NodeID == third.Config.NodeID
 	}
 	if !found {
 		t.Fatal("background repair did not add the third node's durable receipt")
@@ -145,14 +144,14 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 	if !notified {
 		t.Fatal("repair completion was not visible in observations")
 	}
-	if len(source.runtime.Load().Status().Voters) != 3 {
+	if len(source.Runtime.Load().Status().Voters) != 3 {
 		t.Fatal("secondary outage shrank voting membership")
 	}
 	// Restore the secondary's vote before another node fails. Three voters do
 	// not have a majority after two simultaneous outages.
-	restarted := startTestPeer(t, secondary.options)
+	restarted := StartTestPeer(t, secondary.Options)
 	for deadline := time.Now().Add(6 * time.Second); ; {
-		if restarted.runtime.Load().Status().AppVersion >= source.runtime.Load().Status().AppVersion {
+		if restarted.Runtime.Load().Status().AppVersion >= source.Runtime.Load().Status().AppVersion {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -164,7 +163,7 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 		t.Fatal(err)
 	}
 	for deadline := time.Now().Add(6 * time.Second); ; {
-		_, err := third.runtime.Load().ReadState(t.Context())
+		_, err := third.Runtime.Load().ReadState(t.Context())
 		if err == nil {
 			break
 		}
@@ -173,11 +172,11 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
-	if _, err := third.runtime.Load().Transfer(t.Context(), coordination.TransferRequest{ID: "after-repaired-copy", Actor: "owner", ExpectedEpoch: active.Assignment.Epoch, TargetNodeID: third.config.NodeID}); err != nil {
+	if _, err := third.Runtime.Load().Transfer(t.Context(), coordination.TransferRequest{ID: "after-repaired-copy", Actor: "owner", ExpectedEpoch: active.Assignment.Epoch, TargetNodeID: third.Config.NodeID}); err != nil {
 		t.Fatal(err)
 	}
-	next := waitPeerReady(t, third)
-	reader, err := third.contentReplicator(next)
+	next := WaitPeerReady(t, third)
+	reader, err := third.ContentReplicator(next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -193,7 +192,7 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 
 func TestContentRepairReportsUnavailableAndContinuesIndependentObjects(t *testing.T) {
 	peers, active := contentPeers(t)
-	client, err := peers[0].contentReplicator(active)
+	client, err := peers[0].ContentReplicator(active)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +220,7 @@ func TestContentRepairReportsUnavailableAndContinuesIndependentObjects(t *testin
 	recordRepairManifest(t, active.Ledger, missing)
 	for _, peer := range peers[1:] {
 		for _, receipt := range good.Receipts {
-			if receipt.NodeID == peer.config.NodeID {
+			if receipt.NodeID == peer.Config.NodeID {
 				if err := peer.Close(); err != nil {
 					t.Fatal(err)
 				}
@@ -256,8 +255,8 @@ func TestContentRepairRejectsUnclassifiedScopeWithoutCopying(t *testing.T) {
 	peers, active := contentPeers(t)
 	data := []byte("unknown scope")
 	ref := checkpoint.Reference(data)
-	object := contentreplica.Object{Scope: contentreplica.Scope{ProjectID: "unknown", Level: "public", HomeNodeID: peers[0].config.NodeID}, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}
-	manifest := contentreplica.Manifest{ID: object.ID(), Object: object, RequiredCopies: 1, Protection: contentreplica.SingleNode, Receipts: []contentreplica.Receipt{{ObjectID: object.ID(), NodeID: peers[0].config.NodeID, FailureDomain: peers[0].config.FailureDomain, StoredAt: time.Now().UTC()}}}
+	object := contentreplica.Object{Scope: contentreplica.Scope{ProjectID: "unknown", Level: "public", HomeNodeID: peers[0].Config.NodeID}, Kind: contentreplica.Material, Key: ref.SHA256, Blob: ref}
+	manifest := contentreplica.Manifest{ID: object.ID(), Object: object, RequiredCopies: 1, Protection: contentreplica.SingleNode, Receipts: []contentreplica.Receipt{{ObjectID: object.ID(), NodeID: peers[0].Config.NodeID, FailureDomain: peers[0].Config.FailureDomain, StoredAt: time.Now().UTC()}}}
 	recordRepairManifest(t, active.Ledger, manifest)
 	worker, err := peers[0].newContentRepair(active, nil)
 	if err != nil {
@@ -272,20 +271,20 @@ func TestContentRepairRejectsUnclassifiedScopeWithoutCopying(t *testing.T) {
 	if err := active.Runtime.RestartGeneration(active.Generation); err != nil {
 		t.Fatal(err)
 	}
-	waitPeerReady(t, peers[0])
+	WaitPeerReady(t, peers[0])
 	if _, err := worker.sweep(context.Background()); err == nil {
 		t.Fatal("old repair generation acquired replacement authority")
 	}
 }
 
 func TestContentRepairUpgradesSingleMachineManifestAfterJoiningPeers(t *testing.T) {
-	root := clusterPeerTestDir(t)
+	root := ClusterPeerTestDir(t)
 	options, _ := testPeerOptions(t, filepath.Join(root, "source"), nil)
-	options.Activate = func(context.Context, cluster.Activation, func(peerApplicationEndpoint) error) (cluster.Deactivate, error) {
+	options.Activate = func(context.Context, Activation, func(PeerApplicationEndpoint) error) (Deactivate, error) {
 		return nil, nil
 	}
-	source := startTestPeer(t, options)
-	active := waitPeerReady(t, source)
+	source := StartTestPeer(t, options)
+	active := WaitPeerReady(t, source)
 	worker := source.Worker()
 	d := platformconfig.Declaration{Settings: (&config.Config{Gateway: config.Gateway{OwnerID: "test-owner"}}).SettingsValues(), Channels: (&config.Config{Gateway: config.Gateway{OwnerID: "test-owner"}}).ChannelSettings(), Home: config.ProjectHome{Node: worker.Name, Path: "/fixture/home"}, Projects: map[string]config.Project{"workspace": {Level: "internal", Home: config.ProjectHome{Node: worker.Name, Path: "/fixture/workspace"}}}, Nodes: map[string]config.Node{worker.Name: {Addr: worker.Address, Token: worker.Token, Level: "restricted"}}}
 	var err error
@@ -298,11 +297,11 @@ func TestContentRepairUpgradesSingleMachineManifestAfterJoiningPeers(t *testing.
 		t.Fatal(err)
 	}
 	projects := project.Open(active.Ledger)
-	projects.SetHubID(source.config.ClusterID)
+	projects.SetHubID(source.Config.ClusterID)
 	if err := (config.ProjectController{Store: projects}).Reconcile(t.Context(), cfg); err != nil {
 		t.Fatal(err)
 	}
-	client, err := source.contentReplicator(active)
+	client, err := source.ContentReplicator(active)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,11 +317,11 @@ func TestContentRepairUpgradesSingleMachineManifestAfterJoiningPeers(t *testing.
 	recordRepairManifest(t, active.Ledger, manifest)
 	for _, name := range []string{"second", "third"} {
 		options, _ := testPeerOptions(t, filepath.Join(root, name), source)
-		options.Activate = func(context.Context, cluster.Activation, func(peerApplicationEndpoint) error) (cluster.Deactivate, error) {
+		options.Activate = func(context.Context, Activation, func(PeerApplicationEndpoint) error) (Deactivate, error) {
 			return nil, nil
 		}
-		peer := startTestPeer(t, options)
-		if _, err := source.Join(t.Context(), coordination.JoinRequest{ID: "join-" + name, Actor: "owner", Member: coordination.Member{NodeID: peer.config.NodeID, Address: peer.config.RaftAddress, APIAddress: peer.config.PeerURL}}); err != nil {
+		peer := StartTestPeer(t, options)
+		if _, err := source.Join(t.Context(), coordination.JoinRequest{ID: "join-" + name, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL}}); err != nil {
 			t.Fatal(err)
 		}
 		worker := peer.Worker()
@@ -356,7 +355,7 @@ func TestContentRepairLocalFailuresAreVisibleWithoutClaimingRemoteDataLost(t *te
 	for _, failure := range []string{"quota", "staging"} {
 		t.Run(failure, func(t *testing.T) {
 			peers, active := contentPeers(t)
-			client, err := peers[0].contentReplicator(active)
+			client, err := peers[0].ContentReplicator(active)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -369,7 +368,7 @@ func TestContentRepairLocalFailuresAreVisibleWithoutClaimingRemoteDataLost(t *te
 			recordRepairManifest(t, active.Ledger, manifest)
 			for _, peer := range peers[1:] {
 				for _, receipt := range manifest.Receipts {
-					if receipt.NodeID == peer.config.NodeID {
+					if receipt.NodeID == peer.Config.NodeID {
 						if err := peer.Close(); err != nil {
 							t.Fatal(err)
 						}
@@ -383,7 +382,7 @@ func TestContentRepairLocalFailuresAreVisibleWithoutClaimingRemoteDataLost(t *te
 			}
 			if failure == "quota" {
 				worker.client = quotaOnContentRead{worker.client}
-			} else if err := os.WriteFile(filepath.Join(peers[0].config.DataDir, "content-repair"), []byte("not a directory"), 0o600); err != nil {
+			} else if err := os.WriteFile(filepath.Join(peers[0].Config.DataDir, "content-repair"), []byte("not a directory"), 0o600); err != nil {
 				t.Fatal(err)
 			}
 			report, err := worker.sweep(t.Context())

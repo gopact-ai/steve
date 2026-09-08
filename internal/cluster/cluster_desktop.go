@@ -1,4 +1,4 @@
-package main
+package cluster
 
 import (
 	"bytes"
@@ -17,8 +17,8 @@ import (
 	"github.com/gopact-ai/steve/internal/platformconfig"
 )
 
-func (p *clusterPeer) desktopDeclaration() (platformconfig.Declaration, error) {
-	runtime := p.runtime.Load()
+func (p *Peer) DesktopDeclaration() (platformconfig.Declaration, error) {
+	runtime := p.Runtime.Load()
 	if runtime == nil {
 		return platformconfig.Declaration{}, nil
 	}
@@ -48,15 +48,15 @@ func (p *clusterPeer) desktopDeclaration() (platformconfig.Declaration, error) {
 	return d, err
 }
 
-func (p *clusterPeer) localDesktopStatus() (consoleapi.DesktopStatus, error) {
-	if !desktop.IsManagedConfig(p.options.ConfigPath) {
+func (p *Peer) localDesktopStatus() (consoleapi.DesktopStatus, error) {
+	if !desktop.IsManagedConfig(p.Options.ConfigPath) {
 		return consoleapi.DesktopStatus{}, nil
 	}
-	d, err := p.desktopDeclaration()
+	d, err := p.DesktopDeclaration()
 	if err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
-	result := consoleapi.DesktopStatus{Enabled: true, NodeID: p.config.NodeID, AgentCount: len(d.Agents), SetupRequired: len(d.Agents) == 0}
+	result := consoleapi.DesktopStatus{Enabled: true, NodeID: p.Config.NodeID, AgentCount: len(d.Agents), SetupRequired: len(d.Agents) == 0}
 	for id, item := range d.Agents {
 		if item.Default {
 			result.DefaultAgent = id
@@ -67,40 +67,40 @@ func (p *clusterPeer) localDesktopStatus() (consoleapi.DesktopStatus, error) {
 
 // serveDesktopLocal is reached only after the stable local gateway has checked
 // its UI credential. Tool discovery always concerns this computer.
-func (p *clusterPeer) serveDesktopLocal(w http.ResponseWriter, r *http.Request) {
+func (p *Peer) serveDesktopLocal(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	if r.URL.Path == "/console/desktop" && r.Method == http.MethodGet {
 		status, err := p.localDesktopStatus()
 		if err != nil {
-			peerHTTPError(w, err)
+			HTTPError(w, err)
 			return
 		}
-		writePeerJSON(w, status)
+		WriteJSON(w, status)
 		return
 	}
-	if !desktop.IsManagedConfig(p.options.ConfigPath) || r.URL.Path != "/console/desktop/agents" {
+	if !desktop.IsManagedConfig(p.Options.ConfigPath) || r.URL.Path != "/console/desktop/agents" {
 		http.Error(w, "desktop setup is not available", http.StatusNotFound)
 		return
 	}
 	switch r.Method {
 	case http.MethodGet:
-		d, err := p.desktopDeclaration()
+		d, err := p.DesktopDeclaration()
 		if err != nil {
-			peerHTTPError(w, err)
+			HTTPError(w, err)
 			return
 		}
 		result := consoleapi.DesktopDiscovery{Agents: []consoleapi.DesktopAgentCandidate{}}
 		for _, candidate := range p.worker.LocalAgentDiscovery().Agents {
 			registered := false
 			for _, item := range d.Agents {
-				if item.Node == p.config.NodeID && item.Harness == candidate.Harness {
+				if item.Node == p.Config.NodeID && item.Harness == candidate.Harness {
 					registered = true
 				}
 			}
 			result.Agents = append(result.Agents, consoleapi.DesktopAgentCandidate{ID: candidate.ID, Name: candidate.Name, Harness: candidate.Harness, Executable: candidate.Executable, Installed: candidate.Installed, Requires: candidate.Requires, Registered: registered})
 		}
-		writePeerJSON(w, result)
+		WriteJSON(w, result)
 	case http.MethodPost:
 		var request consoleapi.DesktopEnrollRequest
 		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
@@ -115,23 +115,23 @@ func (p *clusterPeer) serveDesktopLocal(w http.ResponseWriter, r *http.Request) 
 		}
 		for _, id := range request.AgentIDs {
 			if err := p.enrollDesktopAgent(r.Context(), id); err != nil {
-				peerHTTPError(w, err)
+				HTTPError(w, err)
 				return
 			}
 		}
 		status, err := p.localDesktopStatus()
 		if err != nil {
-			peerHTTPError(w, err)
+			HTTPError(w, err)
 			return
 		}
-		writePeerJSON(w, status)
+		WriteJSON(w, status)
 	default:
 		w.WriteHeader(http.StatusMethodNotAllowed)
 	}
 }
 
-func (p *clusterPeer) enrollDesktopAgent(ctx context.Context, candidateID string) error {
-	d, err := p.desktopDeclaration()
+func (p *Peer) enrollDesktopAgent(ctx context.Context, candidateID string) error {
+	d, err := p.DesktopDeclaration()
 	if err != nil {
 		return err
 	}
@@ -140,7 +140,7 @@ func (p *clusterPeer) enrollDesktopAgent(ctx context.Context, candidateID string
 		return agenttools.ErrUnsupported
 	}
 	for _, item := range d.Agents {
-		if item.Node == p.config.NodeID && item.Harness == canonical.Harness {
+		if item.Node == p.Config.NodeID && item.Harness == canonical.Harness {
 			return nil
 		}
 	}
@@ -151,7 +151,7 @@ func (p *clusterPeer) enrollDesktopAgent(ctx context.Context, candidateID string
 	}
 	agentID := candidateID
 	if _, exists := d.Agents[agentID]; exists {
-		suffix := p.config.NodeID
+		suffix := p.Config.NodeID
 		if len(suffix) > 10 {
 			suffix = suffix[len(suffix)-10:]
 		}
@@ -160,12 +160,12 @@ func (p *clusterPeer) enrollDesktopAgent(ctx context.Context, candidateID string
 	var result struct {
 		OK bool `json:"ok"`
 	}
-	err = p.applicationJSON(ctx, http.MethodPost, "/console/agents", consoleapi.AddAgentRequest{ID: agentID, Harness: installed.Harness, Node: p.config.NodeID}, &result)
+	err = p.applicationJSON(ctx, http.MethodPost, "/console/agents", consoleapi.AddAgentRequest{ID: agentID, Harness: installed.Harness, Node: p.Config.NodeID}, &result)
 	if err != nil {
 		// The tool can already be installed even when declaration delivery was
 		// interrupted. Only a matching shared Agent declaration confirms it.
-		if current, readErr := p.desktopDeclaration(); readErr == nil {
-			if item, exists := current.Agents[agentID]; exists && item.Node == p.config.NodeID && item.Harness == installed.Harness {
+		if current, readErr := p.DesktopDeclaration(); readErr == nil {
+			if item, exists := current.Agents[agentID]; exists && item.Node == p.Config.NodeID && item.Harness == installed.Harness {
 				return nil
 			}
 		}
@@ -177,7 +177,7 @@ func (p *clusterPeer) enrollDesktopAgent(ctx context.Context, candidateID string
 	return nil
 }
 
-func (p *clusterPeer) applicationJSON(ctx context.Context, method, endpoint string, input, output any) error {
+func (p *Peer) applicationJSON(ctx context.Context, method, endpoint string, input, output any) error {
 	if !strings.HasPrefix(endpoint, "/console/") && endpoint != "/state" {
 		return errors.New("invalid application request")
 	}
@@ -189,11 +189,11 @@ func (p *clusterPeer) applicationJSON(ctx context.Context, method, endpoint stri
 		}
 		body = bytes.NewReader(raw)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, p.uiURL+endpoint, body)
+	request, err := http.NewRequestWithContext(ctx, method, p.UiURL+endpoint, body)
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+p.uiToken)
+	request.Header.Set("Authorization", "Bearer "+p.UIToken)
 	if input != nil {
 		request.Header.Set("Content-Type", "application/json")
 	}
