@@ -1,11 +1,14 @@
 package turn
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/state"
 )
 
 func TestFirstConversationContinuesAfterIdentityGeneration(t *testing.T) {
@@ -87,6 +90,58 @@ func TestIdentityEditRefreshesOnlySettledSession(t *testing.T) {
 			}
 			if second.Injected.Session != first.Injected.Session || !strings.Contains(second.Injected.Instructions, "updated name") {
 				t.Fatal("profile edit lost history or stale identity")
+			}
+		})
+	}
+}
+
+func TestIdentityRefreshAfterReopeningSessionState(t *testing.T) {
+	for _, missing := range []bool{false, true} {
+		t.Run(map[bool]string{false: "persisted-baseline", true: "unknown-baseline"}[missing], func(t *testing.T) {
+			dir := t.TempDir()
+			if err := home.Bootstrap(dir, "owner"); err != nil {
+				t.Fatal(err)
+			}
+			c, _, manager := homeCoordinatorWithManager(t, dir, "owner")
+			path := filepath.Join(t.TempDir(), "state.json")
+			persisted, err := state.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			c.store = persisted
+			req := Request{ConversationID: "dm", Input: "hello", SenderOpenID: "owner", ChatType: protocol.ChatP2P}
+			first, err := c.Handle(t.Context(), req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if missing {
+				saved := persisted.Conversation("dm").Sessions["codex"]
+				saved.SessionConfigHash = ""
+				if err := persisted.SaveSession(saved); err != nil {
+					t.Fatal(err)
+				}
+			}
+			reopened, err := state.Open(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			next := restartCoordinator(t, c, c.catalog, reopened, c.assembler, manager, time.Minute)
+			next.SetIdentity("owner", home.Dir{Path: dir})
+			if err := home.WriteIdentity(dir, "updated soul", "updated name"); err != nil {
+				t.Fatal(err)
+			}
+			second, err := next.Handle(t.Context(), req)
+			if missing {
+				if err == nil || len(manager.runners["codex"].seen()) != 1 {
+					t.Fatal("unclassified drift dispatched a new prompt")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if second.Injected.Session != first.Injected.Session || second.Injected.NewSession || !second.Injected.InstructionsSent || !strings.Contains(second.Injected.Instructions, "updated name") {
+				t.Fatal("restart lost the identity refresh baseline or conversation")
 			}
 		})
 	}
