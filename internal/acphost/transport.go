@@ -33,11 +33,15 @@ type Process interface {
 	Stdin() io.WriteCloser
 	// Wait releases this transport's resources after its logical lifetime.
 	// It is called exactly once. Remote stream loss alone does not prove
-	// process exit; transports may also implement Stopped() bool as evidence.
+	// process exit; Stopped is the evidence.
 	Wait() error
 	// Kill forces the agent and everything it spawned to die — the escape
 	// hatch for a graceful close that did not settle.
 	Kill()
+	// Stopped reports positive evidence that the agent process is gone: a
+	// reaped child, or a node's confirmed exit. A transport that cannot
+	// tell answers false, and the host keeps the process on its books.
+	Stopped() bool
 }
 
 // LocalTransport forks the agent as a child of this process.

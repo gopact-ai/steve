@@ -165,6 +165,11 @@ func (p *elicitationTestProcess) Wait() error {
 	<-p.conn.Done()
 	return p.output.Close()
 }
+
+// Stopped never reports evidence: the fixture stands in for a process
+// whose exit the host cannot confirm.
+func (p *elicitationTestProcess) Stopped() bool { return false }
+
 func (p *elicitationTestProcess) Kill() {
 	_ = p.conn.Close()
 	_ = p.stdin.Close()

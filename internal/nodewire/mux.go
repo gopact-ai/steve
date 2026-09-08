@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"sync"
 	"time"
 )
@@ -220,10 +221,20 @@ func (m *Mux) err() error {
 	return ErrMuxClosed
 }
 
+// writeDeadliner is a connection whose writes can be bounded, as every
+// net.Conn's can; a Mux over a bare pipe gets no such bound.
+type writeDeadliner interface {
+	SetWriteDeadline(time.Time) error
+}
+
+var _ writeDeadliner = (net.Conn)(nil)
+
 func (m *Mux) write(f Frame) error {
 	m.writeMu.Lock()
 	// A half-open TCP connection must eventually wake the reconnect path.
-	if c, ok := m.conn.(interface{ SetWriteDeadline(time.Time) error }); ok {
+	if c, ok := m.conn.(writeDeadliner); ok {
+		// A connection that cannot take a deadline is one the write
+		// below will report on anyway.
 		_ = c.SetWriteDeadline(time.Now().Add(15 * time.Second))
 	}
 	err := WriteFrame(m.conn, f)

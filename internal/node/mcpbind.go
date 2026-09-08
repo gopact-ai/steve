@@ -236,7 +236,10 @@ func LaunchBinding(ctx context.Context, socket, id string, stdin io.Reader, stdo
 	go func() {
 		defer close(done)
 		_, _ = io.Copy(conn, stdin)
-		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
+		if cw, ok := conn.(halfCloser); ok {
+			// Half-closing tells the server the agent's input ended; a
+			// failure here means the socket is already gone, and the copy
+			// of its output below reports that.
 			_ = cw.CloseWrite()
 		}
 	}()
@@ -247,6 +250,15 @@ func LaunchBinding(ctx context.Context, socket, id string, stdin io.Reader, stdo
 	}
 	return err
 }
+
+// halfCloser closes the sending side of a connection so the server sees
+// the agent's EOF while its own answer is still flowing back. The
+// broker's unix socket has one.
+type halfCloser interface {
+	CloseWrite() error
+}
+
+var _ halfCloser = (*net.UnixConn)(nil)
 
 // SocketPath is where the node's own in-process broker listens.
 func (s *Server) SocketPath() string { return filepath.Join(s.conf().StateDir, "mcp.sock") }

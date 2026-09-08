@@ -379,6 +379,17 @@ type Configurable interface {
 	SetOption(context.Context, string, string) error
 }
 
+// Reobserver is a Runner that can report its settings to its observer
+// again after a preference changed them.
+type Reobserver interface {
+	Reobserve()
+}
+
+var (
+	_ Reobserver = (*Session)(nil)
+	_ Reobserver = (*managedSession)(nil)
+)
+
 // ApplyPreferences sets what an agent's configuration pins on a session
 // that has just opened: the model, and any other selector the harness
 // exposes (reasoning effort, thinking, mode) by option id. The agent is
@@ -395,7 +406,7 @@ func ApplyPreferences(ctx context.Context, r Runner, agentID, model string, opti
 	changed := false
 	defer func() {
 		if changed {
-			if r, ok := r.(interface{ Reobserve() }); ok {
+			if r, ok := r.(Reobserver); ok {
 				r.Reobserve()
 			}
 		}

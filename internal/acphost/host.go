@@ -668,7 +668,7 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 		_ = proc.Wait()
 		close(exited)
 		h.mu.Lock()
-		if evidence, ok := proc.(interface{ Stopped() bool }); ok && evidence.Stopped() {
+		if proc.Stopped() {
 			delete(h.processes, generation)
 		}
 		if h.proc == proc {
@@ -985,7 +985,7 @@ func (h *Host) ProcessStopped(generation uint64) bool {
 	if !exists {
 		return true
 	}
-	if evidence, ok := proc.(interface{ Stopped() bool }); ok && evidence.Stopped() {
+	if proc.Stopped() {
 		delete(h.processes, generation)
 		return true
 	}
@@ -1104,8 +1104,7 @@ func (h *Host) AllProcessesStopped() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for generation, proc := range h.processes {
-		proof, ok := proc.(interface{ Stopped() bool })
-		if !ok || !proof.Stopped() {
+		if !proc.Stopped() {
 			return false
 		}
 		delete(h.processes, generation)
