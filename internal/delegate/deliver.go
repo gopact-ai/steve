@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -115,7 +115,7 @@ func (s *Service) collect(taskID string, result agentmcp.DelegateResult) {
 		return
 	}
 	if err := s.tasks.SetDelivery(taskID, task.DeliveryDelivered); err != nil && !strings.Contains(err.Error(), "not found") {
-		log.Printf("delegate: mark task #%s collected: %v", taskID, err)
+		slog.Error(fmt.Sprintf("delegate: mark task #%s collected: %v", taskID, err), "task", taskID)
 	}
 }
 
@@ -185,20 +185,20 @@ func (s *Service) Flush(ctx context.Context, parentID string) {
 		dc.Landing = landing(c)
 		d.Children = append(d.Children, dc)
 		if err := s.tasks.SetDelivery(c.ID, task.DeliveryPending); err != nil {
-			log.Printf("delegate: mark task #%s pending delivery: %v", c.ID, err)
+			slog.Error(fmt.Sprintf("delegate: mark task #%s pending delivery: %v", c.ID, err), "task", c.ID, "parent", parentID, "conversation", parent.Channel)
 		}
 	}
 	d.Key = task.DeliveryKey(waiting[0].ID)
 	if err := deliver(ctx, d); err != nil {
-		log.Printf("delegate: deliver %d child result(s) to task #%s: %v", len(d.Children), parentID, err)
+		slog.Error(fmt.Sprintf("delegate: deliver %d child result(s) to task #%s: %v", len(d.Children), parentID, err), "parent", parentID, "conversation", parent.Channel)
 		return
 	}
 	for _, c := range waiting {
 		if err := s.tasks.SetDelivery(c.ID, task.DeliveryDelivered); err != nil {
-			log.Printf("delegate: mark task #%s delivered: %v", c.ID, err)
+			slog.Error(fmt.Sprintf("delegate: mark task #%s delivered: %v", c.ID, err), "task", c.ID, "parent", parentID, "conversation", parent.Channel)
 		}
 	}
-	log.Printf("delegate: delivered %d child result(s) into %s for task #%s", len(d.Children), parent.Channel, parentID)
+	slog.Info(fmt.Sprintf("delegate: delivered %d child result(s) into %s for task #%s", len(d.Children), parent.Channel, parentID), "parent", parentID, "conversation", parent.Channel)
 }
 
 // landFor lands what the project has queued — the parent holds no lock

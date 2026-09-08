@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -334,7 +334,7 @@ func (s *Service) settleRecovered(ctx context.Context, parent, tracked task.Task
 		return
 	}
 	if run.CleanupErr != nil {
-		log.Printf("delegate: retained session cleanup task=%s attempt=%s error=%v", tracked.ID, record.ID, run.CleanupErr)
+		slog.Error(fmt.Sprintf("delegate: retained session cleanup task=%s attempt=%s error=%v", tracked.ID, record.ID, run.CleanupErr), "task", tracked.ID, "parent", parent.ID, "attempt", record.ID, "node", record.Node)
 	}
 	s.completeChild(ctx, parent.Channel, parent, tracked, tracked.Goal, entry, result, runErr, run.Last)
 }
@@ -390,11 +390,13 @@ func (s *Service) reportRecovery(ctx context.Context, binding QuestionBinding, c
 	s.recoveryQuestions[binding.Attempt] = notice
 	handler := s.recoveryQuestion
 	s.mu.Unlock()
-	log.Printf("delegate: recovery pending task=%s attempt=%s node=%s reason=%s", binding.Task, binding.Attempt, binding.Node, code)
+	slog.Warn(fmt.Sprintf("delegate: recovery pending task=%s attempt=%s node=%s reason=%s", binding.Task, binding.Attempt, binding.Node, code),
+		"task", binding.Task, "parent", binding.ParentTask, "attempt", binding.Attempt, "conversation", binding.Conversation, "node", binding.Node, "reason", code)
 	diagnostic := fmt.Sprintf("已尝试：%s。\n\n%s\n\n%s\n\n%s", attempted, problem, reason, recommendation)
 	if current, err := s.attempts.Get(ctx, binding.Attempt); err == nil && !current.State.Terminal() {
 		if err := s.attempts.MarkUnsettled(ctx, binding.Attempt, "delegate-recovery", errors.New(diagnostic), nil); err != nil {
-			log.Printf("delegate: recovery diagnostic not committed task=%s attempt=%s reason=%s", binding.Task, binding.Attempt, code)
+			slog.Error(fmt.Sprintf("delegate: recovery diagnostic not committed task=%s attempt=%s reason=%s", binding.Task, binding.Attempt, code),
+				"task", binding.Task, "parent", binding.ParentTask, "attempt", binding.Attempt, "conversation", binding.Conversation, "node", binding.Node, "reason", code, "error", err)
 		}
 	}
 	if handler == nil {
@@ -435,7 +437,7 @@ func (s *Service) detachChild(spawned task.Task, entry *child, detached *executi
 	}
 	s.mu.Unlock()
 	close(entry.done)
-	log.Printf("delegate: retained observer detached task=%s attempt=%s node=%s", spawned.ID, detached.AttemptID, detached.NodeID)
+	slog.Info(fmt.Sprintf("delegate: retained observer detached task=%s attempt=%s node=%s", spawned.ID, detached.AttemptID, detached.NodeID), "task", spawned.ID, "attempt", detached.AttemptID, "node", detached.NodeID, "session", detached.SessionID)
 }
 
 // retainedFailure is a node-owned execution's answer kept with its
