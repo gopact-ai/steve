@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -419,7 +420,7 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 			}
 			if offered := harnessModels(hub.advert, a.Harness); len(offered) > 0 {
 				c.Models = offered
-				if a.Model != "" && !contains(offered, a.Model) {
+				if a.Model != "" && !slices.Contains(offered, a.Model) {
 					c.Eligible, c.Why = false, "this machine does not offer model "+a.Model
 					return c
 				}
@@ -460,7 +461,7 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 			// A pinned model the node does not offer is a placement that
 			// would fail at the first prompt; catch it here, where the
 			// cause is still legible.
-			if a.Model != "" && !contains(offered, a.Model) {
+			if a.Model != "" && !slices.Contains(offered, a.Model) {
 				c.Eligible = false
 				c.Why = "node " + a.Node + " does not offer model " + a.Model
 				return c
@@ -506,15 +507,6 @@ func harnessTrouble(advert nodewire.Advert, harnessID string) string {
 		}
 	}
 	return "node " + advert.Node + " does not offer harness " + harnessID
-}
-
-func contains(list []string, want string) bool {
-	for _, item := range list {
-		if item == want {
-			return true
-		}
-	}
-	return false
 }
 
 // Match evaluates a requirement against this candidate's machine for its
