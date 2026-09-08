@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import { X } from "@untitledui/icons";
+import { Loading01, X } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
 import { TextArea } from "@/components/base/textarea/textarea";
 import { useSideChat, type SideSession } from "@/providers/side-chat-provider";
@@ -12,10 +12,28 @@ import { HTTPError, isRejectedRequest } from "@/lib/http";
 import { refKey } from "@/lib/material-ref";
 import type { Exchange, Reply } from "@/lib/types";
 import { Md } from "./markdown";
-import { Working } from "./trace";
+import { Trace, finalTextIndex, hasTraceContent } from "./progress-view";
 import { applyLive, type Live } from "@/lib/live";
 import { QuestionPanel } from "./question-panel";
 import "@/styles/side-chat.css";
+
+// SideLive is the side conversation's running turn: its phase, the process
+// so far, and the latest narration as the answer. The workbench's Working
+// view is not reused here: it reaches the review workspace that hosts this
+// panel, which would close a dependency cycle.
+function SideLive({ live }: { live: Live }) {
+    const { t } = useI18n();
+    const turn = live.turn;
+    const phase = turn?.phase;
+    const label = t(phase === "waking" ? "consoleChrome.preparing" : phase === "finishing" ? "consoleChrome.finishing" : phase === "saving" ? "consoleChrome.saving" : turn ? "consoleChrome.processing" : "consoleChrome.placing");
+    const finalText = turn ? finalTextIndex(turn) : undefined;
+    const answer = finalText === undefined ? turn?.answer : turn?.timeline?.[finalText].text;
+    return <article className="side-chat-answer flex min-w-0 flex-col gap-2">
+        <p role="status" className="flex items-center gap-2 text-xs text-tertiary"><Loading01 aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none text-fg-brand-primary" />{label}{turn?.agent ? ` · ${turn.agent}` : ""}</p>
+        {turn && hasTraceContent(turn, finalText) && <details className="text-xs text-tertiary"><summary className="cursor-pointer">{t("console.trace")}</summary><Trace p={turn} live omitText={finalText} /></details>}
+        {answer && <Md text={answer} />}
+    </article>;
+}
 
 export function SideChatPanel({ onOpenMain }: { onOpenMain?: () => void } = {}) { const { session } = useSideChat(); return session ? <SideConversation key={session.id} session={session} onOpenMain={onOpenMain} /> : null; }
 function SideConversation({ session, onOpenMain }: { session: SideSession; onOpenMain?: () => void }) {
@@ -78,7 +96,7 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
             {replies.map((reply, index) => <article key={reply.id || index} className={reply.kind === "sent" ? "side-chat-user" : "side-chat-answer"}>{reply.kind === "sent" ? <Md text={reply.input || ""} /> : reply.format === "text" ? <p className="whitespace-pre-wrap break-words">{reply.text}</p> : <Md text={reply.text} />}{reply.error && <p className="mt-1 text-xs text-error-primary">{reply.error}</p>}</article>)}
             {queue.filter((entry) => entry.state === "queued" && !replies.some((reply) => reply.exchange_id === entry.id && reply.kind === "sent")).map((entry) => <article key={entry.id} className="side-chat-user"><p className="whitespace-pre-wrap break-words">{entry.input || t("sideChat.materialCount", { count: entry.refs?.length || 0 })}</p><span className="mt-1 block text-xs text-tertiary">{t("sideChat.queued")}</span></article>)}
             {!replies.length && !queue.length && <p className="py-4 text-xs leading-5 text-tertiary">{t(loaded ? "sideChat.empty" : "sideChat.loading")}</p>}
-            {turn ? <Working live={turn} plans={[]} compact /> : busy && <p role="status" className="text-xs text-tertiary">{t("sideChat.running")}</p>}
+            {turn ? <SideLive live={turn} /> : busy && <p role="status" className="text-xs text-tertiary">{t("sideChat.running")}</p>}
             {readError && <p role="alert" className="text-xs text-error-primary">{readError}<button type="button" className="ml-2 underline" onClick={() => void load()}>{t("sideChat.retry")}</button></p>}
         </div>
         {support.interactive_requests && <QuestionPanel conversation={session.id} />}
