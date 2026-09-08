@@ -21,6 +21,8 @@ type runner struct {
 	block    bool
 	err      error
 	progress []view.Progress
+	// during runs while the prompt is in flight, before it ends.
+	during func()
 }
 
 func (r *runner) ID() string { return r.id }
@@ -28,6 +30,9 @@ func (r *runner) Prompt(ctx context.Context, _ string, observe func(view.Progres
 	r.prompts++
 	for _, p := range r.progress {
 		observe(p)
+	}
+	if r.during != nil {
+		r.during()
 	}
 	if r.block {
 		<-ctx.Done()
@@ -40,6 +45,9 @@ func (r *runner) PromptTurn(ctx context.Context, _ string, _ []harness.Media, _ 
 	for _, p := range r.progress {
 		observe(p)
 	}
+	if r.during != nil {
+		r.during()
+	}
 	if r.block {
 		<-ctx.Done()
 		return "", nil, ctx.Err()
@@ -50,6 +58,9 @@ func (r *runner) ResumeTurn(ctx context.Context, _ permission.AskFunc, _ acphost
 	r.resumes++
 	for _, p := range r.progress {
 		observe(p)
+	}
+	if r.during != nil {
+		r.during()
 	}
 	if r.block {
 		<-ctx.Done()

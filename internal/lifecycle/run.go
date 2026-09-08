@@ -537,7 +537,12 @@ func (e *Execution) read(ctx context.Context) error {
 	if !e.settled() && (o.Settlement.Quarantine == QuarantineAlways || o.Settlement.Quarantine == QuarantineManaged && e.Managed) {
 		err = errors.Join(err, harness.ErrStopUnconfirmed)
 	}
-	if err == nil && ctx.Err() != nil {
+	if err == nil && ctx.Err() != nil && !(e.Managed && o.Settlement.DetachManaged) {
+		// A cancelled run's settled prompt is recorded as cancelled, before
+		// validation, as it always was. A node-owned session's is
+		// closeManaged's to read: an explicit stop is a cancelled turn, a
+		// cancelled observer detaches or, for a retained chat turn,
+		// commits what the node finished.
 		err = ctx.Err()
 	}
 	if err == nil && o.Validate != nil {

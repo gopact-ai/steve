@@ -15,8 +15,10 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -601,6 +603,104 @@ func TestRunKeepsAConversationsSessionAndRejectsAnUnfinishedCompletion(t *testin
 	var step *StepError
 	if !errors.As(err, &step) || step.Step != StepFinish || res.Record.State != attempt.Failed || res.Record.Result.Summary != "half" || partial.workspaces.discarded != 0 || res.Durable {
 		t.Fatalf("rejected completion: %+v err=%v", res, err)
+	}
+}
+
+func TestReattachCommitsWhatTheNodeFinishedUnderACancelledObserver(t *testing.T) {
+	// The node finished the prompt before the observer was cancelled: a
+	// retained chat turn commits the answer; a caller that detaches on
+	// cancellation leaves the record for the observer that comes back.
+	running := attempt.Record{Spec: attempt.Spec{ID: "a1", TaskID: "t", Node: "n1", Workspace: project.Workspace{ID: "ws"}}, State: attempt.Running, Session: "ns_1"}
+	w := newWorld("ns_1")
+	w.attempts.record = running
+	ctx, cancel := context.WithCancel(t.Context())
+	w.runner.during = cancel
+	o := w.options()
+	o.Resume = true
+	o.Settlement = Settlement{DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, RejectManaged: true, KeepSession: true}
+	res, err := Reattach(ctx, o, running, w.runner)
+	if err != nil || res.Record.State != attempt.Bound || res.Record.Result == nil || res.Record.Result.Summary != "resumed" {
+		t.Fatalf("a finished prompt was not committed under a cancelled observer: %+v err=%v", res, err)
+	}
+	if h := w.attempts.history(); !strings.Contains(h, "finish bound/test") || strings.Contains(h, "failed") {
+		t.Fatalf("history = %s", h)
+	}
+	leaves := newWorld("ns_1")
+	leaves.attempts.record = running
+	ctx, cancel = context.WithCancel(t.Context())
+	leaves.runner.during = cancel
+	o = leaves.options()
+	o.Resume = true
+	o.Settlement = Settlement{Quarantine: QuarantineAlways, DetachManaged: true, CancelDetaches: true}
+	res, err = Reattach(ctx, o, running, leaves.runner)
+	var detached *execution.RetainedObserverDetached
+	if !errors.As(err, &detached) || !errors.Is(err, context.Canceled) || res.Record.State != attempt.Running || strings.Contains(leaves.attempts.history(), "failed") {
+		t.Fatalf("a cancelled run that detaches was recorded: %+v err=%v history=%s", res, err, leaves.attempts.history())
+	}
+}
+
+func TestReattachRecordsAnExplicitStopOfASettledPromptAsCancelled(t *testing.T) {
+	// The task was stopped while the node finished the prompt: the
+	// attempt is failed as a cancelled turn, on a context the stop did
+	// not cancel, with what the caller keeps of the answer.
+	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { book.Close() })
+	tasks, err := task.OpenLedger(book, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	registry := execution.New(t.Context(), tasks)
+	for _, tc := range []struct {
+		name       string
+		settlement Settlement
+		failed     func(*Execution, error) (*attempt.Result, error)
+	}{
+		{"retained chat turn", Settlement{DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, RejectManaged: true, KeepSession: true}, nil},
+		{"delegation", Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, CancelDetaches: true}, func(e *Execution, cause error) (*attempt.Result, error) {
+			return &attempt.Result{Summary: e.Outcome.Answer}, nil
+		}},
+	} {
+		work, err := tasks.Create(task.Task{Member: "agent", ProjectID: "p"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tasks.Begin(work.ID, "agent", "n1", "ns_1"); err != nil {
+			t.Fatal(err)
+		}
+		token, err := tasks.ExecutionToken(work.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		running := attempt.Record{Spec: attempt.Spec{ID: "a1", TaskID: work.ID, Node: "n1", Workspace: project.Workspace{ID: "ws"}, Execution: &token}, State: attempt.Running, Session: "ns_1"}
+		scope, err := registry.BeginAccepted(t.Context(), execution.Key{TaskID: work.ID, InstanceID: "turn", AttemptID: running.ID}, &token)
+		if err != nil {
+			t.Fatal(err)
+		}
+		w := newWorld("ns_1")
+		w.attempts.record = running
+		w.runner.during = func() {
+			ids, err := tasks.SetAside(work.ID, task.StatePaused)
+			if err != nil {
+				t.Error(err)
+			}
+			registry.Stop(ids, task.ErrExecutionStopped)
+		}
+		o := w.options()
+		o.Resume, o.Settlement, o.Failed = true, tc.settlement, tc.failed
+		res, err := Reattach(scope.Context(), o, running, w.runner)
+		scope.Finish(nil)
+		if !errors.Is(err, harness.ErrTurnCanceled) || res.Record.State != attempt.Failed || !strings.Contains(res.Record.Error, harness.ErrTurnCanceled.Error()) || !res.Durable {
+			t.Fatalf("%s: explicit stop of a settled prompt: %+v err=%v", tc.name, res, err)
+		}
+		if h := w.attempts.history(); !strings.Contains(h, "settled/test failed/test") {
+			t.Fatalf("%s: history = %s", tc.name, h)
+		}
+		if tc.failed != nil && (res.Record.Result == nil || res.Record.Result.Summary != "resumed") {
+			t.Fatalf("%s: the answer was dropped: %+v", tc.name, res.Record)
+		}
 	}
 }
 
