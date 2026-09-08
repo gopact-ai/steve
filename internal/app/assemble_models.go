@@ -3,7 +3,8 @@ package app
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -77,11 +78,11 @@ func assembleModels(life lifetime, boot runtimeAssembly, machines fleetAssembly)
 		issuer := &http.Server{Addr: cfg.Gateway.IssuerAddr, Handler: ledger.IssuerHandler(book, cfg.Gateway.IssuerToken)}
 		go func() {
 			if err := issuer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
-				log.Printf("steve: lease issuer on %s: %v", cfg.Gateway.IssuerAddr, err)
+				slog.Error(fmt.Sprintf("steve: lease issuer on %s: %v", cfg.Gateway.IssuerAddr, err))
 			}
 		}()
 		life.Defer(func() { issuer.Close() })
-		log.Printf("steve: issuing region %s leases on %s", book.Region(), cfg.Gateway.IssuerAddr)
+		slog.Info(fmt.Sprintf("steve: issuing region %s leases on %s", book.Region(), cfg.Gateway.IssuerAddr))
 	}
 	return &modelsValues{endpoints: endpoints, probeDir: probeDir, prober: prober, seen: seen}, nil
 }

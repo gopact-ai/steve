@@ -2,7 +2,8 @@ package app
 
 import (
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -86,10 +87,10 @@ func choosePlanner(cfg *config.Config, catalog *agent.Catalog, executor *agentex
 	}
 	selected, ok := catalog.Resolve(cfg.Gateway.Planner)
 	if !ok {
-		log.Printf("steve: planner agent %q not in catalog; using the rule planner", cfg.Gateway.Planner)
+		slog.Warn(fmt.Sprintf("steve: planner agent %q not in catalog; using the rule planner", cfg.Gateway.Planner), "agent", cfg.Gateway.Planner)
 		return planner.Rule{}
 	}
-	log.Printf("steve: /plan decomposes with %s", selected.ID)
+	slog.Info(fmt.Sprintf("steve: /plan decomposes with %s", selected.ID), "agent", selected.ID)
 	return planner.LLM{
 		Agent: selected.ID, Executor: executor, Timeout: time.Duration(cfg.Policies.Planning.Timeout), Attempts: cfg.Policies.Planning.Attempts,
 	}

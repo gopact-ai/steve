@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -118,7 +118,7 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 			return errors.Join(fmt.Errorf("task %s attempt %s on %s: native stop remains pending: %w", r.TaskID, r.ID, r.Node, cause), err)
 		}
 		if !r.Unsettled || r.Error != message {
-			log.Printf("steve: native stop pending task=%s attempt=%s node=%s: %v", r.TaskID, r.ID, r.Node, cause)
+			slog.Warn(fmt.Sprintf("steve: native stop pending task=%s attempt=%s node=%s: %v", r.TaskID, r.ID, r.Node, cause), "task", r.TaskID, "attempt", r.ID, "node", r.Node)
 		}
 		return nil
 	}

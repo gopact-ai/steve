@@ -2,7 +2,7 @@ package app
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/console"
@@ -35,17 +35,17 @@ func assembleRecovery(input inputAssembly, boot runtimeAssembly, storage ledgerA
 			continue
 		}
 		if quarantinedTasks[interrupted.ID] {
-			log.Printf("steve: task #%s has an unconfirmed previous writer; automatic revival is blocked", interrupted.ID)
+			slog.Warn(fmt.Sprintf("steve: task #%s has an unconfirmed previous writer; automatic revival is blocked", interrupted.ID), "task", interrupted.ID)
 			continue
 		}
 		if _, err := tasks.Finish(interrupted.ID, task.OutcomeInterrupted, task.Tokens{}, 0); err != nil {
-			log.Printf("steve: close interrupted attempt #%s: %v", interrupted.ID, err)
+			slog.Error(fmt.Sprintf("steve: close interrupted attempt #%s: %v", interrupted.ID, err), "task", interrupted.ID)
 			continue
 		}
 		// A paused task's attempt still had to be closed, but resuming it
 		// would overrule the user who set it down.
 		if interrupted.State == task.StatePaused {
-			log.Printf("steve: task #%s is paused; leaving it set aside", interrupted.ID)
+			slog.Info(fmt.Sprintf("steve: task #%s is paused; leaving it set aside", interrupted.ID), "task", interrupted.ID)
 			continue
 		}
 		if console.IsConsole(interrupted.Channel) || interrupted.ChatID == console.ChatID {
@@ -54,7 +54,7 @@ func assembleRecovery(input inputAssembly, boot runtimeAssembly, storage ledgerA
 			// and a follow-up that waited must not run ahead of the
 			// continuation.
 			if time.Since(interrupted.UpdatedAt) > staleTask {
-				log.Printf("steve: task #%s interrupted long ago; leaving it stopped", interrupted.ID)
+				slog.Warn(fmt.Sprintf("steve: task #%s interrupted long ago; leaving it stopped", interrupted.ID), "task", interrupted.ID)
 				cons.Notice(turn.TaskNotice{TaskID: interrupted.ID, ChatID: interrupted.ChatID, MessageID: interrupted.AnchorMessage, Requester: interrupted.Requester, Conversation: interrupted.Channel,
 					Text: catalogText.T(i18n.TaskDropped, interrupted.ID, time.Since(interrupted.UpdatedAt).Round(time.Hour))})
 				continue
@@ -65,14 +65,14 @@ func assembleRecovery(input inputAssembly, boot runtimeAssembly, storage ledgerA
 		if interrupted.AnchorMessage == "" {
 			// Nothing to reply to, so nothing can be said: the task is
 			// only recoverable through the listing.
-			log.Printf("steve: task #%s interrupted with no anchor; not resumable", interrupted.ID)
+			slog.Warn(fmt.Sprintf("steve: task #%s interrupted with no anchor; not resumable", interrupted.ID), "task", interrupted.ID)
 			continue
 		}
 		// A task that stops has to say so. Silence here is the one failure
 		// the delivery promise cannot survive: the user asked for an hour of
 		// work and would otherwise never learn it ended.
 		if time.Since(interrupted.UpdatedAt) > staleTask {
-			log.Printf("steve: task #%s interrupted long ago; leaving it stopped", interrupted.ID)
+			slog.Warn(fmt.Sprintf("steve: task #%s interrupted long ago; leaving it stopped", interrupted.ID), "task", interrupted.ID)
 			dropped = append(dropped, gateway.Notice{
 				TaskID: interrupted.ID, MessageID: interrupted.AnchorMessage,
 				Requester: interrupted.Requester,
@@ -108,7 +108,7 @@ func assembleRecovery(input inputAssembly, boot runtimeAssembly, storage ledgerA
 	for _, t := range pageResumes {
 		if err := cons.Resume(ctx, t.Channel, t.ID, t.Member,
 			catalogText.T(i18n.ResumeNotice, t.ID), catalogText.T(i18n.ResumePrompt, t.Goal), coordinator.ReviveSession); err != nil {
-			log.Printf("console: resume task #%s: %v", t.ID, err)
+			slog.Error(fmt.Sprintf("console: resume task #%s: %v", t.ID, err), "task", t.ID, "conversation", t.Channel)
 		}
 	}
 	if err := cons.Drain(); err != nil {

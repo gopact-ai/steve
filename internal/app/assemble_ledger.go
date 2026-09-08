@@ -2,7 +2,7 @@ package app
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -27,10 +27,10 @@ func assembleLedger(boot runtimeAssembly) (ledgerAssembly, error) {
 	quarantinedTasks := make(map[string]bool, len(recovery.Quarantined))
 	for _, r := range recovery.Quarantined {
 		quarantinedTasks[r.TaskID] = true
-		log.Printf("steve: quarantined previous writer: %s", attempt.Describe(r))
+		slog.Warn(fmt.Sprintf("steve: quarantined previous writer: %s", attempt.Describe(r)), "attempt", r.ID, "task", r.TaskID, "node", r.Node)
 	}
 	for _, r := range recovery.Expired {
-		log.Printf("steve: recovered settled attempt: %s", attempt.Describe(r))
+		slog.Info(fmt.Sprintf("steve: recovered settled attempt: %s", attempt.Describe(r)), "attempt", r.ID, "task", r.TaskID, "node", r.Node)
 	}
 	store, err := state.OpenLedger(book, cfg.Gateway.StatePath)
 	if err != nil {

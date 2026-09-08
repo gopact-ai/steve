@@ -2,7 +2,8 @@ package app
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -43,10 +44,10 @@ func assembleFleetWorkers(boot runtimeAssembly, storage ledgerAssembly, machines
 		}
 		for _, r := range prober.ProbeAll(ctx, endpoints(ctx), false) {
 			if r.Err != nil {
-				log.Printf("steve: probe %s/%s: %v", nodewire.Place(r.Endpoint.Node), r.Endpoint.Harness, r.Err)
+				slog.Warn(fmt.Sprintf("steve: probe %s/%s: %v", nodewire.Place(r.Endpoint.Node), r.Endpoint.Harness, r.Err), "node", nodewire.Place(r.Endpoint.Node), "harness", r.Endpoint.Harness)
 				continue
 			}
-			log.Printf("steve: %s/%s runs %q, offers %v", nodewire.Place(r.Endpoint.Node), r.Endpoint.Harness, r.Current, r.Available)
+			slog.Info(fmt.Sprintf("steve: %s/%s runs %q, offers %v", nodewire.Place(r.Endpoint.Node), r.Endpoint.Harness, r.Current, r.Available), "node", nodewire.Place(r.Endpoint.Node), "harness", r.Endpoint.Harness)
 		}
 	})
 	return nil

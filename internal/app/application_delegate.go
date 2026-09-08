@@ -2,7 +2,8 @@ package app
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -56,7 +57,7 @@ func runReconciler(ctx context.Context, label string, reconcile func(context.Con
 	defer ticker.Stop()
 	for {
 		if err := reconcile(ctx); err != nil && ctx.Err() == nil {
-			log.Printf("steve: %s: %v", label, err)
+			slog.Error(fmt.Sprintf("steve: %s: %v", label, err))
 		}
 		select {
 		case <-ctx.Done():

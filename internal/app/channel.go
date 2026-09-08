@@ -3,7 +3,8 @@ package app
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/onboard"
@@ -24,7 +25,7 @@ func runChannel(boot runtimeAssembly, storage ledgerAssembly, identity homeAssem
 	channel := channels.Channel()
 
 	if channel == nil {
-		log.Printf("steve: console-only hub ready")
+		slog.Info("steve: console-only hub ready")
 		<-ctx.Done()
 		return nil
 	}
@@ -58,13 +59,13 @@ func runChannel(boot runtimeAssembly, storage ledgerAssembly, identity homeAssem
 				return sent.ChatID, nil
 			},
 		}); err != nil {
-			log.Printf("steve: onboard: %v", err)
+			slog.Error(fmt.Sprintf("steve: onboard: %v", err))
 		}
 	})
 
-	log.Printf("steve: starting Feishu long connection")
+	slog.Info("steve: starting Feishu long connection")
 	if err := channel.Start(ctx); err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
-		log.Printf("steve: Feishu connection failed; Console remains available: %v", err)
+		slog.Error(fmt.Sprintf("steve: Feishu connection failed; Console remains available: %v", err))
 		view.Observe("channel.error", "feishu", "Feishu connection failed; check channel credentials and restart the Hub")
 		channelSettings.SetRuntimeError("Feishu connection failed; check the channel configuration and restart the Hub")
 		<-ctx.Done()
