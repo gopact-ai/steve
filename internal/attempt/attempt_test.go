@@ -3,6 +3,7 @@ package attempt
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -335,6 +336,104 @@ func TestAttemptLeasesAreIssuedByTheMachinesRegion(t *testing.T) {
 	}
 	if live, _ := s.Live(ctx); len(live) != 1 {
 		t.Fatalf("live = %d", len(live))
+	}
+}
+
+// fakeIssuer stands in for another region's hub. Its hooks let a test act
+// while the ledger is in the middle of asking it.
+type fakeIssuer struct {
+	onAcquire func(ctx context.Context) error
+	onRelease func()
+	epoch     uint64
+}
+
+func (i *fakeIssuer) Acquire(ctx context.Context, key, holder string, ttl time.Duration) (ledger.Lease, error) {
+	if i.onAcquire != nil {
+		if err := i.onAcquire(ctx); err != nil {
+			return ledger.Lease{}, err
+		}
+	}
+	i.epoch++
+	return ledger.Lease{Key: key, Holder: holder, Epoch: i.epoch, ExpiresAt: time.Now().Add(ttl)}, nil
+}
+
+func (i *fakeIssuer) Renew(ctx context.Context, lease ledger.Lease, ttl time.Duration) (ledger.Lease, error) {
+	return lease, nil
+}
+
+func (i *fakeIssuer) Release(context.Context, ledger.Lease) error {
+	if i.onRelease != nil {
+		i.onRelease()
+	}
+	return nil
+}
+
+func (i *fakeIssuer) Check(context.Context, ledger.Lease) error { return nil }
+func (i *fakeIssuer) Invalidate(context.Context, string) error  { return nil }
+
+func TestACancelledOpenFreesTheLeasesItAlreadyTook(t *testing.T) {
+	s, _ := newService(t)
+	s.l.SetRegion("east")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	// The attempt's own lease is local and taken first; the workspace lease
+	// is west's, and the caller gives up while west is still being asked.
+	s.l.RegisterIssuer("west", &fakeIssuer{onAcquire: func(ctx context.Context) error {
+		cancel()
+		<-ctx.Done()
+		return ctx.Err()
+	}})
+	spec := Spec{ID: "a1", Kind: KindStep, Project: "p", Node: "node-w", Harness: "codex", Region: "west", Workspace: worktree("wt-w", "p"), Scope: ScopePathSet}
+	if _, err := s.Open(ctx, spec); !errors.Is(err, context.Canceled) {
+		t.Fatalf("open under a cancelled caller = %v", err)
+	}
+	bg := context.Background()
+	if lease, ok, _ := s.l.LeaseOf(bg, "attempt:a1"); ok && lease.Holder == "a1" {
+		t.Fatalf("the cancelled open kept its attempt lease until the TTL: %+v", lease)
+	}
+	if live, _ := s.Live(bg); len(live) != 0 {
+		t.Fatalf("live = %+v", live)
+	}
+	// Nothing lingers: the same attempt id opens again at once.
+	spec.Region, spec.Node = "", ""
+	if _, err := s.Open(bg, spec); err != nil {
+		t.Fatalf("reopen after the cancelled open = %v", err)
+	}
+}
+
+func TestATerminalTransitionFreesLeasesUnderACancelledCaller(t *testing.T) {
+	s, _ := newService(t)
+	s.l.SetRegion("east")
+	bg := context.Background()
+	ctx, cancel := context.WithCancel(bg)
+	defer cancel()
+	// The canonical lock is west's and sits between two local leases: the
+	// caller goes away while west releases it, before the local slot is freed.
+	s.l.RegisterIssuer("west", &fakeIssuer{onRelease: cancel})
+	spec := Spec{TaskID: "1", Kind: KindChat, Project: "p", Agent: "claude", Harness: "claude", Slots: 1, CanonicalRegion: "west", Workspace: canonical("p"), Scope: ScopeUnrestricted}
+	rec, err := s.Open(bg, spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	slot := ""
+	for _, lease := range rec.Leases {
+		if strings.HasSuffix(lease.Key, ":slot:1") {
+			slot = lease.Key
+		}
+	}
+	if slot == "" || len(rec.Leases) != 3 {
+		t.Fatalf("leases = %+v", rec.Leases)
+	}
+	if _, err := s.Fail(ctx, rec.ID, "turn", "caller went away"); err != nil {
+		t.Fatalf("fail = %v", err)
+	}
+	if lease, ok, _ := s.l.LeaseOf(bg, slot); ok && lease.Holder == rec.ID {
+		t.Fatalf("the failed attempt kept its slot until the TTL: %+v", lease)
+	}
+	// The endpoint's only slot is free for the next turn.
+	spec.TaskID = "2"
+	if _, err := s.Open(bg, spec); err != nil {
+		t.Fatalf("the next in-place turn = %v", err)
 	}
 }
 
