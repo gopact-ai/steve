@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -171,7 +171,7 @@ func (s *Supervisor) continueFrom(ctx context.Context, p plan.Plan, outcome Outc
 			}
 			// The planner had nothing better. The original failure is the
 			// one worth reporting; the planner's refusal is why it stands.
-			log.Printf("exec: plan %s not revised: %v", current.ID, revErr)
+			slog.Warn(fmt.Sprintf("exec: plan %s not revised: %v", current.ID, revErr), "plan", current.ID, "task", current.TaskID)
 			return outcome, err
 		}
 		current = revised
@@ -242,7 +242,7 @@ func (s *Supervisor) revise(ctx context.Context, current plan.Plan, cause error)
 	if err != nil {
 		return plan.Plan{}, err
 	}
-	log.Printf("exec: plan %s revised to rev %d by %s — %s", current.ID, revised.Rev, s.planner.Name(), cause)
+	slog.Info(fmt.Sprintf("exec: plan %s revised to rev %d by %s — %s", current.ID, revised.Rev, s.planner.Name(), cause), "plan", current.ID, "task", latest.TaskID)
 	return revised, nil
 }
 
@@ -298,7 +298,7 @@ func (s *Supervisor) reserve(ctx context.Context, p plan.Plan) {
 			continue
 		}
 		if _, err := s.deps.Attempts.ReserveForIn(ctx, candidate.Region, key, candidate.Node, candidate.Harness, candidate.Slots, "plan "+p.ID, ReservationTTL); err != nil {
-			log.Printf("exec: plan %s step %s: no capacity to reserve on %s: %v", p.ID, step.ID, endpointOf(candidate.Node, candidate.Harness), err)
+			slog.Warn(fmt.Sprintf("exec: plan %s step %s: no capacity to reserve on %s: %v", p.ID, step.ID, endpointOf(candidate.Node, candidate.Harness), err), "plan", p.ID, "step", step.ID, "task", p.TaskID, "node", candidate.Node)
 		}
 	}
 }

@@ -18,7 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/nodewire"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -379,7 +379,7 @@ func runStepWithRecovery(ctx context.Context, p plan.Plan, step plan.Step, upstr
 			if deps.recoveries != nil {
 				deps.recoveries.Add(1)
 			}
-			log.Printf("exec: step %q attempt %d on %s failed: %v — retrying", step.ID, step.Attempts, out.Agent, err)
+			slog.Warn(fmt.Sprintf("exec: step %q attempt %d on %s failed: %v — retrying", step.ID, step.Attempts, out.Agent, err), "plan", p.ID, "step", step.ID, "attempt", out.AttemptID, "task", p.TaskID, "node", out.Node)
 		}
 	}
 	return last, ErrExhausted{StepID: step.ID, Attempts: step.Attempts, Cause: lastErr}
