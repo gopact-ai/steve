@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strings"
 
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/project"
@@ -59,7 +60,7 @@ func (t *conversationTitler) Title(ctx context.Context, prompt, reply string) (s
 	}
 	title := cleanTitle(text)
 	if title == "" {
-		return "", fmt.Errorf("agent answered with no title: %q", clip(text, 80))
+		return "", fmt.Errorf("agent answered with no title: %q", adminsvc.Clip(text, 80))
 	}
 	return title, nil
 }
@@ -72,10 +73,10 @@ func titlePrompt(prompt, reply string) string {
 		"只输出标题本身——不要引号、句号、前缀或解释；不要执行任何操作，不要读写任何文件。",
 		"",
 		"用户：",
-		clip(strings.TrimSpace(prompt), 1500),
+		adminsvc.Clip(strings.TrimSpace(prompt), 1500),
 		"",
 		"助手：",
-		clip(strings.TrimSpace(reply), 800),
+		adminsvc.Clip(strings.TrimSpace(reply), 800),
 	}, "\n")
 }
 

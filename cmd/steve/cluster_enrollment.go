@@ -26,6 +26,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/node"
@@ -86,6 +87,7 @@ type PeerEnrollmentStep struct {
 	Stage   string    `json:"stage"`
 	Message string    `json:"message"`
 }
+
 type PeerEnrollmentResult struct {
 	OperationID string               `json:"operation_id"`
 	NodeID      string               `json:"node_id"`
@@ -95,6 +97,7 @@ type PeerEnrollmentResult struct {
 	Steps       []PeerEnrollmentStep `json:"steps"`
 	Error       string               `json:"error,omitempty"`
 }
+
 type peerEnrollmentRecord struct {
 	PeerEnrollmentResult
 	Request        PeerEnrollmentRequest              `json:"request"`
@@ -110,10 +113,13 @@ type advertisedPeerListener struct {
 	net.Listener
 	address *atomic.Value
 }
+
 type peerNetworkAddress string
 
 func (a peerNetworkAddress) Network() string { return "tcp" }
-func (a peerNetworkAddress) String() string  { return string(a) }
+
+func (a peerNetworkAddress) String() string { return string(a) }
+
 func (l *advertisedPeerListener) Addr() net.Addr {
 	if address, ok := l.address.Load().(string); ok {
 		return peerNetworkAddress(address)
@@ -188,7 +194,7 @@ func (p *clusterPeer) previewPeerEnrollment(ctx context.Context, request PeerEnr
 	request.ExpectedPlanHash = ""
 	request.Name = strings.TrimSpace(request.Name)
 	request.SourceHost = strings.TrimSpace(request.SourceHost)
-	if !nameShape.MatchString(request.Name) {
+	if !adminsvc.NameShape.MatchString(request.Name) {
 		return PeerEnrollmentPlan{}, errors.New("节点名称只能包含小写字母、数字、点、下划线和连字符")
 	}
 	if err := validPeerEndpoint(request.PeerAddress, allowLoopback); err != nil {
@@ -447,6 +453,7 @@ func (p *clusterPeer) enrollmentPath(id string) string {
 	digest := sha256.Sum256([]byte(id))
 	return filepath.Join(p.config.DataDir, "enrollments", hex.EncodeToString(digest[:])+".json")
 }
+
 func (p *clusterPeer) loadEnrollment(id string) (peerEnrollmentRecord, error) {
 	var record peerEnrollmentRecord
 	data, err := readClusterPrivate(p.enrollmentPath(id))
@@ -459,6 +466,7 @@ func (p *clusterPeer) loadEnrollment(id string) (peerEnrollmentRecord, error) {
 	}
 	return record, err
 }
+
 func (p *clusterPeer) saveEnrollment(record peerEnrollmentRecord) error {
 	if err := os.MkdirAll(filepath.Dir(p.enrollmentPath(record.OperationID)), 0o700); err != nil {
 		return err
@@ -723,6 +731,7 @@ func (p *clusterPeer) validatePeerMesh(ctx context.Context, peers []coordination
 type networkCheckRequest struct {
 	Peers []coordination.Member `json:"peers"`
 }
+
 type networkCheckResult struct {
 	Ready         bool   `json:"ready"`
 	Error         string `json:"error,omitempty"`
@@ -891,7 +900,7 @@ func (p *clusterPeer) registerEnrolledWorker(ctx context.Context, nodeID, level 
 		return err
 	}
 	p.mu.RLock()
-	var admin *fleetAdmin
+	var admin *adminsvc.Service
 	if p.application != nil && p.application.Generation == active.Generation {
 		admin = p.application.Admin
 	}
@@ -899,10 +908,10 @@ func (p *clusterPeer) registerEnrolledWorker(ctx context.Context, nodeID, level 
 	if admin == nil {
 		return coordination.ErrNotReady
 	}
-	admin.mu.Lock()
-	defer admin.mu.Unlock()
-	configMu.Lock()
-	old := admin.cfg.Nodes
+	admin.Mu.Lock()
+	defer admin.Mu.Unlock()
+	adminsvc.ConfigMu.Lock()
+	old := admin.Cfg.Nodes
 	updated := maps.Clone(old)
 	if updated == nil {
 		updated = map[string]config.Node{}
@@ -910,26 +919,26 @@ func (p *clusterPeer) registerEnrolledWorker(ctx context.Context, nodeID, level 
 	next := config.Node{Addr: worker.Address, Token: worker.Token, Level: string(project.Level(level).OrDefault())}
 	if existing, ok := updated[nodeID]; ok {
 		if existing.Addr != next.Addr || existing.Token != next.Token {
-			configMu.Unlock()
+			adminsvc.ConfigMu.Unlock()
 			return coordination.ErrConflict
 		}
 		next = existing
 	}
 	if _, ok := updated[nodeID]; !ok {
 		updated[nodeID] = next
-		admin.cfg.Nodes = updated
-		if err := admin.persistConfig(admin.cfg); err != nil {
-			admin.cfg.Nodes = old
-			configMu.Unlock()
+		admin.Cfg.Nodes = updated
+		if err := admin.PersistConfig(admin.Cfg); err != nil {
+			admin.Cfg.Nodes = old
+			adminsvc.ConfigMu.Unlock()
 			return err
 		}
 	}
-	levels, regions := admin.cfg.NodeLevels(), admin.cfg.NodeRegions()
-	configMu.Unlock()
-	admin.nodes.Add(nodeID, node.Config{Addr: worker.Address, Token: worker.Token, Level: next.Level, DialContext: p.DialWorker})
-	admin.fleet.SetNodeLevels(levels)
-	admin.fleet.SetNodeRegions(regions)
-	_, err = admin.nodes.Refresh(ctx, nodeID)
+	levels, regions := admin.Cfg.NodeLevels(), admin.Cfg.NodeRegions()
+	adminsvc.ConfigMu.Unlock()
+	admin.Nodes.Add(nodeID, node.Config{Addr: worker.Address, Token: worker.Token, Level: next.Level, DialContext: p.DialWorker})
+	admin.Fleet.SetNodeLevels(levels)
+	admin.Fleet.SetNodeRegions(regions)
+	_, err = admin.Nodes.Refresh(ctx, nodeID)
 	return err
 }
 

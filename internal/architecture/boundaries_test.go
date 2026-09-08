@@ -42,7 +42,7 @@ func TestDependenciesRespectDomainAndTransportBoundaries(t *testing.T) {
 			if owner == "consoleapi" && (top == "httpapi" || top == "readmodel" || top == "console" || top == "gateway" || top == "turn") {
 				t.Errorf("%s: API contract imports implementation %s", rel, dependency)
 			}
-			if domains[owner] && (top == "httpapi" || top == "consoleapi" || top == "readmodel" || top == "console" || top == "gateway" || top == "turn" || top == "delegate" || top == "exec") {
+			if domains[owner] && (top == "app" || top == "admin" || top == "cluster" || top == "httpapi" || top == "consoleapi" || top == "readmodel" || top == "console" || top == "gateway" || top == "turn" || top == "delegate" || top == "exec") {
 				t.Errorf("%s: domain imports application/transport %s", rel, dependency)
 			}
 		}

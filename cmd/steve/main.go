@@ -17,13 +17,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"syscall"
 	"time"
 
 	"github.com/gopact-ai/acp"
 	gopactsqlite "github.com/gopact-ai/gopact-ext/stores/sqlite"
 	"github.com/gopact-ai/gopact/workflow"
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/agentexec"
 	"github.com/gopact-ai/steve/internal/agentmcp"
@@ -74,9 +74,6 @@ import (
 	"github.com/gopact-ai/steve/internal/workflowstore"
 	"golang.org/x/term"
 )
-
-// homeProjectID names Steve's home directory as a project.
-const homeProjectID = config.ReservedHomeProject
 
 // idleTaskAge is how long a chat thread may go unspoken to before its
 // task is closed. A person can always start a new one by talking.
@@ -130,7 +127,7 @@ func sweepAttempts(ctx context.Context, attempts *attempt.Service) {
 // default project's if it is homed there, else any project's.
 func probeWorkspace(projects []project.Project, node string) (string, bool) {
 	for _, p := range projects {
-		if p.ID == homeProjectID {
+		if p.ID == adminsvc.HomeProjectID {
 			continue
 		}
 		if ws, err := p.Place(node); err == nil {
@@ -150,11 +147,11 @@ func main() {
 		log.Fatal(err)
 	}
 	if err := run(os.Args[1:]); err != nil {
-		var restart *hubRestartExit
+		var restart *adminsvc.RestartExit
 		if errors.As(err, &restart) {
 			err = processrestart.ReexecCurrent()
 			if err != nil {
-				restart.service.failed(err)
+				restart.Service.Failed(err)
 			}
 		}
 		log.Fatal(err)
@@ -270,7 +267,7 @@ func doctor(args []string) error {
 	// Nodes are probed before agents: availability is a real dial, not a
 	// line in the config, and an agent placed on an unreachable node should
 	// fail with that fact rather than with a mystery session error.
-	nodewire.SetSelf(nodeName())
+	nodewire.SetSelf(adminsvc.NodeName())
 	nodes := node.NewRegistry(cfg.Gateway.HubID, cfg.NodeConfigs())
 	defer nodes.Close()
 	manager.SetTransports(nodes)
@@ -297,9 +294,9 @@ func doctor(args []string) error {
 	}
 	observation, closeObservation := newLocalObservation(ctx, cfg)
 	defer closeObservation()
-	self := observedHubAdvert(cfg, observation)
+	self := adminsvc.ObservedHubAdvert(cfg, observation)
 	log.Printf("steve: hub %s — %s %v, %s/%s, level=%s, harnesses=%s, caps=%v",
-		self.Node, self.Hostname, self.IPs, self.OS, self.Arch, cfg.HubLevel(), harnessSummary(self), self.Capabilities)
+		self.Node, self.Hostname, self.IPs, self.OS, self.Arch, cfg.HubLevel(), adminsvc.HarnessSummary(self), self.Capabilities)
 	reportGit("hub "+self.Node, self)
 	for _, h := range self.Harnesses {
 		if h.Missing != "" {
@@ -312,7 +309,7 @@ func doctor(args []string) error {
 		}
 		log.Printf("steve: node %s up — %s/%s, level=%s, harnesses=%s, caps=%v",
 			status.Name, status.Advert.OS, status.Advert.Arch, status.Level,
-			harnessSummary(status.Advert), status.Advert.Capabilities)
+			adminsvc.HarnessSummary(status.Advert), status.Advert.Capabilities)
 		reportGit("node "+status.Name, status.Advert)
 		for _, h := range status.Advert.Harnesses {
 			if h.Missing != "" {
@@ -444,7 +441,7 @@ type applicationEnvironment struct {
 	ConfigurationRevision func() string
 	Configure             func(*config.Config) error
 	Coordination          consoleapi.CoordinationService
-	Ready                 func(*fleetAdmin, *httpapi.Server) error
+	Ready                 func(*adminsvc.Service, *httpapi.Server) error
 }
 
 func serve(args []string) error {
@@ -455,13 +452,13 @@ func serve(args []string) error {
 }
 
 func serveApplication(parent context.Context, args []string, environment *applicationEnvironment) (runErr error) {
-	var services *hubServices
+	var services *adminsvc.Services
 	defer func() {
-		if services != nil && services.requested() {
+		if services != nil && services.Requested() {
 			if runErr == nil {
-				runErr = &hubRestartExit{service: services}
+				runErr = &adminsvc.RestartExit{Service: services}
 			} else {
-				services.failed(runErr)
+				services.Failed(runErr)
 			}
 		}
 	}()
@@ -496,7 +493,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 			return fmt.Errorf("coordinated application needs its generation ledger")
 		}
 		if environment.NodeID != "" {
-			localNodeIdentity.Store(environment.NodeID)
+			adminsvc.LocalNodeIdentity.Store(environment.NodeID)
 		}
 	} else {
 		book, err = openLedger(cfg)
@@ -568,7 +565,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 			}
 		}
 	}
-	nodewire.SetSelf(nodeName())
+	nodewire.SetSelf(adminsvc.NodeName())
 	nodeConfigs := cfg.NodeConfigs()
 	if environment != nil && environment.ConfigureNodes != nil {
 		if err := environment.ConfigureNodes(nodeConfigs); err != nil {
@@ -601,7 +598,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 	fleet.SetHubCapabilities(cfg.Gateway.Capabilities)
 	observation, closeObservation := newLocalObservation(ctx, cfg)
 	defer closeObservation()
-	fleet.SetHubAdvert(func() nodewire.Advert { return observedHubAdvert(cfg, observation) })
+	fleet.SetHubAdvert(func() nodewire.Advert { return adminsvc.ObservedHubAdvert(cfg, observation) })
 	fleet.SetHubLevel(cfg.HubLevel())
 	// What every harness was seen running, per machine: sessions report
 	// it as they open, and a probe asks on purpose for the ones nobody
@@ -612,7 +609,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 	}
 	fleet.SetModels(seen)
 	manager.SetObserver(func(at harness.Placement, s steveview.Settings) {
-		seen.Observe(models.Observation{Node: at.Node, Harness: at.Harness, Current: s.Model, Available: s.Models, Version: s.Adapter, Source: "session", Selectors: selectorsOf(s.Options)})
+		seen.Observe(models.Observation{Node: at.Node, Harness: at.Harness, Current: s.Model, Available: s.Models, Version: s.Adapter, Source: "session", Selectors: adminsvc.SelectorsOf(s.Options)})
 	})
 	prober := models.NewProber(manager, seen, func(ctx context.Context, node, dir string) error {
 		if node == "" {
@@ -676,7 +673,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 		}
 	}
 	coordinator.SetSkills(live)
-	coordinator.SetProjects(projects, cfg.Gateway.DefaultProject, homeProjectID)
+	coordinator.SetProjects(projects, cfg.Gateway.DefaultProject, adminsvc.HomeProjectID)
 	// Memory: the home's MEMORY.md for the owner, one file per project,
 	// every write locked and audited under the state directory.
 	memories := profile.Service
@@ -716,7 +713,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 	coordinator.SetExecution(executions)
 	artifacts.SetExecution(executions)
 	tasks.SetBudget(cfg.Gateway.TaskMaxTurns, time.Duration(cfg.Gateway.TaskMaxElapsed))
-	coordinator.SetTasks(tasks, nodeName())
+	coordinator.SetTasks(tasks, adminsvc.NodeName())
 	schedules, err := schedule.OpenLedger(book, filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "schedules.json"))
 	if err != nil {
 		return fmt.Errorf("open schedules: %w", err)
@@ -781,7 +778,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 	)
 	supervisor.SetExecution(executions)
 	supervisor.SetPlans(plans)
-	supervisor.SetLedger(book, nodeName())
+	supervisor.SetLedger(book, adminsvc.NodeName())
 	supervisor.SetTasks(tasks)
 	coordinator.SetSupervisor(supervisor, plans, fleet)
 	coordinator.SetPlanRecoveryOwner(func(tracked task.Task) bool { return environment != nil && console.IsConsole(tracked.Channel) })
@@ -800,14 +797,14 @@ func serveApplication(parent context.Context, args []string, environment *applic
 	// operator sees in one place cannot contradict the other.
 	// What each project's directory holds is asked of its machine on a
 	// slow clock and kept: a page must not run git on every repaint.
-	repos := &repoCache{projects: projects, nodes: nodes, hub: nodeName(), poke: make(chan struct{}, 1)}
+	repos := &adminsvc.RepoCache{Projects: projects, Nodes: nodes, Hub: adminsvc.NodeName(), Poke: make(chan struct{}, 1)}
 	view := readmodel.New(readmodel.Sources{
 		Hub: readmodel.Hub{
-			Node: nodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities,
+			Node: adminsvc.NodeName(), Started: time.Now(), Capabilities: cfg.Gateway.Capabilities,
 			Level: string(cfg.HubLevel()),
 		},
-		HubAdvert: func() nodewire.Advert { return observedHubAdvert(cfg, observation) },
-		Repos:     repos.get, HomeProject: homeProjectID, DefaultProject: cfg.Gateway.DefaultProject,
+		HubAdvert: func() nodewire.Advert { return adminsvc.ObservedHubAdvert(cfg, observation) },
+		Repos:     repos.Get, HomeProject: adminsvc.HomeProjectID, DefaultProject: cfg.Gateway.DefaultProject,
 		Models: seen,
 		Roster: fleet, Nodes: nodes, Tasks: tasks, Plans: plans,
 		Ledger:       readmodel.Ledger{Book: book, Attempts: attempts, Artifacts: artifacts, Projects: projects, Intents: intents},
@@ -825,23 +822,23 @@ func serveApplication(parent context.Context, args []string, environment *applic
 	// Skills are the hub's to enable and every machine's to have: each
 	// node gets the enabled set as a content-addressed bundle when it
 	// connects and whenever the set changes, before harnesses restart.
-	shipper := &skillShipper{nodes: nodes, live: live, observe: view.Observe}
-	observation.skills.Store(shipper)
-	if _, err := shipper.pack(); err != nil {
+	shipper := &adminsvc.SkillShipper{Nodes: nodes, Live: live, Observe: view.Observe}
+	observation.Skills.Store(shipper)
+	if _, err := shipper.Pack(); err != nil {
 		log.Printf("steve: skills could not be packed for nodes: %v", err)
 	}
 	live.After = func() error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
-		shipper.shipAll(ctx)
+		shipper.ShipAll(ctx)
 		return manager.Restart()
 	}
 	// Machines coming and going are history, not just log lines.
 	nodes.SetObserver(func(s node.Status) {
 		if s.Up {
 			view.Observe("node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion))
-			background.Go(func(ctx context.Context) { shipper.ship(ctx, s.Name) })
+			background.Go(func(ctx context.Context) { shipper.Ship(ctx, s.Name) })
 			// A machine that comes back may hold worktrees of attempts that
 			// died with the connection; nothing else ever returns for them.
 			if root := s.Advert.WorkspaceRoot; root != "" {
@@ -891,16 +888,16 @@ func serveApplication(parent context.Context, args []string, environment *applic
 		}
 		return project.Level(level)
 	}
-	admin := &fleetAdmin{lifetime: ctx, cfg: cfg, path: *configPath, nodes: nodes, catalog: catalog, fleet: fleet, manager: manager, assembler: assembler, projects: projects, repos: repos, attempts: attempts, tasks: tasks, view: view,
-		skills: live, shipper: shipper, observation: observation, coordinator: coordinator, homePath: cfg.Gateway.HomePath, memory: memories, artifacts: artifacts}
-	defer admin.closeSSH()
+	admin := &adminsvc.Service{Lifetime: ctx, Cfg: cfg, Path: *configPath, Nodes: nodes, Catalog: catalog, Fleet: fleet, Manager: manager, Assembler: assembler, Projects: projects, Repos: repos, Attempts: attempts, Tasks: tasks, View: view,
+		LiveSkills: live, Shipper: shipper, Observation: observation, Coordinator: coordinator, HomePath: cfg.Gateway.HomePath, Memory: memories, Artifacts: artifacts}
+	defer admin.CloseSSH()
 	if environment != nil {
-		admin.writeConfig = environment.WriteConfig
-		admin.writeConfigContext = environment.WriteConfigContext
-		admin.configRevision = environment.ConfigurationRevision
-		admin.clusterMode = true
+		admin.WriteConfig = environment.WriteConfig
+		admin.WriteConfigContext = environment.WriteConfigContext
+		admin.ConfigRevision = environment.ConfigurationRevision
+		admin.ClusterMode = true
 	}
-	admin.homeLoader, admin.sharedHome = profile.Home, profile.Shared
+	admin.HomeLoader, admin.SharedHome = profile.Home, profile.Shared
 	dashboard.SetAdmin(admin)
 	dashboard.SetDesktop(admin)
 	dashboard.SetSSH(admin)
@@ -938,18 +935,18 @@ func serveApplication(parent context.Context, args []string, environment *applic
 		}
 		manager.Stop()
 	}()
-	admin.materials, admin.console, admin.owner = materials, cons, cfg.EffectiveOwnerID()
-	admin.materialLevel = cfg.HubLevel()
-	cons.SetMaterials(materials, admin.authorizeMaterials)
+	admin.Materials, admin.Console, admin.Owner = materials, cons, cfg.EffectiveOwnerID()
+	admin.MaterialLevel = cfg.HubLevel()
+	cons.SetMaterials(materials, admin.AuthorizeMaterials)
 	cons.SetDefaultLocale(cfg.EffectiveLocale())
-	dashboard.SetSettings(newHubSettingsService(admin, cfg))
-	channelSettings := newHubChannelsService(admin, cfg)
+	dashboard.SetSettings(adminsvc.NewSettings(admin, cfg))
+	channelSettings := adminsvc.NewChannels(admin, cfg)
 	dashboard.SetChannels(channelSettings)
 	var restartDocument ledger.Doc = &ledger.FileDocument{Path: filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "service-restarts.json")}
 	if environment != nil {
 		restartDocument = book.Document("service-restarts")
 	}
-	services, err = newHubServices(admin, executions, dashboard.SealWrites, stop, restartDocument)
+	services, err = adminsvc.NewServices(admin, executions, dashboard.SealWrites, stop, restartDocument)
 	if err != nil {
 		return fmt.Errorf("initialize service restart control: %w", err)
 	}
@@ -969,7 +966,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 	// hub's own orphaned worktrees now, queued landings from here on.
 	background.Go(func(ctx context.Context) { sweepWorktrees(ctx, artifacts, attempts, tasks, view, "", "") })
 	background.Go(func(ctx context.Context) { sweepLandings(ctx, projects, artifacts, view) })
-	background.Go(repos.run)
+	background.Go(repos.Run)
 	background.Go(func(ctx context.Context) { sweepIdleTasks(ctx, tasks, attempts, view) })
 	// Discover models for whatever nobody has run yet. It is discovery,
 	// not work: a session opened and closed, no prompt sent. Done off the
@@ -1021,7 +1018,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 		// in the tree, funded from the caller's remainder, with its own
 		// token. It is offered only when the messaging server exists,
 		// because that is where the tool lives.
-		delegation := delegate.New(tasks, fleet, manager, assembler, artifacts, nodeName())
+		delegation := delegate.New(tasks, fleet, manager, assembler, artifacts, adminsvc.NodeName())
 		delegation.SetExecution(executions)
 		delegation.SetLedger(attempts, artifacts)
 		delegation.SetGate(gate)
@@ -1038,7 +1035,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 		delegation.SetObserver(func(c delegate.Child, p steveview.Progress) {
 			where := c.Node
 			if where == "" {
-				where = nodeName() // the hub itself, named like any machine
+				where = adminsvc.NodeName() // the hub itself, named like any machine
 			}
 			info := consoleapi.StepInfo{Kind: "delegate", Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
 				Elapsed: c.Elapsed.Round(time.Second).String(), Answer: c.Answer, Refs: c.Refs}
@@ -1095,8 +1092,8 @@ func serveApplication(parent context.Context, args []string, environment *applic
 	if gate != nil {
 		gate.SetIntents(intent.ForAgents{S: intents, Attempts: attempts})
 		// Platform questions are answered by the coordinator, live.
-		gate.SetInformer(coordinatorInformer{c: coordinator})
-		gate.SetFleeter(fleetTools{admin: admin, view: view})
+		gate.SetInformer(adminsvc.CoordinatorInformer{C: coordinator})
+		gate.SetFleeter(adminsvc.FleetTools{Admin: admin, View: view})
 		gate.SetMemorizer(coordinator)
 	}
 	var channel *feishu.Channel
@@ -1113,7 +1110,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 		cancelConnect()
 		if err != nil {
 			log.Printf("steve: Feishu initialization failed; Console remains available")
-			channelSettings.setRuntimeError("Feishu initialization failed; check the application credentials and restart the Hub")
+			channelSettings.SetRuntimeError("Feishu initialization failed; check the application credentials and restart the Hub")
 			channel = nil
 		} else {
 			gw.BindChannel(channel)
@@ -1264,7 +1261,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 		stops := newApplicationStops(attempts, tasks, manager)
 		reconciliations.Go(func() { runReconciler(ctx, "reconcile requested task stops", stops.Reconcile) })
 	}
-	if err := services.ready(); err != nil {
+	if err := services.Ready(); err != nil {
 		return fmt.Errorf("record service readiness: %w", err)
 	}
 	if environment == nil {
@@ -1342,7 +1339,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 	if err := channel.Start(ctx); err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
 		log.Printf("steve: Feishu connection failed; Console remains available: %v", err)
 		view.Observe("channel.error", "feishu", "Feishu connection failed; check channel credentials and restart the Hub")
-		channelSettings.setRuntimeError("Feishu connection failed; check the channel configuration and restart the Hub")
+		channelSettings.SetRuntimeError("Feishu connection failed; check the channel configuration and restart the Hub")
 		<-ctx.Done()
 	}
 	return nil
@@ -1396,7 +1393,7 @@ func loadConfigured(path string, configure func(*config.Config) error) (*config.
 	if err := cfg.PrepareAdapters(context.Background()); err != nil {
 		return nil, nil, nil, nil, err
 	}
-	manager, err := harnessRuntimeConfig(cfg).HarnessManager()
+	manager, err := adminsvc.HarnessRuntimeConfig(cfg).HarnessManager()
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
@@ -1475,259 +1472,6 @@ func readPort(path string) int {
 		return 0
 	}
 	return port
-}
-
-// harnessSummary renders a node's runtimes for one log line, marking the
-// ones it cannot actually start.
-func harnessSummary(advert nodewire.Advert) string {
-	if len(advert.Harnesses) == 0 {
-		return "none"
-	}
-	names := make([]string, 0, len(advert.Harnesses))
-	for _, h := range advert.Harnesses {
-		if h.Missing != "" {
-			names = append(names, withSlots(h)+"(missing)")
-			continue
-		}
-		names = append(names, withSlots(h))
-	}
-	return strings.Join(names, ",")
-}
-
-func withSlots(h nodewire.Harness) string {
-	if h.Slots > 0 {
-		return fmt.Sprintf("%s(%d)", h.ID, h.Slots)
-	}
-	return h.ID
-}
-
-// hubGeneration identifies this hub process for its own snapshots;
-// hubSequence counts them.
-var (
-	hubGeneration = time.Now().Unix()
-	hubSequence   atomic.Int64
-)
-
-// hubAdvert describes the hub's own machine the way a node's advert
-// describes a node: the same harness check against this PATH, the same
-// identity, so the fleet has one shape for every machine.
-func hubAdvert(cfg *config.Config) nodewire.Advert { return observedHubAdvert(cfg, nil) }
-
-func observedHubAdvert(cfg *config.Config, observation *localObservation) nodewire.Advert {
-	configMu.RLock()
-	defer configMu.RUnlock()
-	specs := make(map[string]node.HarnessSpec, len(cfg.Harnesses))
-	for id, h := range cfg.Harnesses {
-		specs[id] = node.HarnessSpec{Command: h.Command, Args: h.Args, Env: h.Env, ProcessDir: h.ProcessDir, Slots: h.Slots}
-	}
-	adv := node.Advertise(nodeName(), specs, cfg.Gateway.Capabilities)
-	mcp := make(map[string]node.MCPSpec, len(cfg.MCPServers))
-	for id, m := range cfg.MCPServers {
-		mcp[id] = node.MCPSpec{Type: m.Type, Command: m.Command, Args: m.Args, URL: m.URL}
-	}
-	var shipper *skillShipper
-	var launch func(string) (node.LaunchResult, bool)
-	if observation != nil {
-		shipper = observation.skills.Load()
-		launch = observation.launch.Lookup
-	}
-	entries, known := shipper.entries()
-	adv.Snapshot = node.Snapshot(nodeName(), hubGeneration, hubSequence.Add(1), node.Observe{Harnesses: specs, Tools: cfg.Gateway.Tools, MCP: mcp, Declares: cfg.Gateway.Declares, Tags: cfg.Gateway.Capabilities, Launch: launch, Skills: entries, SkillsKnown: known})
-	adv.Features = nodewire.Features()
-	adv.OwnSkills = node.OwnSkills(5 * time.Minute)
-	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
-	adv.Health = node.CheckHealth("", adv.StateDir)
-	return adv
-}
-
-// repoCache keeps what each project's directory holds, asked of its
-// machine every minute and whenever a project is added.
-type repoCache struct {
-	projects *project.Store
-	nodes    *node.Registry
-	hub      string
-
-	mu    sync.Mutex
-	repos map[string][]nodewire.Repo
-	poke  chan struct{}
-}
-
-func (c *repoCache) get(id string) []nodewire.Repo {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.repos[id]
-}
-
-func (c *repoCache) wake() {
-	select {
-	case c.poke <- struct{}{}:
-	default:
-	}
-}
-
-func (c *repoCache) run(ctx context.Context) {
-	for {
-		c.pass(ctx)
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(time.Minute):
-		case <-c.poke:
-		}
-	}
-}
-
-func (c *repoCache) pass(ctx context.Context) {
-	list, err := c.projects.List(ctx)
-	if err != nil {
-		return
-	}
-	next := make(map[string][]nodewire.Repo, len(list))
-	for _, p := range list {
-		for _, ws := range p.Workspaces() {
-			var repos []nodewire.Repo
-			if ws.Node == "" || ws.Node == c.hub {
-				repos = node.InspectRepos(ctx, ws.Path)
-			} else {
-				ictx, cancel := context.WithTimeout(ctx, 20*time.Second)
-				repos, err = c.nodes.Inspect(ictx, ws.Node, ws.Path)
-				cancel()
-				if err != nil {
-					// Keep what we knew: a machine that is down did not
-					// lose its repositories.
-					repos = c.get(ws.ID)
-				}
-			}
-			next[ws.ID] = repos
-		}
-	}
-	c.mu.Lock()
-	c.repos = next
-	c.mu.Unlock()
-}
-
-// selectorsOf keeps every selector a session exposed, choices by label
-// and by value, so the page can offer them and a pin can be matched.
-func selectorsOf(options []steveview.Option) []models.Selector {
-	var out []models.Selector
-	for _, o := range options {
-		sel := models.Selector{ID: o.ID, Name: o.Name, Category: o.Category, Current: o.Current}
-		for _, c := range o.Choices {
-			label := c.Label
-			if label == "" {
-				label = c.Value
-			}
-			sel.Choices = append(sel.Choices, label)
-			sel.Values = append(sel.Values, c.Value)
-		}
-		out = append(out, sel)
-	}
-	return out
-}
-
-// skillShipper keeps every node's harness homes holding the same skills
-// the hub enabled. The bundle is packed from the live map each time it is
-// needed — skills are small, and a stale bundle would ship stale skills.
-type skillShipper struct {
-	nodes   *node.Registry
-	live    *skills.Live
-	observe func(kind, subject, text string)
-
-	mu     sync.Mutex
-	bundle skills.Bundle
-	packed bool
-}
-
-func (s *skillShipper) pack() (skills.Bundle, error) {
-	if s == nil || s.live == nil || s.live.Map == nil {
-		return skills.Bundle{}, errors.New("skills are not configured")
-	}
-	refs, err := s.live.Map.Enabled()
-	if err != nil {
-		return skills.Bundle{}, err
-	}
-	b, err := skills.Pack(refs)
-	if err != nil {
-		return skills.Bundle{}, err
-	}
-	s.mu.Lock()
-	s.bundle, s.packed = b, true
-	s.mu.Unlock()
-	return b, nil
-}
-
-// entries is what the hub's own machine has: the last packed bundle.
-// hash is the bundle the hub last packed, or "" before the first pack.
-func (s *skillShipper) hash() string {
-	if s == nil {
-		return ""
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.packed {
-		return ""
-	}
-	return s.bundle.Hash
-}
-
-func (s *skillShipper) entries() ([]skills.Entry, bool) {
-	if s == nil {
-		return nil, false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.bundle.Skills, s.packed
-}
-
-func (s *skillShipper) ship(ctx context.Context, name string) {
-	b, err := s.pack()
-	if err != nil {
-		log.Printf("steve: skills for %s: %v", name, err)
-		return
-	}
-	ctx, cancel := context.WithTimeout(ctx, time.Minute)
-	defer cancel()
-	if err := s.nodes.PushSkills(ctx, name, b); err != nil {
-		if strings.Contains(err.Error(), "does not take skill bundles") {
-			return
-		}
-		log.Printf("steve: skills to %s: %v", name, err)
-		if s.observe != nil {
-			s.observe("node.skills", name, fmt.Sprintf("%s: skills %s not materialized: %v", name, b.Hash[:12], err))
-		}
-		return
-	}
-	if s.observe != nil {
-		s.observe("node.skills", name, fmt.Sprintf("%s: skills %s materialized (%d skills)", name, b.Hash[:12], len(b.Skills)))
-	}
-}
-
-func (s *skillShipper) shipAll(ctx context.Context) {
-	if s == nil || s.nodes == nil {
-		return
-	}
-	for _, st := range s.nodes.Statuses() {
-		if st.Up {
-			s.ship(ctx, st.Name)
-		}
-	}
-}
-
-// nodeName labels which machine ran a turn: the hub's own node name.
-var localNodeIdentity atomic.Value
-
-func nodeName() string {
-	if id, ok := localNodeIdentity.Load().(string); ok && id != "" {
-		return id
-	}
-	if name := strings.TrimSpace(os.Getenv("STEVE_NODE")); name != "" {
-		return name
-	}
-	host, err := os.Hostname()
-	if err != nil || host == "" {
-		return "local"
-	}
-	return host
 }
 
 // capabilitiesFor adapts the capability assembler to what a step runner

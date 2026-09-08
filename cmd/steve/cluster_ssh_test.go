@@ -77,6 +77,7 @@ type sshEnrollmentFixture struct {
 func (f *sshEnrollmentFixture) PreviewPeerEnrollment(context.Context, PeerEnrollmentRequest) (PeerEnrollmentPlan, error) {
 	return f.plan, nil
 }
+
 func (f *sshEnrollmentFixture) PreparePeerEnrollment(_ context.Context, request PeerEnrollmentRequest, id string) (PeerEnrollmentPackage, error) {
 	if request.ExpectedPlanHash != f.plan.ReviewID {
 		return PeerEnrollmentPackage{}, errors.New("missing reviewed plan hash")
@@ -87,6 +88,7 @@ func (f *sshEnrollmentFixture) PreparePeerEnrollment(_ context.Context, request 
 	raw, _ := json.Marshal(pkg)
 	return PeerEnrollmentPackage{NodeID: pkg.NodeID, Payload: raw, Plan: f.plan}, f.prepareError
 }
+
 func (f *sshEnrollmentFixture) CompletePeerEnrollment(_ context.Context, id string) (PeerEnrollmentResult, error) {
 	f.completes++
 	out := f.completeResult
@@ -108,9 +110,9 @@ func peerSSHFixture(t *testing.T) (peerSSHBackend, *sshEnrollmentFixture, sshcon
 	fixture := &sshEnrollmentFixture{plan: PeerEnrollmentPlan{Request: resolved, ClusterID: "test-cluster", Source: source, Seeds: []coordination.Member{source}, UpdateSourceAddress: true, Effects: []string{"更新本机跨机地址为192.0.2.1，随后验证所有节点独立互联"}}, packageValue: peerJoinPackage{Version: 1, ClusterID: "test-cluster", NodeID: "node-new", Name: "remote", StorageLevel: "restricted", PeerAdvertise: resolved.PeerAddress, RaftAdvertise: resolved.RaftAddress, Seeds: []coordination.Member{source}, PrivateKey: []byte("private-leaf-key"), OwnerToken: "private-owner-token", WorkerToken: "private-worker-token"}, completeResult: PeerEnrollmentResult{NodeID: "node-new", Name: "remote", Phase: "ready", Ready: true}}
 	fixture.plan.ReviewID = fixture.plan.reviewHash()
 	request.ApprovedReviewID = fixture.plan.ReviewID
-	binary := installBinaryFixture(t)
+	binary := InstallBinaryFixture(t)
 	backend := peerSSHBackend{enrollment: fixture, findBinary: func(string) (string, bool) { return binary, true }}
-	check := sshCheckFixture()
+	check := SshCheckFixture()
 	check.Tools = append(check.Tools, sshconnect.Tool{Name: "base64", Available: true})
 	return backend, fixture, request, check
 }

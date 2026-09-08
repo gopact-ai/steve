@@ -58,6 +58,8 @@ Open(spec) → Admit → Prepare(workspace, base) → OpenSession → Arm(runnin
 
 目标：`cmd/steve` 非测试代码 ≤ 2k 行、引用的内部包 ≤ 15 个。
 
+M2 阶段 1：控制台管理服务及其单元测试迁入 `internal/admin`，连同共享配置锁、仓库缓存、技能分发、节点观测和运行时配置辅助类型。`cmd/steve` 从 11,446 行 / 64 个内部依赖降到 7,403 行 / 61 个；共享配置与项目登记的组合测试暂留在命令包，随阶段 3 的应用装配迁移。HTTP、JSON、配置格式和日志文本不变。
+
 ### 状态与动作是类型
 
 - `nodewire.SessionAction` 常量与 `SessionService` 的按动作分发表，替换 `Do` 里的字符串 switch。

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"sync"
 
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
@@ -65,7 +66,7 @@ func (s *applicationConfiguration) SaveContext(parent context.Context, path stri
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	defer func() {
-		saveErr = redactChannelError(saveErr, s.value.Credentials.FeishuAppSecret, cfg.Feishu.AppSecret)
+		saveErr = adminsvc.RedactChannelError(saveErr, s.value.Credentials.FeishuAppSecret, cfg.Feishu.AppSecret)
 	}()
 	if err := s.ctx.Err(); err != nil {
 		return err

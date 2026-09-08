@@ -72,8 +72,8 @@ func TestClusterCoordinatorCompletesStopPersistedByPreviousGeneration(t *testing
 	first.mu.RLock()
 	admin := first.application.Admin
 	first.mu.RUnlock()
-	admin.manager.SetTransports(interruptedStopConnection{nodes: admin.nodes})
-	if _, err := admin.tasks.SetAside(original.TaskID, task.StatePaused); err != nil {
+	admin.Manager.SetTransports(interruptedStopConnection{nodes: admin.Nodes})
+	if _, err := admin.Tasks.SetAside(original.TaskID, task.StatePaused); err != nil {
 		t.Fatal(err)
 	}
 	// No Registry.Stop call follows SetAside in this generation.

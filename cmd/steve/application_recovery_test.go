@@ -113,7 +113,7 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 	first.mu.RLock()
 	admin := first.application.Admin
 	first.mu.RUnlock()
-	mcpURL, err := admin.nodes.MCPEndpoint(t.Context(), first.config.NodeID)
+	mcpURL, err := admin.Nodes.MCPEndpoint(t.Context(), first.config.NodeID)
 	if err != nil || agentToken == "" {
 		t.Fatalf("native collaboration binding missing: %v", err)
 	}
@@ -190,7 +190,7 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 		t.Fatalf("recovery charged another task turn: %+v", tracked)
 	}
 	second.mu.RLock()
-	registry := second.application.Admin.nodes
+	registry := second.application.Admin.Nodes
 	second.mu.RUnlock()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
