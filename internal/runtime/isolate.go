@@ -250,6 +250,8 @@ func linkAuth(dest, userHome, name string) error {
 		return nil
 	}
 	link := filepath.Join(dest, name)
+	// Drop the previous link first; not-exist is the usual answer, and any
+	// other failure resurfaces from Symlink as an existing path.
 	_ = os.Remove(link)
 	if err := os.Symlink(src, link); err != nil {
 		return fmt.Errorf("link %s: %w", name, err)
@@ -267,6 +269,9 @@ func copyAuth(dest, userHome, name string) error {
 		return fmt.Errorf("read %s: %w", name, err)
 	}
 	path := filepath.Join(dest, name)
+	// A link left by linkAuth would make WriteFile write into the user's
+	// home, so drop it first; not-exist is the usual answer, and any other
+	// failure resurfaces from WriteFile.
 	_ = os.Remove(path)
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write %s: %w", name, err)

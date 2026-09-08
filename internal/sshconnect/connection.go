@@ -41,6 +41,8 @@ func (r OpenSSH) Bind(ctx context.Context, alias string, arguments []string) (Co
 	keep := false
 	defer func() {
 		if !keep {
+			// Bind is returning its own error; a failed teardown of the
+			// half-made master adds only a stray directory (see Close).
 			_ = connection.Close()
 		}
 	}()
@@ -123,6 +125,9 @@ func (c *sshConnection) Upload(ctx context.Context, command string, input io.Rea
 	return c.runner.Upload(ctx, c.arguments(command), input)
 }
 
+// Close asks the master to exit and removes the private directory. Its
+// error means only that the directory lingers: the master itself is bounded
+// by ControlPersist whether or not the exit request reached it.
 func (c *sshConnection) Close() error {
 	c.mu.Lock()
 	if c.closed {

@@ -28,10 +28,14 @@ func AcquireLock(stateDir string) (func(), error) {
 		file.Close()
 		return nil, fmt.Errorf("another gateway already serves %s (lock %s is held)", stateDir, path)
 	}
+	// The pid is a courtesy to whoever finds the lock held; the flock is
+	// what excludes, so a failed write costs only that hint.
 	_ = file.Truncate(0)
 	_, _ = fmt.Fprintf(file, "%d\n", os.Getpid())
 	_ = file.Sync()
 	return func() {
+		// Release runs at shutdown, where the lock dies with the process
+		// anyway and no caller is left to tell.
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		_ = file.Close()
 	}, nil
