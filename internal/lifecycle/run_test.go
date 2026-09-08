@@ -339,6 +339,23 @@ func TestRunTakesAnAttemptFromOpenToClosedInOrder(t *testing.T) {
 	}
 }
 
+func TestRunFailsAnAttemptItHasNoWayToOpenASessionFor(t *testing.T) {
+	// A caller that set neither Open nor Sessions is misconfigured: the
+	// attempt it leased is failed and its workspace given back, rather
+	// than left leased behind a panic.
+	w := newWorld("s1")
+	o := w.options()
+	o.Sessions, o.Open = nil, nil
+	res, err := Run(t.Context(), o)
+	var step *StepError
+	if !errors.As(err, &step) || step.Step != StepSession || res.Record.State != attempt.Failed || !res.Durable || res.Driven {
+		t.Fatalf("no way to open a session: %+v err=%v", res, err)
+	}
+	if want := "open admit prepared/test arm/test-open settled/test-open-rejected failed/test discard"; w.attempts.history() != want {
+		t.Fatalf("order:\n got %s\nwant %s", w.attempts.history(), want)
+	}
+}
+
 func TestRunFailsARefusedAdmissionBeforeAnySession(t *testing.T) {
 	w := newWorld("s1")
 	w.roster.verdict = ability.False

@@ -563,11 +563,17 @@ func (e *Execution) openSession(ctx context.Context) error {
 	servers := append(append([]acp.MCPServer(nil), e.Servers...), roster.ToMCP(e.Bindings)...)
 	var session harness.Runner
 	var err error
-	if o.Open != nil {
+	switch {
+	case o.Open != nil:
 		e.Servers = servers
 		session, err = o.Open(ctx, e)
-	} else {
+	case o.Sessions != nil:
 		session, err = o.Sessions.OpenSession(ctx, o.At, e.Upstream, o.Workdir, servers)
+	default:
+		// A caller that set neither is misconfigured. The attempt fails on
+		// it like any open that was refused, so it is closed and its
+		// workspace given back instead of left leased behind a panic.
+		err = errors.New("no way to open a session: neither Open nor Sessions is set")
 	}
 	if err != nil {
 		if o.ArmActor != "" && !errors.Is(err, harness.ErrStopUnconfirmed) {
