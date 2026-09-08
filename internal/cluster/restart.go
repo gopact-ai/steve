@@ -1,6 +1,9 @@
 package cluster
 
-import "log"
+import (
+	"fmt"
+	"log/slog"
+)
 
 // RestartGeneration revokes one application instance while keeping the peer
 // and consensus service running. The normal activation loop joins its users,
@@ -22,7 +25,7 @@ func (r *Runtime) RequestRebuild(generation uint64, cause error) error {
 	r.ready = false
 	if cause != nil {
 		r.lastError = cause
-		log.Printf("cluster: rebuilding application generation %d: %v", generation, cause)
+		slog.Error(fmt.Sprintf("cluster: rebuilding application generation %d: %v", generation, cause), "generation", generation)
 	}
 	r.current.cancel()
 	r.notifyLocked()

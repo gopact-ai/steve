@@ -120,7 +120,10 @@ func (in *ProjectTransfer) Remap(m ledger.TransferIDs) error {
 			return err
 		}
 		b.ConversationID = m.Conversation(b.ConversationID)
-		encoded, _ := json.Marshal(b)
+		encoded, err := json.Marshal(b)
+		if err != nil {
+			return err
+		}
 		next[m.Conversation(id)] = encoded
 	}
 	in.Facts.Bindings[kindBinding] = next
@@ -134,9 +137,17 @@ func (in *ProjectTransfer) Remap(m ledger.TransferIDs) error {
 			if err := json.Unmarshal(rawID, &id); err != nil {
 				return err
 			}
-			value["task_id"], _ = json.Marshal(m.Task(id))
+			task, err := json.Marshal(m.Task(id))
+			if err != nil {
+				return err
+			}
+			value["task_id"] = task
 		}
-		in.Facts.Bindings[kindDisclosure][id], _ = json.Marshal(value)
+		encoded, err := json.Marshal(value)
+		if err != nil {
+			return err
+		}
+		in.Facts.Bindings[kindDisclosure][id] = encoded
 	}
 	for i := range in.Facts.Operations {
 		op := &in.Facts.Operations[i]
@@ -147,7 +158,11 @@ func (in *ProjectTransfer) Remap(m ledger.TransferIDs) error {
 			}
 			d.TaskID = m.Task(d.TaskID)
 			d.ConversationID = m.Conversation(d.ConversationID)
-			op.Data, _ = json.Marshal(d)
+			data, err := json.Marshal(d)
+			if err != nil {
+				return err
+			}
+			op.Data = data
 		}
 	}
 	in.Facts.RemapEnvelopes(m)

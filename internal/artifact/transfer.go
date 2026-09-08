@@ -169,7 +169,11 @@ func (in *ProjectTransfer) Remap(m ledger.TransferIDs, target project.Home) erro
 		if land.Recoverable {
 			land.Target = target
 		}
-		op.Data, _ = json.Marshal(land)
+		data, err := json.Marshal(land)
+		if err != nil {
+			return err
+		}
+		op.Data = data
 	}
 	for _, kind := range []string{attestationKind, pendingKind} {
 		for id, raw := range in.Facts.Bindings[kind] {
@@ -179,7 +183,11 @@ func (in *ProjectTransfer) Remap(m ledger.TransferIDs, target project.Home) erro
 					return err
 				}
 				a.TaskID = m.Task(a.TaskID)
-				raw, _ = json.Marshal(a)
+				encoded, err := json.Marshal(a)
+				if err != nil {
+					return err
+				}
+				raw = encoded
 			} else {
 				var p Pending
 				if err := json.Unmarshal(raw, &p); err != nil {
@@ -188,7 +196,11 @@ func (in *ProjectTransfer) Remap(m ledger.TransferIDs, target project.Home) erro
 				if p.Source != nil && p.Source.Execution != nil {
 					p.Source.Execution.TaskID = m.Task(p.Source.Execution.TaskID)
 				}
-				raw, _ = json.Marshal(p)
+				encoded, err := json.Marshal(p)
+				if err != nil {
+					return err
+				}
+				raw = encoded
 			}
 			in.Facts.Bindings[kind][id] = raw
 		}
@@ -201,7 +213,11 @@ func (in *ProjectTransfer) Remap(m ledger.TransferIDs, target project.Home) erro
 		r.Note = fmt.Sprintf("source replica %s generation %d; verify in destination node partition", r.State, r.Generation)
 		r.State = ReplicaQuarantined
 		r.Generation = 0
-		in.Facts.Bindings[replicaKind][id], _ = json.Marshal(r)
+		encoded, err := json.Marshal(r)
+		if err != nil {
+			return err
+		}
+		in.Facts.Bindings[replicaKind][id] = encoded
 	}
 	in.Facts.RemapEnvelopes(m)
 	return nil

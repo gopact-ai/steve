@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/channel"
@@ -29,7 +29,7 @@ func runScheduleDispatcher(ctx context.Context, store *schedule.Store, page sche
 	dispatch := func(now time.Time) {
 		due, err := store.Due(now)
 		if err != nil {
-			log.Printf("schedule: find due: %v", err)
+			slog.Error(fmt.Sprintf("schedule: find due: %v", err))
 			return
 		}
 		for _, f := range due {
@@ -91,14 +91,14 @@ func dispatchFiring(ctx context.Context, store *schedule.Store, page scheduledCo
 	if err != nil {
 		unknown := errors.Is(err, channel.ErrOutcomeUnknown)
 		if saveErr := store.FailFiring(f.Key, err, unknown); saveErr != nil {
-			log.Printf("schedule %s: %v; record outcome: %v", f.Key, err, saveErr)
+			slog.Error(fmt.Sprintf("schedule %s: %v; record outcome: %v", f.Key, err, saveErr), "schedule", f.Key)
 		} else {
-			log.Printf("schedule %s: %v", f.Key, err)
+			slog.Error(fmt.Sprintf("schedule %s: %v", f.Key, err), "schedule", f.Key)
 		}
 		return
 	}
 	if err := store.AcceptFiring(f.Key, receipt, time.Now()); err != nil {
-		log.Printf("schedule %s: delivery accepted as %s, save receipt: %v", f.Key, receipt, err)
+		slog.Error(fmt.Sprintf("schedule %s: delivery accepted as %s, save receipt: %v", f.Key, receipt, err), "schedule", f.Key)
 	}
 }
 

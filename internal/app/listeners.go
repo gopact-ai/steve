@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 
 	"github.com/gopact-ai/steve/internal/debugapi"
 	"github.com/gopact-ai/steve/internal/desktop"
@@ -57,10 +57,10 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 	}
 	background.Go(func(context.Context) {
 		if err := dashboard.Serve(); err != nil {
-			log.Printf("steve: read model: %v", err)
+			slog.Error(fmt.Sprintf("steve: read model: %v", err))
 		}
 	})
-	log.Printf("steve: dashboard on %s  (steve top -url %s)", dashboard.URL(), dashboard.URL())
+	slog.Info(fmt.Sprintf("steve: dashboard on %s  (steve top -url %s)", dashboard.URL(), dashboard.URL()))
 
 	background.Go(func(ctx context.Context) { runScheduleDispatcher(ctx, schedules, cons, gw, coordinator) })
 
@@ -71,7 +71,7 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 				SenderOpenID: cfg.Feishu.OwnerOpenID,
 				Sender:       channel,
 			}); err != nil {
-				log.Printf("steve: %v", err)
+				slog.Error(fmt.Sprintf("steve: %v", err))
 			}
 		}()
 	}

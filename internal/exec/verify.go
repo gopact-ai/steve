@@ -64,7 +64,7 @@ func (v *Verifiers) byCommand(ctx context.Context, req StepRequest, check plan.V
 	if v.commands == nil {
 		return fmt.Errorf("no way to run commands on %s", nodeLabel(req.Node))
 	}
-	out, err := v.commands.Exec(ctx, req.Node, req.Workspace, check.Command)
+	_, err := v.commands.Exec(ctx, req.Node, req.Workspace, check.Command)
 	if err != nil {
 		var exit interface{ ExitCode() int }
 		if req.Node != "" && !errors.As(err, &exit) {
@@ -72,7 +72,6 @@ func (v *Verifiers) byCommand(ctx context.Context, req StepRequest, check plan.V
 		}
 		return fmt.Errorf("%q on %s: %w", check.Command, nodeLabel(req.Node), err)
 	}
-	_ = out
 	return nil
 }
 

@@ -3,7 +3,8 @@ package gateway
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -105,7 +106,7 @@ func (g *Gateway) newTurnUI(msg feishu.InboundMessage, listen bool) *turnUI {
 			return ui
 		}
 		if err != nil {
-			log.Printf("gateway: card start failed: %v", err)
+			slog.Error(fmt.Sprintf("gateway: card start failed: %v", err), "conversation", conversationID(ui.msg), "message", ui.msg.MessageID)
 		}
 		ui.fallback = true
 	}
@@ -255,7 +256,7 @@ func (u *turnUI) flush() {
 	u.mu.Lock()
 	defer u.mu.Unlock()
 	if err != nil {
-		log.Printf("gateway: card patch failed: %v", err)
+		slog.Error(fmt.Sprintf("gateway: card patch failed: %v", err), "conversation", conversationID(u.msg), "card", u.cardID)
 		u.fallback = true
 		return
 	}
@@ -355,7 +356,7 @@ func (u *turnUI) repostFinal() string {
 	defer cancel()
 	id, err := poster.ReplyCard(ctx, u.msg.MessageID, payload)
 	if err != nil || id == "" {
-		log.Printf("gateway: final card repost failed: %v", err)
+		slog.Error(fmt.Sprintf("gateway: final card repost failed: %v", err), "conversation", conversationID(u.msg), "message", u.msg.MessageID)
 		return ""
 	}
 	u.mu.Lock()
@@ -377,7 +378,7 @@ func (u *turnUI) patchFinal() bool {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := poster.PatchCard(ctx, id, payload); err != nil {
-		log.Printf("gateway: card finish failed: %v", err)
+		slog.Error(fmt.Sprintf("gateway: card finish failed: %v", err), "conversation", conversationID(u.msg), "card", id)
 		return false
 	}
 	return true

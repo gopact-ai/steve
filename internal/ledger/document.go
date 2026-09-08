@@ -163,6 +163,8 @@ func (f *FileDocument) Check() error {
 	}
 	name := temp.Name()
 	if err := temp.Close(); err != nil {
+		// Best effort: the close failure is the finding; a probe file left
+		// behind is harmless.
 		_ = os.Remove(name)
 		return fmt.Errorf("close check file: %w", err)
 	}

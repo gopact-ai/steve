@@ -1,7 +1,8 @@
 package app
 
 import (
-	"log"
+	"fmt"
+	"log/slog"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
@@ -15,12 +16,12 @@ func reportGit(place string, advert nodewire.Advert) {
 	if minimum == "" {
 		minimum = nodewire.MinimumGitVersion
 	}
-	log.Printf("steve: %s git=%s, minimum=%s", place, version, minimum)
+	slog.Info(fmt.Sprintf("steve: %s git=%s, minimum=%s", place, version, minimum))
 	warning := advert.GitWarning
 	if warning == "" {
 		warning = nodewire.GitWarning(advert.Git)
 	}
 	if warning != "" {
-		log.Printf("steve: %s warning: %s", place, warning)
+		slog.Warn(fmt.Sprintf("steve: %s warning: %s", place, warning))
 	}
 }

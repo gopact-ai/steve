@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"os"
 	"path/filepath"
@@ -58,7 +58,7 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 	if err != nil {
 		// The send primitive is an enhancement; a box that cannot bind a
 		// loopback port still serves ordinary turns.
-		log.Printf("steve: agent messaging disabled: %v", err)
+		slog.Warn(fmt.Sprintf("steve: agent messaging disabled: %v", err))
 		gate = nil
 	} else {
 		if environment != nil {
@@ -67,7 +67,7 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 			}
 		}
 		if err := os.WriteFile(portPath, []byte(fmt.Sprintf("%d\n", gate.Port())), 0o600); err != nil {
-			log.Printf("steve: remember agent messaging port: %v", err)
+			slog.Error(fmt.Sprintf("steve: remember agent messaging port: %v", err))
 		}
 		coordinator.SetAgentGate(gate)
 		coordinator.SetNodeEndpoints(nodes)
@@ -137,15 +137,15 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 			}
 			messageID := receipt.Message
 			if err := tasks.AddInterimForTask(taskID, messageID); err != nil {
-				log.Printf("steve: journal interim message: %v", err)
+				slog.Error(fmt.Sprintf("steve: journal interim message: %v", err), "task", taskID)
 			}
 		})
 		background.Go(func(ctx context.Context) {
 			if err := gate.Start(ctx); err != nil {
-				log.Printf("steve: %v", err)
+				slog.Error(fmt.Sprintf("steve: %v", err))
 			}
 		})
-		log.Printf("steve: agent messaging MCP server on %s", gate.URL())
+		slog.Info(fmt.Sprintf("steve: agent messaging MCP server on %s", gate.URL()))
 	}
 	return &delegationValues{gate: gate, recoverRetainedDelegates: recoverRetainedDelegates, redeliverPending: redeliverPending}, nil
 }

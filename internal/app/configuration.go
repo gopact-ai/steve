@@ -2,7 +2,8 @@ package app
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,7 +93,7 @@ func wireHome(cfg *config.Config, live *skills.Live) (*capability.Assembler, err
 
 func warnHome(cfg *config.Config) {
 	if cfg.FeishuEnabled() && cfg.Feishu.OwnerOpenID == "" {
-		log.Printf("steve: feishu.owner_open_id is unset; DMs use guest home")
+		slog.Warn("steve: feishu.owner_open_id is unset; DMs use guest home")
 	}
 }
 
@@ -102,7 +103,7 @@ func checkHome(cfg *config.Config) error {
 		return err
 	}
 	if info.Mode().Perm() != 0o700 {
-		log.Printf("steve: home directory mode is %o, want 700", info.Mode().Perm())
+		slog.Warn(fmt.Sprintf("steve: home directory mode is %o, want 700", info.Mode().Perm()))
 	}
 	for _, name := range []string{home.FileSoul, home.FileUser, home.FileMemory} {
 		path := filepath.Join(cfg.Gateway.HomePath, name)
@@ -111,7 +112,7 @@ func checkHome(cfg *config.Config) error {
 			return err
 		}
 		if st.Mode().Perm() != 0o600 {
-			log.Printf("steve: %s mode is %o, want 600", name, st.Mode().Perm())
+			slog.Warn(fmt.Sprintf("steve: %s mode is %o, want 600", name, st.Mode().Perm()))
 		}
 	}
 	snap, err := home.Load(cfg.Gateway.HomePath, home.ModeOwner)
@@ -119,14 +120,14 @@ func checkHome(cfg *config.Config) error {
 		return err
 	}
 	for _, warning := range snap.Warnings {
-		log.Printf("steve: %s", warning)
+		slog.Warn(fmt.Sprintf("steve: %s", warning))
 	}
 	user, err := os.ReadFile(filepath.Join(cfg.Gateway.HomePath, home.FileUser))
 	if err != nil {
 		return err
 	}
 	if strings.Contains(string(user), home.TemplateMarker) {
-		log.Printf("steve: edit USER.md")
+		slog.Warn("steve: edit USER.md")
 	}
 	return nil
 }

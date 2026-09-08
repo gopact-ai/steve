@@ -3,7 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"maps"
 	"strings"
 
@@ -91,7 +91,7 @@ func (a *Service) UpdateAgent(ctx context.Context, id string, spec consoleapi.Ag
 		return nil
 	})
 	if err == nil || config.Committed(err) {
-		log.Printf("steve: agent %s updated (%s on %s)", id, spec.Harness, orHubName(spec.Node))
+		slog.Info(fmt.Sprintf("steve: agent %s updated (%s on %s)", id, spec.Harness, orHubName(spec.Node)), "agent", id, "harness", spec.Harness, "node", orHubName(spec.Node))
 	}
 	return err
 }
@@ -124,7 +124,7 @@ func (a *Service) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) 
 		return nil
 	})
 	if err == nil || config.Committed(err) {
-		log.Printf("steve: agent %s added (%s on %s)", id, req.Harness, orHubName(req.Node))
+		slog.Info(fmt.Sprintf("steve: agent %s added (%s on %s)", id, req.Harness, orHubName(req.Node)), "agent", id, "harness", req.Harness, "node", orHubName(req.Node))
 	}
 	return err
 }
@@ -143,7 +143,7 @@ func (a *Service) RemoveAgent(_ context.Context, id string) error {
 		return nil
 	})
 	if err == nil || config.Committed(err) {
-		log.Printf("steve: agent %s removed", id)
+		slog.Info(fmt.Sprintf("steve: agent %s removed", id), "agent", id)
 	}
 	return err
 }

@@ -3,7 +3,7 @@ package admin
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"maps"
 	"path/filepath"
 	"slices"
@@ -186,6 +186,6 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	a.Manager.Publish(preparedManager)
 	a.Cfg.Agents, a.Cfg.Harnesses = candidate.Agents, candidate.Harnesses
 	a.Catalog.Publish(preparedCatalog)
-	log.Printf("steve: local agents registered agents=%s", strings.Join(agentIDs, ","))
+	slog.Info(fmt.Sprintf("steve: local agents registered agents=%s", strings.Join(agentIDs, ",")))
 	return a.desktopStatusLocked(), saveErr
 }
