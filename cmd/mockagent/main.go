@@ -100,23 +100,105 @@ func (a *agent) LoadSession(_ context.Context, req *acp.LoadSessionRequest) (*ac
 	return &acp.LoadSessionResponse{}, nil
 }
 
+// Prompt runs the script the prompt's words select, in a fixed order: the
+// media markers first, then each keyword's exchange with the client, then
+// the echo and the stop reason. "ignore-cancel" and "slow" end the turn on
+// their own terms and skip everything after them.
 func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.PromptResponse, error) {
+	input := promptText(req.Prompt)
+	// MOCKAGENT_STREAM_CHUNKS unset or not a number means no streaming.
+	if chunks, _ := strconv.Atoi(os.Getenv("MOCKAGENT_STREAM_CHUNKS")); chunks > 0 && chunks <= 1000 {
+		return a.streamFragments(ctx, req.SessionID, chunks)
+	}
+	if err := a.echoMedia(ctx, req); err != nil {
+		return nil, err
+	}
+	if strings.Contains(input, "ignore-cancel") {
+		return a.ignoreCancel(ctx, req.SessionID)
+	}
+	if strings.Contains(input, "perm") {
+		if err := a.requestPermission(ctx, req.SessionID); err != nil {
+			return nil, err
+		}
+	}
+	if strings.Contains(input, "slow") {
+		return a.waitForCancel(ctx, req.SessionID)
+	}
+	if strings.Contains(input, "askme") {
+		if err := a.askColour(ctx, req.SessionID, input); err != nil {
+			return nil, err
+		}
+	}
+	if strings.Contains(input, "mcpapprove") {
+		if err := a.askMCPApproval(ctx, req.SessionID); err != nil {
+			return nil, err
+		}
+	}
+	// "mcpupdate" sends one milestone card and evolves it twice with
+	// channel_update, the one-evolving-card shape the instructions steer
+	// agents toward. Results are echoed for the wire test.
+	if strings.Contains(input, "mcpupdate") {
+		if err := a.say(ctx, req.SessionID, a.mcpUpdate(req.SessionID)+" "); err != nil {
+			return nil, err
+		}
+	}
+	// "mcpfull" exercises the gateway's built-in messaging MCP server the
+	// way a real agent would: handshake, send a milestone, watch a mention
+	// get refused, recall the milestone. The outcome is echoed so a wire
+	// test can assert on it.
+	if strings.Contains(input, "mcpfull") {
+		if err := a.say(ctx, req.SessionID, a.mcpFull(req.SessionID)+" "); err != nil {
+			return nil, err
+		}
+	}
+	if strings.Contains(input, "plan") {
+		if err := a.reportPlan(ctx, req.SessionID); err != nil {
+			return nil, err
+		}
+	}
+	if strings.Contains(input, "switchmodel") {
+		if err := a.switchModel(ctx, req.SessionID); err != nil {
+			return nil, err
+		}
+	}
+	if err := a.say(ctx, req.SessionID, scriptedReply(input)); err != nil {
+		return nil, err
+	}
+	return a.endTurn(ctx, req.SessionID, input)
+}
+
+// promptText is the prompt's text blocks joined, which is what the script
+// keywords are looked for in.
+func promptText(blocks []acp.ContentBlock) string {
 	var text strings.Builder
-	for _, block := range req.Prompt {
+	for _, block := range blocks {
 		if block.Type == acp.ContentBlockTypeText {
 			text.WriteString(block.Text)
 		}
 	}
-	input := text.String()
-	if chunks, _ := strconv.Atoi(os.Getenv("MOCKAGENT_STREAM_CHUNKS")); chunks > 0 && chunks <= 1000 {
-		for range chunks {
-			chunk := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("stream-fragment\n"))
-			if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: chunk}); err != nil {
-				return nil, err
-			}
+	return text.String()
+}
+
+// say sends one agent message chunk to the client.
+func (a *agent) say(ctx context.Context, sessionID acp.SessionID, text string) error {
+	chunk := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(text))
+	return a.client.Update(ctx, &acp.SessionNotification{SessionID: sessionID, Update: chunk})
+}
+
+// streamFragments answers with a fixed number of chunks and nothing else,
+// for tests that measure streaming rather than content.
+func (a *agent) streamFragments(ctx context.Context, sessionID acp.SessionID, chunks int) (*acp.PromptResponse, error) {
+	for range chunks {
+		if err := a.say(ctx, sessionID, "stream-fragment\n"); err != nil {
+			return nil, err
 		}
-		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
 	}
+	return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+}
+
+// echoMedia reports every image and blob resource in the prompt as a
+// marker with its size and digest, so a test can check what arrived.
+func (a *agent) echoMedia(ctx context.Context, req *acp.PromptRequest) error {
 	for _, block := range req.Prompt {
 		encoded, mime, kind := "", "", ""
 		if block.Type == acp.ContentBlockTypeImage {
@@ -131,202 +213,182 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 				mime = *block.Resource.MIMEType
 			}
 		}
-		if kind != "" {
-			data, err := base64.StdEncoding.DecodeString(encoded)
-			if err != nil {
-				return nil, err
-			}
-			marker := fmt.Sprintf("[media: %s %s %d %x] ", kind, mime, len(data), sha256.Sum256(data))
-			if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(marker))}); err != nil {
-				return nil, err
-			}
+		if kind == "" {
+			continue
+		}
+		data, err := base64.StdEncoding.DecodeString(encoded)
+		if err != nil {
+			return err
+		}
+		if err := a.say(ctx, req.SessionID, fmt.Sprintf("[media: %s %s %d %x] ", kind, mime, len(data), sha256.Sum256(data))); err != nil {
+			return err
 		}
 	}
-	if strings.Contains(input, "ignore-cancel") {
-		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("still running"))}); err != nil {
-			return nil, err
-		}
-		<-ctx.Done()
+	return nil
+}
+
+// ignoreCancel is an agent that never answers session/cancel: it keeps
+// the turn open until the client gives up on it.
+func (a *agent) ignoreCancel(ctx context.Context, sessionID acp.SessionID) (*acp.PromptResponse, error) {
+	if err := a.say(ctx, sessionID, "still running"); err != nil {
+		return nil, err
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+// waitForCancel holds the turn until session/cancel arrives, then ends it
+// with StopReasonCanceled the way a well-behaved agent does.
+func (a *agent) waitForCancel(ctx context.Context, sessionID acp.SessionID) (*acp.PromptResponse, error) {
+	stop := make(chan struct{})
+	a.canceling.Store(string(sessionID), stop)
+	select {
+	case <-stop:
+		// Answering the prompt is what tells the client the session is
+		// still consistent; a real agent that just went quiet here would
+		// leave it unusable.
+		return &acp.PromptResponse{StopReason: acp.StopReasonCanceled}, nil
+	case <-ctx.Done():
 		return nil, ctx.Err()
 	}
+}
 
-	if strings.Contains(input, "perm") {
-		resp, err := a.client.RequestPermission(ctx, &acp.RequestPermissionRequest{
-			SessionID: req.SessionID,
-			ToolCall:  acp.ToolCallUpdate{ToolCallID: "tool-1", Title: ptr("dangerous operation")},
-			Options: []acp.PermissionOption{
-				{OptionID: "allow", Name: "Allow", Kind: acp.PermissionOptionKindAllowOnce},
-				{OptionID: "reject", Name: "Reject", Kind: acp.PermissionOptionKindRejectOnce},
-			},
-		})
-		if err != nil {
-			return nil, err
-		}
-		note := acp.AgentMessageChunkSessionUpdate(
-			acp.TextContentBlock(fmt.Sprintf("[permission: %s/%s] ", resp.Outcome.Outcome, resp.Outcome.OptionID)))
-		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
-			return nil, err
-		}
+// requestPermission asks the client about one tool call and echoes what
+// it decided.
+func (a *agent) requestPermission(ctx context.Context, sessionID acp.SessionID) error {
+	resp, err := a.client.RequestPermission(ctx, &acp.RequestPermissionRequest{
+		SessionID: sessionID,
+		ToolCall:  acp.ToolCallUpdate{ToolCallID: "tool-1", Title: ptr("dangerous operation")},
+		Options: []acp.PermissionOption{
+			{OptionID: "allow", Name: "Allow", Kind: acp.PermissionOptionKindAllowOnce},
+			{OptionID: "reject", Name: "Reject", Kind: acp.PermissionOptionKindRejectOnce},
+		},
+	})
+	if err != nil {
+		return err
 	}
+	return a.say(ctx, sessionID, fmt.Sprintf("[permission: %s/%s] ", resp.Outcome.Outcome, resp.Outcome.OptionID))
+}
 
-	if strings.Contains(input, "slow") {
-		stop := make(chan struct{})
-		a.canceling.Store(string(req.SessionID), stop)
-		select {
-		case <-stop:
-			// Answering the prompt is what tells the client the session is
-			// still consistent; a real agent that just went quiet here would
-			// leave it unusable.
-			return &acp.PromptResponse{StopReason: acp.StopReasonCanceled}, nil
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		}
-	}
-
-	if strings.Contains(input, "askme") {
-		title := "Colour"
-		red, blue := "You prefer red.", "You prefer blue."
-		schema := acp.ElicitationSchema{
-			Type:     acp.ElicitationSchemaTypeObject,
-			Required: &[]string{"question_0"},
-			Properties: map[string]acp.ElicitationPropertySchema{
-				"question_0": {
-					Type: acp.ElicitationPropertySchemaTypeString, Title: &title,
-					OneOf: &[]acp.EnumOption{
-						{Const: "Red", Title: "Red", Description: &red},
-						{Const: "Blue", Title: "Blue", Description: &blue},
-					},
+// askColour elicits a single-choice answer the way claude-agent-acp's
+// AskUserQuestion does and echoes what came back.
+func (a *agent) askColour(ctx context.Context, sessionID acp.SessionID, input string) error {
+	title := "Colour"
+	red, blue := "You prefer red.", "You prefer blue."
+	schema := acp.ElicitationSchema{
+		Type:     acp.ElicitationSchemaTypeObject,
+		Required: &[]string{"question_0"},
+		Properties: map[string]acp.ElicitationPropertySchema{
+			"question_0": {
+				Type: acp.ElicitationPropertySchemaTypeString, Title: &title,
+				OneOf: &[]acp.EnumOption{
+					{Const: "Red", Title: "Red", Description: &red},
+					{Const: "Blue", Title: "Blue", Description: &blue},
 				},
-				// The free-text companion claude-agent-acp sends beside its
-				// choices; a client that cannot render it may skip it.
-				"question_0_custom": {Type: acp.ElicitationPropertySchemaTypeString},
 			},
-		}
-		if strings.Contains(input, "askme-required-text") {
-			schema.Required = &[]string{"question_0", "question_0_custom"}
-		}
-		req := acp.SessionFormCreateElicitationRequest("Which colour do you prefer?", schema, req.SessionID)
-		resp, err := a.client.CreateElicitation(ctx, &req)
-		if err != nil {
-			return nil, err
-		}
-		picked := string(resp.Action)
-		if resp.Content != nil {
-			if raw, ok := (*resp.Content)["question_0"]; ok {
-				picked += ":" + strings.Trim(string(raw), `"`)
-			}
-		}
-		note := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("[answer: " + picked + "] "))
-		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
-			return nil, err
+			// The free-text companion claude-agent-acp sends beside its
+			// choices; a client that cannot render it may skip it.
+			"question_0_custom": {Type: acp.ElicitationPropertySchemaTypeString},
+		},
+	}
+	if strings.Contains(input, "askme-required-text") {
+		schema.Required = &[]string{"question_0", "question_0_custom"}
+	}
+	ereq := acp.SessionFormCreateElicitationRequest("Which colour do you prefer?", schema, sessionID)
+	resp, err := a.client.CreateElicitation(ctx, &ereq)
+	if err != nil {
+		return err
+	}
+	picked := string(resp.Action)
+	if resp.Content != nil {
+		if raw, ok := (*resp.Content)["question_0"]; ok {
+			picked += ":" + strings.Trim(string(raw), `"`)
 		}
 	}
+	return a.say(ctx, sessionID, "[answer: "+picked+"] ")
+}
 
-	// "mcpapprove" raises the elicitation codex-acp sends when codex wants
-	// approval for an MCP tool call: form mode, a "persist" scope choice,
-	// and the codex marker in _meta. The response is echoed so tests can
-	// see whether policy or a human answered.
-	if strings.Contains(input, "mcpapprove") {
-		schema := acp.ElicitationSchema{
-			Type: acp.ElicitationSchemaTypeObject,
-			Properties: map[string]acp.ElicitationPropertySchema{
-				"persist": {Type: acp.ElicitationPropertySchemaTypeString, OneOf: &[]acp.EnumOption{
-					{Const: "once", Title: "Approve once"},
-					{Const: "session", Title: "Approve for session"},
-					{Const: "always", Title: "Always approve"},
-				}},
-			},
-		}
-		ereq := acp.SessionFormCreateElicitationRequest(`Allow tool channel_send on server "steve"?`, schema, req.SessionID)
-		ereq.Meta = acp.Meta{"codex_approval_kind": "mcp_tool_call"}
-		resp, err := a.client.CreateElicitation(ctx, &ereq)
-		if err != nil {
-			return nil, err
-		}
-		picked := string(resp.Action)
-		if resp.Content != nil {
-			if raw, ok := (*resp.Content)["persist"]; ok {
-				picked += ":persist=" + strings.Trim(string(raw), `"`)
-			}
-		}
-		note := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("[approval: " + picked + "] "))
-		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
-			return nil, err
+// askMCPApproval raises the elicitation codex-acp sends when codex wants
+// approval for an MCP tool call: form mode, a "persist" scope choice, and
+// the codex marker in _meta. The response is echoed so tests can see
+// whether policy or a human answered.
+func (a *agent) askMCPApproval(ctx context.Context, sessionID acp.SessionID) error {
+	schema := acp.ElicitationSchema{
+		Type: acp.ElicitationSchemaTypeObject,
+		Properties: map[string]acp.ElicitationPropertySchema{
+			"persist": {Type: acp.ElicitationPropertySchemaTypeString, OneOf: &[]acp.EnumOption{
+				{Const: "once", Title: "Approve once"},
+				{Const: "session", Title: "Approve for session"},
+				{Const: "always", Title: "Always approve"},
+			}},
+		},
+	}
+	ereq := acp.SessionFormCreateElicitationRequest(`Allow tool channel_send on server "steve"?`, schema, sessionID)
+	ereq.Meta = acp.Meta{"codex_approval_kind": "mcp_tool_call"}
+	resp, err := a.client.CreateElicitation(ctx, &ereq)
+	if err != nil {
+		return err
+	}
+	picked := string(resp.Action)
+	if resp.Content != nil {
+		if raw, ok := (*resp.Content)["persist"]; ok {
+			picked += ":persist=" + strings.Trim(string(raw), `"`)
 		}
 	}
+	return a.say(ctx, sessionID, "[approval: "+picked+"] ")
+}
 
-	// "mcpupdate" sends one milestone card and evolves it twice with
-	// channel_update, the one-evolving-card shape the instructions steer
-	// agents toward. Results are echoed for the wire test.
-	if strings.Contains(input, "mcpupdate") {
-		note := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(a.mcpUpdate(req.SessionID) + " "))
-		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
-			return nil, err
-		}
+// reportPlan sends a three-step plan already under way.
+func (a *agent) reportPlan(ctx context.Context, sessionID acp.SessionID) error {
+	steps := []acp.PlanEntry{
+		{Content: "look around", Priority: acp.PlanEntryPriorityHigh, Status: acp.PlanEntryStatusCompleted},
+		{Content: "do the thing", Priority: acp.PlanEntryPriorityMedium, Status: acp.PlanEntryStatusInProgress},
+		{Content: "check it", Priority: acp.PlanEntryPriorityLow, Status: acp.PlanEntryStatusPending},
 	}
+	return a.client.Update(ctx, &acp.SessionNotification{SessionID: sessionID, Update: acp.PlanSessionUpdate(steps)})
+}
 
-	// "mcpfull" exercises the gateway's built-in messaging MCP server the
-	// way a real agent would: handshake, send a milestone, watch a mention
-	// get refused, recall the milestone. The outcome is echoed so a wire
-	// test can assert on it.
-	if strings.Contains(input, "mcpfull") {
-		note := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(a.mcpFull(req.SessionID) + " "))
-		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: note}); err != nil {
-			return nil, err
-		}
-	}
+// switchModel reports a mid-turn model change the way a real agent does.
+func (a *agent) switchModel(ctx context.Context, sessionID acp.SessionID) error {
+	swap := acp.ConfigOptionUpdateSessionUpdate([]acp.SessionConfigOption{modelOption("mock-deep")})
+	return a.client.Update(ctx, &acp.SessionNotification{SessionID: sessionID, Update: swap})
+}
 
-	if strings.Contains(input, "plan") {
-		steps := []acp.PlanEntry{
-			{Content: "look around", Priority: acp.PlanEntryPriorityHigh, Status: acp.PlanEntryStatusCompleted},
-			{Content: "do the thing", Priority: acp.PlanEntryPriorityMedium, Status: acp.PlanEntryStatusInProgress},
-			{Content: "check it", Priority: acp.PlanEntryPriorityLow, Status: acp.PlanEntryStatusPending},
-		}
-		if err := a.client.Update(ctx, &acp.SessionNotification{
-			SessionID: req.SessionID, Update: acp.PlanSessionUpdate(steps),
-		}); err != nil {
-			return nil, err
-		}
-	}
-
-	if strings.Contains(input, "switchmodel") {
-		swap := acp.ConfigOptionUpdateSessionUpdate([]acp.SessionConfigOption{modelOption("mock-deep")})
-		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: swap}); err != nil {
-			return nil, err
-		}
-	}
-
-	// A planning brief gets a plan, so the supervisor loop can be driven
-	// end to end without a real model. The plan is deliberately shaped to
-	// exercise placement across machines and a fan-in: two branches needing
-	// different capabilities, then a merge. Wording is read from the brief so
-	// the same mock can answer a revision (it keeps the finished step ids).
-	reply := "echo: " + input
+// scriptedReply is the turn's answer: an echo, unless the prompt is a
+// planning brief, a verifier's brief or a step meant to upset the plan.
+// A planning brief gets a plan, so the supervisor loop can be driven end
+// to end without a real model. The plan is deliberately shaped to exercise
+// placement across machines and a fan-in: two branches needing different
+// capabilities, then a merge. Wording is read from the brief so the same
+// mock can answer a revision (it keeps the finished step ids).
+func scriptedReply(input string) string {
 	switch {
 	case strings.Contains(input, "输出一份 JSON 计划"):
-		reply = mockPlan(input)
+		return mockPlan(input)
 	case strings.Contains(input, "你是审核者"):
 		// A verifier's verdict: fail anything whose goal asks to be failed,
 		// so a test can drive the verification edge on real hosts.
-		reply = "PASS"
 		if strings.Contains(input, "reject me") {
-			reply = "FAIL\nthe artifact is not where it was claimed to be"
+			return "FAIL\nthe artifact is not where it was claimed to be"
 		}
+		return "PASS"
 	case strings.Contains(input, "surprise"):
 		// A step that learns something which makes the plan wrong.
-		reply = "echo: " + input + "\nFINDING: noted in passing\nREPLAN: the target now requires a recheck before shipping"
+		return "echo: " + input + "\nFINDING: noted in passing\nREPLAN: the target now requires a recheck before shipping"
 	}
-	chunk := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock(reply))
-	if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: chunk}); err != nil {
-		return nil, err
-	}
+	return "echo: " + input
+}
+
+// endTurn builds the response, reporting usage and a cancelled stop when
+// the prompt asks for them.
+func (a *agent) endTurn(ctx context.Context, sessionID acp.SessionID, input string) (*acp.PromptResponse, error) {
 	resp := &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}
 	if strings.Contains(input, "reportusage") {
 		// Keep context/cost on the notification and tokens on the response
 		// so tests exercise the two independent channels real adapters use.
 		update := acp.UsageUpdateSessionUpdate(1600, 128000)
 		update.Cost = &acp.Cost{Amount: 0.125, Currency: "USD"}
-		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: update}); err != nil {
+		if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: sessionID, Update: update}); err != nil {
 			return nil, err
 		}
 		resp.Usage = &acp.Usage{
@@ -343,7 +405,7 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 // SetSessionConfigOption accepts any listed model and answers with the
 // revised list, the way an agent that does not notify separately would.
 func (a *agent) SetSessionConfigOption(_ context.Context, req *acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
-	value, _ := req.Value.(acp.SessionConfigValueID)
+	value, _ := req.Value.(acp.SessionConfigValueID) // any other shape is "" and refused below as an unknown model
 	if req.ConfigID != "model" {
 		return nil, fmt.Errorf("unknown config option %q", req.ConfigID)
 	}
@@ -377,23 +439,28 @@ func (a *agent) Cancel(_ context.Context, n *acp.CancelNotification) error {
 	return nil
 }
 
-// mcpFull runs the send/deny/recall sequence against the session's "feishu"
-// HTTP MCP server and reports what happened in one bracketed line.
-func (a *agent) mcpFull(sessionID acp.SessionID) string {
+// steveServer is the session's "steve" HTTP MCP server, or the bracketed
+// line the tests read when the session has none.
+func (a *agent) steveServer(sessionID acp.SessionID) (*acp.MCPServer, string) {
 	raw, ok := a.mcp.Load(string(sessionID))
 	if !ok {
-		return "[mcp: no server config]"
+		return nil, "[mcp: no server config]"
 	}
-	servers, _ := raw.([]acp.MCPServer)
-	var target *acp.MCPServer
+	servers, _ := raw.([]acp.MCPServer) // only NewSession and LoadSession store here, always this type
 	for i := range servers {
 		if servers[i].Name == "steve" && servers[i].Type == acp.MCPServerTypeHTTP {
-			target = &servers[i]
-			break
+			return &servers[i], ""
 		}
 	}
+	return nil, "[mcp: no steve server]"
+}
+
+// mcpFull runs the send/deny/recall sequence against the session's "steve"
+// HTTP MCP server and reports what happened in one bracketed line.
+func (a *agent) mcpFull(sessionID acp.SessionID) string {
+	target, missing := a.steveServer(sessionID)
 	if target == nil {
-		return "[mcp: no steve server]"
+		return missing
 	}
 	if _, _, err := a.mcpRPC(target, "initialize", map[string]any{
 		"protocolVersion": "2025-06-18",
@@ -407,11 +474,10 @@ func (a *agent) mcpFull(sessionID acp.SessionID) string {
 		return fmt.Sprintf("[mcp: send failed err=%v text=%s]", err, sent)
 	}
 	id := strings.TrimPrefix(sent, "sent message_id=")
-	mention, mentionRejected, err := a.mcpTool(target, "channel_send", map[string]any{"content": "hi", "mention": true})
+	_, mentionRejected, err := a.mcpTool(target, "channel_send", map[string]any{"content": "hi", "mention": true})
 	if err != nil {
 		return "[mcp: mention call failed: " + err.Error() + "]"
 	}
-	_ = mention
 	recalled, recallErr, err := a.mcpTool(target, "channel_recall", map[string]any{"message_id": id})
 	if err != nil || recallErr {
 		return fmt.Sprintf("[mcp: recall failed err=%v text=%s]", err, recalled)
@@ -420,20 +486,9 @@ func (a *agent) mcpFull(sessionID acp.SessionID) string {
 }
 
 func (a *agent) mcpUpdate(sessionID acp.SessionID) string {
-	raw, ok := a.mcp.Load(string(sessionID))
-	if !ok {
-		return "[mcp: no server config]"
-	}
-	servers, _ := raw.([]acp.MCPServer)
-	var target *acp.MCPServer
-	for i := range servers {
-		if servers[i].Name == "steve" && servers[i].Type == acp.MCPServerTypeHTTP {
-			target = &servers[i]
-			break
-		}
-	}
+	target, missing := a.steveServer(sessionID)
 	if target == nil {
-		return "[mcp: no steve server]"
+		return missing
 	}
 	sent, isError, err := a.mcpTool(target, "channel_send", map[string]any{"content": "progress v1", "progress": "1/2"})
 	if err != nil || isError {
@@ -462,7 +517,7 @@ func (a *agent) mcpTool(server *acp.MCPServer, name string, args map[string]any)
 	text := ""
 	if content, ok := result["content"].([]any); ok && len(content) > 0 {
 		if first, ok := content[0].(map[string]any); ok {
-			text, _ = first["text"].(string)
+			text, _ = first["text"].(string) // a text that is not a string reads as empty, which the callers report
 		}
 	}
 	return text, isError, nil
