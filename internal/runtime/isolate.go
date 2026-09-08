@@ -446,7 +446,9 @@ func FilterKimiConfig(src []byte) []byte {
 			topLevel = false
 			skipTable = dropKimiTable(trimmed)
 		}
-		if skipTable {
+		if skipTable || strings.HasPrefix(trimmed, "#") {
+			// Comments go with what they annotate, which may be dropped;
+			// the generated file carries its own header.
 			continue
 		}
 		if topLevel && dropKimiKey(trimmed) {

@@ -296,8 +296,17 @@ theme = "dark"
 
 [[cron]]
 schedule = "* * * * *"
+
+# >>> managed hooks (do not edit) >>>
+[[hooks]]
+event = "Stop"
+command = "/home/op/hook"
+# <<< managed hooks <<<
 `)
 	got := string(FilterKimiConfig(src))
+	if strings.Contains(got, "managed hooks") {
+		t.Fatalf("kept a comment that annotated dropped hooks: %s", got)
+	}
 	for _, want := range []string{`default_model = "kimi-code/k3"`, `default_thinking = true`, `telemetry = true`, `[models."kimi-code/k3"]`, `[providers."managed:kimi-code"]`, `[providers."managed:kimi-code".oauth]`, `[thinking]`, `[loop_control]`} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("dropped %q: %s", want, got)
