@@ -82,15 +82,17 @@ type Nodes interface {
 type Store struct {
 	Review           ReviewLimits
 	landingDriverTTL time.Duration
-	executions       *execution.Registry
-	Dir              string
-	Limits           Limits
-	ledger           *ledger.Ledger
-	projects         *project.Store
-	nodes            Nodes
-	now              func() time.Time
-	replication      contentreplica.Replicator
-	contentState     contentReplicationState
+	// renewTicks paces landing-driver renewals; nil means a real ticker.
+	renewTicks   func(time.Duration) (<-chan time.Time, func())
+	executions   *execution.Registry
+	Dir          string
+	Limits       Limits
+	ledger       *ledger.Ledger
+	projects     *project.Store
+	nodes        Nodes
+	now          func() time.Time
+	replication  contentreplica.Replicator
+	contentState contentReplicationState
 	// ContentLimits bounds verification of a complete replicated history,
 	// independently of Limits, which bounds the current workspace snapshot.
 	ContentLimits ContentLimits
