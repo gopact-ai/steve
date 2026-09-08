@@ -108,13 +108,13 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		case "merged":
 			continue
 		case "old":
-			if _, err := journal.Started(ledger.EffectID{Operation: land.ID, Kind: "land-path", InstanceKey: fmt.Sprintf("%d/%s", land.Round, path)}, "", nil); err != nil {
+			if _, err := journal.Started(landPathEffect(land, path), "", nil); err != nil {
 				return land, err
 			}
 			if err := s.writeFromTree(ctx, p, land.Merged, path); err != nil {
 				return land, err
 			}
-			if _, err := journal.Confirmed(ledger.EffectID{Operation: land.ID, Kind: "land-path", InstanceKey: fmt.Sprintf("%d/%s", land.Round, path)}, nil); err != nil {
+			if _, err := journal.Confirmed(landPathEffect(land, path), nil); err != nil {
 				return land, err
 			}
 			rewritten = append(rewritten, path)

@@ -111,36 +111,116 @@ func (s *Store) LandUnder(ctx context.Context, p project.Project, artifactID, by
 	return s.land(ctx, p, artifactID, by, &held, firstSource(source), nil)
 }
 
+// land runs one landing from admission to commit, in the order the state
+// machine above spells out. held is a canonical lock the caller lends;
+// resume is the record of a landing that recovery is finishing, which
+// keeps its identity and never records a failure of its own.
 func (s *Store) land(ctx context.Context, p project.Project, artifactID, by string, held *ledger.Lease, source *Source, resume *Landing) (Landing, error) {
-	borrowedHolder := ""
+	borrowedHolder, err := s.checkLandingWriter(ctx, p, held)
+	if err != nil {
+		return Landing{}, err
+	}
+	ctx, finish, err := s.admitLandingSource(ctx, artifactID, source)
+	if err != nil {
+		return Landing{}, err
+	}
+	defer finish()
+	land, err := s.proposeLanding(ctx, p, artifactID, by, borrowedHolder, source, resume)
+	if err != nil {
+		return Landing{}, err
+	}
+	unlock, err := s.lockCanonical(ctx, p, &land, held)
+	if err != nil {
+		return land, err
+	}
+	defer unlock()
+	if err := s.move(ctx, &land, LandProposed, LandLocked, nil); err != nil {
+		return land, err
+	}
+	repo, err := s.mergeLanding(ctx, p, &land)
+	if err != nil {
+		return land, err
+	}
+	if err := s.move(ctx, &land, LandLocked, LandMerged, nil); err != nil {
+		return land, err
+	}
+	if len(land.Paths) == 0 {
+		// Nothing to write: the canonical already has it all.
+		if err := s.move(ctx, &land, LandMerged, LandCommitted, nil); err != nil {
+			return land, err
+		}
+		return land, nil
+	}
+	land.Round++
+	if err := s.move(ctx, &land, LandMerged, LandApplying, nil); err != nil {
+		return land, err
+	}
+	// Applying is already admitted under the source epoch. Finish this WAL
+	// operation even if a later stop revokes permission for new work.
+	applyCtx, finishApply := landingApplyContext(ctx)
+	defer finishApply()
+	ctx = applyCtx
+	if err := s.applyLanding(ctx, p, &land, repo); err != nil {
+		return land, err
+	}
+	if err := s.commitLanding(ctx, p, &land); err != nil {
+		return land, err
+	}
+	return land, nil
+}
+
+// checkLandingWriter is who may write the canonical workspace: a lock the
+// caller lends must be the project's and still held, and the home must
+// accept its holder as the writer — or, with no lock lent, be unheld.
+func (s *Store) checkLandingWriter(ctx context.Context, p project.Project, held *ledger.Lease) (borrowedHolder string, err error) {
 	if held != nil {
 		if held.Key != "canonical:"+p.ID {
-			return Landing{}, fmt.Errorf("landing lease %s does not own project %s", held.Key, p.ID)
+			return "", fmt.Errorf("landing lease %s does not own project %s", held.Key, p.ID)
 		}
 		if err := s.ledger.CheckAny(ctx, *held); err != nil {
-			return Landing{}, err
+			return "", err
 		}
 		borrowedHolder = held.Holder
 	}
 	if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error { return attempt.CheckWriterTx(tx, p.Home.Node, p.Home.Path, borrowedHolder) }); err != nil {
-		return Landing{}, err
+		return "", err
 	}
-	if source != nil {
-		if source.Execution == nil {
-			return Landing{}, errors.New("landing source requires execution authorization")
-		}
-		if s.executions != nil {
-			scope, err := s.executions.BeginAccepted(ctx, execution.Key{TaskID: source.Execution.TaskID, InstanceID: "land/" + artifactID, AttemptID: source.AttemptID}, source.Execution)
-			if err != nil {
-				return Landing{}, err
-			}
-			defer scope.Finish(nil)
-			ctx = scope.Context()
-		}
-		if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error { return task.CheckExecutionTx(tx, source.Execution) }); err != nil {
-			return Landing{}, err
-		}
+	return borrowedHolder, nil
+}
+
+// admitLandingSource admits a delegated result under the execution it came
+// from: the landing runs inside an accepted scope of that task, which the
+// returned finish closes once the landing is over. A landing with no
+// source, or a store with no execution registry, gets its context back as
+// it was and a finish that does nothing.
+func (s *Store) admitLandingSource(ctx context.Context, artifactID string, source *Source) (context.Context, func(), error) {
+	finish := func() {}
+	if source == nil {
+		return ctx, finish, nil
 	}
+	if source.Execution == nil {
+		return ctx, finish, errors.New("landing source requires execution authorization")
+	}
+	if s.executions != nil {
+		scope, err := s.executions.BeginAccepted(ctx, execution.Key{TaskID: source.Execution.TaskID, InstanceID: "land/" + artifactID, AttemptID: source.AttemptID}, source.Execution)
+		if err != nil {
+			return ctx, finish, err
+		}
+		finish = func() { scope.Finish(nil) }
+		ctx = scope.Context()
+	}
+	if err := s.ledger.Update(ctx, func(tx *ledger.Tx) error { return task.CheckExecutionTx(tx, source.Execution) }); err != nil {
+		finish()
+		return ctx, func() {}, err
+	}
+	return ctx, finish, nil
+}
+
+// proposeLanding resolves the artifact and the canonical snapshot it
+// descends from, which is the merge base, and opens the landing's record —
+// unless recovery is resuming a landing that already has one, in which
+// case the record keeps its identity and start.
+func (s *Store) proposeLanding(ctx context.Context, p project.Project, artifactID, by, borrowedHolder string, source *Source, resume *Landing) (Landing, error) {
 	m, ok, err := s.Manifest(ctx, artifactID)
 	if err != nil {
 		return Landing{}, err
@@ -167,58 +247,68 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 			return Landing{}, err
 		}
 	}
-	var lease ledger.Lease
-	if held != nil {
-		if held.Key != "canonical:"+p.ID {
-			return land, fmt.Errorf("landing %s: the lease offered is for %s, not the project's canonical", land.ID, held.Key)
-		}
-		lease = *held
-	} else {
-		acquired, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, landingHolder(ctx, land.ID), landTTL)
-		if err != nil {
-			if !land.Recoverable {
-				s.failed(ctx, &land, LandProposed, LandMergeConflicted, err.Error(), nil)
-			}
-			return land, err
-		}
-		lease = acquired
-		defer s.releaseCanonical(ctx, &land, lease)
-		defer trackLandingLease(ctx, lease)()
-	}
-	land.Lease = &lease
-	if err := s.move(ctx, &land, LandProposed, LandLocked, nil); err != nil {
-		return land, err
-	}
+	return land, nil
+}
 
-	// Under the lock: what the canonical workspace holds right now.
-	now, _, err := s.SnapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before landing "+short(artifactID))
+// lockCanonical takes the project's canonical lock for the landing, or
+// adopts the one the caller lends, which is released by nobody here. A
+// lock of the landing's own is renewed by the landing driver when there is
+// one, and the returned unlock stops that and gives the lock back.
+func (s *Store) lockCanonical(ctx context.Context, p project.Project, land *Landing, held *ledger.Lease) (unlock func(), err error) {
+	if held != nil {
+		lease := *held
+		land.Lease = &lease
+		return func() {}, nil
+	}
+	lease, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, landingHolder(ctx, land.ID), landTTL)
 	if err != nil {
 		if !land.Recoverable {
-			s.failed(ctx, &land, LandLocked, LandMergeConflicted, "snapshot: "+err.Error(), nil)
+			s.failed(ctx, land, LandProposed, LandMergeConflicted, err.Error(), nil)
 		}
-		return land, err
+		return nil, err
+	}
+	land.Lease = &lease
+	untrack := trackLandingLease(ctx, lease)
+	return func() {
+		untrack()
+		s.releaseCanonical(ctx, land, lease)
+	}, nil
+}
+
+// mergeLanding, under the lock, snapshots what the canonical workspace
+// holds right now and three-way merges the artifact onto it from their
+// common base, recording the merged snapshot and the paths it changes.
+// Paths both sides changed end the landing as merge-conflicted. The
+// project's repository comes back for applying.
+func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landing) (*Repo, error) {
+	now, _, err := s.SnapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before landing "+short(land.Artifact))
+	if err != nil {
+		if !land.Recoverable {
+			s.failed(ctx, land, LandLocked, LandMergeConflicted, "snapshot: "+err.Error(), nil)
+		}
+		return nil, err
 	}
 	land.Now = now.ID
 	repo, err := s.Repo(ctx, p.ID)
 	if err != nil {
-		return land, err
+		return nil, err
 	}
 	var merged string
 	var conflicts []string
 	if metadataOnly(p) {
-		merged, conflicts, err = s.mergeOnNode(ctx, p, base, now.ID, artifactID)
+		merged, conflicts, err = s.mergeOnNode(ctx, p, land.Base, now.ID, land.Artifact)
 	} else {
-		merged, conflicts, err = repo.Merge(ctx, base, now.ID, artifactID, "land "+short(artifactID)+" into "+p.ID)
+		merged, conflicts, err = repo.Merge(ctx, land.Base, now.ID, land.Artifact, "land "+short(land.Artifact)+" into "+p.ID)
 	}
 	if err != nil {
 		if !land.Recoverable {
-			s.failed(ctx, &land, LandLocked, LandMergeConflicted, err.Error(), nil)
+			s.failed(ctx, land, LandLocked, LandMergeConflicted, err.Error(), nil)
 		}
-		return land, err
+		return nil, err
 	}
 	if len(conflicts) > 0 {
-		s.failed(ctx, &land, LandLocked, LandMergeConflicted, "conflicts", conflicts)
-		return land, Conflict{State: LandMergeConflicted, Paths: conflicts}
+		s.failed(ctx, land, LandLocked, LandMergeConflicted, "conflicts", conflicts)
+		return nil, Conflict{State: LandMergeConflicted, Paths: conflicts}
 	}
 	land.Merged = merged
 	var paths []string
@@ -228,74 +318,74 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		paths, err = repo.Changed(ctx, now.ID, merged)
 	}
 	if err != nil {
-		return land, err
+		return nil, err
 	}
 	land.Paths = paths
-	if err := s.move(ctx, &land, LandLocked, LandMerged, nil); err != nil {
-		return land, err
-	}
-	if len(paths) == 0 {
-		// Nothing to write: the canonical already has it all.
-		if err := s.move(ctx, &land, LandMerged, LandCommitted, nil); err != nil {
-			return land, err
-		}
-		return land, nil
-	}
-	land.Round++
-	if err := s.move(ctx, &land, LandMerged, LandApplying, nil); err != nil {
-		return land, err
-	}
-	// Applying is already admitted under the source epoch. Finish this WAL
-	// operation even if a later stop revokes permission for new work.
-	applyCtx, finishApply := landingApplyContext(ctx)
-	defer finishApply()
-	ctx = applyCtx
+	return repo, nil
+}
+
+// applyLanding writes the merged tree into the canonical workspace, every
+// path journaled before and confirmed after, so a landing cut off here is
+// recovered per path. A write that fails is an apply conflict — unless
+// recovery is the one applying, which records its own outcome.
+func (s *Store) applyLanding(ctx context.Context, p project.Project, land *Landing, repo *Repo) error {
 	journal := s.ledger.Journal()
-	for _, path := range paths {
-		if _, err := journal.Started(ledger.EffectID{Operation: land.ID, Kind: "land-path", InstanceKey: fmt.Sprintf("%d/%s", land.Round, path)}, "", nil); err != nil {
-			return land, err
+	for _, path := range land.Paths {
+		if _, err := journal.Started(landPathEffect(*land, path), "", nil); err != nil {
+			return err
 		}
 	}
+	var err error
 	if p.Home.Node == "" {
-		_, err = repo.Apply(ctx, now.ID, merged, p.Home.Path)
+		_, err = repo.Apply(ctx, land.Now, land.Merged, p.Home.Path)
 	} else {
-		err = s.applyOnNode(ctx, p, now.ID, merged, repo)
+		err = s.applyOnNode(ctx, p, land.Now, land.Merged, repo)
 	}
 	if err != nil {
 		if land.Recoverable {
-			return land, err
+			return err
 		}
-		s.failed(ctx, &land, LandApplying, LandApplyConflicted, err.Error(), paths)
-		return land, Conflict{State: LandApplyConflicted, Paths: paths}
+		s.failed(ctx, land, LandApplying, LandApplyConflicted, err.Error(), land.Paths)
+		return Conflict{State: LandApplyConflicted, Paths: land.Paths}
 	}
-	for _, path := range paths {
-		if _, err := journal.Confirmed(ledger.EffectID{Operation: land.ID, Kind: "land-path", InstanceKey: fmt.Sprintf("%d/%s", land.Round, path)}, nil); err != nil {
-			return land, err
+	for _, path := range land.Paths {
+		if _, err := journal.Confirmed(landPathEffect(*land, path), nil); err != nil {
+			return err
 		}
 	}
-	// Committed: the canonical name moves to the merged snapshot in the
-	// same transaction as the state, fenced on the lock.
+	return nil
+}
+
+// landPathEffect identifies one path's write in the landing's current
+// round; recovery reads the same identity back from the WAL.
+func landPathEffect(land Landing, path string) ledger.EffectID {
+	return ledger.EffectID{Operation: land.ID, Kind: "land-path", InstanceKey: fmt.Sprintf("%d/%s", land.Round, path)}
+}
+
+// commitLanding moves the canonical name to the merged snapshot in the
+// same transaction as the committed state, fenced on the lock, then signs
+// for the merged snapshot as the project's new canonical. A name that
+// moved underneath is a commit conflict.
+func (s *Store) commitLanding(ctx context.Context, p project.Project, land *Landing) error {
 	current, _, _ := s.ledger.Name(ctx, CanonicalRef(p.ID))
 	land.State = LandCommitted
 	land.EndedAt = s.now().UTC()
-	_, err = s.ledger.Transition(ctx, land.ID, LandApplying, LandCommitted, by, landingFence(ctx, []ledger.Lease{lease}), map[string]any{"paths": paths},
+	_, err := s.ledger.Transition(ctx, land.ID, LandApplying, LandCommitted, land.By, landingFence(ctx, []ledger.Lease{*land.Lease}), map[string]any{"paths": land.Paths},
 		func(tx *ledger.Tx, op *ledger.Operation) error {
-			if _, err := tx.CompareAndSetName(CanonicalRef(p.ID), current.Version, merged); err != nil {
+			if _, err := tx.CompareAndSetName(CanonicalRef(p.ID), current.Version, land.Merged); err != nil {
 				return err
 			}
-			return tx.SetData(op, land)
+			return tx.SetData(op, *land)
 		})
 	if err != nil {
 		if errors.Is(err, ledger.ErrConflict) {
-			s.failed(ctx, &land, LandApplying, LandCommitConflict, err.Error(), paths)
-			return land, Conflict{State: LandCommitConflict, Paths: paths}
+			s.failed(ctx, land, LandApplying, LandCommitConflict, err.Error(), land.Paths)
+			return Conflict{State: LandCommitConflict, Paths: land.Paths}
 		}
-		return land, err
+		return err
 	}
-	if _, err := s.receipt(ctx, p, Manifest{ID: merged, Project: p.ID, Parent: now.ID, Label: p.Level, By: land.ID, Message: "landed " + short(artifactID), Canonical: true}); err != nil {
-		return land, err
-	}
-	return land, nil
+	_, err = s.receipt(ctx, p, Manifest{ID: land.Merged, Project: p.ID, Parent: land.Now, Label: p.Level, By: land.ID, Message: "landed " + short(land.Artifact), Canonical: true})
+	return err
 }
 
 // mergeOnNode three-way merges at the home node of a sealed project, which
