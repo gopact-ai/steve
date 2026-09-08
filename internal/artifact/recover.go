@@ -93,9 +93,7 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		return land, fmt.Errorf("landing %s: %w", land.ID, err)
 	}
 	land.Lease = &lease
-	// The lock falls to its TTL when the release fails; the recovery's own
-	// result stands either way.
-	defer func() { _ = s.ledger.ReleaseAny(context.WithoutCancel(ctx), lease) }()
+	defer s.releaseCanonical(ctx, &land, lease)
 	defer trackLandingLease(ctx, lease)()
 
 	land.Round++

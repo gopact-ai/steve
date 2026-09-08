@@ -182,9 +182,7 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 			return land, err
 		}
 		lease = acquired
-		// The lock falls to its TTL when the release fails; nothing else
-		// can be done about it here, and the landing's own result stands.
-		defer func() { _ = s.ledger.ReleaseAny(context.WithoutCancel(ctx), lease) }()
+		defer s.releaseCanonical(ctx, &land, lease)
 		defer trackLandingLease(ctx, lease)()
 	}
 	land.Lease = &lease
@@ -400,6 +398,17 @@ func (s *Store) fail(ctx context.Context, land *Landing, from, to, cause string,
 func (s *Store) failed(ctx context.Context, land *Landing, from, to, cause string, paths []string) {
 	if err := s.fail(ctx, land, from, to, cause, paths); err != nil {
 		slog.Error(fmt.Sprintf("artifact: landing %s: %s not recorded: %v", land.ID, to, err), "landing", land.ID, "artifact", land.Artifact, "project", land.Project)
+	}
+}
+
+// releaseCanonical gives the project's canonical lock back once a landing
+// is over, on a context the caller's cancellation cannot reach. The
+// landing's own result stands whether or not the release succeeds; a lock
+// that stays falls to its TTL, and every landing and in-place turn on the
+// project waits that long, which is worth a line in the log.
+func (s *Store) releaseCanonical(ctx context.Context, land *Landing, lease ledger.Lease) {
+	if err := s.ledger.ReleaseAny(context.WithoutCancel(ctx), lease); err != nil {
+		slog.Warn(fmt.Sprintf("artifact: landing %s: release canonical lock: %v", land.ID, err), "landing", land.ID, "artifact", land.Artifact, "project", land.Project)
 	}
 }
 

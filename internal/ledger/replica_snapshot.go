@@ -258,8 +258,9 @@ func (l *Ledger) replicaTemp(data []byte) (string, func(), error) {
 		return "", nil, err
 	}
 	path := file.Name()
-	// The staging database and its sidecars are scratch; a leftover is
-	// overwritten by the next CreateTemp and never read.
+	// The staging database and its sidecars are scratch: a leftover only
+	// takes space in the ledger directory, is never read, and the ledger
+	// itself was not touched.
 	cleanup := func() {
 		_ = os.Remove(path)
 		_ = os.Remove(path + "-wal")
