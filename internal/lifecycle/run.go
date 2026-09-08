@@ -210,6 +210,14 @@ type Settlement struct {
 	// steps). A node-owned session's detaches, as for any completion that
 	// could not be made.
 	QuarantineFinish bool
+	// RetryCleanup: a node-owned session whose close fails after the
+	// terminal transition is not quarantined — the record stands as it
+	// is, the session, the bindings and the workspace stay, and the close
+	// is reported as CleanupErr for the caller's own recovery to retry
+	// (plan steps, whose restore closes a failed step's session again).
+	// Without it the record is marked unsettled until someone confirms
+	// the stop.
+	RetryCleanup bool
 }
 
 // Options is what a caller settles before Run opens the attempt.
@@ -734,9 +742,12 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 		if closeErr := Close(ctx, o.Sessions, o.At, e.Session); closeErr != nil {
 			// The record is terminal, but its writer is not known to have
 			// exited: the workspace, the slot and the bindings stay until
-			// someone confirms the stop, and the record says so.
+			// someone confirms the stop — the record says so, or the
+			// caller's own recovery closes it again.
 			e.cleanup, e.durable = errors.Join(e.cleanup, fmt.Errorf("close settled session: %w", closeErr)), false
-			e.quarantine(ctx, closeErr)
+			if !o.Settlement.RetryCleanup {
+				e.quarantine(ctx, closeErr)
+			}
 			return err
 		}
 	}

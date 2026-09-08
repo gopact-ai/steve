@@ -609,6 +609,32 @@ func TestRunQuarantinesAManagedSessionWhoseCloseIsUnconfirmed(t *testing.T) {
 	}
 }
 
+func TestRunLeavesAFailedCloseToTheCallersRecoveryWhenAsked(t *testing.T) {
+	// The completion is on the record and the close did not confirm the
+	// process exited, but the caller's own recovery closes the session
+	// again: the record is not quarantined, and nothing is given back yet.
+	o := newWorld("ns_1").options()
+	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantines, RetryCleanup: true}
+	for _, failed := range []bool{false, true} {
+		w := newWorld("ns_1")
+		w.roster.bindings = []ability.Binding{{Name: "tool"}}
+		w.sessions.closeErr = errors.New("node away")
+		state, want := attempt.Bound, error(nil)
+		if failed {
+			// A settled failure: the prompt ended, and the attempt fails on it.
+			w.runner.err = harness.ErrTurnCanceled
+			state, want = attempt.Failed, w.runner.err
+		}
+		res, err := Run(t.Context(), o.withWorld(w))
+		if err != want || res.Record.State != state || res.Durable || res.Unsettled || res.Record.Unsettled || !errors.Is(res.CleanupErr, harness.ErrStopUnconfirmed) {
+			t.Fatalf("failed=%v: %+v err=%v", failed, res, err)
+		}
+		if h := w.attempts.history(); w.workspaces.discarded != 0 || len(w.roster.released) != 0 || len(w.sessions.closed) != 1 || strings.Contains(h, "unsettled") {
+			t.Fatalf("failed=%v: an unconfirmed writer's things were given back, or the record quarantined: discarded=%d released=%v closed=%v history=%s", failed, w.workspaces.discarded, w.roster.released, w.sessions.closed, h)
+		}
+	}
+}
+
 func TestRunKeepsAConversationsSessionAndRejectsAnUnfinishedCompletion(t *testing.T) {
 	w := newWorld("s1")
 	o := w.options()

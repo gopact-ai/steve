@@ -120,8 +120,10 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 // the step's own, or a verifier's whose exit nobody saw, either of which
 // keeps the workspace. A node-owned session this process cannot vouch for
 // — its prompt unsettled, its observer cancelled, a stage of its finish
-// blocked — is the node's, quarantined until an observer comes back.
-var stepSettlement = lifecycle.Settlement{Quarantine: lifecycle.QuarantineManaged, DetachManaged: true, Detachment: lifecycle.DetachQuarantines, CancelDetaches: true, CommitAsGiven: true, QuarantineFinish: true}
+// blocked — is the node's, quarantined until an observer comes back. One
+// whose outcome is on record but whose close failed is not: the step's
+// restore closes a failed step's session again (restoreStep).
+var stepSettlement = lifecycle.Settlement{Quarantine: lifecycle.QuarantineManaged, DetachManaged: true, Detachment: lifecycle.DetachQuarantines, CancelDetaches: true, CommitAsGiven: true, QuarantineFinish: true, RetryCleanup: true}
 
 // retainedStepRunner joins a step's node-owned session again.
 type retainedStepRunner interface {
@@ -599,12 +601,6 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 	case errors.As(err, &detached):
 		unresolved = detached
 		err = r.detachment(step, detached)
-	case run.Unsettled && r.record.State.Terminal():
-		// The outcome is on record, but the node-owned session's close did
-		// not confirm its process exited: the workspace, the slot and the
-		// budget wait for someone who can.
-		unresolved = agentexec.Blocked(r.record, "cleanup", "释放已结束步骤的原会话", "失败结果已保存，但原会话或工作区尚未释放。", "建议恢复原节点后重新检查。", run.CleanupErr)
-		err = unresolved
 	case run.Unsettled:
 		// A stop nobody confirmed: the prompt's own, or a verifier's whose
 		// exit was not seen.
@@ -630,7 +626,17 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 			return r.result, unresolved, unresolved
 		}
 	}
-	if err != nil && run.Managed && run.CleanupErr != nil {
+	if run.Managed && run.CleanupErr != nil {
+		// The outcome is on record and its budget settled, but the
+		// node-owned session's close did not confirm its process exited:
+		// the session, the bindings and the workspace stay with the node.
+		if err == nil {
+			// The result is committed, and delivered; what the node keeps is
+			// the node's until it is reachable again.
+			log.Printf("exec: step %s: attempt %s is bound, but its node session was not released: %v", r.step.ID, r.record.ID, run.CleanupErr)
+			return r.result, nil, nil
+		}
+		// A failed step's session is closed again when the step is restored.
 		unresolved = agentexec.Blocked(r.record, "cleanup", "释放已结束步骤的原会话", "失败结果已保存，但原会话或工作区尚未释放。", "建议恢复原节点后重新检查。", run.CleanupErr)
 		return r.result, unresolved, unresolved
 	}

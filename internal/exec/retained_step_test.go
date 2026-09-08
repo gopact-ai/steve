@@ -33,7 +33,10 @@ type retainedStepSessions struct {
 	prompted, resumed, closed int
 	answer                    string
 	inspectErr                error
-	book                      *ledger.Ledger
+	// closeErr fails every close of the original session; closed counts
+	// the attempts.
+	closeErr error
+	book     *ledger.Ledger
 }
 
 func (s *retainedStepSessions) ID() string { return "ns_step-original" }
@@ -42,9 +45,19 @@ func (s *retainedStepSessions) OpenSession(context.Context, harness.Placement, s
 }
 func (s *retainedStepSessions) CloseSession(context.Context, harness.Placement, string) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	s.closed++
-	s.mu.Unlock()
-	return nil
+	return s.closeErr
+}
+func (s *retainedStepSessions) closes() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closed
+}
+func (s *retainedStepSessions) failClose(err error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.closeErr = err
 }
 func (s *retainedStepSessions) AttachRetainedSession(context.Context, harness.Placement, string, string) (harness.ResumableRunner, error) {
 	return s, nil
@@ -342,6 +355,84 @@ func TestRetainedSettledFailureReleasesOriginalNodeSession(t *testing.T) {
 		t.Fatal("settled failed execution retained open accounting")
 	}
 }
+
+// TestRetainedFailedStepWhoseCloseFailsIsCleanedUpOnRestore: the failure is
+// on record and its budget settled, but the node did not confirm the
+// session closed. The record is not quarantined — restoring the step
+// closes the session again, and blocks only until that succeeds.
+func TestRetainedFailedStepWhoseCloseFailsIsCleanedUpOnRestore(t *testing.T) {
+	p, work, deps, sessions, tasks := retainedStepFixture(t)
+	deps.Runner = settledFailedStep{AgentRunner: deps.Runner.(*AgentRunner), sessions: sessions}
+	sessions.failClose(errors.New("node away"))
+	_, err := runStepWithRecovery(t.Context(), p, work, nil, deps)
+	var blocked *agentexec.RecoveryBlocked
+	if !errors.As(err, &blocked) {
+		t.Fatalf("unconfirmed close did not ask: %v", err)
+	}
+	records, err := deps.Attempts.ForTask(t.Context(), p.TaskID)
+	if err != nil || len(records) != 1 || records[0].State != attempt.Failed || records[0].Unsettled || sessions.closes() != 1 {
+		t.Fatalf("failed step with an unconfirmed close: records=%+v err=%v closes=%d", records, err, sessions.closes())
+	}
+	if tracked, _ := tasks.Get(p.TaskID); tracked.Attempts[0].Open() {
+		t.Fatal("failed step kept its accounting open behind an unconfirmed close")
+	}
+	// The next restore closes it again: blocked while the node is away,
+	// clean once it answers, and never a stop confirmation.
+	restored := work
+	if _, ok, err := restoreStep(t.Context(), p, &restored, nil, deps); ok || !errors.As(err, &blocked) || !strings.HasSuffix(blocked.Question.RequestID, "/cleanup") {
+		t.Fatalf("restore with the node away: ok=%v err=%v", ok, err)
+	}
+	sessions.failClose(nil)
+	if _, ok, err := restoreStep(t.Context(), p, &restored, nil, deps); ok || err != nil || sessions.closes() != 3 {
+		t.Fatalf("restore once the node answers: ok=%v err=%v closes=%d", ok, err, sessions.closes())
+	}
+	if _, ok, err := restoreStep(t.Context(), p, &restored, nil, deps); ok || err != nil {
+		t.Fatalf("restore after cleanup: ok=%v err=%v", ok, err)
+	}
+	if record, err := deps.Attempts.Get(t.Context(), records[0].ID); err != nil || record.State != attempt.Failed || record.Unsettled {
+		t.Fatalf("cleaned-up step: %+v %v", record, err)
+	}
+}
+
+// TestRetainedBoundStepWhoseCloseFailsStillDeliversItsResult: a step
+// resumed past its prompt is committed, and its close fails afterwards.
+// The result is on record and delivered; only the session and the
+// workspace wait for the node.
+func TestRetainedBoundStepWhoseCloseFailsStillDeliversItsResult(t *testing.T) {
+	p, work, deps, sessions, tasks := retainedStepFixture(t, &plan.Verify{Kind: plan.VerifyAgent, Agent: "shipper"})
+	deps.Verifier = verifyFunc(func(StepRequest) error { return nil })
+	cut := `CREATE TRIGGER cut BEFORE UPDATE OF state ON operations WHEN NEW.kind='attempt' AND NEW.state='bound' AND OLD.state!=NEW.state BEGIN SELECT RAISE(FAIL,'phase write unavailable'); END`
+	if err := sessions.book.Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec(cut); return err }); err != nil {
+		t.Fatal(err)
+	}
+	_, err := runStepWithRecovery(t.Context(), p, work, nil, deps)
+	var blocked *agentexec.RecoveryBlocked
+	if !errors.As(err, &blocked) {
+		t.Fatalf("injected failure did not retain original step: %v", err)
+	}
+	if err := sessions.book.Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec("DROP TRIGGER cut"); return err }); err != nil {
+		t.Fatal(err)
+	}
+	sessions.failClose(errors.New("node away"))
+	result, err := runStepWithRecovery(t.Context(), p, work, nil, deps)
+	if err != nil || result.Answer != sessions.answer || !result.Verified || result.AttemptID == "" {
+		t.Fatalf("bound result withheld behind an unconfirmed close: %+v %v", result, err)
+	}
+	records, err := deps.Attempts.ForTask(t.Context(), p.TaskID)
+	if err != nil || len(records) != 1 || records[0].State != attempt.Bound || records[0].Unsettled || sessions.closes() != 2 {
+		t.Fatalf("bound step with an unconfirmed close: records=%+v err=%v closes=%d", records, err, sessions.closes())
+	}
+	if tracked, _ := tasks.Get(p.TaskID); tracked.Budget.Turns != 1 || tracked.Attempts[0].Open() {
+		t.Fatalf("bound step's accounting: %+v", tracked)
+	}
+	// The committed result restores as any other; the close is not tried
+	// again on a step that is done.
+	again, err := runStepWithRecovery(t.Context(), p, work, nil, deps)
+	if err != nil || again.AttemptID != result.AttemptID || sessions.closes() != 2 || sessions.resumed != 1 {
+		t.Fatalf("bound step restored: %+v %v closes=%d resumes=%d", again, err, sessions.closes(), sessions.resumed)
+	}
+}
+
 func TestStepRetainedUnreachableIsRecoveryQuestionNotNewAttempt(t *testing.T) {
 	p, work, deps, sessions, _ := retainedStepFixture(t)
 	sessions.inspectErr = errors.New("node offline")
