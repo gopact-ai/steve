@@ -121,7 +121,9 @@ func (b retainedStepBudget) SettleAttempt(record attempt.Record, outcome task.Ou
 	return b.tasks.SettleAttempt(record.TaskID, record.ID, record.TurnID, record.EndedAt, outcome, usage)
 }
 
-func retainedStepFixture(t *testing.T, checks ...*plan.Verify) (plan.Plan, plan.Step, Deps, *retainedStepSessions, *task.Store) {
+// retainedStepWorld is a plan whose one step runs on a node-owned session
+// the test fakes, before anything has run.
+func retainedStepWorld(t *testing.T, checks ...*plan.Verify) (plan.Plan, plan.Step, Deps, *retainedStepSessions, *task.Store) {
 	t.Helper()
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
@@ -145,6 +147,22 @@ func retainedStepFixture(t *testing.T, checks ...*plan.Verify) (plan.Plan, plan.
 	fleet := testRoster(t, bothNodes())
 	sessions := &retainedStepSessions{book: book, attempts: attempts, tasks: tasks, entered: make(chan struct{}), answer: "  original complete step\nREF: git abcdef\n"}
 	runner := NewAgentRunner(sessions, nil, fleet)
+	registry := execution.New(t.Context(), tasks)
+	deps := Deps{Executions: registry, Roster: fleet, Runner: runner, Budget: retainedStepBudget{tasks}, Workspaces: artifacts, Attempts: attempts, Artifacts: artifacts}
+	p := plan.Plan{ID: "retained-plan", Rev: 1, TaskID: owner.ID, ProjectID: "p", Goal: owner.Goal}
+	work := step("step-1", "work", []string{"gpu"})
+	work.Agent = "builder"
+	if len(checks) > 0 {
+		work.Verify = checks[0]
+	}
+	return p, work, deps, sessions, tasks
+}
+
+// retainedStepFixture is retainedStepWorld after its step ran once and was
+// retained on the node: the coordinator went away mid-prompt.
+func retainedStepFixture(t *testing.T, checks ...*plan.Verify) (plan.Plan, plan.Step, Deps, *retainedStepSessions, *task.Store) {
+	t.Helper()
+	p, work, deps, sessions, tasks := retainedStepWorld(t, checks...)
 	lifetime, stop := context.WithCancel(t.Context())
 	registry := execution.New(lifetime, tasks)
 	t.Cleanup(func() {
@@ -153,13 +171,8 @@ func retainedStepFixture(t *testing.T, checks ...*plan.Verify) (plan.Plan, plan.
 		defer cancel()
 		_ = registry.Shutdown(ctx)
 	})
-	deps := Deps{Executions: registry, Roster: fleet, Runner: runner, Budget: retainedStepBudget{tasks}, Workspaces: artifacts, Attempts: attempts, Artifacts: artifacts}
-	p := plan.Plan{ID: "retained-plan", Rev: 1, TaskID: owner.ID, ProjectID: "p", Goal: owner.Goal}
-	work := step("step-1", "work", []string{"gpu"})
-	work.Agent = "builder"
-	if len(checks) > 0 {
-		work.Verify = checks[0]
-	}
+	deps.Executions = registry
+	attempts := deps.Attempts
 	done := make(chan error, 1)
 	go func() { _, err := runStepWithRecovery(lifetime, p, work, nil, deps); done <- err }()
 	select {
@@ -417,6 +430,87 @@ func TestRetainedStepRecoveryCodesReadAsBefore(t *testing.T) {
 	})
 }
 
+// stoppedSettledStep joins a step whose node finished the command while
+// the task was set aside in the same turn.
+type stoppedSettledStep struct {
+	*AgentRunner
+	sessions *retainedStepSessions
+}
+
+func (r stoppedSettledStep) AttachStep(ctx context.Context, req StepRequest, record attempt.Record) (RetainedStep, error) {
+	joined, err := r.AgentRunner.AttachStep(ctx, req, record)
+	if err != nil {
+		return joined, err
+	}
+	joined.Session = pausedStep{r.sessions}
+	return joined, nil
+}
+
+// pausedStep is a node-owned session whose turn settles well after the
+// task was paused: live, from the prompt; joined, from the resumed turn.
+type pausedStep struct{ *retainedStepSessions }
+
+func (s pausedStep) pause(ctx context.Context) (string, []string, error) {
+	records, err := s.attempts.Live(ctx)
+	if err != nil || len(records) != 1 {
+		return "", nil, errors.New("one original step required")
+	}
+	if _, err := s.tasks.SetAside(records[0].TaskID, task.StatePaused); err != nil {
+		return "", nil, err
+	}
+	return s.answer, nil, nil
+}
+func (s pausedStep) OpenSession(context.Context, harness.Placement, string, string, []acp.MCPServer) (harness.Runner, error) {
+	return s, nil
+}
+func (s pausedStep) Prompt(ctx context.Context, _ string, _ func(view.Progress)) (string, []string, error) {
+	return s.pause(ctx)
+}
+func (s pausedStep) ResumeTurn(ctx context.Context, _ permission.AskFunc, _ acphost.AskUserFunc, _ func(view.Progress)) (string, []string, error) {
+	return s.pause(ctx)
+}
+
+// TestStoppedSettledStepWhoseFailureCannotBeWrittenIsAFailure pins a prompt
+// that settled well in the turn the task was stopped in: the step fails as
+// a cancelled turn, and when the failure cannot be written the question is
+// the ledger's (`failure`), carrying the cancelled turn as the step's
+// error — on the live path and the joined one alike.
+func TestStoppedSettledStepWhoseFailureCannotBeWrittenIsAFailure(t *testing.T) {
+	cut := `CREATE TRIGGER cut BEFORE UPDATE OF state ON operations WHEN NEW.kind='attempt' AND NEW.state='failed' AND OLD.state!=NEW.state BEGIN SELECT RAISE(FAIL,'failure write unavailable'); END`
+	check := func(t *testing.T, p plan.Plan, deps Deps, sessions *retainedStepSessions, result plan.StepResult, err error) {
+		t.Helper()
+		var blocked *agentexec.RecoveryBlocked
+		if !errors.As(err, &blocked) || !strings.HasSuffix(blocked.Question.RequestID, "/failure") {
+			t.Fatalf("failure transition cut after a stop: %v", err)
+		}
+		if result.Error != harness.ErrTurnCanceled.Error() {
+			t.Fatalf("step error = %q, want the cancelled turn", result.Error)
+		}
+		records, err := deps.Attempts.ForTask(t.Context(), p.TaskID)
+		if err != nil || len(records) != 1 || records[0].State != attempt.Running || sessions.closes() != 0 {
+			t.Fatalf("unwritten failure settled the step: %+v %v closes=%d", records, err, sessions.closes())
+		}
+	}
+	t.Run("live", func(t *testing.T) {
+		p, work, deps, sessions, _ := retainedStepWorld(t)
+		deps.Runner = NewAgentRunner(pausedStep{sessions}, nil, deps.Roster)
+		if err := sessions.book.Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec(cut); return err }); err != nil {
+			t.Fatal(err)
+		}
+		result, err := runStepWithRecovery(t.Context(), p, work, nil, deps)
+		check(t, p, deps, sessions, result, err)
+	})
+	t.Run("joined", func(t *testing.T) {
+		p, work, deps, sessions, _ := retainedStepFixture(t)
+		deps.Runner = stoppedSettledStep{AgentRunner: deps.Runner.(*AgentRunner), sessions: sessions}
+		if err := sessions.book.Update(t.Context(), func(tx *ledger.Tx) error { _, err := tx.Exec(cut); return err }); err != nil {
+			t.Fatal(err)
+		}
+		result, err := runStepWithRecovery(t.Context(), p, work, nil, deps)
+		check(t, p, deps, sessions, result, err)
+	})
+}
+
 // failingBudget settles no attempt.
 type failingBudget struct{ err error }
 
@@ -460,11 +554,12 @@ func TestStepSettlementBlocksAsBefore(t *testing.T) {
 		{name: "bound, cleanup", record: bound, cleanup: closeErr},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			r := &stepRun{deps: Deps{Budget: failingBudget{tc.budget}}, record: tc.record, reserved: true, joined: tc.joined, refused: tc.refused, managed: true, promptErr: tc.cause}
+			r := &stepRun{deps: Deps{Budget: failingBudget{tc.budget}}, record: tc.record, reserved: true, joined: tc.joined, refused: tc.refused, managed: true}
+			prompt := tc.cause
 			if tc.refused {
-				r.promptErr = nil
+				prompt = nil
 			}
-			_, err, unresolved := r.settle(lifecycle.Result{Record: tc.record, Driven: true, Managed: true, CleanupErr: tc.cleanup}, tc.cause)
+			_, err, unresolved := r.settle(lifecycle.Result{Record: tc.record, Driven: true, Managed: true, Err: prompt, CleanupErr: tc.cleanup}, tc.cause)
 			var blocked *agentexec.RecoveryBlocked
 			switch {
 			case tc.code == "" && err != tc.cause:

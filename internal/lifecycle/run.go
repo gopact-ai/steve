@@ -359,9 +359,12 @@ type Result struct {
 	Usage    *attempt.Usage
 	// Last is the harness's last report, which Usage was read from.
 	Last view.Progress
-	// Driven says the prompt was sent; Settled that it ended by evidence.
+	// Driven says the prompt was sent; Settled that it ended by evidence;
+	// Err is how it ended — its own error, or the cancelled turn an
+	// explicit stop of a settled node-owned prompt reads as.
 	Driven  bool
 	Settled bool
+	Err     error
 	// Unsettled says the record was quarantined.
 	Unsettled bool
 	// Durable says the attempt reached a terminal state and its cleanup
@@ -416,7 +419,7 @@ func (e *Execution) Armed() bool { return e.armed }
 
 func (e *Execution) result() Result {
 	return Result{Record: e.Record, Session: e.Session, Managed: e.Managed, Answer: e.Outcome.Answer, Activity: e.Outcome.Activity, Usage: e.Usage, Last: e.Outcome.Last,
-		Driven: e.driven, Settled: e.settled(), Unsettled: e.unsettled, Durable: e.durable, CleanupErr: e.cleanup}
+		Driven: e.driven, Settled: e.settled(), Err: e.Outcome.Err, Unsettled: e.unsettled, Durable: e.durable, CleanupErr: e.cleanup}
 }
 
 func (e *Execution) run(ctx context.Context) error {
@@ -700,12 +703,15 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 	settled := e.settled()
 	if settled && errors.Is(execution.CheckExecution(ctx), task.ErrExecutionStopped) {
 		// An explicit stop of a settled prompt is a fact to record, on a
-		// context the stop itself did not cancel.
+		// context the stop itself did not cancel: a prompt that ended well
+		// ended as a cancelled turn, and the caller reads it so from the
+		// result — the transition it failed on may not be written.
 		var stop context.CancelFunc
 		ctx, stop = Cleanup(ctx)
 		defer stop()
 		if err == nil {
 			err = harness.ErrTurnCanceled
+			e.Outcome.Err = err
 		}
 	}
 	cancelled := ctx.Err() != nil

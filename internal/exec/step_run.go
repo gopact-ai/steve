@@ -168,7 +168,8 @@ type stepRun struct {
 	saved *plan.StepResult
 	// reserved says the budget was charged, and is the settle's to settle.
 	reserved bool
-	// promptErr is how the prompt ended, for the step's own error text.
+	// promptErr is how the prompt ended, as Run gave it back, for the
+	// step's own error text.
 	promptErr error
 	// stage is the finish stage that could not be completed; refused says
 	// the finish judged the work and failed it.
@@ -325,7 +326,6 @@ func (*stepSession) Abort()                       {}
 func (r *stepRun) ended(e *lifecycle.Execution) {
 	r.managed = lifecycle.IsManaged(r.record.Session)
 	e.Record, e.Managed = r.record, r.managed
-	r.promptErr = e.Outcome.Err
 	switch {
 	case r.saved != nil:
 		r.result = *r.saved
@@ -583,6 +583,7 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 	if run.Record.ID != "" {
 		r.record = run.Record
 	}
+	r.promptErr = run.Err
 	var step *lifecycle.StepError
 	errors.As(err, &step)
 	var detached *execution.RetainedObserverDetached

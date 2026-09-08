@@ -780,7 +780,7 @@ func TestReattachRecordsAnExplicitStopOfASettledPromptAsCancelled(t *testing.T) 
 		o.Resume, o.Settlement, o.Failed = true, tc.settlement, tc.failed
 		res, err := Reattach(scope.Context(), o, running, w.runner)
 		scope.Finish(nil)
-		if !errors.Is(err, harness.ErrTurnCanceled) || res.Record.State != attempt.Failed || !strings.Contains(res.Record.Error, harness.ErrTurnCanceled.Error()) || !res.Durable {
+		if !errors.Is(err, harness.ErrTurnCanceled) || !errors.Is(res.Err, harness.ErrTurnCanceled) || res.Record.State != attempt.Failed || !strings.Contains(res.Record.Error, harness.ErrTurnCanceled.Error()) || !res.Durable {
 			t.Fatalf("%s: explicit stop of a settled prompt: %+v err=%v", tc.name, res, err)
 		}
 		if h := w.attempts.history(); !strings.Contains(h, "settled/test failed/test") {
