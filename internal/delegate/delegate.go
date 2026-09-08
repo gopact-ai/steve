@@ -690,6 +690,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		prompt = caps.Instructions + "\n\n" + prompt
 	}
 	d := &delegation{service: s, parent: parent, child: child, req: req, at: at}
+	ask, askUser := d.handlers()
 	run, err := lifecycle.Run(ctx, lifecycle.Options{
 		Attempts: s.attempts, Roster: s.roster, Sessions: s.sessions, Workspaces: s.artifacts, Actor: "delegate",
 		Spec: attempt.Spec{Execution: execution.Token(ctx),
@@ -705,7 +706,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		ArmActor: "delegate-opening",
 		At:       at, Workdir: child.Workspace, Servers: caps.MCPServers,
 		Model: candidate.Agent.Model, ModelOptions: candidate.Agent.Options,
-		Prompt: prompt, Ask: d.ask, AskUser: d.askUser,
+		Prompt: prompt, Ask: ask, AskUser: askUser,
 		Observe: func(p view.Progress) {
 			touch()
 			if progress != nil {
@@ -762,6 +763,22 @@ func (d *delegation) started(ctx context.Context, e *lifecycle.Execution) error 
 		return fmt.Errorf("bind delegated tools: %w", err)
 	}
 	return nil
+}
+
+// handlers are the child's question handlers, and nil where the service
+// has none: a node-owned session reads a nil handler as no answer, not
+// as a refusal.
+func (d *delegation) handlers() (permission.AskFunc, func(context.Context, view.Question) (view.Answer, error)) {
+	permissionHandler, questionHandler := d.service.nodeQuestionHandlers(QuestionBinding{})
+	var ask permission.AskFunc
+	var askUser func(context.Context, view.Question) (view.Answer, error)
+	if permissionHandler != nil {
+		ask = d.ask
+	}
+	if questionHandler != nil {
+		askUser = d.askUser
+	}
+	return ask, askUser
 }
 
 func (d *delegation) ask(ctx context.Context, q permission.Ask) (acp.RequestPermissionOutcome, error) {
