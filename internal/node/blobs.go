@@ -24,11 +24,11 @@ func (s *Server) transferBlob(ctx context.Context, stream *nodewire.Stream) {
 	verb, name, _ := strings.Cut(req.Command, " ")
 	name = strings.TrimSpace(name)
 	if name == "" || name != filepath.Base(name) || strings.HasPrefix(name, ".") {
-		_ = stream.CloseWithReason(nodewire.ExitPrefix + "2")
+		closeStream(stream, nodewire.ExitPrefix+"2")
 		return
 	}
 	path := filepath.Join(s.BlobDir(), name)
-	fail := func(code string) { _ = stream.CloseWithReason(nodewire.ExitPrefix + code) }
+	fail := func(code string) { closeStream(stream, nodewire.ExitPrefix+code) }
 	switch verb {
 	case "put":
 		if err := os.MkdirAll(s.BlobDir(), 0o700); err != nil {
@@ -95,7 +95,7 @@ func (s *Server) fetch(ctx context.Context, stream *nodewire.Stream) {
 		if err != nil {
 			log.Printf("steve-node: fetch: %v", err)
 		}
-		_ = stream.CloseWithReason(nodewire.ExitPrefix + code)
+		closeStream(stream, nodewire.ExitPrefix+code)
 	}
 	if len(fields) != 3 || fields[2] != filepath.Base(fields[2]) {
 		fail("2", nil)
@@ -111,11 +111,16 @@ func (s *Server) fetch(ctx context.Context, stream *nodewire.Stream) {
 		return
 	}
 	defer socket.Close()
-	_ = socket.SetDeadline(time.Now().Add(nodewire.HandshakeTimeout))
+	if err := socket.SetDeadline(time.Now().Add(nodewire.HandshakeTimeout)); err != nil {
+		fail("1", err)
+		return
+	}
 	if _, err := nodewire.Dial(socket, nodewire.Hello{Token: token, Hub: "peer:" + s.conf().Name}); err != nil {
 		fail("1", err)
 		return
 	}
+	// Clearing a deadline on a live socket cannot fail in a way the
+	// transfer below would not report.
 	_ = socket.SetDeadline(time.Time{})
 	mux := nodewire.NewMux(socket, true)
 	defer mux.Close()
@@ -153,5 +158,5 @@ func (s *Server) fetch(ctx context.Context, stream *nodewire.Stream) {
 		return
 	}
 	log.Printf("steve-node: fetched %s (%d bytes) from peer %s", name, n, addr)
-	_ = stream.CloseWithReason(nodewire.ExitPrefix + "0")
+	closeStream(stream, nodewire.ExitPrefix+"0")
 }

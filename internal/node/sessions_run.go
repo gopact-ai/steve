@@ -201,6 +201,7 @@ func (one *ownedSession) run(req nodewire.SessionRequest) {
 			command.State = nodewire.SessionCommandCancelled
 			command.Settled = true
 			next.Commands[req.CommandID] = command
+			// A failed commit is latched in one.failure for the next request.
 			_ = one.commitLocked(next)
 		}
 		one.mu.Unlock()
@@ -211,6 +212,7 @@ func (one *ownedSession) run(req nodewire.SessionRequest) {
 		command.Error = "node service stopped before dispatch"
 		next.Commands[req.CommandID] = command
 		next.State.State = nodewire.SessionInterrupted
+		// A failed commit is latched in one.failure for the next request.
 		_ = one.commitLocked(next)
 		one.mu.Unlock()
 		return
@@ -274,6 +276,7 @@ func (one *ownedSession) run(req nodewire.SessionRequest) {
 			next.State.Questions[i].State = "interrupted"
 		}
 	}
+	// A failed commit is latched in one.failure for the next request.
 	_ = one.commitLocked(next)
 }
 

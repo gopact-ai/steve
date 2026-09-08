@@ -69,6 +69,8 @@ type hubOwner struct {
 
 func (s *Server) ownerPath() string { return filepath.Join(s.conf().StateDir, "hub.json") }
 
+// owner is the record as far as it can be read: an unreadable one reads
+// as unowned here, and claim, which re-reads it, reports the error.
 func (s *Server) owner() hubOwner { o, _ := s.readOwner(); return o }
 func (s *Server) readOwner() (hubOwner, error) {
 	var o hubOwner

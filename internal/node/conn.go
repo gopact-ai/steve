@@ -75,12 +75,17 @@ func dial(ctx context.Context, name, hub string, cfg Config, mcpDial func(contex
 	}
 	// The handshake is the one exchange with a hard deadline: past it the
 	// connection is long-lived and its streams carry their own timeouts.
-	_ = socket.SetDeadline(time.Now().Add(nodewire.HandshakeTimeout))
+	if err := socket.SetDeadline(time.Now().Add(nodewire.HandshakeTimeout)); err != nil {
+		socket.Close()
+		return nil, err
+	}
 	advert, err := nodewire.Dial(socket, nodewire.Hello{Token: cfg.Token, Hub: hub, Features: nodewire.Features()})
 	if err != nil {
 		socket.Close()
 		return nil, err
 	}
+	// Clearing a deadline on a live socket cannot fail in a way the mux's
+	// first read would not report.
 	_ = socket.SetDeadline(time.Time{})
 
 	c := &conn{name: name, mux: nodewire.NewMux(socket, true), advert: advert}
@@ -102,6 +107,8 @@ func (c *conn) alive() bool {
 func (c *conn) close() {
 	c.closeOnce.Do(func() {
 		c.released.Store(true)
+		// This connection is being given up; how its socket went down
+		// is not news to anyone.
 		if nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureJournal) {
 			_ = c.mux.CloseGracefully()
 		} else {
@@ -122,7 +129,8 @@ func (c *conn) serveReverse(mcpDial func(context.Context) (net.Conn, error)) {
 			return
 		}
 		if stream.Request().Kind != nodewire.StreamMCP {
-			// The hub opens ACP streams; it never accepts them.
+			// The hub opens ACP streams; it never accepts them. The refusal
+			// is the close itself.
 			_ = stream.Close()
 			continue
 		}
@@ -136,6 +144,9 @@ func (c *conn) serveReverse(mcpDial func(context.Context) (net.Conn, error)) {
 				return
 			}
 			defer upstream.Close()
+			// A proxy pump ends when either side closes; which side and
+			// why belongs to the two ends, not to the pump, so the copies
+			// and the closes that follow report nothing here.
 			go func() { <-stream.Done(); _ = upstream.Close() }()
 			done := make(chan struct{})
 			go func() {

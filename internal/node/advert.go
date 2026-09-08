@@ -105,12 +105,12 @@ func (s *Server) admit(stream *nodewire.Stream) {
 	defer stream.Close()
 	var req nodewire.AdmitRequest
 	if err := json.NewDecoder(stream).Decode(&req); err != nil {
-		_ = json.NewEncoder(stream).Encode(nodewire.AdmitReply{Error: "read request: " + err.Error()})
+		s.admitReply(stream, nodewire.AdmitReply{Error: "read request: " + err.Error()})
 		return
 	}
 	snap := s.snapshot()
 	if snap == nil {
-		_ = json.NewEncoder(stream).Encode(nodewire.AdmitReply{Error: "this node cannot observe itself"})
+		s.admitReply(stream, nodewire.AdmitReply{Error: "this node cannot observe itself"})
 		return
 	}
 	now := time.Now().UTC()
@@ -139,7 +139,7 @@ func (s *Server) admit(stream *nodewire.Stream) {
 			adm.Verdict, adm.Code = ability.False, ability.CodeUnavailable
 			adm.Atoms = append(adm.Atoms, ability.AtomResult{Atom: atom, Verdict: ability.False, Code: ability.CodeUnavailable, Detail: err.Error()})
 		case err != nil:
-			_ = json.NewEncoder(stream).Encode(nodewire.AdmitReply{Error: "bind " + id + ": " + err.Error()})
+			s.admitReply(stream, nodewire.AdmitReply{Error: "bind " + id + ": " + err.Error()})
 			return
 		default:
 			bindings = append(bindings, d)
@@ -150,7 +150,13 @@ func (s *Server) admit(stream *nodewire.Stream) {
 		bindings, adm.Bound = nil, nil
 	}
 	log.Printf("steve-node: admission for attempt %s (%s): %s at %d/%d, bound %v", req.Attempt, req.Harness, adm.Verdict, snap.Generation, snap.Sequence, adm.Bound)
-	if err := json.NewEncoder(stream).Encode(nodewire.AdmitReply{Admission: adm, Bindings: bindings, Nonce: req.Nonce}); err != nil {
+	s.admitReply(stream, nodewire.AdmitReply{Admission: adm, Bindings: bindings, Nonce: req.Nonce})
+}
+
+// admitReply sends the verdict; a hub that stopped listening is logged,
+// since the attempt it placed here will not run without it.
+func (s *Server) admitReply(stream *nodewire.Stream, reply nodewire.AdmitReply) {
+	if err := json.NewEncoder(stream).Encode(reply); err != nil {
 		log.Printf("steve-node: admission reply: %v", err)
 	}
 }

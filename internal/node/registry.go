@@ -301,6 +301,8 @@ func (r *Registry) EnsureConnected(ctx context.Context, names ...string) {
 			continue
 		}
 		dialCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
+		// connect records its failure in the node's status; there is no
+		// caller here to tell.
 		_, _ = r.connect(dialCtx, name)
 		cancel()
 	}
@@ -383,6 +385,7 @@ func (r *Registry) Start(ctx context.Context) {
 						continue
 					}
 					dialCtx, cancel := context.WithTimeout(ctx, defaultDialTimeout)
+					// connect records its failure in the node's status.
 					_, _ = r.connect(dialCtx, name)
 					cancel()
 				}
@@ -487,6 +490,7 @@ func (r *Registry) connect(ctx context.Context, name string) (*conn, error) {
 			if _, ok := r.confs[name]; !ok || r.configRevisions[name] != configurationRevision || r.closed {
 				err = fmt.Errorf("node %q released while dialing", name)
 				r.mu.Unlock()
+				// A connection nobody will use; its close is not the error.
 				_ = c.mux.Close()
 			} else {
 				if r.gens == nil {

@@ -79,6 +79,7 @@ func (r *Registry) Admit(ctx context.Context, name string, req nodewire.AdmitReq
 		return adm, nil
 	}
 	var nonce [12]byte
+	// crypto/rand.Read never returns an error: it fills or crashes.
 	_, _ = cryptorand.Read(nonce[:])
 	req.Nonce = hex.EncodeToString(nonce[:])
 	stream, err := c.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamAdmit})

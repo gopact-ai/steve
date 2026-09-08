@@ -189,6 +189,8 @@ func (s *SessionService) Close() {
 				next.Commands[id] = command
 			}
 		}
+		// A commit that fails is latched in one.failure and answers the
+		// next request for this session; there is no one else to tell.
 		_ = one.commitLocked(next)
 		one.mu.Unlock()
 	}

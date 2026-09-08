@@ -198,6 +198,7 @@ func (m *Mux) Close() error {
 // peers send Goodbye: a bare socket EOF cannot distinguish intent from loss.
 func (m *Mux) CloseGracefully() error {
 	err := m.write(Frame{Kind: KindGoodbye})
+	// Whether the goodbye got out is the answer; the close is release.
 	_ = m.Close()
 	return err
 }
@@ -241,6 +242,7 @@ func (m *Mux) write(f Frame) error {
 	m.writeMu.Unlock()
 	if err != nil {
 		m.shutdown(err)
+		// The write error is the cause; closing only releases the socket.
 		_ = m.conn.Close()
 	}
 	return err
@@ -279,6 +281,7 @@ func (m *Mux) receive() {
 			m.graceful = true
 			m.mu.Unlock()
 			m.shutdown(ErrMuxClosed)
+			// A graceful end; the socket is released, not reported on.
 			_ = m.conn.Close()
 			return
 		}
@@ -288,6 +291,8 @@ func (m *Mux) receive() {
 func (m *Mux) accept(f Frame) {
 	var req OpenRequest
 	if err := json.Unmarshal(f.Payload, &req); err != nil {
+		// The refusal is best effort; a write failure has already shut
+		// the mux down, which the peer notices without this frame.
 		_ = m.write(Frame{Stream: f.Stream, Kind: KindClose, Payload: []byte("bad open request")})
 		return
 	}
@@ -335,5 +340,6 @@ func (m *Mux) shutdown(cause error) {
 	for _, s := range streams {
 		s.finish(fmt.Errorf("%w: %v", ErrMuxClosed, cause))
 	}
+	// cause is what every stream learned; the socket is only released.
 	_ = m.conn.Close()
 }

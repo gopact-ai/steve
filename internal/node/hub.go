@@ -14,6 +14,16 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
+// closeStream ends a stream with the reason the hub reads as its result.
+// The reason is the reply, so failing to send it is worth a line; a
+// connection that already went away reports nil here, and the hub loop
+// logs the disconnect instead.
+func closeStream(stream *nodewire.Stream, reason string) {
+	if err := stream.CloseWithReason(reason); err != nil {
+		log.Printf("steve-node: close %v stream: %v", stream.Request().Kind, err)
+	}
+}
+
 // hubClaim is what a handshake took on this node, kept where the deferred
 // release can see it: a claim may have succeeded even when writing the
 // advert afterwards failed.
@@ -29,6 +39,8 @@ type hubClaim struct {
 // single blob a peer was granted or the hub's stream loop.
 func (s *Server) handle(ctx context.Context, socket net.Conn) {
 	defer socket.Close()
+	// Closing on cancellation only wakes the reads below; the deferred
+	// close reports nothing either.
 	stop := context.AfterFunc(ctx, func() { _ = socket.Close() })
 	defer stop()
 	claim := &hubClaim{}
@@ -65,7 +77,10 @@ func (s *Server) handle(ctx context.Context, socket net.Conn) {
 func (s *Server) handshake(socket net.Conn, claim *hubClaim) (nodewire.Hello, bool) {
 	// The deadline only bounds the handshake; the connection is long-lived
 	// afterwards and its streams carry their own timeouts.
-	_ = socket.SetDeadline(time.Now().Add(nodewire.HandshakeTimeout))
+	if err := socket.SetDeadline(time.Now().Add(nodewire.HandshakeTimeout)); err != nil {
+		log.Printf("steve-node: handshake from %s: %v", socket.RemoteAddr(), err)
+		return nodewire.Hello{}, false
+	}
 	// The reverse listener is bound before the advert so its port can be
 	// reported in the same breath: the hub bakes that URL into the session
 	// fingerprint, so it has to be known before any session opens.
@@ -178,9 +193,7 @@ func (s *Server) dispatch(ctx context.Context, mux *nodewire.Mux, hub, principal
 		var err error
 		done, err = s.beginWork()
 		if err != nil {
-			// The refusal is the reply; a hub that is already gone will
-			// not read it either way.
-			_ = stream.CloseWithReason(err.Error())
+			closeStream(stream, err.Error())
 			return
 		}
 	}
@@ -278,12 +291,12 @@ func (s *Server) grantedName(token string) (string, bool) {
 func (s *Server) grant(stream *nodewire.Stream) {
 	fields := strings.Fields(stream.Request().Command)
 	if len(fields) != 3 || fields[2] == "" {
-		_ = stream.CloseWithReason(nodewire.ExitPrefix + "2")
+		closeStream(stream, nodewire.ExitPrefix+"2")
 		return
 	}
 	seconds, err := strconv.Atoi(fields[2])
 	if err != nil || seconds <= 0 || fields[1] != filepath.Base(fields[1]) {
-		_ = stream.CloseWithReason(nodewire.ExitPrefix + "2")
+		closeStream(stream, nodewire.ExitPrefix+"2")
 		return
 	}
 	s.grantsMu.Lock()
@@ -293,7 +306,7 @@ func (s *Server) grant(stream *nodewire.Stream) {
 	s.grants[fields[0]] = peerGrant{name: fields[1], expires: time.Now().Add(time.Duration(seconds) * time.Second)}
 	s.grantsMu.Unlock()
 	log.Printf("steve-node: granted a peer %s for %ds", fields[1], seconds)
-	_ = stream.CloseWithReason(nodewire.ExitPrefix + "0")
+	closeStream(stream, nodewire.ExitPrefix+"0")
 }
 
 // servePeer answers exactly one "get <name>" for the granted name.
@@ -310,12 +323,12 @@ func (s *Server) servePeer(ctx context.Context, socket net.Conn, hello nodewire.
 	}
 	req := stream.Request()
 	if req.Kind != nodewire.StreamBlob || req.Command != "get "+name {
-		_ = stream.CloseWithReason(nodewire.ExitPrefix + "2")
+		closeStream(stream, nodewire.ExitPrefix+"2")
 		return
 	}
 	done, err := s.beginWork()
 	if err != nil {
-		_ = stream.CloseWithReason(err.Error())
+		closeStream(stream, err.Error())
 		return
 	}
 	defer done()

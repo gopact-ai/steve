@@ -112,6 +112,8 @@ func (b *Broker) Serve(ctx context.Context) error {
 	if err := os.MkdirAll(filepath.Dir(sock), 0o700); err != nil {
 		return err
 	}
+	// A socket file left by an earlier broker is cleared; if it will not
+	// go, Listen reports it.
 	_ = os.Remove(sock)
 	listener, err := net.Listen("unix", sock)
 	if err != nil {
@@ -233,7 +235,9 @@ func (b *Broker) Release(attempt string) int {
 			continue
 		}
 		if nb.running != nil {
-			_ = killProcessGroup(nb.running)
+			if err := killProcessGroup(nb.running); err != nil {
+				log.Printf("steve-node: mcp %s for attempt %s: kill: %v", nb.mcp, attempt, err)
+			}
 		}
 		delete(b.bindings, id)
 		n++
@@ -269,7 +273,9 @@ func (b *Broker) conn(ctx context.Context, c net.Conn) {
 	defer c.Close()
 	stop := context.AfterFunc(ctx, func() { _ = c.Close() })
 	defer stop()
-	_ = c.SetReadDeadline(time.Now().Add(10 * time.Second))
+	if err := c.SetReadDeadline(time.Now().Add(10 * time.Second)); err != nil {
+		return
+	}
 	// The reader stays: bytes after the first line are the session's
 	// first bytes, and they may already sit in its buffer.
 	reader := bufio.NewReaderSize(c, 4096)
@@ -277,6 +283,8 @@ func (b *Broker) conn(ctx context.Context, c net.Conn) {
 	if err != nil {
 		return
 	}
+	// Clearing a deadline on a live socket cannot fail in a way the
+	// session's reads would not report.
 	_ = c.SetReadDeadline(time.Time{})
 	fields := strings.Fields(line)
 	if len(fields) == 0 {
@@ -363,6 +371,9 @@ func (b *Broker) launch(ctx context.Context, c net.Conn, reader io.Reader, id st
 	}
 	b.attach(nb.id, cmd)
 	log.Printf("steve-node: mcp %s started for attempt %s (%s)", nb.mcp, nb.attempt, nb.harness)
+	// The session lasts as long as either pump: when one side ends the
+	// server is torn down whole, and its exit status is not the
+	// session's to report.
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -396,11 +407,14 @@ func (b *Broker) serveProxy(ctx context.Context) error {
 	b.proxyPort = port
 	b.mu.Unlock()
 	if b.cfg.PortFile != "" {
-		_ = os.WriteFile(b.cfg.PortFile, []byte(strconv.Itoa(port)), 0o600)
+		if err := os.WriteFile(b.cfg.PortFile, []byte(strconv.Itoa(port)), 0o600); err != nil {
+			log.Printf("steve-node: mcp proxy: remember port: %v", err)
+		}
 	}
 	server := &http.Server{Handler: http.HandlerFunc(b.proxy), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
+		// Shutdown; Serve reports the close as ErrServerClosed.
 		_ = server.Close()
 	}()
 	go func() {

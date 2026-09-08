@@ -132,6 +132,7 @@ func (s *Stream) deliver(payload []byte) {
 		return
 	}
 	if s.buffer.Len()+len(payload) <= streamBufferBytes {
+		// Writing to a bytes.Buffer cannot fail.
 		_, _ = s.buffer.Write(payload)
 		s.mu.Unlock()
 		select {

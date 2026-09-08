@@ -173,6 +173,8 @@ type Server struct {
 func NewServer(cfg ServerConfig) *Server {
 	s := &Server{mcpPort: rememberedPort(cfg), generation: nextGeneration(), launch: NewLaunchProbe(), processes: map[string]*agentProcess{}}
 	s.cfg.Store(&cfg)
+	// No readable settings file means no revision to guard, which is what
+	// the empty revision says; a write reports the real problem.
 	s.settingsFileRevision, _ = nodeSettingsFileRevision(cfg.Source)
 	return s
 }
@@ -223,6 +225,8 @@ func (s *Server) Serve(ctx context.Context) error {
 		s.restart.draining = true
 		s.restart.mu.Unlock()
 		cancel()
+		// Shutdown closes the listener the accept loop already left; the
+		// close has nothing left to report.
 		_ = listener.Close()
 		if s.sessions != nil {
 			s.sessions.Close()
@@ -239,6 +243,7 @@ func (s *Server) Serve(ctx context.Context) error {
 	log.Printf("steve-node: %s listening on %s", s.conf().Name, listener.Addr())
 	go func() {
 		<-ctx.Done()
+		// Closing unblocks Accept, which reports the end through ctx.
 		_ = listener.Close()
 	}()
 	// Every harness runs in a home this node owns, never the user's own
@@ -324,7 +329,7 @@ func (s *Server) runCommand(ctx context.Context, stream *nodewire.Stream) {
 		}
 	}
 	log.Printf("steve-node: verify %q in %s -> exit %d", req.Command, dir, code)
-	_ = stream.CloseWithReason(fmt.Sprintf("%s%d", nodewire.ExitPrefix, code))
+	closeStream(stream, fmt.Sprintf("%s%d", nodewire.ExitPrefix, code))
 }
 
 func (s *Server) processDir(spec HarnessSpec) string {

@@ -265,7 +265,9 @@ func (s *Server) configure(stream *nodewire.Stream) {
 				out.ErrorCode = "settings_committed"
 			}
 		}
-		_ = json.NewEncoder(stream).Encode(out)
+		if err := json.NewEncoder(stream).Encode(out); err != nil {
+			log.Printf("steve-node: config reply: %v", err)
+		}
 	}
 	switch verb {
 	case "discover-agents", "enroll-agent":

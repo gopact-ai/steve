@@ -55,7 +55,7 @@ func (s *Server) applySkills(stream *nodewire.Stream) {
 	fail := func(code string, err error) {
 		log.Printf("steve-node: skills %s: %v", hash, err)
 		fmt.Fprintln(stream, err.Error())
-		_ = stream.CloseWithReason(nodewire.ExitPrefix + code)
+		closeStream(stream, nodewire.ExitPrefix+code)
 	}
 	if verb != "apply" || hash == "" || hash != filepath.Base(hash) {
 		fail("2", fmt.Errorf("bad request %q", stream.Request().Command))
@@ -73,18 +73,24 @@ func (s *Server) applySkills(stream *nodewire.Stream) {
 	}
 	dir := filepath.Join(s.SkillsDir(), hash)
 	staging := dir + ".staging"
+	// Leftovers of an earlier attempt are cleared best-effort: whatever
+	// survives makes the unpack below fail with the real reason.
 	_ = os.RemoveAll(staging)
 	entries, err := skills.Unpack(data, staging)
 	if err != nil {
+		// Cleanup after a failed unpack; the unpack error is the answer.
 		_ = os.RemoveAll(staging)
 		fail("1", fmt.Errorf("unpack: %w", err))
 		return
 	}
+	// Entries are plain strings and hashes; encoding them cannot fail.
 	manifest, _ := json.Marshal(entries)
 	if err := os.WriteFile(filepath.Join(staging, ".manifest.json"), manifest, 0o600); err != nil {
 		fail("1", err)
 		return
 	}
+	// A stale bundle of the same hash is replaced; if it will not go, the
+	// rename reports it.
 	_ = os.RemoveAll(dir)
 	if err := os.Rename(staging, dir); err != nil {
 		fail("1", err)
@@ -98,6 +104,8 @@ func (s *Server) applySkills(stream *nodewire.Stream) {
 		fail("1", err)
 		return
 	}
+	// The bundle is unpacked and current; the tarball and the bundles it
+	// replaces are only disk now, and the next apply clears what stays.
 	_ = os.Remove(blob)
 	if old, err := os.ReadDir(s.SkillsDir()); err == nil {
 		for _, e := range old {
@@ -107,7 +115,7 @@ func (s *Server) applySkills(stream *nodewire.Stream) {
 		}
 	}
 	log.Printf("steve-node: skills %s materialized: %d skills", hash[:12], len(entries))
-	_ = stream.CloseWithReason(nodewire.ExitPrefix + "0")
+	closeStream(stream, nodewire.ExitPrefix+"0")
 }
 
 // materializeSkills links every skill of the bundle into every harness

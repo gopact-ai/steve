@@ -32,7 +32,11 @@ var probeMu sync.Mutex
 func (s *Server) mcpProbe(ctx context.Context, stream *nodewire.Stream) {
 	defer stream.Close()
 	name := strings.TrimSpace(stream.Request().Command)
-	reply := func(r nodewire.MCPProbeReply) { _ = json.NewEncoder(stream).Encode(r) }
+	reply := func(r nodewire.MCPProbeReply) {
+		if err := json.NewEncoder(stream).Encode(r); err != nil {
+			log.Printf("steve-node: mcp probe reply: %v", err)
+		}
+	}
 	if name == "" {
 		reply(nodewire.MCPProbeReply{Error: "a server name is required"})
 		return
@@ -51,7 +55,11 @@ func (s *Server) mcpProbe(ctx context.Context, stream *nodewire.Stream) {
 		reply(nodewire.MCPProbeReply{Error: "bind: " + err.Error()})
 		return
 	}
-	defer func() { _, _ = s.broker.Release(context.Background(), attempt) }()
+	defer func() {
+		if _, err := s.broker.Release(context.Background(), attempt); err != nil {
+			log.Printf("steve-node: mcp probe: release %s: %v", name, err)
+		}
+	}()
 	result, err := mcpprobe.Probe(ctx, mcpprobe.Server{Type: binding.Transport, Command: binding.Command, Args: binding.Args, URL: binding.URL})
 	if err != nil {
 		reply(nodewire.MCPProbeReply{Error: err.Error()})
@@ -127,7 +135,9 @@ func (r remoteBroker) call(ctx context.Context, line string) (string, error) {
 		return "", fmt.Errorf("mcp broker at %s: %w", r.socket, err)
 	}
 	defer c.Close()
-	_ = c.SetDeadline(time.Now().Add(15 * time.Second))
+	if err := c.SetDeadline(time.Now().Add(15 * time.Second)); err != nil {
+		return "", err
+	}
 	if _, err := io.WriteString(c, line+"\n"); err != nil {
 		return "", err
 	}
@@ -201,19 +211,19 @@ func (s *Server) releaseAttempt(stream *nodewire.Stream) {
 	defer stream.Close()
 	attempt := strings.TrimSpace(stream.Request().Command)
 	if attempt == "" || s.broker == nil {
-		_ = stream.CloseWithReason(nodewire.ExitPrefix + "2")
+		closeStream(stream, nodewire.ExitPrefix+"2")
 		return
 	}
 	n, err := s.broker.Release(context.Background(), attempt)
 	if err != nil {
 		log.Printf("steve-node: release %s: %v", attempt, err)
-		_ = stream.CloseWithReason(nodewire.ExitPrefix + "1")
+		closeStream(stream, nodewire.ExitPrefix+"1")
 		return
 	}
 	if n > 0 {
 		log.Printf("steve-node: released %d MCP binding(s) of attempt %s", n, attempt)
 	}
-	_ = stream.CloseWithReason(nodewire.ExitPrefix + "0")
+	closeStream(stream, nodewire.ExitPrefix+"0")
 }
 
 // LaunchBinding is the launcher side: it connects to the broker, names
@@ -235,6 +245,8 @@ func LaunchBinding(ctx context.Context, socket, id string, stdin io.Reader, stdo
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
+		// The input pump ends with the agent's stdin; the output copy
+		// below is what reports the session's end.
 		_, _ = io.Copy(conn, stdin)
 		if cw, ok := conn.(halfCloser); ok {
 			// Half-closing tells the server the agent's input ended; a
