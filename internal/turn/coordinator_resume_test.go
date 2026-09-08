@@ -265,6 +265,31 @@ func TestRetainedExplicitPauseSettlesAfterObserverCancellation(t *testing.T) {
 	}
 }
 
+func TestRetainedChatSettlementMarkerFailureStaysUnresolved(t *testing.T) {
+	// The node finished the prompt, but the marker saying so could not be
+	// written: the record is quarantined, and the execution scope keeps the
+	// failed cleanup so an explicit stop still reports it instead of
+	// claiming the execution is over.
+	c, runner, book, old, req := retainedChatFixture(t)
+	if _, err := book.DB().Exec(`CREATE TRIGGER fail_marker BEFORE UPDATE OF data ON operations WHEN NEW.kind = 'attempt' AND NEW.data LIKE '%"session_settled":true%' AND OLD.data NOT LIKE '%"session_settled":true%' BEGIN SELECT RAISE(ABORT, 'marker unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	_, err := c.ResumeRetainedChat(t.Context(), old.ID, req)
+	var detached *execution.RetainedObserverDetached
+	if !errors.As(err, &detached) || !strings.Contains(detached.Cause.Error(), "marker unavailable") || runner.resumeCalls != 1 {
+		t.Fatalf("marker failure = %v resumes=%d", err, runner.resumeCalls)
+	}
+	record, err := c.attempts.Get(t.Context(), old.ID)
+	if err != nil || record.State != attempt.Running || !record.Unsettled {
+		t.Fatalf("unmarked settlement was closed or left unquarantined: %+v %v", record, err)
+	}
+	stop := c.executions.Stop([]string{old.TaskID}, task.ErrExecutionStopped)
+	var unresolved *execution.RetainedObserverDetached
+	if err := stop.Wait(t.Context()); !errors.As(err, &unresolved) || !strings.Contains(unresolved.Cause.Error(), "marker unavailable") {
+		t.Fatalf("explicit stop claimed quiescence over a failed settlement: %v", err)
+	}
+}
+
 func TestRetainedTaskAccountingFailureRemainsRetryableWithoutPromptReplay(t *testing.T) {
 	c, runner, book, old, req := retainedChatFixture(t)
 	if _, err := book.DB().Exec(`CREATE TRIGGER fail_accounting BEFORE INSERT ON bindings WHEN NEW.kind = 'document' AND NEW.id = 'tasks' BEGIN SELECT RAISE(ABORT, 'accounting unavailable'); END`); err != nil {

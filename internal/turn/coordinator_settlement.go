@@ -78,6 +78,13 @@ func (t *retainedTurn) settle(parent context.Context, run lifecycle.Result, err 
 	}
 	var detached *execution.RetainedObserverDetached
 	if errors.As(err, &detached) {
+		var step *lifecycle.StepError
+		if errors.As(err, &step) && step.Step == lifecycle.StepSettle {
+			// The prompt settled on the node, but the marker saying so
+			// could not be written: a cleanup that failed, which the
+			// execution scope keeps so a later stop still reports it.
+			return result, err, err
+		}
 		return result, nil, err
 	}
 	if c.afterTurn != nil && t.record.TaskID != "" {
