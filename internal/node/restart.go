@@ -100,14 +100,14 @@ func (s *Server) startRestartControl(cancel context.CancelFunc) error {
 		return errors.New("invalid empty restart receipt document")
 	}
 	for key, record := range s.restart.records {
-		if record.Hub == "" || !journal.ValidID(record.CommandID) || key != record.Hub+"/"+record.CommandID || record.Incarnation <= 0 || record.PreviousIncarnation <= 0 || (record.State != "accepted" && record.State != "restarted" && record.State != "failed") {
+		if record.Hub == "" || !journal.ValidID(record.CommandID) || key != record.Hub+"/"+record.CommandID || record.Incarnation <= 0 || record.PreviousIncarnation <= 0 || (record.State != nodewire.RestartStateAccepted && record.State != nodewire.RestartStateRestarted && record.State != nodewire.RestartStateFailed) {
 			return errors.New("invalid restart receipt")
 		}
 		s.generation = max(s.generation, record.Incarnation+1)
 	}
 	for key, record := range s.restart.records {
-		if record.State == "accepted" {
-			record.State = "restarted"
+		if record.State == nodewire.RestartStateAccepted {
+			record.State = nodewire.RestartStateRestarted
 			record.Incarnation = s.generation
 			record.CompletedAt = time.Now().UTC()
 			s.restart.records[key] = record
@@ -125,15 +125,15 @@ func (s *Server) RestartFailed(cause error) error {
 	if !ok {
 		return errors.New("no accepted restart")
 	}
-	record.State, record.Error, record.CompletedAt = "failed", cause.Error(), time.Now().UTC()
+	record.State, record.Error, record.CompletedAt = nodewire.RestartStateFailed, cause.Error(), time.Now().UTC()
 	s.restart.records[s.restart.pending] = record
 	return s.saveRestarts(s.restart.records)
 }
 
 func (s *Server) restartStatusLocked() nodewire.RestartStatus {
-	status := nodewire.RestartStatus{State: "idle", Supported: s.restart.enabled && s.conf().StateDir != "", Incarnation: s.generation, ActiveStreams: s.restart.active}
+	status := nodewire.RestartStatus{State: nodewire.RestartStateIdle, Supported: s.restart.enabled && s.conf().StateDir != "", Incarnation: s.generation, ActiveStreams: s.restart.active}
 	if s.restart.draining {
-		status.State = "draining"
+		status.State = nodewire.RestartStateDraining
 	}
 	s.processMu.Lock()
 	known := map[string]bool{}
@@ -233,7 +233,7 @@ func (s *Server) restartCommand(hub string, req nodewire.RestartRequest) (nodewi
 		}
 	}
 	status := out.Status
-	status.CommandID, status.State, status.PreviousIncarnation, status.RequestedAt = req.CommandID, "accepted", s.generation, time.Now().UTC()
+	status.CommandID, status.State, status.PreviousIncarnation, status.RequestedAt = req.CommandID, nodewire.RestartStateAccepted, s.generation, time.Now().UTC()
 	s.restart.records[key] = restartRecord{Hub: hub, RestartStatus: status}
 	if err := s.saveRestarts(s.restart.records); err != nil {
 		delete(s.restart.records, key)

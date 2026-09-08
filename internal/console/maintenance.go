@@ -11,7 +11,7 @@ func (s *Service) SealIdle() (func(), error) {
 	}
 	for _, list := range s.exchanges {
 		for _, e := range list {
-			if e.State == "running" || e.State == "queued" {
+			if e.State == consoleapi.ExchangeRunning || e.State == consoleapi.ExchangeQueued {
 				return nil, consoleapi.ErrConsoleClosing
 			}
 		}

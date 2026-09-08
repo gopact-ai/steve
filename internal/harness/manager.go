@@ -228,7 +228,7 @@ func (m *Manager) SupportsHTTPMCP(ctx context.Context, at Placement) (bool, erro
 		if node == "" {
 			node = binding.Binding.NodeID
 		}
-		state, err := transport.NodeSession(ctx, node, nodewire.SessionRequest{Action: "capabilities", Authority: binding.Authority, Binding: binding.Binding, Harness: at.Harness})
+		state, err := transport.NodeSession(ctx, node, nodewire.SessionRequest{Action: nodewire.SessionActionCapabilities, Authority: binding.Authority, Binding: binding.Binding, Harness: at.Harness})
 		return state.SupportsHTTPMCP, err
 	}
 	host, err := m.host(at)
@@ -259,7 +259,7 @@ func (m *Manager) CloseSession(ctx context.Context, at Placement, upstreamID str
 		if node == "" {
 			node = binding.Binding.NodeID
 		}
-		_, err := transport.NodeSession(ctx, node, nodewire.SessionRequest{Action: "close", ID: upstreamID, Authority: binding.Authority, Binding: binding.Binding})
+		_, err := transport.NodeSession(ctx, node, nodewire.SessionRequest{Action: nodewire.SessionActionClose, ID: upstreamID, Authority: binding.Authority, Binding: binding.Binding})
 		return err
 	}
 	m.mu.Lock()

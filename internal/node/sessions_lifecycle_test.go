@@ -78,14 +78,14 @@ func (w sessionGateWriter) Write(data []byte) (int, error) {
 }
 
 func TestNodeSessionLifecycleRPCReservesBeforeCallingNativeAgent(t *testing.T) {
-	for _, operation := range []string{"close", "option"} {
-		t.Run(operation, func(t *testing.T) {
+	for _, operation := range []nodewire.SessionAction{"close", "option"} {
+		t.Run(string(operation), func(t *testing.T) {
 			s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir(), WorkspaceRoot: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}})
 			if err := s.startSessions(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			defer s.sessions.Close()
-			gate := &sessionRPCGate{operation: operation, entered: make(chan struct{}), release: make(chan struct{})}
+			gate := &sessionRPCGate{operation: string(operation), entered: make(chan struct{}), release: make(chan struct{})}
 			var releaseOnce sync.Once
 			release := func() { releaseOnce.Do(func() { close(gate.release) }) }
 			defer release()

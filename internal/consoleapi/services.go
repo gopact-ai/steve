@@ -3,16 +3,18 @@ package consoleapi
 import (
 	"context"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 type RestartOperation struct {
-	CommandID           string    `json:"command_id,omitempty"`
-	State               string    `json:"state"`
-	Incarnation         int64     `json:"incarnation"`
-	PreviousIncarnation int64     `json:"previous_incarnation,omitempty"`
-	RequestedAt         time.Time `json:"requested_at,omitempty"`
-	CompletedAt         time.Time `json:"completed_at,omitempty"`
-	Error               string    `json:"error,omitempty"`
+	CommandID           string                `json:"command_id,omitempty"`
+	State               nodewire.RestartState `json:"state"`
+	Incarnation         int64                 `json:"incarnation"`
+	PreviousIncarnation int64                 `json:"previous_incarnation,omitempty"`
+	RequestedAt         time.Time             `json:"requested_at,omitempty"`
+	CompletedAt         time.Time             `json:"completed_at,omitempty"`
+	Error               string                `json:"error,omitempty"`
 }
 type ManagedService struct {
 	Name      string            `json:"name"`

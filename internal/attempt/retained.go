@@ -169,8 +169,8 @@ func (s *Service) RecoverRetained(ctx context.Context, id string, evidence Retai
 		if command == nil || command.ID != commandID || command.InputSequence == 0 || command.InputSequence > state.InputAccepted {
 			return errors.New("retained input receipt is missing or belongs to another command")
 		}
-		settled := (command.State == "completed" || command.State == "cancelled") && command.Settled
-		live := state.State == "running" && !state.ProcessStopped && !command.ProcessStopped && (command.State == "accepted" || command.State == "running")
+		settled := (command.State == nodewire.SessionCommandCompleted || command.State == nodewire.SessionCommandCancelled) && command.Settled
+		live := state.State == nodewire.SessionRunning && !state.ProcessStopped && !command.ProcessStopped && command.State.Active()
 		if !settled && !live {
 			return errors.New("original node execution cannot be confirmed live or settled")
 		}

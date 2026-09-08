@@ -52,10 +52,6 @@ func (s *Service) submittedLocked(conversation, key, hash string) (*queuedExchan
 	return nil, nil
 }
 
-func terminalExchange(state string) bool {
-	return state == "done" || state == "failed" || state == "cancelled"
-}
-
 func replyOutcome(reply consoleapi.Reply) outcome {
 	out := outcome{reply: reply}
 	if reply.Error != "" {

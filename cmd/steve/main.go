@@ -439,7 +439,7 @@ type applicationEnvironment struct {
 	WriteConfigContext    func(context.Context, string, *config.Config) error
 	ConfigureNodes        func(map[string]node.Config) error
 	SessionBinder         func(context.Context, harness.Placement, string, string) (context.Context, error)
-	SessionAuthorizer     func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, string) error
+	SessionAuthorizer     func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error
 	Fail                  func(error)
 	ConfigurationRevision func() string
 	Configure             func(*config.Config) error
@@ -1042,7 +1042,7 @@ func serveApplication(parent context.Context, args []string, environment *applic
 			}
 			info := consoleapi.StepInfo{Kind: "delegate", Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
 				Elapsed: c.Elapsed.Round(time.Second).String(), Answer: c.Answer, Refs: c.Refs}
-			if c.State != "running" && c.Attempt != "" {
+			if c.State != task.StateRunning && c.Attempt != "" {
 				if changes, err := admin.Changes(ctx, c.Attempt); err == nil && changes != nil {
 					info.Attempt, info.Files = changes.Attempt, changes.Files
 				}

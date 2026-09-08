@@ -17,7 +17,7 @@ type sessionAuthorizationStreamKey struct{}
 // authority against its own replicated consensus state.
 type CoordinatorSessionAuthorizer struct{}
 
-func (CoordinatorSessionAuthorizer) AuthorizeNodeSession(ctx context.Context, principal string, authority nodewire.SessionAuthority, _ nodewire.SessionBinding, action string) error {
+func (CoordinatorSessionAuthorizer) AuthorizeNodeSession(ctx context.Context, principal string, authority nodewire.SessionAuthority, _ nodewire.SessionBinding, action nodewire.SessionAction) error {
 	if principal == "" || principal != authority.ClusterID {
 		return errors.New("authenticated owner differs from the session cluster")
 	}
@@ -47,7 +47,7 @@ func (CoordinatorSessionAuthorizer) AuthorizeNodeSession(ctx context.Context, pr
 // SetSessionAuthorizer installs the current coordinator activation's committed
 // execution verifier. The target name comes from this registry's connection,
 // not from claims supplied by the worker.
-func (r *Registry) SetSessionAuthorizer(authorize func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, string) error) {
+func (r *Registry) SetSessionAuthorizer(authorize func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.sessionAuthority = authorize
@@ -148,7 +148,7 @@ func (r *Registry) NodeSession(ctx context.Context, node string, request nodewir
 		if reply.AuthorizeAction == "" {
 			break
 		}
-		if challenges >= 2 || (reply.AuthorizeAction != request.Action && !(request.Action == "open" && reply.AuthorizeAction == "start")) {
+		if challenges >= 2 || (reply.AuthorizeAction != request.Action && !(request.Action == nodewire.SessionActionOpen && reply.AuthorizeAction == nodewire.SessionActionStart)) {
 			return nodewire.SessionState{}, errors.New("node requested unrelated session authorization")
 		}
 		r.mu.Lock()

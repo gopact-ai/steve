@@ -109,11 +109,11 @@ func (s *SessionService) load() error {
 			return sessionError("unavailable", "node session state identity differs")
 		}
 		one := &ownedSession{service: s, record: record, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
-		if record.State.State != "closed" {
-			record.State.State = "interrupted"
+		if record.State.State != nodewire.SessionClosed {
+			record.State.State = nodewire.SessionInterrupted
 			for id, command := range record.Commands {
-				if command.State == "running" || command.State == "accepted" {
-					command.State = "uncertain"
+				if command.State.Active() {
+					command.State = nodewire.SessionCommandUncertain
 					command.Error = "node service restarted without a live ACP callback"
 					command.Settled = false
 					record.Commands[id] = command
@@ -177,7 +177,7 @@ func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.Sess
 	if err != nil {
 		return nodewire.SessionState{}, err
 	}
-	if !exists || (record.State.State != "closed" && record.State.State != "interrupted") {
+	if !exists || (record.State.State != nodewire.SessionClosed && record.State.State != nodewire.SessionInterrupted) {
 		return nodewire.SessionState{}, sessionError("unavailable", "unknown node-owned session; reconcile the original execution")
 	}
 	if record.ClusterID != req.Authority.ClusterID || record.State.Binding != req.Binding {
@@ -192,14 +192,14 @@ func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.Sess
 		state.Command = &command
 	}
 	switch req.Action {
-	case "open", "attach", "poll", "settings":
+	case nodewire.SessionActionOpen, nodewire.SessionActionAttach, nodewire.SessionActionPoll, nodewire.SessionActionSettings:
 		return state, nil
-	case "close", "cancel", "abort":
+	case nodewire.SessionActionClose, nodewire.SessionActionCancel, nodewire.SessionActionAbort:
 		if !state.ProcessStopped {
 			return state, sessionError("uncertain", "native process stop is not confirmed")
 		}
 		return state, nil
-	case "prompt":
+	case nodewire.SessionActionPrompt:
 		hash := sessionHash(struct {
 			Binding  nodewire.SessionBinding
 			Sequence uint64
@@ -210,7 +210,7 @@ func (s *SessionService) closedState(req nodewire.SessionRequest) (nodewire.Sess
 			return nodewire.SessionState{}, sessionError("conflict", "closed native session cannot accept another input")
 		}
 		return state, nil
-	case "answer":
+	case nodewire.SessionActionAnswer:
 		for _, q := range state.Questions {
 			if q.ID == req.QuestionID && q.Answer != nil && req.Answer != nil && *q.Answer == *req.Answer {
 				return state, nil

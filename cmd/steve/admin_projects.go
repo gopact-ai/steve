@@ -270,7 +270,7 @@ func (a *fleetAdmin) ResumeProjectCopies(ctx context.Context) error {
 		return err
 	}
 	for _, op := range ops {
-		if op.State == "running" {
+		if op.State == project.CloneRunning {
 			cleanup, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			err := a.projects.FinishClone(cleanup, op, false, "hub restarted without a confirmed clone completion", errors.New("clone completion was not recorded before restart"))
 			cancel()

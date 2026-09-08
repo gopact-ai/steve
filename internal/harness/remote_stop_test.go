@@ -21,7 +21,7 @@ func TestManagedStopRequiresNativeReceiptAndFallsBackToActualProcessExit(t *test
 		t.Run(mode, func(t *testing.T) {
 			binding := NodeSessionContext{Binding: nodewire.SessionBinding{TaskID: "task", AttemptID: "attempt", NodeID: "worker"}, CommandID: "command"}
 			s := &managedSession{base: binding, id: "ns_original", at: Placement{Node: "worker"}}
-			var actions []string
+			var actions []nodewire.SessionAction
 			s.transport = stopTransportFunc(func(ctx context.Context, _ string, request nodewire.SessionRequest) (nodewire.SessionState, error) {
 				actions = append(actions, request.Action)
 				if _, ok := ctx.Deadline(); !ok {
@@ -49,9 +49,9 @@ func TestManagedStopRequiresNativeReceiptAndFallsBackToActualProcessExit(t *test
 			if confirmed && err != nil || !confirmed && !errors.Is(err, ErrStopUnconfirmed) {
 				t.Fatalf("stop evidence classification: %v", err)
 			}
-			want := []string{"cancel", "abort"}
+			want := []nodewire.SessionAction{"cancel", "abort"}
 			if mode == "settled" {
-				want = []string{"cancel"}
+				want = []nodewire.SessionAction{"cancel"}
 			}
 			if !reflect.DeepEqual(actions, want) {
 				t.Fatalf("stop RPC sequence: %v", actions)

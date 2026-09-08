@@ -20,7 +20,7 @@ import (
 
 type diskSessionAuthority struct{ dir string }
 
-func (a diskSessionAuthority) AuthorizeNodeSession(_ context.Context, principal string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, _ string) error {
+func (a diskSessionAuthority) AuthorizeNodeSession(_ context.Context, principal string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, _ nodewire.SessionAction) error {
 	raw, err := os.ReadFile(filepath.Join(a.dir, "authority"))
 	if err != nil {
 		return err

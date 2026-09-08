@@ -11,9 +11,9 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
-type sessionAuthorizerFunc func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, string) error
+type sessionAuthorizerFunc func(context.Context, string, nodewire.SessionAuthority, nodewire.SessionBinding, nodewire.SessionAction) error
 
-func (f sessionAuthorizerFunc) AuthorizeNodeSession(ctx context.Context, principal string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action string) error {
+func (f sessionAuthorizerFunc) AuthorizeNodeSession(ctx context.Context, principal string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action nodewire.SessionAction) error {
 	return f(ctx, principal, a, b, action)
 }
 
@@ -21,7 +21,7 @@ func TestSessionAuthorityChallengeCannotAuthorizeUnrelatedActions(t *testing.T) 
 	for _, mode := range []string{"unrelated-action", "too-many-challenges"} {
 		t.Run(mode, func(t *testing.T) {
 			delegate := CoordinatorSessionAuthorizer{}
-			verifier := sessionAuthorizerFunc(func(ctx context.Context, principal string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action string) error {
+			verifier := sessionAuthorizerFunc(func(ctx context.Context, principal string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action nodewire.SessionAction) error {
 				if mode == "unrelated-action" {
 					return delegate.AuthorizeNodeSession(ctx, principal, a, b, "abort")
 				}
@@ -36,7 +36,7 @@ func TestSessionAuthorityChallengeCannotAuthorizeUnrelatedActions(t *testing.T) 
 			registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "challenge-test"}})
 			defer registry.Close()
 			calls := 0
-			registry.SetSessionAuthorizer(func(_ context.Context, _ string, _ nodewire.SessionAuthority, _ nodewire.SessionBinding, action string) error {
+			registry.SetSessionAuthorizer(func(_ context.Context, _ string, _ nodewire.SessionAuthority, _ nodewire.SessionBinding, action nodewire.SessionAction) error {
 				calls++
 				if action != "capabilities" {
 					t.Error("unrelated action reached application authorizer")
@@ -60,9 +60,9 @@ func TestStandaloneSessionRequiresCoordinatorAuthorityAndFreshStartAdmission(t *
 			server := startNode(t, ServerConfig{Name: "worker", Token: "authority-test", StateDir: root, Harnesses: map[string]HarnessSpec{"mock": {Command: "/never-start"}}, SessionAuthorizer: CoordinatorSessionAuthorizer{}})
 			registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "authority-test"}})
 			defer registry.Close()
-			calls := []string{}
+			calls := []nodewire.SessionAction{}
 			if mode != "missing-verifier" {
-				registry.SetSessionAuthorizer(func(_ context.Context, node string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action string) error {
+				registry.SetSessionAuthorizer(func(_ context.Context, node string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action nodewire.SessionAction) error {
 					calls = append(calls, action)
 					if node != "worker" || b.NodeID != node || a.ClusterID != "cluster-1" {
 						return errors.New("incorrect identity")

@@ -95,7 +95,7 @@ func TestHubReexecKeepsPIDConfigAndDurableRestartIdentity(t *testing.T) {
 		deadline := time.Now().Add(15 * time.Second)
 		for time.Now().Before(deadline) {
 			op, err := request("GET", url+"?command_id="+id, nil)
-			if err == nil && op.State == state {
+			if err == nil && string(op.State) == state {
 				return op
 			}
 			time.Sleep(25 * time.Millisecond)

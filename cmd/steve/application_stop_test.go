@@ -24,10 +24,10 @@ import (
 type applicationStopAuthority struct {
 	mu       sync.Mutex
 	epoch    uint64
-	mutating []string
+	mutating []nodewire.SessionAction
 }
 
-func (a *applicationStopAuthority) AuthorizeNodeSession(_ context.Context, principal string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action string) error {
+func (a *applicationStopAuthority) AuthorizeNodeSession(_ context.Context, principal string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action nodewire.SessionAction) error {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if principal != "stop-cluster" || authority.ClusterID != principal || authority.CoordinatorEpoch != a.epoch || authority.WriterGeneration != a.epoch || binding.NodeID != "worker" {

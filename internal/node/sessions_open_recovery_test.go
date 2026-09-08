@@ -98,7 +98,7 @@ func TestOpenCancellationFencesLateNativeCreationAcrossNodeRestart(t *testing.T)
 func TestOpenCancellationWinsAgainstAlreadyAuthorizedDelayedOpen(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	base := &sessionAuthorityTest{epoch: 1, writer: 1}
-	verifier := sessionAuthorizerFunc(func(ctx context.Context, principal string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action string) error {
+	verifier := sessionAuthorizerFunc(func(ctx context.Context, principal string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action nodewire.SessionAction) error {
 		if err := base.AuthorizeNodeSession(ctx, principal, a, b, action); err != nil {
 			return err
 		}
@@ -135,7 +135,7 @@ func TestOpenRecoveryFindsAndStopsOriginalNativeSession(t *testing.T) {
 	registry := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "open-recovery"}})
 	defer registry.Close()
 	base := &sessionAuthorityTest{epoch: 1, writer: 1}
-	registry.SetSessionAuthorizer(func(ctx context.Context, node string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action string) error {
+	registry.SetSessionAuthorizer(func(ctx context.Context, node string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action nodewire.SessionAction) error {
 		if node != b.NodeID {
 			return errors.New("wrong node")
 		}
@@ -150,7 +150,7 @@ func TestOpenRecoveryFindsAndStopsOriginalNativeSession(t *testing.T) {
 	registry.Close()
 	registry = NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "open-recovery"}})
 	defer registry.Close()
-	registry.SetSessionAuthorizer(func(ctx context.Context, _ string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action string) error {
+	registry.SetSessionAuthorizer(func(ctx context.Context, _ string, a nodewire.SessionAuthority, b nodewire.SessionBinding, action nodewire.SessionAction) error {
 		return base.AuthorizeNodeSession(ctx, "cluster-1", a, b, action)
 	})
 	req.Action = "inspect-open"

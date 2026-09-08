@@ -76,7 +76,7 @@ func (s *Service) parentForScope(ctx context.Context, conversation, agent string
 	return parent, nil
 }
 func (s *Service) collectContext(ctx context.Context, id string, result agentmcp.DelegateResult) error {
-	if result.State != "done" && result.State != "failed" {
+	if result.State != task.StateDone && result.State != task.StateFailed {
 		return nil
 	}
 	fixed, ok := agentmcp.ScopeFromContext(ctx)

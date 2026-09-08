@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 // ANSI is used directly rather than through a framework: the whole screen is
@@ -240,17 +241,17 @@ func footer(mode, width int) string {
 		dim + "     tab/v switch · r refresh · q quit" + reset + "\n"
 }
 
-func stateMark(state string) string {
+func stateMark(state task.State) string {
 	switch state {
-	case "running":
+	case task.StateRunning:
 		return violet + "running  " + reset
-	case "done":
+	case task.StateDone:
 		return green + "done     " + reset
-	case "failed":
+	case task.StateFailed:
 		return red + "failed   " + reset
-	case "paused":
+	case task.StatePaused:
 		return yellow + "paused   " + reset
-	case "cancelled":
+	case task.StateCancelled:
 		return dim + "cancelled" + reset
 	default:
 		return dim + fmt.Sprintf("%-9s", state) + reset

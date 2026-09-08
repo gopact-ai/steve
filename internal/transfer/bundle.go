@@ -86,7 +86,7 @@ func releaseGuard(tx *ledger.Tx, id string) error {
 		if err := json.Unmarshal(raw, &c); err != nil {
 			return err
 		}
-		if c.Project == id && c.State != "succeeded" && c.State != "failed" {
+		if c.Project == id && c.State != project.CloneSucceeded && c.State != project.CloneFailed {
 			return fmt.Errorf("clone %s must be stopped before transfer", c.ID)
 		}
 	}

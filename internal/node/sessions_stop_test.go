@@ -197,7 +197,7 @@ type delayedStopPromptAuthority struct {
 	once             sync.Once
 }
 
-func (a *delayedStopPromptAuthority) AuthorizeNodeSession(ctx context.Context, principal string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action string) error {
+func (a *delayedStopPromptAuthority) AuthorizeNodeSession(ctx context.Context, principal string, authority nodewire.SessionAuthority, binding nodewire.SessionBinding, action nodewire.SessionAction) error {
 	if err := a.base.AuthorizeNodeSession(ctx, principal, authority, binding, action); err != nil {
 		return err
 	}
