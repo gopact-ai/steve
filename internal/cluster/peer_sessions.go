@@ -68,6 +68,7 @@ func (p *Peer) authorizeSessionExecution(ctx context.Context, node string, autho
 	if state.Coordinator.NodeID != authority.CoordinatorNodeID || state.Coordinator.Epoch != authority.CoordinatorEpoch || state.WriterGeneration != authority.WriterGeneration {
 		return coordination.ErrStaleEpoch
 	}
+	var poll *time.Ticker
 	for {
 		version, err := runtime.Ledger().ReplicaVersion()
 		if err != nil {
@@ -76,12 +77,14 @@ func (p *Peer) authorizeSessionExecution(ctx context.Context, node string, autho
 		if version >= state.AppVersion {
 			break
 		}
-		timer := time.NewTimer(5 * time.Millisecond)
+		if poll == nil {
+			poll = time.NewTicker(5 * time.Millisecond)
+			defer poll.Stop()
+		}
 		select {
 		case <-ctx.Done():
-			timer.Stop()
 			return ctx.Err()
-		case <-timer.C:
+		case <-poll.C:
 		}
 	}
 	record, err := attempt.New(runtime.Ledger()).Get(ctx, binding.AttemptID)
