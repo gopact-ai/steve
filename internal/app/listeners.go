@@ -65,7 +65,7 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 	background.Go(func(ctx context.Context) { runScheduleDispatcher(ctx, schedules, cons, gw, coordinator) })
 
 	if addr := cfg.Gateway.DebugAddr; addr != "" && channel != nil {
-		go func() {
+		background.Go(func(ctx context.Context) {
 			if err := debugapi.Serve(ctx, addr, gw, debugapi.Defaults{
 				ChatID:       cfg.Gateway.DebugChatID,
 				SenderOpenID: cfg.Feishu.OwnerOpenID,
@@ -73,7 +73,7 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 			}); err != nil {
 				slog.Error(fmt.Sprintf("steve: %v", err))
 			}
-		}()
+		})
 	}
 	return nil
 }
