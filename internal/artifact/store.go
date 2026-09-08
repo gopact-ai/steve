@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -402,7 +402,7 @@ func (s *Store) snapshotOnNode(ctx context.Context, node string, p project.Proje
 	}
 	// What was trusted — the shadow repository, the parent's replica — may
 	// be gone from the node after all: look, and take the snapshot again.
-	log.Printf("artifact: snapshot on %s failed after trusting its state (%v); checking the node", node, err)
+	slog.Warn(fmt.Sprintf("artifact: snapshot on %s failed after trusting its state (%v); checking the node", node, err), "node", node, "project", p.ID)
 	s.forgetShadow(node, bare)
 	sha, changed, _, err = s.snapshotOnNodeWith(ctx, node, p, dir, parent, message, hub, flatten, bare, false)
 	return sha, changed, err

@@ -13,7 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -758,10 +758,10 @@ func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMess
 		err = fmt.Errorf("unknown tool %q", call.Name)
 	}
 	if err != nil {
-		log.Printf("agentmcp: %s conversation=%s agent=%s refused: %v", call.Name, bind.conversationID, bind.agentID, err)
+		slog.Warn(fmt.Sprintf("agentmcp: %s conversation=%s agent=%s refused: %v", call.Name, bind.conversationID, bind.agentID, err), "tool", call.Name, "conversation", bind.conversationID, "agent", bind.agentID)
 		return toolError(err.Error())
 	}
-	log.Printf("agentmcp: %s conversation=%s agent=%s ok", call.Name, bind.conversationID, bind.agentID)
+	slog.Info(fmt.Sprintf("agentmcp: %s conversation=%s agent=%s ok", call.Name, bind.conversationID, bind.agentID), "tool", call.Name, "conversation", bind.conversationID, "agent", bind.agentID)
 	return map[string]any{"content": []map[string]any{{"type": "text", "text": out}}}
 }
 
@@ -882,7 +882,7 @@ func writeRPCError(w http.ResponseWriter, id json.RawMessage, code int, message 
 func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(v); err != nil {
-		log.Printf("agentmcp: write response: %v", err)
+		slog.Error(fmt.Sprintf("agentmcp: write response: %v", err))
 	}
 }
 

@@ -3,7 +3,7 @@ package harness
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"slices"
 	"strings"
@@ -414,11 +414,11 @@ func ApplyPreferences(ctx context.Context, r Runner, agentID, model string, opti
 	if model != "" {
 		optionID, choices := configurable.ModelChoices()
 		if optionID == "" || len(choices) == 0 {
-			log.Printf("harness: agent %q prefers model %q but exposes no model selector", agentID, model)
+			slog.Warn(fmt.Sprintf("harness: agent %q prefers model %q but exposes no model selector", agentID, model), "agent", agentID)
 		} else if picked, ok := MatchChoice(choices, model); !ok {
-			log.Printf("harness: agent %q prefers model %q, not among %d offered", agentID, model, len(choices))
+			slog.Warn(fmt.Sprintf("harness: agent %q prefers model %q, not among %d offered", agentID, model, len(choices)), "agent", agentID)
 		} else if err := configurable.SetModel(ctx, optionID, picked.Value); err != nil {
-			log.Printf("harness: agent %q set preferred model %q: %v", agentID, model, err)
+			slog.Error(fmt.Sprintf("harness: agent %q set preferred model %q: %v", agentID, model, err), "agent", agentID)
 		} else {
 			changed = true
 		}
@@ -436,7 +436,7 @@ func ApplyPreferences(ctx context.Context, r Runner, agentID, model string, opti
 			}
 		}
 		if found == nil {
-			log.Printf("harness: agent %q pins option %q but the harness exposes no such selector", agentID, id)
+			slog.Warn(fmt.Sprintf("harness: agent %q pins option %q but the harness exposes no such selector", agentID, id), "agent", agentID)
 			continue
 		}
 		if found.Category == "model" {
@@ -444,16 +444,16 @@ func ApplyPreferences(ctx context.Context, r Runner, agentID, model string, opti
 		}
 		picked, ok := MatchChoice(found.Choices, want)
 		if !ok {
-			log.Printf("harness: agent %q pins %s=%q, not among %d choices", agentID, id, want, len(found.Choices))
+			slog.Warn(fmt.Sprintf("harness: agent %q pins %s=%q, not among %d choices", agentID, id, want, len(found.Choices)), "agent", agentID)
 			continue
 		}
 		if picked.Value == found.Current {
 			continue
 		}
 		if err := configurable.SetOption(ctx, id, picked.Value); err != nil {
-			log.Printf("harness: agent %q set %s=%q: %v", agentID, id, want, err)
+			slog.Error(fmt.Sprintf("harness: agent %q set %s=%q: %v", agentID, id, want, err), "agent", agentID)
 		} else {
-			log.Printf("harness: agent %q set %s=%q (was %q)", agentID, id, picked.Value, found.Current)
+			slog.Info(fmt.Sprintf("harness: agent %q set %s=%q (was %q)", agentID, id, picked.Value, found.Current), "agent", agentID)
 			changed = true
 		}
 	}

@@ -10,7 +10,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -124,7 +124,7 @@ func (r *Roster) Release(ctx context.Context, node, attemptID string) {
 		return
 	}
 	if err := admitter.Release(ctx, node, attemptID); err != nil {
-		log.Printf("roster: release %s on %s: %v", attemptID, node, err)
+		slog.Error(fmt.Sprintf("roster: release %s on %s: %v", attemptID, node, err), "attempt", attemptID, "node", node)
 	}
 }
 

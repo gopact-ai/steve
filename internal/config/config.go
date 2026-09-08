@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"maps"
 	"os"
 	"path/filepath"
@@ -679,7 +679,7 @@ func (c *Config) PrepareAdapters(ctx context.Context) error {
 			return fmt.Errorf("harness %q: %w", id, err)
 		}
 		if !got.Cached {
-			log.Printf("adapter: installed %s@%s for harness %s", got.Package, got.Version, id)
+			slog.Info(fmt.Sprintf("adapter: installed %s@%s for harness %s", got.Package, got.Version, id), "harness", id)
 		}
 		item.Command = got.Command
 		c.Harnesses[id] = item

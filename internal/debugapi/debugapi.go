@@ -9,7 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"time"
@@ -55,7 +55,7 @@ func Serve(ctx context.Context, addr string, gw Gateway, def Defaults) error {
 		defer cancel()
 		_ = srv.Shutdown(shutdown)
 	}()
-	log.Printf("debugapi: listening on %s", addr)
+	slog.Info(fmt.Sprintf("debugapi: listening on %s", addr))
 	if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return fmt.Errorf("debug endpoint: %w", err)
 	}
