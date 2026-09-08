@@ -30,8 +30,10 @@ type Attempts interface {
 	MarkSessionSettled(ctx context.Context, id, actor string) error
 	MarkUnsettled(ctx context.Context, id, actor string, cause error, usage *attempt.Usage) error
 	FinishCompletion(ctx context.Context, id, actor string, completion attempt.Completion) (attempt.Record, error)
+	Complete(ctx context.Context, id, actor string, completion attempt.Completion) (attempt.Record, error)
 	RejectCompletion(ctx context.Context, id, actor string, completion attempt.Completion, cause error) error
 	FailWith(ctx context.Context, id, actor, cause string, usage *attempt.Usage) (attempt.Record, error)
+	Supersede(ctx context.Context, oldID string, spec attempt.Spec, actor string) (attempt.Record, error)
 }
 
 // Roster admits an attempt onto its machine and gives back what admission
@@ -107,6 +109,25 @@ type Rejected struct {
 func (e *Rejected) Error() string { return e.Cause.Error() }
 func (e *Rejected) Unwrap() error { return e.Cause }
 
+// Failure is work the caller's Finish judged and refused — a result that
+// strayed outside its declared paths, a verification that did not pass:
+// the attempt fails on the cause, on a node-owned session as on a hub one,
+// and cleanup follows the transition. Run returns the cause.
+type Failure struct{ Cause error }
+
+func (e *Failure) Error() string { return e.Cause.Error() }
+func (e *Failure) Unwrap() error { return e.Cause }
+
+// Deferred is a completion that waits on another execution's recovery — a
+// verifier's own retained attempt. A node-owned session's record is left
+// where it is, nothing it holds is given back, and Run returns the
+// Deferred itself; on a hub session nobody comes back for it, and the
+// attempt fails on the cause.
+type Deferred struct{ Cause error }
+
+func (e *Deferred) Error() string { return e.Cause.Error() }
+func (e *Deferred) Unwrap() error { return e.Cause }
+
 // Quarantine says when a prompt that ended without settling — no final
 // answer, no proof the process exited — is an unconfirmed stop.
 type Quarantine int
@@ -177,6 +198,18 @@ type Settlement struct {
 	// from the run's cancellation and bounded by it; zero commits on the
 	// run's own context, so a lost lease rejects the result.
 	CommitTimeout time.Duration
+	// CommitAsGiven commits the completion as the caller gave it, with
+	// Complete: the result the record carries at bind-ready is a checkpoint
+	// of the work in progress, not the candidate (plan steps). Without it
+	// FinishCompletion prepares the record and commits what it then
+	// carries.
+	CommitAsGiven bool
+	// QuarantineFinish: a hub session's completion that ends in an
+	// unconfirmed stop — a verifier whose exit nobody saw — quarantines the
+	// attempt, its workspace and slot kept, instead of failing it (plan
+	// steps). A node-owned session's detaches, as for any completion that
+	// could not be made.
+	QuarantineFinish bool
 }
 
 // Options is what a caller settles before Run opens the attempt.
@@ -189,9 +222,17 @@ type Options struct {
 	Actor string
 	// Spec is the attempt to open.
 	Spec attempt.Spec
+	// Supersede, when set, is the previous attempt of the same work that
+	// this one takes over: its leases are cut and its record points here
+	// before the open. A takeover refused for want of a slot is on record
+	// already; the wait that follows opens without it.
+	Supersede string
 	// SlotPoll retries an open refused for want of a slot every SlotPoll
 	// until the context ends; zero refuses at once.
 	SlotPoll time.Duration
+	// Waiting is told each time the open is refused for want of a slot and
+	// waits SlotPoll for one.
+	Waiting func(full attempt.NoSlot)
 	// Lost is told, after the run is cancelled, that the lease is gone.
 	Lost func()
 
@@ -249,8 +290,10 @@ type Options struct {
 	// what the attempt failed on.
 	Validate func(e *Execution) error
 	// Finish turns a prompt that ended well into the attempt's completion.
-	// A *Rejected error closes the attempt with a partial completion; on a
-	// node-owned session any other error detaches the observer.
+	// A *Rejected error closes the attempt with a partial completion, a
+	// *Failure fails it on the cause, a *Deferred leaves a node-owned
+	// session's record for another execution's recovery; on a node-owned
+	// session any other error detaches the observer.
 	Finish func(ctx context.Context, e *Execution) (attempt.Completion, error)
 	// Failed adds a result to a failure's record; on a node-owned session
 	// an error here detaches the observer.
@@ -396,14 +439,28 @@ func (e *Execution) run(ctx context.Context) error {
 	return e.close(ctx, err)
 }
 
-// open leases the attempt, waiting for a slot when asked to.
+// open leases the attempt — taking a previous one over when asked to —
+// and waits for a slot when asked to.
 func (e *Execution) open(ctx context.Context) error {
+	supersede := e.o.Supersede
 	for {
-		record, err := e.o.Attempts.Open(ctx, e.o.Spec)
+		var record attempt.Record
+		var err error
+		if supersede != "" {
+			record, err = e.o.Attempts.Supersede(ctx, supersede, e.o.Spec, e.o.Actor)
+			// The takeover is on record whether or not a slot was had: a
+			// retry opens in its own name.
+			supersede = ""
+		} else {
+			record, err = e.o.Attempts.Open(ctx, e.o.Spec)
+		}
 		var full attempt.NoSlot
 		if err == nil || e.o.SlotPoll <= 0 || !errors.As(err, &full) {
 			e.Record = record
 			return err
+		}
+		if e.o.Waiting != nil {
+			e.o.Waiting(full)
 		}
 		timer := time.NewTimer(e.o.SlotPoll)
 		select {
@@ -646,6 +703,19 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 			return e.detach(ctx, StepSettle, markErr, false)
 		}
 	}
+	if err == nil {
+		err = e.commitManaged(ctx)
+		var failure *Failure
+		switch {
+		case err == nil:
+		case errors.As(err, &failure):
+			// The caller refused the work: the attempt fails on its cause,
+			// as on a prompt that failed.
+			err = failure.Cause
+		default:
+			return err
+		}
+	}
 	if err != nil {
 		terminal, transition := e.failure(ctx, err)
 		if transition != nil {
@@ -655,8 +725,6 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 			return e.detach(ctx, StepFinish, transition, false)
 		}
 		e.Record = terminal
-	} else if err = e.commitManaged(ctx); err != nil {
-		return err
 	}
 	// The bindings are the node's until the transition is on the record:
 	// an observer that detaches before it leaves them for the one that
@@ -687,10 +755,17 @@ func (e *Execution) commitManaged(ctx context.Context) error {
 		var err error
 		if completion, err = o.Finish(ctx, e); err != nil {
 			var rejected *Rejected
-			if o.Settlement.RejectManaged && errors.As(err, &rejected) {
+			var failure *Failure
+			var deferred *Deferred
+			switch {
+			case errors.As(err, &failure), errors.As(err, &deferred):
+				// A refusal is closeManaged's to record; a deferral leaves
+				// the record, and what the node holds for it, to the
+				// observer that comes back.
+				return err
+			case o.Settlement.RejectManaged && errors.As(err, &rejected):
 				return e.closeRetained(ctx, e.reject(ctx, rejected.Completion, rejected.Cause))
-			}
-			if o.Settlement.RejectManaged {
+			case o.Settlement.RejectManaged:
 				return e.closeRetained(ctx, e.fail(ctx, err))
 			}
 			return e.detach(ctx, StepFinish, err, false)
@@ -700,7 +775,7 @@ func (e *Execution) commitManaged(ctx context.Context) error {
 		completion.Usage = e.Usage
 	}
 	e.stopBeat()
-	completed, err := o.Attempts.FinishCompletion(ctx, e.Record.ID, o.Actor, completion)
+	completed, err := e.commit(ctx, completion)
 	if err != nil {
 		if o.Settlement.RejectManaged {
 			return e.closeRetained(ctx, e.reject(ctx, completion, err))
@@ -826,7 +901,6 @@ func (e *Execution) fail(ctx context.Context, cause error) error {
 // and stops just before the terminal transition it fences.
 func (e *Execution) finish(ctx context.Context) error {
 	o := e.o
-	id := e.Record.ID
 	commit := ctx
 	if o.Settlement.CommitTimeout > 0 {
 		var cancel context.CancelFunc
@@ -838,8 +912,17 @@ func (e *Execution) finish(ctx context.Context) error {
 		var err error
 		if completion, err = o.Finish(commit, e); err != nil {
 			var rejected *Rejected
-			if errors.As(err, &rejected) {
+			var failure *Failure
+			var deferred *Deferred
+			switch {
+			case errors.As(err, &rejected):
 				return e.reject(ctx, rejected.Completion, rejected.Cause)
+			case errors.As(err, &failure):
+				return e.fail(ctx, failure.Cause)
+			case errors.As(err, &deferred):
+				return e.fail(ctx, deferred.Cause)
+			case o.Settlement.QuarantineFinish && errors.Is(err, harness.ErrStopUnconfirmed):
+				return e.quarantine(ctx, err)
 			}
 			return e.fail(ctx, err)
 		}
@@ -848,7 +931,7 @@ func (e *Execution) finish(ctx context.Context) error {
 		completion.Usage = e.Usage
 	}
 	e.stopBeat()
-	completed, err := o.Attempts.FinishCompletion(commit, id, o.Actor, completion)
+	completed, err := e.commit(commit, completion)
 	if err != nil {
 		return e.reject(ctx, completion, err)
 	}
@@ -856,6 +939,15 @@ func (e *Execution) finish(ctx context.Context) error {
 	e.durable = true
 	e.discard(ctx)
 	return nil
+}
+
+// commit writes the completion: prepared by FinishCompletion, or as the
+// caller gave it.
+func (e *Execution) commit(ctx context.Context, completion attempt.Completion) (attempt.Record, error) {
+	if e.o.Settlement.CommitAsGiven {
+		return e.o.Attempts.Complete(ctx, e.Record.ID, e.o.Actor, completion)
+	}
+	return e.o.Attempts.FinishCompletion(ctx, e.Record.ID, e.o.Actor, completion)
 }
 
 // reject closes the attempt on a completion that could not be committed;
