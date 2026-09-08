@@ -3,8 +3,8 @@ package main
 import (
 	"context"
 	"sync"
-	"sync/atomic"
 
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/node"
 )
@@ -40,18 +40,13 @@ func (b *applicationBackground) Close() {
 	b.wg.Wait()
 }
 
-type localObservation struct {
-	launch *node.LaunchProbe
-	skills atomic.Pointer[skillShipper]
-}
-
-func newLocalObservation(ctx context.Context, cfg *config.Config) (*localObservation, func()) {
-	observation := &localObservation{launch: node.NewLaunchProbe()}
+func newLocalObservation(ctx context.Context, cfg *config.Config) (*adminsvc.LocalObservation, func()) {
+	observation := &adminsvc.LocalObservation{Launch: node.NewLaunchProbe()}
 	background := newApplicationBackground(ctx)
 	background.Go(func(ctx context.Context) {
-		observation.launch.Run(ctx, func() []string {
-			configMu.RLock()
-			defer configMu.RUnlock()
+		observation.Launch.Run(ctx, func() []string {
+			adminsvc.ConfigMu.RLock()
+			defer adminsvc.ConfigMu.RUnlock()
 			out := make([]string, 0, len(cfg.Harnesses)+len(cfg.Gateway.Tools))
 			for _, h := range cfg.Harnesses {
 				out = append(out, h.Command)

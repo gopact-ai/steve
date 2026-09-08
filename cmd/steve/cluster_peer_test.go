@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/adapter"
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/coordination"
@@ -364,11 +365,11 @@ func TestClusterPeerActualApplicationActivates(t *testing.T) {
 func TestClusterPeerActualApplicationsRebuildAcrossThreePeerTransfer(t *testing.T) {
 	options, _ := testPeerOptions(t, clusterPeerTestDir(t), nil)
 	var firstStarts, secondStarts atomic.Int32
-	options.ApplicationReady = func(*fleetAdmin, *httpapi.Server, cluster.Activation) error { firstStarts.Add(1); return nil }
+	options.ApplicationReady = func(*adminsvc.Service, *httpapi.Server, cluster.Activation) error { firstStarts.Add(1); return nil }
 	first := startTestPeer(t, options)
 	waitPeerReady(t, first)
 	secondOptions, _ := testPeerOptions(t, clusterPeerTestDir(t), first)
-	secondOptions.ApplicationReady = func(*fleetAdmin, *httpapi.Server, cluster.Activation) error { secondStarts.Add(1); return nil }
+	secondOptions.ApplicationReady = func(*adminsvc.Service, *httpapi.Server, cluster.Activation) error { secondStarts.Add(1); return nil }
 	second := startTestPeer(t, secondOptions)
 	thirdOptions, _ := testPeerOptions(t, clusterPeerTestDir(t), first)
 	third := startTestPeer(t, thirdOptions)

@@ -102,7 +102,7 @@ func TestAutomaticCoordinatorLossPreservesHealthyTaskAndReturningDesktop(t *test
 	}
 	grant := sessions.Conversation(conversation).Sessions["worker"].AgentToken
 	first.mu.RLock()
-	registry := first.application.Admin.nodes
+	registry := first.application.Admin.Nodes
 	first.mu.RUnlock()
 	mcpURL, err := registry.MCPEndpoint(t.Context(), third.config.NodeID)
 	if err != nil {

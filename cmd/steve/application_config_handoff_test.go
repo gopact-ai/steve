@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -20,10 +21,10 @@ func TestSharedSettingsAndChannelConfigSurviveRealCoordinatorTransfer(t *testing
 	first := startTestPeer(t, options)
 	waitPeerReady(t, first)
 	secondOptions, _ := testPeerOptions(t, clusterPeerTestDir(t), first)
-	secondOptions.ApplicationReady = func(a *fleetAdmin, _ *httpapi.Server, _ cluster.Activation) error {
-		configMu.RLock()
-		defer configMu.RUnlock()
-		if a.cfg.Gateway.TaskMaxTurns != 42 || a.cfg.Feishu.AppSecret != "fixture-shared-platform-secret" || a.cfg.FeishuEnabled() {
+	secondOptions.ApplicationReady = func(a *adminsvc.Service, _ *httpapi.Server, _ cluster.Activation) error {
+		adminsvc.ConfigMu.RLock()
+		defer adminsvc.ConfigMu.RUnlock()
+		if a.Cfg.Gateway.TaskMaxTurns != 42 || a.Cfg.Feishu.AppSecret != "fixture-shared-platform-secret" || a.Cfg.FeishuEnabled() {
 			return errors.New("new coordinator did not apply private shared settings")
 		}
 		return nil
@@ -51,7 +52,7 @@ func TestSharedSettingsAndChannelConfigSurviveRealCoordinatorTransfer(t *testing
 	if status != http.StatusOK || json.Unmarshal(body, &channelBefore) != nil {
 		t.Fatalf("initial channels: %d", status)
 	}
-	status, body = peerRequest(t, first, http.MethodPut, "/console/channels", consoleapi.ChannelsUpdate{BaseRevision: channelBefore.Revision, Channels: config.ChannelPatch{Feishu: &config.FeishuChannelPatch{Enabled: channelValue(false), AppID: channelValue("fixture-channel-app"), AppSecret: &config.ChannelSecret{Action: "replace", Value: channelValue("fixture-shared-platform-secret")}}}})
+	status, body = peerRequest(t, first, http.MethodPut, "/console/channels", consoleapi.ChannelsUpdate{BaseRevision: channelBefore.Revision, Channels: config.ChannelPatch{Feishu: &config.FeishuChannelPatch{Enabled: ChannelValue(false), AppID: ChannelValue("fixture-channel-app"), AppSecret: &config.ChannelSecret{Action: "replace", Value: ChannelValue("fixture-shared-platform-secret")}}}})
 	var channelSaved consoleapi.ChannelsView
 	if status != http.StatusOK || json.Unmarshal(body, &channelSaved) != nil || channelSaved.Revision == channelBefore.Revision {
 		t.Fatalf("channel save: %d", status)
@@ -59,7 +60,7 @@ func TestSharedSettingsAndChannelConfigSurviveRealCoordinatorTransfer(t *testing
 	if strings.Contains(string(body), "fixture-shared-platform-secret") {
 		t.Fatal("saved channel response disclosed private credentials")
 	}
-	assertNoChannelSecrets(t, channelSaved)
+	AssertNoChannelSecrets(t, channelSaved)
 	status, _ = peerRequest(t, first, http.MethodPost, "/console/coordination/transfer", consoleapi.CoordinatorTransfer{CommandID: "settings-transfer", ExpectedEpoch: 1, TargetNodeID: second.config.NodeID})
 	if status != http.StatusOK {
 		t.Fatalf("transfer: %d", status)
@@ -79,7 +80,7 @@ func TestSharedSettingsAndChannelConfigSurviveRealCoordinatorTransfer(t *testing
 	if strings.Contains(string(body), "fixture-shared-platform-secret") {
 		t.Fatal("new coordinator disclosed private credentials")
 	}
-	assertNoChannelSecrets(t, after)
+	AssertNoChannelSecrets(t, after)
 	status, _ = peerRequest(t, first, http.MethodPut, "/console/settings", consoleapi.SettingsUpdate{BaseRevision: before.Revision, Settings: json.RawMessage(`{"gateway":{"task_max_turns":100}}`)})
 	if status != http.StatusConflict {
 		t.Fatalf("pre-transfer stale settings revision accepted: %d", status)

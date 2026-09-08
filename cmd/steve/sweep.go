@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -78,7 +79,7 @@ func sweepWorktrees(ctx context.Context, artifacts *artifact.Store, attempts *at
 	}
 	physical := node
 	if physical == "" {
-		physical = nodeName()
+		physical = adminsvc.NodeName()
 	}
 	prepared, err := attempts.RelocationWorkspaces(ctx, physical)
 	if err != nil {
@@ -90,7 +91,7 @@ func sweepWorktrees(ctx context.Context, artifacts *artifact.Store, attempts *at
 	})
 	where := node
 	if where == "" {
-		where = nodeName()
+		where = adminsvc.NodeName()
 	}
 	if err != nil {
 		log.Printf("sweep: worktrees on %s: %v", where, err)

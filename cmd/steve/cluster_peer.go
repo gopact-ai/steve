@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/adapter"
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -44,13 +45,15 @@ import (
 )
 
 const clusterApplicationPath = "/cluster/application"
+
 const clusterWorkerPath = "/cluster/worker"
+
 const clusterContentPath = "/cluster/content"
 
 type peerApplicationEndpoint struct {
 	URL, Token string
 	Generation uint64
-	Admin      *fleetAdmin
+	Admin      *adminsvc.Service
 }
 
 type peerWorkerDescriptor struct {
@@ -67,7 +70,7 @@ type clusterPeerOptions struct {
 	// the activation's ledger before returning.
 	Activate             func(context.Context, cluster.Activation, func(peerApplicationEndpoint) error) (cluster.Deactivate, error)
 	ConfigureApplication func(*config.Config, cluster.Activation) error
-	ApplicationReady     func(*fleetAdmin, *httpapi.Server, cluster.Activation) error
+	ApplicationReady     func(*adminsvc.Service, *httpapi.Server, cluster.Activation) error
 	RaftConfig           *raft.Config
 	PollInterval         time.Duration
 	AllowAutoFailover    bool
@@ -483,9 +486,9 @@ func (p *clusterPeer) startApplication(ctx context.Context, activation cluster.A
 			return p.options.ConfigureApplication(cfg, activation)
 		}
 		return nil
-	}, Ready: func(admin *fleetAdmin, dashboard *httpapi.Server) error {
-		if admin.view != nil {
-			repairObserve = admin.view.Observe
+	}, Ready: func(admin *adminsvc.Service, dashboard *httpapi.Server) error {
+		if admin.View != nil {
+			repairObserve = admin.View.Observe
 		}
 		if p.options.ApplicationReady != nil {
 			if err := p.options.ApplicationReady(admin, dashboard, activation); err != nil {
@@ -512,7 +515,7 @@ func (p *clusterPeer) startApplication(ctx context.Context, activation cluster.A
 		if ctx.Err() != nil && applicationAuthorityError(runErr) {
 			runErr = ctx.Err()
 		}
-		var restart *hubRestartExit
+		var restart *adminsvc.RestartExit
 		expectedRestart := errors.As(runErr, &restart)
 		if expectedRestart && ctx.Err() == nil {
 			runErr = activation.Runtime.RestartGeneration(activation.Generation)
@@ -534,7 +537,7 @@ func (p *clusterPeer) startApplication(ctx context.Context, activation cluster.A
 	stop := func(context.Context) error {
 		stopRepair()
 		<-done
-		var restart *hubRestartExit
+		var restart *adminsvc.RestartExit
 		if errors.Is(runErr, context.Canceled) || errors.As(runErr, &restart) || ctx.Err() != nil && applicationAuthorityError(runErr) {
 			return nil
 		}
@@ -833,6 +836,7 @@ func (p *clusterPeer) TransferCoordinator(ctx context.Context, request consoleap
 	}
 	return p.Coordination(ctx)
 }
+
 func (p *clusterPeer) SetAutoFailover(ctx context.Context, request consoleapi.CoordinatorPolicy) (consoleapi.CoordinationView, error) {
 	if request.Enabled && !p.options.AllowAutoFailover {
 		return consoleapi.CoordinationView{}, fmt.Errorf("%w: 任务续跑准备尚未完成", coordination.ErrNotReady)
@@ -1094,6 +1098,7 @@ type workerPrincipal struct {
 	NodeID     string
 	Connection *authenticatedWorkerConnection
 }
+
 type authenticatedWorkerConnection struct {
 	net.Conn
 	once   sync.Once
@@ -1132,6 +1137,7 @@ func (p *clusterPeer) openLocalWorker(ctx context.Context, nodeID string) (net.C
 	p.mu.Unlock()
 	return wrapped, nil
 }
+
 func (p *clusterPeer) authenticatedWorkerPeer(connection net.Conn) (string, bool) {
 	p.mu.RLock()
 	defer p.mu.RUnlock()
@@ -1230,6 +1236,7 @@ func (p *clusterPeer) FetchWorker(ctx context.Context, member coordination.Membe
 	}
 	return worker, nil
 }
+
 func (p *clusterPeer) SetCoordinatorEligibility(ctx context.Context, request consoleapi.CoordinatorEligibility) (consoleapi.CoordinationView, error) {
 	_, err := p.runtime.Load().SetEligibility(ctx, coordination.EligibilityRequest{ID: request.CommandID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, NodeID: request.NodeID, Eligible: request.Eligible})
 	if err != nil {
@@ -1288,6 +1295,7 @@ func writePeerJSON(w http.ResponseWriter, value any) {
 	w.Header().Set("Cache-Control", "no-store")
 	json.NewEncoder(w).Encode(value)
 }
+
 func peerHTTPError(w http.ResponseWriter, err error) {
 	status := http.StatusServiceUnavailable
 	if errors.Is(err, coordination.ErrConflict) || errors.Is(err, coordination.ErrStaleEpoch) || errors.Is(err, coordination.ErrCommandConflict) {
