@@ -32,7 +32,7 @@ func configuredCloneFixture(t *testing.T) *fleetAdmin {
 	return a
 }
 
-func awaitCloneState(t *testing.T, a *fleetAdmin, state string) project.CloneOperation {
+func awaitCloneState(t *testing.T, a *fleetAdmin, state project.CloneState) project.CloneOperation {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {

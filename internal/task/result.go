@@ -11,7 +11,7 @@ import (
 // so its parent can be told after any restart — not only while the
 // delegating service still remembers the child in memory.
 type Result struct {
-	Outcome string   `json:"outcome,omitempty"`
+	Outcome Outcome  `json:"outcome,omitempty"`
 	Answer  string   `json:"answer,omitempty"`
 	Refs    []string `json:"refs,omitempty"`
 	Attempt string   `json:"attempt,omitempty"`

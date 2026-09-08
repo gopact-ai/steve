@@ -41,7 +41,7 @@ type Delivered struct {
 	Task    string
 	Agent   string
 	Node    string
-	State   string // done | failed
+	State   task.State // done | failed
 	Elapsed time.Duration
 	Goal    string
 	Answer  string
@@ -84,8 +84,8 @@ func (d Delivery) Prompt() string {
 	return b.String()
 }
 
-func stateWord(state string) string {
-	if state == "failed" {
+func stateWord(state task.State) string {
+	if state == task.StateFailed {
 		return "失败"
 	}
 	return "完成"
@@ -111,7 +111,7 @@ func (s *Service) SetDeliverer(fn func(context.Context, Delivery) error) {
 // collect marks a child's result as read by its parent in-turn: it will
 // not be delivered again. Only a terminal result counts.
 func (s *Service) collect(taskID string, result agentmcp.DelegateResult) {
-	if result.State != "done" && result.State != "failed" {
+	if result.State != task.StateDone && result.State != task.StateFailed {
 		return
 	}
 	if err := s.tasks.SetDelivery(taskID, task.DeliveryDelivered); err != nil && !strings.Contains(err.Error(), "not found") {
@@ -175,12 +175,12 @@ func (s *Service) Flush(ctx context.Context, parentID string) {
 		Anchor: parent.AnchorMessage, Requester: parent.Requester, ChatType: parent.ChatType}
 	for _, c := range waiting {
 		elapsed := c.UpdatedAt.Sub(c.CreatedAt)
-		dc := Delivered{Task: c.ID, Agent: c.Member, Node: c.Node, State: string(c.State), Elapsed: elapsed, Goal: c.Goal,
+		dc := Delivered{Task: c.ID, Agent: c.Member, Node: c.Node, State: c.State, Elapsed: elapsed, Goal: c.Goal,
 			Answer: c.Result.Answer, Refs: withoutLandingTalk(c.Result.Refs), Attempt: c.Result.Attempt}
 		if c.State == task.StateDone {
-			dc.State = "done"
+			dc.State = task.StateDone
 		} else {
-			dc.State = "failed"
+			dc.State = task.StateFailed
 		}
 		dc.Landing = landing(c)
 		d.Children = append(d.Children, dc)

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/intent"
 )
 
 var errOutcomeUnknown = channel.ErrOutcomeUnknown
@@ -321,14 +322,14 @@ func (s *Server) reconcileMessageLocked(ctx context.Context, bind binding, id st
 	if err != nil {
 		return fmt.Errorf("read message reconciliation: %w", err)
 	}
-	if outcome != "succeeded" && outcome != "failed" {
+	if outcome != string(intent.Succeeded) && outcome != string(intent.Failed) {
 		return fmt.Errorf("message operation is blocked pending reconciliation of intent %s", record.intentID)
 	}
 	before := st.ids[id]
-	if outcome == "succeeded" && record.pendingTool == "channel_recall" {
+	if outcome == string(intent.Succeeded) && record.pendingTool == "channel_recall" {
 		delete(st.ids, id)
 	} else {
-		if outcome == "succeeded" && record.pendingTool == "channel_update" {
+		if outcome == string(intent.Succeeded) && record.pendingTool == "channel_update" {
 			record.version++
 			record.progress = record.pendingProgress
 		}

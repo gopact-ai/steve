@@ -241,7 +241,7 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 	}
 	entry := &child{scope: scope, started: time.Now(), done: make(chan struct{}), waiters: 1}
 	entry.result = agentmcp.DelegateResult{
-		TaskID: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node, State: "running",
+		TaskID: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node, State: task.StateRunning,
 	}
 	s.mu.Lock()
 	s.pending[spawned.ID] = entry
@@ -249,7 +249,7 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 	// Register the child before Start can return: opening its session may
 	// take longer than the parent's remaining turn, even without progress.
 	s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID,
-		Agent: candidate.Agent.ID, Node: candidate.Node, Goal: req.Goal, State: "running", Since: entry.started}, view.Progress{})
+		Agent: candidate.Agent.ID, Node: candidate.Node, Goal: req.Goal, State: task.StateRunning, Since: entry.started}, view.Progress{})
 
 	// Detached on purpose: the request that asked for this may be gone
 	// long before the child is, and a client hanging up must not cancel
@@ -261,7 +261,7 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 	go s.drive(driveCtx, conversationID, agentID, parent, spawned, candidate, req, entry)
 
 	first, err := s.waitRegistered(requestCtx, entry, inlineWait)
-	if err == nil && first.State == "running" && s.deliver != nil {
+	if err == nil && first.State == task.StateRunning && s.deliver != nil {
 		first.Note = "Still running. You need not wait: when it ends, Steve sends its result into this conversation as a new message. End your turn if nothing else is left."
 	}
 	return first, err
@@ -303,7 +303,7 @@ func (s *Service) Delegate(ctx context.Context, conversationID, agentID string, 
 	if err != nil {
 		return first, err
 	}
-	if first.State != "running" {
+	if first.State != task.StateRunning {
 		return s.settle(first)
 	}
 	s.mu.Lock()
@@ -324,7 +324,7 @@ func (s *Service) Delegate(ctx context.Context, conversationID, agentID string, 
 // failure is the caller's error.
 func (s *Service) settle(result agentmcp.DelegateResult) (agentmcp.DelegateResult, error) {
 	s.collect(result.TaskID, result)
-	if result.State == "failed" {
+	if result.State == task.StateFailed {
 		s.mu.Lock()
 		entry := s.pending[result.TaskID]
 		s.mu.Unlock()
@@ -347,7 +347,7 @@ func (s *Service) waitRegistered(ctx context.Context, entry *child, wait time.Du
 	defer func() {
 		s.mu.Lock()
 		entry.waiters--
-		id, done := entry.result.TaskID, entry.result.State == "done" || entry.result.State == "failed"
+		id, done := entry.result.TaskID, entry.result.State == task.StateDone || entry.result.State == task.StateFailed
 		s.mu.Unlock()
 		if done {
 			if tracked, ok := s.tasks.Get(id); ok {
@@ -387,11 +387,11 @@ func (s *Service) snapshot(entry *child) agentmcp.DelegateResult {
 func (s *Service) fromStore(ctx context.Context, taskID string) (agentmcp.DelegateResult, error) {
 	stored, ok := s.tasks.Get(taskID)
 	if ok && stored.Result != nil && stored.Finished() && (len(stored.Attempts) == 0 || !stored.Attempts[len(stored.Attempts)-1].Open()) {
-		out := agentmcp.DelegateResult{TaskID: stored.ID, Agent: stored.Member, Node: stored.Node, State: "done",
+		out := agentmcp.DelegateResult{TaskID: stored.ID, Agent: stored.Member, Node: stored.Node, State: task.StateDone,
 			Elapsed: stored.UpdatedAt.Sub(stored.CreatedAt).Round(time.Second).String(),
 			Outcome: stored.Result.Outcome, Answer: stored.Result.Answer, Refs: append([]string(nil), stored.Result.Refs...)}
 		if stored.State != task.StateDone {
-			out.State = "failed"
+			out.State = task.StateFailed
 		}
 		if err := s.collectContext(ctx, taskID, out); err != nil {
 			return agentmcp.DelegateResult{}, err
@@ -402,15 +402,15 @@ func (s *Service) fromStore(ctx context.Context, taskID string) (agentmcp.Delega
 		return agentmcp.DelegateResult{}, fmt.Errorf("no task %s", taskID)
 	}
 	if stored.Delegated() && stored.Result == nil && stored.State != task.StateCancelled {
-		return agentmcp.DelegateResult{TaskID: stored.ID, Agent: stored.Member, Node: stored.Node, State: "running"}, nil
+		return agentmcp.DelegateResult{TaskID: stored.ID, Agent: stored.Member, Node: stored.Node, State: task.StateRunning}, nil
 	}
 
-	state := "running"
+	state := task.StateRunning
 	switch stored.State {
 	case task.StateDone:
-		state = "done"
+		state = task.StateDone
 	case task.StateFailed, task.StateCancelled:
-		state = "failed"
+		state = task.StateFailed
 	}
 	return agentmcp.DelegateResult{
 		TaskID: stored.ID, Agent: stored.Member, Node: stored.Node, State: state,
@@ -437,7 +437,7 @@ func (s *Service) drive(ctx context.Context, conversationID, agentID string, par
 	result, runErr := s.run(ctx, conversationID, agentID, parent, spawned, candidate, req, func(p view.Progress) {
 		last = p
 		s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: candidate.Agent.ID, Node: candidate.Node,
-			Goal: req.Goal, State: "running", Since: since, Elapsed: time.Since(since)}, p)
+			Goal: req.Goal, State: task.StateRunning, Since: since, Elapsed: time.Since(since)}, p)
 	})
 
 	s.completeChild(ctx, conversationID, parent, spawned, req.Goal, entry, result, runErr, last)
@@ -488,9 +488,9 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 	}
 	current, _ := s.tasks.Get(spawned.ID)
 	if current.State == task.StatePaused || current.State == task.StateCancelled {
-		result.State, result.Outcome = string(current.State), string(task.OutcomeCancelled)
+		result.State, result.Outcome = current.State, task.OutcomeCancelled
 	} else if runErr != nil {
-		result.State, result.Outcome = "failed", string(task.OutcomeError)
+		result.State, result.Outcome = task.StateFailed, task.OutcomeError
 		if result.Answer == "" {
 			result.Answer = runErr.Error()
 		}
@@ -504,7 +504,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 		}
 		runErr = fmt.Errorf("delegated task #%s on %s failed: %w", spawned.ID, spawned.Member, runErr)
 	} else {
-		result.State = "done"
+		result.State = task.StateDone
 		if _, err := s.advanceExecution(ctx, spawned.ID, task.StateDone); err != nil {
 			log.Printf("delegate: mark task #%s done: %v", spawned.ID, err)
 			if strings.HasPrefix(managedSession, "ns_") {
@@ -515,7 +515,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 		}
 	}
 	if latest, ok := s.tasks.Get(spawned.ID); ok && (latest.State == task.StatePaused || latest.State == task.StateCancelled) {
-		result.State, result.Outcome = string(latest.State), string(task.OutcomeCancelled)
+		result.State, result.Outcome = latest.State, task.OutcomeCancelled
 	}
 	result.TaskID, result.Agent, result.Node = spawned.ID, spawned.Member, spawned.Node
 
@@ -554,7 +554,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 type Child struct {
 	Conversation, ParentTask, Task string
 	Agent, Node, Goal              string
-	State                          string // running | done | failed
+	State                          task.State // running | done | failed, or a paused/cancelled task
 	Since                          time.Time
 	Elapsed                        time.Duration
 	Answer                         string
@@ -922,7 +922,7 @@ func (s *Service) completeResult(ctx context.Context, parent, child task.Task, r
 
 	// What the child said is the result from here on, whatever happens
 	// to its files: every return below carries it.
-	result.Outcome = string(task.OutcomeOK)
+	result.Outcome = task.OutcomeOK
 	result.Answer = answer
 	for _, ref := range exec.ParseRefs(answer) {
 		result.Refs = append(result.Refs, ref.Kind+" "+ref.Value)

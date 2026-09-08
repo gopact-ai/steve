@@ -4,8 +4,8 @@ internal/acphost/host.go:988
 internal/agentexec/runner.go:274
 internal/agentexec/runner.go:297
 internal/agentexec/runner.go:407
-internal/agentmcp/message.go:314
-internal/agentmcp/server.go:927
+internal/agentmcp/message.go:315
+internal/agentmcp/server.go:928
 internal/artifact/content_replication.go:67
 internal/artifact/facts.go:138
 internal/console/console.go:457

@@ -18,17 +18,31 @@ type RestartRequest struct {
 	CommandID string `json:"command_id,omitempty"`
 }
 
+type RestartState string
+
+const (
+	RestartStateIdle      RestartState = "idle"
+	RestartStateDraining  RestartState = "draining"
+	RestartStateAccepted  RestartState = "accepted"
+	RestartStateRestarted RestartState = "restarted"
+	RestartStateFailed    RestartState = "failed"
+)
+
+func (s RestartState) Terminal() bool {
+	return s == RestartStateRestarted || s == RestartStateFailed
+}
+
 type RestartStatus struct {
-	CommandID           string    `json:"command_id,omitempty"`
-	State               string    `json:"state"`
-	Supported           bool      `json:"supported"`
-	Incarnation         int64     `json:"incarnation"`
-	PreviousIncarnation int64     `json:"previous_incarnation,omitempty"`
-	RequestedAt         time.Time `json:"requested_at,omitempty"`
-	CompletedAt         time.Time `json:"completed_at,omitempty"`
-	ActiveStreams       int       `json:"active_streams"`
-	Processes           int       `json:"processes"`
-	Error               string    `json:"error,omitempty"`
+	CommandID           string       `json:"command_id,omitempty"`
+	State               RestartState `json:"state"`
+	Supported           bool         `json:"supported"`
+	Incarnation         int64        `json:"incarnation"`
+	PreviousIncarnation int64        `json:"previous_incarnation,omitempty"`
+	RequestedAt         time.Time    `json:"requested_at,omitempty"`
+	CompletedAt         time.Time    `json:"completed_at,omitempty"`
+	ActiveStreams       int          `json:"active_streams"`
+	Processes           int          `json:"processes"`
+	Error               string       `json:"error,omitempty"`
 }
 
 type RestartReply struct {

@@ -358,9 +358,9 @@ func TestUnsettledWriterRemainsOccupiedAndNeedsIndependentConfirmation(t *testin
 	s.live = append(s.live, attempt.Record{Spec: attempt.Spec{ID: "healthy", Agent: "builder", TaskID: sibling.ID}, State: attempt.Running})
 	snap = m.Snapshot(t.Context())
 	for _, task := range snap.Tasks {
-		want, attention := "unknown", 1
+		want, attention := ExecutionUnknown, 1
 		if task.ID == "1" || task.ID == sibling.ID {
-			want = "running"
+			want = ExecutionRunning
 		}
 		if task.ID == sibling.ID {
 			attention = 0

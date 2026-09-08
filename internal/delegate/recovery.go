@@ -142,7 +142,7 @@ func (s *Service) RecoverRetained(ctx context.Context) error {
 				continue
 			}
 		}
-		entry := &child{started: record.StartedAt, done: make(chan struct{}), session: record.Session, result: agentmcp.DelegateResult{TaskID: tracked.ID, Agent: record.Agent, Node: record.Node, State: "running"}}
+		entry := &child{started: record.StartedAt, done: make(chan struct{}), session: record.Session, result: agentmcp.DelegateResult{TaskID: tracked.ID, Agent: record.Agent, Node: record.Node, State: task.StateRunning}}
 		s.pending[tracked.ID] = entry
 		s.mu.Unlock()
 		s.rememberAttempt(tracked.ID, record.ID)
@@ -253,7 +253,7 @@ func (s *Service) recoverChild(ctx context.Context, parent, tracked task.Task, r
 	var last view.Progress
 	answer, _, runErr := runner.ResumeTurn(runCtx, ask, askUser, func(progress view.Progress) {
 		last = progress
-		s.report(Child{Conversation: parent.Channel, ParentTask: parent.ID, Task: tracked.ID, Agent: record.Agent, Node: record.Node, Goal: tracked.Goal, State: "running", Since: record.StartedAt, Elapsed: time.Since(record.StartedAt), Attempt: record.ID}, progress)
+		s.report(Child{Conversation: parent.Channel, ParentTask: parent.ID, Task: tracked.ID, Agent: record.Agent, Node: record.Node, Goal: tracked.Goal, State: task.StateRunning, Since: record.StartedAt, Elapsed: time.Since(record.StartedAt), Attempt: record.ID}, progress)
 	})
 	if s.canSettleStopped(runCtx, runErr) {
 		if runErr == nil {
@@ -400,7 +400,7 @@ func (s *Service) detachChild(spawned task.Task, entry *child, detached *executi
 		entry.scope.Finish(detached)
 	}
 	s.mu.Lock()
-	entry.result = agentmcp.DelegateResult{TaskID: spawned.ID, Agent: spawned.Member, Node: spawned.Node, State: "running"}
+	entry.result = agentmcp.DelegateResult{TaskID: spawned.ID, Agent: spawned.Member, Node: spawned.Node, State: task.StateRunning}
 	entry.err = nil
 	if s.pending[spawned.ID] == entry {
 		delete(s.pending, spawned.ID)
@@ -411,7 +411,7 @@ func (s *Service) detachChild(spawned task.Task, entry *child, detached *executi
 }
 
 func (s *Service) failRetainedResult(ctx context.Context, record attempt.Record, result agentmcp.DelegateResult, cause error, usage *attempt.Usage) (attempt.Record, error) {
-	result.TaskID, result.Agent, result.Node, result.Outcome = record.TaskID, record.Agent, record.Node, string(outcomeOf(cause))
+	result.TaskID, result.Agent, result.Node, result.Outcome = record.TaskID, record.Agent, record.Node, outcomeOf(cause)
 	if result.Answer == "" {
 		result.Answer = cause.Error()
 	}

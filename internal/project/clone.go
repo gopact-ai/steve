@@ -24,7 +24,7 @@ type CloneOperation struct {
 	Project  string       `json:"project"`
 	Copy     Copy         `json:"copy"`
 	Lease    ledger.Lease `json:"lease"`
-	State    string       `json:"state"`
+	State    CloneState   `json:"state"`
 	Source   string       `json:"source"`
 	Evidence string       `json:"evidence,omitempty"`
 	Error    string       `json:"error,omitempty"`
@@ -47,15 +47,13 @@ func cloneOperationsIn(tx *ledger.Tx) ([]CloneOperation, error) {
 	return out, nil
 }
 
-func cloneBlocking(state string) bool { return state == "running" || state == "unconfirmed" }
-
 func validateCloneOwnership(tx *ledger.Tx, desired map[string]Project) error {
 	operations, err := cloneOperationsIn(tx)
 	if err != nil {
 		return err
 	}
 	for _, op := range operations {
-		if !cloneBlocking(op.State) {
+		if !op.State.BlocksWorkspace() {
 			continue
 		}
 		p, exists := desired[op.Project]
@@ -99,12 +97,12 @@ func (s *Store) BeginClone(ctx context.Context, projectID string, copy Copy, reg
 	if err != nil {
 		return CloneOperation{}, err
 	}
-	op := CloneOperation{ID: id, Project: projectID, Copy: copy, Lease: lease, State: "running", Source: source, At: s.now().UTC()}
+	op := CloneOperation{ID: id, Project: projectID, Copy: copy, Lease: lease, State: CloneRunning, Source: source, At: s.now().UTC()}
 	if _, err := s.l.Begin(ctx, id, cloneKind, "prepared", source, op); err != nil {
 		_ = s.l.ReleaseAny(context.WithoutCancel(ctx), lease)
 		return CloneOperation{}, err
 	}
-	_, err = s.l.Transition(ctx, id, "prepared", "running", source, []ledger.Lease{lease}, nil, func(tx *ledger.Tx, _ *ledger.Operation) error {
+	_, err = s.l.Transition(ctx, id, "prepared", string(CloneRunning), source, []ledger.Lease{lease}, nil, func(tx *ledger.Tx, _ *ledger.Operation) error {
 		all, err := projectsIn(tx)
 		if err != nil {
 			return err
@@ -119,7 +117,7 @@ func (s *Store) BeginClone(ctx context.Context, projectID string, copy Copy, reg
 			return err
 		}
 		for _, active := range operations {
-			if cloneBlocking(active.State) && active.Copy.Node == copy.Node && pathsOverlap(active.Copy.Path, copy.Path) {
+			if active.State.BlocksWorkspace() && active.Copy.Node == copy.Node && pathsOverlap(active.Copy.Path, copy.Path) {
 				return fmt.Errorf("%w: %s", ErrCloneIsolated, active.ID)
 			}
 		}
@@ -128,7 +126,7 @@ func (s *Store) BeginClone(ctx context.Context, projectID string, copy Copy, reg
 	if err != nil {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		_, _ = s.l.Transition(cleanup, id, "prepared", "failed", source, nil, map[string]string{"evidence": "file operation never dispatched", "error": err.Error()}, nil)
+		_, _ = s.l.Transition(cleanup, id, "prepared", string(CloneFailed), source, nil, map[string]string{"evidence": "file operation never dispatched", "error": err.Error()}, nil)
 		_ = s.l.ReleaseAny(cleanup, lease)
 		return CloneOperation{}, err
 	}
@@ -141,7 +139,7 @@ func (s *Store) RenewClone(ctx context.Context, op *CloneOperation, ttl time.Dur
 		return err
 	}
 	op.Lease = next
-	_, err = s.l.Transition(ctx, op.ID, "running", "running", op.Source, []ledger.Lease{next}, nil, func(tx *ledger.Tx, current *ledger.Operation) error {
+	_, err = s.l.Transition(ctx, op.ID, string(CloneRunning), string(CloneRunning), op.Source, []ledger.Lease{next}, nil, func(tx *ledger.Tx, current *ledger.Operation) error {
 		if err := tx.SetData(current, *op); err != nil {
 			return err
 		}
@@ -150,12 +148,12 @@ func (s *Store) RenewClone(ctx context.Context, op *CloneOperation, ttl time.Dur
 	return err
 }
 
-func (s *Store) finishClone(ctx context.Context, op CloneOperation, from, state, actor, evidence string, cause error) error {
+func (s *Store) finishClone(ctx context.Context, op CloneOperation, from, state CloneState, actor, evidence string, cause error) error {
 	op.State, op.Evidence, op.At = state, evidence, s.now().UTC()
 	if cause != nil {
 		op.Error = cause.Error()
 	}
-	_, err := s.l.Transition(ctx, op.ID, from, state, actor, nil, map[string]string{"source": op.Source, "evidence": evidence}, func(tx *ledger.Tx, current *ledger.Operation) error {
+	_, err := s.l.Transition(ctx, op.ID, string(from), string(state), actor, nil, map[string]string{"source": op.Source, "evidence": evidence}, func(tx *ledger.Tx, current *ledger.Operation) error {
 		if err := tx.SetData(current, op); err != nil {
 			return err
 		}
@@ -170,10 +168,10 @@ func (s *Store) finishClone(ctx context.Context, op CloneOperation, from, state,
 		copy, found := p.Copies[op.Copy.Node]
 		if exists && found && sameCopyDeclaration(copy, op.Copy) {
 			copy.State, copy.Error = CopyReady, ""
-			if state != "succeeded" {
+			if state != CloneSucceeded {
 				copy.State, copy.Error = CopyFailed, op.Error
 			}
-			if state == "unconfirmed" {
+			if state == CloneUnconfirmed {
 				copy.Error = fmt.Sprintf("clone %s outcome unconfirmed; workspace isolated: %s", op.ID, op.Error)
 			}
 			p.Copies[copy.Node] = copy
@@ -184,7 +182,7 @@ func (s *Store) finishClone(ctx context.Context, op CloneOperation, from, state,
 	if err != nil {
 		return fmt.Errorf("clone %s completion not recorded; workspace remains isolated: %w", op.ID, err)
 	}
-	if state != "unconfirmed" {
+	if state != CloneUnconfirmed {
 		if err := s.l.ReleaseAny(ctx, op.Lease); err != nil && !errors.Is(err, ledger.ErrStale) {
 			return fmt.Errorf("clone %s stopped but lease release failed: %w", op.ID, err)
 		}
@@ -199,14 +197,14 @@ func (s *Store) FinishClone(ctx context.Context, op CloneOperation, confirmed bo
 	if evidence == "" {
 		return errors.New("clone completion needs outcome evidence")
 	}
-	state := "succeeded"
+	state := CloneSucceeded
 	if cause != nil {
-		state = "failed"
+		state = CloneFailed
 	}
 	if !confirmed {
-		state = "unconfirmed"
+		state = CloneUnconfirmed
 	}
-	return s.finishClone(ctx, op, "running", state, op.Source, evidence, cause)
+	return s.finishClone(ctx, op, CloneRunning, state, op.Source, evidence, cause)
 }
 
 // ConfirmCloneStopped is an explicit operator recovery action. Caller identity
@@ -222,10 +220,10 @@ func (s *Store) ConfirmCloneStopped(ctx context.Context, id, actor, evidence str
 	}
 	for _, op := range operations {
 		if op.ID == id {
-			if !cloneBlocking(op.State) {
+			if !op.State.BlocksWorkspace() {
 				return nil
 			}
-			return s.finishClone(ctx, op, op.State, "failed", actor, evidence, errors.New("operator confirmed the clone stopped"))
+			return s.finishClone(ctx, op, op.State, CloneFailed, actor, evidence, errors.New("operator confirmed the clone stopped"))
 		}
 	}
 	return fmt.Errorf("clone operation %s not found", id)

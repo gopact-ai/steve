@@ -260,12 +260,12 @@ func (m *Model) Snapshot(ctx context.Context) Snapshot {
 	for i := range snap.Tasks {
 		t := &snap.Tasks[i]
 		t.Lifecycle = t.State
-		t.Execution = "idle"
+		t.Execution = ExecutionIdle
 		if !activityKnown || rolledUnsettled[t.ID] {
-			t.Execution = "unknown"
+			t.Execution = ExecutionUnknown
 		}
 		if rolledLive[t.ID] {
-			t.Execution = "running"
+			t.Execution = ExecutionRunning
 		}
 		t.Attention = rolledAttention[t.ID]
 		t.Lane = lane(*t)
@@ -324,19 +324,19 @@ func lane(t Task) string {
 	switch {
 	case t.Attention > 0:
 		return "needs_you"
-	case t.Execution == "running":
+	case t.Execution == ExecutionRunning:
 		return "running"
 	}
 	switch t.Lifecycle {
-	case "done", "cancelled":
+	case task.StateDone, task.StateCancelled:
 		return "ended"
-	case "paused":
+	case task.StatePaused:
 		return "set_aside"
-	case "failed", "blocked", "review":
+	case task.StateFailed, task.StateBlocked, task.StateReview:
 		// Recoverable, and only a person decides how: continue or cancel.
 		return "needs_you"
 	default:
-		if t.Execution == "unknown" {
+		if t.Execution == ExecutionUnknown {
 			return "unknown"
 		}
 		// Open and idle: waiting for its next line, or for its turn.
@@ -491,7 +491,7 @@ func tasks(list []task.Task, plans map[string]plan.Plan) []Task {
 	out := make([]Task, 0, len(list))
 	for _, t := range list {
 		item := Task{
-			ID: t.ID, Goal: t.Goal, State: string(t.State), Member: t.Member,
+			ID: t.ID, Goal: t.Goal, State: t.State, Member: t.Member,
 			NodeID: t.Node, Parent: t.Parent, Children: children[t.ID],
 			Channel: t.Channel, ProjectID: t.ProjectID, Origin: t.Origin, Requester: t.Requester,
 			Turns: t.Budget.Turns, MaxTurns: t.Budget.MaxTurns,

@@ -22,6 +22,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 // ServerName is the MCP server name agents see; tool calls arrive as
@@ -92,11 +93,11 @@ type DelegateResult struct {
 	Node   string `json:"node,omitempty"`
 	// State is running, done or failed. A delegation can outlive any one
 	// tool call, so the caller reads State and awaits when it is running.
-	State   string   `json:"state"`
-	Elapsed string   `json:"elapsed,omitempty"`
-	Outcome string   `json:"outcome,omitempty"`
-	Answer  string   `json:"answer,omitempty"`
-	Refs    []string `json:"refs,omitempty"`
+	State   task.State   `json:"state"`
+	Elapsed string       `json:"elapsed,omitempty"`
+	Outcome task.Outcome `json:"outcome,omitempty"`
+	Answer  string       `json:"answer,omitempty"`
+	Refs    []string     `json:"refs,omitempty"`
 	// Note tells the caller what happens next while the child runs.
 	Note string `json:"note,omitempty"`
 }

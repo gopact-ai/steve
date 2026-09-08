@@ -85,8 +85,8 @@ func (s *hubServices) ready() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	for key, op := range s.history.Operations {
-		if op.State == "accepted" && op.Incarnation != s.history.Incarnation {
-			op.State = "restarted"
+		if op.State == nodewire.RestartStateAccepted && op.Incarnation != s.history.Incarnation {
+			op.State = nodewire.RestartStateRestarted
 			op.Incarnation = s.history.Incarnation
 			op.CompletedAt = time.Now().UTC()
 			s.history.Operations[key] = op
@@ -102,7 +102,7 @@ func (s *hubServices) failed(cause error) {
 	if !ok {
 		return
 	}
-	op.State = "failed"
+	op.State = nodewire.RestartStateFailed
 	op.Error = cause.Error()
 	op.CompletedAt = time.Now().UTC()
 	s.history.Operations[s.pending] = op
@@ -182,7 +182,7 @@ func (s *hubServices) RestartStatus(ctx context.Context, name, id string) (conso
 	if id != "" {
 		return consoleapi.RestartOperation{}, serviceFailure("not_found", "Restart request not found")
 	}
-	return consoleapi.RestartOperation{State: "idle", Incarnation: s.history.Incarnation}, nil
+	return consoleapi.RestartOperation{State: nodewire.RestartStateIdle, Incarnation: s.history.Incarnation}, nil
 }
 func (s *hubServices) seal(ctx context.Context, name string) (func(), error) {
 	var releases []func()
@@ -316,7 +316,7 @@ func (s *hubServices) Restart(ctx context.Context, name string, req consoleapi.R
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	op := consoleapi.RestartOperation{CommandID: req.CommandID, State: "accepted", Incarnation: s.history.Incarnation, PreviousIncarnation: s.history.Incarnation, RequestedAt: time.Now().UTC()}
+	op := consoleapi.RestartOperation{CommandID: req.CommandID, State: nodewire.RestartStateAccepted, Incarnation: s.history.Incarnation, PreviousIncarnation: s.history.Incarnation, RequestedAt: time.Now().UTC()}
 	s.history.Operations[req.CommandID] = op
 	s.history.Latest = req.CommandID
 	if err := s.persist(); err != nil {
@@ -432,7 +432,7 @@ func (s *hubServices) watchNode(name, id string, release func()) {
 			query, cancel := context.WithTimeout(ctx, 2*time.Second)
 			st, err := s.admin.nodes.RestartStatus(query, name, id)
 			cancel()
-			if err == nil && (st.State == "restarted" || st.State == "failed") {
+			if err == nil && st.State.Terminal() {
 				return
 			}
 		}

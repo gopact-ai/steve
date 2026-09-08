@@ -1,6 +1,11 @@
 package consoleapi
 
-import "time"
+import (
+	"time"
+
+	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/view"
+)
 
 type Progress struct {
 	Phase     string     `json:"phase,omitempty"`
@@ -22,13 +27,13 @@ type Span struct {
 }
 
 type ToolCall struct {
-	ID     string `json:"id,omitempty"`
-	Kind   string `json:"kind,omitempty"`
-	Name   string `json:"name,omitempty"`
-	Detail string `json:"detail,omitempty"`
-	Status string `json:"status"`
-	Input  string `json:"input,omitempty"`
-	Output string `json:"output,omitempty"`
+	ID     string          `json:"id,omitempty"`
+	Kind   string          `json:"kind,omitempty"`
+	Name   string          `json:"name,omitempty"`
+	Detail string          `json:"detail,omitempty"`
+	Status view.ToolStatus `json:"status"`
+	Input  string          `json:"input,omitempty"`
+	Output string          `json:"output,omitempty"`
 }
 
 type PlanLine struct {
@@ -58,13 +63,13 @@ type StepProcess struct {
 }
 
 type StepInfo struct {
-	Kind    string   `json:"kind,omitempty"`
-	Goal    string   `json:"goal,omitempty"`
-	State   string   `json:"state,omitempty"`
-	Since   string   `json:"since,omitempty"`
-	Elapsed string   `json:"elapsed,omitempty"`
-	Answer  string   `json:"answer,omitempty"`
-	Refs    []string `json:"refs,omitempty"`
+	Kind    string     `json:"kind,omitempty"`
+	Goal    string     `json:"goal,omitempty"`
+	State   task.State `json:"state,omitempty"`
+	Since   string     `json:"since,omitempty"`
+	Elapsed string     `json:"elapsed,omitempty"`
+	Answer  string     `json:"answer,omitempty"`
+	Refs    []string   `json:"refs,omitempty"`
 	// Attempt and Files say what the child changed, once it ended.
 	Attempt string `json:"attempt,omitempty"`
 	Files   int    `json:"files,omitempty"`
