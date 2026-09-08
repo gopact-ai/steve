@@ -120,9 +120,9 @@ func (e *Failure) Unwrap() error { return e.Cause }
 
 // Deferred is a completion that waits on another execution's recovery — a
 // verifier's own retained attempt. A node-owned session's record is left
-// where it is, nothing it holds is given back, and Run returns the
-// Deferred itself; on a hub session nobody comes back for it, and the
-// attempt fails on the cause.
+// where it is with its session and workspace, its bindings are given
+// back, and Run returns the Deferred itself; on a hub session nobody
+// comes back for it, and the attempt fails on the cause.
 type Deferred struct{ Cause error }
 
 func (e *Deferred) Error() string { return e.Cause.Error() }
@@ -714,12 +714,19 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 	if err == nil {
 		err = e.commitManaged(ctx)
 		var failure *Failure
+		var deferred *Deferred
 		switch {
 		case err == nil:
 		case errors.As(err, &failure):
 			// The caller refused the work: the attempt fails on its cause,
 			// as on a prompt that failed.
 			err = failure.Cause
+		case errors.As(err, &deferred):
+			// The completion is another execution's to finish: the record,
+			// the session and the workspace wait for it; the bindings, which
+			// the finish had already done with, go back now.
+			e.release(ctx)
+			return err
 		default:
 			return err
 		}

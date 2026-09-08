@@ -979,8 +979,10 @@ func TestRunLeavesADeferredCompletionToTheObserverThatComesBack(t *testing.T) {
 	if !errors.As(err, &deferred) || deferred.Cause != waiting || res.Record.State != attempt.Running || res.Unsettled || res.Durable {
 		t.Fatalf("deferred: %+v err=%v", res, err)
 	}
-	if h := m.attempts.history(); len(m.sessions.closed) != 0 || len(m.roster.released) != 0 || m.workspaces.discarded != 0 || !strings.HasSuffix(h, "settled/test") {
-		t.Fatalf("a deferred completion gave something back: closed=%v released=%v discarded=%d history=%s", m.sessions.closed, m.roster.released, m.workspaces.discarded, h)
+	// The session and the workspace wait for the observer that comes back;
+	// the bindings, which the finish was done with, go back now.
+	if h := m.attempts.history(); len(m.sessions.closed) != 0 || len(m.roster.released) != 1 || m.workspaces.discarded != 0 || !strings.HasSuffix(h, "settled/test release") {
+		t.Fatalf("a deferred completion kept its bindings or gave more back: closed=%v released=%v discarded=%d history=%s", m.sessions.closed, m.roster.released, m.workspaces.discarded, h)
 	}
 	// Nobody comes back for a hub session: the attempt fails on the cause.
 	h := newWorld("s1")
