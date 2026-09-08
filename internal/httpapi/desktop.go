@@ -14,7 +14,7 @@ func (s *Server) SetDesktop(service consoleapi.DesktopService) { s.desktop = ser
 func (s *Server) consoleDesktop(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	if s.desktop == nil {
-		_ = json.NewEncoder(w).Encode(consoleapi.DesktopStatus{})
+		writeJSON(w, consoleapi.DesktopStatus{})
 		return
 	}
 	status, err := s.desktop.DesktopStatus(r.Context())
@@ -22,7 +22,7 @@ func (s *Server) consoleDesktop(w http.ResponseWriter, r *http.Request) {
 		writeDesktopError(w, err, http.StatusInternalServerError)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(status)
+	writeJSON(w, status)
 }
 
 func (s *Server) consoleDesktopAgents(w http.ResponseWriter, r *http.Request) {
@@ -40,7 +40,7 @@ func (s *Server) consoleDesktopAgents(w http.ResponseWriter, r *http.Request) {
 		if result.Agents == nil {
 			result.Agents = []consoleapi.DesktopAgentCandidate{}
 		}
-		_ = json.NewEncoder(w).Encode(result)
+		writeJSON(w, result)
 		return
 	}
 	var request consoleapi.DesktopEnrollRequest
@@ -59,10 +59,10 @@ func (s *Server) consoleDesktopAgents(w http.ResponseWriter, r *http.Request) {
 		writeDesktopError(w, err, http.StatusBadRequest)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(result)
+	writeJSON(w, result)
 }
 
 func writeDesktopError(w http.ResponseWriter, err error, status int) {
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	writeJSON(w, map[string]string{"error": err.Error()})
 }

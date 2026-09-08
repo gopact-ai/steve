@@ -39,8 +39,8 @@ func (s *Server) consoleSettings(w http.ResponseWriter, r *http.Request) {
 			status = http.StatusConflict
 		}
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		writeJSON(w, map[string]string{"error": err.Error()})
 		return
 	}
-	_ = json.NewEncoder(w).Encode(view)
+	writeJSON(w, view)
 }

@@ -47,7 +47,7 @@ func (s *Server) sshCandidates(w http.ResponseWriter, r *http.Request) {
 		s.sshError(w, err)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(result)
+	writeJSON(w, result)
 }
 
 func (s *Server) sshCheck(w http.ResponseWriter, r *http.Request) {
@@ -65,7 +65,7 @@ func (s *Server) sshCheck(w http.ResponseWriter, r *http.Request) {
 		s.sshError(w, err)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(result)
+	writeJSON(w, result)
 }
 
 func (s *Server) sshPlan(w http.ResponseWriter, r *http.Request) {
@@ -85,7 +85,7 @@ func (s *Server) sshPlan(w http.ResponseWriter, r *http.Request) {
 		s.sshError(w, err)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(result)
+	writeJSON(w, result)
 }
 
 func (s *Server) sshInstall(w http.ResponseWriter, r *http.Request) {
@@ -100,7 +100,7 @@ func (s *Server) sshInstall(w http.ResponseWriter, r *http.Request) {
 	if err != nil && result.Status == "" {
 		result.Status = "needs_attention"
 	}
-	_ = json.NewEncoder(w).Encode(result)
+	writeJSON(w, result)
 }
 
 func (s *Server) sshAvailable(w http.ResponseWriter) bool {
@@ -110,7 +110,7 @@ func (s *Server) sshAvailable(w http.ResponseWriter) bool {
 		return true
 	}
 	w.WriteHeader(http.StatusNotImplemented)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": "SSH 接入尚未启用"})
+	writeJSON(w, map[string]string{"error": "SSH 接入尚未启用"})
 	return false
 }
 
@@ -118,11 +118,11 @@ func (s *Server) sshError(w http.ResponseWriter, err error) {
 	var step *sshconnect.StepError
 	if errors.As(err, &step) {
 		w.WriteHeader(http.StatusBadRequest)
-		_ = json.NewEncoder(w).Encode(map[string]any{"error": step.Error(), "step": step})
+		writeJSON(w, map[string]any{"error": step.Error(), "step": step})
 		return
 	}
 	w.WriteHeader(http.StatusInternalServerError)
-	_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+	writeJSON(w, map[string]string{"error": err.Error()})
 }
 
 func decodeSSH(w http.ResponseWriter, r *http.Request, value any) bool {

@@ -30,10 +30,10 @@ func queueResponse(w http.ResponseWriter, value any, err error) {
 			status = http.StatusConflict
 		}
 		w.WriteHeader(status)
-		_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+		writeJSON(w, map[string]string{"error": err.Error()})
 		return
 	}
-	_ = json.NewEncoder(w).Encode(value)
+	writeJSON(w, value)
 }
 
 func (s *Server) consoleEnqueue(w http.ResponseWriter, r *http.Request) {

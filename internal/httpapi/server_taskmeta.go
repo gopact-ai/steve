@@ -30,7 +30,7 @@ func (s *Server) consoleTaskMeta(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, updated := range s.model.Snapshot(r.Context()).Tasks {
 		if updated.ID == r.PathValue("task") {
-			_ = json.NewEncoder(w).Encode(updated)
+			writeJSON(w, updated)
 			return
 		}
 	}
