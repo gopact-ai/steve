@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"net/http"
 	"strconv"
@@ -242,7 +242,7 @@ func (s *Server) state(w http.ResponseWriter, r *http.Request) {
 	encoder := json.NewEncoder(w)
 	encoder.SetIndent("", "  ")
 	if err := encoder.Encode(snap); err != nil {
-		log.Printf("readmodel: encode snapshot: %v", err)
+		slog.Error(fmt.Sprintf("readmodel: encode snapshot: %v", err))
 	}
 }
 
