@@ -26,10 +26,10 @@ type LocalObservation struct {
 	Skills atomic.Pointer[SkillShipper]
 }
 
-// homeProjectID names Steve's home directory as a project.
+// HomeProjectID names Steve's home directory as a project.
 const HomeProjectID = config.ReservedHomeProject
 
-// harnessSummary renders a node's runtimes for one log line, marking the
+// HarnessSummary renders a node's runtimes for one log line, marking the
 // ones it cannot actually start.
 func HarnessSummary(advert nodewire.Advert) string {
 	if len(advert.Harnesses) == 0 {
