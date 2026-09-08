@@ -650,7 +650,7 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 		terminal, transition := e.failure(ctx, err)
 		if transition != nil {
 			if o.Settlement.RejectManaged {
-				return errors.Join(err, fmt.Errorf("settle %s: %w", id, transition))
+				return e.closeRetained(ctx, errors.Join(err, fmt.Errorf("settle %s: %w", id, transition)))
 			}
 			return e.detach(ctx, StepFinish, transition, false)
 		}
@@ -688,10 +688,10 @@ func (e *Execution) commitManaged(ctx context.Context) error {
 		if completion, err = o.Finish(ctx, e); err != nil {
 			var rejected *Rejected
 			if o.Settlement.RejectManaged && errors.As(err, &rejected) {
-				return e.reject(ctx, rejected.Completion, rejected.Cause)
+				return e.closeRetained(ctx, e.reject(ctx, rejected.Completion, rejected.Cause))
 			}
 			if o.Settlement.RejectManaged {
-				return e.fail(ctx, err)
+				return e.closeRetained(ctx, e.fail(ctx, err))
 			}
 			return e.detach(ctx, StepFinish, err, false)
 		}
@@ -703,12 +703,23 @@ func (e *Execution) commitManaged(ctx context.Context) error {
 	completed, err := o.Attempts.FinishCompletion(ctx, e.Record.ID, o.Actor, completion)
 	if err != nil {
 		if o.Settlement.RejectManaged {
-			return e.reject(ctx, completion, err)
+			return e.closeRetained(ctx, e.reject(ctx, completion, err))
 		}
 		return e.detach(ctx, StepFinish, err, false)
 	}
 	e.Record = completed
 	return nil
+}
+
+// closeRetained ends a retained session's turn on a transition the caller
+// made itself — a completion it rejected, a prompt it failed — instead
+// of leaving the record for an observer that comes back. Nobody comes
+// back for the bindings either: they are given back with the close, as
+// the hub-owned close gives them back before its own transition, whether
+// or not the transition was written.
+func (e *Execution) closeRetained(ctx context.Context, err error) error {
+	e.release(ctx)
+	return err
 }
 
 // detach reports a node-owned session this process can no longer observe.

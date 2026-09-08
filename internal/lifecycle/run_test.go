@@ -752,3 +752,58 @@ func TestReattachJoinsAnExecutionFromThePromptOn(t *testing.T) {
 		t.Fatalf("a chat turn's uncommittable completion was not rejected: %+v err=%v", res, err)
 	}
 }
+
+func TestReattachReleasesARetainedSessionsBindingsOnEveryTerminalTransition(t *testing.T) {
+	// A retained chat turn closes its own attempt: whether the completion
+	// is committed, rejected or failed, the record is terminal and no
+	// observer comes back for the bindings the node bound for it. Only a
+	// detachment — and the quarantine of a stop nobody confirmed — leaves
+	// them for the observer that does.
+	running := attempt.Record{Spec: attempt.Spec{ID: "a1", TaskID: "t", Node: "n1", Workspace: project.Workspace{ID: "ws"}}, State: attempt.Running, Session: "ns_1", Admission: &ability.Admission{Bound: []string{"tool"}}}
+	retained := Settlement{DetachManaged: true, Detachment: DetachQuarantinesUnlessCancelled, RejectManaged: true, KeepSession: true}
+	for _, tc := range []struct {
+		name     string
+		arrange  func(w *world, o *Options)
+		history  string
+		released bool
+	}{
+		{"committed", func(*world, *Options) {}, "settled/test finish bound/test release discard", true},
+		{"Finish rejects it", func(_ *world, o *Options) {
+			o.Finish = func(context.Context, *Execution) (attempt.Completion, error) {
+				return attempt.Completion{}, &Rejected{Completion: attempt.Completion{Result: attempt.Result{Summary: "half"}}, Cause: errors.New("snapshot unavailable")}
+			}
+		}, "settled/test reject failed/test release", true},
+		{"the ledger rejects the completion", func(w *world, _ *Options) { w.attempts.failAt = attempt.Bound }, "settled/test finish bound/test reject failed/test release", true},
+		{"Finish fails", func(_ *world, o *Options) {
+			o.Finish = func(context.Context, *Execution) (attempt.Completion, error) {
+				return attempt.Completion{}, errors.New("no result")
+			}
+		}, "settled/test failed/test discard release", true},
+		{"the observer detaches", func(w *world, o *Options) {
+			w.runner.err = harness.ErrStopUnconfirmed
+			o.Settlement.Detachment = DetachSilently
+		}, "", false},
+		{"the detachment quarantines", func(w *world, _ *Options) { w.runner.err = harness.ErrStopUnconfirmed }, "unsettled/test", false},
+	} {
+		w := newWorld("ns_1")
+		w.attempts.record = running
+		o := w.options()
+		o.Resume = true
+		o.Settlement = retained
+		tc.arrange(w, &o)
+		res, err := Reattach(t.Context(), o, running, w.runner)
+		if h := w.attempts.history(); h != tc.history {
+			t.Fatalf("%s: history = %q, want %q (err=%v)", tc.name, h, tc.history, err)
+		}
+		var detached *execution.RetainedObserverDetached
+		if errors.As(err, &detached) == tc.released || res.Record.State.Terminal() != tc.released {
+			t.Fatalf("%s: %+v err=%v", tc.name, res.Record, err)
+		}
+		if released := len(w.roster.released) == 1 && w.roster.released[0] == "n1/a1"; released != tc.released || len(w.roster.released) > 1 {
+			t.Fatalf("%s: released = %v, want released=%v", tc.name, w.roster.released, tc.released)
+		}
+		if len(w.sessions.closed) != 0 {
+			t.Fatalf("%s: a kept session was closed: %v", tc.name, w.sessions.closed)
+		}
+	}
+}
