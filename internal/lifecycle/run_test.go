@@ -579,7 +579,7 @@ func TestReattachJoinsAnExecutionFromThePromptOn(t *testing.T) {
 	if err != nil || w.runner.resumes != 1 || w.runner.prompts != 0 || res.Record.State != attempt.Bound || res.Answer != "resumed" || !res.Durable {
 		t.Fatalf("reattach = %+v err=%v resumes=%d prompts=%d", res, err, w.runner.resumes, w.runner.prompts)
 	}
-	if want := "settled/test release finish bound/test close discard"; w.attempts.history() != want {
+	if want := "settled/test finish bound/test close release discard"; w.attempts.history() != want {
 		t.Fatalf("reattach order = %s", w.attempts.history())
 	}
 	replay := newWorld("ns_1")

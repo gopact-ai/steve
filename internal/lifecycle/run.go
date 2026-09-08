@@ -610,8 +610,8 @@ func (e *Execution) close(ctx context.Context, err error) error {
 }
 
 // closeManaged settles a node-owned session the node keeps: the observer
-// detaches when it cannot vouch for the end, and cleans up only after a
-// terminal transition it made itself.
+// detaches when it cannot vouch for the end, and cleans up — session,
+// bindings, workspace — only after a terminal transition it made itself.
 func (e *Execution) closeManaged(ctx context.Context, err error) error {
 	o := e.o
 	id := e.Record.ID
@@ -641,7 +641,6 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 			return e.detach(ctx, StepSettle, markErr, false)
 		}
 	}
-	e.release(ctx)
 	if err != nil {
 		terminal, transition := e.failure(ctx, err)
 		if transition != nil {
@@ -654,12 +653,16 @@ func (e *Execution) closeManaged(ctx context.Context, err error) error {
 	} else if err = e.commitManaged(ctx); err != nil {
 		return err
 	}
+	// The bindings are the node's until the transition is on the record:
+	// an observer that detaches before it leaves them for the one that
+	// comes back.
 	e.durable = true
 	if e.Session != nil && !o.Settlement.KeepSession {
 		if closeErr := Close(ctx, o.Sessions, o.At, e.Session); closeErr != nil {
 			e.cleanup, e.durable = errors.Join(e.cleanup, fmt.Errorf("close settled session: %w", closeErr)), false
 		}
 	}
+	e.release(ctx)
 	e.discard(ctx)
 	return err
 }
