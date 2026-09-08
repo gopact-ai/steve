@@ -62,6 +62,8 @@ M2 阶段 1：控制台管理服务及其单元测试迁入 `internal/admin`，�
 
 M2 阶段 2：成员接入、内容复制与修复、桌面与 SSH 服务并入已有的 `internal/cluster`；应用启动和 SSH HTTP handler 通过注入保持依赖方向。`cmd/steve` 降到 3,366 行 / 55 个内部依赖。纯集群测试随实现迁移；真实应用启动、多进程接入及命令行测试仍在命令包，阶段 3 再迁移应用集成部分。
 
+M2 阶段 3：`internal/app.Build(ctx, Config)` 按原顺序装配运行时、账本恢复、主目录、机群、模型、执行与计划、读模型、控制台、管理、委派与通道，`App.Run(ctx)` 发布入口并运行服务；各装配函数通过接口传递产物。清理栈保留原来的逆序关闭及重启错误处理，失败构建与未进入 Run 的应用也能释放资源。`application_*.go`、调度、清扫、标题、执行预算与应用集成测试一并迁入。`cmd/steve` 最终为 **672 行 / 15 个内部依赖**，只保留参数解析、子命令及 main；893 行的 `serveApplication` 从长函数基线删除，未新增超限函数。领域依赖规则继续禁止引用应用层；仅作为组合根的 `internal/app` 获准装配 HTTP 传输。
+
 ### 状态与动作是类型
 
 - `nodewire.SessionAction` 常量与 `SessionService` 的按动作分发表，替换 `Do` 里的字符串 switch。

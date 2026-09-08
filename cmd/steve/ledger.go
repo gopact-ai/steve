@@ -15,17 +15,6 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 )
 
-// openLedger opens the authority every store lives in. A database older
-// than its incarnation file — a restore from backup — is refused here with
-// the command that fixes it, rather than served with stale leases.
-func openLedger(cfg *config.Config) (*ledger.Ledger, error) {
-	book, err := ledger.Open(filepath.Dir(cfg.Gateway.StatePath), ledger.Options{})
-	if errors.Is(err, ledger.ErrRecoveryRequired) {
-		return nil, fmt.Errorf("%w\nrun: steve ledger recover --config <config>", err)
-	}
-	return book, err
-}
-
 // ledgerCmd is the operator's door into the ledger: inspect the incarnation,
 // rotate it after restoring a backup, and reconcile the effects journal
 // before the gateway serves again.

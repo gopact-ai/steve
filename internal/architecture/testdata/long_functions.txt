@@ -1,6 +1,5 @@
 cmd/mockagent.agent.Prompt 200
 cmd/steve.ledgerCmd 150
-cmd/steve.serveApplication 850
 internal/agentexec.Runner.Prompt 300
 internal/artifact.Store.land 150
 internal/attempt.Service.OpenRelocation 150
