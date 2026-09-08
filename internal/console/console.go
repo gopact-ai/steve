@@ -24,6 +24,7 @@ import (
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/text"
 	"github.com/gopact-ai/steve/internal/turn"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -439,14 +440,7 @@ func placement(p *turn.Placement) *consoleapi.Placement {
 
 // clipTitle is a line's first sentence-ish, short enough for a sidebar.
 func clipTitle(input string) string {
-	line := strings.TrimSpace(input)
-	if i := strings.IndexByte(line, '\n'); i >= 0 {
-		line = strings.TrimSpace(line[:i])
-	}
-	if r := []rune(line); len(r) > 48 {
-		return string(r[:48]) + "…"
-	}
-	return line
+	return text.Clip(strings.TrimSpace(text.FirstLine(strings.TrimSpace(input))), 48)
 }
 
 // Context is where a conversation stands, from the coordinator's own rules.

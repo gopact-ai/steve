@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/skills"
+	"github.com/gopact-ai/steve/internal/text"
 )
 
 // Skills is the skills page: what is found where, what is on, who pins
@@ -136,7 +137,7 @@ func (a *Service) MachineSkills(ctx context.Context) []consoleapi.MachineSkills 
 	found := func(name string, hub bool, own []nodewire.OwnSkill, err error) consoleapi.MachineSkills {
 		item := consoleapi.MachineSkills{Name: nodewire.Place(name), Hub: hub, Skills: []consoleapi.FoundSkill{}}
 		if err != nil {
-			item.Error = Clip(strings.TrimSpace(err.Error()), 200)
+			item.Error = text.Clip(strings.TrimSpace(err.Error()), 200)
 			return item
 		}
 		item.Up = true
@@ -194,7 +195,7 @@ func (a *Service) ImportSkill(ctx context.Context, nodeName, path string) (strin
 	defer cancel()
 	encoded, err := a.Nodes.Files(sctx, a.nodeKey(nodeName), nodewire.FileRequest{Op: nodewire.FileImportSkill, Path: path})
 	if err != nil {
-		return "", fmt.Errorf("从 %s 取 %s：%s", nodewire.Place(a.nodeKey(nodeName)), path, Clip(strings.TrimSpace(err.Error()), 200))
+		return "", fmt.Errorf("从 %s 取 %s：%s", nodewire.Place(a.nodeKey(nodeName)), path, text.Clip(strings.TrimSpace(err.Error()), 200))
 	}
 	if err := skills.UnpackImport(encoded, dest); err != nil {
 		return "", err

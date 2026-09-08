@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/text"
 )
 
 // MessageAPI is the provider boundary used for agent-authored milestones.
@@ -109,7 +110,7 @@ func milestoneContent(msg channel.Message) (string, string, error) {
 	if format != "markdown" && format != "text" {
 		return "", "", fmt.Errorf("feishu: unsupported message format %q", format)
 	}
-	content := truncateRunes(stripMentions(msg.Content), maxMilestoneRunes)
+	content := text.Clip(stripMentions(msg.Content), maxMilestoneRunes)
 	if strings.TrimSpace(content) == "" {
 		return "", "", errors.New("feishu: message content is required")
 	}
@@ -140,7 +141,7 @@ func milestoneCard(markdown, tail string) []byte {
 		"schema": "2.0",
 		"config": map[string]any{
 			"update_multi": true, "width_mode": "default",
-			"summary": map[string]any{"content": truncateRunes(strings.Join(strings.Fields(markdown), " "), maxMilestoneSummaryRunes)},
+			"summary": map[string]any{"content": text.Clip(strings.Join(strings.Fields(markdown), " "), maxMilestoneSummaryRunes)},
 		},
 		"body": map[string]any{
 			"direction": "vertical", "padding": "12px", "elements": elements,
