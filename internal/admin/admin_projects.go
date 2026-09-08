@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -316,7 +316,7 @@ func (a *Service) startProjectClonesLocked(ctx context.Context) {
 			}
 			op, err := a.Projects.BeginClone(ctx, p.ID, c, region, "operator-config", ttl)
 			if err != nil {
-				log.Printf("steve: clone %s not started; ownership unavailable: %v", p.ID, err)
+				slog.Warn(fmt.Sprintf("steve: clone %s not started; ownership unavailable: %v", p.ID, err), "project", p.ID)
 				continue
 			}
 			a.cloning[key] = true
@@ -385,7 +385,7 @@ func (a *Service) clone(op project.CloneOperation, key string, ttl time.Duration
 	defer a.Mu.Unlock()
 	delete(a.cloning, key)
 	if recordErr != nil {
-		log.Printf("steve: clone %s cleanup pending; workspace remains isolated: %v", op.ID, recordErr)
+		slog.Error(fmt.Sprintf("steve: clone %s cleanup pending; workspace remains isolated: %v", op.ID, recordErr), "clone", op.ID)
 	}
 	if a.Repos != nil {
 		a.Repos.wake()

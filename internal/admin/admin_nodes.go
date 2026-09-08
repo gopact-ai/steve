@@ -7,7 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"net/url"
 	"path/filepath"
@@ -158,7 +158,7 @@ func (a *Service) setNodeSettingsLocked(ctx context.Context, name string, set no
 	// The running pieces follow the file.
 	for id, h := range harnesses {
 		if err := a.Manager.Set(id, harness.Config{Command: h.Command, Args: h.Args, ProcessDir: h.ProcessDir, Env: runtime.ApplyEnv(h.Env, id, stateDir), Permission: h.Permission}); err != nil {
-			log.Printf("steve: harness %s: %v", id, err)
+			slog.Error(fmt.Sprintf("steve: harness %s: %v", id, err), "harness", id)
 		}
 	}
 	for id := range old.Harnesses {
@@ -179,8 +179,8 @@ func (a *Service) setNodeSettingsLocked(ctx context.Context, name string, set no
 	if a.Observation != nil {
 		a.Observation.Launch.Wake()
 	}
-	log.Printf("steve: hub settings applied from the page: %d harnesses, %d tools, %d mcp, %d declares, %d tags",
-		len(harnesses), len(set.Tools), len(servers), len(set.Declares), len(set.Capabilities))
+	slog.Info(fmt.Sprintf("steve: hub settings applied from the page: %d harnesses, %d tools, %d mcp, %d declares, %d tags",
+		len(harnesses), len(set.Tools), len(servers), len(set.Declares), len(set.Capabilities)))
 	return a.hubSettings(), saveErr
 }
 
@@ -245,7 +245,7 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 	a.Nodes.Add(name, node.Config{Addr: addr, Token: token, Level: string(level)})
 	a.Fleet.SetNodeLevels(levels)
 	a.Fleet.SetNodeRegions(regions)
-	log.Printf("steve: machine %s added (%s, %s); waiting for it to come up", name, addr, level)
+	slog.Info(fmt.Sprintf("steve: machine %s added (%s, %s); waiting for it to come up", name, addr, level), "node", name)
 	out := consoleapi.AddNodeResult{Name: name, Token: token,
 		Command: fmt.Sprintf("curl -fsSL '%s/bootstrap/%s?token=%s' | bash -l", req.HubURL, name, token)}
 	if binary == "" {
@@ -307,7 +307,7 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 	a.Nodes.Remove(name)
 	a.Fleet.SetNodeLevels(levels)
 	a.Fleet.SetNodeRegions(regions)
-	log.Printf("steve: machine %s removed", name)
+	slog.Info(fmt.Sprintf("steve: machine %s removed", name), "node", name)
 	return saveErr
 }
 
