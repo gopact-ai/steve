@@ -12,6 +12,7 @@ import (
 )
 
 func OpenClusterPeer(ctx context.Context, options cluster.PeerOptions) (*cluster.Peer, error) {
+	configureLogging()
 	options.StartApplication = startPeerApplication
 	options.SSHHandler = func(service cluster.SSHControl, token, origin string) (http.Handler, error) {
 		return httpapi.SSHHandler(service, token, origin)

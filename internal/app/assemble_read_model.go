@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -55,7 +55,7 @@ func assembleReadModel(boot runtimeAssembly, storage ledgerAssembly, machines fl
 		Observations: book.Document("observations"),
 	})
 	if err := view.LoadObservations(); err != nil {
-		log.Printf("steve: observations: %v", err)
+		slog.Error(fmt.Sprintf("steve: observations: %v", err))
 	}
 	// A machine's abilities changing is history too: a tool that vanished
 	// explains the placement that failed after it.
@@ -68,7 +68,7 @@ func assembleReadModel(boot runtimeAssembly, storage ledgerAssembly, machines fl
 	shipper := &adminsvc.SkillShipper{Nodes: nodes, Live: live, Observe: view.Observe}
 	observation.Skills.Store(shipper)
 	if _, err := shipper.Pack(); err != nil {
-		log.Printf("steve: skills could not be packed for nodes: %v", err)
+		slog.Error(fmt.Sprintf("steve: skills could not be packed for nodes: %v", err))
 	}
 	live.After = func() error {
 		if err := ctx.Err(); err != nil {

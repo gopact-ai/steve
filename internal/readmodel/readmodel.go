@@ -16,7 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -1032,7 +1032,7 @@ func (m *Model) Observe(kind, subject, text string) {
 	if doc != nil {
 		if raw, err := json.Marshal(list); err == nil {
 			if err := doc.Save(raw); err != nil {
-				log.Printf("readmodel: save observations: %v", err)
+				slog.Error(fmt.Sprintf("readmodel: save observations: %v", err))
 			}
 		}
 	}

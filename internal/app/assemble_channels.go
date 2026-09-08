@@ -2,7 +2,8 @@ package app
 
 import (
 	"context"
-	"log"
+	"fmt"
+	"log/slog"
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
@@ -50,7 +51,7 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 		}, gw.HandleMessage)
 		cancelConnect()
 		if err != nil {
-			log.Printf("steve: Feishu initialization failed; Console remains available")
+			slog.Error("steve: Feishu initialization failed; Console remains available")
 			channelSettings.SetRuntimeError("Feishu initialization failed; check the application credentials and restart the Hub")
 			channel = nil
 		} else {
@@ -87,7 +88,7 @@ func assembleChannels(boot runtimeAssembly, storage ledgerAssembly, work executi
 		if r.ChatID == console.ChatID || console.IsConsole(r.ConversationID) {
 			if err := cons.Resume(ctx, r.ConversationID, r.TaskID, r.Member,
 				catalogText.T(i18n.TaskResumeNotice, r.TaskID), catalogText.T(i18n.TaskResumeManual, r.Goal), coordinator.ReviveSession); err != nil {
-				log.Printf("console: resume task #%s: %v", r.TaskID, err)
+				slog.Error(fmt.Sprintf("console: resume task #%s: %v", r.TaskID, err), "task", r.TaskID, "conversation", r.ConversationID)
 			}
 			return
 		}

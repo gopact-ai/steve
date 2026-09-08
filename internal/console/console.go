@@ -12,7 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 	"sync"
@@ -268,7 +268,7 @@ func (s *Service) save() error {
 		err = s.doc.Save(raw)
 	}
 	if err != nil {
-		log.Printf("console: save transcript: %v", err)
+		slog.Error(fmt.Sprintf("console: save transcript: %v", err))
 		return fmt.Errorf("console: save transcript: %w", err)
 	}
 	return nil
@@ -341,7 +341,7 @@ func (s *Service) autoTitle(conversation, prompt, reply string) {
 	defer cancel()
 	title, err := s.titler.Title(ctx, prompt, reply)
 	if err != nil {
-		log.Printf("console: title %s: %v", conversation, err)
+		slog.Error(fmt.Sprintf("console: title %s: %v", conversation, err), "conversation", conversation)
 		return
 	}
 	title = clipTitle(title)
@@ -868,7 +868,7 @@ func (s *Service) Resume(ctx context.Context, conversation, taskID, member, noti
 	if err := revive(conversation, member); err != nil {
 		return fmt.Errorf("revive session for task #%s: %w", taskID, err)
 	}
-	log.Printf("console: resuming task #%s conversation=%s member=%s", taskID, conversation, member)
+	slog.Info(fmt.Sprintf("console: resuming task #%s conversation=%s member=%s", taskID, conversation, member), "task", taskID, "conversation", conversation, "member", member)
 	_, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true})
 	return err
 }

@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/attempt"
@@ -26,7 +26,7 @@ func sweepIdleTasks(ctx context.Context, tasks *task.Store, attempts *attempt.Se
 	defer ticker.Stop()
 	for {
 		for _, t := range tasks.CloseIdle(idleTaskAge, live) {
-			log.Printf("steve: task #%s closed after %s without a word", t.ID, idleTaskAge)
+			slog.Info(fmt.Sprintf("steve: task #%s closed after %s without a word", t.ID, idleTaskAge), "task", t.ID)
 			if view != nil {
 				view.Observe("task.idle", t.ID, fmt.Sprintf("task #%s (%s) closed: quiet for more than %s", t.ID, t.Member, idleTaskAge))
 			}
@@ -50,10 +50,10 @@ func sweepAttempts(ctx context.Context, attempts *attempt.Service) {
 		case <-ticker.C:
 			expired, err := attempts.Sweep(ctx)
 			if err != nil {
-				log.Printf("steve: sweep attempts: %v", err)
+				slog.Error(fmt.Sprintf("steve: sweep attempts: %v", err))
 			}
 			for _, r := range expired {
-				log.Printf("steve: expired attempt %s", attempt.Describe(r))
+				slog.Warn(fmt.Sprintf("steve: expired attempt %s", attempt.Describe(r)), "attempt", r.ID, "task", r.TaskID, "node", r.Node)
 			}
 		}
 	}

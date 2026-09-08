@@ -5,7 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net"
 	"strings"
 	"time"
@@ -70,7 +70,7 @@ func (g *Gateway) Notify(n Notice) {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if _, err := tr.ReplyText(ctx, n.MessageID, text); err != nil {
-		log.Printf("gateway: notice for task #%s: %v", n.TaskID, err)
+		slog.Error(fmt.Sprintf("gateway: notice for task #%s: %v", n.TaskID, err), "task", n.TaskID, "message", n.MessageID)
 	}
 }
 
@@ -83,7 +83,7 @@ func (g *Gateway) Notify(n Notice) {
 // own history on session load, so "continue" means exactly that.
 func (g *Gateway) Revive(revivals []Revival, revive func(conversationID, member string) error) {
 	if _, ok := g.ch.(textReplier); !ok {
-		log.Printf("gateway: channel cannot post resume notices; %d tasks stay stopped", len(revivals))
+		slog.Warn(fmt.Sprintf("gateway: channel cannot post resume notices; %d tasks stay stopped", len(revivals)))
 		return
 	}
 	for _, r := range revivals {
@@ -131,15 +131,15 @@ func (g *Gateway) Deliver(r Revival, notice, prompt string) error {
 func (g *Gateway) ResumeTask(r Revival, revive func(conversationID, member string) error) {
 	tr, ok := g.ch.(textReplier)
 	if !ok {
-		log.Printf("gateway: channel cannot post resume notices; task #%s stays stopped", r.TaskID)
+		slog.Warn(fmt.Sprintf("gateway: channel cannot post resume notices; task #%s stays stopped", r.TaskID), "task", r.TaskID)
 		return
 	}
 	if r.ConversationID == "" || r.MessageID == "" || r.Member == "" {
-		log.Printf("gateway: task #%s not resumable: incomplete anchor", r.TaskID)
+		slog.Warn(fmt.Sprintf("gateway: task #%s not resumable: incomplete anchor", r.TaskID), "task", r.TaskID)
 		return
 	}
 	if err := revive(r.ConversationID, r.Member); err != nil {
-		log.Printf("gateway: revive session for task #%s: %v", r.TaskID, err)
+		slog.Error(fmt.Sprintf("gateway: revive session for task #%s: %v", r.TaskID, err), "task", r.TaskID, "conversation", r.ConversationID, "member", r.Member)
 		return
 	}
 	if !r.Manual {
@@ -157,10 +157,10 @@ func (g *Gateway) ResumeTask(r Revival, revive func(conversationID, member strin
 	noticeID, err := tr.ReplyText(ctx, r.MessageID, g.text.T(notice, r.TaskID))
 	cancel()
 	if err != nil || noticeID == "" {
-		log.Printf("gateway: post resume notice for task #%s: %v", r.TaskID, err)
+		slog.Error(fmt.Sprintf("gateway: post resume notice for task #%s: %v", r.TaskID, err), "task", r.TaskID, "conversation", r.ConversationID, "message", r.MessageID)
 		return
 	}
-	log.Printf("gateway: resuming task #%s conversation=%s member=%s manual=%t", r.TaskID, r.ConversationID, r.Member, r.Manual)
+	slog.Info(fmt.Sprintf("gateway: resuming task #%s conversation=%s member=%s manual=%t", r.TaskID, r.ConversationID, r.Member, r.Manual), "task", r.TaskID, "conversation", r.ConversationID, "member", r.Member)
 	g.HandleMessage(feishu.InboundMessage{
 		ConversationID: r.ConversationID,
 		ChatID:         r.ChatID,
@@ -231,7 +231,7 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 	if f.Member != "" {
 		text = "@" + f.Member + " " + text
 	}
-	log.Printf("gateway: firing schedule #%s conversation=%s member=%s", f.ScheduleID, f.ConversationID, f.Member)
+	slog.Info(fmt.Sprintf("gateway: firing schedule #%s conversation=%s member=%s", f.ScheduleID, f.ConversationID, f.Member), "schedule", f.ScheduleID, "conversation", f.ConversationID, "member", f.Member)
 	msg := feishu.InboundMessage{
 		ConversationID: f.ConversationID,
 		ChatID:         f.ChatID,

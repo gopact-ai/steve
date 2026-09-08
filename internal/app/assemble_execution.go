@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"time"
@@ -77,7 +77,7 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 		return nil, fmt.Errorf("recover landings: %w", err)
 	} else {
 		for _, l := range recovered {
-			log.Printf("steve: recovered landing %s of %s into %s: %s", l.ID, l.Artifact, l.Project, l.State)
+			slog.Info(fmt.Sprintf("steve: recovered landing %s of %s into %s: %s", l.ID, l.Artifact, l.Project, l.State), "landing", l.ID, "artifact", l.Artifact, "project", l.Project)
 		}
 	}
 	tasks, err := task.OpenLedger(book, filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "tasks.json"))
@@ -100,12 +100,12 @@ func assembleExecution(input inputAssembly, boot runtimeAssembly, storage ledger
 	coordinator.SetSchedules(schedules)
 	coordinator.SetCatalog(catalogText)
 	if names := live.Map.EnabledNames(); len(names) > 0 {
-		log.Printf("steve: isolated runtimes; skills=%s", strings.Join(names, ","))
+		slog.Info(fmt.Sprintf("steve: isolated runtimes; skills=%s", strings.Join(names, ",")))
 	} else {
-		log.Printf("steve: isolated runtimes; skills=none")
+		slog.Info("steve: isolated runtimes; skills=none")
 	}
 	{
-		log.Printf("steve: serving at most %d conversations at once", gateway.PoolSize())
+		slog.Info(fmt.Sprintf("steve: serving at most %d conversations at once", gateway.PoolSize()))
 	}
 	gw := gateway.New(coordinator)
 	gw.SetCatalog(catalogText)

@@ -24,6 +24,7 @@ type App struct {
 // Build assembles the subsystems in startup order. Background owners started
 // during assembly retain ctx, and failed builds unwind every completed step.
 func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
+	configureLogging()
 	life := &applicationLifetime{}
 	built := false
 	defer func() {

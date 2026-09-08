@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/agenttools"
@@ -131,7 +131,7 @@ func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttoo
 	a.Cfg.Agents = candidate.Agents
 	a.Catalog.Publish(prepared)
 	result.Registered = true
-	log.Printf("steve: selected agent registered agent=%s node=%s harness=%s", id, name, canonical.Harness)
+	slog.Info(fmt.Sprintf("steve: selected agent registered agent=%s node=%s harness=%s", id, name, canonical.Harness), "agent", id, "node", name, "harness", canonical.Harness)
 	return result, errors.Join(installErr, saveErr)
 }
 

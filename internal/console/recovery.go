@@ -3,7 +3,8 @@ package console
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -435,7 +436,7 @@ func (s *Service) resultReply(ctx context.Context, exchange Exchange, work *proc
 	reply := consoleapi.Reply{At: time.Now().UTC(), Conversation: exchange.Conversation, ProjectID: exchange.ExpectedProject, Title: result.Title, Text: result.Text, Kind: "reply", Process: work.summary(), Refs: exchange.Refs, Materials: exchange.Materials}
 	if result.Attempt != "" && s.inspector != nil {
 		if changes, cerr := s.inspector.Changes(ctx, result.Attempt); cerr != nil {
-			log.Printf("console: changes of attempt %s: %v", result.Attempt, cerr)
+			slog.Error(fmt.Sprintf("console: changes of attempt %s: %v", result.Attempt, cerr), "attempt", result.Attempt, "conversation", exchange.Conversation, "exchange", exchange.ID)
 		} else if changes != nil {
 			reply.Changes = changes
 		}

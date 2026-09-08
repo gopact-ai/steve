@@ -3,7 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -21,6 +21,7 @@ import (
 )
 
 func Doctor(configPath string, timeout time.Duration) error {
+	configureLogging()
 	cfg, catalog, manager, live, err := load(configPath)
 	if err != nil {
 		return err
@@ -53,7 +54,7 @@ func Doctor(configPath string, timeout time.Duration) error {
 		if err != nil {
 			return err
 		}
-		log.Printf("steve: feishu bot %s %s", identity.Name, identity.OpenID)
+		slog.Info(fmt.Sprintf("steve: feishu bot %s %s", identity.Name, identity.OpenID))
 	}
 
 	// Nodes are probed before agents: availability is a real dial, not a
@@ -77,7 +78,7 @@ func Doctor(configPath string, timeout time.Duration) error {
 		return fmt.Errorf("reconcile configured projects: %w", err)
 	}
 	for _, note := range cfg.Migrated {
-		log.Printf("steve: config migrated: %s", note)
+		slog.Info(fmt.Sprintf("steve: config migrated: %s", note))
 	}
 	for _, g := range cfg.GrantList() {
 		if _, err := projects.Grant(context.Background(), g.Project, g.Principal, g.Role, g.By); err != nil {
@@ -87,25 +88,25 @@ func Doctor(configPath string, timeout time.Duration) error {
 	observation, closeObservation := newLocalObservation(ctx, cfg)
 	defer closeObservation()
 	self := adminsvc.ObservedHubAdvert(cfg, observation)
-	log.Printf("steve: hub %s — %s %v, %s/%s, level=%s, harnesses=%s, caps=%v",
-		self.Node, self.Hostname, self.IPs, self.OS, self.Arch, cfg.HubLevel(), adminsvc.HarnessSummary(self), self.Capabilities)
+	slog.Info(fmt.Sprintf("steve: hub %s — %s %v, %s/%s, level=%s, harnesses=%s, caps=%v",
+		self.Node, self.Hostname, self.IPs, self.OS, self.Arch, cfg.HubLevel(), adminsvc.HarnessSummary(self), self.Capabilities), "node", self.Node)
 	reportGit("hub "+self.Node, self)
 	for _, h := range self.Harnesses {
 		if h.Missing != "" {
-			log.Printf("steve: hub cannot run %s: %s", h.ID, h.Missing)
+			slog.Warn(fmt.Sprintf("steve: hub cannot run %s: %s", h.ID, h.Missing), "node", self.Node, "harness", h.ID)
 		}
 	}
 	for _, status := range nodes.Probe(ctx) {
 		if !status.Up {
 			return fmt.Errorf("node %q at %s unreachable: %s", status.Name, status.Addr, status.LastError)
 		}
-		log.Printf("steve: node %s up — %s/%s, level=%s, harnesses=%s, caps=%v",
+		slog.Info(fmt.Sprintf("steve: node %s up — %s/%s, level=%s, harnesses=%s, caps=%v",
 			status.Name, status.Advert.OS, status.Advert.Arch, status.Level,
-			adminsvc.HarnessSummary(status.Advert), status.Advert.Capabilities)
+			adminsvc.HarnessSummary(status.Advert), status.Advert.Capabilities), "node", status.Name)
 		reportGit("node "+status.Name, status.Advert)
 		for _, h := range status.Advert.Harnesses {
 			if h.Missing != "" {
-				log.Printf("steve: node %s cannot run %s: %s", status.Name, h.ID, h.Missing)
+				slog.Warn(fmt.Sprintf("steve: node %s cannot run %s: %s", status.Name, h.ID, h.Missing), "node", status.Name, "harness", h.ID)
 			}
 		}
 	}
@@ -129,7 +130,7 @@ func Doctor(configPath string, timeout time.Duration) error {
 		// yet, and that is reported rather than papered over.
 		workspace, ok := probeWorkspace(declared, selected.Node)
 		if !ok {
-			log.Printf("steve: agent %s on %s: no project is homed there; session not probed", selected.ID, at)
+			slog.Warn(fmt.Sprintf("steve: agent %s on %s: no project is homed there; session not probed", selected.ID, at), "agent", selected.ID, "node", selected.Node, "harness", selected.Harness)
 			continue
 		}
 		session, err := manager.OpenSession(ctx, at, "", workspace, capabilities.MCPServers)
@@ -141,11 +142,11 @@ func Doctor(configPath string, timeout time.Duration) error {
 		}
 	}
 	if names := live.Map.EnabledNames(); len(names) > 0 {
-		log.Printf("steve: skills %s", strings.Join(names, ","))
+		slog.Info(fmt.Sprintf("steve: skills %s", strings.Join(names, ",")))
 	} else {
-		log.Printf("steve: skills none")
+		slog.Info("steve: skills none")
 	}
-	log.Printf("steve: doctor passed")
+	slog.Info("steve: doctor passed")
 	return nil
 }
 

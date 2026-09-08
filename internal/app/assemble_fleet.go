@@ -2,7 +2,7 @@ package app
 
 import (
 	"fmt"
-	"log"
+	"log/slog"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -44,7 +44,7 @@ func assembleFleet(life lifetime, input inputAssembly, boot runtimeAssembly) (fl
 		return nil, fmt.Errorf("reconcile configured projects: %w", err)
 	}
 	for _, note := range cfg.Migrated {
-		log.Printf("steve: config migrated: %s", note)
+		slog.Info(fmt.Sprintf("steve: config migrated: %s", note))
 	}
 
 	// The roster is what turns "which agents exist" into "which agents can

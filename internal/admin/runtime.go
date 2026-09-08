@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -241,7 +241,7 @@ func (s *SkillShipper) entries() ([]skills.Entry, bool) {
 func (s *SkillShipper) Ship(ctx context.Context, name string) {
 	b, err := s.Pack()
 	if err != nil {
-		log.Printf("steve: skills for %s: %v", name, err)
+		slog.Error(fmt.Sprintf("steve: skills for %s: %v", name, err), "node", name)
 		return
 	}
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
@@ -250,7 +250,7 @@ func (s *SkillShipper) Ship(ctx context.Context, name string) {
 		if strings.Contains(err.Error(), "does not take skill bundles") {
 			return
 		}
-		log.Printf("steve: skills to %s: %v", name, err)
+		slog.Error(fmt.Sprintf("steve: skills to %s: %v", name, err), "node", name)
 		if s.Observe != nil {
 			s.Observe("node.skills", name, fmt.Sprintf("%s: skills %s not materialized: %v", name, b.Hash[:12], err))
 		}
