@@ -1253,6 +1253,23 @@ checks["readmodel-unknown"] = async (f) => {
     await f.page.getByText("活动状态未知", { exact: true }).waitFor();
 };
 
+checks["fleet-live-activity"] = async (f) => {
+    // The activity column follows streamed progress, ahead of the 10 s
+    // snapshot floor, and without re-reading /state per chunk.
+    const state = { ...usageState(usageFixture()), tasks: [task("11", A, "scratch")], agents: [{ id: "test-agent", harness: "mock", eligible: true, busy: 1, activities: [] }] };
+    let stateReads = 0;
+    await f.page.route("**/state", (route) => { stateReads++; return route.fulfill({ json: state }); });
+    await f.page.goto(`${app.url}/#/fleet`); await f.page.reload();
+    await f.page.getByText("test-agent", { exact: true }).first().waitFor();
+    await f.page.getByText("空闲", { exact: true }).first().waitFor();
+    const reads = stateReads;
+    await f.emit({ kind: "console.progress", task_id: "11", progress: { agent: "test-agent", tools: [{ id: "t1", kind: "shell", name: "go test ./...", status: "running" }] } });
+    await f.page.getByText(/#11 .*shell/).first().waitFor();
+    await f.emit({ kind: "console.progress", task_id: "11", progress: { agent: "test-agent", tools: [{ id: "t1", kind: "shell", name: "go test ./...", status: "completed" }, { id: "t2", kind: "read", name: "Read README", status: "running" }] } });
+    await f.page.getByText(/#11 .*read/).first().waitFor();
+    assert.equal(stateReads, reads, "Streamed progress must update the activity column without re-reading /state");
+};
+
 checks["usage-dashboard-ranges"] = async (f) => {
     const usage = usageFixture();
     await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
