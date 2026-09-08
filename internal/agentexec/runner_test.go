@@ -178,6 +178,9 @@ func TestAuxiliaryValidationAndPromptFailuresStillSettle(t *testing.T) {
 			if !errors.Is(err, cause) || out.Attempt.State != attempt.Failed {
 				t.Fatalf("out=%+v err=%v", out, err)
 			}
+			if errors.Is(err, context.Canceled) {
+				t.Fatalf("cleanup mislabeled the failure as canceled: %v", err)
+			}
 			var invalid *ValidationError
 			if errors.As(err, &invalid) != (stage == "validation") {
 				t.Fatalf("incorrect correction eligibility: %v", err)
@@ -213,6 +216,51 @@ func TestAuxiliarySlotAdmissionWaitsAndDoesNotSpendBeforeEntry(t *testing.T) {
 	}
 	if _, err := w.runner.Prompt(t.Context(), w.spec(attempt.KindVerify), "work", nil); err != nil {
 		t.Fatal(err)
+	}
+}
+
+type interruptedWorkspaces struct {
+	Workspaces
+	cancel context.CancelFunc
+	err    error
+}
+
+func (w interruptedWorkspaces) Materialize(ctx context.Context, _ project.Request) (project.Workspace, error) {
+	if w.cancel != nil {
+		w.cancel()
+	}
+	<-ctx.Done()
+	return project.Workspace{}, w.err
+}
+
+func TestAuxiliaryPreparationPreservesCancellationAndDependencyError(t *testing.T) {
+	for _, deadline := range []bool{false, true} {
+		t.Run(map[bool]string{false: "canceled", true: "deadline"}[deadline], func(t *testing.T) {
+			w := world(t, 1)
+			ctx, cancel := context.WithCancel(t.Context())
+			defer cancel()
+			cause := errors.New("dependency interrupted")
+			workspaces := interruptedWorkspaces{Workspaces: w.runner.workspaces, cancel: cancel, err: cause}
+			spec := w.spec(attempt.KindVerify)
+			want := context.Canceled
+			if deadline {
+				workspaces.cancel = nil
+				spec.Timeout = time.Second
+				want = context.DeadlineExceeded
+			}
+			w.runner.workspaces = workspaces
+			_, err := w.runner.Prompt(ctx, spec, "work", nil)
+			if !errors.Is(err, want) || !errors.Is(err, cause) {
+				t.Fatalf("cancellation or dependency failure lost: %v", err)
+			}
+			work, ok := w.tasks.Get(w.work.ID)
+			if !ok {
+				t.Fatal("task disappeared")
+			}
+			if w.sessions.opened.Load() != 0 || work.Budget.Turns != 0 {
+				t.Fatalf("canceled preparation executed or spent budget: opened=%d turns=%d", w.sessions.opened.Load(), work.Budget.Turns)
+			}
+		})
 	}
 }
 

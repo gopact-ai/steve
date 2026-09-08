@@ -116,7 +116,7 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 	if spec.TurnID != "" {
 		prior, found, err := r.attempts.LatestForTurn(parent, spec.TurnID)
 		if err != nil {
-			return out, err
+			return out, errors.Join(err, parent.Err())
 		}
 		if found && prior.Kind == spec.Kind && (strings.HasPrefix(prior.Session, "ns_") || PendingOpen(prior)) {
 			if prior.TaskID != spec.TaskID || prior.WorkID != identity {
@@ -131,6 +131,15 @@ func (r *Runner) Prompt(parent context.Context, spec Spec, prompt string, valida
 	}
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
+	// Dependencies such as SQLite can return their own interruption error
+	// when a prompt expires. Keep both errors so callers can recognize the
+	// cancellation without losing evidence of a failed or uncertain operation.
+	// Capture this context: child contexts are also canceled during cleanup.
+	defer func(promptCtx context.Context) {
+		if runErr != nil && promptCtx.Err() != nil && !errors.Is(runErr, promptCtx.Err()) {
+			runErr = errors.Join(runErr, promptCtx.Err())
+		}
+	}(ctx)
 	id := attempt.NewID()
 	scope, err := r.executions.Begin(ctx, execution.Key{TaskID: spec.TaskID, InstanceID: spec.TurnID, AttemptID: id})
 	if err != nil {

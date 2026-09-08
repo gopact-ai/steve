@@ -111,6 +111,7 @@ export function ConsolePage() {
     const activeConversation = useRef(conversation);
     activeConversation.current = conversation;
     const queueRequest = useRef(0);
+    const queueRevision = useRef(0);
     const transcriptRequest = useRef(0);
     const transcriptRevision = useRef(0);
     // Quotes ride with the next message wherever it is sent from; they
@@ -164,14 +165,22 @@ export function ConsolePage() {
         if (activeConversation.current !== conversation) return;
         const request = ++queueRequest.current;
         try {
-            const data = await fetchQueue(conversation);
-            if (activeConversation.current !== conversation || request !== queueRequest.current) return;
-            setQueueReadError(null);
-            setExchanges(data.queue || []);
-            await reconcileSubmission(conversation, data.queue || []);
-            if (activeConversation.current !== conversation || request !== queueRequest.current) return;
-            const running = [...(data.queue || [])].filter((e) => ["running", "recovering", "awaiting-user"].includes(e.state)).sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""))[0];
-            setLive((cur) => running ? (cur?.exchangeID === running.id ? cur : { since: running.started_at || running.enqueued_at, exchangeID: running.id, steps: {}, order: [] }) : null);
+            // Lifecycle events can overtake HTTP and draft-lock reconciliation.
+            // Retry once; continuous traffic converges through the regular poll.
+            for (let attempt = 0; attempt < 2; attempt++) {
+                const revision = queueRevision.current;
+                const data = await fetchQueue(conversation);
+                if (activeConversation.current !== conversation || request !== queueRequest.current) return;
+                if (revision !== queueRevision.current) continue;
+                await reconcileSubmission(conversation, data.queue || []);
+                if (activeConversation.current !== conversation || request !== queueRequest.current) return;
+                if (revision !== queueRevision.current) continue;
+                setQueueReadError(null);
+                setExchanges(data.queue || []);
+                const running = [...(data.queue || [])].filter((e) => ["running", "recovering", "awaiting-user"].includes(e.state)).sort((a, b) => (b.started_at || "").localeCompare(a.started_at || ""))[0];
+                setLive((cur) => running ? (cur?.exchangeID === running.id ? cur : { since: running.started_at || running.enqueued_at, exchangeID: running.id, steps: {}, order: [] }) : null);
+                return;
+            }
         } catch (e) {
             if (activeConversation.current === conversation && request === queueRequest.current) setQueueReadError({ conversation, error: e });
         }
@@ -238,6 +247,7 @@ export function ConsolePage() {
         if (fresh.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.meta" || ev.kind === "console.queue")) loadConversations();
         const mine = fresh.filter((ev) => ev.conversation === conversation);
         if (!mine.length) return;
+        if (mine.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.queue")) queueRevision.current++;
         const lines = mine.filter((ev) => ["console.sent", "console.reply", "console.notice", "console.milestone", "console.recalled"].includes(ev.kind));
         if (lines.length) transcriptRevision.current++;
         setLive((cur) => mine.reduce(applyLive, cur));
