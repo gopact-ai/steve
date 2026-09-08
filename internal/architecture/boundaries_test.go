@@ -36,10 +36,11 @@ func TestDependenciesRespectDomainAndTransportBoundaries(t *testing.T) {
 			}
 			dependency := strings.TrimPrefix(importPath, "github.com/gopact-ai/steve/internal/")
 			top := strings.Split(dependency, "/")[0]
-			if top == "httpapi" && owner != "httpapi" {
+			// app is the composition root; other implementations consume API ports.
+			if top == "httpapi" && owner != "httpapi" && owner != "app" {
 				t.Errorf("%s: implementation imports HTTP transport %s", rel, dependency)
 			}
-			if owner == "consoleapi" && (top == "httpapi" || top == "readmodel" || top == "console" || top == "gateway" || top == "turn") {
+			if owner == "consoleapi" && (top == "app" || top == "admin" || top == "cluster" || top == "httpapi" || top == "readmodel" || top == "console" || top == "gateway" || top == "turn") {
 				t.Errorf("%s: API contract imports implementation %s", rel, dependency)
 			}
 			if domains[owner] && (top == "app" || top == "admin" || top == "cluster" || top == "httpapi" || top == "consoleapi" || top == "readmodel" || top == "console" || top == "gateway" || top == "turn" || top == "delegate" || top == "exec") {

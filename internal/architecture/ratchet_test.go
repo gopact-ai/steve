@@ -25,10 +25,10 @@ const (
 	// unless the baseline already lists it.
 	longFunction = 150
 	// cmdSteveMaxLines bounds the composition root, which only shrinks.
-	cmdSteveMaxLines = 3366
+	cmdSteveMaxLines = 672
 	// cmdSteveMaxFanOut bounds how many internal packages cmd/steve wires
 	// directly, which only shrinks.
-	cmdSteveMaxFanOut = 55
+	cmdSteveMaxFanOut = 15
 )
 
 // stateWords are the bare string states and actions that are still

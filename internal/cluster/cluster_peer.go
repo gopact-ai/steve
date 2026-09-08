@@ -61,7 +61,7 @@ type ApplicationServer interface {
 }
 
 type PeerOptions struct {
-	StartApplication func(context.Context, *Peer, Activation, func(PeerApplicationEndpoint) error) (Deactivate, error)
+	StartApplication func(context.Context, ApplicationHost, Activation, func(PeerApplicationEndpoint) error) (Deactivate, error)
 	SSHHandler       func(SSHControl, string, string) (http.Handler, error)
 	ConfigPath       string
 	ClusterPath      string
