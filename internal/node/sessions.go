@@ -40,6 +40,59 @@ type SessionService struct {
 	closed              bool
 	unverifiedProcesses bool
 	wg                  sync.WaitGroup
+	capMu               sync.Mutex
+	capabilities        map[string]harnessCapabilities
+}
+
+// harnessCapabilities is what starting a harness once said about the agent
+// behind it. The answer belongs to the binary, not to a session: the hub
+// asks before every turn, and each answer used to cost an adapter process.
+type harnessCapabilities struct {
+	spec            string
+	supportsHTTPMCP bool
+	at              time.Time
+}
+
+// capabilityTTL bounds how long a probe answers for a binary nobody has
+// started since; a session open refreshes it with the agent's own answer.
+const capabilityTTL = time.Hour
+
+func (s *SessionService) hostConfig(harnessID string, spec HarnessSpec, broker *permission.Broker) acphost.Config {
+	return acphost.Config{NoRestart: true, Command: spec.Command, Args: spec.Args, ProcessDir: s.server.processDir(spec), Env: steveruntime.ApplyEnv(spec.Env, harnessID, s.server.conf().StateDir), Permission: broker}
+}
+
+// capabilityKey names the binary a capability answer was taken from: the
+// same command, arguments, directory and environment.
+func capabilityKey(cfg acphost.Config) string {
+	return sessionHash(struct {
+		Command, ProcessDir string
+		Args, Env           []string
+	}{cfg.Command, cfg.ProcessDir, cfg.Args, cfg.Env})
+}
+
+func (s *SessionService) cachedCapabilities(harnessID, key string) (harnessCapabilities, bool) {
+	s.capMu.Lock()
+	defer s.capMu.Unlock()
+	c, ok := s.capabilities[harnessID]
+	if !ok || c.spec != key || time.Since(c.at) > capabilityTTL {
+		return harnessCapabilities{}, false
+	}
+	return c, true
+}
+
+func (s *SessionService) rememberCapabilities(harnessID, key string, supportsHTTPMCP bool) {
+	s.capMu.Lock()
+	defer s.capMu.Unlock()
+	if s.capabilities == nil {
+		s.capabilities = map[string]harnessCapabilities{}
+	}
+	s.capabilities[harnessID] = harnessCapabilities{spec: key, supportsHTTPMCP: supportsHTTPMCP, at: time.Now()}
+}
+
+func (s *SessionService) forgetCapabilities(harnessID string) {
+	s.capMu.Lock()
+	defer s.capMu.Unlock()
+	delete(s.capabilities, harnessID)
 }
 
 type ownedSession struct {
@@ -182,9 +235,19 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 			return nodewire.SessionState{}, sessionError("unavailable", "harness is not registered on this node")
 		}
 		broker, _ := permission.New(permission.PolicyRead)
-		host := acphost.New(acphost.Config{NoRestart: true, Command: spec.Command, Args: spec.Args, ProcessDir: s.server.processDir(spec), Env: steveruntime.ApplyEnv(spec.Env, req.Harness, s.server.conf().StateDir), Permission: broker})
+		cfg := s.hostConfig(req.Harness, spec, broker)
+		key := capabilityKey(cfg)
+		if cached, ok := s.cachedCapabilities(req.Harness, key); ok {
+			return nodewire.SessionState{Binding: req.Binding, Harness: req.Harness, SupportsHTTPMCP: cached.supportsHTTPMCP}, nil
+		}
+		// Starting the adapter once says what its agent accepts; the answer
+		// is kept so the next turn does not pay for a process of its own.
+		host := acphost.New(cfg)
 		defer host.Close()
 		supported, err := host.SupportsHTTPMCP(ctx)
+		if err == nil {
+			s.rememberCapabilities(req.Harness, key, supported)
+		}
 		return nodewire.SessionState{Binding: req.Binding, Harness: req.Harness, SupportsHTTPMCP: supported}, err
 	}
 	if req.Action == "open" && req.ID == "" {
@@ -377,7 +440,8 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		s.mu.Unlock()
 		return nodewire.SessionState{}, err
 	}
-	host := acphost.New(acphost.Config{NoRestart: true, Command: spec.Command, Args: spec.Args, ProcessDir: s.server.processDir(spec), Env: steveruntime.ApplyEnv(spec.Env, req.Harness, s.server.conf().StateDir), Permission: broker})
+	hostCfg := s.hostConfig(req.Harness, spec, broker)
+	host := acphost.New(hostCfg)
 	one := &ownedSession{service: s, host: host, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
 	one.record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: sessionConfigHash(req), State: nodewire.SessionState{ID: id, Binding: req.Binding, Harness: req.Harness, State: "opening", Questions: []nodewire.SessionQuestion{}}, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}}
 	if err := one.commitLocked(one.record); err != nil {
@@ -398,7 +462,14 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 	native, generation, openErr := host.OpenSession(openCtx, "", acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
 	httpMCP := false
 	if openErr == nil {
-		httpMCP, _ = host.SupportsHTTPMCP(openCtx)
+		// The agent that actually runs is the authority on what it accepts:
+		// its answer replaces whatever a probe said.
+		if supported, err := host.SupportsHTTPMCP(openCtx); err == nil {
+			httpMCP = supported
+			s.rememberCapabilities(req.Harness, capabilityKey(hostCfg), supported)
+		}
+	} else {
+		s.forgetCapabilities(req.Harness)
 	}
 	one.mu.Lock()
 	next := one.copyLocked()
