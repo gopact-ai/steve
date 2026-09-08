@@ -86,6 +86,14 @@ Open(spec) → Admit → Prepare(workspace, base) → OpenSession → Arm(runnin
 - **临时接口断言**与**内联字符串状态**：同样的基线棘轮。
 - 现有的领域/传输依赖方向测试保留。
 
+## 已知抖动的测试
+
+CI 的 GitHub 托管 runner 负载不稳时，以下时序敏感测试会偶发失败（本地与多数 CI 运行通过），属于 M6 要处理的清理项：把"租约 TTL 与续期间隔"的比值放大、或改用可控时钟，而不是靠重跑。
+
+- `internal/artifact` `TestLandingDriverRenewsAndRejectsStaleTransitions`（"landing driver expired during work"）
+- `internal/exec` `TestRunDriverRenewsAndFencesAReplacedOwner`（"driver lease expired"）
+- `cmd/steve-node` `TestNodeCommandReexecutesAndKeepsDurableCommandIdentity`（"node is busy; release idle sessions before restarting"）
+
 ## 实施顺序（不构成设计约束）
 
 | 步 | 内容 | 验收 | 估计 |
