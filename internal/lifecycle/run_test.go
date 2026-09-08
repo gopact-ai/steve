@@ -29,6 +29,8 @@ type fakeAttempts struct {
 	lost    chan struct{}
 	openErr error
 	failAt  attempt.State
+	// unsettledErr fails the quarantine marker.
+	unsettledErr error
 	// ttl, when set, makes the lease real: Heartbeat renews it every
 	// ttl/3, and a transition on an expired lease is lost.
 	ttl      time.Duration
@@ -146,6 +148,9 @@ func (f *fakeAttempts) MarkSessionSettled(_ context.Context, _, actor string) er
 }
 func (f *fakeAttempts) MarkUnsettled(_ context.Context, _, actor string, cause error, usage *attempt.Usage) error {
 	f.log("unsettled/" + actor)
+	if f.unsettledErr != nil {
+		return f.unsettledErr
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.record.Unsettled = true
@@ -208,12 +213,20 @@ func (f *fakeSessions) CloseSession(_ context.Context, _ harness.Placement, id s
 
 type fakeWorkspaces struct {
 	discarded int
+	// live says the last discard's context was not cancelled; remaining
+	// is how much of its deadline it had.
+	live      bool
+	remaining time.Duration
 	log       func(string)
 }
 
-func (f *fakeWorkspaces) Discard(context.Context, project.Workspace) error {
+func (f *fakeWorkspaces) Discard(ctx context.Context, _ project.Workspace) error {
 	f.log("discard")
 	f.discarded++
+	f.live = ctx.Err() == nil
+	if deadline, ok := ctx.Deadline(); ok {
+		f.remaining = time.Until(deadline)
+	}
 	return nil
 }
 
@@ -423,6 +436,61 @@ func TestRunRenewsTheLeaseUntilTheTerminalTransition(t *testing.T) {
 	res, err = Run(t.Context(), o)
 	if err != nil || res.Record.State != attempt.Bound || len(managed.attempts.beating) != 0 {
 		t.Fatalf("a node-owned session's slow completion: %+v err=%v beating=%v", res, err, managed.attempts.beating)
+	}
+}
+
+func TestRunCleansUpOnAWindowMintedAfterTheCallersHooks(t *testing.T) {
+	// The completion may take most of what a cleanup is allowed; what
+	// follows it — the transition, the discard — gets a window of its own.
+	const took = 200 * time.Millisecond
+	w := newWorld("s1")
+	o := w.options()
+	o.Finish = func(_ context.Context, e *Execution) (attempt.Completion, error) {
+		time.Sleep(took)
+		return attempt.Completion{Result: attempt.Result{Summary: e.Outcome.Answer}}, nil
+	}
+	if _, err := Run(t.Context(), o); err != nil {
+		t.Fatal(err)
+	}
+	if w.workspaces.remaining < CleanupTimeout-took/2 {
+		t.Fatalf("the discard ran on the completion's leftovers: %v of %v left", w.workspaces.remaining, CleanupTimeout)
+	}
+	failed := newWorld("s1")
+	o = failed.options()
+	o.Finish = func(context.Context, *Execution) (attempt.Completion, error) {
+		time.Sleep(took)
+		return attempt.Completion{}, errors.New("no completion")
+	}
+	if _, err := Run(t.Context(), o); err == nil || failed.attempts.record.State != attempt.Failed {
+		t.Fatalf("failed completion = %v state=%s", err, failed.attempts.record.State)
+	}
+	if failed.workspaces.remaining < CleanupTimeout-took/2 {
+		t.Fatalf("the failure's discard ran on the completion's leftovers: %v of %v left", failed.workspaces.remaining, CleanupTimeout)
+	}
+	// A workspace whose attempt never opened is given back even when the
+	// run was cancelled waiting for it.
+	cancelled, cancel := context.WithCancel(t.Context())
+	cancel()
+	unopened := newWorld("s1")
+	unopened.attempts.openErr = errors.New("no lease")
+	if _, err := Run(cancelled, unopened.options()); !errors.Is(err, unopened.attempts.openErr) {
+		t.Fatalf("open failure = %v", err)
+	}
+	if unopened.workspaces.discarded != 1 || !unopened.workspaces.live {
+		t.Fatalf("an unopened attempt's workspace was discarded on the cancelled run: discarded=%d live=%v", unopened.workspaces.discarded, unopened.workspaces.live)
+	}
+}
+
+func TestRunReportsAQuarantineItCouldNotWrite(t *testing.T) {
+	w := newWorld("ns_1")
+	w.runner.err = errors.New("observer lost")
+	w.attempts.unsettledErr = errors.New("ledger away")
+	o := w.options()
+	o.Settlement = Settlement{Quarantine: QuarantineManaged, DetachManaged: true, Detachment: DetachQuarantines}
+	res, err := Run(t.Context(), o)
+	var detached *execution.RetainedObserverDetached
+	if !errors.As(err, &detached) || !errors.Is(err, w.attempts.unsettledErr) || !errors.Is(err, w.runner.err) || !res.Unsettled || res.Record.Unsettled {
+		t.Fatalf("a quarantine that failed was not reported: %+v err=%v", res, err)
 	}
 }
 

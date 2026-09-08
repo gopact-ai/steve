@@ -555,23 +555,27 @@ func (e *Execution) settled() bool {
 	return e.Outcome.PromptSettled || (e.o.Settlement.StoppedSettles && Stopped(e.Session))
 }
 
-// close records how the run ended and gives back what it held.
+// close records how the run ended and gives back what it held. Each
+// step that runs after the caller's hooks — the terminal transition, the
+// quarantine, giving the bindings and the workspace back — is bounded on
+// its own: the hooks may take longer than one cleanup is allowed, and a
+// context minted before them would be gone when they return.
 func (e *Execution) close(ctx context.Context, err error) error {
 	if e.Record.ID == "" {
 		return err
 	}
-	cleanup, stop := Cleanup(ctx)
-	defer stop()
 	o := e.o
 	if e.Managed && e.Record.Session == "" && (errors.Is(err, harness.ErrStopUnconfirmed) || o.Settlement.QuarantineUnpublished) {
 		// The node has a process whose identity never reached the record:
 		// not this process's to close or to call stopped.
-		return e.quarantine(cleanup, errors.Join(harness.ErrStopUnconfirmed, err))
+		return e.quarantine(ctx, errors.Join(harness.ErrStopUnconfirmed, err))
 	}
 	if e.Managed && e.driven && o.Settlement.DetachManaged {
-		return e.closeManaged(ctx, cleanup, err)
+		return e.closeManaged(ctx, err)
 	}
 	id := e.Record.ID
+	cleanup, stop := Cleanup(ctx)
+	defer stop()
 	switch {
 	case e.Session == nil || errors.Is(err, harness.ErrStopUnconfirmed):
 	case o.Settlement.KeepSession && e.armed:
@@ -588,34 +592,36 @@ func (e *Execution) close(ctx context.Context, err error) error {
 		}
 	}
 	if errors.Is(err, harness.ErrStopUnconfirmed) {
-		return e.quarantine(cleanup, err)
+		return e.quarantine(ctx, err)
 	}
 	if e.Session != nil && e.settled() {
 		if markErr := o.Attempts.MarkSessionSettled(cleanup, id, o.Actor); markErr != nil {
 			err = errors.Join(err, fmt.Errorf("record prompt settlement: %w", markErr))
 		}
 	}
-	e.release(cleanup)
+	e.release(ctx)
 	if err == nil && ctx.Err() != nil {
 		err = ctx.Err()
 	}
 	if err != nil {
-		return e.fail(cleanup, err)
+		return e.fail(ctx, err)
 	}
-	return e.finish(ctx, cleanup)
+	return e.finish(ctx)
 }
 
 // closeManaged settles a node-owned session the node keeps: the observer
 // detaches when it cannot vouch for the end, and cleans up only after a
 // terminal transition it made itself.
-func (e *Execution) closeManaged(ctx, cleanup context.Context, err error) error {
+func (e *Execution) closeManaged(ctx context.Context, err error) error {
 	o := e.o
 	id := e.Record.ID
 	settled := e.settled()
 	if settled && errors.Is(execution.CheckExecution(ctx), task.ErrExecutionStopped) {
 		// An explicit stop of a settled prompt is a fact to record, on a
 		// context the stop itself did not cancel.
-		ctx = cleanup
+		var stop context.CancelFunc
+		ctx, stop = Cleanup(ctx)
+		defer stop()
 		if err == nil {
 			err = harness.ErrTurnCanceled
 		}
@@ -623,7 +629,7 @@ func (e *Execution) closeManaged(ctx, cleanup context.Context, err error) error 
 	cancelled := ctx.Err() != nil
 	quarantines := o.Settlement.Quarantine == QuarantineAlways || o.Settlement.Quarantine == QuarantineManaged
 	if errors.Is(err, harness.ErrStopUnconfirmed) || !settled && (quarantines || cancelled) || cancelled && o.Settlement.CancelDetaches {
-		return e.detach(cleanup, StepDrive, errors.Join(err, ctx.Err()), cancelled)
+		return e.detach(ctx, StepDrive, errors.Join(err, ctx.Err()), cancelled)
 	}
 	if o.Settlement.CommitTimeout > 0 {
 		var cancel context.CancelFunc
@@ -632,36 +638,36 @@ func (e *Execution) closeManaged(ctx, cleanup context.Context, err error) error 
 	}
 	if settled {
 		if markErr := o.Attempts.MarkSessionSettled(ctx, id, o.Actor); markErr != nil {
-			return e.detach(cleanup, StepSettle, markErr, false)
+			return e.detach(ctx, StepSettle, markErr, false)
 		}
 	}
-	e.release(cleanup)
+	e.release(ctx)
 	if err != nil {
 		terminal, transition := e.failure(ctx, err)
 		if transition != nil {
 			if o.Settlement.RejectManaged {
 				return errors.Join(err, fmt.Errorf("settle %s: %w", id, transition))
 			}
-			return e.detach(cleanup, StepFinish, transition, false)
+			return e.detach(ctx, StepFinish, transition, false)
 		}
 		e.Record = terminal
-	} else if err = e.commitManaged(ctx, cleanup); err != nil {
+	} else if err = e.commitManaged(ctx); err != nil {
 		return err
 	}
 	e.durable = true
 	if e.Session != nil && !o.Settlement.KeepSession {
-		if closeErr := Close(cleanup, o.Sessions, o.At, e.Session); closeErr != nil {
+		if closeErr := Close(ctx, o.Sessions, o.At, e.Session); closeErr != nil {
 			e.cleanup, e.durable = errors.Join(e.cleanup, fmt.Errorf("close settled session: %w", closeErr)), false
 		}
 	}
-	e.discard(cleanup)
+	e.discard(ctx)
 	return err
 }
 
 // commitManaged commits a node-owned session's completion; what cannot be
 // committed is left for a returning observer, or rejected when the
 // caller closes its own.
-func (e *Execution) commitManaged(ctx, cleanup context.Context) error {
+func (e *Execution) commitManaged(ctx context.Context) error {
 	o := e.o
 	var completion attempt.Completion
 	if o.Finish != nil {
@@ -669,12 +675,12 @@ func (e *Execution) commitManaged(ctx, cleanup context.Context) error {
 		if completion, err = o.Finish(ctx, e); err != nil {
 			var rejected *Rejected
 			if o.Settlement.RejectManaged && errors.As(err, &rejected) {
-				return e.reject(cleanup, rejected.Completion, rejected.Cause)
+				return e.reject(ctx, rejected.Completion, rejected.Cause)
 			}
 			if o.Settlement.RejectManaged {
-				return e.fail(cleanup, err)
+				return e.fail(ctx, err)
 			}
-			return e.detach(cleanup, StepFinish, err, false)
+			return e.detach(ctx, StepFinish, err, false)
 		}
 	}
 	if completion.Usage == nil {
@@ -684,24 +690,25 @@ func (e *Execution) commitManaged(ctx, cleanup context.Context) error {
 	completed, err := o.Attempts.FinishCompletion(ctx, e.Record.ID, o.Actor, completion)
 	if err != nil {
 		if o.Settlement.RejectManaged {
-			return e.reject(cleanup, completion, err)
+			return e.reject(ctx, completion, err)
 		}
-		return e.detach(cleanup, StepFinish, err, false)
+		return e.detach(ctx, StepFinish, err, false)
 	}
 	e.Record = completed
 	return nil
 }
 
 // detach reports a node-owned session this process can no longer observe.
-func (e *Execution) detach(cleanup context.Context, step Step, cause error, cancelled bool) error {
+// A quarantine that could not be written is part of what it reports.
+func (e *Execution) detach(ctx context.Context, step Step, cause error, cancelled bool) error {
 	o := e.o
 	cause = errors.Join(harness.ErrStopUnconfirmed, cause)
 	switch o.Settlement.Detachment {
 	case DetachQuarantines:
-		e.quarantine(cleanup, cause)
+		cause = e.quarantine(ctx, cause)
 	case DetachQuarantinesUnlessCancelled:
 		if !cancelled {
-			e.quarantine(cleanup, cause)
+			cause = e.quarantine(ctx, cause)
 		}
 	}
 	return &StepError{step, &execution.RetainedObserverDetached{AttemptID: e.Record.ID, NodeID: e.Record.Node, SessionID: e.Record.Session, Cause: cause}}
@@ -709,8 +716,11 @@ func (e *Execution) detach(cleanup context.Context, step Step, cause error, canc
 
 // quarantine marks an attempt whose writer may still be running: the
 // workspace, the slot and the bindings stay until someone confirms the
-// stop.
-func (e *Execution) quarantine(cleanup context.Context, cause error) error {
+// stop. What comes back is the cause, with the marker's failure when it
+// could not be written.
+func (e *Execution) quarantine(ctx context.Context, cause error) error {
+	cleanup, stop := Cleanup(ctx)
+	defer stop()
 	o := e.o
 	e.unsettled = true
 	if err := o.Attempts.MarkUnsettled(cleanup, e.Record.ID, o.Actor, cause, e.Usage); err != nil {
@@ -726,16 +736,20 @@ func (e *Execution) refresh(ctx context.Context) {
 	}
 }
 
-func (e *Execution) release(cleanup context.Context) {
+func (e *Execution) release(ctx context.Context) {
 	if (len(e.Bindings) > 0 || e.bound) && e.o.Roster != nil {
+		cleanup, stop := Cleanup(ctx)
+		defer stop()
 		e.o.Roster.Release(cleanup, e.o.Spec.Node, e.Record.ID)
 	}
 }
 
-func (e *Execution) discard(cleanup context.Context) {
+func (e *Execution) discard(ctx context.Context) {
 	if e.o.Workspaces == nil {
 		return
 	}
+	cleanup, stop := Cleanup(ctx)
+	defer stop()
 	if err := e.o.Workspaces.Discard(cleanup, e.o.Spec.Workspace); err != nil {
 		e.cleanup, e.durable = errors.Join(e.cleanup, fmt.Errorf("discard %s: %w", e.o.Spec.ID, err)), false
 	}
@@ -768,22 +782,25 @@ func (e *Execution) failure(ctx context.Context, cause error) (attempt.Record, e
 	})
 }
 
-// fail closes a hub-owned attempt as failed and gives its workspace back.
-func (e *Execution) fail(cleanup context.Context, cause error) error {
+// fail closes a hub-owned attempt as failed, on a cleanup context of its
+// own, and gives its workspace back.
+func (e *Execution) fail(ctx context.Context, cause error) error {
+	cleanup, stop := Cleanup(ctx)
+	defer stop()
 	failed, err := e.failure(cleanup, cause)
 	if err != nil {
 		return errors.Join(cause, fmt.Errorf("settle %s: %w", e.Record.ID, err))
 	}
 	e.Record = failed
 	e.durable = true
-	e.discard(cleanup)
+	e.discard(ctx)
 	return cause
 }
 
 // finish commits the caller's completion; a rejected completion keeps the
 // workspace for review. The lease is renewed through the caller's hook
 // and stops just before the terminal transition it fences.
-func (e *Execution) finish(ctx, cleanup context.Context) error {
+func (e *Execution) finish(ctx context.Context) error {
 	o := e.o
 	id := e.Record.ID
 	commit := ctx
@@ -798,9 +815,9 @@ func (e *Execution) finish(ctx, cleanup context.Context) error {
 		if completion, err = o.Finish(commit, e); err != nil {
 			var rejected *Rejected
 			if errors.As(err, &rejected) {
-				return e.reject(cleanup, rejected.Completion, rejected.Cause)
+				return e.reject(ctx, rejected.Completion, rejected.Cause)
 			}
-			return e.fail(cleanup, err)
+			return e.fail(ctx, err)
 		}
 	}
 	if completion.Usage == nil {
@@ -809,18 +826,20 @@ func (e *Execution) finish(ctx, cleanup context.Context) error {
 	e.stopBeat()
 	completed, err := o.Attempts.FinishCompletion(commit, id, o.Actor, completion)
 	if err != nil {
-		return e.reject(cleanup, completion, err)
+		return e.reject(ctx, completion, err)
 	}
 	e.Record = completed
 	e.durable = true
-	e.discard(cleanup)
+	e.discard(ctx)
 	return nil
 }
 
 // reject closes the attempt on a completion that could not be committed;
 // like every terminal transition, it is the first thing after the lease
 // stops being renewed.
-func (e *Execution) reject(cleanup context.Context, completion attempt.Completion, cause error) error {
+func (e *Execution) reject(ctx context.Context, completion attempt.Completion, cause error) error {
+	cleanup, stop := Cleanup(ctx)
+	defer stop()
 	e.stopBeat()
 	err := e.o.Attempts.RejectCompletion(cleanup, e.Record.ID, e.o.Actor, completion, cause)
 	e.refresh(cleanup)
