@@ -1,5 +1,5 @@
 export const domainZh = {
-    "consoleChrome.completionKeys": "↑↓ 选择 · Tab 填入 · Enter 发送 · Esc 收起",
+    "consoleChrome.completionKeys": "↑↓ 选择 · Tab/Enter 填入 · Shift+Enter 发送 · Esc 收起",
     "consoleChrome.quotedFrom": "引自 {title}",
     "consoleChrome.dropQuote": "去掉引用",
     "consoleChrome.message": "消息",
@@ -18,9 +18,9 @@ export const domainZh = {
     "consoleChrome.stopping": "正在停止",
     "consoleChrome.stop": "停止",
     "consoleChrome.stopHint": "停止（/cancel）",
-    "consoleChrome.queueHint": "排到当前回合之后（Enter）",
+    "consoleChrome.queueHint": "排到当前回合之后（Shift+Enter）",
     "consoleChrome.send": "发送",
-    "consoleChrome.sendHint": "发送（Enter）",
+    "consoleChrome.sendHint": "发送（Shift+Enter）",
     "consoleChrome.editQueued": "编辑排队消息",
     "consoleChrome.quotes": "{count} 条引用",
     "consoleChrome.steer": "插队",
@@ -153,7 +153,7 @@ export const domainZh = {
 } as const;
 
 export const domainEn = {
-    "consoleChrome.completionKeys": "↑↓ Select · Tab Fill · Enter Send · Esc Dismiss",
+    "consoleChrome.completionKeys": "↑↓ Select · Tab/Enter Fill · Shift+Enter Send · Esc Dismiss",
     "consoleChrome.quotedFrom": "From {title}",
     "consoleChrome.dropQuote": "Remove quote",
     "consoleChrome.message": "Message",
@@ -172,9 +172,9 @@ export const domainEn = {
     "consoleChrome.stopping": "Stopping",
     "consoleChrome.stop": "Stop",
     "consoleChrome.stopHint": "Stop (/cancel)",
-    "consoleChrome.queueHint": "Queue after the current turn (Enter)",
+    "consoleChrome.queueHint": "Queue after the current turn (Shift+Enter)",
     "consoleChrome.send": "Send",
-    "consoleChrome.sendHint": "Send (Enter)",
+    "consoleChrome.sendHint": "Send (Shift+Enter)",
     "consoleChrome.editQueued": "Edit queued message",
     "consoleChrome.quotes": "Quotes: {count}",
     "consoleChrome.steer": "Send now",
