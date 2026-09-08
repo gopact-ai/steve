@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
-	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/checkpoint"
@@ -557,26 +556,18 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 		return Result{}, err
 	}
 	c.setRunner(req.ConversationID, r.Agent, runner)
-	defer lifecycle.Keep(turnCtx, c.attempts, r.ID, cancel)()
 	spent := &turnSpend{}
 	req.OnProgress = spent.wrap(req.OnProgress, r.Agent)
-	prompt := frozen.Instructions + "\n\n" + p.Prompt
-	out, activity, runErr := promptTurn(turnCtx, runner, prompt, req)
-	settled = acphost.PromptSettled(runErr)
-	if errors.Is(runErr, harness.ErrStopUnconfirmed) {
-		if turnCtx.Err() == nil {
-			_ = c.attempts.MarkUnsettled(turnCtx, r.ID, "relocation", runErr, spent.attemptUsage())
-		}
-		return Result{}, runErr
-	}
-	result = Result{AgentID: r.Agent, Text: out, Activity: activity, Attempt: r.ID, Injected: &Injected{Project: r.Project, Workspace: r.Workspace.Path, Agent: r.Agent, Node: r.Node, Harness: r.Harness, Model: selected.Model, Options: selected.Options, Session: runner.ID(), NewSession: true, Prompt: p.Prompt}}
-	if settled {
-		runErr, cleanupFailure = c.settleRetained(turnCtx, r, result, runErr, spent)
-	} else {
-		cleanupFailure = c.closeAttempt(turnCtx, r.ID, result, runErr, spent, nil)
-	}
+	t := &retainedTurn{c: c, req: req, record: r, spent: spent, injected: &Injected{Project: r.Project, Workspace: r.Workspace.Path, Agent: r.Agent, Node: r.Node, Harness: r.Harness, Model: selected.Model, Options: selected.Options, Session: runner.ID(), NewSession: true, Prompt: p.Prompt}}
+	run, runErr := lifecycle.Reattach(turnCtx, t.options(frozen.Instructions+"\n\n"+p.Prompt, false), r, runner)
+	settled = run.Settled
+	result, cleanupFailure, runErr = t.settle(turnCtx, run, runErr)
 	if cleanupFailure != nil {
 		return Result{}, cleanupFailure
+	}
+	var detached *execution.RetainedObserverDetached
+	if errors.As(runErr, &detached) {
+		return Result{}, runErr
 	}
 	session.Tainted = false
 	session.InstructionsApplied = true

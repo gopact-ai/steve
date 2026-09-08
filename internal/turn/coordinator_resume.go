@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
@@ -240,29 +239,19 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 	settled = observed.Command != nil && observed.Command.Settled && (observed.Command.State == nodewire.SessionCommandCompleted || observed.Command.State == nodewire.SessionCommandCancelled)
 	scope.AdoptRetained()
 	c.setRunner(req.ConversationID, record.Agent, runner)
-	defer lifecycle.Keep(ctx, c.attempts, record.ID, cancel)()
 	spent := &turnSpend{}
-	progress := spent.wrap(req.OnProgress, record.Agent)
+	req.OnProgress = spent.wrap(req.OnProgress, record.Agent)
 	req.phase(view.PhaseRunning)
-	out, activity, runErr := runner.ResumeTurn(ctx, req.OnAsk, req.OnAskUser, progress)
-	if errors.Is(runErr, harness.ErrStopUnconfirmed) || (ctx.Err() != nil && !acphost.PromptSettled(runErr)) {
-		if ctx.Err() == nil {
-			_ = c.attempts.MarkUnsettled(ctx, record.ID, "retained-session", runErr, spent.attemptUsage())
-		}
-		return Result{}, retainedBlocked("observer-detached", "接续并观察原执行的进度", "原执行的观察连接再次中断。", "无法确认它是否已经完成，因此保留原执行并等待核实。", "建议恢复连接后重新检查。", runErr)
-	}
-	settled = acphost.PromptSettled(runErr)
-	if settled {
-		req.phase(view.PhaseFinishing)
-	}
-	result = Result{AgentID: record.Agent, Text: out, Activity: activity, Attempt: record.ID, Injected: &Injected{Project: record.Project, Workspace: record.Workspace.Path, Agent: record.Agent, Node: record.Node, Harness: record.Harness, Session: record.Session}}
-	if settled {
-		runErr, cleanupFailure = c.settleRetained(ctx, record, result, runErr, spent)
-	} else {
-		cleanupFailure = c.closeAttempt(ctx, record.ID, result, runErr, spent, nil)
-	}
+	t := &retainedTurn{c: c, req: req, record: record, spent: spent, finishing: true, injected: &Injected{Project: record.Project, Workspace: record.Workspace.Path, Agent: record.Agent, Node: record.Node, Harness: record.Harness, Session: record.Session}}
+	run, runErr := lifecycle.Reattach(ctx, t.options("", true), record, runner)
+	settled = run.Settled
+	result, cleanupFailure, runErr = t.settle(ctx, run, runErr)
 	if cleanupFailure != nil {
 		return Result{}, cleanupFailure
+	}
+	var detached *execution.RetainedObserverDetached
+	if errors.As(runErr, &detached) {
+		return Result{}, retainedBlocked("observer-detached", "接续并观察原执行的进度", "原执行的观察连接再次中断。", "无法确认它是否已经完成，因此保留原执行并等待核实。", "建议恢复连接后重新检查。", runErr)
 	}
 	if saved := c.store.Conversation(req.ConversationID).Sessions[record.Agent]; saved.UpstreamID == record.Session {
 		saved.Tainted = false
