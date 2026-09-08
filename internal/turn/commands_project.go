@@ -10,7 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -54,7 +54,7 @@ func (c commands) projectCmd(ctx context.Context, req Request, rest string) (Res
 	now := time.Now().UTC().Format(time.RFC3339)
 	for agentID := range conversation.Sessions {
 		if err := c.store.ArchiveSession(req.ConversationID, agentID, now); err != nil {
-			log.Printf("turn: archive %s session on project switch: %v", agentID, err)
+			slog.Error(fmt.Sprintf("turn: archive %s session on project switch: %v", agentID, err), "conversation", req.ConversationID, "agent", agentID, "project", p.ID)
 		}
 		// A task belongs to the project it was opened in; the next turn
 		// here runs in another. What this conversation still held is
@@ -62,7 +62,7 @@ func (c commands) projectCmd(ctx context.Context, req Request, rest string) (Res
 		// directory and a different data level.
 		c.closeTask(req.ConversationID, agentID)
 	}
-	log.Printf("turn: conversation %s bound to project %s (v%d) by %s", req.ConversationID, p.ID, binding.Version, req.SenderOpenID)
+	slog.Info(fmt.Sprintf("turn: conversation %s bound to project %s (v%d) by %s", req.ConversationID, p.ID, binding.Version, req.SenderOpenID), "conversation", req.ConversationID, "project", p.ID)
 	return Result{Title: title, Text: c.text.T(i18n.ProjectSwitched, p.ID, homeLabel(p))}, nil
 }
 

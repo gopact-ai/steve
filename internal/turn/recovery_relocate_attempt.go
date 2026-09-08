@@ -7,6 +7,7 @@ package turn
 import (
 	"context"
 	"errors"
+	"fmt"
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agent"
@@ -19,6 +20,7 @@ import (
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
+	"log/slog"
 	"strings"
 	"time"
 )
@@ -176,7 +178,12 @@ func (c *Coordinator) relocationPreparation(ctx context.Context, p attempt.Reloc
 		admitted = &existing
 	}
 	if admitted == nil {
-		proof, _ = c.inspectRelocation(ctx, old)
+		// Without evidence the plan is approved on the record alone; the
+		// operator sees why the original could not be looked at.
+		var inspectErr error
+		if proof, inspectErr = c.inspectRelocation(ctx, old); inspectErr != nil {
+			slog.Warn(fmt.Sprintf("turn: inspect attempt %s before relocation: %v", old.ID, inspectErr), "plan", p.ID, "attempt", old.ID, "node", old.Node)
+		}
 	}
 	if proof != nil && proof.Session.Command != nil && !proof.Session.ProcessStopped && (proof.Session.State == nodewire.SessionRunning || proof.Session.Command.Settled) {
 		return nil, nil, false, errors.New("original execution is live or settled; reattach it instead of replacing it")

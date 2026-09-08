@@ -3,7 +3,8 @@ package turn
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/home"
@@ -39,7 +40,7 @@ func (c *Coordinator) bindingFor(ctx context.Context, req Request) (project.Bind
 	if err != nil {
 		return project.Binding{}, err
 	}
-	log.Printf("turn: conversation %s bound to project %s by default", req.ConversationID, id)
+	slog.Info(fmt.Sprintf("turn: conversation %s bound to project %s by default", req.ConversationID, id), "conversation", req.ConversationID, "project", id)
 	return binding, nil
 }
 

@@ -6,7 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/gopact-ai/steve/internal/nodewire"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -28,6 +28,24 @@ type Supervisor interface {
 	PrepareRecovery(ctx context.Context) error
 	OpenRuns(ctx context.Context) ([]exec.RunRecord, error)
 	Resume(ctx context.Context, rec exec.RunRecord) (exec.Outcome, error)
+}
+
+// rulePlanner is a supervisor that can draft a plan from rules alone,
+// without an agent, so the task can be opened with the plan attached.
+type rulePlanner interface {
+	PrepareRulePlan(ctx context.Context, goal, projectID string) (plan.Plan, bool, error)
+}
+
+// retainedRunReader is a supervisor that can list the plan runs a previous
+// process left in flight.
+type retainedRunReader interface {
+	RetainedRuns(ctx context.Context) ([]exec.RunRecord, error)
+}
+
+// retainedPlanner is a supervisor that can pick planning back up for a
+// task whose planning attempt was interrupted.
+type retainedPlanner interface {
+	ResumePlanning(ctx context.Context, taskID string) (plan.Plan, error)
 }
 
 // SetSupervisor enables the planning verbs.
@@ -71,9 +89,7 @@ func (c *Coordinator) openPreparedPlanTask(ctx context.Context, req Request, goa
 		return task.Task{}, fmt.Errorf("%s", c.text.T(i18n.PlanDisabled))
 	}
 	var prepared *task.PreparedPlan
-	if pure, ok := c.supervisor.(interface {
-		PrepareRulePlan(context.Context, string, string) (plan.Plan, bool, error)
-	}); ok {
+	if pure, ok := c.supervisor.(rulePlanner); ok {
 		built, available, err := pure.PrepareRulePlan(ctx, goal, projectID)
 		if err != nil {
 			return task.Task{}, err
@@ -194,12 +210,12 @@ func (c *Coordinator) ResumePlans(ctx context.Context) {
 		return
 	}
 	if err := c.supervisor.PrepareRecovery(ctx); err != nil {
-		log.Printf("turn: prepare plan recovery: %v", err)
+		slog.Error(fmt.Sprintf("turn: prepare plan recovery: %v", err))
 		return
 	}
 	open, err := c.supervisor.OpenRuns(ctx)
 	if err != nil {
-		log.Printf("turn: list open plan runs: %v", err)
+		slog.Error(fmt.Sprintf("turn: list open plan runs: %v", err))
 		return
 	}
 	for _, rec := range open {
@@ -208,7 +224,7 @@ func (c *Coordinator) ResumePlans(ctx context.Context) {
 			continue
 		}
 		if !ok || tracked.State == task.StatePaused || tracked.State == task.StateCancelled {
-			log.Printf("turn: plan %s run not resumed: task #%s is %s", rec.PlanID, rec.TaskID, tracked.State)
+			slog.Warn(fmt.Sprintf("turn: plan %s run not resumed: task #%s is %s", rec.PlanID, rec.TaskID, tracked.State), "plan", rec.PlanID, "run", rec.RunID, "task", rec.TaskID)
 			continue
 		}
 		go c.resumePlan(ctx, rec, tracked)
@@ -216,7 +232,7 @@ func (c *Coordinator) ResumePlans(ctx context.Context) {
 }
 
 func (c *Coordinator) resumePlan(ctx context.Context, rec exec.RunRecord, tracked task.Task) {
-	log.Printf("turn: resuming plan %s (run %s) for task #%s", rec.PlanID, rec.RunID, tracked.ID)
+	slog.Info(fmt.Sprintf("turn: resuming plan %s (run %s) for task #%s", rec.PlanID, rec.RunID, tracked.ID), "plan", rec.PlanID, "run", rec.RunID, "task", tracked.ID)
 	ctx, cancel := context.WithTimeout(ctx, planTimeout)
 	defer cancel()
 	outcome, runErr := c.supervisor.Resume(ctx, rec)

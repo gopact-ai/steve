@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -258,7 +259,9 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 		}
 	}()
 	if err := c.artifacts.VerifyPreparedWorkspace(ctx, p.Target.Workspace, p.Checkpoint); err != nil {
-		_ = c.attempts.InvalidateRelocation(ctx, p.ID, "prepared workspace changed before execution")
+		if invalidateErr := c.attempts.InvalidateRelocation(ctx, p.ID, "prepared workspace changed before execution"); invalidateErr != nil {
+			slog.Error(fmt.Sprintf("turn: invalidate relocation plan %s: %v", p.ID, invalidateErr), "plan", p.ID, "attempt", old.ID, "node", p.Target.Node)
+		}
 		return Result{}, retainedBlocked("prepared-workspace", "重新校验目标恢复目录", "目标目录已缺失或与方案快照不一致。", "不能在空目录或已变更的文件上执行已批准的方案。", "建议重新准备一份完整快照方案；已有变更不会被覆盖。", err)
 	}
 	r, err := c.openRelocationAttempt(ctx, p, old, admitted, approval)

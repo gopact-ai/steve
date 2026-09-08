@@ -25,7 +25,7 @@ import (
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/view"
-	"log"
+	"log/slog"
 	"sync"
 	"time"
 )
@@ -154,7 +154,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	run, runErr := lifecycle.Run(ctx, t.options(spec, candidate))
 	result, err = t.settle(parent, run, runErr)
 	if run.Record.ID != "" {
-		log.Printf("turn: timing attempt=%s %s", run.Record.ID, clock)
+		clock.report(parent, run.Record.ID)
 	}
 	return result, err
 }
@@ -223,7 +223,7 @@ func (c *Coordinator) gateExtras(ctx context.Context, conversationID string, sel
 	endpoint := ""
 	if selected.Node != "" {
 		if c.endpoints == nil {
-			log.Printf("turn: agent %q is on node %q with no endpoint resolver; messaging disabled", selected.ID, selected.Node)
+			slog.Warn(fmt.Sprintf("turn: agent %q is on node %q with no endpoint resolver; messaging disabled", selected.ID, selected.Node), "conversation", conversationID, "agent", selected.ID, "node", selected.Node)
 			return nil, saved.AgentToken, nil
 		}
 		endpoint, err = c.endpoints.MCPEndpoint(ctx, selected.Node)
@@ -231,7 +231,7 @@ func (c *Coordinator) gateExtras(ctx context.Context, conversationID string, sel
 			// Losing the send primitive costs milestone cards, not the
 			// turn. The fingerprint changes, so the drift is visible
 			// rather than a capability that quietly stopped working.
-			log.Printf("turn: node %q messaging endpoint: %v", selected.Node, err)
+			slog.Warn(fmt.Sprintf("turn: node %q messaging endpoint: %v", selected.Node, err), "conversation", conversationID, "agent", selected.ID, "node", selected.Node)
 			return nil, saved.AgentToken, nil
 		}
 	}

@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"github.com/gopact-ai/steve/internal/text"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -45,9 +46,9 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		// The binding moved under a task that was never closed (an older
 		// switch, a crash between the two): the task stays with its
 		// project, and this turn opens its own.
-		log.Printf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, binding.ProjectID)
+		slog.Warn(fmt.Sprintf("turn: task %s belongs to project %s, conversation now on %s; closing it", tracked.ID, tracked.ProjectID, binding.ProjectID), "task", tracked.ID, "conversation", req.ConversationID, "project", binding.ProjectID)
 		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
-			log.Printf("turn: close task %s: %v", tracked.ID, err)
+			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
 		}
 		ok = false
 	}
@@ -64,7 +65,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		})
 		if err != nil {
 			// Losing the task record must not cost the user their turn.
-			log.Printf("turn: create task: %v", err)
+			slog.Error(fmt.Sprintf("turn: create task: %v", err), "conversation", req.ConversationID, "agent", selected.ID, "node", executionNode)
 			return "", nil
 		}
 		tracked = created
@@ -73,7 +74,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		if text, spent := c.budgetStop(tracked); spent {
 			return "", UserError{Text: text}
 		}
-		log.Printf("turn: begin task %s: %v", tracked.ID, err)
+		slog.Error(fmt.Sprintf("turn: begin task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID, "node", executionNode)
 		return "", nil
 	}
 	// The anchor is what a restarted gateway replies to when it resumes
@@ -81,7 +82,7 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 	// exchange (and inside the right topic).
 	if req.MessageID != "" {
 		if err := c.tasks.SetAnchor(tracked.ID, req.ChatID, req.MessageID, string(req.ChatType), req.CardID); err != nil {
-			log.Printf("turn: anchor task %s: %v", tracked.ID, err)
+			slog.Error(fmt.Sprintf("turn: anchor task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", req.ConversationID)
 		}
 	}
 	return tracked.ID, nil
@@ -94,7 +95,7 @@ func (c *Coordinator) finishTask(id string, turnErr error, tokens task.Tokens, m
 		return
 	}
 	if _, err := c.tasks.FinishAs(id, outcome(turnErr), tokens, 0, model); err != nil {
-		log.Printf("turn: finish task %s: %v", id, err)
+		slog.Error(fmt.Sprintf("turn: finish task %s: %v", id, err), "task", id)
 	}
 }
 
@@ -109,7 +110,7 @@ func (c *Coordinator) closeTask(conversationID, agentID string) {
 	}
 	for _, tracked := range c.tasks.Holding(conversationID, agentID) {
 		if _, err := c.tasks.Advance(tracked.ID, task.StateDone); err != nil {
-			log.Printf("turn: close task %s: %v", tracked.ID, err)
+			slog.Error(fmt.Sprintf("turn: close task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", conversationID, "agent", agentID)
 		}
 	}
 }
@@ -128,14 +129,8 @@ func outcome(err error) task.Outcome {
 }
 
 func goal(prompt string) string {
-	trimmed := strings.TrimSpace(prompt)
-	if line, _, found := strings.Cut(trimmed, "\n"); found {
-		trimmed = strings.TrimSpace(line)
-	}
-	if len([]rune(trimmed)) <= goalLimit {
-		return trimmed
-	}
-	return string([]rune(trimmed)[:goalLimit]) + "…"
+	line := strings.TrimSpace(text.FirstLine(strings.TrimSpace(prompt)))
+	return text.Clip(line, goalLimit)
 }
 
 // budgetStop names the limit that stopped the task and shows where the work
@@ -357,7 +352,7 @@ func (c *Coordinator) stopTurnFor(ctx context.Context, tracked task.Task) {
 		return
 	}
 	if _, err := c.cancel(ctx, tracked.Channel, member); err != nil {
-		log.Printf("turn: stop turn for task %s: %v", tracked.ID, err)
+		slog.Error(fmt.Sprintf("turn: stop turn for task %s: %v", tracked.ID, err), "task", tracked.ID, "conversation", tracked.Channel, "agent", member.ID)
 	}
 }
 

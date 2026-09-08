@@ -14,7 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/task"
-	"log"
+	"log/slog"
 	"sort"
 	"strings"
 )
@@ -125,20 +125,20 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 		return Result{Title: title, Text: c.text.T(i18n.RepairStopped, agentID, runErr) + "\n\n" + c.planTree(final, outcome)}
 	}
 	if _, err := c.advanceExecution(ctx, tracked.ID, task.StateDone); err != nil {
-		log.Printf("turn: close repair task %s: %v", tracked.ID, err)
+		slog.Error(fmt.Sprintf("turn: close repair task %s: %v", tracked.ID, err), "task", tracked.ID)
 	}
 	// The verify command passed on that machine; now let the machine say
 	// so itself, which is what every placement decision reads.
 	if fix.Broken.Node != "" && c.refresher != nil {
 		if _, err := c.refresher.Refresh(ctx, fix.Broken.Node); err != nil {
-			log.Printf("turn: refresh %s after repair: %v", fix.Broken.Node, err)
+			slog.Error(fmt.Sprintf("turn: refresh %s after repair: %v", fix.Broken.Node, err), "node", fix.Broken.Node)
 		}
 	}
 	// A harness that just started existing has never reported a model;
 	// ask it, so the fleet's column fills without waiting for real work.
 	if c.probeOne != nil {
 		if err := c.probeOne(ctx, fix.Broken.Node, fix.Broken.Harness); err != nil {
-			log.Printf("turn: probe %s after repair: %v", agentID, err)
+			slog.Error(fmt.Sprintf("turn: probe %s after repair: %v", agentID, err), "agent", agentID, "node", fix.Broken.Node)
 		}
 	}
 	for _, item := range c.fleet.All(ctx) {

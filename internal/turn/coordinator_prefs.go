@@ -3,7 +3,8 @@ package turn
 import (
 	"context"
 	"errors"
-	"log"
+	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -64,7 +65,7 @@ func (c *Coordinator) SetPreferences(ctx context.Context, conversationID, agentI
 		// Same as a reset's session half, without its task half: the
 		// agent's upstream session ends, the work it was on does not.
 		if err := c.runtime.CloseSession(ctx, harness.Placement{Node: saved.NodeID, Harness: saved.HarnessID}, saved.UpstreamID); err != nil {
-			log.Printf("turn: close %s session for new preferences: %v", selected.ID, err)
+			slog.Error(fmt.Sprintf("turn: close %s session for new preferences: %v", selected.ID, err), "conversation", conversationID, "agent", selected.ID, "node", saved.NodeID)
 		}
 		if err := c.store.ArchiveSession(conversationID, selected.ID, time.Now().UTC().Format(time.RFC3339)); err != nil {
 			return err

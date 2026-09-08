@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -100,7 +100,9 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 		Spec: spec,
 		// A lost lease cancels the turn, because nothing done after it
 		// could be recorded.
-		Lost: func() { log.Printf("turn: attempt %s lost its lease; cancelling the turn", spec.ID) },
+		Lost: func() {
+			slog.Warn(fmt.Sprintf("turn: attempt %s lost its lease; cancelling the turn", spec.ID), "attempt", spec.ID, "task", t.tracked, "conversation", t.req.ConversationID)
+		},
 		// A chat turn is admitted like any other attempt: the machine's
 		// own word on the agent's requirements, taken now, kept on the
 		// record. A refusal ends the turn before a session is opened.
@@ -166,7 +168,7 @@ func (t *chatTurn) open(ctx context.Context, e *lifecycle.Execution) (harness.Ru
 	runner, err := c.open(ctx, t.saved, selected, t.workspace.Path, e.Servers)
 	if err != nil && t.saved.UpstreamID != "" && !strings.HasPrefix(t.saved.UpstreamID, "ns_") && !errors.Is(err, harness.ErrNodeSessionUnavailable) {
 		if stateErr := c.store.DeleteSession(t.req.ConversationID, selected.ID); stateErr != nil {
-			log.Printf("turn: delete unreopenable session state: %v", stateErr)
+			slog.Error(fmt.Sprintf("turn: delete unreopenable session state: %v", stateErr), "attempt", e.Record.ID, "conversation", t.req.ConversationID, "agent", selected.ID)
 		}
 		t.saved.UpstreamID = ""
 		t.saved.InstructionsApplied = false
@@ -290,7 +292,7 @@ func (t *chatTurn) finish(ctx context.Context, e *lifecycle.Execution) (attempt.
 	t.session.Tainted = false
 	t.session.InstructionsApplied = true
 	if err := c.store.SaveSession(t.session); err != nil {
-		log.Printf("turn: save completed session state: %v", err)
+		slog.Error(fmt.Sprintf("turn: save completed session state: %v", err), "attempt", e.Record.ID, "conversation", t.req.ConversationID, "agent", selected.ID)
 		out += "\n\n" + c.text.T(i18n.StateSaveFailed, protocol.CommandNew)
 	}
 	t.clock.mark("save")
@@ -369,7 +371,7 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Minute)
 		defer cancel()
 		if afterErr := c.afterCompletion(ctx, run.Record, t.result, t.pending, t.clock); afterErr != nil {
-			log.Printf("turn: completion: %v", afterErr)
+			slog.Error(fmt.Sprintf("turn: completion: %v", afterErr), "attempt", run.Record.ID, "task", t.tracked, "conversation", req.ConversationID)
 			return t.result, afterErr
 		}
 		return t.result, nil
@@ -382,7 +384,7 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 			// observer that comes back to it.
 			if !t.managed {
 				if stateErr := c.store.DeleteSession(req.ConversationID, selected.ID); stateErr != nil {
-					log.Printf("turn: delete unconfirmed session: %v", stateErr)
+					slog.Error(fmt.Sprintf("turn: delete unconfirmed session: %v", stateErr), "attempt", run.Record.ID, "conversation", req.ConversationID, "agent", selected.ID)
 				}
 			}
 		case errors.Is(err, harness.ErrTurnCanceled):
@@ -392,14 +394,14 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 			t.session.Tainted = false
 			t.session.InstructionsApplied = true
 			if stateErr := c.store.SaveSession(t.session); stateErr != nil {
-				log.Printf("turn: save canceled session state: %v", stateErr)
+				slog.Error(fmt.Sprintf("turn: save canceled session state: %v", stateErr), "attempt", run.Record.ID, "conversation", req.ConversationID, "agent", selected.ID)
 			}
 		default:
 			// A failed/expired turn does not authorize killing the shared
 			// host; a confirmed response only invalidates this
 			// conversation's session.
 			if stateErr := c.store.DeleteSession(req.ConversationID, selected.ID); stateErr != nil {
-				log.Printf("turn: delete failed session state: %v", stateErr)
+				slog.Error(fmt.Sprintf("turn: delete failed session state: %v", stateErr), "attempt", run.Record.ID, "conversation", req.ConversationID, "agent", selected.ID)
 			}
 		}
 	}

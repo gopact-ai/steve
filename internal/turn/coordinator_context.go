@@ -3,6 +3,7 @@ package turn
 import (
 	"context"
 	"errors"
+	"github.com/gopact-ai/steve/internal/text"
 	"regexp"
 	"sort"
 	"strings"
@@ -191,7 +192,7 @@ func (c *Coordinator) Suggest(ctx context.Context, conversationID, line string) 
 			if op != "" {
 				insert = "/tasks " + op + " " + t.ID
 			}
-			out = append(out, Suggestion{Label: "#" + t.ID, Detail: string(t.State) + " · " + t.Member + " · " + clip(t.Goal, 80), Insert: insert})
+			out = append(out, Suggestion{Label: "#" + t.ID, Detail: string(t.State) + " · " + t.Member + " · " + text.Clip(t.Goal, 80), Insert: insert})
 		}
 		return out
 	case protocol.CommandApprove, protocol.CommandDeny:
