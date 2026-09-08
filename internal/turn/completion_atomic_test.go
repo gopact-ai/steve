@@ -1,14 +1,19 @@
 package turn
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -111,4 +116,34 @@ func TestTurnCompletionRequiresReadableProject(t *testing.T) {
 			t.Fatalf("unread project completion retained canonical lease: %v", err)
 		}
 	}
+}
+
+// closeAttempt is a turn's completion committed outside a run: what the
+// coordinator's Finish hook and lifecycle's commit do together, for tests
+// of the completion's atomicity.
+func (c *Coordinator) closeAttempt(parent context.Context, id string, result Result, turnErr error, spent *turnSpend, clock *turnClock) error {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Minute)
+	defer cancel()
+	usage := spent.attemptUsage()
+	if turnErr != nil {
+		_, err := c.attempts.FailWith(ctx, id, "turn", turnErr.Error(), usage)
+		return err
+	}
+	record, err := c.attempts.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	completion, pending, err := c.completion(ctx, record, result, usage, clock)
+	if err != nil {
+		var rejected *lifecycle.Rejected
+		if errors.As(err, &rejected) {
+			return c.attempts.RejectCompletion(ctx, id, "turn", rejected.Completion, rejected.Cause)
+		}
+		return err
+	}
+	completed, err := c.attempts.FinishCompletion(ctx, id, "turn", completion)
+	if err != nil {
+		return c.attempts.RejectCompletion(ctx, id, "turn", completion, fmt.Errorf("commit attempt %s: %w", id, err))
+	}
+	return c.afterCompletion(ctx, completed, result, pending, clock)
 }

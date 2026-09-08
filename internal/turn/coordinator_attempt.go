@@ -10,59 +10,9 @@ import (
 
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/attempt"
-	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/project"
 )
-
-// closeAttempt records the outcome of a retained or relocated turn even
-// when its own context is gone: a cancelled turn is still a fact.
-func (c *Coordinator) closeAttempt(parent context.Context, id string, result Result, turnErr error, spent *turnSpend, clock *turnClock) error {
-	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), 2*time.Minute)
-	defer cancel()
-	// Last of all — after the attempt is closed and the queued landings
-	// are done — whoever waits for this turn's end is told.
-	if c.afterTurn != nil {
-		if record, err := c.attempts.Get(ctx, id); err == nil && record.TaskID != "" {
-			defer c.afterTurn(record.TaskID)
-		}
-	}
-	usage := spent.attemptUsage()
-	if errors.Is(turnErr, harness.ErrStopUnconfirmed) {
-		if err := c.attempts.MarkUnsettled(ctx, id, "turn", turnErr, usage); err != nil {
-			return errors.Join(turnErr, err)
-		}
-		return turnErr
-	}
-	if c.fleet != nil {
-		if record, err := c.attempts.Get(ctx, id); err == nil && record.Admission != nil && len(record.Admission.Bound) > 0 {
-			c.fleet.Release(ctx, record.Node, id)
-		}
-	}
-	if turnErr != nil {
-		if _, err := c.attempts.FailWith(ctx, id, "turn", turnErr.Error(), usage); err != nil {
-			return fmt.Errorf("record failed attempt %s: %w", id, err)
-		}
-		return nil
-	}
-	record, err := c.attempts.Get(ctx, id)
-	if err != nil {
-		return c.attempts.RejectCompletion(ctx, id, "turn", attempt.Completion{Usage: usage}, fmt.Errorf("read attempt completion: %w", err))
-	}
-	completion, pending, err := c.completion(ctx, record, result, usage, clock)
-	if err != nil {
-		var rejected *lifecycle.Rejected
-		if errors.As(err, &rejected) {
-			return c.attempts.RejectCompletion(ctx, id, "turn", rejected.Completion, rejected.Cause)
-		}
-		return err
-	}
-	completed, err := c.attempts.FinishCompletion(ctx, id, "turn", completion)
-	if err != nil {
-		return c.attempts.RejectCompletion(ctx, id, "turn", completion, fmt.Errorf("commit attempt %s: %w", id, err))
-	}
-	return c.afterCompletion(ctx, completed, result, pending, clock)
-}
 
 // completion is a chat turn's result as the ledger records it: the
 // after-snapshot — the turn's change, bound to the turn's name. A

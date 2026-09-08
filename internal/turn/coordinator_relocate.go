@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/checkpoint"
@@ -319,29 +320,8 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 	if c.maintaining {
 		return Result{}, errors.New("coordination is transferring or under maintenance")
 	}
-	p, err := c.attempts.Relocation(ctx, planID)
+	p, old, err := c.relocationRequest(ctx, planID, req)
 	if err != nil {
-		return Result{}, err
-	}
-	old, err := c.attempts.Get(ctx, p.SourceID)
-	if err != nil {
-		return Result{}, err
-	}
-	if p.Owner != req.SenderOpenID || req.Relocation == nil || p.InputDigest != relocationRequestDigest(req) {
-		return Result{}, errors.New("relocation approval does not match the original request context")
-	}
-	tracked, ok := c.tasks.Get(old.TaskID)
-	if !ok || tracked.Channel != req.ConversationID || old.TurnID != req.MessageID || (req.ExpectedProject != "" && req.ExpectedProject != old.Project) {
-		return Result{}, errors.New("relocation does not belong to this task conversation")
-	}
-	c.rememberMode(req)
-	if old.Execution == nil {
-		return Result{}, errors.New("original task authorization is missing")
-	}
-	if err := c.tasks.CheckExecution(*old.Execution); err != nil {
-		return Result{}, err
-	}
-	if err := c.require(ctx, old.Project, req.SenderOpenID, project.RoleWrite); err != nil {
 		return Result{}, err
 	}
 	// Claim the driver before Admit can bind or release MCP resources. A
@@ -354,51 +334,17 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 	}
 	defer c.clearActive(req.ConversationID, old.Agent)
 	ctx = turnCtx
-	var admitted *attempt.Record
-	if existing, loadErr := c.attempts.Get(ctx, p.Target.ID); loadErr == nil {
-		if existing.Recovery == nil || existing.Recovery.PlanID != p.ID {
-			return Result{}, errors.New("replacement attempt belongs to another plan")
-		}
-		if old.State == attempt.Superseded && !old.Unsettled && old.SupersededBy == existing.ID && c.executions != nil {
-			c.executions.Resolve(old.ID)
-		}
-		if existing.State == attempt.Running || existing.State == attempt.Bound {
-			return c.resumeRetainedChat(ctx, existing.ID, req, true)
-		}
-		if !attempt.PreparingRelocation(existing) {
-			return Result{}, retainedBlocked("relocation-preparation", "读取此前已确认方案的准备记录", "此前的新执行在发送输入前中断。", "需要核实已创建的原生会话与资源，不能凭重试覆盖它们。", "建议重新核对该准备记录并建立新的具体恢复方案。", nil)
-		}
-		admitted = &existing
-	}
-	var proof *attempt.RetainedEvidence
-	if admitted == nil {
-		proof, _ = c.inspectRelocation(ctx, old)
-	}
-	if proof != nil && proof.Session.Command != nil && !proof.Session.ProcessStopped && (proof.Session.State == nodewire.SessionRunning || proof.Session.Command.Settled) {
-		return Result{}, errors.New("original execution is live or settled; reattach it instead of replacing it")
-	}
-	approval := attempt.RelocationApproval{PlanID: p.ID, Actor: req.SenderOpenID, ChoiceID: choice, Node: proof}
-	if choice == "confirm-stopped-and-retry:"+p.ID {
-		approval.StoppedConfirmed = true
-		approval.EffectsReviewed = true
-		for _, action := range p.UnknownActions {
-			approval.ActionResults = append(approval.ActionResults, checkpoint.ActionResolution{ActionID: action.ID, Outcome: checkpoint.ActionRetryAuthorized, Evidence: choice})
-		}
-	}
-	selected, candidate, err := c.relocationTarget(ctx, old, p.Target.Node)
+	admitted, proof, resume, err := c.relocationPreparation(ctx, p, old)
 	if err != nil {
 		return Result{}, err
 	}
-	if relocationDigest(selected) != p.TargetConfigHash {
-		return Result{}, errors.New("target Agent configuration changed; request a new plan")
+	if resume {
+		return c.resumeRetainedChat(ctx, p.Target.ID, req, true)
 	}
-	manifest, ok, err := c.artifacts.Manifest(ctx, p.Checkpoint)
-	if err != nil || !ok || manifest.Content == nil || !manifest.Content.Recoverable() {
-		return Result{}, errors.New("complete copied checkpoint is no longer available")
-	}
-	repo, err := c.artifacts.Repo(ctx, p.Target.Project)
-	if err != nil || !repo.Has(ctx, p.Checkpoint) {
-		return Result{}, errors.New("checkpoint bytes could not be verified")
+	approval := relocationApproval(p, choice, req.SenderOpenID, proof)
+	selected, candidate, err := c.verifyRelocationTarget(ctx, p, old)
+	if err != nil {
+		return Result{}, err
 	}
 	frozen, hasFrozen, err := c.attempts.RelocationSession(ctx, p.Target.ID)
 	if err != nil {
@@ -421,23 +367,9 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 		_ = c.attempts.InvalidateRelocation(ctx, p.ID, "prepared workspace changed before execution")
 		return Result{}, retainedBlocked("prepared-workspace", "重新校验目标恢复目录", "目标目录已缺失或与方案快照不一致。", "不能在空目录或已变更的文件上执行已批准的方案。", "建议重新准备一份完整快照方案；已有变更不会被覆盖。", err)
 	}
-	var r attempt.Record
-	if admitted != nil {
-		r, err = c.attempts.RecoverRelocationPreparation(ctx, admitted.ID)
-		if err != nil {
-			return Result{}, err
-		}
-	} else {
-		r, err = c.attempts.OpenRelocation(ctx, p.ID, approval)
-		if err != nil {
-			return Result{}, err
-		}
-		// The source's exact leases and stop decision committed together.
-		// Its ended observer is now resolved; keeping it quarantined would
-		// make a later task stop report an already retired execution.
-		if c.executions != nil {
-			c.executions.Resolve(old.ID)
-		}
+	r, err := c.openRelocationAttempt(ctx, p, old, admitted, approval)
+	if err != nil {
+		return Result{}, err
 	}
 	if r.State == attempt.Running && r.Session != "" {
 		return c.resumeRetainedChat(ctx, r.ID, req, true)
@@ -458,101 +390,30 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 	}
 	known, settled := false, false
 	var cleanupFailure error
-	defer func() {
-		var unresolved error
-		if cleanupFailure != nil {
-			unresolved = cleanupFailure
-			if known && turnCtx.Err() != nil {
-				unresolved = &execution.RetainedObserverDetached{AttemptID: r.ID, NodeID: r.Node, SessionID: r.Session, Cause: errors.Join(cleanupFailure, turnCtx.Err())}
-			}
-		} else if err != nil && !settled {
-			unresolved = errors.Join(harness.ErrStopUnconfirmed, err)
-			if known {
-				unresolved = &execution.RetainedObserverDetached{AttemptID: r.ID, NodeID: r.Node, SessionID: r.Session, Cause: unresolved}
-			} else if pending := pendingNodeOpen(r, err); pending != nil {
-				unresolved = pending
-			}
-		}
-		scope.Finish(unresolved)
-	}()
+	defer func() { scope.Finish(retainedUnresolved(r, known, settled, cleanupFailure, err, turnCtx.Err(), true)) }()
 	turnCtx = scope.Context()
 	scope.AdoptRetained()
 	if req.OnTurnReady != nil {
 		req.OnTurnReady(r.TaskID, r.ID)
 	}
-	if r.State == attempt.Leased {
-		r, err = c.attempts.Advance(turnCtx, r.ID, attempt.Prepared, "relocation", func(next *attempt.Record) { next.Admission = &admission })
-		if err != nil {
-			return Result{}, err
-		}
-	}
-	var priorUsage task.RecoveryUsage
-	if old.Usage != nil {
-		u := old.Usage
-		priorUsage = task.RecoveryUsage{Tokens: task.Tokens{Input: u.Input, Output: u.Output, CachedRead: u.CachedRead, CachedWrite: u.CachedWrite, Total: u.Input + u.Output}, Model: u.Model, Reported: u.Reported}
-	}
-	if err := c.tasks.BindRecoveryWorkspace(*r.Execution, task.RecoveryWorkspace{ID: r.Workspace.ID, ProjectID: r.Project, NodeID: r.Node, Path: r.Workspace.Path, Base: r.Base, AgentID: r.Agent, HarnessID: r.Harness, AttemptID: r.ID, PlanID: p.ID, TurnID: r.TurnID}, priorUsage); err != nil {
+	if r, err = c.bindRelocation(turnCtx, r, old, p, admission); err != nil {
 		return Result{}, err
 	}
-	saved := c.store.Conversation(req.ConversationID).Sessions[r.Agent]
 	if !hasFrozen {
-		// Every replacement gets a fresh bearer; only this attempt's exact
-		// persisted payload may reuse it after an interrupted open.
-		extras, agentToken, err := c.gateExtras(turnCtx, req.ConversationID, selected, state.Session{})
-		if err != nil {
-			return Result{}, err
-		}
-		capabilities, err := c.assemble(selected, req, extras)
-		if err != nil {
-			return Result{}, err
-		}
-		frozen = attempt.RelocationSessionConfig{MCPServers: append(append([]acp.MCPServer(nil), capabilities.MCPServers...), roster.ToMCP(bindings)...), AgentToken: agentToken, Fingerprint: capabilities.Fingerprint, SessionConfigHash: capabilities.SessionFingerprint, Instructions: capabilities.Instructions}
-		if err := c.attempts.RecordRelocationSession(turnCtx, r.ID, frozen); err != nil {
+		if frozen, err = c.freezeRelocationSession(turnCtx, req, selected, bindings, r); err != nil {
 			return Result{}, err
 		}
 		// Frozen bindings now belong to durable preparation, including a
 		// crash before the native open result reaches this coordinator.
 		releaseUnstarted = false
 	}
-	binding, err := c.bindingFor(turnCtx, req)
+	session, err := c.relocationSessionState(turnCtx, req, r, frozen)
 	if err != nil {
-		return Result{}, err
-	}
-	if saved.UpstreamID != "" && saved.UpstreamID != r.Session {
-		if err := c.store.ArchiveSession(req.ConversationID, r.Agent, time.Now().UTC().Format(time.RFC3339)); err != nil {
-			return Result{}, err
-		}
-	}
-	session := state.Session{ConversationID: req.ConversationID, AgentID: r.Agent, HarnessID: r.Harness, NodeID: r.Node, UpstreamID: r.Session, Workspace: r.Workspace.Path, ProjectID: r.Project, ProjectVersion: binding.Version, CapabilityHash: frozen.Fingerprint, SessionConfigHash: frozen.SessionConfigHash, AgentToken: frozen.AgentToken, Tainted: true}
-	if err := c.store.SaveSession(session); err != nil {
 		return Result{}, err
 	}
 	releaseUnstarted = false
-	runner, err := c.runtime.OpenSession(turnCtx, placement(selected), r.Session, r.Workspace.Path, frozen.MCPServers)
+	runner, r, session, known, err := c.openRelocation(turnCtx, req, r, selected, frozen, session)
 	if err != nil {
-		return Result{}, err
-	}
-	if !strings.HasPrefix(runner.ID(), "ns_") {
-		return Result{}, errors.New("replacement requires a node-owned session")
-	}
-	known = true
-	r.Session = runner.ID()
-	r, err = c.attempts.RecordSession(turnCtx, r.ID, "relocation", runner.ID())
-	if err != nil {
-		return Result{}, err
-	}
-	session.UpstreamID = runner.ID()
-	if err := c.store.SaveSession(session); err != nil {
-		return Result{}, err
-	}
-	if err := applyRecoveryPreferences(turnCtx, runner, r.Preferences); err != nil {
-		return Result{}, retainedBlocked("relocation-options", "在目标原生会话设置并读回原执行的模型和选项", "目标会话不能按原设置继续任务。", err.Error(), "建议补齐目标Agent支持的模型和选项后重新检查；尚未向它发送原任务。", err)
-	}
-	r, err = c.attempts.Advance(turnCtx, r.ID, attempt.Running, "relocation", func(next *attempt.Record) { next.Session = runner.ID() })
-	if err != nil {
-		return Result{}, err
-	}
-	if err := c.bindExecutionGate(turnCtx, req.ConversationID, r.ID); err != nil {
 		return Result{}, err
 	}
 	c.setRunner(req.ConversationID, r.Agent, runner)
@@ -593,4 +454,212 @@ func relocationRequirements(requires, uses []string, frozen bool) ([]string, []s
 		return requires, nil
 	}
 	return requires, append([]string(nil), uses...)
+}
+
+// relocationRequest is the approved plan and the attempt it replaces, once
+// the approval is this requester's, this conversation's, and the task
+// still authorizes the original execution.
+func (c *Coordinator) relocationRequest(ctx context.Context, planID string, req Request) (attempt.RelocationIntent, attempt.Record, error) {
+	p, err := c.attempts.Relocation(ctx, planID)
+	if err != nil {
+		return attempt.RelocationIntent{}, attempt.Record{}, err
+	}
+	old, err := c.attempts.Get(ctx, p.SourceID)
+	if err != nil {
+		return attempt.RelocationIntent{}, attempt.Record{}, err
+	}
+	if p.Owner != req.SenderOpenID || req.Relocation == nil || p.InputDigest != relocationRequestDigest(req) {
+		return attempt.RelocationIntent{}, attempt.Record{}, errors.New("relocation approval does not match the original request context")
+	}
+	tracked, ok := c.tasks.Get(old.TaskID)
+	if !ok || tracked.Channel != req.ConversationID || old.TurnID != req.MessageID || (req.ExpectedProject != "" && req.ExpectedProject != old.Project) {
+		return attempt.RelocationIntent{}, attempt.Record{}, errors.New("relocation does not belong to this task conversation")
+	}
+	c.rememberMode(req)
+	if old.Execution == nil {
+		return attempt.RelocationIntent{}, attempt.Record{}, errors.New("original task authorization is missing")
+	}
+	if err := c.tasks.CheckExecution(*old.Execution); err != nil {
+		return attempt.RelocationIntent{}, attempt.Record{}, err
+	}
+	if err := c.require(ctx, old.Project, req.SenderOpenID, project.RoleWrite); err != nil {
+		return attempt.RelocationIntent{}, attempt.Record{}, err
+	}
+	return p, old, nil
+}
+
+// relocationPreparation is what an earlier delivery of the same approval
+// left: a replacement already running or done (resume it), one interrupted
+// before its input (admitted), or nothing, in which case the source is
+// inspected once more so a live execution is reattached, not replaced.
+func (c *Coordinator) relocationPreparation(ctx context.Context, p attempt.RelocationIntent, old attempt.Record) (admitted *attempt.Record, proof *attempt.RetainedEvidence, resume bool, err error) {
+	if existing, loadErr := c.attempts.Get(ctx, p.Target.ID); loadErr == nil {
+		if existing.Recovery == nil || existing.Recovery.PlanID != p.ID {
+			return nil, nil, false, errors.New("replacement attempt belongs to another plan")
+		}
+		if old.State == attempt.Superseded && !old.Unsettled && old.SupersededBy == existing.ID && c.executions != nil {
+			c.executions.Resolve(old.ID)
+		}
+		if existing.State == attempt.Running || existing.State == attempt.Bound {
+			return nil, nil, true, nil
+		}
+		if !attempt.PreparingRelocation(existing) {
+			return nil, nil, false, retainedBlocked("relocation-preparation", "读取此前已确认方案的准备记录", "此前的新执行在发送输入前中断。", "需要核实已创建的原生会话与资源，不能凭重试覆盖它们。", "建议重新核对该准备记录并建立新的具体恢复方案。", nil)
+		}
+		admitted = &existing
+	}
+	if admitted == nil {
+		proof, _ = c.inspectRelocation(ctx, old)
+	}
+	if proof != nil && proof.Session.Command != nil && !proof.Session.ProcessStopped && (proof.Session.State == nodewire.SessionRunning || proof.Session.Command.Settled) {
+		return nil, nil, false, errors.New("original execution is live or settled; reattach it instead of replacing it")
+	}
+	return admitted, proof, false, nil
+}
+
+func relocationApproval(p attempt.RelocationIntent, choice, actor string, proof *attempt.RetainedEvidence) attempt.RelocationApproval {
+	approval := attempt.RelocationApproval{PlanID: p.ID, Actor: actor, ChoiceID: choice, Node: proof}
+	if choice == "confirm-stopped-and-retry:"+p.ID {
+		approval.StoppedConfirmed = true
+		approval.EffectsReviewed = true
+		for _, action := range p.UnknownActions {
+			approval.ActionResults = append(approval.ActionResults, checkpoint.ActionResolution{ActionID: action.ID, Outcome: checkpoint.ActionRetryAuthorized, Evidence: choice})
+		}
+	}
+	return approval
+}
+
+// verifyRelocationTarget is the target agent and its candidate, once the
+// agent is still what the plan was made for and the checkpoint's bytes are
+// still there to run on.
+func (c *Coordinator) verifyRelocationTarget(ctx context.Context, p attempt.RelocationIntent, old attempt.Record) (agent.Agent, roster.Candidate, error) {
+	selected, candidate, err := c.relocationTarget(ctx, old, p.Target.Node)
+	if err != nil {
+		return agent.Agent{}, roster.Candidate{}, err
+	}
+	if relocationDigest(selected) != p.TargetConfigHash {
+		return agent.Agent{}, roster.Candidate{}, errors.New("target Agent configuration changed; request a new plan")
+	}
+	manifest, ok, err := c.artifacts.Manifest(ctx, p.Checkpoint)
+	if err != nil || !ok || manifest.Content == nil || !manifest.Content.Recoverable() {
+		return agent.Agent{}, roster.Candidate{}, errors.New("complete copied checkpoint is no longer available")
+	}
+	repo, err := c.artifacts.Repo(ctx, p.Target.Project)
+	if err != nil || !repo.Has(ctx, p.Checkpoint) {
+		return agent.Agent{}, roster.Candidate{}, errors.New("checkpoint bytes could not be verified")
+	}
+	return selected, candidate, nil
+}
+
+// openRelocationAttempt is the replacement attempt: the one an interrupted
+// delivery prepared, recovered, or a new one opened on the approval.
+func (c *Coordinator) openRelocationAttempt(ctx context.Context, p attempt.RelocationIntent, old attempt.Record, admitted *attempt.Record, approval attempt.RelocationApproval) (attempt.Record, error) {
+	if admitted != nil {
+		return c.attempts.RecoverRelocationPreparation(ctx, admitted.ID)
+	}
+	r, err := c.attempts.OpenRelocation(ctx, p.ID, approval)
+	if err != nil {
+		return attempt.Record{}, err
+	}
+	// The source's exact leases and stop decision committed together.
+	// Its ended observer is now resolved; keeping it quarantined would
+	// make a later task stop report an already retired execution.
+	if c.executions != nil {
+		c.executions.Resolve(old.ID)
+	}
+	return r, nil
+}
+
+// bindRelocation prepares the replacement and binds its workspace to the
+// task's recovery, carrying the source's spend forward.
+func (c *Coordinator) bindRelocation(ctx context.Context, r, old attempt.Record, p attempt.RelocationIntent, admission ability.Admission) (attempt.Record, error) {
+	if r.State == attempt.Leased {
+		prepared, err := c.attempts.Advance(ctx, r.ID, attempt.Prepared, "relocation", func(next *attempt.Record) { next.Admission = &admission })
+		if err != nil {
+			return r, err
+		}
+		r = prepared
+	}
+	var priorUsage task.RecoveryUsage
+	if old.Usage != nil {
+		u := old.Usage
+		priorUsage = task.RecoveryUsage{Tokens: task.Tokens{Input: u.Input, Output: u.Output, CachedRead: u.CachedRead, CachedWrite: u.CachedWrite, Total: u.Input + u.Output}, Model: u.Model, Reported: u.Reported}
+	}
+	if err := c.tasks.BindRecoveryWorkspace(*r.Execution, task.RecoveryWorkspace{ID: r.Workspace.ID, ProjectID: r.Project, NodeID: r.Node, Path: r.Workspace.Path, Base: r.Base, AgentID: r.Agent, HarnessID: r.Harness, AttemptID: r.ID, PlanID: p.ID, TurnID: r.TurnID}, priorUsage); err != nil {
+		return r, err
+	}
+	return r, nil
+}
+
+// freezeRelocationSession assembles the replacement's session once and
+// keeps it with the attempt. Every replacement gets a fresh bearer; only
+// this attempt's exact persisted payload may reuse it after an
+// interrupted open.
+func (c *Coordinator) freezeRelocationSession(ctx context.Context, req Request, selected agent.Agent, bindings []ability.Binding, r attempt.Record) (attempt.RelocationSessionConfig, error) {
+	extras, agentToken, err := c.gateExtras(ctx, req.ConversationID, selected, state.Session{})
+	if err != nil {
+		return attempt.RelocationSessionConfig{}, err
+	}
+	capabilities, err := c.assemble(selected, req, extras)
+	if err != nil {
+		return attempt.RelocationSessionConfig{}, err
+	}
+	frozen := attempt.RelocationSessionConfig{MCPServers: append(append([]acp.MCPServer(nil), capabilities.MCPServers...), roster.ToMCP(bindings)...), AgentToken: agentToken, Fingerprint: capabilities.Fingerprint, SessionConfigHash: capabilities.SessionFingerprint, Instructions: capabilities.Instructions}
+	if err := c.attempts.RecordRelocationSession(ctx, r.ID, frozen); err != nil {
+		return attempt.RelocationSessionConfig{}, err
+	}
+	return frozen, nil
+}
+
+// relocationSessionState is the conversation's record of the replacement
+// session, saved tainted before it opens.
+func (c *Coordinator) relocationSessionState(ctx context.Context, req Request, r attempt.Record, frozen attempt.RelocationSessionConfig) (state.Session, error) {
+	binding, err := c.bindingFor(ctx, req)
+	if err != nil {
+		return state.Session{}, err
+	}
+	if saved := c.store.Conversation(req.ConversationID).Sessions[r.Agent]; saved.UpstreamID != "" && saved.UpstreamID != r.Session {
+		if err := c.store.ArchiveSession(req.ConversationID, r.Agent, time.Now().UTC().Format(time.RFC3339)); err != nil {
+			return state.Session{}, err
+		}
+	}
+	session := state.Session{ConversationID: req.ConversationID, AgentID: r.Agent, HarnessID: r.Harness, NodeID: r.Node, UpstreamID: r.Session, Workspace: r.Workspace.Path, ProjectID: r.Project, ProjectVersion: binding.Version, CapabilityHash: frozen.Fingerprint, SessionConfigHash: frozen.SessionConfigHash, AgentToken: frozen.AgentToken, Tainted: true}
+	if err := c.store.SaveSession(session); err != nil {
+		return state.Session{}, err
+	}
+	return session, nil
+}
+
+// openRelocation opens the replacement's node-owned session, records its
+// identity, sets the source's model and options on it, and takes the
+// attempt to running. known says a session exists on the node, whatever
+// happened after.
+func (c *Coordinator) openRelocation(ctx context.Context, req Request, r attempt.Record, selected agent.Agent, frozen attempt.RelocationSessionConfig, session state.Session) (harness.Runner, attempt.Record, state.Session, bool, error) {
+	runner, err := c.runtime.OpenSession(ctx, placement(selected), r.Session, r.Workspace.Path, frozen.MCPServers)
+	if err != nil {
+		return nil, r, session, false, err
+	}
+	if !strings.HasPrefix(runner.ID(), "ns_") {
+		return nil, r, session, false, errors.New("replacement requires a node-owned session")
+	}
+	r.Session = runner.ID()
+	r, err = c.attempts.RecordSession(ctx, r.ID, "relocation", runner.ID())
+	if err != nil {
+		return nil, r, session, true, err
+	}
+	session.UpstreamID = runner.ID()
+	if err := c.store.SaveSession(session); err != nil {
+		return nil, r, session, true, err
+	}
+	if err := applyRecoveryPreferences(ctx, runner, r.Preferences); err != nil {
+		return nil, r, session, true, retainedBlocked("relocation-options", "在目标原生会话设置并读回原执行的模型和选项", "目标会话不能按原设置继续任务。", err.Error(), "建议补齐目标Agent支持的模型和选项后重新检查；尚未向它发送原任务。", err)
+	}
+	r, err = c.attempts.Advance(ctx, r.ID, attempt.Running, "relocation", func(next *attempt.Record) { next.Session = runner.ID() })
+	if err != nil {
+		return nil, r, session, true, err
+	}
+	if err := c.bindExecutionGate(ctx, req.ConversationID, r.ID); err != nil {
+		return nil, r, session, true, err
+	}
+	return runner, r, session, true, nil
 }
