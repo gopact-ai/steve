@@ -69,7 +69,7 @@ func (f *flipNodes) Statuses() []node.Status {
 	}
 	return out
 }
-func (f *flipNodes) EnsureConnected(context.Context) {}
+func (f *flipNodes) EnsureConnected(context.Context, ...string) {}
 func (f *flipNodes) Refresh(_ context.Context, name string) (nodewire.Advert, error) {
 	f.mu.Lock()
 	f.refreshd = append(f.refreshd, name)

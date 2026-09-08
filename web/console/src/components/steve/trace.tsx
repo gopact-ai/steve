@@ -28,6 +28,9 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
     const elapsed = useElapsed(live.since);
     const steps: Step[] = plans.flatMap((p) => p.steps || []);
     const latest = live.turn ?? (live.order.length ? live.steps[live.order[live.order.length - 1]] : undefined);
+    const phase = latest?.phase;
+    const phaseLabel = t(phase === "waking" ? "consoleChrome.preparing" : phase === "finishing" ? "consoleChrome.finishing" : phase === "saving" ? "consoleChrome.saving" : latest ? "consoleChrome.processing" : "consoleChrome.placing");
+    const agentLabel = latest ? [latest.agent, latest.model].filter(Boolean).join(" · ") : "";
     if (compact) {
         const extra = live.order.filter((id) => !steps.some((s) => s.id === id));
         const group = (id: string) => {
@@ -38,10 +41,11 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
         };
         return (
             <div className="flex min-w-0 flex-col gap-1 px-2 py-1">
-                <div className="flex items-center gap-2 text-xs text-quaternary">
-                    <Loading01 className="size-3 animate-spin text-fg-brand-primary" />
-                    <span>{latest ? [latest.agent, latest.model].filter(Boolean).join(" · ") || t("status.inProgress") : t("consoleChrome.placing")}</span>
-                    <span>· {fmtSeconds(elapsed, locale)}</span>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-quaternary">
+                    <Loading01 aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none text-fg-brand-primary" />
+                    <span role="status">{phaseLabel}</span>
+                    {agentLabel && <span className="min-w-0 break-all">{agentLabel}</span>}
+                    <span className="shrink-0 tabular-nums">· {fmtSeconds(elapsed, locale)}</span>
                 </div>
                 {steps.map((s) => group(s.id))}
                 {extra.map(group)}
@@ -59,7 +63,7 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
         );
     }
     return (
-        <Panel title={t("status.inProgress")} badge={<span className="flex items-center gap-1 text-xs text-tertiary"><Loading01 className="size-3 animate-spin text-fg-brand-primary" />{fmtSeconds(elapsed, locale)}</span>}>
+        <Panel title={phaseLabel} badge={<span className="flex items-center gap-1 text-xs text-tertiary"><Loading01 className="size-3 animate-spin text-fg-brand-primary" />{fmtSeconds(elapsed, locale)}</span>}>
             <div className="flex min-w-0 flex-col gap-3">
                 {steps.length > 0 && (
                     <div className="flex flex-col gap-2">

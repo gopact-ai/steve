@@ -27,7 +27,7 @@ type retainedAuxNodes struct{}
 func (retainedAuxNodes) Statuses() []node.Status {
 	return []node.Status{{Name: "worker", Up: true, Advert: nodewire.Advert{Node: "worker", Harnesses: []nodewire.Harness{{ID: "mock"}}}}}
 }
-func (retainedAuxNodes) EnsureConnected(context.Context) {}
+func (retainedAuxNodes) EnsureConnected(context.Context, ...string) {}
 
 type retainedAuxSessions struct {
 	mu                        sync.Mutex

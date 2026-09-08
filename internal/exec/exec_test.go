@@ -40,7 +40,7 @@ func (f *fakeNodes) Statuses() []node.Status {
 	return append([]node.Status{}, f.statuses...)
 }
 
-func (*fakeNodes) EnsureConnected(context.Context) {}
+func (*fakeNodes) EnsureConnected(context.Context, ...string) {}
 
 func (f *fakeNodes) down(name string) {
 	f.mu.Lock()

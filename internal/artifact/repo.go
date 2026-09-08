@@ -88,15 +88,6 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, f
 		if _, err := r.git(ctx, env, "read-tree", parent); err != nil {
 			return "", false, fmt.Errorf("read parent tree: %w", err)
 		}
-		// A gitlink inherited from the parent would make git ignore every
-		// file under that path; whatever is there now is plain files.
-		if links, err := r.gitlinks(ctx, env); err != nil {
-			return "", false, err
-		} else if len(links) > 0 {
-			if _, err := r.git(ctx, env, append([]string{"update-index", "--force-remove", "--"}, links...)...); err != nil {
-				return "", false, fmt.Errorf("drop gitlinks: %w", err)
-			}
-		}
 	}
 	add := []string{"add", "-A", "--", "."}
 	if flatten {
@@ -121,7 +112,7 @@ func (r *Repo) Snapshot(ctx context.Context, workTree, parent, message string, f
 			add = append(add, ":(exclude,literal)"+filepath.ToSlash(dir))
 		}
 	}
-	if err := r.checkLimits(ctx, workTree, env, add[3:]); err != nil {
+	if err := r.prepareSnapshotIndex(ctx, workTree, env, add[3:]); err != nil {
 		return "", false, err
 	}
 	if _, err := r.git(ctx, env, add...); err != nil {

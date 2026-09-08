@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"os"
 	"strings"
 	"sync"
 	"time"
@@ -33,7 +32,6 @@ import (
 	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/schedule"
-	"github.com/gopact-ai/steve/internal/sessions"
 	"github.com/gopact-ai/steve/internal/skills"
 	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/task"
@@ -164,7 +162,6 @@ type coordinatorState struct {
 	channelOwners map[string]string
 	home          home.Loader
 	homePath      string
-	scanHome      string
 	skills        *skills.Live
 	gate          AgentGate
 	endpoints     NodeEndpoints
@@ -444,6 +441,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return Result{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
 	defer c.clearActive(conversationID, selected.ID)
+	req.phase(view.PhaseWaking)
 	defer func() {
 		c.mu.Lock()
 		defer c.mu.Unlock()
@@ -546,7 +544,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}
 	contextChanged := saved.HarnessID != "" && saved.CapabilityHash != capabilities.Fingerprint
 	if contextChanged {
-		// Only editable identity can change in place. A missing baseline cannot
+		// Only identity and platform guidance can change in place. A missing baseline cannot
 		// prove that MCP connections, skills and visibility stayed the same.
 		if saved.SessionConfigHash == "" || saved.SessionConfigHash != capabilities.SessionFingerprint {
 			return Result{}, UserError{Text: c.text.T(i18n.CapabilityDrift, protocol.CommandNew)}
@@ -662,7 +660,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		if _, shared := c.home.(home.IdentityEditor); shared {
 			user = onboard.ContinueShared(c.text.Locale()) + "\n\n" + user
 		} else {
-			user = onboard.Continue(c.text.Locale(), c.homePath, c.excerpts(prompt)) + "\n\n" + user
+			user = onboard.Continue(c.text.Locale(), c.homePath) + "\n\n" + user
 		}
 	}
 	injected := &Injected{
@@ -677,7 +675,7 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if !session.InstructionsApplied && (capabilities.Instructions != "" || contextChanged) {
 		instructions := capabilities.Instructions
 		if contextChanged {
-			instructions = "[steve: context update]\nThe following is the current context. It replaces the previously supplied identity and profile. Keep the conversation history and continue with the user's message below.\n\n" + instructions
+			instructions = "[steve: context update]\nThe following is the current context. It replaces the previously supplied Steve context, identity and profile. Keep the conversation history and continue with the user's message below.\n\n" + instructions
 		}
 		user = instructions + "\n\n" + user
 		injected.InstructionsSent = true
@@ -696,6 +694,9 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		return Result{}, err
 	}
 	out, activity, err := promptTurn(ctx, runner, prompt, req)
+	if acphost.PromptSettled(err) {
+		req.phase(view.PhaseFinishing)
+	}
 	if acphost.PromptSettled(err) {
 		settledCtx, finishSettle := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 		if settleErr := c.attempts.MarkSessionSettled(settledCtx, att.ID, "turn"); settleErr != nil {
@@ -756,7 +757,6 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		} else {
 			out = reply
 		}
-		activity = nil
 	}
 	return Result{AgentID: selected.ID, Text: out, Activity: activity, Injected: injected, Attempt: att.ID}, nil
 }
@@ -770,21 +770,6 @@ func (c *Coordinator) buildingProfile(req Request) (bool, error) {
 		return editor.NeedsInit()
 	}
 	return c.homePath != "" && home.NeedsInit(c.homePath), nil
-}
-
-func (c *Coordinator) excerpts(input string) string {
-	if !onboard.AllowScan(input) {
-		return ""
-	}
-	root := c.scanHome
-	if root == "" {
-		var err error
-		root, err = os.UserHomeDir()
-		if err != nil {
-			return ""
-		}
-	}
-	return sessions.Format(sessions.Collect(root))
 }
 
 func (c *Coordinator) discard(parent context.Context, selected agent.Agent, runner harness.Runner) {

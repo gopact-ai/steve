@@ -175,7 +175,7 @@ func informTools() []map[string]any {
 	return []map[string]any{
 		{
 			"name":        "steve_context",
-			"description": "Where you stand right now in Steve: which agent you are and on which machine, the project and the workspace directory you are in (the home, a copy, or a worktree — and why none, if none), your task's remaining budget, whether this is the owner's private chat or a group, and which MCP servers and skills you have. Call it first in a session, and again when unsure where you are. It changes nothing.",
+			"description": "Where you stand right now in Steve: which agent you are and on which machine, the project and the workspace directory you are in (the home, a copy, or a worktree — and why none, if none), your task's remaining budget, whether this is the owner's private chat or a group, and which MCP servers and skills you have. Read this when an answer or action needs live state not established by the supplied context, or when operational details may be stale. Greetings and ordinary questions need no context call. It changes nothing.",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{}},
 		},
 		{

@@ -42,7 +42,9 @@ const (
 // once per session alongside the rest of the capability instructions, and it
 // is part of the capability fingerprint, so keep it stable.
 const Instructions = `## Steve (steve_context / steve_projects / steve_help)
-- Call steve_context first: it says who you are, where you are working, your budget, and what you have. steve_help(topic) has the way things are done here; steve_projects says where every project is.
+- Answer greetings and ordinary questions directly from the conversation and supplied context; no Steve tool call is required for every turn.
+- Call steve_context when the answer or next action depends on current identity, environment, budget, machines, or available tools that the supplied context does not establish. Check live state before relying on potentially stale operational details; never invent current capabilities.
+- Use steve_help(topic) when you need platform usage guidance and steve_projects when you need project locations. Steve's platform capabilities are provided by this MCP server.
 
 ## Channel messaging (channel_send / channel_update / channel_recall)
 The Steve MCP server posts and maintains interim messages in the current conversation.

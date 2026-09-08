@@ -58,16 +58,26 @@ func (l Limits) check(files, bytes, largest int64) error {
 	return nil
 }
 
-func (r *Repo) checkLimits(ctx context.Context, workTree string, env, paths []string) error {
-	// Use the snapshot's index and ignore rules, not the user's index.
-	// Tracked files still count when ignored; deleted files do not.
-	args := append([]string{"ls-files", "--cached", "--others", "--exclude-standard", "-z", "--"}, paths...)
-	out, err := r.git(ctx, env, args...)
+// prepareSnapshotIndex removes inherited gitlinks and checks the candidate
+// files before staging. One tagged index listing serves both checks on the
+// common path; only a gitlink needs removal and another listing so its newly
+// exposed files are counted too.
+func (r *Repo) prepareSnapshotIndex(ctx context.Context, workTree string, env, paths []string) error {
+	candidates, links, err := r.snapshotCandidates(ctx, env, paths)
 	if err != nil {
 		return err
 	}
+	if len(links) > 0 {
+		if _, err := r.git(ctx, env, append([]string{"update-index", "--force-remove", "--"}, links...)...); err != nil {
+			return fmt.Errorf("drop gitlinks: %w", err)
+		}
+		candidates, _, err = r.snapshotCandidates(ctx, env, paths)
+		if err != nil {
+			return err
+		}
+	}
 	var files, bytes, largest int64
-	for _, path := range strings.Split(out, "\x00") {
+	for _, path := range candidates {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -89,4 +99,34 @@ func (r *Repo) checkLimits(ctx context.Context, workTree string, env, paths []st
 		largest = max(largest, info.Size())
 	}
 	return r.Limits.defaults().check(files, bytes, largest)
+}
+
+// Use the snapshot's index and ignore rules, not the user's index.
+// Tracked files still count when ignored; deleted files do not. The -t tag
+// distinguishes an untracked filename that resembles staged-entry metadata.
+func (r *Repo) snapshotCandidates(ctx context.Context, env, paths []string) (files, links []string, err error) {
+	args := append([]string{"ls-files", "-t", "--stage", "--cached", "--others", "--exclude-standard", "-z", "--"}, paths...)
+	out, err := r.git(ctx, env, args...)
+	if err != nil {
+		return nil, nil, err
+	}
+	for _, entry := range strings.Split(out, "\x00") {
+		if entry == "" {
+			continue
+		}
+		if path, ok := strings.CutPrefix(entry, "? "); ok {
+			files = append(files, path)
+			continue
+		}
+		metadata, path, ok := strings.Cut(entry, "\t")
+		if !ok || len(metadata) < 2 {
+			return nil, nil, fmt.Errorf("invalid snapshot index entry")
+		}
+		if strings.HasPrefix(metadata[2:], "160000 ") {
+			links = append(links, path)
+			continue
+		}
+		files = append(files, path)
+	}
+	return files, links, nil
 }

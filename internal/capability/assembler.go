@@ -31,8 +31,8 @@ type Capabilities struct {
 	Instructions string
 	MCPServers   []acp.MCPServer
 	Fingerprint  string
-	// SessionFingerprint excludes editable home identity text. MCP connections,
-	// skills and visibility remain fixed for the lifetime of a session.
+	// SessionFingerprint excludes editable home identity and platform guidance.
+	// MCP connections, agent configuration, skills and visibility remain fixed.
 	SessionFingerprint string
 }
 
@@ -117,6 +117,13 @@ func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras [
 		}
 		parts = append(parts, string(data))
 	}
+	// Platform guidance is prompt context, not native session configuration.
+	// Capture the configured agent instructions before appending that guidance.
+	sessionParts := parts
+	if snap.Identity != "" {
+		sessionParts = parts[1:]
+	}
+	sessionInstructions := strings.Join(sessionParts, "\n\n")
 	for _, extra := range extras {
 		if strings.TrimSpace(extra.Instructions) != "" {
 			parts = append(parts, extra.Instructions)
@@ -183,11 +190,7 @@ func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras [
 	if err != nil {
 		return Capabilities{}, err
 	}
-	sessionParts := parts
-	if snap.Identity != "" {
-		sessionParts = parts[1:]
-	}
-	sessionFP, err := fingerprint(strings.Join(sessionParts, "\n\n"), servers, hashMode, skillsHash)
+	sessionFP, err := fingerprint(sessionInstructions, servers, hashMode, skillsHash)
 	if err != nil {
 		return Capabilities{}, err
 	}

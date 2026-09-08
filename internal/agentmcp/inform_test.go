@@ -2,9 +2,28 @@ package agentmcp
 
 import (
 	"context"
+	"net/http"
 	"strings"
 	"testing"
 )
+
+func TestContextGuidanceDoesNotRequireAReadBeforeOrdinaryConversation(t *testing.T) {
+	server, _ := startServer(t)
+	server.SetInformer(&taskInformer{})
+	server.Extras("chat", "agent", "token", "")
+	list := rpc(t, server.URL(), "token", "tools/list", nil)
+	if list.status != http.StatusOK || !strings.Contains(list.rawBody, "steve_context") {
+		t.Fatalf("context tool missing from MCP: %+v", list)
+	}
+	for _, guidance := range []string{Instructions, list.rawBody} {
+		if strings.Contains(guidance, "Call steve_context first") || strings.Contains(guidance, "Call it first in a session") {
+			t.Fatalf("MCP still requires an unconditional context round trip: %s", guidance)
+		}
+		if !strings.Contains(guidance, "ordinary questions") || !strings.Contains(guidance, "live state") {
+			t.Fatalf("MCP guidance must allow direct replies and require current operational facts: %s", guidance)
+		}
+	}
+}
 
 func TestPlatformOverviewIsAvailableThroughMCP(t *testing.T) {
 	server, _ := startServer(t)

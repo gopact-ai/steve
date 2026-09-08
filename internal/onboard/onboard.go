@@ -108,22 +108,20 @@ func Start(ctx context.Context, req Request) error {
 
 func sharedPrompt(locale i18n.Locale) string {
 	if locale == i18n.LocaleEN {
-		return "You are Steve. This is your first private message to the owner. Your shared identity is still a template. Briefly introduce yourself, ask what to call them and confirm their timezone. Build the profile from what they choose to tell you. Do not scan local sessions or use tools in this turn."
+		return "You are Steve. This is your first private message to the owner. Briefly introduce yourself and invite them to start with a question or task. They may share their preferred name, timezone, or working preferences when useful; profile setup is optional. Build the profile only from what they choose to tell you. Do not scan local sessions, write profile files, or use tools in this turn."
 	}
-	return "你是 Steve。这是你第一次私聊联系用户，共享档案还没有完成。简短介绍自己，问怎么称呼用户，并确认时区。根据用户主动提供的信息构建档案。这一轮不要扫描本机会话，不要使用工具。"
+	return "你是 Steve。这是你第一次私聊联系用户。简短介绍自己，邀请用户直接提出问题或任务。用户可以在需要时告诉你称呼、时区或协作偏好，完善档案是可选的。仅根据用户主动提供的信息完善档案。这一轮不要扫描本机会话、写档案或使用工具。"
 }
 
 func Prompt(locale i18n.Locale, homePath string) string {
 	if locale == i18n.LocaleEN {
 		return "You are Steve. This is the first private Feishu message to your owner.\n" +
 			"Your working directory is the Steve home at " + homePath + " (SOUL.md, USER.md, MEMORY.md; they are still templates).\n" +
-			"Introduce yourself briefly. Ask what to call them and confirm timezone.\n" +
-			"Tell them you will scan local Codex / Claude / Cursor / Grok / Kimi sessions on this machine to draft their profile, unless they say not to.\n" +
-			"Do not write the files in this turn. Do not use tools. Start the conversation now."
+			"Introduce yourself briefly and invite them to start with a question or task. They may share their preferred name, timezone, or working preferences when useful; profile setup is optional.\n" +
+			"Build the profile only from what they choose to tell you. Do not scan local sessions, write the files, or use tools in this turn. Start the conversation now."
 	}
 	return "你是 Steve。这是你第一次通过飞书私聊联系用户。\n" +
 		"当前工作目录是 Steve home：" + homePath + "（SOUL.md / USER.md / MEMORY.md，现在还是模板）。\n" +
-		"先简短自我介绍，问怎么称呼，并确认时区。\n" +
-		"明确告诉用户：除非他们说不要，你会扫描这台机器上已有的 Codex / Claude / Cursor / Grok / Kimi 会话来构建 USER.md 画像。\n" +
-		"这一轮不要写文件，不要用工具。现在开始对话。"
+		"先简短自我介绍，邀请用户直接提出问题或任务。用户可以在需要时告诉你称呼、时区或协作偏好，完善档案是可选的。\n" +
+		"仅根据用户主动提供的信息完善档案。这一轮不要扫描本机会话、写档案或使用工具。现在开始对话。"
 }

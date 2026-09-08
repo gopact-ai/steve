@@ -13,6 +13,23 @@ import (
 	"github.com/gopact-ai/steve/internal/state"
 )
 
+func TestFirstContactOffersConversationWithoutMandatoryProfile(t *testing.T) {
+	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
+		for _, prompt := range []string{Prompt(locale, "/tmp/home"), sharedPrompt(locale)} {
+			if strings.Contains(prompt, "unless they say not to") || strings.Contains(prompt, "除非他们说不要") {
+				t.Fatalf("first contact still promises implicit history scanning: %s", prompt)
+			}
+			if locale == i18n.LocaleEN {
+				if !strings.Contains(prompt, "question or task") || !strings.Contains(prompt, "profile setup is optional") || !strings.Contains(prompt, "Do not scan local sessions") {
+					t.Fatalf("first contact requires profile setup: %s", prompt)
+				}
+			} else if !strings.Contains(prompt, "直接提出问题或任务") || !strings.Contains(prompt, "完善档案是可选的") || !strings.Contains(prompt, "不要扫描本机会话") {
+				t.Fatalf("first contact requires profile setup: %s", prompt)
+			}
+		}
+	}
+}
+
 func TestStartUsesSharedProfileAndDoesNotPromiseLocalHistoryScanning(t *testing.T) {
 	for _, configured := range []bool{false, true} {
 		t.Run(map[bool]string{false: "template", true: "configured"}[configured], func(t *testing.T) {

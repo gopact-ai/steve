@@ -184,7 +184,7 @@ func TestOwnerFollowUpWritesPortrait(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.Text != "已记下，李总。" || len(result.Activity) != 0 {
+	if result.Text != "已记下，李总。" || len(result.Activity) != 1 || result.Activity[0] != runner.activity[0] {
 		t.Fatalf("result = %#v", result)
 	}
 	if len(runner.seen()) == 0 || !strings.Contains(runner.seen()[0], "===SOUL.md===") {
@@ -202,27 +202,72 @@ func TestOwnerFollowUpWritesPortrait(t *testing.T) {
 	}
 }
 
-func TestOwnerFollowUpSkipsScanWhenDenied(t *testing.T) {
+func TestOwnerCanChatBeforeProvidingProfile(t *testing.T) {
+	dir := t.TempDir()
+	if err := home.Bootstrap(dir, "ou_me"); err != nil {
+		t.Fatal(err)
+	}
+	coordinator, store, runner := homeCoordinator(t, dir, "ou_me")
+	var upstream string
+	for _, input := range []string{"你好", "帮我看看项目的测试命令"} {
+		runner.reply = "可以，我会按你的要求协助。"
+		runner.activity = []string{"read project instructions"}
+		result, err := coordinator.Handle(t.Context(), Request{ConversationID: "dm", Input: input, SenderOpenID: "ou_me", ChatType: protocol.ChatP2P})
+		if err != nil || result.Text != runner.reply {
+			t.Fatalf("ordinary conversation failed: %+v %v", result, err)
+		}
+		if len(result.Activity) != 1 || result.Activity[0] != runner.activity[0] {
+			t.Fatalf("optional profile setup swallowed task activity: %+v", result.Activity)
+		}
+		if upstream == "" {
+			upstream = result.Injected.Session
+		} else if result.Injected.NewSession || result.Injected.Session != upstream {
+			t.Fatal("ordinary conversation replaced its ongoing session")
+		}
+		if !home.NeedsInit(dir) || upstream == "" || store.Conversation("dm").Sessions["codex"].UpstreamID != upstream {
+			t.Fatal("ordinary reply must preserve the template and ongoing session")
+		}
+	}
+	runner.reply = "已记下。\n===SOUL.md===\n# Soul\n你是用户的个人助手，偏好简洁准确的协作。\n===USER.md===\n# User\n- 称呼：李工\n- 回复偏好：简洁\n"
+	result, err := coordinator.Handle(t.Context(), Request{ConversationID: "dm", Input: "叫我李工，以后回复简洁一点，顺便看看项目的测试命令", SenderOpenID: "ou_me", ChatType: protocol.ChatP2P})
+	if err != nil || result.Text != "已记下。" || home.NeedsInit(dir) {
+		t.Fatalf("later owner facts were not saved: %+v %v", result, err)
+	}
+	if len(result.Activity) != 1 || result.Activity[0] != runner.activity[0] {
+		t.Fatalf("recording owner facts hid actual task activity: %+v", result.Activity)
+	}
+	user, err := os.ReadFile(filepath.Join(dir, home.FileUser))
+	if err != nil || !strings.Contains(string(user), "李工") || !strings.Contains(string(user), "简洁") {
+		t.Fatalf("owner facts lost: %s %v", user, err)
+	}
+}
+
+func TestOwnerFollowUpDoesNotScanLocalHistory(t *testing.T) {
 	dir := t.TempDir()
 	if err := home.Bootstrap(dir, "ou_me"); err != nil {
 		t.Fatal(err)
 	}
 	coordinator, _, runner := homeCoordinator(t, dir, "ou_me")
-	runner.reply = "好的，不会扫描。"
-	coordinator.scanHome = t.TempDir()
-	if err := os.MkdirAll(filepath.Join(coordinator.scanHome, ".codex", "sessions"), 0o700); err != nil {
+	runner.reply = "可以随时告诉我你的问题。"
+	userHome := t.TempDir()
+	t.Setenv("HOME", userHome)
+	if err := os.MkdirAll(filepath.Join(userHome, ".codex", "sessions"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(coordinator.scanHome, ".codex", "sessions", "a.jsonl"), []byte(`{"role":"user","text":"secret project zebra"}`+"\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(userHome, ".codex", "sessions", "a.jsonl"), []byte(`{"role":"user","text":"secret project zebra"}`+"\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := coordinator.Handle(t.Context(), Request{
-		ConversationID: "dm", Input: "不允许扫描，叫我李总", SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
-	}); err != nil {
-		t.Fatal(err)
+	for _, input := range []string{"你好", "叫我李总", "不允许扫描，叫我李总"} {
+		if _, err := coordinator.Handle(t.Context(), Request{
+			ConversationID: "dm", Input: input, SenderOpenID: "ou_me", ChatType: protocol.ChatP2P,
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
-	if strings.Contains(runner.seen()[0], "secret project zebra") {
-		t.Fatal("scan ran after deny")
+	for _, prompt := range runner.seen() {
+		if strings.Contains(prompt, "secret project zebra") {
+			t.Fatal("ordinary conversation scanned local history")
+		}
 	}
 }
 
@@ -319,6 +364,5 @@ func homeCoordinatorWithManager(t *testing.T, homeDir, owner string) (*Coordinat
 	coordinator := newCoordinator(t, catalog, store, assembler, manager, time.Minute)
 	coordinator.SetIdentity(owner, home.Dir{Path: homeDir})
 	useHome(t, coordinator, homeDir)
-	coordinator.scanHome = t.TempDir()
 	return coordinator, store, manager
 }

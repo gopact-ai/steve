@@ -40,7 +40,9 @@ func TestProfileFollowupWritesSharedIdentityWithoutScanningLocalHistory(t *testi
 			}}
 			coordinator.SetIdentity("owner", loader)
 			coordinator.assembler.SetHome(loader)
-			history := filepath.Join(coordinator.scanHome, ".codex", "sessions")
+			userHome := t.TempDir()
+			t.Setenv("HOME", userHome)
+			history := filepath.Join(userHome, ".codex", "sessions")
 			if err := os.MkdirAll(history, 0o700); err != nil {
 				t.Fatal(err)
 			}
@@ -51,6 +53,15 @@ func TestProfileFollowupWritesSharedIdentityWithoutScanningLocalHistory(t *testi
 			if err != nil {
 				t.Fatal(err)
 			}
+			runner.reply = "你好，我可以帮你处理问题和任务。"
+			greeting, err := coordinator.Handle(t.Context(), Request{ConversationID: "dm", Input: "你好", SenderOpenID: "owner", ChatType: protocol.ChatP2P})
+			if err != nil || greeting.Text != runner.reply {
+				t.Fatalf("shared template prevented ordinary conversation: %+v %v", greeting, err)
+			}
+			unconfigured, err := shared.HomeFiles(t.Context())
+			if err != nil || !home.IsTemplate(unconfigured[home.FileUser]) {
+				t.Fatalf("ordinary greeting wrote a shared profile: %v", err)
+			}
 			runner.reply = "已记下。\n===SOUL.md===\n# Soul\n你是用户的可靠个人助手，帮助维护项目。\n===USER.md===\n# User\n- 称呼：李工\n- 时区：Asia/Shanghai\n"
 			result, err := coordinator.Handle(t.Context(), Request{ConversationID: "dm", Input: "叫我李工，时区上海", SenderOpenID: "owner", ChatType: protocol.ChatP2P})
 			if fail {
@@ -59,6 +70,9 @@ func TestProfileFollowupWritesSharedIdentityWithoutScanningLocalHistory(t *testi
 				}
 			} else if err != nil || result.Text != "已记下。" {
 				t.Fatalf("shared profile result: %+v %v", result, err)
+			}
+			if !fail && (result.Injected.NewSession || result.Injected.Session != greeting.Injected.Session) {
+				t.Fatal("providing profile facts replaced the original conversation")
 			}
 			for _, prompt := range runner.seen() {
 				if strings.Contains(prompt, "private-history-must-not-be-scanned") {

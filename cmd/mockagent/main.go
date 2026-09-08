@@ -24,6 +24,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -107,6 +108,15 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 		}
 	}
 	input := text.String()
+	if chunks, _ := strconv.Atoi(os.Getenv("MOCKAGENT_STREAM_CHUNKS")); chunks > 0 && chunks <= 1000 {
+		for range chunks {
+			chunk := acp.AgentMessageChunkSessionUpdate(acp.TextContentBlock("stream-fragment\n"))
+			if err := a.client.Update(ctx, &acp.SessionNotification{SessionID: req.SessionID, Update: chunk}); err != nil {
+				return nil, err
+			}
+		}
+		return &acp.PromptResponse{StopReason: acp.StopReasonEndTurn}, nil
+	}
 	for _, block := range req.Prompt {
 		encoded, mime, kind := "", "", ""
 		if block.Type == acp.ContentBlockTypeImage {

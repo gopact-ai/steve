@@ -221,6 +221,12 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 	}
 	s.processes[e.ID] = work
 	s.mu.Unlock()
+	stream := s.progress(exchange.Conversation, exchange.ID, work)
+	defer stream.Close()
+	detach := func(err error) {
+		stream.Close()
+		s.detachRecovery(e, err)
+	}
 	stop := s.follow(ctx, exchange.Conversation, work)
 	defer stop()
 	if s.anchor != nil {
@@ -230,7 +236,7 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 	waitingPlan := ""
 	for {
 		if ctx.Err() != nil {
-			s.detachRecovery(e, ctx.Err())
+			detach(ctx.Err())
 			return
 		}
 		candidate, found, lookupErr := s.findRetained(ctx, driver, exchange)
@@ -243,6 +249,7 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 			requester = exchange.Requester
 		}
 		if requester == "" || requester != s.owner {
+			stream.Close()
 			s.finish(e, consoleapi.Reply{}, errors.New("recovery requires the original console owner"))
 			return
 		}
@@ -256,7 +263,8 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 				base.TaskID, base.AttemptID = taskID, attemptID
 				identityMu.Unlock()
 			},
-			OnProgress: s.progress(exchange.Conversation, exchange.ID, work),
+			OnProgress: stream.Update,
+			OnPhase:    stream.Phase,
 			OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 				return s.askPermission(ctx, questionBase(), ask)
 			},
@@ -272,7 +280,7 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 			s.mu.Unlock()
 			if saveErr != nil {
 				if ctx.Err() != nil {
-					s.detachRecovery(e, ctx.Err())
+					detach(ctx.Err())
 					return
 				}
 				lookupErr = saveErr
@@ -283,13 +291,15 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 					result, err = driver.ResumeRetainedChat(ctx, candidate.AttemptID, request)
 				}
 				if err == nil || (result.Attempt != "" && !isRecoveryBlocked(err)) {
+					stream.Phase(view.PhaseSaving)
+					stream.Close()
 					s.finish(e, s.resultReply(ctx, exchange, work, result, err), err)
 					return
 				}
 			}
 		}
 		if ctx.Err() != nil {
-			s.detachRecovery(e, ctx.Err())
+			detach(ctx.Err())
 			return
 		}
 		if planner, supportsRelocation := driver.(relocationDriver); supportsRelocation && found && candidate.plan == nil && isRecoveryBlocked(err) {
@@ -311,12 +321,12 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 							s.publishQueue(e.Conversation)
 							s.mu.Unlock()
 							if saveErr != nil {
-								s.detachRecovery(e, saveErr)
+								detach(saveErr)
 								return
 							}
 							answer, askErr := s.RequestRecovery(ctx, questionBase(), plan.Question)
 							if askErr != nil {
-								s.detachRecovery(e, askErr)
+								detach(askErr)
 								return
 							}
 							if answer.Value != "confirm-stopped-and-retry:"+plan.ID {
@@ -329,6 +339,8 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 						if !quiet {
 							result, relocationErr := planner.RelocateChat(ctx, plan.ID, choice, request)
 							if relocationErr == nil || (result.Attempt != "" && !isRecoveryBlocked(relocationErr)) {
+								stream.Phase(view.PhaseSaving)
+								stream.Close()
 								s.finish(e, s.resultReply(ctx, exchange, work, result, relocationErr), relocationErr)
 								return
 							}
@@ -354,10 +366,10 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 		s.mu.Unlock()
 		if saveErr != nil {
 			if ctx.Err() != nil {
-				s.detachRecovery(e, ctx.Err())
+				detach(ctx.Err())
 				return
 			}
-			s.detachRecovery(e, saveErr)
+			detach(saveErr)
 			return
 		}
 		if quiet {
@@ -366,7 +378,7 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 			case <-timer.C:
 			case <-ctx.Done():
 				timer.Stop()
-				s.detachRecovery(e, ctx.Err())
+				detach(ctx.Err())
 				return
 			}
 			continue
@@ -376,10 +388,10 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 		answer, askErr := s.askUser(ctx, base, question)
 		if askErr != nil {
 			if ctx.Err() != nil {
-				s.detachRecovery(e, ctx.Err())
+				detach(ctx.Err())
 				return
 			}
-			s.detachRecovery(e, askErr)
+			detach(askErr)
 			return
 		}
 		// Free-form advice is retained in the question record. Without an

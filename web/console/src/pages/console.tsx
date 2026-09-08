@@ -22,7 +22,7 @@ import { Sheet } from "@/components/steve/drawer";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import { placeLabel } from "@/lib/workspaces";
-import { useFleet, useIntent } from "@/lib/fleet";
+import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
 import { applyDelegation, restoreDelegations, withDelegations, type Delegations } from "@/lib/delegations";
 import { beginSubmission, retrySubmission, failSubmission, finishSubmission, reconcileSubmission, restoreSubmission, updateDraft, useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission, useMaterials, removeDraftMaterial, submissionRefs } from "@/lib/drafts";
 import { useI18n } from "@/providers/locale-provider";
@@ -38,7 +38,8 @@ import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, 
 // the line in flight and the composer's text, and lays out the three
 // columns from components/steve. Nothing here draws.
 export function ConsolePage() {
-    const { snap, consoleEvents, refresh, live: connection, hubUpdated } = useFleet();
+    const { snap, refresh, live: connection, hubUpdated } = useFleet();
+    const consoleEvents = useConsoleEvents();
     const { t, locale } = useI18n();
     const materials = useMaterial();
     const side = useSideChat();

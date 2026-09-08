@@ -259,6 +259,9 @@ func (c *Coordinator) resumeRetainedChat(parent context.Context, id string, req 
 		return Result{}, retainedBlocked("observer-detached", "接续并观察原执行的进度", "原执行的观察连接再次中断。", "无法确认它是否已经完成，因此保留原执行并等待核实。", "建议恢复连接后重新检查。", runErr)
 	}
 	settled = acphost.PromptSettled(runErr)
+	if settled {
+		req.phase(view.PhaseFinishing)
+	}
 	result = Result{AgentID: record.Agent, Text: out, Activity: activity, Attempt: record.ID, Injected: &Injected{Project: record.Project, Workspace: record.Workspace.Path, Agent: record.Agent, Node: record.Node, Harness: record.Harness, Session: record.Session}}
 	if settled {
 		runErr, cleanupFailure = c.settleRetained(ctx, record, result, runErr, spent)

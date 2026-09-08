@@ -24,28 +24,8 @@ func TestIncompleteDraftDoesNotReportIdentitySaved(t *testing.T) {
 	}
 }
 
-func TestAllowScan(t *testing.T) {
-	tests := []struct {
-		name  string
-		input string
-		want  bool
-	}{
-		{name: "default", input: "叫我李总，时区对的", want: true},
-		{name: "explicit allow", input: "允许扫描", want: true},
-		{name: "deny chinese", input: "不允许扫描会话", want: false},
-		{name: "deny english", input: "please do not scan", want: false},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			if got := AllowScan(tt.input); got != tt.want {
-				t.Fatalf("AllowScan(%q)=%v want %v", tt.input, got, tt.want)
-			}
-		})
-	}
-}
-
 func TestParseDraftRejectsInstructionEcho(t *testing.T) {
-	if _, err := ParseDraft(Continue(i18n.LocaleZH, "/tmp/home", "")); err == nil {
+	if _, err := ParseDraft(Continue(i18n.LocaleZH, "/tmp/home")); err == nil {
 		t.Fatal("instruction echo should not parse as a draft")
 	}
 }
@@ -86,6 +66,10 @@ func TestApplyWithoutDraftKeepsFiles(t *testing.T) {
 	if err := home.Bootstrap(dir, "ou_owner"); err != nil {
 		t.Fatal(err)
 	}
+	const existingSoul = "# Soul\nYou are Steve. The owner prefers concise explanations.\n"
+	if err := os.WriteFile(filepath.Join(dir, home.FileSoul), []byte(existingSoul), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	reply, written, err := Apply(dir, "先问问称呼。")
 	if err != nil || written || reply != "先问问称呼。" {
 		t.Fatalf("reply=%q written=%v err=%v", reply, written, err)
@@ -93,12 +77,31 @@ func TestApplyWithoutDraftKeepsFiles(t *testing.T) {
 	if !home.NeedsInit(dir) {
 		t.Fatal("template should remain")
 	}
+	soul, err := os.ReadFile(filepath.Join(dir, home.FileSoul))
+	if err != nil || string(soul) != existingSoul {
+		t.Fatalf("ordinary reply changed existing identity: %q %v", soul, err)
+	}
 }
 
-func TestContinueMentionsExcerpts(t *testing.T) {
-	got := Continue(i18n.LocaleZH, "/tmp/home", "codex: likes tea")
-	if !strings.Contains(got, "likes tea") || !strings.Contains(got, soulFence) {
-		t.Fatalf("continue = %s", got)
+func TestContinueMakesProfileOptionalAndKeepsOwnerFacts(t *testing.T) {
+	for _, locale := range []i18n.Locale{i18n.LocaleZH, i18n.LocaleEN} {
+		for _, prompt := range []string{Continue(locale, "/tmp/home"), ContinueShared(locale)} {
+			for _, required := range []string{
+				"## Optional profile setup",
+				"Reply directly to greetings and ordinary questions",
+				"Only produce a profile when the owner supplies durable facts",
+				"Preserve any existing non-template identity and user facts",
+				"Tools remain available for the user's actual request",
+				"Do not scan local sessions to complete a profile",
+			} {
+				if !strings.Contains(prompt, required) {
+					t.Fatalf("missing profile decision rule %q: %s", required, prompt)
+				}
+			}
+			if strings.Contains(prompt, "Build their profile now.") || strings.Contains(prompt, "- Do not use tools.") {
+				t.Fatalf("profile setup still overrides ordinary conversation: %s", prompt)
+			}
+		}
 	}
 }
 

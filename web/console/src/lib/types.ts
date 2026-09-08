@@ -107,6 +107,7 @@ export interface ToolCall { id?: string; kind?: string; name?: string; detail?: 
 export interface PlanLine { text: string; status: string }
 export interface Span { kind: "text" | "thought" | "tool"; text?: string; tool?: string; at: string }
 export interface Progress {
+    phase?: string;
     agent?: string; node?: string; model?: string; reasoning?: string; answer?: string; tools?: ToolCall[]; plan?: PlanLine[];
     timeline?: Span[];
 }

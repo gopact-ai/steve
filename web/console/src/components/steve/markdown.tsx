@@ -1,4 +1,4 @@
-import { useState, type ReactElement, type ReactNode } from "react";
+import { memo, useState, type ReactElement, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Code02, Copy01, Terminal } from "@untitledui/icons";
@@ -8,13 +8,13 @@ import type { Plugin } from "unified";
 // Md renders a piece of markdown the way the transcript wants it: the
 // prose rules from globals.css, and every fenced block as a CodeBlock
 // with its language named and a copy button, like a chat app's.
-export function Md({ text, size = "sm", className }: { text: string; size?: "sm" | "xs"; className?: string }) {
+export const Md = memo(function Md({ text, size = "sm", className }: { text: string; size?: "sm" | "xs"; className?: string }) {
     return (
         <div className={`md prose prose-sm max-w-none break-words [overflow-wrap:anywhere] ${size === "xs" ? "text-xs prose-p:my-0.5 prose-strong:font-medium" : ""} ${className ?? ""}`}>
             <Markdown remarkPlugins={[remarkGfm]} rehypePlugins={[sourcePositions]} components={components}>{text}</Markdown>
         </div>
     );
-}
+});
 
 const components: Components = {
     pre: ({ children }) => {

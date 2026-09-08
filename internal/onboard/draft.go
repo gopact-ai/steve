@@ -19,19 +19,6 @@ const (
 	userFence = "===USER.md==="
 )
 
-func AllowScan(input string) bool {
-	folded := strings.ToLower(strings.TrimSpace(input))
-	for _, phrase := range []string{
-		"不允许", "不要扫", "别扫", "不要扫描", "不准扫", "别扫描",
-		"don't scan", "do not scan", "no scan", "dont scan",
-	} {
-		if strings.Contains(folded, phrase) {
-			return false
-		}
-	}
-	return true
-}
-
 func Building(conversationID string, ownerP2P, needsInit bool) bool {
 	if !ownerP2P || !needsInit {
 		return false
@@ -39,52 +26,47 @@ func Building(conversationID string, ownerP2P, needsInit bool) bool {
 	return !strings.HasPrefix(conversationID, "steve:onboard:")
 }
 
-func Continue(locale i18n.Locale, homePath, excerpts string) string {
-	return continueProfile(locale, homePath, excerpts, false)
+func Continue(locale i18n.Locale, homePath string) string {
+	return continueProfile(locale, homePath, false)
 }
 
-// ContinueShared builds a profile only from the current conversation. Local
+// ContinueShared offers profile setup from the current conversation. Local
 // histories are not a shared identity source after a coordinator moves.
 func ContinueShared(locale i18n.Locale) string {
-	return continueProfile(locale, "", "", true)
+	return continueProfile(locale, "", true)
 }
 
-func continueProfile(locale i18n.Locale, homePath, excerpts string, shared bool) string {
+func continueProfile(locale i18n.Locale, homePath string, shared bool) string {
 	lang := "简体中文"
 	if locale == i18n.LocaleEN {
 		lang = "English"
 	}
 	var b strings.Builder
-	b.WriteString("The owner answered. Build their profile now.\n")
+	b.WriteString("## Optional profile setup\n")
+	b.WriteString("Reply directly to greetings and ordinary questions. Do not delay the user's request to complete a profile, ask setup questions, or produce identity files.\n")
+	b.WriteString("Only produce a profile when the owner supplies durable facts about themselves or their preferences, or asks to create their profile. Otherwise reply normally without file markers.\n")
 	if shared {
 		b.WriteString("Steve will persist this profile in its shared identity store.")
 	} else {
 		b.WriteString("Working directory: ")
 		b.WriteString(homePath)
 	}
-	b.WriteString("\nWrite both files in ")
+	b.WriteString("\nIf producing a profile, write both files in ")
 	b.WriteString(lang)
 	b.WriteString(".\n")
-	b.WriteString("Rules:\n")
-	b.WriteString("- Do not use tools. Steve will write the files from your output.\n")
-	if shared {
-		b.WriteString("- Do not invent. Only use the owner's current messages and supplied shared profile. Do not scan local sessions.\n")
-	} else {
-		b.WriteString("- Do not invent. Only use the owner's message and the session excerpts below.\n")
-	}
+	b.WriteString("Profile rules:\n")
+	b.WriteString("- Do not use tools just to create the profile; Steve will write the files from your output. Tools remain available for the user's actual request.\n")
+	b.WriteString("- Do not invent. Only use the owner's messages and supplied profile. Do not scan local sessions to complete a profile.\n")
+	b.WriteString("- Preserve any existing non-template identity and user facts; update only what the owner supplied or corrected. Do not turn a greeting or a one-off question into a durable preference.\n")
 	b.WriteString("- USER.md is a durable portrait: name, timezone, projects, preferences, people. Short bullets.\n")
 	b.WriteString("- SOUL.md is Steve's identity as their personal assistant. The AI tools Steve drives are hands, not another self; do not name specific tools, Steve is told what it has each turn.\n")
 	b.WriteString("- Do not put channel identifiers (a Feishu open_id, a token) in USER.md; they live in Steve's config. Do not include the template marker comment.\n")
-	b.WriteString("- First write a short reply confirming what you recorded.\n")
-	b.WriteString("- Then output ONLY this shape:\n\n")
+	b.WriteString("- Answer the user's request first, briefly acknowledging any facts recorded.\n")
+	b.WriteString("- Only when recording a profile, append both complete files in this shape:\n\n")
 	b.WriteString(soulFence)
 	b.WriteString("\n<full SOUL.md>\n")
 	b.WriteString(userFence)
 	b.WriteString("\n<full USER.md>\n")
-	if excerpts != "" {
-		b.WriteString("\nSession excerpts (stable facts only):\n")
-		b.WriteString(excerpts)
-	}
 	return b.String()
 }
 

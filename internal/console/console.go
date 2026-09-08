@@ -595,6 +595,8 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		return consoleapi.Reply{Text: err.Error(), Error: err.Error()}, err
 	}
 	work := newProcess()
+	stream := s.progress(conversation, exchange.ID, work)
+	defer stream.Close()
 	s.mu.Lock()
 	if s.processes == nil {
 		s.processes = map[string]*process{}
@@ -625,8 +627,11 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		OnAskUser: func(ctx context.Context, q view.Question) (view.Answer, error) {
 			return s.askUser(ctx, questionBase(), q)
 		},
-		OnProgress: s.progress(conversation, exchange.ID, work),
+		OnProgress: stream.Update,
+		OnPhase:    stream.Phase,
 	})
+	stream.Phase(view.PhaseSaving)
+	stream.Close()
 	stop()
 	reply = s.resultReply(ctx, exchange, work, result, err)
 	// The first real exchange names the conversation, unless it has a
@@ -641,42 +646,6 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		}
 	}
 	return reply, err
-}
-
-// progress is the turn's own stream, published no more often than a page
-// can usefully repaint, and kept as the reply's process.
-func (s *Service) progress(conversation, exchangeID string, work *process) func(view.Progress) {
-	var mu sync.Mutex
-	var last time.Time
-	return func(p view.Progress) {
-		cut := readmodel.FromProgress(p)
-		work.turn(cut)
-		if s.model == nil {
-			return
-		}
-		mu.Lock()
-		due := time.Since(last) >= progressEvery || toolsChanged(work, cut)
-		if due {
-			last = time.Now()
-		}
-		mu.Unlock()
-		if due {
-			s.model.Publish(readmodel.Event{Kind: "console.progress", Conversation: conversation, ExchangeID: exchangeID, Progress: &cut})
-		}
-	}
-}
-
-// progressEvery bounds how often a token stream repaints the page.
-const progressEvery = 500 * time.Millisecond
-
-func toolsChanged(work *process, next consoleapi.Progress) bool {
-	work.mu.Lock()
-	defer work.mu.Unlock()
-	if len(next.Tools) != work.publishedTools {
-		work.publishedTools = len(next.Tools)
-		return true
-	}
-	return false
 }
 
 // follow collects plan progress. Delegations go through UpdateStep so a
@@ -705,11 +674,10 @@ func (s *Service) follow(ctx context.Context, conversation string, work *process
 
 // process is what one console line caused, gathered as it happens.
 type process struct {
-	mu             sync.Mutex
-	last           consoleapi.Progress
-	steps          map[string]consoleapi.StepProcess
-	order          []string
-	publishedTools int
+	mu    sync.Mutex
+	last  consoleapi.Progress
+	steps map[string]consoleapi.StepProcess
+	order []string
 }
 
 func newProcess() *process { return &process{steps: map[string]consoleapi.StepProcess{}} }

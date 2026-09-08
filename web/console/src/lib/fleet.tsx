@@ -10,12 +10,12 @@ interface FleetState {
     snap: Snapshot;
     live: Live;
     events: Event[];
-    consoleEvents: Event[];
     refresh: () => void;
     hubUpdated: boolean;
 }
 
 const FleetContext = createContext<FleetState | null>(null);
+const ConsoleEventsContext = createContext<Event[] | null>(null);
 
 // The snapshot is re-read when the stream says something moved, with a
 // polling floor in case the stream drops silently.
@@ -50,18 +50,25 @@ export function FleetProvider({ children }: { children: ReactNode }) {
         let source: EventSource | null = null;
         let retry: number | null = null;
         let arrived = 0;
+        let reconnecting = false;
         const connect = () => {
             source = new EventSource(eventsURL());
-            source.onopen = () => setLive("live");
+            source.onopen = () => {
+                setLive("live");
+                if (reconnecting) { reconnecting = false; void load(); }
+            };
             source.onmessage = (e) => {
                 const ev = JSON.parse(e.data) as Event;
                 // The console follows its own traffic and the progress of
                 // work asked from it; everything else is the activity feed.
                 if (ev.kind.startsWith("console.") || ev.kind === "step.progress" || ev.kind === "delegate.progress") setConsoleEvents((list) => [...list.slice(-399), { ...ev, n: ++arrived }]);
                 else setEvents((list) => [ev, ...list].slice(0, 300));
-                refresh();
+                // Text snapshots carry no fleet lifecycle changes. Re-reading
+                // /state here also invalidates every snapshot consumer.
+                if (!isStreamingProgress(ev)) refresh();
             };
             source.onerror = () => {
+                reconnecting = true;
                 setLive("reconnecting");
                 source?.close();
                 retry = window.setTimeout(connect, 3000);
@@ -71,14 +78,26 @@ export function FleetProvider({ children }: { children: ReactNode }) {
         return () => { window.clearInterval(floor); source?.close(); if (retry) window.clearTimeout(retry); if (pending.current) window.clearTimeout(pending.current); };
     }, [load, refresh]);
 
-    const value = useMemo(() => ({ snap, live, events, consoleEvents, refresh, hubUpdated }), [snap, live, events, consoleEvents, refresh, hubUpdated]);
-    return <FleetContext.Provider value={value}>{children}</FleetContext.Provider>;
+    const value = useMemo(() => ({ snap, live, events, refresh, hubUpdated }), [snap, live, events, refresh, hubUpdated]);
+    return <FleetContext.Provider value={value}><ConsoleEventsContext.Provider value={consoleEvents}>{children}</ConsoleEventsContext.Provider></FleetContext.Provider>;
 }
 
 export function useFleet(): FleetState {
     const ctx = useContext(FleetContext);
     if (!ctx) throw new Error("useFleet outside FleetProvider");
     return ctx;
+}
+
+export function useConsoleEvents(): Event[] {
+    const events = useContext(ConsoleEventsContext);
+    if (!events) throw new Error("useConsoleEvents outside FleetProvider");
+    return events;
+}
+
+export function isStreamingProgress(event: Event): boolean {
+    // Delegation completion also changes its durable step and task state.
+    if (event.step?.state && event.step.state !== "running") return false;
+    return event.kind === "console.progress" || event.kind === "step.progress" || event.kind === "delegate.progress";
 }
 
 // Verbs sent from other pages land on the console: this is the hand-off.

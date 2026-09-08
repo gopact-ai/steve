@@ -319,7 +319,7 @@ type refusingNode struct {
 func (n *refusingNode) Statuses() []node.Status {
 	return []node.Status{{Name: "remote", Up: true, Advert: nodewire.Advert{Node: "remote", Capabilities: []string{"gpu"}, Harnesses: []nodewire.Harness{{ID: "mock"}}}}}
 }
-func (*refusingNode) EnsureConnected(context.Context) {}
+func (*refusingNode) EnsureConnected(context.Context, ...string) {}
 func (n *refusingNode) Admit(context.Context, string, nodewire.AdmitRequest) (ability.Admission, error) {
 	n.calls++
 	return ability.Admission{Verdict: n.verdict, Source: ability.SourceNode}, nil

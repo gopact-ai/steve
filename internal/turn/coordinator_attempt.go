@@ -41,21 +41,15 @@ func (c *Coordinator) openAttempt(ctx context.Context, req Request, selected age
 	// both the machine's level and the endpoint's session cap.
 	var chosen *roster.Candidate
 	if c.fleet != nil {
-		for _, cand := range c.fleet.All(ctx) {
-			if cand.Node != selected.Node || cand.Harness != selected.Harness {
-				continue
-			}
-			cand.Agent = selected
-			chosen = &cand
-			spec.Slots = cand.Slots
-			spec.Region = cand.Region
-			if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok {
-				spec.CanonicalRegion = c.fleet.RegionOf(p.Home.Node)
-			}
-			if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok && !p.Level.OrDefault().Admits(cand.Level.OrDefault()) {
+		cand := c.fleet.ForAgent(ctx, selected)
+		chosen = &cand
+		spec.Slots = cand.Slots
+		spec.Region = cand.Region
+		if p, ok, perr := c.projects.Get(ctx, binding.ProjectID); perr == nil && ok {
+			spec.CanonicalRegion = c.fleet.RegionOf(p.Home.Node)
+			if !p.Level.OrDefault().Admits(cand.Level.OrDefault()) {
 				return attempt.Record{}, nil, UserError{Text: c.text.T(i18n.ProjectLevel, p.ID, p.Level.OrDefault(), selected.ID, placeLabel(selected.Node), cand.Level.OrDefault(), protocol.CommandProject)}
 			}
-			break
 		}
 	}
 	spec.Requires = selected.Requires

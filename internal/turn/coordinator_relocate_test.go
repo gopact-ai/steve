@@ -22,7 +22,7 @@ type relocationResourceProbe struct {
 }
 
 func (n *relocationResourceProbe) Statuses() []node.Status { return nil }
-func (n *relocationResourceProbe) EnsureConnected(ctx context.Context) {
+func (n *relocationResourceProbe) EnsureConnected(ctx context.Context, _ ...string) {
 	if n.probes.Add(1) == 1 {
 		close(n.entered)
 	}

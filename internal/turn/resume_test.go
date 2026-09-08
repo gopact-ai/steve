@@ -215,7 +215,7 @@ func TestIncompleteProfileOnlyInterceptsHomeProject(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			building := strings.Contains(result.Injected.Prompt, "Build their profile now.")
+			building := strings.Contains(result.Injected.Prompt, "## Optional profile setup")
 			if building != (projectID == "home") {
 				t.Fatalf("project=%s profile intercepted=%v", projectID, building)
 			}

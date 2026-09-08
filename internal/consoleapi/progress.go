@@ -3,6 +3,7 @@ package consoleapi
 import "time"
 
 type Progress struct {
+	Phase     string     `json:"phase,omitempty"`
 	Agent     string     `json:"agent,omitempty"`
 	Node      string     `json:"node,omitempty"`
 	Model     string     `json:"model,omitempty"`

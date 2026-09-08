@@ -22,6 +22,17 @@ func (one *ownedSession) commitLocked(next sessionRecord) error {
 	if one.failure != nil {
 		return one.failure
 	}
+	// Every semantic transition includes the latest coalesced progress. The
+	// receipt and its final text therefore cross the durable boundary together.
+	if one.pendingProgress != nil {
+		next.State.Progress = *one.pendingProgress
+		next.State.Settings = one.pendingProgress.Settings
+	}
+	one.pendingProgress = nil
+	if one.progressTimer != nil {
+		one.progressTimer.Stop()
+		one.progressTimer = nil
+	}
 	next.State.Sequence = one.record.State.Sequence + 1
 	raw, err := json.Marshal(next)
 	if err == nil && len(raw) > nodewire.NodeSessionMaxBytes {

@@ -31,10 +31,11 @@ import (
 // EnsureConnected is part of the contract because a placement decision is
 // exactly the moment worth paying a dial for: reporting a node as down
 // because nobody has tried it yet would describe the registry's ignorance
-// rather than the fleet.
+// rather than the fleet. Names restrict dialing to those machines; no names
+// means every configured node.
 type NodeSource interface {
 	Statuses() []node.Status
-	EnsureConnected(ctx context.Context)
+	EnsureConnected(ctx context.Context, names ...string)
 }
 
 // Candidate is one agent considered for a placement, with the reason it does
@@ -268,25 +269,54 @@ func (r *Roster) SetHubCapabilities(caps []string) {
 // All reports every configured agent with its current standing. This is what
 // /status, the read model and `doctor` render.
 func (r *Roster) All(ctx context.Context) []Candidate {
+	return r.describeAgents(ctx, r.catalog.List(), true)
+}
+
+// ForAgent describes an already selected agent with the same placement facts
+// and admission evidence as All, connecting only to its machine. An unrelated
+// offline node must not delay a turn whose destination is already known.
+func (r *Roster) ForAgent(ctx context.Context, selected agent.Agent) Candidate {
+	return r.describeAgents(ctx, []agent.Agent{selected}, false)[0]
+}
+
+func (r *Roster) describeAgents(ctx context.Context, agents []agent.Agent, allNodes bool) []Candidate {
+	needsHub := false
+	selectedNodes := map[string]bool{}
+	for _, a := range agents {
+		if a.Node == "" {
+			needsHub = true
+		} else {
+			selectedNodes[a.Node] = true
+		}
+	}
 	r.mu.RLock()
 	nodes, hubCaps := r.nodes, append([]string(nil), r.hubCaps...)
 	hub, levels, regions := place{level: r.hubLevel, slots: r.hubSlots}, r.nodeLevels, r.regions
 	book := r.models
-	if r.hubAdvert != nil {
+	if needsHub && r.hubAdvert != nil {
 		hub.advert = r.hubAdvert()
 	}
 	r.mu.RUnlock()
 
 	byNode := map[string]node.Status{}
-	if nodes != nil {
-		nodes.EnsureConnected(ctx)
+	if nodes != nil && (allNodes || len(selectedNodes) > 0) {
+		if allNodes {
+			nodes.EnsureConnected(ctx)
+		} else {
+			names := make([]string, 0, len(selectedNodes))
+			for name := range selectedNodes {
+				names = append(names, name)
+			}
+			sort.Strings(names)
+			nodes.EnsureConnected(ctx, names...)
+		}
 		for _, s := range nodes.Statuses() {
 			byNode[s.Name] = s
 		}
 	}
 
-	out := make([]Candidate, 0, len(r.catalog.List()))
-	for _, a := range r.catalog.List() {
+	out := make([]Candidate, 0, len(agents))
+	for _, a := range agents {
 		c := describe(a, byNode, hubCaps, hub, levels)
 		c.Region = regions[a.Node]
 		if book != nil {

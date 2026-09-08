@@ -4,7 +4,7 @@ import { Button } from "@/components/base/buttons/button";
 import { TextArea } from "@/components/base/textarea/textarea";
 import { useSideChat, type SideSession } from "@/providers/side-chat-provider";
 import { useI18n } from "@/providers/locale-provider";
-import { useFleet } from "@/lib/fleet";
+import { isStreamingProgress, useConsoleEvents, useFleet } from "@/lib/fleet";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import { fetchQueue, fetchReplies, enqueue, send, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useMaterials, useSubmission, updateDraft, removeDraftMaterial, beginSubmission, retrySubmission, finishSubmission, failSubmission, reconcileSubmission, restoreSubmission, submissionRefs, useStops, beginStop, finishStop, isStopPending, type Submission } from "@/lib/drafts";
@@ -17,7 +17,8 @@ import "@/styles/side-chat.css";
 
 export function SideChatPanel({ onOpenMain }: { onOpenMain?: () => void } = {}) { const { session } = useSideChat(); return session ? <SideConversation key={session.id} session={session} onOpenMain={onOpenMain} /> : null; }
 function SideConversation({ session, onOpenMain }: { session: SideSession; onOpenMain?: () => void }) {
-    const { t, locale } = useI18n(); const side = useSideChat(); const { consoleEvents, live } = useFleet();
+    const { t, locale } = useI18n(); const side = useSideChat(); const { live } = useFleet();
+    const consoleEvents = useConsoleEvents();
     const draftIssue = useDraftIssue(session.id);
     const savedDraft = useSavedDraft(session.id);
     const text = useDraft(session.id), refs = useMaterials(session.id), pending = useSubmission(session.id), stops = useStops(), stop = stops[session.id];
@@ -25,7 +26,7 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
     const [replies, setReplies] = useState<Reply[]>([]), [queue, setQueue] = useState<Exchange[]>([]), [readError, setReadError] = useState(""), [loaded, setLoaded] = useState(false);
     const input = useRef<HTMLTextAreaElement>(null), transcript = useRef<HTMLDivElement>(null), follow = useRef(true);
     const load = useResourceRead(`side:${session.id}`, async (signal) => Promise.all([fetchReplies(session.id, signal), fetchQueue(session.id, signal)]), ([history, exchanges]) => { setReplies(history.replies || []); setQueue(exchanges.queue || []); reconcileSubmission(session.id, exchanges.queue || []); setReadError(""); setLoaded(true); }, (error) => { setReadError(error instanceof Error ? error.message : String(error)); setLoaded(true); });
-    const event = consoleEvents.findLast((entry) => entry.conversation === session.id)?.n;
+    const event = consoleEvents.findLast((entry) => entry.conversation === session.id && !isStreamingProgress(entry))?.n;
     useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 3000); return () => window.clearInterval(timer); }, [load, live]);
     useEffect(() => { void load(); }, [event, load]);
     useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [replies, queue]);

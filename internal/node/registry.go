@@ -294,9 +294,13 @@ func (r *Registry) Names() []string {
 
 // EnsureConnected dials any node that is not currently connected, so a
 // caller about to make a placement decision is looking at the fleet rather
-// than at whatever the registry last happened to learn.
-func (r *Registry) EnsureConnected(ctx context.Context) {
-	for _, name := range r.Names() {
+// than at whatever the registry last happened to learn. Named nodes restrict
+// that check to an already selected destination.
+func (r *Registry) EnsureConnected(ctx context.Context, names ...string) {
+	if len(names) == 0 {
+		names = r.Names()
+	}
+	for _, name := range names {
 		r.mu.Lock()
 		live := r.live[name]
 		r.mu.Unlock()

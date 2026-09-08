@@ -20,7 +20,7 @@ type fakeNodes struct{ statuses []node.Status }
 
 func (f fakeNodes) Statuses() []node.Status { return f.statuses }
 
-func (fakeNodes) EnsureConnected(context.Context) {}
+func (fakeNodes) EnsureConnected(context.Context, ...string) {}
 
 func fixture(t *testing.T) *Model {
 	t.Helper()

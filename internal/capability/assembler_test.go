@@ -259,3 +259,29 @@ func TestSessionFingerprintKeepsConfigurationSeparateFromIdentity(t *testing.T) 
 		t.Fatal("MCP connection change ignored")
 	}
 }
+
+func TestPlatformGuidanceRefreshKeepsSessionConfiguration(t *testing.T) {
+	a := NewAssembler(nil)
+	selected := agent.Agent{ID: "agent"}
+	extras := []Extra{{Name: "steve", Instructions: "Call context first", Server: MCPServer{Type: "http", URL: "http://localhost:1234/mcp"}}}
+	first, err := a.AssembleExtra(selected, home.ModeNone, extras)
+	if err != nil {
+		t.Fatal(err)
+	}
+	extras[0].Instructions = "Query live context only when the request needs it"
+	next, err := a.AssembleExtra(selected, home.ModeNone, extras)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Fingerprint == first.Fingerprint || next.SessionFingerprint != first.SessionFingerprint {
+		t.Fatal("platform guidance was treated as native configuration")
+	}
+	extras[0].Server.URL = "http://localhost:5678/mcp"
+	changed, err := a.AssembleExtra(selected, home.ModeNone, extras)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if changed.SessionFingerprint == next.SessionFingerprint {
+		t.Fatal("changed MCP connection can reuse stale native session")
+	}
+}

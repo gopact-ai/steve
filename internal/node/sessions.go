@@ -43,16 +43,18 @@ type SessionService struct {
 }
 
 type ownedSession struct {
-	service    *SessionService
-	mu         sync.Mutex
-	record     sessionRecord
-	host       *acphost.Host
-	changed    chan struct{}
-	waiters    map[string]chan struct{}
-	runDone    chan struct{}
-	openDone   chan struct{}
-	openCancel context.CancelFunc
-	failure    error
+	service         *SessionService
+	mu              sync.Mutex
+	record          sessionRecord
+	host            *acphost.Host
+	changed         chan struct{}
+	waiters         map[string]chan struct{}
+	runDone         chan struct{}
+	openDone        chan struct{}
+	openCancel      context.CancelFunc
+	failure         error
+	pendingProgress *view.Progress
+	progressTimer   *time.Timer
 }
 
 type sessionRecord struct {
@@ -523,13 +525,7 @@ func (one *ownedSession) run(req nodewire.SessionRequest) {
 			return one.askUser(ctx, req.CommandID, q)
 		},
 		func(progress view.Progress) {
-			one.mu.Lock()
-			next := one.copyLocked()
-			next.State.Progress = progress
-			next.State.Settings = progress.Settings
-			err := one.commitLocked(next)
-			one.mu.Unlock()
-			if err != nil {
+			if err := one.updateProgress(req.CommandID, progress); err != nil {
 				go host.Abort(generation)
 			}
 		},

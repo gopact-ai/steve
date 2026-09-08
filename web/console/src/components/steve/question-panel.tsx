@@ -6,7 +6,7 @@ import { Md } from "@/components/steve/markdown";
 import { questions, answerQuestion } from "@/lib/api/material";
 import type { PendingQuestion, QuestionAnswer } from "@/lib/types";
 import { useResourceRead } from "@/hooks/use-resource-read";
-import { useFleet } from "@/lib/fleet";
+import { useConsoleEvents, useFleet } from "@/lib/fleet";
 import { useI18n } from "@/providers/locale-provider";
 import { HTTPError } from "@/lib/http";
 import { dateTime } from "@/lib/format";
@@ -14,7 +14,8 @@ import "@/styles/questions.css";
 
 export function QuestionPanel({ conversation }: { conversation: string }) {
     const { t } = useI18n();
-    const { consoleEvents, live } = useFleet();
+    const { live } = useFleet();
+    const consoleEvents = useConsoleEvents();
     const [items, setItems] = useState<PendingQuestion[]>([]);
     const [error, setError] = useState("");
     const load = useResourceRead(`questions:${conversation}`, (signal) => questions(conversation, signal), (value) => {
