@@ -12,6 +12,8 @@ import (
 )
 
 func (one *ownedSession) copyLocked() sessionRecord {
+	// The record is plain data that round-trips through JSON by
+	// construction: this is a deep copy, not a parse.
 	raw, _ := json.Marshal(one.record)
 	var next sessionRecord
 	_ = json.Unmarshal(raw, &next)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -168,10 +169,33 @@ func TestApplyingRecoveryUsesHistoricalTargetButNeverAMovedDirectory(t *testing.
 	}
 }
 
+// leaseClock is the ledger's clock under a driver test: the test moves it
+// by hand and paces renewals through a channel, so no wall-clock ratio is
+// left for a slow runner to break.
+type leaseClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *leaseClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *leaseClock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
+}
+
 func TestLandingDriverRenewsAndRejectsStaleTransitions(t *testing.T) {
 	canonical := t.TempDir()
-	store, _ := newStore(t, &localNode{}, project.Home{Path: canonical})
-	ttl := 150 * time.Millisecond
+	clock := &leaseClock{t: time.Now()}
+	store, _ := newStoreWith(t, &localNode{}, project.Home{Path: canonical}, ledger.Options{Now: clock.now})
+	ticks := make(chan time.Time)
+	store.renewTicks = func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }
+	ttl := time.Minute
 	lease, err := store.ledger.Acquire(t.Context(), "landing-driver:test", "first", ttl)
 	if err != nil {
 		t.Fatal(err)
@@ -182,12 +206,24 @@ func TestLandingDriverRenewsAndRejectsStaleTransitions(t *testing.T) {
 	if _, err := store.ledger.Begin(t.Context(), land.ID, landKind, LandProposed, "test", land); err != nil {
 		t.Fatal(err)
 	}
-	time.Sleep(ttl * 3)
+	// Two renewals past the halfway mark; the second tick is only taken
+	// once the first renewal has committed, so the lease now outlives its
+	// original expiry.
+	clock.advance(ttl / 2)
+	ticks <- time.Time{}
+	ticks <- time.Time{}
+	clock.advance(ttl/2 + ttl/6)
 	if _, err := store.ledger.Acquire(t.Context(), lease.Key, "second", ttl); !errors.Is(err, ledger.ErrHeld) {
 		t.Fatalf("landing driver expired during work: %v", err)
 	}
 	if err := store.ledger.Invalidate(t.Context(), lease.Key); err != nil {
 		t.Fatal(err)
+	}
+	// The next renewal finds the lease gone; a renewal already racing the
+	// invalidation has stopped the driver by itself.
+	select {
+	case ticks <- time.Time{}:
+	case <-ctx.Done():
 	}
 	select {
 	case <-ctx.Done():

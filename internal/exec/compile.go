@@ -638,6 +638,8 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 		}
 	}
 	if err != nil {
+		// The step never ran: its workspace is dropped when possible and
+		// swept later otherwise; the placement error is what is reported.
 		_ = deps.Artifacts.Discard(ctx, workspace)
 		return plan.StepResult{StartedAt: started, EndedAt: time.Now(), Error: err.Error()}, err
 	}
@@ -691,6 +693,8 @@ func runStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Result
 			unresolved = agentexec.Blocked(failed, "cleanup", "释放已结束步骤的原会话", "失败结果已保存，但原会话或工作区尚未释放。", "建议恢复原节点后重新检查。", err)
 			return
 		}
+		// The failure is recorded; a workspace that cannot be dropped now is
+		// swept later.
 		_ = deps.Artifacts.Discard(context.WithoutCancel(ctx), workspace)
 	}
 
@@ -816,7 +820,9 @@ func finishStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Res
 			return result, cause
 		}
 		*unresolved = retainedStepDetached(record, cause)
-		_ = deps.Attempts.MarkUnsettled(ctx, record.ID, "exec-recovery", cause, attemptUsage(result.Usage))
+		if err := deps.Attempts.MarkUnsettled(ctx, record.ID, "exec-recovery", cause, attemptUsage(result.Usage)); err != nil {
+			log.Printf("exec: quarantine: %v", err)
+		}
 		return result, agentexec.Blocked(record, stage, "保存原步骤的产物、验证与结果", "原命令已返回，但步骤还没有完整提交。", "建议恢复原节点或存储，继续核对这次执行。", *unresolved)
 	}
 	advance := func(to attempt.State) error {
@@ -977,6 +983,8 @@ func finishStep(ctx context.Context, p plan.Plan, step plan.Step, upstream []Res
 		return result, agentexec.Blocked(completed, "accounting", "保存步骤的用量与预算", "步骤结果已经提交，但预算结算尚未完成。", "建议恢复存储后核对同一次执行。", err)
 	}
 
+	// The step is committed; a workspace that cannot be dropped now is
+	// swept later.
 	_ = deps.Artifacts.Discard(context.WithoutCancel(ctx), workspace)
 	return result, nil
 }

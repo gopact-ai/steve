@@ -5,7 +5,8 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"log"
+	"fmt"
+	"log/slog"
 	"runtime"
 	"strings"
 	"sync"
@@ -142,7 +143,7 @@ func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
 	g.mu.Unlock()
 	// The sender's open_id in the log is also how a new owner finds their
 	// own id during setup.
-	log.Printf("gateway: message conversation=%s sender=%s", conversationID(msg), msg.SenderOpenID)
+	slog.Info(fmt.Sprintf("gateway: message conversation=%s sender=%s", conversationID(msg), msg.SenderOpenID), "conversation", conversationID(msg), "sender", msg.SenderOpenID)
 	go g.serve(msg, conversationID(msg))
 }
 
@@ -231,7 +232,7 @@ func (g *Gateway) seedTopic(msg feishu.InboundMessage, task string) {
 	anchor, thread, err := seeder.ReplyThread(ctx, msg.MessageID, task)
 	cancel()
 	if err != nil || anchor == "" || thread == "" {
-		log.Printf("gateway: seed topic failed: %v", err)
+		slog.Error(fmt.Sprintf("gateway: seed topic failed: %v", err), "conversation", conversationID(msg), "message", msg.MessageID)
 		g.reply(msg.MessageID, g.text.T(i18n.TopicFailed))
 		return
 	}
@@ -279,7 +280,7 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 		},
 	})
 	if err != nil {
-		log.Printf("gateway: turn failed: chat=%s error=%v", msg.ChatID, err)
+		slog.Error(fmt.Sprintf("gateway: turn failed: chat=%s error=%v", msg.ChatID, err), "conversation", conversationID, "chat", msg.ChatID, "message", msg.MessageID)
 	}
 	ui.finish(result, err)
 }
@@ -298,13 +299,13 @@ func (g *Gateway) truncateRunes(text string, max int) string {
 
 func (g *Gateway) reply(messageID, text string) {
 	if g.ch == nil {
-		log.Printf("gateway: no channel bound, dropping reply")
+		slog.Warn("gateway: no channel bound, dropping reply", "message", messageID)
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := g.ch.Reply(ctx, messageID, text); err != nil {
-		log.Printf("gateway: reply failed: %v", err)
+		slog.Error(fmt.Sprintf("gateway: reply failed: %v", err), "message", messageID)
 	}
 }
 
@@ -370,7 +371,7 @@ func (g *Gateway) askPermission(ctx context.Context, ui *turnUI, ask permission.
 		name = string(ask.Kind)
 	}
 	ui.setApproval(&card.Approval{RequestID: id, ToolName: name, Reason: ask.Reason})
-	log.Printf("gateway: approval %s pending: tool=%q kind=%s", id, name, ask.Kind)
+	slog.Info(fmt.Sprintf("gateway: approval %s pending: tool=%q kind=%s", id, name, ask.Kind), "request", id, "tool", name, "kind", ask.Kind)
 	timer := time.NewTimer(approvalTimeout)
 	defer timer.Stop()
 	select {
@@ -379,7 +380,7 @@ func (g *Gateway) askPermission(ctx context.Context, ui *turnUI, ask permission.
 	case <-timer.C:
 		// Deny instead of stalling: the agent ends the turn cleanly rather
 		// than dragging the whole prompt into its own timeout.
-		log.Printf("gateway: approval %s timed out, denying", id)
+		slog.Warn(fmt.Sprintf("gateway: approval %s timed out, denying", id), "request", id)
 		return permission.Choose(false, ask.Options), nil
 	case <-ctx.Done():
 		return permission.Choose(false, ask.Options), ctx.Err()
@@ -387,8 +388,8 @@ func (g *Gateway) askPermission(ctx context.Context, ui *turnUI, ask permission.
 }
 
 func (g *Gateway) HandleCardAction(action feishu.CardAction) feishu.CardToast {
-	log.Printf("gateway: card action=%q request=%s decision=%s user=%s message=%s",
-		action.Action, action.RequestID, action.Decision, action.OpenID, action.MessageID)
+	slog.Info(fmt.Sprintf("gateway: card action=%q request=%s decision=%s user=%s message=%s",
+		action.Action, action.RequestID, action.Decision, action.OpenID, action.MessageID), "action", action.Action, "request", action.RequestID, "decision", action.Decision, "user", action.OpenID, "message", action.MessageID)
 	switch action.Action {
 	case "tool_approval":
 		return g.handleApprovalAction(action)
@@ -466,7 +467,7 @@ func (g *Gateway) setTurnCard(id, cardID string) {
 	defer g.mu.Unlock()
 	if entry := g.turns[id]; entry != nil {
 		entry.cardID = cardID
-		log.Printf("gateway: turn %s card=%s", id, cardID)
+		slog.Info(fmt.Sprintf("gateway: turn %s card=%s", id, cardID), "turn", id, "card", cardID)
 	}
 }
 
@@ -556,7 +557,7 @@ func (g *Gateway) recall(cardID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := r.DeleteMessage(ctx, cardID); err != nil {
-		log.Printf("gateway: recall card failed: %v", err)
+		slog.Error(fmt.Sprintf("gateway: recall card failed: %v", err), "card", cardID)
 	}
 }
 
@@ -603,7 +604,7 @@ func (g *Gateway) ack(messageID string) string {
 	defer cancel()
 	id, err := r.AddReaction(ctx, messageID, thinkingEmoji)
 	if err != nil {
-		log.Printf("gateway: ack reaction failed: %v", err)
+		slog.Error(fmt.Sprintf("gateway: ack reaction failed: %v", err), "message", messageID)
 		return ""
 	}
 	return id
@@ -620,7 +621,7 @@ func (g *Gateway) unack(messageID, reactionID string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := r.RemoveReaction(ctx, messageID, reactionID); err != nil {
-		log.Printf("gateway: clear reaction failed: %v", err)
+		slog.Error(fmt.Sprintf("gateway: clear reaction failed: %v", err), "message", messageID)
 	}
 }
 
@@ -630,7 +631,7 @@ func (g *Gateway) unack(messageID, reactionID string) {
 // rather than hanging the prompt.
 func (g *Gateway) askQuestion(ctx context.Context, ui *turnUI, q view.Question) (view.Answer, error) {
 	if len(q.Choices) == 0 {
-		log.Printf("gateway: question declined: text-only input is unsupported by Feishu cards")
+		slog.Warn("gateway: question declined: text-only input is unsupported by Feishu cards", "conversation", conversationID(ui.msg))
 		return view.Answer{Decision: "decline"}, nil
 	}
 	ui.mu.Lock()
@@ -654,7 +655,7 @@ func (g *Gateway) askQuestion(ctx context.Context, ui *turnUI, q view.Question) 
 	}()
 	q.RequestID = id
 	ui.setQuestion(&q)
-	log.Printf("gateway: question %s pending: %d choices", id, len(q.Choices))
+	slog.Info(fmt.Sprintf("gateway: question %s pending: %d choices", id, len(q.Choices)), "request", id, "conversation", conversationID(ui.msg))
 	timer := time.NewTimer(approvalTimeout)
 	defer timer.Stop()
 	select {
@@ -664,7 +665,7 @@ func (g *Gateway) askQuestion(ctx context.Context, ui *turnUI, q view.Question) 
 		// Unanswered is a real answer here: the agent gets "cancelled" and
 		// decides for itself, rather than the prompt stalling to its own
 		// timeout with nothing on screen.
-		log.Printf("gateway: question %s timed out", id)
+		slog.Warn(fmt.Sprintf("gateway: question %s timed out", id), "request", id, "conversation", conversationID(ui.msg))
 		return view.Answer{}, nil
 	case <-ctx.Done():
 		return view.Answer{}, ctx.Err()

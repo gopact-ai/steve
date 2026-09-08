@@ -257,6 +257,8 @@ func NewID() string { return newID() }
 
 func newID() string {
 	var b [8]byte
+	// crypto/rand.Read never returns an error; it aborts the program
+	// instead when the platform cannot supply randomness.
 	_, _ = rand.Read(b[:])
 	return "att-" + hex.EncodeToString(b[:])
 }
@@ -284,6 +286,8 @@ func (s *Service) Hold(ctx context.Context, region, key, holder string) (func(),
 		}
 		return nil, err
 	}
+	// Letting go is best effort: a lease that cannot be released falls to
+	// its TTL, and the holder has nothing further to do with it.
 	return func() { _ = s.l.ReleaseAny(context.Background(), lease) }, nil
 }
 
@@ -485,7 +489,7 @@ func (s *Service) releaseAll(parent context.Context, leases []ledger.Lease) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), releaseTimeout)
 	defer cancel()
 	for _, lease := range leases {
-		_ = s.l.ReleaseAny(ctx, lease)
+		_ = s.l.ReleaseAny(ctx, lease) // falls to its TTL, see above
 	}
 }
 
@@ -779,6 +783,8 @@ func (s *Service) Sweep(ctx context.Context) ([]Record, error) {
 		if err := s.expireSettled(ctx, r, "sweeper", "lease expired after confirmed settlement"); err != nil {
 			continue // it moved on its own between the list and now
 		}
+		// The attempt is expired; whatever it still held falls to its
+		// TTL if the invalidation fails.
 		_, _ = s.l.InvalidateHeldBy(ctx, r.ID)
 		r.State = Expired
 		expired = append(expired, r)
@@ -803,6 +809,7 @@ func (s *Service) ExpireAll(ctx context.Context, cause string) ([]Record, error)
 		if err := s.expire(ctx, r, "restart", cause); err != nil {
 			continue
 		}
+		// As in Sweep: leases left behind fall to their TTL.
 		_, _ = s.l.InvalidateHeldBy(ctx, r.ID)
 		r.State = Expired
 		r.Error = cause
@@ -1037,6 +1044,8 @@ func (s *Service) ReleaseReservation(ctx context.Context, id string) error {
 	if err != nil || !ok {
 		return err
 	}
+	// A reservation already taken over has a stale lease here; either way
+	// the record goes and what remains falls to its TTL.
 	_ = s.l.ReleaseAny(ctx, r.Lease)
 	return s.l.DeleteBinding(ctx, reservationKind, id)
 }
@@ -1067,6 +1076,8 @@ func (s *Service) takeReservation(ctx context.Context, spec Spec, held []ledger.
 		return held, fmt.Errorf("attempt: take reservation %s: %w", r.ID, err)
 	}
 	lease.Region = s.l.Region()
+	// The lease has moved to the attempt; a reservation record that
+	// survives can no longer be taken, since its lease is stale.
 	_ = s.l.DeleteBinding(ctx, reservationKind, r.ID)
 	return append(held, lease), nil
 }
@@ -1102,6 +1113,8 @@ func (s *Service) ReserveForIn(ctx context.Context, region, key, node, harness s
 func (s *Service) ReleaseReservationFor(ctx context.Context, key string) {
 	var id string
 	if ok, err := s.l.GetBinding(ctx, reservationForKind, key, &id); err == nil && ok {
+		// Best effort by contract: the caller is giving the key up and a
+		// reservation that lingers expires with its lease.
 		_ = s.ReleaseReservation(ctx, id)
 		_ = s.l.DeleteBinding(ctx, reservationForKind, key)
 	}

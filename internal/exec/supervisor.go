@@ -48,15 +48,17 @@ type PlanStore interface {
 // new revision from the planner, keeping every step that already finished.
 // Both are ordinary edges, taken with the reason on record.
 type Supervisor struct {
-	planner          planner.Planner
-	runs             *Runs
-	deps             Deps
-	plans            PlanStore
-	fleet            *roster.Roster
-	ledger           *ledger.Ledger
-	owner            string
-	tasks            *task.Store
-	driverTTL        time.Duration
+	planner   planner.Planner
+	runs      *Runs
+	deps      Deps
+	plans     PlanStore
+	fleet     *roster.Roster
+	ledger    *ledger.Ledger
+	owner     string
+	tasks     *task.Store
+	driverTTL time.Duration
+	// driverTicks paces run-driver renewals; nil means a real ticker.
+	driverTicks      func(time.Duration) (<-chan time.Time, func())
 	recoveryMu       sync.Mutex
 	recoveryPrepared bool
 }

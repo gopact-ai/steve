@@ -8,7 +8,6 @@ internal/coordination.machine.Apply 250
 internal/delegate.Service.recoverChild 150
 internal/exec.finishStep 150
 internal/exec.runStep 250
-internal/node.Server.handle 150
 internal/readmodel.Model.Snapshot 250
 internal/transfer.exportProject 200
 internal/transfer.importProject 300

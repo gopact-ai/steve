@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
@@ -116,7 +117,9 @@ func (s *Server) sessionStream(parent context.Context, principal string, stream 
 			reply.ErrorCode = classified.Code
 		}
 	}
-	_ = writeSessionMessage(stream, reply)
+	if err := writeSessionMessage(stream, reply); err != nil {
+		log.Printf("steve-node: session reply: %v", err)
+	}
 }
 
 // NodeSession uses the existing authenticated connection, with per-request

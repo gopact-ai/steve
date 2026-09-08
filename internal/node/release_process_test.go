@@ -25,6 +25,10 @@ func (p *waitingReleaseProcess) Wait() error           { close(p.waitStarted); <
 func (p *waitingReleaseProcess) Kill()                 { p.killOnce.Do(func() { close(p.killed) }) }
 func (p *waitingReleaseProcess) finish()               { p.exitOnce.Do(func() { close(p.allowExit) }) }
 
+// Stopped is never evidence here: the tests want a process whose exit
+// the node cannot vouch for.
+func (p *waitingReleaseProcess) Stopped() bool { return false }
+
 type releaseDiscardWriter struct{}
 
 func (releaseDiscardWriter) Write(b []byte) (int, error) { return len(b), nil }

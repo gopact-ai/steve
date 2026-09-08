@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"sync"
 	"time"
@@ -115,15 +115,15 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 		httpDone := make(chan error, 1)
 		go func() { httpDone <- dashboard.Shutdown(cleanup) }()
 		if err := cons.Shutdown(cleanup); err != nil {
-			log.Printf("steve: console shutdown incomplete: %v", err)
+			slog.Error(fmt.Sprintf("steve: console shutdown incomplete: %v", err))
 			*life.RunError() = errors.Join(*life.RunError(), err)
 		}
 		if err := executions.Shutdown(cleanup); err != nil {
-			log.Printf("steve: execution shutdown incomplete; startup will reconcile remaining writers: %v", err)
+			slog.Error(fmt.Sprintf("steve: execution shutdown incomplete; startup will reconcile remaining writers: %v", err))
 			*life.RunError() = errors.Join(*life.RunError(), err)
 		}
 		if err := <-httpDone; err != nil {
-			log.Printf("steve: HTTP shutdown incomplete: %v", err)
+			slog.Error(fmt.Sprintf("steve: HTTP shutdown incomplete: %v", err))
 			*life.RunError() = errors.Join(*life.RunError(), err)
 		}
 		manager.Stop()

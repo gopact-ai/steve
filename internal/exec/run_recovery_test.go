@@ -33,7 +33,14 @@ type runWorld struct {
 
 func recoveryWorld(t *testing.T) *runWorld {
 	t.Helper()
-	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	return recoveryWorldAt(t, nil)
+}
+
+// recoveryWorldAt builds the world on a ledger reading the given clock, so
+// a test can run leases against time it moves itself.
+func recoveryWorldAt(t *testing.T, now func() time.Time) *runWorld {
+	t.Helper()
+	book, err := ledger.Open(t.TempDir(), ledger.Options{Now: now})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -225,9 +232,33 @@ func TestPlanRecoveryCannotFollowAChangedHomeBeforeFirstLanding(t *testing.T) {
 	}
 }
 
+// leaseClock is the ledger's clock under a driver test: the test moves it
+// by hand and paces renewals through a channel, so no wall-clock ratio is
+// left for a slow runner to break.
+type leaseClock struct {
+	mu sync.Mutex
+	t  time.Time
+}
+
+func (c *leaseClock) now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.t
+}
+
+func (c *leaseClock) advance(d time.Duration) {
+	c.mu.Lock()
+	c.t = c.t.Add(d)
+	c.mu.Unlock()
+}
+
 func TestRunDriverRenewsAndFencesAReplacedOwner(t *testing.T) {
-	w := recoveryWorld(t)
-	w.sup.driverTTL = 150 * time.Millisecond
+	clock := &leaseClock{t: time.Now()}
+	w := recoveryWorldAt(t, clock.now)
+	ttl := time.Minute
+	w.sup.driverTTL = ttl
+	ticks := make(chan time.Time)
+	w.sup.driverTicks = func(time.Duration) (<-chan time.Time, func()) { return ticks, func() {} }
 	rec, err := w.sup.opened(t.Context(), w.plan)
 	if err != nil {
 		t.Fatal(err)
@@ -244,7 +275,13 @@ func TestRunDriverRenewsAndFencesAReplacedOwner(t *testing.T) {
 		done <- err
 	}()
 	ownerCtx := <-entered
-	time.Sleep(3 * w.sup.driverTTL)
+	// Two renewals past the halfway mark; the second tick is only taken
+	// once the first renewal has committed, so the lease now outlives its
+	// original expiry.
+	clock.advance(ttl / 2)
+	ticks <- time.Time{}
+	ticks <- time.Time{}
+	clock.advance(ttl/2 + ttl/6)
 	if _, err := w.sup.runOwner(t.Context(), rec, func(context.Context, RunRecord) (Outcome, error) {
 		t.Error("second driver entered")
 		return Outcome{}, nil
@@ -253,6 +290,12 @@ func TestRunDriverRenewsAndFencesAReplacedOwner(t *testing.T) {
 	}
 	if err := w.book.Invalidate(t.Context(), "plan-driver:"+rec.ID); err != nil {
 		t.Fatal(err)
+	}
+	// The next renewal finds the lease gone; a renewal already racing the
+	// invalidation has stopped the driver by itself.
+	select {
+	case ticks <- time.Time{}:
+	case <-ownerCtx.Done():
 	}
 	select {
 	case <-ownerCtx.Done():

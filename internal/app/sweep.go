@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -46,10 +46,10 @@ func sweepLandings(ctx context.Context, projects *project.Store, artifacts *arti
 			landed, err := artifacts.LandPending(ctx, p)
 			for _, l := range landed {
 				view.Observe("landing", p.ID, fmt.Sprintf("queued result %s landed into %s: %s (%d paths)", l.Artifact[:12], p.ID, l.State, len(l.Paths)))
-				log.Printf("sweep: landing %s of %s into %s: %s (%d paths)", l.ID, l.Artifact[:12], p.ID, l.State, len(l.Paths))
+				slog.Info(fmt.Sprintf("sweep: landing %s of %s into %s: %s (%d paths)", l.ID, l.Artifact[:12], p.ID, l.State, len(l.Paths)), "landing", l.ID, "artifact", l.Artifact, "project", p.ID)
 			}
 			if err != nil && !errors.Is(err, ledger.ErrHeld) {
-				log.Printf("sweep: land pending for %s: %v", p.ID, err)
+				slog.Error(fmt.Sprintf("sweep: land pending for %s: %v", p.ID, err), "project", p.ID)
 			}
 		}
 	}
@@ -83,7 +83,7 @@ func sweepWorktrees(ctx context.Context, artifacts *artifact.Store, attempts *at
 	}
 	prepared, err := attempts.RelocationWorkspaces(ctx, physical)
 	if err != nil {
-		log.Printf("sweep: pending recovery workspaces on %s: %v", physical, err)
+		slog.Error(fmt.Sprintf("sweep: pending recovery workspaces on %s: %v", physical, err), "node", physical)
 		return
 	}
 	removed, err := artifacts.SweepWorktrees(ctx, node, root, func(path string) bool {
@@ -94,10 +94,10 @@ func sweepWorktrees(ctx context.Context, artifacts *artifact.Store, attempts *at
 		where = adminsvc.NodeName()
 	}
 	if err != nil {
-		log.Printf("sweep: worktrees on %s: %v", where, err)
+		slog.Error(fmt.Sprintf("sweep: worktrees on %s: %v", where, err), "node", where)
 	}
 	if len(removed) > 0 {
 		view.Observe("worktree.sweep", where, fmt.Sprintf("removed %d orphaned worktree(s): %s", len(removed), strings.Join(removed, ", ")))
-		log.Printf("sweep: removed %d orphaned worktree(s) on %s: %s", len(removed), where, strings.Join(removed, ", "))
+		slog.Info(fmt.Sprintf("sweep: removed %d orphaned worktree(s) on %s: %s", len(removed), where, strings.Join(removed, ", ")), "node", where)
 	}
 }

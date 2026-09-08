@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"strings"
 	"time"
 
@@ -176,11 +177,13 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		acquired, err := s.ledger.AcquireIn(ctx, s.homeRegion(ctx, p), "canonical:"+p.ID, landingHolder(ctx, land.ID), landTTL)
 		if err != nil {
 			if !land.Recoverable {
-				_ = s.fail(ctx, &land, LandProposed, LandMergeConflicted, err.Error(), nil)
+				s.failed(ctx, &land, LandProposed, LandMergeConflicted, err.Error(), nil)
 			}
 			return land, err
 		}
 		lease = acquired
+		// The lock falls to its TTL when the release fails; nothing else
+		// can be done about it here, and the landing's own result stands.
 		defer func() { _ = s.ledger.ReleaseAny(context.WithoutCancel(ctx), lease) }()
 		defer trackLandingLease(ctx, lease)()
 	}
@@ -193,7 +196,7 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	now, _, err := s.SnapshotCanonical(ctx, p, s.canonicalRef(ctx, p.ID), land.ID, "before landing "+short(artifactID))
 	if err != nil {
 		if !land.Recoverable {
-			_ = s.fail(ctx, &land, LandLocked, LandMergeConflicted, "snapshot: "+err.Error(), nil)
+			s.failed(ctx, &land, LandLocked, LandMergeConflicted, "snapshot: "+err.Error(), nil)
 		}
 		return land, err
 	}
@@ -211,12 +214,12 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	}
 	if err != nil {
 		if !land.Recoverable {
-			_ = s.fail(ctx, &land, LandLocked, LandMergeConflicted, err.Error(), nil)
+			s.failed(ctx, &land, LandLocked, LandMergeConflicted, err.Error(), nil)
 		}
 		return land, err
 	}
 	if len(conflicts) > 0 {
-		_ = s.fail(ctx, &land, LandLocked, LandMergeConflicted, "conflicts", conflicts)
+		s.failed(ctx, &land, LandLocked, LandMergeConflicted, "conflicts", conflicts)
 		return land, Conflict{State: LandMergeConflicted, Paths: conflicts}
 	}
 	land.Merged = merged
@@ -264,7 +267,7 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		if land.Recoverable {
 			return land, err
 		}
-		_ = s.fail(ctx, &land, LandApplying, LandApplyConflicted, err.Error(), paths)
+		s.failed(ctx, &land, LandApplying, LandApplyConflicted, err.Error(), paths)
 		return land, Conflict{State: LandApplyConflicted, Paths: paths}
 	}
 	for _, path := range paths {
@@ -286,7 +289,7 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		})
 	if err != nil {
 		if errors.Is(err, ledger.ErrConflict) {
-			_ = s.fail(ctx, &land, LandApplying, LandCommitConflict, err.Error(), paths)
+			s.failed(ctx, &land, LandApplying, LandCommitConflict, err.Error(), paths)
 			return land, Conflict{State: LandCommitConflict, Paths: paths}
 		}
 		return land, err
@@ -388,6 +391,16 @@ func (s *Store) fail(ctx context.Context, land *Landing, from, to, cause string,
 	}
 	land.EndedAt = s.now().UTC()
 	return s.move(context.WithoutCancel(ctx), land, from, to, map[string]any{"paths": paths})
+}
+
+// failed records a failure whose cause the caller is already returning. A
+// record that cannot be written (the lock or driver was lost underneath)
+// leaves the landing in its previous state for recovery to find, so it is
+// logged rather than allowed to hide the cause.
+func (s *Store) failed(ctx context.Context, land *Landing, from, to, cause string, paths []string) {
+	if err := s.fail(ctx, land, from, to, cause, paths); err != nil {
+		log.Printf("artifact: landing %s: %s not recorded: %v", land.ID, to, err)
+	}
 }
 
 // canonicalAncestor walks an artifact's parents to the canonical snapshot

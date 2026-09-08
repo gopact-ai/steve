@@ -99,6 +99,8 @@ func (s *Store) BeginClone(ctx context.Context, projectID string, copy Copy, reg
 	}
 	op := CloneOperation{ID: id, Project: projectID, Copy: copy, Lease: lease, State: CloneRunning, Source: source, At: s.now().UTC()}
 	if _, err := s.l.Begin(ctx, id, cloneKind, "prepared", source, op); err != nil {
+		// The copy's lease falls to its TTL when the release fails; the
+		// Begin failure is what the caller needs.
 		_ = s.l.ReleaseAny(context.WithoutCancel(ctx), lease)
 		return CloneOperation{}, err
 	}
@@ -126,6 +128,8 @@ func (s *Store) BeginClone(ctx context.Context, projectID string, copy Copy, reg
 	if err != nil {
 		cleanup, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		// Best effort on the way out: an operation left in "prepared" is
+		// failed by recovery, and the lease falls to its TTL.
 		_, _ = s.l.Transition(cleanup, id, "prepared", string(CloneFailed), source, nil, map[string]string{"evidence": "file operation never dispatched", "error": err.Error()}, nil)
 		_ = s.l.ReleaseAny(cleanup, lease)
 		return CloneOperation{}, err

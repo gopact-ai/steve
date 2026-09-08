@@ -86,6 +86,7 @@ func Version() string {
 // so a node can be told apart from the others by more than the label a
 // config gave it.
 func Identity() (hostname string, ips []string) {
+	// A machine without a hostname is told apart by its addresses alone.
 	hostname, _ = os.Hostname()
 	ifaces, err := net.Interfaces()
 	if err != nil {

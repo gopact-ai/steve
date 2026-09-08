@@ -665,10 +665,12 @@ func (h *Host) ensureStarted(ctx context.Context) error {
 	go func() {
 		<-conn.Done()
 		connErr := conn.Err()
+		// Wait releases the transport; how the agent ended is read from
+		// the connection error, and Stopped carries the evidence.
 		_ = proc.Wait()
 		close(exited)
 		h.mu.Lock()
-		if evidence, ok := proc.(interface{ Stopped() bool }); ok && evidence.Stopped() {
+		if proc.Stopped() {
 			delete(h.processes, generation)
 		}
 		if h.proc == proc {
@@ -985,7 +987,7 @@ func (h *Host) ProcessStopped(generation uint64) bool {
 	if !exists {
 		return true
 	}
-	if evidence, ok := proc.(interface{ Stopped() bool }); ok && evidence.Stopped() {
+	if proc.Stopped() {
 		delete(h.processes, generation)
 		return true
 	}
@@ -1104,8 +1106,7 @@ func (h *Host) AllProcessesStopped() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	for generation, proc := range h.processes {
-		proof, ok := proc.(interface{ Stopped() bool })
-		if !ok || !proof.Stopped() {
+		if !proc.Stopped() {
 			return false
 		}
 		delete(h.processes, generation)
@@ -1124,6 +1125,8 @@ func (h *Host) shutdownLocked() {
 	}
 	h.alive = false
 	conn, stdin, exited, proc := h.conn, h.stdin, h.exited, h.proc
+	// Shutdown: the closes tell the agent to leave, and the monitor
+	// goroutine reports how it went.
 	if conn != nil {
 		_ = conn.Close()
 	}

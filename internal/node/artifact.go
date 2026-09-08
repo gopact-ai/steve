@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -54,6 +55,7 @@ func (r *Registry) operation(ctx context.Context, name, kind, feature string, re
 	case err := <-done:
 		return err
 	case <-ctx.Done():
+		// Closing only wakes the decoder; ctx carries the answer.
 		_ = stream.Close()
 		<-done // no decoder writes to reply after we return
 		return ctx.Err()
@@ -69,7 +71,8 @@ func operationContext(ctx context.Context, stream *nodewire.Stream) (context.Con
 		case <-stream.Done():
 			cancel()
 		case <-ctx.Done():
-			// Also wake a decoder waiting on an incomplete request.
+			// Also wake a decoder waiting on an incomplete request; the
+			// close itself has nothing to add to the cancellation.
 			_ = stream.Close()
 		}
 	}()
@@ -88,5 +91,7 @@ func (s *Server) runArtifact(ctx context.Context, stream *nodewire.Stream) {
 		result, err := artifact.RunOperation(ctx, req)
 		reply.Result, reply.Error = result, artifact.EncodeFailure(err)
 	}
-	_ = json.NewEncoder(stream).Encode(reply)
+	if err := json.NewEncoder(stream).Encode(reply); err != nil {
+		log.Printf("steve-node: artifact reply: %v", err)
+	}
 }

@@ -43,6 +43,7 @@ func (s *Server) closeMCP() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.mcpListener != nil {
+		// Shutdown: closing ends forwardMCP, which is the point.
 		_ = s.mcpListener.Close()
 	}
 }
@@ -122,6 +123,8 @@ func (s *Server) forwardMCP(listener net.Listener) {
 			w.Header().Set("Content-Type", "application/json")
 			w.Header().Set("Retry-After", "1")
 			w.WriteHeader(http.StatusServiceUnavailable)
+			// An agent that stopped reading gets no body; net/http has
+			// already accounted for the connection.
 			_, _ = w.Write([]byte(`{"jsonrpc":"2.0","id":null,"error":{"code":-32000,"message":"hub unreachable, retry later"}}`))
 		},
 	}
@@ -136,6 +139,8 @@ func (s *Server) forwardMCP(listener net.Listener) {
 	}), ReadHeaderTimeout: 10 * time.Second}
 	defer server.Close()
 	defer transport.CloseIdleConnections()
+	// Serve only returns once closeMCP closes the listener, and that is
+	// the error it returns.
 	_ = server.Serve(listener)
 }
 

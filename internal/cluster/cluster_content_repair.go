@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"sort"
@@ -42,7 +42,7 @@ func (p *Peer) newContentRepair(active Activation, observe ContentRepairObservat
 func (p *Peer) StartContentRepair(active Activation, observe ContentRepairObservation) func() {
 	worker, err := p.newContentRepair(active, observe)
 	if err != nil {
-		log.Printf("content repair could not start: %v", err)
+		slog.Error(fmt.Sprintf("content repair could not start: %v", err))
 		return func() {}
 	}
 	ctx, cancel := context.WithCancel(active.Context)
@@ -87,7 +87,7 @@ func (w *contentRepairWorker) notice(ctx context.Context, id, status, message st
 		status = "recovered"
 		message = "此前等待的协作内容副本已恢复可用。"
 	}
-	log.Printf("content repair: object=%s status=%s %s", id, status, message)
+	slog.Info(fmt.Sprintf("content repair: object=%s status=%s %s", id, status, message), "object", id, "status", status)
 	if w.observe != nil {
 		w.observe("content."+status, id, message)
 	}

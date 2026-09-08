@@ -5,7 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net"
 	"regexp"
 	"sync"
@@ -113,7 +113,7 @@ func (s *Services) Failed(cause error) {
 	op.CompletedAt = time.Now().UTC()
 	s.history.Operations[s.pending] = op
 	if err := s.persist(); err != nil {
-		log.Printf("steve: persist restart failure: %v", err)
+		slog.Error(fmt.Sprintf("steve: persist restart failure: %v", err))
 	}
 }
 

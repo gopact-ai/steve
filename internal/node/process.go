@@ -65,11 +65,11 @@ func (s *Server) sessionGrace() time.Duration {
 func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	req := stream.Request()
 	if req.Kind != nodewire.StreamACP {
-		_ = stream.CloseWithReason("unknown stream kind")
+		closeStream(stream, "unknown stream kind")
 		return
 	}
 	if req.Stream != "" && !journal.ValidID(req.Stream) {
-		_ = stream.CloseWithReason("invalid stream id")
+		closeStream(stream, "invalid stream id")
 		return
 	}
 	s.processMu.Lock()
@@ -77,7 +77,7 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	if req.Resume {
 		s.processMu.Unlock()
 		if p == nil {
-			_ = stream.CloseWithReason("unknown process stream")
+			closeStream(stream, "unknown process stream")
 			return
 		}
 		p.attach(stream, req)
@@ -85,13 +85,13 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	}
 	if p != nil && req.Stream != "" {
 		s.processMu.Unlock()
-		_ = stream.CloseWithReason("process stream already exists")
+		closeStream(stream, "process stream already exists")
 		return
 	}
 	spec, ok := s.conf().Harnesses[req.Harness]
 	if !ok {
 		s.processMu.Unlock()
-		_ = stream.CloseWithReason("unknown harness")
+		closeStream(stream, "unknown harness")
 		return
 	}
 	proc, err := (acphost.LocalTransport{
@@ -100,7 +100,7 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	}).Start(ctx)
 	if err != nil {
 		s.processMu.Unlock()
-		_ = stream.CloseWithReason(err.Error())
+		closeStream(stream, err.Error())
 		return
 	}
 	s.hubMu.Lock()
@@ -129,7 +129,7 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	// must still deliver its last lines and close reason to its attachment.
 	if err != nil {
 		p.kill()
-		_ = stream.CloseWithReason(err.Error())
+		closeStream(stream, err.Error())
 	}
 	go p.run(ctx)
 	if err == nil {
@@ -172,7 +172,7 @@ func (p *agentProcess) replace(stream *nodewire.Stream, req nodewire.OpenRequest
 	a := &attachment{stream: stream, replaying: req.Resume, available: make(chan struct{}, 1), haveIn: p.haveIn}
 	p.attached = a
 	if old != nil {
-		go func() { _ = old.stream.CloseWithReason("superseded") }()
+		go func() { closeStream(old.stream, "superseded") }()
 	}
 	return a, nil
 }
@@ -180,7 +180,7 @@ func (p *agentProcess) replace(stream *nodewire.Stream, req nodewire.OpenRequest
 func (p *agentProcess) attach(stream *nodewire.Stream, req nodewire.OpenRequest) {
 	a, err := p.replace(stream, req)
 	if err != nil {
-		_ = stream.CloseWithReason(err.Error())
+		closeStream(stream, err.Error())
 		return
 	}
 	p.serveAttachment(a, req)
@@ -209,12 +209,12 @@ func (p *agentProcess) serveAttachment(a *attachment, req nodewire.OpenRequest) 
 			p.mu.Unlock()
 			writer := replayWriter{stream: a.stream}
 			if err := p.journal.Out.ReplayUntil(after, through, &writer); err != nil {
-				_ = a.stream.CloseWithReason(err.Error())
+				closeStream(a.stream, err.Error())
 				return
 			}
 			after = through
 			if writer.exit != "" {
-				_ = a.stream.CloseWithReason(writer.exit)
+				closeStream(a.stream, writer.exit)
 				return
 			}
 			p.mu.Lock()
@@ -225,7 +225,7 @@ func (p *agentProcess) serveAttachment(a *attachment, req nodewire.OpenRequest) 
 				exit := p.exit
 				p.mu.Unlock()
 				if exit != "" {
-					_ = a.stream.CloseWithReason(exit)
+					closeStream(a.stream, exit)
 					return
 				}
 				break
@@ -238,6 +238,7 @@ func (p *agentProcess) serveAttachment(a *attachment, req nodewire.OpenRequest) 
 		p.mu.Lock()
 		if a.live.Len() > 0 {
 			data := make([]byte, min(a.live.Len(), nodewire.MaxPayload))
+			// Reading a bytes.Buffer within its length cannot fail.
 			_, _ = a.live.Read(data)
 			p.mu.Unlock()
 			if _, err := a.stream.Write(data); err != nil {
@@ -248,7 +249,7 @@ func (p *agentProcess) serveAttachment(a *attachment, req nodewire.OpenRequest) 
 		exit := a.exit
 		p.mu.Unlock()
 		if exit != "" {
-			_ = a.stream.CloseWithReason(exit)
+			closeStream(a.stream, exit)
 			return
 		}
 		select {
@@ -308,6 +309,9 @@ func (p *agentProcess) detach(a *attachment) {
 }
 
 func (p *agentProcess) readInput(a *attachment) {
+	// Input ends when the attachment or the process goes; detach handles
+	// the first and the process waiter the second, so the pump's own
+	// error adds nothing.
 	if p.id == "" {
 		_, _ = io.Copy(p.proc.Stdin(), a.stream)
 		return
@@ -324,6 +328,8 @@ func (p *agentProcess) readInput(a *attachment) {
 			if !complete {
 				p.journal.Disable(journal.ErrLineTooLong)
 			} else {
+				// The journal latches its own failure and marks the
+				// stream unresumable; input still reaches the process.
 				_, _ = p.journal.In.Append(line)
 			}
 		}
@@ -335,6 +341,8 @@ func (p *agentProcess) readInput(a *attachment) {
 		_, err := p.proc.Stdin().Write(line)
 		p.inputMu.Unlock()
 		if err == nil && complete && p.id != "" {
+			// An ack that cannot be sent means the attachment is going,
+			// which its Done channel already reports.
 			_ = a.stream.AckInput(haveIn)
 		}
 		return err
@@ -348,6 +356,7 @@ func (p *agentProcess) emit(line outputLine, complete bool) {
 		if !complete {
 			p.journal.Disable(journal.ErrLineTooLong)
 		} else {
+			// The journal latches its own failure; live output goes on.
 			_, _ = p.journal.Out.Append(line.data)
 		}
 	}
@@ -359,6 +368,7 @@ func (p *agentProcess) emit(line outputLine, complete bool) {
 		return
 	}
 	if a.live.Len()+len(line.data) <= liveBufferBytes {
+		// Writing to a bytes.Buffer cannot fail.
 		_, _ = a.live.Write(line.data)
 		if line.exit != "" {
 			a.exit = line.exit
@@ -372,7 +382,7 @@ func (p *agentProcess) emit(line outputLine, complete bool) {
 	// The log remains available. Never let a slow reader stall stdout or
 	// another process on the same mux.
 	a.failed = true
-	go func() { _ = a.stream.CloseWithReason("slow consumer") }()
+	go func() { closeStream(a.stream, "slow consumer") }()
 }
 
 func (p *agentProcess) run(ctx context.Context) {
@@ -386,6 +396,8 @@ func (p *agentProcess) run(ctx context.Context) {
 		case <-done:
 		}
 	}()
+	// Output ends with the process; Wait below is where its fate is read,
+	// so the pump's own error adds nothing.
 	if p.id == "" {
 		// Old hubs do not promise newline framing or reconnect support.
 		_, _ = io.Copy(writerFunc(func(b []byte) (int, error) {
@@ -410,7 +422,10 @@ func (p *agentProcess) run(ctx context.Context) {
 		p.grace.Stop()
 	}
 	if p.journal != nil {
-		_ = p.journal.Finish(code)
+		if err := p.journal.Finish(code); err != nil {
+			log.Printf("steve-node: stream %s: record exit: %v", p.id, err)
+		}
+		// The journal is finished; closing releases its files.
 		_ = p.journal.Close()
 	}
 	if p.exitReady != nil {
@@ -475,14 +490,14 @@ func (s *Server) releaseProcess(stream *nodewire.Stream) {
 	p := s.processes[stream.Request().Stream]
 	s.processMu.Unlock()
 	if p == nil {
-		_ = stream.CloseWithReason("unknown process stream; exit is unconfirmed")
+		closeStream(stream, "unknown process stream; exit is unconfirmed")
 		return
 	}
 	p.mu.Lock()
 	p.released = true
 	if p.exit != "" {
 		p.mu.Unlock()
-		_ = stream.CloseWithReason("exit 0")
+		closeStream(stream, "exit 0")
 		return
 	}
 	if p.exitReady == nil {
@@ -500,11 +515,11 @@ func (s *Server) releaseProcess(stream *nodewire.Stream) {
 	// it follows the sole process waiter regardless of the child's exit code.
 	select {
 	case <-ended:
-		_ = stream.CloseWithReason("exit 0")
+		closeStream(stream, "exit 0")
 	case <-stream.Done():
 		return
 	case <-stopping:
-		_ = stream.CloseWithReason("process exit is unconfirmed: node is stopping")
+		closeStream(stream, "process exit is unconfirmed: node is stopping")
 	}
 }
 
@@ -512,7 +527,9 @@ func (s *Server) pruneStreams(ctx context.Context) {
 	ticker := time.NewTicker(time.Minute)
 	defer ticker.Stop()
 	for {
-		_ = journal.Prune(s.conf().StateDir, time.Now())
+		if err := journal.Prune(s.conf().StateDir, time.Now()); err != nil {
+			log.Printf("steve-node: prune stream journals: %v", err)
+		}
 		s.processMu.Lock()
 		for id, p := range s.processes {
 			p.mu.Lock()
@@ -541,6 +558,7 @@ func (s *Server) injectDrop(ctx context.Context, mux *nodewire.Mux) {
 				case <-ctx.Done():
 				case <-timer.C:
 					log.Printf("steve-node: fault injection: drop hub once")
+					// The drop is the point; its close error is not.
 					_ = mux.Close()
 				}
 			}()
