@@ -1,9 +1,6 @@
 internal/acphost/host.go:1107
 internal/acphost/host.go:671
 internal/acphost/host.go:988
-internal/agentexec/runner.go:274
-internal/agentexec/runner.go:297
-internal/agentexec/runner.go:407
 internal/agentmcp/message.go:314
 internal/agentmcp/server.go:927
 internal/artifact/content_replication.go:67
@@ -14,7 +11,6 @@ internal/console/console.go:504
 internal/console/questions.go:285
 internal/console/queue.go:62
 internal/coordination/failover.go:30
-internal/delegate/delegate.go:774
 internal/delegate/recovery.go:438
 internal/exec/agent_runner.go:107
 internal/exec/agent_runner.go:276
