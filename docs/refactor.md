@@ -96,9 +96,9 @@ M2 阶段 3：`internal/app.Build(ctx, Config)` 按原顺序装配运行时、�
 
 CI 的 GitHub 托管 runner 负载不稳时，以下时序敏感测试会偶发失败（本地与多数 CI 运行通过），属于 M6 要处理的清理项：把"租约 TTL 与续期间隔"的比值放大、或改用可控时钟，而不是靠重跑。
 
-- `internal/artifact` `TestLandingDriverRenewsAndRejectsStaleTransitions`（"landing driver expired during work"）
-- `internal/exec` `TestRunDriverRenewsAndFencesAReplacedOwner`（"driver lease expired"）
 - `cmd/steve-node` `TestNodeCommandReexecutesAndKeepsDurableCommandIdentity`（"node is busy; release idle sessions before restarting"）
+
+已修好：`internal/artifact` 与 `internal/exec` 的两个租约驱动测试改为注入续期节拍与账本时钟（`renewTicks` / `driverTicks` + `ledger.Options.Now`），不再依赖真实时间比。
 
 ## 实施顺序（不构成设计约束）
 
