@@ -614,6 +614,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 			identityMu.Lock()
 			identity.TaskID, identity.AttemptID = taskID, attemptID
 			identityMu.Unlock()
+			stream.Bind(taskID)
 		},
 		OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
 			return s.askPermission(ctx, questionBase(), ask)
