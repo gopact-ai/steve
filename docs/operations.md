@@ -393,6 +393,10 @@ ssh me@host-3 'bash -lc "nohup /home/me/steve-bin/steve-node -config /home/me/st
 
 node 要安装 Git；工作树物化和产物传输依赖它。默认 harness home 隔离在 `state_dir/runtimes/<harness>`，初始化时按工具规则引用认证、筛选配置，不会直接沿用用户的个人技能/MCP 清单。正常运行时 hub 下发启用的技能包，node 校验并物化；认证和必要的环境变量仍需在 node 本机准备。
 
+内置工具的隔离 home 各自引用部署用户的认证并复制筛选后的配置：Codex 链接 `~/.codex/auth.json` 并保留 `config.toml` 的模型与 provider；Claude Code 链接 `~/.claude/.credentials.json` 并只保留 `settings.json` 的 `env`；Grok 复制 `~/.grok/auth.json` 并关闭 compat；Kimi Code 链接 `~/.kimi-code/credentials`、`oauth`，并保留 `config.toml` 的 `default_model`、`[providers]`（含 OAuth 存储）、`[models]`、`[thinking]`、`[loop_control]` 等模型访问配置，去掉 hooks、MCP、skills、plugins、agents、cron 与终端偏好。部署用户没有 `~/.kimi-code/config.toml` 时不生成隔离配置，Kimi 使用自身默认值；用环境变量 `KIMI_MODEL_NAME` / `KIMI_API_KEY` 等配置的模型仍通过 harness `env` 传入。
+
+node 对每个 harness 的能力探测（agent 是否接受 HTTP MCP，决定平台 MCP 能否注入）按二进制、参数、目录和环境缓存 1 小时，真实会话打开时以 agent 自己的回答刷新，打开失败则丢弃缓存。这意味着同一台机器上原地更换适配器二进制后，最迟在下一次会话打开时纠正；要立刻生效可重启 node。
+
 当前独立 `steve-node` 也支持由节点持有的原生会话。作为多机协作的执行节点时，它通过已认证连接向当前协调节点核对执行授权，并保存会话与输入回执；无需为此添加 `node.json` 字段，也不会成为账本副本或投票成员。旧二进制必须升级并重启才具有该能力，刷新资源页不能升级进程。协调节点与执行节点均应使用支持该协议的版本。
 
 ### 在控制台添加机器
@@ -564,6 +568,7 @@ bash -lc 'make e2e-autonomous'
 | `sweep: removed N orphaned worktree(s) on ...` | 清理没有活 attempt 持有的隔离工作树；启动及 node 连接时会触发检查。 |
 | `sweep: worktrees on <node>: <error>` | 该机器的孤儿工作树清扫失败；检查可达性、目录和文件权限。 |
 | `gateway.owner_id is required for a console-only hub` | 独立控制台缺少 owner。设置稳定的 `gateway.owner_id`；控制台 token 用于认证，不能代替 owner 身份。 |
+| `能力或身份文件已变化，请先发送 /new` / `Capabilities or identity files changed` | 会话保存的能力指纹与当前装配结果不同。只有身份与平台说明的变化可以原地补发；MCP、技能或可见性配置变化，以及没有会话配置基线的旧会话（在引入基线之前最后一次对话的会话），都要求 `/new` 一次，之后新会话带基线，身份/平台说明的更新不再要求 `/new`。不要为了隐藏提示跳过校验。 |
 | `Authentication required`，但资源页 harness 可用 | 可执行程序存在/能启动不等于模型认证有效；检查 node 的登录环境、认证链接和隔离 home，尤其不要用裸环境启动 node/nodectl。 |
 | `harness ... missing` 或 `start agent ...` | 检查目标机器命令的绝对路径、执行权限、解释器及 PATH；不是只检查 hub 的安装。启动探针有 3 秒期限。 |
 | `this node is served by hub ...` / `this node belongs to hub ...` | 机器已有活 hub 或仍在归属宽限；确认连接的 hub 名称和 token，按明确的移交流程处理。 |
