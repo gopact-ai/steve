@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -37,6 +38,7 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/text"
 )
 
 // maxParallelSteps bounds how many steps of one plan run at once. A step
@@ -372,7 +374,7 @@ func runStepWithRecovery(ctx context.Context, p plan.Plan, step plan.Step, upstr
 		if errors.As(err, &nowhere) || errors.As(err, &noBudget) {
 			return out, err
 		}
-		if out.Agent != "" && !contains(step.Tried, out.Agent) {
+		if out.Agent != "" && !slices.Contains(step.Tried, out.Agent) {
 			step.Tried = append(step.Tried, out.Agent)
 		}
 		if retry < MaxRecoveries {
@@ -512,22 +514,9 @@ func refNames(refs []plan.Ref) []string {
 	return out
 }
 
-func clipSummary(text string) string {
-	runes := []rune(text)
-	if len(runes) <= 200 {
-		return text
-	}
-	return string(runes[:200]) + "…"
-}
-
-func contains(list []string, want string) bool {
-	for _, item := range list {
-		if item == want {
-			return true
-		}
-	}
-	return false
-}
+// clipSummary is the step's answer as the record's summary: its first
+// 200 runes.
+func clipSummary(answer string) string { return text.Clip(answer, 200) }
 
 // dependencies is a step's inbound edges. Needs and Merge are the same thing
 // to the graph; they differ in what the plan is claiming, not in how the
