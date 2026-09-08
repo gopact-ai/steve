@@ -685,283 +685,274 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	if err := s.tasks.BindAttempt(accountingToken, attemptID, turnID); err != nil {
 		return result, fmt.Errorf("bind delegate accounting: %w", err)
 	}
-	record, err := s.attempts.Open(ctx, attempt.Spec{Execution: execution.Token(ctx),
-		ID: attemptID, TaskID: child.ID, TurnID: turnID, Kind: attempt.KindDelegate,
-		Project: parent.ProjectID, Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID, Slots: candidate.Slots,
-		Region: candidate.Region, CanonicalRegion: s.homeRegion(ctx, parent.ProjectID),
-		Workspace: workspace, Scope: attempt.ScopePathSet, Base: base, By: delegatedBy, Requires: req.Requires,
-	})
-	if err != nil {
-		accountingErr := s.finish(child.ID, task.OutcomeError)
-		_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
-		return result, fmt.Errorf("lease delegation: %w", errors.Join(err, accountingErr))
-	}
-	runCtx, stopRun := context.WithCancel(ctx)
-	defer stopRun()
-	stopBeat := lifecycle.Keep(runCtx, s.attempts, record.ID, func() {
-		log.Printf("delegate: attempt %s lost its lease; cancelling task #%s", record.ID, child.ID)
-		stopRun()
-	})
-	defer stopBeat()
-	var observed *attempt.Usage
-	failAttempt := func(cause error) {
-		if errors.Is(cause, harness.ErrStopUnconfirmed) {
-			if err := s.attempts.MarkUnsettled(context.WithoutCancel(ctx), record.ID, "delegate", cause, observed); err != nil {
-				log.Printf("delegate: quarantine: %v", err)
-			}
-			return
-		}
-		if _, err := s.attempts.FailWith(context.WithoutCancel(ctx), record.ID, "delegate", cause.Error(), observed); err != nil {
-			log.Printf("delegate: attempt %s could not be failed: %v", record.ID, err)
-			return
-		}
-		_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
-	}
-	// The machine's final word on the requirement, taken now, before a
-	// session is opened there.
-	admission, bindings, err := s.roster.Admit(ctx, candidate, req.Requires, candidate.Agent.MCPServers, record.ID)
-	if err != nil {
-		s.finish(child.ID, task.OutcomeError)
-		failAttempt(err)
-		return result, fmt.Errorf("admission on %s: %w", at, err)
-	}
-	if admission.Refused() {
-		err := &Refusal{Code: "REFUSED_AT_ADMISSION", Retryable: true, Requires: req.Requires,
-			Failures: []Failure{{Agent: candidate.Agent.ID, Node: candidate.Node, Reasons: admission.Atoms}}}
-		s.finish(child.ID, task.OutcomeError)
-		failAttempt(err)
-		return result, err
-	}
-	if len(bindings) > 0 {
-		defer func() {
-			var detached *execution.RetainedObserverDetached
-			if !errors.As(runErr, &detached) {
-				s.roster.Release(context.WithoutCancel(ctx), candidate.Node, record.ID)
-			}
-		}()
-	}
-	if err := s.attempts.ArmSession(ctx, record.ID, "delegate-opening"); err != nil {
-		accountingErr := s.finish(child.ID, task.OutcomeError)
-		failAttempt(err)
-		return result, errors.Join(err, accountingErr)
-	}
-	session, err := s.sessions.OpenSession(ctx, at, "", child.Workspace, append(caps.MCPServers, roster.ToMCP(bindings)...))
-	if err != nil {
-		if opening := pendingDelegateOpen(record, child, err); opening != nil {
-			cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
-			persistErr := s.attempts.MarkUnsettled(cleanup, record.ID, "delegate-opening", err, observed)
-			cancel()
-			opening.Cause = errors.Join(err, persistErr)
-			s.reportDelegatePreparation(ctx, parent, child, record)
-			return result, retainedDetached(record, opening)
-		}
-		s.finish(child.ID, task.OutcomeError)
-		failAttempt(err)
-		return result, fmt.Errorf("open session on %s: %w", at, err)
-	}
-	unsettled, sessionClosed := false, false
-	managed := lifecycle.Managed(session)
-	record.Session = session.ID()
-	s.mu.Lock()
-	if entry := s.pending[child.ID]; entry != nil {
-		entry.session = session.ID()
-	}
-	s.mu.Unlock()
-	closeSession := func() error {
-		if sessionClosed {
-			return nil
-		}
-		sessionClosed = true
-		return lifecycle.Close(ctx, s.sessions, at, session)
-	}
-	defer func() {
-		if unsettled || sessionClosed {
-			return
-		}
-		if managed {
-			current, err := s.attempts.Get(context.WithoutCancel(ctx), record.ID)
-			if err != nil || !current.State.Terminal() {
-				return
-			}
-			if closeErr := closeSession(); closeErr != nil {
-				log.Printf("delegate: settled session cleanup task=%s attempt=%s: %v", child.ID, record.ID, closeErr)
-			}
-			return
-		}
-		if closeErr := closeSession(); closeErr != nil {
-			runErr = errors.Join(runErr, closeErr)
-			if err := s.attempts.MarkUnsettled(context.WithoutCancel(ctx), record.ID, "delegate", runErr, observed); err != nil {
-				runErr = errors.Join(runErr, err)
-			}
-		}
-	}()
-	if ctxErr := ctx.Err(); ctxErr != nil {
-		s.finish(child.ID, task.OutcomeCancelled)
-		failAttempt(ctxErr)
-		return result, ctxErr
-	}
-	harness.ApplyPreferences(ctx, session, candidate.Agent.ID, candidate.Agent.Model, candidate.Agent.Options)
-	for _, state := range []attempt.State{attempt.Prepared, attempt.Running} {
-		if _, err := s.attempts.Advance(ctx, record.ID, state, "delegate", func(r *attempt.Record) { r.Admission = &admission; r.Session = session.ID() }); err != nil {
-			s.finish(child.ID, task.OutcomeError)
-			failAttempt(err)
-			return result, err
-		}
-	}
-	if managed {
-		if err := s.bindDelegatedExecution(ctx, parent, child, record); err != nil {
-			s.finish(child.ID, task.OutcomeError)
-			failAttempt(err)
-			return result, fmt.Errorf("bind delegated tools: %w", err)
-		}
-	}
-	ctx = runCtx
-
 	prompt := payload.Render() + exec.ReportingContract + worktreeContract
 	if caps.Instructions != "" {
 		prompt = caps.Instructions + "\n\n" + prompt
 	}
-	ask, askUser := s.nodeQuestionHandlers(questionBinding(parent, child, record))
-	driven := lifecycle.Drive{Session: session, Prompt: prompt, Turn: managed, Ask: ask, AskUser: askUser, Observe: func(p view.Progress) {
-		touch()
-		if progress != nil {
-			progress(p)
-		}
-	}}.Run(ctx)
-	answer, last := driven.Answer, driven.Last
-	err = driven.Err
-	promptSettled := driven.PromptSettled
-	if managed && s.canSettleStopped(ctx, err) {
-		if err == nil {
-			err = harness.ErrTurnCanceled
-		}
-		var finishCleanup context.CancelFunc
-		ctx, finishCleanup = lifecycle.Cleanup(ctx)
-		defer finishCleanup()
-	}
-	if managed && (ctx.Err() != nil || errors.Is(err, harness.ErrStopUnconfirmed) || !promptSettled) {
-		unsettled = true
-		s.spent(child.ID, last)
-		observed = attemptUsage(last)
-		cause := errors.Join(err, ctx.Err(), harness.ErrStopUnconfirmed)
-		if ctx.Err() == nil {
-			_ = s.attempts.MarkUnsettled(ctx, record.ID, "delegate-observer", cause, observed)
-		}
-		return result, retainedDetached(record, cause)
-	}
-	if !managed && !errors.Is(err, harness.ErrStopUnconfirmed) {
-		err = errors.Join(err, closeSession())
-	}
-	unsettled = errors.Is(err, harness.ErrStopUnconfirmed)
-	if promptSettled && !unsettled {
-		settledCtx, finishSettle := lifecycle.Cleanup(ctx)
-		if settleErr := s.attempts.MarkSessionSettled(settledCtx, record.ID, "delegate"); settleErr != nil {
-			if managed {
-				finishSettle()
-				unsettled = true
-				return result, retainedDetached(record, settleErr)
+	d := &delegation{service: s, parent: parent, child: child, req: req, at: at}
+	run, err := lifecycle.Run(ctx, lifecycle.Options{
+		Attempts: s.attempts, Roster: s.roster, Sessions: s.sessions, Workspaces: s.artifacts, Actor: "delegate",
+		Spec: attempt.Spec{Execution: execution.Token(ctx),
+			ID: attemptID, TaskID: child.ID, TurnID: turnID, Kind: attempt.KindDelegate,
+			Project: parent.ProjectID, Node: candidate.Node, Harness: candidate.Harness, Agent: candidate.Agent.ID, Slots: candidate.Slots,
+			Region: candidate.Region, CanonicalRegion: s.homeRegion(ctx, parent.ProjectID),
+			Workspace: workspace, Scope: attempt.ScopePathSet, Base: base, By: delegatedBy, Requires: req.Requires,
+		},
+		Lost: func() { log.Printf("delegate: attempt %s lost its lease; cancelling task #%s", attemptID, child.ID) },
+		// The machine's final word on the requirement, taken now, before a
+		// session is opened there.
+		Candidate: candidate, Requires: req.Requires, Uses: candidate.Agent.MCPServers, AdmitUnsure: true,
+		ArmActor: "delegate-opening",
+		At:       at, Workdir: child.Workspace, Servers: caps.MCPServers,
+		Model: candidate.Agent.Model, ModelOptions: candidate.Agent.Options,
+		Prompt: prompt, Ask: d.ask, AskUser: d.askUser,
+		Observe: func(p view.Progress) {
+			touch()
+			if progress != nil {
+				progress(p)
 			}
-			err = errors.Join(err, settleErr)
-		}
-		finishSettle()
-	}
-	if err == nil {
-		err = ctx.Err()
-	}
-	s.spent(child.ID, last)
-	observed = attemptUsage(last)
-	if err != nil {
-		if managed {
-			result.Answer = answer
-			if _, saveErr := s.failRetainedResult(ctx, record, result, err, observed); saveErr != nil {
-				return result, retainedDetached(record, saveErr)
-			}
-		} else {
-			failAttempt(err)
-		}
-		s.finish(child.ID, outcomeOf(err))
-		return result, err
-	}
-	return s.completeResult(ctx, parent, child, record, answer, observed, stopBeat, failAttempt)
+		},
+		Arm: d.arm, Started: d.started, Finish: d.finish, Failed: d.failed, Wrap: d.wrap,
+		// A hub session's close decides whether its stop is confirmed; a
+		// node-owned session this process stops observing is the node's,
+		// and stays recoverable unless the run itself was cancelled.
+		Settlement: lifecycle.Settlement{Quarantine: lifecycle.QuarantineManaged, DetachManaged: true, Detachment: lifecycle.DetachQuarantinesUnlessCancelled},
+	})
+	return d.settle(ctx, run, err)
 }
 
-func (s *Service) completeResult(ctx context.Context, parent, child task.Task, record attempt.Record, answer string, observed *attempt.Usage, stopBeat func(), failAttempt func(error)) (result agentmcp.DelegateResult, runErr error) {
-	result = agentmcp.DelegateResult{TaskID: child.ID, Agent: record.Agent, Node: record.Node}
-	workspace, base := record.Workspace, record.Base
-	fail := func(cause error) error {
-		if lifecycle.IsManaged(record.Session) {
-			return retainedDetached(record, cause)
+// delegation is one child's side of the lifecycle: who answers its
+// questions, what its result publishes, and how the parent reads the end.
+type delegation struct {
+	service *Service
+	parent  task.Task
+	child   task.Task
+	req     agentmcp.DelegateRequest
+	at      harness.Placement
+
+	mu      sync.Mutex
+	binding QuestionBinding
+	// published is the result on its way to the ledger, once Finish ran;
+	// publishErr is why it did not get there.
+	published  publication
+	publishErr error
+}
+
+// arm remembers the session against the child for cancel and questions.
+func (d *delegation) arm(_ context.Context, e *lifecycle.Execution) (func(*attempt.Record), error) {
+	s := d.service
+	s.mu.Lock()
+	if entry := s.pending[d.child.ID]; entry != nil {
+		entry.session = e.Session.ID()
+	}
+	s.mu.Unlock()
+	record := e.Record
+	record.Session = e.Session.ID()
+	d.mu.Lock()
+	d.binding = questionBinding(d.parent, d.child, record)
+	d.mu.Unlock()
+	return nil, nil
+}
+
+func (d *delegation) started(ctx context.Context, e *lifecycle.Execution) error {
+	if !e.Managed {
+		return nil
+	}
+	if err := d.service.bindDelegatedExecution(ctx, d.parent, d.child, e.Record); err != nil {
+		return fmt.Errorf("bind delegated tools: %w", err)
+	}
+	return nil
+}
+
+func (d *delegation) ask(ctx context.Context, q permission.Ask) (acp.RequestPermissionOutcome, error) {
+	d.mu.Lock()
+	binding := d.binding
+	d.mu.Unlock()
+	ask, _ := d.service.nodeQuestionHandlers(binding)
+	if ask == nil {
+		return acp.RequestPermissionOutcome{}, errors.New("delegated permission handler is not configured")
+	}
+	return ask(ctx, q)
+}
+
+func (d *delegation) askUser(ctx context.Context, q view.Question) (view.Answer, error) {
+	d.mu.Lock()
+	binding := d.binding
+	d.mu.Unlock()
+	_, askUser := d.service.nodeQuestionHandlers(binding)
+	if askUser == nil {
+		return view.Answer{}, errors.New("delegated question handler is not configured")
+	}
+	return askUser(ctx, q)
+}
+
+func (d *delegation) finish(ctx context.Context, e *lifecycle.Execution) (attempt.Completion, error) {
+	p, err := d.service.publish(ctx, d.child, e.Record, e.Outcome.Answer, e.Usage)
+	d.published = p
+	if err != nil {
+		d.publishErr = err
+		return attempt.Completion{}, err
+	}
+	return p.completion, nil
+}
+
+func (d *delegation) failed(e *lifecycle.Execution, cause error) (*attempt.Result, error) {
+	if !e.Managed {
+		return nil, nil
+	}
+	return retainedFailure(e.Record, e.Outcome.Answer, cause)
+}
+
+func (d *delegation) wrap(step lifecycle.Step, e *lifecycle.Execution, err error) error {
+	switch step {
+	case lifecycle.StepOpen:
+		return fmt.Errorf("lease delegation: %w", err)
+	case lifecycle.StepAdmit:
+		var refused *lifecycle.Refused
+		if errors.As(err, &refused) {
+			return &Refusal{Code: "REFUSED_AT_ADMISSION", Retryable: true, Requires: d.req.Requires,
+				Failures: []Failure{{Agent: d.child.Member, Node: d.at.Node, Reasons: refused.Admission.Atoms}}}
+		}
+		return fmt.Errorf("admission on %s: %w", d.at, err)
+	case lifecycle.StepSession:
+		if e.Session != nil || errors.Is(err, harness.ErrStopUnconfirmed) {
+			return err
+		}
+		return fmt.Errorf("open session on %s: %w", d.at, err)
+	case lifecycle.StepFinish:
+		return fmt.Errorf("complete delegation result: %w", err)
+	}
+	return err
+}
+
+// settle reads how the run ended for the child's task and its parent.
+func (d *delegation) settle(ctx context.Context, run lifecycle.Result, err error) (agentmcp.DelegateResult, error) {
+	s, child, parent := d.service, d.child, d.parent
+	record := run.Record
+	result := d.published.result
+	if result.TaskID == "" {
+		result = agentmcp.DelegateResult{TaskID: child.ID, Agent: record.Agent, Node: record.Node}
+	}
+	if run.Driven {
+		s.spent(child.ID, run.Last)
+	}
+	if run.CleanupErr != nil && run.Managed {
+		log.Printf("delegate: settled session cleanup task=%s attempt=%s: %v", child.ID, record.ID, run.CleanupErr)
+	}
+	var step *lifecycle.StepError
+	var detached *execution.RetainedObserverDetached
+	switch {
+	case errors.As(err, &detached):
+		if run.Managed && run.Driven {
+			result.Answer = run.Answer
+		}
+		return result, err
+	case run.Unsettled && run.Session == nil:
+		if opening := pendingDelegateOpen(record, child, err); opening != nil {
+			opening.Cause = err
+			s.reportDelegatePreparation(ctx, parent, child, record)
+			return result, retainedDetached(record, opening)
 		}
 		s.finish(child.ID, task.OutcomeError)
-		failAttempt(cause)
-		return cause
+		return result, err
+	case errors.As(err, &step):
+		outcome := task.OutcomeError
+		if step.Step == lifecycle.StepSession && run.Session != nil {
+			outcome = task.OutcomeCancelled
+		}
+		accountingErr := s.finish(child.ID, outcome)
+		if step.Step == lifecycle.StepOpen || step.Step == lifecycle.StepArm {
+			err = errors.Join(err, accountingErr)
+		}
+		return result, err
+	case err != nil:
+		if run.Managed {
+			result.Answer = run.Answer
+		}
+		outcome := outcomeOf(err)
+		if d.publishErr != nil {
+			outcome = task.OutcomeError
+		}
+		s.finish(child.ID, outcome)
+		return result, err
 	}
+	if run.Managed && ctx.Err() != nil {
+		return result, retainedDetached(record, ctx.Err())
+	}
+	return s.land(ctx, parent, child, record, d.published)
+}
 
-	// What the child said is the result from here on, whatever happens
-	// to its files: every return below carries it.
-	result.Outcome = task.OutcomeOK
-	result.Answer = answer
+// publication is a delegation's result on its way to the ledger: what the
+// child said, the artifact its files became, and the completion binding
+// that artifact to the child's name.
+type publication struct {
+	result     agentmcp.DelegateResult
+	published  artifact.Manifest
+	changed    bool
+	completion attempt.Completion
+}
+
+// publish makes the child's files an artifact and walks the attempt to
+// bind-ready with it. What the child said is the result from here on,
+// whatever happens to its files: every return carries it.
+func (s *Service) publish(ctx context.Context, child task.Task, record attempt.Record, answer string, observed *attempt.Usage) (publication, error) {
+	p := publication{result: agentmcp.DelegateResult{TaskID: child.ID, Agent: record.Agent, Node: record.Node, Outcome: task.OutcomeOK, Answer: answer}}
 	for _, ref := range exec.ParseRefs(answer) {
-		result.Refs = append(result.Refs, ref.Kind+" "+ref.Value)
+		p.result.Refs = append(p.result.Refs, ref.Kind+" "+ref.Value)
 	}
 	// The child's result becomes an artifact bound to its name and queued
 	// to land once the parent's turn releases the canonical lock.
-	published, changed, err := s.artifacts.Publish(ctx, workspace, base, record.ID, "delegation #"+child.ID)
+	published, changed, err := s.artifacts.Publish(ctx, record.Workspace, record.Base, record.ID, "delegation #"+child.ID)
 	if err != nil {
-		return result, fail(fmt.Errorf("publish delegation result: %w", err))
+		return p, fmt.Errorf("publish delegation result: %w", err)
 	}
 	for _, to := range []attempt.State{attempt.Snapshotted, attempt.Published, attempt.Durable, attempt.BindReady} {
 		if _, err := s.attempts.Advance(ctx, record.ID, to, "delegate", nil); err != nil {
-			return result, fail(err)
+			return p, err
 		}
 	}
 	name := "steve/" + child.ID + "/result"
 	current, _, err := s.artifacts.Resolve(ctx, name)
 	if err != nil {
-		return result, fail(err)
+		return p, err
 	}
 	if changed {
-		result.Refs = append(result.Refs, "artifact "+published.ID)
+		p.result.Refs = append(p.result.Refs, "artifact "+published.ID)
 	}
-	output, err := json.Marshal(result)
+	output, err := json.Marshal(p.result)
 	if err != nil {
-		return result, err
+		return p, err
 	}
-	completion := attempt.Completion{Result: attempt.Result{Artifact: published.ID, Summary: clipRunes(result.Answer, 200), Refs: result.Refs, Output: output}, Usage: observed,
+	p.published, p.changed = published, changed
+	p.completion = attempt.Completion{Result: attempt.Result{Artifact: published.ID, Summary: clipRunes(p.result.Answer, 200), Refs: p.result.Refs, Output: output}, Usage: observed,
 		Binding: &attempt.NameBinding{Name: name, ExpectedVersion: current.Version}}
-	stopBeat()
-	if _, err := s.attempts.Complete(ctx, record.ID, "delegate", completion); err != nil {
-		if lifecycle.IsManaged(record.Session) {
-			return result, retainedDetached(record, err)
-		}
-		err = s.attempts.RejectCompletion(ctx, record.ID, "delegate", completion, err)
-		s.finish(child.ID, task.OutcomeError)
-		return result, fmt.Errorf("complete delegation result: %w", err)
-	}
-	if lifecycle.IsManaged(record.Session) && ctx.Err() != nil {
-		return result, retainedDetached(record, ctx.Err())
-	}
-	_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
-	if changed {
+	return p, nil
+}
+
+// land puts a committed result's change where the parent works, or
+// queues it to land when the parent's turn is over.
+func (s *Service) land(ctx context.Context, parent, child task.Task, record attempt.Record, p publication) (agentmcp.DelegateResult, error) {
+	result := p.result
+	if p.changed {
 		// The parent asked for this and holds the canonical lock right now:
 		// the result lands under its lease, into the directory it is
 		// working in, so the parent sees the files this turn. A conflict
 		// is queued for after the turn and reported as such.
 		if lease, ok := s.parentLease(ctx, parent); ok {
-			if p, found, perr := s.artifacts.Project(ctx, parent.ProjectID); perr == nil && found {
-				landed, lerr := s.artifacts.LandUnder(ctx, p, published.ID, "task #"+child.ID, lease, artifact.SourceOf(ctx, record.ID)...)
+			if pr, found, perr := s.artifacts.Project(ctx, parent.ProjectID); perr == nil && found {
+				landed, lerr := s.artifacts.LandUnder(ctx, pr, p.published.ID, "task #"+child.ID, lease, artifact.SourceOf(ctx, record.ID)...)
 				switch {
 				case lerr == nil:
 					result.Refs = append(result.Refs, fmt.Sprintf("landed into your working directory: %d path(s)", len(landed.Paths)))
 					s.finish(child.ID, task.OutcomeOK)
 					return result, nil
 				default:
-					log.Printf("delegate: land %s under parent's lease: %v", published.ID, lerr)
+					log.Printf("delegate: land %s under parent's lease: %v", p.published.ID, lerr)
 					result.Refs = append(result.Refs, "not landed yet: "+lerr.Error())
 				}
 			}
 		}
-		if err := s.artifacts.Defer(ctx, parent.ProjectID, published.ID, "task #"+child.ID, artifact.SourceOf(ctx, record.ID)...); err != nil {
+		if err := s.artifacts.Defer(ctx, parent.ProjectID, p.published.ID, "task #"+child.ID, artifact.SourceOf(ctx, record.ID)...); err != nil {
 			if lifecycle.IsManaged(record.Session) {
 				return result, retainedDetached(record, err)
 			}
@@ -972,6 +963,38 @@ func (s *Service) completeResult(ctx context.Context, parent, child task.Task, r
 	}
 	s.finish(child.ID, task.OutcomeOK)
 	return result, nil
+}
+
+// completeResult commits a recovered node-owned execution's result: the
+// same publication and landing as a live run, with the completion written
+// by the recovering observer.
+func (s *Service) completeResult(ctx context.Context, parent, child task.Task, record attempt.Record, answer string, observed *attempt.Usage, stopBeat func(), failAttempt func(error)) (result agentmcp.DelegateResult, runErr error) {
+	fail := func(cause error) error {
+		if lifecycle.IsManaged(record.Session) {
+			return retainedDetached(record, cause)
+		}
+		s.finish(child.ID, task.OutcomeError)
+		failAttempt(cause)
+		return cause
+	}
+	p, err := s.publish(ctx, child, record, answer, observed)
+	if err != nil {
+		return p.result, fail(err)
+	}
+	stopBeat()
+	if _, err := s.attempts.Complete(ctx, record.ID, "delegate", p.completion); err != nil {
+		if lifecycle.IsManaged(record.Session) {
+			return p.result, retainedDetached(record, err)
+		}
+		err = s.attempts.RejectCompletion(ctx, record.ID, "delegate", p.completion, err)
+		s.finish(child.ID, task.OutcomeError)
+		return p.result, fmt.Errorf("complete delegation result: %w", err)
+	}
+	if lifecycle.IsManaged(record.Session) && ctx.Err() != nil {
+		return p.result, retainedDetached(record, ctx.Err())
+	}
+	_ = s.artifacts.Discard(context.WithoutCancel(ctx), record.Workspace)
+	return s.land(ctx, parent, child, record, p)
 }
 
 // place picks who does the work. The caller is excluded from its own
