@@ -873,7 +873,10 @@ func insertBullet(body, section, bullet string) string {
 	return strings.Join(out, "\n") + "\n"
 }
 
-// truncate cuts to a byte budget on a line boundary.
+// truncate cuts to a byte budget on a line boundary. It is not text.Clip:
+// the budget is bytes, not runes, the cut backs up to the last whole line
+// so the prompt never sees half a bullet, and the result ends in a newline
+// with no ellipsis.
 func truncate(s string, budget int) string {
 	if len([]byte(s)) <= budget {
 		return s
