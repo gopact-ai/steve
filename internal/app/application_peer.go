@@ -90,6 +90,9 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 		close(done)
 		if ctx.Err() == nil && !expectedRestart {
 			if cluster.ApplicationAuthorityError(runErr) {
+				// RequestRebuild only refuses (ErrInactive) when this
+				// generation has already ended, and then there is nothing
+				// left to rebuild; the cause is logged by the runtime.
 				_ = activation.Runtime.RequestRebuild(activation.Generation, runErr)
 			} else {
 				activation.Runtime.FailGeneration(activation.Generation, runErr)

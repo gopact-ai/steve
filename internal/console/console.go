@@ -796,6 +796,8 @@ func (s *Service) Notice(n turn.TaskNotice) {
 // newReplyID names a line: time-ordered, unique enough for a transcript.
 func newReplyID() string {
 	var raw [4]byte
+	// crypto/rand.Read never returns an error; it aborts the program
+	// instead when the platform cannot supply randomness.
 	_, _ = rand.Read(raw[:])
 	return fmt.Sprintf("r%x%x", time.Now().UnixNano()/1000, raw)
 }

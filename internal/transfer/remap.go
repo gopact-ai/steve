@@ -134,7 +134,11 @@ func remapBundle(b *Bundle, home string) error {
 	b.Plans.Remap(m)
 	b.State.Remap(m)
 	b.Schedules.Remap(m)
-	b.Console = b.Console.Remap(m.Task, m.Conversation, m.Key)
+	console, err := b.Console.Remap(m.Task, m.Conversation, m.Key)
+	if err != nil {
+		return err
+	}
+	b.Console = console
 	if err := b.Project.Remap(m); err != nil {
 		return err
 	}

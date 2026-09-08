@@ -16,7 +16,10 @@ func TestProjectRemapPreservesProseAndOriginalCommandIdentity(t *testing.T) {
 	r := consoleapi.Reply{ID: "r-answer", Conversation: "console:source", ProjectID: "p", ExchangeID: "e1", Text: "task #1 original prose", Process: &consoleapi.Process{Steps: []consoleapi.StepProcess{{ID: "#1", Goal: "task #1 goal"}}}}
 	in := ProjectTransfer{Schema: 1, Project: "p", Conversations: []string{"console:source"}, Replies: map[string][]consoleapi.Reply{"console:source": {r}}, Exchanges: map[string][]TransferExchange{"console:source": {{Exchange: Exchange{ID: "e1", Conversation: "console:source", ExpectedProject: "p", Input: "edited after acceptance", State: "done", Key: "client:retry", Quotes: quotes}, PayloadHash: hash, Receipt: &r}}}, Questions: map[string]consoleapi.PendingQuestion{"q1": {ID: "q1", Conversation: "console:source", Project: "p", TaskID: "1", ExchangeID: "e1", State: "answered", Message: "task #1 original question"}}}
 	conv := func(id string) string { return "console:hub~" + strings.TrimPrefix(id, "console:") }
-	out := in.Remap(func(id string) string { return "hub~" + id }, conv, nil)
+	out, err := in.Remap(func(id string) string { return "hub~" + id }, conv, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if in.Replies["console:source"][0].Process.Steps[0].ID != "#1" {
 		t.Fatal("remap changed source snapshot")
 	}
@@ -51,7 +54,10 @@ func TestProjectRemapPreservesProseAndOriginalCommandIdentity(t *testing.T) {
 func TestProjectRemapMovesStructuredStepRefsInRepliesAndReceipts(t *testing.T) {
 	reply := consoleapi.Reply{Conversation: "console:a", Process: &consoleapi.Process{Steps: []consoleapi.StepProcess{{ID: "#1", StepInfo: consoleapi.StepInfo{Answer: "original task 1", Refs: []string{"task 1", "git abc"}}}}}}
 	in := ProjectTransfer{Replies: map[string][]consoleapi.Reply{"console:a": {reply}}, Exchanges: map[string][]TransferExchange{"console:a": {{Receipt: &reply}}}}
-	out := in.Remap(func(id string) string { return "origin~" + id }, nil, nil)
+	out, err := in.Remap(func(id string) string { return "origin~" + id }, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	for _, got := range []consoleapi.Reply{out.Replies["console:a"][0], *out.Exchanges["console:a"][0].Receipt} {
 		step := got.Process.Steps[0]
 		if step.Refs[0] != "task origin~1" || step.Refs[1] != "git abc" || step.Answer != "original task 1" {

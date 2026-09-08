@@ -411,6 +411,9 @@ func (p *Peer) activate(ctx context.Context, activation Activation) (Deactivate,
 
 func (p *Peer) ApplicationStoreFailure(active Activation, cause error) {
 	if cause != nil {
+		// RequestRebuild only refuses (ErrInactive) when this generation
+		// has already ended, and then there is nothing left to rebuild;
+		// the cause is logged by the runtime.
 		_ = active.Runtime.RequestRebuild(active.Generation, cause)
 	}
 }

@@ -2,6 +2,7 @@ package console
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -9,11 +10,18 @@ import (
 )
 
 // Remap changes only structured local identifiers. Material content/provenance
-// and all user/agent prose remain immutable facts from the source hub.
-func (in ProjectTransfer) Remap(taskID, conversation, key func(string) string) ProjectTransfer {
-	raw, _ := json.Marshal(in)
+// and all user/agent prose remain immutable facts from the source hub. The
+// source is copied through JSON so it stays untouched; a transfer that does
+// not survive that round trip is reported rather than remapped in part.
+func (in ProjectTransfer) Remap(taskID, conversation, key func(string) string) (ProjectTransfer, error) {
+	raw, err := json.Marshal(in)
+	if err != nil {
+		return ProjectTransfer{}, fmt.Errorf("copy console transfer: %w", err)
+	}
 	var out ProjectTransfer
-	_ = json.Unmarshal(raw, &out)
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return ProjectTransfer{}, fmt.Errorf("copy console transfer: %w", err)
+	}
 	apply := func(fn func(string) string, id string) string {
 		if fn == nil || id == "" {
 			return id
@@ -89,5 +97,5 @@ func (in ProjectTransfer) Remap(taskID, conversation, key func(string) string) P
 	for i, id := range out.Conversations {
 		out.Conversations[i] = apply(conversation, id)
 	}
-	return out
+	return out, nil
 }

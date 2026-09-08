@@ -26,6 +26,9 @@ func (a *Service) CloseSSH() {
 	service := a.ssh
 	a.Mu.Unlock()
 	if service != nil {
+		// Shutdown: the SSH service holds only outbound connections, and
+		// whatever one of them was doing has already reported its own
+		// result to the console.
 		_ = service.Close()
 	}
 }
@@ -63,7 +66,9 @@ func (b sshNodeBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 	binary := a.Cfg.Gateway.NodeBinary
 	ConfigMu.RUnlock()
 	if binary == "" && desktop.IsManagedConfig(a.Path) {
-		binary, _ = desktop.BundledNodeBinary(check.OS + "/" + check.Arch)
+		if bundled, ok := desktop.BundledNodeBinary(check.OS + "/" + check.Arch); ok {
+			binary = bundled
+		}
 	}
 	template := sshconnect.Template{Steps: []sshconnect.Step{}, Effects: []string{
 		"登记这台机器的节点名称、服务地址和数据等级",

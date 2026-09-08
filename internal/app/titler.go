@@ -50,6 +50,10 @@ func (t *conversationTitler) Title(ctx context.Context, prompt, reply string) (s
 	if err != nil {
 		return "", err
 	}
+	// The session exists only for this one question and holds no state
+	// worth keeping; by the time the close runs the answer (or the error
+	// that replaces it) is what the caller gets, and a failed close has
+	// nothing to add to either.
 	defer func() { _ = t.manager.CloseSession(context.Background(), at, runner.ID()) }()
 	if a.Model != "" || len(a.Options) > 0 {
 		harness.ApplyPreferences(ctx, runner, a.ID, a.Model, a.Options)

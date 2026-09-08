@@ -166,6 +166,8 @@ func (a *Service) RefreshMachineSkills(ctx context.Context) []consoleapi.Machine
 			defer wg.Done()
 			rctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			defer cancel()
+			// The refresh is a nudge; its result, and whichever machine
+			// was down or slow, is read back by MachineSkills below.
 			_, _ = a.Nodes.Refresh(rctx, name)
 		}(name)
 	}
