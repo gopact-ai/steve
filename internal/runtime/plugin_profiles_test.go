@@ -99,6 +99,32 @@ func TestPluginRuntimeRetainsOriginalHomeAcrossDefaultChanges(t *testing.T) {
 	}
 }
 
+func TestAdoptedSkillIsExcludedOnlyFromTheNewPluginHome(t *testing.T) {
+	profiles, selection, cfg := profileFixture(t)
+	before, err := profiles.Prepare(t.Context(), "before-adoption", selection, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	selection.ExcludedSkills = []string{"global"}
+	after, err := profiles.Prepare(t.Context(), "after-adoption", selection, cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(profiles.Store.RuntimeDir(after.Ref.ID), "home/skills/global")); !os.IsNotExist(err) {
+		t.Fatalf("new profile still contains adopted source: %v", err)
+	}
+	for _, path := range []string{filepath.Join(CodexHome(profiles.StateDir), "skills/global/SKILL.md"), filepath.Join(profiles.Store.RuntimeDir(before.Ref.ID), "home/skills/global/SKILL.md")} {
+		data, err := os.ReadFile(path)
+		if err != nil || string(data) != "original global skill" {
+			t.Fatalf("adoption changed existing source/session: %s %v", data, err)
+		}
+	}
+	entries, err := os.ReadDir(filepath.Join(profiles.Store.RuntimeDir(after.Ref.ID), "home/skills"))
+	if err != nil || len(entries) == 0 {
+		t.Fatalf("replacement package skills missing: %v", err)
+	}
+}
+
 func TestPluginRuntimePreparationKeepsIdentityAfterMaterializationFailure(t *testing.T) {
 	profiles, selection, cfg := profileFixture(t)
 	fault := errors.New("materialization interrupted")

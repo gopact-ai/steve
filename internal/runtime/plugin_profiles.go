@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/harness"
@@ -46,7 +47,7 @@ func (p PluginProfiles) materialize(ctx context.Context, dir string, record plug
 		return "", err
 	}
 	if key != "" {
-		if err := copyProfileSkills(ctx, filepath.Join(source, "skills"), filepath.Join(home, "skills")); err != nil {
+		if err := copyProfileSkills(ctx, filepath.Join(source, "skills"), filepath.Join(home, "skills"), selection.ExcludedSkills...); err != nil {
 			return "", err
 		}
 	}
@@ -110,7 +111,7 @@ func replaceProfileEnv(env []string, key, value string) []string {
 	return append(out, key+"="+value)
 }
 
-func copyProfileSkills(ctx context.Context, source, dest string) error {
+func copyProfileSkills(ctx context.Context, source, dest string, excluded ...string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -123,7 +124,7 @@ func copyProfileSkills(ctx context.Context, source, dest string) error {
 	}
 	refs := make([]skills.Ref, 0, len(entries))
 	for _, entry := range entries {
-		if strings.HasPrefix(entry.Name(), ".") {
+		if strings.HasPrefix(entry.Name(), ".") || slices.Contains(excluded, entry.Name()) {
 			continue
 		}
 		resolved, err := filepath.EvalSymlinks(filepath.Join(source, entry.Name()))
