@@ -130,7 +130,7 @@ func (s *Service) RecoverRetained(ctx context.Context, id string, evidence Retai
 			return errors.New("attempt is not a supported retained execution phase")
 		}
 		state, binding, command := evidence.Session, evidence.Session.Binding, evidence.Session.Command
-		if !strings.HasPrefix(state.ID, "ns_") || state.ID != result.Session || state.Harness != result.Harness || binding.ProjectID != result.Project || binding.AttemptID != result.ID || binding.TaskID != result.TaskID || binding.NodeID != result.Node || binding.TaskEpoch != result.Execution.Epoch {
+		if binding.PluginRuntimeID != result.PluginRuntimeID() || !strings.HasPrefix(state.ID, "ns_") || state.ID != result.Session || state.Harness != result.Harness || binding.ProjectID != result.Project || binding.AttemptID != result.ID || binding.TaskID != result.TaskID || binding.NodeID != result.Node || binding.TaskEpoch != result.Execution.Epoch {
 			return errors.New("retained node session does not match the admitted attempt")
 		}
 		if result.Execution.TaskID != result.TaskID {

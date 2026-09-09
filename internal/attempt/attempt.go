@@ -30,6 +30,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -104,6 +105,7 @@ const (
 
 // Spec is what an attempt is fixed to when it opens.
 type Spec struct {
+	PluginRuntime *plugins.RuntimeRef `json:"plugin_runtime,omitempty"`
 	// WorkID is the caller-owned specification identity used by recovery.
 	WorkID    string               `json:"work_id,omitempty"`
 	Execution *task.ExecutionToken `json:"execution,omitempty"`
@@ -295,6 +297,12 @@ func (s *Service) Hold(ctx context.Context, region, key, holder string) (func(),
 // all or nothing: a lease that cannot be had releases the ones already
 // taken and reports which resource is busy.
 func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
+	if spec.PluginRuntime != nil {
+		if spec.PluginRuntime.Validate() != nil || spec.PluginRuntime.Selection.Project != spec.Project || spec.PluginRuntime.Selection.Node != spec.Node || spec.PluginRuntime.Selection.Harness != spec.Harness {
+			return Record{}, errors.New("attempt plugin runtime differs from execution")
+		}
+		spec.PluginRuntime = spec.PluginRuntime.Clone()
+	}
 	if err := s.checkUnsettled(ctx, spec); err != nil {
 		return Record{}, err
 	}
@@ -1278,4 +1286,11 @@ func (s *Service) ReleaseEndpointAfterSessionClosed(ctx context.Context, id, act
 		}
 	}
 	return nil
+}
+
+func (r Record) PluginRuntimeID() string {
+	if r.PluginRuntime == nil {
+		return ""
+	}
+	return r.PluginRuntime.ID
 }

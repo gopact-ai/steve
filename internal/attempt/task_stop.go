@@ -140,7 +140,7 @@ func stoppedTaskTx(tx *ledger.Tx, r Record) (task.Task, error) {
 }
 
 func matchesStoppedSession(r Record, tracked task.Task, st nodewire.SessionState) bool {
-	if st.Harness != r.Harness || st.Binding.ProjectID != r.Project || st.Binding.NodeID != r.Node || st.Binding.TaskID != r.TaskID || st.Binding.AttemptID != r.ID || st.Binding.ExecutionEpoch != SessionExecutionEpoch(r) || st.Binding.TaskEpoch != r.Execution.Epoch || st.Binding.SessionID != RetainedSessionID(tracked.Channel, tracked.ID, r.Agent) {
+	if st.Binding.PluginRuntimeID != r.PluginRuntimeID() || st.Harness != r.Harness || st.Binding.ProjectID != r.Project || st.Binding.NodeID != r.Node || st.Binding.TaskID != r.TaskID || st.Binding.AttemptID != r.ID || st.Binding.ExecutionEpoch != SessionExecutionEpoch(r) || st.Binding.TaskEpoch != r.Execution.Epoch || st.Binding.SessionID != RetainedSessionID(tracked.Channel, tracked.ID, r.Agent) {
 		return false
 	}
 	if r.Session == "" {
