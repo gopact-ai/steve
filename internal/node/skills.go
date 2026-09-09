@@ -73,9 +73,15 @@ func (s *Server) applySkills(stream *nodewire.Stream) {
 	}
 	dir := filepath.Join(s.SkillsDir(), hash)
 	staging := dir + ".staging"
-	// Leftovers of an earlier attempt are cleared best-effort: whatever
-	// survives makes the unpack below fail with the real reason.
-	_ = os.RemoveAll(staging)
+	// Leftovers of an earlier attempt have to go before the unpack: it
+	// writes its own entries into whatever is there and reports nothing
+	// about the rest, so a survivor would be promoted to this hash and
+	// linked into every harness home while the manifest names only the
+	// bundle's own skills.
+	if err := os.RemoveAll(staging); err != nil {
+		fail("1", fmt.Errorf("clear staging: %w", err))
+		return
+	}
 	entries, err := skills.Unpack(data, staging)
 	if err != nil {
 		// Cleanup after a failed unpack; the unpack error is the answer.
