@@ -67,7 +67,7 @@ func (r *Registry) Plugins(ctx context.Context, name string, request nodewire.Pl
 		if reply.Error != "" {
 			return reply, pluginReplyError(reply)
 		}
-		if request.Action == nodewire.PluginRuntimePrepare || request.Action == nodewire.PluginRuntimeInspect {
+		if request.Action == nodewire.PluginRuntimePrepare || request.Action == nodewire.PluginRuntimeInspect || request.Action == nodewire.PluginRuntimeRetire || request.Action == nodewire.PluginRuntimeRemove || request.Action == nodewire.PluginRuntimeClose {
 			if request.Selection == nil || reply.Runtime == nil || reply.Runtime.Validate() != nil {
 				return reply, plugins.ErrIntegrity
 			}
@@ -78,7 +78,7 @@ func (r *Registry) Plugins(ctx context.Context, name string, request nodewire.Pl
 			}
 			return reply, nil
 		}
-		if request.Action != nodewire.PluginSecrets {
+		if request.Action != nodewire.PluginSecrets && request.Action != nodewire.PluginRuntimeList {
 			expected, err := request.Deployment.Hash()
 			if err != nil || reply.Receipt == nil || reply.Receipt.Schema != plugins.Schema || reply.Receipt.PreparedAt.IsZero() || reply.Receipt.Hash != expected {
 				return reply, fmt.Errorf("%w: node replied for another plugin deployment", plugins.ErrIntegrity)

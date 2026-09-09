@@ -66,6 +66,25 @@ func (s *Server) pluginOperation(ctx context.Context, principal string, req node
 	}
 	store := s.pluginStore()
 	switch req.Action {
+	case nodewire.PluginRuntimeClose:
+		return nodewire.PluginReply{Runtime: req.Runtime}, s.closePluginRuntime(ctx, req)
+	case nodewire.PluginRuntimeList:
+		infos, err := store.RuntimeInfos()
+		return nodewire.PluginReply{Runtimes: infos}, err
+	case nodewire.PluginRuntimeRetire, nodewire.PluginRuntimeRemove:
+		if req.Runtime == nil || req.Runtime.Selection.Node != cfg.Name {
+			return nodewire.PluginReply{}, plugins.ErrInvalid
+		}
+		if req.Action == nodewire.PluginRuntimeRetire {
+			return nodewire.PluginReply{Runtime: req.Runtime}, store.RetireRuntime(ctx, *req.Runtime)
+		}
+		if err := store.CheckRuntimeRemovable(*req.Runtime); err != nil {
+			return nodewire.PluginReply{}, err
+		}
+		if err := s.pluginRuntimePool().Drop(req.Runtime.ID); err != nil {
+			return nodewire.PluginReply{}, err
+		}
+		return nodewire.PluginReply{Runtime: req.Runtime}, store.RemoveRuntime(ctx, *req.Runtime)
 	case nodewire.PluginRuntimePrepare, nodewire.PluginRuntimeInspect:
 		return s.pluginRuntimeOperation(ctx, req)
 	case nodewire.PluginSecrets:

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -188,6 +189,11 @@ func (s *SessionService) Close() {
 			for id, command := range next.Commands {
 				command.ProcessStopped = true
 				next.Commands[id] = command
+			}
+		}
+		if next.State.ProcessStopped && next.State.Plugin != nil {
+			if err := s.server.pluginStore().EndRuntimeUse(context.Background(), *next.State.Plugin, "session/"+next.State.ID); err != nil {
+				slog.Error("steve-node: plugin shutdown receipt failed", "error", err)
 			}
 		}
 		// A commit that fails is latched in one.failure and answers the

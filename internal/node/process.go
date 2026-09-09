@@ -105,8 +105,18 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 		}
 		transport = prepared
 	}
+	if req.Plugin != nil {
+		if err := s.pluginStore().BeginRuntimeUse(ctx, *req.Plugin, "stream/"+req.Stream, "stream"); err != nil {
+			s.processMu.Unlock()
+			closeStream(stream, err.Error())
+			return
+		}
+	}
 	proc, err := transport.Start(ctx)
 	if err != nil {
+		if req.Plugin != nil {
+			err = errors.Join(err, s.pluginStore().EndRuntimeUse(context.WithoutCancel(ctx), *req.Plugin, "stream/"+req.Stream))
+		}
 		s.processMu.Unlock()
 		closeStream(stream, err.Error())
 		return
@@ -428,6 +438,11 @@ func (p *agentProcess) run(ctx context.Context) {
 		}
 	}
 	if p.pluginRuntimeID != "" && p.proc.Stopped() {
+		if info, err := p.server.pluginStore().RuntimeInfo(p.pluginRuntimeID); err == nil {
+			if err := p.server.pluginStore().EndRuntimeUse(context.WithoutCancel(ctx), info.Ref, "stream/"+p.id); err != nil {
+				slog.Error("steve-node: plugin exit receipt failed", "error", err)
+			}
+		}
 		if err := p.server.pluginRuntimePool().Drop(p.pluginRuntimeID); err != nil {
 			slog.Error("steve-node: plugin broker stop failed", "error", err)
 		}

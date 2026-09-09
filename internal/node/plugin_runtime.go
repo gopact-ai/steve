@@ -61,6 +61,9 @@ func (p *PluginRuntimePool) Prepare(ctx context.Context, commandID string, selec
 }
 
 func (p *PluginRuntimePool) Load(ctx context.Context, ref plugins.RuntimeRef) (PluginRuntime, error) {
+	if err := p.Store.CheckRuntimeActive(ref); err != nil {
+		return PluginRuntime{}, err
+	}
 	profiles := steveruntime.PluginProfiles{Store: p.Store, StateDir: p.StateDir}
 	record, err := p.Store.Runtime(ref)
 	if err != nil {
@@ -99,6 +102,9 @@ func (p *PluginRuntimePool) servers(ctx context.Context, ref plugins.RuntimeRef)
 			return nil, err
 		}
 		for name, spec := range resolved {
+			if !ref.Selection.Includes(record.Deployment.Installation, "mcp", name) {
+				continue
+			}
 			native, err := plugins.NativeName(record.Deployment.PackageID, "mcp", name)
 			if err != nil {
 				return nil, err

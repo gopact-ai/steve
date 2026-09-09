@@ -112,6 +112,13 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		host.Close()
 		return nodewire.SessionState{}, err
 	}
+	if req.Plugin != nil {
+		if err := s.server.pluginStore().BeginRuntimeUse(ctx, *req.Plugin, "session/"+id, "session"); err != nil {
+			s.mu.Unlock()
+			host.Close()
+			return nodewire.SessionState{}, err
+		}
+	}
 	openCtx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
 	one.openCancel, one.openDone = cancel, make(chan struct{})
 	defer cancel()
@@ -440,6 +447,9 @@ func (one *ownedSession) settleStop(req nodewire.SessionRequest, host *acphost.H
 		err = acphost.ErrStopUnconfirmed
 	}
 	if err == nil && next.State.State == nodewire.SessionClosed && next.State.Plugin != nil {
+		if stopErr := one.service.server.pluginStore().EndRuntimeUse(context.Background(), *next.State.Plugin, "session/"+next.State.ID); stopErr != nil {
+			return one.state(req.CommandID), stopErr
+		}
 		if closeErr := one.service.server.pluginRuntimePool().Drop(next.State.Plugin.ID); closeErr != nil {
 			return one.state(req.CommandID), closeErr
 		}
