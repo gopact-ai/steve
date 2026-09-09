@@ -132,6 +132,9 @@ func (r *Registry) NodeSession(ctx context.Context, node string, request nodewir
 	if !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeatureNodeSessions) {
 		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node does not support node-owned sessions")}
 	}
+	if (request.Plugin != nil || request.Binding.PluginRuntimeID != "") && !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeaturePluginRuntimes) {
+		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node cannot preserve plugin runtime binding")}
+	}
 	stream, err := conn.mux.Open(nodewire.OpenRequest{Kind: nodewire.StreamNodeSessions})
 	if err != nil {
 		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: err}

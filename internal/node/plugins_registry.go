@@ -23,6 +23,9 @@ func (r *Registry) Plugins(ctx context.Context, name string, request nodewire.Pl
 	if !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeaturePlugins) {
 		return nodewire.PluginReply{}, fmt.Errorf("%w: node %s does not support plugin packages", plugins.ErrIncompatible, name)
 	}
+	if (request.Action == nodewire.PluginRuntimePrepare || request.Action == nodewire.PluginRuntimeInspect) && !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeaturePluginRuntimes) {
+		return nodewire.PluginReply{}, plugins.ErrIncompatible
+	}
 	request.Node = name
 	if request.Authority.ClusterID == "" {
 		request.Authority.ClusterID = r.hub
@@ -63,6 +66,17 @@ func (r *Registry) Plugins(ctx context.Context, name string, request nodewire.Pl
 		}
 		if reply.Error != "" {
 			return reply, pluginReplyError(reply)
+		}
+		if request.Action == nodewire.PluginRuntimePrepare || request.Action == nodewire.PluginRuntimeInspect {
+			if request.Selection == nil || reply.Runtime == nil || reply.Runtime.Validate() != nil {
+				return reply, plugins.ErrIntegrity
+			}
+			want, e := request.Selection.Hash()
+			actual, a := reply.Runtime.Selection.Hash()
+			if e != nil || a != nil || want != actual || (request.Runtime != nil && request.Runtime.ID != reply.Runtime.ID) {
+				return reply, plugins.ErrIntegrity
+			}
+			return reply, nil
 		}
 		if request.Action != nodewire.PluginSecrets {
 			expected, err := request.Deployment.Hash()

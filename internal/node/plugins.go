@@ -66,6 +66,8 @@ func (s *Server) pluginOperation(ctx context.Context, principal string, req node
 	}
 	store := s.pluginStore()
 	switch req.Action {
+	case nodewire.PluginRuntimePrepare, nodewire.PluginRuntimeInspect:
+		return s.pluginRuntimeOperation(ctx, req)
 	case nodewire.PluginSecrets:
 		secrets, err := store.Secrets()
 		return nodewire.PluginReply{Secrets: secrets}, err

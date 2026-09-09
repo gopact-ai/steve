@@ -92,18 +92,19 @@ func (s *SessionService) forgetCapabilities(harnessID string) {
 }
 
 type ownedSession struct {
-	service         *SessionService
-	mu              sync.Mutex
-	record          sessionRecord
-	host            *acphost.Host
-	changed         chan struct{}
-	waiters         map[string]chan struct{}
-	runDone         chan struct{}
-	openDone        chan struct{}
-	openCancel      context.CancelFunc
-	failure         error
-	pendingProgress *view.Progress
-	progressTimer   *time.Timer
+	pluginInstructions string
+	service            *SessionService
+	mu                 sync.Mutex
+	record             sessionRecord
+	host               *acphost.Host
+	changed            chan struct{}
+	waiters            map[string]chan struct{}
+	runDone            chan struct{}
+	openDone           chan struct{}
+	openCancel         context.CancelFunc
+	failure            error
+	pendingProgress    *view.Progress
+	progressTimer      *time.Timer
 }
 
 type sessionRecord struct {
@@ -218,6 +219,9 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 	if err := s.authorize(ctx, principal, req); err != nil {
 		return nodewire.SessionState{}, err
 	}
+	if err := validatePluginSessionOpen(req); err != nil {
+		return nodewire.SessionState{}, err
+	}
 	s.mu.Lock()
 	closed := s.closed
 	s.mu.Unlock()
@@ -302,7 +306,7 @@ func (one *ownedSession) admitLocked(req nodewire.SessionRequest) error {
 	}
 	if req.Binding != next.State.Binding {
 		before, after := next.State.Binding, req.Binding
-		if req.Action != nodewire.SessionActionOpen || one.runningLocked() || before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || one.host == nil || next.State.State != nodewire.SessionIdle {
+		if req.Action != nodewire.SessionActionOpen || one.runningLocked() || before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || before.PluginRuntimeID != after.PluginRuntimeID || one.host == nil || next.State.State != nodewire.SessionIdle {
 			return sessionError("conflict", "session belongs to another execution")
 		}
 		next.State.Binding = req.Binding

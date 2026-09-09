@@ -118,6 +118,9 @@ type Observe struct {
 
 // Server accepts hub connections and runs agents on this machine.
 type Server struct {
+	pluginClosing        bool
+	pluginMu             sync.Mutex
+	pluginRuntime        *PluginRuntimePool
 	enrollmentMu         sync.Mutex
 	settingsMu           sync.Mutex
 	settingsFileRevision string
@@ -238,6 +241,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			s.sessions.Close()
 		}
 		s.closeMCP()
+		s.closePluginRuntimes()
 		handlers.Wait()
 		s.requestWG.Wait()
 		s.workWG.Wait()
