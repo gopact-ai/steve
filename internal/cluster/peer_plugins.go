@@ -6,10 +6,13 @@ import (
 	"slices"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 	"github.com/gopact-ai/steve/internal/plugins"
+	"github.com/gopact-ai/steve/internal/state"
 )
 
 func (p *Peer) AuthorizePlugins(ctx context.Context, principal string, request nodewire.PluginRequest) error {
@@ -79,6 +82,9 @@ func (p *Peer) authorizePluginRequest(ctx context.Context, req nodewire.PluginRe
 	if _, ok := declaration.Nodes[req.Node]; !ok {
 		return errors.New("plugin request targets an unknown node")
 	}
+	if req.RelocationPlan != "" {
+		return authorizePluginRelocation(ctx, runtime.Ledger(), declaration, req)
+	}
 	switch req.Action {
 	case nodewire.PluginRuntimePrepare, nodewire.PluginRuntimeInspect:
 		if req.Action == nodewire.PluginRuntimeInspect && req.Runtime != nil {
@@ -87,6 +93,12 @@ func (p *Peer) authorizePluginRequest(ctx context.Context, req nodewire.PluginRe
 			}
 		}
 		return authorizePluginRuntime(declaration, req)
+	case nodewire.PluginRuntimeList:
+		return nil
+	case nodewire.PluginRuntimeClose:
+		return authorizePluginRuntimeClose(ctx, runtime.Ledger(), req)
+	case nodewire.PluginRuntimeRetire, nodewire.PluginRuntimeRemove:
+		return authorizePluginRemoval(ctx, runtime.Ledger(), declaration, req)
 	case nodewire.PluginSecrets:
 		return nil
 	case nodewire.PluginInspect:
@@ -159,6 +171,76 @@ func authorizePluginRuntime(declaration platformconfig.Declaration, req nodewire
 	for _, hash := range req.Selection.Deployments {
 		if !wanted[hash] {
 			return errors.New("runtime selection is not enabled by current configuration")
+		}
+	}
+	return nil
+}
+
+func authorizePluginRemoval(ctx context.Context, book *ledger.Ledger, declaration platformconfig.Declaration, req nodewire.PluginRequest) error {
+	if req.Runtime == nil || req.Runtime.Validate() != nil || req.Runtime.Selection.Node != req.Node {
+		return plugins.ErrInvalid
+	}
+	refs, err := state.PluginReferences(book.Document("state"))
+	if err != nil {
+		return err
+	}
+	for _, ref := range refs {
+		if ref.Runtime.ID == req.Runtime.ID {
+			return plugins.ErrRuntimeBusy
+		}
+	}
+	active, err := attempt.New(book).Live(ctx)
+	if err != nil {
+		return err
+	}
+	for _, record := range active {
+		if record.PluginRuntimeID() == req.Runtime.ID {
+			return plugins.ErrRuntimeBusy
+		}
+		reservation, found, err := (&plugins.Library{Ledger: book}).RuntimeReservation(ctx, record.ID)
+		if err != nil {
+			return err
+		}
+		if found {
+			wanted, _ := req.Runtime.Selection.Hash()
+			actual, err := reservation.Selection.Hash()
+			if err != nil {
+				return err
+			}
+			if reservation.RuntimeID == req.Runtime.ID || (reservation.RuntimeID == "" && actual == wanted) {
+				return plugins.ErrRuntimeBusy
+			}
+		}
+	}
+
+	return nil
+}
+
+func authorizePluginRuntimeClose(ctx context.Context, book *ledger.Ledger, req nodewire.PluginRequest) error {
+	if req.Runtime == nil || req.Runtime.Validate() != nil || req.Runtime.Selection.Node != req.Node {
+		return plugins.ErrInvalid
+	}
+	active, err := attempt.New(book).Live(ctx)
+	if err != nil {
+		return err
+	}
+	for _, record := range active {
+		if record.PluginRuntimeID() == req.Runtime.ID {
+			return plugins.ErrRuntimeBusy
+		}
+		reservation, found, err := (&plugins.Library{Ledger: book}).RuntimeReservation(ctx, record.ID)
+		if err != nil {
+			return err
+		}
+		if found {
+			wanted, _ := req.Runtime.Selection.Hash()
+			actual, err := reservation.Selection.Hash()
+			if err != nil {
+				return err
+			}
+			if reservation.RuntimeID == req.Runtime.ID || (reservation.RuntimeID == "" && actual == wanted) {
+				return plugins.ErrRuntimeBusy
+			}
 		}
 	}
 	return nil
