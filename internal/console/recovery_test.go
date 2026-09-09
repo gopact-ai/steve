@@ -1,6 +1,7 @@
 package console
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"sync/atomic"
@@ -240,4 +241,64 @@ func TestRetainedGenerationShutdownStopsFailedSaveRetriesWithoutTerminalizing(t 
 			t.Fatalf("detachment invented a terminal reply: %+v", item)
 		}
 	}
+}
+
+// unwritableRecoveringDoc refuses the save that records an exchange as
+// recovering and takes every other write, so a test can lose exactly
+// that one state write.
+type unwritableRecoveringDoc struct {
+	*memDoc
+	armed atomic.Bool
+}
+
+func (d *unwritableRecoveringDoc) Save(raw []byte) error {
+	if d.armed.Load() && bytes.Contains(raw, []byte(`"state":"recovering"`)) {
+		return errors.New("transcript volume is full")
+	}
+	return d.memDoc.Save(raw)
+}
+
+// A recovery that cannot record the exchange as recovering must not
+// resume the retained execution behind an unwritten state: it holds the
+// exchange for the owner and puts the block to them.
+func TestRecoveryAsksTheOwnerWhenRecordingRecoveringFails(t *testing.T) {
+	lifetime, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	s := New(&echo{}, "owner", nil)
+	s.EnableRetainedRecovery(lifetime)
+	doc := &unwritableRecoveringDoc{memDoc: recoveryDocument()}
+	if err := s.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	driver := &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
+		return turn.Result{Text: "resumed", Attempt: "attempt-1"}, nil
+	}}
+	doc.armed.Store(true)
+	if err := s.RecoverChats(lifetime, driver); err != nil {
+		t.Fatal(err)
+	}
+	question := awaitRecoveryQuestion(t, s)
+	if question.Title != "原执行需要核实" {
+		t.Fatalf("unsaved recovering state asked another question: %+v", question)
+	}
+	if driver.calls.Load() != 0 {
+		t.Fatalf("resumed behind an unwritten state: %d", driver.calls.Load())
+	}
+	if got := s.Queue("main"); got[0].State != consoleapi.ExchangeAwaitingUser {
+		t.Fatalf("exchange not held for the owner: %+v", got)
+	}
+}
+
+func awaitRecoveryQuestion(t *testing.T, s *Service) consoleapi.PendingQuestion {
+	t.Helper()
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline); {
+		for _, q := range s.Questions("main") {
+			if q.State == "pending" {
+				return q
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("recovery question not opened")
+	return consoleapi.PendingQuestion{}
 }

@@ -45,6 +45,14 @@ type textReplier interface {
 	ReplyText(ctx context.Context, messageID, text string) (string, error)
 }
 
+// scheduledValidator is a processor that checks a scheduled fire's
+// conversation, project and requester before the notice is posted, so a
+// stale schedule is refused rather than announced. A processor without
+// the check runs the fire on the request's own validation.
+type scheduledValidator interface {
+	ValidateScheduled(ctx context.Context, conversation, expectedProject, requester string) error
+}
+
 // Notice is one line Steve posts on its own initiative, outside any turn's
 // card: a task ended, and saying so is the platform's job rather than the
 // agent's. The mention is what makes it a delivery instead of a log entry.
@@ -207,9 +215,7 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 	if f.ConversationID == "" || f.MessageID == "" || f.Prompt == "" || f.Member == "" || f.Requester == "" || f.ProjectID == "" {
 		return FireReceipt{}, fmt.Errorf("schedule %s has incomplete execution context", f.ScheduleID)
 	}
-	if validator, ok := g.processor.(interface {
-		ValidateScheduled(context.Context, string, string, string) error
-	}); ok {
+	if validator, ok := g.processor.(scheduledValidator); ok {
 		if err := validator.ValidateScheduled(ctx, f.ConversationID, f.ProjectID, f.Requester); err != nil {
 			return FireReceipt{}, err
 		}

@@ -448,9 +448,7 @@ func (s *Service) Context(ctx context.Context, conversation string) (consoleapi.
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	aware, ok := s.handler.(interface {
-		Context(ctx context.Context, conversationID string) (turn.Context, error)
-	})
+	aware, ok := s.handler.(contextProvider)
 	if !ok {
 		return consoleapi.Context{Conversation: conversation, Agents: []consoleapi.AgentChoice{}}, nil
 	}
@@ -480,9 +478,7 @@ func (s *Service) Suggest(ctx context.Context, conversation, line string) []cons
 	if !strings.HasPrefix(conversation, Prefix) {
 		conversation = Prefix + conversation
 	}
-	aware, ok := s.handler.(interface {
-		Suggest(ctx context.Context, conversationID, line string) []turn.Suggestion
-	})
+	aware, ok := s.handler.(suggester)
 	if !ok {
 		return nil
 	}
@@ -495,7 +491,7 @@ func (s *Service) Suggest(ctx context.Context, conversation, line string) []cons
 
 // Verbs is what the console can be told, with help, from the coordinator.
 func (s *Service) Verbs() []consoleapi.Verb {
-	aware, ok := s.handler.(interface{ Verbs() []turn.Verb })
+	aware, ok := s.handler.(verbLister)
 	if !ok {
 		return nil
 	}
@@ -601,9 +597,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		s.anchor(conversation, ChatID, AnchorMark+exchange.ID)
 	}
 	stop := s.follow(ctx, conversation, work)
-	var identityMu sync.Mutex
-	identity := consoleapi.PendingQuestion{Conversation: conversation, ExchangeID: exchange.ID, Project: exchange.ExpectedProject, Locale: exchange.Locale}
-	questionBase := func() consoleapi.PendingQuestion { identityMu.Lock(); defer identityMu.Unlock(); return identity }
+	identity := &questionIdentity{base: consoleapi.PendingQuestion{Conversation: conversation, ExchangeID: exchange.ID, Project: exchange.ExpectedProject, Locale: exchange.Locale}}
 	result, err := s.handler.Handle(ctx, turn.Request{
 		Channel:        "console",
 		ConversationID: conversation, ChatID: ChatID, MessageID: AnchorMark + exchange.ID, Input: prompt, Queue: !isInterrupt(input),
@@ -611,16 +605,14 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		Origin: exchange.Origin, ExpectedProject: exchange.ExpectedProject,
 		Locale: exchange.Locale, Images: media,
 		OnTurnReady: func(taskID, attemptID string) {
-			identityMu.Lock()
-			identity.TaskID, identity.AttemptID = taskID, attemptID
-			identityMu.Unlock()
+			identity.set(taskID, attemptID)
 			stream.Bind(taskID)
 		},
 		OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
-			return s.askPermission(ctx, questionBase(), ask)
+			return s.askPermission(ctx, identity.binding(), ask)
 		},
 		OnAskUser: func(ctx context.Context, q view.Question) (view.Answer, error) {
-			return s.askUser(ctx, questionBase(), q)
+			return s.askUser(ctx, identity.binding(), q)
 		},
 		OnProgress: stream.Update,
 		OnPhase:    stream.Phase,
