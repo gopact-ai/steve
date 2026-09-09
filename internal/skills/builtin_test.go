@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -15,7 +16,7 @@ func TestSetupShipsBuiltinsOnByDefaultButRemembersADisable(t *testing.T) {
 	}
 	names, _ := BuiltinNames()
 	for _, want := range []string{"skill-creator"} {
-		if !contains(names, want) {
+		if !slices.Contains(names, want) {
 			t.Fatalf("builtin %s missing from %v", want, names)
 		}
 		if _, err := os.Stat(filepath.Join(BuiltinRoot(stateDir), want, "SKILL.md")); err != nil {
@@ -26,7 +27,7 @@ func TestSetupShipsBuiltinsOnByDefaultButRemembersADisable(t *testing.T) {
 			t.Fatalf("%s describes itself as %+v", want, d)
 		}
 	}
-	if !contains(m.EnabledNames(), "skill-creator") {
+	if !slices.Contains(m.EnabledNames(), "skill-creator") {
 		t.Fatalf("builtins not enabled: %v", m.EnabledNames())
 	}
 	// The shipped directory is searched last, so a user's skill of the
@@ -47,7 +48,7 @@ func TestSetupShipsBuiltinsOnByDefaultButRemembersADisable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if contains(m2.EnabledNames(), "skill-creator") {
+	if slices.Contains(m2.EnabledNames(), "skill-creator") {
 		t.Fatal("disabled builtin came back on")
 	}
 	if m2.BuiltinRootPath() != BuiltinRoot(stateDir) {
@@ -79,7 +80,7 @@ func TestPlatformSkillIsNotShippedOrRetainedInRuntimes(t *testing.T) {
 		t.Fatal(err)
 	}
 	names, err := BuiltinNames()
-	if err != nil || contains(names, "steve") || contains(m.EnabledNames(), "steve") {
+	if err != nil || slices.Contains(names, "steve") || slices.Contains(m.EnabledNames(), "steve") {
 		t.Fatalf("platform skill remains shipped or enabled: %v, %v", names, err)
 	}
 	for _, old := range []string{legacy, filepath.Join(dest, "steve")} {
@@ -136,7 +137,7 @@ func TestStaleBuiltinLeavesTheEnabledSet(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if contains(m2.EnabledNames(), "steve-gone") {
+	if slices.Contains(m2.EnabledNames(), "steve-gone") {
 		t.Fatal("a skill that no longer ships stayed enabled")
 	}
 	if _, err := m2.Enabled(); err != nil {

@@ -3,6 +3,7 @@ package skills
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync"
 )
 
@@ -110,7 +111,7 @@ func (l *Live) AddDests(dests ...string) error {
 	defer l.mu.Unlock()
 	var added []string
 	for _, dest := range dests {
-		if contains(l.Dests, dest) || contains(added, dest) {
+		if slices.Contains(l.Dests, dest) || slices.Contains(added, dest) {
 			continue
 		}
 		if err := l.Map.Materialize(dest); err != nil {

@@ -126,59 +126,77 @@ func UnpackImport(encoded, dest string) error {
 	}
 	defer gz.Close()
 	tmp := dest + ".loading"
-	_ = os.RemoveAll(tmp)
+	// What an earlier import left behind would otherwise be merged into
+	// this one, since MkdirAll accepts a directory that already exists.
+	if err := os.RemoveAll(tmp); err != nil {
+		return fmt.Errorf("clear an earlier import: %w", err)
+	}
 	if err := os.MkdirAll(tmp, 0o700); err != nil {
 		return err
 	}
-	tr := tar.NewReader(gz)
+	if err := unpackEntries(tar.NewReader(gz), tmp); err != nil {
+		// The unpack error is the answer; what a failed remove leaves
+		// behind is refused by the RemoveAll above at the next import.
+		_ = os.RemoveAll(tmp)
+		return err
+	}
+	return os.Rename(tmp, dest)
+}
+
+// unpackEntries writes the stream's directories and regular files under
+// tmp, refusing an entry that would land outside it, and requires a
+// SKILL.md at the top once the stream ends.
+func unpackEntries(tr *tar.Reader, tmp string) error {
 	for {
 		h, err := tr.Next()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			_ = os.RemoveAll(tmp)
 			return err
 		}
 		name := filepath.Clean("/" + h.Name)
 		target := filepath.Join(tmp, name)
 		if !strings.HasPrefix(target, tmp+string(filepath.Separator)) && target != tmp {
-			_ = os.RemoveAll(tmp)
 			return fmt.Errorf("entry %q escapes the skill", h.Name)
 		}
 		switch h.Typeflag {
 		case tar.TypeDir:
 			if err := os.MkdirAll(target, 0o700); err != nil {
-				_ = os.RemoveAll(tmp)
 				return err
 			}
 		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-				_ = os.RemoveAll(tmp)
+			if err := writeEntry(target, h.Mode, tr); err != nil {
 				return err
 			}
-			mode := os.FileMode(0o600)
-			if h.Mode&0o111 != 0 {
-				mode = 0o700
-			}
-			f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
-			if err != nil {
-				_ = os.RemoveAll(tmp)
-				return err
-			}
-			if _, err := io.Copy(f, io.LimitReader(tr, importCap)); err != nil {
-				f.Close()
-				_ = os.RemoveAll(tmp)
-				return err
-			}
-			f.Close()
 		default:
 			// Links and devices are not part of a skill.
 		}
 	}
 	if !hasSkill(tmp) {
-		_ = os.RemoveAll(tmp)
 		return fmt.Errorf("no SKILL.md in what the machine sent")
 	}
-	return os.Rename(tmp, dest)
+	return nil
+}
+
+// writeEntry writes one regular file from the stream, executable when the
+// header says so.
+func writeEntry(target string, headerMode int64, content io.Reader) error {
+	if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
+		return err
+	}
+	mode := os.FileMode(0o600)
+	if headerMode&0o111 != 0 {
+		mode = 0o700
+	}
+	f, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
+	if err != nil {
+		return err
+	}
+	if _, err := io.Copy(f, io.LimitReader(content, importCap)); err != nil {
+		// The copy failed and is reported; the close cannot add to it.
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
