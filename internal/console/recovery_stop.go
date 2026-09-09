@@ -125,11 +125,16 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 		s.mu.Unlock()
 		return result, true, errors.Join(err, saveErr)
 	}
+	result, err = s.finishRecoveryStop(ctx, target, result, release)
+	return result, true, err
+}
+
+func (s *Service) finishRecoveryStop(ctx context.Context, target *queuedExchange, result turn.Result, release func()) (turn.Result, error) {
 	reply := consoleapi.Reply{Text: result.Text, Title: result.Title}
 	s.mu.Lock()
 	if target.State.Terminal() {
 		s.mu.Unlock()
-		return result, true, nil
+		return result, nil
 	}
 	// Persist confirmed settlement before interrupting the waiter. A crash in
 	// this gap must finish delivery on restart, never ask or execute again.
@@ -138,7 +143,7 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	if err := s.save(); err != nil {
 		target.RecoveryStop, target.RecoveryStopPending = previous, pending
 		s.mu.Unlock()
-		return turn.Result{}, true, err
+		return turn.Result{}, err
 	}
 	cancel, done := target.cancel, target.done
 	if cancel == nil {
@@ -161,9 +166,9 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	}
 	select {
 	case <-done:
-		return result, true, nil
+		return result, nil
 	case <-ctx.Done():
-		return turn.Result{}, true, ctx.Err()
+		return turn.Result{}, ctx.Err()
 	}
 }
 

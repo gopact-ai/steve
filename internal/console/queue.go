@@ -102,7 +102,7 @@ type enqueueOptions struct {
 }
 
 func (s *Service) enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef, options enqueueOptions) (*queuedExchange, Exchange, error) {
-	prompt, key, front := options.Prompt, options.Key, options.Front
+	prompt, key := options.Prompt, options.Key
 	if s.owner == "" {
 		return nil, Exchange{}, errors.New("the console needs feishu.owner_open_id: it acts as the owner")
 	}
@@ -212,6 +212,12 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	if !strings.HasPrefix(key, "client:") {
 		e.PayloadHash = ""
 	}
+	return s.acceptExchangeLocked(e, options.Front)
+}
+
+func (s *Service) acceptExchangeLocked(e *queuedExchange, front bool) (*queuedExchange, Exchange, error) {
+	conversation := e.Conversation
+	var err error
 	list := s.exchanges[conversation]
 	at := len(list)
 	if front {
@@ -226,7 +232,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	copy(list[at+1:], list[at:])
 	list[at] = e
 	s.exchanges[conversation] = list
-	if s.immediate(input) {
+	if s.immediate(e.Input) {
 		err = s.startLocked(e)
 	} else if s.running[conversation] == 0 {
 		err = s.startNextLocked(conversation)
