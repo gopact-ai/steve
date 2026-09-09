@@ -4,5 +4,3 @@ internal/config.Load 166
 internal/console.Service.recoverExchange 199
 internal/coordination.machine.Apply 261
 internal/readmodel.Model.Snapshot 256
-internal/transfer.exportProject 239
-internal/transfer.importProject 309
