@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/plugins"
 	"io"
 	"net"
 	"sync"
@@ -17,8 +18,9 @@ import (
 // reverse channel that lets a remote agent reach the hub's loopback MCP
 // server.
 type OpenRequest struct {
-	Kind    string `json:"kind"`
-	Harness string `json:"harness,omitempty"`
+	Plugin  *plugins.RuntimeRef `json:"plugin,omitempty"`
+	Kind    string              `json:"kind"`
+	Harness string              `json:"harness,omitempty"`
 	// Stream identifies a harness process, which may host many ACP sessions.
 	// Cursors count complete newline-terminated lines, never frames or bytes.
 	Stream   string `json:"stream,omitempty"`
