@@ -859,7 +859,7 @@ func (d *delegation) settle(ctx context.Context, run lifecycle.Result, err error
 		s.spent(child.ID, run.Last)
 	}
 	if run.CleanupErr != nil && run.Managed {
-		slog.Error(fmt.Sprintf("delegate: settled session cleanup task=%s attempt=%s: %v", child.ID, record.ID, run.CleanupErr), "task", child.ID, "parent", parent.ID, "attempt", record.ID, "node", record.Node)
+		slog.Error(fmt.Sprintf("delegate: settled session cleanup task=%s attempt=%s: %v", child.ID, record.ID, run.CleanupErr), "parent", parent.ID, "node", record.Node)
 	}
 	var step *lifecycle.StepError
 	var detached *execution.RetainedObserverDetached

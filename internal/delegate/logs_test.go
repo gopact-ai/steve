@@ -2,13 +2,18 @@ package delegate
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"log/slog"
 	"regexp"
+	"sort"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/logs"
+	"github.com/gopact-ai/steve/internal/view"
 )
 
 // lockedLog collects log lines written from any goroutine.
@@ -107,4 +112,50 @@ func waitForLogLines(t *testing.T, out *lockedLog, patterns ...string) {
 // the assertions read as the operations table does.
 func stripTimes(s string) string {
 	return regexp.MustCompile(`(?m)^\d{4}/\d\d/\d\d \d\d:\d\d:\d\d `).ReplaceAllString(s, "")
+}
+
+// A line carries each identifier once: keys a message already spells out
+// are not appended as fields again, so one grep per key finds one hit.
+func TestDelegateLogLinesCarryEachFieldOnce(t *testing.T) {
+	out := &lockedLog{}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(logs.NewHandler(out)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	w, sessions, _, _ := detachedDelegateFixture(t)
+	sessions.inspectErr = errors.New("node unreachable")
+	service := recoveredDelegateService(t, w, sessions)
+	asked := make(chan struct{}, 4)
+	service.SetRecoveryQuestion(func(ctx context.Context, _ RecoveryQuestion) (view.Answer, error) {
+		asked <- struct{}{}
+		<-ctx.Done()
+		return view.Answer{}, ctx.Err()
+	})
+	if err := service.RecoverRetained(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-asked:
+	case <-time.After(3 * time.Second):
+		t.Fatal("missing recovery question")
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(stripTimes(out.String())), "\n") {
+		if repeated := repeatedFieldKeys(line); len(repeated) > 0 {
+			t.Errorf("keys %v appear more than once in %q", repeated, line)
+		}
+	}
+}
+
+// repeatedFieldKeys names the key= tokens a single line carries twice.
+func repeatedFieldKeys(line string) []string {
+	seen, repeated := map[string]int{}, []string(nil)
+	for _, m := range regexp.MustCompile(`(?:^|[ ])([a-z][a-z.]*)=`).FindAllStringSubmatch(line, -1) {
+		seen[m[1]]++
+		if seen[m[1]] == 2 {
+			repeated = append(repeated, m[1])
+		}
+	}
+	sort.Strings(repeated)
+	return repeated
 }
