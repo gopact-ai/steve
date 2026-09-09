@@ -30,6 +30,9 @@ func (s *Store) MaterializeRuntimeSkills(ctx context.Context, selection Selectio
 			return "", err
 		}
 		for _, name := range sortedKeys(bundle.Manifest.Skills) {
+			if !selection.Includes(receipt.Deployment.Installation, "skill", name) {
+				continue
+			}
 			native, err := NativeName(bundle.Manifest.ID, "skill", name)
 			if err != nil {
 				return "", err
@@ -94,6 +97,9 @@ func (s *Store) RuntimeInstructions(selection Selection) (string, error) {
 			return "", err
 		}
 		for _, name := range sortedKeys(bundle.Manifest.Skills) {
+			if !selection.Includes(receipt.Deployment.Installation, "skill", name) {
+				continue
+			}
 			instructions = append(instructions, string(files[path.Join(bundle.Manifest.Skills[name], "SKILL.md")].data))
 		}
 	}

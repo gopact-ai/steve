@@ -113,7 +113,7 @@ func (s *Store) ensure() error {
 	if !info.IsDir() {
 		return fmt.Errorf("%w: plugin store must be a directory", ErrIntegrity)
 	}
-	for _, name := range []string{"packages", "receipts", "requests", "secrets", "deployments", "runtimes", "runtime-commands"} {
+	for _, name := range []string{"packages", "receipts", "requests", "secrets", "deployments", "runtimes", "runtime-commands", "removed-runtimes"} {
 		dir := filepath.Join(s.Dir, name)
 		if err := os.Mkdir(dir, 0700); err != nil && !errors.Is(err, fs.ErrExist) {
 			return err

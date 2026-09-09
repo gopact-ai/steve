@@ -39,7 +39,7 @@ func (s *Store) PrepareRuntime(ctx context.Context, id string, selection Selecti
 	if !nameShape.MatchString(id) || cfg.Command == "" || materialize == nil {
 		return RuntimeRecord{}, ErrInvalid
 	}
-	selection.Deployments = slices.Clone(selection.Deployments)
+	selection = selection.Clone()
 	slices.Sort(selection.Deployments)
 	cfg = cfg.Clone()
 	hash, err := selection.Hash()
@@ -65,8 +65,16 @@ func (s *Store) PrepareRuntime(ctx context.Context, id string, selection Selecti
 		if err != nil || original != hash {
 			return RuntimeRecord{}, ErrConflict
 		}
+		if err := s.CheckRuntimeActive(ref); err != nil && !os.IsNotExist(err) {
+			return RuntimeRecord{}, err
+		}
 		record, err := s.Runtime(ref)
 		if os.IsNotExist(err) {
+			if _, removedErr := os.Stat(filepath.Join(s.Dir, "removed-runtimes", ref.ID)); removedErr == nil {
+				return record, ErrRuntimeRetired
+			} else if !os.IsNotExist(removedErr) {
+				return record, removedErr
+			}
 			original, _, readErr := s.readRuntimeCommand(id)
 			if readErr != nil {
 				return record, readErr
@@ -93,6 +101,11 @@ func (s *Store) PrepareRuntime(ctx context.Context, id string, selection Selecti
 }
 
 func (s *Store) materializeRuntime(ctx context.Context, record RuntimeRecord, materialize RuntimeMaterializer) (RuntimeRecord, error) {
+	if _, err := os.Stat(filepath.Join(s.Dir, "removed-runtimes", record.Ref.ID)); err == nil {
+		return record, ErrRuntimeRetired
+	} else if !os.IsNotExist(err) {
+		return record, err
+	}
 	dir := s.RuntimeDir(record.Ref.ID)
 	if _, err := os.Lstat(dir); err == nil {
 		return s.Runtime(record.Ref)
