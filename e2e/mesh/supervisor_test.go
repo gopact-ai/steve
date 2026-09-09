@@ -59,9 +59,6 @@ type fleet struct {
 	view       *readmodel.Model
 }
 
-// nodeWork is the directory every node's project is homed at.
-const nodeWork = "/home/pengxiang.lpx/steve-work"
-
 // declareProjects gives the fleet one project per place: "local" on the
 // hub, and one named after each node, homed at that node's work directory.
 func declareProjects(t *testing.T, dir string, nodes artifact.Nodes, extra ...project.Project) (*project.Store, *attempt.Service, *artifact.Store) {
@@ -77,8 +74,8 @@ func declareProjects(t *testing.T, dir string, nodes artifact.Nodes, extra ...pr
 	projects := project.Open(book)
 	declared := []project.Project{
 		{ID: "local", Home: project.Home{Path: t.TempDir()}},
-		{ID: nodeA, Home: project.Home{Node: nodeA, Path: nodeWork}},
-		{ID: nodeB, Home: project.Home{Node: nodeB, Path: nodeWork}},
+		{ID: nodeA, Home: project.Home{Node: nodeA, Path: work(nodeA)}},
+		{ID: nodeB, Home: project.Home{Node: nodeB, Path: work(nodeB)}},
 	}
 	declared = append(declared, extra...)
 	if err := projects.Declare(t.Context(), declared); err != nil {
@@ -273,8 +270,7 @@ func TestC1PlacementAndFanOutAcrossHosts(t *testing.T) {
 func TestC4NodeLossRePlacesTheStep(t *testing.T) {
 	requireMesh(t)
 	f := newFleet(t)
-	host := addrHost(addrB())
-	t.Cleanup(func() { _, _ = sshOut(t, host, "~/steve-bin/nodectl start") })
+	t.Cleanup(func() { _ = machines.StartNode(nodeB) })
 
 	// Both agents can satisfy "work"; only one node will survive.
 	catalog, err := agent.NewCatalog(map[string]agent.Config{
@@ -299,8 +295,8 @@ func TestC4NodeLossRePlacesTheStep(t *testing.T) {
 	}
 
 	// node-b holds prod-cred; take it away and nothing can run the step.
-	if out, err := sshOut(t, host, "~/steve-bin/nodectl stop"); err != nil {
-		t.Fatalf("stop node-b: %v\n%s", err, out)
+	if err := machines.StopNode(nodeB); err != nil {
+		t.Fatalf("stop node-b: %v", err)
 	}
 	// Let the registry notice.
 	deadline := time.Now().Add(20 * time.Second)
@@ -444,16 +440,44 @@ func TestB1ReadModelAndRenderers(t *testing.T) {
 	if m == nil {
 		t.Fatalf("the shell names no bundle: %s", shell)
 	}
-	asset, err := http.Get(server.URL() + "/" + string(m))
-	if err != nil {
-		t.Fatal(err)
+	// The shell preloads the entry's siblings, and the entry imports more
+	// by relative name; both are part of the console the hub serves.
+	start := []string{}
+	for _, name := range regexp.MustCompile(`assets/[A-Za-z0-9_.-]+\.js`).FindAll(shell, -1) {
+		start = append(start, string(name))
 	}
-	bundle, _ := io.ReadAll(asset.Body)
-	asset.Body.Close()
-	if asset.StatusCode != http.StatusOK || !strings.Contains(string(bundle), "/events") || !strings.Contains(string(bundle), "console/send") {
-		t.Fatalf("the bundle (%d, %d bytes) does not subscribe to the stream or reach the console", asset.StatusCode, len(bundle))
+	// The console is served as an entry chunk that pulls in the rest, so
+	// what it does is spread across the assets the entry names, not all in
+	// the file the shell points at.
+	served, total := map[string]bool{}, 0
+	var scripts []string
+	for pending := start; len(pending) > 0; {
+		name := pending[0]
+		pending = pending[1:]
+		if served[name] {
+			continue
+		}
+		served[name] = true
+		asset, err := http.Get(server.URL() + "/" + name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		chunk, _ := io.ReadAll(asset.Body)
+		asset.Body.Close()
+		if asset.StatusCode != http.StatusOK {
+			t.Fatalf("the console asset %s answered %d", name, asset.StatusCode)
+		}
+		total += len(chunk)
+		scripts = append(scripts, string(chunk))
+		for _, next := range regexp.MustCompile(`"\./([A-Za-z0-9_.-]+\.js)"`).FindAllSubmatch(chunk, -1) {
+			pending = append(pending, "assets/"+string(next[1]))
+		}
 	}
-	t.Logf("console at %s (%s, %d bytes)", server.URL(), m, len(bundle))
+	console := strings.Join(scripts, "\n")
+	if !strings.Contains(console, "/events") || !strings.Contains(console, "console/send") {
+		t.Fatalf("the console (%d assets, %d bytes) does not subscribe to the stream or reach the console", len(served), total)
+	}
+	t.Logf("console at %s (%d assets from %s, %d bytes)", server.URL(), len(served), m, total)
 }
 
 func orHub(node string) string {

@@ -1,6 +1,6 @@
 GO ?= go
 
-.PHONY: build console test test-console e2e e2e-fleet e2e-autonomous
+.PHONY: build console test test-console e2e e2e-lab e2e-fleet e2e-autonomous
 
 # The console is a React app built into internal/readmodel/web/dist and
 # embedded into the binary; rebuild it after touching web/console.
@@ -34,8 +34,17 @@ test-console:
 desktop:
 	./scripts/build-desktop.sh
 
+# The three-host suite. Machines come from e2e/fleetlab: a container per
+# node by default, or ones you name through STEVE_LAB_<NODE>_ADDR and
+# friends when the run needs real agents and credentials.
 e2e:
 	STEVE_MESH_E2E=1 $(GO) test -count=1 -timeout 25m ./e2e/mesh/
+
+# What the suite's machines are, on their own: separate filesystems and
+# process tables, one address that both this process and the other nodes
+# reach, and a node that can be stopped and started without losing work.
+e2e-lab:
+	$(GO) test -count=1 -timeout 10m ./e2e/fleetlab/
 
 # Uses an already-running hub. HUB / TOKEN override config.e2e.json.
 e2e-fleet:

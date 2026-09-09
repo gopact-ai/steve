@@ -1,8 +1,11 @@
 // Package mesh is the three-host acceptance suite. It talks to real
-// steve-node processes over a real network, so it is opt-in: set
-// STEVE_MESH_E2E=1 and point the two node addresses at live nodes.
+// steve-node processes over a real network, so it is opt-in:
 //
 //	STEVE_MESH_E2E=1 go test ./e2e/mesh/ -v
+//
+// The machines come from e2e/fleetlab: a container per node by default,
+// or hardware the operator names in the environment for the runs that
+// need real agents. Either way the suite holds no addresses of its own.
 //
 // Scenario numbers refer to SCENARIOS.md in this directory.
 package mesh
@@ -19,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/e2e/fleetlab"
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/node"
@@ -33,30 +37,57 @@ const (
 	nodeB = "node-b"
 )
 
-func addrA() string  { return env("STEVE_MESH_NODE_A", "10.37.124.132:7701") }
-func addrB() string  { return env("STEVE_MESH_NODE_B", "10.37.97.2:7701") }
-func tokenA() string { return env("STEVE_MESH_TOKEN_A", "e2e-mesh-token-a") }
-func tokenB() string { return env("STEVE_MESH_TOKEN_B", "e2e-mesh-token-b") }
+// machines is the fleet the whole suite runs against. Scenarios share it
+// the way they shared two standing hosts before: bringing a fleet up per
+// scenario would cost more than every scenario put together.
+var (
+	machines    *fleetlab.Lab
+	machinesErr error
+)
 
-func env(key, fallback string) string {
-	if v := strings.TrimSpace(os.Getenv(key)); v != "" {
-		return v
+// The capabilities each node offers are what the placement scenarios sort
+// by: one machine claims a GPU, the other an internal network and a
+// production credential. None can be checked from inside a process, which
+// is the point — placement has to take the machine at its word.
+func TestMain(m *testing.M) {
+	if os.Getenv("STEVE_MESH_E2E") != "" {
+		machines, machinesErr = fleetlab.Open(
+			fleetlab.Spec{Name: nodeA, Capabilities: []string{"gpu"}},
+			fleetlab.Spec{Name: nodeB, Capabilities: []string{"internal-net", "prod-cred"}},
+		)
 	}
-	return fallback
+	code := m.Run()
+	if machines != nil {
+		machines.Close()
+	}
+	os.Exit(code)
 }
 
-func requireMesh(t *testing.T) {
+// requireMesh gates a scenario on having a fleet. Missing Docker on a
+// machine that was never going to run this is a skip; an operator who
+// asked for the suite and got no fleet is told why it failed.
+func requireMesh(t *testing.T) *fleetlab.Lab {
 	t.Helper()
 	if os.Getenv("STEVE_MESH_E2E") == "" {
 		t.Skip("set STEVE_MESH_E2E=1 to run the three-host suite")
 	}
+	if machinesErr != nil {
+		if reason := fleetlab.Unavailable(); reason != "" {
+			t.Skipf("no machines to run on: %s", reason)
+		}
+		t.Fatalf("the fleet did not come up: %v", machinesErr)
+	}
+	return machines
 }
+
+// work is the directory a node's projects and sessions are homed at.
+func work(nodeName string) string { return machines.Work(nodeName) }
 
 func registry(t *testing.T) *node.Registry {
 	t.Helper()
 	reg := node.NewRegistry("hub-e2e", map[string]node.Config{
-		nodeA: {Addr: addrA(), Token: tokenA(), DialTimeout: 10 * time.Second},
-		nodeB: {Addr: addrB(), Token: tokenB(), DialTimeout: 10 * time.Second},
+		nodeA: {Addr: machines.Addr(nodeA), Token: machines.Token(nodeA), DialTimeout: 10 * time.Second},
+		nodeB: {Addr: machines.Addr(nodeB), Token: machines.Token(nodeB), DialTimeout: 10 * time.Second},
 	})
 	t.Cleanup(reg.Close)
 	return reg
@@ -178,7 +209,7 @@ func TestA2RemoteSessionRoundTrip(t *testing.T) {
 			t.Cleanup(host.Stop)
 			ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 			defer cancel()
-			sid, generation, err := host.OpenSession(ctx, "", acphost.SessionConfig{Workdir: "/home/pengxiang.lpx/steve-work"})
+			sid, generation, err := host.OpenSession(ctx, "", acphost.SessionConfig{Workdir: work(nodeName)})
 			if err != nil {
 				t.Fatalf("open session on %s: %v", nodeName, err)
 			}
@@ -203,10 +234,10 @@ func TestA2ProcessRunsOnTheNode(t *testing.T) {
 	t.Cleanup(host.Stop)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	if _, _, err := host.OpenSession(ctx, "", acphost.SessionConfig{Workdir: "/home/pengxiang.lpx/steve-work"}); err != nil {
+	if _, _, err := host.OpenSession(ctx, "", acphost.SessionConfig{Workdir: work(nodeA)}); err != nil {
 		t.Fatal(err)
 	}
-	out, err := sshOut(t, addrHost(addrA()), "pgrep -af mockagent | head -3")
+	out, err := onNode(t, nodeA, "pgrep -af mockagent | head -3")
 	if err != nil {
 		t.Skipf("cannot inspect %s over ssh: %v", nodeA, err)
 	}
@@ -252,7 +283,7 @@ func TestA3ReverseMCPTunnel(t *testing.T) {
 	// Call it from the node itself, the way an agent there would.
 	curl := "curl -sS -X POST -H 'Authorization: Bearer sess-token-xyz' " +
 		"-d '{\"jsonrpc\":\"2.0\",\"method\":\"tools/list\"}' " + endpoint
-	out, err := sshOut(t, addrHost(addrA()), curl)
+	out, err := onNode(t, nodeA, curl)
 	if err != nil {
 		t.Fatalf("call from the node failed: %v\n%s", err, out)
 	}
@@ -293,38 +324,27 @@ func TestA5CapabilityIsolation(t *testing.T) {
 	t.Logf("gpu -> %s only; internal-net -> %s only", nodeA, nodeB)
 }
 
-func addrHost(addr string) string {
-	host, _, ok := strings.Cut(addr, ":")
-	if !ok {
-		return addr
-	}
-	return host
-}
-
-// sshOut runs a command on a node. The suite already assumes operator access
-// to these hosts — it started the nodes there.
-func sshOut(t *testing.T, host, command string) (string, error) {
+// onNode runs a command on the machine a node runs on. Proving where
+// something happened — the marker file, the process, the log line — means
+// reading it from that machine and nowhere else.
+func onNode(t *testing.T, nodeName, command string) (string, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	cmd := exec.CommandContext(ctx, "ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-n", host, command)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return machines.Exec(nodeName, command)
 }
 
 // A4: a node going away must fail its sessions, not hang them — and the hub
 // must reconnect on its own once the node is back.
 func TestA4NodeDropAndReconnect(t *testing.T) {
 	requireMesh(t)
+	lab := requireMesh(t)
 	reg := registry(t)
-	host := addrHost(addrB())
 
 	broker, _ := permission.New("auto")
 	acp := acphost.New(acphost.Config{Transport: reg.Transport(nodeB, "mock"), Permission: broker})
 	t.Cleanup(acp.Stop)
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	sid, generation, err := acp.OpenSession(ctx, "", acphost.SessionConfig{Workdir: "/home/pengxiang.lpx/steve-work"})
+	sid, generation, err := acp.OpenSession(ctx, "", acphost.SessionConfig{Workdir: work(nodeB)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -333,10 +353,10 @@ func TestA4NodeDropAndReconnect(t *testing.T) {
 	}
 
 	// Pull the node out from under the live session.
-	if out, err := sshOut(t, host, "~/steve-bin/nodectl stop"); err != nil {
-		t.Fatalf("stop node: %v\n%s", err, out)
+	if err := lab.StopNode(nodeB); err != nil {
+		t.Fatalf("stop node: %v", err)
 	}
-	t.Cleanup(func() { _, _ = sshOut(t, host, "~/steve-bin/nodectl start") })
+	t.Cleanup(func() { _ = lab.StartNode(nodeB) })
 
 	// The next prompt must fail promptly rather than block forever.
 	failed := make(chan error, 1)
@@ -370,8 +390,8 @@ down:
 	t.Logf("%s reported down", nodeB)
 
 	// Bring it back; a fresh session must connect without restarting the hub.
-	if out, err := sshOut(t, host, "~/steve-bin/nodectl start"); err != nil {
-		t.Fatalf("restart node: %v\n%s", err, out)
+	if err := lab.StartNode(nodeB); err != nil {
+		t.Fatalf("restart node: %v", err)
 	}
 	var advert error
 	for range 20 {
@@ -385,7 +405,7 @@ down:
 	}
 	revived := acphost.New(acphost.Config{Transport: reg.Transport(nodeB, "mock"), Permission: broker})
 	t.Cleanup(revived.Stop)
-	sid2, gen2, err := revived.OpenSession(ctx, "", acphost.SessionConfig{Workdir: "/home/pengxiang.lpx/steve-work"})
+	sid2, gen2, err := revived.OpenSession(ctx, "", acphost.SessionConfig{Workdir: work(nodeB)})
 	if err != nil {
 		t.Fatalf("session after reconnect: %v", err)
 	}

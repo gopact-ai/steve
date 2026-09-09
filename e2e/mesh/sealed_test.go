@@ -17,18 +17,21 @@ import (
 // canonical directory in between.
 func TestC9SealedProjectLivesAndLandsOnItsOldGitNode(t *testing.T) {
 	requireMesh(t)
-	host := addrHost(addrB())
-	canonical := nodeWork + "/vault-b"
-	if out, err := sshOut(t, host, "rm -rf "+canonical+" && mkdir -p "+canonical+" && printf f0 > "+canonical+"/f && git --version"); err != nil {
+	// A sealed project of its own, beside the node's general work rather
+	// than inside it: two projects may not claim overlapping directories
+	// on one machine, and this scenario is about where a project lives,
+	// not about nesting.
+	canonical := machines.Node(nodeB).Home + "/vaults/vault-b"
+	if out, err := onNode(t, nodeB, "rm -rf "+canonical+" && mkdir -p "+canonical+" && printf f0 > "+canonical+"/f && git --version"); err != nil {
 		t.Fatalf("prepare node-b: %v\n%s", err, out)
 	} else {
 		t.Logf("node-b %s", strings.TrimSpace(out))
 	}
-	t.Cleanup(func() { _, _ = sshOut(t, host, "rm -rf "+canonical) })
+	t.Cleanup(func() { _, _ = onNode(t, nodeB, "rm -rf "+canonical) })
 
 	reg := node.NewRegistry("hub-e2e", map[string]node.Config{
-		nodeA: {Addr: addrA(), Token: tokenA(), DialTimeout: 10 * time.Second},
-		nodeB: {Addr: addrB(), Token: tokenB(), DialTimeout: 10 * time.Second, Level: "sealed"},
+		nodeA: {Addr: machines.Addr(nodeA), Token: machines.Token(nodeA), DialTimeout: 10 * time.Second},
+		nodeB: {Addr: machines.Addr(nodeB), Token: machines.Token(nodeB), DialTimeout: 10 * time.Second, Level: "sealed"},
 	})
 	t.Cleanup(reg.Close)
 	reg.SetHubLevel("restricted")
@@ -62,21 +65,21 @@ func TestC9SealedProjectLivesAndLandsOnItsOldGitNode(t *testing.T) {
 	}
 	// The step (played by ssh) writes in its worktree; the user edits f in
 	// place meanwhile.
-	if out, err := sshOut(t, host, "printf g1 > "+ws.Path+"/g"); err != nil {
+	if out, err := onNode(t, nodeB, "printf g1 > "+ws.Path+"/g"); err != nil {
 		t.Fatalf("write in worktree: %v\n%s", err, out)
 	}
 	result, changed, err := artifacts.Publish(ctx, ws, ws.Base, "att-b", "step on node-b")
 	if err != nil || !changed || hub.Has(ctx, result.ID) {
 		t.Fatalf("publish = %+v changed=%v err=%v hubHas=%v", result, changed, err, hub.Has(ctx, result.ID))
 	}
-	if out, err := sshOut(t, host, "printf f-user > "+canonical+"/f"); err != nil {
+	if out, err := onNode(t, nodeB, "printf f-user > "+canonical+"/f"); err != nil {
 		t.Fatalf("user edit: %v\n%s", err, out)
 	}
 	land, err := artifacts.Land(ctx, p, result.ID, "e2e")
 	if err != nil || land.State != "committed" {
 		t.Fatalf("land = %+v err=%v", land, err)
 	}
-	out, err := sshOut(t, host, "cat "+canonical+"/f; echo; cat "+canonical+"/g; echo; ls "+nodeWork+"/worktrees | wc -l")
+	out, err := onNode(t, nodeB, "cat "+canonical+"/f; echo; cat "+canonical+"/g; echo; ls "+work(nodeB)+"/worktrees | wc -l")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +90,7 @@ func TestC9SealedProjectLivesAndLandsOnItsOldGitNode(t *testing.T) {
 	if err := artifacts.Discard(ctx, ws); err != nil {
 		t.Fatal(err)
 	}
-	if out, _ := sshOut(t, host, "ls "+nodeWork+"/worktrees | wc -l"); strings.TrimSpace(out) != "0" {
+	if out, _ := onNode(t, nodeB, "ls "+work(nodeB)+"/worktrees | wc -l"); strings.TrimSpace(out) != "0" {
 		t.Fatalf("worktrees left on node-b: %s", strings.TrimSpace(out))
 	}
 	// The hub holds metadata only: manifests and replicas, no objects.

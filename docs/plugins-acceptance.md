@@ -38,10 +38,10 @@ go build ./...
 go vet ./internal/... ./cmd/...
 gofmt -l .
 NODE_OPTIONS=--experimental-strip-types \
-LD_LIBRARY_PATH=/opt/home/pengxiang.lpx/steve-bin/libs make test-console
+LD_LIBRARY_PATH=<Chromium 动态库目录> make test-console
 ```
 
-本机 Node 22.16 需要上述 TypeScript 类型剥离选项，Chromium 使用环境已有动态库。未添加依赖或修改系统库。前端 build 重写嵌入资源，Go build/vet 应在它完成后执行。首次并行执行遇到资源文件切换，已改为前端构建后执行 Go 检查。
+本机 Node 22.16 需要上述 TypeScript 类型剥离选项，Chromium 使用环境已有动态库（把 `LD_LIBRARY_PATH` 指向它们所在目录）。未添加依赖或修改系统库。前端 build 重写嵌入资源，Go build/vet 应在它完成后执行。首次并行执行遇到资源文件切换，已改为前端构建后执行 Go 检查。
 
 架构度量保持：非测试函数不超过 120 行；`long_functions.txt`、`interface_assertions.txt`、`state_literals.txt` 均为 0 字节；`cmd/steve` 上限仍为 670 行 / 15 个内部依赖。不把阈值下调到 100。
 

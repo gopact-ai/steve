@@ -2,6 +2,7 @@ package mesh
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -16,12 +17,10 @@ import (
 func requireReal(t *testing.T) {
 	t.Helper()
 	requireMesh(t)
-	if envOr("STEVE_MESH_REAL", "") == "" {
+	if os.Getenv("STEVE_MESH_REAL") == "" {
 		t.Skip("set STEVE_MESH_REAL=1 to run against real models")
 	}
 }
-
-func envOr(key, fallback string) string { return env(key, fallback) }
 
 // Real-0: which real harnesses on which nodes actually answer. This is the
 // roster's truth beyond "the binary exists": credentials, network, and the
@@ -57,7 +56,7 @@ func TestRealHarnessesAnswerOnTheNodes(t *testing.T) {
 			ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 			defer cancel()
 			started := time.Now()
-			sid, gen, err := host.OpenSession(ctx, "", acphost.SessionConfig{Workdir: "/home/pengxiang.lpx/steve-work"})
+			sid, gen, err := host.OpenSession(ctx, "", acphost.SessionConfig{Workdir: work(p.node)})
 			if err != nil {
 				t.Logf("✗ %s/%s: open session: %v", p.node, p.harness, err)
 				t.Skip("harness did not start")

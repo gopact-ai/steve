@@ -23,8 +23,8 @@ import (
 func TestC8LevelsGatePlacementAndSealedStaysHome(t *testing.T) {
 	requireMesh(t)
 	reg := node.NewRegistry("hub-e2e", map[string]node.Config{
-		nodeA: {Addr: addrA(), Token: tokenA(), DialTimeout: 10 * time.Second, Level: "public"},
-		nodeB: {Addr: addrB(), Token: tokenB(), DialTimeout: 10 * time.Second, Level: "restricted"},
+		nodeA: {Addr: machines.Addr(nodeA), Token: machines.Token(nodeA), DialTimeout: 10 * time.Second, Level: "public"},
+		nodeB: {Addr: machines.Addr(nodeB), Token: machines.Token(nodeB), DialTimeout: 10 * time.Second, Level: "restricted"},
 	})
 	t.Cleanup(reg.Close)
 	reg.SetHubLevel("sealed")

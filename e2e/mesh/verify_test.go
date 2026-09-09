@@ -20,9 +20,8 @@ func TestC3VerifyCommandRunsOnTheNodeAndGatesDone(t *testing.T) {
 	requireMesh(t)
 	f := newFleet(t)
 	f.registry.EnsureConnected(t.Context())
-	host := addrHost(addrB())
-	_, _ = sshOut(t, host, "rm -f ~/steve-work/.verified")
-	t.Cleanup(func() { _, _ = sshOut(t, host, "rm -f ~/steve-work/.verified") })
+	_, _ = onNode(t, nodeB, "rm -f ~/steve-work/.verified")
+	t.Cleanup(func() { _, _ = onNode(t, nodeB, "rm -f ~/steve-work/.verified") })
 
 	created, err := f.plans.Create(plan.Plan{ProjectID: "local",
 		TaskID: verificationTask(t, f, "verify"), Goal: "prove the check runs where the work is", By: "declared",
@@ -60,7 +59,7 @@ func TestC3VerifyCommandRunsOnTheNodeAndGatesDone(t *testing.T) {
 		t.Fatalf("recoveries = %d; the check should have failed exactly once", outcome.Recoveries)
 	}
 	// The marker is on node-b, not on the hub: the check ran over there.
-	out, err := sshOut(t, host, "ls ~/steve-work/.verified && echo MARKER-ON-NODE")
+	out, err := onNode(t, nodeB, "ls ~/steve-work/.verified && echo MARKER-ON-NODE")
 	if err != nil || !strings.Contains(out, "MARKER-ON-NODE") {
 		t.Fatalf("the verification marker is not on %s: %v\n%s", nodeB, err, out)
 	}
