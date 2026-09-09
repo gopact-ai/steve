@@ -15,6 +15,8 @@ import (
 )
 
 type Environment struct {
+	PluginAuthority       nodewire.SessionAuthority
+	PluginAuthorizer      func(context.Context, string, nodewire.PluginRequest) error
 	Ledger                *ledger.Ledger
 	Content               contentreplica.Replicator
 	NodeID                string

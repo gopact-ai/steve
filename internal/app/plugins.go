@@ -28,6 +28,9 @@ type pluginFlags struct {
 }
 
 func runPluginsCommand(ctx context.Context, args []string, out, diagnostic io.Writer) error {
+	if len(args) > 0 && (args[0] == "secret-put" || args[0] == "secret-list") {
+		return runPluginSecretCommand(ctx, args, os.Stdin, out, diagnostic)
+	}
 	if len(args) == 0 {
 		return errors.New("usage: steve plugins <preview|prepare|list|show> [flags]")
 	}
