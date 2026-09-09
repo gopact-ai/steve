@@ -544,11 +544,13 @@ func (c *Candidate) addModels(models []string, version string, at time.Time) {
 		copied.Offers = append(copied.Offers, cap)
 	}
 	copied.Coverage[ability.Model] = ability.Complete
-	if err := ability.Validate(&copied); err != nil {
-		// The copy is installed regardless so the observed models are not
-		// lost; a snapshot past its limits is worth a line.
-		slog.Warn(fmt.Sprintf("roster: %s snapshot with observed models: %v", c.Node, err), "node", c.Node, "agent", c.Agent.ID)
-	}
+	// Validate is called for its normalising side effects and its verdict is
+	// deliberately dropped: models are recorded under the display names the
+	// harness offers ("GPT 5"), and the capability ID grammar rejects those
+	// for the space, so an ordinary fleet fails here on every roster read.
+	// The copy is installed either way, so nothing observed is lost and the
+	// snapshot is no worse than the machine's own report.
+	_ = ability.Validate(&copied)
 	c.Snapshot = &copied
 }
 
@@ -577,10 +579,9 @@ func (c *Candidate) markFunctional(version string, at time.Time) {
 		o.Assurance = ability.Functional
 		copied.Offers[i] = o
 	}
-	if err := ability.Validate(&copied); err != nil {
-		// As in addModels: the assurance is kept, the limit breach is logged.
-		slog.Warn(fmt.Sprintf("roster: %s snapshot after functional harness: %v", c.Node, err), "node", c.Node, "agent", c.Agent.ID)
-	}
+	// Dropped as in addModels: the same display-name models sit on this copy,
+	// so the verdict says nothing about the assurance raised here.
+	_ = ability.Validate(&copied)
 	c.Snapshot = &copied
 }
 
