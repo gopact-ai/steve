@@ -42,6 +42,7 @@ type ServerConfig struct {
 
 // Server exposes the snapshot, the change stream and the dashboard.
 type Server struct {
+	plugins      consoleapi.PluginsService
 	coordination consoleapi.CoordinationService
 	ssh          SSHService
 	sshOrigin    string
@@ -83,6 +84,7 @@ func (s *Server) URL() string { return "http://" + s.listener.Addr().String() }
 func (s *Server) Serve() error {
 	mux := http.NewServeMux()
 	s.sshRoutes(mux)
+	s.pluginRoutes(mux)
 	s.coordinationRoutes(mux)
 	mux.HandleFunc("GET /console/desktop", s.guard(s.consoleDesktop))
 	mux.HandleFunc("GET /console/desktop/agents", s.guard(s.consoleDesktopAgents))
