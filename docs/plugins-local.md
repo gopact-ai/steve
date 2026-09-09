@@ -1,6 +1,6 @@
 # 本地能力包准备
 
-已实现的范围是读取、校验和准备能力包。`prepared` 表示固定内容及本地回执已保存，不表示已安装执行依赖、已配置凭据、节点可用或会话已启用。节点准备与配置校验的底层协议已接入，项目管理入口、版本化会话与管理页继续按 [插件规划](plugins.md) 推进。
+已实现的范围是读取、校验和准备能力包。`prepared` 表示固定内容及本地回执已保存，不表示已安装执行依赖、已配置凭据、节点可用或会话已启用。节点准备、隔离运行配置及管理 API 已接入；管理页面、预设流程与安全移除继续按 [插件规划](plugins.md) 推进。
 
 ## 使用
 
@@ -96,4 +96,23 @@ URL、header、参数和环境值使用同一个引用结构：`text` 为字面�
 
 第一条命令从 stdin 读取至 EOF。不要把值写在命令行参数里。得到的 `{name, revision}` 可以用于节点部署配置；协调端只读取引用和可用性，不能查询凭据值。包清单的 `settings` 声明仍决定它是普通配置还是 secret，不能用普通配置字段绕过类型检查。
 
-节点的 `plugin_packages.v1` 协议目前提供 prepare、inspect 和凭据元数据查询；它校验部署的项目范围、目标节点、包摘要、普通配置、凭据版本和平台/解释器需求。内部 `Selection` 固定会话将要用的部署集合，尚未接入实际会话。`plugins.Library` 可把包内容按项目复制到独立节点，并从同一账本记录恢复；本地 CLI 的独立缓存不自动加入该库。
+节点的 `plugin_packages.v1` 协议目前提供 prepare、inspect 和凭据元数据查询；它校验部署的项目范围、目标节点、包摘要、普通配置、凭据版本和平台/解释器需求。内部 `Selection` 固定会话的部署集合，通过 `plugin_runtimes.v1` 准备并绑定实际运行目录。`plugins.Library` 可把包内容按项目复制到独立节点，并从同一账本记录恢复；本地 CLI 的独立缓存不自动加入该库。
+
+## 管理 API 与运行引用
+
+运行中的 Steve 现有以下 owner 鉴权入口：
+
+| 路径 | 用途 |
+|---|---|
+| `GET /console/plugins` | 包、期望安装、节点准备记录、最近观察到的不可用状态和管理操作 |
+| `POST /console/plugins/preview` | 校验来源并返回固定摘要和清单 |
+| `POST /console/plugins/import` | 带 `command_id`、`project`、`digest`、`source` 导入到项目包库 |
+| `PUT /console/plugins/installations/{id}` | 带 `base_revision` 和 `installation` 保存期望配置 |
+| `POST /console/plugins/installations/{id}/prepare` | 重试目标机器准备并显示逐节点结果 |
+| `GET /console/plugins/nodes/{node}/secrets` | 只查询该节点已有凭据引用 |
+
+安装声明为 `package_id`、`digest`、`enabled`、`projects` 和 `targets`。每个 target 的配置包含普通 `values` 与 `{name, revision}` 形式的 `secrets` 引用。配置验证和 owner 项目范围检查由后端执行；没有导入到所选项目的包不能直接启用。保存配置不等于所有节点已就绪，节点离线或缺依赖会保留明确状态并重试。
+
+已启用、符合项目和节点范围的安装会在创建新会话时解析。已有普通会话不会在中途自动增加插件。插件会话将 runtime 引用保存到 attempt 和会话记录，新版本影响新会话；旧会话继续使用原版本及目录。停用阻止新绑定，改变项目或节点授权会拒绝继续使用被撤销范围；完整的受影响会话管理与安全移除入口仍在实现中。
+
+运行目录还保存原生会话数据、配置、固定技能、MCP 地址和本地能力 token。缺失或被改写的技能会被拒绝，不能用最新版重新创建来替代。请勿手动清理这些目录：空闲、归档或待恢复会话仍可能引用它们。当前没有面向用户的删除命令，也不承诺强杀/人工删目录之后无损恢复。
