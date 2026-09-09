@@ -178,6 +178,10 @@ func (c *Coordinator) PlanRelocation(ctx context.Context, id string, req Request
 	if r.Preferences != nil {
 		intent.Target.Preferences.ModelLabel = r.Preferences.ModelLabel
 	}
+	intent.Plugins, err = c.planPluginRelocation(ctx, r, intent.Target)
+	if err != nil {
+		return RelocationPlan{}, err
+	}
 	intent, err = c.attempts.RecordRelocation(ctx, intent)
 	if err != nil {
 		return RelocationPlan{}, err

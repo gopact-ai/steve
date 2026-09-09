@@ -188,6 +188,7 @@ func (c *Coordinator) buildingProfile(req Request) (bool, error) {
 }
 
 func (c *Coordinator) open(ctx context.Context, saved state.Session, selected agent.Agent, workspace string, servers []acp.MCPServer) (harness.Runner, error) {
+	ctx = harness.WithPluginProfile(ctx, saved.PluginRuntime)
 	if saved.HarnessID != "" && saved.HarnessID != selected.Harness {
 		return nil, fmt.Errorf("session belongs to harness %q, not %q", saved.HarnessID, selected.Harness)
 	}
