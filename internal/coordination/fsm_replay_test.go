@@ -190,3 +190,33 @@ func TestApplyStopsOnForeignClusterCommand(t *testing.T) {
 		t.Fatalf("undecodable entry receipt %+v", r)
 	}
 }
+
+// TestApplyJoinPrepareRejectionDoesNotDependOnMapOrder pins which rejection a
+// newcomer gets when it takes one member's address and a different member's
+// failure domain. Receipts are replicated state: they are written to the
+// snapshot and answer any later entry that reuses the command ID, so replicas
+// that disagreed here would answer the same retry differently forever.
+func TestApplyJoinPrepareRejectionDoesNotDependOnMapOrder(t *testing.T) {
+	n1 := Member{NodeID: "n1", Address: "10.0.0.1:1", FailureDomain: "rack-1", StorageLevel: "restricted"}
+	n2 := Member{NodeID: "n2", Address: "10.0.0.2:1", FailureDomain: "rack-2", StorageLevel: "restricted"}
+	c := command{Kind: "join_prepare", ID: "prepare-n9", ClusterID: "cluster", Actor: "test", Member: Member{NodeID: "n9", Address: n1.Address, FailureDomain: n2.FailureDomain, StorageLevel: "restricted"}}
+	c.Fingerprint = fingerprint(c.Kind, c)
+	data, err := json.Marshal(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Every machine is fresh, so only Go's randomized map iteration can
+	// make two of these 200 replays differ.
+	for i := range 200 {
+		m := newMachine("cluster", nil)
+		m.state.Members[n1.NodeID] = n1
+		m.state.Members[n2.NodeID] = n2
+		r, ok := m.Apply(&raft.Log{Index: 1, Data: data}).(receipt)
+		if !ok {
+			t.Fatalf("apply returned %T", r)
+		}
+		if r.Code != "conflict" || r.Message != "address already belongs to another node" {
+			t.Fatalf("replay %d rejected with %q / %q", i, r.Code, r.Message)
+		}
+	}
+}

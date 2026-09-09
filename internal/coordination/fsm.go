@@ -268,11 +268,19 @@ func applyJoinPrepare(s *State, c command, r *receipt) *AuditRecord {
 		}
 		return nil
 	}
+	// Take the two collisions one map pass at a time. A single pass rejecting
+	// on whichever member it happened to reach first would let Go's map
+	// iteration order pick the receipt for a newcomer that collides with one
+	// member's address and another member's failure domain, and receipts are
+	// replicated: they enter the snapshot and answer a retry of the same
+	// command ID, so the replicas would disagree about it forever.
 	for _, old := range s.Members {
 		if old.Address == c.Member.Address {
 			r.reject("conflict", "address already belongs to another node")
 			return nil
 		}
+	}
+	for _, old := range s.Members {
 		if c.Member.FailureDomain != "" && old.FailureDomain == c.Member.FailureDomain {
 			r.reject("invalid", "another member already occupies this physical failure domain")
 			return nil
