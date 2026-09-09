@@ -1,3 +1,4 @@
+import { PluginResources } from "@/components/steve/plugins/resources";
 import { useI18n } from "@/providers/locale-provider";
 import type { Translator } from "@/lib/i18n";
 import { useEffect, useState } from "react";
@@ -68,6 +69,7 @@ const steveToolSummaries: Record<string, string> = {
             <PageHeader title="MCP"
                 description={tr("mcp.description")} />
             <PageBody>
+                <PluginResources resources={view?.plugins ?? []} />
                 {(error || readError) && <div role="alert" className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error || readError}</div>}
                 <TableCard.Root size="sm" className="workbench-table min-w-0">
                     <TableCard.Header title={tr("mcp.installed")} badge={`${deployments.length}`} description={tr("mcp.installedHint")} />

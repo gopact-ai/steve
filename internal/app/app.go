@@ -3,6 +3,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/gopact-ai/steve/internal/logs"
@@ -81,6 +82,9 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	if err != nil {
 		return nil, err
 	}
+	if err := assemblePlugins(life, runtime, fleet, console, input); err != nil {
+		return nil, err
+	}
 	administration, err := assembleAdministration(life, input, runtime, execution, plans, readModel, console)
 	if err != nil {
 		return nil, err
@@ -120,23 +124,32 @@ func (a *App) Run(ctx context.Context) (runErr error) {
 func (a *App) Close() error { return a.life.Close() }
 
 type lifetime interface {
+	AfterClose(func() error)
 	Defer(func())
 	RunError() *error
 	SetServices(*adminsvc.Services)
 }
 
 type applicationLifetime struct {
-	once     sync.Once
-	cleanup  []func()
-	err      error
-	services *adminsvc.Services
+	afterClose []func() error
+	once       sync.Once
+	cleanup    []func()
+	err        error
+	services   *adminsvc.Services
 }
 
 func (l *applicationLifetime) Defer(close func())                      { l.cleanup = append(l.cleanup, close) }
 func (l *applicationLifetime) RunError() *error                        { return &l.err }
 func (l *applicationLifetime) SetServices(services *adminsvc.Services) { l.services = services }
+func (l *applicationLifetime) AfterClose(f func() error)               { l.afterClose = append(l.afterClose, f) }
+
 func (l *applicationLifetime) Close() error {
 	l.once.Do(func() {
+		defer func() {
+			for _, close := range l.afterClose {
+				l.err = errors.Join(l.err, close())
+			}
+		}()
 		for _, cleanup := range l.cleanup {
 			defer cleanup()
 		}

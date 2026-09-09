@@ -94,6 +94,9 @@ func testPlanHandover(t *testing.T, llm bool) {
 			time.Sleep(20 * time.Millisecond)
 		}
 	}
+	pluginFixture := preparePeerPluginFixture(t, first)
+	pluginFixture.activate(t, first, "1.0.0")
+	adoptPeerPluginAgent(t, first, first.Config.NodeID)
 	conversation := "console:plan-handover"
 	status, body = PeerRequest(t, first, http.MethodPost, "/console/send", consoleapi.Submission{Conversation: conversation, Input: "/project use workspace", CommandID: "plan-project"})
 	if status != http.StatusOK {
@@ -107,6 +110,11 @@ func testPlanHandover(t *testing.T, llm bool) {
 	if original.Kind == "recovery" || original.TaskID == "" || original.AttemptID == "" || !strings.HasPrefix(original.SessionID, "ns_") {
 		t.Fatalf("plan lacks exact native question binding: %+v", original)
 	}
+	originalRecord, err := attempt.New(first.Runtime.Load().Ledger()).Get(t.Context(), original.AttemptID)
+	if err != nil || originalRecord.PluginRuntime == nil {
+		t.Fatalf("planning/step runtime absent: %v", err)
+	}
+	pluginFixture.activate(t, first, "2.0.0")
 	if _, err := first.Runtime.Load().Transfer(t.Context(), coordination.TransferRequest{ID: "plan-handover", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: second.Config.NodeID}); err != nil {
 		t.Fatal(err)
 	}
@@ -165,6 +173,12 @@ func testPlanHandover(t *testing.T, llm bool) {
 	}
 	foundOriginal := false
 	for _, record := range records {
+		if record.PluginRuntime == nil {
+			t.Fatalf("plan execution lost plugin runtime: %s %s", record.ID, record.Kind)
+		}
+		if record.ID == original.AttemptID && record.PluginRuntimeID() != originalRecord.PluginRuntimeID() {
+			t.Fatal("original plan runtime changed on handover")
+		}
 		if record.State != attempt.Bound {
 			t.Fatalf("plan execution not bound: %+v", record)
 		}

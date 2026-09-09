@@ -45,7 +45,7 @@ func validateObject(object Object, limit int64) error {
 		return ErrTooLarge
 	}
 	switch object.Kind {
-	case Material:
+	case Material, PluginPackage:
 		if object.Key != object.Blob.SHA256 {
 			return ErrInvalid
 		}

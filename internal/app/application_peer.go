@@ -10,6 +10,7 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/httpapi"
 	"github.com/gopact-ai/steve/internal/logs"
+	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
 func OpenClusterPeer(ctx context.Context, options cluster.PeerOptions) (*cluster.Peer, error) {
@@ -66,6 +67,8 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 	environment.ConfigurationRevision = stateConfig.Revision
 	environment.SessionBinder = newApplicationSessionBinder(activation)
 	environment.SessionAuthorizer = p.ApplicationSessionAuthorizer(activation)
+	environment.PluginAuthorizer = p.ApplicationPluginAuthorizer(activation)
+	environment.PluginAuthority = nodewire.SessionAuthority{ClusterID: p.ApplicationClusterID(), CoordinatorNodeID: activation.NodeID, CoordinatorEpoch: activation.Assignment.Epoch, WriterGeneration: activation.WriterGeneration}
 	environment.Content = content
 	environment.Fail = func(err error) { p.ApplicationStoreFailure(activation, err) }
 	go func() {

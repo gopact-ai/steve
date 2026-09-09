@@ -286,7 +286,8 @@ func (r *stepRun) start(ctx context.Context, e *lifecycle.Execution) error {
 
 // OpenSession hands Run the step's session: the Runner opens the real one
 // when it prompts, with the servers the machine bound for the step.
-func (r *stepRun) OpenSession(_ context.Context, _ harness.Placement, _, _ string, servers []acp.MCPServer) (harness.Runner, error) {
+func (r *stepRun) OpenSession(ctx context.Context, _ harness.Placement, _, _ string, servers []acp.MCPServer) (harness.Runner, error) {
+	r.req.PluginRuntime = harness.PluginProfile(ctx)
 	r.req.MCP = servers
 	return &stepSession{run: r}, nil
 }

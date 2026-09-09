@@ -17,6 +17,7 @@ import (
 
 const (
 	Material                    = "material"
+	PluginPackage               = "plugin-package"
 	GitBundle                   = "git-bundle"
 	Replicated                  = "replicated"
 	SingleNode                  = "single_node"

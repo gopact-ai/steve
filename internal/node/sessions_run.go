@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -82,14 +84,40 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		s.mu.Unlock()
 		return nodewire.SessionState{}, err
 	}
+	pluginInstructions := ""
+	configHash := sessionConfigHash(req)
 	hostCfg := s.hostConfig(req.Harness, spec, broker)
+	if req.Plugin != nil {
+		if req.Plugin.ID != req.Binding.PluginRuntimeID || req.Plugin.Selection.Project != req.Binding.ProjectID || req.Plugin.Selection.Harness != req.Harness || req.Plugin.Selection.Node != req.Binding.NodeID {
+			s.mu.Unlock()
+			return nodewire.SessionState{}, plugins.ErrInvalid
+		}
+		prepared, err := s.server.pluginRuntimePool().Load(ctx, *req.Plugin)
+		if err != nil {
+			s.mu.Unlock()
+			return nodewire.SessionState{}, err
+		}
+		pluginInstructions = prepared.Instructions
+		hostCfg = acphost.Config{NoRestart: true, Command: prepared.Config.Command, Args: prepared.Config.Args, Env: prepared.Config.Env, ProcessDir: prepared.Config.ProcessDir, Permission: broker}
+		req.MCPServers = append(append([]acp.MCPServer(nil), req.MCPServers...), prepared.Servers...)
+	} else if req.Binding.PluginRuntimeID != "" {
+		s.mu.Unlock()
+		return nodewire.SessionState{}, plugins.ErrInvalid
+	}
 	host := acphost.New(hostCfg)
-	one := &ownedSession{service: s, host: host, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
-	one.record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: sessionConfigHash(req), State: nodewire.SessionState{ID: id, Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionOpening, Questions: []nodewire.SessionQuestion{}}, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}}
+	one := &ownedSession{pluginInstructions: pluginInstructions, service: s, host: host, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
+	one.record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: configHash, State: nodewire.SessionState{ID: id, Plugin: req.Plugin.Clone(), Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionOpening, Questions: []nodewire.SessionQuestion{}}, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}}
 	if err := one.commitLocked(one.record); err != nil {
 		s.mu.Unlock()
 		host.Close()
 		return nodewire.SessionState{}, err
+	}
+	if req.Plugin != nil {
+		if err := s.server.pluginStore().BeginRuntimeUse(ctx, *req.Plugin, "session/"+id, "session"); err != nil {
+			s.mu.Unlock()
+			host.Close()
+			return nodewire.SessionState{}, err
+		}
 	}
 	openCtx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
 	one.openCancel, one.openDone = cancel, make(chan struct{})
@@ -236,6 +264,9 @@ func (one *ownedSession) run(req nodewire.SessionRequest) {
 	media := make([]acphost.Image, 0, len(req.Media))
 	for _, item := range req.Media {
 		media = append(media, acphost.Image{MIME: item.MIME, Data: item.Data, URI: item.URI})
+	}
+	if one.pluginInstructions != "" {
+		req.Text = one.pluginInstructions + "\n\n" + req.Text
 	}
 	output, activity, runErr := host.PromptTurn(one.service.ctx, native, generation, req.Text, media,
 		func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
@@ -415,6 +446,14 @@ func (one *ownedSession) settleStop(req nodewire.SessionRequest, host *acphost.H
 	if err == nil && !confirmed {
 		err = acphost.ErrStopUnconfirmed
 	}
+	if err == nil && next.State.State == nodewire.SessionClosed && next.State.Plugin != nil {
+		if stopErr := one.service.server.pluginStore().EndRuntimeUse(context.Background(), *next.State.Plugin, "session/"+next.State.ID); stopErr != nil {
+			return one.state(req.CommandID), stopErr
+		}
+		if closeErr := one.service.server.pluginRuntimePool().Drop(next.State.Plugin.ID); closeErr != nil {
+			return one.state(req.CommandID), closeErr
+		}
+	}
 	if err == nil && next.State.State == nodewire.SessionClosed {
 		one.service.mu.Lock()
 		if one.service.sessions[next.State.ID] == one {
@@ -434,10 +473,15 @@ func sessionConfigHash(req nodewire.SessionRequest) string {
 	if policy == "" {
 		policy = permission.PolicyRead
 	}
+	ref := req.Plugin.Clone()
+	if ref != nil {
+		slices.Sort(ref.Selection.Deployments)
+	}
 	return sessionHash(struct {
+		Plugin                       *plugins.RuntimeRef `json:"plugin,omitempty"`
 		Harness, Workdir, Permission string
 		Servers                      []acp.MCPServer
-	}{req.Harness, req.Workdir, policy, req.MCPServers})
+	}{ref, req.Harness, req.Workdir, policy, req.MCPServers})
 }
 
 func (s *SessionService) processesStopped() bool {

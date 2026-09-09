@@ -1,3 +1,4 @@
+import { PluginResources } from "@/components/steve/plugins/resources";
 import { useI18n } from "@/providers/locale-provider";
 import { useEffect, useRef, useState } from "react";
 import { ChevronDown, Download01, Folder, Plus, PuzzlePiece01, RefreshCw01, Server01, Trash01 } from "@untitledui/icons";
@@ -62,6 +63,7 @@ export function SkillsPage() {
             <PageHeader title={tr("skills.title")}
                 description={tr("skills.summary", { count: on })} />
             <PageBody>
+                <PluginResources resources={view?.plugins ?? []} />
                 {(error || readError || machinesError) && <div role="alert" className="rounded-lg bg-error-primary px-4 py-2 text-sm text-error-primary">{error || readError || machinesError}</div>}
                 <p className="text-xs text-tertiary">{tr("skills.changeHint")}</p>
                 <TableCard.Root size="sm" className="workbench-table min-w-0">

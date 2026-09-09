@@ -43,6 +43,7 @@ type ServerConfig struct {
 	// from the hub are written back there. Empty means nowhere.
 	Source            string                        `json:"-"`
 	Listener          net.Listener                  `json:"-"`
+	PluginAuthorizer  PluginAuthorizer              `json:"-"`
 	SessionAuthorizer SessionAuthorizer             `json:"-"`
 	AuthenticatedPeer func(net.Conn) (string, bool) `json:"-"`
 
@@ -117,6 +118,9 @@ type Observe struct {
 
 // Server accepts hub connections and runs agents on this machine.
 type Server struct {
+	pluginClosing        bool
+	pluginMu             sync.Mutex
+	pluginRuntime        *PluginRuntimePool
 	enrollmentMu         sync.Mutex
 	settingsMu           sync.Mutex
 	settingsFileRevision string
@@ -171,6 +175,11 @@ type Server struct {
 }
 
 func NewServer(cfg ServerConfig) *Server {
+	if cfg.PluginAuthorizer == nil {
+		if _, ok := cfg.SessionAuthorizer.(CoordinatorSessionAuthorizer); ok {
+			cfg.PluginAuthorizer = CoordinatorPluginAuthorizer{}
+		}
+	}
 	s := &Server{mcpPort: rememberedPort(cfg), generation: nextGeneration(), launch: NewLaunchProbe(), processes: map[string]*agentProcess{}}
 	s.cfg.Store(&cfg)
 	// No readable settings file means no revision to guard, which is what
@@ -232,6 +241,7 @@ func (s *Server) Serve(ctx context.Context) error {
 			s.sessions.Close()
 		}
 		s.closeMCP()
+		s.closePluginRuntimes()
 		handlers.Wait()
 		s.requestWG.Wait()
 		s.workWG.Wait()

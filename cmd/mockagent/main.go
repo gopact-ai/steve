@@ -151,6 +151,11 @@ func (a *agent) Prompt(ctx context.Context, req *acp.PromptRequest) (*acp.Prompt
 			return nil, err
 		}
 	}
+	if strings.Contains(input, "plugincheck") {
+		if err := a.exercisePlugins(ctx, req.SessionID); err != nil {
+			return nil, err
+		}
+	}
 	if strings.Contains(input, "plan") {
 		if err := a.reportPlan(ctx, req.SessionID); err != nil {
 			return nil, err

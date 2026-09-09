@@ -16,7 +16,7 @@ func pendingNodeOpen(record attempt.Record, err error) *execution.NodePreparatio
 		return nil
 	}
 	binding := pending.Binding
-	if binding.AttemptID != record.ID || binding.TaskID != record.TaskID || binding.ProjectID != record.Project || binding.NodeID != record.Node || binding.TaskEpoch != record.Execution.Epoch || binding.ExecutionEpoch != attempt.SessionExecutionEpoch(record) || pending.OpenCommandID != attempt.InputCommandID(record)+"/open" {
+	if binding.PluginRuntimeID != record.PluginRuntimeID() || binding.AttemptID != record.ID || binding.TaskID != record.TaskID || binding.ProjectID != record.Project || binding.NodeID != record.Node || binding.TaskEpoch != record.Execution.Epoch || binding.ExecutionEpoch != attempt.SessionExecutionEpoch(record) || pending.OpenCommandID != attempt.InputCommandID(record)+"/open" {
 		return nil
 	}
 	return &execution.NodePreparationObserverDetached{AttemptID: record.ID, NodeID: record.Node, OpenCommandID: pending.OpenCommandID, Cause: err}

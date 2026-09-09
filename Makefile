@@ -27,6 +27,7 @@ test-console:
 	npm --prefix web/console run test:ssh
 	npm --prefix web/console run test:coordination
 	npm --prefix web/console run test:node-agents
+	npm --prefix web/console run test:plugins
 	npm --prefix web/console run test:selection
 
 .PHONY: desktop

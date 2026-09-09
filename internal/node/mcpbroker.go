@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 // The MCP broker keeps the machine's MCP servers — and their credentials
@@ -67,6 +68,7 @@ var (
 // the token the node must present for control commands, and where the
 // launcher binary and working directory are.
 type BrokerConfig struct {
+	StrictPort    bool               `json:"-"`
 	Socket        string             `json:"socket"`
 	Token         string             `json:"token"`
 	MCPServers    map[string]MCPSpec `json:"mcp_servers"`
@@ -90,7 +92,10 @@ type mcpBinding struct {
 
 // Broker holds the servers, mints bindings, launches, proxies.
 type Broker struct {
-	cfg BrokerConfig
+	connections sync.WaitGroup
+	proxyDone   chan struct{}
+	ready       func(error)
+	cfg         BrokerConfig
 	// work is installed only by an embedded node, sharing its restart gate.
 	work func() (func(), error)
 
@@ -104,8 +109,17 @@ func NewBroker(cfg BrokerConfig) *Broker {
 }
 
 // Serve listens on the socket and the loopback proxy until ctx ends.
-func (b *Broker) Serve(ctx context.Context) error {
+func (b *Broker) Serve(ctx context.Context) (serveErr error) {
+	announced := false
+	defer func() {
+		if !announced && b.ready != nil {
+			b.ready(serveErr)
+		}
+	}()
 	if err := b.serveProxy(ctx); err != nil {
+		if b.cfg.StrictPort {
+			return err
+		}
 		slog.Error(fmt.Sprintf("steve-node: %v", err))
 	}
 	sock := b.cfg.Socket
@@ -127,6 +141,10 @@ func (b *Broker) Serve(ctx context.Context) error {
 		listener.Close()
 		return err
 	}
+	if b.ready != nil {
+		b.ready(nil)
+		announced = true
+	}
 	go func() {
 		<-ctx.Done()
 		listener.Close()
@@ -140,7 +158,7 @@ func (b *Broker) Serve(ctx context.Context) error {
 			}
 			return fmt.Errorf("mcp broker: accept: %w", err)
 		}
-		go b.conn(ctx, conn)
+		b.connections.Go(func() { b.conn(ctx, conn) })
 	}
 }
 
@@ -202,7 +220,7 @@ func (b *Broker) Bind(mcp, attempt, harness string) (ability.Binding, error) {
 	b.mu.Lock()
 	now := time.Now()
 	for id, old := range b.bindings {
-		if now.After(old.expires) {
+		if !old.expires.IsZero() && now.After(old.expires) {
 			delete(b.bindings, id)
 		}
 	}
@@ -249,7 +267,7 @@ func (b *Broker) binding(id string) (mcpBinding, bool) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	nb, ok := b.bindings[id]
-	if !ok || time.Now().After(nb.expires) {
+	if !ok || (!nb.expires.IsZero() && time.Now().After(nb.expires)) {
 		return mcpBinding{}, false
 	}
 	return nb, true
@@ -411,8 +429,18 @@ func (b *Broker) launch(ctx context.Context, c net.Conn, reader io.Reader, id st
 func (b *Broker) serveProxy(ctx context.Context) error {
 	var listener net.Listener
 	var err error
+	if b.cfg.StrictPort {
+		if _, err := os.Stat(b.cfg.PortFile); err == nil && rememberedPortIn(b.cfg.PortFile) == 0 {
+			return errors.New("plugin MCP port record is invalid")
+		} else if err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
 	if preferred := rememberedPortIn(b.cfg.PortFile); preferred > 0 {
 		listener, err = net.Listen("tcp", "127.0.0.1:"+strconv.Itoa(preferred))
+		if err != nil && b.cfg.StrictPort {
+			return fmt.Errorf("plugin MCP port unavailable: %w", err)
+		}
 	}
 	if listener == nil {
 		listener, err = net.Listen("tcp", "127.0.0.1:0")
@@ -425,15 +453,21 @@ func (b *Broker) serveProxy(ctx context.Context) error {
 	b.proxyPort = port
 	b.mu.Unlock()
 	if b.cfg.PortFile != "" {
-		if err := os.WriteFile(b.cfg.PortFile, []byte(strconv.Itoa(port)), 0o600); err != nil {
+		if err := b.rememberProxyPort(port); err != nil {
+			if b.cfg.StrictPort {
+				listener.Close()
+				return err
+			}
 			slog.Error(fmt.Sprintf("steve-node: mcp proxy: remember port: %v", err))
 		}
 	}
+	b.proxyDone = make(chan struct{})
 	server := &http.Server{Handler: http.HandlerFunc(b.proxy), ReadHeaderTimeout: 10 * time.Second}
 	go func() {
 		<-ctx.Done()
 		// Shutdown; Serve reports the close as ErrServerClosed.
 		_ = server.Close()
+		close(b.proxyDone)
 	}()
 	go func() {
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
@@ -537,3 +571,11 @@ func (p prefixedLog) Write(b []byte) (int, error) {
 
 // mcpBroker is how the node reaches its broker: in-process, or over the
 // socket with the control token.
+
+func (b *Broker) rememberProxyPort(port int) error {
+	raw := []byte(strconv.Itoa(port))
+	if !b.cfg.StrictPort {
+		return os.WriteFile(b.cfg.PortFile, raw, 0600)
+	}
+	return (&ledger.FileDocument{Path: b.cfg.PortFile}).Save(raw)
+}

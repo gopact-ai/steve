@@ -1,0 +1,14 @@
+import { request } from "../http";
+import type { PluginInstallation, PluginInstallationView, PluginPackage, PluginPresetPreview, PluginPresetRequest, PluginPreview, PluginSource, PluginsView, SecretInfo } from "../plugin-types";
+const root = "/console/plugins";
+export const fetchPlugins = (signal?: AbortSignal) => request<PluginsView>(root, { signal });
+export const previewPlugin = (source: PluginSource) => request<PluginPreview>(`${root}/preview`, { method: "POST", body: source });
+export const importPlugin = (body: { command_id: string; project: string; digest: string; source: PluginSource }) => request<PluginPackage>(`${root}/import`, { method: "POST", body });
+export const savePlugin = (id: string, revision: string, installation: PluginInstallation) => request<PluginsView>(`${root}/installations/${encodeURIComponent(id)}`, { method: "PUT", body: { base_revision: revision, installation } });
+export const preparePlugin = (id: string) => request<PluginInstallationView>(`${root}/installations/${encodeURIComponent(id)}/prepare`, { method: "POST" });
+export const fetchPluginSecrets = (node: string, signal?: AbortSignal) => request<SecretInfo[]>(`${root}/nodes/${encodeURIComponent(node || "hub")}/secrets`, { signal });
+export const previewPluginPreset = (id: string, body: PluginPresetRequest) => request<PluginPresetPreview>(`${root}/installations/${encodeURIComponent(id)}/presets/preview`, { method: "POST", body });
+export const applyPluginPreset = (id: string, body: PluginPresetRequest) => request<PluginPresetPreview>(`${root}/installations/${encodeURIComponent(id)}/presets/apply`, { method: "POST", body });
+export const fetchPluginUsage = (id: string, signal?: AbortSignal) => request<import("../plugin-types").PluginUsage>(`${root}/installations/${encodeURIComponent(id)}/usage`, { signal });
+export const closePluginRuntime = (id: string, runtime: string) => request<import("../plugin-types").PluginUsage>(`${root}/installations/${encodeURIComponent(id)}/runtimes/${encodeURIComponent(runtime)}/close`, { method: "POST" });
+export const removePlugin = (id: string, revision: string) => request<PluginsView>(`${root}/installations/${encodeURIComponent(id)}`, { method: "DELETE", body: { base_revision: revision } });

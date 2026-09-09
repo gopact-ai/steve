@@ -10,6 +10,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/plugins"
 )
 
 // Transport returns an acphost transport that runs harnessID on this node.
@@ -20,6 +21,7 @@ func (r *Registry) Transport(nodeName, harnessID string) acphost.Transport {
 }
 
 type remoteTransport struct {
+	plugin   *plugins.RuntimeRef
 	registry *Registry
 	node     string
 	harness  string
@@ -32,6 +34,9 @@ func (t remoteTransport) Start(ctx context.Context) (acphost.Process, error) {
 	if err != nil {
 		return nil, err
 	}
+	if t.plugin != nil && !nodewire.HasFeature(c.getAdvert().Features, nodewire.FeaturePluginRuntimes) {
+		return nil, plugins.ErrIncompatible
+	}
 	if !c.offers(t.harness) {
 		return nil, fmt.Errorf("node %q does not offer harness %q: %s",
 			t.node, t.harness, c.harnessTrouble(t.harness))
@@ -40,7 +45,7 @@ func (t remoteTransport) Start(ctx context.Context) (acphost.Process, error) {
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return nil, err
 	}
-	req := nodewire.OpenRequest{Kind: nodewire.StreamACP, Harness: t.harness, Stream: hex.EncodeToString(nonce[:])}
+	req := nodewire.OpenRequest{Kind: nodewire.StreamACP, Harness: t.harness, Plugin: t.plugin.Clone(), Stream: hex.EncodeToString(nonce[:])}
 	resumable := nodewire.HasFeature(c.getAdvert().Features, nodewire.FeatureJournal)
 	if !resumable {
 		req.Stream = ""

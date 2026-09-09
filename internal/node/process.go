@@ -22,6 +22,7 @@ const SessionGrace = 10 * time.Minute
 const liveBufferBytes = 16 << 20
 
 type agentProcess struct {
+	pluginRuntimeID    string
 	server             *Server
 	id, harness, owner string
 	proc               acphost.Process
@@ -94,11 +95,28 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 		closeStream(stream, "unknown harness")
 		return
 	}
-	proc, err := (acphost.LocalTransport{
-		Command: spec.Command, Args: spec.Args,
-		ProcessDir: s.processDir(spec), Env: steveruntime.ApplyEnv(spec.Env, req.Harness, s.conf().StateDir),
-	}).Start(ctx)
+	transport := acphost.LocalTransport{Command: spec.Command, Args: spec.Args, ProcessDir: s.processDir(spec), Env: steveruntime.ApplyEnv(spec.Env, req.Harness, s.conf().StateDir)}
+	if req.Plugin != nil {
+		prepared, err := s.pluginProcessConfig(ctx, req)
+		if err != nil {
+			s.processMu.Unlock()
+			closeStream(stream, err.Error())
+			return
+		}
+		transport = prepared
+	}
+	if req.Plugin != nil {
+		if err := s.pluginStore().BeginRuntimeUse(ctx, *req.Plugin, "stream/"+req.Stream, "stream"); err != nil {
+			s.processMu.Unlock()
+			closeStream(stream, err.Error())
+			return
+		}
+	}
+	proc, err := transport.Start(ctx)
 	if err != nil {
+		if req.Plugin != nil {
+			err = errors.Join(err, s.pluginStore().EndRuntimeUse(context.WithoutCancel(ctx), *req.Plugin, "stream/"+req.Stream))
+		}
 		s.processMu.Unlock()
 		closeStream(stream, err.Error())
 		return
@@ -107,6 +125,9 @@ func (s *Server) runAgent(ctx context.Context, stream *nodewire.Stream) {
 	owner := s.hubName
 	s.hubMu.Unlock()
 	p = &agentProcess{server: s, id: req.Stream, harness: req.Harness, owner: owner, proc: proc}
+	if req.Plugin != nil {
+		p.pluginRuntimeID = req.Plugin.ID
+	}
 	if req.Stream != "" {
 		p.journal, err = journal.New(s.conf().StateDir, req.Stream, journal.Options{})
 		if err != nil {
@@ -414,6 +435,16 @@ func (p *agentProcess) run(ctx context.Context) {
 		code = -1
 		if e, ok := err.(*exec.ExitError); ok {
 			code = e.ExitCode()
+		}
+	}
+	if p.pluginRuntimeID != "" && p.proc.Stopped() {
+		if info, err := p.server.pluginStore().RuntimeInfo(p.pluginRuntimeID); err == nil {
+			if err := p.server.pluginStore().EndRuntimeUse(context.WithoutCancel(ctx), info.Ref, "stream/"+p.id); err != nil {
+				slog.Error("steve-node: plugin exit receipt failed", "error", err)
+			}
+		}
+		if err := p.server.pluginRuntimePool().Drop(p.pluginRuntimeID); err != nil {
+			slog.Error("steve-node: plugin broker stop failed", "error", err)
 		}
 	}
 	p.mu.Lock()

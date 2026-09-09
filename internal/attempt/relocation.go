@@ -15,6 +15,7 @@ import (
 	"github.com/gopact-ai/steve/internal/checkpoint"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/task"
 )
@@ -85,6 +86,7 @@ func Relocatable(r Record) bool {
 }
 
 type RelocationIntent struct {
+	Plugins          *plugins.Relocation         `json:"plugins,omitempty"`
 	ID               string                      `json:"id"`
 	SourceID         string                      `json:"source_id"`
 	SourceRevision   int64                       `json:"source_revision"`

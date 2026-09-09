@@ -35,6 +35,7 @@ import (
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/plan"
+	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/task"
@@ -48,6 +49,7 @@ const maxParallelSteps = 8
 
 // StepRequest is one step handed to whatever actually drives agents.
 type StepRequest struct {
+	PluginRuntime *plugins.RuntimeRef
 	// MCP are the servers the machine bound for this step's session, as
 	// launchers, on top of what the agent's capabilities assemble.
 	MCP    []acp.MCPServer

@@ -247,8 +247,15 @@ func (c *Coordinator) openRelocationAttempt(ctx context.Context, p attempt.Reloc
 // bindRelocation prepares the replacement and binds its workspace to the
 // task's recovery, carrying the source's spend forward.
 func (c *Coordinator) bindRelocation(ctx context.Context, r, old attempt.Record, p attempt.RelocationIntent, admission ability.Admission) (attempt.Record, error) {
+	ref, err := c.prepareRelocationPlugins(ctx, r, p)
+	if err != nil {
+		return r, err
+	}
 	if r.State == attempt.Leased {
-		prepared, err := c.attempts.Advance(ctx, r.ID, attempt.Prepared, "relocation", func(next *attempt.Record) { next.Admission = &admission })
+		prepared, err := c.attempts.Advance(ctx, r.ID, attempt.Prepared, "relocation", func(next *attempt.Record) {
+			next.Admission = &admission
+			next.PluginRuntime = ref.Clone()
+		})
 		if err != nil {
 			return r, err
 		}
@@ -279,6 +286,9 @@ func (c *Coordinator) freezeRelocationSession(ctx context.Context, req Request, 
 		return attempt.RelocationSessionConfig{}, err
 	}
 	frozen := attempt.RelocationSessionConfig{MCPServers: append(append([]acp.MCPServer(nil), capabilities.MCPServers...), roster.ToMCP(bindings)...), AgentToken: agentToken, Fingerprint: capabilities.Fingerprint, SessionConfigHash: capabilities.SessionFingerprint, Instructions: capabilities.Instructions}
+	if r.PluginRuntime != nil {
+		frozen.PluginSkillsFingerprint = capabilities.SkillsFingerprint
+	}
 	if err := c.attempts.RecordRelocationSession(ctx, r.ID, frozen); err != nil {
 		return attempt.RelocationSessionConfig{}, err
 	}
@@ -297,7 +307,8 @@ func (c *Coordinator) relocationSessionState(ctx context.Context, req Request, r
 			return state.Session{}, err
 		}
 	}
-	session := state.Session{ConversationID: req.ConversationID, AgentID: r.Agent, HarnessID: r.Harness, NodeID: r.Node, UpstreamID: r.Session, Workspace: r.Workspace.Path, ProjectID: r.Project, ProjectVersion: binding.Version, CapabilityHash: frozen.Fingerprint, SessionConfigHash: frozen.SessionConfigHash, AgentToken: frozen.AgentToken, Tainted: true}
+	session := state.Session{PluginRuntime: r.PluginRuntime.Clone(), ConversationID: req.ConversationID, AgentID: r.Agent, HarnessID: r.Harness, NodeID: r.Node, UpstreamID: r.Session, Workspace: r.Workspace.Path, ProjectID: r.Project, ProjectVersion: binding.Version, CapabilityHash: frozen.Fingerprint, SessionConfigHash: frozen.SessionConfigHash, AgentToken: frozen.AgentToken, Tainted: true}
+	session.PluginSkillsFingerprint = frozen.PluginSkillsFingerprint
 	if err := c.store.SaveSession(session); err != nil {
 		return state.Session{}, err
 	}
@@ -309,6 +320,7 @@ func (c *Coordinator) relocationSessionState(ctx context.Context, req Request, r
 // attempt to running. known says a session exists on the node, whatever
 // happened after.
 func (c *Coordinator) openRelocation(ctx context.Context, req Request, r attempt.Record, selected agent.Agent, frozen attempt.RelocationSessionConfig, session state.Session) (harness.Runner, attempt.Record, state.Session, bool, error) {
+	ctx = harness.WithPluginProfile(ctx, r.PluginRuntime)
 	runner, err := c.runtime.OpenSession(ctx, placement(selected), r.Session, r.Workspace.Path, frozen.MCPServers)
 	if err != nil {
 		return nil, r, session, false, err

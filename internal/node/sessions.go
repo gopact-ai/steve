@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
@@ -92,18 +93,19 @@ func (s *SessionService) forgetCapabilities(harnessID string) {
 }
 
 type ownedSession struct {
-	service         *SessionService
-	mu              sync.Mutex
-	record          sessionRecord
-	host            *acphost.Host
-	changed         chan struct{}
-	waiters         map[string]chan struct{}
-	runDone         chan struct{}
-	openDone        chan struct{}
-	openCancel      context.CancelFunc
-	failure         error
-	pendingProgress *view.Progress
-	progressTimer   *time.Timer
+	pluginInstructions string
+	service            *SessionService
+	mu                 sync.Mutex
+	record             sessionRecord
+	host               *acphost.Host
+	changed            chan struct{}
+	waiters            map[string]chan struct{}
+	runDone            chan struct{}
+	openDone           chan struct{}
+	openCancel         context.CancelFunc
+	failure            error
+	pendingProgress    *view.Progress
+	progressTimer      *time.Timer
 }
 
 type sessionRecord struct {
@@ -189,6 +191,11 @@ func (s *SessionService) Close() {
 				next.Commands[id] = command
 			}
 		}
+		if next.State.ProcessStopped && next.State.Plugin != nil {
+			if err := s.server.pluginStore().EndRuntimeUse(context.Background(), *next.State.Plugin, "session/"+next.State.ID); err != nil {
+				slog.Error("steve-node: plugin shutdown receipt failed", "error", err)
+			}
+		}
 		// A commit that fails is latched in one.failure and answers the
 		// next request for this session; there is no one else to tell.
 		_ = one.commitLocked(next)
@@ -216,6 +223,9 @@ func (s *SessionService) authorize(ctx context.Context, principal string, req no
 
 func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.SessionRequest) (nodewire.SessionState, error) {
 	if err := s.authorize(ctx, principal, req); err != nil {
+		return nodewire.SessionState{}, err
+	}
+	if err := validatePluginSessionOpen(req); err != nil {
 		return nodewire.SessionState{}, err
 	}
 	s.mu.Lock()
@@ -302,7 +312,7 @@ func (one *ownedSession) admitLocked(req nodewire.SessionRequest) error {
 	}
 	if req.Binding != next.State.Binding {
 		before, after := next.State.Binding, req.Binding
-		if req.Action != nodewire.SessionActionOpen || one.runningLocked() || before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || one.host == nil || next.State.State != nodewire.SessionIdle {
+		if req.Action != nodewire.SessionActionOpen || one.runningLocked() || before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || before.PluginRuntimeID != after.PluginRuntimeID || one.host == nil || next.State.State != nodewire.SessionIdle {
 			return sessionError("conflict", "session belongs to another execution")
 		}
 		next.State.Binding = req.Binding

@@ -90,6 +90,7 @@ func (c *Coordinator) turnSpec(ctx context.Context, req Request, selected agent.
 }
 
 func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecycle.Options {
+	spec.PluginRuntime = t.saved.PluginRuntime.Clone()
 	c, req, selected := t.c, t.req, t.selected
 	var fleet lifecycle.Roster
 	if c.fleet != nil {
@@ -187,6 +188,7 @@ func (t *chatTurn) arm(_ context.Context, e *lifecycle.Execution) (func(*attempt
 	t.managed = e.Managed
 	req.phase(view.PhaseRunning)
 	t.session = state.Session{
+		PluginRuntime:  e.Record.PluginRuntime.Clone(),
 		ConversationID: req.ConversationID, AgentID: selected.ID, HarnessID: selected.Harness,
 		NodeID:     selected.Node,
 		UpstreamID: runner.ID(), Workspace: t.workspace.Path, CapabilityHash: t.capabilities.Fingerprint,
@@ -194,6 +196,9 @@ func (t *chatTurn) arm(_ context.Context, e *lifecycle.Execution) (func(*attempt
 		SessionConfigHash:   t.capabilities.SessionFingerprint,
 		InstructionsApplied: t.saved.InstructionsApplied, Tainted: true,
 		AgentToken: t.saved.AgentToken,
+	}
+	if e.Record.PluginRuntime != nil {
+		t.session.PluginSkillsFingerprint = t.capabilities.SkillsFingerprint
 	}
 	if err := c.store.SaveSession(t.session); err != nil {
 		return nil, err

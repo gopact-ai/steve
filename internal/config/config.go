@@ -21,6 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -222,6 +223,7 @@ type ProjectHome struct {
 }
 
 type Config struct {
+	Plugins map[string]plugins.Installation `json:"plugins,omitempty"`
 	// RuntimeHome keeps the shared home workspace anchored to its physical
 	// node while this process uses its own local identity files.
 	RuntimeHome *ProjectHome         `json:"-"`
@@ -267,8 +269,9 @@ type Region struct {
 }
 
 type Agent struct {
-	Aliases []string `json:"aliases"`
-	Harness string   `json:"harness"`
+	PluginOrigin *plugins.AgentOrigin `json:"plugin_origin,omitempty"`
+	Aliases      []string             `json:"aliases"`
+	Harness      string               `json:"harness"`
 	// Node places this agent on a machine; empty runs it on the hub.
 	Node string `json:"node,omitempty"`
 	// Model is the preferred model. The node's advert decides what is
@@ -612,7 +615,10 @@ func (c *Config) validateTopology() error {
 	if err := c.validateHarnesses(); err != nil {
 		return err
 	}
-	return c.validateAgents()
+	if err := c.validateAgents(); err != nil {
+		return err
+	}
+	return c.ValidatePlugins()
 }
 
 func (c *Config) validateProjects() error {
@@ -743,8 +749,14 @@ func (c *Config) resolvePaths() {
 func (c *Config) AgentCatalog() (*agent.Catalog, error) {
 	configs := make(map[string]agent.Config, len(c.Agents))
 	for id, item := range c.Agents {
+		if item.PluginOrigin != nil {
+			if err := item.PluginOrigin.Adopted.CheckRemaining(item.Skills, item.MCPServers); err != nil {
+				return nil, fmt.Errorf("agent %s: %w", id, err)
+			}
+		}
 		configs[id] = agent.Config{
-			Harness: item.Harness, Node: item.Node, Model: item.Model, Options: item.Options, About: item.About, Requires: item.Requires,
+			PluginOrigin: item.PluginOrigin.Clone(),
+			Harness:      item.Harness, Node: item.Node, Model: item.Model, Options: item.Options, About: item.About, Requires: item.Requires,
 			Aliases:      item.Aliases,
 			SystemPrompt: item.SystemPrompt, Skills: item.Skills, MCPServers: item.MCPServers, Default: item.Default,
 		}

@@ -25,6 +25,11 @@ func (a *Service) Skills(ctx context.Context) (consoleapi.SkillsView, error) {
 		return consoleapi.SkillsView{}, errors.New("技能没有配置")
 	}
 	view := consoleapi.SkillsView{Fingerprint: a.LiveSkills.Map.Fingerprint(), SearchPaths: a.LiveSkills.Map.SearchPaths(), BuiltinRoot: a.LiveSkills.Map.BuiltinRootPath(), Skills: []consoleapi.SkillView{}, Nodes: []consoleapi.SkillNode{}, Sources: []consoleapi.SkillSource{}}
+	var pluginErr error
+	view.Plugins, pluginErr = a.pluginResources(ctx, "skill")
+	if pluginErr != nil {
+		return view, pluginErr
+	}
 	// A skill from a source resolves into its clone; that, not the name,
 	// says which source it came from — a skill of the same name from
 	// the user's directory or the shipped set is not the source's.

@@ -1203,3 +1203,16 @@ func (h *Host) Settings(sid acp.SessionID) view.Settings {
 	out.Options = optionsView(h.Options(sid))
 	return out
 }
+
+// CloseIdle atomically refuses a running prompt before closing its host. It
+// is used for explicit retirement of an otherwise idle plugin runtime.
+func (h *Host) CloseIdle() error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.active) > 0 {
+		return ErrSessionBusy
+	}
+	h.isClosed = true
+	h.shutdownLocked()
+	return nil
+}

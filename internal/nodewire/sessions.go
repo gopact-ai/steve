@@ -8,6 +8,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -34,13 +35,14 @@ type SessionAuthority struct {
 // SessionBinding names the already admitted execution, independently of the
 // coordinator process currently observing it.
 type SessionBinding struct {
-	ProjectID      string `json:"project_id"`
-	SessionID      string `json:"session_id"`
-	TaskID         string `json:"task_id"`
-	AttemptID      string `json:"attempt_id"`
-	NodeID         string `json:"node_id"`
-	ExecutionEpoch uint64 `json:"execution_epoch"`
-	TaskEpoch      uint64 `json:"task_epoch"`
+	PluginRuntimeID string `json:"plugin_runtime_id,omitempty"`
+	ProjectID       string `json:"project_id"`
+	SessionID       string `json:"session_id"`
+	TaskID          string `json:"task_id"`
+	AttemptID       string `json:"attempt_id"`
+	NodeID          string `json:"node_id"`
+	ExecutionEpoch  uint64 `json:"execution_epoch"`
+	TaskEpoch       uint64 `json:"task_epoch"`
 }
 
 type SessionMedia struct {
@@ -71,24 +73,25 @@ const (
 )
 
 type SessionRequest struct {
-	Action        SessionAction    `json:"action"`
-	Authority     SessionAuthority `json:"authority"`
-	Binding       SessionBinding   `json:"binding"`
-	ID            string           `json:"id,omitempty"`
-	Harness       string           `json:"harness,omitempty"`
-	Workdir       string           `json:"workdir,omitempty"`
-	MCPServers    []acp.MCPServer  `json:"mcp_servers,omitempty"`
-	Permission    string           `json:"permission,omitempty"`
-	CommandID     string           `json:"command_id,omitempty"`
-	InputSequence uint64           `json:"input_sequence,omitempty"`
-	Text          string           `json:"text,omitempty"`
-	Media         []SessionMedia   `json:"media,omitempty"`
-	After         uint64           `json:"after,omitempty"`
-	WaitMS        int              `json:"wait_ms,omitempty"`
-	QuestionID    string           `json:"question_id,omitempty"`
-	Answer        *SessionAnswer   `json:"answer,omitempty"`
-	OptionID      string           `json:"option_id,omitempty"`
-	OptionValue   string           `json:"option_value,omitempty"`
+	Plugin        *plugins.RuntimeRef `json:"plugin,omitempty"`
+	Action        SessionAction       `json:"action"`
+	Authority     SessionAuthority    `json:"authority"`
+	Binding       SessionBinding      `json:"binding"`
+	ID            string              `json:"id,omitempty"`
+	Harness       string              `json:"harness,omitempty"`
+	Workdir       string              `json:"workdir,omitempty"`
+	MCPServers    []acp.MCPServer     `json:"mcp_servers,omitempty"`
+	Permission    string              `json:"permission,omitempty"`
+	CommandID     string              `json:"command_id,omitempty"`
+	InputSequence uint64              `json:"input_sequence,omitempty"`
+	Text          string              `json:"text,omitempty"`
+	Media         []SessionMedia      `json:"media,omitempty"`
+	After         uint64              `json:"after,omitempty"`
+	WaitMS        int                 `json:"wait_ms,omitempty"`
+	QuestionID    string              `json:"question_id,omitempty"`
+	Answer        *SessionAnswer      `json:"answer,omitempty"`
+	OptionID      string              `json:"option_id,omitempty"`
+	OptionValue   string              `json:"option_value,omitempty"`
 }
 
 type SessionAnswer struct {
@@ -126,6 +129,7 @@ type SessionCommand struct {
 }
 
 type SessionState struct {
+	Plugin          *plugins.RuntimeRef `json:"plugin,omitempty"`
 	OpenReceipt     *SessionOpenReceipt `json:"open_receipt,omitempty"`
 	ID              string              `json:"id"`
 	Binding         SessionBinding      `json:"binding"`

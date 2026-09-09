@@ -159,7 +159,7 @@ const (
 
 // Features is what this build supports.
 func Features() []string {
-	return []string{FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureConfigRevision, FeatureInspect, FeatureMCPProbe, FeatureOwnSkills, FeatureJournal, FeatureArtifact, FeatureFiles}
+	return []string{FeaturePluginRuntimes, FeaturePlugins, FeatureManifest, FeatureAdmission, FeatureSkills, FeatureMCP, FeatureConfig, FeatureConfigRevision, FeatureInspect, FeatureMCPProbe, FeatureOwnSkills, FeatureJournal, FeatureArtifact, FeatureFiles}
 }
 
 // HasFeature says whether a list names a feature.

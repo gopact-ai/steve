@@ -207,6 +207,8 @@ The parent agent can end its turn and wait for platform delivery; **polling is n
 ## Further reading
 
 - [docs/architecture.md](docs/architecture.md): module dependencies, authority, commit and query boundaries.
+- [docs/plugins-local.md](docs/plugins-local.md): local capability package preview, pinned preparation and command reference (Chinese).
+- [docs/plugins.md](docs/plugins.md): plugin implementation plan (Chinese), covering capability packages, version and node binding, and acceptance stages.
 - [docs/operations.md](docs/operations.md): configuration keys, deployment, gates and troubleshooting.
 - [docs/history/](docs/history/): archived console and capability proposals and the collaboration audit.
 - Code: entry points in [cmd/](cmd/), core implementation in [internal/](internal/), console in [web/console/](web/console/), acceptance checks in [e2e/](e2e/).

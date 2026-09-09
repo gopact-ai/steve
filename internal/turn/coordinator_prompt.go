@@ -143,7 +143,16 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	saved.AgentToken = agentToken
 	t.clock.mark("gate")
 	extras = append(extras, c.projectMemory(ctx, req.ConversationID, req)...)
-	capabilities, err := c.assemble(selected, req, extras)
+	var capabilities capability.Capabilities
+	if saved.PluginRuntime != nil {
+		mode := home.ModeNone
+		if c.home != nil {
+			mode = injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
+		}
+		capabilities, err = c.assembler.AssembleExtraPinned(selected, mode, extras, saved.PluginSkillsFingerprint)
+	} else {
+		capabilities, err = c.assemble(selected, req, extras)
+	}
 	if err != nil {
 		return err
 	}
@@ -179,6 +188,7 @@ func (c *Coordinator) buildingProfile(req Request) (bool, error) {
 }
 
 func (c *Coordinator) open(ctx context.Context, saved state.Session, selected agent.Agent, workspace string, servers []acp.MCPServer) (harness.Runner, error) {
+	ctx = harness.WithPluginProfile(ctx, saved.PluginRuntime)
 	if saved.HarnessID != "" && saved.HarnessID != selected.Harness {
 		return nil, fmt.Errorf("session belongs to harness %q, not %q", saved.HarnessID, selected.Harness)
 	}

@@ -10,6 +10,8 @@ import (
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/platformconfig"
+	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -91,7 +93,7 @@ func (p *Peer) authorizeSessionExecution(ctx context.Context, node string, autho
 	if err != nil {
 		return err
 	}
-	if record.TaskID != binding.TaskID || record.Project != binding.ProjectID || record.Node != binding.NodeID || attempt.SessionExecutionEpoch(record) != binding.ExecutionEpoch || record.Execution == nil || record.Execution.Epoch != binding.TaskEpoch {
+	if record.PluginRuntimeID() != binding.PluginRuntimeID || record.TaskID != binding.TaskID || record.Project != binding.ProjectID || record.Node != binding.NodeID || attempt.SessionExecutionEpoch(record) != binding.ExecutionEpoch || record.Execution == nil || record.Execution.Epoch != binding.TaskEpoch {
 		return errors.New("node session differs from the committed execution")
 	}
 	tasks, err := task.OpenLedger(runtime.Ledger(), "")
@@ -101,6 +103,18 @@ func (p *Peer) authorizeSessionExecution(ctx context.Context, node string, autho
 	tracked, ok := tasks.Get(record.TaskID)
 	if !ok || binding.SessionID != LogicalAgentSession(tracked.Channel, tracked.ID, record.Agent) {
 		return errors.New("node session conversation differs")
+	}
+	if !stopping && record.PluginRuntime != nil {
+		declared, found, err := platformconfig.New(runtime.Ledger()).Load()
+		if err != nil {
+			return err
+		}
+		if !found {
+			return coordination.ErrNotReady
+		}
+		if err := (&plugins.Library{Ledger: runtime.Ledger()}).CheckRuntimeScope(ctx, declared.Plugins, *record.PluginRuntime); err != nil {
+			return err
+		}
 	}
 	if !stopping && !observation {
 		if record.State.Terminal() || record.Unsettled {

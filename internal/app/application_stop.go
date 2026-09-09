@@ -149,7 +149,7 @@ func (s *applicationStops) stop(parent context.Context, r attempt.Record) error 
 	if err != nil {
 		return failed(err)
 	}
-	expected := nodewire.SessionBinding{ProjectID: r.Project, SessionID: attempt.RetainedSessionID(tracked.Channel, tracked.ID, r.Agent), TaskID: r.TaskID, AttemptID: r.ID, NodeID: r.Node, ExecutionEpoch: attempt.SessionExecutionEpoch(r), TaskEpoch: r.Execution.Epoch}
+	expected := nodewire.SessionBinding{PluginRuntimeID: r.PluginRuntimeID(), ProjectID: r.Project, SessionID: attempt.RetainedSessionID(tracked.Channel, tracked.ID, r.Agent), TaskID: r.TaskID, AttemptID: r.ID, NodeID: r.Node, ExecutionEpoch: attempt.SessionExecutionEpoch(r), TaskEpoch: r.Execution.Epoch}
 	if state.ID != r.Session || state.Harness != r.Harness || state.Binding != expected || state.Command != nil && state.Command.ID != attempt.InputCommandID(r) {
 		return failed(errors.New("node observation belongs to another execution"))
 	}

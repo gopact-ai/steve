@@ -64,6 +64,7 @@ func NewAgentRunner(sessions Sessions, caps Capabilities, r *roster.Roster) *Age
 const DefaultStepTimeout = 15 * time.Minute
 
 func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan.StepResult, runErr error) {
+	ctx = harness.WithPluginProfile(ctx, req.PluginRuntime)
 	candidate, ok := a.find(ctx, req.Agent)
 	if !ok {
 		return plan.StepResult{}, fmt.Errorf("agent %q is no longer in the roster", req.Agent)
