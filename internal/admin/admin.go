@@ -20,6 +20,7 @@ import (
 	"github.com/gopact-ai/steve/internal/memory"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/roster"
@@ -34,6 +35,7 @@ import (
 // them so a restart keeps them. A new machine gets a token of its own
 // and one command to run.
 type Service struct {
+	PluginLibrary      *plugins.Library
 	Observation        *LocalObservation
 	ClusterMode        bool
 	ssh                *sshconnect.Service

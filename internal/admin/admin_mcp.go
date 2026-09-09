@@ -84,6 +84,11 @@ func (a *Service) advertOf(ctx context.Context, nodeKey string) (nodewire.Advert
 // what each machine's coding agents configured themselves.
 func (a *Service) MCP(ctx context.Context) (consoleapi.MCPView, error) {
 	view := consoleapi.MCPView{Deployments: []consoleapi.MCPDeployment{}, Platform: []consoleapi.MCPPlatform{}, Machines: []consoleapi.MCPMachine{}}
+	var pluginErr error
+	view.Plugins, pluginErr = a.pluginResources(ctx, "mcp")
+	if pluginErr != nil {
+		return view, pluginErr
+	}
 	attach := map[string][]string{}
 	if a.Catalog != nil {
 		for _, ag := range a.Catalog.List() {

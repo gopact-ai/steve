@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 // PluginService owns management actions, while immutable content and runtime
 // resources remain with the library and each physical node.
 type PluginService struct {
+	RuntimeGate  *sync.RWMutex
 	Admin        *Service
 	Library      *plugins.Library
 	Local        *node.PluginRuntimePool
@@ -54,6 +56,13 @@ func (s *PluginService) Plugins(ctx context.Context) (consoleapi.PluginsView, er
 		return consoleapi.PluginsView{}, err
 	}
 	view := consoleapi.PluginsView{Operations: operations, Revision: revision, Packages: packages, Installations: []consoleapi.PluginInstallationView{}}
+	view.Agents = []consoleapi.PluginAgentView{}
+	ConfigMu.RLock()
+	for id, item := range s.Admin.Cfg.Agents {
+		view.Agents = append(view.Agents, pluginAgentView(id, item))
+	}
+	ConfigMu.RUnlock()
+	slices.SortFunc(view.Agents, func(a, b consoleapi.PluginAgentView) int { return strings.Compare(a.ID, b.ID) })
 	ids := make([]string, 0, len(items))
 	for id := range items {
 		ids = append(ids, id)
@@ -162,6 +171,10 @@ func (s *PluginService) ImportPlugin(ctx context.Context, req consoleapi.PluginI
 func (s *PluginService) UpdatePlugin(ctx context.Context, id string, req consoleapi.PluginUpdateRequest) (consoleapi.PluginsView, error) {
 	s.Admin.Mu.Lock()
 	defer s.Admin.Mu.Unlock()
+	if s.RuntimeGate != nil {
+		s.RuntimeGate.Lock()
+		defer s.RuntimeGate.Unlock()
+	}
 	ConfigMu.RLock()
 	candidate := *s.Admin.Cfg
 	candidate.Plugins = config.ClonePluginInstallations(s.Admin.Cfg.Plugins)
@@ -170,9 +183,13 @@ func (s *PluginService) UpdatePlugin(ctx context.Context, id string, req console
 	if req.BaseRevision == "" || req.BaseRevision != revision {
 		return consoleapi.PluginsView{}, consoleapi.ErrSettingsConflict
 	}
+	if prior, exists := candidate.Plugins[id]; exists && prior.PackageID != req.Installation.PackageID {
+		return consoleapi.PluginsView{}, errors.New("use a new installation name for a different package")
+	}
 	if candidate.Plugins == nil {
 		candidate.Plugins = map[string]plugins.Installation{}
 	}
+	previous := candidate.Plugins[id]
 	candidate.Plugins[id] = req.Installation
 	candidate.Plugins = config.ClonePluginInstallations(candidate.Plugins)
 	if err := candidate.ValidatePlugins(); err != nil {
@@ -191,6 +208,12 @@ func (s *PluginService) UpdatePlugin(ctx context.Context, id string, req console
 				return consoleapi.PluginsView{}, err
 			}
 		}
+	}
+	if err := s.Library.RememberTargets(ctx, id, previous); err != nil {
+		return consoleapi.PluginsView{}, err
+	}
+	if err := s.Library.RememberTargets(ctx, id, candidate.Plugins[id]); err != nil {
+		return consoleapi.PluginsView{}, err
 	}
 	ConfigMu.Lock()
 	if pluginRevision(s.Admin.Cfg.Plugins) != revision {
