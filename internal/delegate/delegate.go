@@ -205,7 +205,7 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 		return agentmcp.DelegateResult{}, fmt.Errorf("workspace for %s: %w", candidate.Agent.ID, err)
 	}
 	if err := ctx.Err(); err != nil {
-		s.discardUnused(ctx, workspace, attemptID, parent)
+		s.discardUnused(ctx, workspace, parent)
 		return agentmcp.DelegateResult{}, err
 	}
 	s.rememberBase(workspace.ID, workspace.Base)
@@ -226,18 +226,18 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 		spawned, err = s.tasks.Spawn(parent.ID, childSpec)
 	}
 	if err != nil {
-		s.discardUnused(ctx, workspace, attemptID, parent)
+		s.discardUnused(ctx, workspace, parent)
 		return agentmcp.DelegateResult{}, err
 	}
 	slog.Info(fmt.Sprintf("delegate: %s -> %s task #%s under #%s on %s", agentID, candidate.Agent.ID, spawned.ID, parent.ID, nodeLabel(candidate.Node)),
-		"task", spawned.ID, "parent", parent.ID, "attempt", attemptID, "conversation", conversationID, "agent", candidate.Agent.ID, "node", candidate.Node)
+		"task", spawned.ID, "parent", parent.ID, "attempt", ledgerAttemptID(workspace), "conversation", conversationID, "agent", candidate.Agent.ID, "node", candidate.Node)
 
 	var scope *execution.Scope
 	if s.executions != nil {
 		var err error
 		scope, err = s.executions.Begin(s.executions.Detached(ctx), execution.Key{TaskID: spawned.ID, InstanceID: "delegate/" + spawned.ID, AttemptID: attemptID})
 		if err != nil {
-			s.discardUnused(ctx, workspace, attemptID, parent)
+			s.discardUnused(ctx, workspace, parent)
 			return agentmcp.DelegateResult{}, err
 		}
 	}
@@ -679,7 +679,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	}
 	workspace := project.Workspace{ID: s.worktreeID(child), Project: parent.ProjectID, Node: candidate.Node, Path: child.Workspace, Kind: project.KindWorktree}
 	base := s.baseOf(workspace.ID)
-	attemptID, turnID := strings.TrimPrefix(workspace.ID, "wt-"), "delegate/"+child.ID
+	attemptID, turnID := ledgerAttemptID(workspace), "delegate/"+child.ID
 	accountingToken := task.ExecutionToken{TaskID: accountingTask.ID, Epoch: accountingTask.ExecutionEpoch}
 	if original := execution.Token(ctx); original != nil {
 		accountingToken = *original
@@ -1206,9 +1206,11 @@ func (s *Service) parentLease(ctx context.Context, parent task.Task) (ledger.Lea
 // was refused. The caller is already returning the refusal, which is the
 // error the agent needs; a worktree that could not be removed is disk
 // left on the node, reported here for the operator.
-func (s *Service) discardUnused(ctx context.Context, workspace project.Workspace, attemptID string, parent task.Task) {
+func (s *Service) discardUnused(ctx context.Context, workspace project.Workspace, parent task.Task) {
 	if err := s.artifacts.Discard(context.WithoutCancel(ctx), workspace); err != nil {
-		slog.Warn(fmt.Sprintf("delegate: discard unused workspace %s: %v", workspace.Path, err), "attempt", attemptID, "parent", parent.ID, "node", workspace.Node, "project", workspace.Project)
+		// No attempt was ever opened on this worktree, so the workspace
+		// id is the only identifier that leads anywhere.
+		slog.Warn(fmt.Sprintf("delegate: discard unused workspace %s: %v", workspace.Path, err), "workspace", workspace.ID, "parent", parent.ID, "node", workspace.Node, "project", workspace.Project)
 	}
 }
 
@@ -1237,6 +1239,14 @@ func (s *Service) baseOf(workspaceID string) string {
 func delegateBrief(c roster.Candidate) string {
 	return fmt.Sprintf("You are the delegate for this work, running on %s (capabilities: %s). Do it here, in this directory, yourself; delegating further is not available to you.\n\n",
 		nodeLabel(c.Node), strings.Join(c.Capabilities, ", "))
+}
+
+// ledgerAttemptID is the attempt a child's run is recorded under. The
+// materializer names the worktree after the attempt it was cut for, so
+// the id the ledger sees is the workspace id without its "wt-" prefix --
+// not the minted att- id, which only names the workspace request.
+func ledgerAttemptID(workspace project.Workspace) string {
+	return strings.TrimPrefix(workspace.ID, "wt-")
 }
 
 // worktreeID recovers the workspace id from the child's directory: the

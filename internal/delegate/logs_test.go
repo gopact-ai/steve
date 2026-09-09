@@ -52,6 +52,25 @@ func TestDelegateLogLinesKeepTheirTextAndCarryFields(t *testing.T) {
 		`^delegate: task #`+first.TaskID+` done on node-a task=`+first.TaskID+` parent=`+parent.ID+` attempt=\S+ conversation=chat agent=builder node=node-a$`,
 		`^delegate: delivered 1 child result\(s\) into chat for task #`+parent.ID+` parent=`+parent.ID+` conversation=chat$`,
 	)
+
+	// docs/operations.md sends the operator from the creation line to the
+	// attempt, so it must name the attempt the ledger goes on to record.
+	lines := stripTimes(out.String())
+	created := attemptOnLine(t, lines, `delegate: codex -> builder task #`+first.TaskID+` under`)
+	settled := attemptOnLine(t, lines, `delegate: task #`+first.TaskID+` done`)
+	if created != settled {
+		t.Errorf("creation line says attempt=%s, settled line says attempt=%s", created, settled)
+	}
+}
+
+// attemptOnLine reads the attempt field off the one line starting with prefix.
+func attemptOnLine(t *testing.T, lines, prefix string) string {
+	t.Helper()
+	m := regexp.MustCompile(`(?m)^` + prefix + `.* attempt=(\S+)`).FindStringSubmatch(lines)
+	if m == nil {
+		t.Fatalf("no attempt field on a line starting %q in log:\n%s", prefix, lines)
+	}
+	return m[1]
 }
 
 // waitForLogLines fails once every pattern has had its chance to appear,
