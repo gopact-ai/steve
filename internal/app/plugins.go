@@ -117,5 +117,11 @@ func parsePluginFlags(action string, args []string, out io.Writer) (pluginFlags,
 			options.source.Kind = "git"
 		}
 	}
+	if action == "prepare" && options.commandID == "" {
+		return options, errors.New("plugins prepare requires -command-id")
+	}
+	if (action == "prepare" || action == "show") && options.digest == "" {
+		return options, fmt.Errorf("plugins %s requires -digest", action)
+	}
 	return options, nil
 }

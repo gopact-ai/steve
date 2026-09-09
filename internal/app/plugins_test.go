@@ -7,6 +7,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/plugins"
@@ -74,5 +75,34 @@ func TestPluginCommandRefusalsDoNotPrepareContent(t *testing.T) {
 	err := runPluginsCommand(ctx, []string{"preview", "-source", filepath.Join("..", "..", "examples", "plugins", "github")}, &out, &out)
 	if !errors.Is(err, context.Canceled) {
 		t.Fatalf("cancel: %v", err)
+	}
+}
+
+func TestPluginCommandsNameMissingRequiredFlagsBeforeAccessingFiles(t *testing.T) {
+	for _, missing := range []struct {
+		action, flag string
+		flags        []string
+	}{
+		{"prepare", "-command-id", []string{"-digest", strings.Repeat("a", 64)}},
+		{"prepare", "-digest", []string{"-command-id", "prepare"}},
+		{"show", "-digest", nil},
+	} {
+		t.Run(missing.action+missing.flag, func(t *testing.T) {
+			store := filepath.Join(t.TempDir(), "store")
+			args := []string{missing.action, "-store", store}
+			if missing.action == "prepare" {
+				args = append(args, "-source", filepath.Join(t.TempDir(), "absent-source"))
+			}
+			args = append(args, missing.flags...)
+			var out, diagnostic bytes.Buffer
+			err := runPluginsCommand(t.Context(), args, &out, &diagnostic)
+			want := "plugins " + missing.action + " requires " + missing.flag
+			if err == nil || err.Error() != want || out.Len() != 0 {
+				t.Fatalf("missing flag: %v output=%q, want %q", err, out.String(), want)
+			}
+			if _, err := os.Lstat(store); !os.IsNotExist(err) {
+				t.Fatalf("invalid command touched the store: %v", err)
+			}
+		})
 	}
 }
