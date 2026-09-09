@@ -176,7 +176,7 @@ func (s *Server) detachHub(mux *nodewire.Mux) bool {
 // readOnlyStream is a request that observes the node without changing it,
 // which a restarting node still answers.
 func readOnlyStream(req nodewire.OpenRequest) bool {
-	return req.Kind == nodewire.StreamAdvert || req.Kind == nodewire.StreamInspect || (req.Kind == nodewire.StreamConfig && (req.Command == "get" || req.Command == "discover-agents"))
+	return (req.Kind == nodewire.StreamPlugins && (req.Command == string(nodewire.PluginInspect) || req.Command == string(nodewire.PluginSecrets))) || req.Kind == nodewire.StreamAdvert || req.Kind == nodewire.StreamInspect || (req.Kind == nodewire.StreamConfig && (req.Command == "get" || req.Command == "discover-agents"))
 }
 
 // dispatch hands one accepted stream to its handler on the request
@@ -209,6 +209,8 @@ func (s *Server) dispatch(ctx context.Context, mux *nodewire.Mux, hub, principal
 // process stream.
 func (s *Server) serveStream(ctx context.Context, mux *nodewire.Mux, principal string, stream *nodewire.Stream) {
 	switch stream.Request().Kind {
+	case nodewire.StreamPlugins:
+		s.pluginStream(ctx, principal, stream)
 	case nodewire.StreamNodeSessions:
 		s.sessionStream(ctx, principal, stream)
 	case nodewire.StreamExec:
