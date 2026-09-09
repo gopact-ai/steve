@@ -143,7 +143,16 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	saved.AgentToken = agentToken
 	t.clock.mark("gate")
 	extras = append(extras, c.projectMemory(ctx, req.ConversationID, req)...)
-	capabilities, err := c.assemble(selected, req, extras)
+	var capabilities capability.Capabilities
+	if saved.PluginRuntime != nil {
+		mode := home.ModeNone
+		if c.home != nil {
+			mode = injectionMode(req.ChatType, req.SenderOpenID, c.ownerOpenID)
+		}
+		capabilities, err = c.assembler.AssembleExtraPinned(selected, mode, extras, saved.PluginSkillsFingerprint)
+	} else {
+		capabilities, err = c.assemble(selected, req, extras)
+	}
 	if err != nil {
 		return err
 	}

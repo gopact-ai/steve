@@ -297,7 +297,7 @@ func (c *Coordinator) relocationSessionState(ctx context.Context, req Request, r
 			return state.Session{}, err
 		}
 	}
-	session := state.Session{ConversationID: req.ConversationID, AgentID: r.Agent, HarnessID: r.Harness, NodeID: r.Node, UpstreamID: r.Session, Workspace: r.Workspace.Path, ProjectID: r.Project, ProjectVersion: binding.Version, CapabilityHash: frozen.Fingerprint, SessionConfigHash: frozen.SessionConfigHash, AgentToken: frozen.AgentToken, Tainted: true}
+	session := state.Session{PluginRuntime: r.PluginRuntime.Clone(), ConversationID: req.ConversationID, AgentID: r.Agent, HarnessID: r.Harness, NodeID: r.Node, UpstreamID: r.Session, Workspace: r.Workspace.Path, ProjectID: r.Project, ProjectVersion: binding.Version, CapabilityHash: frozen.Fingerprint, SessionConfigHash: frozen.SessionConfigHash, AgentToken: frozen.AgentToken, Tainted: true}
 	if err := c.store.SaveSession(session); err != nil {
 		return state.Session{}, err
 	}
