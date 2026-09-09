@@ -286,9 +286,9 @@ func (s *Service) Hold(ctx context.Context, region, key, holder string) (func(),
 		}
 		return nil, err
 	}
-	// Letting go is best effort: a lease that cannot be released falls to
-	// its TTL, and the holder has nothing further to do with it.
-	return func() { _ = s.l.ReleaseAny(context.Background(), lease) }, nil
+	// Letting go is best effort: the holder has nothing further to do with
+	// a lease that cannot be released, which falls to its TTL.
+	return func() { s.release(context.Background(), lease) }, nil
 }
 
 // Open takes every lease the attempt needs and records it leased. It is
@@ -489,7 +489,17 @@ func (s *Service) releaseAll(parent context.Context, leases []ledger.Lease) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(parent), releaseTimeout)
 	defer cancel()
 	for _, lease := range leases {
-		_ = s.l.ReleaseAny(ctx, lease) // falls to its TTL, see above
+		s.release(ctx, lease)
+	}
+}
+
+// release gives one lease back. The caller is done with the resource
+// either way, so a refusal is not returned; it is logged, because the
+// lease then falls to its TTL and whoever waits on the resource waits
+// that long.
+func (s *Service) release(ctx context.Context, lease ledger.Lease) {
+	if err := s.l.ReleaseAny(ctx, lease); err != nil {
+		slog.Warn(fmt.Sprintf("attempt: release %s held by %s: %v", lease.Key, lease.Holder, err), "resource", lease.Key, "holder", lease.Holder)
 	}
 }
 
@@ -783,9 +793,7 @@ func (s *Service) Sweep(ctx context.Context) ([]Record, error) {
 		if err := s.expireSettled(ctx, r, "sweeper", "lease expired after confirmed settlement"); err != nil {
 			continue // it moved on its own between the list and now
 		}
-		// The attempt is expired; whatever it still held falls to its
-		// TTL if the invalidation fails.
-		_, _ = s.l.InvalidateHeldBy(ctx, r.ID)
+		s.invalidateHeld(ctx, r)
 		r.State = Expired
 		expired = append(expired, r)
 	}
@@ -809,13 +817,22 @@ func (s *Service) ExpireAll(ctx context.Context, cause string) ([]Record, error)
 		if err := s.expire(ctx, r, "restart", cause); err != nil {
 			continue
 		}
-		// As in Sweep: leases left behind fall to their TTL.
-		_, _ = s.l.InvalidateHeldBy(ctx, r.ID)
+		s.invalidateHeld(ctx, r)
 		r.State = Expired
 		r.Error = cause
 		expired = append(expired, r)
 	}
 	return expired, nil
+}
+
+// invalidateHeld takes back whatever an attempt just expired still holds.
+// The expiry is already recorded; a resource the invalidation could not
+// reach falls to its TTL, and is logged so a project or slot that stays
+// busy has an explanation.
+func (s *Service) invalidateHeld(ctx context.Context, r Record) {
+	if _, err := s.l.InvalidateHeldBy(ctx, r.ID); err != nil {
+		slog.Warn(fmt.Sprintf("attempt: invalidate leases held by %s: %v", r.ID, err), "attempt", r.ID, "task", r.TaskID, "node", r.Node)
+	}
 }
 
 // expire is the unfenced edge into expired: the attempt's leases are, by
@@ -1044,9 +1061,13 @@ func (s *Service) ReleaseReservation(ctx context.Context, id string) error {
 	if err != nil || !ok {
 		return err
 	}
-	// A reservation already taken over has a stale lease here; either way
-	// the record goes and what remains falls to its TTL.
-	_ = s.l.ReleaseAny(ctx, r.Lease)
+	// The record goes either way. A reservation already taken over or
+	// expired has a stale lease that releases nothing, which is the
+	// expected end of one; any other refusal leaves the slot leased until
+	// its TTL runs out, and whoever waits on the endpoint waits that long.
+	if err := s.l.ReleaseAny(ctx, r.Lease); err != nil && !errors.Is(err, ledger.ErrStale) {
+		slog.Warn(fmt.Sprintf("attempt: release reservation %s slot %s: %v", id, r.Lease.Key, err), "reservation", id, "resource", r.Lease.Key)
+	}
 	return s.l.DeleteBinding(ctx, reservationKind, id)
 }
 
@@ -1076,9 +1097,12 @@ func (s *Service) takeReservation(ctx context.Context, spec Spec, held []ledger.
 		return held, fmt.Errorf("attempt: take reservation %s: %w", r.ID, err)
 	}
 	lease.Region = s.l.Region()
-	// The lease has moved to the attempt; a reservation record that
-	// survives can no longer be taken, since its lease is stale.
-	_ = s.l.DeleteBinding(ctx, reservationKind, r.ID)
+	// The lease has moved to the attempt, which is the open's result; a
+	// reservation record that survives can no longer be taken, since its
+	// lease is stale, so the record is only logged.
+	if err := s.l.DeleteBinding(ctx, reservationKind, r.ID); err != nil {
+		slog.Warn(fmt.Sprintf("attempt: delete taken reservation %s: %v", r.ID, err), "reservation", r.ID, "attempt", spec.ID, "task", spec.TaskID)
+	}
 	return append(held, lease), nil
 }
 
@@ -1113,10 +1137,15 @@ func (s *Service) ReserveForIn(ctx context.Context, region, key, node, harness s
 func (s *Service) ReleaseReservationFor(ctx context.Context, key string) {
 	var id string
 	if ok, err := s.l.GetBinding(ctx, reservationForKind, key, &id); err == nil && ok {
-		// Best effort by contract: the caller is giving the key up and a
-		// reservation that lingers expires with its lease.
-		_ = s.ReleaseReservation(ctx, id)
-		_ = s.l.DeleteBinding(ctx, reservationForKind, key)
+		// Best effort by contract: the caller is giving the key up, and a
+		// reservation that lingers holds its slot until its lease expires,
+		// which is worth a line in the log.
+		if err := s.ReleaseReservation(ctx, id); err != nil {
+			slog.Warn(fmt.Sprintf("attempt: release reservation %s for %s: %v", id, key, err), "reservation", id)
+		}
+		if err := s.l.DeleteBinding(ctx, reservationForKind, key); err != nil {
+			slog.Warn(fmt.Sprintf("attempt: forget reservation %s for %s: %v", id, key, err), "reservation", id)
+		}
 	}
 }
 

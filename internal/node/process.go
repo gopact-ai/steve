@@ -425,7 +425,9 @@ func (p *agentProcess) run(ctx context.Context) {
 		if err := p.journal.Finish(code); err != nil {
 			slog.Error(fmt.Sprintf("steve-node: stream %s: record exit: %v", p.id, err), "stream", p.id)
 		}
-		// The journal is finished; closing releases its files.
+		// The exit is recorded above. Close does the last sync, and a
+		// fault there is latched by the journal itself, which marks the
+		// stream unresumable.
 		_ = p.journal.Close()
 	}
 	if p.exitReady != nil {

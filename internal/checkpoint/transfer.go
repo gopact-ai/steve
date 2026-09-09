@@ -208,6 +208,9 @@ func (s *Store) fetchBlob(ctx context.Context, node string, scope Scope, ref Blo
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	reader, writer := io.Pipe()
+	// A pipe's CloseWithError always returns nil, and the first close wins:
+	// closing both ends on cancellation, on the sender's end and on the
+	// receiver's end only tells the other side why the stream stopped.
 	stop := context.AfterFunc(ctx, func() {
 		_ = reader.CloseWithError(ctx.Err())
 		_ = writer.CloseWithError(ctx.Err())

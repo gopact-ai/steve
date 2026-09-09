@@ -28,10 +28,20 @@ func AcquireLock(stateDir string) (func(), error) {
 		file.Close()
 		return nil, fmt.Errorf("another gateway already serves %s (lock %s is held)", stateDir, path)
 	}
+	// The pid is a courtesy to whoever finds the lock held; the flock is
+	// what excludes, so a failed write costs only that hint.
 	_ = file.Truncate(0)
 	_, _ = fmt.Fprintf(file, "%d\n", os.Getpid())
 	_ = file.Sync()
 	return func() {
+		// Release also runs mid-process — node adoption, project export and
+		// import, and a cluster peer each hold the lock for one bounded
+		// operation and expect the next AcquireLock over the same directory
+		// to succeed. Both errors are still dropped, and release keeps its
+		// bare func() shape, because neither can leave the directory locked:
+		// the flock lives on this open file description, which the kernel
+		// drops with the descriptor whichever way close answers, so the
+		// unlock only surrenders it a moment earlier.
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		_ = file.Close()
 	}, nil

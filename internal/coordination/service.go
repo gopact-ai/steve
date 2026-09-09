@@ -190,7 +190,10 @@ func checkIdentity(c Config) error {
 	if !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	contents, _ = json.Marshal(want)
+	contents, err = json.Marshal(want)
+	if err != nil {
+		return fmt.Errorf("encode node identity: %w", err)
+	}
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
 		return fmt.Errorf("create node identity: %w", err)
@@ -302,7 +305,14 @@ func (s *Service) barrier(ctx context.Context) error {
 	return s.wait(ctx, s.raft.Barrier(s.config.ApplyTimeout))
 }
 
+// fingerprint identifies a command's input so a reused command ID with
+// different input is refused rather than answered from the receipt.
 func fingerprint(kind string, input any) string {
+	// Every input is one of the plain request structs above: strings,
+	// integers, booleans and byte slices, which Marshal cannot fail on.
+	// Ignoring the error keeps the function total; were it ever wrong, the
+	// fingerprint would collapse to the kind alone and duplicate detection
+	// would degrade to the ID only, not corrupt state.
 	encoded, _ := json.Marshal(input)
 	sum := sha256.Sum256(append([]byte(kind+":"), encoded...))
 	return hex.EncodeToString(sum[:])

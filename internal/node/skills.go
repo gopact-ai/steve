@@ -73,9 +73,15 @@ func (s *Server) applySkills(stream *nodewire.Stream) {
 	}
 	dir := filepath.Join(s.SkillsDir(), hash)
 	staging := dir + ".staging"
-	// Leftovers of an earlier attempt are cleared best-effort: whatever
-	// survives makes the unpack below fail with the real reason.
-	_ = os.RemoveAll(staging)
+	// Leftovers of an earlier attempt have to go before the unpack: it
+	// writes its own entries into whatever is there and reports nothing
+	// about the rest, so a survivor would be promoted to this hash and
+	// linked into every harness home while the manifest names only the
+	// bundle's own skills.
+	if err := os.RemoveAll(staging); err != nil {
+		fail("1", fmt.Errorf("clear staging: %w", err))
+		return
+	}
 	entries, err := skills.Unpack(data, staging)
 	if err != nil {
 		// Cleanup after a failed unpack; the unpack error is the answer.
@@ -104,12 +110,17 @@ func (s *Server) applySkills(stream *nodewire.Stream) {
 		fail("1", err)
 		return
 	}
-	// The bundle is unpacked and current; the tarball and the bundles it
-	// replaces are only disk now, and the next apply clears what stays.
-	_ = os.Remove(blob)
+	// The bundle is unpacked and current, so the tarball and the bundles
+	// it replaces are only disk now. Nothing else clears the tarball, so
+	// a failure here is the only notice of it.
+	if err := os.Remove(blob); err != nil {
+		slog.Warn(fmt.Sprintf("steve-node: skills %s: remove bundle blob: %v", hash[:12], err), "skills", hash)
+	}
 	if old, err := os.ReadDir(s.SkillsDir()); err == nil {
 		for _, e := range old {
 			if e.IsDir() && e.Name() != hash {
+				// A bundle that will not go is retried by the next apply,
+				// which removes every directory but its own.
 				_ = os.RemoveAll(filepath.Join(s.SkillsDir(), e.Name()))
 			}
 		}

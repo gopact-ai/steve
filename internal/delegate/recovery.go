@@ -5,7 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
+	"slices"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -18,6 +19,7 @@ import (
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/text"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -214,7 +216,7 @@ func (s *Service) deliverRecovered(ctx context.Context, parent, tracked task.Tas
 			return true
 		}
 		s.clearRecovery(record.ID)
-		if record.Result.Artifact != "" && hasArtifactRef(result.Refs, record.Result.Artifact) {
+		if record.Result.Artifact != "" && slices.Contains(result.Refs, "artifact "+record.Result.Artifact) {
 			if err := s.artifacts.Defer(ctx, record.Project, record.Result.Artifact, "task #"+tracked.ID, artifact.SourceOf(ctx, record.ID)...); err != nil {
 				pending("landing", "恢复已提交产物的落地记录", "子任务的回复已保存，但产物落地尚未恢复。", "项目可能暂时不可用，不能声称文件已经落地。", "建议恢复项目连接后重新检查。", err)
 				return true
@@ -231,6 +233,10 @@ func (s *Service) deliverRecovered(ctx context.Context, parent, tracked task.Tas
 				return true
 			}
 		}
+		// The failure is settled from the record, like a bound result:
+		// a question raised while the node was unreachable is answered by
+		// it and must not stay open over a child that is over.
+		s.clearRecovery(record.ID)
 		s.completeChild(ctx, parent.Channel, parent, tracked, tracked.Goal, entry, result, errors.New(record.Error), view.Progress{})
 		return true
 	}
@@ -330,7 +336,7 @@ func (s *Service) settleRecovered(ctx context.Context, parent, tracked task.Task
 		return
 	}
 	if run.CleanupErr != nil {
-		log.Printf("delegate: retained session cleanup task=%s attempt=%s error=%v", tracked.ID, record.ID, run.CleanupErr)
+		slog.Error(fmt.Sprintf("delegate: retained session cleanup task=%s attempt=%s error=%v", tracked.ID, record.ID, run.CleanupErr), "parent", parent.ID, "node", record.Node)
 	}
 	s.completeChild(ctx, parent.Channel, parent, tracked, tracked.Goal, entry, result, runErr, run.Last)
 }
@@ -349,14 +355,6 @@ func (s *Service) finishFromRecord(record attempt.Record, outcome task.Outcome) 
 		}
 	}
 	return errors.New("retained delegate receipt has no exact task accounting row")
-}
-func hasArtifactRef(refs []string, id string) bool {
-	for _, ref := range refs {
-		if ref == "artifact "+id {
-			return true
-		}
-	}
-	return false
 }
 
 func (s *Service) clearRecovery(id string) {
@@ -386,11 +384,13 @@ func (s *Service) reportRecovery(ctx context.Context, binding QuestionBinding, c
 	s.recoveryQuestions[binding.Attempt] = notice
 	handler := s.recoveryQuestion
 	s.mu.Unlock()
-	log.Printf("delegate: recovery pending task=%s attempt=%s node=%s reason=%s", binding.Task, binding.Attempt, binding.Node, code)
+	slog.Warn(fmt.Sprintf("delegate: recovery pending task=%s attempt=%s node=%s reason=%s", binding.Task, binding.Attempt, binding.Node, code),
+		"parent", binding.ParentTask, "conversation", binding.Conversation)
 	diagnostic := fmt.Sprintf("已尝试：%s。\n\n%s\n\n%s\n\n%s", attempted, problem, reason, recommendation)
 	if current, err := s.attempts.Get(ctx, binding.Attempt); err == nil && !current.State.Terminal() {
 		if err := s.attempts.MarkUnsettled(ctx, binding.Attempt, "delegate-recovery", errors.New(diagnostic), nil); err != nil {
-			log.Printf("delegate: recovery diagnostic not committed task=%s attempt=%s reason=%s", binding.Task, binding.Attempt, code)
+			slog.Error(fmt.Sprintf("delegate: recovery diagnostic not committed task=%s attempt=%s reason=%s", binding.Task, binding.Attempt, code),
+				"parent", binding.ParentTask, "conversation", binding.Conversation, "node", binding.Node, "error", err)
 		}
 	}
 	if handler == nil {
@@ -414,7 +414,12 @@ func (s *Service) reportRecovery(ctx context.Context, binding QuestionBinding, c
 				delete(s.recoveryQuestions, binding.Attempt)
 			}
 			s.mu.Unlock()
-			_ = s.RecoverRetained(questionCtx)
+			// The answer asked for another pass; nobody is waiting on
+			// its outcome, and a pass that fails as a whole is a ledger
+			// or shutdown problem, not this child's.
+			if err := s.RecoverRetained(questionCtx); err != nil {
+				slog.Warn(fmt.Sprintf("delegate: recovery pass after answer: %v", err), "task", binding.Task, "parent", binding.ParentTask, "attempt", binding.Attempt, "conversation", binding.Conversation, "node", binding.Node, "reason", code)
+			}
 		}
 	}()
 }
@@ -431,7 +436,7 @@ func (s *Service) detachChild(spawned task.Task, entry *child, detached *executi
 	}
 	s.mu.Unlock()
 	close(entry.done)
-	log.Printf("delegate: retained observer detached task=%s attempt=%s node=%s", spawned.ID, detached.AttemptID, detached.NodeID)
+	slog.Info(fmt.Sprintf("delegate: retained observer detached task=%s attempt=%s node=%s", spawned.ID, detached.AttemptID, detached.NodeID), "session", detached.SessionID)
 }
 
 // retainedFailure is a node-owned execution's answer kept with its
@@ -446,7 +451,7 @@ func retainedFailure(record attempt.Record, answer string, cause error) (*attemp
 	if err != nil {
 		return nil, err
 	}
-	return &attempt.Result{Summary: clipRunes(result.Answer, 200), Output: output}, nil
+	return &attempt.Result{Summary: text.Clip(result.Answer, 200), Output: output}, nil
 }
 
 func (s *Service) failRetainedResult(ctx context.Context, record attempt.Record, result agentmcp.DelegateResult, cause error, usage *attempt.Usage) (attempt.Record, error) {
@@ -466,13 +471,19 @@ func (s *Service) canSettleStopped(ctx context.Context, cause error) bool {
 	return token != nil && acphost.PromptSettled(cause) && errors.Is(s.tasks.CheckExecution(*token), task.ErrExecutionStopped)
 }
 
+// executionBinder is a gate that can bind a recovered child's tool
+// authorization to the task epoch, attempt and node session it already
+// runs under, so the child keeps its token instead of being minted a
+// new one. A gate without it cannot recover a retained child.
+type executionBinder interface {
+	BindExecution(context.Context, agentmcp.Binding, agentmcp.GrantScope) error
+}
+
 func (s *Service) bindDelegatedExecution(ctx context.Context, parent, child task.Task, record attempt.Record) error {
 	if s.gate == nil {
 		return nil
 	}
-	binder, ok := s.gate.(interface {
-		BindExecution(context.Context, agentmcp.Binding, agentmcp.GrantScope) error
-	})
+	binder, ok := s.gate.(executionBinder)
 	if !ok || record.Execution == nil {
 		return errors.New("delegated tool execution binding is unavailable")
 	}

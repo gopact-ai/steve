@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -192,9 +192,11 @@ func (r *stepRun) run(ctx context.Context, spec attempt.Spec, supersede string) 
 		// Every slot is taken: wait for one rather than fail the step. The
 		// plan's own deadline bounds the wait.
 		r.waited = &full
-		log.Printf("exec: step %s waits for a slot on %s", r.step.ID, full.Endpoint)
+		slog.Info(fmt.Sprintf("exec: step %s waits for a slot on %s", r.step.ID, full.Endpoint), "plan", r.p.ID, "step", r.step.ID, "attempt", spec.ID, "task", r.p.TaskID, "node", r.candidate.Node)
 	}
-	o.Lost = func() { log.Printf("exec: attempt %s lost its lease; cancelling step %s", spec.ID, r.step.ID) }
+	o.Lost = func() {
+		slog.Warn(fmt.Sprintf("exec: attempt %s lost its lease; cancelling step %s", spec.ID, r.step.ID), "attempt", spec.ID, "plan", r.p.ID, "step", r.step.ID, "task", r.p.TaskID, "node", r.candidate.Node)
+	}
 	// Placement was a decision on a snapshot; admission is the machine's
 	// word on what it has now. A refusal fails this attempt and sends the
 	// step back to placement, which will not pick the same agent first.
@@ -643,7 +645,7 @@ func (r *stepRun) settle(run lifecycle.Result, err error) (plan.StepResult, erro
 		if err == nil {
 			// The result is committed, and delivered; what the node keeps is
 			// the node's until it is reachable again.
-			log.Printf("exec: step %s: attempt %s is bound, but its node session was not released: %v", r.step.ID, r.record.ID, run.CleanupErr)
+			slog.Warn(fmt.Sprintf("exec: step %s: attempt %s is bound, but its node session was not released: %v", r.step.ID, r.record.ID, run.CleanupErr), "attempt", r.record.ID, "plan", r.p.ID, "step", r.step.ID, "task", r.p.TaskID, "node", r.record.Node)
 			return r.result, nil, nil
 		}
 		// A failed step's session is closed again when the step is restored.

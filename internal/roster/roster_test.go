@@ -1,8 +1,10 @@
 package roster
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"sync"
 	"testing"
@@ -427,4 +429,33 @@ func TestAllIsSafeUnderConcurrentReaders(t *testing.T) {
 		}()
 	}
 	wg.Wait()
+}
+
+// Building the roster is silent for an ordinary fleet. Harnesses report
+// their models by display name, spaces and all, so the snapshot copy the
+// roster assembles never satisfies the capability ID grammar; complaining
+// about that on the path every /state request walks would log forever
+// about something no operator can change.
+func TestRosterBuildLogsNothingForDisplayNameModels(t *testing.T) {
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	defer slog.SetDefault(previous)
+
+	catalog := mustCatalog(t, map[string]agent.Config{
+		"claude":  {Harness: "claude", Default: true},
+		"builder": {Harness: "codex", Node: "node-a"},
+	})
+	r := New(catalog)
+	r.SetNodes(fakeNodes{statuses: []node.Status{up("node-a", nil, nodewire.Harness{ID: "codex", Command: "codex"})}})
+	r.SetModels(fakeBook{
+		"/claude":      {Current: "Claude Opus 4.5", Available: []string{"Claude Opus 4.5"}, Version: "claude-code 2.0"},
+		"node-a/codex": {Current: "GPT 5", Available: []string{"GPT 5", "GPT 5 mini"}, Version: "codex 0.5"},
+	})
+	if got := r.All(t.Context()); len(got) != 2 {
+		t.Fatalf("candidates = %d, want 2", len(got))
+	}
+	if logged.Len() != 0 {
+		t.Fatalf("roster build logged:\n%s", logged.String())
+	}
 }

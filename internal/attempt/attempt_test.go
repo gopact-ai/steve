@@ -1,13 +1,16 @@
 package attempt
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/logs"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -463,5 +466,64 @@ func TestExpireAllFreesWhatTheDeadProcessHeld(t *testing.T) {
 	}
 	if got, _ := s.Get(ctx, held.ID); got.State != Expired || got.Error != "hub restarted" {
 		t.Fatalf("old attempt = %+v", got)
+	}
+}
+
+// unreachableOnRelease is a region's hub that answers the acquire and is then
+// out of reach: its release fails for a reason other than a takeover.
+type unreachableOnRelease struct{ *ledger.Ledger }
+
+func (unreachableOnRelease) Release(context.Context, ledger.Lease) error {
+	return errors.New("dial tcp: connection refused")
+}
+
+func TestReleasingAReservationReportsTheSlotItLeavesHeld(t *testing.T) {
+	s, c := newService(t)
+	west, err := ledger.Open(t.TempDir(), ledger.Options{Now: c.now})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer west.Close()
+	west.SetRegion("west")
+	s.l.SetRegion("east")
+	s.l.RegisterIssuer("west", unreachableOnRelease{west})
+	ctx := context.Background()
+	r, err := s.ReserveIn(ctx, "west", "resv-1", "node-w", "codex", 1, "plan 1/build", "supervisor", time.Minute)
+	if err != nil {
+		t.Fatalf("reserve = %v", err)
+	}
+
+	var out bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(logs.NewHandler(&out)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	if err := s.ReleaseReservation(ctx, r.ID); err != nil {
+		t.Fatalf("release reservation = %v", err)
+	}
+	// The record is gone, but the slot stays leased until its TTL runs out
+	// and whoever waits on the endpoint waits that long.
+	var full NoSlot
+	if _, err := s.ReserveIn(ctx, "west", "resv-2", "node-w", "codex", 1, "plan 1/other", "supervisor", time.Minute); !errors.As(err, &full) {
+		t.Fatalf("reserve after the failed release = %v", err)
+	}
+	line := out.String()
+	if !strings.Contains(line, "endpoint:node-w/codex:slot:1") || !strings.Contains(line, "connection refused") || !strings.Contains(line, "level=WARN") {
+		t.Fatalf("release failure was not reported: %q", line)
+	}
+
+	// A reservation whose lease has expired or been taken over releases
+	// nothing by design, which is no news for the log.
+	out.Reset()
+	local, err := s.Reserve(ctx, "resv-3", "node-a", "codex", 1, "plan 1/late", "supervisor", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c.t = c.t.Add(2 * time.Minute)
+	if err := s.ReleaseReservation(ctx, local.ID); err != nil {
+		t.Fatalf("release an expired reservation = %v", err)
+	}
+	if out.Len() != 0 {
+		t.Fatalf("a stale reservation lease was reported: %q", out.String())
 	}
 }

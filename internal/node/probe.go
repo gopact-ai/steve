@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/text"
 )
 
 // LaunchResult is what starting a binary once told us: whether it ran at
@@ -204,14 +205,7 @@ func versionIn(out string) *ability.Version {
 }
 
 func firstLine(s string) string {
-	s = strings.TrimSpace(s)
-	if i := strings.IndexByte(s, '\n'); i >= 0 {
-		s = s[:i]
-	}
-	if len(s) > 160 {
-		s = s[:160] + "…"
-	}
-	return s
+	return text.Clip(text.FirstLine(strings.TrimSpace(s)), 160)
 }
 
 // limitedBuffer keeps the first few KB of a chatty --version and drops the

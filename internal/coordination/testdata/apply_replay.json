@@ -1,0 +1,4933 @@
+{
+  "steps": [
+    {
+      "index": 1,
+      "command": {
+        "kind": "initialize",
+        "id": "init-before-voters",
+        "fingerprint": "06ca03c40bd797b86ee0bec0ed2fe84e266a4d85f09bcedbbaa056ac620af5ee",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n1",
+          "address": "10.0.0.1:1",
+          "api_address": "10.0.0.1:2",
+          "name": "one",
+          "auto_eligible": false,
+          "failure_domain": "rack-1",
+          "storage_level": "restricted"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "06ca03c40bd797b86ee0bec0ed2fe84e266a4d85f09bcedbbaa056ac620af5ee",
+        "result": {
+          "revision": 0,
+          "index": 1,
+          "coordinator": {
+            "node_id": "",
+            "epoch": 0
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "invalid",
+        "message": "initial node is not a voter"
+      }
+    },
+    {
+      "index": 3,
+      "command": {
+        "kind": "initialize",
+        "id": "init",
+        "fingerprint": "3347857e50fde9bbe0a0678837176f74189d61007a190539feea64338586b0e8",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n1",
+          "address": "10.0.0.1:1",
+          "api_address": "10.0.0.1:2",
+          "name": "one",
+          "auto_eligible": false,
+          "failure_domain": "rack-1",
+          "storage_level": "restricted"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "3347857e50fde9bbe0a0678837176f74189d61007a190539feea64338586b0e8",
+        "result": {
+          "revision": 2,
+          "index": 3,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        }
+      }
+    },
+    {
+      "index": 4,
+      "command": {
+        "kind": "initialize",
+        "id": "init-again",
+        "fingerprint": "11b688cec8645fbc9f361bc164bc9b40b8c0a706b5b55043c4874565eed204d0",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n1",
+          "address": "10.0.0.1:1",
+          "api_address": "10.0.0.1:2",
+          "name": "one",
+          "auto_eligible": false,
+          "failure_domain": "rack-1",
+          "storage_level": "restricted"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "11b688cec8645fbc9f361bc164bc9b40b8c0a706b5b55043c4874565eed204d0",
+        "result": {
+          "revision": 2,
+          "index": 4,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "conflict",
+        "message": "cluster is already initialized"
+      }
+    },
+    {
+      "index": 5,
+      "command": {
+        "kind": "join_prepare",
+        "id": "prepare-n2-public",
+        "fingerprint": "f73561a892348bd06e53fa782bf67e15982876085913a7f2fe25eb897a866520",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n2",
+          "address": "10.0.0.2:1",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": "public"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "f73561a892348bd06e53fa782bf67e15982876085913a7f2fe25eb897a866520",
+        "result": {
+          "revision": 2,
+          "index": 5,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "invalid",
+        "message": "full ledger replica requires restricted storage authorization"
+      }
+    },
+    {
+      "index": 6,
+      "command": {
+        "kind": "join_prepare",
+        "id": "prepare-n2",
+        "fingerprint": "32b8b70f6b10beaa7032a70f73b24ec18806e377fa50e6f06bb235fcabc87f05",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n2",
+          "address": "10.0.0.2:1",
+          "api_address": "10.0.0.2:2",
+          "name": "two",
+          "auto_eligible": false,
+          "failure_domain": "rack-2",
+          "storage_level": "restricted"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "32b8b70f6b10beaa7032a70f73b24ec18806e377fa50e6f06bb235fcabc87f05",
+        "result": {
+          "revision": 3,
+          "index": 6,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        }
+      }
+    },
+    {
+      "index": 7,
+      "command": {
+        "kind": "join_prepare",
+        "id": "prepare-n2-repeat",
+        "fingerprint": "5ec43c9e72e59f2e0ecd341c094ecd1652a360c5d15fdc9c1be12cccff6e0b91",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n2",
+          "address": "10.0.0.2:1",
+          "api_address": "10.0.0.2:2",
+          "name": "two",
+          "auto_eligible": false,
+          "failure_domain": "rack-2",
+          "storage_level": "restricted"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "5ec43c9e72e59f2e0ecd341c094ecd1652a360c5d15fdc9c1be12cccff6e0b91",
+        "result": {
+          "revision": 4,
+          "index": 7,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        }
+      }
+    },
+    {
+      "index": 8,
+      "command": {
+        "kind": "join_prepare",
+        "id": "prepare-n2-differs",
+        "fingerprint": "41fadd0edd80bc7f85b0ab31be3642191106870876bdc745882974aa55ec72e9",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n2",
+          "address": "10.0.0.9:1",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": "restricted"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "41fadd0edd80bc7f85b0ab31be3642191106870876bdc745882974aa55ec72e9",
+        "result": {
+          "revision": 4,
+          "index": 8,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "conflict",
+        "message": "member already exists with different properties"
+      }
+    },
+    {
+      "index": 9,
+      "command": {
+        "kind": "join_prepare",
+        "id": "prepare-address-taken",
+        "fingerprint": "b760f67f1c8190614b9df8e6496c6d3068451520e30475638a2ad3866b38e636",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n9",
+          "address": "10.0.0.2:1",
+          "auto_eligible": false,
+          "failure_domain": "rack-9",
+          "storage_level": "restricted"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "b760f67f1c8190614b9df8e6496c6d3068451520e30475638a2ad3866b38e636",
+        "result": {
+          "revision": 4,
+          "index": 9,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "conflict",
+        "message": "address already belongs to another node"
+      }
+    },
+    {
+      "index": 10,
+      "command": {
+        "kind": "join_prepare",
+        "id": "prepare-domain-taken",
+        "fingerprint": "5410f33ce3da50e238a1844d39e1e0ca51366457ff8f3d6ca5cf0d7c3721d7f0",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n9",
+          "address": "10.0.0.9:1",
+          "auto_eligible": false,
+          "failure_domain": "rack-2",
+          "storage_level": "restricted"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "5410f33ce3da50e238a1844d39e1e0ca51366457ff8f3d6ca5cf0d7c3721d7f0",
+        "result": {
+          "revision": 4,
+          "index": 10,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "invalid",
+        "message": "another member already occupies this physical failure domain"
+      }
+    },
+    {
+      "index": 11,
+      "command": {
+        "kind": "join",
+        "id": "join-n2-early",
+        "fingerprint": "710883720e7c83105e6648fcf6d2c7a4953731f4fd384491561f4ca857cd63b7",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n2",
+          "address": "10.0.0.2:1",
+          "api_address": "10.0.0.2:2",
+          "name": "two",
+          "auto_eligible": false,
+          "failure_domain": "rack-2",
+          "storage_level": "restricted"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "710883720e7c83105e6648fcf6d2c7a4953731f4fd384491561f4ca857cd63b7",
+        "result": {
+          "revision": 4,
+          "index": 11,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "conflict",
+        "message": "member has not joined the voting configuration"
+      }
+    },
+    {
+      "index": 13,
+      "command": {
+        "kind": "join",
+        "id": "join-n2",
+        "fingerprint": "6a4c328a9d89e7246a6d12d7511da9aa60dc49a63a58284ddde99ea35382940b",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n2",
+          "address": "10.0.0.2:1",
+          "api_address": "10.0.0.2:2",
+          "name": "two",
+          "auto_eligible": false,
+          "failure_domain": "rack-2",
+          "storage_level": "restricted"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "6a4c328a9d89e7246a6d12d7511da9aa60dc49a63a58284ddde99ea35382940b",
+        "result": {
+          "revision": 6,
+          "index": 13,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        }
+      }
+    },
+    {
+      "index": 14,
+      "command": {
+        "kind": "join_prepare",
+        "id": "prepare-n3",
+        "fingerprint": "86413fcc28ae3e3df96b6d2a75d5cecf3a89dc3d6a2540fa2e5fcbddd2a04240",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n3",
+          "address": "10.0.0.3:1",
+          "api_address": "10.0.0.3:2",
+          "name": "three",
+          "auto_eligible": false,
+          "failure_domain": "rack-3",
+          "storage_level": "sealed"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "86413fcc28ae3e3df96b6d2a75d5cecf3a89dc3d6a2540fa2e5fcbddd2a04240",
+        "result": {
+          "revision": 7,
+          "index": 14,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        }
+      }
+    },
+    {
+      "index": 16,
+      "command": {
+        "kind": "join",
+        "id": "join-n3",
+        "fingerprint": "dad7efdc952fa6408948ff5bf4054b6ce9d4037eedf90c792b27b38e10ed42f3",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n3",
+          "address": "10.0.0.3:1",
+          "api_address": "10.0.0.3:2",
+          "name": "three",
+          "auto_eligible": false,
+          "failure_domain": "rack-3",
+          "storage_level": "sealed"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "dad7efdc952fa6408948ff5bf4054b6ce9d4037eedf90c792b27b38e10ed42f3",
+        "result": {
+          "revision": 9,
+          "index": 16,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        }
+      }
+    },
+    {
+      "index": 17,
+      "command": {
+        "kind": "policy",
+        "id": "policy-stale",
+        "fingerprint": "c8d7e410b1609fdcc3340eba8d99f2073723b7444d1788cfdbd01eb52c90501f",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "policy-stale",
+          "actor": "",
+          "expected_revision": 1,
+          "enabled": true
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "c8d7e410b1609fdcc3340eba8d99f2073723b7444d1788cfdbd01eb52c90501f",
+        "result": {
+          "revision": 9,
+          "index": 17,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "conflict",
+        "message": "policy revision changed"
+      }
+    },
+    {
+      "index": 18,
+      "command": {
+        "kind": "policy",
+        "id": "policy-too-few",
+        "fingerprint": "9e9afcb7100d0d135a7b2236cbcf2308967247c5cc5a96bb80a78723ac237052",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "policy-too-few",
+          "actor": "",
+          "expected_revision": 9,
+          "enabled": true
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "9e9afcb7100d0d135a7b2236cbcf2308967247c5cc5a96bb80a78723ac237052",
+        "result": {
+          "revision": 9,
+          "index": 18,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "invalid",
+        "message": "automatic failover needs at least three voters and two eligible nodes"
+      }
+    },
+    {
+      "index": 19,
+      "command": {
+        "kind": "eligibility",
+        "id": "eligible-stale",
+        "fingerprint": "fe1cb02a3ad77665149d8374db2f3880baa417f214e5bf116b02f7df14941672",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "eligible-stale",
+          "actor": "",
+          "expected_revision": 1,
+          "node_id": "n2",
+          "eligible": true
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "fe1cb02a3ad77665149d8374db2f3880baa417f214e5bf116b02f7df14941672",
+        "result": {
+          "revision": 9,
+          "index": 19,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "conflict",
+        "message": "membership revision changed"
+      }
+    },
+    {
+      "index": 20,
+      "command": {
+        "kind": "eligibility",
+        "id": "eligible-stranger",
+        "fingerprint": "d77c561fa0befc27bc1018e94b98759d9854fbe483ce357f67849d1aea5d6ea4",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "eligible-stranger",
+          "actor": "",
+          "expected_revision": 9,
+          "node_id": "n9",
+          "eligible": true
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "d77c561fa0befc27bc1018e94b98759d9854fbe483ce357f67849d1aea5d6ea4",
+        "result": {
+          "revision": 9,
+          "index": 20,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "invalid",
+        "message": "node is not a voting member"
+      }
+    },
+    {
+      "index": 21,
+      "command": {
+        "kind": "eligibility",
+        "id": "eligible-n2",
+        "fingerprint": "7f9f8d0beb7f41db885038e3c0cb3f63797f892e0888dfb8b172843c847d75ea",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "eligible-n2",
+          "actor": "",
+          "expected_revision": 9,
+          "node_id": "n2",
+          "eligible": true
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "7f9f8d0beb7f41db885038e3c0cb3f63797f892e0888dfb8b172843c847d75ea",
+        "result": {
+          "revision": 10,
+          "index": 21,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        }
+      }
+    },
+    {
+      "index": 22,
+      "command": {
+        "kind": "eligibility",
+        "id": "eligible-n3",
+        "fingerprint": "df0d60d68fc9d204d9c40f2955c552715b7038fcdd5b733b1d22f0a6950bcc41",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "eligible-n3",
+          "actor": "",
+          "expected_revision": 10,
+          "node_id": "n3",
+          "eligible": true
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "df0d60d68fc9d204d9c40f2955c552715b7038fcdd5b733b1d22f0a6950bcc41",
+        "result": {
+          "revision": 11,
+          "index": 22,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        }
+      }
+    },
+    {
+      "index": 23,
+      "command": {
+        "kind": "policy",
+        "id": "policy-on",
+        "fingerprint": "ba1d8c43e4bffe1e5743fe8cc5eb78afb579d4ea5d8f7235b9e3f9639e86da00",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "policy-on",
+          "actor": "",
+          "expected_revision": 11,
+          "enabled": true
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "ba1d8c43e4bffe1e5743fe8cc5eb78afb579d4ea5d8f7235b9e3f9639e86da00",
+        "result": {
+          "revision": 12,
+          "index": 23,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        }
+      }
+    },
+    {
+      "index": 24,
+      "command": {
+        "kind": "eligibility",
+        "id": "eligible-n3-off",
+        "fingerprint": "9bc16554a43f43cb55a27fbed2f4e2312c84443d3901ae0c1d3d26358ad38ca4",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "eligible-n3-off",
+          "actor": "",
+          "expected_revision": 12,
+          "node_id": "n3",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "9bc16554a43f43cb55a27fbed2f4e2312c84443d3901ae0c1d3d26358ad38ca4",
+        "result": {
+          "revision": 13,
+          "index": 24,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        }
+      }
+    },
+    {
+      "index": 25,
+      "command": {
+        "kind": "policy",
+        "id": "policy-off",
+        "fingerprint": "535179e783b9cfcb52874a8e24d2d8414370613ee328eee71c26b26b68c4f5c6",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "policy-off",
+          "actor": "",
+          "expected_revision": 13,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "535179e783b9cfcb52874a8e24d2d8414370613ee328eee71c26b26b68c4f5c6",
+        "result": {
+          "revision": 14,
+          "index": 25,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        }
+      }
+    },
+    {
+      "index": 26,
+      "command": {
+        "kind": "writer",
+        "id": "writer-epoch",
+        "fingerprint": "c105d61c35d81019519cdc4984d36469c8f2d084ae69c6f699c4cbb7929f76b1",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "writer-epoch",
+          "caller_node_id": "n1",
+          "coordinator_epoch": 9,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "c105d61c35d81019519cdc4984d36469c8f2d084ae69c6f699c4cbb7929f76b1",
+        "result": {
+          "revision": 14,
+          "index": 26,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "epoch",
+        "message": "coordinator assignment changed"
+      }
+    },
+    {
+      "index": 27,
+      "command": {
+        "kind": "writer",
+        "id": "writer-caller",
+        "fingerprint": "3ee9ddd63ee3c6cbdeb6877b65671e9dca4f9b1c12c531a842f0380783215e78",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "writer-caller",
+          "caller_node_id": "n2",
+          "coordinator_epoch": 1,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "3ee9ddd63ee3c6cbdeb6877b65671e9dca4f9b1c12c531a842f0380783215e78",
+        "result": {
+          "revision": 14,
+          "index": 27,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "coordinator",
+        "message": "caller does not hold the coordinator role"
+      }
+    },
+    {
+      "index": 28,
+      "command": {
+        "kind": "writer",
+        "id": "writer-generation",
+        "fingerprint": "594882576eeadb0f9c9832838c28fd4f6dc007c463e27b1139e5902e8e534060",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "writer-generation",
+          "caller_node_id": "n1",
+          "coordinator_epoch": 1,
+          "expected_generation": 5
+        }
+      },
+      "receipt": {
+        "fingerprint": "594882576eeadb0f9c9832838c28fd4f6dc007c463e27b1139e5902e8e534060",
+        "result": {
+          "revision": 14,
+          "index": 28,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "conflict",
+        "message": "writer generation changed"
+      }
+    },
+    {
+      "index": 29,
+      "command": {
+        "kind": "writer",
+        "id": "writer",
+        "fingerprint": "5057269366a62e27be3d95edeb2a104002b7b260e74bfb366a1472c17fdbf75c",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "writer",
+          "caller_node_id": "n1",
+          "coordinator_epoch": 1,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "5057269366a62e27be3d95edeb2a104002b7b260e74bfb366a1472c17fdbf75c",
+        "result": {
+          "revision": 14,
+          "index": 29,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 1
+        }
+      }
+    },
+    {
+      "index": 30,
+      "command": {
+        "kind": "app",
+        "id": "app-epoch",
+        "fingerprint": "495c2bb7213b2b1d13aec17daf815c0b93da0d9853338da4ad707996ac6362ec",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "app-epoch",
+          "caller_node_id": "n1",
+          "coordinator_epoch": 9,
+          "expected_version": 0,
+          "writer_generation": 1,
+          "payload": "Mw=="
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "495c2bb7213b2b1d13aec17daf815c0b93da0d9853338da4ad707996ac6362ec",
+        "result": {
+          "revision": 14,
+          "index": 30,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 1
+        },
+        "code": "epoch",
+        "message": "coordinator assignment changed"
+      }
+    },
+    {
+      "index": 31,
+      "command": {
+        "kind": "app",
+        "id": "app-caller",
+        "fingerprint": "b9bdc430d2f6d263a00d6b08b88c97c95799948be1015a4c716c9cf61d5970ab",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "app-caller",
+          "caller_node_id": "n2",
+          "coordinator_epoch": 1,
+          "expected_version": 0,
+          "writer_generation": 1,
+          "payload": "Mw=="
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "b9bdc430d2f6d263a00d6b08b88c97c95799948be1015a4c716c9cf61d5970ab",
+        "result": {
+          "revision": 14,
+          "index": 31,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 1
+        },
+        "code": "coordinator",
+        "message": "caller does not hold the coordinator role"
+      }
+    },
+    {
+      "index": 32,
+      "command": {
+        "kind": "app",
+        "id": "app-writer",
+        "fingerprint": "47885aeeb097901ee6193188e4b6e1a542c5f37fa10ff858eb68f40ad1e7e2f9",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "app-writer",
+          "caller_node_id": "n1",
+          "coordinator_epoch": 1,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": "Mw=="
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "47885aeeb097901ee6193188e4b6e1a542c5f37fa10ff858eb68f40ad1e7e2f9",
+        "result": {
+          "revision": 14,
+          "index": 32,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 1
+        },
+        "code": "writer",
+        "message": "writer generation changed"
+      }
+    },
+    {
+      "index": 33,
+      "command": {
+        "kind": "app",
+        "id": "app-version",
+        "fingerprint": "cc1770c52d4b1da91defb78d3107a6af015cb41bbe4535577985b9b8f081f5f2",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "app-version",
+          "caller_node_id": "n1",
+          "coordinator_epoch": 1,
+          "expected_version": 4,
+          "writer_generation": 1,
+          "payload": "Mw=="
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "cc1770c52d4b1da91defb78d3107a6af015cb41bbe4535577985b9b8f081f5f2",
+        "result": {
+          "revision": 14,
+          "index": 33,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 0,
+          "writer_generation": 1
+        },
+        "code": "conflict",
+        "message": "application version changed"
+      }
+    },
+    {
+      "index": 34,
+      "command": {
+        "kind": "app",
+        "id": "app-1",
+        "fingerprint": "90703acfaeabc78fe763e7c7e03af2282db941999cbb8b784a252f33f1dd1f4f",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "app-1",
+          "caller_node_id": "n1",
+          "coordinator_epoch": 1,
+          "expected_version": 0,
+          "writer_generation": 1,
+          "payload": "Mw=="
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "90703acfaeabc78fe763e7c7e03af2282db941999cbb8b784a252f33f1dd1f4f",
+        "result": {
+          "revision": 14,
+          "index": 34,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 1,
+          "writer_generation": 1,
+          "data": "Mw=="
+        }
+      }
+    },
+    {
+      "index": 35,
+      "command": {
+        "kind": "app",
+        "id": "app-2",
+        "fingerprint": "b08a382b6ac066d831ad674ca5db580de7b772bd70e6eab29996346149b0c887",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "app-2",
+          "caller_node_id": "n1",
+          "coordinator_epoch": 1,
+          "expected_version": 1,
+          "writer_generation": 1,
+          "payload": "Mw=="
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "b08a382b6ac066d831ad674ca5db580de7b772bd70e6eab29996346149b0c887",
+        "result": {
+          "revision": 14,
+          "index": 35,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1,
+          "data": "Ng=="
+        }
+      }
+    },
+    {
+      "index": 36,
+      "command": {
+        "kind": "app",
+        "id": "app-1",
+        "fingerprint": "90703acfaeabc78fe763e7c7e03af2282db941999cbb8b784a252f33f1dd1f4f",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "app-1",
+          "caller_node_id": "n1",
+          "coordinator_epoch": 1,
+          "expected_version": 0,
+          "writer_generation": 1,
+          "payload": "Mw=="
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "90703acfaeabc78fe763e7c7e03af2282db941999cbb8b784a252f33f1dd1f4f",
+        "result": {
+          "revision": 14,
+          "index": 34,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 1,
+          "writer_generation": 1,
+          "data": "Mw=="
+        }
+      }
+    },
+    {
+      "index": 37,
+      "command": {
+        "kind": "app",
+        "id": "app-1",
+        "fingerprint": "other-input",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "app-1",
+          "caller_node_id": "n1",
+          "coordinator_epoch": 1,
+          "expected_version": 2,
+          "writer_generation": 1,
+          "payload": "Mw=="
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "",
+        "result": {
+          "revision": 0,
+          "index": 0,
+          "coordinator": {
+            "node_id": "",
+            "epoch": 0
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "command",
+        "message": "command ID belongs to different input"
+      }
+    },
+    {
+      "index": 38,
+      "command": {
+        "kind": "address_prepare",
+        "id": "addr-stale",
+        "fingerprint": "ae3239e2c48e133029ecb06c71c991b2f19491ebed741223a10ead6f139bc4b6",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "addr-stale",
+          "actor": "",
+          "expected_revision": 1,
+          "node_id": "n2",
+          "address": "10.0.0.22:1",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "ae3239e2c48e133029ecb06c71c991b2f19491ebed741223a10ead6f139bc4b6",
+        "result": {
+          "revision": 14,
+          "index": 38,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "conflict",
+        "message": "member address revision changed"
+      }
+    },
+    {
+      "index": 39,
+      "command": {
+        "kind": "address_prepare",
+        "id": "addr-stranger",
+        "fingerprint": "1242268836a21fa5ac1a702b35bf22f3c183b646b9b404cfc5b6f4f874226c12",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "addr-stranger",
+          "actor": "",
+          "expected_revision": 14,
+          "node_id": "n9",
+          "address": "10.0.0.22:1",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "1242268836a21fa5ac1a702b35bf22f3c183b646b9b404cfc5b6f4f874226c12",
+        "result": {
+          "revision": 14,
+          "index": 39,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "invalid",
+        "message": "address changes require an active voting member"
+      }
+    },
+    {
+      "index": 40,
+      "command": {
+        "kind": "address_prepare",
+        "id": "addr-taken",
+        "fingerprint": "bbb02ba6d2942647372e2467582c14297a91e41deaa87cbb6b30e0a2e026bbc9",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "addr-taken",
+          "actor": "",
+          "expected_revision": 14,
+          "node_id": "n2",
+          "address": "10.0.0.3:1",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "bbb02ba6d2942647372e2467582c14297a91e41deaa87cbb6b30e0a2e026bbc9",
+        "result": {
+          "revision": 14,
+          "index": 40,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "conflict",
+        "message": "address belongs to another member"
+      }
+    },
+    {
+      "index": 41,
+      "command": {
+        "kind": "address_prepare",
+        "id": "addr-1",
+        "fingerprint": "9f5e58ed074fc4f80d38be3a456b4864a0593fefeef9edb6021b862dd9879509",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "addr-1",
+          "actor": "",
+          "expected_revision": 14,
+          "node_id": "n2",
+          "address": "10.0.0.22:1",
+          "api_address": "10.0.0.22:2"
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "9f5e58ed074fc4f80d38be3a456b4864a0593fefeef9edb6021b862dd9879509",
+        "result": {
+          "revision": 15,
+          "index": 41,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        }
+      }
+    },
+    {
+      "index": 42,
+      "command": {
+        "kind": "address_prepare",
+        "id": "addr-2",
+        "fingerprint": "3dbe4f61d16487fd1d2b519c740258b1293f7159a8b25283774c16776d1a8b49",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "addr-2",
+          "actor": "",
+          "expected_revision": 15,
+          "node_id": "n2",
+          "address": "10.0.0.23:1",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "3dbe4f61d16487fd1d2b519c740258b1293f7159a8b25283774c16776d1a8b49",
+        "result": {
+          "revision": 15,
+          "index": 42,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "conflict",
+        "message": "another address update is pending"
+      }
+    },
+    {
+      "index": 43,
+      "command": {
+        "kind": "address",
+        "id": "addr-1-early",
+        "fingerprint": "b16ccd1d192628be8ca4d81c61c50fd922b0b78a0d72b16bea5f1799922f018c",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "addr-1",
+          "actor": "",
+          "expected_revision": 14,
+          "node_id": "n2",
+          "address": "10.0.0.22:1",
+          "api_address": "10.0.0.22:2"
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "b16ccd1d192628be8ca4d81c61c50fd922b0b78a0d72b16bea5f1799922f018c",
+        "result": {
+          "revision": 15,
+          "index": 43,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "conflict",
+        "message": "voting configuration has not adopted the new address"
+      }
+    },
+    {
+      "index": 44,
+      "command": {
+        "kind": "address",
+        "id": "addr-1-differs",
+        "fingerprint": "74b833458b92050b9e519c997b3179050c0ac931beb810df59f26d296d6a46c7",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "addr-1",
+          "actor": "",
+          "expected_revision": 15,
+          "node_id": "n2",
+          "address": "10.0.0.23:1",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "74b833458b92050b9e519c997b3179050c0ac931beb810df59f26d296d6a46c7",
+        "result": {
+          "revision": 15,
+          "index": 44,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "conflict",
+        "message": "address update preparation differs"
+      }
+    },
+    {
+      "index": 46,
+      "command": {
+        "kind": "address",
+        "id": "addr-1-commit",
+        "fingerprint": "8a9af908d4081a62a44c693556e9f87dd23049fb6a66080f6382850521fd95cc",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "addr-1",
+          "actor": "",
+          "expected_revision": 14,
+          "node_id": "n2",
+          "address": "10.0.0.22:1",
+          "api_address": "10.0.0.22:2"
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "8a9af908d4081a62a44c693556e9f87dd23049fb6a66080f6382850521fd95cc",
+        "result": {
+          "revision": 17,
+          "index": 46,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        }
+      }
+    },
+    {
+      "index": 47,
+      "command": {
+        "kind": "transfer",
+        "id": "transfer-epoch",
+        "fingerprint": "af5bf53fedb17370fe9484bbb0f50dde355469240342cab90cc0673ff43335dc",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "transfer-epoch",
+          "actor": "",
+          "expected_epoch": 9,
+          "target_node_id": "n2",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        },
+        "expected_app_version": 2,
+        "expected_configuration_index": 45
+      },
+      "receipt": {
+        "fingerprint": "af5bf53fedb17370fe9484bbb0f50dde355469240342cab90cc0673ff43335dc",
+        "result": {
+          "revision": 17,
+          "index": 47,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "epoch",
+        "message": "coordinator assignment changed"
+      }
+    },
+    {
+      "index": 48,
+      "command": {
+        "kind": "transfer",
+        "id": "transfer-version",
+        "fingerprint": "862fd0e7ad6ce7559fc30644686eb0e59998a27346b7754a564c963880a0c624",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "transfer-version",
+          "actor": "",
+          "expected_epoch": 1,
+          "target_node_id": "n2",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        },
+        "expected_app_version": 1,
+        "expected_configuration_index": 45
+      },
+      "receipt": {
+        "fingerprint": "862fd0e7ad6ce7559fc30644686eb0e59998a27346b7754a564c963880a0c624",
+        "result": {
+          "revision": 17,
+          "index": 48,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "conflict",
+        "message": "replicated state changed while preparing transfer"
+      }
+    },
+    {
+      "index": 49,
+      "command": {
+        "kind": "transfer",
+        "id": "transfer-stranger",
+        "fingerprint": "ae52a02ba555e3cf6b75e77305552cd97b7b75d41d59d62c3ff3669a5b66d018",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "transfer-stranger",
+          "actor": "",
+          "expected_epoch": 1,
+          "target_node_id": "n9",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        },
+        "expected_app_version": 2,
+        "expected_configuration_index": 45
+      },
+      "receipt": {
+        "fingerprint": "ae52a02ba555e3cf6b75e77305552cd97b7b75d41d59d62c3ff3669a5b66d018",
+        "result": {
+          "revision": 17,
+          "index": 49,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "invalid",
+        "message": "target is not a voting member"
+      }
+    },
+    {
+      "index": 50,
+      "command": {
+        "kind": "transfer",
+        "id": "transfer-automatic",
+        "fingerprint": "62c5b97dadac72e878869ed4380009c65d55555e0903fe0707454ae8f721b249",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "transfer-automatic",
+          "actor": "",
+          "expected_epoch": 1,
+          "target_node_id": "n2",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        },
+        "automatic": true,
+        "expected_app_version": 2,
+        "expected_configuration_index": 45
+      },
+      "receipt": {
+        "fingerprint": "62c5b97dadac72e878869ed4380009c65d55555e0903fe0707454ae8f721b249",
+        "result": {
+          "revision": 17,
+          "index": 50,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "invalid",
+        "message": "automatic transfer is not permitted"
+      }
+    },
+    {
+      "index": 51,
+      "command": {
+        "kind": "transfer",
+        "id": "transfer-self",
+        "fingerprint": "7f24014754bc40e32180fcc1b2b09e6d8232ee4cb64af6cb0a000627d003fc69",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "transfer-self",
+          "actor": "",
+          "expected_epoch": 1,
+          "target_node_id": "n1",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        },
+        "expected_app_version": 2,
+        "expected_configuration_index": 45
+      },
+      "receipt": {
+        "fingerprint": "7f24014754bc40e32180fcc1b2b09e6d8232ee4cb64af6cb0a000627d003fc69",
+        "result": {
+          "revision": 17,
+          "index": 51,
+          "coordinator": {
+            "node_id": "n1",
+            "epoch": 1
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "invalid",
+        "message": "target already coordinates this cluster"
+      }
+    },
+    {
+      "index": 52,
+      "command": {
+        "kind": "transfer",
+        "id": "transfer-n2",
+        "fingerprint": "2e0e5d501114909b54a05853310ed8e6ff077ec34ab8702bd134312ac14fdef0",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "transfer-n2",
+          "actor": "",
+          "expected_epoch": 1,
+          "target_node_id": "n2",
+          "reason": "maintenance"
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        },
+        "expected_app_version": 2,
+        "expected_configuration_index": 45
+      },
+      "receipt": {
+        "fingerprint": "2e0e5d501114909b54a05853310ed8e6ff077ec34ab8702bd134312ac14fdef0",
+        "result": {
+          "revision": 18,
+          "index": 52,
+          "coordinator": {
+            "node_id": "n2",
+            "epoch": 2
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        }
+      }
+    },
+    {
+      "index": 53,
+      "command": {
+        "kind": "writer",
+        "id": "writer-old-coordinator",
+        "fingerprint": "9c4d8b553f10001be0894ea16a023f01ca1f1b537d3736eabaa8553bd193a0a9",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "writer-old-coordinator",
+          "caller_node_id": "n1",
+          "coordinator_epoch": 2,
+          "expected_generation": 1
+        }
+      },
+      "receipt": {
+        "fingerprint": "9c4d8b553f10001be0894ea16a023f01ca1f1b537d3736eabaa8553bd193a0a9",
+        "result": {
+          "revision": 18,
+          "index": 53,
+          "coordinator": {
+            "node_id": "n2",
+            "epoch": 2
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "coordinator",
+        "message": "caller does not hold the coordinator role"
+      }
+    },
+    {
+      "index": 54,
+      "command": {
+        "kind": "remove_prepare",
+        "id": "remove-prepare-coordinator",
+        "fingerprint": "189a966842cfc8cf16eed487c77fcf0e7248c9fe22edd0d5bf46fa142aba7374",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "remove-prepare-coordinator",
+          "actor": "",
+          "node_id": "n2"
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "189a966842cfc8cf16eed487c77fcf0e7248c9fe22edd0d5bf46fa142aba7374",
+        "result": {
+          "revision": 18,
+          "index": 54,
+          "coordinator": {
+            "node_id": "n2",
+            "epoch": 2
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "conflict",
+        "message": "current coordinator cannot be removed"
+      }
+    },
+    {
+      "index": 55,
+      "command": {
+        "kind": "remove_prepare",
+        "id": "remove-prepare-stranger",
+        "fingerprint": "d2d829843c87cf70bb6c67ff5abe01f282720a6be77ca26af85765e1b0b85c68",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "remove-prepare-stranger",
+          "actor": "",
+          "node_id": "n9"
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "d2d829843c87cf70bb6c67ff5abe01f282720a6be77ca26af85765e1b0b85c68",
+        "result": {
+          "revision": 18,
+          "index": 55,
+          "coordinator": {
+            "node_id": "n2",
+            "epoch": 2
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "invalid",
+        "message": "member does not exist"
+      }
+    },
+    {
+      "index": 56,
+      "command": {
+        "kind": "remove_prepare",
+        "id": "remove-prepare-n3",
+        "fingerprint": "e19a152b1d5fa794c31c2c6007dde00acd1e15ea4b12df91b9523cbcc5e910f1",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "remove-prepare-n3",
+          "actor": "",
+          "node_id": "n3"
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "e19a152b1d5fa794c31c2c6007dde00acd1e15ea4b12df91b9523cbcc5e910f1",
+        "result": {
+          "revision": 19,
+          "index": 56,
+          "coordinator": {
+            "node_id": "n2",
+            "epoch": 2
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        }
+      }
+    },
+    {
+      "index": 57,
+      "command": {
+        "kind": "join_prepare",
+        "id": "prepare-n3-removing",
+        "fingerprint": "9a7f949c0d0f2f3545ff4b859f3e5f74dd6579fca80ab23fd9fef6b09f8e72c2",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "n3",
+          "address": "10.0.0.3:1",
+          "api_address": "10.0.0.3:2",
+          "name": "three",
+          "auto_eligible": false,
+          "failure_domain": "rack-3",
+          "storage_level": "sealed"
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "9a7f949c0d0f2f3545ff4b859f3e5f74dd6579fca80ab23fd9fef6b09f8e72c2",
+        "result": {
+          "revision": 19,
+          "index": 57,
+          "coordinator": {
+            "node_id": "n2",
+            "epoch": 2
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "conflict",
+        "message": "member removal is in progress"
+      }
+    },
+    {
+      "index": 58,
+      "command": {
+        "kind": "remove",
+        "id": "remove-n3-voter",
+        "fingerprint": "d174a723f406d2ea6863f41fef88e6fb0b7ef9361dcc5e7636635d75db6a038f",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "remove-n3-voter",
+          "actor": "",
+          "node_id": "n3"
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "d174a723f406d2ea6863f41fef88e6fb0b7ef9361dcc5e7636635d75db6a038f",
+        "result": {
+          "revision": 19,
+          "index": 58,
+          "coordinator": {
+            "node_id": "n2",
+            "epoch": 2
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "conflict",
+        "message": "member is still in the voting configuration"
+      }
+    },
+    {
+      "index": 60,
+      "command": {
+        "kind": "remove",
+        "id": "remove-n3",
+        "fingerprint": "70a0307f1f15a1d4ca06b48c91cd04a27af981f95a53fe1f85f41b5fe940a104",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "remove-n3",
+          "actor": "",
+          "node_id": "n3"
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "70a0307f1f15a1d4ca06b48c91cd04a27af981f95a53fe1f85f41b5fe940a104",
+        "result": {
+          "revision": 21,
+          "index": 60,
+          "coordinator": {
+            "node_id": "n2",
+            "epoch": 2
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        }
+      }
+    },
+    {
+      "index": 61,
+      "command": {
+        "kind": "remove",
+        "id": "remove-coordinator",
+        "fingerprint": "1f868a7247bd9cfb743ae31152033ec6b27e0a5f1630ef7d526834c98a20a76a",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "remove-coordinator",
+          "actor": "",
+          "node_id": "n2"
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "1f868a7247bd9cfb743ae31152033ec6b27e0a5f1630ef7d526834c98a20a76a",
+        "result": {
+          "revision": 21,
+          "index": 61,
+          "coordinator": {
+            "node_id": "n2",
+            "epoch": 2
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "conflict",
+        "message": "member is still in the voting configuration"
+      }
+    },
+    {
+      "index": 62,
+      "command": {
+        "kind": "surprise",
+        "id": "unknown",
+        "fingerprint": "d71ae40de3b1913a09118e5a47f3bf46946b04fb33a8b8b206c43fd3aaaccaaa",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "d71ae40de3b1913a09118e5a47f3bf46946b04fb33a8b8b206c43fd3aaaccaaa",
+        "result": {
+          "revision": 21,
+          "index": 62,
+          "coordinator": {
+            "node_id": "n2",
+            "epoch": 2
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "invalid",
+        "message": "unknown command"
+      }
+    },
+    {
+      "index": 63,
+      "command": {
+        "kind": "app",
+        "id": "app-3",
+        "fingerprint": "7efc9ac58868c75985588eccce00f5e561354cf32f9fc6056b5d00c93f95e79d",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "app-3",
+          "caller_node_id": "n1",
+          "coordinator_epoch": 2,
+          "expected_version": 2,
+          "writer_generation": 1,
+          "payload": "Mw=="
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "7efc9ac58868c75985588eccce00f5e561354cf32f9fc6056b5d00c93f95e79d",
+        "result": {
+          "revision": 21,
+          "index": 63,
+          "coordinator": {
+            "node_id": "n2",
+            "epoch": 2
+          },
+          "app_version": 2,
+          "writer_generation": 1
+        },
+        "code": "coordinator",
+        "message": "caller does not hold the coordinator role"
+      }
+    },
+    {
+      "index": 64,
+      "command": {
+        "kind": "app",
+        "id": "app-4",
+        "fingerprint": "f114bcc106af2d2bf5df6ebe4163036851ae4315e195696619747356fc1ed780",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "app-4",
+          "caller_node_id": "n2",
+          "coordinator_epoch": 2,
+          "expected_version": 2,
+          "writer_generation": 1,
+          "payload": "Mw=="
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "",
+        "result": {
+          "revision": 0,
+          "index": 0,
+          "coordinator": {
+            "node_id": "",
+            "epoch": 0
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "application",
+        "message": "replicated application failed; replica stopped"
+      }
+    },
+    {
+      "index": 65,
+      "command": {
+        "kind": "policy",
+        "id": "policy-after-failure",
+        "fingerprint": "9718572a75e20fc4f8003fae95596c5c460baf11e657e324eac2304db51cbfbd",
+        "actor": "test",
+        "time": "2026-09-08T12:00:00Z",
+        "cluster_id": "cluster",
+        "member": {
+          "node_id": "",
+          "address": "",
+          "auto_eligible": false,
+          "failure_domain": "",
+          "storage_level": ""
+        },
+        "transfer": {
+          "id": "",
+          "actor": "",
+          "expected_epoch": 0,
+          "target_node_id": "",
+          "reason": ""
+        },
+        "policy": {
+          "id": "policy-after-failure",
+          "actor": "",
+          "expected_revision": 21,
+          "enabled": false
+        },
+        "eligibility": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "eligible": false
+        },
+        "remove": {
+          "id": "",
+          "actor": "",
+          "node_id": ""
+        },
+        "address": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "address": "",
+          "api_address": ""
+        },
+        "app": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_version": 0,
+          "writer_generation": 0,
+          "payload": null
+        },
+        "writer": {
+          "id": "",
+          "caller_node_id": "",
+          "coordinator_epoch": 0,
+          "expected_generation": 0
+        }
+      },
+      "receipt": {
+        "fingerprint": "",
+        "result": {
+          "revision": 0,
+          "index": 0,
+          "coordinator": {
+            "node_id": "",
+            "epoch": 0
+          },
+          "app_version": 0,
+          "writer_generation": 0
+        },
+        "code": "application",
+        "message": "replica is stopped"
+      }
+    }
+  ],
+  "state": {
+    "cluster_id": "cluster",
+    "revision": 21,
+    "applied_index": 64,
+    "configuration_index": 59,
+    "members": {
+      "n1": {
+        "node_id": "n1",
+        "address": "10.0.0.1:1",
+        "api_address": "10.0.0.1:2",
+        "name": "one",
+        "auto_eligible": false,
+        "failure_domain": "rack-1",
+        "storage_level": "restricted"
+      },
+      "n2": {
+        "node_id": "n2",
+        "address": "10.0.0.22:1",
+        "api_address": "10.0.0.22:2",
+        "name": "two",
+        "auto_eligible": true,
+        "failure_domain": "rack-2",
+        "storage_level": "restricted"
+      }
+    },
+    "voters": {
+      "n1": "10.0.0.1:1",
+      "n2": "10.0.0.22:1"
+    },
+    "removing": {},
+    "pending_addresses": {},
+    "coordinator": {
+      "node_id": "n2",
+      "epoch": 2
+    },
+    "auto_failover": false,
+    "app_version": 2,
+    "writer_generation": 1,
+    "audit": [
+      {
+        "command_id": "init",
+        "index": 3,
+        "time": "2026-09-08T12:00:00Z",
+        "kind": "coordinator_initialized",
+        "actor": "test",
+        "to": "n1",
+        "epoch": 1
+      },
+      {
+        "command_id": "join-n2",
+        "index": 13,
+        "time": "2026-09-08T12:00:00Z",
+        "kind": "member_joined",
+        "actor": "test",
+        "to": "n2"
+      },
+      {
+        "command_id": "join-n3",
+        "index": 16,
+        "time": "2026-09-08T12:00:00Z",
+        "kind": "member_joined",
+        "actor": "test",
+        "to": "n3"
+      },
+      {
+        "command_id": "eligible-n2",
+        "index": 21,
+        "time": "2026-09-08T12:00:00Z",
+        "kind": "automatic_eligibility_granted",
+        "actor": "test",
+        "to": "n2"
+      },
+      {
+        "command_id": "eligible-n3",
+        "index": 22,
+        "time": "2026-09-08T12:00:00Z",
+        "kind": "automatic_eligibility_granted",
+        "actor": "test",
+        "to": "n3"
+      },
+      {
+        "command_id": "policy-on",
+        "index": 23,
+        "time": "2026-09-08T12:00:00Z",
+        "kind": "automatic_failover_enabled",
+        "actor": "test"
+      },
+      {
+        "command_id": "eligible-n3-off",
+        "index": 24,
+        "time": "2026-09-08T12:00:00Z",
+        "kind": "automatic_eligibility_removed",
+        "actor": "test",
+        "to": "n3"
+      },
+      {
+        "command_id": "policy-off",
+        "index": 25,
+        "time": "2026-09-08T12:00:00Z",
+        "kind": "automatic_failover_disabled",
+        "actor": "test"
+      },
+      {
+        "command_id": "addr-1-commit",
+        "index": 46,
+        "time": "2026-09-08T12:00:00Z",
+        "kind": "member_address_changed",
+        "actor": "test",
+        "from": "n2",
+        "to": "n2",
+        "reason": "Raft 10.0.0.2:1 -\u003e 10.0.0.22:1; HTTPS 10.0.0.2:2 -\u003e 10.0.0.22:2"
+      },
+      {
+        "command_id": "transfer-n2",
+        "index": 52,
+        "time": "2026-09-08T12:00:00Z",
+        "kind": "coordinator_transferred",
+        "actor": "test",
+        "from": "n1",
+        "to": "n2",
+        "epoch": 2,
+        "reason": "maintenance"
+      },
+      {
+        "command_id": "remove-n3",
+        "index": 60,
+        "time": "2026-09-08T12:00:00Z",
+        "kind": "member_removed",
+        "actor": "test",
+        "from": "n3"
+      }
+    ]
+  }
+}

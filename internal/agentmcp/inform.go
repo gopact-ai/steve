@@ -165,6 +165,8 @@ func (s *Server) steveHelp(raw json.RawMessage) (string, error) {
 		Topic string `json:"topic"`
 	}
 	if len(raw) > 0 {
+		// Unreadable arguments read as no topic: help answers with the
+		// overview rather than refusing to help.
 		_ = json.Unmarshal(raw, &args)
 	}
 	return helpText(args.Topic)

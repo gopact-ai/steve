@@ -37,6 +37,9 @@ func captureNestedGit(ctx context.Context, source string) (map[string]NestedGit,
 			if err != nil || strings.TrimSpace(string(top)) != root {
 				return fmt.Errorf("cannot export nested Git repository %s: %v", root, err)
 			}
+			// symbolic-ref fails on a detached HEAD, and an empty branch is
+			// how the bundle records one; rev-parse --show-toplevel above
+			// already proved the repository is readable.
 			branch, _ := git(ctx, root, "symbolic-ref", "-q", "HEAD")
 			repo := NestedGit{Branch: strings.TrimSpace(string(branch))}
 			head, err := git(ctx, root, "rev-parse", "--verify", "HEAD")

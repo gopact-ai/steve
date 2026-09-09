@@ -93,9 +93,7 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		return land, fmt.Errorf("landing %s: %w", land.ID, err)
 	}
 	land.Lease = &lease
-	// The lock falls to its TTL when the release fails; the recovery's own
-	// result stands either way.
-	defer func() { _ = s.ledger.ReleaseAny(context.WithoutCancel(ctx), lease) }()
+	defer s.releaseCanonical(ctx, &land, lease)
 	defer trackLandingLease(ctx, lease)()
 
 	land.Round++
@@ -110,13 +108,13 @@ func (s *Store) recoverLanding(ctx context.Context, land Landing) (Landing, erro
 		case "merged":
 			continue
 		case "old":
-			if _, err := journal.Started(ledger.EffectID{Operation: land.ID, Kind: "land-path", InstanceKey: fmt.Sprintf("%d/%s", land.Round, path)}, "", nil); err != nil {
+			if _, err := journal.Started(landPathEffect(land, path), "", nil); err != nil {
 				return land, err
 			}
 			if err := s.writeFromTree(ctx, p, land.Merged, path); err != nil {
 				return land, err
 			}
-			if _, err := journal.Confirmed(ledger.EffectID{Operation: land.ID, Kind: "land-path", InstanceKey: fmt.Sprintf("%d/%s", land.Round, path)}, nil); err != nil {
+			if _, err := journal.Confirmed(landPathEffect(land, path), nil); err != nil {
 				return land, err
 			}
 			rewritten = append(rewritten, path)

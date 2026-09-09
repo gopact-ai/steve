@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -202,18 +201,67 @@ func (s *Service) findRetained(ctx context.Context, driver RetainedChatDriver, e
 	return found, ok, nil
 }
 
+// exchangeRecovery is one worker reattaching a queued exchange to the
+// execution it was interrupted from. Each pass observes the retained work
+// afresh; quiet and waitingPlan carry the owner's last answer from one
+// pass to the next, so an unresolved question is not asked again until
+// something changes.
+type exchangeRecovery struct {
+	s        *Service
+	ctx      context.Context
+	e        *queuedExchange
+	exchange Exchange
+	work     *process
+	stream   *progressStream
+	driver   RetainedChatDriver
+
+	// quiet holds after the owner declined to retry: the loop then waits
+	// and re-observes instead of asking again. waitingPlan is the
+	// relocation plan they were asked about, so a different plan asks anew.
+	quiet       bool
+	waitingPlan string
+}
+
 func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver RetainedChatDriver) {
+	exchange, work, ok := s.openRecovery(e)
+	if !ok {
+		return
+	}
+	stream := s.progress(exchange.Conversation, exchange.ID, work)
+	defer stream.Close()
+	stop := s.follow(ctx, exchange.Conversation, work)
+	defer stop()
+	if s.anchor != nil {
+		s.anchor(exchange.Conversation, ChatID, AnchorMark+exchange.ID)
+	}
+	r := &exchangeRecovery{s: s, ctx: ctx, e: e, exchange: exchange, work: work, stream: stream, driver: driver}
+	for {
+		if ctx.Err() != nil {
+			r.detach(ctx.Err())
+			return
+		}
+		if !r.observe() {
+			return
+		}
+	}
+}
+
+// openRecovery registers the exchange's process so the page can follow
+// the recovery. An exchange already stopped while recovering settles with
+// its stop reply instead, and one whose stop is still pending waits for
+// it; neither gets a worker.
+func (s *Service) openRecovery(e *queuedExchange) (Exchange, *process, bool) {
 	s.mu.Lock()
 	if e.RecoveryStop != nil {
 		reply := *e.RecoveryStop
 		s.mu.Unlock()
 		s.finish(e, reply, nil)
-		return
+		return Exchange{}, nil, false
 	}
 	if e.RecoveryStopPending != "" {
 		s.mu.Unlock()
 		s.waitRecoveryStop(e)
-		return
+		return Exchange{}, nil, false
 	}
 	exchange := copyExchange(e.Exchange)
 	work := newProcess()
@@ -222,184 +270,260 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 	}
 	s.processes[e.ID] = work
 	s.mu.Unlock()
-	stream := s.progress(exchange.Conversation, exchange.ID, work)
-	defer stream.Close()
-	detach := func(err error) {
-		stream.Close()
-		s.detachRecovery(e, err)
+	return exchange, work, true
+}
+
+// markExchange persists a recovery state change and tells the page.
+func (s *Service) markExchange(e *queuedExchange, state consoleapi.ExchangeState) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	e.State = state
+	err := s.save()
+	s.publishQueue(e.Conversation)
+	return err
+}
+
+// observe makes one pass: it looks for the retained execution, resumes or
+// relocates it when it can, and otherwise puts what blocks the recovery
+// to the owner. It reports whether another pass should follow.
+func (r *exchangeRecovery) observe() bool {
+	candidate, found, lookupErr := r.s.findRetained(r.ctx, r.driver, r.exchange)
+	identity := r.identity(candidate, found)
+	requester := r.s.owner
+	if r.exchange.Requester != "" {
+		requester = r.exchange.Requester
 	}
-	stop := s.follow(ctx, exchange.Conversation, work)
-	defer stop()
-	if s.anchor != nil {
-		s.anchor(exchange.Conversation, ChatID, AnchorMark+exchange.ID)
+	if requester == "" || requester != r.s.owner {
+		r.stream.Close()
+		r.s.finish(r.e, consoleapi.Reply{}, errors.New("recovery requires the original console owner"))
+		return false
 	}
-	quiet := false
-	waitingPlan := ""
-	for {
-		if ctx.Err() != nil {
-			detach(ctx.Err())
-			return
+	request := r.request(requester, identity)
+	var err error
+	if found && lookupErr == nil {
+		var done bool
+		if done, err = r.resume(candidate, request); done {
+			return false
 		}
-		candidate, found, lookupErr := s.findRetained(ctx, driver, exchange)
-		base := consoleapi.PendingQuestion{Conversation: exchange.Conversation, ExchangeID: exchange.ID, Project: exchange.ExpectedProject, TaskID: candidate.TaskID, AttemptID: candidate.AttemptID, Locale: exchange.Locale}
-		if found && candidate.ProjectID != "" {
-			base.Project = candidate.ProjectID
-		}
-		requester := s.owner
-		if exchange.Requester != "" {
-			requester = exchange.Requester
-		}
-		if requester == "" || requester != s.owner {
-			stream.Close()
-			s.finish(e, consoleapi.Reply{}, errors.New("recovery requires the original console owner"))
-			return
-		}
-		var result turn.Result
-		var err error
-		var identityMu sync.Mutex
-		questionBase := func() consoleapi.PendingQuestion { identityMu.Lock(); defer identityMu.Unlock(); return base }
-		request := turn.Request{Channel: "console", ConversationID: exchange.Conversation, MessageID: AnchorMark + exchange.ID, ChatID: ChatID, SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true, Origin: exchange.Origin, ExpectedProject: exchange.ExpectedProject, Locale: exchange.Locale,
-			OnTurnReady: func(taskID, attemptID string) {
-				identityMu.Lock()
-				base.TaskID, base.AttemptID = taskID, attemptID
-				identityMu.Unlock()
-			},
-			OnProgress: stream.Update,
-			OnPhase:    stream.Phase,
-			OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
-				return s.askPermission(ctx, questionBase(), ask)
-			},
-			OnAskUser: func(ctx context.Context, q view.Question) (view.Answer, error) {
-				return s.askUser(ctx, questionBase(), q)
-			},
-		}
-		if found && lookupErr == nil {
-			s.mu.Lock()
-			e.State = consoleapi.ExchangeRecovering
-			saveErr := s.save()
-			s.publishQueue(e.Conversation)
-			s.mu.Unlock()
-			if saveErr != nil {
-				if ctx.Err() != nil {
-					detach(ctx.Err())
-					return
-				}
-				lookupErr = saveErr
-			} else {
-				if candidate.plan != nil {
-					result, err = driver.(retainedPlanDriver).ResumeRetainedPlan(ctx, *candidate.plan, request)
-				} else {
-					result, err = driver.ResumeRetainedChat(ctx, candidate.AttemptID, request)
-				}
-				if err == nil || (result.Attempt != "" && !isRecoveryBlocked(err)) {
-					stream.Phase(view.PhaseSaving)
-					stream.Close()
-					s.finish(e, s.resultReply(ctx, exchange, work, result, err), err)
-					return
-				}
-			}
-		}
-		if ctx.Err() != nil {
-			detach(ctx.Err())
-			return
-		}
-		if planner, supportsRelocation := driver.(relocationDriver); supportsRelocation && found && candidate.plan == nil && isRecoveryBlocked(err) {
-			input, images, captureErr := s.relocationInput(ctx, exchange, candidate.ProjectID, requester)
-			if captureErr == nil {
-				request.Relocation, request.Images = input, images
-				plan, planErr := planner.PlanRelocation(ctx, candidate.AttemptID, request)
-				if planErr == nil && plan.ID != "" {
-					signature := plan.ID + "/" + plan.Question.Message
-					if quiet && waitingPlan != "" && signature != waitingPlan {
-						quiet = false
-					}
-					if !quiet {
-						choice := s.approvedRelocation(questionBase(), plan.ID)
-						if !plan.Automatic && !plan.Approved && choice == "" {
-							s.mu.Lock()
-							e.State = consoleapi.ExchangeAwaitingUser
-							saveErr := s.save()
-							s.publishQueue(e.Conversation)
-							s.mu.Unlock()
-							if saveErr != nil {
-								detach(saveErr)
-								return
-							}
-							answer, askErr := s.RequestRecovery(ctx, questionBase(), plan.Question)
-							if askErr != nil {
-								detach(askErr)
-								return
-							}
-							if answer.Value != "confirm-stopped-and-retry:"+plan.ID {
-								quiet = true
-								waitingPlan = signature
-							} else {
-								choice = answer.Value
-							}
-						}
-						if !quiet {
-							result, relocationErr := planner.RelocateChat(ctx, plan.ID, choice, request)
-							if relocationErr == nil || (result.Attempt != "" && !isRecoveryBlocked(relocationErr)) {
-								stream.Phase(view.PhaseSaving)
-								stream.Close()
-								s.finish(e, s.resultReply(ctx, exchange, work, result, relocationErr), relocationErr)
-								return
-							}
-							err = &turn.RecoveryBlocked{Cause: relocationErr, Question: view.Question{Kind: "recovery", Title: "恢复方案需要重新检查", Message: "已按确认的恢复方案检查执行条件。\n\n本次恢复尚未完成：" + relocationErr.Error() + "\n\n已保存的原任务和恢复记录仍保留，没有将失败当作完成。\n\n建议重新检查当前执行，或等待原节点恢复。", Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查"}, {Value: "wait", Label: "暂时等待"}}}}
-						}
-					}
-				} else if isRecoveryBlocked(planErr) {
-					err = planErr
-				}
-			} else {
-				err = &turn.RecoveryBlocked{Cause: captureErr, Question: view.Question{Kind: "recovery", Title: "恢复上下文需要处理", Message: "已读取原输入与冻结材料。\n\n当前无法完整重建恢复上下文：" + captureErr.Error() + "\n\n不会用新文件或猜测替换原材料。\n\n建议恢复原材料后重新检查。", Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查"}, {Value: "wait", Label: "暂时等待"}}}}
-			}
-		}
-		var blocked *turn.RecoveryBlocked
-		if !errors.As(err, &blocked) {
-			cause := errors.Join(lookupErr, err)
-			blocked = &turn.RecoveryBlocked{Cause: cause, Question: view.Question{Kind: "recovery", Title: "原执行需要核实", Message: "已检查这条会话的执行记录。\n\n暂时找不到可以安全接回的原执行或完整结果。\n\n原任务可能仍在节点上运行，重新发送任务可能造成重复操作。\n\n建议检查原机器和执行记录，确认后重新检查；也可以保留任务等待处理。", Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查原执行"}, {Value: "wait", Label: "暂时等待"}}}}
-		}
-		s.mu.Lock()
-		e.State = consoleapi.ExchangeAwaitingUser
-		saveErr := s.save()
-		s.publishQueue(e.Conversation)
-		s.mu.Unlock()
-		if saveErr != nil {
-			if ctx.Err() != nil {
-				detach(ctx.Err())
-				return
-			}
-			detach(saveErr)
-			return
-		}
-		if quiet {
-			timer := time.NewTimer(30 * time.Second)
-			select {
-			case <-timer.C:
-			case <-ctx.Done():
-				timer.Stop()
-				detach(ctx.Err())
-				return
-			}
-			continue
-		}
-		question := blocked.Question
-		question.Kind = "recovery"
-		answer, askErr := s.askUser(ctx, base, question)
-		if askErr != nil {
-			if ctx.Err() != nil {
-				detach(ctx.Err())
-				return
-			}
-			detach(askErr)
-			return
-		}
-		// Free-form advice is retained in the question record. Without an
-		// explicit retry choice, make one fresh observation and then wait
-		// quietly instead of repeatedly asking the same unresolved question.
-		quiet = answer.Value != "retry"
 	}
+	if r.ctx.Err() != nil {
+		r.detach(r.ctx.Err())
+		return false
+	}
+	if planner, ok := r.driver.(relocationDriver); ok && found && candidate.plan == nil && isRecoveryBlocked(err) {
+		var done bool
+		done, err = r.relocate(planner, candidate, request, identity, err)
+		if done {
+			return false
+		}
+	}
+	return r.consult(blockedBy(err, lookupErr), identity)
+}
+
+// identity binds the pass's questions to the execution found for the
+// exchange; a resumed turn refines it through OnTurnReady.
+func (r *exchangeRecovery) identity(candidate retainedExchange, found bool) *questionIdentity {
+	base := consoleapi.PendingQuestion{Conversation: r.exchange.Conversation, ExchangeID: r.exchange.ID, Project: r.exchange.ExpectedProject, TaskID: candidate.TaskID, AttemptID: candidate.AttemptID, Locale: r.exchange.Locale}
+	if found && candidate.ProjectID != "" {
+		base.Project = candidate.ProjectID
+	}
+	return &questionIdentity{base: base}
+}
+
+// request is the turn request a resumed or relocated execution answers,
+// with its progress and questions routed to this exchange.
+func (r *exchangeRecovery) request(requester string, identity *questionIdentity) turn.Request {
+	return turn.Request{Channel: "console", ConversationID: r.exchange.Conversation, MessageID: AnchorMark + r.exchange.ID, ChatID: ChatID, SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true, Origin: r.exchange.Origin, ExpectedProject: r.exchange.ExpectedProject, Locale: r.exchange.Locale,
+		OnTurnReady: identity.set,
+		OnProgress:  r.stream.Update,
+		OnPhase:     r.stream.Phase,
+		OnAsk: func(ctx context.Context, ask permission.Ask) (acp.RequestPermissionOutcome, error) {
+			return r.s.askPermission(ctx, identity.binding(), ask)
+		},
+		OnAskUser: func(ctx context.Context, q view.Question) (view.Answer, error) {
+			return r.s.askUser(ctx, identity.binding(), q)
+		},
+	}
+}
+
+// resume reattaches to the retained execution once the exchange is
+// recorded as recovering. It reports whether the worker is done — the
+// exchange settled, or a cancelled console detached it — and otherwise
+// what now blocks the recovery: the state save that failed before the
+// resumption was tried, or what the resumption itself hit.
+func (r *exchangeRecovery) resume(candidate retainedExchange, request turn.Request) (done bool, blocked error) {
+	// Do not reattach behind a state the console could not write: an
+	// execution resumed under an unrecorded exchange would be lost again
+	// by the next restart, so the failure is what the owner is told.
+	if saveErr := r.s.markExchange(r.e, consoleapi.ExchangeRecovering); saveErr != nil {
+		if r.ctx.Err() != nil {
+			r.detach(r.ctx.Err())
+			return true, nil
+		}
+		return false, saveErr
+	}
+	var result turn.Result
+	var err error
+	if candidate.plan != nil {
+		result, err = r.driver.(retainedPlanDriver).ResumeRetainedPlan(r.ctx, *candidate.plan, request)
+	} else {
+		result, err = r.driver.ResumeRetainedChat(r.ctx, candidate.AttemptID, request)
+	}
+	if settles(result, err) {
+		r.settle(result, err)
+		return true, nil
+	}
+	return false, err
+}
+
+// relocate moves the blocked chat to another node by a plan the owner
+// approves, unless they already did or the plan needs no approval. It
+// reports whether the exchange settled; otherwise it returns what now
+// blocks the recovery, which stays the incoming block when planning
+// changed nothing.
+func (r *exchangeRecovery) relocate(planner relocationDriver, candidate retainedExchange, request turn.Request, identity *questionIdentity, blocked error) (bool, error) {
+	input, images, captureErr := r.s.relocationInput(r.ctx, r.exchange, candidate.ProjectID, request.SenderOpenID)
+	if captureErr != nil {
+		return false, blockedRecovery(captureErr, "恢复上下文需要处理", "已读取原输入与冻结材料。\n\n当前无法完整重建恢复上下文："+captureErr.Error()+"\n\n不会用新文件或猜测替换原材料。\n\n建议恢复原材料后重新检查。", "重新检查")
+	}
+	request.Relocation, request.Images = input, images
+	plan, planErr := planner.PlanRelocation(r.ctx, candidate.AttemptID, request)
+	if planErr != nil || plan.ID == "" {
+		if isRecoveryBlocked(planErr) {
+			return false, planErr
+		}
+		return false, blocked
+	}
+	signature := plan.ID + "/" + plan.Question.Message
+	if r.quiet && r.waitingPlan != "" && signature != r.waitingPlan {
+		r.quiet = false
+	}
+	if r.quiet {
+		return false, blocked
+	}
+	choice := r.s.approvedRelocation(identity.binding(), plan.ID)
+	if !plan.Automatic && !plan.Approved && choice == "" {
+		done, approved := r.approvePlan(plan, signature, identity)
+		if done {
+			return true, nil
+		}
+		if approved == "" {
+			return false, blocked
+		}
+		choice = approved
+	}
+	result, err := planner.RelocateChat(r.ctx, plan.ID, choice, request)
+	if settles(result, err) {
+		r.settle(result, err)
+		return true, nil
+	}
+	return false, blockedRecovery(err, "恢复方案需要重新检查", "已按确认的恢复方案检查执行条件。\n\n本次恢复尚未完成："+err.Error()+"\n\n已保存的原任务和恢复记录仍保留，没有将失败当作完成。\n\n建议重新检查当前执行，或等待原节点恢复。", "重新检查")
+}
+
+// approvePlan records the exchange as waiting and puts the relocation plan
+// to the owner. It reports whether the worker is done — the save or the
+// question failed and the exchange was detached — and otherwise the
+// approved choice; any other answer leaves the recovery quiet on this
+// plan and the choice empty.
+func (r *exchangeRecovery) approvePlan(plan turn.RelocationPlan, signature string, identity *questionIdentity) (done bool, choice string) {
+	if err := r.s.markExchange(r.e, consoleapi.ExchangeAwaitingUser); err != nil {
+		r.detach(err)
+		return true, ""
+	}
+	answer, err := r.s.RequestRecovery(r.ctx, identity.binding(), plan.Question)
+	if err != nil {
+		r.detach(err)
+		return true, ""
+	}
+	if answer.Value != "confirm-stopped-and-retry:"+plan.ID {
+		r.quiet, r.waitingPlan = true, signature
+		return false, ""
+	}
+	return false, answer.Value
+}
+
+// consult records the block for the owner. While they have declined to
+// retry it waits and observes again; otherwise it asks, and the answer
+// decides whether the next pass asks once more. It reports whether
+// another pass should follow.
+func (r *exchangeRecovery) consult(blocked *turn.RecoveryBlocked, identity *questionIdentity) bool {
+	if err := r.s.markExchange(r.e, consoleapi.ExchangeAwaitingUser); err != nil {
+		if r.ctx.Err() != nil {
+			err = r.ctx.Err()
+		}
+		r.detach(err)
+		return false
+	}
+	if r.quiet {
+		return r.wait()
+	}
+	question := blocked.Question
+	question.Kind = "recovery"
+	answer, err := r.s.askUser(r.ctx, identity.binding(), question)
+	if err != nil {
+		if r.ctx.Err() != nil {
+			err = r.ctx.Err()
+		}
+		r.detach(err)
+		return false
+	}
+	// Free-form advice is retained in the question record. Without an
+	// explicit retry choice, make one fresh observation and then wait
+	// quietly instead of repeatedly asking the same unresolved question.
+	r.quiet = answer.Value != "retry"
+	return true
+}
+
+// wait lets a quiet recovery observe the execution again every so often,
+// until the exchange's lifetime ends.
+func (r *exchangeRecovery) wait() bool {
+	timer := time.NewTimer(30 * time.Second)
+	select {
+	case <-timer.C:
+		return true
+	case <-r.ctx.Done():
+		timer.Stop()
+		r.detach(r.ctx.Err())
+		return false
+	}
+}
+
+// settle records what the resumed or relocated execution produced as the
+// exchange's reply.
+func (r *exchangeRecovery) settle(result turn.Result, err error) {
+	r.stream.Phase(view.PhaseSaving)
+	r.stream.Close()
+	r.s.finish(r.e, r.s.resultReply(r.ctx, r.exchange, r.work, result, err), err)
+}
+
+// detach ends the worker without settling the exchange; the stream closes
+// first so the page stops following before the exchange is handed back.
+func (r *exchangeRecovery) detach(err error) {
+	r.stream.Close()
+	r.s.detachRecovery(r.e, err)
+}
+
+// settles says whether an execution's outcome closes the exchange: it
+// answered, or it ran and failed for a reason other than being out of
+// reach, which a fresh pass could not change.
+func settles(result turn.Result, err error) bool {
+	return err == nil || (result.Attempt != "" && !isRecoveryBlocked(err))
+}
+
+// blockedBy is the block to put to the owner: the recovery's own, or when
+// the execution could not even be found, a generic one over both errors.
+func blockedBy(err, lookupErr error) *turn.RecoveryBlocked {
+	var blocked *turn.RecoveryBlocked
+	if errors.As(err, &blocked) {
+		return blocked
+	}
+	return blockedRecovery(errors.Join(lookupErr, err), "原执行需要核实", "已检查这条会话的执行记录。\n\n暂时找不到可以安全接回的原执行或完整结果。\n\n原任务可能仍在节点上运行，重新发送任务可能造成重复操作。\n\n建议检查原机器和执行记录，确认后重新检查；也可以保留任务等待处理。", "重新检查原执行")
+}
+
+// blockedRecovery is a block whose question offers the owner a retry, by
+// the given label, or to wait.
+func blockedRecovery(cause error, title, message, retryLabel string) *turn.RecoveryBlocked {
+	return &turn.RecoveryBlocked{Cause: cause, Question: view.Question{Kind: "recovery", Title: title, Message: message, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: retryLabel}, {Value: "wait", Label: "暂时等待"}}}}
 }
 
 func isRecoveryBlocked(err error) bool {

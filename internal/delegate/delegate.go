@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/nodewire"
-	"log"
+	"log/slog"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -41,6 +41,7 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/text"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -204,7 +205,7 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 		return agentmcp.DelegateResult{}, fmt.Errorf("workspace for %s: %w", candidate.Agent.ID, err)
 	}
 	if err := ctx.Err(); err != nil {
-		_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
+		s.discardUnused(ctx, workspace, parent)
 		return agentmcp.DelegateResult{}, err
 	}
 	s.rememberBase(workspace.ID, workspace.Base)
@@ -225,17 +226,18 @@ func (s *Service) start(ctx context.Context, conversationID, agentID string, req
 		spawned, err = s.tasks.Spawn(parent.ID, childSpec)
 	}
 	if err != nil {
-		_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
+		s.discardUnused(ctx, workspace, parent)
 		return agentmcp.DelegateResult{}, err
 	}
-	log.Printf("delegate: %s -> %s task #%s under #%s on %s", agentID, candidate.Agent.ID, spawned.ID, parent.ID, nodeLabel(candidate.Node))
+	slog.Info(fmt.Sprintf("delegate: %s -> %s task #%s under #%s on %s", agentID, candidate.Agent.ID, spawned.ID, parent.ID, nodeLabel(candidate.Node)),
+		"task", spawned.ID, "parent", parent.ID, "attempt", ledgerAttemptID(workspace), "conversation", conversationID, "agent", candidate.Agent.ID, "node", candidate.Node)
 
 	var scope *execution.Scope
 	if s.executions != nil {
 		var err error
 		scope, err = s.executions.Begin(s.executions.Detached(ctx), execution.Key{TaskID: spawned.ID, InstanceID: "delegate/" + spawned.ID, AttemptID: attemptID})
 		if err != nil {
-			_ = s.artifacts.Discard(context.WithoutCancel(ctx), workspace)
+			s.discardUnused(ctx, workspace, parent)
 			return agentmcp.DelegateResult{}, err
 		}
 	}
@@ -495,7 +497,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 			result.Answer = runErr.Error()
 		}
 		if _, err := s.advanceExecution(ctx, spawned.ID, task.StateFailed); err != nil {
-			log.Printf("delegate: mark task #%s failed: %v", spawned.ID, err)
+			slog.Error(fmt.Sprintf("delegate: mark task #%s failed: %v", spawned.ID, err), "task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "node", spawned.Node)
 			if strings.HasPrefix(managedSession, "ns_") {
 				s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-state", "保存子任务的已提交执行状态", "任务状态尚未完整保存。", "已有执行结果保持可恢复，不能提前报告任务结束。", "建议恢复存储后核对同一次执行。")
 				s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
@@ -506,7 +508,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 	} else {
 		result.State = task.StateDone
 		if _, err := s.advanceExecution(ctx, spawned.ID, task.StateDone); err != nil {
-			log.Printf("delegate: mark task #%s done: %v", spawned.ID, err)
+			slog.Error(fmt.Sprintf("delegate: mark task #%s done: %v", spawned.ID, err), "task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "node", spawned.Node)
 			if strings.HasPrefix(managedSession, "ns_") {
 				s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-state", "保存子任务的已提交执行状态", "任务状态尚未完整保存。", "已有执行结果保持可恢复，不能提前报告任务结束。", "建议恢复存储后核对同一次执行。")
 				s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
@@ -520,7 +522,7 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 	result.TaskID, result.Agent, result.Node = spawned.ID, spawned.Member, spawned.Node
 
 	if err := s.tasks.SetResult(spawned.ID, task.Result{Outcome: result.Outcome, Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}); err != nil {
-		log.Printf("delegate: record result of task #%s: %v", spawned.ID, err)
+		slog.Error(fmt.Sprintf("delegate: record result of task #%s: %v", spawned.ID, err), "task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "node", spawned.Node)
 		if strings.HasPrefix(managedSession, "ns_") {
 			s.reportRecovery(ctx, questionBinding(parent, spawned, retainedRecord), "task-result", "保存原执行的完整答复到子任务记录", "答复尚未完整写入任务。", "已提交的执行结果仍保留，不能提前向父任务宣布完成。", "建议恢复存储后重新核对。")
 			s.detachChild(spawned, entry, &execution.RetainedObserverDetached{AttemptID: retainedRecord.ID, NodeID: retainedRecord.Node, SessionID: managedSession, Cause: err})
@@ -531,7 +533,8 @@ func (s *Service) completeChild(ctx context.Context, conversationID string, pare
 	entry.result, entry.err = result, runErr
 	s.mu.Unlock()
 	close(entry.done)
-	log.Printf("delegate: task #%s %s on %s", spawned.ID, result.State, nodeLabel(spawned.Node))
+	slog.Info(fmt.Sprintf("delegate: task #%s %s on %s", spawned.ID, result.State, nodeLabel(spawned.Node)),
+		"task", spawned.ID, "parent", parent.ID, "attempt", s.attemptOf(spawned.ID), "conversation", conversationID, "agent", spawned.Member, "node", spawned.Node)
 	s.report(Child{Conversation: conversationID, ParentTask: parent.ID, Task: spawned.ID, Agent: spawned.Member, Node: spawned.Node,
 		Goal: description, State: result.State, Since: since, Elapsed: time.Since(since), Answer: result.Answer, Refs: result.Refs, Attempt: s.attemptOf(spawned.ID)}, last)
 
@@ -613,7 +616,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 				// Losing milestone cards is a degradation; losing the
 				// delegation is not. The child runs without the send
 				// primitive.
-				log.Printf("delegate: node %q messaging endpoint: %v", candidate.Node, err)
+				slog.Warn(fmt.Sprintf("delegate: node %q messaging endpoint: %v", candidate.Node, err), "task", child.ID, "parent", parent.ID, "conversation", conversationID, "agent", candidate.Agent.ID, "node", candidate.Node)
 				endpoint = ""
 			}
 		}
@@ -676,7 +679,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 	}
 	workspace := project.Workspace{ID: s.worktreeID(child), Project: parent.ProjectID, Node: candidate.Node, Path: child.Workspace, Kind: project.KindWorktree}
 	base := s.baseOf(workspace.ID)
-	attemptID, turnID := strings.TrimPrefix(workspace.ID, "wt-"), "delegate/"+child.ID
+	attemptID, turnID := ledgerAttemptID(workspace), "delegate/"+child.ID
 	accountingToken := task.ExecutionToken{TaskID: accountingTask.ID, Epoch: accountingTask.ExecutionEpoch}
 	if original := execution.Token(ctx); original != nil {
 		accountingToken = *original
@@ -699,7 +702,9 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 			Region: candidate.Region, CanonicalRegion: s.homeRegion(ctx, parent.ProjectID),
 			Workspace: workspace, Scope: attempt.ScopePathSet, Base: base, By: delegatedBy, Requires: req.Requires,
 		},
-		Lost: func() { log.Printf("delegate: attempt %s lost its lease; cancelling task #%s", attemptID, child.ID) },
+		Lost: func() {
+			slog.Warn(fmt.Sprintf("delegate: attempt %s lost its lease; cancelling task #%s", attemptID, child.ID), "attempt", attemptID, "task", child.ID, "parent", parent.ID, "conversation", conversationID, "node", candidate.Node)
+		},
 		// The machine's final word on the requirement, taken now, before a
 		// session is opened there.
 		Candidate: candidate, Requires: req.Requires, Uses: candidate.Agent.MCPServers, AdmitUnsure: true,
@@ -854,7 +859,7 @@ func (d *delegation) settle(ctx context.Context, run lifecycle.Result, err error
 		s.spent(child.ID, run.Last)
 	}
 	if run.CleanupErr != nil && run.Managed {
-		log.Printf("delegate: settled session cleanup task=%s attempt=%s: %v", child.ID, record.ID, run.CleanupErr)
+		slog.Error(fmt.Sprintf("delegate: settled session cleanup task=%s attempt=%s: %v", child.ID, record.ID, run.CleanupErr), "parent", parent.ID, "node", record.Node)
 	}
 	var step *lifecycle.StepError
 	var detached *execution.RetainedObserverDetached
@@ -941,7 +946,7 @@ func (s *Service) publish(ctx context.Context, child task.Task, record attempt.R
 		return p, err
 	}
 	p.published, p.changed = published, changed
-	p.completion = attempt.Completion{Result: attempt.Result{Artifact: published.ID, Summary: clipRunes(p.result.Answer, 200), Refs: p.result.Refs, Output: output}, Usage: observed,
+	p.completion = attempt.Completion{Result: attempt.Result{Artifact: published.ID, Summary: text.Clip(p.result.Answer, 200), Refs: p.result.Refs, Output: output}, Usage: observed,
 		Binding: &attempt.NameBinding{Name: name, ExpectedVersion: current.Version}}
 	return p, nil
 }
@@ -964,7 +969,7 @@ func (s *Service) land(ctx context.Context, parent, child task.Task, record atte
 					s.finish(child.ID, task.OutcomeOK)
 					return result, nil
 				default:
-					log.Printf("delegate: land %s under parent's lease: %v", p.published.ID, lerr)
+					slog.Warn(fmt.Sprintf("delegate: land %s under parent's lease: %v", p.published.ID, lerr), "artifact", p.published.ID, "task", child.ID, "parent", parent.ID, "attempt", record.ID, "project", parent.ProjectID)
 					result.Refs = append(result.Refs, "not landed yet: "+lerr.Error())
 				}
 			}
@@ -1163,15 +1168,10 @@ func ctxErr(err, target error) bool {
 
 const goalLimit = 120
 
-func goal(text string) string {
-	trimmed := strings.TrimSpace(text)
-	if line, _, found := strings.Cut(trimmed, "\n"); found {
-		trimmed = strings.TrimSpace(line)
-	}
-	if len([]rune(trimmed)) <= goalLimit {
-		return trimmed
-	}
-	return string([]rune(trimmed)[:goalLimit]) + "…"
+// goal is the first line of the request, cut to fit a task listing.
+func goal(request string) string {
+	line := strings.TrimSpace(text.FirstLine(strings.TrimSpace(request)))
+	return text.Clip(line, goalLimit)
 }
 
 func newToken() (string, error) {
@@ -1202,6 +1202,19 @@ func (s *Service) parentLease(ctx context.Context, parent task.Task) (ledger.Lea
 	return ledger.Lease{}, false
 }
 
+// discardUnused removes the worktree a delegation was given before it
+// was refused. The caller is already returning the refusal, which is the
+// error the agent needs; a worktree that could not be removed is disk
+// left on the node, reported here for the operator.
+func (s *Service) discardUnused(ctx context.Context, workspace project.Workspace, parent task.Task) {
+	if err := s.artifacts.Discard(context.WithoutCancel(ctx), workspace); err != nil {
+		// No attempt was ever opened on this worktree, so the path an
+		// operator has to clean up and the workspace id it is filed
+		// under are the identifiers that lead anywhere.
+		slog.Warn(fmt.Sprintf("delegate: discard unused workspace %s: %v", workspace.Path, err), "workspace", workspace.ID, "parent", parent.ID, "node", workspace.Node, "project", workspace.Project)
+	}
+}
+
 // rememberBase keeps the base a child's worktree came from until run()
 // needs it, keyed by the worktree id.
 func (s *Service) rememberBase(attemptID, base string) {
@@ -1227,6 +1240,14 @@ func (s *Service) baseOf(workspaceID string) string {
 func delegateBrief(c roster.Candidate) string {
 	return fmt.Sprintf("You are the delegate for this work, running on %s (capabilities: %s). Do it here, in this directory, yourself; delegating further is not available to you.\n\n",
 		nodeLabel(c.Node), strings.Join(c.Capabilities, ", "))
+}
+
+// ledgerAttemptID is the attempt a child's run is recorded under. The
+// materializer names the worktree after the attempt it was cut for, so
+// the id the ledger sees is the workspace id without its "wt-" prefix --
+// not the minted att- id, which only names the workspace request.
+func ledgerAttemptID(workspace project.Workspace) string {
+	return strings.TrimPrefix(workspace.ID, "wt-")
 }
 
 // worktreeID recovers the workspace id from the child's directory: the

@@ -19,6 +19,9 @@ func fingerprint(raw []byte) string {
 }
 
 func (c *Config) rememberFileRevision(path string, raw []byte) {
+	// Abs fails only when the working directory is gone. An empty source
+	// path then fails every CheckFileRevision as "source path differs",
+	// which refuses the write rather than risking the wrong file.
 	c.sourcePath, _ = filepath.Abs(path)
 	c.sourceFingerprint = fingerprint(raw)
 }

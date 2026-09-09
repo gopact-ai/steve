@@ -4,8 +4,10 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/gopact-ai/steve/internal/ability"
 )
@@ -86,5 +88,22 @@ func TestSnapshotCarriesLaunchEvidence(t *testing.T) {
 	plain := Snapshot("n", 1, 2, Observe{Tools: []string{"goodtool"}})
 	if plain.Offers[0].Assurance != ability.Existence || len(plain.Offers[0].Evidence) != 1 {
 		t.Fatalf("without a probe = %+v", plain.Offers[0])
+	}
+}
+
+// A launch result is the first line of what the binary said, trimmed of
+// surrounding whitespace and cut to a readable width by rune, so a
+// multibyte character at the cut is kept whole rather than split.
+func TestLaunchResultIsOneReadableLine(t *testing.T) {
+	if got := firstLine("  claude 1.2.3\nusage: claude [flags]\n"); got != "claude 1.2.3" {
+		t.Fatalf("firstLine = %q", got)
+	}
+	long := strings.Repeat("é", 200)
+	got := firstLine(long)
+	if want := strings.Repeat("é", 160) + "…"; got != want {
+		t.Fatalf("firstLine clipped %d runes to %d", 200, len([]rune(got)))
+	}
+	if !utf8.ValidString(got) {
+		t.Fatalf("firstLine cut a rune in half: %q", got)
 	}
 }
