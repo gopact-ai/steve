@@ -23,7 +23,7 @@ import (
 const (
 	// longFunction is the length a non-test function may not exceed
 	// unless the baseline already lists it.
-	longFunction = 150
+	longFunction = 120
 	// cmdSteveMaxLines bounds the composition root, which only shrinks.
 	cmdSteveMaxLines = 670
 	// cmdSteveMaxFanOut bounds how many internal packages cmd/steve wires
@@ -90,7 +90,11 @@ func ratchet(t *testing.T, name string, current []string) {
 	sort.Strings(current)
 	path := filepath.Join(repoRoot(t), "internal", "architecture", "testdata", name+".txt")
 	if os.Getenv("RATCHET_UPDATE") == "1" {
-		if err := os.WriteFile(path, []byte(strings.Join(current, "\n")+"\n"), 0o644); err != nil {
+		data := strings.Join(current, "\n")
+		if len(current) > 0 {
+			data += "\n"
+		}
+		if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 			t.Fatal(err)
 		}
 		return
