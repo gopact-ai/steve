@@ -52,70 +52,15 @@ func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set node
 		return nodewire.Settings{}, nodewire.ErrSettingsRevisionConflict
 	}
 	set = nodewire.CloneSettings(set)
-	harnesses := make(map[string]config.Harness, len(set.Harnesses))
-	for id, h := range set.Harnesses {
-		if !NameShape.MatchString(strings.ToLower(id)) || strings.TrimSpace(h.Command) == "" {
-			return nodewire.Settings{}, fmt.Errorf("AI 工具 %q 需要一个合法的名字和启动命令", id)
-		}
-		ConfigMu.RLock()
-		item := a.Cfg.Harnesses[id]
-		ConfigMu.RUnlock()
-		if h.Adapter != nil && *h.Adapter != item.Adapter {
-			return nodewire.Settings{}, fmt.Errorf("更换 %s 的 adapter 需要通过配置文件重启生效", id)
-		}
-		if item.Adapter != "" && h.Command != item.Command {
-			return nodewire.Settings{}, fmt.Errorf("%s 使用固定 adapter，不能直接更换生成的启动命令", id)
-		}
-		item.Command, item.Args, item.ProcessDir = h.Command, h.Args, h.ProcessDir
-		if h.Env != nil {
-			item.Env = h.Env
-		}
-		if h.Slots != nil {
-			if *h.Slots < 0 {
-				return nodewire.Settings{}, fmt.Errorf("%s slots must be nonnegative", id)
-			}
-			item.Slots = *h.Slots
-		}
-		if h.Permission != nil {
-			item.Permission = *h.Permission
-		}
-		if item.Permission == "" {
-			item.Permission = config.PermissionRead
-		}
-		if _, err := permission.New(item.Permission); err != nil {
-			return nodewire.Settings{}, err
-		}
-		harnesses[id] = item
+	harnesses, err := a.hubHarnessSettings(set.Harnesses)
+	if err != nil {
+		return nodewire.Settings{}, err
 	}
-	servers := make(map[string]config.MCPServer, len(set.MCPServers))
-	for id, m := range set.MCPServers {
-		ConfigMu.RLock()
-		old := a.Cfg.MCPServers[id]
-		ConfigMu.RUnlock()
-		if m.Env == nil {
-			m.Env = old.Env
-		}
-		if m.Headers == nil {
-			m.Headers = old.Headers
-		}
-		if !NameShape.MatchString(strings.ToLower(id)) {
-			return nodewire.Settings{}, fmt.Errorf("MCP 服务器 %q 的名字不合法", id)
-		}
-		switch m.Type {
-		case "", "stdio":
-			if strings.TrimSpace(m.Command) == "" {
-				return nodewire.Settings{}, fmt.Errorf("MCP 服务器 %q 需要启动命令", id)
-			}
-			m.Type = "stdio"
-		case "http", "sse":
-			if !strings.HasPrefix(m.URL, "http://") && !strings.HasPrefix(m.URL, "https://") {
-				return nodewire.Settings{}, fmt.Errorf("MCP 服务器 %q 需要 http(s) 地址", id)
-			}
-		default:
-			return nodewire.Settings{}, fmt.Errorf("MCP 服务器 %q：不认识的类型 %q", id, m.Type)
-		}
-		servers[id] = config.MCPServer{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
+	servers, err := a.hubMCPSettings(set.MCPServers)
+	if err != nil {
+		return nodewire.Settings{}, err
 	}
+
 	for _, d := range set.Declares {
 		if !strings.Contains(d, ":") {
 			return nodewire.Settings{}, fmt.Errorf("声明 %q 要写成 kind:id，如 network:office", d)
@@ -181,6 +126,79 @@ func (a *Service) setNodeSettingsLocked(_ context.Context, name string, set node
 	slog.Info(fmt.Sprintf("steve: hub settings applied from the page: %d harnesses, %d tools, %d mcp, %d declares, %d tags",
 		len(harnesses), len(set.Tools), len(servers), len(set.Declares), len(set.Capabilities)))
 	return a.hubSettings(), saveErr
+}
+
+func (a *Service) hubHarnessSettings(settings map[string]nodewire.HarnessSetting) (map[string]config.Harness, error) {
+	harnesses := make(map[string]config.Harness, len(settings))
+	for id, h := range settings {
+		if !NameShape.MatchString(strings.ToLower(id)) || strings.TrimSpace(h.Command) == "" {
+			return nil, fmt.Errorf("AI 工具 %q 需要一个合法的名字和启动命令", id)
+		}
+		ConfigMu.RLock()
+		item := a.Cfg.Harnesses[id]
+		ConfigMu.RUnlock()
+		if h.Adapter != nil && *h.Adapter != item.Adapter {
+			return nil, fmt.Errorf("更换 %s 的 adapter 需要通过配置文件重启生效", id)
+		}
+		if item.Adapter != "" && h.Command != item.Command {
+			return nil, fmt.Errorf("%s 使用固定 adapter，不能直接更换生成的启动命令", id)
+		}
+		item.Command, item.Args, item.ProcessDir = h.Command, h.Args, h.ProcessDir
+		if h.Env != nil {
+			item.Env = h.Env
+		}
+		if h.Slots != nil {
+			if *h.Slots < 0 {
+				return nil, fmt.Errorf("%s slots must be nonnegative", id)
+			}
+			item.Slots = *h.Slots
+		}
+		if h.Permission != nil {
+			item.Permission = *h.Permission
+		}
+		if item.Permission == "" {
+			item.Permission = config.PermissionRead
+		}
+		if _, err := permission.New(item.Permission); err != nil {
+			return nil, err
+		}
+		harnesses[id] = item
+	}
+	return harnesses, nil
+}
+
+func (a *Service) hubMCPSettings(settings map[string]nodewire.MCPSetting) (map[string]config.MCPServer, error) {
+
+	servers := make(map[string]config.MCPServer, len(settings))
+	for id, m := range settings {
+		ConfigMu.RLock()
+		old := a.Cfg.MCPServers[id]
+		ConfigMu.RUnlock()
+		if m.Env == nil {
+			m.Env = old.Env
+		}
+		if m.Headers == nil {
+			m.Headers = old.Headers
+		}
+		if !NameShape.MatchString(strings.ToLower(id)) {
+			return nil, fmt.Errorf("MCP 服务器 %q 的名字不合法", id)
+		}
+		switch m.Type {
+		case "", "stdio":
+			if strings.TrimSpace(m.Command) == "" {
+				return nil, fmt.Errorf("MCP 服务器 %q 需要启动命令", id)
+			}
+			m.Type = "stdio"
+		case "http", "sse":
+			if !strings.HasPrefix(m.URL, "http://") && !strings.HasPrefix(m.URL, "https://") {
+				return nil, fmt.Errorf("MCP 服务器 %q 需要 http(s) 地址", id)
+			}
+		default:
+			return nil, fmt.Errorf("MCP 服务器 %q：不认识的类型 %q", id, m.Type)
+		}
+		servers[id] = config.MCPServer{Type: m.Type, Command: m.Command, Args: m.Args, Env: m.Env, URL: m.URL, Headers: m.Headers}
+	}
+	return servers, nil
 }
 
 func (a *Service) hubSettings() nodewire.Settings {
