@@ -584,7 +584,8 @@ func importProject(ctx context.Context, o ImportOptions, syncFile func(*os.File)
 	if err := stageOwnership(ctx, book, stageBook, o.HubID, p, b.Owner); err != nil {
 		return empty, err
 	}
-	facts, err := importedFacts(ctx, stageBook, b, p.ID, identity, targetHome)
+	run := importRun{o: o, b: b, id: p.ID, identity: identity, targetHome: targetHome, stageDir: stageDir}
+	facts, err := run.importedFacts(ctx, stageBook)
 	if err != nil {
 		return empty, err
 	}
@@ -595,19 +596,19 @@ func importProject(ctx context.Context, o ImportOptions, syncFile func(*os.File)
 	if err := book.ValidateImport(ctx, facts, docs, expected); err != nil {
 		return empty, err
 	}
-	marker, retry, err := claimInstall(o, b, p.ID, targetHome)
+	marker, retry, err := run.claimInstall()
 	if err != nil {
 		return empty, err
 	}
-	if err := installFiles(ctx, o, book, b, p.ID, targetHome, stageDir, retry); err != nil {
+	if err := run.installFiles(ctx, book, retry); err != nil {
 		return empty, err
 	}
-	if err := installMemory(o.StateDir, b.Memory, p.ID); err != nil {
+	if err := run.installMemory(); err != nil {
 		return empty, err
 	}
 	// Ownership must not become durable before the files it authorizes. Git
 	// and copied workspace files do not themselves guarantee a durable tree.
-	for _, path := range installedPaths(o.StateDir, b, p.ID, targetHome, marker) {
+	for _, path := range run.installedPaths(marker) {
 		if err := syncTransferPath(path, syncFile); err != nil {
 			return empty, fmt.Errorf("migration files not durable; project remains inactive: %w", err)
 		}
@@ -798,22 +799,36 @@ func stageOccupiedHomes(ctx context.Context, book, stageBook *ledger.Ledger) err
 	return nil
 }
 
+// importRun is what every stage below the staging ledger shares: the
+// options as given, the bundle being installed, and the identity, project
+// and places derived from them once. The stages read it instead of
+// repeating the same interchangeable strings positionally.
+type importRun struct {
+	o        ImportOptions
+	b        Bundle
+	id       string
+	identity string
+	// targetHome is the absolute home the project takes here; stageDir is
+	// the temporary directory the install rebuilds repositories in.
+	targetHome, stageDir string
+}
+
 // importedFacts is everything the commit writes to the live ledger: the
 // bundle's facts, the receipt that lets the same transfer resume, and the
 // project, ownership and material bindings as staged.
-func importedFacts(ctx context.Context, stageBook *ledger.Ledger, b Bundle, id, identity, targetHome string) (ledger.TransferFacts, error) {
-	facts := b.Facts
-	receiptRaw, err := json.Marshal(struct{ Digest, Home string }{identity, targetHome})
+func (r importRun) importedFacts(ctx context.Context, stageBook *ledger.Ledger) (ledger.TransferFacts, error) {
+	facts := r.b.Facts
+	receiptRaw, err := json.Marshal(struct{ Digest, Home string }{r.identity, r.targetHome})
 	if err != nil {
 		return facts, err
 	}
-	facts.Add(ledger.TransferFacts{Bindings: map[string]map[string]json.RawMessage{"project-transfer-receipt": {b.Owner.TransferID: receiptRaw}}})
+	facts.Add(ledger.TransferFacts{Bindings: map[string]map[string]json.RawMessage{"project-transfer-receipt": {r.b.Owner.TransferID: receiptRaw}}})
 	for _, kind := range []string{"project", "project-owner"} {
 		raw, err := stageBook.Bindings(ctx, kind)
 		if err != nil {
 			return facts, err
 		}
-		facts.Add(ledger.TransferFacts{Bindings: map[string]map[string]json.RawMessage{kind: {id: raw[id]}}})
+		facts.Add(ledger.TransferFacts{Bindings: map[string]map[string]json.RawMessage{kind: {r.id: raw[r.id]}}})
 	}
 	for _, kind := range []string{"material", "material-annotation"} {
 		raw, err := stageBook.Bindings(ctx, kind)
@@ -829,16 +844,16 @@ func importedFacts(ctx context.Context, stageBook *ledger.Ledger, b Bundle, id, 
 // this transfer's before anything is written there. A marker left by an
 // interrupted import must describe the same payload and places; the
 // install is then a retry that tolerates what is already in place.
-func claimInstall(o ImportOptions, b Bundle, id, targetHome string) (marker string, retry bool, err error) {
-	inputBytes, err := os.ReadFile(o.Input)
+func (r importRun) claimInstall() (marker string, retry bool, err error) {
+	inputBytes, err := os.ReadFile(r.o.Input)
 	if err != nil {
 		return "", false, err
 	}
-	if strings.ContainsAny(b.Owner.TransferID, "/\\") || b.Owner.TransferID == "" {
+	if strings.ContainsAny(r.b.Owner.TransferID, "/\\") || r.b.Owner.TransferID == "" {
 		return "", false, errors.New("invalid transfer id")
 	}
-	marker = filepath.Join(o.StateDir, "transfers", b.Owner.TransferID+".json")
-	markerBytes, err := json.Marshal(struct{ Digest, Home, Project string }{digest(inputBytes), targetHome, id})
+	marker = filepath.Join(r.o.StateDir, "transfers", r.b.Owner.TransferID+".json")
+	markerBytes, err := json.Marshal(struct{ Digest, Home, Project string }{digest(inputBytes), r.targetHome, r.id})
 	if err != nil {
 		return "", false, err
 	}
@@ -850,7 +865,7 @@ func claimInstall(o ImportOptions, b Bundle, id, targetHome string) (marker stri
 	} else if !os.IsNotExist(err) {
 		return "", false, err
 	}
-	if err := refuseOccupiedTargets(o.StateDir, b, id, targetHome); err != nil {
+	if err := r.refuseOccupiedTargets(); err != nil {
 		return "", false, err
 	}
 	if err := (&ledger.FileDocument{Path: marker}).Save(markerBytes); err != nil {
@@ -861,17 +876,17 @@ func claimInstall(o ImportOptions, b Bundle, id, targetHome string) (marker stri
 
 // refuseOccupiedTargets stops a fresh install from writing where another
 // project, or an earlier life of this one, already keeps files.
-func refuseOccupiedTargets(stateDir string, b Bundle, id, targetHome string) error {
-	if entries, err := os.ReadDir(targetHome); err == nil && len(entries) > 0 {
+func (r importRun) refuseOccupiedTargets() error {
+	if entries, err := os.ReadDir(r.targetHome); err == nil && len(entries) > 0 {
 		return errors.New("target home must be empty")
 	} else if err != nil && !os.IsNotExist(err) {
 		return err
 	}
-	if _, err := os.Stat(filepath.Join(stateDir, "artifacts", "objects", id+".git")); err == nil {
+	if _, err := os.Stat(filepath.Join(r.o.StateDir, "artifacts", "objects", r.id+".git")); err == nil {
 		return errors.New("target artifact repository already exists")
 	}
-	for name := range b.Memory {
-		if _, err := os.Stat(filepath.Join(stateDir, "memory", "projects", name)); err == nil {
+	for name := range r.b.Memory {
+		if _, err := os.Stat(filepath.Join(r.o.StateDir, "memory", "projects", name)); err == nil {
 			return errors.New("target memory already exists")
 		}
 	}
@@ -882,42 +897,42 @@ func refuseOccupiedTargets(stateDir string, b Bundle, id, targetHome string) err
 // repositories, the artifact repository, the source history and the
 // material blobs. Each step accepts its own earlier, identical result so
 // an interrupted install can be retried.
-func installFiles(ctx context.Context, o ImportOptions, book *ledger.Ledger, b Bundle, id, targetHome, stageDir string, retry bool) error {
-	if err := restoreSnapshot(ctx, b.Workspace, b.Snapshot, targetHome); err != nil {
+func (r importRun) installFiles(ctx context.Context, book *ledger.Ledger, retry bool) error {
+	if err := restoreSnapshot(ctx, r.b.Workspace, r.b.Snapshot, r.targetHome); err != nil {
 		return err
 	}
-	if err := restoreGitHistory(ctx, b.GitHistory, b.GitCommit, b.GitBranch, targetHome, stageDir); err != nil {
+	if err := restoreGitHistory(ctx, r.b.GitHistory, r.b.GitCommit, r.b.GitBranch, r.targetHome, r.stageDir); err != nil {
 		return err
 	}
-	if err := restoreNestedGit(ctx, b.NestedGit, targetHome, stageDir); err != nil {
+	if err := restoreNestedGit(ctx, r.b.NestedGit, r.targetHome, r.stageDir); err != nil {
 		return err
 	}
-	if err := artifact.ImportProjectObjects(ctx, filepath.Join(o.StateDir, "artifacts"), b.Artifacts, retry); err != nil {
+	if err := artifact.ImportProjectObjects(ctx, filepath.Join(r.o.StateDir, "artifacts"), r.b.Artifacts, retry); err != nil {
 		return err
 	}
-	if len(b.GitHistory) > 0 {
-		history := filepath.Join(o.StateDir, "artifacts", "source-history", id+".bundle")
-		if err := (&ledger.FileDocument{Path: history}).Save(b.GitHistory); err != nil {
+	if len(r.b.GitHistory) > 0 {
+		history := filepath.Join(r.o.StateDir, "artifacts", "source-history", r.id+".bundle")
+		if err := (&ledger.FileDocument{Path: history}).Save(r.b.GitHistory); err != nil {
 			return err
 		}
 	}
-	materials, err := material.Open(filepath.Join(o.StateDir, "materials"), book)
+	materials, err := material.Open(filepath.Join(r.o.StateDir, "materials"), book)
 	if err != nil {
 		return err
 	}
 	defer materials.Close()
 	// Blob files are content addressed and inert until their metadata commits.
-	return materials.StageBlobs(b.Material)
+	return materials.StageBlobs(r.b.Material)
 }
 
 // installMemory writes the project's memory files, accepting a file an
 // interrupted install already wrote with the same bytes.
-func installMemory(stateDir string, files map[string][]byte, id string) error {
-	for name, raw := range files {
-		if name != id+".md" && name != id+".md.requests.jsonl" && name != id+".md.pending.json" && name != id+".audit.jsonl" {
+func (r importRun) installMemory() error {
+	for name, raw := range r.b.Memory {
+		if name != r.id+".md" && name != r.id+".md.requests.jsonl" && name != r.id+".md.pending.json" && name != r.id+".audit.jsonl" {
 			return errors.New("invalid memory path")
 		}
-		path := filepath.Join(stateDir, "memory", "projects", name)
+		path := filepath.Join(r.o.StateDir, "memory", "projects", name)
 		if old, err := os.ReadFile(path); err == nil {
 			if string(old) != string(raw) {
 				return errors.New("target project memory changed")
@@ -935,19 +950,19 @@ func installMemory(stateDir string, files map[string][]byte, id string) error {
 
 // installedPaths lists everything the install wrote that must be durable
 // before the ledger records the project as present.
-func installedPaths(stateDir string, b Bundle, id, targetHome, marker string) []string {
-	paths := []string{targetHome, marker}
-	if len(b.Artifacts.GitBundle) > 0 {
-		paths = append(paths, filepath.Join(stateDir, "artifacts", "objects", id+".git"))
+func (r importRun) installedPaths(marker string) []string {
+	paths := []string{r.targetHome, marker}
+	if len(r.b.Artifacts.GitBundle) > 0 {
+		paths = append(paths, filepath.Join(r.o.StateDir, "artifacts", "objects", r.id+".git"))
 	}
-	if len(b.GitHistory) > 0 {
-		paths = append(paths, filepath.Join(stateDir, "artifacts", "source-history", id+".bundle"))
+	if len(r.b.GitHistory) > 0 {
+		paths = append(paths, filepath.Join(r.o.StateDir, "artifacts", "source-history", r.id+".bundle"))
 	}
-	for blob := range b.Material.Blobs {
-		paths = append(paths, filepath.Join(stateDir, "materials", blob))
+	for blob := range r.b.Material.Blobs {
+		paths = append(paths, filepath.Join(r.o.StateDir, "materials", blob))
 	}
-	for name := range b.Memory {
-		paths = append(paths, filepath.Join(stateDir, "memory", "projects", name))
+	for name := range r.b.Memory {
+		paths = append(paths, filepath.Join(r.o.StateDir, "memory", "projects", name))
 	}
 	return paths
 }
