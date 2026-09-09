@@ -18,23 +18,30 @@ const (
 	PluginPrepare        PluginAction = "prepare"
 	PluginRuntimePrepare PluginAction = "runtime-prepare"
 	PluginRuntimeInspect PluginAction = "runtime-inspect"
+	PluginRuntimeList    PluginAction = "runtime-list"
+	PluginRuntimeRetire  PluginAction = "runtime-retire"
+	PluginRuntimeRemove  PluginAction = "runtime-remove"
 	PluginInspect        PluginAction = "inspect"
 	PluginSecrets        PluginAction = "secrets"
 )
 
+const PluginRuntimeClose PluginAction = "runtime-close"
+
 type PluginRequest struct {
-	Permission string              `json:"permission,omitempty"`
-	CommandID  string              `json:"command_id,omitempty"`
-	Selection  *plugins.Selection  `json:"selection,omitempty"`
-	Runtime    *plugins.RuntimeRef `json:"runtime,omitempty"`
-	Action     PluginAction        `json:"action"`
-	Authority  SessionAuthority    `json:"authority"`
-	Node       string              `json:"node"`
-	Deployment plugins.Deployment  `json:"deployment"`
-	Bundle     []byte              `json:"bundle,omitempty"`
+	RelocationPlan string              `json:"relocation_plan,omitempty"`
+	Permission     string              `json:"permission,omitempty"`
+	CommandID      string              `json:"command_id,omitempty"`
+	Selection      *plugins.Selection  `json:"selection,omitempty"`
+	Runtime        *plugins.RuntimeRef `json:"runtime,omitempty"`
+	Action         PluginAction        `json:"action"`
+	Authority      SessionAuthority    `json:"authority"`
+	Node           string              `json:"node"`
+	Deployment     plugins.Deployment  `json:"deployment"`
+	Bundle         []byte              `json:"bundle,omitempty"`
 }
 
 type PluginReply struct {
+	Runtimes     []plugins.RuntimeInfo      `json:"runtimes,omitempty"`
 	Permission   string                     `json:"permission,omitempty"`
 	Runtime      *plugins.RuntimeRef        `json:"runtime,omitempty"`
 	Servers      []acp.MCPServer            `json:"servers,omitempty"`
