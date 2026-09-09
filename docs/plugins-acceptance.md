@@ -27,7 +27,7 @@
 
 ## 门禁
 
-本轮反复运行受影响包与 `internal/architecture` 的 `-race -count=1` 测试。最终代码与嵌入资源提交 `b6645d5`：后端完整 race 75 个测试包通过、7 个无测试包；`make test-console` 全部门禁通过；Go build/vet、gofmt 与 diff 检查通过。后续文档提交不改变被测代码。验证命令如下。
+本轮反复运行受影响包与 `internal/architecture` 的 `-race -count=1` 测试。实现及嵌入资源 `b6645d5`、升级浏览器断言 `d0c6f18` 已验收：后端完整 race 75 个测试包通过、7 个无测试包；`make test-console` 全部门禁通过；Go build/vet、gofmt 与 diff 检查通过。随后审查补修的最终代码为 `f07079c`：插件、app 与架构包的竞态测试及 build/vet/gofmt 通过；完整后端竞态结果记录在 MR。前端代码没有变化。验证命令如下。
 
 ```sh
 export PATH=/usr/local/go/bin:$PATH
@@ -47,8 +47,15 @@ LD_LIBRARY_PATH=/opt/home/pengxiang.lpx/steve-bin/libs make test-console
 
 ## 边界和后续
 
-本轮没有为既有功能引入有意的行为偏差，没有更改既有日志文本。新增插件协议和配置字段属于本轮功能；插件会话不会被全局 Skills 刷新重启，普通会话沿用原逻辑。没有 SSH、线上配置编辑、hub/节点重启或生产 e2e 操作。
+本轮没有更改既有日志文本。审查补修了两项插件输入行为：存储父目录不存在时拒绝创建；`prepare` 缺少 `-command-id`/`-digest`、`show` 缺少 `-digest` 时在 CLI 层指出参数名。对应复现和测试见下表；其他非插件流程沿用原逻辑。新增插件协议和配置字段属于本轮功能；插件会话不会被全局 Skills 刷新重启，普通会话沿用原逻辑。没有 SSH、线上配置编辑、hub/节点重启或生产 e2e 操作。
 
 显式采用的单位是 Agent 的 Skills/MCP **引用**，不是仍被其他 Agent 使用的用户源目录或机器服务定义。删除安装解除预设来源，保留 Agent 当前配置；不会自动恢复已采用的旧引用。共享包库、凭据版本与命令记录保留，没有自动包库/凭据 GC。强制终止留下的暂存目录及短 Unix socket 目录可能需要离线维护，不能按年龄删除运行状态。
 
 真机验收仍需主会话对真实 GitHub/内网服务及 fleet 执行，并在合并前补充证据；此处的服务替身测试不能替代它。插件市场、自动更新、递归依赖、新 harness 安装、自定义前端、hooks、验证器和外部触发器不在第一轮。下一轮先规划验证器契约、提交后事件和自动化受理身份。
+
+## 审查补修
+
+| 审查项 | 复现与修正 | 回归证据 |
+|---|---|---|
+| 存储父目录契约 | 给合法的 `plugins prepare` 请求指定 `<不存在的父目录>/plugins`，原实现递归创建父目录；现在返回目录不存在，且不创建父目录。显式创建父目录后同一请求可成功。 | `TestPrepareRequiresAnExistingStoreParent` |
+| CLI 必填参数提示 | `plugins prepare -source <目录> -store <路径>` 漏掉 `-command-id` 或 `-digest`，以及 `plugins show -store <路径>` 漏掉 `-digest`，原先进入底层泛化错误；现在返回 `plugins <动作> requires <参数>`，不访问源或修改存储。 | `TestPluginCommandsNameMissingRequiredFlagsBeforeAccessingFiles` |
