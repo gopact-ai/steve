@@ -34,8 +34,14 @@ func AcquireLock(stateDir string) (func(), error) {
 	_, _ = fmt.Fprintf(file, "%d\n", os.Getpid())
 	_ = file.Sync()
 	return func() {
-		// Release runs at shutdown, where the lock dies with the process
-		// anyway and no caller is left to tell.
+		// Release also runs mid-process — node adoption, project export and
+		// import, and a cluster peer each hold the lock for one bounded
+		// operation and expect the next AcquireLock over the same directory
+		// to succeed. Both errors are still dropped, and release keeps its
+		// bare func() shape, because neither can leave the directory locked:
+		// the flock lives on this open file description, which the kernel
+		// drops with the descriptor whichever way close answers, so the
+		// unlock only surrenders it a moment earlier.
 		_ = syscall.Flock(int(file.Fd()), syscall.LOCK_UN)
 		_ = file.Close()
 	}, nil
