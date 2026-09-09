@@ -143,9 +143,11 @@ func (s *Server) forwardMCP(listener net.Listener) {
 	defer transport.CloseIdleConnections()
 	// Serve returns once closeMCP closes the listener, reporting that
 	// close as net.ErrClosed. Any other end is the listener dying on its
-	// own: agents would only see their MCP calls refused, so say so.
+	// own: agents would only see their MCP calls refused, so say so. The
+	// wording keeps this apart from the bind that never came up, which
+	// hub.go reports under "reverse MCP listener" and is fixed elsewhere.
 	if err := server.Serve(listener); err != nil && !errors.Is(err, net.ErrClosed) && !errors.Is(err, http.ErrServerClosed) {
-		slog.Error(fmt.Sprintf("steve-node: reverse MCP listener: %v", err), "node", s.conf().Name)
+		slog.Error(fmt.Sprintf("steve-node: reverse MCP listener stopped serving: %v — MCP calls from agents here are refused", err), "node", s.conf().Name)
 	}
 }
 
