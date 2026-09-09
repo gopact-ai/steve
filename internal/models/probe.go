@@ -25,6 +25,13 @@ type Opener interface {
 	CloseSession(ctx context.Context, at harness.Placement, upstreamID string) error
 }
 
+// settingsReporter is a runner that says what its agent is set to. A
+// probe only reads, so it asks for the reporting method alone: a runner
+// that reports selectors without offering setters is still observed.
+type settingsReporter interface {
+	Settings() view.Settings
+}
+
 // Prepare makes a directory exist on a machine before a session opens in
 // it. The registry's command channel does this for a node; the hub uses
 // the filesystem.
@@ -63,11 +70,11 @@ func (p *Prober) Probe(ctx context.Context, ep Endpoint) (Observation, error) {
 	if err != nil {
 		return Observation{}, err
 	}
-	// An agent with no selectors is not Configurable; its observation
-	// records that nothing was reported.
+	// An agent with no selectors reports nothing; its observation records
+	// that it was asked and did not tell.
 	var settings view.Settings
-	if configurable, ok := runner.(harness.Configurable); ok {
-		settings = configurable.Settings()
+	if reporter, ok := runner.(settingsReporter); ok {
+		settings = reporter.Settings()
 	}
 	if err := p.open.CloseSession(ctx, at, runner.ID()); err != nil {
 		slog.Error(fmt.Sprintf("models: close probe session on %s/%s: %v", ep.Node, ep.Harness, err), "node", ep.Node, "harness", ep.Harness)
