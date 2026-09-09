@@ -85,12 +85,15 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 	if status != http.StatusOK {
 		t.Fatalf("register fixture agent: %d %s", status, body)
 	}
+	pluginFixture := preparePeerPluginFixture(t, first)
+	pluginFixture.activate(t, first, "1.0.0")
+	adoptPeerPluginAgent(t, first, first.Config.NodeID)
 	conversation := "console:retained-integration"
 	status, body = PeerRequest(t, first, http.MethodPost, "/console/send", consoleapi.Submission{Conversation: conversation, Input: "/project use workspace", CommandID: "bind-recovery-workspace"})
 	if status != http.StatusOK {
 		t.Fatalf("bind workspace: %d %s", status, body)
 	}
-	status, body = PeerRequest(t, first, http.MethodPost, "/console/queue", consoleapi.Submission{Conversation: conversation, Input: "askme original retained command", CommandID: "original-retained-input"})
+	status, body = PeerRequest(t, first, http.MethodPost, "/console/queue", consoleapi.Submission{Conversation: conversation, Input: "askme plugincheck original retained command", CommandID: "original-retained-input"})
 	if status != http.StatusOK {
 		t.Fatalf("submit original command: %d %s", status, body)
 	}
@@ -110,6 +113,11 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
+	savedPlugin := conversationStore.Conversation(conversation).Sessions["worker"].PluginRuntime
+	if savedPlugin == nil {
+		t.Fatal("plugin binding missing before transfer")
+	}
+	pluginFixture.activate(t, first, "2.0.0")
 	agentToken := conversationStore.Conversation(conversation).Sessions["worker"].AgentToken
 	first.Mu.RLock()
 	admin := first.Application.Admin
@@ -178,6 +186,9 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 	if record.State != attempt.Bound || record.Result == nil || !strings.Contains(string(record.Result.Output), "accept:Blue") {
 		t.Fatalf("original attempt lacks atomic completed response: %+v", record)
 	}
+	if record.PluginRuntimeID() != savedPlugin.ID || !strings.Contains(string(record.Result.Output), "PLUGIN_SKILL_github_1.0.0") || strings.Contains(string(record.Result.Output), "PLUGIN_SKILL_github_2.0.0") || !strings.Contains(string(record.Result.Output), "REVIEW_EVIDENCE/team-tools/1.0.0") || pluginFixture.calls.Load() != 2 {
+		t.Fatalf("plugin transfer changed content or replayed tools: %s calls=%d", record.Result.Output, pluginFixture.calls.Load())
+	}
 	records, err := attempts.ForTask(t.Context(), original.TaskID)
 	if err != nil || len(records) != 1 {
 		t.Fatalf("recovery created a second attempt: %+v %v", records, err)
@@ -195,7 +206,7 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 	second.Mu.RUnlock()
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
 	defer cancel()
-	state, err := registry.NodeSession(ctx, first.Worker().Name, nodewire.SessionRequest{Action: "attach", ID: record.Session, Authority: nodewire.SessionAuthority{ClusterID: first.Config.ClusterID, CoordinatorNodeID: active.NodeID, CoordinatorEpoch: active.Assignment.Epoch, WriterGeneration: active.WriterGeneration}, Binding: nodewire.SessionBinding{ProjectID: record.Project, SessionID: attempt.RetainedSessionID(tracked.Channel, tracked.ID, record.Agent), TaskID: record.TaskID, AttemptID: record.ID, NodeID: record.Node, ExecutionEpoch: attempt.SessionExecutionEpoch(record), TaskEpoch: record.Execution.Epoch}, CommandID: record.TurnID})
+	state, err := registry.NodeSession(ctx, first.Worker().Name, nodewire.SessionRequest{Action: "attach", ID: record.Session, Authority: nodewire.SessionAuthority{ClusterID: first.Config.ClusterID, CoordinatorNodeID: active.NodeID, CoordinatorEpoch: active.Assignment.Epoch, WriterGeneration: active.WriterGeneration}, Binding: nodewire.SessionBinding{PluginRuntimeID: record.PluginRuntimeID(), ProjectID: record.Project, SessionID: attempt.RetainedSessionID(tracked.Channel, tracked.ID, record.Agent), TaskID: record.TaskID, AttemptID: record.ID, NodeID: record.Node, ExecutionEpoch: attempt.SessionExecutionEpoch(record), TaskEpoch: record.Execution.Epoch}, CommandID: record.TurnID})
 	if err != nil || state.InputAccepted != 1 || state.Command == nil || state.Command.InputSequence != 1 {
 		t.Fatalf("original prompt was replayed or receipt lost: %+v %v", state, err)
 	}
@@ -210,6 +221,8 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 		t.Fatalf("new conversation did not close the original native session: %+v %v; response=%s", closed, err, body)
 	}
 	checkRetainedMCP(t, mcpURL, agentToken, http.StatusUnauthorized)
+	checkPeerPluginProjectIsolation(t, second, first)
+	checkPeerPluginRollbackAndRemoval(t, second, conversation)
 }
 
 func checkRetainedMCP(t *testing.T, address, token string, want int) {
@@ -291,12 +304,15 @@ func TestSourceNodeLossUsesPlanScopedApprovalAndContinuesInIsolatedWorkspace(t *
 			t.Fatalf("register agent: %d %s", status, body)
 		}
 	}
+	pluginFixture := preparePeerPluginFixture(t, first, second, third)
+	pluginFixture.activate(t, first, "1.0.0")
+	adoptPeerPluginAgent(t, first, first.Config.NodeID)
 	conversation := "console:source-loss"
 	status, body := PeerRequest(t, first, http.MethodPost, "/console/send", consoleapi.Submission{Conversation: conversation, Input: "/project use workspace", CommandID: "source-loss-project"})
 	if status != http.StatusOK {
 		t.Fatalf("bind project: %d %s", status, body)
 	}
-	status, body = PeerRequest(t, first, http.MethodPost, "/console/queue", consoleapi.Submission{Conversation: conversation, Input: "@worker askme source lost", CommandID: "source-loss-input"})
+	status, body = PeerRequest(t, first, http.MethodPost, "/console/queue", consoleapi.Submission{Conversation: conversation, Input: "@worker askme plugincheck source lost", CommandID: "source-loss-input"})
 	if status != http.StatusOK {
 		t.Fatalf("submit: %d %s", status, body)
 	}
@@ -308,6 +324,10 @@ func TestSourceNodeLossUsesPlanScopedApprovalAndContinuesInIsolatedWorkspace(t *
 	if err != nil {
 		t.Fatal(err)
 	}
+	if oldRecord.PluginRuntime == nil {
+		t.Fatal("plugin source binding absent")
+	}
+	pluginFixture.activate(t, first, "2.0.0")
 	if _, err := first.Runtime.Load().Transfer(t.Context(), coordination.TransferRequest{ID: "coordinate-away", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: second.Config.NodeID}); err != nil {
 		t.Fatal(err)
 	}
@@ -415,6 +435,9 @@ func TestSourceNodeLossUsesPlanScopedApprovalAndContinuesInIsolatedWorkspace(t *
 	newRecord, err := attempt.New(book).Get(t.Context(), question.AttemptID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if newRecord.PluginRuntime == nil || newRecord.PluginRuntimeID() == oldRecord.PluginRuntimeID() || !strings.Contains(string(newRecord.Result.Output), "PLUGIN_SKILL_github_1.0.0") || !strings.Contains(string(newRecord.Result.Output), "REVIEW_EVIDENCE/team-tools/1.0.0") {
+		t.Fatalf("relocation lost original plugin version: %+v", newRecord)
 	}
 	if newRecord.State != attempt.Bound || newRecord.Workspace.Kind != "worktree" || newRecord.Node == oldRecord.Node || newRecord.Workspace.Path == oldRecord.Workspace.Path || newRecord.Recovery == nil {
 		t.Fatalf("unsafe replacement workspace: %+v", newRecord)
