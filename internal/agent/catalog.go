@@ -11,11 +11,13 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/protocol"
 )
 
 type Config struct {
-	Harness string
+	PluginOrigin *plugins.AgentOrigin
+	Harness      string
 	// Node is the machine this agent runs on; empty is the hub itself.
 	// An agent is (node, harness, model): the harness binary and the model
 	// endpoints it can reach are properties of a machine, so the same
@@ -82,6 +84,7 @@ func (c *Catalog) Publish(prepared *Catalog) {
 }
 
 func cloneConfig(cfg Config) Config {
+	cfg.PluginOrigin = cfg.PluginOrigin.Clone()
 	cfg.Options = maps.Clone(cfg.Options)
 	cfg.Aliases = slices.Clone(cfg.Aliases)
 	cfg.Requires = slices.Clone(cfg.Requires)
