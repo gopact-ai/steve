@@ -1208,8 +1208,9 @@ func (s *Service) parentLease(ctx context.Context, parent task.Task) (ledger.Lea
 // left on the node, reported here for the operator.
 func (s *Service) discardUnused(ctx context.Context, workspace project.Workspace, parent task.Task) {
 	if err := s.artifacts.Discard(context.WithoutCancel(ctx), workspace); err != nil {
-		// No attempt was ever opened on this worktree, so the workspace
-		// id is the only identifier that leads anywhere.
+		// No attempt was ever opened on this worktree, so the path an
+		// operator has to clean up and the workspace id it is filed
+		// under are the identifiers that lead anywhere.
 		slog.Warn(fmt.Sprintf("delegate: discard unused workspace %s: %v", workspace.Path, err), "workspace", workspace.ID, "parent", parent.ID, "node", workspace.Node, "project", workspace.Project)
 	}
 }
