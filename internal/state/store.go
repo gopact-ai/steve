@@ -13,12 +13,15 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/plugins"
 )
 
 type Session struct {
-	ConversationID string `json:"conversation_id"`
-	AgentID        string `json:"agent_id"`
-	HarnessID      string `json:"harness_id"`
+	PluginSkillsFingerprint string              `json:"plugin_skills_fingerprint,omitempty"`
+	PluginRuntime           *plugins.RuntimeRef `json:"plugin_runtime,omitempty"`
+	ConversationID          string              `json:"conversation_id"`
+	AgentID                 string              `json:"agent_id"`
+	HarnessID               string              `json:"harness_id"`
 	// NodeID is the machine the session's agent process runs on. Empty
 	// means the hub itself. A restored session must reconnect to the same
 	// node: the agent's workspace and its conversation live there.
@@ -196,6 +199,7 @@ func (s *Store) SetPreferences(conversationID, agentID string, patch map[string]
 }
 
 func (s *Store) SaveSession(session Session) error {
+	session.PluginRuntime = session.PluginRuntime.Clone()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := cloneData(s.data)
@@ -528,6 +532,9 @@ func cloneData(source data) data {
 func cloneConversation(conversation Conversation) Conversation {
 	clone := conversation
 	clone.Archived = append([]Archived(nil), conversation.Archived...)
+	for i := range clone.Archived {
+		clone.Archived[i].PluginRuntime = clone.Archived[i].PluginRuntime.Clone()
+	}
 	if conversation.Preferences != nil {
 		clone.Preferences = make(map[string]map[string]string, len(conversation.Preferences))
 		for agent, prefs := range conversation.Preferences {
@@ -540,6 +547,7 @@ func cloneConversation(conversation Conversation) Conversation {
 	}
 	clone.Sessions = make(map[string]Session, len(conversation.Sessions))
 	for id, session := range conversation.Sessions {
+		session.PluginRuntime = session.PluginRuntime.Clone()
 		clone.Sessions[id] = session
 	}
 	return clone
