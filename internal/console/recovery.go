@@ -302,8 +302,7 @@ func (r *exchangeRecovery) observe() bool {
 	var err error
 	if found && lookupErr == nil {
 		var done bool
-		done, err, lookupErr = r.resume(candidate, request)
-		if done {
+		if done, err = r.resume(candidate, request); done {
 			return false
 		}
 	}
@@ -348,18 +347,23 @@ func (r *exchangeRecovery) request(requester string, identity *questionIdentity)
 }
 
 // resume reattaches to the retained execution once the exchange is
-// recorded as recovering. It reports whether the exchange settled; when
-// it did not, err says what blocked the resumption and saveErr names a
-// state save that failed before it was tried.
-func (r *exchangeRecovery) resume(candidate retainedExchange, request turn.Request) (done bool, err, saveErr error) {
-	if saveErr = r.s.markExchange(r.e, consoleapi.ExchangeRecovering); saveErr != nil {
+// recorded as recovering. It reports whether the worker is done — the
+// exchange settled, or a cancelled console detached it — and otherwise
+// what now blocks the recovery: the state save that failed before the
+// resumption was tried, or what the resumption itself hit.
+func (r *exchangeRecovery) resume(candidate retainedExchange, request turn.Request) (done bool, blocked error) {
+	// Do not reattach behind a state the console could not write: an
+	// execution resumed under an unrecorded exchange would be lost again
+	// by the next restart, so the failure is what the owner is told.
+	if saveErr := r.s.markExchange(r.e, consoleapi.ExchangeRecovering); saveErr != nil {
 		if r.ctx.Err() != nil {
 			r.detach(r.ctx.Err())
-			return true, nil, saveErr
+			return true, nil
 		}
-		return false, nil, saveErr
+		return false, saveErr
 	}
 	var result turn.Result
+	var err error
 	if candidate.plan != nil {
 		result, err = r.driver.(retainedPlanDriver).ResumeRetainedPlan(r.ctx, *candidate.plan, request)
 	} else {
@@ -367,9 +371,9 @@ func (r *exchangeRecovery) resume(candidate retainedExchange, request turn.Reque
 	}
 	if settles(result, err) {
 		r.settle(result, err)
-		return true, err, nil
+		return true, nil
 	}
-	return false, err, nil
+	return false, err
 }
 
 // relocate moves the blocked chat to another node by a plan the owner
