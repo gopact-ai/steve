@@ -1,0 +1,27 @@
+{
+  "schema": 1,
+  "api": "steve.plugins.v1",
+  "id": "example/team-tools",
+  "version": "0.1.0",
+  "description": "Triage project issues using a team-provided MCP endpoint and shared investigation instructions.",
+  "settings": {
+    "endpoint": {"description": "HTTP(S) MCP endpoint reachable from the selected execution node.", "required": true},
+    "token": {"description": "Team-service credential configured only on the executing node.", "secret": true, "required": true}
+  },
+  "skills": {"triage": "skills/triage"},
+  "mcp": {
+    "team": {
+      "transport": "http",
+      "url": {"config": "endpoint"},
+      "headers": {"Authorization": {"secret": "token", "prefix": "Bearer "}}
+    }
+  },
+  "agents": {
+    "investigator": {
+      "harness": "claude-code",
+      "system_prompt": "Investigate the requested issue using the team's tools. Attribute evidence to its source and request clarification when the requested system or project is ambiguous.",
+      "skills": ["triage"],
+      "mcp_servers": ["team"]
+    }
+  }
+}

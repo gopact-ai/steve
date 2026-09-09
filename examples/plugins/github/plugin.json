@@ -1,0 +1,30 @@
+{
+  "schema": 1,
+  "api": "steve.plugins.v1",
+  "id": "gopact/github",
+  "version": "0.1.0",
+  "description": "Review GitHub pull requests using a project-scoped agent preset and the GitHub MCP service.",
+  "settings": {
+    "token": {
+      "description": "GitHub credential supplied on the executing node; grant only access needed by the selected project.",
+      "secret": true,
+      "required": true
+    }
+  },
+  "skills": {"review": "skills/review"},
+  "mcp": {
+    "github": {
+      "transport": "http",
+      "url": {"text": "https://api.githubcopilot.com/mcp/"},
+      "headers": {"Authorization": {"secret": "token", "prefix": "Bearer "}}
+    }
+  },
+  "agents": {
+    "reviewer": {
+      "harness": "codex",
+      "system_prompt": "Review the requested change and report actionable findings with evidence. Follow the project's authorization for any GitHub mutation.",
+      "skills": ["review"],
+      "mcp_servers": ["github"]
+    }
+  }
+}
