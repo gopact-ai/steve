@@ -22,3 +22,16 @@ func TestPluginScopesRequireKnownProjectsAndSuitableMachines(t *testing.T) {
 		t.Fatal("unknown project accepted")
 	}
 }
+
+func TestPluginScopesRejectDuplicatePackageActivation(t *testing.T) {
+	item := plugins.Installation{PackageID: "test/package", Digest: strings.Repeat("a", 64), Enabled: true, Projects: []string{"p"}, Targets: map[string]plugins.Configuration{"": {}}}
+	cfg := &Config{Projects: map[string]Project{"p": {}}, Plugins: map[string]plugins.Installation{"one": item, "two": item}}
+	if err := cfg.ValidatePlugins(); err == nil {
+		t.Fatal("duplicate runtime capability names passed configuration review")
+	}
+	item.Enabled = false
+	cfg.Plugins["two"] = item
+	if err := cfg.ValidatePlugins(); err != nil {
+		t.Fatalf("inactive candidate cannot coexist: %v", err)
+	}
+}

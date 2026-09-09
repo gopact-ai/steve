@@ -11,6 +11,7 @@ import (
 // ValidatePlugins checks desired scopes without touching package files or
 // node credentials. Node readiness remains a separate observed fact.
 func (c *Config) ValidatePlugins() error {
+	occupied := map[string]string{}
 	ids := make([]string, 0, len(c.Plugins))
 	for id := range c.Plugins {
 		ids = append(ids, id)
@@ -35,6 +36,13 @@ func (c *Config) ValidatePlugins() error {
 				level = project.Level(configured.Level).OrDefault()
 			}
 			for _, pid := range deployment.Projects {
+				if item.Enabled {
+					key := item.PackageID + "\x00" + node + "\x00" + pid
+					if other, exists := occupied[key]; exists {
+						return fmt.Errorf("plugins %s and %s enable the same package on the same project and node", other, id)
+					}
+					occupied[key] = id
+				}
 				p, ok := c.Projects[pid]
 				if !ok {
 					return fmt.Errorf("plugin %s names unknown project %s", id, pid)
