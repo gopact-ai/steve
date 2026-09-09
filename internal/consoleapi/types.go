@@ -264,8 +264,9 @@ type Admin interface {
 // skill found there with whether it is handed to agents, and whether
 // each machine holds the current bundle.
 type SkillsView struct {
-	Fingerprint string   `json:"fingerprint"`
-	SearchPaths []string `json:"search_paths"`
+	Plugins     []PluginResourceView `json:"plugins,omitempty"`
+	Fingerprint string               `json:"fingerprint"`
+	SearchPaths []string             `json:"search_paths"`
 	// BuiltinRoot is the directory the skills shipped with steve are
 	// written to; it is searched last and cannot be removed.
 	BuiltinRoot string      `json:"builtin_root,omitempty"`
@@ -336,9 +337,10 @@ type FoundSkill struct {
 // platform's own session servers, and what each machine's coding
 // agents configured themselves.
 type MCPView struct {
-	Deployments []MCPDeployment `json:"deployments"`
-	Platform    []MCPPlatform   `json:"platform"`
-	Machines    []MCPMachine    `json:"machines"`
+	Plugins     []PluginResourceView `json:"plugins,omitempty"`
+	Deployments []MCPDeployment      `json:"deployments"`
+	Platform    []MCPPlatform        `json:"platform"`
+	Machines    []MCPMachine         `json:"machines"`
 }
 
 // MCPDeployment is one server on one machine: the shape (values of env
