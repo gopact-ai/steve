@@ -210,12 +210,11 @@ func snapshot(ctx context.Context, source string) ([]byte, string, []byte, error
 	if top, err := git(ctx, source, "rev-parse", "--show-toplevel"); err == nil {
 		// The history comes along only when source is the repository's own
 		// top level, not a directory inside one; the comparison needs the
-		// physical path git printed.
+		// physical path git printed. A source that cannot be resolved is
+		// not that top level as far as this comparison goes, so the export
+		// goes on without history rather than failing over it.
 		abs, err := filepath.EvalSymlinks(source)
-		if err != nil {
-			return nil, "", nil, err
-		}
-		if strings.TrimSpace(string(top)) == abs {
+		if err == nil && strings.TrimSpace(string(top)) == abs {
 			historyFile := filepath.Join(temp, "history.bundle")
 			if _, err := git(ctx, source, "bundle", "create", historyFile, "--all", "HEAD"); err != nil {
 				return nil, "", nil, err
