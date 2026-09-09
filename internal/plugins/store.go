@@ -103,7 +103,7 @@ func (s *Store) ensure() error {
 	if s.Dir == "" {
 		return fmt.Errorf("%w: plugin store directory is required", ErrInvalid)
 	}
-	if err := os.MkdirAll(s.Dir, 0700); err != nil {
+	if err := os.Mkdir(s.Dir, 0700); err != nil && !errors.Is(err, fs.ErrExist) {
 		return err
 	}
 	info, err := os.Lstat(s.Dir)

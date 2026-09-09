@@ -46,6 +46,28 @@ func TestPreparePinsBytesAndReplaysWithoutSource(t *testing.T) {
 	}
 }
 
+func TestPrepareRequiresAnExistingStoreParent(t *testing.T) {
+	source := fixtureDirectory(t)
+	bundle, err := ReadDirectory(t.Context(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	parent := filepath.Join(t.TempDir(), "missing")
+	store := &Store{Dir: filepath.Join(parent, "plugins")}
+	if _, err := store.Prepare(t.Context(), "install", bundle.Digest, Source{Kind: "directory", Location: source}); !os.IsNotExist(err) {
+		t.Fatalf("missing parent was not refused: %v", err)
+	}
+	if _, err := os.Lstat(parent); !os.IsNotExist(err) {
+		t.Fatalf("failed preparation created its parent: %v", err)
+	}
+	if err := os.Mkdir(parent, 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Prepare(t.Context(), "install", bundle.Digest, Source{Kind: "directory", Location: source}); err != nil {
+		t.Fatalf("retry with explicit parent failed: %v", err)
+	}
+}
+
 func TestPrepareRefusesChangedPreviewAndReleaseIdentity(t *testing.T) {
 	dir := fixtureDirectory(t)
 	before, err := ReadDirectory(t.Context(), dir)
