@@ -16,7 +16,7 @@ func (e *Execution) preparePluginRuntime(ctx context.Context) (*plugins.RuntimeR
 		}
 		return nil, nil
 	}
-	ref, err := preparer.PreparePluginSession(ctx, harness.PluginPreparation{At: e.o.At, Project: e.Record.Project, AttemptID: e.Record.ID, Upstream: e.Upstream, Prior: e.Record.PluginRuntime})
+	ref, err := preparer.PreparePluginSession(ctx, harness.PluginPreparation{AgentID: e.Record.Agent, At: e.o.At, Project: e.Record.Project, AttemptID: e.Record.ID, Upstream: e.Upstream, Prior: e.Record.PluginRuntime})
 	if err != nil {
 		return nil, err
 	}
