@@ -257,7 +257,8 @@ func (f *fakeSessions) CloseSession(_ context.Context, _ harness.Placement, id s
 }
 
 type fakeWorkspaces struct {
-	discarded int
+	discarded  int
+	discardErr error
 	// live says the last discard's context was not cancelled; remaining
 	// is how much of its deadline it had.
 	live      bool
@@ -272,7 +273,7 @@ func (f *fakeWorkspaces) Discard(ctx context.Context, _ project.Workspace) error
 	if deadline, ok := ctx.Deadline(); ok {
 		f.remaining = time.Until(deadline)
 	}
-	return nil
+	return f.discardErr
 }
 
 type world struct {
@@ -336,6 +337,23 @@ func TestRunTakesAnAttemptFromOpenToClosedInOrder(t *testing.T) {
 	}
 	if len(w.roster.released) != 1 || w.roster.released[0] != "n1/a1" || len(w.sessions.closed) != 1 || w.workspaces.discarded != 1 {
 		t.Fatalf("cleanup: released=%v closed=%v discarded=%d", w.roster.released, w.sessions.closed, w.workspaces.discarded)
+	}
+}
+
+func TestRunFailsAnAttemptItHasNoWayToOpenASessionFor(t *testing.T) {
+	// A caller that set neither Open nor Sessions is misconfigured: the
+	// attempt it leased is failed and its workspace given back, rather
+	// than left leased behind a panic.
+	w := newWorld("s1")
+	o := w.options()
+	o.Sessions, o.Open = nil, nil
+	res, err := Run(t.Context(), o)
+	var step *StepError
+	if !errors.As(err, &step) || step.Step != StepSession || res.Record.State != attempt.Failed || !res.Durable || res.Driven {
+		t.Fatalf("no way to open a session: %+v err=%v", res, err)
+	}
+	if want := "open admit prepared/test arm/test-open settled/test-open-rejected failed/test discard"; w.attempts.history() != want {
+		t.Fatalf("order:\n got %s\nwant %s", w.attempts.history(), want)
 	}
 }
 
@@ -529,6 +547,30 @@ func TestRunCleansUpOnAWindowMintedAfterTheCallersHooks(t *testing.T) {
 	}
 	if unopened.workspaces.discarded != 1 || !unopened.workspaces.live {
 		t.Fatalf("an unopened attempt's workspace was discarded on the cancelled run: discarded=%d live=%v", unopened.workspaces.discarded, unopened.workspaces.live)
+	}
+}
+
+func TestRunNamesADiscardFailureByTheAttemptTheLedgerAssigned(t *testing.T) {
+	// A chat turn opens without an id of its own and the ledger assigns
+	// one; a workspace that could not be given back is reported under
+	// that id, not the empty one the spec had.
+	w := newWorld("s1")
+	w.workspaces.discardErr = errors.New("busy")
+	o := w.options()
+	o.Spec.ID = ""
+	res, err := Run(t.Context(), o)
+	if err != nil || res.Durable || res.CleanupErr == nil || !strings.Contains(res.CleanupErr.Error(), "discard a1: busy") {
+		t.Fatalf("discard failure = %v durable=%v err=%v", res.CleanupErr, res.Durable, err)
+	}
+	// Before there is an attempt at all, the workspace itself is named.
+	unopened := newWorld("s1")
+	unopened.workspaces.discardErr = errors.New("busy")
+	unopened.attempts.openErr = errors.New("no lease")
+	o = unopened.options()
+	o.Spec.ID = ""
+	res, _ = Run(t.Context(), o)
+	if res.CleanupErr == nil || !strings.Contains(res.CleanupErr.Error(), "discard workspace ws: busy") {
+		t.Fatalf("unopened discard failure = %v", res.CleanupErr)
 	}
 }
 
