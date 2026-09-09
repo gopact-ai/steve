@@ -2,6 +2,7 @@ package harness
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/acphost"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -29,11 +31,12 @@ const (
 )
 
 type Config struct {
-	Command    string
-	Args       []string
-	ProcessDir string
-	Env        []string
-	Permission string
+	PluginInstructions string
+	Command            string
+	Args               []string
+	ProcessDir         string
+	Env                []string
+	Permission         string
 }
 
 // Placement is where one session's agent process runs. An empty Node means
@@ -62,6 +65,7 @@ type Transports interface {
 }
 
 type Manager struct {
+	pluginRuntimes    PluginRuntimeProvider
 	suspended         map[string]bool
 	configs           map[string]Config
 	remote            Transports
@@ -176,6 +180,12 @@ func (m *Manager) OpenSession(ctx context.Context, at Placement, upstreamID, wor
 	if runner, handled, err := m.openNodeSession(ctx, at, upstreamID, workdir, servers); handled {
 		return runner, err
 	}
+	if PluginProfile(ctx) != nil {
+		return m.openPluginSession(ctx, at, upstreamID, workdir, servers)
+	}
+	if strings.HasPrefix(upstreamID, "ps_") {
+		return nil, errors.New("plugin runtime reference is required to resume this session")
+	}
 	if workdir == "" {
 		return nil, fmt.Errorf("agent workspace is required")
 	}
@@ -239,6 +249,9 @@ func (m *Manager) SupportsHTTPMCP(ctx context.Context, at Placement) (bool, erro
 }
 
 func (m *Manager) CloseSession(ctx context.Context, at Placement, upstreamID string) error {
+	if handled, err := m.closePluginSession(ctx, at, upstreamID); handled {
+		return err
+	}
 	var bindErr error
 	ctx, bindErr = m.bindNodeSession(ctx, at, upstreamID, "")
 	if bindErr != nil {
@@ -293,10 +306,13 @@ func (m *Manager) Restart() error {
 		return fmt.Errorf("harness manager is stopped")
 	}
 	hosts := make([]*acphost.Host, 0, len(m.hosts))
-	for _, host := range m.hosts {
+	for key, host := range m.hosts {
+		if strings.HasPrefix(key, "plugin/") {
+			continue
+		}
 		hosts = append(hosts, host)
+		delete(m.hosts, key)
 	}
-	m.hosts = map[string]*acphost.Host{}
 	m.mu.Unlock()
 	for _, host := range hosts {
 		host.Close()
@@ -495,10 +511,12 @@ type TurnRunner interface {
 }
 
 type Session struct {
-	at         Placement
-	id         acp.SessionID
-	generation uint64
-	host       *acphost.Host
+	plugin             *plugins.RuntimeRef
+	pluginInstructions string
+	at                 Placement
+	id                 acp.SessionID
+	generation         uint64
+	host               *acphost.Host
 	// observe is the manager's observer, kept so a session whose
 	// selectors were just pinned can report its settings again.
 	observe Observer
@@ -516,7 +534,12 @@ func (s *Session) Reobserve() {
 	}
 }
 
-func (s *Session) ID() string { return string(s.id) }
+func (s *Session) ID() string {
+	if s.plugin != nil {
+		return profileSessionID(*s.plugin, s.id)
+	}
+	return string(s.id)
+}
 
 func (s *Session) Prompt(ctx context.Context, text string, progress func(view.Progress)) (string, []string, error) {
 	return s.PromptTurn(ctx, text, nil, nil, nil, progress)
@@ -530,6 +553,9 @@ func (s *Session) PromptTurn(
 	askUser acphost.AskUserFunc,
 	progress func(view.Progress),
 ) (string, []string, error) {
+	if s.pluginInstructions != "" {
+		text = s.pluginInstructions + "\n\n" + text
+	}
 	images := make([]acphost.Image, 0, len(media))
 	for _, item := range media {
 		if len(item.Data) == 0 {

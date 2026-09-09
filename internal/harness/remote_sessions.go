@@ -92,6 +92,10 @@ type managedSession struct {
 
 func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID, workdir string, servers []acp.MCPServer) (Runner, bool, error) {
 	binding, bound := NodeSessionFromContext(ctx)
+	profile := PluginProfile(ctx)
+	if profile != nil {
+		binding.Binding.PluginRuntimeID = profile.ID
+	}
 	managed := strings.HasPrefix(upstreamID, "ns_")
 	if !bound && !managed {
 		return nil, false, nil
@@ -120,7 +124,7 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 	if policy == "" {
 		policy = permission.PolicyRead
 	}
-	request := nodewire.SessionRequest{Action: nodewire.SessionActionOpen, Authority: binding.Authority, Binding: binding.Binding, ID: upstreamID, Harness: at.Harness, Workdir: workdir, MCPServers: servers, Permission: policy, CommandID: binding.CommandID + "/open"}
+	request := nodewire.SessionRequest{Action: nodewire.SessionActionOpen, Plugin: profile, Authority: binding.Authority, Binding: binding.Binding, ID: upstreamID, Harness: at.Harness, Workdir: workdir, MCPServers: servers, Permission: policy, CommandID: binding.CommandID + "/open"}
 	state, err := transport.NodeSession(ctx, node, request)
 	if err != nil {
 		var notSent *nodewire.SessionNotDispatched
