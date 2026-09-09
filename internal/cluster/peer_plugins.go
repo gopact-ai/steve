@@ -3,6 +3,7 @@ package cluster
 import (
 	"context"
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/coordination"
@@ -79,6 +80,13 @@ func (p *Peer) authorizePluginRequest(ctx context.Context, req nodewire.PluginRe
 		return errors.New("plugin request targets an unknown node")
 	}
 	switch req.Action {
+	case nodewire.PluginRuntimePrepare, nodewire.PluginRuntimeInspect:
+		if req.Action == nodewire.PluginRuntimeInspect && req.Runtime != nil {
+			if err := (&plugins.Library{Ledger: runtime.Ledger()}).CheckRuntimeScope(ctx, declaration.Plugins, *req.Runtime); err != nil {
+				return err
+			}
+		}
+		return authorizePluginRuntime(declaration, req)
 	case nodewire.PluginSecrets:
 		return nil
 	case nodewire.PluginInspect:
@@ -107,4 +115,51 @@ func (p *Peer) authorizePluginRequest(ctx context.Context, req nodewire.PluginRe
 	default:
 		return plugins.ErrIncompatible
 	}
+}
+
+func authorizePluginRuntime(declaration platformconfig.Declaration, req nodewire.PluginRequest) error {
+	if req.Selection == nil || req.Selection.Node != req.Node {
+		return plugins.ErrInvalid
+	}
+	if _, err := req.Selection.Hash(); err != nil {
+		return err
+	}
+	if req.Action == nodewire.PluginRuntimeInspect {
+		if req.Runtime == nil {
+			return plugins.ErrInvalid
+		}
+		// Inspection retains an existing runtime; it never grants a new selection.
+		expected, err := req.Runtime.Selection.Hash()
+		if err != nil {
+			return err
+		}
+		actual, _ := req.Selection.Hash()
+		if actual != expected {
+			return plugins.ErrInvalid
+		}
+		return nil
+	}
+	wanted := map[string]bool{}
+	for id, item := range declaration.Plugins {
+		if !item.Enabled {
+			continue
+		}
+		d, err := item.Deployment(id, req.Node)
+		if err != nil {
+			continue
+		}
+		if slices.Contains(d.Projects, req.Selection.Project) {
+			hash, err := d.Hash()
+			if err != nil {
+				return err
+			}
+			wanted[hash] = true
+		}
+	}
+	for _, hash := range req.Selection.Deployments {
+		if !wanted[hash] {
+			return errors.New("runtime selection is not enabled by current configuration")
+		}
+	}
+	return nil
 }
