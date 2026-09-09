@@ -21,6 +21,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/permission"
+	"github.com/gopact-ai/steve/internal/plugins"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
@@ -222,6 +223,7 @@ type ProjectHome struct {
 }
 
 type Config struct {
+	Plugins map[string]plugins.Installation `json:"plugins,omitempty"`
 	// RuntimeHome keeps the shared home workspace anchored to its physical
 	// node while this process uses its own local identity files.
 	RuntimeHome *ProjectHome         `json:"-"`
@@ -612,7 +614,10 @@ func (c *Config) validateTopology() error {
 	if err := c.validateHarnesses(); err != nil {
 		return err
 	}
-	return c.validateAgents()
+	if err := c.validateAgents(); err != nil {
+		return err
+	}
+	return c.ValidatePlugins()
 }
 
 func (c *Config) validateProjects() error {
