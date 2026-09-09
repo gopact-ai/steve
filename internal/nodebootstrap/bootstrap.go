@@ -31,27 +31,10 @@ var shaShape = regexp.MustCompile(`^[a-f0-9]{64}$`)
 // Build refuses an existing installation instead of implicitly stopping or
 // replacing it. Credentials are input data for bash/curl, never process args.
 func Build(spec Spec) (string, error) {
-	port, err := strconv.Atoi(spec.Port)
-	if !nameShape.MatchString(spec.Name) || err != nil || port < 1 || port > 65535 || spec.Token == "" {
-		return "", fmt.Errorf("invalid node bootstrap identity or port")
+	if err := validateSpec(spec); err != nil {
+		return "", err
 	}
-	if spec.DownloadURL != "" {
-		u, err := url.Parse(spec.DownloadURL)
-		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Fragment != "" || strings.ContainsAny(spec.DownloadURL, "\r\n\x00") {
-			return "", fmt.Errorf("invalid node download URL")
-		}
-	}
-	if spec.DownloadURL != "" && spec.UploadID != "" {
-		return "", fmt.Errorf("choose one node binary source")
-	}
-	if spec.UploadID != "" && spec.UploadID != PreviewUploadID && !uploadShape.MatchString(spec.UploadID) {
-		return "", fmt.Errorf("invalid node upload ID")
-	}
-	if spec.DownloadURL != "" || spec.UploadID != "" {
-		if !shaShape.MatchString(spec.SHA256) || (spec.OS != "linux" && spec.OS != "darwin") || (spec.Arch != "amd64" && spec.Arch != "arm64") {
-			return "", fmt.Errorf("node install requires verified platform and SHA-256")
-		}
-	}
+
 	config, err := json.MarshalIndent(struct {
 		Name          string             `json:"name"`
 		Listen        string             `json:"listen"`
@@ -161,6 +144,31 @@ fi
 echo 'Node process started; coordinator connectivity must still be verified.'
 `)
 	return b.String(), nil
+}
+
+func validateSpec(spec Spec) error {
+	port, err := strconv.Atoi(spec.Port)
+	if !nameShape.MatchString(spec.Name) || err != nil || port < 1 || port > 65535 || spec.Token == "" {
+		return fmt.Errorf("invalid node bootstrap identity or port")
+	}
+	if spec.DownloadURL != "" {
+		u, err := url.Parse(spec.DownloadURL)
+		if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.Fragment != "" || strings.ContainsAny(spec.DownloadURL, "\r\n\x00") {
+			return fmt.Errorf("invalid node download URL")
+		}
+	}
+	if spec.DownloadURL != "" && spec.UploadID != "" {
+		return fmt.Errorf("choose one node binary source")
+	}
+	if spec.UploadID != "" && spec.UploadID != PreviewUploadID && !uploadShape.MatchString(spec.UploadID) {
+		return fmt.Errorf("invalid node upload ID")
+	}
+	if spec.DownloadURL != "" || spec.UploadID != "" {
+		if !shaShape.MatchString(spec.SHA256) || (spec.OS != "linux" && spec.OS != "darwin") || (spec.Arch != "amd64" && spec.Arch != "arm64") {
+			return fmt.Errorf("node install requires verified platform and SHA-256")
+		}
+	}
+	return nil
 }
 
 func unamePattern(goos, arch string) string {

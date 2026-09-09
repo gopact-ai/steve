@@ -578,7 +578,25 @@ func ToolTitles() map[string]string {
 }
 
 func toolList(delegating, informing, fleeting, remembering bool) []map[string]any {
-	tools := []map[string]any{
+	tools := baseTools()
+	if delegating {
+		tools = append(tools, delegationTools()...)
+	}
+
+	if informing {
+		tools = append(tools, informTools()...)
+	}
+	if fleeting {
+		tools = append(tools, fleetTools()...)
+	}
+	if remembering {
+		tools = append(tools, memoryTools()...)
+	}
+	return tools
+}
+
+func baseTools() []map[string]any {
+	return []map[string]any{
 		{
 			"name": "channel_send",
 			"description": "Post an interim milestone message into the current channel conversation. " +
@@ -664,67 +682,58 @@ func toolList(delegating, informing, fleeting, remembering bool) []map[string]an
 			},
 		},
 	}
-	if delegating {
-		tools = append(tools, map[string]any{
-			"name": "steve_delegate",
-			"description": "Hand one bounded piece of work to another agent, possibly on another machine. " +
-				"Name the agent, or say what capability the work needs (gpu, internal-net, prod-cred) and Steve picks who can. " +
-				"Returns as soon as the child is placed: read `state`. If it is `running`, you do not have to wait: when the child ends, Steve sends its result into this conversation as a new message, and you continue from there — so end your turn when nothing else is left. " +
-				"Call steve_await only when you must have the result within this turn. " +
-				"The child gets its own budget carved from yours, its own session, and only what you pass here — never your transcript. " +
-				"Use for work that needs a machine or credential you do not have; not for splitting work you could do yourself.",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"goal": map[string]any{
-						"type":        "string",
-						"description": "One bounded goal, stated so someone with none of your context could act on it.",
-					},
-					"agent": map[string]any{
-						"type":        "string",
-						"description": "A specific agent id. Leave empty to place by capability.",
-					},
-					"requires": map[string]any{
-						"type":        "array",
-						"items":       map[string]any{"type": "string"},
-						"description": "Capabilities the machine must have, e.g. [\"gpu\"]. Used when agent is empty.",
-					},
-					"refs": map[string]any{
-						"type":        "array",
-						"items":       map[string]any{"type": "string"},
-						"description": "Pointers the child needs: \"git <commit-or-branch>\", \"blob <digest>\". Pass refs, not content.",
-					},
-					"expect": map[string]any{
-						"type":        "string",
-						"description": "What a good result looks like, in one line. Becomes the child's acceptance line.",
-					},
+}
+
+func delegationTools() []map[string]any {
+	return []map[string]any{map[string]any{
+		"name": "steve_delegate",
+		"description": "Hand one bounded piece of work to another agent, possibly on another machine. " +
+			"Name the agent, or say what capability the work needs (gpu, internal-net, prod-cred) and Steve picks who can. " +
+			"Returns as soon as the child is placed: read `state`. If it is `running`, you do not have to wait: when the child ends, Steve sends its result into this conversation as a new message, and you continue from there — so end your turn when nothing else is left. " +
+			"Call steve_await only when you must have the result within this turn. " +
+			"The child gets its own budget carved from yours, its own session, and only what you pass here — never your transcript. " +
+			"Use for work that needs a machine or credential you do not have; not for splitting work you could do yourself.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"goal": map[string]any{
+					"type":        "string",
+					"description": "One bounded goal, stated so someone with none of your context could act on it.",
 				},
-				"required": []string{"goal"},
-			},
-		}, map[string]any{
-			"name": "steve_await",
-			"description": "Wait for a delegated child task and return its result. Usually unnecessary: a child's result is delivered into this conversation as a message when it ends. " +
-				"Use it only when you need the result within this turn. Waits up to wait_seconds (max 50) and returns `state: running` if it is not finished yet. Only the caller's own children can be awaited.",
-			"inputSchema": map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"task_id":      map[string]any{"type": "string", "description": "The task_id steve_delegate returned."},
-					"wait_seconds": map[string]any{"type": "integer", "description": "How long to wait this call, 1–50. Default 30."},
+				"agent": map[string]any{
+					"type":        "string",
+					"description": "A specific agent id. Leave empty to place by capability.",
 				},
-				"required": []string{"task_id"},
+				"requires": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Capabilities the machine must have, e.g. [\"gpu\"]. Used when agent is empty.",
+				},
+				"refs": map[string]any{
+					"type":        "array",
+					"items":       map[string]any{"type": "string"},
+					"description": "Pointers the child needs: \"git <commit-or-branch>\", \"blob <digest>\". Pass refs, not content.",
+				},
+				"expect": map[string]any{
+					"type":        "string",
+					"description": "What a good result looks like, in one line. Becomes the child's acceptance line.",
+				},
 			},
-		})
-	}
-	if informing {
-		tools = append(tools, informTools()...)
-	}
-	if fleeting {
-		tools = append(tools, fleetTools()...)
-	}
-	if remembering {
-		tools = append(tools, memoryTools()...)
-	}
-	return tools
+			"required": []string{"goal"},
+		},
+	}, map[string]any{
+		"name": "steve_await",
+		"description": "Wait for a delegated child task and return its result. Usually unnecessary: a child's result is delivered into this conversation as a message when it ends. " +
+			"Use it only when you need the result within this turn. Waits up to wait_seconds (max 50) and returns `state: running` if it is not finished yet. Only the caller's own children can be awaited.",
+		"inputSchema": map[string]any{
+			"type": "object",
+			"properties": map[string]any{
+				"task_id":      map[string]any{"type": "string", "description": "The task_id steve_delegate returned."},
+				"wait_seconds": map[string]any{"type": "integer", "description": "How long to wait this call, 1–50. Default 30."},
+			},
+			"required": []string{"task_id"},
+		},
+	}}
 }
 
 func (s *Server) callTool(ctx context.Context, bind binding, params json.RawMessage) map[string]any {

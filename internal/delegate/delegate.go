@@ -636,17 +636,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		return result, fmt.Errorf("assemble capabilities for %s: %w", candidate.Agent.ID, err)
 	}
 
-	refs := parseRefArgs(req.Refs)
-	now := time.Now()
-	payload, err := ctxpack.Build(ctxpack.Context{
-		Goal:      delegateBrief(candidate) + req.Goal + expectLine(req.Expect),
-		Ancestry:  ancestry(s.tasks, child),
-		Refs:      refs,
-		Bearings:  ctxpack.Bearings(child.Workspace, refs),
-		Facts:     candidate.Capabilities,
-		TurnsLeft: child.Budget.MaxTurns,
-		Deadline:  deadlineText(child, now),
-	})
+	payload, err := s.delegationContext(child, candidate, req)
 	if err != nil {
 		return result, err
 	}
@@ -725,6 +715,20 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		Settlement: lifecycle.Settlement{Quarantine: lifecycle.QuarantineManaged, DetachManaged: true, Detachment: lifecycle.DetachQuarantinesUnlessCancelled, CancelDetaches: true},
 	})
 	return d.settle(ctx, run, err)
+}
+
+func (s *Service) delegationContext(child task.Task, candidate roster.Candidate, req agentmcp.DelegateRequest) (ctxpack.Context, error) {
+	refs := parseRefArgs(req.Refs)
+	now := time.Now()
+	return ctxpack.Build(ctxpack.Context{
+		Goal:      delegateBrief(candidate) + req.Goal + expectLine(req.Expect),
+		Ancestry:  ancestry(s.tasks, child),
+		Refs:      refs,
+		Bearings:  ctxpack.Bearings(child.Workspace, refs),
+		Facts:     candidate.Capabilities,
+		TurnsLeft: child.Budget.MaxTurns,
+		Deadline:  deadlineText(child, now),
+	})
 }
 
 // delegation is one child's side of the lifecycle: who answers its

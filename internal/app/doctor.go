@@ -97,19 +97,8 @@ func Doctor(configPath string, timeout time.Duration) error {
 			slog.Warn(fmt.Sprintf("steve: hub cannot run %s: %s", h.ID, h.Missing), "node", self.Node, "harness", h.ID)
 		}
 	}
-	for _, status := range nodes.Probe(ctx) {
-		if !status.Up {
-			return fmt.Errorf("node %q at %s unreachable: %s", status.Name, status.Addr, status.LastError)
-		}
-		slog.Info(fmt.Sprintf("steve: node %s up — %s/%s, level=%s, harnesses=%s, caps=%v",
-			status.Name, status.Advert.OS, status.Advert.Arch, status.Level,
-			adminsvc.HarnessSummary(status.Advert), status.Advert.Capabilities), "node", status.Name)
-		reportGit("node "+status.Name, status.Advert)
-		for _, h := range status.Advert.Harnesses {
-			if h.Missing != "" {
-				slog.Warn(fmt.Sprintf("steve: node %s cannot run %s: %s", status.Name, h.ID, h.Missing), "node", status.Name, "harness", h.ID)
-			}
-		}
+	if err := probeDoctorNodes(ctx, nodes); err != nil {
+		return err
 	}
 
 	for _, selected := range catalog.List() {
@@ -148,6 +137,24 @@ func Doctor(configPath string, timeout time.Duration) error {
 		slog.Info("steve: skills none")
 	}
 	slog.Info("steve: doctor passed")
+	return nil
+}
+
+func probeDoctorNodes(ctx context.Context, nodes *node.Registry) error {
+	for _, status := range nodes.Probe(ctx) {
+		if !status.Up {
+			return fmt.Errorf("node %q at %s unreachable: %s", status.Name, status.Addr, status.LastError)
+		}
+		slog.Info(fmt.Sprintf("steve: node %s up — %s/%s, level=%s, harnesses=%s, caps=%v",
+			status.Name, status.Advert.OS, status.Advert.Arch, status.Level,
+			adminsvc.HarnessSummary(status.Advert), status.Advert.Capabilities), "node", status.Name)
+		reportGit("node "+status.Name, status.Advert)
+		for _, h := range status.Advert.Harnesses {
+			if h.Missing != "" {
+				slog.Warn(fmt.Sprintf("steve: node %s cannot run %s: %s", status.Name, h.ID, h.Missing), "node", status.Name, "harness", h.ID)
+			}
+		}
+	}
 	return nil
 }
 

@@ -983,25 +983,10 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	if err := validPeerEndpoint(bundle.RaftAdvertise, true); err != nil {
 		return PeerImportResult{}, err
 	}
-	pair, err := tls.X509KeyPair(bundle.Certificate, bundle.PrivateKey)
-	if err != nil {
+	if err := validatePeerCertificate(bundle); err != nil {
 		return PeerImportResult{}, err
 	}
-	roots := x509.NewCertPool()
-	if !roots.AppendCertsFromPEM(bundle.CA) {
-		return PeerImportResult{}, errors.New("invalid cluster CA")
-	}
-	leaf, err := x509.ParseCertificate(pair.Certificate[0])
-	if err != nil {
-		return PeerImportResult{}, err
-	}
-	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}}); err != nil {
-		return PeerImportResult{}, err
-	}
-	identity, err := coordination.CertificateIdentity(leaf)
-	if err != nil || identity != (coordination.Identity{ClusterID: bundle.ClusterID, NodeID: bundle.NodeID}) {
-		return PeerImportResult{}, errors.New("peer certificate identity differs from enrollment")
-	}
+
 	root, err := filepath.Abs(stateDir)
 	if err != nil {
 		return PeerImportResult{}, err
@@ -1078,4 +1063,27 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	}
 	defer parent.Close()
 	return result, parent.Sync()
+}
+
+func validatePeerCertificate(bundle PeerJoinPackage) error {
+	pair, err := tls.X509KeyPair(bundle.Certificate, bundle.PrivateKey)
+	if err != nil {
+		return err
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(bundle.CA) {
+		return errors.New("invalid cluster CA")
+	}
+	leaf, err := x509.ParseCertificate(pair.Certificate[0])
+	if err != nil {
+		return err
+	}
+	if _, err := leaf.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth}}); err != nil {
+		return err
+	}
+	identity, err := coordination.CertificateIdentity(leaf)
+	if err != nil || identity != (coordination.Identity{ClusterID: bundle.ClusterID, NodeID: bundle.NodeID}) {
+		return errors.New("peer certificate identity differs from enrollment")
+	}
+	return nil
 }

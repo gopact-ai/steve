@@ -116,42 +116,60 @@ func jsonEqual(a, b []byte) bool {
 	return json.Unmarshal(a, &x) == nil && json.Unmarshal(b, &y) == nil && reflect.DeepEqual(x, y)
 }
 func importFactsTx(tx *Tx, f TransferFacts, docs, expected map[string]json.RawMessage, validate bool) error {
+	newOps, err := validateImportedOperations(tx, f.Operations)
+	if err != nil {
+		return err
+	}
+	if err := validateImportedReferences(tx, f, docs, expected); err != nil {
+		return err
+	}
+	if validate {
+		return nil
+	}
+	return writeImportedFacts(tx, f, docs, newOps)
+}
+
+func validateImportedOperations(tx *Tx, operations []Operation) (map[string]bool, error) {
 	existingOps := map[string]Operation{}
 	kinds := map[string]bool{}
-	for _, op := range f.Operations {
+	for _, op := range operations {
 		kinds[op.Kind] = true
 	}
 	for kind := range kinds {
 		rows, err := tx.Operations(kind, "")
 		if err != nil {
-			return err
+			return nil, err
 		}
 		for _, op := range rows {
 			existingOps[op.ID] = op
 		}
 	}
 	newOps := map[string]bool{}
-	for _, op := range f.Operations {
+	for _, op := range operations {
 		if op.ID == "" || op.Kind == "" || !json.Valid(op.Data) {
-			return errors.New("invalid operation import")
+			return nil, errors.New("invalid operation import")
 		}
 		var actualKind string
 		err := tx.QueryRow("SELECT kind FROM operations WHERE id = ?", op.ID).Scan(&actualKind)
 		if err != nil && !errors.Is(err, errNoRows()) {
-			return err
+			return nil, err
 		}
 		if err == nil {
 			old := existingOps[op.ID]
 			if actualKind != op.Kind || old.State != op.State || old.Revision != op.Revision || !jsonEqual(old.Data, op.Data) {
-				return fmt.Errorf("operation ID collision %s", op.ID)
+				return nil, fmt.Errorf("operation ID collision %s", op.ID)
 			}
 			continue
 		}
 		if newOps[op.ID] {
-			return fmt.Errorf("duplicate operation %s", op.ID)
+			return nil, fmt.Errorf("duplicate operation %s", op.ID)
 		}
 		newOps[op.ID] = true
 	}
+	return newOps, nil
+}
+
+func validateImportedReferences(tx *Tx, f TransferFacts, docs, expected map[string]json.RawMessage) error {
 	for _, n := range f.Names {
 		var version int64
 		var artifact string
@@ -197,9 +215,11 @@ func importFactsTx(tx *Tx, f TransferFacts, docs, expected map[string]json.RawMe
 			return fmt.Errorf("document disappeared during import: %s", kind)
 		}
 	}
-	if validate {
-		return nil
-	}
+	return nil
+}
+
+// All domains use the caller's transaction, including failures at the last document.
+func writeImportedFacts(tx *Tx, f TransferFacts, docs map[string]json.RawMessage, newOps map[string]bool) error {
 	for _, op := range f.Operations {
 		if !newOps[op.ID] {
 			continue

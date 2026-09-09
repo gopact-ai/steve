@@ -90,25 +90,7 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		}
 		delegation.MaxSilence = time.Duration(cfg.Gateway.PromptTimeout)
 		delegation.RegisterIdle = nodes.RegisterIdle
-		delegation.SetObserver(func(c delegate.Child, p steveview.Progress) {
-			where := c.Node
-			if where == "" {
-				where = adminsvc.NodeName() // the hub itself, named like any machine
-			}
-			info := consoleapi.StepInfo{Kind: "delegate", Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
-				Elapsed: c.Elapsed.Round(time.Second).String(), Answer: c.Answer, Refs: c.Refs}
-			if c.State != task.StateRunning && c.Attempt != "" {
-				if changes, err := admin.Changes(ctx, c.Attempt); err == nil && changes != nil {
-					info.Attempt, info.Files = changes.Attempt, changes.Files
-				}
-			}
-			view.DelegateProgress(c.Task, c.Agent, where, info, p)
-			if console.IsConsole(c.Conversation) {
-				progress := readmodel.FromProgress(p)
-				progress.Agent, progress.Node = c.Agent, where
-				cons.UpdateStep(c.Conversation, c.Task, readmodel.FromStepProgress("#"+c.Task, progress, info))
-			}
-		})
+		delegation.SetObserver(delegateObserver(ctx, admin, view, cons))
 		gate.SetDelegator(delegation)
 		// A child's result goes back into its parent's conversation as a
 		// message — the page's queue or the chat — instead of the parent
@@ -181,4 +163,26 @@ func readPort(path string) int {
 		return 0
 	}
 	return port
+}
+
+func delegateObserver(ctx context.Context, admin *adminsvc.Service, view *readmodel.Model, cons *console.Service) func(delegate.Child, steveview.Progress) {
+	return func(c delegate.Child, p steveview.Progress) {
+		where := c.Node
+		if where == "" {
+			where = adminsvc.NodeName() // the hub itself, named like any machine
+		}
+		info := consoleapi.StepInfo{Kind: "delegate", Goal: c.Goal, State: c.State, Since: c.Since.UTC().Format(time.RFC3339),
+			Elapsed: c.Elapsed.Round(time.Second).String(), Answer: c.Answer, Refs: c.Refs}
+		if c.State != task.StateRunning && c.Attempt != "" {
+			if changes, err := admin.Changes(ctx, c.Attempt); err == nil && changes != nil {
+				info.Attempt, info.Files = changes.Attempt, changes.Files
+			}
+		}
+		view.DelegateProgress(c.Task, c.Agent, where, info, p)
+		if console.IsConsole(c.Conversation) {
+			progress := readmodel.FromProgress(p)
+			progress.Agent, progress.Node = c.Agent, where
+			cons.UpdateStep(c.Conversation, c.Task, readmodel.FromStepProgress("#"+c.Task, progress, info))
+		}
+	}
 }

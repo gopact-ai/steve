@@ -30,41 +30,17 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 		},
 		Features: nodewire.Features(), Source: "node",
 	}
-	observed := func(kind ability.Kind, id, cmd string) ability.Capability {
-		c := ability.Capability{Kind: kind, ID: id, Assurance: ability.Existence}
-		path, err := exec.LookPath(cmd)
-		if err != nil {
-			c.Evidence = []ability.Evidence{{Kind: ability.Observed, Method: "path", OK: false, Result: fmt.Sprintf("%q not on this node's PATH", cmd), At: now}}
-			c.Detail = fmt.Sprintf("%q not on this node's PATH", cmd)
-			return c
-		}
-		c.Evidence = []ability.Evidence{{Kind: ability.Observed, Method: "path", OK: true, Result: path, At: now}}
-		// Being on PATH is existence; having started is launchable. The
-		// launch check ran on its own clock, so it carries its own time,
-		// and a binary that would not start makes the entry unavailable.
-		if o.Launch != nil {
-			if r, ok := o.Launch(path); ok {
-				c.Evidence = append(c.Evidence, ability.Evidence{Kind: ability.Observed, Method: "launch", OK: r.OK, Result: r.Result, At: r.At})
-				if r.OK {
-					c.Assurance = ability.Launchable
-					c.Version = r.Version
-				} else {
-					c.Detail = "does not start: " + r.Result
-				}
-			}
-		}
-		return c
-	}
+
 	ids := make([]string, 0, len(o.Harnesses))
 	for id := range o.Harnesses {
 		ids = append(ids, id)
 	}
 	sort.Strings(ids)
 	for _, id := range ids {
-		s.Offers = append(s.Offers, observed(ability.Harness, id, o.Harnesses[id].Command))
+		s.Offers = append(s.Offers, o.commandCapability(now, ability.Harness, id, o.Harnesses[id].Command))
 	}
 	for _, tool := range o.Tools {
-		s.Offers = append(s.Offers, observed(ability.Tool, tool, tool))
+		s.Offers = append(s.Offers, o.commandCapability(now, ability.Tool, tool, tool))
 	}
 	if o.MCPError != "" {
 		s.Coverage[ability.MCP] = ability.Errored
@@ -94,7 +70,7 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 			var c ability.Capability
 			switch spec.Type {
 			case "stdio", "":
-				c = observed(ability.MCP, id, spec.Command)
+				c = o.commandCapability(now, ability.MCP, id, spec.Command)
 			case "http", "sse":
 				// Reached through the node's loopback proxy, which adds the
 				// configured headers; the URL itself is checked for shape.
@@ -143,6 +119,32 @@ func Snapshot(name string, generation, sequence int64, o Observe) *ability.Snaps
 		return nil
 	}
 	return s
+}
+
+func (o Observe) commandCapability(now time.Time, kind ability.Kind, id, cmd string) ability.Capability {
+	c := ability.Capability{Kind: kind, ID: id, Assurance: ability.Existence}
+	path, err := exec.LookPath(cmd)
+	if err != nil {
+		c.Evidence = []ability.Evidence{{Kind: ability.Observed, Method: "path", OK: false, Result: fmt.Sprintf("%q not on this node's PATH", cmd), At: now}}
+		c.Detail = fmt.Sprintf("%q not on this node's PATH", cmd)
+		return c
+	}
+	c.Evidence = []ability.Evidence{{Kind: ability.Observed, Method: "path", OK: true, Result: path, At: now}}
+	// Being on PATH is existence; having started is launchable. The
+	// launch check ran on its own clock, so it carries its own time,
+	// and a binary that would not start makes the entry unavailable.
+	if o.Launch != nil {
+		if r, ok := o.Launch(path); ok {
+			c.Evidence = append(c.Evidence, ability.Evidence{Kind: ability.Observed, Method: "launch", OK: r.OK, Result: r.Result, At: r.At})
+			if r.OK {
+				c.Assurance = ability.Launchable
+				c.Version = r.Version
+			} else {
+				c.Detail = "does not start: " + r.Result
+			}
+		}
+	}
+	return c
 }
 
 // hardware is what can be seen without root: CPUs, the architecture, and

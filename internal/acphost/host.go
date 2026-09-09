@@ -853,15 +853,11 @@ func (h *Host) PromptTurn(
 	}
 	caller := h.caller
 	caps := h.capabilities
-	for _, media := range images {
-		if len(media.Data) == 0 {
-			continue
-		}
-		if caps == nil || caps.PromptCapabilities == nil || (media.URI == "" && !caps.PromptCapabilities.Image) || (media.URI != "" && !caps.PromptCapabilities.EmbeddedContext) {
-			h.mu.Unlock()
-			return "", nil, fmt.Errorf("agent does not support the attached media type %s", media.MIME)
-		}
+	if err := validatePromptMedia(images, caps); err != nil {
+		h.mu.Unlock()
+		return "", nil, err
 	}
+
 	askCtx, cancelAsk := context.WithCancel(ctx)
 	col := &collector{
 		progress:   progress,
@@ -951,6 +947,18 @@ func (h *Host) PromptTurn(
 		activity = append(activity, fmt.Sprintf("(stopReason: %s)", resp.StopReason))
 	}
 	return out, activity, nil
+}
+
+func validatePromptMedia(images []Image, caps *acp.AgentCapabilities) error {
+	for _, media := range images {
+		if len(media.Data) == 0 {
+			continue
+		}
+		if caps == nil || caps.PromptCapabilities == nil || (media.URI == "" && !caps.PromptCapabilities.Image) || (media.URI != "" && !caps.PromptCapabilities.EmbeddedContext) {
+			return fmt.Errorf("agent does not support the attached media type %s", media.MIME)
+		}
+	}
+	return nil
 }
 
 // Cancel asks the agent to stop the in-flight turn of one session.

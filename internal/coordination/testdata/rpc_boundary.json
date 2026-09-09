@@ -1,0 +1,350 @@
+[
+  {
+    "Name": "identity-before-route",
+    "Status": 401,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: verified mutual TLS is required\"}\n",
+    "Read": false,
+    "Closed": false,
+    "Authorized": null
+  },
+  {
+    "Name": "nested-route",
+    "Status": 404,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "text/plain; charset=utf-8"
+      ],
+      "X-Content-Type-Options": [
+        "nosniff"
+      ]
+    },
+    "Body": "404 page not found\n",
+    "Read": false,
+    "Closed": false,
+    "Authorized": null
+  },
+  {
+    "Name": "read-method",
+    "Status": 405,
+    "Header": {
+      "Allow": [
+        "GET"
+      ],
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request\"}\n",
+    "Read": false,
+    "Closed": false,
+    "Authorized": null
+  },
+  {
+    "Name": "mutation-method-before-route",
+    "Status": 405,
+    "Header": {
+      "Allow": [
+        "POST"
+      ],
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request\"}\n",
+    "Read": false,
+    "Closed": false,
+    "Authorized": null
+  },
+  {
+    "Name": "unknown-mutation",
+    "Status": 404,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "text/plain; charset=utf-8"
+      ],
+      "X-Content-Type-Options": [
+        "nosniff"
+      ]
+    },
+    "Body": "404 page not found\n",
+    "Read": false,
+    "Closed": false,
+    "Authorized": null
+  },
+  {
+    "Name": "owner-required-before-body",
+    "Status": 403,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: owner authorization is required\"}\n",
+    "Read": false,
+    "Closed": false,
+    "Authorized": null
+  },
+  {
+    "Name": "owner-denied",
+    "Status": 403,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: owner authorization denied\"}\n",
+    "Read": false,
+    "Closed": false,
+    "Authorized": [
+      "peer:policy"
+    ]
+  },
+  {
+    "Name": "owner-blank",
+    "Status": 403,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: owner authorization denied\"}\n",
+    "Read": false,
+    "Closed": false,
+    "Authorized": [
+      "peer:join"
+    ]
+  },
+  {
+    "Name": "invalid-json",
+    "Status": 400,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: invalid command body\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": null
+  },
+  {
+    "Name": "unknown-field",
+    "Status": 400,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: invalid command body\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": null
+  },
+  {
+    "Name": "second-object",
+    "Status": 400,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: command body must contain one object\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": null
+  },
+  {
+    "Name": "body-limit",
+    "Status": 400,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: invalid command body\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": null
+  },
+  {
+    "Name": "writer-spoof",
+    "Status": 403,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"not_coordinator\",\"message\":\"coordination: caller is not coordinator\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": null
+  },
+  {
+    "Name": "app-spoof",
+    "Status": 403,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"not_coordinator\",\"message\":\"coordination: caller is not coordinator\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": null
+  },
+  {
+    "Name": "transfer-decode",
+    "Status": 400,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: invalid command body\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": [
+      "peer:transfer"
+    ]
+  },
+  {
+    "Name": "policy-decode",
+    "Status": 400,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: invalid command body\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": [
+      "peer:policy"
+    ]
+  },
+  {
+    "Name": "eligibility-decode",
+    "Status": 400,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: invalid command body\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": [
+      "peer:eligibility"
+    ]
+  },
+  {
+    "Name": "join-decode",
+    "Status": 400,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: invalid command body\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": [
+      "peer:join"
+    ]
+  },
+  {
+    "Name": "remove-decode",
+    "Status": 400,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: invalid command body\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": [
+      "peer:remove"
+    ]
+  },
+  {
+    "Name": "address-decode",
+    "Status": 400,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: invalid command body\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": [
+      "peer:address"
+    ]
+  }
+]

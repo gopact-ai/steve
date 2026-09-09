@@ -99,6 +99,11 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 	s.wg.Add(1)
 	s.mu.Unlock()
 	defer s.wg.Done()
+	return one.openNative(openCtx, req, hostCfg)
+}
+
+func (one *ownedSession) openNative(openCtx context.Context, req nodewire.SessionRequest, hostCfg acphost.Config) (nodewire.SessionState, error) {
+	s, host := one.service, one.host
 	// The durable open belongs to the node. A lost caller response must not
 	// kill a successfully created agent or make an identical retry start twice.
 	native, generation, openErr := host.OpenSession(openCtx, "", acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
@@ -380,6 +385,10 @@ func (one *ownedSession) stop(ctx context.Context, req nodewire.SessionRequest) 
 		}
 	}
 
+	return one.settleStop(req, host, generation)
+}
+
+func (one *ownedSession) settleStop(req nodewire.SessionRequest, host *acphost.Host, generation uint64) (nodewire.SessionState, error) {
 	one.mu.Lock()
 	next := one.copyLocked()
 	next.State.ProcessStopped = host.ProcessStopped(generation)

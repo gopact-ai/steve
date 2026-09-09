@@ -138,21 +138,10 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	if _, err := (&config.Config{Agents: agents}).AgentCatalog(); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
-	// Expensive local preparation and adapter installation do not hold the
-	// configuration lock. Existing requests and status reads remain usable.
-	stateDir := filepath.Dir(statePath)
-	if err := runtime.PrepareSelected(stateDir, selected); err != nil {
-		return consoleapi.DesktopStatus{}, fmt.Errorf("准备所选 Agent 运行环境：%w", err)
+	if err := a.prepareDesktopAgents(ctx, statePath, selected, addedHarnesses); err != nil {
+		return consoleapi.DesktopStatus{}, err
 	}
-	install := &config.Config{Gateway: config.Gateway{StatePath: statePath}, Harnesses: addedHarnesses}
-	if err := install.PrepareAdapters(ctx); err != nil {
-		return consoleapi.DesktopStatus{}, fmt.Errorf("安装所选 Agent 适配器：%w", err)
-	}
-	if a.LiveSkills != nil {
-		if err := a.LiveSkills.AddDests(runtime.SelectedSkillDests(stateDir, selected)...); err != nil {
-			return consoleapi.DesktopStatus{}, fmt.Errorf("准备所选 Agent skills：%w", err)
-		}
-	}
+
 	ConfigMu.Lock()
 	defer ConfigMu.Unlock()
 	if err := ctx.Err(); err != nil {
@@ -188,4 +177,23 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	a.Catalog.Publish(preparedCatalog)
 	slog.Info(fmt.Sprintf("steve: local agents registered agents=%s", strings.Join(agentIDs, ",")))
 	return a.desktopStatusLocked(), saveErr
+}
+
+func (a *Service) prepareDesktopAgents(ctx context.Context, statePath string, selected []string, harnesses map[string]config.Harness) error {
+	// Expensive local preparation and adapter installation do not hold the
+	// configuration lock. Existing requests and status reads remain usable.
+	stateDir := filepath.Dir(statePath)
+	if err := runtime.PrepareSelected(stateDir, selected); err != nil {
+		return fmt.Errorf("准备所选 Agent 运行环境：%w", err)
+	}
+	install := &config.Config{Gateway: config.Gateway{StatePath: statePath}, Harnesses: harnesses}
+	if err := install.PrepareAdapters(ctx); err != nil {
+		return fmt.Errorf("安装所选 Agent 适配器：%w", err)
+	}
+	if a.LiveSkills != nil {
+		if err := a.LiveSkills.AddDests(runtime.SelectedSkillDests(stateDir, selected)...); err != nil {
+			return fmt.Errorf("准备所选 Agent skills：%w", err)
+		}
+	}
+	return nil
 }
