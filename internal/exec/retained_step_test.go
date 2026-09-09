@@ -584,6 +584,34 @@ func TestStepSettlementBlocksAsBefore(t *testing.T) {
 	}
 }
 
+// A completion deferred to another execution's recovery — a verifier whose
+// own retained attempt an observer elsewhere is joining — hands back that
+// recovery's block and leaves nothing unresolved in the step's own scope.
+// The step's session was closed before the finish judged the work, so no
+// writer of its own is unaccounted for; the verifier's block is the
+// verifier's scope's to keep. The record stays in the phase it reached, for
+// the observer that comes back to resume from; a block on this attempt's
+// own recovery is the step's to report.
+func TestDeferredStepLeavesNothingUnresolvedOfItsOwn(t *testing.T) {
+	verifier := attempt.Record{Spec: attempt.Spec{ID: "v1", TaskID: "t", Node: "n1"}, State: attempt.Running, Session: "ns_v"}
+	waiting := agentexec.Blocked(verifier, "observer", "连接原验证的节点", "原验证暂时不能安全接续。", "建议恢复原节点后重新检查。", nil)
+	record := attempt.Record{Spec: attempt.Spec{ID: "a1", TaskID: "t", Node: "n1"}, State: attempt.Verifying, Session: "ns_1"}
+	r := &stepRun{record: record, managed: true, closed: true}
+	deferred := r.blocked("verify", waiting)
+	var d *lifecycle.Deferred
+	if !errors.As(deferred, &d) || d.Cause != waiting {
+		t.Fatalf("another execution's block = %v, want a deferral on it", deferred)
+	}
+	result, err, unresolved := r.settle(lifecycle.Result{Record: record, Driven: true, Managed: true}, deferred)
+	if err != waiting || unresolved != nil || r.record.State != attempt.Verifying {
+		t.Fatalf("deferred step: result=%+v err=%v unresolved=%v state=%s", result, err, unresolved, r.record.State)
+	}
+	own := agentexec.Blocked(record, "observer", "连接原步骤的节点", "原步骤暂时不能安全接续。", "建议恢复原节点后重新检查。", nil)
+	if err := r.blocked("verify", own); err != own {
+		t.Fatalf("this attempt's own block = %v, want it as it is", err)
+	}
+}
+
 // TestRetainedFailedStepWhoseCloseFailsIsCleanedUpOnRestore: the failure is
 // on record and its budget settled, but the node did not confirm the
 // session closed. The record is not quarantined — restoring the step

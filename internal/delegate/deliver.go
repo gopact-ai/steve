@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/text"
 )
 
 // A parent does not wait for its children: when one ends, its result is
@@ -68,7 +69,7 @@ func (d Delivery) Prompt() string {
 	for _, c := range d.Children {
 		fmt.Fprintf(&b, "\n## 子任务 #%s · %s@%s · %s · 用时 %s\n", c.Task, c.Agent, nodeLabel(c.Node), stateWord(c.State), c.Elapsed.Round(time.Second))
 		if g := strings.TrimSpace(c.Goal); g != "" {
-			fmt.Fprintf(&b, "目标：%s\n", clipRunes(g, 300))
+			fmt.Fprintf(&b, "目标：%s\n", text.Clip(g, 300))
 		}
 		if c.Landing != "" {
 			fmt.Fprintf(&b, "改动：%s\n", c.Landing)
@@ -77,7 +78,7 @@ func (d Delivery) Prompt() string {
 			fmt.Fprintf(&b, "refs：%s\n", strings.Join(c.Refs, "；"))
 		}
 		if a := strings.TrimSpace(c.Answer); a != "" {
-			fmt.Fprintf(&b, "回答：\n%s\n", clipRunes(a, 4000))
+			fmt.Fprintf(&b, "回答：\n%s\n", text.Clip(a, 4000))
 		}
 	}
 	b.WriteString("\n继续你的任务。还在跑的子任务结束后会再送来，不必用 steve_await 等；都齐了就汇总回复。")
@@ -89,14 +90,6 @@ func stateWord(state task.State) string {
 		return "失败"
 	}
 	return "完成"
-}
-
-func clipRunes(text string, limit int) string {
-	r := []rune(text)
-	if len(r) <= limit {
-		return text
-	}
-	return string(r[:limit]) + "…"
 }
 
 // SetDeliverer installs the channel that carries deliveries: the console
@@ -115,7 +108,7 @@ func (s *Service) collect(taskID string, result agentmcp.DelegateResult) {
 		return
 	}
 	if err := s.tasks.SetDelivery(taskID, task.DeliveryDelivered); err != nil && !strings.Contains(err.Error(), "not found") {
-		log.Printf("delegate: mark task #%s collected: %v", taskID, err)
+		slog.Error(fmt.Sprintf("delegate: mark task #%s collected: %v", taskID, err), "task", taskID)
 	}
 }
 
@@ -166,7 +159,9 @@ func (s *Service) Flush(ctx context.Context, parentID string) {
 		// Nobody to continue: the results stay on the children's records;
 		// the listing shows them. Mark them so they are not retried.
 		for _, c := range waiting {
-			_ = s.tasks.SetDelivery(c.ID, task.DeliveryDelivered)
+			if err := s.tasks.SetDelivery(c.ID, task.DeliveryDelivered); err != nil {
+				slog.Error(fmt.Sprintf("delegate: mark task #%s delivered: %v", c.ID, err), "task", c.ID, "parent", parentID)
+			}
 		}
 		return
 	}
@@ -185,20 +180,20 @@ func (s *Service) Flush(ctx context.Context, parentID string) {
 		dc.Landing = landing(c)
 		d.Children = append(d.Children, dc)
 		if err := s.tasks.SetDelivery(c.ID, task.DeliveryPending); err != nil {
-			log.Printf("delegate: mark task #%s pending delivery: %v", c.ID, err)
+			slog.Error(fmt.Sprintf("delegate: mark task #%s pending delivery: %v", c.ID, err), "task", c.ID, "parent", parentID, "conversation", parent.Channel)
 		}
 	}
 	d.Key = task.DeliveryKey(waiting[0].ID)
 	if err := deliver(ctx, d); err != nil {
-		log.Printf("delegate: deliver %d child result(s) to task #%s: %v", len(d.Children), parentID, err)
+		slog.Error(fmt.Sprintf("delegate: deliver %d child result(s) to task #%s: %v", len(d.Children), parentID, err), "parent", parentID, "conversation", parent.Channel)
 		return
 	}
 	for _, c := range waiting {
 		if err := s.tasks.SetDelivery(c.ID, task.DeliveryDelivered); err != nil {
-			log.Printf("delegate: mark task #%s delivered: %v", c.ID, err)
+			slog.Error(fmt.Sprintf("delegate: mark task #%s delivered: %v", c.ID, err), "task", c.ID, "parent", parentID, "conversation", parent.Channel)
 		}
 	}
-	log.Printf("delegate: delivered %d child result(s) into %s for task #%s", len(d.Children), parent.Channel, parentID)
+	slog.Info(fmt.Sprintf("delegate: delivered %d child result(s) into %s for task #%s", len(d.Children), parent.Channel, parentID), "parent", parentID, "conversation", parent.Channel)
 }
 
 // landFor lands what the project has queued — the parent holds no lock

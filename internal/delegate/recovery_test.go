@@ -588,3 +588,53 @@ func TestRecoveredDelegateExplicitStopReceiptUsesIndependentSettlementContext(t 
 		t.Fatalf("recovered stop lost settlement: %+v", stored)
 	}
 }
+
+// A recovery question raised while the node could not be reached must go
+// when the attempt is settled from the record: the operator confirming the
+// stop makes the failure a fact, and the next pass delivers it.
+func TestRetainedDelegateSettledFailureClearsStaleRecoveryQuestion(t *testing.T) {
+	w, sessions, _, child := detachedDelegateFixture(t)
+	sessions.inspectErr = errors.New("node unreachable")
+	service := recoveredDelegateService(t, w, sessions)
+	asked := make(chan context.Context, 4)
+	service.SetRecoveryQuestion(func(ctx context.Context, q RecoveryQuestion) (view.Answer, error) {
+		asked <- ctx
+		// Nobody answers; the question stays open until recovery withdraws it.
+		<-ctx.Done()
+		return view.Answer{}, ctx.Err()
+	})
+	if err := service.RecoverRetained(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var question context.Context
+	select {
+	case question = <-asked:
+	case <-time.After(3 * time.Second):
+		t.Fatal("missing recovery question")
+	}
+	records, err := w.attempts.ForTask(t.Context(), child.TaskID)
+	if err != nil || len(records) != 1 || !records[0].Unsettled {
+		t.Fatalf("unreachable node did not quarantine the attempt: %+v %v", records, err)
+	}
+	if _, err := w.attempts.ConfirmStopped(t.Context(), records[0].ID, "operator", "node process exited"); err != nil {
+		t.Fatal(err)
+	}
+	if err := service.RecoverRetained(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	stored := awaitDelegateResult(t, w.tasks, child.TaskID)
+	if stored.State != task.StateFailed || stored.Result.Outcome != task.OutcomeError {
+		t.Fatalf("confirmed stop was not delivered as the child's failure: %+v", stored)
+	}
+	select {
+	case <-question.Done():
+	case <-time.After(3 * time.Second):
+		t.Fatal("recovery question outlived the failure settled from the record")
+	}
+	service.mu.Lock()
+	notice := service.recoveryQuestions[records[0].ID]
+	service.mu.Unlock()
+	if notice != nil {
+		t.Fatalf("stale recovery notice kept after settlement: %+v", notice)
+	}
+}
