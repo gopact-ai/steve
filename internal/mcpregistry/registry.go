@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 )
@@ -230,7 +231,7 @@ func Plan(p Package) (Setting, error) {
 	case "npx":
 		s.Command = "npx"
 		s.Args = append(s.Args, p.RuntimeArgs...)
-		if !contains(s.Args, "-y") && !contains(s.Args, "--yes") {
+		if !slices.Contains(s.Args, "-y") && !slices.Contains(s.Args, "--yes") {
 			s.Args = append(s.Args, "-y")
 		}
 		s.Args = append(s.Args, identifierAt(p.Identifier, p.Version))
@@ -275,13 +276,4 @@ func identifierAt(id, version string) string {
 		return id
 	}
 	return id + "@" + version
-}
-
-func contains(list []string, want string) bool {
-	for _, s := range list {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }

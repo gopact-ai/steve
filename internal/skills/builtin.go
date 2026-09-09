@@ -2,6 +2,7 @@ package skills
 
 import (
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -50,7 +51,23 @@ func InstallBuiltins(stateDir string) (string, error) {
 	if err := os.RemoveAll(fresh); err != nil {
 		return "", err
 	}
-	err := fs.WalkDir(builtinFS, "builtin", func(path string, d fs.DirEntry, err error) error {
+	if err := writeBuiltins(fresh); err != nil {
+		// The write error is the answer; what a failed remove leaves
+		// behind is cleared by the RemoveAll above at the next boot.
+		_ = os.RemoveAll(fresh)
+		return "", fmt.Errorf("install built-in skills: %w", err)
+	}
+	if err := swapBuiltins(root, fresh); err != nil {
+		// Same: the swap error is the answer.
+		_ = os.RemoveAll(fresh)
+		return "", err
+	}
+	return root, nil
+}
+
+// writeBuiltins writes the shipped skills into fresh, scripts executable.
+func writeBuiltins(fresh string) error {
+	return fs.WalkDir(builtinFS, "builtin", func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -70,23 +87,32 @@ func InstallBuiltins(stateDir string) (string, error) {
 		}
 		return os.WriteFile(target, data, mode)
 	})
-	if err != nil {
-		_ = os.RemoveAll(fresh)
-		return "", fmt.Errorf("install built-in skills: %w", err)
-	}
+}
+
+// swapBuiltins moves fresh into place at root. The previous copy is set
+// aside rather than deleted until the swap is through, so a swap that
+// fails halfway can put it back and the hub keeps the skills it had.
+func swapBuiltins(root, fresh string) error {
 	old := root + ".old"
+	// A copy set aside by an earlier swap: if it will not go, the rename
+	// onto it below reports it.
 	_ = os.RemoveAll(old)
+	moved := false
 	if _, err := os.Stat(root); err == nil {
 		if err := os.Rename(root, old); err != nil {
-			_ = os.RemoveAll(fresh)
-			return "", err
+			return err
 		}
+		moved = true
 	}
 	if err := os.Rename(fresh, root); err != nil {
-		_ = os.Rename(old, root)
-		_ = os.RemoveAll(fresh)
-		return "", err
+		if moved {
+			if restoreErr := os.Rename(old, root); restoreErr != nil {
+				return errors.Join(err, fmt.Errorf("restore the previous built-in skills: %w", restoreErr))
+			}
+		}
+		return err
 	}
+	// The previous copy is only disk now; the next install clears it.
 	_ = os.RemoveAll(old)
-	return root, nil
+	return nil
 }

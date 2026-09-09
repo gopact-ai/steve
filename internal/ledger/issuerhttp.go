@@ -46,18 +46,20 @@ func IssuerHandler(l *Ledger, token string) http.Handler {
 	}
 	respond := func(w http.ResponseWriter, lease Lease, err error) {
 		w.Header().Set("Content-Type", "application/json")
-		// A body that cannot be written means the client has gone; the
-		// lease decision itself is already committed either way.
 		if err != nil {
 			code := http.StatusConflict
 			if errors.Is(err, ErrStale) {
 				code = http.StatusPreconditionFailed
 			}
 			w.WriteHeader(code)
+			// A body that cannot be written means the client has gone; the
+			// refusal stands in the ledger whether or not it reads it.
 			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error(), "kind": kindOf(err)})
 			return
 		}
 		lease.Region = l.Region()
+		// Likewise: the lease is already committed, and a client that
+		// missed it renews or reacquires on its own.
 		_ = json.NewEncoder(w).Encode(map[string]any{"lease": lease})
 	}
 	mux.HandleFunc("/leases/acquire", authed(func(w http.ResponseWriter, r *http.Request) {

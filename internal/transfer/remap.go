@@ -149,7 +149,10 @@ func remapBundle(b *Bundle, home string) error {
 		}
 		if _, ok := b.Project.Facts.Bindings["conversation-project"][conv]; !ok {
 			binding := project.Binding{ConversationID: conv, ProjectID: b.Project.Project.ID, Version: 1, By: "project-transfer", At: b.CreatedAt}
-			raw, _ := json.Marshal(binding)
+			raw, err := json.Marshal(binding)
+			if err != nil {
+				return err
+			}
 			b.Project.Facts.Bindings["conversation-project"][conv] = raw
 			b.Project.Facts.Names = append(b.Project.Facts.Names, ledger.NamedRef{Name: "conversation/" + conv + "/project", Version: 1, Artifact: b.Project.Project.ID, UpdatedAt: b.CreatedAt})
 		}
@@ -179,7 +182,10 @@ func remapBundle(b *Bundle, home string) error {
 		return err
 	}
 	b.Facts.Add(intents)
-	mappingRaw, _ := json.Marshal(project.OriginMapping{Project: b.Project.Project.ID, HubID: b.Owner.HubID, TransferID: b.Owner.TransferID, IDs: m})
+	mappingRaw, err := json.Marshal(project.OriginMapping{Project: b.Project.Project.ID, HubID: b.Owner.HubID, TransferID: b.Owner.TransferID, IDs: m})
+	if err != nil {
+		return err
+	}
 	b.Facts.Add(ledger.TransferFacts{Bindings: map[string]map[string]json.RawMessage{"project-origin-mapping": {b.Owner.TransferID: mappingRaw}}})
 	return nil
 }

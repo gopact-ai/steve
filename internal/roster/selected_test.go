@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -24,7 +25,7 @@ func (n *selectedNodes) Statuses() []node.Status { return n.statuses }
 func (n *selectedNodes) EnsureConnected(_ context.Context, names ...string) {
 	n.connected = append(n.connected, append([]string(nil), names...))
 	for i := range n.statuses {
-		if len(names) == 0 || contains(names, n.statuses[i].Name) {
+		if len(names) == 0 || slices.Contains(names, n.statuses[i].Name) {
 			n.statuses[i].Up = true
 		}
 	}

@@ -41,30 +41,19 @@ func main() {
 	}
 }
 
+// commands are the subcommands by name; anything else is `steve run`. A table
+// rather than a switch: it gives back the 10 lines the ledger verb split cost.
+var commands = map[string]func(args []string) error{
+	"setup": setup, "doctor": doctor, "top": top, "dash": dash, "desktop": desktopCmd, "peer": peerCmd, "peer-import": peerImportCmd,
+	"ledger": ledgerCmd, "migrate": migrateCmd, "say": say,
+}
+
 func run(args []string) error {
 	if len(args) > 0 {
-		switch args[0] {
-		case "setup":
-			return setup(args[1:])
-		case "doctor":
-			return doctor(args[1:])
-		case "top":
-			return top(os.Args[2:])
-		case "dash":
-			return dash(os.Args[2:])
-		case "desktop":
-			return desktopCmd(args[1:])
-		case "peer":
-			return peerCmd(args[1:])
-		case "peer-import":
-			return peerImportCmd(args[1:])
-		case "ledger":
-			return ledgerCmd(args[1:])
-		case "migrate":
-			return migrateCmd(args[1:])
-		case "say":
-			return say(args[1:])
-		case "run":
+		if command, ok := commands[args[0]]; ok {
+			return command(args[1:])
+		}
+		if args[0] == "run" {
 			args = args[1:]
 		}
 	}
@@ -199,7 +188,7 @@ func say(args []string) error {
 	if input == "" {
 		return errors.New("usage: steve say [-url …] [-token …] <text or /verb …>")
 	}
-	body, _ := json.Marshal(map[string]string{"conversation": *conversation, "input": input})
+	body, _ := json.Marshal(map[string]string{"conversation": *conversation, "input": input}) // a map of strings always encodes
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, *url+"/console/send", bytes.NewReader(body))

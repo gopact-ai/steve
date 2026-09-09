@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -419,7 +420,7 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 			}
 			if offered := harnessModels(hub.advert, a.Harness); len(offered) > 0 {
 				c.Models = offered
-				if a.Model != "" && !contains(offered, a.Model) {
+				if a.Model != "" && !slices.Contains(offered, a.Model) {
 					c.Eligible, c.Why = false, "this machine does not offer model "+a.Model
 					return c
 				}
@@ -460,7 +461,7 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 			// A pinned model the node does not offer is a placement that
 			// would fail at the first prompt; catch it here, where the
 			// cause is still legible.
-			if a.Model != "" && !contains(offered, a.Model) {
+			if a.Model != "" && !slices.Contains(offered, a.Model) {
 				c.Eligible = false
 				c.Why = "node " + a.Node + " does not offer model " + a.Model
 				return c
@@ -508,15 +509,6 @@ func harnessTrouble(advert nodewire.Advert, harnessID string) string {
 	return "node " + advert.Node + " does not offer harness " + harnessID
 }
 
-func contains(list []string, want string) bool {
-	for _, item := range list {
-		if item == want {
-			return true
-		}
-	}
-	return false
-}
-
 // Match evaluates a requirement against this candidate's machine for its
 // harness, now. Nil snapshots yield unknown, never a match.
 func (c Candidate) Match(req ability.Requirement) ability.MatchResult {
@@ -552,6 +544,12 @@ func (c *Candidate) addModels(models []string, version string, at time.Time) {
 		copied.Offers = append(copied.Offers, cap)
 	}
 	copied.Coverage[ability.Model] = ability.Complete
+	// Validate is called for its normalising side effects and its verdict is
+	// deliberately dropped: models are recorded under the display names the
+	// harness offers ("GPT 5"), and the capability ID grammar rejects those
+	// for the space, so an ordinary fleet fails here on every roster read.
+	// The copy is installed either way, so nothing observed is lost and the
+	// snapshot is no worse than the machine's own report.
 	_ = ability.Validate(&copied)
 	c.Snapshot = &copied
 }
@@ -581,6 +579,8 @@ func (c *Candidate) markFunctional(version string, at time.Time) {
 		o.Assurance = ability.Functional
 		copied.Offers[i] = o
 	}
+	// Dropped as in addModels: the same display-name models sit on this copy,
+	// so the verdict says nothing about the assurance raised here.
 	_ = ability.Validate(&copied)
 	c.Snapshot = &copied
 }

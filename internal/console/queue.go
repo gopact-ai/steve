@@ -59,9 +59,7 @@ func isInterrupt(input string) bool {
 }
 
 func (s *Service) parseInput(input string) (string, turn.ParsedInput) {
-	if parser, ok := s.handler.(interface {
-		ParseInput(string) (string, turn.ParsedInput)
-	}); ok {
+	if parser, ok := s.handler.(inputParser); ok {
 		return parser.ParseInput(input)
 	}
 	return turn.ParseAddressedInput(input)

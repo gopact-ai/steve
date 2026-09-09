@@ -3,6 +3,7 @@ package planner
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	"github.com/gopact-ai/steve/internal/plan"
 )
@@ -65,7 +66,7 @@ func (r Rule) revise(req Request) (plan.Plan, error) {
 			continue
 		}
 		// Remember who already failed so the retry lands somewhere new.
-		if s.Result != nil && s.Result.Agent != "" && !contains(s.Tried, s.Result.Agent) {
+		if s.Result != nil && s.Result.Agent != "" && !slices.Contains(s.Tried, s.Result.Agent) {
 			s.Tried = append(s.Tried, s.Result.Agent)
 		}
 		if !r.hasAlternative(req, *s) {
@@ -92,7 +93,7 @@ func (r Rule) revise(req Request) (plan.Plan, error) {
 
 func (r Rule) hasAlternative(req Request, s plan.Step) bool {
 	for _, c := range req.Roster {
-		if !c.Eligible || contains(s.Tried, c.Agent.ID) {
+		if !c.Eligible || slices.Contains(s.Tried, c.Agent.ID) {
 			continue
 		}
 		if missing(s.Requires, c.Capabilities) {
@@ -134,16 +135,7 @@ func missing(requires, have []string) bool {
 		if want == "" || want == "any" {
 			continue
 		}
-		if !contains(have, want) {
-			return true
-		}
-	}
-	return false
-}
-
-func contains(list []string, want string) bool {
-	for _, item := range list {
-		if item == want {
+		if !slices.Contains(have, want) {
 			return true
 		}
 	}

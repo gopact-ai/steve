@@ -508,15 +508,15 @@ func Write(path, name, text string) error {
 	}
 	if _, err := tmp.WriteString(text); err != nil {
 		tmp.Close()
-		_ = os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name()) // the write is the finding; a stray temp dotfile is all a failed sweep costs
 		return err
 	}
 	if err := tmp.Close(); err != nil {
-		_ = os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name()) // the close is the finding; a stray temp dotfile is all a failed sweep costs
 		return err
 	}
 	if err := os.Chmod(tmp.Name(), 0o600); err != nil {
-		_ = os.Remove(tmp.Name())
+		_ = os.Remove(tmp.Name()) // the chmod is the finding; a stray temp dotfile is all a failed sweep costs
 		return err
 	}
 	return os.Rename(tmp.Name(), target)

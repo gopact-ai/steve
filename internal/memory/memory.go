@@ -17,6 +17,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -137,6 +138,54 @@ type Retriever interface {
 	Recall(ctx context.Context, scope Scope, query string, limit int) ([]Hit, error)
 }
 
+// The optional sides of a Store, named where the Service uses them. A
+// store without one is served through the required methods instead.
+
+// textReader is a store that can give a scope as the profile page edits
+// it, template and all, which a Snapshot cut for the prompt cannot.
+type textReader interface {
+	Text(context.Context, Scope) (string, error)
+}
+
+// pathReporter is a store that keeps a scope in a file it can name.
+type pathReporter interface {
+	Path(Scope) (string, error)
+}
+
+// readChecker is a store that can refuse a read before the retriever is
+// asked, so an index never answers for a scope the caller may not see.
+type readChecker interface {
+	CheckRead(context.Context, Scope) error
+}
+
+// namedSource is a store that names itself as where a recall came from.
+type namedSource interface {
+	Name() string
+}
+
+// auditSink is a store that keeps the audit itself instead of leaving it
+// to the Service's file.
+type auditSink interface {
+	recordAudit(auditLine) error
+}
+
+// Bind the optional sides the two stores are meant to have, so renaming
+// or resigning one of these methods fails the build here instead of
+// quietly dropping the Service back to the required method: a store that
+// stops reporting Text serves cut snapshots to the profile page, and one
+// that stops keeping its own audit writes the Service's file instead.
+// The absences are as deliberate as the bindings — Markdown has no
+// authority to check a read against and no ledger to audit into, so it
+// is left out of those three.
+var (
+	_ textReader   = (*LedgerStore)(nil)
+	_ readChecker  = (*LedgerStore)(nil)
+	_ namedSource  = (*LedgerStore)(nil)
+	_ auditSink    = (*LedgerStore)(nil)
+	_ textReader   = (*Markdown)(nil)
+	_ pathReporter = (*Markdown)(nil)
+)
+
 // ---------------------------------------------------------------- service
 
 // Actor is who is writing, for the audit line.
@@ -188,9 +237,7 @@ func (s *Service) List(ctx context.Context, scope Scope) ([]Item, error) {
 
 // Text is a scope as the page edits it, when the store can say.
 func (s *Service) Text(ctx context.Context, scope Scope) (string, error) {
-	if t, ok := s.store.(interface {
-		Text(context.Context, Scope) (string, error)
-	}); ok {
+	if t, ok := s.store.(textReader); ok {
 		return t.Text(ctx, scope)
 	}
 	text, _, err := s.store.Snapshot(ctx, scope)
@@ -199,7 +246,7 @@ func (s *Service) Text(ctx context.Context, scope Scope) (string, error) {
 
 // Where is the file a scope lives in, when the store has one.
 func (s *Service) Where(scope Scope) string {
-	if p, ok := s.store.(interface{ Path(Scope) (string, error) }); ok {
+	if p, ok := s.store.(pathReporter); ok {
 		if path, err := p.Path(scope); err == nil {
 			return path
 		}
@@ -255,9 +302,7 @@ func (s *Service) recordRemember(ctx context.Context, scope Scope, section, text
 // store's keyword match otherwise.
 func (s *Service) Recall(ctx context.Context, scope Scope, query string, limit int) ([]Hit, string, error) {
 	if s.retriever != nil {
-		if authority, ok := s.store.(interface {
-			CheckRead(context.Context, Scope) error
-		}); ok {
+		if authority, ok := s.store.(readChecker); ok {
 			if err := authority.CheckRead(ctx, scope); err != nil {
 				return nil, "", err
 			}
@@ -270,7 +315,7 @@ func (s *Service) Recall(ctx context.Context, scope Scope, query string, limit i
 	}
 	hits, err := s.store.Recall(ctx, scope, query, limit)
 	source := "markdown"
-	if named, ok := s.store.(interface{ Name() string }); ok {
+	if named, ok := s.store.(namedSource); ok {
 		source = named.Name()
 	}
 	return hits, source, err
@@ -303,9 +348,13 @@ type auditLine struct {
 }
 
 // audit appends one line; the fact's text is not in it, only its size.
+// The write it describes has already happened, so a line that cannot be
+// kept is logged rather than turned into the caller's failure.
 func (s *Service) audit(line auditLine) {
-	if sink, ok := s.store.(interface{ recordAudit(auditLine) error }); ok {
-		_ = sink.recordAudit(line)
+	if sink, ok := s.store.(auditSink); ok {
+		if err := sink.recordAudit(line); err != nil {
+			slog.Error(fmt.Sprintf("memory: audit %s: %v", line.Op, err), "op", line.Op, "scope", line.Scope.String())
+		}
 		return
 	}
 	if s.auditPath == "" {
@@ -314,17 +363,32 @@ func (s *Service) audit(line auditLine) {
 	line.At = time.Now().UTC().Format(time.RFC3339)
 	raw, err := json.Marshal(line)
 	if err != nil {
+		slog.Error(fmt.Sprintf("memory: audit %s: %v", line.Op, err), "op", line.Op, "scope", line.Scope.String())
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	_ = os.MkdirAll(filepath.Dir(s.auditPath), 0o700)
+	if err := s.appendAuditLine(raw); err != nil {
+		slog.Error(fmt.Sprintf("memory: audit %s: %v", line.Op, err), "op", line.Op, "scope", line.Scope.String(), "path", s.auditPath)
+	}
+}
+
+// appendAuditLine adds one encoded line to the audit file, creating the
+// file and its directory on the first write. A close that fails counts
+// as a failed write: the line may not be on disk.
+func (s *Service) appendAuditLine(raw []byte) error {
+	if err := os.MkdirAll(filepath.Dir(s.auditPath), 0o700); err != nil {
+		return err
+	}
 	f, err := os.OpenFile(s.auditPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return
+		return err
 	}
-	defer f.Close()
-	_, _ = f.Write(append(raw, '\n'))
+	_, err = f.Write(append(raw, '\n'))
+	if cerr := f.Close(); err == nil {
+		err = cerr
+	}
+	return err
 }
 
 func errText(err error) string {
@@ -699,6 +763,8 @@ func idComment(id string) string { return "<!-- m:" + id + " -->" }
 
 func newID() string {
 	var raw [6]byte
+	// crypto/rand.Read never returns an error; it aborts the program
+	// instead when the platform cannot supply randomness.
 	_, _ = rand.Read(raw[:])
 	return hex.EncodeToString(raw[:])
 }
@@ -824,7 +890,10 @@ func insertBullet(body, section, bullet string) string {
 	return strings.Join(out, "\n") + "\n"
 }
 
-// truncate cuts to a byte budget on a line boundary.
+// truncate cuts to a byte budget on a line boundary. It is not text.Clip:
+// the budget is bytes, not runes, the cut backs up to the last whole line
+// so the prompt never sees half a bullet, and the result ends in a newline
+// with no ellipsis.
 func truncate(s string, budget int) string {
 	if len([]byte(s)) <= budget {
 		return s

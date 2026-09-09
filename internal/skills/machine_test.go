@@ -41,3 +41,52 @@ func TestScanLocalAndImportRoundTrip(t *testing.T) {
 		t.Fatal("garbage accepted")
 	}
 }
+
+func TestUnpackImportClearsAnEarlierAttemptFirst(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "notes")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(src, "SKILL.md"), []byte("# notes\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := PackImport(t.Context(), src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "notes")
+	stale := filepath.Join(dest+".loading", "stale.txt")
+	if err := os.MkdirAll(filepath.Dir(stale), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(stale, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := UnpackImport(encoded, dest); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dest, "stale.txt")); err == nil {
+		t.Fatal("an earlier attempt's file was merged into the import")
+	}
+	if os.Getuid() == 0 {
+		t.Skip("root removes anything")
+	}
+	dest = filepath.Join(t.TempDir(), "notes")
+	locked := filepath.Join(dest+".loading", "locked")
+	if err := os.MkdirAll(locked, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(locked, "keep"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(locked, 0o500); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(locked, 0o700) })
+	if err := UnpackImport(encoded, dest); err == nil || !strings.Contains(err.Error(), "clear an earlier import") {
+		t.Fatalf("leftovers that will not go were merged: %v", err)
+	}
+	if _, err := os.Stat(dest); err == nil {
+		t.Fatal("a skill was installed on top of leftovers")
+	}
+}

@@ -58,6 +58,8 @@ func Open(cfg Config) (*Store, error) {
 	failed := true
 	defer func() {
 		if failed {
+			// Open reports why it failed; releasing the lock file and
+			// the root on the way out has nothing to add to that.
 			if s.lock != nil {
 				_ = s.lock.Close()
 			}
@@ -134,6 +136,7 @@ func (s *Store) Close() error {
 }
 
 func scopeID(scope Scope) string {
+	// Scope is three plain strings; encoding it cannot fail.
 	raw, _ := json.Marshal(scope)
 	return Reference(raw).SHA256
 }
@@ -189,6 +192,7 @@ func copyChecked(ctx context.Context, into io.Writer, content io.Reader, ref Blo
 
 func tempName() string {
 	var value [16]byte
+	// crypto/rand.Read never returns an error: it fills or crashes.
 	_, _ = rand.Read(value[:])
 	return "tmp/" + hex.EncodeToString(value[:])
 }
@@ -220,10 +224,12 @@ func (s *Store) openVerifiedLocked(ctx context.Context, scope Scope, ref BlobRef
 		return nil, err
 	}
 	if err := copyChecked(ctx, io.Discard, file, ref); err != nil {
+		// The file was only read; the verification failure is the answer.
 		_ = file.Close()
 		return nil, err
 	}
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		// Same: nothing was written, the seek failure is the answer.
 		_ = file.Close()
 		return nil, err
 	}
@@ -259,8 +265,7 @@ func (s *Store) PutBlob(ctx context.Context, scope Scope, ref BlobRef, content i
 			}
 		}
 		if existing, err := s.openVerifiedLocked(ctx, scope, ref); err == nil {
-			_ = existing.Close()
-			err = errors.Join(s.syncDir(path.Dir(name)), s.syncDir("blobs"))
+			err = errors.Join(existing.Close(), s.syncDir(path.Dir(name)), s.syncDir("blobs"))
 			s.mu.Unlock()
 			if err != nil {
 				return err
@@ -304,6 +309,10 @@ func (s *Store) PutBlob(ctx context.Context, scope Scope, ref BlobRef, content i
 func (s *Store) receiveBlob(ctx context.Context, scope Scope, ref BlobRef, content io.Reader, file *os.File, tmp string, replacement bool) error {
 	name := blobName(scope, ref)
 	defer func() {
+		// On success the file is already closed and the temporary name
+		// already renamed away, so both calls report nothing worth
+		// hearing; on failure the error being returned is the answer,
+		// and a temporary file that survives is swept at the next Open.
 		_ = file.Close()
 		s.mu.Lock()
 		defer s.mu.Unlock()
@@ -461,12 +470,17 @@ func (s *Store) writeJSONLocked(name string, value any) error {
 	if err != nil {
 		return err
 	}
+	// On success the temporary name is renamed away; on failure a file that
+	// survives is swept at the next Open. Neither result adds to the
+	// return value.
 	defer s.root.Remove(tmp)
 	if _, err := file.Write(raw); err != nil {
+		// The write failed and is reported; the close cannot add to it.
 		_ = file.Close()
 		return err
 	}
 	if err := file.Sync(); err != nil {
+		// The sync failed and is reported; the close cannot add to it.
 		_ = file.Close()
 		return err
 	}
@@ -506,6 +520,7 @@ func (s *Store) Prepare(ctx context.Context, snapshot Snapshot) (Receipt, error)
 			return Receipt{}, err
 		}
 		if err := file.Sync(); err != nil {
+			// The sync failed and is reported; the close cannot add to it.
 			_ = file.Close()
 			return Receipt{}, err
 		}

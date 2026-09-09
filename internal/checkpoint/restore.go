@@ -3,6 +3,7 @@ package checkpoint
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"path"
@@ -12,7 +13,7 @@ import (
 // Restore materializes selected portable files into an exclusively created
 // directory. It never writes to a project's canonical directory. Consumers
 // must wait for success and acquire fresh execution authority before running.
-func (s *Store) Restore(ctx context.Context, manifest Manifest, directory string) (Restored, error) {
+func (s *Store) Restore(ctx context.Context, manifest Manifest, directory string) (restored Restored, err error) {
 	verified, err := s.Verify(ctx, manifest)
 	if err != nil {
 		return Restored{}, err
@@ -29,17 +30,29 @@ func (s *Store) Restore(ctx context.Context, manifest Manifest, directory string
 	}
 	root, err := os.OpenRoot(directory)
 	if err != nil {
-		_ = os.Remove(directory)
+		// The empty directory created a moment ago blocks the next
+		// Restore into the same place just as a partial one does, so a
+		// remove that will not go is reported the same way, alongside
+		// the failure that stopped the restore.
+		if removeErr := os.Remove(directory); removeErr != nil {
+			err = errors.Join(err, fmt.Errorf("checkpoint: remove unused recovery directory: %w", removeErr))
+		}
 		return Restored{}, err
 	}
 	defer root.Close()
+	// A panic unwinds with the named result still nil, so success is
+	// recorded in a flag the unwind cannot fake.
 	complete := false
 	defer func() {
-		if !complete {
-			_ = root.RemoveAll("workspace")
-			_ = root.RemoveAll("materials")
-			_ = root.Remove("context.json")
-			_ = os.Remove(directory)
+		if complete {
+			return
+		}
+		// A partial recovery directory is never handed out. One that
+		// will not go blocks the next Restore into the same place, so
+		// the caller hears about it alongside the failure that stopped
+		// the restore.
+		if removeErr := removeRecovery(root, directory); removeErr != nil {
+			err = errors.Join(err, fmt.Errorf("checkpoint: remove partial recovery directory: %w", removeErr))
 		}
 	}()
 	m := verified.Manifest()
@@ -56,10 +69,12 @@ func (s *Store) Restore(ctx context.Context, manifest Manifest, directory string
 			return err
 		}
 		if err := s.ReadBlob(ctx, m.Snapshot.Scope, ref, file); err != nil {
+			// The copy failed and is reported; the close cannot add to it.
 			_ = file.Close()
 			return err
 		}
 		if err := file.Sync(); err != nil {
+			// The sync failed and is reported; the close cannot add to it.
 			_ = file.Close()
 			return err
 		}
@@ -86,6 +101,26 @@ func (s *Store) Restore(ctx context.Context, manifest Manifest, directory string
 	}
 	complete = true
 	return Restored{Directory: directory, Context: filepath.Join(directory, "context.json"), Workspace: filepath.Join(directory, "workspace"), Materials: filepath.Join(directory, "materials")}, nil
+}
+
+// removeRecovery clears what Restore wrote under root and then the
+// directory itself. Only the entries Restore creates are touched, through
+// the root, so a directory that gained other content in the meantime is
+// left standing and reported by the final remove.
+func removeRecovery(root *os.Root, directory string) error {
+	var errs []error
+	for _, name := range []string{"workspace", "materials"} {
+		if err := root.RemoveAll(name); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if err := root.Remove("context.json"); err != nil && !errors.Is(err, os.ErrNotExist) {
+		errs = append(errs, err)
+	}
+	if err := os.Remove(directory); err != nil {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
 }
 
 // Load returns only the local index of ledger-committed checkpoints. Prepared

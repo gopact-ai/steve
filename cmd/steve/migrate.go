@@ -55,7 +55,6 @@ func migrateCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-
 		fmt.Printf("project %s active on %s at %s; prior model sessions require a fresh session\n", p.ID, cfg.Gateway.HubID, p.Home.Path)
 		return nil
 	default:
@@ -75,7 +74,7 @@ func recordMigratedProject(path string, cfg *config.Config, p project.Project) e
 		}
 	}
 	if old, exists := cfg.Projects[p.ID]; exists {
-		a, _ := json.Marshal(old)
+		a, _ := json.Marshal(old) // Project holds only strings, slices and maps of them, which always encode
 		b, _ := json.Marshal(desired)
 		if string(a) != string(b) {
 			return errors.New("target config already declares a conflicting project")

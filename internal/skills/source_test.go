@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"testing"
 )
 
@@ -94,13 +95,13 @@ func TestSourcesInstallUpdateAndRemove(t *testing.T) {
 	if err := m.RemoveSource(src.Slug); err != nil {
 		t.Fatal(err)
 	}
-	if contains(m.EnabledNames(), "alpha") {
+	if slices.Contains(m.EnabledNames(), "alpha") {
 		t.Fatal("alpha still enabled after its source is gone")
 	}
 	if _, err := os.Stat(src.Dir); !os.IsNotExist(err) {
 		t.Fatal("clone survived removal")
 	}
-	if len(m.Sources()) != 0 || contains(m.SearchPaths(), src.Root) {
+	if len(m.Sources()) != 0 || slices.Contains(m.SearchPaths(), src.Root) {
 		t.Fatalf("source not forgotten: %v %v", m.Sources(), m.SearchPaths())
 	}
 }

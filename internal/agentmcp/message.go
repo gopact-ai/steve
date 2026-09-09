@@ -312,9 +312,7 @@ func (s *Server) dispatchMessage(ctx context.Context, bind binding, tool string,
 }
 
 func (s *Server) reconcileMessageLocked(ctx context.Context, bind binding, id string, st *sentState, record sentMsg) error {
-	reader, ok := s.intents.(interface {
-		Outcome(context.Context, string) (string, error)
-	})
+	reader, ok := s.intents.(OutcomeReader)
 	if !ok || record.intentID == "" {
 		return errors.New("message operation is blocked pending reconciliation")
 	}

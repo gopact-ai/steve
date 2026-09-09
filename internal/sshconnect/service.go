@@ -259,6 +259,8 @@ func (s *Service) bind(ctx context.Context, c Candidate) (Connection, error) {
 	closed = s.closed
 	s.mu.Unlock()
 	if closed {
+		// The service closed while the master came up; the closed error is
+		// the finding, and a failed teardown leaves only a stray directory.
 		_ = connection.Close()
 		return nil, fail("ssh", "closed", "SSH 接入服务已关闭", "重新启动服务后检查")
 	}
@@ -343,6 +345,8 @@ func (s *Service) Plan(ctx context.Context, req InstallRequest) (InstallPlan, er
 	keep := false
 	defer func() {
 		if !keep {
+			// Plan is returning its own error; a failed teardown adds only a
+			// stray socket directory to it.
 			_ = connection.Close()
 		}
 	}()
@@ -382,6 +386,8 @@ func (s *Service) Plan(ctx context.Context, req InstallRequest) (InstallPlan, er
 	if len(s.plans) >= 128 {
 		s.mu.Unlock()
 		for _, old := range expired {
+			// The expired plans are gone from the table; a master that fails
+			// to tear down leaves a stray directory and no plan to report to.
 			_ = old.Close()
 		}
 		return InstallPlan{}, fail("planning", "too_many_plans", "待确认的安装计划过多", "等待旧计划过期后重试")
@@ -392,6 +398,8 @@ func (s *Service) Plan(ctx context.Context, req InstallRequest) (InstallPlan, er
 	keep = true
 	s.mu.Unlock()
 	for _, old := range expired {
+		// As above: nothing but a stray directory can come of it, and the
+		// new plan's result is not the place to report it.
 		_ = old.Close()
 	}
 	return plan, nil
@@ -407,6 +415,8 @@ func (s *Service) expire(id string) {
 	delete(s.plans, id)
 	s.mu.Unlock()
 	if stored.connection != nil {
+		// The plan expired on its timer: nobody is waiting on it, and a
+		// failed teardown leaves only a stray directory.
 		_ = stored.connection.Close()
 	}
 }
@@ -474,6 +484,8 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 	if s.now().After(stored.plan.ExpiresAt) || !stored.plan.Ready {
 		s.mu.Unlock()
 		if stored.connection != nil {
+			// The plan is refused either way; a failed teardown leaves only
+			// a stray directory behind the refusal.
 			_ = stored.connection.Close()
 		}
 		return InstallResult{}, fail("planning", "plan_not_ready", "安装计划已过期或仍有未解决的问题", "处理计划中列出的问题后重新检查")
@@ -485,6 +497,8 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 	s.mu.Unlock()
 	result, err := s.commit(ctx, plan, revision, connection)
 	if connection != nil {
+		// The installation's outcome is the finding; the master has done
+		// its work, and a failed teardown leaves only a stray directory.
 		_ = connection.Close()
 	}
 	s.mu.Lock()
@@ -691,6 +705,7 @@ func clonePlan(plan InstallPlan) InstallPlan {
 	// HubURL is intentionally absent from wire JSON but stays in the snapshot.
 	raw, _ := json.Marshal(plan)
 	var copy InstallPlan
+	// raw is Marshal's own output for this very type, so it decodes.
 	_ = json.Unmarshal(raw, &copy)
 	copy.Request.HubURL = plan.Request.HubURL
 	return copy

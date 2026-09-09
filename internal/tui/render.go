@@ -311,6 +311,11 @@ func whereOf(snap readmodel.Snapshot, node string) string {
 	return "hub"
 }
 
+// truncate fits s into width columns, ellipsis included. It is not
+// text.Clip: Clip's limit is what survives the cut, so Clip(s, width-1)
+// shortens a string that is exactly width runes long and Clip(s, width)
+// spills one column past it, and neither clamps a narrow width. See
+// TestTruncateIsNotClip.
 func truncate(s string, width int) string {
 	if width < 4 {
 		width = 4
