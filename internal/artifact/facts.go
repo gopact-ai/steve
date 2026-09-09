@@ -134,12 +134,17 @@ func (s *Store) Replicas(ctx context.Context, artifactID string) ([]Replica, err
 	return out, nil
 }
 
+// generationNodes is a registry that numbers a node's incarnations: the
+// generation moves when the node comes back, and a replica record made
+// under an earlier one is no longer trusted.
+type generationNodes interface {
+	Generation(ctx context.Context, node string) (int64, error)
+}
+
 // generationOf is the node's current generation, or 0 when the node side
 // does not track one.
 func (s *Store) generationOf(ctx context.Context, node string) int64 {
-	if g, ok := s.nodes.(interface {
-		Generation(ctx context.Context, node string) (int64, error)
-	}); ok {
+	if g, ok := s.nodes.(generationNodes); ok {
 		gen, err := g.Generation(ctx, node)
 		if err == nil {
 			return gen

@@ -1,7 +1,5 @@
 internal/agentmcp/message.go:315
 internal/agentmcp/server.go:928
-internal/artifact/content_replication.go:67
-internal/artifact/facts.go:140
 internal/console/console.go:451
 internal/console/console.go:483
 internal/console/console.go:498
@@ -13,8 +11,6 @@ internal/exec/supervisor.go:108
 internal/gateway/resume.go:210
 internal/httpapi/server.go:1106
 internal/httpapi/server_queue.go:84
-internal/ledger/replica_snapshot.go:115
-internal/ledger/replica_snapshot.go:48
 internal/memory/memory.go:191
 internal/memory/memory.go:202
 internal/memory/memory.go:258
