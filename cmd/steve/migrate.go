@@ -55,7 +55,6 @@ func migrateCmd(args []string) error {
 		if err != nil {
 			return err
 		}
-
 		fmt.Printf("project %s active on %s at %s; prior model sessions require a fresh session\n", p.ID, cfg.Gateway.HubID, p.Home.Path)
 		return nil
 	default:

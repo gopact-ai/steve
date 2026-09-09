@@ -41,7 +41,8 @@ func main() {
 	}
 }
 
-// commands are the subcommands by name; anything else is `steve run`.
+// commands are the subcommands by name; anything else is `steve run`. A table
+// rather than a switch: it gives back the 10 lines the ledger verb split cost.
 var commands = map[string]func(args []string) error{
 	"setup": setup, "doctor": doctor, "top": top, "dash": dash, "desktop": desktopCmd, "peer": peerCmd, "peer-import": peerImportCmd,
 	"ledger": ledgerCmd, "migrate": migrateCmd, "say": say,
