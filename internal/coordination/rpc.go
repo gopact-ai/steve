@@ -53,17 +53,7 @@ func (h *rpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if action == "status" || action == "state" {
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
-			h.failure(w, http.StatusMethodNotAllowed, ErrInvalid)
-			return
-		}
-		if action == "status" {
-			json.NewEncoder(w).Encode(h.service.Status())
-			return
-		}
-		state, err := h.service.ReadState(r.Context())
-		h.reply(w, state, err)
+		h.serveRead(w, r, action)
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -89,24 +79,12 @@ func (h *rpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, h.options.MaxBodyBytes)
 	defer r.Body.Close()
-	decode := func(target any) bool {
-		decoder := json.NewDecoder(r.Body)
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(target); err != nil {
-			h.failure(w, http.StatusBadRequest, fmt.Errorf("%w: invalid command body", ErrInvalid))
-			return false
-		}
-		if err := decoder.Decode(new(any)); err != io.EOF {
-			h.failure(w, http.StatusBadRequest, fmt.Errorf("%w: command body must contain one object", ErrInvalid))
-			return false
-		}
-		return true
-	}
+
 	var result Result
 	switch action {
 	case "writer":
 		var request WriterRequest
-		if !decode(&request) {
+		if !h.decodeCommand(w, r, &request) {
 			return
 		}
 		if request.CallerNodeID != identity.NodeID {
@@ -117,7 +95,7 @@ func (h *rpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result, err = h.service.BeginWriter(r.Context(), request)
 	case "app":
 		var request AppCommand
-		if !decode(&request) {
+		if !h.decodeCommand(w, r, &request) {
 			return
 		}
 		if request.CallerNodeID != identity.NodeID {
@@ -128,48 +106,77 @@ func (h *rpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		result, err = h.service.ApplyApp(r.Context(), request)
 	case "transfer":
 		var request TransferRequest
-		if !decode(&request) {
+		if !h.decodeCommand(w, r, &request) {
 			return
 		}
 		request.Actor = actor
 		result, err = h.service.Transfer(r.Context(), request)
 	case "policy":
 		var request PolicyRequest
-		if !decode(&request) {
+		if !h.decodeCommand(w, r, &request) {
 			return
 		}
 		request.Actor = actor
 		result, err = h.service.SetAutoFailover(r.Context(), request)
 	case "eligibility":
 		var request EligibilityRequest
-		if !decode(&request) {
+		if !h.decodeCommand(w, r, &request) {
 			return
 		}
 		request.Actor = actor
 		result, err = h.service.SetEligibility(r.Context(), request)
 	case "join":
 		var request JoinRequest
-		if !decode(&request) {
+		if !h.decodeCommand(w, r, &request) {
 			return
 		}
 		request.Actor = actor
 		result, err = h.service.Join(r.Context(), request)
 	case "remove":
 		var request RemoveRequest
-		if !decode(&request) {
+		if !h.decodeCommand(w, r, &request) {
 			return
 		}
 		request.Actor = actor
 		result, err = h.service.Remove(r.Context(), request)
 	case "address":
 		var request MemberAddressRequest
-		if !decode(&request) {
+		if !h.decodeCommand(w, r, &request) {
 			return
 		}
 		request.Actor = actor
 		result, err = h.service.UpdateMemberAddress(r.Context(), request)
 	}
 	h.reply(w, result, err)
+}
+
+func (h *rpcHandler) serveRead(w http.ResponseWriter, r *http.Request, action string) {
+	if r.Method != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		h.failure(w, http.StatusMethodNotAllowed, ErrInvalid)
+		return
+	}
+	if action == "status" {
+		json.NewEncoder(w).Encode(h.service.Status())
+		return
+	}
+	state, err := h.service.ReadState(r.Context())
+	h.reply(w, state, err)
+	return
+}
+
+func (h *rpcHandler) decodeCommand(w http.ResponseWriter, r *http.Request, target any) bool {
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(target); err != nil {
+		h.failure(w, http.StatusBadRequest, fmt.Errorf("%w: invalid command body", ErrInvalid))
+		return false
+	}
+	if err := decoder.Decode(new(any)); err != io.EOF {
+		h.failure(w, http.StatusBadRequest, fmt.Errorf("%w: command body must contain one object", ErrInvalid))
+		return false
+	}
+	return true
 }
 
 func requestIdentity(r *http.Request, clusterID string) (Identity, error) {
