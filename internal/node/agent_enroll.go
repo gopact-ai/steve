@@ -140,21 +140,10 @@ func (s *Server) enrollAgentWith(ctx context.Context, req agenttools.InstallRequ
 	if err := ctx.Err(); err != nil {
 		return agenttools.Enrollment{}, err
 	}
-	// Executable discovery is only a candidate. Check again immediately before
-	// publishing, after an adapter download may have taken several minutes.
-	var refreshed agenttools.Candidate
-	for _, candidate := range deps.discover() {
-		if candidate.ID == selected.ID {
-			refreshed = candidate
-			break
-		}
-	}
-	if refreshed.Executable != selected.Executable {
-		return agenttools.Enrollment{}, fmt.Errorf("%w: selected executable changed; refresh discovery", agenttools.ErrUnavailable)
-	}
-	if _, err := agenttools.Registration(refreshed); err != nil {
+	if err := verifyEnrollmentCandidate(selected, deps.discover); err != nil {
 		return agenttools.Enrollment{}, err
 	}
+
 	s.settingsMu.Lock()
 	defer s.settingsMu.Unlock()
 	if err := s.checkEnrollmentRevision(req.ExpectedRevision); err != nil {
@@ -197,6 +186,25 @@ func (s *Server) enrollAgentWith(ctx context.Context, req agenttools.InstallRequ
 	s.launch.Wake()
 	slog.Info(fmt.Sprintf("steve-node: selected tool registered candidate=%s harness=%s adapter=%s", req.CandidateID, canonical.Harness, h.Adapter), "candidate", req.CandidateID, "harness", canonical.Harness)
 	return agenttools.Enrollment{CandidateID: req.CandidateID, Harness: canonical.Harness, Revision: s.settings().Revision}, writeErr
+}
+
+func verifyEnrollmentCandidate(selected agenttools.Candidate, discover func() []agenttools.Candidate) error {
+	// Executable discovery is only a candidate. Check again immediately before
+	// publishing, after an adapter download may have taken several minutes.
+	var refreshed agenttools.Candidate
+	for _, candidate := range discover() {
+		if candidate.ID == selected.ID {
+			refreshed = candidate
+			break
+		}
+	}
+	if refreshed.Executable != selected.Executable {
+		return fmt.Errorf("%w: selected executable changed; refresh discovery", agenttools.ErrUnavailable)
+	}
+	if _, err := agenttools.Registration(refreshed); err != nil {
+		return err
+	}
+	return nil
 }
 
 func matchesEnrolledTool(existing HarnessSpec, declared agenttools.Declaration) bool {
