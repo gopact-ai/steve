@@ -423,6 +423,7 @@ func (a *agent) DeleteSession(_ context.Context, req *acp.DeleteSessionRequest) 
 }
 
 func (a *agent) ListSessions(_ context.Context, _ *acp.ListSessionsRequest) (*acp.ListSessionsResponse, error) {
+	// An untouched atomic.Value holds nil, which reads as "" here: nothing deleted yet, so both sessions are listed.
 	if gone, _ := a.deleted.Load().(string); gone == "mock-session-1" {
 		return &acp.ListSessionsResponse{}, nil
 	}
@@ -513,7 +514,7 @@ func (a *agent) mcpTool(server *acp.MCPServer, name string, args map[string]any)
 	if err != nil {
 		return "", false, err
 	}
-	isError, _ := result["isError"].(bool)
+	isError, _ := result["isError"].(bool) // absent or not a bool is the JSON-RPC default for a result that did not fail
 	text := ""
 	if content, ok := result["content"].([]any); ok && len(content) > 0 {
 		if first, ok := content[0].(map[string]any); ok {
