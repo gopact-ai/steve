@@ -473,7 +473,33 @@ func writeConfigFile(file *os.File, data []byte) error {
 	return nil
 }
 
+// Load reads a configuration file and returns it ready to run: the file's
+// values with the defaults filled in, checked, and its paths resolved.
 func Load(path string) (*Config, error) {
+	cfg, err := readConfigFile(path)
+	if err != nil {
+		return nil, err
+	}
+	cfg.applyDefaults()
+	if err := cfg.validateSettings(); err != nil {
+		return nil, err
+	}
+	// Projects come from the file or from the older per-agent layout; only
+	// once they are known can the default project be filled in and checked.
+	if err := cfg.migrateProjects(); err != nil {
+		return nil, err
+	}
+	cfg.inferDefaultProject()
+	if err := cfg.validateTopology(); err != nil {
+		return nil, err
+	}
+	cfg.resolvePaths()
+	return cfg, nil
+}
+
+// readConfigFile decodes exactly one JSON object with no unknown fields and
+// remembers the file's revision for the optimistic check Save makes.
+func readConfigFile(path string) (*Config, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
@@ -488,156 +514,230 @@ func Load(path string) (*Config, error) {
 	if err := decoder.Decode(&struct{}{}); err != io.EOF {
 		return nil, fmt.Errorf("parse config: expected one JSON object")
 	}
-	cfg.Policies = cfg.Policies.WithDefaults()
-	if err := cfg.Policies.Validate(); err != nil {
-		return nil, err
-	}
-	if cfg.Gateway.Locale != "" && cfg.Gateway.Locale != "zh" && cfg.Gateway.Locale != "en" {
-		return nil, fmt.Errorf("gateway.locale must be zh or en")
-	}
-	cfg.Gateway.OwnerID = strings.TrimSpace(cfg.Gateway.OwnerID)
-	if cfg.Gateway.DefaultChannel == "" {
-		cfg.Gateway.DefaultChannel = "console"
-		if cfg.FeishuEnabled() {
-			cfg.Gateway.DefaultChannel = "feishu"
+	return cfg, nil
+}
+
+// applyDefaults fills what the file left out and trims the identities it
+// gave. Nothing here can fail; the checks come after.
+func (c *Config) applyDefaults() {
+	c.Policies = c.Policies.WithDefaults()
+	c.Gateway.OwnerID = strings.TrimSpace(c.Gateway.OwnerID)
+	if c.Gateway.DefaultChannel == "" {
+		c.Gateway.DefaultChannel = "console"
+		if c.FeishuEnabled() {
+			c.Gateway.DefaultChannel = "feishu"
 		}
 	}
-	cfg.Feishu.applyDefaults()
-	cfg.Feishu.OwnerOpenID = strings.TrimSpace(cfg.Feishu.OwnerOpenID)
-	if cfg.Gateway.PromptTimeout <= 0 {
-		cfg.Gateway.PromptTimeout = Duration(10 * time.Minute)
+	c.Feishu.applyDefaults()
+	c.Feishu.OwnerOpenID = strings.TrimSpace(c.Feishu.OwnerOpenID)
+	if c.Gateway.PromptTimeout <= 0 {
+		c.Gateway.PromptTimeout = Duration(10 * time.Minute)
 	}
-	if cfg.Gateway.OfflineReminderAfter == 0 {
-		cfg.Gateway.OfflineReminderAfter = Duration(DefaultOfflineReminder)
+	if c.Gateway.OfflineReminderAfter == 0 {
+		c.Gateway.OfflineReminderAfter = Duration(DefaultOfflineReminder)
 	}
-	if cfg.Gateway.StatePath == "" {
-		cfg.Gateway.StatePath = "~/.steve/state.json"
+	if c.Gateway.StatePath == "" {
+		c.Gateway.StatePath = "~/.steve/state.json"
 	}
-	if cfg.Gateway.ReadModelAddr == "" {
-		cfg.Gateway.ReadModelAddr = "127.0.0.1:7710"
+	if c.Gateway.ReadModelAddr == "" {
+		c.Gateway.ReadModelAddr = "127.0.0.1:7710"
 	}
-	cfg.Gateway.StatePath = absolute(cfg.Gateway.StatePath)
-	if cfg.Gateway.HomePath == "" {
-		cfg.Gateway.HomePath = filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "home")
-	}
-	cfg.Gateway.HomePath = absolute(cfg.Gateway.HomePath)
-	for id, item := range cfg.Agents {
-		for i, skill := range item.Skills {
-			item.Skills[i] = absolute(skill)
-		}
-		cfg.Agents[id] = item
-	}
-	if err := cfg.migrateProjects(); err != nil {
-		return nil, err
-	}
-	for id, item := range cfg.Projects {
-		if id == ReservedHomeProject {
-			return nil, fmt.Errorf("project id %q is reserved for Steve's own home directory", id)
-		}
-		if item.Home.Path == "" {
-			return nil, fmt.Errorf("project %q home.path is required", id)
-		}
-		// A remote home is a path on the node's filesystem. Resolving it
-		// against the hub's home would produce a path that means something
-		// different — or nothing — over there.
-		if item.Home.Node == "" {
-			item.Home.Path = absolute(item.Home.Path)
-		}
-		if item.Home.Node != "" {
-			if _, ok := cfg.Nodes[item.Home.Node]; !ok {
-				return nil, fmt.Errorf("project %q home.node %q is not in nodes{}", id, item.Home.Node)
-			}
-		}
-		for i, skill := range item.Skills {
-			item.Skills[i] = absolute(skill)
-		}
-		cfg.Projects[id] = item
-	}
-	for id, item := range cfg.Nodes {
-		if item.Region != "" && item.Region != cfg.Gateway.Region && cfg.Gateway.Region != "" || item.Region != "" && cfg.Gateway.Region == "" && item.Region != "default" {
-			if _, ok := cfg.Gateway.Regions[item.Region]; !ok {
-				return nil, fmt.Errorf("node %q is in region %q, which gateway.regions does not list", id, item.Region)
-			}
-		}
-		if item.Level != "" && !project.Level(item.Level).Valid() {
-			return nil, fmt.Errorf("node %q level %q is not public, internal, restricted or sealed", id, item.Level)
-		}
-	}
-	if cfg.Gateway.Level != "" && !project.Level(cfg.Gateway.Level).Valid() {
-		return nil, fmt.Errorf("gateway.level %q is not public, internal, restricted or sealed", cfg.Gateway.Level)
-	}
-	if cfg.Gateway.DefaultProject == "" && len(cfg.Projects) == 1 {
-		for id := range cfg.Projects {
-			cfg.Gateway.DefaultProject = id
-		}
-	}
-	if cfg.Gateway.DefaultProject != "" {
-		if _, ok := cfg.Projects[cfg.Gateway.DefaultProject]; !ok {
-			return nil, fmt.Errorf("gateway.default_project %q is not in projects{}", cfg.Gateway.DefaultProject)
-		}
-	}
-	for id, item := range cfg.Harnesses {
+	for id, item := range c.Harnesses {
 		if item.Permission == "" {
 			item.Permission = PermissionRead
-		}
-		switch {
-		case item.Adapter != "" && item.Command != "":
-			return nil, fmt.Errorf("harness %q sets both adapter and command; pick one", id)
-		case item.Adapter == "" && item.Command == "":
-			return nil, fmt.Errorf("harness %q needs an adapter or a command", id)
-		case item.Adapter != "":
-			if _, known := adapter.Catalog[item.Adapter]; !known {
-				return nil, fmt.Errorf("harness %q: adapter %q is not one of %s", id, item.Adapter, strings.Join(adapter.Names(), ", "))
-			}
-			if len(item.Args) > 0 {
-				return nil, fmt.Errorf("harness %q: an adapter takes no args", id)
-			}
-		}
-		item.ProcessDir = absolute(item.ProcessDir)
-		cfg.Harnesses[id] = item
-	}
-	if cfg.Gateway.Planner != "" {
-		if _, ok := cfg.Agents[cfg.Gateway.Planner]; !ok {
-			return nil, fmt.Errorf("gateway.planner references unknown agent %q", cfg.Gateway.Planner)
+			c.Harnesses[id] = item
 		}
 	}
-	for id, item := range cfg.Nodes {
-		if strings.TrimSpace(item.Addr) == "" {
-			return nil, fmt.Errorf("node %q addr is required", id)
-		}
-		if strings.TrimSpace(item.Token) == "" {
-			return nil, fmt.Errorf("node %q token is required", id)
+}
+
+// inferDefaultProject makes a lone project the default when the file names
+// none: with one project there is nothing else a conversation could mean.
+func (c *Config) inferDefaultProject() {
+	if c.Gateway.DefaultProject != "" || len(c.Projects) != 1 {
+		return
+	}
+	for id := range c.Projects {
+		c.Gateway.DefaultProject = id
+	}
+}
+
+// validateSettings checks the fields that stand on their own, before the
+// projects are known.
+func (c *Config) validateSettings() error {
+	if err := c.Policies.Validate(); err != nil {
+		return err
+	}
+	if c.Gateway.Locale != "" && c.Gateway.Locale != "zh" && c.Gateway.Locale != "en" {
+		return fmt.Errorf("gateway.locale must be zh or en")
+	}
+	return nil
+}
+
+// validateTopology checks that projects, nodes, harnesses and agents refer
+// to each other consistently. The checks keep their historical order so a
+// file with several faults reports the same first one it always did.
+func (c *Config) validateTopology() error {
+	if err := c.validateProjects(); err != nil {
+		return err
+	}
+	if err := c.validateNodePlacement(); err != nil {
+		return err
+	}
+	if c.Gateway.Level != "" && !project.Level(c.Gateway.Level).Valid() {
+		return fmt.Errorf("gateway.level %q is not public, internal, restricted or sealed", c.Gateway.Level)
+	}
+	if c.Gateway.DefaultProject != "" {
+		if _, ok := c.Projects[c.Gateway.DefaultProject]; !ok {
+			return fmt.Errorf("gateway.default_project %q is not in projects{}", c.Gateway.DefaultProject)
 		}
 	}
-	if _, err := cfg.AgentCatalog(); err != nil {
-		return nil, err
+	if err := c.validateHarnessDeclarations(); err != nil {
+		return err
+	}
+	if c.Gateway.Planner != "" {
+		if _, ok := c.Agents[c.Gateway.Planner]; !ok {
+			return fmt.Errorf("gateway.planner references unknown agent %q", c.Gateway.Planner)
+		}
+	}
+	if err := c.validateNodeEndpoints(); err != nil {
+		return err
+	}
+	if _, err := c.AgentCatalog(); err != nil {
+		return err
 	}
 	// Not HarnessManager: a harness that names an adapter has no command
 	// until the adapter is fetched, and loading a file must not depend on
 	// the network. Loading checks the configuration; the manager checks
 	// that it can be run.
-	if err := cfg.validateHarnesses(); err != nil {
-		return nil, err
+	if err := c.validateHarnesses(); err != nil {
+		return err
 	}
-	for id, item := range cfg.Agents {
-		if _, ok := cfg.Harnesses[item.Harness]; !ok && item.Node == "" {
-			return nil, fmt.Errorf("agent %q references unknown harness %q", id, item.Harness)
+	return c.validateAgents()
+}
+
+func (c *Config) validateProjects() error {
+	for id, item := range c.Projects {
+		if id == ReservedHomeProject {
+			return fmt.Errorf("project id %q is reserved for Steve's own home directory", id)
+		}
+		if item.Home.Path == "" {
+			return fmt.Errorf("project %q home.path is required", id)
+		}
+		if item.Home.Node != "" {
+			if _, ok := c.Nodes[item.Home.Node]; !ok {
+				return fmt.Errorf("project %q home.node %q is not in nodes{}", id, item.Home.Node)
+			}
+		}
+	}
+	return nil
+}
+
+// validateNodePlacement checks each node's region and level: what the hub
+// may place there.
+func (c *Config) validateNodePlacement() error {
+	for id, item := range c.Nodes {
+		if item.Region != "" && item.Region != c.Gateway.Region && c.Gateway.Region != "" || item.Region != "" && c.Gateway.Region == "" && item.Region != "default" {
+			if _, ok := c.Gateway.Regions[item.Region]; !ok {
+				return fmt.Errorf("node %q is in region %q, which gateway.regions does not list", id, item.Region)
+			}
+		}
+		if item.Level != "" && !project.Level(item.Level).Valid() {
+			return fmt.Errorf("node %q level %q is not public, internal, restricted or sealed", id, item.Level)
+		}
+	}
+	return nil
+}
+
+// validateNodeEndpoints checks each node says how to reach it and how to
+// prove we may.
+func (c *Config) validateNodeEndpoints() error {
+	for id, item := range c.Nodes {
+		if strings.TrimSpace(item.Addr) == "" {
+			return fmt.Errorf("node %q addr is required", id)
+		}
+		if strings.TrimSpace(item.Token) == "" {
+			return fmt.Errorf("node %q token is required", id)
+		}
+	}
+	return nil
+}
+
+// validateHarnessDeclarations checks each harness names either a catalog
+// adapter or a command of its own, never both or neither.
+func (c *Config) validateHarnessDeclarations() error {
+	for id, item := range c.Harnesses {
+		switch {
+		case item.Adapter != "" && item.Command != "":
+			return fmt.Errorf("harness %q sets both adapter and command; pick one", id)
+		case item.Adapter == "" && item.Command == "":
+			return fmt.Errorf("harness %q needs an adapter or a command", id)
+		case item.Adapter != "":
+			if _, known := adapter.Catalog[item.Adapter]; !known {
+				return fmt.Errorf("harness %q: adapter %q is not one of %s", id, item.Adapter, strings.Join(adapter.Names(), ", "))
+			}
+			if len(item.Args) > 0 {
+				return fmt.Errorf("harness %q: an adapter takes no args", id)
+			}
+		}
+	}
+	return nil
+}
+
+// validateAgents checks each agent's harness, node and MCP servers exist
+// where they have to: on the hub for a hub-local agent, on the node for one
+// placed there.
+func (c *Config) validateAgents() error {
+	for id, item := range c.Agents {
+		if _, ok := c.Harnesses[item.Harness]; !ok && item.Node == "" {
+			return fmt.Errorf("agent %q references unknown harness %q", id, item.Harness)
 		}
 		if item.Node != "" {
-			if _, ok := cfg.Nodes[item.Node]; !ok {
-				return nil, fmt.Errorf("agent %q references unknown node %q", id, item.Node)
+			if _, ok := c.Nodes[item.Node]; !ok {
+				return fmt.Errorf("agent %q references unknown node %q", id, item.Node)
 			}
 		}
 		for _, server := range item.MCPServers {
 			// An agent on another machine uses that machine's servers,
 			// bound there at admission; only a hub-local agent's names must
 			// exist in this configuration.
-			if _, ok := cfg.MCPServers[server]; !ok && item.Node == "" {
-				return nil, fmt.Errorf("agent %q references unknown MCP server %q", id, server)
+			if _, ok := c.MCPServers[server]; !ok && item.Node == "" {
+				return fmt.Errorf("agent %q references unknown MCP server %q", id, server)
 			}
 		}
 	}
-	return cfg, nil
+	return nil
+}
+
+// resolvePaths makes every hub-local path absolute and derives the home
+// directory from the state path when the file gave none. A project home on
+// another node is that node's path and is left alone: resolving it against
+// the hub's filesystem would produce a path that means something different,
+// or nothing, over there.
+func (c *Config) resolvePaths() {
+	c.Gateway.StatePath = absolute(c.Gateway.StatePath)
+	if c.Gateway.HomePath == "" {
+		c.Gateway.HomePath = filepath.Join(filepath.Dir(c.Gateway.StatePath), "home")
+	}
+	c.Gateway.HomePath = absolute(c.Gateway.HomePath)
+	for id, item := range c.Agents {
+		for i, skill := range item.Skills {
+			item.Skills[i] = absolute(skill)
+		}
+		c.Agents[id] = item
+	}
+	for id, item := range c.Projects {
+		if item.Home.Node == "" {
+			item.Home.Path = absolute(item.Home.Path)
+		}
+		for i, skill := range item.Skills {
+			item.Skills[i] = absolute(skill)
+		}
+		c.Projects[id] = item
+	}
+	for id, item := range c.Harnesses {
+		item.ProcessDir = absolute(item.ProcessDir)
+		c.Harnesses[id] = item
+	}
 }
 
 func (c *Config) AgentCatalog() (*agent.Catalog, error) {
@@ -758,6 +858,8 @@ func (c *Config) migrateProjects() error {
 		item.LegacyWorkspace = ""
 		c.Agents[id] = item
 	}
+	// Projects hold only strings, slices and maps of them, which always
+	// encode; the note is advice for the operator, not something to fail on.
 	rendered, _ := json.MarshalIndent(c.Projects, "", "  ")
 	c.Migrated = append(c.Migrated, fmt.Sprintf("agents[].workspace is now projects{}; move this into the config and set gateway.default_project = %q:\n%s", c.Gateway.DefaultProject, rendered))
 	return nil
