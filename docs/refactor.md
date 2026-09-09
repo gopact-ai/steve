@@ -97,6 +97,7 @@ M2 阶段 3：`internal/app.Build(ctx, Config)` 按原顺序装配运行时、�
 CI 的 GitHub 托管 runner 负载不稳时，以下时序敏感测试会偶发失败（本地与多数 CI 运行通过），属于 M6 要处理的清理项：把"租约 TTL 与续期间隔"的比值放大、或改用可控时钟，而不是靠重跑。
 
 - `cmd/steve-node` `TestNodeCommandReexecutesAndKeepsDurableCommandIdentity`（"node is busy; release idle sessions before restarting"）
+- `internal/node` `TestMCPBindingKeepsSecretsOnTheNode`（"a released binding still launched"）：高负载下偶发，单独 `-count=5` 稳定通过。
 
 已修好：`internal/artifact` 与 `internal/exec` 的两个租约驱动测试改为注入续期节拍与账本时钟（`renewTicks` / `driverTicks` + `ledger.Options.Now`），不再依赖真实时间比。
 
@@ -114,6 +115,34 @@ CI 的 GitHub 托管 runner 负载不稳时，以下时序敏感测试会偶发�
 
 M1 是收益最大的一步，也是唯一改动执行路径的一步，所以放在最前并单独验收；M2–M6 主要是搬运和替换，可以分给并行的执行者。
 
-M3 实施结果：`state_literals.txt` 从实施前的 53 条记录降到 0 条（上方现状表保留早期统计）。会话动作、会话及命令状态、交换状态和管理操作状态使用各自的类型；任务状态与结果复用 `task.State` / `task.Outcome`。动作分发保留原有授权和回执处理顺序，`start` 仍仅用于 open 内部的二次授权。JSON 字符串值及各领域原有的终态判定保持不变。
+## 实施结果（2026-09-09，master 收口）
 
-M4 实施进度：`internal/logs` 持有两个可执行文件共用的 slog handler（标准日志时间前缀、消息原文、`key=value` 字段跟在后面，仅 WARN/ERROR 带 `level=`），`internal/app` 与 `cmd/steve-node` 都在入口安装它；应用层、node 与 nodewire、harness、acphost 及各领域包已改用 `slog`，标识（`task` / `attempt` / `node` / `conversation` / `stream` / `harness` / `artifact` / `landing` / `project` …）作为字段附加，消息文本原样保留。`log.Printf` 只剩 `turn` / `delegate` / `exec` 三个包，随生命周期收敛一起迁移。
+| 指标 | 计划前（`f0942df`） | 现在 |
+|---|---|---|
+| 回合生命周期实现 | 5 份 | 1 份（`internal/lifecycle` 的 `Run` / `Reattach`） |
+| `cmd/steve` | 11.4k 行，fan-out 64 | 670 行，fan-out 15 |
+| 超过 150 / 200 行的函数 | 21 / 12（最长 893） | 0 / 0（最长 149） |
+| 超过 100 行的函数 | 67 | 52 |
+| 内联字符串状态 / 动作 | 53 | 0 |
+| 临时接口断言 `x.(interface{…})` | 41 | 0 |
+| `log.Printf` | 294 | 0 |
+| `_ =` 吞掉的错误（非测试） | 390 | 141，每处都有一行说明为什么可以忽略 |
+| 未被引用的包 | `internal/sessions` | 已删 |
+
+各里程碑的落点：
+
+**M1 执行生命周期**。`internal/lifecycle` 是唯一一份：`Run` 走开 attempt → 心跳 → 准入 → 准备 → 开会话 → 驱动 → 结算 → 关闭，`Reattach` 是接回原执行的另一个入口；`Settlement` 用选项表达调用方之间真正的差异（`DetachManaged` / `RejectManaged` / `KeepSession` / `CancelDetaches` / `CommitAsGiven` / `QuarantineFinish` / `RetryCleanup`）。五个调用方（`turn.prompt`、`turn.RelocateChat`、`turn.resumeRetainedChat`、`delegate.run`、`agentexec.Runner.Prompt`）以及计划步骤的执行、完成、接回都改成薄包装；`attempts.Open` / `Heartbeat` / `FinishCompletion` 在 `lifecycle` 之外没有调用点。心跳在终态转换前才停（在 Finish 钩子之后），租约丢失取消、`ErrStopUnconfirmed` 的隔离、脱离取消的清理 ctx 都只写一次。
+
+**M2 组合根**。`serveApplication`（893 行）变成 `internal/app` 的 `Build(ctx, Config)` + `App.Run(ctx)`，子系统装配拆到 `assemble_*.go`；控制台管理用例进 `internal/admin`，桌面多机进 `internal/cluster`。
+
+**M3 类型化动作与状态**。会话动作、会话与命令状态、交换状态、管理操作状态各有类型，任务状态复用 `task.State` / `task.Outcome`；JSON 字符串值不变。
+
+**M4 结构化日志**。`internal/logs` 持有两个可执行文件共用的 slog handler（标准日志时间前缀、消息原文、`key=value` 字段跟在后面，仅 WARN/ERROR 带 `level=`）；`internal/app` 与 `cmd/steve-node` 在入口安装。全仓消息文本原样保留，标识（`task` / `attempt` / `node` / `conversation` / `stream` / `harness` / `artifact` / `landing` / `project` …）作为字段附加，`docs/operations.md` 排障表因此仍然可 grep。`turn: timing` 是结构化事件，各阶段耗时为整数毫秒字段。
+
+**M5 端口与拆包**。`turn.Coordinator` 与 `node.Server` 按职责拆到 600 行以下的文件；临时接口断言全部改成消费方声明的具名端口，可选能力仍然可选。
+
+**M6 错误与工具函数**。跨包重复的 `clip` / `firstLine` / `contains` 收进 `internal/text` 或换成 `slices.Contains`；剩下的 `_ =` 每处都写明忽略的代价。清理过程中先复现再修的缺陷包括：`checkpoint.Restore` 的清理挂在具名返回值上、panic 展开时不执行；节点技能暂存目录清不掉却继续 apply；`attempt.ReleaseReservation` 丢掉释放错误；`coordination.applyJoinPrepare` 的拒绝理由取决于 map 遍历顺序。
+
+**下一步**。长函数基线清零后，`longFunction` 阈值可以从 150 下调到 120 再到 100（当前最长的非测试函数 149 行，超过 100 行的还有 52 个），继续用同一套棘轮往下压。
+
+**过程**。M0 的棘轮从头护到尾：基线只能变短，阈值一次没放宽。每个里程碑都是"实现 → 独立复核找茬 → 修 → 再复核（含变异检查与对照 master 的复现脚本）"，合入前 `go test -race` 全绿，合入后部署 hub 与两台节点跑 `make e2e-fleet`，改动执行路径时再跑 `make e2e-autonomous`。
