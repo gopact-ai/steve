@@ -6,6 +6,7 @@ import (
 	"regexp"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/logs"
 )
@@ -44,15 +45,42 @@ func TestDelegateLogLinesKeepTheirTextAndCarryFields(t *testing.T) {
 	release()
 	box.wait(t, 1)
 
-	lines := stripTimes(out.String())
-	for _, want := range []string{
-		`^delegate: codex -> builder task #` + first.TaskID + ` under #` + parent.ID + ` on node-a task=` + first.TaskID + ` parent=` + parent.ID + ` attempt=\S+ conversation=chat agent=builder node=node-a$`,
-		`^delegate: task #` + first.TaskID + ` done on node-a task=` + first.TaskID + ` parent=` + parent.ID + ` attempt=\S+ conversation=chat agent=builder node=node-a$`,
-		`^delegate: delivered 1 child result\(s\) into chat for task #` + parent.ID + ` parent=` + parent.ID + ` conversation=chat$`,
-	} {
-		if !regexp.MustCompile(`(?m)` + want).MatchString(lines) {
-			t.Errorf("missing %q in log:\n%s", want, lines)
+	// The delivery line is written after the deliverer returns, so the
+	// mailbox seeing the result does not mean the line is in the buffer.
+	waitForLogLines(t, out,
+		`^delegate: codex -> builder task #`+first.TaskID+` under #`+parent.ID+` on node-a task=`+first.TaskID+` parent=`+parent.ID+` attempt=\S+ conversation=chat agent=builder node=node-a$`,
+		`^delegate: task #`+first.TaskID+` done on node-a task=`+first.TaskID+` parent=`+parent.ID+` attempt=\S+ conversation=chat agent=builder node=node-a$`,
+		`^delegate: delivered 1 child result\(s\) into chat for task #`+parent.ID+` parent=`+parent.ID+` conversation=chat$`,
+	)
+}
+
+// waitForLogLines fails once every pattern has had its chance to appear,
+// reporting the whole log so a missing line is read in context.
+func waitForLogLines(t *testing.T, out *lockedLog, patterns ...string) {
+	t.Helper()
+	want := make([]*regexp.Regexp, len(patterns))
+	for i, p := range patterns {
+		want[i] = regexp.MustCompile(`(?m)` + p)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		lines := stripTimes(out.String())
+		missing := want[:0:0]
+		for _, re := range want {
+			if !re.MatchString(lines) {
+				missing = append(missing, re)
+			}
 		}
+		if len(missing) == 0 {
+			return
+		}
+		if time.Now().After(deadline) {
+			for _, re := range missing {
+				t.Errorf("missing %q in log:\n%s", re, lines)
+			}
+			return
+		}
+		time.Sleep(10 * time.Millisecond)
 	}
 }
 
