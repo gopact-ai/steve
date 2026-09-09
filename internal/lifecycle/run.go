@@ -506,8 +506,13 @@ func (e *Execution) start(ctx context.Context) error {
 		}
 		prepare = mutate
 	}
+	pluginRuntime, err := e.preparePluginRuntime(ctx)
+	if err != nil {
+		return e.step(StepPrepare, err)
+	}
 	admission := e.Admission
 	prepared, err := o.Attempts.Advance(ctx, id, attempt.Prepared, o.Actor, func(r *attempt.Record) {
+		r.PluginRuntime = pluginRuntime.Clone()
 		if o.Roster != nil {
 			r.Admission = &admission
 		}
@@ -559,6 +564,7 @@ func (e *Execution) start(ctx context.Context) error {
 // bindings, and pins the agent's preferences on a fresh one. A rejected
 // open on an armed attempt is disarmed; an unconfirmed one is not.
 func (e *Execution) openSession(ctx context.Context) error {
+	ctx = harness.WithPluginProfile(ctx, e.Record.PluginRuntime)
 	o := e.o
 	servers := append(append([]acp.MCPServer(nil), e.Servers...), roster.ToMCP(e.Bindings)...)
 	var session harness.Runner
