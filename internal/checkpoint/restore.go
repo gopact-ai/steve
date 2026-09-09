@@ -30,10 +30,13 @@ func (s *Store) Restore(ctx context.Context, manifest Manifest, directory string
 	}
 	root, err := os.OpenRoot(directory)
 	if err != nil {
-		// The directory was created empty a moment ago; a remove that
-		// fails leaves an empty directory, and the open error is the
-		// answer.
-		_ = os.Remove(directory)
+		// The empty directory created a moment ago blocks the next
+		// Restore into the same place just as a partial one does, so a
+		// remove that will not go is reported the same way, alongside
+		// the failure that stopped the restore.
+		if removeErr := os.Remove(directory); removeErr != nil {
+			err = errors.Join(err, fmt.Errorf("checkpoint: remove unused recovery directory: %w", removeErr))
+		}
 		return Restored{}, err
 	}
 	defer root.Close()
