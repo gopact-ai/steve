@@ -28,9 +28,10 @@ type MCPServer struct {
 }
 
 type Capabilities struct {
-	Instructions string
-	MCPServers   []acp.MCPServer
-	Fingerprint  string
+	SkillsFingerprint string
+	Instructions      string
+	MCPServers        []acp.MCPServer
+	Fingerprint       string
 	// SessionFingerprint excludes editable home identity and platform guidance.
 	// MCP connections, agent configuration, skills and visibility remain fixed.
 	SessionFingerprint string
@@ -95,6 +96,16 @@ func (a *Assembler) AssembleMode(selected agent.Agent, mode home.Mode) (Capabili
 }
 
 func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras []Extra) (Capabilities, error) {
+	return a.assembleExtra(selected, mode, extras, nil)
+}
+
+// AssembleExtraPinned preserves the native skill view of an existing plugin
+// runtime while allowing the usual identity and project-memory refreshes.
+func (a *Assembler) AssembleExtraPinned(selected agent.Agent, mode home.Mode, extras []Extra, skills string) (Capabilities, error) {
+	return a.assembleExtra(selected, mode, extras, &skills)
+}
+
+func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras []Extra, pinnedSkills *string) (Capabilities, error) {
 	var snap home.Snapshot
 	if a.home != nil && mode != home.ModeNone {
 		var err error
@@ -183,7 +194,9 @@ func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras [
 		hashMode = mode
 	}
 	skillsHash := ""
-	if a.skills != nil {
+	if pinnedSkills != nil {
+		skillsHash = *pinnedSkills
+	} else if a.skills != nil {
 		skillsHash = a.skills.Fingerprint()
 	}
 	fp, err := fingerprint(identity, servers, hashMode, skillsHash)
@@ -194,7 +207,7 @@ func (a *Assembler) AssembleExtra(selected agent.Agent, mode home.Mode, extras [
 	if err != nil {
 		return Capabilities{}, err
 	}
-	return Capabilities{Instructions: instructions, MCPServers: servers, Fingerprint: fp, SessionFingerprint: sessionFP}, nil
+	return Capabilities{SkillsFingerprint: skillsHash, Instructions: instructions, MCPServers: servers, Fingerprint: fp, SessionFingerprint: sessionFP}, nil
 }
 
 func makeMCPServer(name string, cfg MCPServer) (acp.MCPServer, error) {
