@@ -18,6 +18,7 @@ import (
 	"github.com/gopact-ai/steve/internal/lifecycle"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -215,6 +216,10 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 	if c.maintaining {
 		return Result{}, errors.New("coordination is transferring or under maintenance")
 	}
+	return c.relocateChat(ctx, planID, choice, req)
+}
+
+func (c *Coordinator) relocateChat(ctx context.Context, planID, choice string, req Request) (result Result, err error) {
 	p, old, err := c.relocationRequest(ctx, planID, req)
 	if err != nil {
 		return Result{}, err
@@ -258,11 +263,8 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 			c.fleet.Release(cleanup, p.Target.Node, p.Target.ID)
 		}
 	}()
-	if err := c.artifacts.VerifyPreparedWorkspace(ctx, p.Target.Workspace, p.Checkpoint); err != nil {
-		if invalidateErr := c.attempts.InvalidateRelocation(ctx, p.ID, "prepared workspace changed before execution"); invalidateErr != nil {
-			slog.Error(fmt.Sprintf("turn: invalidate relocation plan %s: %v", p.ID, invalidateErr), "plan", p.ID, "attempt", old.ID, "node", p.Target.Node)
-		}
-		return Result{}, retainedBlocked("prepared-workspace", "重新校验目标恢复目录", "目标目录已缺失或与方案快照不一致。", "不能在空目录或已变更的文件上执行已批准的方案。", "建议重新准备一份完整快照方案；已有变更不会被覆盖。", err)
+	if err := c.verifyRelocationWorkspace(ctx, p, old.ID); err != nil {
+		return Result{}, err
 	}
 	r, err := c.openRelocationAttempt(ctx, p, old, admitted, approval)
 	if err != nil {
@@ -272,11 +274,7 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 		return c.resumeRetainedChat(ctx, r.ID, req, true)
 	}
 	if r.State == attempt.Bound {
-		var result Result
-		if r.Result != nil && json.Unmarshal(r.Result.Output, &result) == nil {
-			return c.gateDisclosure(ctx, req, result)
-		}
-		return Result{}, errors.New("completed relocation has no recoverable result")
+		return c.completedRelocation(ctx, req, r)
 	}
 	if r.State != attempt.Leased && r.State != attempt.Prepared {
 		return Result{}, errors.New("relocation preparation was interrupted; reconcile the recorded attempt")
@@ -327,19 +325,40 @@ func (c *Coordinator) RelocateChat(ctx context.Context, planID, choice string, r
 	if errors.As(runErr, &detached) {
 		return Result{}, runErr
 	}
-	session.Tainted = false
-	session.InstructionsApplied = true
-	if err := c.store.SaveSession(session); err != nil {
-		cleanupFailure = err
-		return Result{}, err
-	}
-	if cleanupFailure = c.finishRetainedTask(r, runErr, spent); cleanupFailure != nil {
+	if cleanupFailure = t.finishRelocation(session, runErr); cleanupFailure != nil {
 		return Result{}, cleanupFailure
 	}
 	if runErr != nil {
 		return result, runErr
 	}
 	return c.gateDisclosure(turnCtx, req, result)
+}
+
+func (c *Coordinator) verifyRelocationWorkspace(ctx context.Context, p attempt.RelocationIntent, sourceID string) error {
+	if err := c.artifacts.VerifyPreparedWorkspace(ctx, p.Target.Workspace, p.Checkpoint); err != nil {
+		if invalidateErr := c.attempts.InvalidateRelocation(ctx, p.ID, "prepared workspace changed before execution"); invalidateErr != nil {
+			slog.Error(fmt.Sprintf("turn: invalidate relocation plan %s: %v", p.ID, invalidateErr), "plan", p.ID, "attempt", sourceID, "node", p.Target.Node)
+		}
+		return retainedBlocked("prepared-workspace", "重新校验目标恢复目录", "目标目录已缺失或与方案快照不一致。", "不能在空目录或已变更的文件上执行已批准的方案。", "建议重新准备一份完整快照方案；已有变更不会被覆盖。", err)
+	}
+	return nil
+}
+
+func (c *Coordinator) completedRelocation(ctx context.Context, req Request, r attempt.Record) (Result, error) {
+	var result Result
+	if r.Result != nil && json.Unmarshal(r.Result.Output, &result) == nil {
+		return c.gateDisclosure(ctx, req, result)
+	}
+	return Result{}, errors.New("completed relocation has no recoverable result")
+}
+
+func (t *retainedTurn) finishRelocation(session state.Session, runErr error) error {
+	session.Tainted = false
+	session.InstructionsApplied = true
+	if err := t.c.store.SaveSession(session); err != nil {
+		return err
+	}
+	return t.c.finishRetainedTask(t.record, runErr, t.spent)
 }
 
 func relocationRequirements(requires, uses []string, frozen bool) ([]string, []string) {

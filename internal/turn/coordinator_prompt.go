@@ -114,37 +114,9 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 			return Result{}, bindErr
 		}
 	}
-	conversation := c.store.Conversation(conversationID)
-	saved := conversation.Sessions[selected.ID]
-	saved.ConversationID = conversationID
-	extras, agentToken, err := c.gateExtras(ctx, conversationID, selected, saved)
-	if err != nil {
+	if err := t.prepareSession(ctx); err != nil {
 		return Result{}, err
 	}
-	saved.AgentToken = agentToken
-	clock.mark("gate")
-	extras = append(extras, c.projectMemory(ctx, conversationID, req)...)
-	capabilities, err := c.assemble(selected, req, extras)
-	if err != nil {
-		return Result{}, err
-	}
-	clock.mark("assemble")
-	if saved.Tainted {
-		return Result{}, UserError{Text: c.text.T(i18n.Tainted, protocol.CommandNew)}
-	}
-	contextChanged := saved.HarnessID != "" && saved.CapabilityHash != capabilities.Fingerprint
-	if contextChanged {
-		// Only identity and platform guidance can change in place. A missing baseline cannot
-		// prove that MCP connections, skills and visibility stayed the same.
-		if saved.SessionConfigHash == "" || saved.SessionConfigHash != capabilities.SessionFingerprint {
-			return Result{}, UserError{Text: c.text.T(i18n.CapabilityDrift, protocol.CommandNew)}
-		}
-		saved.InstructionsApplied = false
-	}
-	if saved.HarnessID != "" && sessionDrifted(saved, binding, workspace.Path) {
-		return Result{}, UserError{Text: c.text.T(i18n.WorkspaceDrift, protocol.CommandNew)}
-	}
-	t.saved, t.capabilities, t.contextChanged = saved, capabilities, contextChanged
 	// The turn is an attempt from here: leased on the project's canonical
 	// workspace, renewed while it runs, and closed with whatever happened.
 	spec, candidate, err := c.turnSpec(ctx, req, selected, tracked, binding, workspace)
@@ -157,6 +129,42 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 		clock.report(parent, run.Record.ID)
 	}
 	return result, err
+}
+
+func (t *chatTurn) prepareSession(ctx context.Context) error {
+	c, req, selected := t.c, t.req, t.selected
+	conversation := c.store.Conversation(req.ConversationID)
+	saved := conversation.Sessions[selected.ID]
+	saved.ConversationID = req.ConversationID
+	extras, agentToken, err := c.gateExtras(ctx, req.ConversationID, selected, saved)
+	if err != nil {
+		return err
+	}
+	saved.AgentToken = agentToken
+	t.clock.mark("gate")
+	extras = append(extras, c.projectMemory(ctx, req.ConversationID, req)...)
+	capabilities, err := c.assemble(selected, req, extras)
+	if err != nil {
+		return err
+	}
+	t.clock.mark("assemble")
+	if saved.Tainted {
+		return UserError{Text: c.text.T(i18n.Tainted, protocol.CommandNew)}
+	}
+	contextChanged := saved.HarnessID != "" && saved.CapabilityHash != capabilities.Fingerprint
+	if contextChanged {
+		// Only identity and platform guidance can change in place. A missing baseline cannot
+		// prove that MCP connections, skills and visibility stayed the same.
+		if saved.SessionConfigHash == "" || saved.SessionConfigHash != capabilities.SessionFingerprint {
+			return UserError{Text: c.text.T(i18n.CapabilityDrift, protocol.CommandNew)}
+		}
+		saved.InstructionsApplied = false
+	}
+	if saved.HarnessID != "" && sessionDrifted(saved, t.binding, t.workspace.Path) {
+		return UserError{Text: c.text.T(i18n.WorkspaceDrift, protocol.CommandNew)}
+	}
+	t.saved, t.capabilities, t.contextChanged = saved, capabilities, contextChanged
+	return nil
 }
 
 func (c *Coordinator) buildingProfile(req Request) (bool, error) {
