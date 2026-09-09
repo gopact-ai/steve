@@ -12,6 +12,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/plugins"
 )
 
 const document = "platform-configuration"
@@ -22,16 +23,17 @@ var (
 )
 
 type Declaration struct {
-	Revision       uint64                    `json:"revision"`
-	Settings       config.SettingsValues     `json:"settings"`
-	Channels       config.ChannelSettings    `json:"channels"`
-	Credentials    ChannelCredentials        `json:"channel_credentials"`
-	Work           WorkPolicy                `json:"work"`
-	DefaultProject string                    `json:"default_project,omitempty"`
-	Home           config.ProjectHome        `json:"home"`
-	Agents         map[string]config.Agent   `json:"agents"`
-	Projects       map[string]config.Project `json:"projects"`
-	Nodes          map[string]config.Node    `json:"nodes"`
+	Plugins        map[string]plugins.Installation `json:"plugins,omitempty"`
+	Revision       uint64                          `json:"revision"`
+	Settings       config.SettingsValues           `json:"settings"`
+	Channels       config.ChannelSettings          `json:"channels"`
+	Credentials    ChannelCredentials              `json:"channel_credentials"`
+	Work           WorkPolicy                      `json:"work"`
+	DefaultProject string                          `json:"default_project,omitempty"`
+	Home           config.ProjectHome              `json:"home"`
+	Agents         map[string]config.Agent         `json:"agents"`
+	Projects       map[string]config.Project       `json:"projects"`
+	Nodes          map[string]config.Node          `json:"nodes"`
 }
 
 // ChannelCredentials are private platform connection material. They are never
@@ -171,6 +173,18 @@ func FromLocal(cfg *config.Config, local LocalNode) (Declaration, error) {
 		}
 		d.Projects[id] = p
 	}
+	for id, item := range d.Plugins {
+		targets := make(map[string]plugins.Configuration, len(item.Targets))
+		for node, cfg := range item.Targets {
+			target := normalize(node)
+			if _, exists := targets[target]; exists {
+				return Declaration{}, fmt.Errorf("plugin %s repeats the local physical target", id)
+			}
+			targets[target] = cfg
+		}
+		item.Targets = targets
+		d.Plugins[id] = item
+	}
 	return d, validate(d)
 }
 
@@ -186,6 +200,7 @@ func (d Declaration) Apply(cfg *config.Config) error {
 		return err
 	}
 	cfg.Agents, cfg.Projects, cfg.Nodes = owned.Agents, owned.Projects, owned.Nodes
+	cfg.Plugins = owned.Plugins
 	owned.applySettings(cfg)
 	cfg.RuntimeHome = &owned.Home
 	return nil
@@ -208,7 +223,7 @@ func declaration(cfg *config.Config, home config.ProjectHome) (Declaration, erro
 	settings.Gateway.OwnerID = cfg.EffectiveOwnerID()
 	return clone(Declaration{Settings: settings, Channels: cfg.ChannelSettings(), Credentials: ChannelCredentials{FeishuAppSecret: cfg.Feishu.AppSecret},
 		Work: WorkPolicy{Planner: cfg.Gateway.Planner, OfflineReminderAfter: cfg.Gateway.OfflineReminderAfter, DirectTransfer: cfg.Gateway.DirectTransfer}, DefaultProject: cfg.Gateway.DefaultProject,
-		Home: home, Agents: cfg.Agents, Projects: cfg.Projects, Nodes: cfg.Nodes})
+		Home: home, Agents: cfg.Agents, Projects: cfg.Projects, Nodes: cfg.Nodes, Plugins: cfg.Plugins})
 }
 
 func (d Declaration) applySettings(cfg *config.Config) {
@@ -274,6 +289,16 @@ func validate(d Declaration) error {
 				return fmt.Errorf("project %q has an unknown durable node", id)
 			}
 		}
+	}
+	for id, item := range d.Plugins {
+		for node := range item.Targets {
+			if !known(node) {
+				return fmt.Errorf("plugin %s requires a known physical node", id)
+			}
+		}
+	}
+	if err := (&config.Config{Plugins: d.Plugins, Projects: d.Projects, Nodes: d.Nodes}).ValidatePlugins(); err != nil {
+		return err
 	}
 	_, err := (&config.Config{Agents: d.Agents}).AgentCatalog()
 	return err
