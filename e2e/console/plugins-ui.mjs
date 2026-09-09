@@ -91,6 +91,24 @@ try {
     await page.getByText("Interpreter is missing; register it on this machine.").waitFor();
     console.log("PASS configuration selects credential references and separates enablement from node readiness");
 
+    const updatedManifest = structuredClone(manifest); updatedManifest.version = "2.0.0"; updatedManifest.mcp.api.url.text = "https://new.example.invalid/mcp";
+    f.view.packages.push({ project: "p", digest: "f".repeat(64), manifest: updatedManifest });
+    await page.getByRole("button", { name: "Refresh Status", exact: true }).click();
+    await page.getByRole("button", { name: "Edit Configuration", exact: true }).click();
+    const upgrade = page.getByRole("dialog", { name: "Configure Installation", exact: true });
+    await upgrade.getByRole("button", { name: /Version/ }).click();
+    await page.getByRole("option", { name: /2.0.0/ }).click();
+    await upgrade.getByText("Version change: 1.0.0 → 2.0.0").waitFor();
+    const writesBeforeReview = f.calls.filter((call) => call.kind === "save").length;
+    await upgrade.getByRole("button", { name: "Save Installation", exact: true }).click();
+    await upgrade.getByText("Review and acknowledge the changes before enabling this version.").waitFor();
+    assert.equal(f.calls.filter((call) => call.kind === "save").length, writesBeforeReview);
+    await upgrade.getByRole("checkbox", { name: /I reviewed this version/ }).focus(); await page.keyboard.press("Space");
+    await upgrade.getByRole("button", { name: "Save Installation", exact: true }).click();
+    await upgrade.waitFor({ state: "hidden" });
+    assert.equal(f.view.installations[0].installation.digest, "f".repeat(64));
+    console.log("PASS activating a changed version requires reviewing the manifest and scope");
+
     await page.getByRole("button", { name: "Edit Configuration", exact: true }).click();
     const edit = page.getByRole("dialog", { name: "Configure Installation", exact: true });
     const originalRevision = f.view.revision; f.view.revision = "r100"; f.view.installations[0].installation.enabled = false; f.stale = true;
