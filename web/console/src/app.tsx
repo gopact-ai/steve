@@ -2,7 +2,7 @@ import { CoordinationProvider, useCoordination } from "@/lib/coordination";
 import { DesktopOnboarding } from "@/components/steve/desktop-onboarding";
 import { SelectionProvider } from "@/providers/selection-provider";
 import { SideChatProvider } from "@/providers/side-chat-provider";
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import { BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
 import { Sheet } from "@/components/steve/drawer";
@@ -21,6 +21,8 @@ import { HomePage } from "@/pages/home";
 import { SettingsPage } from "@/pages/settings";
 import { MaterialProvider } from "@/providers/material-provider";
 import { ReviewProvider } from "@/components/steve/review-context";
+
+const PluginsPage = lazy(() => import("@/pages/plugins").then((module) => ({ default: module.PluginsPage })));
 
 export function App() {
     const navigate = useNavigate();
@@ -50,6 +52,7 @@ function Shell() {
             { href: "/projects", label: t("nav.projects"), icon: Folder, badge: 0 },
             { href: "/fleet", label: t("nav.fleet"), icon: Server01, badge: 0 },
             { href: "/skills", label: t("nav.skills"), icon: PuzzlePiece01, badge: 0 },
+            { href: "/plugins", label: t("nav.plugins"), icon: PuzzlePiece01, badge: 0 },
             { href: "/mcp", label: t("nav.mcp"), icon: Dataflow03, badge: 0 },
             { href: "/home", label: t("nav.home"), icon: BookOpen01, badge: 0 },
         ] },
@@ -111,6 +114,7 @@ function Shell() {
                 <Route path="/fleet" element={<FleetPage />} />
                 <Route path="/skills" element={<SkillsPage />} />
                 <Route path="/mcp" element={<MCPPage />} />
+                <Route path="/plugins" element={<Suspense fallback={<div role="status" className="p-6 text-sm text-tertiary">{t("common.loading")}</div>}><PluginsPage /></Suspense>} />
                 <Route path="/home" element={<HomePage />} />
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/inbox" element={<InboxPage />} />

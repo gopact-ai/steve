@@ -159,7 +159,7 @@ export interface Snapshot {
 export interface SkillView { name: string; path: string; root: string; title?: string; description?: string; enabled: boolean; builtin?: boolean; source?: string; agents: string[]; projects: string[] }
 export interface SkillSource { slug: string; url: string; ref?: string; subdir?: string; root: string; head?: string; fetched_at?: string; skills: string[]; error?: string }
 export interface SkillNode { name: string; up: boolean; synced: boolean; takes: boolean }
-export interface SkillsView { fingerprint: string; search_paths: string[]; builtin_root?: string; skills: SkillView[]; nodes: SkillNode[]; sources: SkillSource[] }
+export interface SkillsView { plugins?: import("./plugin-types").PluginResource[]; fingerprint: string; search_paths: string[]; builtin_root?: string; skills: SkillView[]; nodes: SkillNode[]; sources: SkillSource[] }
 export interface SkillDoc { name: string; path: string; content: string }
 export interface FoundSkill { name: string; path: string; title?: string; description?: string; loaded?: boolean }
 export interface MachineSkills { name: string; hub?: boolean; up: boolean; skills: FoundSkill[]; error?: string }
@@ -176,7 +176,7 @@ export interface MCPDeployment { node: string; name: string; type: string; comma
 export interface MCPPlatform { name: string; description: string; tools: { name: string; description: string }[] }
 export interface MCPOwn { name: string; source: string; scope?: string; type: string; command?: string; args?: string[]; url?: string; env_keys?: string[]; header_keys?: string[]; adopted?: boolean }
 export interface MCPMachine { name: string; hub?: boolean; up: boolean; unsupported?: boolean; own: MCPOwn[] }
-export interface MCPView { deployments: MCPDeployment[]; platform: MCPPlatform[]; machines: MCPMachine[] }
+export interface MCPView { plugins?: import("./plugin-types").PluginResource[]; deployments: MCPDeployment[]; platform: MCPPlatform[]; machines: MCPMachine[] }
 export interface MCPRegistryEnv { name: string; description?: string; required?: boolean; secret?: boolean; default?: string }
 export interface MCPRegistryPackage { registry_type: string; identifier: string; version?: string; runtime_hint?: string; transport?: string; needs?: string; env: MCPRegistryEnv[] }
 export interface MCPRegistryRemote { type: string; url: string; headers: MCPRegistryEnv[] }

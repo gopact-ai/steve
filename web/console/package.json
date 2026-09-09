@@ -20,7 +20,8 @@
         "test:ssh": "node ../../e2e/console/ssh-connect-ui.mjs",
         "test:coordination": "node ../../e2e/console/coordination-ui.mjs",
         "test:node-agents": "node ../../e2e/console/node-agents-ui.mjs",
-        "test:selection": "node ../../e2e/console/selection.mjs && node ../../e2e/console/selection-ui.mjs && node ../../e2e/console/side-chat-ui.mjs && node ../../e2e/console/changes-card.mjs"
+        "test:selection": "node ../../e2e/console/selection.mjs && node ../../e2e/console/selection-ui.mjs && node ../../e2e/console/side-chat-ui.mjs && node ../../e2e/console/changes-card.mjs",
+        "test:plugins": "node ../../e2e/console/plugins-ui.mjs"
     },
     "dependencies": {
         "@tailwindcss/typography": "^0.5.19",
