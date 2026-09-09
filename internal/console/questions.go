@@ -5,6 +5,7 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -13,6 +14,27 @@ import (
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/view"
 )
+
+// questionIdentity is the task and attempt an exchange's questions are
+// bound to, filled in once the turn reports which execution answers it.
+// A turn reports that from its own goroutine while the console's callers
+// read it, so the two are held under one lock.
+type questionIdentity struct {
+	mu   sync.Mutex
+	base consoleapi.PendingQuestion
+}
+
+func (q *questionIdentity) set(taskID, attemptID string) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.base.TaskID, q.base.AttemptID = taskID, attemptID
+}
+
+func (q *questionIdentity) binding() consoleapi.PendingQuestion {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return q.base
+}
 
 func copyQuestion(q consoleapi.PendingQuestion) consoleapi.PendingQuestion {
 	q.Options = append([]consoleapi.QuestionOption{}, q.Options...)

@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"sync"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -221,26 +220,6 @@ type exchangeRecovery struct {
 	// relocation plan they were asked about, so a different plan asks anew.
 	quiet       bool
 	waitingPlan string
-}
-
-// questionIdentity is the task and attempt the recovery's questions are
-// bound to, filled in once the resumed turn reports which execution it
-// reattached to.
-type questionIdentity struct {
-	mu   sync.Mutex
-	base consoleapi.PendingQuestion
-}
-
-func (q *questionIdentity) set(taskID, attemptID string) {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	q.base.TaskID, q.base.AttemptID = taskID, attemptID
-}
-
-func (q *questionIdentity) binding() consoleapi.PendingQuestion {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	return q.base
 }
 
 func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver RetainedChatDriver) {
