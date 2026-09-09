@@ -17,7 +17,7 @@ func pendingDelegateOpen(record attempt.Record, tracked task.Task, cause error) 
 	if !errors.As(cause, &pending) || record.Execution == nil || record.Execution.TaskID != tracked.ID || record.TaskID != tracked.ID || record.Node == "" {
 		return nil
 	}
-	expected := nodewire.SessionBinding{ProjectID: record.Project, SessionID: attempt.RetainedSessionID(tracked.Channel, tracked.ID, record.Agent), TaskID: record.TaskID, AttemptID: record.ID, NodeID: record.Node, ExecutionEpoch: attempt.SessionExecutionEpoch(record), TaskEpoch: record.Execution.Epoch}
+	expected := nodewire.SessionBinding{PluginRuntimeID: record.PluginRuntimeID(), ProjectID: record.Project, SessionID: attempt.RetainedSessionID(tracked.Channel, tracked.ID, record.Agent), TaskID: record.TaskID, AttemptID: record.ID, NodeID: record.Node, ExecutionEpoch: attempt.SessionExecutionEpoch(record), TaskEpoch: record.Execution.Epoch}
 	if pending.Binding != expected || pending.OpenCommandID != attempt.InputCommandID(record)+"/open" {
 		return nil
 	}
