@@ -1061,9 +1061,13 @@ func (s *Service) ReleaseReservation(ctx context.Context, id string) error {
 	if err != nil || !ok {
 		return err
 	}
-	// A reservation already taken over has a stale lease here; either way
-	// the record goes and what remains falls to its TTL.
-	_ = s.l.ReleaseAny(ctx, r.Lease)
+	// The record goes either way. A reservation already taken over or
+	// expired has a stale lease that releases nothing, which is the
+	// expected end of one; any other refusal leaves the slot leased until
+	// its TTL runs out, and whoever waits on the endpoint waits that long.
+	if err := s.l.ReleaseAny(ctx, r.Lease); err != nil && !errors.Is(err, ledger.ErrStale) {
+		slog.Warn(fmt.Sprintf("attempt: release reservation %s slot %s: %v", id, r.Lease.Key, err), "reservation", id, "resource", r.Lease.Key)
+	}
 	return s.l.DeleteBinding(ctx, reservationKind, id)
 }
 
