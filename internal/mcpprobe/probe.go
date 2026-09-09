@@ -277,12 +277,15 @@ func (t *stdioTransport) Notify(_ context.Context, method string, params any) er
 	return t.send(rpcRequest{JSONRPC: "2.0", Method: method, Params: params})
 }
 
+// Close discards the probe child; the probe's own result is the finding,
+// so how the child goes is not checked.
 func (t *stdioTransport) Close() {
+	// Closing stdin asks it to leave; a pipe already gone is no worse.
 	_ = t.stdin.Close()
 	if t.cmd.Process != nil {
-		_ = t.cmd.Process.Kill()
+		_ = t.cmd.Process.Kill() // makes sure; a child already gone is the aim
 	}
-	_ = t.cmd.Wait()
+	_ = t.cmd.Wait() // reaps only; a non-zero exit of a killed child says nothing
 }
 
 func (t *stdioTransport) stderrTail() string {

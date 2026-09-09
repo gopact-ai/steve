@@ -10,6 +10,13 @@ import (
 	"github.com/gopact-ai/steve/internal/ledger"
 )
 
+// The real ledger serves both optional ports; the assembly relies on it
+// without a runtime check, so the compiler holds the line here.
+var (
+	_ ExecutionClaims = intent.ForAgents{}
+	_ OutcomeReader   = intent.ForAgents{}
+)
+
 // attemptsOf plays the attempt service: which attempt is live for a task.
 type attemptsOf struct{ live string }
 
