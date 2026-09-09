@@ -123,7 +123,11 @@ func (m *Model) enterFullScreen() (func(), error) {
 	fmt.Print("\x1b[?1049h\x1b[?25l") // alternate screen, hide cursor
 	return func() {
 		fmt.Print("\x1b[?25h\x1b[?1049l")
-		_ = term.Restore(fd, state)
+		// The screen is already handed back; a raw mode that will not
+		// undo itself is the user's to fix, so say so where they can see it.
+		if err := term.Restore(fd, state); err != nil {
+			fmt.Fprintf(os.Stderr, "steve top: restore terminal: %v (run `reset`)\n", err)
+		}
 	}, nil
 }
 

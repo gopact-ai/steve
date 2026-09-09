@@ -40,6 +40,19 @@ func PendingID(owner string) string {
 	return PendingPrefix + owner
 }
 
+// initReporter is a home reader that knows itself whether the identity
+// still needs setting up. The shared (ledger-backed) reader is one; a
+// plain directory is judged from what it loads instead.
+type initReporter interface {
+	NeedsInit() (bool, error)
+}
+
+// Bind the shared reader, so it losing NeedsInit fails the build here
+// rather than sending onboarding down the directory branch — which reads
+// a path the shared identity does not live in. home.Dir is deliberately
+// not bound: it is the reader the directory branch is for.
+var _ initReporter = home.EditableReader{}
+
 func Start(ctx context.Context, req Request) error {
 	if req.Owner == "" || req.Store == nil {
 		return nil
@@ -49,7 +62,7 @@ func Start(ctx context.Context, req Request) error {
 	}
 	needsInit := false
 	shared := false
-	if reader, ok := req.Reader.(interface{ NeedsInit() (bool, error) }); ok {
+	if reader, ok := req.Reader.(initReporter); ok {
 		var err error
 		needsInit, err = reader.NeedsInit()
 		if err != nil {
