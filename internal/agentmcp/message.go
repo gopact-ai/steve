@@ -40,42 +40,9 @@ func channelArgument() map[string]any {
 }
 
 func (s *Server) channelCall(ctx context.Context, bind binding, tool string, raw json.RawMessage) (string, error) {
-	var args messageArgs
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&args); err != nil {
-		return "", fmt.Errorf("bad %s arguments: %w", tool, err)
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		return "", fmt.Errorf("bad %s arguments: expected one object", tool)
-	}
-	if args.Mention {
-		return "", errors.New("mention is not allowed: mentions are reserved for the platform's final answer")
-	}
-	args.Channel = strings.TrimSpace(args.Channel)
-	args.Content = truncateRunes(args.Content, maxContentRunes)
-	args.Progress = truncateRunes(strings.Join(strings.Fields(args.Progress), ""), 16)
-	if tool != "channel_recall" && strings.TrimSpace(args.Content) == "" {
-		return "", errors.New("content is required")
-	}
-	if tool == "channel_send" {
-		if args.MessageID != "" {
-			return "", errors.New("channel_send does not accept message_id")
-		}
-		if args.Format == "" {
-			args.Format = "markdown"
-		}
-		if args.Format != "text" && args.Format != "markdown" {
-			return "", fmt.Errorf("unknown format %q (use markdown or text)", args.Format)
-		}
-	} else if args.MessageID == "" {
-		return "", errors.New("message_id is required")
-	}
-	if tool == "channel_recall" && (args.Content != "" || args.Progress != "" || args.Format != "") {
-		return "", errors.New("channel_recall accepts only message_id and channel")
-	}
-	if tool == "channel_update" && args.Format != "" {
-		return "", errors.New("channel_update preserves the original message format")
+	args, err := parseMessageArgs(tool, raw)
+	if err != nil {
+		return "", err
 	}
 
 	s.mu.Lock()
@@ -171,6 +138,48 @@ func (s *Server) channelCall(ctx context.Context, bind binding, tool string, raw
 	})
 }
 
+func parseMessageArgs(tool string, raw json.RawMessage) (messageArgs, error) {
+	var args messageArgs
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&args); err != nil {
+		return messageArgs{}, fmt.Errorf("bad %s arguments: %w", tool, err)
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		return messageArgs{}, fmt.Errorf("bad %s arguments: expected one object", tool)
+	}
+	if args.Mention {
+		return messageArgs{}, errors.New("mention is not allowed: mentions are reserved for the platform's final answer")
+	}
+	args.Channel = strings.TrimSpace(args.Channel)
+	args.Content = truncateRunes(args.Content, maxContentRunes)
+	args.Progress = truncateRunes(strings.Join(strings.Fields(args.Progress), ""), 16)
+	if tool != "channel_recall" && strings.TrimSpace(args.Content) == "" {
+		return messageArgs{}, errors.New("content is required")
+	}
+	if tool == "channel_send" {
+		if args.MessageID != "" {
+			return messageArgs{}, errors.New("channel_send does not accept message_id")
+		}
+		if args.Format == "" {
+			args.Format = "markdown"
+		}
+		if args.Format != "text" && args.Format != "markdown" {
+			return messageArgs{}, fmt.Errorf("unknown format %q (use markdown or text)", args.Format)
+		}
+	} else if args.MessageID == "" {
+		return messageArgs{}, errors.New("message_id is required")
+	}
+	if tool == "channel_recall" && (args.Content != "" || args.Progress != "" || args.Format != "") {
+		return messageArgs{}, errors.New("channel_recall accepts only message_id and channel")
+	}
+	if tool == "channel_update" && args.Format != "" {
+		return messageArgs{}, errors.New("channel_update preserves the original message format")
+	}
+
+	return args, nil
+}
+
 func (s *Server) dispatchMessage(ctx context.Context, bind binding, tool string, call messageCall) (string, channel.Address, error) {
 	empty := channel.Address{}
 	if err := ctx.Err(); err != nil {
@@ -238,6 +247,22 @@ func (s *Server) dispatchMessage(ctx context.Context, bind binding, tool string,
 	}
 	s.mu.Unlock()
 
+	delivery := messageDelivery{server: s, bind: bind, call: call, state: st, record: record}
+	return delivery.deliver(ctx, tool)
+}
+
+// The reservation is durable before delivery leaves the server lock.
+// Its receipt is committed against that same state after the channel answers.
+type messageDelivery struct {
+	server *Server
+	bind   binding
+	call   messageCall
+	state  *sentState
+	record sentMsg
+}
+
+func (d messageDelivery) deliver(ctx context.Context, tool string) (string, channel.Address, error) {
+	s, bind, call, st, record := d.server, d.bind, d.call, d.state, d.record
 	callCtx, cancel := context.WithTimeout(ctx, sendTimeout)
 	defer cancel()
 	msg := channel.Message{Content: call.args.Content, Format: record.format, Attribution: milestoneTail(record.attribution, bind.agentID, record.seq, call.args.Progress)}
