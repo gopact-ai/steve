@@ -15,7 +15,7 @@ import (
 func TestDependenciesRespectDomainAndTransportBoundaries(t *testing.T) {
 	_, here, _, _ := runtime.Caller(0)
 	root := filepath.Clean(filepath.Join(filepath.Dir(here), "../.."))
-	domains := map[string]bool{"ledger": true, "task": true, "project": true, "attempt": true, "ability": true, "capability": true, "agent": true, "state": true}
+	domains := map[string]bool{"ledger": true, "task": true, "project": true, "attempt": true, "ability": true, "capability": true, "agent": true, "state": true, "plugins": true}
 	err := filepath.WalkDir(filepath.Join(root, "internal"), func(file string, entry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
