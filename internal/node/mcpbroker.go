@@ -333,16 +333,32 @@ func (b *Broker) conn(ctx context.Context, c net.Conn) {
 	}
 }
 
+// refuse ends a launch the broker will not serve. The launcher writes the
+// session's first bytes straight behind the binding id, so closing with
+// those bytes still queued resets the connection and the launcher reports
+// a read error where it should see an empty session. Reading what is
+// already on the way — bounded, since a launcher that keeps talking to a
+// binding that is gone must not hold the broker — lets the close land as
+// an orderly end.
+func refuse(c net.Conn, reader io.Reader) {
+	if err := c.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		return
+	}
+	_, _ = io.CopyN(io.Discard, reader, 1<<20)
+}
+
 // launch starts the server behind a binding and pipes it to the launcher.
 func (b *Broker) launch(ctx context.Context, c net.Conn, reader io.Reader, id string) {
 	nb, ok := b.binding(id)
 	if !ok {
 		slog.Warn("steve-node: mcp broker: unknown or expired binding")
+		refuse(c, reader)
 		return
 	}
 	spec, ok := b.server(nb.mcp)
 	if !ok || (spec.Type != "stdio" && spec.Type != "") {
 		slog.Warn(fmt.Sprintf("steve-node: mcp broker: %s is not a stdio server here", nb.mcp), "mcp", nb.mcp)
+		refuse(c, reader)
 		return
 	}
 	cmd := exec.CommandContext(ctx, spec.Command, spec.Args...)
