@@ -81,8 +81,17 @@ func (m *Manager) openPluginSession(ctx context.Context, at Placement, upstream,
 	if err != nil {
 		return nil, err
 	}
+	if err := m.pluginUsage(ctx, at, *ref, true); err != nil {
+		return nil, err
+	}
 	id, generation, err := host.OpenSession(ctx, native, acphost.SessionConfig{Workdir: workdir, MCPServers: combined})
 	if err != nil {
+		host.Close()
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if stopErr := waitPluginProcessStop(cleanup, host); stopErr == nil {
+			err = errors.Join(err, m.pluginUsage(cleanup, at, *ref, false))
+		}
 		return nil, err
 	}
 	m.mu.Lock()
@@ -127,6 +136,10 @@ func (m *Manager) pluginHost(at Placement, ref plugins.RuntimeRef, cfg Config) (
 	}
 	host := acphost.New(hostCfg)
 	m.hosts[key] = host
+	if m.pluginRefs == nil {
+		m.pluginRefs = map[*acphost.Host]plugins.RuntimeRef{}
+	}
+	m.pluginRefs[host] = *ref.Clone()
 	return host, nil
 }
 
@@ -151,8 +164,14 @@ func (m *Manager) closePluginSession(ctx context.Context, at Placement, id strin
 	if err := waitPluginProcessStop(ctx, host); err != nil {
 		return true, err
 	}
+	if ref := PluginProfile(ctx); ref != nil {
+		if err := m.pluginUsage(ctx, at, *ref, false); err != nil {
+			return true, err
+		}
+	}
 	m.mu.Lock()
 	delete(m.hosts, "plugin/"+head+"/"+at.key())
+	delete(m.pluginRefs, host)
 	provider := m.pluginRuntimes
 	m.mu.Unlock()
 	if closer, ok := provider.(PluginRuntimeCloser); ok {
@@ -162,6 +181,7 @@ func (m *Manager) closePluginSession(ctx context.Context, at Placement, id strin
 }
 
 type PluginPreparation struct {
+	AgentID   string
 	At        Placement
 	Project   string
 	AttemptID string
@@ -171,6 +191,31 @@ type PluginPreparation struct {
 
 type PluginSessionPreparer interface {
 	PreparePluginSession(context.Context, PluginPreparation) (*plugins.RuntimeRef, error)
+}
+
+type PluginRelocationPreparer interface {
+	PlanPluginRelocation(context.Context, PluginPreparation) (*plugins.Relocation, error)
+	PreparePluginRelocation(context.Context, string, string, plugins.Relocation) (*plugins.RuntimeRef, error)
+}
+
+func (m *Manager) PlanPluginRelocation(ctx context.Context, req PluginPreparation) (*plugins.Relocation, error) {
+	m.mu.Lock()
+	provider, ok := m.pluginRuntimes.(PluginRelocationPreparer)
+	m.mu.Unlock()
+	if !ok {
+		return nil, plugins.ErrUnavailable
+	}
+	return provider.PlanPluginRelocation(ctx, req)
+}
+
+func (m *Manager) PreparePluginRelocation(ctx context.Context, plan, id string, frozen plugins.Relocation) (*plugins.RuntimeRef, error) {
+	m.mu.Lock()
+	provider, ok := m.pluginRuntimes.(PluginRelocationPreparer)
+	m.mu.Unlock()
+	if !ok {
+		return nil, plugins.ErrUnavailable
+	}
+	return provider.PreparePluginRelocation(ctx, plan, id, frozen)
 }
 
 func (m *Manager) PreparePluginSession(ctx context.Context, request PluginPreparation) (*plugins.RuntimeRef, error) {
@@ -212,6 +257,35 @@ func waitPluginProcessStop(ctx context.Context, host *acphost.Host) error {
 			return errors.Join(ErrStopUnconfirmed, ctx.Err())
 		case <-ticker.C:
 		}
+	}
+	return nil
+}
+
+func (m *Manager) ClosePluginRuntime(ctx context.Context, ref plugins.RuntimeRef) error {
+	at := Placement{Node: ref.Selection.Node, Harness: ref.Selection.Harness}
+	key := "plugin/" + ref.ID + "/" + at.key()
+	m.mu.Lock()
+	host := m.hosts[key]
+	provider := m.pluginRuntimes
+	m.mu.Unlock()
+	if host == nil {
+		return nil
+	}
+	if err := host.CloseIdle(); err != nil {
+		return err
+	}
+	if err := waitPluginProcessStop(ctx, host); err != nil {
+		return err
+	}
+	if err := m.pluginUsage(ctx, at, ref, false); err != nil {
+		return err
+	}
+	m.mu.Lock()
+	delete(m.hosts, key)
+	delete(m.pluginRefs, host)
+	m.mu.Unlock()
+	if closer, ok := provider.(PluginRuntimeCloser); ok {
+		return closer.ClosePluginRuntime(ctx, at, ref.ID)
 	}
 	return nil
 }

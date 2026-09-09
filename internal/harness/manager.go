@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/acphost"
@@ -65,6 +66,7 @@ type Transports interface {
 }
 
 type Manager struct {
+	pluginRefs        map[*acphost.Host]plugins.RuntimeRef
 	pluginRuntimes    PluginRuntimeProvider
 	suspended         map[string]bool
 	configs           map[string]Config
@@ -291,9 +293,21 @@ func (m *Manager) Stop() {
 	for _, host := range m.hosts {
 		hosts = append(hosts, host)
 	}
+	refs := make(map[*acphost.Host]plugins.RuntimeRef, len(m.pluginRefs))
+	for host, ref := range m.pluginRefs {
+		refs[host] = ref
+	}
 	m.mu.Unlock()
 	for _, host := range hosts {
 		host.Close()
+		if ref, ok := refs[host]; ok && host.AllProcessesStopped() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			err := m.pluginUsage(ctx, Placement{Node: ref.Selection.Node, Harness: ref.Selection.Harness}, ref, false)
+			cancel()
+			if err != nil {
+				slog.Error("harness: plugin stop receipt failed", "error", err)
+			}
+		}
 	}
 }
 
