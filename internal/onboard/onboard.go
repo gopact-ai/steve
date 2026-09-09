@@ -47,6 +47,12 @@ type initReporter interface {
 	NeedsInit() (bool, error)
 }
 
+// Bind the shared reader, so it losing NeedsInit fails the build here
+// rather than sending onboarding down the directory branch — which reads
+// a path the shared identity does not live in. home.Dir is deliberately
+// not bound: it is the reader the directory branch is for.
+var _ initReporter = home.EditableReader{}
+
 func Start(ctx context.Context, req Request) error {
 	if req.Owner == "" || req.Store == nil {
 		return nil

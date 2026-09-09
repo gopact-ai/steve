@@ -32,6 +32,12 @@ type settingsReporter interface {
 	Settings() view.Settings
 }
 
+// Bind the local session, so it losing Settings fails the build here
+// rather than turning every probe into "asked, and it does not tell".
+// The remote session reports the same way but is unexported by its
+// package, so only this one can be bound from here.
+var _ settingsReporter = (*harness.Session)(nil)
+
 // Prepare makes a directory exist on a machine before a session opens in
 // it. The registry's command channel does this for a node; the hub uses
 // the filesystem.
