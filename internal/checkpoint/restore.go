@@ -37,8 +37,11 @@ func (s *Store) Restore(ctx context.Context, manifest Manifest, directory string
 		return Restored{}, err
 	}
 	defer root.Close()
+	// A panic unwinds with the named result still nil, so success is
+	// recorded in a flag the unwind cannot fake.
+	complete := false
 	defer func() {
-		if err == nil {
+		if complete {
 			return
 		}
 		// A partial recovery directory is never handed out. One that
@@ -93,6 +96,7 @@ func (s *Store) Restore(ctx context.Context, manifest Manifest, directory string
 	if err := ctx.Err(); err != nil {
 		return Restored{}, err
 	}
+	complete = true
 	return Restored{Directory: directory, Context: filepath.Join(directory, "context.json"), Workspace: filepath.Join(directory, "workspace"), Materials: filepath.Join(directory, "materials")}, nil
 }
 
