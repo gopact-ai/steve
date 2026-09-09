@@ -126,18 +126,10 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	if err != nil {
 		return nil, err
 	}
-	identitySource := physicalFailureDomain
-	if options.TestFailureDomain != nil {
-		identitySource = options.TestFailureDomain
+	if err := confirmPeerIdentity(options, &settings); err != nil {
+		return nil, err
 	}
-	failureDomain, identityErr := identitySource()
-	if identityErr != nil && settings.FailureDomain != "" {
-		return nil, errors.New("无法确认已登记节点的物理身份")
-	}
-	if settings.FailureDomain != "" && failureDomain != settings.FailureDomain {
-		return nil, errors.New("节点数据的物理身份已改变，请重新确认接入身份")
-	}
-	settings.FailureDomain = failureDomain
+
 	application, err := config.Load(options.ConfigPath)
 	if err != nil {
 		return nil, err
@@ -197,21 +189,7 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 			uiListener.Close()
 		}
 	}()
-	p.Config.RaftBindAddress = raftListener.Addr().String()
-	p.Config.PeerBindAddress = peerListener.Addr().String()
-	p.Config.RaftAddress = boundAdvertiseAddress(settings.RaftAddress, raftListener.Addr().String())
-	p.Config.PeerAddress = boundAdvertiseAddress(settings.PeerAddress, peerListener.Addr().String())
-	p.Config.UIAddress = uiListener.Addr().String()
-	if p.Config.PeerURL == "" {
-		p.Config.PeerURL = "https://" + p.Config.PeerAddress
-	} else if advertised, err := url.Parse(p.Config.PeerURL); err == nil && advertised.Port() == "0" {
-		_, port, _ := net.SplitHostPort(p.Config.PeerAddress)
-		advertised.Host = net.JoinHostPort(advertised.Hostname(), port)
-		p.Config.PeerURL = advertised.String()
-	}
-	p.raftAdvertisement.Store(p.Config.RaftAddress)
-	p.peerAdvertisement.Store(p.Config.PeerURL)
-	p.UiURL = "http://" + p.Config.UIAddress
+	p.recordBoundAddresses(raftListener, peerListener, uiListener)
 	if err := SaveClusterJSON(options.ClusterPath, p.Config, false); err != nil {
 		return nil, err
 	}
@@ -241,9 +219,55 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 		return nil, err
 	}
 	p.Runtime.Store(runtime)
-	serverTLS, err := identity.ServerConfig()
+	if err := p.startPeerServers(runtime, peerListener, uiListener); err != nil {
+		return nil, err
+	}
+
+	p.unpublish, err = desktop.PublishEndpoint(options.ConfigPath, p.UiURL)
 	if err != nil {
 		return nil, err
+	}
+	return p, nil
+}
+
+func confirmPeerIdentity(options PeerOptions, settings *PeerConfig) error {
+	identitySource := physicalFailureDomain
+	if options.TestFailureDomain != nil {
+		identitySource = options.TestFailureDomain
+	}
+	failureDomain, identityErr := identitySource()
+	if identityErr != nil && settings.FailureDomain != "" {
+		return errors.New("无法确认已登记节点的物理身份")
+	}
+	if settings.FailureDomain != "" && failureDomain != settings.FailureDomain {
+		return errors.New("节点数据的物理身份已改变，请重新确认接入身份")
+	}
+	settings.FailureDomain = failureDomain
+	return nil
+}
+
+func (p *Peer) recordBoundAddresses(raftListener, peerListener, uiListener net.Listener) {
+	p.Config.RaftBindAddress = raftListener.Addr().String()
+	p.Config.PeerBindAddress = peerListener.Addr().String()
+	p.Config.RaftAddress = boundAdvertiseAddress(p.Config.RaftAddress, raftListener.Addr().String())
+	p.Config.PeerAddress = boundAdvertiseAddress(p.Config.PeerAddress, peerListener.Addr().String())
+	p.Config.UIAddress = uiListener.Addr().String()
+	if p.Config.PeerURL == "" {
+		p.Config.PeerURL = "https://" + p.Config.PeerAddress
+	} else if advertised, err := url.Parse(p.Config.PeerURL); err == nil && advertised.Port() == "0" {
+		_, port, _ := net.SplitHostPort(p.Config.PeerAddress)
+		advertised.Host = net.JoinHostPort(advertised.Hostname(), port)
+		p.Config.PeerURL = advertised.String()
+	}
+	p.raftAdvertisement.Store(p.Config.RaftAddress)
+	p.peerAdvertisement.Store(p.Config.PeerURL)
+	p.UiURL = "http://" + p.Config.UIAddress
+}
+
+func (p *Peer) startPeerServers(runtime *Runtime, peerListener, uiListener net.Listener) error {
+	serverTLS, err := p.identity.ServerConfig()
+	if err != nil {
+		return err
 	}
 	mux := http.NewServeMux()
 	mux.Handle(coordination.RPCPath, runtime.RPCHandler(coordination.RPCOptions{AuthorizeControl: p.authorizeControl}))
@@ -253,15 +277,11 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	mux.HandleFunc("/cluster/network/check", p.serveNetworkCheck)
 	mux.HandleFunc("/cluster/enrollment/", p.servePeerEnrollment)
 	mux.HandleFunc(clusterContentPath, p.serveContent)
-	p.peerServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, TLSConfig: serverTLS, BaseContext: func(net.Listener) context.Context { return ctx }}
-	p.uiServer = &http.Server{Handler: http.HandlerFunc(p.serveUI), ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return ctx }}
+	p.peerServer = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second, TLSConfig: serverTLS, BaseContext: func(net.Listener) context.Context { return p.ctx }}
+	p.uiServer = &http.Server{Handler: http.HandlerFunc(p.serveUI), ReadHeaderTimeout: 10 * time.Second, BaseContext: func(net.Listener) context.Context { return p.ctx }}
 	go p.serve(p.peerServer, tls.NewListener(peerListener, serverTLS))
 	go p.serve(p.uiServer, uiListener)
-	p.unpublish, err = desktop.PublishEndpoint(options.ConfigPath, p.UiURL)
-	if err != nil {
-		return nil, err
-	}
-	return p, nil
+	return nil
 }
 
 func (p *Peer) serve(server *http.Server, listener net.Listener) {
