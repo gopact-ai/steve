@@ -194,62 +194,18 @@ func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reade
 		}
 	}
 
-	var scannedOpenID string
+	credentials := appCredentials{appID: appID, secret: secret, domain: domain}
 	if createApp {
-		created, err := opts.Register(ctx, feishu.RegisterOptions{Out: opts.Out, Domain: domain, Catalog: opts.Catalog})
-		if err != nil {
-			if !opts.Interactive {
-				return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: %w", err)
-			}
-			fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupCreateAppFailed, err))
-			appID, secret, domain, err = promptManualCredentials(reader, opts, flags, appID, secret, domain)
-			if err != nil {
-				return config.Feishu{}, feishu.Identity{}, err
-			}
-		} else {
-			appID = created.AppID
-			secret = created.AppSecret
-			if created.Domain != "" {
-				domain = created.Domain
-			}
-			scannedOpenID = created.OpenID
-			fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupCreatedApp, created.AppID))
+		if err := credentials.register(ctx, flags, opts, reader); err != nil {
+			return config.Feishu{}, feishu.Identity{}, err
 		}
 	}
+	if err := credentials.complete(flags, opts, reader); err != nil {
+		return config.Feishu{}, feishu.Identity{}, err
+	}
+	appID, secret, domain = credentials.appID, credentials.secret, credentials.domain
+	scannedOpenID := credentials.scannedOpenID
 
-	if appID == "" {
-		if !opts.Interactive {
-			return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: -app-id is required")
-		}
-		var err error
-		appID, secret, domain, err = promptManualCredentials(reader, opts, flags, appID, secret, domain)
-		if err != nil {
-			return config.Feishu{}, feishu.Identity{}, err
-		}
-	}
-	if secret == "" {
-		if !opts.Interactive {
-			return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: environment variable %s is empty", secretEnv(flags))
-		}
-		var err error
-		secret, err = promptSecret(opts)
-		if err != nil {
-			return config.Feishu{}, feishu.Identity{}, err
-		}
-	}
-	if secret == "" {
-		return config.Feishu{}, feishu.Identity{}, fmt.Errorf("setup: app secret is empty")
-	}
-	if domain == "" && opts.Interactive && scannedOpenID == "" {
-		var err error
-		domain, err = promptSelect(opts, reader, opts.Out, opts.Catalog.T(i18n.SetupDomain), domainOptions(opts.Catalog), config.DomainFeishu)
-		if err != nil {
-			return config.Feishu{}, feishu.Identity{}, err
-		}
-	}
-	if domain == "" {
-		domain = config.DomainFeishu
-	}
 	opts.Catalog = i18n.New(i18n.FromDomain(domain))
 
 	identity, err := opts.Probe(ctx, appID, secret, domain)
@@ -297,6 +253,69 @@ func collect(ctx context.Context, flags Flags, opts Options, reader *bufio.Reade
 		AllowUnmentioned: allowUnmentioned,
 		OwnerOpenID:      owner,
 	}, identity, nil
+}
+
+type appCredentials struct{ appID, secret, domain, scannedOpenID string }
+
+func (c *appCredentials) register(ctx context.Context, flags Flags, opts Options, reader *bufio.Reader) error {
+	created, err := opts.Register(ctx, feishu.RegisterOptions{Out: opts.Out, Domain: c.domain, Catalog: opts.Catalog})
+	if err != nil {
+		if !opts.Interactive {
+			return fmt.Errorf("setup: %w", err)
+		}
+		fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupCreateAppFailed, err))
+		c.appID, c.secret, c.domain, err = promptManualCredentials(reader, opts, flags, c.appID, c.secret, c.domain)
+		if err != nil {
+			return err
+		}
+	} else {
+		c.appID = created.AppID
+		c.secret = created.AppSecret
+		if created.Domain != "" {
+			c.domain = created.Domain
+		}
+		c.scannedOpenID = created.OpenID
+		fmt.Fprintln(opts.Out, opts.Catalog.T(i18n.SetupCreatedApp, created.AppID))
+	}
+	return nil
+}
+
+func (c *appCredentials) complete(flags Flags, opts Options, reader *bufio.Reader) error {
+
+	if c.appID == "" {
+		if !opts.Interactive {
+			return fmt.Errorf("setup: -app-id is required")
+		}
+		var err error
+		c.appID, c.secret, c.domain, err = promptManualCredentials(reader, opts, flags, c.appID, c.secret, c.domain)
+		if err != nil {
+			return err
+		}
+	}
+	if c.secret == "" {
+		if !opts.Interactive {
+			return fmt.Errorf("setup: environment variable %s is empty", secretEnv(flags))
+		}
+		var err error
+		c.secret, err = promptSecret(opts)
+		if err != nil {
+			return err
+		}
+	}
+	if c.secret == "" {
+		return fmt.Errorf("setup: app secret is empty")
+	}
+	if c.domain == "" && opts.Interactive && c.scannedOpenID == "" {
+		var err error
+		c.domain, err = promptSelect(opts, reader, opts.Out, opts.Catalog.T(i18n.SetupDomain), domainOptions(opts.Catalog), config.DomainFeishu)
+		if err != nil {
+			return err
+		}
+	}
+	if c.domain == "" {
+		c.domain = config.DomainFeishu
+	}
+	return nil
 }
 
 func finishCached(ctx context.Context, opts Options, reader *bufio.Reader, cached config.Feishu) (config.Feishu, feishu.Identity, error) {
