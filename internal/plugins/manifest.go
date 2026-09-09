@@ -27,6 +27,7 @@ var (
 	ErrIncompatible = errors.New("incompatible plugin package")
 	ErrConflict     = errors.New("plugin identity conflict")
 	ErrIntegrity    = errors.New("plugin content integrity mismatch")
+	ErrUnavailable  = errors.New("plugin dependency is unavailable")
 	nameShape       = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 	versionShape    = regexp.MustCompile(`^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-[a-z0-9][a-z0-9.-]*)?$`)
 	digestShape     = regexp.MustCompile(`^[a-f0-9]{64}$`)

@@ -57,7 +57,7 @@ func (s *Store) Install(ctx context.Context, req InstallRequest) (Receipt, error
 	if err != nil {
 		return Receipt{}, err
 	}
-	if bundle.Digest != req.ExpectedDigest {
+	if bundle.Digest != req.ExpectedDigest || (req.Source.Kind == "bundle" && req.Source.Location != bundle.Digest) {
 		return Receipt{}, fmt.Errorf("%w: preview differs from package", ErrIntegrity)
 	}
 	if err := req.Source.validate(); err != nil {
@@ -113,7 +113,7 @@ func (s *Store) ensure() error {
 	if !info.IsDir() {
 		return fmt.Errorf("%w: plugin store must be a directory", ErrIntegrity)
 	}
-	for _, name := range []string{"packages", "receipts", "requests"} {
+	for _, name := range []string{"packages", "receipts", "requests", "secrets", "deployments"} {
 		dir := filepath.Join(s.Dir, name)
 		if err := os.Mkdir(dir, 0700); err != nil && !errors.Is(err, fs.ErrExist) {
 			return err
@@ -221,6 +221,10 @@ func (source Source) validate() error {
 		return fmt.Errorf("%w: invalid source location", ErrInvalid)
 	}
 	switch source.Kind {
+	case "bundle":
+		if !digestShape.MatchString(source.Location) || source.Commit != "" || source.Subdir != "" {
+			return fmt.Errorf("%w: verified bundle source", ErrInvalid)
+		}
 	case "directory":
 		if !filepath.IsAbs(source.Location) || source.Commit != "" || source.Subdir != "" {
 			return fmt.Errorf("%w: directory source", ErrInvalid)

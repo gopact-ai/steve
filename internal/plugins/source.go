@@ -28,6 +28,9 @@ func Resolve(ctx context.Context, source Source) (Bundle, Source, error) {
 		bundle, err := ReadDirectory(ctx, source.Location)
 		return bundle, source, err
 	}
+	if source.Kind != "git" {
+		return Bundle{}, source, fmt.Errorf("%w: verified bundles require supplied bytes", ErrInvalid)
+	}
 	bundle, err := readGit(ctx, source)
 	return bundle, source, err
 }
