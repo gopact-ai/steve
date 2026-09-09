@@ -759,6 +759,7 @@ func (p *Peer) startWorker(workspaceRoot string) error {
 	cfg.Source = p.Config.WorkerConfigFile
 	cfg.Listener = listener
 	cfg.SessionAuthorizer = p
+	cfg.PluginAuthorizer = p
 	cfg.AuthenticatedPeer = p.authenticatedWorkerPeer
 	restorePeerAdapters(&cfg)
 	p.workerListener = listener
