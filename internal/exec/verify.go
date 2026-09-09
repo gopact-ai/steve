@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plan"
+	"github.com/gopact-ai/steve/internal/text"
 )
 
 // Commands runs a shell command on a machine. The node registry satisfies
@@ -92,7 +93,7 @@ func (v *Verifiers) byAgent(ctx context.Context, req StepRequest, check plan.Ver
 		case "FAIL":
 			return fmt.Errorf("verifier %s rejected: %s", check.Agent, reason)
 		default:
-			return fmt.Errorf("verifier %s did not return PASS or FAIL: %s", check.Agent, firstLine(answer))
+			return fmt.Errorf("verifier %s did not return PASS or FAIL: %s", check.Agent, text.FirstLine(answer))
 		}
 	})
 	return err
@@ -126,11 +127,6 @@ func parseVerdict(answer string) (string, string) {
 		}
 	}
 	return "", ""
-}
-
-func firstLine(s string) string {
-	line, _, _ := strings.Cut(s, "\n")
-	return line
 }
 
 func nodeLabel(node string) string { return nodewire.Place(node) }
