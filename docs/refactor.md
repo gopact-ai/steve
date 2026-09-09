@@ -97,9 +97,8 @@ M2 阶段 3：`internal/app.Build(ctx, Config)` 按原顺序装配运行时、�
 CI 的 GitHub 托管 runner 负载不稳时，以下时序敏感测试会偶发失败（本地与多数 CI 运行通过），属于 M6 要处理的清理项：把"租约 TTL 与续期间隔"的比值放大、或改用可控时钟，而不是靠重跑。
 
 - `cmd/steve-node` `TestNodeCommandReexecutesAndKeepsDurableCommandIdentity`（"node is busy; release idle sessions before restarting"）
-- `internal/node` `TestMCPBindingKeepsSecretsOnTheNode`（"a released binding still launched"）：高负载下偶发，单独 `-count=5` 稳定通过。
 
-已修好：`internal/artifact` 与 `internal/exec` 的两个租约驱动测试改为注入续期节拍与账本时钟（`renewTicks` / `driverTicks` + `ledger.Options.Now`），不再依赖真实时间比。
+已修好：`internal/artifact` 与 `internal/exec` 的两个租约驱动测试改为注入续期节拍与账本时钟（`renewTicks` / `driverTicks` + `ledger.Options.Now`），不再依赖真实时间比。`internal/node` 的 `TestMCPBindingKeepsSecretsOnTheNode`（"a released binding still launched"）查下去不是测试的问题：MCP broker 拒绝一次启动时直接关连接，启动方已发出的首批字节还在它的接收队列里，AF_UNIX 于是给对端回 ECONNRESET，启动方读到连接错误而不是空会话；拒绝路径改成先有界读走这些字节再关（#49）。
 
 ## 实施顺序（不构成设计约束）
 
