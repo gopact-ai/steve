@@ -1,0 +1,853 @@
+{
+  "at": "<time>",
+  "hub": {
+    "node": "hub-1",
+    "started": "<time>",
+    "capabilities": [
+      "basic"
+    ],
+    "advert": {
+      "version": 0,
+      "node": "hub-1",
+      "os": "",
+      "arch": "",
+      "hostname": "hub-1.local",
+      "harnesses": [
+        {
+          "id": "mock",
+          "command": "mockagent"
+        }
+      ]
+    }
+  },
+  "nodes": [
+    {
+      "name": "hub-1",
+      "role": "hub",
+      "host": "hub-1.local",
+      "up": true,
+      "capabilities": [
+        "basic"
+      ],
+      "harnesses": [
+        {
+          "id": "mock",
+          "model": "mock-fast",
+          "models": [
+            "mock-fast",
+            "mock-deep"
+          ]
+        }
+      ],
+      "level": "internal",
+      "snapshot": {
+        "schema": "ability.v1",
+        "node": "hub-1",
+        "generation": 0,
+        "sequence": 0,
+        "generated_at": "<time>",
+        "received_at": "<time>",
+        "digest": "b598f283508c8489",
+        "coverage": {
+          "harness": "complete",
+          "tag": "complete"
+        },
+        "offers": [
+          {
+            "kind": "harness",
+            "id": "mock",
+            "availability": "available",
+            "evidence": [
+              {
+                "kind": "observed",
+                "method": "advert",
+                "ok": true,
+                "at": "<time>"
+              }
+            ],
+            "assurance": "existence"
+          }
+        ],
+        "source": "legacy"
+      }
+    },
+    {
+      "name": "node-a",
+      "role": "worker",
+      "addr": "10.0.0.1:7701",
+      "up": true,
+      "os": "linux",
+      "arch": "amd64",
+      "capabilities": [
+        "gpu"
+      ],
+      "harnesses": [
+        {
+          "id": "mock",
+          "models": [
+            "m1"
+          ]
+        },
+        {
+          "id": "absent",
+          "missing": "\"absent-bin\" not on this node's PATH"
+        }
+      ],
+      "snapshot": {
+        "schema": "ability.v1",
+        "node": "node-a",
+        "generation": 0,
+        "sequence": 0,
+        "generated_at": "<time>",
+        "received_at": "<time>",
+        "digest": "cbcf02e7650d9314",
+        "coverage": {
+          "harness": "complete",
+          "tag": "complete"
+        },
+        "offers": [
+          {
+            "kind": "harness",
+            "id": "absent",
+            "availability": "unavailable",
+            "evidence": [
+              {
+                "kind": "observed",
+                "method": "advert",
+                "result": "\"absent-bin\" not on this node's PATH",
+                "ok": false,
+                "at": "<time>"
+              }
+            ],
+            "assurance": "existence",
+            "detail": "\"absent-bin\" not on this node's PATH"
+          },
+          {
+            "kind": "harness",
+            "id": "mock",
+            "availability": "available",
+            "evidence": [
+              {
+                "kind": "observed",
+                "method": "advert",
+                "ok": true,
+                "at": "<time>"
+              }
+            ],
+            "assurance": "existence"
+          },
+          {
+            "kind": "tag",
+            "id": "gpu",
+            "availability": "available",
+            "evidence": [
+              {
+                "kind": "declared",
+                "method": "config",
+                "ok": true
+              }
+            ]
+          }
+        ],
+        "source": "legacy"
+      }
+    },
+    {
+      "name": "node-b",
+      "role": "worker",
+      "addr": "10.0.0.2:7701",
+      "up": false,
+      "last_error": "connection refused",
+      "snapshot": {
+        "schema": "ability.v1",
+        "node": "hub",
+        "generation": 0,
+        "sequence": 0,
+        "generated_at": "<time>",
+        "received_at": "<time>",
+        "digest": "2ca4ebda0b05dc54",
+        "coverage": {
+          "harness": "complete",
+          "tag": "complete"
+        },
+        "offers": null,
+        "source": "legacy"
+      }
+    }
+  ],
+  "agents": [
+    {
+      "id": "builder",
+      "node": "node-a",
+      "harness": "mock",
+      "models": [
+        "m1"
+      ],
+      "eligible": true,
+      "requires": [
+        "gpu"
+      ],
+      "conditions": [
+        {
+          "atom": "tag:gpu",
+          "met": true
+        }
+      ],
+      "level": "internal",
+      "activities": [
+        {
+          "agent": "builder",
+          "attempt_id": "stuck",
+          "kind": "writer",
+          "workspace": "/work/q",
+          "task_id": "1",
+          "detail": "原执行进程是否退出尚未确认: lease lost",
+          "since": "<time>",
+          "at": "<time>"
+        }
+      ],
+      "busy": 1,
+      "activity_known": true,
+      "snapshot": {
+        "schema": "ability.v1",
+        "node": "node-a",
+        "generation": 0,
+        "sequence": 0,
+        "generated_at": "<time>",
+        "received_at": "<time>",
+        "digest": "2fbc01d0175cad88",
+        "coverage": {
+          "harness": "complete",
+          "model": "complete",
+          "tag": "complete"
+        },
+        "offers": [
+          {
+            "kind": "harness",
+            "id": "absent",
+            "availability": "unavailable",
+            "evidence": [
+              {
+                "kind": "observed",
+                "method": "advert",
+                "result": "\"absent-bin\" not on this node's PATH",
+                "ok": false,
+                "at": "<time>"
+              }
+            ],
+            "assurance": "existence",
+            "detail": "\"absent-bin\" not on this node's PATH"
+          },
+          {
+            "kind": "harness",
+            "id": "mock",
+            "availability": "available",
+            "evidence": [
+              {
+                "kind": "observed",
+                "method": "advert",
+                "ok": true,
+                "at": "<time>"
+              }
+            ],
+            "assurance": "existence"
+          },
+          {
+            "kind": "model",
+            "id": "m1",
+            "scope": "mock",
+            "availability": "available",
+            "evidence": [
+              {
+                "kind": "observed",
+                "method": "session",
+                "ok": true
+              }
+            ],
+            "assurance": "functional"
+          },
+          {
+            "kind": "tag",
+            "id": "gpu",
+            "availability": "available",
+            "evidence": [
+              {
+                "kind": "declared",
+                "method": "config",
+                "ok": true
+              }
+            ]
+          }
+        ],
+        "source": "legacy"
+      }
+    },
+    {
+      "id": "fixme",
+      "node": "node-a",
+      "harness": "absent",
+      "repair": "builder",
+      "eligible": false,
+      "why": "\"absent-bin\" not on this node's PATH",
+      "level": "internal",
+      "activity_known": true,
+      "snapshot": {
+        "schema": "ability.v1",
+        "node": "node-a",
+        "generation": 0,
+        "sequence": 0,
+        "generated_at": "<time>",
+        "received_at": "<time>",
+        "digest": "cbcf02e7650d9314",
+        "coverage": {
+          "harness": "complete",
+          "tag": "complete"
+        },
+        "offers": [
+          {
+            "kind": "harness",
+            "id": "absent",
+            "availability": "unavailable",
+            "evidence": [
+              {
+                "kind": "observed",
+                "method": "advert",
+                "result": "\"absent-bin\" not on this node's PATH",
+                "ok": false,
+                "at": "<time>"
+              }
+            ],
+            "assurance": "existence",
+            "detail": "\"absent-bin\" not on this node's PATH"
+          },
+          {
+            "kind": "harness",
+            "id": "mock",
+            "availability": "available",
+            "evidence": [
+              {
+                "kind": "observed",
+                "method": "advert",
+                "ok": true,
+                "at": "<time>"
+              }
+            ],
+            "assurance": "existence"
+          },
+          {
+            "kind": "tag",
+            "id": "gpu",
+            "availability": "available",
+            "evidence": [
+              {
+                "kind": "declared",
+                "method": "config",
+                "ok": true
+              }
+            ]
+          }
+        ],
+        "source": "legacy"
+      }
+    },
+    {
+      "id": "local",
+      "node": "hub-1",
+      "harness": "mock",
+      "models": [
+        "mock-fast",
+        "mock-deep"
+      ],
+      "model": "mock-fast",
+      "eligible": true,
+      "observed": "mock-fast",
+      "default": true,
+      "level": "internal",
+      "activities": [
+        {
+          "agent": "local",
+          "attempt_id": "live",
+          "workspace": "/work/p",
+          "task_id": "2",
+          "conversation": "chat:1",
+          "tool": "bash",
+          "detail": "go test ./...",
+          "since": "<time>",
+          "at": "<time>"
+        }
+      ],
+      "busy": 1,
+      "activity_known": true,
+      "snapshot": {
+        "schema": "ability.v1",
+        "node": "hub",
+        "generation": 0,
+        "sequence": 0,
+        "generated_at": "<time>",
+        "received_at": "<time>",
+        "digest": "b602d5d76c13aaff",
+        "coverage": {
+          "harness": "complete",
+          "model": "complete",
+          "tag": "complete"
+        },
+        "offers": [
+          {
+            "kind": "model",
+            "id": "mock-deep",
+            "scope": "mock",
+            "availability": "available",
+            "evidence": [
+              {
+                "kind": "observed",
+                "method": "session",
+                "ok": true,
+                "at": "<time>"
+              }
+            ],
+            "assurance": "functional"
+          },
+          {
+            "kind": "model",
+            "id": "mock-fast",
+            "scope": "mock",
+            "availability": "available",
+            "evidence": [
+              {
+                "kind": "observed",
+                "method": "session",
+                "ok": true,
+                "at": "<time>"
+              }
+            ],
+            "assurance": "functional"
+          },
+          {
+            "kind": "tag",
+            "id": "basic",
+            "availability": "available",
+            "evidence": [
+              {
+                "kind": "declared",
+                "method": "config",
+                "ok": true
+              }
+            ]
+          }
+        ],
+        "source": "legacy"
+      }
+    }
+  ],
+  "tasks": [
+    {
+      "id": "2",
+      "goal": "build it",
+      "priority": "normal",
+      "state": "draft",
+      "member": "builder",
+      "node": "node-a",
+      "parent": "1",
+      "turns": 0,
+      "max_turns": 24,
+      "elapsed": "0s",
+      "max_elapsed": "1h0m0s",
+      "updated_at": "<time>",
+      "tokens": {},
+      "seconds": 0,
+      "channel": "chat",
+      "lifecycle": "draft",
+      "execution": "running",
+      "attention": 0,
+      "lane": "running"
+    },
+    {
+      "id": "1",
+      "goal": "ship it",
+      "priority": "normal",
+      "state": "draft",
+      "member": "local",
+      "children": [
+        "2"
+      ],
+      "turns": 0,
+      "max_turns": 24,
+      "elapsed": "0s",
+      "max_elapsed": "1h0m0s",
+      "updated_at": "<time>",
+      "plan_id": "1",
+      "tokens": {},
+      "seconds": 0,
+      "channel": "chat",
+      "lifecycle": "draft",
+      "execution": "running",
+      "attention": 4,
+      "lane": "needs_you"
+    }
+  ],
+  "plans": [
+    {
+      "id": "1",
+      "task_id": "1",
+      "rev": 1,
+      "goal": "ship it",
+      "by": "rule",
+      "because": "initial plan",
+      "steps": [
+        {
+          "id": "build",
+          "goal": "compile",
+          "state": "pending",
+          "requires": [
+            "gpu"
+          ],
+          "verify": "none"
+        }
+      ]
+    }
+  ],
+  "attempts": [
+    {
+      "id": "live",
+      "kind": "",
+      "state": "running",
+      "task_id": "2",
+      "project": "",
+      "agent": "local",
+      "node": "hub-1",
+      "scope": "",
+      "workspace": "/work/p",
+      "started_at": "<time>"
+    },
+    {
+      "unsettled": true,
+      "error": "lease lost",
+      "id": "stuck",
+      "kind": "",
+      "state": "leased",
+      "task_id": "1",
+      "project": "",
+      "agent": "builder",
+      "node": "node-a",
+      "scope": "",
+      "workspace": "/work/q",
+      "started_at": "<time>"
+    }
+  ],
+  "landings": [
+    {
+      "id": "land-p",
+      "project": "p",
+      "artifact": "",
+      "state": "committed",
+      "paths": 0,
+      "at": "<time>"
+    },
+    {
+      "id": "land-q",
+      "project": "q",
+      "artifact": "",
+      "state": "committed",
+      "paths": 0,
+      "at": "<time>"
+    }
+  ],
+  "facts": {
+    "reservations": [
+      {
+        "id": "reservation",
+        "endpoint": "",
+        "for": "",
+        "expires_at": "<time>"
+      }
+    ],
+    "attestations": [
+      {
+        "artifact": "artifact",
+        "kind": "",
+        "verifier": "",
+        "verdict": "pass",
+        "attempt": "",
+        "at": "<time>"
+      }
+    ],
+    "replicas": [
+      {
+        "artifact": "artifact",
+        "node": "node",
+        "generation": 0,
+        "state": "",
+        "at": "<time>"
+      }
+    ],
+    "disclosures": [
+      {
+        "id": "disclosure",
+        "project": "p",
+        "task_id": "1",
+        "requester": "",
+        "bytes": 0,
+        "at": "<time>"
+      }
+    ],
+    "effects": [
+      {
+        "id": "effect",
+        "tool": "send",
+        "task_id": "1",
+        "attempt": "",
+        "error": "执行结果尚未确认",
+        "at": "<time>"
+      }
+    ],
+    "grants": [
+      {
+        "project": "p",
+        "principal": "owner",
+        "role": "",
+        "by": ""
+      }
+    ]
+  },
+  "projects": [
+    {
+      "id": "p",
+      "node": "hub-1",
+      "path": "/work/p",
+      "level": "internal",
+      "repo": "",
+      "agents": [
+        "local"
+      ],
+      "repos": [
+        {
+          "path": "repo-of-canonical:p",
+          "dirty": false,
+          "agents_md": false
+        }
+      ],
+      "home": true,
+      "workspaces": [
+        {
+          "id": "canonical:p",
+          "node": "hub-1",
+          "path": "/work/p",
+          "kind": "canonical",
+          "busy": true,
+          "activity_known": true,
+          "repos": [
+            {
+              "path": "repo-of-canonical:p",
+              "dirty": false,
+              "agents_md": false
+            }
+          ],
+          "agents": [
+            "local"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "q",
+      "node": "hub-1",
+      "path": "/work/q",
+      "level": "internal",
+      "repo": "",
+      "agents": [
+        "local"
+      ],
+      "repos": [
+        {
+          "path": "repo-of-canonical:q",
+          "dirty": false,
+          "agents_md": false
+        }
+      ],
+      "default": true,
+      "workspaces": [
+        {
+          "id": "canonical:q",
+          "node": "hub-1",
+          "path": "/work/q",
+          "kind": "canonical",
+          "activity_known": true,
+          "repos": [
+            {
+              "path": "repo-of-canonical:q",
+              "dirty": false,
+              "agents_md": false
+            }
+          ],
+          "agents": [
+            "local"
+          ]
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "by_day": null,
+    "by_agent": null,
+    "by_model": null,
+    "total": {
+      "key": "",
+      "tokens": {},
+      "seconds": 0,
+      "attempts": 0
+    },
+    "timezone": "",
+    "periods": null,
+    "by_harness": null,
+    "by_trigger": null,
+    "by_project": null,
+    "tasks": {
+      "count": 0,
+      "measured": 0,
+      "min_seconds": 0,
+      "max_seconds": 0,
+      "average_seconds": 0,
+      "total_seconds": 0
+    },
+    "by_task": null,
+    "throughput": {
+      "window_tpm": 0,
+      "active_tpm": 0,
+      "peak_tpm": 0,
+      "estimated": false,
+      "measured_tokens": 0,
+      "unmeasured_tokens": 0,
+      "active_seconds": 0
+    }
+  },
+  "inbox": [
+    {
+      "id": "disclosure",
+      "type": "disclosure",
+      "source": "disclosure",
+      "project_id": "p",
+      "task_id": "1",
+      "summary": "task #1 wants to send 0 bytes out of sealed project p (asked by )",
+      "choices": [
+        {
+          "label": "approve",
+          "command": "/approve disclosure"
+        },
+        {
+          "label": "deny",
+          "command": "/deny disclosure",
+          "danger": true
+        }
+      ],
+      "created_at": "<time>",
+      "resolvable": true
+    },
+    {
+      "id": "effect",
+      "type": "effect",
+      "source": "",
+      "task_id": "1",
+      "summary": "send was called for task #1 and nobody knows whether it happened: 执行结果尚未确认",
+      "choices": [
+        {
+          "label": "confirm it happened",
+          "command": "/effects effect happened"
+        },
+        {
+          "label": "allow it to be called again",
+          "command": "/effects effect new",
+          "danger": true
+        }
+      ],
+      "created_at": "<time>",
+      "resolvable": true
+    },
+    {
+      "attempt_id": "stuck",
+      "node": "node-a",
+      "workspace": "/work/q",
+      "id": "writer:stuck",
+      "type": "writer",
+      "source": "stuck",
+      "task_id": "1",
+      "summary": "原执行进程是否退出尚未确认，目录与执行资源继续保留占用: lease lost",
+      "choices": [],
+      "created_at": "<time>",
+      "resolvable": false
+    },
+    {
+      "conversation": "console:ask",
+      "id": "ask",
+      "type": "question",
+      "source": "ask",
+      "project_id": "p",
+      "task_id": "1",
+      "summary": "Which branch?",
+      "choices": [],
+      "created_at": "<time>",
+      "resolvable": true
+    }
+  ],
+  "schedules": [
+    {
+      "id": "nightly",
+      "conversation": "chat:1",
+      "agent": "local",
+      "prompt": "sweep",
+      "spec": "0 3 * * *",
+      "next_at": "<time>",
+      "runs": 2,
+      "state": "armed"
+    }
+  ],
+  "sources": [
+    {
+      "name": "nodes",
+      "wired": true
+    },
+    {
+      "name": "roster",
+      "wired": true
+    },
+    {
+      "name": "tasks",
+      "wired": true
+    },
+    {
+      "name": "plans",
+      "wired": true
+    },
+    {
+      "name": "ledger",
+      "wired": true
+    },
+    {
+      "name": "schedules",
+      "wired": true
+    },
+    {
+      "name": "ledger-live",
+      "wired": true
+    },
+    {
+      "name": "ledger-projects",
+      "wired": true
+    },
+    {
+      "name": "ledger-landings",
+      "wired": true
+    },
+    {
+      "name": "ledger-facts",
+      "wired": true
+    },
+    {
+      "name": "ledger-attention",
+      "wired": true
+    },
+    {
+      "name": "ledger-usage",
+      "wired": true
+    }
+  ]
+}

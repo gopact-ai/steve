@@ -2,5 +2,3 @@ cmd/mockagent.agent.Prompt 239
 cmd/steve.ledgerCmd 171
 internal/config.Load 166
 internal/console.Service.recoverExchange 199
-internal/coordination.machine.Apply 261
-internal/readmodel.Model.Snapshot 256
