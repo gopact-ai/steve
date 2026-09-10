@@ -74,8 +74,8 @@ func newRealFleet(t *testing.T) *realFleet {
 	dir := t.TempDir()
 	projects, attempts, artifacts := declareProjects(t, dir, reg,
 		project.Project{ID: "real", Home: project.Home{Path: hubWork}},
-		project.Project{ID: "real-a", Home: project.Home{Node: nodeA, Path: nodeWork + "/real-a"}},
-		project.Project{ID: "real-b", Home: project.Home{Node: nodeB, Path: nodeWork + "/real-b"}},
+		project.Project{ID: "real-a", Home: project.Home{Node: nodeA, Path: work(nodeA) + "/real-a"}},
+		project.Project{ID: "real-b", Home: project.Home{Node: nodeB, Path: work(nodeB) + "/real-b"}},
 	)
 	tasks, err := task.OpenLedger(ledgerOf(t, dir), "")
 	if err != nil {
@@ -118,8 +118,9 @@ func TestRealClaudePlansRealCodexExecutesOnTheNodes(t *testing.T) {
 	requireReal(t)
 	f := newRealFleet(t)
 	f.registry.EnsureConnected(t.Context())
-	for _, host := range []string{addrHost(addrA()), addrHost(addrB())} {
-		_, _ = sshOut(t, host, "rm -rf ~/steve-work/real-a ~/steve-work/real-b; mkdir -p ~/steve-work/real-a ~/steve-work/real-b")
+	for _, machine := range []string{nodeA, nodeB} {
+		dirs := shellPath(work(machine)+"/real-a") + " " + shellPath(work(machine)+"/real-b")
+		_, _ = onNode(t, machine, "rm -rf "+dirs+"; mkdir -p "+dirs)
 	}
 
 	store, err := state.Open(filepath.Join(t.TempDir(), "state.json"))
@@ -229,7 +230,7 @@ func TestRealClaudePlansRealCodexExecutesOnTheNodes(t *testing.T) {
 		t.Errorf("no README landed in the hub project")
 	}
 	// The nodes kept nothing: worktrees are discarded after publish.
-	if out, err := sshOut(t, addrHost(addrA()), "ls ~/steve-work/worktrees/ 2>/dev/null | wc -l"); err == nil && strings.TrimSpace(out) != "0" {
+	if out, err := onNode(t, nodeA, "ls "+shellPath(work(nodeA)+"/worktrees/")+" 2>/dev/null | wc -l"); err == nil && strings.TrimSpace(out) != "0" {
 		t.Errorf("worktrees left behind on %s: %s", nodeA, strings.TrimSpace(out))
 	}
 }
@@ -242,8 +243,7 @@ func TestRealClaudeDelegatesToTheNodeThatCan(t *testing.T) {
 	requireReal(t)
 	f := newRealFleet(t)
 	f.registry.EnsureConnected(t.Context())
-	hostB := addrHost(addrB())
-	_, _ = sshOut(t, hostB, "mkdir -p ~/steve-work/real-b && rm -f ~/steve-work/real-b/staged.txt")
+	_, _ = onNode(t, nodeB, "mkdir -p "+shellPath(work(nodeB)+"/real-b")+" && rm -f "+shellPath(work(nodeB)+"/real-b/staged.txt"))
 
 	gate, err := agentmcp.New(0)
 	if err != nil {
@@ -317,7 +317,7 @@ func TestRealClaudeDelegatesToTheNodeThatCan(t *testing.T) {
 	} else {
 		t.Logf("staged.txt landed in %s: %q", landed.Home.Path, strings.TrimSpace(string(raw)))
 	}
-	if out, err := sshOut(t, hostB, "ls ~/steve-work/worktrees/ | wc -l"); err == nil && strings.TrimSpace(out) != "0" {
+	if out, err := onNode(t, nodeB, "ls "+shellPath(work(nodeB)+"/worktrees/")+" | wc -l"); err == nil && strings.TrimSpace(out) != "0" {
 		t.Errorf("worktrees left behind on %s: %s", nodeB, strings.TrimSpace(out))
 	}
 	// And the model reported what came back rather than inventing it.

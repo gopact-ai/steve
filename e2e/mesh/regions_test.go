@@ -24,8 +24,8 @@ import (
 func TestC10RegionalLeasesAreIssuedByTheNodesRegion(t *testing.T) {
 	requireMesh(t)
 	reg := node.NewRegistry("hub-e2e", map[string]node.Config{
-		nodeA: {Addr: addrA(), Token: tokenA(), DialTimeout: 10 * time.Second},
-		nodeB: {Addr: addrB(), Token: tokenB(), DialTimeout: 10 * time.Second, Region: "west"},
+		nodeA: {Addr: machines.Addr(nodeA), Token: machines.Token(nodeA), DialTimeout: 10 * time.Second},
+		nodeB: {Addr: machines.Addr(nodeB), Token: machines.Token(nodeB), DialTimeout: 10 * time.Second, Region: "west"},
 	})
 	t.Cleanup(reg.Close)
 	reg.EnsureConnected(t.Context())

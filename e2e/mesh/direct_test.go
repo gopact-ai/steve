@@ -25,7 +25,7 @@ func TestC11ArtifactsMoveNodeToNodeUnderTheHubsGrant(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if out, err := sshOut(t, addrHost(addrB()), "printf made-on-b > "+ws.Path+"/direct.txt"); err != nil {
+	if out, err := onNode(t, nodeB, "printf made-on-b > "+ws.Path+"/direct.txt"); err != nil {
 		t.Fatalf("write on node-b: %v\n%s", err, out)
 	}
 	result, changed, err := f.artifacts.Publish(ctx, ws, ws.Base, "att-b", "made on node-b")
@@ -35,13 +35,13 @@ func TestC11ArtifactsMoveNodeToNodeUnderTheHubsGrant(t *testing.T) {
 	_ = f.artifacts.Discard(ctx, ws)
 
 	// Materialising it on node-a takes it from node-b, not the hub.
-	before, _ := sshOut(t, addrHost(addrB()), "grep -c 'peer' ~/steve-node.log || true")
+	before, _ := onNode(t, nodeB, "grep -c 'peer' ~/steve-node.log || true")
 	other, err := f.artifacts.Materialize(ctx, project.Request{Project: "local", Node: nodeA, Isolated: true, Base: result.ID, Owner: "att-a"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = f.artifacts.Discard(context.Background(), other) })
-	if out, err := sshOut(t, addrHost(addrA()), "cat "+other.Path+"/direct.txt"); err != nil || strings.TrimSpace(out) != "made-on-b" {
+	if out, err := onNode(t, nodeA, "cat "+other.Path+"/direct.txt"); err != nil || strings.TrimSpace(out) != "made-on-b" {
 		t.Fatalf("node-a worktree content = %q err=%v", out, err)
 	}
 	replicas, _ := f.artifacts.Replicas(ctx, result.ID)
@@ -54,7 +54,7 @@ func TestC11ArtifactsMoveNodeToNodeUnderTheHubsGrant(t *testing.T) {
 	if !strings.HasPrefix(onA, "verified direct from "+nodeB) {
 		t.Fatalf("replica on node-a = %q, want a verified direct transfer from node-b (replicas: %+v)", onA, replicas)
 	}
-	after, _ := sshOut(t, addrHost(addrB()), "grep -c 'peer' ~/steve-node.log || true")
+	after, _ := onNode(t, nodeB, "grep -c 'peer' ~/steve-node.log || true")
 	if strings.TrimSpace(after) == strings.TrimSpace(before) {
 		t.Fatalf("node-b saw no peer connection (before=%s after=%s)", strings.TrimSpace(before), strings.TrimSpace(after))
 	}
