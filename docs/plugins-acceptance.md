@@ -51,7 +51,29 @@ LD_LIBRARY_PATH=<Chromium 动态库目录> make test-console
 
 显式采用的单位是 Agent 的 Skills/MCP **引用**，不是仍被其他 Agent 使用的用户源目录或机器服务定义。删除安装解除预设来源，保留 Agent 当前配置；不会自动恢复已采用的旧引用。共享包库、凭据版本与命令记录保留，没有自动包库/凭据 GC。强制终止留下的暂存目录及短 Unix socket 目录可能需要离线维护，不能按年龄删除运行状态。
 
-真机验收仍需主会话对真实 GitHub/内网服务及 fleet 执行，并在合并前补充证据；此处的服务替身测试不能替代它。插件市场、自动更新、递归依赖、新 harness 安装、自定义前端、hooks、验证器和外部触发器不在第一轮。下一轮先规划验证器契约、提交后事件和自动化受理身份。
+真机验收已执行，见下方「真机验收记录」；`examples/plugins/github` 的活调用仍需一个能访问 GitHub Copilot MCP 的凭据，未做。插件市场、自动更新、递归依赖、新 harness 安装、自定义前端、hooks、验证器和外部触发器不在第一轮。下一轮先规划验证器契约、提交后事件和自动化受理身份。
+
+## 真机验收记录（2026-09-10）
+
+在两台真机（node-a / node-b，各自装了真 claude 与真 codex）上跑完 `example/team-tools` 的完整生命周期。**hub 必须作为集群应用运行**：节点只接受已提交协调者的插件操作（见 [plugins-local.md](plugins-local.md#部署到节点需要协调者)），独立 hub 到这一步会被拒。
+
+服务不是替身：临时写了一个真的 HTTP MCP 团队服务起在协调者机器上（Bearer 校验、`initialize`/`tools/list`/`tools/call`，工具 `team_issue_lookup` 返回带 `TEAMSVC-OK` 的可辨识答案），node-b 跨机访问它。
+
+| 步骤 | 结果 |
+|---|---|
+| 节点上写凭据 | `steve plugins secret-put`（值从 stdin），`secret-list` 能查到两个版本，旧版本保留 |
+| 预览 / 导入 | 固定摘要一致，导入进 scratch 项目的包库 |
+| 保存安装配置 | 启用 + 项目范围 + 目标 node-b + 普通配置（端点）+ 凭据版本引用，目标转为 `pending` |
+| 准备到节点 | `prepared`；包内容按摘要落在 node-b 的 `~/.steve-node/plugins/packages/<digest>/content` |
+| Agent 预设 | `investigator` → 新 agent `triager`（claude-code on node-b），带包内技能与 MCP |
+| **真回合调用插件 MCP** | 真 claude 在 node-b 上调 `team_issue_lookup`，答案含 `TEAMSVC-OK`；**服务端日志显示请求来自 `10.37.97.2`**，即经节点 broker 出去，不是本机 |
+| 升级到 v2 | 导入 0.2.0、切默认版本、重新准备成功 |
+| 版本隔离 | 已绑定的会话仍用原部署，新会话用新默认版本（两个 runtime 分别指向两个 deployment 摘要） |
+| 回退 | 切回 v1 摘要成功 |
+| 停用后移除 | 仍有会话占用时移除被拒（`plugin runtime still has unconfirmed process use`）；逐个关闭空闲运行引用后移除成功 |
+| 移除后的节点 | 运行目录清空，tombstone 落在 `removed-runtimes`，**包库与命令记录保留** |
+
+未覆盖：`examples/plugins/github`（需要 GitHub Copilot MCP 凭据；两台节点到 `api.githubcopilot.com/mcp/` 可达，返回 401，节点上没有该凭据）。
 
 ## 审查补修
 

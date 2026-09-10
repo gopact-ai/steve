@@ -220,3 +220,42 @@ func TestFirstBoundPortIsRememberedForStableWebViewStorage(t *testing.T) {
 		t.Fatal("a later bind silently moved browser storage to another origin")
 	}
 }
+
+// Each invalid state path gets the message for what it actually is. One
+// wording for all of them once reported a group-readable directory as a
+// symbolic link it never was.
+func TestPrivateDirectoryNamesWhatItFound(t *testing.T) {
+	root := t.TempDir()
+	if err := os.Chmod(root, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := privateDirectory(root); err != nil {
+		t.Fatalf("a private directory was rejected: %v", err)
+	}
+
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(root, "link")
+	if err := os.Symlink(root, link); err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(root, "shared")
+	if err := os.Mkdir(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []struct{ path, says string }{
+		{link, "symbolic link"},
+		{file, "not a directory"},
+		{shared, "private to its owner"},
+	} {
+		err := privateDirectory(want.path)
+		if err == nil {
+			t.Fatalf("%s was accepted", want.path)
+		}
+		if !strings.Contains(err.Error(), want.says) {
+			t.Fatalf("%s reported %q, which does not say %q", want.path, err, want.says)
+		}
+	}
+}

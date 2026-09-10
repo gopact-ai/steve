@@ -226,8 +226,16 @@ func privateDirectory(path string) error {
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-		return errors.New("desktop state directory must be a private directory, not a symbolic link")
+	// A message per condition. One wording for all of them named the
+	// symlink case for a directory that was merely group-readable, which
+	// sent a reader looking for a link that was never there. A path that
+	// is not a directory at all never reaches here: the MkdirAll above
+	// fails on it, and says so.
+	switch {
+	case info.Mode()&os.ModeSymlink != 0:
+		return fmt.Errorf("desktop state directory must be a directory, but %s is a symbolic link", path)
+	case info.Mode().Perm()&0o077 != 0:
+		return fmt.Errorf("desktop state directory must be private to its owner; %s is %#o", path, info.Mode().Perm())
 	}
 	return nil
 }
