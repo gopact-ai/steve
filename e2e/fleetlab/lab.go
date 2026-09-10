@@ -37,6 +37,17 @@ type Spec struct {
 	Declares     []string
 	Capabilities []string
 	Tools        []string
+	// SessionGrace is how long this node's sessions survive a lost hub
+	// connection, waiting to be resumed. Zero leaves the node's own
+	// default (ten minutes), which is longer than a scenario about losing
+	// a node can wait for.
+	//
+	// It applies to machines the lab starts. A machine the operator
+	// supplies keeps whatever grace it was started with — the lab cannot
+	// change a setting a node reads at startup without restarting it, and
+	// that node is not the lab's to restart. A scenario that needs the
+	// real figure reads it from the node's advert, which carries it.
+	SessionGrace time.Duration
 }
 
 // Node is one machine of a running lab.

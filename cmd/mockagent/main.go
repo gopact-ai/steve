@@ -377,11 +377,22 @@ func scriptedReply(input string) string {
 			return "FAIL\nthe artifact is not where it was claimed to be"
 		}
 		return "PASS"
-	case strings.Contains(input, "surprise"):
-		// A step that learns something which makes the plan wrong.
+	case strings.Contains(instruction(input), "surprise"):
+		// A step that learns something which makes the plan wrong. The
+		// trigger is read from this step's own instruction, not from the
+		// whole brief: a brief also quotes the goals of the steps this one
+		// depends on, so matching anywhere would make every step
+		// downstream of a surprising one report the same surprise.
 		return "echo: " + input + "\nFINDING: noted in passing\nREPLAN: the target now requires a recheck before shipping"
 	}
 	return "echo: " + input
+}
+
+// instruction is what this turn was asked to do: the first line of the
+// prompt, before the sections that describe the surroundings.
+func instruction(input string) string {
+	line, _, _ := strings.Cut(input, "\n")
+	return line
 }
 
 // endTurn builds the response, reporting usage and a cancelled stop when

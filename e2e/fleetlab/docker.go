@@ -115,9 +115,15 @@ func startDockerContext(ctx context.Context, specs []Spec, agentPackage string) 
 func (d *docker) startNode(spec Spec, runID, tag, gateway string, binaries map[string]string) error {
 	name := "steve-lab-" + runID + "-" + spec.Name
 	d.containers[spec.Name] = name
-	out, err := runDockerMutation(d.ctx, 120*time.Second, "run", "--detach", "--name", name,
+	args := []string{"run", "--detach", "--name", name,
 		"--network", d.network, "--hostname", spec.Name,
-		"--publish", net.JoinHostPort(gateway, "")+":"+nodePort, tag)
+		"--publish", net.JoinHostPort(gateway, "") + ":" + nodePort}
+	if spec.SessionGrace > 0 {
+		// The node reads its own grace from the environment, and docker exec
+		// inherits it, so a restarted node keeps the same window.
+		args = append(args, "--env", "STEVE_NODE_SESSION_GRACE="+spec.SessionGrace.String())
+	}
+	out, err := runDockerMutation(d.ctx, 120*time.Second, append(args, tag)...)
 	if err != nil {
 		return fmt.Errorf("start %s: %w\n%s", spec.Name, err, out)
 	}

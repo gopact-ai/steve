@@ -54,7 +54,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("STEVE_MESH_E2E") != "" {
 		machines, machinesErr = fleetlab.Open(
 			fleetlab.Spec{Name: nodeA, Capabilities: []string{"gpu"}},
-			fleetlab.Spec{Name: nodeB, Capabilities: []string{"internal-net", "prod-cred"}},
+			fleetlab.Spec{Name: nodeB, Capabilities: []string{"internal-net", "prod-cred"}, SessionGrace: nodeBGrace},
 		)
 	}
 	code := m.Run()
@@ -62,6 +62,27 @@ func TestMain(m *testing.M) {
 		machines.Close()
 	}
 	os.Exit(code)
+}
+
+// nodeBGrace is the grace the lab asks node-b for: long enough to be a
+// real window, short enough that a scenario can wait it out. The node
+// remains the authority — see graceOf.
+const nodeBGrace = 10 * time.Second
+
+// graceOf is how long this node really holds a session whose hub
+// connection is gone. The lab sets it on machines it starts; a machine the
+// operator supplied keeps its own, so the figure has to come from the node
+// rather than from what was asked for.
+func graceOf(t *testing.T, reg *node.Registry, nodeName string) time.Duration {
+	t.Helper()
+	advert, err := reg.Advert(t.Context(), nodeName)
+	if err != nil {
+		t.Fatalf("read %s's advert: %v", nodeName, err)
+	}
+	if advert.SessionGraceMS <= 0 {
+		t.Fatalf("%s advertises no session grace", nodeName)
+	}
+	return time.Duration(advert.SessionGraceMS) * time.Millisecond
 }
 
 // requireMesh gates a scenario on having a fleet. Missing Docker on a
@@ -356,14 +377,17 @@ func onNode(t *testing.T, nodeName, command string) (string, error) {
 // A4: a node going away must fail its sessions, not hang them — and the hub
 // must reconnect on its own once the node is back.
 func TestA4NodeDropAndReconnect(t *testing.T) {
-	requireMesh(t)
 	lab := requireMesh(t)
 	reg := registry(t)
 
 	broker, _ := permission.New("auto")
 	acp := acphost.New(acphost.Config{Transport: reg.Transport(nodeB, "mock"), Permission: broker})
 	t.Cleanup(acp.Stop)
-	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	// The turn has to outlive the node's grace by enough to prove the turn
+	// ended on its own: a context that expires first would end it for the
+	// wrong reason and prove nothing.
+	grace := graceOf(t, reg, nodeB)
+	ctx, cancel := context.WithTimeout(context.Background(), grace+2*time.Minute)
 	defer cancel()
 	sid, generation, err := acp.OpenSession(ctx, "", acphost.SessionConfig{Workdir: work(nodeB)})
 	if err != nil {
@@ -379,8 +403,14 @@ func TestA4NodeDropAndReconnect(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = lab.StartNode(nodeB) })
 
-	// The next prompt must fail promptly rather than block forever.
+	// A lost connection does not end a session on the spot: the node holds
+	// it for its grace so a restart can resume the work. What must not
+	// happen is waiting with no end — once the node has had its window and
+	// not come back, the turn fails on its own rather than hanging until
+	// its caller gives up. That bound is why this scenario gives node-b a
+	// short grace; the ten-minute default is for operators, not tests.
 	failed := make(chan error, 1)
+	started := time.Now()
 	go func() {
 		_, _, err := acp.Prompt(ctx, sid, generation, "after the drop", nil)
 		failed <- err
@@ -390,9 +420,10 @@ func TestA4NodeDropAndReconnect(t *testing.T) {
 		if err == nil {
 			t.Fatal("a prompt succeeded against a node that is gone")
 		}
-		t.Logf("session failed as expected: %v", err)
-	case <-time.After(30 * time.Second):
-		t.Fatal("prompt hung after the node went away")
+		t.Logf("session failed %s after the node stopped: %v", time.Since(started).Round(time.Millisecond), err)
+	case <-time.After(grace + 60*time.Second):
+		t.Fatalf("the turn was still waiting %s after the node stopped, past its %s of grace",
+			time.Since(started).Round(time.Second), grace)
 	}
 
 	// The registry must report it down without being asked to re-probe.
