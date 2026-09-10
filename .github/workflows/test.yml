@@ -34,3 +34,12 @@ jobs:
         working-directory: web/console
       - run: npm run test:streaming && npm run test:ui && npm run test:architecture && npm run test:settings && npm run test:materials && npm run test:questions && npm run test:desktop && npm run test:ssh && npm run test:coordination && npm run test:node-agents && npm run test:plugins && npm run test:selection
         working-directory: web/console
+  fleet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Disposable hub gates and cleanup
+        run: STEVE_HUBLAB_E2E=1 TMPDIR=/tmp go test -race -count=1 -timeout 12m ./e2e/fleetlab/...
