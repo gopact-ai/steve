@@ -47,7 +47,8 @@ XDG directories, config, state and scratch project. Its HTTP listener binds an
 OS-selected loopback port; readiness uses the published URL in its log and an
 authenticated `/state` request, including agent eligibility and both nodes up.
 Each node has its own Docker filesystem, process namespace, token and port.
-Node-to-node transfers use the existing bridge gateway/published-port address.
+Published wire ports bind only to that lab's bridge gateway, not every host
+interface. Node-to-node transfers use the same gateway/published-port address.
 The hub's MCP service stays on loopback and uses Steve's reverse node tunnel.
 
 The separate `agent` command is an explicit **test participant**, not a model.

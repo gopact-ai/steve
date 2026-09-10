@@ -101,7 +101,10 @@ func hubPrerequisites(ctx context.Context) (string, error) {
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	if reason := dockerUnavailable(); reason != "" {
+	if reason := dockerUnavailableContext(ctx); reason != "" {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
 		return "", fmt.Errorf("hub lab: %s", reason)
 	}
 	endpoint, err := runContext(ctx, 30*time.Second, "docker", "context", "inspect", "--format", "{{.Endpoints.docker.Host}}")

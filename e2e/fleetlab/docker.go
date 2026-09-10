@@ -43,11 +43,13 @@ type docker struct {
 }
 
 // dockerUnavailable reports why a container lab cannot run here, or "".
-func dockerUnavailable() string {
+func dockerUnavailable() string { return dockerUnavailableContext(context.Background()) }
+
+func dockerUnavailableContext(ctx context.Context) string {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return "docker is not installed"
 	}
-	out, err := run(30*time.Second, "docker", "version", "--format", "{{.Server.Version}}")
+	out, err := runContext(ctx, 30*time.Second, "docker", "version", "--format", "{{.Server.Version}}")
 	if err != nil {
 		return "docker is installed but not answering: " + text.FirstLine(strings.TrimSpace(out))
 	}
@@ -115,7 +117,7 @@ func (d *docker) startNode(spec Spec, runID, tag, gateway string, binaries map[s
 	d.containers[spec.Name] = name
 	out, err := runDockerMutation(d.ctx, 120*time.Second, "run", "--detach", "--name", name,
 		"--network", d.network, "--hostname", spec.Name,
-		"--publish", "0.0.0.0::"+nodePort, tag)
+		"--publish", net.JoinHostPort(gateway, "")+":"+nodePort, tag)
 	if err != nil {
 		return fmt.Errorf("start %s: %w\n%s", spec.Name, err, out)
 	}

@@ -71,6 +71,14 @@ func TestHubGatesUseIndependentLabs(t *testing.T) {
 		t.FailNow()
 	}
 	a, b := labs[0], labs[1]
+	for _, h := range labs {
+		for _, container := range h.lab.containers {
+			out, err := run(10*time.Second, "docker", "inspect", "--format", `{{(index (index .NetworkSettings.Ports "7701/tcp") 0).HostIp}}`, container)
+			if err != nil || strings.TrimSpace(out) != h.lab.gateway {
+				t.Fatalf("node port is not bound only to lab gateway: %v %s", err, out)
+			}
+		}
+	}
 	if a.Dir == b.Dir || a.ProjectDir == b.ProjectDir || a.URL == b.URL || a.Token == b.Token || a.lab.network == b.lab.network {
 		t.Fatal("labs share state, project, endpoint, token or network")
 	}
@@ -316,5 +324,45 @@ func TestHubCancelledDuringDockerCreationWaitsThenCleans(t *testing.T) {
 		if len(paths) != 0 {
 			t.Errorf("cancelled startup leaked directories: %v", paths)
 		}
+	}
+}
+
+func TestHubDockerAvailabilityProbeRespectsCancellation(t *testing.T) {
+	requireHubLab(t)
+	dir := t.TempDir()
+	started := filepath.Join(dir, "probe-started")
+	script := "#!/bin/sh\nprintf started > '" + started + "'\nexec sleep 30\n"
+	if err := os.WriteFile(filepath.Join(dir, "docker"), []byte(script), 0700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	done := make(chan error, 1)
+	go func() { _, err := hubPrerequisites(ctx); done <- err }()
+	timer := time.NewTimer(5 * time.Second)
+	defer timer.Stop()
+	ticker := time.NewTicker(time.Millisecond)
+	defer ticker.Stop()
+	for {
+		if _, err := os.Stat(started); err == nil {
+			break
+		}
+		select {
+		case <-timer.C:
+			t.Fatal("Docker probe did not start")
+		case err := <-done:
+			t.Fatalf("probe ended before cancellation: %v", err)
+		case <-ticker.C:
+		}
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("probe cancellation = %v", err)
+		}
+	case <-timer.C:
+		t.Fatal("cancelled Docker probe did not return")
 	}
 }
