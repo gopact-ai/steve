@@ -38,18 +38,20 @@ func InitializePeer(stateDir string) (PeerInitialization, error) {
 	if err := preparePeerDirectory(root); err != nil {
 		return result, err
 	}
-	// Share the application's lock: reject concurrent initialization or a live
-	// application rather than changing its files while it is running.
-	unlock, err := runtimestore.AcquireLock(root)
-	if err != nil {
-		return result, err
-	}
-	defer unlock()
+	// Refuse a live peer before touching the application lock: it may be
+	// acquiring that lock right now as a newly elected coordinator.
 	unlockPeer, err := lockExistingPeer(root)
 	if err != nil {
 		return result, err
 	}
 	defer unlockPeer()
+	// Share the application's lock to exclude another initializer or a
+	// standalone application using this directory.
+	unlock, err := runtimestore.AcquireLock(root)
+	if err != nil {
+		return result, err
+	}
+	defer unlock()
 	installed, err := desktop.Bootstrap(desktop.Options{StateDir: root})
 	if err != nil {
 		return result, err

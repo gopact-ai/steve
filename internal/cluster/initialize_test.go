@@ -147,8 +147,15 @@ func TestInitializePeerRefusesInactivePeerProcess(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer unlock()
+	lockPath := filepath.Join(root, "gateway.lock")
+	if err := os.WriteFile(lockPath, []byte("previous application"), 0600); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := InitializePeer(root); err == nil {
 		t.Fatal("initialized while peer process lock was held")
+	}
+	if data, err := os.ReadFile(lockPath); err != nil || string(data) != "previous application" {
+		t.Fatal("refusing a live peer touched its application lock")
 	}
 }
 
