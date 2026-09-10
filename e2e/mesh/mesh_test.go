@@ -54,7 +54,7 @@ func TestMain(m *testing.M) {
 	if os.Getenv("STEVE_MESH_E2E") != "" {
 		machines, machinesErr = fleetlab.Open(
 			fleetlab.Spec{Name: nodeA, Capabilities: []string{"gpu"}},
-			fleetlab.Spec{Name: nodeB, Capabilities: []string{"internal-net", "prod-cred"}},
+			fleetlab.Spec{Name: nodeB, Capabilities: []string{"internal-net", "prod-cred"}, SessionGrace: nodeBGrace},
 		)
 	}
 	code := m.Run()
@@ -63,6 +63,12 @@ func TestMain(m *testing.M) {
 	}
 	os.Exit(code)
 }
+
+// nodeBGrace is how long node-b holds a session whose hub connection is
+// gone, waiting to resume it. The default is ten minutes, which is right
+// for an operator restarting a node and far too long for a scenario that
+// stops one on purpose.
+const nodeBGrace = 10 * time.Second
 
 // requireMesh gates a scenario on having a fleet. Missing Docker on a
 // machine that was never going to run this is a skip; an operator who
@@ -379,8 +385,14 @@ func TestA4NodeDropAndReconnect(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = lab.StartNode(nodeB) })
 
-	// The next prompt must fail promptly rather than block forever.
+	// A lost connection does not end a session on the spot: the node holds
+	// it for its grace so a restart can resume the work. What must not
+	// happen is waiting with no end — once the node has had its window and
+	// not come back, the turn fails on its own rather than hanging until
+	// its caller gives up. That bound is why this scenario gives node-b a
+	// short grace; the ten-minute default is for operators, not tests.
 	failed := make(chan error, 1)
+	started := time.Now()
 	go func() {
 		_, _, err := acp.Prompt(ctx, sid, generation, "after the drop", nil)
 		failed <- err
@@ -390,9 +402,10 @@ func TestA4NodeDropAndReconnect(t *testing.T) {
 		if err == nil {
 			t.Fatal("a prompt succeeded against a node that is gone")
 		}
-		t.Logf("session failed as expected: %v", err)
-	case <-time.After(30 * time.Second):
-		t.Fatal("prompt hung after the node went away")
+		t.Logf("session failed %s after the node stopped: %v", time.Since(started).Round(time.Millisecond), err)
+	case <-time.After(nodeBGrace + 30*time.Second):
+		t.Fatalf("the turn was still waiting %s after the node stopped, past its %s of grace",
+			time.Since(started).Round(time.Second), nodeBGrace)
 	}
 
 	// The registry must report it down without being asked to re-probe.

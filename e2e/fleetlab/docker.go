@@ -102,9 +102,15 @@ func startDocker(specs []Spec) (backend, error) {
 // the binaries this suite just built, a config, and a started node.
 func (d *docker) startNode(spec Spec, runID, tag, gateway string, binaries map[string]string) error {
 	name := "steve-lab-" + runID + "-" + spec.Name
-	out, err := run(120*time.Second, "docker", "run", "--detach", "--name", name,
+	args := []string{"run", "--detach", "--name", name,
 		"--network", d.network, "--hostname", spec.Name,
-		"--publish", "0.0.0.0::"+nodePort, tag)
+		"--publish", "0.0.0.0::" + nodePort}
+	if spec.SessionGrace > 0 {
+		// The node reads its own grace from the environment, and docker exec
+		// inherits it, so a restarted node keeps the same window.
+		args = append(args, "--env", "STEVE_NODE_SESSION_GRACE="+spec.SessionGrace.String())
+	}
+	out, err := run(120*time.Second, "docker", append(args, tag)...)
 	if err != nil {
 		return fmt.Errorf("start %s: %w\n%s", spec.Name, err, out)
 	}
