@@ -191,4 +191,56 @@ func TestPluginDeploymentSaysWhenThisHubIsNoCoordinator(t *testing.T) {
 	if err := service.coordinator(""); err != nil {
 		t.Fatalf("the local machine was gated: %v", err)
 	}
+
+	// A node that is merely down would come back; not being a coordinator
+	// will not pass, so it keeps the target's state instead of being
+	// overlaid with "offline" and leaving the page contradicting itself.
+	service.Admin.Nodes = node.NewRegistry("cluster-under-test", map[string]node.Config{
+		"worker": {Addr: "127.0.0.1:1", Token: "t"},
+	})
+	t.Cleanup(service.Admin.Nodes.Close)
+	view, err = service.Plugins(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target = view.Installations[0].Targets[0]
+	if target.State != "unavailable" || !strings.Contains(target.Error, "not a cluster coordinator") {
+		t.Fatalf("an unreachable node hid the reason: %+v", target)
+	}
+
+	// Reading that node's runtimes says it too, rather than reporting
+	// whatever a request the node would refuse came back with.
+	usage, err := service.PluginUsage(ctx, "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(usage.Errors["worker"], "not a cluster coordinator") {
+		t.Fatalf("usage errors = %+v", usage.Errors)
+	}
+
+	// The usage list drops the machines this hub cannot reach, so an
+	// operation that leans on it must not fail on the gap: closing a
+	// runtime and removing the installation report the reason instead.
+	if _, err := service.ClosePluginRuntime(ctx, "one", "whatever"); !errors.Is(err, ErrNoCoordinator) {
+		t.Fatalf("closing a runtime returned %v", err)
+	}
+	// Removal comes after deactivation, as the documented flow has it.
+	current, err := service.Plugins(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.UpdatePlugin(ctx, "one", consoleapi.PluginUpdateRequest{
+		BaseRevision: current.Revision,
+		Installation: plugins.Installation{PackageID: record.Manifest.ID, Digest: record.Digest,
+			Projects: []string{"p"}, Targets: map[string]plugins.Configuration{"worker": {}}},
+	}); err != nil {
+		t.Fatalf("deactivating needs no node: %v", err)
+	}
+	current, err = service.Plugins(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RemovePlugin(ctx, "one", consoleapi.PluginRemoveRequest{BaseRevision: current.Revision}); !errors.Is(err, ErrNoCoordinator) {
+		t.Fatalf("removal returned %v", err)
+	}
 }

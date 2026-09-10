@@ -126,7 +126,10 @@ func (s *PluginService) installationView(ctx context.Context, id string, item pl
 				}
 			}
 		}
-		if node != "" && s.Admin.Nodes != nil {
+		// A node that is merely down will come back; a hub that is not a
+		// coordinator will not become one by waiting, so that reason keeps
+		// the target's state rather than being overlaid with "offline".
+		if node != "" && s.Admin.Nodes != nil && s.coordinator(node) == nil {
 			up := false
 			for _, status := range s.Admin.Nodes.Statuses() {
 				if status.Name == node {

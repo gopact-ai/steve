@@ -105,6 +105,10 @@ func (s *PluginService) PluginUsage(ctx context.Context, id string) (consoleapi.
 				out.Errors[node] = "node registry unavailable"
 				continue
 			}
+			if err := s.coordinator(node); err != nil {
+				out.Errors[node] = err.Error()
+				continue
+			}
 			var reply nodewire.PluginReply
 			reply, err = s.Admin.Nodes.Plugins(ctx, node, nodewire.PluginRequest{Action: nodewire.PluginRuntimeList, Authority: s.Authority})
 			infos = reply.Runtimes
@@ -130,6 +134,29 @@ func (s *PluginService) PluginUsage(ctx context.Context, id string) (consoleapi.
 		}
 	}
 	return out, nil
+}
+
+// coordinatorForInstallation reports whether this hub can act on every
+// machine an installation has ever been deployed to. A mutating operation
+// leans on the usage list, and that list drops the nodes this hub cannot
+// reach — so without this check a close or a removal would fail on the
+// gap instead of the reason for it.
+func (s *PluginService) coordinatorForInstallation(ctx context.Context, id string) error {
+	_, items := s.snapshot()
+	item, exists := items[id]
+	if !exists {
+		return nil
+	}
+	nodes, err := s.installationNodes(ctx, id, item)
+	if err != nil {
+		return nil
+	}
+	for node := range nodes {
+		if err := s.coordinator(node); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (s *PluginService) installationNodes(ctx context.Context, id string, item plugins.Installation) (map[string]bool, error) {
@@ -167,6 +194,9 @@ func (s *PluginService) RemovePlugin(ctx context.Context, id string, req console
 	}
 	usage, err := s.PluginUsage(ctx, id)
 	if err != nil {
+		return consoleapi.PluginsView{}, err
+	}
+	if err := s.coordinatorForInstallation(ctx, id); err != nil {
 		return consoleapi.PluginsView{}, err
 	}
 	if len(usage.References) > 0 || len(usage.Errors) > 0 {
@@ -241,6 +271,9 @@ func (s *PluginService) retireRuntime(ctx context.Context, ref plugins.RuntimeRe
 	if ref.Selection.Node == "" {
 		return s.Local.Store.RetireRuntime(ctx, ref)
 	}
+	if err := s.coordinator(ref.Selection.Node); err != nil {
+		return err
+	}
 	_, err := s.Admin.Nodes.Plugins(ctx, ref.Selection.Node, nodewire.PluginRequest{Action: nodewire.PluginRuntimeRetire, Authority: s.Authority, Runtime: &ref, Selection: &ref.Selection})
 	return err
 }
@@ -253,6 +286,9 @@ func (s *PluginService) removeRuntime(ctx context.Context, ref plugins.RuntimeRe
 			return err
 		}
 		return s.Local.Store.RemoveRuntime(ctx, ref)
+	}
+	if err := s.coordinator(ref.Selection.Node); err != nil {
+		return err
 	}
 	_, err := s.Admin.Nodes.Plugins(ctx, ref.Selection.Node, nodewire.PluginRequest{Action: nodewire.PluginRuntimeRemove, Authority: s.Authority, Runtime: &ref, Selection: &ref.Selection})
 	return err
@@ -267,6 +303,9 @@ func (s *PluginService) ClosePluginRuntime(ctx context.Context, id, runtimeID st
 	}
 	usage, err := s.PluginUsage(ctx, id)
 	if err != nil {
+		return usage, err
+	}
+	if err := s.coordinatorForInstallation(ctx, id); err != nil {
 		return usage, err
 	}
 	var ref *plugins.RuntimeRef
@@ -291,6 +330,9 @@ func (s *PluginService) ClosePluginRuntime(ctx context.Context, id, runtimeID st
 	// additionally closed by the node's authoritative session service.
 	if err := s.Admin.Coordinator.ForgetPluginRuntime(ctx, *ref, func(ctx context.Context) error {
 		if ref.Selection.Node != "" {
+			if err := s.coordinator(ref.Selection.Node); err != nil {
+				return err
+			}
 			_, err := s.Admin.Nodes.Plugins(ctx, ref.Selection.Node, nodewire.PluginRequest{Action: nodewire.PluginRuntimeClose, Authority: s.Authority, Runtime: ref, Selection: &ref.Selection})
 			return err
 		}
