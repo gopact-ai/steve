@@ -226,8 +226,13 @@ func privateDirectory(path string) error {
 	if err != nil {
 		return err
 	}
-	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0o077 != 0 {
-		return errors.New("desktop state directory must be a private directory, not a symbolic link")
+	switch {
+	case !info.IsDir() || info.Mode()&os.ModeSymlink != 0:
+		return errors.New("desktop state directory must be a directory, not a symbolic link")
+	case info.Mode().Perm()&0o077 != 0:
+		// The old wording named only the symlink case, so a directory that
+		// was merely group-readable was reported as a link it never was.
+		return fmt.Errorf("desktop state directory must be private to its owner; %s is %#o", path, info.Mode().Perm())
 	}
 	return nil
 }
