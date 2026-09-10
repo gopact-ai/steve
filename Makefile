@@ -46,12 +46,13 @@ e2e:
 e2e-lab:
 	$(GO) test -count=1 -timeout 10m ./e2e/fleetlab/
 
-# Uses an already-running hub. HUB / TOKEN override config.e2e.json.
+# Owns a disposable hub and Docker nodes; missing prerequisites fail the gate.
+# Linux host + local Docker with a matching Go toolchain are required.
 e2e-fleet:
-	@bash -lc '$(GO) run ./e2e/fleet'
+	$(GO) run ./e2e/fleetlab/cmd/gate
 
 # The coordinator is told only the goal: it must look the fleet up, split
-# the work, place it by capability and report. Needs kvtool in the
-# project's main directory and a remote node advertising build.
+# the work, place it by capability and report. The lab supplies kvtool,
+# a deterministic ACP agent and a copy of the host Go toolchain on node-b.
 e2e-autonomous:
-	@bash -lc '$(GO) run ./e2e/fleet -scenario autonomous'
+	$(GO) run ./e2e/fleetlab/cmd/gate -scenario autonomous
