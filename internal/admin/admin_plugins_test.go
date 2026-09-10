@@ -191,4 +191,30 @@ func TestPluginDeploymentSaysWhenThisHubIsNoCoordinator(t *testing.T) {
 	if err := service.coordinator(""); err != nil {
 		t.Fatalf("the local machine was gated: %v", err)
 	}
+
+	// A node that is merely down would come back; not being a coordinator
+	// will not pass, so it keeps the target's state instead of being
+	// overlaid with "offline" and leaving the page contradicting itself.
+	service.Admin.Nodes = node.NewRegistry("cluster-under-test", map[string]node.Config{
+		"worker": {Addr: "127.0.0.1:1", Token: "t"},
+	})
+	t.Cleanup(service.Admin.Nodes.Close)
+	view, err = service.Plugins(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target = view.Installations[0].Targets[0]
+	if target.State != "unavailable" || !strings.Contains(target.Error, "not a cluster coordinator") {
+		t.Fatalf("an unreachable node hid the reason: %+v", target)
+	}
+
+	// Reading that node's runtimes says it too, rather than reporting
+	// whatever a request the node would refuse came back with.
+	usage, err := service.PluginUsage(ctx, "one")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(usage.Errors["worker"], "not a cluster coordinator") {
+		t.Fatalf("usage errors = %+v", usage.Errors)
+	}
 }

@@ -40,6 +40,9 @@ func (p *applicationPlugins) PreparePluginRelocation(ctx context.Context, plan, 
 		if err != nil {
 			return nil, err
 		}
+		if err := p.coordinator(d.Node); err != nil {
+			return nil, err
+		}
 		reply, err := p.nodes.Plugins(ctx, d.Node, nodewire.PluginRequest{Action: nodewire.PluginPrepare, Authority: p.authority, RelocationPlan: plan, Deployment: d, Bundle: bundle.Data})
 		if err != nil {
 			return nil, err
@@ -49,6 +52,9 @@ func (p *applicationPlugins) PreparePluginRelocation(ctx context.Context, plan, 
 		}
 	}
 	if err := p.library.ReserveRuntime(ctx, attemptID, frozen.Selection); err != nil {
+		return nil, err
+	}
+	if err := p.coordinator(frozen.Selection.Node); err != nil {
 		return nil, err
 	}
 	reply, err := p.nodes.Plugins(ctx, frozen.Selection.Node, nodewire.PluginRequest{Action: nodewire.PluginRuntimePrepare, Authority: p.authority, RelocationPlan: plan, Permission: cfg.Permission, CommandID: pluginRuntimeCommand(attemptID), Selection: &frozen.Selection})

@@ -105,6 +105,10 @@ func (s *PluginService) PluginUsage(ctx context.Context, id string) (consoleapi.
 				out.Errors[node] = "node registry unavailable"
 				continue
 			}
+			if err := s.coordinator(node); err != nil {
+				out.Errors[node] = err.Error()
+				continue
+			}
 			var reply nodewire.PluginReply
 			reply, err = s.Admin.Nodes.Plugins(ctx, node, nodewire.PluginRequest{Action: nodewire.PluginRuntimeList, Authority: s.Authority})
 			infos = reply.Runtimes
@@ -241,6 +245,9 @@ func (s *PluginService) retireRuntime(ctx context.Context, ref plugins.RuntimeRe
 	if ref.Selection.Node == "" {
 		return s.Local.Store.RetireRuntime(ctx, ref)
 	}
+	if err := s.coordinator(ref.Selection.Node); err != nil {
+		return err
+	}
 	_, err := s.Admin.Nodes.Plugins(ctx, ref.Selection.Node, nodewire.PluginRequest{Action: nodewire.PluginRuntimeRetire, Authority: s.Authority, Runtime: &ref, Selection: &ref.Selection})
 	return err
 }
@@ -253,6 +260,9 @@ func (s *PluginService) removeRuntime(ctx context.Context, ref plugins.RuntimeRe
 			return err
 		}
 		return s.Local.Store.RemoveRuntime(ctx, ref)
+	}
+	if err := s.coordinator(ref.Selection.Node); err != nil {
+		return err
 	}
 	_, err := s.Admin.Nodes.Plugins(ctx, ref.Selection.Node, nodewire.PluginRequest{Action: nodewire.PluginRuntimeRemove, Authority: s.Authority, Runtime: &ref, Selection: &ref.Selection})
 	return err
@@ -291,6 +301,9 @@ func (s *PluginService) ClosePluginRuntime(ctx context.Context, id, runtimeID st
 	// additionally closed by the node's authoritative session service.
 	if err := s.Admin.Coordinator.ForgetPluginRuntime(ctx, *ref, func(ctx context.Context) error {
 		if ref.Selection.Node != "" {
+			if err := s.coordinator(ref.Selection.Node); err != nil {
+				return err
+			}
 			_, err := s.Admin.Nodes.Plugins(ctx, ref.Selection.Node, nodewire.PluginRequest{Action: nodewire.PluginRuntimeClose, Authority: s.Authority, Runtime: ref, Selection: &ref.Selection})
 			return err
 		}
