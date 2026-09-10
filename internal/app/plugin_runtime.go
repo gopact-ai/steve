@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,6 +30,19 @@ type applicationPlugins struct {
 	local     *node.PluginRuntimePool
 	nodes     *node.Registry
 	authority nodewire.SessionAuthority
+}
+
+// coordinator reports whether this hub can carry out a plugin operation on
+// the named machine. Its own needs no authority; another node checks every
+// request against a committed coordinator, which a hub outside the
+// clustered application does not have. Saying so here keeps a plugin
+// session from failing with the node's word about a coordinator the
+// operator never configured.
+func (p *applicationPlugins) coordinator(node string) error {
+	if node == "" || p.authority.ClusterID != "" {
+		return nil
+	}
+	return fmt.Errorf("%w: %s", plugins.ErrUnavailable, adminsvc.ErrNoCoordinator)
 }
 
 func (p *applicationPlugins) PreparePluginSession(ctx context.Context, req harness.PluginPreparation) (*plugins.RuntimeRef, error) {
@@ -120,6 +134,9 @@ func (p *applicationPlugins) PreparePluginSession(ctx context.Context, req harne
 		}
 		return runtime.Ref.Clone(), nil
 	}
+	if err := p.coordinator(req.At.Node); err != nil {
+		return nil, err
+	}
 	reply, err := p.nodes.Plugins(ctx, req.At.Node, nodewire.PluginRequest{Action: nodewire.PluginRuntimePrepare, Permission: cfg.Permission, Authority: p.authority, CommandID: command, Selection: &selection})
 	if err != nil {
 		return nil, err
@@ -142,6 +159,9 @@ func (p *applicationPlugins) prepareDeployment(ctx context.Context, d plugins.De
 		}
 		return p.library.RecordDeployment(ctx, receipt)
 	}
+	if err := p.coordinator(d.Node); err != nil {
+		return err
+	}
 	reply, err := p.nodes.Plugins(ctx, d.Node, nodewire.PluginRequest{Action: nodewire.PluginPrepare, Authority: p.authority, Deployment: d, Bundle: bundle.Data})
 	if err != nil {
 		return err
@@ -162,6 +182,9 @@ func (p *applicationPlugins) PluginRuntime(ctx context.Context, at harness.Place
 	if at.Node == "" {
 		runtime, err := p.local.Load(ctx, ref)
 		return runtime.Config, runtime.Servers, err
+	}
+	if err := p.coordinator(at.Node); err != nil {
+		return harness.Config{}, nil, err
 	}
 	reply, err := p.nodes.Plugins(ctx, at.Node, nodewire.PluginRequest{Action: nodewire.PluginRuntimeInspect, Authority: p.authority, Selection: &ref.Selection, Runtime: &ref})
 	if err != nil {

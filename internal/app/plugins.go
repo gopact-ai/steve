@@ -32,7 +32,7 @@ func runPluginsCommand(ctx context.Context, args []string, out, diagnostic io.Wr
 		return runPluginSecretCommand(ctx, args, os.Stdin, out, diagnostic)
 	}
 	if len(args) == 0 {
-		return errors.New("usage: steve plugins <preview|prepare|list|show> [flags]")
+		return errors.New("usage: steve plugins <preview|prepare|list|show|secret-put|secret-list> [flags]")
 	}
 	action := args[0]
 	options, err := parsePluginFlags(action, args[1:], diagnostic)

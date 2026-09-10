@@ -32,6 +32,24 @@ type PluginService struct {
 	observations map[string]consoleapi.PluginTargetView
 }
 
+// ErrNoCoordinator means this hub cannot deploy plugins: a node only accepts
+// plugin operations from a committed cluster coordinator, the same footing
+// node-owned sessions are on, and a hub started outside the clustered
+// application has no such identity to present. Saying so here keeps the
+// operator from reading the node's refusal as a fleet problem.
+var ErrNoCoordinator = errors.New("this hub is not a cluster coordinator, so it cannot deploy plugins to nodes")
+
+// coordinator reports whether this hub can carry out a plugin operation on
+// the named machine. Its own machine needs no authority: nothing leaves the
+// process. Another node checks every request against a committed
+// coordinator, which a hub outside the clustered application does not have.
+func (s *PluginService) coordinator(node string) error {
+	if node == "" || s.Authority.ClusterID != "" {
+		return nil
+	}
+	return ErrNoCoordinator
+}
+
 func (s *PluginService) snapshot() (string, map[string]plugins.Installation) {
 	ConfigMu.RLock()
 	defer ConfigMu.RUnlock()
@@ -84,10 +102,14 @@ func (s *PluginService) installationView(ctx context.Context, id string, item pl
 	for _, node := range names {
 		target := consoleapi.PluginTargetView{Node: node, State: "pending"}
 		deployment, err := item.Deployment(id, node)
-		if err != nil {
+		switch {
+		case err != nil:
 			target.State = "unavailable"
 			target.Error = err.Error()
-		} else {
+		case s.coordinator(node) != nil:
+			target.State = "unavailable"
+			target.Error = ErrNoCoordinator.Error()
+		default:
 			hash, err := deployment.Hash()
 			if err != nil {
 				target.Error = err.Error()
@@ -292,6 +314,9 @@ func (s *PluginService) prepareTarget(ctx context.Context, d plugins.Deployment)
 	if err != nil {
 		return plugins.DeploymentReceipt{}, err
 	}
+	if err := s.coordinator(d.Node); err != nil {
+		return plugins.DeploymentReceipt{}, err
+	}
 	var receipt plugins.DeploymentReceipt
 	if d.Node == "" {
 		receipt, err = s.Local.Store.PrepareDeployment(ctx, d, plugins.Environment{})
@@ -312,6 +337,9 @@ func (s *PluginService) PluginSecrets(ctx context.Context, node string) ([]plugi
 	node = s.Admin.nodeKey(node)
 	if node == "" {
 		return s.Local.Store.Secrets()
+	}
+	if err := s.coordinator(node); err != nil {
+		return nil, err
 	}
 	reply, err := s.Admin.Nodes.Plugins(ctx, node, nodewire.PluginRequest{Action: nodewire.PluginSecrets, Authority: s.Authority})
 	return reply.Secrets, err
