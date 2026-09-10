@@ -583,7 +583,7 @@ bash -lc 'make e2e-autonomous'
 
 ## 插件安装与会话版本
 
-插件的包准备、节点部署、启用与会话使用是不同状态。控制台「插件」页显示目标机器的实际回执；查看 [插件操作指南](plugins-local.md) 和 [隔离验收记录](plugins-acceptance.md)。凭据先在执行机器用 `steve plugins secret-put` 从 stdin 写入，管理端仅选择版本引用。不要把密钥放到普通设置、包归档、日志或 MR 中。
+插件往**别的节点**部署需要 hub 作为集群应用运行：节点只接受已提交协调者的插件操作。独立 hub（`steve run`）能导入、能配置、能管自己这台机器，控制台目标状态会写明 `this hub is not a cluster coordinator`。插件的包准备、节点部署、启用与会话使用是不同状态。控制台「插件」页显示目标机器的实际回执；查看 [插件操作指南](plugins-local.md) 和 [隔离验收记录](plugins-acceptance.md)。凭据先在执行机器用 `steve plugins secret-put` 从 stdin 写入，管理端仅选择版本引用。不要把密钥放到普通设置、包归档、日志或 MR 中。
 
 旧会话使用固定的包摘要、技能目录和 MCP 路由。升版或回退只改变新会话；停用只阻止新绑定。撤销项目/节点范围后，核心会拒绝该范围的新准入和会话接回；已发出的外部请求不会被撤销。
 

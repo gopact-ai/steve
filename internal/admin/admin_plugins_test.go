@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/node"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/plugins"
 )
 
@@ -32,7 +33,10 @@ func pluginAdminFixture(t *testing.T) (*PluginService, string) {
 	store := &plugins.Store{Dir: filepath.Join(state, "plugins")}
 	pool := &node.PluginRuntimePool{Store: store, StateDir: state}
 	t.Cleanup(func() { pool.Close() })
-	service := &PluginService{Admin: &Service{Cfg: cfg, Path: path}, Library: &plugins.Library{Store: store, Ledger: book}, Local: pool}
+	// A node accepts plugin operations only from a committed coordinator, so
+	// the service under test carries the authority a real one presents.
+	service := &PluginService{Admin: &Service{Cfg: cfg, Path: path}, Library: &plugins.Library{Store: store, Ledger: book}, Local: pool,
+		Authority: nodewire.SessionAuthority{ClusterID: "cluster-under-test", CoordinatorNodeID: "hub", CoordinatorEpoch: 1, WriterGeneration: 1}}
 	source := t.TempDir()
 	os.Mkdir(filepath.Join(source, "skill"), 0700)
 	manifest := plugins.Manifest{Schema: plugins.Schema, API: plugins.API, ID: "test/admin", Version: "1.0.0", Description: "admin fixture", Skills: map[string]string{"work": "skill"}}
@@ -120,5 +124,71 @@ func TestPluginManagementRefusesUnknownScopeAndUnimportedContent(t *testing.T) {
 	}
 	if len(service.Admin.Cfg.Plugins) != 0 {
 		t.Fatal("failed update changed live configuration")
+	}
+}
+
+// A hub outside the clustered application holds no coordinator authority,
+// and a node checks every plugin operation against one. Discovering that
+// from the node's refusal reads as a fleet problem; the hub says it plainly
+// instead, on the page and at the operation that cannot be carried out.
+func TestPluginDeploymentSaysWhenThisHubIsNoCoordinator(t *testing.T) {
+	service, source := pluginAdminFixture(t)
+	service.Authority = nodewire.SessionAuthority{}
+	ctx := t.Context()
+
+	preview, err := service.PreviewPlugin(ctx, plugins.Source{Kind: "directory", Location: source})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := service.ImportPlugin(ctx, consoleapi.PluginImportRequest{
+		CommandID: "import-1", Project: "p", Digest: preview.Digest, Source: preview.Source,
+	})
+	if err != nil {
+		t.Fatalf("import into the project library needs no node: %v", err)
+	}
+	view, err := service.Plugins(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision := view.Revision
+	service.Admin.Cfg.Nodes = map[string]config.Node{"worker": {Addr: "127.0.0.1:1", Token: "t"}}
+	if _, err := service.UpdatePlugin(ctx, "one", consoleapi.PluginUpdateRequest{
+		BaseRevision: revision,
+		Installation: plugins.Installation{PackageID: record.Manifest.ID, Digest: record.Digest,
+			Enabled: true, Projects: []string{"p"},
+			Targets: map[string]plugins.Configuration{"worker": {}}},
+	}); err != nil {
+		t.Fatalf("saving the wanted configuration needs no node: %v", err)
+	}
+
+	// The page names the reason on the target that cannot be prepared.
+	view, err = service.Plugins(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(view.Installations) != 1 || len(view.Installations[0].Targets) != 1 {
+		t.Fatalf("view = %+v", view.Installations)
+	}
+	target := view.Installations[0].Targets[0]
+	if target.State != "unavailable" || !strings.Contains(target.Error, "not a cluster coordinator") {
+		t.Fatalf("target = %+v", target)
+	}
+
+	// Preparing reports the same reason on the target rather than sending a
+	// request the node would refuse, and asking that node for its
+	// credential references says it too.
+	prepared, err := service.PreparePlugin(ctx, "one")
+	if err != nil {
+		t.Fatalf("prepare returned %v", err)
+	}
+	if len(prepared.Targets) != 1 || !strings.Contains(prepared.Targets[0].Error, "not a cluster coordinator") {
+		t.Fatalf("prepared = %+v", prepared.Targets)
+	}
+	if _, err := service.PluginSecrets(ctx, "worker"); !errors.Is(err, ErrNoCoordinator) {
+		t.Fatalf("secrets returned %v", err)
+	}
+	// The hub's own machine is not gated: nothing leaves the process.
+	if err := service.coordinator(""); err != nil {
+		t.Fatalf("the local machine was gated: %v", err)
 	}
 }
