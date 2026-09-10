@@ -37,6 +37,14 @@ type realFleet struct {
 	assembler *capability.Assembler
 }
 
+// realHome is where a project of the real-model scenarios lives on a node:
+// beside the machine's general work rather than inside it. Two projects may
+// not claim overlapping directories on one machine, and the node itself is
+// homed at the work directory.
+func realHome(nodeName, project string) string {
+	return machines.Node(nodeName).Home + "/steve-projects/" + project
+}
+
 func newRealFleet(t *testing.T) *realFleet {
 	t.Helper()
 	reg := registry(t)
@@ -74,8 +82,8 @@ func newRealFleet(t *testing.T) *realFleet {
 	dir := t.TempDir()
 	projects, attempts, artifacts := declareProjects(t, dir, reg,
 		project.Project{ID: "real", Home: project.Home{Path: hubWork}},
-		project.Project{ID: "real-a", Home: project.Home{Node: nodeA, Path: work(nodeA) + "/real-a"}},
-		project.Project{ID: "real-b", Home: project.Home{Node: nodeB, Path: work(nodeB) + "/real-b"}},
+		project.Project{ID: "real-a", Home: project.Home{Node: nodeA, Path: realHome(nodeA, "real-a")}},
+		project.Project{ID: "real-b", Home: project.Home{Node: nodeB, Path: realHome(nodeB, "real-b")}},
 	)
 	tasks, err := task.OpenLedger(ledgerOf(t, dir), "")
 	if err != nil {
@@ -92,7 +100,7 @@ func newRealFleet(t *testing.T) *realFleet {
 	})
 
 	return &realFleet{
-		fleet: &fleet{catalog: catalog, registry: reg, roster: fleetRoster, manager: manager,
+		fleet: &fleet{book: ledgerOf(t, dir), catalog: catalog, registry: reg, roster: fleetRoster, manager: manager,
 			tasks: tasks, plans: plans, view: view, projects: projects, attempts: attempts, artifacts: artifacts},
 		assembler: capability.NewAssembler(nil),
 	}
@@ -119,7 +127,7 @@ func TestRealClaudePlansRealCodexExecutesOnTheNodes(t *testing.T) {
 	f := newRealFleet(t)
 	f.registry.EnsureConnected(t.Context())
 	for _, machine := range []string{nodeA, nodeB} {
-		dirs := shellPath(work(machine)+"/real-a") + " " + shellPath(work(machine)+"/real-b")
+		dirs := shellPath(realHome(machine, "real-a")) + " " + shellPath(realHome(machine, "real-b"))
 		_, _ = onNode(t, machine, "rm -rf "+dirs+"; mkdir -p "+dirs)
 	}
 
@@ -158,8 +166,13 @@ func TestRealClaudePlansRealCodexExecutesOnTheNodes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Minute)
 	defer cancel()
 	started := time.Now()
-	goal := "/plan 做一个最小的 Go 模块 calc：在有 gpu 的机器上实现 Add(a, b int) int 并写单元测试；" +
-		"在有 internal-net 的机器上写一份 calc 的 README.md 说明 API 和用法。" +
+	// The capability tokens are given literally. A planner reads them off
+	// the fleet, and a bare word is a tag: a step asking for "hardware:gpu"
+	// names a different kind of capability than the tag these machines
+	// declare, and has nowhere to run.
+	goal := "/plan 做一个最小的 Go 模块 calc：在声明了 gpu 的机器上实现 Add(a, b int) int 并写单元测试；" +
+		"在声明了 internal-net 的机器上写一份 calc 的 README.md 说明 API 和用法。" +
+		"两个步骤的 requires 只写这两个词本身（gpu / internal-net），不要加前缀。" +
 		"每台机器各自在自己的工作目录里做，不需要互相拷贝文件。" +
 		"Go 在 /usr/local/go/bin/go。验证用命令，不要用 none。"
 	result, err := coordinator.Handle(ctx, turn.Request{
@@ -243,7 +256,7 @@ func TestRealClaudeDelegatesToTheNodeThatCan(t *testing.T) {
 	requireReal(t)
 	f := newRealFleet(t)
 	f.registry.EnsureConnected(t.Context())
-	_, _ = onNode(t, nodeB, "mkdir -p "+shellPath(work(nodeB)+"/real-b")+" && rm -f "+shellPath(work(nodeB)+"/real-b/staged.txt"))
+	_, _ = onNode(t, nodeB, "mkdir -p "+shellPath(realHome(nodeB, "real-b"))+" && rm -f "+shellPath(realHome(nodeB, "real-b")+"/staged.txt"))
 
 	gate, err := agentmcp.New(0)
 	if err != nil {
