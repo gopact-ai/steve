@@ -12,6 +12,7 @@ package mesh
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net"
 	"net/http"
@@ -72,8 +73,8 @@ func requireMesh(t *testing.T) *fleetlab.Lab {
 		t.Skip("set STEVE_MESH_E2E=1 to run the three-host suite")
 	}
 	if machinesErr != nil {
-		if reason := fleetlab.Unavailable(); reason != "" {
-			t.Skipf("no machines to run on: %s", reason)
+		if errors.Is(machinesErr, fleetlab.ErrUnavailable) {
+			t.Skipf("no machines to run on: %v", machinesErr)
 		}
 		t.Fatalf("the fleet did not come up: %v", machinesErr)
 	}
@@ -82,6 +83,9 @@ func requireMesh(t *testing.T) *fleetlab.Lab {
 
 // work is the directory a node's projects and sessions are homed at.
 func work(nodeName string) string { return machines.Work(nodeName) }
+
+// shellPath keeps a lab-provided path literal in a node-side command.
+func shellPath(path string) string { return "'" + strings.ReplaceAll(path, "'", "'\"'\"'") + "'" }
 
 func registry(t *testing.T) *node.Registry {
 	t.Helper()

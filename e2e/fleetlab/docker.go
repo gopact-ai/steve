@@ -1,6 +1,7 @@
 package fleetlab
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/sha256"
 	"embed"
@@ -374,17 +375,12 @@ func dialable(addr string) error {
 // it outlasts the deadline: a docker call that hangs must not hang the
 // suite with it.
 func run(within time.Duration, name string, args ...string) (string, error) {
-	cmd := exec.Command(name, args...)
-	done := make(chan struct{})
-	timer := time.AfterFunc(within, func() {
-		if cmd.Process != nil {
-			_ = cmd.Process.Kill()
-		}
-		close(done)
-	})
+	ctx, cancel := context.WithTimeout(context.Background(), within)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	cmd.WaitDelay = time.Second
 	out, err := cmd.CombinedOutput()
-	if !timer.Stop() {
-		<-done
+	if ctx.Err() != nil {
 		return string(out), fmt.Errorf("%s timed out after %s", name, within)
 	}
 	return string(out), err

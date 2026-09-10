@@ -19,9 +19,11 @@
 package fleetlab
 
 import (
+	"errors"
 	"fmt"
+	"net"
 	"os"
-	"os/exec"
+	"path"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +70,10 @@ type Lab struct {
 	names []string
 }
 
+// ErrUnavailable means no container runtime is available. Invalid lab
+// configuration and failures while starting machines are ordinary errors.
+var ErrUnavailable = errors.New("fleetlab unavailable")
+
 // Unavailable reports why a lab cannot run here, or "" when one can. A
 // suite calls it before Open so it can skip with a reason rather than
 // fail as if the code under test were broken.
@@ -96,8 +102,8 @@ func Open(specs ...Spec) (*Lab, error) {
 	}
 	if back == nil {
 		if reason := dockerUnavailable(); reason != "" {
-			return nil, fmt.Errorf("fleetlab: %s; set the %s variables to use machines you already have",
-				reason, remoteEnvExample(specs[0].Name))
+			return nil, fmt.Errorf("%w: %s; set the %s variables to use machines you already have",
+				ErrUnavailable, reason, remoteEnvExample(specs[0].Name))
 		}
 		if back, err = startDocker(specs); err != nil {
 			return nil, fmt.Errorf("fleetlab: %w", err)
@@ -110,10 +116,10 @@ func Open(specs ...Spec) (*Lab, error) {
 // test's lifetime. It skips when there is nothing to run machines on.
 func Start(t testing.TB, specs ...Spec) *Lab {
 	t.Helper()
-	if reason := Unavailable(); reason != "" && os.Getenv(remoteEnv(specs[0].Name, "ADDR")) == "" {
-		t.Skipf("fleetlab: %s", reason)
-	}
 	lab, err := Open(specs...)
+	if errors.Is(err, ErrUnavailable) {
+		t.Skipf("%v", err)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -220,13 +226,17 @@ func attachRemote(specs []Spec) (backend, error) {
 			continue
 		}
 		home := strings.TrimSpace(os.Getenv(remoteEnv(spec.Name, "HOME")))
-		if home == "" {
-			home = "~"
+		if !path.IsAbs(home) {
+			return nil, fmt.Errorf("%s must be an absolute path", remoteEnv(spec.Name, "HOME"))
+		}
+		token := strings.TrimSpace(os.Getenv(remoteEnv(spec.Name, "TOKEN")))
+		if token == "" {
+			return nil, fmt.Errorf("%s must not be empty", remoteEnv(spec.Name, "TOKEN"))
 		}
 		nodes[spec.Name] = Node{
 			Name:  spec.Name,
 			Addr:  addr,
-			Token: strings.TrimSpace(os.Getenv(remoteEnv(spec.Name, "TOKEN"))),
+			Token: token,
 			Home:  home,
 			Work:  home + "/steve-work",
 		}
@@ -248,9 +258,8 @@ func (r *remote) node(name string) (Node, bool) { n, ok := r.nodes[name]; return
 
 func (r *remote) exec(name, script string) (string, error) {
 	host := hostOf(r.nodes[name].Addr)
-	cmd := exec.Command("ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-n", host, script)
-	out, err := cmd.CombinedOutput()
-	return string(out), err
+	return run(2*time.Minute, "ssh", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no",
+		"-o", "ConnectTimeout=10", "-n", host, script)
 }
 
 func (r *remote) stop(name string) error {
@@ -274,8 +283,8 @@ func (r *remote) close() {}
 
 // hostOf is the host half of host:port, for ssh.
 func hostOf(addr string) string {
-	if i := strings.LastIndex(addr, ":"); i > 0 {
-		return addr[:i]
+	if host, _, err := net.SplitHostPort(addr); err == nil {
+		return host
 	}
 	return addr
 }

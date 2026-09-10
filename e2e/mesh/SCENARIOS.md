@@ -4,7 +4,7 @@
 
 机器由 [e2e/fleetlab](../fleetlab) 提供，默认一台节点一个容器：套件自己编译 `steve-node` 与 `mockagent`、构建镜像（只在本机第一次跑时构建）、起容器、跑完删干净。所以这里不写任何地址，也不需要事先准备机器——有 Docker 就能跑，没有就整套跳过并说明原因。
 
-要跑真模型场景，得把机器换成装了真 agent 和凭据的机器：给每个节点设 `STEVE_LAB_NODE_A_ADDR` / `_TOKEN` / `_HOME`（node-b 同理），套件就用它们而不起容器，节点侧命令走 ssh，停起节点走 `~/steve-bin/nodectl`（可用 `STEVE_LAB_NODECTL` 改）。一台 node 一次只服务一个 hub：跑之前先停掉正在用它们的 hub（干净停掉即交还；若 hub 是崩掉的，node 会替它保留 10 分钟，或在 node 上 `steve-node adopt hub-e2e`），否则握手被拒（`this node is served by hub …` / `belongs to hub …`），套件会报 "node is down"。
+要跑真模型场景，得把机器换成装了真 agent 和凭据的机器：给每个节点设 `STEVE_LAB_NODE_A_ADDR` / `_TOKEN` / `_HOME`（node-b 同理，`_HOME` 必须是该机器上的绝对路径），套件就用它们而不起容器，节点侧命令走 ssh，停起节点走 `~/steve-bin/nodectl`（可用 `STEVE_LAB_NODECTL` 改）。一台 node 一次只服务一个 hub：跑之前先停掉正在用它们的 hub（干净停掉即交还；若 hub 是崩掉的，node 会替它保留 10 分钟，或在 node 上 `steve-node adopt hub-e2e`），否则握手被拒（`this node is served by hub …` / `belongs to hub …`），套件会报 "node is down"。
 
 A1–A5 连接层；B1/B3 读模型与两个渲染器（B2 变更流由 C1 覆盖）；C1+C2 跨机放置与实测并行重叠；
 C3 命令验证在 node 上跑（在节点上核实标记文件）+ 跨机 agent 审核 FAIL 有约束力；C4 无处可跑指名原因；
