@@ -149,8 +149,25 @@ func TestA1MissingHarnessIsReportedNotHidden(t *testing.T) {
 		Harnesses: map[string]node.HarnessSpec{"absent": {Command: "definitely-not-installed"}},
 	})
 	ctx, cancel := context.WithCancel(t.Context())
-	t.Cleanup(cancel)
-	go func() { _ = broken.Serve(ctx) }()
+	done := make(chan error, 1)
+	go func() { done <- broken.Serve(ctx) }()
+	t.Cleanup(func() {
+		// The registry closes first. Join Serve so its handlers and
+		// background writers finish before TempDir removes the state.
+		cancel()
+		var serveErr error
+		select {
+		case serveErr = <-done:
+		case <-time.After(5 * time.Second):
+			t.Error("fixture node did not stop serving")
+			// A slow shutdown is a failure, but still owns its state.
+			// The test process timeout bounds a server that never exits.
+			serveErr = <-done
+		}
+		if serveErr != nil {
+			t.Errorf("fixture node serve: %v", serveErr)
+		}
+	})
 	for range 100 {
 		if addr := broken.Addr(); addr != "" && !strings.HasSuffix(addr, ":0") {
 			break
