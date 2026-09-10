@@ -7,6 +7,7 @@ import (
 	"embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -33,6 +34,8 @@ const containerHome = "/home/steve"
 
 // docker is a lab whose machines are containers this process started.
 type docker struct {
+	ctx        context.Context
+	gateway    string
 	network    string
 	nodes      map[string]Node
 	containers map[string]string
@@ -40,11 +43,13 @@ type docker struct {
 }
 
 // dockerUnavailable reports why a container lab cannot run here, or "".
-func dockerUnavailable() string {
+func dockerUnavailable() string { return dockerUnavailableContext(context.Background()) }
+
+func dockerUnavailableContext(ctx context.Context) string {
 	if _, err := exec.LookPath("docker"); err != nil {
 		return "docker is not installed"
 	}
-	out, err := run(30*time.Second, "docker", "version", "--format", "{{.Server.Version}}")
+	out, err := runContext(ctx, 30*time.Second, "docker", "version", "--format", "{{.Server.Version}}")
 	if err != nil {
 		return "docker is installed but not answering: " + text.FirstLine(strings.TrimSpace(out))
 	}
@@ -54,44 +59,51 @@ func dockerUnavailable() string {
 // startDocker builds the node image if this machine lacks it, then starts
 // one container per spec on a private network.
 func startDocker(specs []Spec) (backend, error) {
-	root, err := moduleRoot()
+	return startDockerContext(context.Background(), specs, "./cmd/mockagent")
+}
+
+func startDockerContext(ctx context.Context, specs []Spec, agentPackage string) (_ *docker, err error) {
+	root, err := moduleRootContext(ctx)
 	if err != nil {
 		return nil, err
 	}
-	arch := serverArch()
+	arch, err := serverArchContext(ctx)
+	if err != nil {
+		return nil, err
+	}
 	work, err := os.MkdirTemp("", "steve-fleetlab-")
 	if err != nil {
 		return nil, err
 	}
-	lab := &docker{nodes: map[string]Node{}, containers: map[string]string{}, work: work}
-	tag, err := buildImage(work)
+	lab := &docker{ctx: ctx, nodes: map[string]Node{}, containers: map[string]string{}, work: work}
+	defer func() {
+		if err != nil {
+			err = errors.Join(err, lab.remove())
+		}
+	}()
+	tag, err := buildImage(ctx, work)
 	if err != nil {
-		lab.close()
 		return nil, err
 	}
-	binaries, err := buildBinaries(root, work, arch)
+	binaries, err := buildBinaries(ctx, root, work, arch, agentPackage)
 	if err != nil {
-		lab.close()
 		return nil, err
 	}
 	runID := token(6)
 	lab.network = "steve-lab-" + runID
-	if out, err := run(60*time.Second, "docker", "network", "create", lab.network); err != nil {
-		lab.network = ""
-		lab.close()
+	if out, err := runDockerMutation(ctx, 60*time.Second, "network", "create", lab.network); err != nil {
 		return nil, fmt.Errorf("create network: %w\n%s", err, out)
 	}
 	// Both this process and the other containers reach a node through the
 	// network's gateway, so the address the hub configures is the same one
 	// a peer node dials for a direct artifact transfer.
-	gateway, err := networkGateway(lab.network)
+	gateway, err := networkGateway(ctx, lab.network)
 	if err != nil {
-		lab.close()
 		return nil, err
 	}
+	lab.gateway = gateway
 	for _, spec := range specs {
 		if err := lab.startNode(spec, runID, tag, gateway, binaries); err != nil {
-			lab.close()
 			return nil, err
 		}
 	}
@@ -102,14 +114,14 @@ func startDocker(specs []Spec) (backend, error) {
 // the binaries this suite just built, a config, and a started node.
 func (d *docker) startNode(spec Spec, runID, tag, gateway string, binaries map[string]string) error {
 	name := "steve-lab-" + runID + "-" + spec.Name
-	out, err := run(120*time.Second, "docker", "run", "--detach", "--name", name,
+	d.containers[spec.Name] = name
+	out, err := runDockerMutation(d.ctx, 120*time.Second, "run", "--detach", "--name", name,
 		"--network", d.network, "--hostname", spec.Name,
-		"--publish", "0.0.0.0::"+nodePort, tag)
+		"--publish", net.JoinHostPort(gateway, "")+":"+nodePort, tag)
 	if err != nil {
 		return fmt.Errorf("start %s: %w\n%s", spec.Name, err, out)
 	}
-	d.containers[spec.Name] = name
-	published, err := publishedPort(name)
+	published, err := publishedPort(d.ctx, name)
 	if err != nil {
 		return err
 	}
@@ -125,18 +137,18 @@ func (d *docker) startNode(spec Spec, runID, tag, gateway string, binaries map[s
 		return err
 	}
 	for _, binary := range []string{"steve-node", "mockagent"} {
-		if out, err := run(120*time.Second, "docker", "cp", binaries[binary], name+":"+containerHome+"/steve-bin/"+binary); err != nil {
+		if out, err := runContext(d.ctx, 120*time.Second, "docker", "cp", binaries[binary], name+":"+containerHome+"/steve-bin/"+binary); err != nil {
 			return fmt.Errorf("copy %s to %s: %w\n%s", binary, spec.Name, err, out)
 		}
 	}
-	if out, err := run(60*time.Second, "docker", "cp", config, name+":"+containerHome+"/node.json"); err != nil {
+	if out, err := runContext(d.ctx, 60*time.Second, "docker", "cp", config, name+":"+containerHome+"/node.json"); err != nil {
 		return fmt.Errorf("copy config to %s: %w\n%s", spec.Name, err, out)
 	}
 	d.nodes[spec.Name] = node
 	if err := d.start(spec.Name); err != nil {
 		return err
 	}
-	if err := waitDialable(node.Addr, 60*time.Second); err != nil {
+	if err := waitDialableContext(d.ctx, node.Addr, 60*time.Second); err != nil {
 		log, _ := d.exec(spec.Name, "tail -n 40 "+containerHome+"/steve-node.log")
 		return fmt.Errorf("%s never answered: %w\n%s", spec.Name, err, log)
 	}
@@ -184,7 +196,7 @@ func (d *docker) writeConfig(spec Spec, node Node) (string, error) {
 func (d *docker) node(name string) (Node, bool) { n, ok := d.nodes[name]; return n, ok }
 
 func (d *docker) exec(name, script string) (string, error) {
-	return run(2*time.Minute, "docker", "exec", d.containers[name], "bash", "-lc", script)
+	return runContext(d.ctx, 2*time.Minute, "docker", "exec", d.containers[name], "bash", "-lc", script)
 }
 
 func (d *docker) stop(name string) error {
@@ -206,27 +218,21 @@ func (d *docker) start(name string) error {
 // close removes what this lab created. Every step is attempted even when
 // an earlier one fails: a leaked container costs the next run its name.
 func (d *docker) close() {
-	for _, container := range d.containers {
-		_, _ = run(60*time.Second, "docker", "rm", "--force", "--volumes", container)
-	}
-	if d.network != "" {
-		_, _ = run(60*time.Second, "docker", "network", "rm", d.network)
-	}
-	if d.work != "" {
-		_ = os.RemoveAll(d.work)
+	if err := d.remove(); err != nil {
+		fmt.Fprintln(os.Stderr, "fleetlab cleanup:", err)
 	}
 }
 
 // buildImage builds the node image unless this machine already has it.
 // The tag carries a digest of the image's own sources, so an edit to the
 // Dockerfile or nodectl produces a new tag instead of a stale hit.
-func buildImage(work string) (string, error) {
+func buildImage(ctx context.Context, work string) (string, error) {
 	files, err := imageFiles()
 	if err != nil {
 		return "", err
 	}
 	tag := "steve-fleetlab-node:" + imageDigest(files)
-	if _, err := run(30*time.Second, "docker", "image", "inspect", tag); err == nil {
+	if _, err := runContext(ctx, 30*time.Second, "docker", "image", "inspect", tag); err == nil {
 		return tag, nil
 	}
 	context := filepath.Join(work, "image")
@@ -244,7 +250,7 @@ func buildImage(work string) (string, error) {
 	}
 	// The first build on a machine installs packages, which is slower than
 	// anything else the lab does and happens once.
-	if out, err := run(10*time.Minute, "docker", "build", "--tag", tag, context); err != nil {
+	if out, err := runContext(ctx, 10*time.Minute, "docker", "build", "--tag", tag, context); err != nil {
 		return "", fmt.Errorf("build the node image: %w\n%s", err, out)
 	}
 	return tag, nil
@@ -282,14 +288,14 @@ func imageDigest(files map[string][]byte) string {
 
 // buildBinaries compiles what a node runs, for the architecture the
 // Docker server runs on rather than this process's own.
-func buildBinaries(root, work, arch string) (map[string]string, error) {
+func buildBinaries(ctx context.Context, root, work, arch, agentPackage string) (map[string]string, error) {
 	built := map[string]string{}
 	for _, target := range []struct{ name, pkg string }{
 		{"steve-node", "./cmd/steve-node"},
-		{"mockagent", "./cmd/mockagent"},
+		{"mockagent", agentPackage},
 	} {
 		path := filepath.Join(work, target.name)
-		cmd := exec.Command("go", "build", "-o", path, target.pkg)
+		cmd := exec.CommandContext(ctx, "go", "build", "-o", path, target.pkg)
 		cmd.Dir = root
 		cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOOS=linux", "GOARCH="+arch)
 		if out, err := cmd.CombinedOutput(); err != nil {
@@ -300,11 +306,11 @@ func buildBinaries(root, work, arch string) (map[string]string, error) {
 	return built, nil
 }
 
-// moduleRoot is the repository the suite is running from, found through
+// moduleRootContext is the repository the suite is running from, found through
 // the go tool so it does not depend on where a test's working directory
 // happens to be.
-func moduleRoot() (string, error) {
-	out, err := run(30*time.Second, "go", "env", "GOMOD")
+func moduleRootContext(ctx context.Context) (string, error) {
+	out, err := runContext(ctx, 30*time.Second, "go", "env", "GOMOD")
 	if err != nil {
 		return "", fmt.Errorf("locate the module: %w\n%s", err, out)
 	}
@@ -315,18 +321,22 @@ func moduleRoot() (string, error) {
 	return filepath.Dir(gomod), nil
 }
 
-// serverArch is the architecture of the machine running the containers,
+// serverArchContext is the architecture of the machine running the containers,
 // which is not this process's when Docker is remote.
-func serverArch() string {
-	out, err := run(30*time.Second, "docker", "version", "--format", "{{.Server.Arch}}")
-	if arch := strings.TrimSpace(out); err == nil && arch != "" {
-		return arch
+func serverArchContext(ctx context.Context) (string, error) {
+	out, err := runContext(ctx, 30*time.Second, "docker", "version", "--format", "{{.Server.Arch}}")
+	arch := strings.TrimSpace(out)
+	if err != nil {
+		return "", fmt.Errorf("Docker server architecture: %w: %s", err, out)
 	}
-	return "amd64"
+	if arch == "" {
+		return "", errors.New("Docker server returned no architecture")
+	}
+	return arch, nil
 }
 
-func networkGateway(network string) (string, error) {
-	out, err := run(30*time.Second, "docker", "network", "inspect", network,
+func networkGateway(ctx context.Context, network string) (string, error) {
+	out, err := runContext(ctx, 30*time.Second, "docker", "network", "inspect", network,
 		"--format", "{{(index .IPAM.Config 0).Gateway}}")
 	gateway := strings.TrimSpace(out)
 	if err != nil || gateway == "" {
@@ -338,8 +348,8 @@ func networkGateway(network string) (string, error) {
 // publishedPort is the port on the lab's host that reaches a container's
 // node. Docker prints one line per protocol family; the first with a port
 // is the one to dial.
-func publishedPort(container string) (string, error) {
-	out, err := run(30*time.Second, "docker", "port", container, nodePort+"/tcp")
+func publishedPort(ctx context.Context, container string) (string, error) {
+	out, err := runContext(ctx, 30*time.Second, "docker", "port", container, nodePort+"/tcp")
 	if err != nil {
 		return "", fmt.Errorf("read the published port of %s: %w\n%s", container, err, out)
 	}
@@ -352,36 +362,42 @@ func publishedPort(container string) (string, error) {
 }
 
 func waitDialable(addr string, within time.Duration) error {
-	deadline := time.Now().Add(within)
-	var last error
-	for time.Now().Before(deadline) {
-		if last = dialable(addr); last == nil {
-			return nil
-		}
-		time.Sleep(200 * time.Millisecond)
-	}
-	return last
+	return waitDialableContext(context.Background(), addr, within)
 }
-
-func dialable(addr string) error {
-	conn, err := net.DialTimeout("tcp", addr, 3*time.Second)
-	if err != nil {
-		return err
+func waitDialableContext(parent context.Context, addr string, within time.Duration) error {
+	ctx, cancel := context.WithTimeout(parent, within)
+	defer cancel()
+	ticker := time.NewTicker(200 * time.Millisecond)
+	defer ticker.Stop()
+	dialer := net.Dialer{Timeout: 3 * time.Second}
+	for {
+		conn, err := dialer.DialContext(ctx, "tcp", addr)
+		if err == nil {
+			return conn.Close()
+		}
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("wait for %s: %w", addr, ctx.Err())
+		case <-ticker.C:
+		}
 	}
-	return conn.Close()
 }
 
 // run executes a command and returns its combined output, killing it if
 // it outlasts the deadline: a docker call that hangs must not hang the
 // suite with it.
 func run(within time.Duration, name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), within)
+	return runContext(context.Background(), within, name, args...)
+}
+
+func runContext(parent context.Context, within time.Duration, name string, args ...string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, within)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.WaitDelay = time.Second
 	out, err := cmd.CombinedOutput()
 	if ctx.Err() != nil {
-		return string(out), fmt.Errorf("%s timed out after %s", name, within)
+		return string(out), fmt.Errorf("%s timed out after %s: %w", name, within, ctx.Err())
 	}
 	return string(out), err
 }
