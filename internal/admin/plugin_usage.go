@@ -136,6 +136,29 @@ func (s *PluginService) PluginUsage(ctx context.Context, id string) (consoleapi.
 	return out, nil
 }
 
+// coordinatorForInstallation reports whether this hub can act on every
+// machine an installation has ever been deployed to. A mutating operation
+// leans on the usage list, and that list drops the nodes this hub cannot
+// reach — so without this check a close or a removal would fail on the
+// gap instead of the reason for it.
+func (s *PluginService) coordinatorForInstallation(ctx context.Context, id string) error {
+	_, items := s.snapshot()
+	item, exists := items[id]
+	if !exists {
+		return nil
+	}
+	nodes, err := s.installationNodes(ctx, id, item)
+	if err != nil {
+		return nil
+	}
+	for node := range nodes {
+		if err := s.coordinator(node); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *PluginService) installationNodes(ctx context.Context, id string, item plugins.Installation) (map[string]bool, error) {
 	history, err := s.Library.InstallationNodes(ctx, id)
 	if err != nil {
@@ -171,6 +194,9 @@ func (s *PluginService) RemovePlugin(ctx context.Context, id string, req console
 	}
 	usage, err := s.PluginUsage(ctx, id)
 	if err != nil {
+		return consoleapi.PluginsView{}, err
+	}
+	if err := s.coordinatorForInstallation(ctx, id); err != nil {
 		return consoleapi.PluginsView{}, err
 	}
 	if len(usage.References) > 0 || len(usage.Errors) > 0 {
@@ -277,6 +303,9 @@ func (s *PluginService) ClosePluginRuntime(ctx context.Context, id, runtimeID st
 	}
 	usage, err := s.PluginUsage(ctx, id)
 	if err != nil {
+		return usage, err
+	}
+	if err := s.coordinatorForInstallation(ctx, id); err != nil {
 		return usage, err
 	}
 	var ref *plugins.RuntimeRef

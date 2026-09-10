@@ -217,4 +217,30 @@ func TestPluginDeploymentSaysWhenThisHubIsNoCoordinator(t *testing.T) {
 	if !strings.Contains(usage.Errors["worker"], "not a cluster coordinator") {
 		t.Fatalf("usage errors = %+v", usage.Errors)
 	}
+
+	// The usage list drops the machines this hub cannot reach, so an
+	// operation that leans on it must not fail on the gap: closing a
+	// runtime and removing the installation report the reason instead.
+	if _, err := service.ClosePluginRuntime(ctx, "one", "whatever"); !errors.Is(err, ErrNoCoordinator) {
+		t.Fatalf("closing a runtime returned %v", err)
+	}
+	// Removal comes after deactivation, as the documented flow has it.
+	current, err := service.Plugins(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.UpdatePlugin(ctx, "one", consoleapi.PluginUpdateRequest{
+		BaseRevision: current.Revision,
+		Installation: plugins.Installation{PackageID: record.Manifest.ID, Digest: record.Digest,
+			Projects: []string{"p"}, Targets: map[string]plugins.Configuration{"worker": {}}},
+	}); err != nil {
+		t.Fatalf("deactivating needs no node: %v", err)
+	}
+	current, err = service.Plugins(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := service.RemovePlugin(ctx, "one", consoleapi.PluginRemoveRequest{BaseRevision: current.Revision}); !errors.Is(err, ErrNoCoordinator) {
+		t.Fatalf("removal returned %v", err)
+	}
 }
