@@ -278,7 +278,7 @@ steve peer-init -config /home/me/steve-bin/config.json -storage-level restricted
 steve run -config /home/me/steve-bin/config.json
 ```
 
-`peer-init` 要求支持进程锁的 Unix 平台；其他平台会明确拒绝初始化。它保留原配置、项目、任务账本、owner 和 hub ID；以原 hub ID 作为 cluster ID，原来采用该 hub 的节点仍使用原凭据。命令生成独立 peer 身份、私有证书及 `<config>.cluster.json`，随后 `steve run` 自动发现此文件并激活集群应用。原本的本机 harness 和 MCP 定义写入该 peer 的私有 worker 配置；固定适配器在启动时按原版本解析。已有会话和运行目录保留，新执行遵循集群会话的准入规则。输出只有配置路径和公开身份。控制台沿用原来的 token，要求至少 32 个字符且不含空白，监听地址必须为 loopback；需要调整控制台监听时可在初始化时传 `-ui-address 127.0.0.1:7710`。
+`peer-init` 要求支持进程锁的 Unix 平台；其他平台会明确拒绝初始化。它保留原配置、项目、任务账本、owner 和 hub ID；以原 hub ID 作为 cluster ID，原来采用该 hub 的节点仍使用原凭据。命令生成独立 peer 身份、私有证书及 `<config>.cluster.json`，随后 `steve run` 自动发现此文件并激活集群应用。原本的本机 harness 和 MCP 定义写入该 peer 的私有 worker 配置；固定适配器在启动时按原版本解析。原有 harness 权限策略作为共享执行策略保留，在协调者切换和配置修改后仍生效；未配置策略的新工具仍默认为只读。已有会话和运行目录保留，新执行遵循集群会话的准入规则。输出只有配置路径和公开身份。控制台沿用原来的 token，要求至少 32 个字符且不含空白，监听地址必须为 loopback；需要调整控制台监听时可在初始化时传 `-ui-address 127.0.0.1:7710`。
 
 必须显式选择 `restricted` 或 `sealed`，表示这台机器可保存私有协作账本。默认 Raft 和 peer HTTPS 在 loopback 自动选择端口，适用于单个协调者管理远端 worker；若要加入其他完整 peer，初始化时用 `-raft-address <可达地址>:7801 -peer-address <可达地址>:7802` 指定本机可绑定且互相可达的地址。`peer-init` 只初始化第一个 peer；添加其他成员使用控制台现有的机群加入流程。
 

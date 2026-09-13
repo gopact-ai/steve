@@ -224,6 +224,8 @@ type ProjectHome struct {
 
 type Config struct {
 	Plugins map[string]plugins.Installation `json:"plugins,omitempty"`
+	// RuntimePermissions are shared execution policies, without local commands.
+	RuntimePermissions map[string]string `json:"-"`
 	// RuntimeHome keeps the shared home workspace anchored to its physical
 	// node while this process uses its own local identity files.
 	RuntimeHome *ProjectHome         `json:"-"`
@@ -812,7 +814,14 @@ func (c *Config) HarnessManager() (*harness.Manager, error) {
 			Command: item.Command, Args: item.Args, ProcessDir: item.ProcessDir, Env: item.Env, Permission: item.Permission,
 		}
 	}
-	return harness.NewManager(configs)
+	manager, err := harness.NewManager(configs)
+	if err != nil {
+		return nil, err
+	}
+	if err := manager.SetRemotePermissions(c.RuntimePermissions); err != nil {
+		return nil, err
+	}
+	return manager, nil
 }
 
 // NodeConfigs is what the registry needs to reach each remote machine.
