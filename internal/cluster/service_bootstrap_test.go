@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/hubid"
+	"github.com/gopact-ai/steve/internal/node"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 )
 
@@ -27,6 +29,50 @@ func serviceFixture(t *testing.T) (ServiceBootstrap, string) {
 		t.Fatal(err)
 	}
 	return ServiceBootstrap{ConfigPath: cfg, StorageLevel: "restricted"}, state
+}
+
+func TestServiceBootstrapPublishesLocalHarnessAndMCPDefinitions(t *testing.T) {
+	options, _ := serviceFixture(t)
+	cfg, err := config.Load(options.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Harnesses["mock"] = config.Harness{Command: "/bin/false", Args: []string{"--fixture"}, Env: []string{"FIXTURE_AUTH=private-test-value"}, ProcessDir: "/fixture/runtime", Slots: 2, Permission: "auto"}
+	cfg.MCPServers = map[string]config.MCPServer{
+		"stdio": {Command: "/bin/false", Args: []string{"--mcp"}, Env: map[string]string{"FIXTURE_TOKEN": "private-test-value"}},
+		"http":  {Type: "http", URL: "https://fixture.invalid/mcp", Headers: map[string]string{"Authorization": "Bearer private-test-value"}},
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(options.ConfigPath, raw, 0600); err != nil {
+		t.Fatal(err)
+	}
+	path, err := PrepareServiceCluster(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, err := LoadClusterPeerConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err = os.ReadFile(peer.WorkerConfigFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var worker node.ServerConfig
+	if err := json.Unmarshal(raw, &worker); err != nil {
+		t.Fatal(err)
+	}
+	wantHarness := node.HarnessSpec{Command: "/bin/false", Args: []string{"--fixture"}, Env: []string{"FIXTURE_AUTH=private-test-value"}, ProcessDir: "/fixture/runtime", Slots: 2}
+	wantMCP := map[string]node.MCPSpec{
+		"stdio": {Command: "/bin/false", Args: []string{"--mcp"}, Env: map[string]string{"FIXTURE_TOKEN": "private-test-value"}},
+		"http":  {Type: "http", URL: "https://fixture.invalid/mcp", Headers: map[string]string{"Authorization": "Bearer private-test-value"}},
+	}
+	if !reflect.DeepEqual(worker.Harnesses["mock"], wantHarness) || !reflect.DeepEqual(worker.MCPServers, wantMCP) {
+		t.Fatal("published worker lost local process or MCP definitions")
+	}
 }
 
 func TestServiceBootstrapPreservesStandaloneIdentityConfigurationAndData(t *testing.T) {

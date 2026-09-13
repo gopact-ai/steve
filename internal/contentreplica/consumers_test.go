@@ -210,3 +210,55 @@ func TestSingleAndSealedContentDoNotClaimMachineLossProtection(t *testing.T) {
 		})
 	}
 }
+
+func TestArtifactLandsWithPhysicalDurablePlaceAfterServiceConversion(t *testing.T) {
+	for _, members := range [][]string{{"a"}, {"a", "b"}} {
+		t.Run(members[len(members)-1], func(t *testing.T) {
+			_, _, client := newCluster(t, "internal", members...)
+			book := openBook(t)
+			projects := project.Open(book)
+			work := t.TempDir()
+			if err := os.WriteFile(filepath.Join(work, "original.txt"), []byte("keep\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			p := project.Project{ID: "p", Home: project.Home{Node: "a", Path: work}, DurablePlaces: []string{"a"}}
+			if err := projects.Declare(t.Context(), []project.Project{p}); err != nil {
+				t.Fatal(err)
+			}
+			p, _, _ = projects.Get(t.Context(), "p")
+			store := artifact.New(t.TempDir(), book, projects, artifact.LocalNodes{Dir: t.TempDir()})
+			store.SetReplication(client("a"))
+			ws, err := store.Materialize(t.Context(), project.Request{Project: "p", Node: "a", Isolated: true, Owner: "child"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(ws.Path, "result.txt"), []byte("landed\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			result, _, err := store.Publish(t.Context(), ws, store.CanonicalOf(t.Context(), "p"), "child", "result")
+			if err != nil {
+				t.Fatal(err)
+			}
+			other := p
+			other.DurablePlaces = []string{"unrelated"}
+			if result.Durable(other) {
+				t.Fatal("unrelated physical place accepted")
+			}
+			incomplete := *result.Content
+			incomplete.Receipts = nil
+			unprotected := result
+			unprotected.Content = &incomplete
+			if unprotected.Durable(p) {
+				t.Fatal("incomplete content accepted")
+			}
+			land, err := store.Land(t.Context(), p, result.ID, "test")
+			if err != nil || land.State != artifact.LandCommitted {
+				t.Fatalf("physical receipt did not permit landing: %+v %v", land, err)
+			}
+			got, err := os.ReadFile(filepath.Join(work, "result.txt"))
+			if err != nil || string(got) != "landed\n" {
+				t.Fatalf("landed file = %q: %v", got, err)
+			}
+		})
+	}
+}
