@@ -9,7 +9,36 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/i18n"
 )
+
+func NativeImportConversation(command string) (string, error) {
+	if command == "" || len(command) > 512 {
+		return "", errors.New("native import requires an idempotency command")
+	}
+	hash := sha256.Sum256([]byte(command))
+	return Prefix + "import:" + hex.EncodeToString(hash[:]), nil
+}
+
+// ImportedConversation recovers a completed import without contacting a source
+// machine that may since have been disconnected or had its history archived.
+func (s *Service) ImportedConversation(node string, req consoleapi.NativeImportRequest) (consoleapi.ImportedSession, bool, error) {
+	conversation, err := NativeImportConversation(req.CommandID)
+	if err != nil {
+		return consoleapi.ImportedSession{}, false, err
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	meta, ok := s.meta[conversation]
+	if !ok {
+		return consoleapi.ImportedSession{}, false, nil
+	}
+	previous := meta.NativeImport
+	if previous == nil || previous.Node != node || previous.Agent != req.Agent || previous.Project != req.Project || previous.Reference.Harness != req.Source.Harness || (req.Source.Home != "" && previous.Reference.SourceHome != req.Source.Home) || previous.Reference.NativeID != req.NativeID || previous.Reference.Revision != req.Revision {
+		return consoleapi.ImportedSession{}, false, consoleapi.ErrQuestionConflict
+	}
+	return *previous, true, nil
+}
 
 // EnsureImportedConversation keeps the import receipt in durable metadata,
 // independent of transcript pruning. Binding completes before it becomes visible.
@@ -18,7 +47,7 @@ func (s *Service) EnsureImportedConversation(ctx context.Context, command string
 		return origin, errors.New("native import requires an owner, command and session binding")
 	}
 	hash := sha256.Sum256([]byte(command))
-	conversation := Prefix + "import:" + hex.EncodeToString(hash[:])
+	conversation, _ := NativeImportConversation(command)
 	origin.Conversation = conversation
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -40,7 +69,7 @@ func (s *Service) EnsureImportedConversation(ctx context.Context, command string
 	title := clipTitle(fmt.Sprintf("%s · %s", origin.Reference.Harness, origin.Reference.NativeID))
 	now := time.Now().UTC()
 	s.meta[conversation] = Meta{Title: title, TitleBy: "system", UpdatedAt: now, NativeImport: &origin}
-	body := fmt.Sprintf("已导入历史会话\n工具：%s\n机器：%s\n原会话：%s\n目录：%s\n\n发送下一条消息后将恢复此上下文。", origin.Reference.Harness, origin.Node, origin.Reference.NativeID, origin.Reference.SourceWorkdir)
+	body := i18n.New(i18n.ContextLocale(ctx)).T(i18n.NativeHistoryImported, origin.Reference.Harness, origin.Node, origin.Reference.NativeID, origin.Reference.SourceWorkdir)
 	notice := s.recordLocked(consoleapi.Reply{ID: "native-import-" + hex.EncodeToString(hash[:]), Conversation: conversation, ProjectID: origin.Project, At: now, Title: title, Text: body, Format: "text", Kind: "notice"})
 	if err := s.save(); err != nil {
 		delete(s.meta, conversation)

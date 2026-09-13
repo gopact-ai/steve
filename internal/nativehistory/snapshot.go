@@ -20,6 +20,7 @@ type ImportRequest struct {
 	Source    Source `json:"source"`
 	NativeID  string `json:"native_id"`
 	Revision  string `json:"revision"`
+	Workdir   string `json:"workdir,omitempty"`
 }
 
 // Snapshot freezes a selected history under a caller-owned idempotency key.
@@ -28,12 +29,20 @@ func Snapshot(ctx context.Context, store string, request ImportRequest) (Referen
 	if request.CommandID == "" || len(request.CommandID) > 512 || !validSourceNativeID(request.Source.Harness, request.NativeID) || request.Revision == "" {
 		return Reference{}, errors.New("native import requires a command, session id and source revision")
 	}
+	release, err := LockStorage(ctx, store)
+	if err != nil {
+		return Reference{}, err
+	}
+	defer release()
 	sum := sha256.Sum256([]byte(request.CommandID))
 	id := "import_" + hex.EncodeToString(sum[:])
 	dest := filepath.Join(store, id)
 	if previous, err := readReference(dest); err == nil {
 		if !matchesRequest(previous, request) {
 			return Reference{}, errors.New("native import command already used with different input")
+		}
+		if err := checkWorkdir(previous.SourceWorkdir, request.Workdir); err != nil {
+			return Reference{}, err
 		}
 		return previous, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -55,6 +64,12 @@ func Snapshot(ctx context.Context, store string, request ImportRequest) (Referen
 	}
 	if selected == nil || selected.Revision != request.Revision {
 		return Reference{}, ErrChanged
+	}
+	if err := checkWorkdir(selected.Workdir, request.Workdir); err != nil {
+		return Reference{}, err
+	}
+	if err := CheckStorage(ctx, store, 1, MaxSnapshotBytes); err != nil {
+		return Reference{}, err
 	}
 	root, err := sourceRoot(request.Source)
 	if err != nil {
@@ -99,6 +114,9 @@ func Snapshot(ctx context.Context, store string, request ImportRequest) (Referen
 	if err := syncDirectory(stage); err != nil {
 		return Reference{}, err
 	}
+	if err := CheckStorage(ctx, store, 0, 0); err != nil {
+		return Reference{}, err
+	}
 	if err := os.Rename(stage, dest); err != nil {
 		previous, readErr := readReference(dest)
 		if readErr == nil && matchesRequest(previous, request) {
@@ -110,6 +128,13 @@ func Snapshot(ctx context.Context, store string, request ImportRequest) (Referen
 		return Reference{}, err
 	}
 	return ref, nil
+}
+
+func checkWorkdir(source, destination string) error {
+	if destination != "" && (!filepath.IsAbs(destination) || filepath.Clean(source) != filepath.Clean(destination)) {
+		return errors.New("native history requires its original workspace")
+	}
+	return nil
 }
 
 func matchesRequest(ref Reference, req ImportRequest) bool {

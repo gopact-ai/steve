@@ -21,7 +21,7 @@ func dshAttachments(ctx context.Context, root *os.Root, files []sourceFile) ([]s
 	objects := map[string]bool{}
 	for _, file := range files {
 		name := filepath.Base(file.path)
-		if name != "session.jsonl" && name != "session.jsonl.zstd" {
+		if !isDshTranscript(name) {
 			continue
 		}
 		if err := scanDshAttachments(ctx, root, file.path, objects); err != nil {
@@ -100,4 +100,13 @@ func collectDshAttachments(value any, objects map[string]bool, depth int) error 
 		}
 	}
 	return nil
+}
+
+func isDshTranscript(name string) bool {
+	switch name {
+	case "session.jsonl", "session.jsonl.zstd", "session.v3.jsonl", "session.v3.jsonl.zstd":
+		return true
+	default:
+		return false
+	}
 }

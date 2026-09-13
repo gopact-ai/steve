@@ -42,6 +42,7 @@ func FromLang(lang string) Locale {
 type Key string
 
 const (
+	NativeHistoryImported  Key = "native_history_imported"
 	TurnCanceled           Key = "turn_canceled"
 	HubMaintenance         Key = "hub_maintenance"
 	AgentFailed            Key = "agent_failed"

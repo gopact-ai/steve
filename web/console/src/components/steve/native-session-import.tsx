@@ -29,10 +29,10 @@ export function NativeSessionImport({ agents, nodes, projects, onClose, onImport
     const pending = useRef(false);
     const [error, setError] = useState("");
     const entry = entries?.find((e) => e.revision === selected);
-    const matching = entry && agent ? projects.filter((p) => p.workspaces.some((w) => w.node === agent.node && w.path === entry.workdir && (!w.state || w.state === "ready"))) : [];
+    const matching = entry && agent ? projects.filter((p) => p.workspaces.some((w) => w.node === agent.node && cleanNodePath(w.path) === cleanNodePath(entry.workdir) && (!w.state || w.state === "ready"))) : [];
     const project = matching.find((p) => p.id === projectID) || (matching.length === 1 ? matching[0] : undefined);
     const visible = entries?.filter((e) => `${e.title || ""} ${e.native_id} ${e.workdir}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) || [];
-    function reset() { setEntries(null); setSelected(""); setProjectID(""); setError(""); }
+    function reset() { setQuery(""); setEntries(null); setSelected(""); setProjectID(""); setError(""); }
     async function find() {
         if (!agent || pending.current) return;
         pending.current = true; setBusy("read"); setError(""); setSelected("");
@@ -87,4 +87,15 @@ export function NativeSessionImport({ agents, nodes, projects, onClose, onImport
             {error && <p role="alert" className="break-words text-sm text-error-primary">{error}</p>}
         </div>
     </Sheet>;
+}
+
+// Native histories currently come from POSIX nodes; match filepath.Clean on
+// that node without interpreting backslashes or resolving filesystem symlinks.
+function cleanNodePath(path: string): string {
+    const parts: string[] = [];
+    for (const part of path.split("/")) {
+        if (!part || part === ".") continue;
+        if (part === "..") parts.pop(); else parts.push(part);
+    }
+    return (path.startsWith("/") ? "/" : "") + parts.join("/");
 }

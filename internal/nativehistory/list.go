@@ -60,7 +60,7 @@ func List(ctx context.Context, source Source) ([]Entry, error) {
 				return nil
 			}
 		case "dsh":
-			if len(strings.Split(path, "/")) != 4 || (d.Name() != "session.jsonl" && d.Name() != "session.jsonl.zstd") {
+			if len(strings.Split(path, "/")) != 4 || !isDshTranscript(d.Name()) {
 				return nil
 			}
 		case "grok":

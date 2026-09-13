@@ -1,6 +1,7 @@
 package i18n
 
 var zh = map[Key]string{
+	NativeHistoryImported:  "已导入历史会话\n工具：%s\n机器：%s\n原会话：%s\n目录：%s\n\n发送下一条消息后将恢复此上下文。",
 	HubMaintenance:         "Hub 正在维护，暂不接受新请求。",
 	TurnCanceled:           "任务已取消",
 	AgentFailed:            "Agent 调用失败，请检查 Steve 日志。",
@@ -230,6 +231,7 @@ var zh = map[Key]string{
 }
 
 var en = map[Key]string{
+	NativeHistoryImported:  "History imported\nTool: %s\nMachine: %s\nOriginal session: %s\nWorkspace: %s\n\nSend your next message to continue this context.",
 	HubMaintenance:         "The Hub is under maintenance; new requests are temporarily unavailable.",
 	TurnCanceled:           "Task canceled",
 	AgentFailed:            "Agent call failed. Check the Steve logs.",

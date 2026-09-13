@@ -203,14 +203,17 @@ type attemptRow struct {
 }
 
 type task struct {
-	ID          string       `json:"id"`
-	Parent      string       `json:"parent"`
-	State       string       `json:"state"`
-	Member      string       `json:"member"`
-	Node        string       `json:"node"`
-	Project     string       `json:"project_id"`
-	Channel     string       `json:"channel"`
-	AttemptRows []attemptRow `json:"attempt_rows"`
+	ID             string       `json:"id"`
+	Parent         string       `json:"parent"`
+	State          string       `json:"state"`
+	Member         string       `json:"member"`
+	Node           string       `json:"node"`
+	Project        string       `json:"project_id"`
+	Channel        string       `json:"channel"`
+	AttemptRows    []attemptRow `json:"attempt_rows"`
+	ResultDelivery *struct {
+		State string `json:"state"`
+	} `json:"result_delivery"`
 }
 
 type state struct {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"slices"
 	"time"
@@ -96,6 +97,13 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 	one := &ownedSession{pluginInstructions: pluginInstructions, service: s, host: host, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
 	one.record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: configHash, State: nodewire.SessionState{ID: id, NativeImport: req.NativeImport.Clone(), Plugin: req.Plugin.Clone(), Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionOpening, Questions: []nodewire.SessionQuestion{}}, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}}
 	if err := one.commitLocked(one.record); err != nil {
+		// Save can fail after publishing its record. Only remove preparation
+		// when durable absence is confirmed; uncertainty retains the history.
+		if req.NativeImport != nil {
+			if _, exists, readErr := s.readRecord(id); readErr == nil && !exists {
+				_ = os.RemoveAll(filepath.Join(s.server.conf().StateDir, "native-runtimes", id))
+			}
+		}
 		s.mu.Unlock()
 		host.Close()
 		return nodewire.SessionState{}, err

@@ -11,59 +11,64 @@ import (
 )
 
 func TestDshImportsRootSessionAndIndependentCompressedEventFrames(t *testing.T) {
-	for _, compressed := range []bool{false, true} {
-		home := t.TempDir()
-		name := "sessions/-work/root-session/session.jsonl"
-		header := []byte("{\"type\":\"session\",\"version\":1,\"id\":\"root-session\",\"cwd\":\"/work\",\"createdAt\":0,\"delegationDepth\":0}\n")
-		event := []byte("{\"type\":\"text\",\"text\":\"context marker\"}\n")
-		raw := append(append([]byte{}, header...), event...)
-		if compressed {
-			name += ".zstd"
-			encoder, err := zstd.NewWriter(nil)
+	for _, version := range []int{1, 3} {
+		for _, compressed := range []bool{false, true} {
+			home := t.TempDir()
+			name := "sessions/-work/root-session/session.jsonl"
+			if version == 3 {
+				name = "sessions/-work/root-session/session.v3.jsonl"
+			}
+			header := []byte(fmt.Sprintf("{\"type\":\"session\",\"version\":%d,\"id\":\"root-session\",\"cwd\":\"/work\",\"createdAt\":0,\"delegationDepth\":0}\n", version))
+			event := []byte("{\"type\":\"text\",\"text\":\"context marker\"}\n")
+			raw := append(append([]byte{}, header...), event...)
+			if compressed {
+				name += ".zstd"
+				encoder, err := zstd.NewWriter(nil)
+				if err != nil {
+					t.Fatal(err)
+				}
+				raw = append(encoder.EncodeAll(header, nil), encoder.EncodeAll(event, nil)...)
+				encoder.Close()
+			}
+			writeFixture(t, home, name, string(raw))
+			attachment := "selected attachment bytes"
+			digest := fmt.Sprintf("%x", sha256.Sum256([]byte(attachment)))
+			attachmentPath := "attachments/v1/objects/" + digest[:2] + "/" + digest
+			writeFixture(t, home, attachmentPath, attachment)
+			refEvent := []byte(`{"type":"user","images":[{"attachmentId":"sha256:` + digest + `"}]}` + "\n")
+			if compressed {
+				encoder, _ := zstd.NewWriter(nil)
+				refEvent = encoder.EncodeAll(refEvent, nil)
+				encoder.Close()
+			}
+			raw = append(raw, refEvent...)
+			writeFixture(t, home, name, string(raw))
+			writeFixture(t, home, "attachments/v1/objects/unselected", "must stay behind")
+			writeFixture(t, home, "sessions/-work/child/session.jsonl", "{\"type\":\"session\",\"id\":\"child\",\"cwd\":\"/work\",\"origin\":\"subagent\"}\n")
+			src := Source{Harness: "dsh", Home: home}
+			entries, err := List(t.Context(), src)
+			if err != nil || len(entries) != 1 || entries[0].NativeID != "root-session" || entries[0].Workdir != "/work" {
+				t.Fatalf("DSH metadata: %+v %v", entries, err)
+			}
+			store := t.TempDir()
+			ref, err := Snapshot(t.Context(), store, ImportRequest{CommandID: "import", Source: src, NativeID: entries[0].NativeID, Revision: entries[0].Revision})
 			if err != nil {
 				t.Fatal(err)
 			}
-			raw = append(encoder.EncodeAll(header, nil), encoder.EncodeAll(event, nil)...)
-			encoder.Close()
-		}
-		writeFixture(t, home, name, string(raw))
-		attachment := "selected attachment bytes"
-		digest := fmt.Sprintf("%x", sha256.Sum256([]byte(attachment)))
-		attachmentPath := "attachments/v1/objects/" + digest[:2] + "/" + digest
-		writeFixture(t, home, attachmentPath, attachment)
-		refEvent := []byte(`{"type":"user","images":[{"attachmentId":"sha256:` + digest + `"}]}` + "\n")
-		if compressed {
-			encoder, _ := zstd.NewWriter(nil)
-			refEvent = encoder.EncodeAll(refEvent, nil)
-			encoder.Close()
-		}
-		raw = append(raw, refEvent...)
-		writeFixture(t, home, name, string(raw))
-		writeFixture(t, home, "attachments/v1/objects/unselected", "must stay behind")
-		writeFixture(t, home, "sessions/-work/child/session.jsonl", "{\"type\":\"session\",\"id\":\"child\",\"cwd\":\"/work\",\"origin\":\"subagent\"}\n")
-		src := Source{Harness: "dsh", Home: home}
-		entries, err := List(t.Context(), src)
-		if err != nil || len(entries) != 1 || entries[0].NativeID != "root-session" || entries[0].Workdir != "/work" {
-			t.Fatalf("DSH metadata: %+v %v", entries, err)
-		}
-		store := t.TempDir()
-		ref, err := Snapshot(t.Context(), store, ImportRequest{CommandID: "import", Source: src, NativeID: entries[0].NativeID, Revision: entries[0].Revision})
-		if err != nil {
-			t.Fatal(err)
-		}
-		dest := filepath.Join(t.TempDir(), "runtime")
-		if err := Materialize(t.Context(), store, ref, dest); err != nil {
-			t.Fatal(err)
-		}
-		got, err := os.ReadFile(filepath.Join(dest, name))
-		if err != nil || string(got) != string(raw) {
-			t.Fatal("DSH storage encoding or event frames changed")
-		}
-		if got, err := os.ReadFile(filepath.Join(dest, attachmentPath)); err != nil || string(got) != attachment {
-			t.Fatal("selected DSH attachment missing")
-		}
-		if _, err := os.Stat(filepath.Join(dest, "attachments/v1/objects/unselected")); !os.IsNotExist(err) {
-			t.Fatal("unrelated attachment copied")
+			dest := filepath.Join(t.TempDir(), "runtime")
+			if err := Materialize(t.Context(), store, ref, dest); err != nil {
+				t.Fatal(err)
+			}
+			got, err := os.ReadFile(filepath.Join(dest, name))
+			if err != nil || string(got) != string(raw) {
+				t.Fatal("DSH storage encoding or event frames changed")
+			}
+			if got, err := os.ReadFile(filepath.Join(dest, attachmentPath)); err != nil || string(got) != attachment {
+				t.Fatal("selected DSH attachment missing")
+			}
+			if _, err := os.Stat(filepath.Join(dest, "attachments/v1/objects/unselected")); !os.IsNotExist(err) {
+				t.Fatal("unrelated attachment copied")
+			}
 		}
 	}
 }

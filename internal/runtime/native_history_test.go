@@ -38,6 +38,19 @@ func TestNativeRuntimeCombinesSelectedHistoryWithAdmittedAccessAndSkills(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
+	// An unavailable current skill must leave the execution retryable.
+	if err := os.Symlink(filepath.Join(active, "missing"), filepath.Join(active, "skills/unavailable")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareNativeHistory(t.Context(), state, "ns_selected", ref, harness.Config{Env: []string{"CODEX_HOME=" + active}}); err == nil {
+		t.Fatal("unavailable active skill accepted")
+	}
+	if _, err := os.Stat(filepath.Join(state, "native-runtimes/ns_selected")); !os.IsNotExist(err) {
+		t.Fatal("failed preparation published runtime")
+	}
+	if err := os.Remove(filepath.Join(active, "skills/unavailable")); err != nil {
+		t.Fatal(err)
+	}
 	cfg, err := PrepareNativeHistory(t.Context(), state, "ns_selected", ref, harness.Config{Env: []string{"CODEX_HOME=" + active, "STEVE_PLUGIN_SKILLS_DIR=" + filepath.Join(active, "skills")}})
 	if err != nil {
 		t.Fatal(err)

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	"github.com/gopact-ai/steve/internal/console"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/nativehistory"
 )
@@ -29,6 +30,13 @@ func (a *Service) ImportNativeHistory(ctx context.Context, name string, req cons
 	if !a.ClusterMode || a.Coordinator == nil || a.Console == nil || a.Catalog == nil {
 		return consoleapi.ImportedSession{}, errors.New("历史会话迁移需要已启用集群的服务")
 	}
+	if previous, exists, err := a.Console.ImportedConversation(name, req); err != nil || exists {
+		return previous, err
+	}
+	conversation, err := console.NativeImportConversation(req.CommandID)
+	if err != nil {
+		return consoleapi.ImportedSession{}, err
+	}
 	target, err := a.nodeForAgentEnrollment(name)
 	if err != nil {
 		return consoleapi.ImportedSession{}, err
@@ -37,7 +45,11 @@ func (a *Service) ImportNativeHistory(ctx context.Context, name string, req cons
 	if !ok || selected.ID != req.Agent || selected.Node != name || selected.Harness != req.Source.Harness {
 		return consoleapi.ImportedSession{}, errors.New("请选择运行在来源机器上且使用相同工具的 Agent")
 	}
-	ref, err := a.Nodes.ImportNativeHistory(ctx, name, nativehistory.ImportRequest{CommandID: req.CommandID, Source: req.Source, NativeID: req.NativeID, Revision: req.Revision})
+	workdir, err := a.Coordinator.PreflightNativeImport(ctx, conversation, req.Project, selected)
+	if err != nil {
+		return consoleapi.ImportedSession{}, err
+	}
+	ref, err := a.Nodes.ImportNativeHistory(ctx, name, nativehistory.ImportRequest{CommandID: req.CommandID, Source: req.Source, NativeID: req.NativeID, Revision: req.Revision, Workdir: workdir})
 	if err != nil {
 		return consoleapi.ImportedSession{}, err
 	}

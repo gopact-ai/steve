@@ -1584,7 +1584,7 @@ checks["native-history-import"] = async (f) => {
         { native_id: "retained-native-id", harness: "codex", source_home: home, workdir: "/test/scratch", title: "Retained context with a long title and original workspace", updated_at: at, revision: "revision-one" },
         { native_id: "unmapped-native-id", harness: "codex", source_home: home, workdir: "/very/long/original/workspace/without/a/matching/project", title: "Unmapped session", updated_at: at, revision: "revision-two" },
     ];
-    const state = { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [node], agents: [{ id: "test-agent", node: "test-node", harness: "codex", eligible: true }], tasks: [], plans: [], projects: [{ ...project("scratch"), workspaces: [{ id: "scratch-work", node: "test-node", path: "/test/scratch", kind: "canonical", agents: ["test-agent"] }] }], attempts: [], landings: [] };
+    const state = { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [node], agents: [{ id: "test-agent", node: "test-node", harness: "codex", eligible: true }], tasks: [], plans: [], projects: [{ ...project("scratch"), workspaces: [{ id: "scratch-work", node: "test-node", path: "/test//scratch/./", kind: "canonical", agents: ["test-agent"] }] }], attempts: [], landings: [] };
     await f.page.route("**/state", (route) => route.fulfill({ json: state }));
     const posts = []; let failRead = true, loseReceipt = true;
     await f.page.route("**/console/nodes/test-node/native-history**", async (route) => {
@@ -1604,6 +1604,10 @@ checks["native-history-import"] = async (f) => {
     await dialog.getByRole("button", { name: "查找会话", exact: true }).click();
     await dialog.getByRole("alert").getByText("Source machine is temporarily unavailable").waitFor();
     await dialog.getByRole("button", { name: "查找会话", exact: true }).click();
+    await dialog.getByRole("textbox", { name: "筛选标题、目录或会话 ID" }).fill("no matching session");
+    await dialog.getByRole("textbox", { name: "历史目录（可选）" }).fill(home);
+    await dialog.getByRole("button", { name: "查找会话", exact: true }).click();
+    assert.equal(await dialog.getByRole("textbox", { name: "筛选标题、目录或会话 ID" }).inputValue(), "");
     await dialog.getByText("Unmapped session", { exact: true }).click();
     await dialog.getByText(/没有项目匹配这个会话的目录/).waitFor();
     assert.equal(await dialog.getByRole("button", { name: "导入并打开会话", exact: true }).isDisabled(), true);

@@ -24,13 +24,18 @@ func PrepareNativeHistory(ctx context.Context, stateDir, execution string, ref n
 		return harness.Config{}, nativehistory.ErrUnsupported
 	}
 	parent := filepath.Join(stateDir, "native-runtimes")
-	if err := os.MkdirAll(parent, 0700); err != nil {
+	release, err := nativehistory.LockStorage(ctx, parent)
+	if err != nil {
 		return harness.Config{}, err
 	}
+	defer release()
 	dest := filepath.Join(parent, execution)
 	if _, err := os.Lstat(dest); err == nil {
 		return harness.Config{}, errors.New("native import runtime already exists; reconcile its original execution")
 	} else if !errors.Is(err, os.ErrNotExist) {
+		return harness.Config{}, err
+	}
+	if err := nativehistory.CheckStorage(ctx, parent, 1, nativehistory.MaxSnapshotBytes); err != nil {
 		return harness.Config{}, err
 	}
 	stage, err := os.MkdirTemp(parent, ".prepare-")
@@ -61,6 +66,9 @@ func PrepareNativeHistory(ctx context.Context, stateDir, execution string, ref n
 		return harness.Config{}, err
 	}
 	if err := ctx.Err(); err != nil {
+		return harness.Config{}, err
+	}
+	if err := nativehistory.CheckStorage(ctx, parent, 0, 0); err != nil {
 		return harness.Config{}, err
 	}
 	if err := os.Rename(stage, dest); err != nil {
