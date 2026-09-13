@@ -53,7 +53,10 @@ func PrepareNativeHistory(ctx context.Context, stateDir, execution string, ref n
 	case harness.ClaudeCode:
 		err = PrepareClaude(home, source)
 	case harness.Dsh:
-		err = PrepareDsh(home, source)
+		err = nativehistory.PrepareDshRuntime(ctx, home)
+		if err == nil {
+			err = PrepareDsh(home, source)
+		}
 	case harness.Grok:
 		err = PrepareGrok(home, source)
 	default:

@@ -7,9 +7,11 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/klauspost/compress/zstd"
@@ -22,6 +24,13 @@ func dshAttachments(ctx context.Context, root *os.Root, files []sourceFile) ([]s
 	for _, file := range files {
 		name := filepath.Base(file.path)
 		if !isDshTranscript(name) {
+			continue
+		}
+		selected, err := selectedDshGeneration(root, file.path)
+		if err != nil {
+			return nil, err
+		}
+		if !selected {
 			continue
 		}
 		if err := scanDshAttachments(ctx, root, file.path, objects); err != nil {
@@ -103,10 +112,55 @@ func collectDshAttachments(value any, objects map[string]bool, depth int) error 
 }
 
 func isDshTranscript(name string) bool {
-	switch name {
-	case "session.jsonl", "session.jsonl.zstd", "session.v3.jsonl", "session.v3.jsonl.zstd":
-		return true
-	default:
-		return false
+	_, ok := dshGeneration(name)
+	return ok
+}
+
+func dshGeneration(name string) (int, bool) {
+	name = strings.TrimSuffix(name, ".zstd")
+	if name == "session.jsonl" {
+		return 0, true
 	}
+	version, ok := strings.CutPrefix(name, "session.v")
+	if !ok || !strings.HasSuffix(version, ".jsonl") {
+		return 0, false
+	}
+	version = strings.TrimSuffix(version, ".jsonl")
+	n, err := strconv.Atoi(version)
+	return n, err == nil && n > 0 && strconv.Itoa(n) == version
+}
+
+// DSH retains older generations after migration and resumes the highest one.
+// Match that selection, rejecting unknown generations and mixed encodings
+// instead of silently importing an older transcript or an unloadable root.
+func selectedDshGeneration(root *os.Root, path string) (bool, error) {
+	entries, err := fs.ReadDir(root.FS(), filepath.ToSlash(filepath.Dir(path)))
+	if err != nil {
+		return false, err
+	}
+	latest, selected, encoding := -1, "", ""
+	for _, entry := range entries {
+		version, ok := dshGeneration(entry.Name())
+		if !ok {
+			continue
+		}
+		if version > 3 {
+			return false, ErrUnsupported
+		}
+		if !entry.Type().IsRegular() {
+			return false, errors.New("DSH history generation must be a regular file")
+		}
+		currentEncoding := "jsonl"
+		if strings.HasSuffix(entry.Name(), ".zstd") {
+			currentEncoding = "zstd"
+		}
+		if encoding != "" && encoding != currentEncoding {
+			return false, errors.New("DSH history contains incompatible physical encodings")
+		}
+		encoding = currentEncoding
+		if version > latest {
+			latest, selected = version, entry.Name()
+		}
+	}
+	return filepath.Base(path) == selected, nil
 }

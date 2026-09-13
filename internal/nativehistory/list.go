@@ -63,6 +63,13 @@ func List(ctx context.Context, source Source) ([]Entry, error) {
 			if len(strings.Split(path, "/")) != 4 || !isDshTranscript(d.Name()) {
 				return nil
 			}
+			selected, err := selectedDshGeneration(root, path)
+			if err != nil {
+				return err
+			}
+			if !selected {
+				return nil
+			}
 		case "grok":
 			if d.Name() != "summary.json" || len(strings.Split(path, "/")) != 4 {
 				return nil

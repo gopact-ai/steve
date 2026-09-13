@@ -3,6 +3,7 @@ package nativehistory
 import (
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"testing"
@@ -69,6 +70,74 @@ func TestDshImportsRootSessionAndIndependentCompressedEventFrames(t *testing.T) 
 			if _, err := os.Stat(filepath.Join(dest, "attachments/v1/objects/unselected")); !os.IsNotExist(err) {
 				t.Fatal("unrelated attachment copied")
 			}
+		}
+	}
+}
+
+func TestDshUsesLatestGenerationAndCompressesOnlyTheRuntimeCopy(t *testing.T) {
+	home := t.TempDir()
+	legacy := "sessions/-work/root/session.jsonl"
+	current := "sessions/-work/root/session.v3.jsonl"
+	writeFixture(t, home, legacy, `{"type":"session","version":0,"id":"root","cwd":"/work"}`+"\n")
+	text := `{"type":"session","version":3,"id":"root","cwd":"/work","delegationDepth":0}` + "\n" + `{"type":"text","text":"updated history"}` + "\n"
+	writeFixture(t, home, current, text)
+	writeFixture(t, home, "sessions/-work/child/session.v3.jsonl", `{"type":"session","version":3,"id":"child","cwd":"/work","delegationDepth":1}`+"\n")
+	source := Source{Harness: "dsh", Home: home}
+	entries, err := List(t.Context(), source)
+	if err != nil || len(entries) != 1 || entries[0].NativeID != "root" {
+		t.Fatalf("generation discovery: %+v %v", entries, err)
+	}
+	store := t.TempDir()
+	ref, err := Snapshot(t.Context(), store, ImportRequest{CommandID: "generation", Source: source, NativeID: "root", Revision: entries[0].Revision})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := filepath.Join(t.TempDir(), "home")
+	if err := Materialize(t.Context(), store, ref, dest); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareDshRuntime(t.Context(), dest); err != nil {
+		t.Fatal(err)
+	}
+	for _, name := range []string{legacy, current} {
+		original, err := os.ReadFile(filepath.Join(home, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		f, err := os.Open(filepath.Join(dest, name+".zstd"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		decoder, err := zstd.NewReader(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := io.ReadAll(decoder)
+		decoder.Close()
+		f.Close()
+		if err != nil || string(got) != string(original) {
+			t.Fatal("runtime conversion changed history", err)
+		}
+		if _, err := os.Stat(filepath.Join(dest, name)); !os.IsNotExist(err) {
+			t.Fatal("mixed runtime encodings")
+		}
+	}
+	after, err := List(t.Context(), source)
+	if err != nil || after[0].Revision != entries[0].Revision {
+		t.Fatal("source history changed", err)
+	}
+	if got, err := List(t.Context(), Source{Harness: "dsh", Home: dest}); err != nil || len(got) != 1 {
+		t.Fatalf("runtime discovery: %+v %v", got, err)
+	}
+}
+
+func TestDshRejectsFutureOrMixedGenerationsInsteadOfFallingBack(t *testing.T) {
+	for _, extra := range []string{"session.v4.jsonl", "session.v3.jsonl.zstd"} {
+		home := t.TempDir()
+		writeFixture(t, home, "sessions/-work/root/session.jsonl", `{"type":"session","id":"root","cwd":"/work"}`+"\n")
+		writeFixture(t, home, "sessions/-work/root/"+extra, "unsupported")
+		if _, err := List(t.Context(), Source{Harness: "dsh", Home: home}); err == nil {
+			t.Fatalf("fell back to obsolete history for %s", extra)
 		}
 	}
 }

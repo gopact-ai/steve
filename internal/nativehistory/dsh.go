@@ -29,10 +29,11 @@ func readDshEntry(entry Entry, input io.Reader) (Entry, error) {
 		return entry, errors.Join(errors.New("DSH session header is missing"), scan.Err())
 	}
 	var header struct {
-		Type   string `json:"type"`
-		ID     string `json:"id"`
-		Cwd    string `json:"cwd"`
-		Origin string `json:"origin"`
+		Type            string `json:"type"`
+		ID              string `json:"id"`
+		Cwd             string `json:"cwd"`
+		Origin          string `json:"origin"`
+		DelegationDepth int    `json:"delegationDepth"`
 	}
 	if err := json.Unmarshal(scan.Bytes(), &header); err != nil {
 		return entry, err
@@ -41,7 +42,7 @@ func readDshEntry(entry Entry, input io.Reader) (Entry, error) {
 		return entry, errors.New("unrecognized DSH session header")
 	}
 	// DSH's ACP resume surface accepts persisted root sessions only.
-	if header.Origin == "subagent" {
+	if header.Origin == "subagent" || header.DelegationDepth > 0 {
 		return entry, nil
 	}
 	entry.NativeID, entry.Workdir = header.ID, header.Cwd
