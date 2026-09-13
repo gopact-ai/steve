@@ -51,6 +51,15 @@ func PrepareServiceCluster(options ServiceBootstrap) (string, error) {
 	}
 	path := DefaultClusterConfigPath(configPath)
 	dir := filepath.Join(root, "cluster")
+	// A follower can be alive without the application holding the state lock.
+	// Check its process lock too before recovering or validating bootstrap.
+	if _, err := os.Stat(dir); err == nil {
+		unlockPeer, err := steveruntime.AcquireLock(filepath.Join(dir, "peer-process"))
+		if err != nil {
+			return "", fmt.Errorf("stop the peer before initializing its cluster: %w", err)
+		}
+		defer unlockPeer()
+	}
 	if _, err := os.Lstat(path); err == nil {
 		_, err := validateServicePeer(path, dir, identity, options)
 		return path, err

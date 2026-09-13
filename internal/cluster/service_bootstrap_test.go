@@ -71,6 +71,14 @@ func TestServiceBootstrapPreservesStandaloneIdentityConfigurationAndData(t *test
 	if reloaded.NodeID != peer.NodeID {
 		t.Fatal("idempotent bootstrap reminted node")
 	}
+	unlock, err := steveruntime.AcquireLock(filepath.Join(peer.DataDir, "peer-process"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareServiceCluster(options); err == nil {
+		t.Fatal("initialized while a follower peer was alive")
+	}
+	unlock()
 	options.NodeID = "another-node"
 	if _, err := PrepareServiceCluster(options); err == nil {
 		t.Fatal("bootstrap changed identity")
