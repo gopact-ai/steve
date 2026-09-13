@@ -13,6 +13,8 @@ import (
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/gopact-ai/steve/internal/cluster"
 )
 
 type consoleConnection struct {
@@ -63,36 +65,71 @@ func (options *consoleClientFlags) resolve(flags *flag.FlagSet) (consoleConnecti
 	return connection, nil
 }
 
+// Connection fields distinguish an omitted value from a malformed JSON null.
+type connectionString string
+
+func (value *connectionString) UnmarshalJSON(data []byte) error {
+	if bytes.Equal(bytes.TrimSpace(data), []byte("null")) {
+		return errors.New("connection fields must be strings")
+	}
+	var decoded string
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*value = connectionString(decoded)
+	return nil
+}
+
+type connectionGateway struct {
+	Address connectionString `json:"read_model_addr"`
+	Token   connectionString `json:"read_model_token"`
+}
+
+func (gateway *connectionGateway) UnmarshalJSON(data []byte) error {
+	data = bytes.TrimSpace(data)
+	if len(data) == 0 || data[0] != '{' {
+		return errors.New("gateway connection settings must be a JSON object")
+	}
+	type fields connectionGateway
+	return json.Unmarshal(data, (*fields)(gateway))
+}
+
 func readConsoleConnection(path string) (consoleConnection, error) {
 	var config struct {
-		Gateway struct {
-			Address string `json:"read_model_addr"`
-			Token   string `json:"read_model_token"`
-		} `json:"gateway"`
+		Gateway connectionGateway `json:"gateway"`
 	}
 	if err := readConsoleJSON(path, &config); err != nil {
 		return consoleConnection{}, err
 	}
-	address, err := normalizeConsoleURL(config.Gateway.Address, true)
+	address, err := normalizeConsoleURL(string(config.Gateway.Address), true)
 	if err != nil {
 		return consoleConnection{}, fmt.Errorf("config gateway.read_model_addr: %w", err)
 	}
 	sidecarPath := path + ".cluster.json"
 	if _, err := os.Lstat(sidecarPath); err == nil {
 		var sidecar struct {
-			UIAddress string `json:"ui_address"`
+			UIAddress connectionString `json:"ui_address"`
 		}
-		if err := readConsoleJSON(sidecarPath, &sidecar); err != nil {
+		data, err := cluster.ReadClusterPrivate(sidecarPath)
+		if err != nil {
+			return consoleConnection{}, fmt.Errorf("read cluster sidecar: %w", err)
+		}
+		if err := decodeConsoleJSON(sidecarPath, data, &sidecar); err != nil {
 			return consoleConnection{}, err
 		}
-		address, err = normalizeConsoleURL(sidecar.UIAddress, true)
+		host, _, splitErr := net.SplitHostPort(string(sidecar.UIAddress))
+		ip := net.ParseIP(host)
+		if splitErr != nil || ip == nil || !ip.IsLoopback() {
+			return consoleConnection{}, errors.New("cluster sidecar ui_address must be an explicit loopback IP and port")
+		}
+		address, err = normalizeConsoleURL(string(sidecar.UIAddress), true)
 		if err != nil {
 			return consoleConnection{}, fmt.Errorf("cluster sidecar ui_address: %w", err)
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return consoleConnection{}, fmt.Errorf("inspect cluster sidecar: %w", err)
 	}
-	return consoleConnection{URL: address, Token: config.Gateway.Token}, nil
+	return consoleConnection{URL: address, Token: string(config.Gateway.Token)}, nil
 }
 
 func readConsoleJSON(path string, target any) error {
@@ -100,6 +137,10 @@ func readConsoleJSON(path string, target any) error {
 	if err != nil {
 		return fmt.Errorf("read console connection config: %w", err)
 	}
+	return decodeConsoleJSON(path, data, target)
+}
+
+func decodeConsoleJSON(path string, data []byte, target any) error {
 	data = bytes.TrimSpace(data)
 	if len(data) == 0 || data[0] != '{' || json.Unmarshal(data, target) != nil {
 		return fmt.Errorf("decode console connection config %s: expected a JSON object with valid connection fields", path)

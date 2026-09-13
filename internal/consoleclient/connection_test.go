@@ -67,10 +67,8 @@ func TestConsoleConnectionConfigAndSidecar(t *testing.T) {
 		{"ipv6 wildcard", "[::]:8800", "", "http://[::1]:8800"},
 		{"omitted host", ":8800", "", "http://127.0.0.1:8800"},
 		{"https", "https://console.example/base/", "", "https://console.example/base"},
+		{"IPv6 sidecar", "127.0.0.1:8800", `{"ui_address":"[::1]:9900"}`, "http://[::1]:9900"},
 		{"sidecar", "127.0.0.1:8800", `{"ui_address":"127.0.0.1:9900","data_dir":false}`, "http://127.0.0.1:9900"},
-		{"empty sidecar address", "127.0.0.1:8800", `{"ui_address":""}`, defaultReadModelURL},
-		{"omitted sidecar address", "127.0.0.1:8800", `{}`, defaultReadModelURL},
-		{"sidecar wildcard", "127.0.0.1:8800", `{"ui_address":"[::]:9900"}`, "http://[::1]:9900"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "config.json")
@@ -194,6 +192,16 @@ func TestConsoleConnectionReadErrors(t *testing.T) {
 		{"syntax", `{"gateway":`, ""},
 		{"root null", `null`, ""},
 		{"root array", `[]`, ""},
+		{"gateway null", `{"gateway":null}`, ""},
+		{"address null", `{"gateway":{"read_model_addr":null,"read_model_token":"secret-token"}}`, ""},
+		{"token null", `{"gateway":{"read_model_token":null}}`, ""},
+		{"sidecar address null", clientFixtureConfig("127.0.0.1:8800", "secret-token"), `{"ui_address":null}`},
+		{"sidecar missing address", `{}`, `{}`},
+		{"sidecar empty address", `{}`, `{"ui_address":""}`},
+		{"sidecar wildcard", `{}`, `{"ui_address":"0.0.0.0:8800"}`},
+		{"sidecar ipv6 wildcard", `{}`, `{"ui_address":"[::]:8800"}`},
+		{"sidecar remote", `{}`, `{"ui_address":"192.0.2.1:8800"}`},
+		{"sidecar hostname", `{}`, `{"ui_address":"localhost:8800"}`},
 		{"gateway type", `{"gateway":"secret-token"}`, ""},
 		{"address type", `{"gateway":{"read_model_addr":123}}`, ""},
 		{"token type", `{"gateway":{"read_model_token":123}}`, ""},
@@ -323,7 +331,7 @@ func TestConsoleClientCommandsConfigReadOnly(t *testing.T) {
 				address := strings.TrimPrefix(server.URL, "http://")
 				if sidecar {
 					address = "127.0.0.1:1"
-					writeClientFixture(t, "config.json.cluster.json", fmt.Sprintf(`{"ui_address":%q,"cert_file":"missing.pem","data_dir":"must-not-create-cluster"}`, server.URL))
+					writeClientFixture(t, "config.json.cluster.json", fmt.Sprintf(`{"ui_address":%q,"cert_file":"missing.pem","data_dir":"must-not-create-cluster"}`, strings.TrimPrefix(server.URL, "http://")))
 				}
 				config := fmt.Sprintf(`{"gateway":{"read_model_addr":%q,"read_model_token":%q,"state_path":"must-not-create-state/state.json","home_path":"must-not-create-home"},"harnesses":{"mock":{"command":"must-not-run-agent"}},"agents":false,"feishu":{"app_id":"incomplete"}}`, address, token)
 				writeClientFixture(t, "config.json", config)
@@ -473,5 +481,45 @@ func invokeConsoleClient(args []string) error {
 		return Say(args[1:])
 	default:
 		return fmt.Errorf("unknown test client %q", args[0])
+	}
+}
+
+func TestConsoleSidecarRequiresPrivateRegularFile(t *testing.T) {
+	for _, kind := range []string{"world readable", "group writable", "symlink", "oversized"} {
+		t.Run(kind, func(t *testing.T) {
+			root := t.TempDir()
+			path := filepath.Join(root, "config.json")
+			writeClientFixture(t, path, clientFixtureConfig("127.0.0.1:8800", "owner-token"))
+			sidecar := path + ".cluster.json"
+			writeClientFixture(t, sidecar, `{"ui_address":"127.0.0.1:9900"}`)
+			switch kind {
+			case "world readable", "group writable":
+				mode := fs.FileMode(0o644)
+				if kind == "group writable" {
+					mode = 0o620
+				}
+				if err := os.Chmod(sidecar, mode); err != nil {
+					t.Fatal(err)
+				}
+				if info, _ := os.Stat(sidecar); info.Mode().Perm()&0o077 == 0 {
+					t.Skip("file permission bits are unavailable")
+				}
+			case "symlink":
+				target := sidecar + ".target"
+				if err := os.Rename(sidecar, target); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Symlink(target, sidecar); err != nil {
+					t.Skipf("symlinks unavailable: %v", err)
+				}
+			case "oversized":
+				if err := os.Truncate(sidecar, (8<<20)+1); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := resolveTestConnection("-config", path); err == nil || strings.Contains(err.Error(), "owner-token") {
+				t.Fatalf("wanted safe sidecar rejection, got %v", err)
+			}
+		})
 	}
 }
