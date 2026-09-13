@@ -40,7 +40,10 @@ var openMu sync.Mutex
 func Open(ctx context.Context, dir string) (*Repo, error) {
 	openMu.Lock()
 	defer openMu.Unlock()
-	if _, err := os.Stat(filepath.Join(dir, "HEAD")); err == nil {
+	// git init writes HEAD before all repository metadata exists. A killed
+	// initialization must not make the next attempt accept that partial tree.
+	ready := filepath.Join(dir, "steve-initialized")
+	if _, err := os.Stat(ready); err == nil {
 		return &Repo{Dir: dir}, nil
 	}
 	if err := os.MkdirAll(filepath.Dir(dir), 0o700); err != nil {
@@ -59,6 +62,9 @@ func Open(ctx context.Context, dir string) (*Repo, error) {
 		if _, err := r.git(ctx, nil, "config", setting[0], setting[1]); err != nil {
 			return nil, err
 		}
+	}
+	if err := os.WriteFile(ready, []byte("1\n"), 0600); err != nil {
+		return nil, err
 	}
 	return r, nil
 }
