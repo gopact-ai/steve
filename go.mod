@@ -8,6 +8,7 @@ require (
 	github.com/gopact-ai/gopact-ext/stores v0.2.1-0.20260901080022-8fc158112202
 	github.com/hashicorp/raft v1.7.3
 	github.com/hashicorp/raft-boltdb/v2 v2.3.1
+	github.com/klauspost/compress v1.20.0
 	github.com/larksuite/oapi-sdk-go/v3 v3.9.10
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	go.etcd.io/bbolt v1.5.0

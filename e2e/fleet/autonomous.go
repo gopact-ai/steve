@@ -150,18 +150,13 @@ func (g *gate) runAutonomous(ctx context.Context) error {
 		if err := g.request(ctx, http.MethodGet, "/console/tasks/"+url.PathEscape(root.ID), nil, &detail); err != nil {
 			return err
 		}
-		allEnded := len(detail.Children) > 0
-		for _, c := range detail.Children {
-			if !finished(c.State) {
-				allEnded = false
-			}
-		}
-		if allEnded && g.quiet(ctx) {
+		if childrenDelivered(detail.Children) && g.quiet(ctx) {
 			break
 		}
 		time.Sleep(10 * time.Second)
 	}
 	g.log("PASS children ended count=%d", len(detail.Children))
+	g.log("PASS parent processing receipts children=%d", len(detail.Children))
 
 	replies, err := g.transcript(ctx)
 	if err != nil {
@@ -336,6 +331,20 @@ func (g *gate) runAutonomous(ctx context.Context) error {
 	g.log("PASS awaits=%d children=%d", awaits, len(runs))
 	g.log("AUTONOMOUS PASS elapsed=%s conversation=%s task=#%s children=%d", time.Since(g.started).Round(time.Millisecond), g.conversation, root.ID, len(runs))
 	return nil
+}
+
+func childrenDelivered(children []task) bool {
+	if len(children) == 0 {
+		return false
+	}
+	for _, child := range children {
+		// Completion precedes snapshot push/landing and parent continuation.
+		// A quiet queue in that interval is not a result-processing receipt.
+		if !finished(child.State) || child.ResultDelivery == nil || child.ResultDelivery.State != "delivered" {
+			return false
+		}
+	}
+	return true
 }
 
 // rootTask finds the task this conversation opened for the coordinator.

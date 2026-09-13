@@ -114,6 +114,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("PUT /console/conversations/{id}", s.guard(s.consoleUpdateConversation))
 	mux.HandleFunc("POST /console/nodes", s.guard(s.consoleAddNode))
 	mux.HandleFunc("DELETE /console/nodes/{name}", s.guard(s.consoleRemoveNode))
+	mux.HandleFunc("GET /console/nodes/{name}/native-history", s.guard(s.consoleNativeHistory))
+	mux.HandleFunc("POST /console/nodes/{name}/native-history", s.guard(s.consoleNativeHistory))
 	mux.HandleFunc("GET /console/nodes/{name}/agents", s.guard(s.consoleNodeAgents))
 	mux.HandleFunc("POST /console/nodes/{name}/agents", s.guard(s.consoleNodeAgents))
 	mux.HandleFunc("POST /console/agents", s.guard(s.consoleAddAgent))

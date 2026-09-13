@@ -51,10 +51,11 @@ type Handler interface {
 // the agent's summary of the first exchange, or the owner's own — and
 // whether it has been put away.
 type Meta struct {
-	Title     string    `json:"title,omitempty"`
-	TitleBy   string    `json:"title_by,omitempty"`
-	Archived  bool      `json:"archived,omitempty"`
-	UpdatedAt time.Time `json:"updated_at,omitzero"`
+	NativeImport *consoleapi.ImportedSession `json:"native_import,omitempty"`
+	Title        string                      `json:"title,omitempty"`
+	TitleBy      string                      `json:"title_by,omitempty"`
+	Archived     bool                        `json:"archived,omitempty"`
+	UpdatedAt    time.Time                   `json:"updated_at,omitzero"`
 }
 
 // Titler names a conversation from its first exchange: a short summary of

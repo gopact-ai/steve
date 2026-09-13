@@ -24,11 +24,13 @@ const (
 	Codex      = "codex"
 	ClaudeCode = "claude-code"
 	Grok       = "grok"
+	Dsh        = "dsh"
 	Kimi       = "kimi"
 
 	EnvCodexHome       = "CODEX_HOME"
 	EnvClaudeConfigDir = "CLAUDE_CONFIG_DIR"
 	EnvGrokHome        = "GROK_HOME"
+	EnvDshHome         = "DSH_HOME"
 	EnvKimiCodeHome    = "KIMI_CODE_HOME"
 )
 

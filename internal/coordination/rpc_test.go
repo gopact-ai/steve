@@ -284,12 +284,20 @@ func TestPeerTLSRejectsWrongClusterCAAndNodeIdentity(t *testing.T) {
 func TestRemoveConsensusLeaderAfterCoordinatorTransferRoutesAndCommits(t *testing.T) {
 	c := newTLSTestCluster(t, 3)
 	client := c.clients["node-2"]
-	_, err := client.Transfer(context.Background(), TransferRequest{ID: "move-before-remove", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"})
-	if err != nil {
-		t.Fatal(err)
-	}
+	// The new voter may not yet have applied the bootstrap index. Only that
+	// expected admission failure is retried; routing/commit failures still fail.
+	eventually(t, 5*time.Second, func() bool {
+		_, err := client.Transfer(t.Context(), TransferRequest{ID: "move-before-remove", Actor: "owner", ExpectedEpoch: 1, TargetNodeID: "node-2"})
+		if errors.Is(err, ErrNotReady) {
+			return false
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		return true
+	})
 	request := RemoveRequest{ID: "remove-old-node", Actor: "owner", NodeID: "node-1"}
-	_, err = client.Remove(context.Background(), request)
+	_, err := client.Remove(context.Background(), request)
 	if err != nil {
 		t.Fatal(err)
 	}

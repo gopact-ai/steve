@@ -33,6 +33,7 @@ async function fixture({ history = false, running = false } = {}) {
     const f = { page, context, calls: [], errors: [], releases: [], binding: null, enqueue: null, cancel: null, failBinding: false, failEnqueue: false, replyReads: 0 };
     page.on("pageerror", (e) => f.errors.push(String(e)));
     const conversations = [{ id: A, title: "Conversation A", project: "scratch" }, { id: B, title: "Conversation B", project: "home" }];
+    f.conversations = conversations;
     const projects = [project("scratch"), project("home")];
     const replies = Object.fromEntries(conversations.map((c) => [c.id, Array.from({ length: history && c.id === A ? 35 : 1 }, (_, i) => ({ id: `${c.id}-${i}`, kind: "reply", conversation: c.id, at, text: `${c.title} history ${i}\n\nA retained answer with enough detail to occupy its own row.` }))]));
     f.replies = replies;
@@ -1573,6 +1574,61 @@ checks["fleet-version-drift"] = async (f) => {
     nodes[1].version = "abc1234";
     await f.emit({ kind: "node.changed" }); await f.page.clock.runFor(350);
     await eventually(async () => (await f.page.getByText("版本不同", { exact: true }).count()) === 0, "Drift should clear after a running process updates");
+};
+
+checks["native-history-import"] = async (f) => {
+    const node = { name: "test-node", role: "node", up: true, version: "test", features: ["native_history.v1"], harnesses: [] };
+    const imported = "console:import:fixture";
+    const home = "/original/codex";
+    const entries = [
+        { native_id: "retained-native-id", harness: "codex", source_home: home, workdir: "/test/scratch", title: "Retained context with a long title and original workspace", updated_at: at, revision: "revision-one" },
+        { native_id: "unmapped-native-id", harness: "codex", source_home: home, workdir: "/very/long/original/workspace/without/a/matching/project", title: "Unmapped session", updated_at: at, revision: "revision-two" },
+    ];
+    const state = { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [node], agents: [{ id: "test-agent", node: "test-node", harness: "codex", eligible: true }], tasks: [], plans: [], projects: [{ ...project("scratch"), workspaces: [{ id: "scratch-work", node: "test-node", path: "/test//scratch/./", kind: "canonical", agents: ["test-agent"] }] }], attempts: [], landings: [] };
+    const pendingState = gate();
+    await f.page.route("**/state", async (route) => { await pendingState.promise; return route.fulfill({ json: state }); });
+    const posts = []; let failRead = true, loseReceipt = true;
+    await f.page.route("**/console/nodes/test-node/native-history**", async (route) => {
+        if (route.request().method() === "GET") {
+            if (failRead) { failRead = false; return route.fulfill({ status: 503, json: { error: "Source machine is temporarily unavailable" } }); }
+            return route.fulfill({ json: { entries } });
+        }
+        posts.push(route.request().postDataJSON());
+        if (loseReceipt) { loseReceipt = false; return route.abort("connectionreset"); }
+        f.conversations.push({ id: imported, title: "Imported conversation", project: "scratch", agent: "test-agent" });
+        f.replies[imported] = [{ id: "import-notice", conversation: imported, kind: "notice", at, text: "History imported; send your next message to continue." }];
+        return route.fulfill({ json: { conversation: imported } });
+    });
+    await f.page.reload();
+    await f.page.getByRole("button", { name: "导入历史会话", exact: true }).click();
+    const dialog = f.page.getByRole("dialog", { name: "导入历史会话", exact: true });
+    await dialog.getByText("先接入支持会话迁移的机器并登记 Agent。", { exact: true }).waitFor();
+    pendingState.release();
+    await dialog.getByRole("button", { name: "查找会话", exact: true }).click();
+    await dialog.getByRole("alert").getByText("Source machine is temporarily unavailable").waitFor();
+    await dialog.getByRole("button", { name: "查找会话", exact: true }).click();
+    await dialog.getByRole("textbox", { name: "筛选标题、目录或会话 ID" }).fill("no matching session");
+    await dialog.getByRole("textbox", { name: "历史目录（可选）" }).fill(home);
+    await dialog.getByRole("button", { name: "查找会话", exact: true }).click();
+    assert.equal(await dialog.getByRole("textbox", { name: "筛选标题、目录或会话 ID" }).inputValue(), "");
+    await dialog.getByText("Unmapped session", { exact: true }).click();
+    await dialog.getByText(/没有项目匹配这个会话的目录/).waitFor();
+    assert.equal(await dialog.getByRole("button", { name: "导入并打开会话", exact: true }).isDisabled(), true);
+    await dialog.getByText("Retained context with a long title and original workspace", { exact: true }).click();
+    await f.page.screenshot({ path: path.join(output, "native-import-wide.png"), fullPage: true });
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await f.page.screenshot({ path: path.join(output, "native-import-narrow.png"), fullPage: true });
+    assert.ok(await dialog.evaluate((e) => e.scrollWidth <= e.clientWidth + 1), "Narrow import dialog must not overflow");
+    await f.page.keyboard.press("Tab");
+    assert.ok(await dialog.evaluate((e) => e.contains(document.activeElement)), "Keyboard focus must remain in import dialog");
+    await dialog.getByRole("button", { name: "导入并打开会话", exact: true }).click();
+    await dialog.getByRole("alert").waitFor();
+    assert.equal(posts.length, 1);
+    await dialog.getByRole("button", { name: "导入并打开会话", exact: true }).click();
+    await f.page.getByText("History imported; send your next message to continue.", { exact: true }).waitFor();
+    assert.deepEqual(posts[0], posts[1], "Lost import receipt must retry the same command and selected history");
+    assert.equal(posts[1].source.home, home); assert.equal(posts[1].native_id, "retained-native-id");
+    assert.equal(f.calls.filter((c) => c.path === "/console/send" || (c.path === "/console/queue" && c.method === "POST")).length, 0, "Import must not submit a task prompt");
 };
 
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);

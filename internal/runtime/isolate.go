@@ -61,6 +61,8 @@ func PrepareSelected(stateDir string, selected []string) error {
 			err = PrepareCodex(CodexHome(stateDir), source(".codex"))
 		case harness.ClaudeCode:
 			err = PrepareClaude(ClaudeHome(stateDir), source(".claude"))
+		case harness.Dsh:
+			err = PrepareDsh(DshHome(stateDir), source(".dsh"))
 		case harness.Grok:
 			err = PrepareGrok(GrokHome(stateDir), source(".grok"))
 		case harness.Kimi:
@@ -92,6 +94,8 @@ func SelectedSkillDests(stateDir string, selected []string) []string {
 			dest = CodexHome(stateDir)
 		case harness.ClaudeCode:
 			dest = ClaudeHome(stateDir)
+		case harness.Dsh:
+			dest = DshHome(stateDir)
 		case harness.Grok:
 			dest = GrokHome(stateDir)
 		case harness.Kimi:
@@ -111,6 +115,8 @@ func ApplyEnv(env []string, harnessID, stateDir string) []string {
 		key, value = harness.EnvCodexHome, CodexHome(stateDir)
 	case harness.ClaudeCode:
 		key, value = harness.EnvClaudeConfigDir, ClaudeHome(stateDir)
+	case harness.Dsh:
+		key, value = harness.EnvDshHome, DshHome(stateDir)
 	case harness.Grok:
 		key, value = harness.EnvGrokHome, GrokHome(stateDir)
 	case harness.Kimi:

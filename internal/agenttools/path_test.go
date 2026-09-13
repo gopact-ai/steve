@@ -37,7 +37,7 @@ func TestFinderDiscoveryIncludesUserInstallersWithoutExecuting(t *testing.T) {
 	body := "#!/bin/sh\n: > '" + marker + "'\n"
 	nvm := filepath.Join(home, ".nvm", "versions", "node", "v22.22.0", "bin")
 	want := map[string]string{}
-	for _, name := range []string{"codex", "claude", "node", "npm"} {
+	for _, name := range []string{"codex", "claude", "dsh", "node", "npm"} {
 		want[name] = pathTestProgram(t, nvm, name, body)
 	}
 	want["kimi"] = pathTestProgram(t, filepath.Join(home, ".kimi-code", "bin"), "kimi", body)

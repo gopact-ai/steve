@@ -93,7 +93,7 @@ func (p *Peer) authorizeSessionExecution(ctx context.Context, node string, autho
 	if err != nil {
 		return err
 	}
-	if record.PluginRuntimeID() != binding.PluginRuntimeID || record.TaskID != binding.TaskID || record.Project != binding.ProjectID || record.Node != binding.NodeID || attempt.SessionExecutionEpoch(record) != binding.ExecutionEpoch || record.Execution == nil || record.Execution.Epoch != binding.TaskEpoch {
+	if record.NativeImportID() != binding.NativeImportID || record.PluginRuntimeID() != binding.PluginRuntimeID || record.TaskID != binding.TaskID || record.Project != binding.ProjectID || record.Node != binding.NodeID || attempt.SessionExecutionEpoch(record) != binding.ExecutionEpoch || record.Execution == nil || record.Execution.Epoch != binding.TaskEpoch {
 		return errors.New("node session differs from the committed execution")
 	}
 	tasks, err := task.OpenLedger(runtime.Ledger(), "")

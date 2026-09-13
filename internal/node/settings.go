@@ -270,6 +270,8 @@ func (s *Server) configure(stream *nodewire.Stream) {
 		}
 	}
 	switch verb {
+	case "list-native-history", "import-native-history":
+		s.configureNativeHistory(stream)
 	case "discover-agents", "enroll-agent":
 		s.configureAgentTools(stream)
 	case "get":

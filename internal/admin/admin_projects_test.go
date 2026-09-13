@@ -14,7 +14,7 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 )
 
-func projectAdminFixture(t *testing.T) (*Service, *ledger.Ledger) {
+func projectAdminFixture(t *testing.T, options ...ledger.Options) (*Service, *ledger.Ledger) {
 	t.Helper()
 	admin := agentAdminFixture(t)
 	admin.Cfg.Nodes = map[string]config.Node{"remote": {Addr: "127.0.0.1:1", Token: "test"}}
@@ -27,7 +27,11 @@ func projectAdminFixture(t *testing.T) (*Service, *ledger.Ledger) {
 	if err := config.Save(admin.Path, admin.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	book, err := ledger.Open(t.TempDir(), ledger.Options{})
+	var opts ledger.Options
+	if len(options) > 0 {
+		opts = options[0]
+	}
+	book, err := ledger.Open(t.TempDir(), opts)
 	if err != nil {
 		t.Fatal(err)
 	}

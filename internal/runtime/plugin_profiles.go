@@ -36,6 +36,8 @@ func (p PluginProfiles) materialize(ctx context.Context, dir string, record plug
 		err = PrepareCodex(home, source)
 	case harness.ClaudeCode:
 		err = PrepareClaude(home, source)
+	case harness.Dsh:
+		err = PrepareDsh(home, source)
 	case harness.Grok:
 		err = PrepareGrok(home, source)
 	case harness.Kimi:
@@ -86,6 +88,8 @@ func (p PluginProfiles) nativeHome(id string, env []string) (string, string) {
 		key, source = harness.EnvCodexHome, CodexHome(p.StateDir)
 	case harness.ClaudeCode:
 		key, source = harness.EnvClaudeConfigDir, ClaudeHome(p.StateDir)
+	case harness.Dsh:
+		key, source = harness.EnvDshHome, DshHome(p.StateDir)
 	case harness.Grok:
 		key, source = harness.EnvGrokHome, GrokHome(p.StateDir)
 	case harness.Kimi:

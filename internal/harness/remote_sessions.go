@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/nativehistory"
 	"log/slog"
 	"strings"
 	"sync"
@@ -20,6 +21,7 @@ import (
 // NodeSessionContext must come from the committed task/attempt and input
 // records. Reattachment uses the same IDs; a new process cannot mint substitutes.
 type NodeSessionContext struct {
+	NativeImport  *nativehistory.Reference
 	Authority     nodewire.SessionAuthority
 	Binding       nodewire.SessionBinding
 	CommandID     string
@@ -97,6 +99,9 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 		binding.Binding.PluginRuntimeID = profile.ID
 	}
 	managed := strings.HasPrefix(upstreamID, "ns_")
+	if selected := requestedNativeImport(ctx); selected != nil && (!bound || binding.NativeImport == nil || *selected != *binding.NativeImport) {
+		return nil, true, ErrNodeSessionUnavailable
+	}
 	if !bound && !managed {
 		return nil, false, nil
 	}
@@ -124,7 +129,7 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 	if policy == "" {
 		policy = permission.PolicyRead
 	}
-	request := nodewire.SessionRequest{Action: nodewire.SessionActionOpen, Plugin: profile, Authority: binding.Authority, Binding: binding.Binding, ID: upstreamID, Harness: at.Harness, Workdir: workdir, MCPServers: servers, Permission: policy, CommandID: binding.CommandID + "/open"}
+	request := nodewire.SessionRequest{Action: nodewire.SessionActionOpen, NativeImport: binding.NativeImport.Clone(), Plugin: profile, Authority: binding.Authority, Binding: binding.Binding, ID: upstreamID, Harness: at.Harness, Workdir: workdir, MCPServers: servers, Permission: policy, CommandID: binding.CommandID + "/open"}
 	state, err := transport.NodeSession(ctx, node, request)
 	if err != nil {
 		var notSent *nodewire.SessionNotDispatched
