@@ -74,7 +74,14 @@ func PrepareNativeHistory(ctx context.Context, stateDir, execution string, ref n
 	if err := nativehistory.CheckStorage(ctx, parent, 0, 0); err != nil {
 		return harness.Config{}, err
 	}
+	if err := syncNativeRuntime(ctx, stage); err != nil {
+		return harness.Config{}, err
+	}
 	if err := os.Rename(stage, dest); err != nil {
+		return harness.Config{}, err
+	}
+	if err := syncNativePath(parent); err != nil {
+		_ = os.RemoveAll(dest) // No session can use it before preparation returns.
 		return harness.Config{}, err
 	}
 	cfg.Env = replaceProfileEnv(cfg.Env, key, filepath.Join(dest, "home"))
@@ -82,4 +89,29 @@ func PrepareNativeHistory(ctx context.Context, stateDir, execution string, ref n
 		cfg.Env = replaceProfileEnv(cfg.Env, "STEVE_PLUGIN_SKILLS_DIR", filepath.Join(dest, "home", "skills"))
 	}
 	return cfg, nil
+}
+
+// Preparation writes access settings and skills after Materialize has synced
+// history. Persist those files and directories before the node commits a record.
+func syncNativeRuntime(ctx context.Context, dir string) error {
+	return filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		return syncNativePath(path)
+	})
+}
+func syncNativePath(path string) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	return f.Sync()
 }

@@ -47,9 +47,6 @@ func List(ctx context.Context, source Source) ([]Entry, error) {
 		if d.IsDir() {
 			return nil
 		}
-		if len(out) >= maxEntries {
-			return errors.New("native session list exceeds 2000 records; select a narrower history home")
-		}
 		switch source.Harness {
 		case "codex":
 			if !strings.HasPrefix(d.Name(), "rollout-") || !strings.HasSuffix(path, ".jsonl") {
@@ -88,6 +85,9 @@ func List(ctx context.Context, source Source) ([]Entry, error) {
 		}
 		if !validSourceNativeID(source.Harness, entry.NativeID) || !filepath.IsAbs(entry.Workdir) {
 			return nil
+		}
+		if len(out) >= maxEntries {
+			return errors.New("native session list exceeds 2000 records; select a narrower history home")
 		}
 		entry.UpdatedAt = info.ModTime().UTC()
 		files, err := inventory(ctx, root, entry)

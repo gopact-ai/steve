@@ -7,6 +7,8 @@ import (
 	"errors"
 )
 
+const StorageSupported = false
+
 // Native history execution currently requires POSIX node path semantics and
 // a process-safe storage lock. Do not claim the bound on unsupported systems.
 func LockStorage(context.Context, string) (func(), error) {

@@ -49,7 +49,7 @@ func (a *agent) Initialize(_ context.Context, _ *acp.InitializeRequest) (*acp.In
 		AgentInfo:       &acp.Implementation{Name: "mockagent", Version: "0.1.0"},
 		AgentCapabilities: &acp.AgentCapabilities{
 			PromptCapabilities: &acp.PromptCapabilities{Image: os.Getenv("MOCKAGENT_NO_MEDIA") == "", EmbeddedContext: os.Getenv("MOCKAGENT_NO_MEDIA") == ""},
-			LoadSession:        true,
+			LoadSession:        os.Getenv("MOCKAGENT_NO_RESUME") == "",
 			MCPCapabilities:    &acp.MCPCapabilities{HTTP: true},
 			SessionCapabilities: &acp.SessionCapabilities{
 				List:   &acp.SessionListCapabilities{},

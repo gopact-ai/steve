@@ -1585,7 +1585,8 @@ checks["native-history-import"] = async (f) => {
         { native_id: "unmapped-native-id", harness: "codex", source_home: home, workdir: "/very/long/original/workspace/without/a/matching/project", title: "Unmapped session", updated_at: at, revision: "revision-two" },
     ];
     const state = { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [node], agents: [{ id: "test-agent", node: "test-node", harness: "codex", eligible: true }], tasks: [], plans: [], projects: [{ ...project("scratch"), workspaces: [{ id: "scratch-work", node: "test-node", path: "/test//scratch/./", kind: "canonical", agents: ["test-agent"] }] }], attempts: [], landings: [] };
-    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    const pendingState = gate();
+    await f.page.route("**/state", async (route) => { await pendingState.promise; return route.fulfill({ json: state }); });
     const posts = []; let failRead = true, loseReceipt = true;
     await f.page.route("**/console/nodes/test-node/native-history**", async (route) => {
         if (route.request().method() === "GET") {
@@ -1601,6 +1602,8 @@ checks["native-history-import"] = async (f) => {
     await f.page.reload();
     await f.page.getByRole("button", { name: "导入历史会话", exact: true }).click();
     const dialog = f.page.getByRole("dialog", { name: "导入历史会话", exact: true });
+    await dialog.getByText("先接入支持会话迁移的机器并登记 Agent。", { exact: true }).waitFor();
+    pendingState.release();
     await dialog.getByRole("button", { name: "查找会话", exact: true }).click();
     await dialog.getByRole("alert").getByText("Source machine is temporarily unavailable").waitFor();
     await dialog.getByRole("button", { name: "查找会话", exact: true }).click();

@@ -14,6 +14,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/mcpscan"
+	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/skills"
 )
@@ -27,7 +28,10 @@ func (s *Server) advert() nodewire.Advert {
 	adv.Snapshot = s.snapshot()
 	adv.Features = nodewire.Features()
 	if s.sessions != nil {
-		adv.Features = append(adv.Features, nodewire.FeatureNodeSessions, nodewire.FeatureNativeHistory)
+		adv.Features = append(adv.Features, nodewire.FeatureNodeSessions)
+		if nativehistory.StorageSupported {
+			adv.Features = append(adv.Features, nodewire.FeatureNativeHistory)
+		}
 	}
 	s.restart.mu.Lock()
 	if s.restart.enabled && s.conf().StateDir != "" {

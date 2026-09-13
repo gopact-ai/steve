@@ -114,3 +114,24 @@ func TestNativeImportRejectsMissingBindingAndWorkspaceRemapping(t *testing.T) {
 		t.Fatal("rejected import created an execution")
 	}
 }
+
+func TestNativeHistoryPOSTChecksResumeBeforeSnapshot(t *testing.T) {
+	s, ref, _ := importedNodeFixture(t)
+	cfg := s.conf()
+	spec := cfg.Harnesses["codex"]
+	spec.Env = append(spec.Env, "MOCKAGENT_NO_RESUME=1")
+	cfg.Harnesses["codex"] = spec
+	dir := filepath.Join(cfg.StateDir, "native-imports")
+	before, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.snapshotNativeHistory(t.Context(), nativehistory.ImportRequest{CommandID: "direct-post", Source: nativehistory.Source{Harness: "codex", Home: ref.SourceHome}, NativeID: ref.NativeID, Revision: ref.Revision})
+	if err == nil || !strings.Contains(err.Error(), "does not support") {
+		t.Fatalf("unsupported adapter import: %v", err)
+	}
+	after, err := os.ReadDir(dir)
+	if err != nil || len(after) != len(before) {
+		t.Fatal("unsupported import copied history", err)
+	}
+}

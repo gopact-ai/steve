@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const StorageSupported = true
+
 // LockStorage serializes admission and publication across node processes; a
 // crash releases the descriptor, while its unpublished stage stays accounted.
 func LockStorage(ctx context.Context, store string) (func(), error) {

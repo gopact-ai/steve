@@ -74,7 +74,7 @@ func (s *Server) configureNativeHistory(stream *nodewire.Stream) {
 			}
 		case "import-native-history":
 			var ref nativehistory.Reference
-			ref, err = nativehistory.Snapshot(ctx, filepath.Join(s.conf().StateDir, "native-imports"), request)
+			ref, err = s.snapshotNativeHistory(ctx, request)
 			if err == nil {
 				out.Reference = &ref
 			}
@@ -84,6 +84,13 @@ func (s *Server) configureNativeHistory(stream *nodewire.Stream) {
 		out.Error = err.Error()
 	}
 	_ = json.NewEncoder(stream).Encode(out)
+}
+
+func (s *Server) snapshotNativeHistory(ctx context.Context, request nativehistory.ImportRequest) (nativehistory.Reference, error) {
+	if err := s.checkNativeResume(ctx, request.Source.Harness); err != nil {
+		return nativehistory.Reference{}, err
+	}
+	return nativehistory.Snapshot(ctx, filepath.Join(s.conf().StateDir, "native-imports"), request)
 }
 
 func (s *Server) checkNativeResume(ctx context.Context, harnessID string) error {

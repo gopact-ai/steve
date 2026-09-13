@@ -20,7 +20,7 @@ type sourceFile struct {
 
 // inventory includes only the chosen transcript and its own adjunct history.
 // It rejects links and special files, including links inside adjunct trees.
-func inventory(ctx context.Context, root *os.Root, entry Entry) ([]sourceFile, error) {
+func inventory(ctx context.Context, root *os.Root, entry Entry, includeAttachments ...bool) ([]sourceFile, error) {
 	var files []sourceFile
 	var size int64
 	add := func(path string, info os.FileInfo) error {
@@ -75,7 +75,7 @@ func inventory(ctx context.Context, root *os.Root, entry Entry) ([]sourceFile, e
 			return nil, err
 		}
 	}
-	if entry.Harness == "dsh" {
+	if entry.Harness == "dsh" && len(includeAttachments) > 0 && includeAttachments[0] {
 		attachments, err := dshAttachments(ctx, root, files)
 		if err != nil {
 			return nil, err
@@ -99,6 +99,12 @@ func inventoryRevision(entry Entry, files []sourceFile) string {
 	encoder := json.NewEncoder(h)
 	_ = encoder.Encode([]string{entry.Harness, entry.NativeID, entry.SourceHome, entry.Workdir})
 	for _, f := range files {
+		// Discovery fingerprints transcript metadata. DSH's content-addressed
+		// attachments are extracted only for the selected snapshot and their
+		// bytes are verified against the reference digest during copying.
+		if entry.Harness == "dsh" && strings.HasPrefix(filepath.ToSlash(f.path), "attachments/") {
+			continue
+		}
 		_ = encoder.Encode([]any{f.path, f.info.Size(), f.info.ModTime().UTC()})
 	}
 	return hex.EncodeToString(h.Sum(nil))

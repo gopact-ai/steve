@@ -142,6 +142,36 @@ func TestDshRejectsFutureOrMixedGenerationsInsteadOfFallingBack(t *testing.T) {
 	}
 }
 
+func TestDshDiscoveryDefersEventsAndSnapshotRejectsCorruptAttachment(t *testing.T) {
+	home, store := t.TempDir(), t.TempDir()
+	path := "sessions/-work/root/session.v3.jsonl"
+	header := `{"type":"session","version":3,"id":"root","cwd":"/work"}` + "\n"
+	writeFixture(t, home, path, header+"events are intentionally not decoded by discovery\n")
+	source := Source{Harness: "dsh", Home: home}
+	if entries, err := List(t.Context(), source); err != nil || len(entries) != 1 {
+		t.Fatalf("discovery decoded events: %+v %v", entries, err)
+	}
+	digest := fmt.Sprintf("%x", sha256.Sum256([]byte("correct image")))
+	writeFixture(t, home, path, header+`{"attachmentId":"sha256:`+digest+`"}`+"\n")
+	writeFixture(t, home, "attachments/v1/objects/"+digest[:2]+"/"+digest, "corrupt image")
+	entries, err := List(t.Context(), source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Snapshot(t.Context(), store, ImportRequest{CommandID: "corrupt", Source: source, NativeID: "root", Revision: entries[0].Revision}); err == nil {
+		t.Fatal("corrupt content-addressed image was imported")
+	}
+	files, err := os.ReadDir(store)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, f := range files {
+		if f.Name() != ".admission.lock" {
+			t.Fatal("corrupt image published a snapshot", f.Name())
+		}
+	}
+}
+
 func TestDshOpaqueThreadIDResumesFromEncodedDirectory(t *testing.T) {
 	home := t.TempDir()
 	id := "lark/chat:one/thread/two"

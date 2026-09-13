@@ -19,7 +19,8 @@ export function NativeSessionImport({ agents, nodes, projects, onClose, onImport
     const { t, locale } = useI18n();
     const available = agents.filter((a) => ["codex", "claude-code", "grok", "dsh"].includes(a.harness) && nodes.some((n) => n.name === a.node && n.up && n.features?.includes("native_history.v1")));
     const [agentID, setAgentID] = useState(available[0]?.id || "");
-    const agent = available.find((a) => a.id === agentID);
+    const effectiveAgentID = agentID || available[0]?.id || "";
+    const agent = available.find((a) => a.id === effectiveAgentID);
     const [home, setHome] = useState("");
     const [entries, setEntries] = useState<HistoryEntry[] | null>(null);
     const [selected, setSelected] = useState("");
@@ -35,6 +36,7 @@ export function NativeSessionImport({ agents, nodes, projects, onClose, onImport
     function reset() { setQuery(""); setEntries(null); setSelected(""); setProjectID(""); setError(""); }
     async function find() {
         if (!agent || pending.current) return;
+        setAgentID(agent.id);
         pending.current = true; setBusy("read"); setError(""); setSelected("");
         try {
             const params = new URLSearchParams({ harness: agent.harness, home: home.trim() });
@@ -63,7 +65,7 @@ export function NativeSessionImport({ agents, nodes, projects, onClose, onImport
         <div className="workbench-drawer-body flex flex-col gap-4">
             <p className="text-sm text-tertiary">{t("nativeImport.hint")}</p>
             {!available.length ? <p role="status" className="text-sm text-tertiary">{t("nativeImport.unavailable")}</p> : <>
-                <Select label={t("nativeImport.agent")} selectedKey={agentID} isDisabled={!!busy} onSelectionChange={(key) => { setAgentID(String(key)); reset(); }} items={available.map((a) => ({ id: a.id, label: `${a.id} · ${a.harness} · ${a.node}` }))}>
+                <Select label={t("nativeImport.agent")} selectedKey={effectiveAgentID} isDisabled={!!busy} onSelectionChange={(key) => { setAgentID(String(key)); reset(); }} items={available.map((a) => ({ id: a.id, label: `${a.id} · ${a.harness} · ${a.node}` }))}>
                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                 </Select>
                 <Input label={t("nativeImport.source")} hint={t("nativeImport.sourceHint")} value={home} isDisabled={!!busy} onChange={(value) => { setHome(value); reset(); }} />
