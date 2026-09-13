@@ -1,4 +1,4 @@
-package main
+package consoleclient
 
 import (
 	"encoding/json"
@@ -334,7 +334,7 @@ func TestConsoleClientCommandsConfigReadOnly(t *testing.T) {
 				} else if command == "say" {
 					args = append(args, "-conversation", "console:fixture", "/fleet", "two", "words")
 				}
-				output, err := captureClientOutput(t, func() error { return run(args) })
+				output, err := captureClientOutput(t, func() error { return invokeConsoleClient(args) })
 				if err != nil || requests.Load() != 1 {
 					t.Fatalf("command error=%v requests=%d", err, requests.Load())
 				}
@@ -385,7 +385,7 @@ func TestConsoleClientCommandsDoNotSendCredentialsAcrossOrigins(t *testing.T) {
 				} else if command == "say" {
 					args = append(args, "/fleet")
 				}
-				_, err := captureClientOutput(t, func() error { return run(args) })
+				_, err := captureClientOutput(t, func() error { return invokeConsoleClient(args) })
 				return err
 			}
 			if err := invoke("-url", destination.URL); err == nil || strings.Contains(err.Error(), "config-owner-token") {
@@ -430,7 +430,7 @@ func TestConsoleClientCommandsRejectConfigBeforeRequest(t *testing.T) {
 			if command == "say" {
 				args = append(args, "/fleet")
 			}
-			if err := run(args); err == nil {
+			if err := invokeConsoleClient(args); err == nil {
 				t.Fatal("ignored broken explicit config")
 			}
 		})
@@ -460,5 +460,18 @@ func TestConsoleRedirectSameOriginAndLimit(t *testing.T) {
 	}
 	if err := checkConsoleRedirect(original, make([]*http.Request, 10)); err == nil {
 		t.Fatal("redirect loop was allowed")
+	}
+}
+
+func invokeConsoleClient(args []string) error {
+	switch args[0] {
+	case "dash":
+		return Dash(args[1:])
+	case "top":
+		return Top(args[1:])
+	case "say":
+		return Say(args[1:])
+	default:
+		return fmt.Errorf("unknown test client %q", args[0])
 	}
 }
