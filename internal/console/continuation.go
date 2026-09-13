@@ -13,7 +13,7 @@ import (
 // and restarts. Durable ingress and confirmed parent processing are distinct.
 func (s *Service) ContinueTask(ctx context.Context, conversation, taskID, key, member, notice, prompt string) error {
 	if member == "" || taskID == "" || key == "" {
-		return fmt.Errorf("task continuation needs a parent and member")
+		return fmt.Errorf("task continuation needs a parent, member and delivery key")
 	}
 	// Once accepted, the durable input is authoritative. Landing descriptions
 	// may change while its receipt is pending; never rebuild that message.

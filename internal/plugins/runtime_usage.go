@@ -29,12 +29,15 @@ type RuntimePackage struct {
 }
 
 type RuntimeInfo struct {
-	Packages  []RuntimePackage `json:"packages"`
-	Ref       RuntimeRef       `json:"ref"`
-	CommandID string           `json:"command_id"`
-	CreatedAt time.Time        `json:"created_at"`
-	Retired   bool             `json:"retired"`
-	Uses      []RuntimeUse     `json:"uses"`
+	// Installations comes from this node's retained deployment receipts.
+	// Nil identifies an older peer that did not report this inventory.
+	Installations []string         `json:"installations"`
+	Packages      []RuntimePackage `json:"packages"`
+	Ref           RuntimeRef       `json:"ref"`
+	CommandID     string           `json:"command_id"`
+	CreatedAt     time.Time        `json:"created_at"`
+	Retired       bool             `json:"retired"`
+	Uses          []RuntimeUse     `json:"uses"`
 }
 
 func (s *Store) BeginRuntimeUse(ctx context.Context, ref RuntimeRef, id, kind string) error {
@@ -165,7 +168,7 @@ func (s *Store) RuntimeInfos() ([]RuntimeInfo, error) {
 		} else if !os.IsNotExist(removedErr) {
 			return nil, removedErr
 		}
-		info := RuntimeInfo{Ref: record.Ref, CommandID: id, CreatedAt: record.CreatedAt, Uses: []RuntimeUse{}}
+		info := RuntimeInfo{Installations: []string{}, Ref: record.Ref, CommandID: id, CreatedAt: record.CreatedAt, Uses: []RuntimeUse{}}
 		for _, hash := range record.Ref.Selection.Deployments {
 			deployment, err := s.Deployment(hash)
 			if err != nil {
@@ -175,6 +178,7 @@ func (s *Store) RuntimeInfos() ([]RuntimeInfo, error) {
 			if !ok {
 				return nil, ErrIntegrity
 			}
+			info.Installations = append(info.Installations, deployment.Deployment.Installation)
 			info.Packages = append(info.Packages, RuntimePackage{ID: receipt.ID, Version: receipt.Version, Digest: receipt.Digest})
 		}
 		_, err = root.Lstat("runtimes/" + record.Ref.ID + "/retired.json")
