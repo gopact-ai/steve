@@ -29,6 +29,9 @@ const goalLimit = 120
 // reach the user rather than be swallowed.
 func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string, binding project.Binding, workspace string) (string, error) {
 	if c.tasks == nil {
+		if req.ExpectedTask != "" {
+			return "", fmt.Errorf("task continuation requires a task store")
+		}
 		return "", nil
 	}
 	// An onboarding turn runs under a synthetic conversation that is
@@ -44,8 +47,11 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 	tracked, ok := c.tasks.Active(req.ConversationID, selected.ID, req.Origin)
 	if req.ExpectedTask != "" {
 		tracked, ok = c.tasks.Get(req.ExpectedTask)
-		if !ok || tracked.Channel != req.ConversationID || tracked.Member != selected.ID || tracked.State != task.StateRunning || (tracked.ProjectID != "" && tracked.ProjectID != binding.ProjectID) {
-			return "", fmt.Errorf("task %s is no longer available for this continuation", req.ExpectedTask)
+		if !ok || tracked.Channel != req.ConversationID || tracked.Member != selected.ID || (tracked.ProjectID != "" && tracked.ProjectID != binding.ProjectID) {
+			return "", fmt.Errorf("task %s continuation binding changed", req.ExpectedTask)
+		}
+		if tracked.State != task.StateRunning {
+			return "", fmt.Errorf("%w: task %s is no longer available", task.ErrContinuationUnavailable, req.ExpectedTask)
 		}
 	}
 	if ok && tracked.ProjectID != "" && binding.ProjectID != "" && tracked.ProjectID != binding.ProjectID {

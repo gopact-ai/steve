@@ -1,6 +1,7 @@
 package task
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -22,7 +23,7 @@ type Result struct {
 // delivered after it succeeded: a crash between the two is retried, and
 // the delivery key keeps the retry from arriving twice.
 type Delivery struct {
-	State         string    `json:"state"` // pending | delivered | suppressed | uncertain
+	State         string    `json:"state"` // pending | queued | delivered | suppressed | uncertain
 	Key           string    `json:"key,omitempty"`
 	At            time.Time `json:"at"`
 	Attempts      int       `json:"attempts,omitempty"`
@@ -32,6 +33,7 @@ type Delivery struct {
 
 const (
 	DeliveryPending    = "pending"
+	DeliveryQueued     = "queued"
 	DeliveryDelivered  = "delivered"
 	DeliverySuppressed = "suppressed"
 	DeliveryUncertain  = "uncertain"
@@ -116,3 +118,6 @@ func sameDelivery(a, b *Delivery) bool {
 	}
 	return *a == *b
 }
+
+// ErrContinuationUnavailable is a rejection before any parent execution was admitted.
+var ErrContinuationUnavailable = errors.New("parent continuation was not admitted")

@@ -100,6 +100,7 @@ type Service struct {
 	deliver            func(context.Context, Delivery) error
 	deliverMu          sync.Mutex
 	replaySafeDelivery func(task.Task) bool
+	deliveryReceipt    func(task.Task, string) (bool, error)
 
 	mu                 sync.Mutex
 	pending            map[string]*child

@@ -1500,16 +1500,17 @@ checks["board-overview"] = async (f) => {
         { ...root("15", "done", "ended"), archived_at: at },
         { ...root("21", "done", "ended"), parent: "11", origin: "delegate:11", result_delivery: { state: "pending", attempts: 2, error: "Temporary delivery failure", next_attempt_at: "2026-09-06T10:00:10Z", at } },
         { ...root("22", "done", "needs_you"), parent: "11", origin: "delegate:11", result_delivery: { state: "uncertain", attempts: 1, error: "Receipt lost: " + "long-unbroken-detail".repeat(20), at } },
+        { ...root("16", "paused", "set_aside"), parent: "15" },
     ];
     const state = { ...usageState(usageFixture()), tasks: rows, projects: [project("scratch")] };
     await f.page.route("**/state", (route) => route.fulfill({ json: state }));
     await f.page.goto(`${app.url}/#/console?view=board`); await f.page.reload();
     const summary = f.page.getByRole("region", { name: "主任务统计" });
     await summary.getByText("主任务", { exact: true }).waitFor();
-    assert.match(await summary.innerText(), /主任务\s+4/);
+    assert.match(await summary.innerText(), /主任务\s+5/);
     assert.match(await summary.innerText(), /已完成\s+1/);
     assert.match(await summary.innerText(), /已取消\s+1/);
-    assert.match(await summary.innerText(), /已暂停\s+1/);
+    assert.match(await summary.innerText(), /已暂停\s+2/);
     await f.page.getByText("2 个结果待交接 · 1 个交接待确认", { exact: true }).waitFor();
     await f.page.getByRole("switch", { name: "显示已归档" }).press("Space");
     assert.match(await summary.innerText(), /主任务\s+5/);
@@ -1541,6 +1542,19 @@ checks["board-overview"] = async (f) => {
     });
     await f.page.getByRole("region", { name: "Root task summary" }).waitFor();
     assert.equal(f.calls.length, 0, "Reading handoffs must not dispatch work");
+};
+
+checks["child-handoff"] = async (f) => {
+    const child = { ...task("22", A, "scratch"), state: "done", lifecycle: "done", execution: "idle", lane: "needs_you", parent: "11", result_delivery: { state: "uncertain", error: "Child receipt was lost", attempts: 2, at } };
+    const state = { ...usageState(usageFixture()), tasks: [task("11", A, "scratch"), child] };
+    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    await f.page.goto(`${app.url}/#/console?view=board&tab=all`); await f.page.reload();
+    await f.page.getByRole("row").filter({ hasText: "Task 22" }).click();
+    const dialog = f.page.getByRole("dialog");
+    await dialog.getByRole("heading", { name: "结果交接", exact: true }).waitFor();
+    await dialog.getByText("#22 → #11", { exact: true }).waitFor();
+    await dialog.getByText("Child receipt was lost", { exact: true }).waitFor();
+    await f.page.screenshot({ path: path.join(output, "child-handoff.png"), fullPage: true });
 };
 
 checks["fleet-version-drift"] = async (f) => {

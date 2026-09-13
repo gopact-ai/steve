@@ -369,7 +369,7 @@ func (b *snapshotBuilder) taskAxes() {
 			}
 			rolledAttention[id] += waiting
 			if d := t.ResultDelivery; d != nil {
-				if d.State == task.DeliveryPending || d.State == task.DeliveryUncertain {
+				if d.State == task.DeliveryPending || d.State == task.DeliveryQueued || d.State == task.DeliveryUncertain {
 					rolledPending[id]++
 				}
 				if d.State == task.DeliveryUncertain {

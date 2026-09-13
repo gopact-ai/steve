@@ -44,7 +44,8 @@ const lanes: { key: string; title: string; hint: string }[] = [
     const [showArchived, setShowArchived] = useState(false);
     const byID = useMemo(() => new Map(snap.tasks.map((t) => [t.id, t])), [snap.tasks]);
     const visibleTasks = snap.tasks.filter((t) => showArchived || !t.archived_at);
-    const roots = visibleTasks.filter((t) => !t.parent || !byID.has(t.parent));
+    const visibleIDs = new Set(visibleTasks.map((t) => t.id));
+    const roots = visibleTasks.filter((t) => !t.parent || !visibleIDs.has(t.parent));
     const running = roots.filter((t) => t.lane === "running").length;
     const needsYou = roots.filter((t) => t.lane === "needs_you").length;
     const activityUnavailable = !!unavailableSource(snap.sources, "ledger-live");

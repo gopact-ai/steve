@@ -16,7 +16,7 @@ export function TaskDeliveries({ task, tasks }: { task: Task; tasks: Task[] }) {
         return false;
     });
     if (!records.length) return null;
-    const names = { pending: tr("tasks.handoffPending"), delivered: tr("tasks.handoffDelivered"), suppressed: tr("tasks.handoffSuppressed"), uncertain: tr("tasks.handoffUncertain") };
+    const names = { queued: tr("tasks.handoffQueued"), pending: tr("tasks.handoffPending"), delivered: tr("tasks.handoffDelivered"), suppressed: tr("tasks.handoffSuppressed"), uncertain: tr("tasks.handoffUncertain") };
     return <DrawerSection title={tr("tasks.handoffs")}>
         <ul className="flex flex-col divide-y divide-secondary">
             {records.map((child) => {
