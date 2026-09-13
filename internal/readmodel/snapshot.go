@@ -349,6 +349,7 @@ func (b *snapshotBuilder) taskAxes() {
 	for _, t := range snap.Tasks {
 		parent[t.ID] = t.Parent
 	}
+	rolledPending, rolledUncertain := map[string]int{}, map[string]int{}
 	rolledLive, rolledUnsettled, rolledAttention := map[string]bool{}, map[string]bool{}, map[string]int{}
 	for _, t := range snap.Tasks {
 		waiting := attention[t.ID]
@@ -367,6 +368,14 @@ func (b *snapshotBuilder) taskAxes() {
 				rolledUnsettled[id] = true
 			}
 			rolledAttention[id] += waiting
+			if d := t.ResultDelivery; d != nil {
+				if d.State == task.DeliveryPending || d.State == task.DeliveryUncertain {
+					rolledPending[id]++
+				}
+				if d.State == task.DeliveryUncertain {
+					rolledUncertain[id]++
+				}
+			}
 		}
 	}
 	for i := range snap.Tasks {
@@ -380,6 +389,7 @@ func (b *snapshotBuilder) taskAxes() {
 			t.Execution = ExecutionRunning
 		}
 		t.Attention = rolledAttention[t.ID]
+		t.PendingResults, t.UncertainResults = rolledPending[t.ID], rolledUncertain[t.ID]
 		t.Lane = lane(*t)
 		if t.Lane == "pending" && !b.attentionKnown {
 			t.Lane = "unknown"
@@ -433,7 +443,7 @@ func (m *Model) markSource(snap *Snapshot, name string, err error) {
 // is called "queued" — there is no queue on record to count.
 func lane(t Task) string {
 	switch {
-	case t.Attention > 0:
+	case t.Attention > 0 || t.UncertainResults > 0:
 		return "needs_you"
 	case t.Execution == ExecutionRunning:
 		return "running"
@@ -609,6 +619,13 @@ func tasks(list []task.Task, plans map[string]plan.Plan) []Task {
 			Elapsed:   t.Budget.Elapsed.Round(time.Second).String(),
 			MaxElapse: t.Budget.MaxElapsed.Round(time.Minute).String(),
 			UpdatedAt: t.UpdatedAt,
+		}
+		if t.Delegated() && t.Finished() && t.Result != nil && t.Parent != "" {
+			item.ResultDelivery = &task.Delivery{State: task.DeliveryPending, At: t.UpdatedAt}
+			if t.Delivery != nil {
+				d := *t.Delivery
+				item.ResultDelivery = &d
+			}
 		}
 		if p, ok := plans[t.ID]; ok {
 			item.PlanID = p.ID

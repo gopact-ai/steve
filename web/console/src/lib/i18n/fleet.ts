@@ -1,4 +1,6 @@
 export const fleetZh = {
+ "fleet.versionDrift": "版本不同",
+ "fleet.versionDriftHint": "{count} 台机器与协调节点版本不同（{version}）。版本来自正在运行的进程；请核对后统一升级。",
     "fleet.none": "无",
     "fleet.conditionMet": "机器满足",
     "fleet.toolDefault": "不固定（用 AI 工具的默认）",
@@ -136,6 +138,8 @@ export const fleetZh = {
 } as const;
 
 export const fleetEn = {
+ "fleet.versionDrift": "Version differs",
+ "fleet.versionDriftHint": "{count} machines differ from coordinator version {version}. Versions are reported by running processes; review and align deployments.",
     "fleet.none": "None",
     "fleet.conditionMet": "Requirements met",
     "fleet.toolDefault": "Use the tool default",

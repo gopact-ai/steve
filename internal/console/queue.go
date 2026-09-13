@@ -94,11 +94,11 @@ func (s *Service) EnqueueCommand(ctx context.Context, conversation, input, comma
 // instead of the input; front puts the line ahead of everything still
 // waiting, behind what already ran or runs.
 type enqueueOptions struct {
-	Prompt, Key                        string
-	Front                              bool
-	Origin, Requester, ExpectedProject string
-	Refs                               []material.Ref
-	Locale                             string
+	Prompt, Key                                      string
+	Front                                            bool
+	Origin, Requester, ExpectedProject, ExpectedTask string
+	Refs                                             []material.Ref
+	Locale                                           string
 }
 
 func (s *Service) enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef, options enqueueOptions) (*queuedExchange, Exchange, error) {
@@ -204,7 +204,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	}
 	e := &queuedExchange{
 		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
-			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject,
+			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject, ExpectedTask: options.ExpectedTask,
 			Refs: copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
 			Quotes: append([]QuoteRef(nil), quotes...), State: consoleapi.ExchangeQueued, EnqueuedAt: time.Now().UTC()},
 		PayloadHash: hash, ctx: s.exchangeContext(ctx), done: make(chan struct{}),

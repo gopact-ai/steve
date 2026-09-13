@@ -194,7 +194,7 @@ func TestAClosedParentGetsNoContinuation(t *testing.T) {
 	release()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if c, _ := w.tasks.Get(first.TaskID); c.Delivery != nil && c.Delivery.State == task.DeliveryDelivered {
+		if c, _ := w.tasks.Get(first.TaskID); c.Delivery != nil && c.Delivery.State == task.DeliverySuppressed {
 			break
 		}
 		if time.Now().After(deadline) {

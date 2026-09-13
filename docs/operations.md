@@ -517,16 +517,16 @@ bash -lc 'exec /home/me/steve-bin/steve-node mcp-broker -config /home/me/steve-b
 | `make build` | 静态构建 hub 和 node | Go 1.27+；不启动服务 |
 | `make test` | Go 测试、竞态检查与依赖门禁 | 本地运行 |
 | `make test-console` | 前端构建、依赖与隔离浏览器测试 | 先安装 npm 开发依赖和 Playwright Chromium |
-| `make e2e-fleet` | 指定远端 agent 的委派、attempt、改动索引、用量、文件落地 | 已运行机群；客户端默认/上限 10 分钟 |
-| `make e2e-autonomous` | 查机群、并行拆解委派、按 build 能力执行、回传结果与落地 | 已运行机群；客户端默认/上限 20 分钟 |
+| `make e2e-fleet` | 独立 hub + Docker 节点，确定性 Agent 验证委派与落地 | Linux、本机 Docker、匹配 Go 工具链；总期限 25 分钟 |
+| `make e2e-autonomous` | 同一隔离机群验证并行委派、能力调度与结果交接 | 同上；不调用真实模型 |
 | `make e2e` | `STEVE_MESH_E2E=1` 的 mesh 测试 | Go 测试总超时 25 分钟；独立测试机群配置见 [e2e/mesh/](../e2e/mesh/) |
 | CI | Go gofmt/vet/race、前端构建/依赖门禁/隔离浏览器测试 | master push 与 PR；不运行真实机群门禁 |
 
-两个 fleet 门禁在 **hub 机器的仓库根目录**运行，使用已有 hub 和 node，不构建、部署或重启它们。它们以 owner 访问控制台 API，读取 hub 本机项目主目录，所以仅有远程 HTTP 访问不够；任务会使用真实模型并留下会话与文件证据。
+上述 make 入口自行构建和清理隔离环境。真实模型验收使用下面的客户端，在 **hub 机器的仓库根目录**运行，使用已有 hub 和 node，不构建、部署或重启它们。它们以 owner 访问控制台 API，读取 hub 本机项目主目录，所以仅有远程 HTTP 访问不够；任务会使用真实模型并留下会话与文件证据。
 
 ```bash
-bash -lc 'make e2e-fleet'
-bash -lc 'make e2e-autonomous'
+go run ./e2e/fleet
+go run ./e2e/fleet -scenario autonomous
 ```
 
 连接参数优先级为命令行 `-hub` / `-token` → 环境变量 `HUB` / `TOKEN` → 当前工作树的 `config.e2e.json` 中 `gateway.read_model_addr` / `gateway.read_model_token`。缺地址时用 `http://127.0.0.1:7710`，通配监听地址转换为 loopback；token 必填。新工作树必须自备连接配置或环境变量，门禁不会读取别的工作树配置。
@@ -538,7 +538,7 @@ bash -lc 'make e2e-autonomous'
 | `-agent` / `AGENT` | `claude` | hub 上的协调 agent |
 | `-target-node` / `TARGET_NODE` | `node-b` | 普通 fleet 指定的远端机器 |
 | `-target-agent` / `TARGET_AGENT` | `shipper` | 普通 fleet 指定的远端 agent |
-| `-scenario` / `SCENARIO` | `delegate` | `autonomous` 由协调 agent 自己挑目标；make e2e-autonomous 显式选择它 |
+| `-scenario` / `SCENARIO` | `delegate` | `autonomous` 由协调 agent 自己挑目标；`-scenario autonomous` 显式选择它 |
 | `-timeout` | delegate 为 `10m`，autonomous 为 `20m` | 可缩短，必须为正数且不能超过对应上限 |
 
 自主门禁还要求项目主目录有 `kvtool/main.go`，在线远端 node 的 `capabilities` 包含 `build`，并有可编译、可写文档的 agent。它检查至少两个子任务成功且执行有重叠、编译产物确实来自申报 build 的远端、README 校验章节与发布说明落地、`sha256sum -c` 成功、二进制是 ELF x86-64，以及子任务 attempt 和实际报告的用量。hub 需有 `sha256sum` 与 `file`。`steve_await` 次数超过子任务数的两倍会失败，避免把轮询当自主协调。

@@ -307,10 +307,13 @@ type Task struct {
 	// Lifecycle is the task's own state; Execution says whether an
 	// attempt is live (idle|running|unknown); Attention counts known requests
 	// waiting; Lane is the board column that follows from the three.
-	Lifecycle task.State     `json:"lifecycle"`
-	Execution ExecutionState `json:"execution"`
-	Attention int            `json:"attention"`
-	Lane      string         `json:"lane"`
+	Lifecycle        task.State     `json:"lifecycle"`
+	Execution        ExecutionState `json:"execution"`
+	Attention        int            `json:"attention"`
+	Lane             string         `json:"lane"`
+	ResultDelivery   *task.Delivery `json:"result_delivery,omitempty"`
+	PendingResults   int            `json:"pending_results,omitempty"`
+	UncertainResults int            `json:"uncertain_results,omitempty"`
 }
 
 type Plan struct {

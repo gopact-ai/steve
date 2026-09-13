@@ -96,9 +96,10 @@ type Service struct {
 	// deliver carries a finished child's result into its parent's
 	// conversation; deliverMu serialises deliveries per process so a
 	// turn ending and a child ending at once send one message, not two.
-	spawnGuard func(context.Context, *ledger.Tx) error
-	deliver    func(context.Context, Delivery) error
-	deliverMu  sync.Mutex
+	spawnGuard         func(context.Context, *ledger.Tx) error
+	deliver            func(context.Context, Delivery) error
+	deliverMu          sync.Mutex
+	replaySafeDelivery func(task.Task) bool
 
 	mu                 sync.Mutex
 	pending            map[string]*child

@@ -602,7 +602,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		Channel:        "console",
 		ConversationID: conversation, ChatID: ChatID, MessageID: AnchorMark + exchange.ID, Input: prompt, Queue: !isInterrupt(input),
 		SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true,
-		Origin: exchange.Origin, ExpectedProject: exchange.ExpectedProject,
+		Origin: exchange.Origin, ExpectedProject: exchange.ExpectedProject, ExpectedTask: exchange.ExpectedTask,
 		Locale: exchange.Locale, Images: media,
 		OnTurnReady: func(taskID, attemptID string) {
 			identity.set(taskID, attemptID)
@@ -871,5 +871,15 @@ func (s *Service) Continue(ctx context.Context, conversation, key, member, notic
 		return fmt.Errorf("continue %s: no member to address", conversation)
 	}
 	_, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true, Key: key})
+	return err
+}
+
+// ContinueTask keeps the accepted message bound to the parent across queueing,
+// restarts and conversation resets. Admission rechecks the parent's state.
+func (s *Service) ContinueTask(ctx context.Context, conversation, taskID, key, member, notice, prompt string) error {
+	if member == "" || taskID == "" {
+		return fmt.Errorf("task continuation needs a parent and member")
+	}
+	_, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true, Key: key, ExpectedTask: taskID})
 	return err
 }

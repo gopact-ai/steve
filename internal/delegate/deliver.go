@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agentmcp"
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/text"
@@ -101,6 +102,14 @@ func (s *Service) SetDeliverer(fn func(context.Context, Delivery) error) {
 	s.deliver = fn
 }
 
+// SetReplaySafeDelivery identifies channels whose durable ingress deduplicates
+// delivery keys even across restarts. Other channels require a receipt.
+func (s *Service) SetReplaySafeDelivery(check func(task.Task) bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.replaySafeDelivery = check
+}
+
 // collect marks a child's result as read by its parent in-turn: it will
 // not be delivered again. Only a terminal result counts.
 func (s *Service) collect(taskID string, result agentmcp.DelegateResult) {
@@ -129,8 +138,12 @@ func (s *Service) flushIfIdle(ctx context.Context, parentID string) {
 // child ends while no turn runs. Safe to call twice: a child is
 // delivered once.
 func (s *Service) Flush(ctx context.Context, parentID string) {
+	s.flush(ctx, parentID, time.Now())
+}
+
+func (s *Service) flush(ctx context.Context, parentID string, due time.Time) {
 	s.mu.Lock()
-	deliver := s.deliver
+	deliver, replaySafe := s.deliver, s.replaySafeDelivery
 	s.mu.Unlock()
 	if deliver == nil {
 		return
@@ -144,6 +157,9 @@ func (s *Service) Flush(ctx context.Context, parentID string) {
 	s.mu.Lock()
 	ready := waiting[:0]
 	for _, tracked := range waiting {
+		if d := tracked.Delivery; d != nil && (d.State == task.DeliveryUncertain || (!due.IsZero() && d.NextAttemptAt.After(due))) {
+			continue
+		}
 		if current := s.pending[tracked.ID]; current != nil && current.waiters > 0 {
 			continue
 		}
@@ -155,45 +171,68 @@ func (s *Service) Flush(ctx context.Context, parentID string) {
 		return
 	}
 	parent, ok := s.tasks.Get(parentID)
-	if !ok || parent.Finished() || parent.State == task.StatePaused {
+	if !ok || parent.State.Terminal() {
 		// Nobody to continue: the results stay on the children's records;
 		// the listing shows them. Mark them so they are not retried.
 		for _, c := range waiting {
-			if err := s.tasks.SetDelivery(c.ID, task.DeliveryDelivered); err != nil {
-				slog.Error(fmt.Sprintf("delegate: mark task #%s delivered: %v", c.ID, err), "task", c.ID, "parent", parentID)
+			if err := s.tasks.SetDelivery(c.ID, task.DeliverySuppressed); err != nil {
+				slog.Error(fmt.Sprintf("delegate: suppress delivery for task #%s: %v", c.ID, err), "task", c.ID, "parent", parentID)
 			}
 		}
 		return
 	}
-	landing := s.landFor(ctx, parent)
-	d := Delivery{Conversation: parent.Channel, ParentTask: parent.ID, Member: parent.Member, ChatID: parent.ChatID,
-		Anchor: parent.AnchorMessage, Requester: parent.Requester, ChatType: parent.ChatType}
-	for _, c := range waiting {
-		elapsed := c.UpdatedAt.Sub(c.CreatedAt)
-		dc := Delivered{Task: c.ID, Agent: c.Member, Node: c.Node, State: c.State, Elapsed: elapsed, Goal: c.Goal,
-			Answer: c.Result.Answer, Refs: withoutLandingTalk(c.Result.Refs), Attempt: c.Result.Attempt}
-		if c.State == task.StateDone {
-			dc.State = task.StateDone
-		} else {
-			dc.State = task.StateFailed
-		}
-		dc.Landing = landing(c)
-		d.Children = append(d.Children, dc)
-		if err := s.tasks.SetDelivery(c.ID, task.DeliveryPending); err != nil {
-			slog.Error(fmt.Sprintf("delegate: mark task #%s pending delivery: %v", c.ID, err), "task", c.ID, "parent", parentID, "conversation", parent.Channel)
-		}
-	}
-	d.Key = task.DeliveryKey(waiting[0].ID)
-	if err := deliver(ctx, d); err != nil {
-		slog.Error(fmt.Sprintf("delegate: deliver %d child result(s) to task #%s: %v", len(d.Children), parentID, err), "parent", parentID, "conversation", parent.Channel)
+	if parent.State != task.StateRunning {
 		return
 	}
-	for _, c := range waiting {
-		if err := s.tasks.SetDelivery(c.ID, task.DeliveryDelivered); err != nil {
-			slog.Error(fmt.Sprintf("delegate: mark task #%s delivered: %v", c.ID, err), "task", c.ID, "parent", parentID, "conversation", parent.Channel)
-		}
+	ids := make([]string, 0, len(waiting))
+	for _, child := range waiting {
+		ids = append(ids, child.ID)
 	}
-	slog.Info(fmt.Sprintf("delegate: delivered %d child result(s) into %s for task #%s", len(d.Children), parent.Channel, parentID), "parent", parentID, "conversation", parent.Channel)
+	batches, err := s.tasks.PrepareDeliveries(parentID, ids)
+	if err != nil {
+		slog.Error("delegate: prepare result delivery", "parent", parentID, "error", err)
+		return
+	}
+	landing := s.landFor(ctx, parent)
+	for _, batch := range batches {
+		if ctx.Err() != nil {
+			return
+		}
+		s.deliverBatch(ctx, deliver, parent, batch, landing, replaySafe != nil && replaySafe(parent))
+	}
+}
+
+func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context, Delivery) error, parent task.Task, waiting []task.Task, landing func(task.Task) string, replaySafe bool) {
+	d := Delivery{Conversation: parent.Channel, ParentTask: parent.ID, Member: parent.Member, ChatID: parent.ChatID,
+		Anchor: parent.AnchorMessage, Requester: parent.Requester, ChatType: parent.ChatType, Key: waiting[0].Delivery.Key}
+	ids := make([]string, 0, len(waiting))
+	for _, c := range waiting {
+		state := task.StateFailed
+		if c.State == task.StateDone {
+			state = task.StateDone
+		}
+		d.Children = append(d.Children, Delivered{Task: c.ID, Agent: c.Member, Node: c.Node, State: state,
+			Elapsed: c.UpdatedAt.Sub(c.CreatedAt), Goal: c.Goal, Answer: c.Result.Answer,
+			Refs: withoutLandingTalk(c.Result.Refs), Attempt: c.Result.Attempt, Landing: landing(c)})
+		ids = append(ids, c.ID)
+	}
+	if err := s.tasks.StartDelivery(ids, replaySafe); err != nil {
+		slog.Error("delegate: record delivery start", "parent", parent.ID, "error", err)
+		return
+	}
+	state, detail := task.DeliveryDelivered, ""
+	if err := deliver(ctx, d); err != nil {
+		state, detail = task.DeliveryPending, err.Error()
+		if errors.Is(err, channel.ErrOutcomeUnknown) {
+			state = task.DeliveryUncertain
+		}
+		slog.Error("delegate: result delivery failed", "parent", parent.ID, "conversation", parent.Channel, "error", err)
+	}
+	if err := s.tasks.RecordDelivery(ids, state, detail); err != nil {
+		slog.Error("delegate: record result delivery", "parent", parent.ID, "error", err)
+	} else if state == task.DeliveryDelivered {
+		slog.Info(fmt.Sprintf("delegate: delivered %d child result(s) into %s for task #%s", len(d.Children), parent.Channel, parent.ID), "parent", parent.ID, "conversation", parent.Channel)
+	}
 }
 
 // landFor lands what the project has queued — the parent holds no lock
@@ -258,7 +297,33 @@ func (s *Service) landFor(ctx context.Context, parent task.Task) func(task.Task)
 // process died, whose parents were never told.
 func (s *Service) RedeliverPending(ctx context.Context) {
 	for parentID := range s.tasks.Undelivered() {
-		s.flushIfIdle(ctx, parentID)
+		if s.attempts != nil {
+			if _, live := s.attempts.LiveAttemptOf(ctx, parentID); live {
+				continue
+			}
+		}
+		s.flush(ctx, parentID, time.Time{})
+	}
+}
+
+// ReconcileDeliveries retries durable pending messages while the application is
+// running. It does not wake paused/failed parents or replay uncertain sends.
+func (s *Service) ReconcileDeliveries(ctx context.Context) error {
+	s.reconcileDeliveries(ctx, time.Now())
+	return ctx.Err()
+}
+
+func (s *Service) reconcileDeliveries(ctx context.Context, now time.Time) {
+	for parentID := range s.tasks.Undelivered() {
+		if ctx.Err() != nil {
+			return
+		}
+		if s.attempts != nil {
+			if _, live := s.attempts.LiveAttemptOf(ctx, parentID); live {
+				continue
+			}
+		}
+		s.flush(ctx, parentID, now)
 	}
 }
 
@@ -273,4 +338,20 @@ func withoutLandingTalk(refs []string) []string {
 		out = append(out, r)
 	}
 	return out
+}
+
+// ConfirmDelivery records an asynchronous channel receipt without holding the
+// dispatch lock. A parent turn may itself flush newly finished children.
+func (s *Service) ConfirmDelivery(d Delivery, err error) {
+	ids := make([]string, 0, len(d.Children))
+	for _, c := range d.Children {
+		ids = append(ids, c.Task)
+	}
+	state, detail := task.DeliveryDelivered, ""
+	if err != nil {
+		state, detail = task.DeliveryUncertain, err.Error()
+	}
+	if err := s.tasks.RecordDelivery(ids, state, detail); err != nil {
+		slog.Error("delegate: record continuation receipt", "parent", d.ParentTask, "error", err)
+	}
 }

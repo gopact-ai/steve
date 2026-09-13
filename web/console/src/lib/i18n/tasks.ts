@@ -1,4 +1,15 @@
 export const tasksZh = {
+ "tasks.handoffs": "结果交接",
+ "tasks.handoffPending": "待交接",
+ "tasks.handoffDelivered": "已送达",
+ "tasks.handoffSuppressed": "父任务已结束，结果保留",
+ "tasks.handoffUncertain": "待确认",
+ "tasks.handoffAttempts": "已尝试 {count} 次",
+ "tasks.handoffRetry": "下次自动重试：{time}",
+ "tasks.handoffHeld": "父任务当前不能继续；结果会保留至恢复后交接。",
+ "tasks.handoffWaiting": "等待父任务空闲后交接。",
+ "tasks.handoffCheck": "先核对父任务会话是否已收到结果；确认前不会自动重发。",
+
     "tasks.high": "高",
     "tasks.archived": "已归档",
     "tasks.projectPrefix": "· 项目",
@@ -50,6 +61,17 @@ export const tasksZh = {
 } as const;
 
 export const tasksEn = {
+ "tasks.handoffs": "Result handoffs",
+ "tasks.handoffPending": "Pending",
+ "tasks.handoffDelivered": "Delivered",
+ "tasks.handoffSuppressed": "Parent ended; result retained",
+ "tasks.handoffUncertain": "Awaiting confirmation",
+ "tasks.handoffAttempts": "{count} attempts",
+ "tasks.handoffRetry": "Next automatic retry: {time}",
+ "tasks.handoffHeld": "The parent cannot continue yet. The result is retained until it resumes.",
+ "tasks.handoffWaiting": "Waiting for the parent to become idle.",
+ "tasks.handoffCheck": "Check whether the parent conversation received the result. Automatic replay is disabled until confirmed.",
+
     "tasks.high": "High",
     "tasks.archived": "Archived",
     "tasks.projectPrefix": " · Project ",

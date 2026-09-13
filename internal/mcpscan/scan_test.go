@@ -8,6 +8,7 @@ import (
 
 func TestScanCodexAndClaude(t *testing.T) {
 	home := t.TempDir()
+	t.Setenv("CODEX_HOME", filepath.Join(home, ".codex"))
 	_ = os.MkdirAll(filepath.Join(home, ".codex"), 0o755)
 	_ = os.WriteFile(filepath.Join(home, ".codex", "config.toml"), []byte(`
 model = "gpt-5"

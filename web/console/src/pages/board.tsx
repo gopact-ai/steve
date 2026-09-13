@@ -70,7 +70,11 @@ const lanes: { key: string; title: string; hint: string }[] = [
                         {(item) => <Tab {...item} />}
                     </TabList>
                 </Tabs>
-                {tab !== "usage" && <div className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                {tab !== "usage" && <div role="region" aria-label={tr("board.rootSummary")} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                    <Stat label={tr("board.totalRoots")} value={roots.length} tone="gray" />
+                    <Stat label={tr("board.completed")} value={roots.filter((t) => t.lifecycle === "done").length} tone="gray" />
+                    <Stat label={tr("board.cancelled")} value={roots.filter((t) => t.lifecycle === "cancelled").length} tone="gray" />
+                    <Stat label={tr("board.paused")} value={roots.filter((t) => t.lifecycle === "paused").length} tone="gray" />
                     <Stat label={tr("status.running")} value={activityUnavailable ? (running ? `${running}+` : tr("common.unknown")) : running} tone={running ? "blue" : "gray"} />
                     <Stat label={tr("board.attention")} value={attentionUnavailable ? (needsYou ? `${needsYou}+` : tr("common.unknown")) : needsYou} tone={needsYou ? "warning" : "gray"} />
                     <Stat label={tr("board.today")} value={todayUsage && !usageUnavailable ? `${todayTokens} · ${fmtSeconds(todayUsage.seconds, locale)}` : "—"} tone="gray" />
@@ -81,7 +85,7 @@ const lanes: { key: string; title: string; hint: string }[] = [
                 {tab === "active" && (
                     <div className="grid grid-cols-1 gap-5 md:grid-cols-2 xl:grid-cols-4">
                         {lanes.filter((lane) => lane.key !== "unknown" || roots.some((task) => task.lane === "unknown")).map((lane) => {
-                            const items = roots.filter((t) => t.lane === lane.key || (lane.key === "ended" && t.lane === "set_aside" && false)).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+                            const items = roots.filter((t) => t.lane === lane.key).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
                             const shown = lane.key === "ended" ? items.slice(0, 8) : items;
                             return (
                                 <div key={lane.key} className="workbench-task-lane flex min-w-0 flex-col gap-2">
@@ -152,6 +156,7 @@ function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () 
                         {tr("board.runningPrefix")}{now.tool ? `${now.tool} ${now.detail || ""}` : now.step_id ? tr("board.step", { step: now.step_id }) : tr("status.running")} · {relative(now.since, locale)}
                     </div>
                 )}
+                {!!t.pending_results && <div className={`text-xs ${t.uncertain_results ? "text-warning-primary" : "text-tertiary"}`}>{tr("board.pendingResults", { count: t.pending_results })}{t.uncertain_results ? ` · ${tr("board.uncertainResults", { count: t.uncertain_results })}` : ""}</div>}
                 {steps.length > 0 && <div className="text-xs text-tertiary">{tr("board.stepProgress", { done, total: steps.length })}</div>}
                 <div className="flex items-center gap-2 u-meta text-quaternary">
                     <span className="w-16">{tr("board.turnCount", { count: t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns })}</span>

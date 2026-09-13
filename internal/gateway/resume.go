@@ -104,6 +104,18 @@ func (g *Gateway) Revive(revivals []Revival, revive func(conversationID, member 
 // a reply at the task's anchor and becomes the anchor of the turn the
 // prompt starts, the way a resume does.
 func (g *Gateway) Deliver(r Revival, notice, prompt string) error {
+	return g.deliver(r, notice, prompt, nil)
+}
+
+// DeliverConfirmed reports success only after the parent has processed the input.
+// Until that callback, a crash or missing receipt must never cause blind replay.
+// Processing runs outside the caller's dispatch lock: its after-turn hook can
+// itself deliver more children without deadlocking.
+func (g *Gateway) DeliverConfirmed(r Revival, notice, prompt string, confirm func(error)) error {
+	return g.deliver(r, notice, prompt, confirm)
+}
+
+func (g *Gateway) deliver(r Revival, notice, prompt string, confirm func(error)) error {
 	tr, ok := g.ch.(textReplier)
 	if !ok {
 		return fmt.Errorf("channel cannot post notices")
@@ -115,12 +127,12 @@ func (g *Gateway) Deliver(r Revival, notice, prompt string) error {
 	noticeID, err := tr.ReplyText(ctx, r.MessageID, notice)
 	cancel()
 	if err != nil {
-		return err
+		return noticeError(err)
 	}
 	if noticeID == "" {
-		return fmt.Errorf("task #%s: notice posted without an id", r.TaskID)
+		return fmt.Errorf("%w: task #%s notice has no receipt", channel.ErrOutcomeUnknown, r.TaskID)
 	}
-	g.HandleMessage(feishu.InboundMessage{
+	msg := feishu.InboundMessage{
 		ConversationID: r.ConversationID,
 		ChatID:         r.ChatID,
 		MessageID:      noticeID,
@@ -128,8 +140,16 @@ func (g *Gateway) Deliver(r Revival, notice, prompt string) error {
 		ChatType:       protocol.ParseChatType(r.ChatType),
 		Mentioned:      true,
 		Text:           "@" + r.Member + " " + prompt,
-	})
-	return nil
+	}
+	if confirm == nil {
+		g.HandleMessage(msg)
+		return nil
+	}
+	g.mu.Lock()
+	g.rememberLocked(noticeID)
+	g.mu.Unlock()
+	go func() { confirm(g.serveTask(msg, r.ConversationID, r.TaskID)) }()
+	return fmt.Errorf("%w: parent continuation is awaiting confirmation", channel.ErrOutcomeUnknown)
 }
 
 // ResumeTask picks one task back up. The notice is not decoration: it is the
@@ -286,4 +306,12 @@ func (g *Gateway) FireSchedule(ctx context.Context, f Fire) (FireReceipt, error)
 	})
 	ui.finish(result, runErr)
 	return FireReceipt{MessageID: noticeID}, nil
+}
+
+func noticeError(err error) error {
+	var network net.Error
+	if errors.As(err, &network) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return errors.Join(channel.ErrOutcomeUnknown, err)
+	}
+	return err
 }

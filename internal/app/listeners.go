@@ -27,12 +27,12 @@ func startListeners(life lifetime, input inputAssembly, boot runtimeAssembly, st
 	reconciliations := page.Reconciliations()
 	services := management.Services()
 	recoverRetainedDelegates := delegates.RecoverRetainedDelegates()
-	redeliverPending := delegates.RedeliverPending()
+	reconcileDeliveries := delegates.ReconcileDeliveries()
 	channel := channels.Channel()
 	// Children that ended before the last process died, whose parents
 	// were never told.
-	if redeliverPending != nil {
-		background.Go(redeliverPending)
+	if reconcileDeliveries != nil {
+		reconciliations.Go(func() { runReconciler(ctx, "reconcile child result delivery", reconcileDeliveries) })
 	}
 	if recoverRetainedDelegates != nil {
 		reconciliations.Go(func() { runReconciler(ctx, "reconcile retained child executions", recoverRetainedDelegates) })

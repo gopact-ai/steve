@@ -8,6 +8,7 @@ import { short, when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import { fmtSeconds, fmtTokens, label, spend, labelsFor } from "@/lib/labels";
 import type { Plan, Task } from "@/lib/types";
+import { TaskDeliveries } from "./task-deliveries";
 import { CallGraph } from "./call-graph";
 import { Drawer, DrawerSection } from "./drawer";
 import { TaskMetaMenu, TaskTitleEditor, useTaskMeta } from "./task-meta-menu";
@@ -65,7 +66,7 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                 <DrawerSection title={tr("tasks.result")}>
                     <div className="flex flex-col gap-1 text-sm">
                         <Row k={tr("tasks.execution")} v={t.execution === "running" ? tr("tasks.running") : t.execution === "unknown" ? tr("tasks.unknown") : tr("tasks.idle")} />
-                        <Row k={tr("tasks.attention")} v={t.attention ? tr("tasks.attentionCount", { count: t.attention }) : tr("tasks.none")} />
+                        <Row k={tr("tasks.attention")} v={t.attention || t.uncertain_results ? tr("tasks.attentionCount", { count: t.attention + (t.uncertain_results || 0) }) : tr("tasks.none")} />
                         <Row k={tr("tasks.budget")} v={tr("tasks.budgetSummary", { turns: t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns, elapsed: t.elapsed || "0s", limit: t.max_elapsed && t.max_elapsed !== "0s" ? ` / ${t.max_elapsed}` : "" })} />
                         <Row k={tr("tasks.usage")} v={`${spend(t.tokens, locale)} · ${fmtSeconds(t.seconds, locale)}`} />
                         {landings.length > 0 && <Row k={tr("tasks.recentMerges")} v={landings.map((l) => `${label(labelsFor(locale).taskState, l.state) === l.state ? l.state : l.state} ${short(l.artifact)} ${when(l.at, locale)}`).join(" · ")} />}
@@ -79,6 +80,7 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                     </div>
                     {!consoleTask && <p className="mt-2 text-xs text-tertiary">{tr("tasks.channelHint")}</p>}
                 </DrawerSection>
+                <TaskDeliveries task={t} tasks={tasks} />
                 {plan && (
                     <DrawerSection title={<>{tr("tasks.planRevision", { plan: plan.id, revision: plan.rev, by: plan.by })}</>}>
                         {plan.because && <p className="mb-2 line-clamp-3 text-xs text-tertiary" title={plan.because}>{tr("tasks.revisionReason")}{plan.because}</p>}

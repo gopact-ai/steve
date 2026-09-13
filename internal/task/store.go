@@ -352,12 +352,28 @@ func (s *Store) Interrupted() []Task {
 // ancestor in the same durable write. Concurrent siblings share the same
 // ancestor budget; a task may have only one open attempt of its own.
 func (s *Store) Begin(id, member, node, session string) (Task, error) {
+	return s.begin(id, member, node, session, "")
+}
+
+// BeginContinuation cannot reopen a paused/failed parent or charge a different
+// conversation. The guard and turn admission share the task store lock.
+func (s *Store) BeginContinuation(id, channel, member, node string) (Task, error) {
+	if channel == "" {
+		return Task{}, fmt.Errorf("continuation requires a conversation")
+	}
+	return s.begin(id, member, node, "", channel)
+}
+
+func (s *Store) begin(id, member, node, session, channel string) (Task, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	next := s.clone()
 	stored, ok := next.Tasks[id]
 	if !ok {
 		return Task{}, fmt.Errorf("task %s not found", id)
+	}
+	if channel != "" && (stored.Channel != channel || stored.Member != member || stored.State != StateRunning) {
+		return Task{}, fmt.Errorf("task %s is no longer available for this continuation", id)
 	}
 	if row := stored.primaryAttempt(); row != nil && row.Open() {
 		return Task{}, fmt.Errorf("task %s already has an open attempt", id)
@@ -561,7 +577,7 @@ func (s *Store) installLocked(next data) {
 	if s.observe != nil {
 		var changed []string
 		for id, t := range next.Tasks {
-			if prev, ok := s.data.Tasks[id]; !ok || prev.State != t.State || !prev.UpdatedAt.Equal(t.UpdatedAt) || !s.data.Meta[id].equal(next.Meta[id]) {
+			if prev, ok := s.data.Tasks[id]; !ok || prev.State != t.State || !prev.UpdatedAt.Equal(t.UpdatedAt) || !s.data.Meta[id].equal(next.Meta[id]) || !sameDelivery(prev.Delivery, t.Delivery) {
 				changed = append(changed, id)
 			}
 		}

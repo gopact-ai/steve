@@ -42,6 +42,12 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		executionNode = c.node
 	}
 	tracked, ok := c.tasks.Active(req.ConversationID, selected.ID, req.Origin)
+	if req.ExpectedTask != "" {
+		tracked, ok = c.tasks.Get(req.ExpectedTask)
+		if !ok || tracked.Channel != req.ConversationID || tracked.Member != selected.ID || tracked.State != task.StateRunning || (tracked.ProjectID != "" && tracked.ProjectID != binding.ProjectID) {
+			return "", fmt.Errorf("task %s is no longer available for this continuation", req.ExpectedTask)
+		}
+	}
 	if ok && tracked.ProjectID != "" && binding.ProjectID != "" && tracked.ProjectID != binding.ProjectID {
 		// The binding moved under a task that was never closed (an older
 		// switch, a crash between the two): the task stays with its
@@ -70,7 +76,16 @@ func (c *Coordinator) beginTask(req Request, selected agent.Agent, prompt string
 		}
 		tracked = created
 	}
-	if _, err := c.tasks.Begin(tracked.ID, selected.ID, executionNode, ""); err != nil {
+	var beginErr error
+	if req.ExpectedTask != "" {
+		_, beginErr = c.tasks.BeginContinuation(tracked.ID, req.ConversationID, selected.ID, executionNode)
+	} else {
+		_, beginErr = c.tasks.Begin(tracked.ID, selected.ID, executionNode, "")
+	}
+	if err := beginErr; err != nil {
+		if req.ExpectedTask != "" {
+			return "", err
+		}
 		if text, spent := c.budgetStop(tracked); spent {
 			return "", UserError{Text: text}
 		}

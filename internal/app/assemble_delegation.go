@@ -53,7 +53,7 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 	portPath := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "agentmcp.port")
 	gate, err := agentmcp.New(readPort(portPath))
 	// redeliverPending is the delegation service's start-up pass, once it exists.
-	var redeliverPending func(context.Context)
+	var reconcileDeliveries func(context.Context) error
 	var recoverRetainedDelegates func(context.Context) error
 	if err != nil {
 		// The send primitive is an enhancement; a box that cannot bind a
@@ -95,15 +95,18 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		// A child's result goes back into its parent's conversation as a
 		// message — the page's queue or the chat — instead of the parent
 		// polling for it; a turn's end delivers what ended meanwhile.
+		delegation.SetReplaySafeDelivery(func(parent task.Task) bool {
+			return parent.ChatID == console.ChatID || console.IsConsole(parent.Channel)
+		})
 		delegation.SetDeliverer(func(ctx context.Context, d delegate.Delivery) error {
 			if d.ChatID == console.ChatID || console.IsConsole(d.Conversation) {
-				return cons.Continue(ctx, d.Conversation, d.Key, d.Member, d.Notice(), d.Prompt())
+				return cons.ContinueTask(ctx, d.Conversation, d.ParentTask, d.Key, d.Member, d.Notice(), d.Prompt())
 			}
-			return gw.Deliver(gateway.Revival{TaskID: d.ParentTask, Member: d.Member, ConversationID: d.Conversation,
-				ChatID: d.ChatID, MessageID: d.Anchor, Requester: d.Requester, ChatType: d.ChatType}, d.Notice(), d.Prompt())
+			return gw.DeliverConfirmed(gateway.Revival{TaskID: d.ParentTask, Member: d.Member, ConversationID: d.Conversation,
+				ChatID: d.ChatID, MessageID: d.Anchor, Requester: d.Requester, ChatType: d.ChatType}, d.Notice(), d.Prompt(), func(err error) { delegation.ConfirmDelivery(d, err) })
 		})
 		coordinator.SetAfterTurn(func(taskID string) { delegation.Flush(ctx, taskID) })
-		redeliverPending = delegation.RedeliverPending
+		reconcileDeliveries = delegation.ReconcileDeliveries
 		// Remote agents call a loopback port on their own machine; the node
 		// forwards it back here over the connection it already holds, so the
 		// messaging server never has to leave 127.0.0.1.
@@ -129,19 +132,19 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		})
 		slog.Info(fmt.Sprintf("steve: agent messaging MCP server on %s", gate.URL()))
 	}
-	return &delegationValues{gate: gate, recoverRetainedDelegates: recoverRetainedDelegates, redeliverPending: redeliverPending}, nil
+	return &delegationValues{gate: gate, recoverRetainedDelegates: recoverRetainedDelegates, reconcileDeliveries: reconcileDeliveries}, nil
 }
 
 type delegationAssembly interface {
 	Gate() *agentmcp.Server
 	RecoverRetainedDelegates() func(context.Context) error
-	RedeliverPending() func(context.Context)
+	ReconcileDeliveries() func(context.Context) error
 }
 
 type delegationValues struct {
 	gate                     *agentmcp.Server
 	recoverRetainedDelegates func(context.Context) error
-	redeliverPending         func(context.Context)
+	reconcileDeliveries      func(context.Context) error
 }
 
 func (v *delegationValues) Gate() *agentmcp.Server { return v.gate }
@@ -150,7 +153,9 @@ func (v *delegationValues) RecoverRetainedDelegates() func(context.Context) erro
 	return v.recoverRetainedDelegates
 }
 
-func (v *delegationValues) RedeliverPending() func(context.Context) { return v.redeliverPending }
+func (v *delegationValues) ReconcileDeliveries() func(context.Context) error {
+	return v.reconcileDeliveries
+}
 
 // readPort reads a previously remembered loopback port; 0 means none.
 func readPort(path string) int {

@@ -3,7 +3,8 @@
 All changes go through a pull request. CI must be green before merging.
 
 Changes to delegation, landing, timeouts, snapshots, or node channels must also
-pass `make e2e-fleet` on the live fleet before merging. Paste the complete output
+pass `make e2e-fleet` in the disposable fleet lab and the live-fleet client
+below before merging. Paste the complete output
 in the PR description, including the final `FLEET PASS`, conversation, task and
 attempt IDs. CI's local tests do not replace this check. Re-run the gate after
 changes that affect those paths.
@@ -17,6 +18,14 @@ Project-local design and frontend review skills are listed in
 [.agents/skills](.agents/skills/README.md). Follow the
 [workbench instructions](web/console/AGENTS.md) when changing the console UI.
 
+## Disposable fleet gates
+
+`make e2e-fleet` and `make e2e-autonomous` build an isolated host hub and Docker
+nodes with a deterministic ACP agent. They do not read the operator's hub config
+or exercise a real model. Linux, a local Docker engine and a matching Go toolchain
+are required; missing prerequisites fail the gate. The wrapper owns cleanup and
+has a 25-minute deadline. CI also runs these gates and failure-path cleanup checks.
+
 ## Live fleet gate
 
 Run from the repository root on the hub machine, with an existing hub and remote
@@ -24,7 +33,7 @@ node already running. The gate uses the console API as the owner and checks the
 project's main directory locally. It does not build, deploy or restart the hub.
 
 ```sh
-bash -lc 'make e2e-fleet'
+go run ./e2e/fleet
 ```
 
 `HUB` and `TOKEN` override `gateway.read_model_addr` and
@@ -58,11 +67,11 @@ printed conversation/task IDs and use the console's `/cancel` if needed.
 ## Autonomous fleet gate
 
 ```sh
-bash -lc 'make e2e-autonomous'
+go run ./e2e/fleet -scenario autonomous
 ```
 
 This uses the same running hub, owner token, local connection config, `PROJECT`
-and `AGENT` as `e2e-fleet`. The project must contain `kvtool/main.go` in its main
+and `AGENT` as the live delegate client. The project must contain `kvtool/main.go` in its main
 directory on the hub, and an online remote node must advertise the `build` tag.
 Provide agents that can compile and write documentation; the coordinator chooses
 them from the fleet instead of being given a target agent. The hub needs
@@ -82,7 +91,7 @@ work. Include the full output through `AUTONOMOUS PASS` and the conversation,
 task and attempt IDs when reporting this gate.
 
 CI runs gofmt, Go vet/race tests, frontend dependency checks, production builds
-and isolated browser interactions. It does not run either live fleet gate.
+and isolated browser interactions. Its fleet job runs disposable gates, not real-model live fleet gates.
 Run `make test` and `make test-console` locally; install the test browser with
 `cd web/console && npm ci && npx playwright install chromium` first. Configuration, deployment and troubleshooting are in
 [operations](docs/operations.md).

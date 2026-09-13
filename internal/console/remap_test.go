@@ -68,3 +68,14 @@ func TestProjectRemapMovesStructuredStepRefsInRepliesAndReceipts(t *testing.T) {
 		t.Fatal("source result was mutated")
 	}
 }
+
+func TestTransferRemapsContinuationParent(t *testing.T) {
+	in := ProjectTransfer{Schema: 1, Project: "p", Exchanges: map[string][]TransferExchange{"console:c": {{Exchange: Exchange{ID: "e", Conversation: "console:c", ExpectedTask: "12", ExpectedProject: "p"}}}}}
+	out, err := in.Remap(func(id string) string { return "migrated-" + id }, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if out.Exchanges["console:c"][0].ExpectedTask != "migrated-12" || in.Exchanges["console:c"][0].ExpectedTask != "12" {
+		t.Fatal("continuation parent identity was not independently remapped")
+	}
+}
