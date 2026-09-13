@@ -19,9 +19,10 @@ type Result struct {
 }
 
 // Delivery says whether a child's result has reached the conversation
-// its parent lives in. Pending is written before the attempt to deliver,
-// delivered after it succeeded: a crash between the two is retried, and
-// the delivery key keeps the retry from arriving twice.
+// its parent lives in. Pending precedes dispatch; delivered requires a confirmed
+// parent-processing receipt. Replay-safe channels retry with the same durable
+// key. An interrupted non-replay-safe send remains uncertain until confirmed
+// and is never automatically replayed.
 type Delivery struct {
 	State         string    `json:"state"` // pending | queued | delivered | suppressed | uncertain
 	Key           string    `json:"key,omitempty"`
