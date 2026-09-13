@@ -409,7 +409,9 @@ func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
 	}
 	settled := true
 	record := Record{SessionSettled: &settled, Spec: spec, State: Leased, Revision: 1, Leases: held, StartedAt: s.now().UTC()}
-	if _, err := s.l.Begin(ctx, spec.ID, kind, string(Leased), spec.By, record); err != nil {
+	if _, err := s.l.BeginGuarded(ctx, spec.ID, kind, string(Leased), spec.By, record, func(tx *ledger.Tx) error {
+		return task.CheckExecutionTx(tx, spec.Execution)
+	}); err != nil {
 		release()
 		return Record{}, err
 	}

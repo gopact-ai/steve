@@ -23,6 +23,7 @@ var taskVerbs = map[string]taskVerb{
 	"pause": taskPause, "暂停": taskPause,
 	"resume": taskResume, "继续": taskResume, "恢复": taskResume,
 	"cancel": taskCancel, "取消": taskCancel, "结束": taskCancel,
+	"complete": taskComplete, "done": taskComplete, "完成": taskComplete,
 	"show": taskShow, "详情": taskShow,
 }
 
@@ -75,40 +76,53 @@ func isTaskID(s string) bool {
 // never the point on its own: a task that outlives its turn is only useful if
 // the person who started it can look inside it, set it down, and pick it back
 // up without leaving the conversation.
-func (c commands) tasksCmd(ctx context.Context, req Request, rest string) Result {
+func (c commands) tasksCmd(ctx context.Context, req Request, rest string) (Result, error) {
 	title := c.text.T(i18n.CardTasks)
-	if c.tasks == nil {
-		return Result{Title: title, Text: c.text.T(i18n.TasksEmpty)}
-	}
 	verb, id, ok := parseTaskArgs(rest)
+	if c.tasks == nil {
+		if ok && verb == taskComplete {
+			text := c.text.T(i18n.TasksEmpty)
+			return Result{Title: title, Text: text}, UserError{Text: text}
+		}
+		return Result{Title: title, Text: c.text.T(i18n.TasksEmpty)}, nil
+	}
 	if !ok {
-		return Result{Title: title, Text: c.text.T(i18n.TasksUsage, protocol.CommandTasks)}
+		return Result{Title: title, Text: c.text.T(i18n.TasksUsage, protocol.CommandTasks)}, nil
 	}
 	if verb == taskList {
-		return c.tasksList(req, title)
+		return c.tasksList(req, title), nil
 	}
 	tracked, found := c.taskTarget(req.ConversationID, id, verb)
 	if !found {
+		if verb == taskComplete {
+			text := c.text.T(i18n.TaskNone)
+			if id != "" {
+				text = c.text.T(i18n.TaskUnknown, id)
+			}
+			return Result{Title: title, Text: text}, UserError{Text: text}
+		}
 		switch {
 		case id != "":
-			return Result{Title: title, Text: c.text.T(i18n.TaskUnknown, id)}
+			return Result{Title: title, Text: c.text.T(i18n.TaskUnknown, id)}, nil
 		case verb == taskResume:
-			return Result{Title: title, Text: c.text.T(i18n.TaskNonePaused, protocol.CommandTasks)}
+			return Result{Title: title, Text: c.text.T(i18n.TaskNonePaused, protocol.CommandTasks)}, nil
 		default:
-			return Result{Title: title, Text: c.text.T(i18n.TaskNone)}
+			return Result{Title: title, Text: c.text.T(i18n.TaskNone)}, nil
 		}
 	}
 	switch verb {
 	case taskShow:
-		return Result{Title: title, Text: c.taskDetail(tracked)}
+		return Result{Title: title, Text: c.taskDetail(tracked)}, nil
 	case taskPause:
-		return c.taskSetAside(ctx, title, tracked, task.StatePaused)
+		return c.taskSetAside(ctx, title, tracked, task.StatePaused), nil
 	case taskCancel:
-		return c.taskSetAside(ctx, title, tracked, task.StateCancelled)
+		return c.taskSetAside(ctx, title, tracked, task.StateCancelled), nil
 	case taskResume:
-		return c.taskPickUp(title, tracked)
+		return c.taskPickUp(title, tracked), nil
+	case taskComplete:
+		return c.taskComplete(ctx, title, tracked)
 	}
-	return Result{Title: title, Text: c.text.T(i18n.TasksUsage, protocol.CommandTasks)}
+	return Result{Title: title, Text: c.text.T(i18n.TasksUsage, protocol.CommandTasks)}, nil
 }
 
 // taskTarget resolves which task the user meant. An explicit id is scoped to
@@ -125,6 +139,12 @@ func (c commands) taskTarget(conversationID, id string, verb taskVerb) (task.Tas
 	// List is newest first, so the bare verb acts on what the user most
 	// plausibly has in mind — the thing they were just talking about.
 	for _, candidate := range c.tasks.List(conversationID) {
+		if verb == taskComplete {
+			if candidate.Parent == "" && candidate.Origin == "" {
+				return candidate, true
+			}
+			continue
+		}
 		if verb == taskResume {
 			if candidate.State == task.StatePaused {
 				return candidate, true

@@ -128,6 +128,9 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	if run.Record.ID != "" {
 		clock.report(parent, run.Record.ID)
 	}
+	if err == nil {
+		return c.gateDisclosure(parent, req, result)
+	}
 	return result, err
 }
 

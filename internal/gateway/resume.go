@@ -189,7 +189,7 @@ func (g *Gateway) ResumeTask(r Revival, revive func(conversationID, member strin
 		return
 	}
 	slog.Info(fmt.Sprintf("gateway: resuming task #%s conversation=%s member=%s manual=%t", r.TaskID, r.ConversationID, r.Member, r.Manual), "task", r.TaskID, "conversation", r.ConversationID, "member", r.Member)
-	g.HandleMessage(feishu.InboundMessage{
+	g.handleTaskMessage(feishu.InboundMessage{
 		ConversationID: r.ConversationID,
 		ChatID:         r.ChatID,
 		MessageID:      noticeID,
@@ -197,7 +197,7 @@ func (g *Gateway) ResumeTask(r Revival, revive func(conversationID, member strin
 		ChatType:       protocol.ParseChatType(r.ChatType),
 		Mentioned:      true,
 		Text:           "@" + r.Member + " " + g.text.T(prompt, r.Goal),
-	})
+	}, r.TaskID)
 }
 
 // Fire is one scheduled run. It carries the same anchor-and-replay shape as a

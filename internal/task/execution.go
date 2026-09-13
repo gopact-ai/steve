@@ -45,7 +45,7 @@ func (s *Store) CheckExecution(token ExecutionToken) error {
 
 func checkExecution(tasks map[string]*Task, token ExecutionToken) error {
 	t, ok := tasks[token.TaskID]
-	if !ok || t.ExecutionEpoch != token.Epoch || t.State == StatePaused || t.State == StateCancelled {
+	if !ok || t.ExecutionEpoch != token.Epoch || t.State == StatePaused || t.State == StateCancelled || t.CompletedByUser {
 		return fmt.Errorf("%w: task %s epoch %d", ErrExecutionStopped, token.TaskID, token.Epoch)
 	}
 	lineage, err := taskLineage(tasks, token.TaskID)
@@ -53,7 +53,7 @@ func checkExecution(tasks map[string]*Task, token ExecutionToken) error {
 		return err
 	}
 	for _, ancestor := range lineage {
-		if ancestor.State == StatePaused || ancestor.State == StateCancelled {
+		if ancestor.State == StatePaused || ancestor.State == StateCancelled || ancestor.CompletedByUser {
 			return fmt.Errorf("%w: ancestor %s", ErrExecutionStopped, ancestor.ID)
 		}
 	}

@@ -390,6 +390,7 @@ func (b *snapshotBuilder) taskAxes() {
 		}
 		t.Attention = rolledAttention[t.ID]
 		t.PendingResults, t.UncertainResults = rolledPending[t.ID], rolledUncertain[t.ID]
+		t.CanComplete = t.CanComplete && t.Execution == ExecutionIdle && b.attentionKnown && t.Attention == 0 && t.PendingResults == 0 && t.UncertainResults == 0 && t.PlanID == ""
 		t.Lane = lane(*t)
 		if t.Lane == "pending" && !b.attentionKnown {
 			t.Lane = "unknown"
@@ -616,9 +617,10 @@ func tasks(list []task.Task, plans map[string]plan.Plan) []Task {
 			NodeID: t.Node, Parent: t.Parent, Children: children[t.ID],
 			Channel: t.Channel, ProjectID: t.ProjectID, Origin: t.Origin, Requester: t.Requester,
 			Turns: t.Budget.Turns, MaxTurns: t.Budget.MaxTurns,
-			Elapsed:   t.Budget.Elapsed.Round(time.Second).String(),
-			MaxElapse: t.Budget.MaxElapsed.Round(time.Minute).String(),
-			UpdatedAt: t.UpdatedAt,
+			Elapsed:     t.Budget.Elapsed.Round(time.Second).String(),
+			MaxElapse:   t.Budget.MaxElapsed.Round(time.Minute).String(),
+			UpdatedAt:   t.UpdatedAt,
+			CanComplete: task.CompletionBlocker(t, list) == nil,
 		}
 		if t.Delegated() && t.Finished() && t.Result != nil && t.Parent != "" {
 			item.ResultDelivery = &task.Delivery{State: task.DeliveryPending, At: t.UpdatedAt}

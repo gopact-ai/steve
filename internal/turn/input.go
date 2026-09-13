@@ -74,7 +74,7 @@ func (parsed ParsedInput) Control() bool {
 	}
 	if parsed.Command == protocol.CommandTasks {
 		verb, _, ok := parseTaskArgs(parsed.Rest)
-		return ok && (verb == taskPause || verb == taskCancel)
+		return ok && (verb == taskPause || verb == taskCancel || verb == taskComplete)
 	}
 	return false
 }

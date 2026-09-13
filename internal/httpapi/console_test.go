@@ -149,6 +149,11 @@ func TestConsoleEndpointsAreGuardedAndOptional(t *testing.T) {
 		t.Fatal("replies claimed the console was enabled")
 	}
 	server.SetConsole(&fakeConsole{})
+	for _, token := range []string{"", "wrong-owner-token"} {
+		if code, _ := post(token, `{"conversation":"console:main","input":"/tasks complete 148"}`); code != http.StatusUnauthorized {
+			t.Fatalf("unauthorized task completion = %d", code)
+		}
+	}
 	code, body := post("t0k", `{"conversation":"console:main","input":"/fleet"}`)
 	if code != http.StatusOK || (!strings.Contains(body, "did /fleet") || !strings.Contains(body, `"exchange_id":"exchange-id"`)) {
 		t.Fatalf("send = %d %s", code, body)

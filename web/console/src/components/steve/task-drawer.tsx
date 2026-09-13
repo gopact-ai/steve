@@ -39,14 +39,21 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
     const landings = snap.landings.filter((l) => l.project === t.project_id).slice(0, 5);
     const holds = ["running", "blocked", "review", "paused", "draft", "failed"].includes(t.lifecycle);
     const consoleTask = t.channel?.startsWith("console:");
+    const completionRoot = !t.parent && !t.origin && !t.plan_id && !plan && ["running", "review"].includes(t.lifecycle);
+    const canComplete = completionRoot && t.can_complete === true && t.execution === "idle" && t.attention === 0 && !t.pending_results && !t.uncertain_results;
     async function act(command: string) {
         if (acting.current || !consoleTask || !t.channel) return;
         acting.current = true;
         setPending(true);
         setError("");
         setResult("");
-        try { const reply = await send(t.channel, command); setResult(reply.text); refresh(); }
-        catch (e) { setError(String(e).replace(/^Error: /, "")); }
+        try {
+            const reply = await send(t.channel, command);
+            if (reply.error) setError(reply.error);
+            else setResult(reply.text);
+            refresh();
+        }
+        catch (e) { setError(String(e).replace(/^Error: /, "")); refresh(); }
         finally { acting.current = false; setPending(false); }
     }
     return (
@@ -71,13 +78,15 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                         <Row k={tr("tasks.usage")} v={`${spend(t.tokens, locale)} · ${fmtSeconds(t.seconds, locale)}`} />
                         {landings.length > 0 && <Row k={tr("tasks.recentMerges")} v={landings.map((l) => `${label(labelsFor(locale).taskState, l.state) === l.state ? l.state : l.state} ${short(l.artifact)} ${when(l.at, locale)}`).join(" · ")} />}
                     </div>
-                    <div className="mt-3 flex gap-2">
+                    <div className="mt-3 flex flex-wrap gap-2">
+                        {canComplete && <Button size="sm" color="secondary" isLoading={pending} showTextWhileLoading isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks complete ${t.id}`)}>{tr("tasks.complete")}</Button>}
                         {holds && !["paused", "failed"].includes(t.lifecycle) && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks pause ${t.id}`)}>{tr("tasks.pause")}</Button>}
                         {t.lifecycle === "paused" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>{tr("tasks.resume")}</Button>}
                         {t.lifecycle === "failed" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>{tr("common.retry")}</Button>}
                         {holds && <Button size="sm" color="secondary-destructive" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks cancel ${t.id}`)}>{tr("common.cancel")}</Button>}
                         <Button size="sm" color="link-gray" isDisabled={!consoleTask} onClick={() => { onClose(); navigate(`/console?conversation=${encodeURIComponent(t.channel!)}`); }}>{tr("tasks.viewInWorkbench")}</Button>
                     </div>
+                    {completionRoot && <p className="mt-2 text-xs text-tertiary">{tr(canComplete ? "tasks.completeHint" : t.attention ? "tasks.completeAttention" : t.execution !== "idle" ? "tasks.completeBusy" : "tasks.completePending")}</p>}
                     {!consoleTask && <p className="mt-2 text-xs text-tertiary">{tr("tasks.channelHint")}</p>}
                 </DrawerSection>
                 <TaskDeliveries task={t} tasks={tasks} />

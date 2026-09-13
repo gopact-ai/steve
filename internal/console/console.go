@@ -859,7 +859,7 @@ func (s *Service) Resume(ctx context.Context, conversation, taskID, member, noti
 		return fmt.Errorf("revive session for task #%s: %w", taskID, err)
 	}
 	slog.Info(fmt.Sprintf("console: resuming task #%s conversation=%s member=%s", taskID, conversation, member), "task", taskID, "conversation", conversation, "member", member)
-	_, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true})
+	_, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true, ExpectedTask: taskID})
 	return err
 }
 

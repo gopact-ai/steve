@@ -281,7 +281,7 @@ func TestConsoleResumesATaskAheadOfWhatWaits(t *testing.T) {
 	}
 	running.finish <- nil
 	call := nextCall(t, h)
-	if call.req.Input != "@claude continue: ship it" || call.req.ConversationID != "console:main" {
+	if call.req.Input != "@claude continue: ship it" || call.req.ConversationID != "console:main" || call.req.ExpectedTask != "53" {
 		t.Fatalf("continuation = %+v", call.req)
 	}
 	call.finish <- nil

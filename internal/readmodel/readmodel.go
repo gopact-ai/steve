@@ -314,6 +314,7 @@ type Task struct {
 	ResultDelivery   *task.Delivery `json:"result_delivery,omitempty"`
 	PendingResults   int            `json:"pending_results,omitempty"`
 	UncertainResults int            `json:"uncertain_results,omitempty"`
+	CanComplete      bool           `json:"can_complete,omitempty"`
 }
 
 type Plan struct {

@@ -134,6 +134,10 @@ func (g *Gateway) SetCatalog(cat i18n.Catalog) { g.text = cat }
 // job, and it does it by taking the turn away from the running prompt
 // rather than by making the user wait.
 func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
+	g.handleTaskMessage(msg, "")
+}
+
+func (g *Gateway) handleTaskMessage(msg feishu.InboundMessage, expectedTask string) {
 	g.mu.Lock()
 	if _, duplicate := g.seen[msg.MessageID]; msg.MessageID != "" && duplicate {
 		g.mu.Unlock()
@@ -144,7 +148,7 @@ func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
 	// The sender's open_id in the log is also how a new owner finds their
 	// own id during setup.
 	slog.Info(fmt.Sprintf("gateway: message conversation=%s sender=%s", conversationID(msg), msg.SenderOpenID), "conversation", conversationID(msg), "sender", msg.SenderOpenID)
-	go g.serve(msg, conversationID(msg))
+	go g.serveTask(msg, conversationID(msg), expectedTask)
 }
 
 // serve runs one message against the pool.

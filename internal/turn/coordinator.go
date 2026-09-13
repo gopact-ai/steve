@@ -347,12 +347,7 @@ func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 	if result, handled, err := c.commands().dispatch(ctx, req, selected, cmd, rest); handled {
 		return result, err
 	}
-	result, err := c.prompt(ctx, req, selected, prompt)
-	if err != nil {
-		return result, err
-	}
-	// Content of a sealed project leaves only with the owner's approval.
-	return c.gateDisclosure(ctx, req, result)
+	return c.prompt(ctx, req, selected, prompt)
 }
 
 func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, string, bool, error) {
