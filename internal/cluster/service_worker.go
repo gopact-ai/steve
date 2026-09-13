@@ -21,6 +21,7 @@ func serviceWorker(peer PeerConfig, cfg *config.Config) (node.ServerConfig, erro
 	}
 	worker := node.ServerConfig{Name: peer.NodeID, Listen: "127.0.0.1:0", Token: token,
 		Hubs: map[string]string{peer.ClusterID: token}, StateDir: filepath.Join(peer.DataDir, "node"),
+		Tools: slices.Clone(cfg.Gateway.Tools), Capabilities: slices.Clone(cfg.Gateway.Capabilities), Declares: slices.Clone(cfg.Gateway.Declares),
 		WorkspaceRoot: filepath.Dir(cfg.Gateway.StatePath), Harnesses: map[string]node.HarnessSpec{}, MCPServers: map[string]node.MCPSpec{}}
 	for id, spec := range cfg.Harnesses {
 		worker.Harnesses[id] = node.HarnessSpec{Adapter: spec.Adapter, Command: spec.Command, Args: slices.Clone(spec.Args),
