@@ -128,6 +128,12 @@ func Say(args []string) error {
 	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
 		return fmt.Errorf("console at %s answered %s", connection.URL, res.Status)
 	}
+	if res.StatusCode != http.StatusOK {
+		if out.Error != "" {
+			return errors.New(out.Error)
+		}
+		return fmt.Errorf("console at %s answered %s", connection.URL, res.Status)
+	}
 	if out.Reply.Title != "" {
 		fmt.Println("== " + out.Reply.Title)
 	}
