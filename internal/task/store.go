@@ -373,7 +373,7 @@ func (s *Store) begin(id, member, node, session, channel string) (Task, error) {
 		return Task{}, fmt.Errorf("task %s not found", id)
 	}
 	if channel != "" && (stored.Channel != channel || stored.Member != member || stored.State != StateRunning) {
-		return Task{}, fmt.Errorf("task %s is no longer available for this continuation", id)
+		return Task{}, fmt.Errorf("%w: task %s is no longer available", ErrContinuationUnavailable, id)
 	}
 	if row := stored.primaryAttempt(); row != nil && row.Open() {
 		return Task{}, fmt.Errorf("task %s already has an open attempt", id)

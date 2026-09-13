@@ -98,6 +98,12 @@ func assembleDelegation(input inputAssembly, boot runtimeAssembly, storage ledge
 		delegation.SetReplaySafeDelivery(func(parent task.Task) bool {
 			return parent.ChatID == console.ChatID || console.IsConsole(parent.Channel)
 		})
+		delegation.SetDeliveryReceipt(func(parent task.Task, key string) (bool, error) {
+			if parent.ChatID == console.ChatID || console.IsConsole(parent.Channel) {
+				return cons.ContinuationReceipt(parent.Channel, parent.ID, key)
+			}
+			return false, nil
+		})
 		delegation.SetDeliverer(func(ctx context.Context, d delegate.Delivery) error {
 			if d.ChatID == console.ChatID || console.IsConsole(d.Conversation) {
 				return cons.ContinueTask(ctx, d.Conversation, d.ParentTask, d.Key, d.Member, d.Notice(), d.Prompt())

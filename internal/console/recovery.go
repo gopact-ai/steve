@@ -333,7 +333,7 @@ func (r *exchangeRecovery) identity(candidate retainedExchange, found bool) *que
 // request is the turn request a resumed or relocated execution answers,
 // with its progress and questions routed to this exchange.
 func (r *exchangeRecovery) request(requester string, identity *questionIdentity) turn.Request {
-	return turn.Request{Channel: "console", ConversationID: r.exchange.Conversation, MessageID: AnchorMark + r.exchange.ID, ChatID: ChatID, SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true, Origin: r.exchange.Origin, ExpectedProject: r.exchange.ExpectedProject, Locale: r.exchange.Locale,
+	return turn.Request{Channel: "console", ConversationID: r.exchange.Conversation, MessageID: AnchorMark + r.exchange.ID, ChatID: ChatID, SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true, Origin: r.exchange.Origin, ExpectedProject: r.exchange.ExpectedProject, ExpectedTask: r.exchange.ExpectedTask, Locale: r.exchange.Locale,
 		OnTurnReady: identity.set,
 		OnProgress:  r.stream.Update,
 		OnPhase:     r.stream.Phase,

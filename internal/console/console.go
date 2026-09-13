@@ -873,13 +873,3 @@ func (s *Service) Continue(ctx context.Context, conversation, key, member, notic
 	_, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true, Key: key})
 	return err
 }
-
-// ContinueTask keeps the accepted message bound to the parent across queueing,
-// restarts and conversation resets. Admission rechecks the parent's state.
-func (s *Service) ContinueTask(ctx context.Context, conversation, taskID, key, member, notice, prompt string) error {
-	if member == "" || taskID == "" {
-		return fmt.Errorf("task continuation needs a parent and member")
-	}
-	_, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true, Key: key, ExpectedTask: taskID})
-	return err
-}

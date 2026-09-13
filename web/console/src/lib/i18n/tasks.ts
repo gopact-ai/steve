@@ -1,4 +1,5 @@
 export const tasksZh = {
+ "tasks.handoffQueued": "已入队，等待父任务处理",
  "tasks.handoffs": "结果交接",
  "tasks.handoffPending": "待交接",
  "tasks.handoffDelivered": "已送达",
@@ -61,6 +62,7 @@ export const tasksZh = {
 } as const;
 
 export const tasksEn = {
+ "tasks.handoffQueued": "Queued; waiting for parent processing",
  "tasks.handoffs": "Result handoffs",
  "tasks.handoffPending": "Pending",
  "tasks.handoffDelivered": "Delivered",

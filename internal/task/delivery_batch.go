@@ -32,14 +32,14 @@ func (s *Store) PrepareDeliveries(parent string, candidates []string) ([][]Task,
 		if !ok || t.Parent != parent || !t.Delegated() || !t.Finished() || t.Result == nil {
 			continue
 		}
-		if t.Delivery != nil && t.Delivery.State != DeliveryPending {
+		if t.Delivery != nil && t.Delivery.State != DeliveryPending && t.Delivery.State != DeliveryQueued {
 			continue
 		}
 		if t.Delivery == nil || t.Delivery.Key == "" {
 			fresh = append(fresh, *t)
 			continue
 		}
-		if t.Delivery.State == DeliveryPending {
+		if t.Delivery.State == DeliveryPending || t.Delivery.State == DeliveryQueued {
 			groups[t.Delivery.Key] = append(groups[t.Delivery.Key], *t.clone())
 		}
 	}
@@ -72,10 +72,13 @@ func (s *Store) StartDelivery(ids []string, replaySafe bool) error {
 	next := s.clone()
 	for _, id := range ids {
 		t, ok := next.Tasks[id]
-		if !ok || t.Delivery == nil || t.Delivery.State != DeliveryPending {
+		if !ok || t.Delivery == nil || t.Delivery.State != DeliveryPending && t.Delivery.State != DeliveryQueued {
 			return fmt.Errorf("task %s has no pending delivery", id)
 		}
 		d := t.Delivery
+		if d.State == DeliveryQueued {
+			continue
+		}
 		d.Attempts++
 		d.At = s.now()
 		d.Error = ""
@@ -106,6 +109,9 @@ func (s *Store) RecordDelivery(ids []string, state, detail string) error {
 		d := t.Delivery
 		d.State, d.At, d.Error = state, s.now(), detail
 		d.NextAttemptAt = time.Time{}
+		if state == DeliveryQueued {
+			d.NextAttemptAt = d.At.Add(5 * time.Second)
+		}
 		if state == DeliveryPending {
 			d.NextAttemptAt = d.At.Add(deliveryRetryDelay(d.Attempts))
 		}

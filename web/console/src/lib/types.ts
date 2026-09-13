@@ -31,7 +31,7 @@ export interface Agent {
 export interface Selector { id: string; name: string; category?: string; current?: string; choices?: string[]; values?: string[] }
 export interface Tokens { input?: number; output?: number; cached_read?: number; cached_write?: number; total?: number; context?: number }
 export interface AttemptRow { day: string; agent: string; node?: string; model?: string; outcome?: string; started: string; seconds: number; tokens: Tokens; reported: boolean }
-export interface ResultDelivery { state: "pending" | "delivered" | "suppressed" | "uncertain"; key?: string; at: string; attempts?: number; error?: string; next_attempt_at?: string }
+export interface ResultDelivery { state: "pending" | "queued" | "delivered" | "suppressed" | "uncertain"; key?: string; at: string; attempts?: number; error?: string; next_attempt_at?: string }
 export interface Task {
     result_delivery?: ResultDelivery; pending_results?: number; uncertain_results?: number;
     id: string; goal: string; state: string; lifecycle: string; execution: string; attention: number; lane: string;

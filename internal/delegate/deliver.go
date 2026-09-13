@@ -110,6 +110,14 @@ func (s *Service) SetReplaySafeDelivery(check func(task.Task) bool) {
 	s.replaySafeDelivery = check
 }
 
+// SetDeliveryReceipt installs a read-only durable receipt lookup. Receipts
+// remain meaningful after the parent has paused or finished.
+func (s *Service) SetDeliveryReceipt(check func(task.Task, string) (bool, error)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deliveryReceipt = check
+}
+
 // collect marks a child's result as read by its parent in-turn: it will
 // not be delivered again. Only a terminal result counts.
 func (s *Service) collect(taskID string, result agentmcp.DelegateResult) {
@@ -143,7 +151,7 @@ func (s *Service) Flush(ctx context.Context, parentID string) {
 
 func (s *Service) flush(ctx context.Context, parentID string, due time.Time) {
 	s.mu.Lock()
-	deliver, replaySafe := s.deliver, s.replaySafeDelivery
+	deliver, replaySafe, receipt := s.deliver, s.replaySafeDelivery, s.deliveryReceipt
 	s.mu.Unlock()
 	if deliver == nil {
 		return
@@ -171,6 +179,12 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time) {
 		return
 	}
 	parent, ok := s.tasks.Get(parentID)
+	if ok && receipt != nil {
+		waiting = s.checkDeliveryReceipts(parent, waiting, receipt)
+	}
+	if len(waiting) == 0 {
+		return
+	}
 	if !ok || parent.State.Terminal() {
 		// Nobody to continue: the results stay on the children's records;
 		// the listing shows them. Mark them so they are not retried.
@@ -223,10 +237,14 @@ func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context
 	state, detail := task.DeliveryDelivered, ""
 	if err := deliver(ctx, d); err != nil {
 		state, detail = task.DeliveryPending, err.Error()
-		if errors.Is(err, channel.ErrOutcomeUnknown) {
+		if errors.Is(err, channel.ErrDeliveryQueued) {
+			state, detail = task.DeliveryQueued, ""
+		} else if errors.Is(err, channel.ErrOutcomeUnknown) {
 			state = task.DeliveryUncertain
 		}
-		slog.Error("delegate: result delivery failed", "parent", parent.ID, "conversation", parent.Channel, "error", err)
+		if state != task.DeliveryQueued {
+			slog.Error("delegate: result delivery failed", "parent", parent.ID, "conversation", parent.Channel, "error", err)
+		}
 	}
 	if err := s.tasks.RecordDelivery(ids, state, detail); err != nil {
 		slog.Error("delegate: record result delivery", "parent", parent.ID, "error", err)
