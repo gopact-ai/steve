@@ -9,6 +9,9 @@ import (
 	"syscall"
 )
 
+// LockSupported reports whether AcquireLock enforces process exclusion.
+const LockSupported = true
+
 // AcquireLock takes an exclusive advisory lock scoped to the state
 // directory, so a second gateway over the same state cannot start. Two
 // gateways on one Feishu app split the event stream between them — half the

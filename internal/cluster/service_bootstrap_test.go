@@ -134,6 +134,8 @@ func TestServiceBootstrapRequiresStoppedServiceAndValidInputs(t *testing.T) {
 	for _, mutate := range []func(*ServiceBootstrap){
 		func(o *ServiceBootstrap) { o.StorageLevel = "public" },
 		func(o *ServiceBootstrap) { o.UIAddress = "0.0.0.0:7710" },
+		func(o *ServiceBootstrap) { o.UIAddress = "127.0.0.1:99999" },
+		func(o *ServiceBootstrap) { o.UIAddress = "127.0.0.1:http" },
 		func(o *ServiceBootstrap) { o.RaftAddress = "0.0.0.0:7801" },
 		func(o *ServiceBootstrap) { o.NodeID = "../other" },
 		func(o *ServiceBootstrap) { o.NodeID = "node?unexpected" },
@@ -146,5 +148,64 @@ func TestServiceBootstrapRequiresStoppedServiceAndValidInputs(t *testing.T) {
 	}
 	if _, err := os.Stat(DefaultClusterConfigPath(options.ConfigPath)); !os.IsNotExist(err) {
 		t.Fatal("invalid initialization published sidecar")
+	}
+}
+
+func TestServiceBootstrapKeepsAllocatedPortsOnExplicitZeroRetry(t *testing.T) {
+	options, _ := serviceFixture(t)
+	options.RaftAddress, options.PeerAddress, options.UIAddress = "127.0.0.1:0", "127.0.0.1:0", "127.0.0.1:0"
+	path, err := PrepareServiceCluster(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer, err := LoadClusterPeerConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	peer.RaftAddress, peer.PeerAddress, peer.UIAddress = "127.0.0.1:18001", "127.0.0.1:18002", "127.0.0.1:18003"
+	if err := SaveClusterJSON(path, peer, false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PrepareServiceCluster(options); err != nil {
+		t.Fatal(err)
+	}
+	got, err := LoadClusterPeerConfig(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NodeID != peer.NodeID || got.RaftAddress != peer.RaftAddress || got.UIAddress != peer.UIAddress {
+		t.Fatal("retry replaced allocated addresses or identity")
+	}
+	options.PeerAddress = "127.0.0.2:0"
+	if _, err := PrepareServiceCluster(options); err == nil {
+		t.Fatal("retry accepted a different host")
+	}
+}
+
+func TestServiceBootstrapRejectsUnusableUITokensBeforePublishing(t *testing.T) {
+	for _, whitespace := range []string{" ", "\t", "\r", "\n"} {
+		options, _ := serviceFixture(t)
+		raw, err := os.ReadFile(options.ConfigPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cfg map[string]any
+		if err := json.Unmarshal(raw, &cfg); err != nil {
+			t.Fatal(err)
+		}
+		cfg["gateway"].(map[string]any)["read_model_token"] = strings.Repeat("a", 32) + whitespace + "z"
+		raw, err = json.Marshal(cfg)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(options.ConfigPath, raw, 0600); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := PrepareServiceCluster(options); err == nil {
+			t.Fatal("accepted token containing whitespace")
+		}
+		if _, err := os.Stat(DefaultClusterConfigPath(options.ConfigPath)); !os.IsNotExist(err) {
+			t.Fatal("published unusable sidecar")
+		}
 	}
 }

@@ -747,6 +747,9 @@ func (p *Peer) startWorker(workspaceRoot string) error {
 	if err := requireClusterLoopback(cfg.Listen); err != nil {
 		return err
 	}
+	if err := preparePeerAdapters(p.ctx, &cfg); err != nil {
+		return err
+	}
 	listener, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		return err

@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/hubid"
+	"github.com/gopact-ai/steve/internal/node"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 )
 
@@ -28,6 +30,9 @@ type ServiceBootstrap struct {
 var serviceNodeID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._-]{0,63}$`)
 
 func PrepareServiceCluster(options ServiceBootstrap) (string, error) {
+	if !steveruntime.LockSupported {
+		return "", errors.New("peer-init requires a platform with process locking support")
+	}
 	configPath, err := filepath.Abs(options.ConfigPath)
 	if err != nil {
 		return "", err
@@ -100,7 +105,11 @@ func PrepareServiceCluster(options ServiceBootstrap) (string, error) {
 		CertFile: filepath.Join(dir, "node.pem"), KeyFile: filepath.Join(dir, "node-key.pem"),
 		OwnerTokenFile: filepath.Join(dir, "owner-control-token"), WorkerConfigFile: filepath.Join(dir, "node.json")}
 	peer.RaftBindAddress, peer.PeerBindAddress = peer.RaftAddress, peer.PeerAddress
-	if err := publishClusterBootstrap(root, path, peer); err != nil {
+	worker, err := serviceWorker(peer, cfg)
+	if err != nil {
+		return "", err
+	}
+	if err := publishClusterBootstrap(root, path, peer, &worker); err != nil {
 		return "", err
 	}
 	return path, nil
@@ -117,8 +126,8 @@ func validateServiceBootstrap(options ServiceBootstrap, cfg *config.Config) erro
 	if options.StorageLevel != "restricted" && options.StorageLevel != "sealed" {
 		return errors.New("peer-init requires --storage-level restricted or sealed for the private collaboration ledger")
 	}
-	if len(cfg.Gateway.ReadModelToken) < 32 {
-		return errors.New("gateway.read_model_token must contain at least 32 characters before peer-init")
+	if len(cfg.Gateway.ReadModelToken) < 32 || strings.ContainsAny(cfg.Gateway.ReadModelToken, "\r\n\t ") {
+		return errors.New("gateway.read_model_token must contain at least 32 characters without whitespace before peer-init")
 	}
 	if options.NodeID != "" && !serviceNodeID.MatchString(options.NodeID) {
 		return errors.New("invalid peer node ID")
@@ -136,7 +145,14 @@ func validateServiceBootstrap(options ServiceBootstrap, cfg *config.Config) erro
 	if ui == "" {
 		ui = cfg.Gateway.ReadModelAddr
 	}
-	return requireClusterLoopback(ui)
+	if err := requireClusterLoopback(ui); err != nil {
+		return err
+	}
+	_, port, _ := net.SplitHostPort(ui)
+	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
+		return errors.New("cluster UI needs a numeric port between 0 and 65535")
+	}
+	return nil
 }
 
 func validateServicePeer(path, dir, identity string, options ServiceBootstrap) (PeerConfig, error) {
@@ -148,7 +164,7 @@ func validateServicePeer(path, dir, identity string, options ServiceBootstrap) (
 		return saved, errors.New("existing cluster initialization differs from the requested service identity")
 	}
 	for _, pair := range [][2]string{{options.RaftAddress, saved.RaftAddress}, {options.PeerAddress, saved.PeerAddress}, {options.UIAddress, saved.UIAddress}} {
-		if pair[0] != "" && pair[0] != pair[1] {
+		if pair[0] != "" && !sameServiceAddress(pair[0], pair[1]) {
 			return saved, errors.New("peer-init cannot change an existing peer's addresses")
 		}
 	}
@@ -162,7 +178,18 @@ func validateServicePeer(path, dir, identity string, options ServiceBootstrap) (
 	return saved, err
 }
 
-func publishClusterBootstrap(root, path string, peer PeerConfig) error {
+// OpenPeer persists allocated ports. Repeating an explicit :0 selection keeps
+// that allocation, while a different host or fixed port still conflicts.
+func sameServiceAddress(requested, saved string) bool {
+	if requested == saved {
+		return true
+	}
+	host, port, err := net.SplitHostPort(requested)
+	savedHost, _, savedErr := net.SplitHostPort(saved)
+	return err == nil && savedErr == nil && host == savedHost && port == "0"
+}
+
+func publishClusterBootstrap(root, path string, peer PeerConfig, worker *node.ServerConfig) error {
 	staging, err := os.MkdirTemp(root, ".cluster-init-")
 	if err != nil {
 		return err
@@ -176,6 +203,11 @@ func publishClusterBootstrap(root, path string, peer PeerConfig) error {
 	temporary.OwnerTokenFile = filepath.Join(staging, "owner-control-token")
 	if err := createClusterAuthority(temporary); err != nil {
 		return err
+	}
+	if worker != nil {
+		if err := SaveClusterJSON(filepath.Join(staging, "node.json"), worker, true); err != nil {
+			return err
+		}
 	}
 	if err := SaveClusterJSON(filepath.Join(staging, "bootstrap.json"), peer, true); err != nil {
 		return err

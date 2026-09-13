@@ -184,7 +184,7 @@ func PrepareDesktopCluster(configPath string) (string, error) {
 		peer.PeerAddress = net.JoinHostPort(addresses[0], "0")
 	}
 	peer.WorkerConfigFile = filepath.Join(dir, "node.json")
-	if err := publishClusterBootstrap(installed.Paths.Root, path, peer); err != nil {
+	if err := publishClusterBootstrap(installed.Paths.Root, path, peer, nil); err != nil {
 		return "", err
 	}
 	return path, nil
