@@ -14,9 +14,10 @@ import (
 
 type TransferExchange struct {
 	Exchange
-	PayloadHash  string            `json:"payload_hash,omitempty"`
-	QuoteAliases map[string]string `json:"quote_aliases,omitempty"`
-	Receipt      *consoleapi.Reply `json:"receipt,omitempty"`
+	PayloadHash          string            `json:"payload_hash,omitempty"`
+	QuoteAliases         map[string]string `json:"quote_aliases,omitempty"`
+	Receipt              *consoleapi.Reply `json:"receipt,omitempty"`
+	ContinuationRejected bool              `json:"continuation_rejected,omitempty"`
 }
 
 // ProjectTransfer is a durable domain snapshot, without process contexts or
@@ -102,7 +103,7 @@ func ExportProject(doc ledger.Doc, project string, conversations []string) (Proj
 				foreign = true
 				continue
 			}
-			out.Exchanges[id] = append(out.Exchanges[id], TransferExchange{Exchange: copyExchange(e.Exchange), PayloadHash: e.PayloadHash, QuoteAliases: e.QuoteAliases, Receipt: e.Receipt})
+			out.Exchanges[id] = append(out.Exchanges[id], TransferExchange{Exchange: copyExchange(e.Exchange), PayloadHash: e.PayloadHash, QuoteAliases: e.QuoteAliases, Receipt: e.Receipt, ContinuationRejected: e.ContinuationRejected})
 		}
 		for _, r := range saved.Replies[id] {
 			if r.ProjectID == "" {
@@ -213,7 +214,7 @@ func ImportProject(doc ledger.Doc, in ProjectTransfer) error {
 				}
 			}
 			if old, ok := existingExchanges[e.ID]; ok {
-				got := TransferExchange{Exchange: copyExchange(old.Exchange), PayloadHash: old.PayloadHash, QuoteAliases: old.QuoteAliases, Receipt: old.Receipt}
+				got := TransferExchange{Exchange: copyExchange(old.Exchange), PayloadHash: old.PayloadHash, QuoteAliases: old.QuoteAliases, Receipt: old.Receipt, ContinuationRejected: old.ContinuationRejected}
 				if !reflect.DeepEqual(got, e) {
 					return fmt.Errorf("exchange %s conflicts", e.ID)
 				}
@@ -224,7 +225,7 @@ func ImportProject(doc ledger.Doc, in ProjectTransfer) error {
 					return fmt.Errorf("command key %s conflicts", e.Key)
 				}
 			}
-			q := &queuedExchange{Exchange: e.Exchange, PayloadHash: e.PayloadHash, QuoteAliases: e.QuoteAliases, Receipt: e.Receipt}
+			q := &queuedExchange{Exchange: e.Exchange, PayloadHash: e.PayloadHash, QuoteAliases: e.QuoteAliases, Receipt: e.Receipt, ContinuationRejected: e.ContinuationRejected}
 			saved.Exchanges[conversation] = append(saved.Exchanges[conversation], q)
 			existingExchanges[e.ID] = q
 		}

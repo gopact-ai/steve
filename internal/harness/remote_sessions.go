@@ -116,7 +116,7 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 	m.mu.Lock()
 	transport, ok := m.remote.(NodeSessionTransport)
 	observe, stopped := m.observe, m.stopped
-	policy := m.configs[at.Harness].Permission
+	policy := m.remotePermission(at.Harness)
 	m.mu.Unlock()
 	if !ok || stopped {
 		return nil, true, ErrNodeSessionUnavailable

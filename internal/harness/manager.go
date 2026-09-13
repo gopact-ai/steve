@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -66,6 +67,7 @@ type Transports interface {
 }
 
 type Manager struct {
+	remotePermissions map[string]string
 	pluginRefs        map[*acphost.Host]plugins.RuntimeRef
 	pluginRuntimes    PluginRuntimeProvider
 	suspended         map[string]bool
@@ -114,10 +116,12 @@ func (m *Manager) Publish(prepared *Manager) {
 	}
 	prepared.mu.Lock()
 	configs := cloneConfigs(prepared.configs)
+	policies := maps.Clone(prepared.remotePermissions)
 	prepared.mu.Unlock()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.configs = configs
+	m.remotePermissions = policies
 }
 
 // Set adds or replaces one harness's configuration at runtime. Hosts
@@ -351,11 +355,8 @@ func (m *Manager) host(at Placement) (*acphost.Host, error) {
 	if !ok && at.Node == "" {
 		return nil, fmt.Errorf("unknown harness %q", at.Harness)
 	}
-	if at.Node != "" && cfg.Permission == "" {
-		// A remote node owns its own tool declaration. A matching local
-		// policy remains explicit configuration; otherwise new remote tools
-		// use the same read policy as a first local registration.
-		cfg.Permission = permission.PolicyRead
+	if at.Node != "" {
+		cfg.Permission = m.remotePermission(at.Harness)
 	}
 	broker, err := permission.New(cfg.Permission)
 	if err != nil {

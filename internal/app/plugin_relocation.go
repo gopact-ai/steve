@@ -28,6 +28,9 @@ func (p *applicationPlugins) PreparePluginRelocation(ctx context.Context, plan, 
 	adminsvc.ConfigMu.RLock()
 	items := config.ClonePluginInstallations(p.cfg.Plugins)
 	cfg := p.cfg.Harnesses[frozen.Selection.Harness]
+	if policy, exists := p.cfg.RuntimePermissions[frozen.Selection.Harness]; exists {
+		cfg.Permission = policy
+	}
 	adminsvc.ConfigMu.RUnlock()
 	if err := frozen.CheckScope(items); err != nil {
 		return nil, err

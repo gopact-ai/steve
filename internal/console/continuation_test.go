@@ -1,6 +1,7 @@
 package console
 
 import (
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -62,6 +63,46 @@ func TestContinuationReceiptWaitsForParentAndRetriesOnlyUnadmittedWork(t *testin
 	if len(restored.Queue("main")) != 1 {
 		t.Fatal("retry duplicated the durable exchange")
 	}
+}
+
+func TestProjectTransferRetainsRejectedContinuationAdmission(t *testing.T) {
+	source := &memDoc{}
+	reply := consoleapi.Reply{ID: "r1", Conversation: "console:source", ProjectID: "p", ExchangeID: "e1", Kind: "reply", Error: "parent paused"}
+	saved := transcript{Replies: map[string][]consoleapi.Reply{"console:source": {reply}}, Exchanges: map[string][]*queuedExchange{"console:source": {{Exchange: Exchange{ID: "e1", Conversation: "console:source", ExpectedProject: "p", ExpectedTask: "parent", Key: "deliver:child", Input: "child finished", Prompt: "@worker complete original answer", State: consoleapi.ExchangeFailed}, ContinuationRejected: true, Receipt: &reply}}}}
+	raw, err := json.Marshal(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Save(raw); err != nil {
+		t.Fatal(err)
+	}
+	bundle, err := ExportProject(source, "p", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bundle, err = bundle.Remap(func(id string) string { return "origin~" + id }, func(string) string { return "console:imported" }, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dest := &memDoc{}
+	if err := ImportProject(dest, bundle); err != nil {
+		t.Fatal(err)
+	}
+	h := &queueHandler{started: make(chan *queueCall, 1)}
+	s := New(h, "owner", nil)
+	if err := s.Persist(dest); err != nil {
+		t.Fatal(err)
+	}
+	e := bundle.Exchanges["console:imported"][0]
+	if err := s.ContinueTask(t.Context(), "console:imported", "origin~parent", e.Key, "worker", "new notice", "must retain original"); !errors.Is(err, channel.ErrDeliveryQueued) {
+		t.Fatal(err)
+	}
+	call := nextCall(t, h)
+	if call.req.ExpectedTask != "origin~parent" || call.req.Input != "@worker complete original answer" {
+		t.Fatalf("migration lost input or binding: %+v", call.req)
+	}
+	call.finish <- nil
+	awaitExchange(t, s, e.ID)
 }
 
 func TestContinuationNeverReplaysAnAdmittedFailure(t *testing.T) {

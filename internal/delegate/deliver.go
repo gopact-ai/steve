@@ -111,7 +111,8 @@ func (s *Service) SetReplaySafeDelivery(check func(task.Task) bool) {
 }
 
 // SetDeliveryReceipt installs a read-only durable receipt lookup. Receipts
-// remain meaningful after the parent has paused or finished.
+// remain meaningful after the parent has paused or finished. Lookups must be
+// repeatable; observing a receipt never consumes or deletes it.
 func (s *Service) SetDeliveryReceipt(check func(task.Task, string) (bool, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -121,7 +122,7 @@ func (s *Service) SetDeliveryReceipt(check func(task.Task, string) (bool, error)
 // collect marks a child's result as read by its parent in-turn: it will
 // not be delivered again. Only a terminal result counts.
 func (s *Service) collect(taskID string, result agentmcp.DelegateResult) {
-	if result.State != task.StateDone && result.State != task.StateFailed {
+	if result.State != task.StateDone && result.State != task.StateFailed && result.State != task.StateCancelled {
 		return
 	}
 	if err := s.tasks.SetDelivery(taskID, task.DeliveryDelivered); err != nil && !strings.Contains(err.Error(), "not found") {
@@ -146,10 +147,10 @@ func (s *Service) flushIfIdle(ctx context.Context, parentID string) {
 // child ends while no turn runs. Safe to call twice: a child is
 // delivered once.
 func (s *Service) Flush(ctx context.Context, parentID string) {
-	s.flush(ctx, parentID, time.Now())
+	s.flush(ctx, parentID, time.Now(), nil)
 }
 
-func (s *Service) flush(ctx context.Context, parentID string, due time.Time) {
+func (s *Service) flush(ctx context.Context, parentID string, due time.Time, waiting []task.Task) {
 	s.mu.Lock()
 	deliver, replaySafe, receipt := s.deliver, s.replaySafeDelivery, s.deliveryReceipt
 	s.mu.Unlock()
@@ -158,7 +159,19 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time) {
 	}
 	s.deliverMu.Lock()
 	defer s.deliverMu.Unlock()
-	waiting := s.tasks.Undelivered()[parentID]
+	if waiting == nil {
+		waiting = s.tasks.Undelivered()[parentID]
+	}
+	// Re-read only the candidate IDs under the dispatch reservation. A receipt
+	// or inline collection may have completed since the shared snapshot.
+	waiting = s.currentWaiting(waiting)
+	parent, ok := s.tasks.Get(parentID)
+	if ok && receipt != nil {
+		waiting = s.checkDeliveryReceipts(parent, waiting, receipt)
+	}
+	if len(waiting) == 0 {
+		return
+	}
 	// A caller already waiting gets the first chance to consume its result.
 	// Registration precedes execution, so closing done cannot race an inline
 	// response into an additional automatic continuation.
@@ -175,13 +188,6 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time) {
 	}
 	s.mu.Unlock()
 	waiting = ready
-	if len(waiting) == 0 {
-		return
-	}
-	parent, ok := s.tasks.Get(parentID)
-	if ok && receipt != nil {
-		waiting = s.checkDeliveryReceipts(parent, waiting, receipt)
-	}
 	if len(waiting) == 0 {
 		return
 	}
@@ -314,14 +320,7 @@ func (s *Service) landFor(ctx context.Context, parent task.Task) func(task.Task)
 // RedeliverPending is the start-up pass: children that ended before the
 // process died, whose parents were never told.
 func (s *Service) RedeliverPending(ctx context.Context) {
-	for parentID := range s.tasks.Undelivered() {
-		if s.attempts != nil {
-			if _, live := s.attempts.LiveAttemptOf(ctx, parentID); live {
-				continue
-			}
-		}
-		s.flush(ctx, parentID, time.Time{})
-	}
+	s.reconcileDeliveries(ctx, time.Now())
 }
 
 // ReconcileDeliveries retries durable pending messages while the application is
@@ -332,7 +331,7 @@ func (s *Service) ReconcileDeliveries(ctx context.Context) error {
 }
 
 func (s *Service) reconcileDeliveries(ctx context.Context, now time.Time) {
-	for parentID := range s.tasks.Undelivered() {
+	for parentID, waiting := range s.tasks.Undelivered() {
 		if ctx.Err() != nil {
 			return
 		}
@@ -341,7 +340,7 @@ func (s *Service) reconcileDeliveries(ctx context.Context, now time.Time) {
 				continue
 			}
 		}
-		s.flush(ctx, parentID, now)
+		s.flush(ctx, parentID, now, waiting)
 	}
 }
 

@@ -269,6 +269,21 @@ bash -lc 'exec /home/me/steve-bin/steve run -config /home/me/steve-bin/config.js
 
 hub 对 `state_path` 的父目录持单例锁，同一状态目录不能同时启动两个 hub。配置由 setup 保存时权限为 `0600`；手工复制的含密钥文件也设为 `0600`。不要用 `doctor` 作为线上只读健康检查：它会准备运行目录、打开账本、声明项目并启动 agent 探针；已有 hub 的日常检查用控制台、`steve top` 或 `/state`。
 
+### 服务模式的集群初始化
+
+需要向远端节点部署插件时，将现有服务初始化为集群 peer。先停止服务并备份配置和完整状态目录，再运行：
+
+```sh
+steve peer-init -config /home/me/steve-bin/config.json -storage-level restricted
+steve run -config /home/me/steve-bin/config.json
+```
+
+`peer-init` 要求支持进程锁的 Unix 平台；其他平台会明确拒绝初始化。它保留原配置、项目、任务账本、owner 和 hub ID；以原 hub ID 作为 cluster ID，原来采用该 hub 的节点仍使用原凭据。命令生成独立 peer 身份、私有证书及 `<config>.cluster.json`，随后 `steve run` 自动发现此文件并激活集群应用。原本的本机 harness 和 MCP 定义写入该 peer 的私有 worker 配置；固定适配器在启动时按原版本解析。原有 harness 权限策略作为共享执行策略保留，在协调者切换和配置修改后仍生效；未配置策略的新工具仍默认为只读。已有会话和运行目录保留，新执行遵循集群会话的准入规则。输出只有配置路径和公开身份。控制台沿用原来的 token，要求至少 32 个字符且不含空白，监听地址必须为 loopback；需要调整控制台监听时可在初始化时传 `-ui-address 127.0.0.1:7710`。
+
+必须显式选择 `restricted` 或 `sealed`，表示这台机器可保存私有协作账本。默认 Raft 和 peer HTTPS 在 loopback 自动选择端口，适用于单个协调者管理远端 worker；若要加入其他完整 peer，初始化时用 `-raft-address <可达地址>:7801 -peer-address <可达地址>:7802` 指定本机可绑定且互相可达的地址。`peer-init` 只初始化第一个 peer；添加其他成员使用控制台现有的机群加入流程。
+
+重复相同初始化返回原身份；配置不一致会报错。初始化中断时使用原参数重试，已发布的证书会复用。peer 已运行后不要删除 sidecar 重新生成身份，也不要移走 sidecar 退回独立模式；恢复应使用包含集群状态的完整备份。
+
 ### 控制台与凭据
 
 省略飞书应用凭据即可独立运行控制台，设置 `gateway.owner_id` 为稳定的部署 owner 标识；`app_id` / `app_secret` 只填写其中一个会被拒绝。两者都填写时，Steve 才验证并启动飞书/Lark 通道。控制台 owner 优先使用 `gateway.owner_id`，否则使用 `feishu.owner_open_id`；独立部署没有有效 owner 时启动失败。飞书 owner 仍使用该应用下的 open_id。身份和记忆文件在本地准备，不需要通过飞书完成首次启动。
@@ -583,7 +598,7 @@ go run ./e2e/fleet -scenario autonomous
 
 ## 插件安装与会话版本
 
-插件往**别的节点**部署需要 hub 作为集群应用运行：节点只接受已提交协调者的插件操作。独立 hub（`steve run`）能导入、能配置、能管自己这台机器，控制台目标状态会写明 `this hub is not a cluster coordinator`。插件的包准备、节点部署、启用与会话使用是不同状态。控制台「插件」页显示目标机器的实际回执；查看 [插件操作指南](plugins-local.md) 和 [隔离验收记录](plugins-acceptance.md)。凭据先在执行机器用 `steve plugins secret-put` 从 stdin 写入，管理端仅选择版本引用。不要把密钥放到普通设置、包归档、日志或 MR 中。
+插件往**别的节点**部署需要 hub 作为集群应用运行：节点只接受已提交协调者的插件操作。未初始化集群的独立 hub 能导入、能配置、能管自己这台机器，控制台目标状态会写明 `this hub is not a cluster coordinator`；服务部署按上面的 `peer-init` 流程初始化。插件的包准备、节点部署、启用与会话使用是不同状态。控制台「插件」页显示目标机器的实际回执；查看 [插件操作指南](plugins-local.md) 和 [隔离验收记录](plugins-acceptance.md)。凭据先在执行机器用 `steve plugins secret-put` 从 stdin 写入，管理端仅选择版本引用。不要把密钥放到普通设置、包归档、日志或 MR 中。
 
 旧会话使用固定的包摘要、技能目录和 MCP 路由。升版或回退只改变新会话；停用只阻止新绑定。撤销项目/节点范围后，核心会拒绝该范围的新准入和会话接回；已发出的外部请求不会被撤销。
 

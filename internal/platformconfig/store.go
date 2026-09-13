@@ -8,10 +8,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plugins"
 )
 
@@ -45,9 +47,10 @@ type ChannelCredentials struct {
 // WorkPolicy names behavior shared across coordinator changes. It contains
 // no process address, credential, node capability or machine-local path.
 type WorkPolicy struct {
-	Planner              string          `json:"planner,omitempty"`
-	OfflineReminderAfter config.Duration `json:"offline_reminder_after,omitempty"`
-	DirectTransfer       bool            `json:"direct_transfer,omitempty"`
+	HarnessPermissions   map[string]string `json:"harness_permissions,omitempty"`
+	Planner              string            `json:"planner,omitempty"`
+	OfflineReminderAfter config.Duration   `json:"offline_reminder_after,omitempty"`
+	DirectTransfer       bool              `json:"direct_transfer,omitempty"`
 }
 
 type LocalNode struct {
@@ -222,7 +225,7 @@ func declaration(cfg *config.Config, home config.ProjectHome) (Declaration, erro
 	settings := cfg.SettingsValues()
 	settings.Gateway.OwnerID = cfg.EffectiveOwnerID()
 	return clone(Declaration{Settings: settings, Channels: cfg.ChannelSettings(), Credentials: ChannelCredentials{FeishuAppSecret: cfg.Feishu.AppSecret},
-		Work: WorkPolicy{Planner: cfg.Gateway.Planner, OfflineReminderAfter: cfg.Gateway.OfflineReminderAfter, DirectTransfer: cfg.Gateway.DirectTransfer}, DefaultProject: cfg.Gateway.DefaultProject,
+		Work: WorkPolicy{HarnessPermissions: declaredPermissions(cfg), Planner: cfg.Gateway.Planner, OfflineReminderAfter: cfg.Gateway.OfflineReminderAfter, DirectTransfer: cfg.Gateway.DirectTransfer}, DefaultProject: cfg.Gateway.DefaultProject,
 		Home: home, Agents: cfg.Agents, Projects: cfg.Projects, Nodes: cfg.Nodes, Plugins: cfg.Plugins})
 }
 
@@ -231,6 +234,7 @@ func (d Declaration) applySettings(cfg *config.Config) {
 	cfg.Gateway.OwnerID, cfg.Gateway.Locale = policy.OwnerID, policy.Locale
 	cfg.Gateway.TaskMaxTurns, cfg.Gateway.TaskMaxElapsed, cfg.Gateway.PromptTimeout = policy.TaskMaxTurns, policy.TaskMaxElapsed, policy.PromptTimeout
 	cfg.Policies = d.Settings.Policies
+	cfg.RuntimePermissions = maps.Clone(d.Work.HarnessPermissions)
 	cfg.Gateway.Planner, cfg.Gateway.OfflineReminderAfter, cfg.Gateway.DirectTransfer = d.Work.Planner, d.Work.OfflineReminderAfter, d.Work.DirectTransfer
 	cfg.Gateway.DefaultProject, cfg.Gateway.DefaultChannel = d.DefaultProject, d.Channels.DefaultChannel
 	f := d.Channels.Feishu
@@ -239,6 +243,14 @@ func (d Declaration) applySettings(cfg *config.Config) {
 }
 
 func validate(d Declaration) error {
+	for id, policy := range d.Work.HarnessPermissions {
+		if strings.TrimSpace(id) == "" {
+			return errors.New("shared harness policy needs a harness id")
+		}
+		if _, err := permission.New(policy); err != nil {
+			return fmt.Errorf("shared harness policy %s: %w", id, err)
+		}
+	}
 	if err := validateClassifications(d.Projects); err != nil {
 		return err
 	}
@@ -328,4 +340,21 @@ func clone(d Declaration) (Declaration, error) {
 	var result Declaration
 	err = json.Unmarshal(raw, &result)
 	return result, err
+}
+
+// Preserve shared policies on administrative edits; read local declarations
+// only when first importing an independent service.
+func declaredPermissions(cfg *config.Config) map[string]string {
+	if cfg.RuntimePermissions != nil {
+		return maps.Clone(cfg.RuntimePermissions)
+	}
+	out := map[string]string{}
+	for id, item := range cfg.Harnesses {
+		policy := item.Permission
+		if policy == "" {
+			policy = permission.PolicyRead
+		}
+		out[id] = policy
+	}
+	return out
 }

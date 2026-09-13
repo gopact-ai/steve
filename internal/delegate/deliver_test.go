@@ -216,7 +216,7 @@ func TestAFailedDeliveryIsRetriedFromTheRecord(t *testing.T) {
 	release()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if c, _ := w.tasks.Get(first.TaskID); c.Delivery != nil && c.Delivery.State == task.DeliveryPending {
+		if c, _ := w.tasks.Get(first.TaskID); c.Delivery != nil && c.Delivery.State == task.DeliveryPending && c.Delivery.Error == "channel down" && !c.Delivery.NextAttemptAt.IsZero() {
 			break
 		}
 		if time.Now().After(deadline) {
@@ -229,6 +229,11 @@ func TestAFailedDeliveryIsRetriedFromTheRecord(t *testing.T) {
 	box.fail = nil
 	box.mu.Unlock()
 	w.service.RedeliverPending(t.Context())
+	if box.count() != 0 {
+		t.Fatal("restart bypassed the persisted delivery backoff")
+	}
+	child, _ := w.tasks.Get(first.TaskID)
+	w.service.reconcileDeliveries(t.Context(), child.Delivery.NextAttemptAt)
 	got := box.wait(t, 1)
 	if got[0].ParentTask != parent.ID || got[0].Children[0].Task != first.TaskID {
 		t.Fatalf("delivery = %+v", got[0])

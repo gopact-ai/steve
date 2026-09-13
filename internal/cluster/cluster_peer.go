@@ -756,6 +756,10 @@ func (p *Peer) startWorker(workspaceRoot string) error {
 		listener.Close()
 		return err
 	}
+	if err := preparePeerAdapters(p.ctx, &cfg); err != nil {
+		listener.Close()
+		return err
+	}
 	cfg.Source = p.Config.WorkerConfigFile
 	cfg.Listener = listener
 	cfg.SessionAuthorizer = p

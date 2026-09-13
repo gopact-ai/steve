@@ -80,6 +80,9 @@ func (p *applicationPlugins) PreparePluginSession(ctx context.Context, req harne
 	adminsvc.ConfigMu.RLock()
 	items := config.ClonePluginInstallations(p.cfg.Plugins)
 	cfg := p.cfg.Harnesses[req.At.Harness]
+	if policy, exists := p.cfg.RuntimePermissions[req.At.Harness]; exists {
+		cfg.Permission = policy
+	}
 	origin := p.cfg.Agents[req.AgentID].PluginOrigin.Clone()
 	adminsvc.ConfigMu.RUnlock()
 	selection := plugins.Selection{Project: req.Project, Node: req.At.Node, Harness: req.At.Harness}

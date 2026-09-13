@@ -199,10 +199,12 @@ The parent agent can end its turn and wait for platform delivery; **polling is n
 |---|---|
 | `make test` | Local Go tests, race checks and dependency boundaries. |
 | `make test-console` | Frontend boundaries, build and isolated browser interactions. |
-| `make e2e-fleet` | Checks a named remote delegation, attempt, changes, usage and landing on an existing fleet; default and maximum client deadline **10 minutes**. |
-| `make e2e-autonomous` | Checks fleet discovery, parallel decomposition and delegation, capability placement and proactive result delivery; default and maximum **20 minutes**, requiring `kvtool/main.go` in the project's canonical directory and a remote node advertising `build`. |
+| `make e2e-fleet` | Creates an isolated hub and Docker nodes with a deterministic agent to check delegation, attempts, changes, usage and landing; total deadline **25 minutes**. |
+| `make e2e-autonomous` | Uses the same isolated lab to check capability placement, parallel delegation and proactive handoffs; prepares `kvtool` automatically and makes no real-model calls. |
+| `go run ./e2e/fleet` | Checks a named delegation on an existing real-model fleet; client deadline **10 minutes**. |
+| `go run ./e2e/fleet -scenario autonomous` | Real autonomous collaboration; deadline **20 minutes**, requiring `kvtool/main.go` in the canonical directory and a remote node advertising `build`. |
 
-[CI](.github/workflows/test.yml) runs gofmt, vet, race tests, frontend builds, dependency checks and isolated browser tests, without live fleet gates. The live gates use existing hub and node processes and do not build, deploy or restart them; they create real tasks and files. Connection options, required tools, timeout handling and PR evidence requirements are in [CONTRIBUTING.md](CONTRIBUTING.md) and [operations](docs/operations.md#门禁与-ci).
+The isolated lab requires Linux, a local Docker engine and a matching Go toolchain. [CI](.github/workflows/test.yml) runs gofmt, vet, race tests, frontend builds, dependency checks, isolated browser tests and disposable fleet gates. Real-model gates run separately. The live gates use existing hub and node processes and do not build, deploy or restart them; they create real tasks and files. Connection options, required tools, timeout handling and PR evidence requirements are in [CONTRIBUTING.md](CONTRIBUTING.md) and [operations](docs/operations.md#门禁与-ci).
 
 ## Further reading
 

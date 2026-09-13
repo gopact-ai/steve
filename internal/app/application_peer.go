@@ -38,7 +38,6 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 	}
 	environment := &Environment{Ledger: activation.Ledger, NodeID: activation.NodeID, Coordination: p, Configure: func(cfg *config.Config) error {
 		cfg.Gateway.HubID = p.ApplicationClusterID()
-		cfg.Harnesses = map[string]config.Harness{}
 		if cfg.Nodes == nil {
 			cfg.Nodes = map[string]config.Node{}
 		}
