@@ -184,36 +184,7 @@ func PrepareDesktopCluster(configPath string) (string, error) {
 		peer.PeerAddress = net.JoinHostPort(addresses[0], "0")
 	}
 	peer.WorkerConfigFile = filepath.Join(dir, "node.json")
-	staging, err := os.MkdirTemp(installed.Paths.Root, ".cluster-init-")
-	if err != nil {
-		return "", err
-	}
-	defer os.RemoveAll(staging)
-	temporary := peer
-	temporary.CACertFile = filepath.Join(staging, "ca.pem")
-	temporary.CAKeyFile = filepath.Join(staging, "ca-key.pem")
-	temporary.CertFile = filepath.Join(staging, "node.pem")
-	temporary.KeyFile = filepath.Join(staging, "node-key.pem")
-	temporary.OwnerTokenFile = filepath.Join(staging, "owner-control-token")
-	if err := createClusterAuthority(temporary); err != nil {
-		return "", err
-	}
-	if err := SaveClusterJSON(filepath.Join(staging, "bootstrap.json"), peer, true); err != nil {
-		return "", err
-	}
-	if err := os.Rename(staging, dir); err != nil {
-		return "", err
-	}
-	parent, err := os.Open(installed.Paths.Root)
-	if err != nil {
-		return "", err
-	}
-	err = parent.Sync()
-	parent.Close()
-	if err != nil {
-		return "", err
-	}
-	if err := SaveClusterJSON(path, peer, true); err != nil {
+	if err := publishClusterBootstrap(installed.Paths.Root, path, peer, nil); err != nil {
 		return "", err
 	}
 	return path, nil

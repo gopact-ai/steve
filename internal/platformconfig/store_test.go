@@ -8,6 +8,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/ledger"
+	"maps"
 )
 
 func initialConfig() *config.Config {
@@ -80,5 +81,37 @@ func TestSharedConfigCASRejectsStaleDeclaration(t *testing.T) {
 	first.Agents["main"] = config.Agent{Harness: "codex", Default: true}
 	if _, err := store.Save(t.Context(), got.Revision, first); err == nil {
 		t.Fatal("accepted a role-relative agent location")
+	}
+}
+
+func TestServicePermissionsSurviveCoordinatorChangesAndAdministrativeEdits(t *testing.T) {
+	cfg := initialConfig()
+	cfg.Harnesses["codex"] = config.Harness{Command: "/private/codex", Env: []string{"SECRET=private"}, Permission: "auto"}
+	d, err := FromLocal(cfg, LocalNode{ID: "worker", Config: config.Node{Addr: "worker", Token: "token"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if d.Work.HarnessPermissions["codex"] != "auto" {
+		t.Fatal("local policy lost")
+	}
+	next := &config.Config{}
+	if err := d.Apply(next); err != nil {
+		t.Fatal(err)
+	}
+	next.Harnesses = map[string]config.Harness{}
+	candidate, err := d.WithCandidate(next)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !maps.Equal(candidate.Work.HarnessPermissions, d.Work.HarnessPermissions) {
+		t.Fatal("administrative edit discarded policy")
+	}
+	next.RuntimePermissions["codex"] = "deny"
+	if d.Work.HarnessPermissions["codex"] != "auto" {
+		t.Fatal("runtime mutation changed durable policy")
+	}
+	candidate.Work.HarnessPermissions["codex"] = "invalid"
+	if err := validate(candidate); err == nil {
+		t.Fatal("invalid shared permission accepted")
 	}
 }

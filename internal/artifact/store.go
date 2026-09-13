@@ -53,8 +53,18 @@ type Receipt struct {
 
 // Durable reports whether one of the project's durable places holds it.
 func (m Manifest) Durable(p project.Project) bool {
-	if m.Content != nil && !m.Content.Complete() {
-		return false
+	if m.Content != nil {
+		if !m.Content.Complete() || m.Content.Object.Kind != contentreplica.GitBundle || m.Content.Object.Key != m.ID || m.Content.Object.Scope.ProjectID != p.ID {
+			return false
+		}
+		// Cluster configuration pins durable places to physical node IDs.
+		// Receiver-verified content receipts carry those IDs; the legacy
+		// hub receipt below only identifies the standalone coordinator.
+		for _, receipt := range m.Content.Receipts {
+			if p.Durable(receipt.NodeID) {
+				return true
+			}
+		}
 	}
 	for _, r := range m.Receipts {
 		if p.Durable(r.Place) {

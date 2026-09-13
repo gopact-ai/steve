@@ -125,3 +125,56 @@ func TestRevokedTargetRemainsInRemovalInventoryWithoutASessionReceipt(t *testing
 		t.Fatalf("offline historical worker no longer blocked removal: %v", err)
 	}
 }
+
+func TestRuntimeUsageSurvivesAnOlderCoordinatorDeploymentLedger(t *testing.T) {
+	for _, installation := range []string{"tools", "unrelated"} {
+		t.Run(installation, func(t *testing.T) {
+			service, ref := installedRuntime(t)
+			known, err := service.Local.Store.Deployment(ref.Selection.Deployments[0])
+			if err != nil {
+				t.Fatal(err)
+			}
+			old := known.Deployment
+			old.Installation = installation
+			old.Projects = []string{"p", "previous-project"}
+			receipt, err := service.Local.Store.PrepareDeployment(t.Context(), old, plugins.Environment{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := service.Library.Deployment(t.Context(), receipt.Hash); !errors.Is(err, plugins.ErrUnavailable) {
+				t.Fatalf("fixture receipt exists in coordinator: %v", err)
+			}
+			selected := ref.Selection
+			selected.Deployments = []string{receipt.Hash}
+			retained, err := service.Local.Prepare(t.Context(), "old-ledger-runtime", selected, harness.Config{Command: "unused"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := service.Local.Store.BeginRuntimeUse(t.Context(), retained.Ref, "old-native", "host"); err != nil {
+				t.Fatal(err)
+			}
+			usage, err := service.PluginUsage(t.Context(), "tools")
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if installation == "tools" {
+				want = 2
+			}
+			if len(usage.Runtimes) != want {
+				t.Fatalf("runtime ownership lost: %+v", usage)
+			}
+			view, err := service.Plugins(t.Context())
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, err = service.RemovePlugin(t.Context(), "tools", consoleapi.PluginRemoveRequest{BaseRevision: view.Revision})
+			if installation == "tools" && !errors.Is(err, plugins.ErrRuntimeBusy) {
+				t.Fatalf("old process lost its stop barrier: %v", err)
+			}
+			if installation == "unrelated" && err != nil {
+				t.Fatalf("unrelated old runtime blocked removal: %v", err)
+			}
+		})
+	}
+}
