@@ -8,6 +8,21 @@ import (
 	"github.com/gopact-ai/steve/internal/task"
 )
 
+func (s *Service) currentWaiting(candidates []task.Task) []task.Task {
+	out := candidates[:0]
+	for _, candidate := range candidates {
+		t, ok := s.tasks.Get(candidate.ID)
+		if !ok || !t.Delegated() || !t.Finished() || t.Result == nil {
+			continue
+		}
+		if d := t.Delivery; d != nil && (d.State == task.DeliveryDelivered || d.State == task.DeliverySuppressed) {
+			continue
+		}
+		out = append(out, t)
+	}
+	return out
+}
+
 // Inspect an existing queue entry before applying parent-state gates or
 // rebuilding landing descriptions. This path never starts a parent turn.
 func (s *Service) checkDeliveryReceipts(parent task.Task, waiting []task.Task, receipt func(task.Task, string) (bool, error)) []task.Task {

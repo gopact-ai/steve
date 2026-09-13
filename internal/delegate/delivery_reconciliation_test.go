@@ -3,6 +3,7 @@ package delegate
 import (
 	"context"
 	"errors"
+	"github.com/gopact-ai/steve/internal/agentmcp"
 	"github.com/gopact-ai/steve/internal/channel"
 	"testing"
 	"time"
@@ -23,6 +24,36 @@ func completedChild(t *testing.T, w *world, parent task.Task, goal string) task.
 		t.Fatal(err)
 	}
 	return child
+}
+
+func TestInlineCancelledChildIsNotDeliveredAgain(t *testing.T) {
+	w := newWorld(t)
+	parent := w.running(t, "codex")
+	tracked, err := w.tasks.Create(task.Task{Parent: parent.ID, Channel: parent.Channel, Member: "builder", Origin: "delegate:" + parent.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.tasks.Advance(tracked.ID, task.StateCancelled); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.tasks.SetResult(tracked.ID, task.Result{Outcome: task.OutcomeCancelled, Answer: "cancelled by owner"}); err != nil {
+		t.Fatal(err)
+	}
+	box := &mailbox{}
+	w.service.SetDeliverer(box.deliver)
+	entry := &child{done: make(chan struct{}), started: time.Now(), result: agentmcp.DelegateResult{TaskID: tracked.ID, State: task.StateCancelled}}
+	close(entry.done)
+	if _, err := w.service.wait(t.Context(), entry, -1); err != nil {
+		t.Fatal(err)
+	}
+	w.service.RedeliverPending(t.Context())
+	if box.count() != 0 {
+		t.Fatal("inline cancelled result was delivered again")
+	}
+	stored, _ := w.tasks.Get(tracked.ID)
+	if stored.Delivery == nil || stored.Delivery.State != task.DeliveryDelivered {
+		t.Fatal("inline result consumption was not durable")
+	}
 }
 
 func TestPausedParentKeepsUnreportedResultsUntilResumed(t *testing.T) {
@@ -68,7 +99,7 @@ func TestDeliveryReceiptLossDoesNotAbsorbALaterChild(t *testing.T) {
 	w.service.Flush(t.Context(), parent.ID)
 	second := completedChild(t, w, parent, "later result")
 	loseReceipt = false
-	w.service.RedeliverPending(t.Context())
+	w.service.reconcileDeliveries(t.Context(), time.Now().Add(time.Hour))
 	seen := map[string]int{}
 	for _, d := range accepted {
 		for _, child := range d.Children {

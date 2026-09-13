@@ -66,7 +66,7 @@ func TestPauseBetweenBatchPreparationAndQueueAdmissionRetainsTheAnswer(t *testin
 	if _, err := w.tasks.Advance(parent.ID, task.StateRunning); err != nil {
 		t.Fatal(err)
 	}
-	w.service.RedeliverPending(t.Context())
+	w.service.reconcileDeliveries(t.Context(), time.Now().Add(time.Hour))
 	select {
 	case prompt := <-processed:
 		if !strings.Contains(prompt, "unique child answer") {
@@ -79,7 +79,7 @@ func TestPauseBetweenBatchPreparationAndQueueAdmissionRetainsTheAnswer(t *testin
 	if _, err := w.tasks.Advance(parent.ID, task.StateDone); err != nil {
 		t.Fatal(err)
 	}
-	w.service.RedeliverPending(t.Context())
+	w.service.reconcileDeliveries(t.Context(), time.Now().Add(time.Hour))
 	got, _ = w.tasks.Get(child.ID)
 	if got.Delivery.State != task.DeliveryDelivered {
 		t.Fatalf("parent receipt missing: %+v", got.Delivery)
