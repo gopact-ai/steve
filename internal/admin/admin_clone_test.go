@@ -10,14 +10,15 @@ import (
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
 )
 
-func configuredCloneFixture(t *testing.T) *Service {
+func configuredCloneFixture(t *testing.T, options ...ledger.Options) *Service {
 	t.Helper()
-	a, book := projectAdminFixture(t)
+	a, book := projectAdminFixture(t, options...)
 	a.Attempts = attempt.New(book)
 	a.Fleet = roster.New(a.Catalog)
 	p := a.Cfg.Projects["remove"]
@@ -92,7 +93,11 @@ func TestRunningCloneBlocksRemovalRetirementAndReassignment(t *testing.T) {
 }
 
 func TestTimedOutRemoteCloneRecordsUnknownWithFreshCleanupContext(t *testing.T) {
-	a := configuredCloneFixture(t)
+	// Lease time must not expire during fixture fsync/scheduling before the
+	// remote operation starts. Exercise expiry explicitly after its timeout.
+	base := time.Now()
+	var elapsed atomic.Int64
+	a := configuredCloneFixture(t, ledger.Options{Now: func() time.Time { return base.Add(time.Duration(elapsed.Load())) }})
 	a.cloneTimeout = 20 * time.Millisecond
 	a.cloneLeaseTTL = 100 * time.Millisecond
 	var calls atomic.Int32
@@ -118,7 +123,7 @@ func TestTimedOutRemoteCloneRecordsUnknownWithFreshCleanupContext(t *testing.T) 
 	if calls.Load() != 1 {
 		t.Fatal("unknown remote clone automatically replayed")
 	}
-	time.Sleep(120 * time.Millisecond)
+	elapsed.Add(int64(time.Second))
 	if err := a.RemoveWorkspace(t.Context(), "remove", "remote"); !errors.Is(err, project.ErrCloneIsolated) {
 		t.Fatalf("lease expiry cleared unknown physical ownership: %v", err)
 	}
