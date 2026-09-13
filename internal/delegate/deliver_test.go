@@ -216,7 +216,7 @@ func TestAFailedDeliveryIsRetriedFromTheRecord(t *testing.T) {
 	release()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		if c, _ := w.tasks.Get(first.TaskID); c.Delivery != nil && c.Delivery.State == task.DeliveryPending {
+		if c, _ := w.tasks.Get(first.TaskID); c.Delivery != nil && c.Delivery.State == task.DeliveryPending && c.Delivery.Error == "channel down" && !c.Delivery.NextAttemptAt.IsZero() {
 			break
 		}
 		if time.Now().After(deadline) {
