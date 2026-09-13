@@ -288,15 +288,24 @@ steve run -config /home/me/steve-bin/config.json
 
 省略飞书应用凭据即可独立运行控制台，设置 `gateway.owner_id` 为稳定的部署 owner 标识；`app_id` / `app_secret` 只填写其中一个会被拒绝。两者都填写时，Steve 才验证并启动飞书/Lark 通道。控制台 owner 优先使用 `gateway.owner_id`，否则使用 `feishu.owner_open_id`；独立部署没有有效 owner 时启动失败。飞书 owner 仍使用该应用下的 open_id。身份和记忆文件在本地准备，不需要通过飞书完成首次启动。
 
-默认地址 `127.0.0.1:7710` 只在 hub 本机可访问。对外监听需要设置 `gateway.read_model_addr` 和非空 `gateway.read_model_token`。`dash` / `top` / `say` 不读取 config.json 的地址或 token，使用自定义监听时要显式传参：
+默认地址 `127.0.0.1:7710` 只在 hub 本机可访问。对外监听需要设置 `gateway.read_model_addr` 和非空 `gateway.read_model_token`。`dash` / `top` / `say` 可用显式 `-config <path>` 只读加载连接：
 
 ```bash
-./steve dash -url http://10.0.0.1:7710 -token "$STEVE_CONSOLE_TOKEN"
-./steve top -url http://10.0.0.1:7710 -token "$STEVE_CONSOLE_TOKEN" -once
-./steve say -url http://10.0.0.1:7710 -token "$STEVE_CONSOLE_TOKEN" /fleet
+./steve dash -config config.json
+./steve top -config config.json -once
+./steve say -config config.json /fleet
 ```
 
-这里的环境变量由部署者预先设置。read-model token 代表 owner 管理权限；`dash` 输出的 URL 会包含 token，不要贴进 PR。它与飞书 app secret、node 认证 token、MCP broker token 和区域 issuer token 分别配置。
+连接规则：
+
+- 不传 `-config` 时不自动查找配置，仍使用 `http://127.0.0.1:7710`、空 token 和原命令参数默认值。
+- 传入时读取 `gateway.read_model_addr` / `gateway.read_model_token`；存在 `<config>.cluster.json` 时，地址改用 sidecar 的 `ui_address`，token 仍来自原配置。空地址使用原默认地址；监听地址可省略 `http://`，`0.0.0.0`、`[::]` 和省略主机的 `:端口` 分别转为 `127.0.0.1`、`[::1]` 和 `127.0.0.1`。
+- 显式 `-url` / `-token` 覆盖对应配置值，`-token ''` 明确禁用凭据。同 origin（协议、主机、有效端口相同，默认端口等价）的 URL 覆盖可继承配置 token；改变 origin 且配置有 token 时，必须显式给出 `-token`，否则报错，不发送请求。`localhost` 与 `127.0.0.1` 视为不同主机，不做 DNS 等价判断。客户端也不跟随跨 origin 或含 userinfo 的重定向。
+- `-url` 必须是 HTTP(S) URL；连接地址禁止 userinfo、query 和 fragment。缺失或损坏的显式配置、损坏的已存在 sidecar、非法连接地址都会报错，显式覆盖也不会跳过配置读取和地址校验。无须让其他服务配置合法，不读取证书或初始化运行目录，不启动 Hub、探测 Agent、修改配置；`say` 仍会向正在运行的控制台发送所给命令。
+
+例如 `./steve top -config config.json -url http://localhost:17710 -token "$STEVE_CONSOLE_TOKEN" -once` 显式指定转发端点及其凭据；这里的环境变量由部署者预先设置，客户端不会自动读取它。read-model token 代表 owner 管理权限，仅通过 Authorization 请求头发送；`dash` 原有输出登录链接的功能保留，打印的 URL 会包含 token，不要贴进 PR。它与飞书 app secret、node 认证 token、MCP broker token 和区域 issuer token 分别配置。
+
+远程浏览器可使用 localhost SSH 转发：在浏览器所在机器执行 `ssh -N -L 127.0.0.1:17710:127.0.0.1:7710 user@hub.example`，再访问 `http://localhost:17710` 并登录。浏览器将 localhost 视为安全上下文，可使用 Web Locks；普通远程 HTTP 地址不具备这一条件。端口按实际部署调整，若复制 `dash` 打印的登录链接，应仅在本地将地址替换为该转发地址，并保护其中的 token。
 
 资源页可以即时添加机器和 agent，项目页可以添加项目/工作区，并写回相应配置；直接在磁盘上编辑 JSON 不是通用热加载接口。当前没有 `steve config apply` 命令。
 

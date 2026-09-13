@@ -99,14 +99,17 @@ func setup(args []string) error {
 // two renderers, so the terminal and the browser cannot disagree.
 func top(args []string) error {
 	flags := flag.NewFlagSet("top", flag.ContinueOnError)
-	url := flags.String("url", defaultReadModelURL, "read model URL of a running gateway")
-	token := flags.String("token", "", "token, when the read model is not on loopback")
+	connectionFlags := addConsoleClientFlags(flags)
 	refresh := flags.Duration("refresh", 5*time.Second, "redraw floor; changes also redraw immediately")
 	once := flags.Bool("once", false, "print one frame and exit")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
-	model := tui.New(tui.Config{URL: *url, Token: *token, Refresh: *refresh})
+	connection, err := connectionFlags.resolve(flags)
+	if err != nil {
+		return err
+	}
+	model := tui.New(tui.Config{URL: connection.URL, Token: connection.Token, Refresh: *refresh, CheckRedirect: checkConsoleRedirect})
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	if *once {
@@ -120,31 +123,34 @@ func top(args []string) error {
 // the gateway itself, so there is no second process to keep alive.
 func dash(args []string) error {
 	flags := flag.NewFlagSet("dash", flag.ContinueOnError)
-	url := flags.String("url", defaultReadModelURL, "read model URL of a running gateway")
-	token := flags.String("token", "", "token, when the read model is not on loopback")
+	connectionFlags := addConsoleClientFlags(flags)
 	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	connection, err := connectionFlags.resolve(flags)
+	if err != nil {
 		return err
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, *url+"/state", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, connection.URL+"/state", nil)
 	if err != nil {
 		return err
 	}
-	if *token != "" {
-		req.Header.Set("Authorization", "Bearer "+*token)
+	if connection.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+connection.Token)
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := consoleHTTPClient().Do(req)
 	if err != nil {
-		return fmt.Errorf("no gateway at %s — is `steve run` up? %w", *url, err)
+		return fmt.Errorf("no gateway at %s — is `steve run` up? %w", connection.URL, err)
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("read model at %s answered %s", *url, res.Status)
+		return fmt.Errorf("read model at %s answered %s", connection.URL, res.Status)
 	}
-	page := *url
-	if *token != "" {
-		page += "/?token=" + neturl.QueryEscape(*token)
+	page := connection.URL
+	if connection.Token != "" {
+		page += "/?token=" + neturl.QueryEscape(connection.Token)
 	}
 	fmt.Println(page)
 	return nil
@@ -178,30 +184,33 @@ func isTerminal() bool {
 // the page's send box, from a shell.
 func say(args []string) error {
 	flags := flag.NewFlagSet("say", flag.ContinueOnError)
-	url := flags.String("url", defaultReadModelURL, "read model URL of a running gateway")
-	token := flags.String("token", "", "token, when the read model is not on loopback")
+	connectionFlags := addConsoleClientFlags(flags)
 	conversation := flags.String("conversation", "console:main", "console conversation")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	input := strings.TrimSpace(strings.Join(flags.Args(), " "))
 	if input == "" {
-		return errors.New("usage: steve say [-url …] [-token …] <text or /verb …>")
+		return errors.New("usage: steve say [-config …] [-url …] [-token …] <text or /verb …>")
+	}
+	connection, err := connectionFlags.resolve(flags)
+	if err != nil {
+		return err
 	}
 	body, _ := json.Marshal(map[string]string{"conversation": *conversation, "input": input}) // a map of strings always encodes
 	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, *url+"/console/send", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, connection.URL+"/console/send", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	if *token != "" {
-		req.Header.Set("Authorization", "Bearer "+*token)
+	if connection.Token != "" {
+		req.Header.Set("Authorization", "Bearer "+connection.Token)
 	}
-	res, err := http.DefaultClient.Do(req)
+	res, err := consoleHTTPClient().Do(req)
 	if err != nil {
-		return fmt.Errorf("no gateway at %s — is `steve run` up? %w", *url, err)
+		return fmt.Errorf("no gateway at %s — is `steve run` up? %w", connection.URL, err)
 	}
 	defer res.Body.Close()
 	var out struct {
@@ -212,7 +221,7 @@ func say(args []string) error {
 		} `json:"reply"`
 	}
 	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-		return fmt.Errorf("console at %s answered %s", *url, res.Status)
+		return fmt.Errorf("console at %s answered %s", connection.URL, res.Status)
 	}
 	if out.Reply.Title != "" {
 		fmt.Println("== " + out.Reply.Title)
