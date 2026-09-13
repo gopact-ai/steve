@@ -111,7 +111,8 @@ func (s *Service) SetReplaySafeDelivery(check func(task.Task) bool) {
 }
 
 // SetDeliveryReceipt installs a read-only durable receipt lookup. Receipts
-// remain meaningful after the parent has paused or finished.
+// remain meaningful after the parent has paused or finished. Lookups must be
+// repeatable; observing a receipt never consumes or deletes it.
 func (s *Service) SetDeliveryReceipt(check func(task.Task, string) (bool, error)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -164,6 +165,13 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 	// Re-read only the candidate IDs under the dispatch reservation. A receipt
 	// or inline collection may have completed since the shared snapshot.
 	waiting = s.currentWaiting(waiting)
+	parent, ok := s.tasks.Get(parentID)
+	if ok && receipt != nil {
+		waiting = s.checkDeliveryReceipts(parent, waiting, receipt)
+	}
+	if len(waiting) == 0 {
+		return
+	}
 	// A caller already waiting gets the first chance to consume its result.
 	// Registration precedes execution, so closing done cannot race an inline
 	// response into an additional automatic continuation.
@@ -180,13 +188,6 @@ func (s *Service) flush(ctx context.Context, parentID string, due time.Time, wai
 	}
 	s.mu.Unlock()
 	waiting = ready
-	if len(waiting) == 0 {
-		return
-	}
-	parent, ok := s.tasks.Get(parentID)
-	if ok && receipt != nil {
-		waiting = s.checkDeliveryReceipts(parent, waiting, receipt)
-	}
 	if len(waiting) == 0 {
 		return
 	}

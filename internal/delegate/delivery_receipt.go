@@ -32,13 +32,16 @@ func (s *Service) checkDeliveryReceipts(parent task.Task, waiting []task.Task, r
 			groups[d.Key] = append(groups[d.Key], child.ID)
 		}
 	}
-	checked := map[string]bool{}
+	observed := map[string]bool{}
 	for key, ids := range groups {
 		found, err := receipt(parent, key)
 		if !found {
 			continue
 		}
-		checked[key] = true
+		// Reserve this batch from dispatch even if the task receipt save fails.
+		// Nothing is acknowledged in the store until RecordDelivery succeeds;
+		// the next pass rereads the retained, non-consuming queue receipt.
+		observed[key] = true
 		state, detail := task.DeliveryDelivered, ""
 		if errors.Is(err, channel.ErrDeliveryQueued) {
 			state = task.DeliveryQueued
@@ -51,7 +54,7 @@ func (s *Service) checkDeliveryReceipts(parent task.Task, waiting []task.Task, r
 	}
 	out := waiting[:0]
 	for _, child := range waiting {
-		if child.Delivery == nil || !checked[child.Delivery.Key] {
+		if child.Delivery == nil || !observed[child.Delivery.Key] {
 			out = append(out, child)
 		}
 	}
