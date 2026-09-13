@@ -50,6 +50,10 @@ func PrepareServiceCluster(options ServiceBootstrap) (string, error) {
 		return "", fmt.Errorf("stop the application before initializing its cluster: %w", err)
 	}
 	defer unlock()
+	cfg, err = loadLockedServiceConfig(configPath, root, options)
+	if err != nil {
+		return "", err
+	}
 	identity, err := hubid.Resolve(root, cfg.Gateway.HubID)
 	if err != nil {
 		return "", err
@@ -152,7 +156,7 @@ func validateServiceBootstrap(options ServiceBootstrap, cfg *config.Config) erro
 	if _, err := strconv.ParseUint(port, 10, 16); err != nil {
 		return errors.New("cluster UI needs a numeric port between 0 and 65535")
 	}
-	return nil
+	return distinctServiceEndpoints(serviceAddress(options.RaftAddress), serviceAddress(options.PeerAddress), ui)
 }
 
 func validateServicePeer(path, dir, identity string, options ServiceBootstrap) (PeerConfig, error) {
@@ -225,4 +229,40 @@ func publishClusterBootstrap(root, path string, peer PeerConfig, worker *node.Se
 		return err
 	}
 	return SaveClusterJSON(path, peer, true)
+}
+
+// The first read only locates the application lock. Once locked, use the
+// configuration that the stopped application actually left on disk.
+func loadLockedServiceConfig(path, root string, options ServiceBootstrap) (*config.Config, error) {
+	cfg, err := config.Load(path)
+	if err != nil {
+		return nil, err
+	}
+	if filepath.Dir(cfg.Gateway.StatePath) != root {
+		return nil, errors.New("service state location changed during initialization; retry peer-init")
+	}
+	if err := validateServiceBootstrap(options, cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func distinctServiceEndpoints(addresses ...string) error {
+	var endpoints []*net.TCPAddr
+	for _, address := range addresses {
+		endpoint, err := net.ResolveTCPAddr("tcp", address)
+		if err != nil {
+			return err
+		}
+		if endpoint.Port == 0 {
+			continue
+		}
+		for _, previous := range endpoints {
+			if previous.Port == endpoint.Port && previous.IP.Equal(endpoint.IP) && previous.Zone == endpoint.Zone {
+				return errors.New("Raft, peer and UI listeners need distinct non-zero endpoints")
+			}
+		}
+		endpoints = append(endpoints, endpoint)
+	}
+	return nil
 }

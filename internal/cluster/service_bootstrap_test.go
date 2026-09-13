@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/hubid"
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 )
@@ -207,5 +209,66 @@ func TestServiceBootstrapRejectsUnusableUITokensBeforePublishing(t *testing.T) {
 		if _, err := os.Stat(DefaultClusterConfigPath(options.ConfigPath)); !os.IsNotExist(err) {
 			t.Fatal("published unusable sidecar")
 		}
+	}
+}
+
+func TestServiceBootstrapRejectsConflictingListenersBeforePublication(t *testing.T) {
+	for _, addresses := range [][3]string{{"127.0.0.1:7801", "127.0.0.1:7801", "127.0.0.1:0"}, {"127.0.0.1:7801", "127.0.0.1:0", "127.0.0.1:7801"}, {"127.0.0.1:0", "127.0.0.1:7801", "127.0.0.1:7801"}} {
+		options, _ := serviceFixture(t)
+		options.RaftAddress, options.PeerAddress, options.UIAddress = addresses[0], addresses[1], addresses[2]
+		if _, err := PrepareServiceCluster(options); err == nil {
+			t.Fatalf("accepted conflicting listeners: %v", addresses)
+		}
+		if _, err := os.Stat(DefaultClusterConfigPath(options.ConfigPath)); !os.IsNotExist(err) {
+			t.Fatal("published conflicting listeners")
+		}
+	}
+	if err := distinctServiceEndpoints("127.0.0.1:0", "127.0.0.1:0", "127.0.0.1:0"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestServiceBootstrapReloadsLockedConfigurationAndPreservesCapabilities(t *testing.T) {
+	options, root := serviceFixture(t)
+	cfg, err := config.Load(options.ConfigPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlock, err := steveruntime.AcquireLock(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer unlock()
+	cfg.Gateway.Tools = []string{"go"}
+	cfg.Gateway.Capabilities = []string{"build"}
+	cfg.Gateway.Declares = []string{"filesystem:repo"}
+	cfg.Harnesses["mock"] = config.Harness{Command: "/bin/true", Permission: "auto"}
+	if err := config.Save(options.ConfigPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	refreshed, err := loadLockedServiceConfig(options.ConfigPath, root, options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Harnesses["mock"].Command != "/bin/true" {
+		t.Fatal("used the config read before locking")
+	}
+	worker, err := serviceWorker(PeerConfig{NodeID: "worker", ClusterID: "cluster", DataDir: filepath.Join(root, "cluster")}, refreshed)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !slices.Equal(worker.Tools, cfg.Gateway.Tools) || !slices.Equal(worker.Capabilities, cfg.Gateway.Capabilities) || !slices.Equal(worker.Declares, cfg.Gateway.Declares) {
+		t.Fatal("worker lost physical capability declarations")
+	}
+	refreshed.Gateway.Tools[0] = "changed"
+	if worker.Tools[0] != "go" {
+		t.Fatal("worker aliased application capabilities")
+	}
+	cfg.Gateway.StatePath = filepath.Join(root, "moved", "state.json")
+	if err := config.Save(options.ConfigPath, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := loadLockedServiceConfig(options.ConfigPath, root, options); err == nil {
+		t.Fatal("used a configuration whose state was not locked")
 	}
 }

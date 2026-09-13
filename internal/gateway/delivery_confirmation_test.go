@@ -1,11 +1,14 @@
 package gateway
 
 import (
+	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/channel"
-	"github.com/gopact-ai/steve/internal/turn"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/channel"
+	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/turn"
 )
 
 func TestDeliveryConfirmationWaitsForParentAndBindsTask(t *testing.T) {
@@ -35,5 +38,31 @@ func TestDeliveryConfirmationWaitsForParentAndBindsTask(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("receipt lost")
+	}
+}
+
+type failedContinuationProcessor struct{ failure error }
+
+func (p failedContinuationProcessor) Handle(context.Context, turn.Request) (turn.Result, error) {
+	return turn.Result{}, p.failure
+}
+
+func TestDeliveryConfirmationPreservesParentProcessingErrors(t *testing.T) {
+	for _, failure := range []error{task.ErrContinuationUnavailable, errors.New("admitted parent failed")} {
+		g := New(failedContinuationProcessor{failure: failure})
+		g.BindChannel(&scheduledNotice{id: "posted-notice"})
+		confirmed := make(chan error, 1)
+		r := Revival{TaskID: "original-parent", Member: "worker", ConversationID: "chat", MessageID: "anchor"}
+		if err := g.DeliverConfirmed(r, "result ready", "continue", func(err error) { confirmed <- err }); !errors.Is(err, channel.ErrOutcomeUnknown) {
+			t.Fatalf("notice prematurely settled processing: %v", err)
+		}
+		select {
+		case err := <-confirmed:
+			if !errors.Is(err, failure) {
+				t.Fatalf("processing failure acknowledged as success: %v", err)
+			}
+		case <-time.After(time.Second):
+			t.Fatal("processing receipt was lost")
+		}
 	}
 }
