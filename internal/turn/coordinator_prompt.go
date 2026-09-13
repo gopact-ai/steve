@@ -160,7 +160,7 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	if saved.Tainted {
 		return UserError{Text: c.text.T(i18n.Tainted, protocol.CommandNew)}
 	}
-	contextChanged := saved.HarnessID != "" && saved.CapabilityHash != capabilities.Fingerprint
+	contextChanged := saved.HarnessID != "" && (saved.NativeImport == nil || saved.UpstreamID != "") && saved.CapabilityHash != capabilities.Fingerprint
 	if contextChanged {
 		// Only identity and platform guidance can change in place. A missing baseline cannot
 		// prove that MCP connections, skills and visibility stayed the same.
@@ -189,6 +189,7 @@ func (c *Coordinator) buildingProfile(req Request) (bool, error) {
 
 func (c *Coordinator) open(ctx context.Context, saved state.Session, selected agent.Agent, workspace string, servers []acp.MCPServer) (harness.Runner, error) {
 	ctx = harness.WithPluginProfile(ctx, saved.PluginRuntime)
+	ctx = harness.WithNativeImport(ctx, saved.NativeImport)
 	if saved.HarnessID != "" && saved.HarnessID != selected.Harness {
 		return nil, fmt.Errorf("session belongs to harness %q, not %q", saved.HarnessID, selected.Harness)
 	}
@@ -200,7 +201,7 @@ func (c *Coordinator) open(ctx context.Context, saved state.Session, selected ag
 	// resumed one keeps whatever the user last chose with /model. The agent
 	// is the authority on what it offers, so a preference it cannot honour
 	// is logged and skipped rather than failing the turn.
-	if saved.UpstreamID == "" {
+	if saved.UpstreamID == "" && saved.NativeImport == nil {
 		// The owner's choices for this conversation sit over the agent's
 		// configured defaults.
 		if model, options := c.preferred(saved.ConversationID, selected); model != "" || len(options) > 0 {

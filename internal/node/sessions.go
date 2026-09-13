@@ -312,7 +312,7 @@ func (one *ownedSession) admitLocked(req nodewire.SessionRequest) error {
 	}
 	if req.Binding != next.State.Binding {
 		before, after := next.State.Binding, req.Binding
-		if req.Action != nodewire.SessionActionOpen || one.runningLocked() || before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || before.PluginRuntimeID != after.PluginRuntimeID || one.host == nil || next.State.State != nodewire.SessionIdle {
+		if req.Action != nodewire.SessionActionOpen || one.runningLocked() || before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || before.NativeImportID != after.NativeImportID || before.PluginRuntimeID != after.PluginRuntimeID || one.host == nil || next.State.State != nodewire.SessionIdle {
 			return sessionError("conflict", "session belongs to another execution")
 		}
 		next.State.Binding = req.Binding

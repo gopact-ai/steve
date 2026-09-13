@@ -49,7 +49,7 @@ func (r *recordingRunner) Bind(_ context.Context, _ string, args []string) (Conn
 	return &fixtureConnection{runner: r, args: append([]string{}, args...)}, nil
 }
 
-const completeProbe = "STEVE_CHECK\tos\tLinux\nSTEVE_CHECK\tarch\tx86_64\nSTEVE_CHECK\tuser\tremote-user\nSTEVE_CHECK\taddress\t192.0.2.7\nSTEVE_CHECK\tbash\t1\nSTEVE_CHECK\tcurl\t1\nSTEVE_CHECK\tgit\t1\nSTEVE_CHECK\tnohup\t1\nSTEVE_CHECK\tsha256sum\t1\nSTEVE_CHECK\tshasum\t0\nSTEVE_CHECK\tbase64\t1\nSTEVE_CHECK\tnode\t1\nSTEVE_CHECK\tnpm\t1\nSTEVE_CHECK\tcodex\t1\nSTEVE_CHECK\tclaude\t0\nSTEVE_CHECK\tgrok\t0\nSTEVE_CHECK\tkimi\t0\nSTEVE_CHECK\texisting\t0\n"
+const completeProbe = "STEVE_CHECK\tos\tLinux\nSTEVE_CHECK\tarch\tx86_64\nSTEVE_CHECK\tuser\tremote-user\nSTEVE_CHECK\taddress\t192.0.2.7\nSTEVE_CHECK\tbash\t1\nSTEVE_CHECK\tcurl\t1\nSTEVE_CHECK\tgit\t1\nSTEVE_CHECK\tnohup\t1\nSTEVE_CHECK\tsha256sum\t1\nSTEVE_CHECK\tshasum\t0\nSTEVE_CHECK\tbase64\t1\nSTEVE_CHECK\tnode\t1\nSTEVE_CHECK\tnpm\t1\nSTEVE_CHECK\tcodex\t1\nSTEVE_CHECK\tclaude\t0\nSTEVE_CHECK\tgrok\t0\nSTEVE_CHECK\tkimi\t0\nSTEVE_CHECK\tdsh\t0\nSTEVE_CHECK\texisting\t0\n"
 
 func (r *recordingRunner) Run(_ context.Context, args []string, stdin string) (Output, error) {
 	r.mu.Lock()
@@ -584,7 +584,7 @@ func TestSSHAgentCandidatesReuseCatalogAndAreOnlyAdvisory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(check.Agents) != 4 {
+	if len(check.Agents) != 5 {
 		t.Fatalf("shared catalog not used: %#v", check.Agents)
 	}
 	for _, candidate := range check.Agents {

@@ -31,7 +31,7 @@ func TestSharedDiscoveryFindsOnlyExecutableFilesWithoutRunningThem(t *testing.T)
 func TestRemotePathMappingSharesTheCatalogWithoutAccessingLocalFiles(t *testing.T) {
 	paths := map[string]string{"codex": "/remote/private/bin/codex", "node": "node", "npm": "/remote/private/bin/npm", "grok": "./grok"}
 	out := FromPaths(paths)
-	if len(out) != 4 {
+	if len(out) != 5 {
 		t.Fatalf("catalog=%+v", out)
 	}
 	for _, candidate := range out {

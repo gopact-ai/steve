@@ -132,6 +132,9 @@ func (r *Registry) NodeSession(ctx context.Context, node string, request nodewir
 	if !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeatureNodeSessions) {
 		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node does not support node-owned sessions")}
 	}
+	if (request.NativeImport != nil || request.Binding.NativeImportID != "") && !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeatureNativeHistory) {
+		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node cannot preserve native history import; update steve-node")}
+	}
 	if (request.Plugin != nil || request.Binding.PluginRuntimeID != "") && !nodewire.HasFeature(conn.getAdvert().Features, nodewire.FeaturePluginRuntimes) {
 		return nodewire.SessionState{}, &nodewire.SessionNotDispatched{Cause: sessionError("unavailable", "node cannot preserve plugin runtime binding")}
 	}

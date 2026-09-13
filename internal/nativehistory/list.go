@@ -59,6 +59,10 @@ func List(ctx context.Context, source Source) ([]Entry, error) {
 			if len(strings.Split(path, "/")) != 3 || !strings.HasSuffix(path, ".jsonl") {
 				return nil
 			}
+		case "dsh":
+			if len(strings.Split(path, "/")) != 4 || (d.Name() != "session.jsonl" && d.Name() != "session.jsonl.zstd") {
+				return nil
+			}
 		case "grok":
 			if d.Name() != "summary.json" || len(strings.Split(path, "/")) != 4 {
 				return nil
@@ -75,7 +79,7 @@ func List(ctx context.Context, source Source) ([]Entry, error) {
 		if err != nil {
 			return err
 		}
-		if !validNativeID(entry.NativeID) || !filepath.IsAbs(entry.Workdir) {
+		if !validSourceNativeID(source.Harness, entry.NativeID) || !filepath.IsAbs(entry.Workdir) {
 			return nil
 		}
 		entry.UpdatedAt = info.ModTime().UTC()
@@ -109,6 +113,9 @@ func readEntry(root *os.Root, source Source, path string) (Entry, error) {
 		return entry, err
 	}
 	defer file.Close()
+	if source.Harness == "dsh" {
+		return readDshEntry(entry, file)
+	}
 	if source.Harness == "grok" {
 		return readGrokEntry(root, entry, io.LimitReader(file, 1<<20))
 	}

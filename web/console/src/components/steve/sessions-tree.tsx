@@ -57,7 +57,7 @@ function notable(t: Task, all: Task[]): boolean {
     return t.execution === "running" || (t.attention || 0) > 0 || !!t.plan_id || (t.origin || "").startsWith("schedule") || all.some((c) => c.parent === t.id);
 }
 
-export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate, collapsed, onToggle, creating, tasks = [], onTask }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onUpdate: (id: string, patch: ConversationPatch) => void; collapsed?: boolean; onToggle?: () => void; creating?: boolean; tasks?: Task[]; onTask?: (t: Task) => void }) {
+export function SessionsTree({ list, projects, current, onPick, onNew, onImport, onUpdate, collapsed, onToggle, creating, tasks = [], onTask }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onImport?: () => void; onUpdate: (id: string, patch: ConversationPatch) => void; collapsed?: boolean; onToggle?: () => void; creating?: boolean; tasks?: Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
     const [folded, setFolded] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem("steve.folded") || "{}"); } catch { return {}; } });
     const toggle = (id: string) => setFolded((f) => { const next = { ...f, [id]: !f[id] }; try { localStorage.setItem("steve.folded", JSON.stringify(next)); } catch { /* ignore */ } return next; });
@@ -135,6 +135,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onUpdate,
                 </button>
                 {onToggle && <button type="button" onClick={onToggle} className="flex size-7 shrink-0 items-center justify-center rounded-md text-fg-quaternary hover:bg-primary/70 hover:text-fg-quaternary_hover" title={tr("consoleChrome.collapseSessions")} aria-label={tr("consoleChrome.collapseSessions")}><ChevronLeftDouble className="size-4" /></button>}
             </div>
+            {onImport && <button type="button" onClick={onImport} className="mx-3 mb-2 rounded-md px-2 py-1.5 text-left text-xs text-tertiary hover:bg-secondary focus-visible:outline-2 focus-visible:outline-brand">{tr("nativeImport.open")}</button>}
             <div className="conversation-search"><Input size="sm" aria-label={tr("consoleChrome.searchConversations")} placeholder={tr("consoleChrome.searchPlaceholder")} value={search} onChange={setSearch} /></div>
             <div className="conversation-tree">
                 <TreeHeading>{tr("console.project")}</TreeHeading>

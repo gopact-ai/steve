@@ -61,6 +61,7 @@ var supported = []Candidate{
 	{ID: "codex", Name: "Codex", Harness: "codex", Adapter: "codex-acp"},
 	{ID: "claude", Name: "Claude Code", Harness: "claude-code", Adapter: "claude-agent-acp"},
 	{ID: "grok", Name: "Grok", Harness: "grok"},
+	{ID: "dsh", Name: "DeepSeek Harness", Harness: "dsh"},
 	{ID: "kimi", Name: "Kimi Code", Harness: "kimi"},
 }
 
@@ -162,6 +163,8 @@ func Registration(candidate Candidate) (Declaration, error) {
 			out.Args = []string{"agent", "--no-leader", "stdio"}
 		case "kimi":
 			out.Args = []string{"acp"}
+		case "dsh":
+			out.Args = []string{"--profile", "acp"}
 		}
 	}
 	return out, nil

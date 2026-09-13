@@ -9,6 +9,7 @@ import { AssistantMessage, UserMessage } from "@/components/steve/message";
 import { Rail, type RailTab } from "@/components/steve/rail";
 import { ResizableInspector } from "@/components/steve/resizable-inspector";
 import { useReviewActive } from "@/components/steve/review-context";
+import { NativeSessionImport } from "@/components/steve/native-session-import";
 import { SessionsTree } from "@/components/steve/sessions-tree";
 import { TaskDrawer } from "@/components/steve/task-drawer";
 import { DelegationCard } from "@/components/steve/delegation";
@@ -64,6 +65,7 @@ export function ConsolePage() {
     const stopState = stops[conversation];
     const stopping = !!stopState?.active;
     const [creating, setCreating] = useState(false);
+    const [importing, setImporting] = useState(false);
     const creatingRequest = useRef(false);
     const [status, setStatus] = useState("");
     const [queueReadError, setQueueReadError] = useState<{ conversation: string; error: unknown } | null>(null);
@@ -475,13 +477,14 @@ export function ConsolePage() {
     const toolbarStatus = stopState?.uncertain ? t("console.stopUncertain") : status || contextError || conversationsError || (queueReadError?.conversation === conversation ? readErrorText(queueReadError.error) : "") || (replyReadError?.conversation === conversation ? readErrorText(replyReadError.error) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "");
     const listed = conversations.some((c) => c.id === conversation) ? conversations : [{ id: conversation, title: t("console.newConversation"), last_at: "", count: 0, running: false, project: context?.project?.id, agent: context?.agent?.id }, ...conversations];
 
-    const sessions = (collapsed = sessionsCollapsed) => <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={selectConversation} onNew={(project) => void newSession(project)} creating={creating}
+    const sessions = (collapsed = sessionsCollapsed) => <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={selectConversation} onNew={(project) => void newSession(project)} creating={creating} onImport={() => { setMobileSessions(false); setImporting(true); }}
                 onUpdate={(id, patch) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}
                 collapsed={collapsed} onToggle={() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(false)}
                 tasks={snap.tasks} onTask={(t) => { setMobileSessions(false); if (t.parent && stepOf(t.id)) { setChild(t); setPickedTask(null); } else setPickedTask(t); }} />;
     const inspector = <Rail key={conversation} context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} onClose={() => setInspectorOpen(false)} />;
     return (
         <div className={`console-workbench ${side.session ? "has-side-chat" : ""}`}>
+            {importing && <NativeSessionImport agents={snap.agents} nodes={snap.nodes} projects={snap.projects} onClose={() => setImporting(false)} onImported={(id) => { setImporting(false); selectConversation(id); void loadConversations(); }} />}
             {view === "chat" && desktopSessions && !side.session && sessions()}
             {mobileSessions && !desktopSessions && <Sheet label={t("console.sessions")}  side="left" width={300} onClose={() => setMobileSessions(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("console.closeSessions")}  onClick={() => setMobileSessions(false)}><X aria-hidden="true" /></button>{sessions(false)}</Sheet>}
             {pickedTask && <TaskDrawer t={pickedTask} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === pickedTask.id)} onClose={() => setPickedTask(null)} width={RAIL_WIDTH} />}

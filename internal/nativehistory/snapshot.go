@@ -25,7 +25,7 @@ type ImportRequest struct {
 // Snapshot freezes a selected history under a caller-owned idempotency key.
 // Repeating a completed import reads its receipt even if the source is gone.
 func Snapshot(ctx context.Context, store string, request ImportRequest) (Reference, error) {
-	if request.CommandID == "" || len(request.CommandID) > 512 || !validNativeID(request.NativeID) || request.Revision == "" {
+	if request.CommandID == "" || len(request.CommandID) > 512 || !validSourceNativeID(request.Source.Harness, request.NativeID) || request.Revision == "" {
 		return Reference{}, errors.New("native import requires a command, session id and source revision")
 	}
 	sum := sha256.Sum256([]byte(request.CommandID))

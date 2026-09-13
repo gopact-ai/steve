@@ -91,6 +91,7 @@ func (c *Coordinator) turnSpec(ctx context.Context, req Request, selected agent.
 
 func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecycle.Options {
 	spec.PluginRuntime = t.saved.PluginRuntime.Clone()
+	spec.NativeImport = t.saved.NativeImport.Clone()
 	c, req, selected := t.c, t.req, t.selected
 	var fleet lifecycle.Roster
 	if c.fleet != nil {
@@ -167,7 +168,7 @@ func (t *chatTurn) prepare(ctx context.Context, e *lifecycle.Execution) (func(*a
 func (t *chatTurn) open(ctx context.Context, e *lifecycle.Execution) (harness.Runner, error) {
 	c, selected := t.c, t.selected
 	runner, err := c.open(ctx, t.saved, selected, t.workspace.Path, e.Servers)
-	if err != nil && t.saved.UpstreamID != "" && !strings.HasPrefix(t.saved.UpstreamID, "ns_") && !errors.Is(err, harness.ErrNodeSessionUnavailable) {
+	if err != nil && t.saved.NativeImport == nil && t.saved.UpstreamID != "" && !strings.HasPrefix(t.saved.UpstreamID, "ns_") && !errors.Is(err, harness.ErrNodeSessionUnavailable) {
 		if stateErr := c.store.DeleteSession(t.req.ConversationID, selected.ID); stateErr != nil {
 			slog.Error(fmt.Sprintf("turn: delete unreopenable session state: %v", stateErr), "attempt", e.Record.ID, "conversation", t.req.ConversationID, "agent", selected.ID)
 		}
@@ -188,6 +189,7 @@ func (t *chatTurn) arm(_ context.Context, e *lifecycle.Execution) (func(*attempt
 	t.managed = e.Managed
 	req.phase(view.PhaseRunning)
 	t.session = state.Session{
+		NativeImport:   e.Record.NativeImport.Clone(),
 		PluginRuntime:  e.Record.PluginRuntime.Clone(),
 		ConversationID: req.ConversationID, AgentID: selected.ID, HarnessID: selected.Harness,
 		NodeID:     selected.Node,

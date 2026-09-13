@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"github.com/gopact-ai/steve/internal/nativehistory"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -18,6 +19,8 @@ func SessionOpenID(cluster, node, attempt, command, harness string) string {
 	hash := sha256.Sum256(raw)
 	return "ns_" + hex.EncodeToString(hash[:])
 }
+
+const FeatureNativeHistory = "native_history.v1"
 
 const FeatureNodeSessions = "node_sessions.v1"
 const StreamNodeSessions = "node_sessions"
@@ -35,6 +38,7 @@ type SessionAuthority struct {
 // SessionBinding names the already admitted execution, independently of the
 // coordinator process currently observing it.
 type SessionBinding struct {
+	NativeImportID  string `json:"native_import_id,omitempty"`
 	PluginRuntimeID string `json:"plugin_runtime_id,omitempty"`
 	ProjectID       string `json:"project_id"`
 	SessionID       string `json:"session_id"`
@@ -73,25 +77,26 @@ const (
 )
 
 type SessionRequest struct {
-	Plugin        *plugins.RuntimeRef `json:"plugin,omitempty"`
-	Action        SessionAction       `json:"action"`
-	Authority     SessionAuthority    `json:"authority"`
-	Binding       SessionBinding      `json:"binding"`
-	ID            string              `json:"id,omitempty"`
-	Harness       string              `json:"harness,omitempty"`
-	Workdir       string              `json:"workdir,omitempty"`
-	MCPServers    []acp.MCPServer     `json:"mcp_servers,omitempty"`
-	Permission    string              `json:"permission,omitempty"`
-	CommandID     string              `json:"command_id,omitempty"`
-	InputSequence uint64              `json:"input_sequence,omitempty"`
-	Text          string              `json:"text,omitempty"`
-	Media         []SessionMedia      `json:"media,omitempty"`
-	After         uint64              `json:"after,omitempty"`
-	WaitMS        int                 `json:"wait_ms,omitempty"`
-	QuestionID    string              `json:"question_id,omitempty"`
-	Answer        *SessionAnswer      `json:"answer,omitempty"`
-	OptionID      string              `json:"option_id,omitempty"`
-	OptionValue   string              `json:"option_value,omitempty"`
+	NativeImport  *nativehistory.Reference `json:"native_import,omitempty"`
+	Plugin        *plugins.RuntimeRef      `json:"plugin,omitempty"`
+	Action        SessionAction            `json:"action"`
+	Authority     SessionAuthority         `json:"authority"`
+	Binding       SessionBinding           `json:"binding"`
+	ID            string                   `json:"id,omitempty"`
+	Harness       string                   `json:"harness,omitempty"`
+	Workdir       string                   `json:"workdir,omitempty"`
+	MCPServers    []acp.MCPServer          `json:"mcp_servers,omitempty"`
+	Permission    string                   `json:"permission,omitempty"`
+	CommandID     string                   `json:"command_id,omitempty"`
+	InputSequence uint64                   `json:"input_sequence,omitempty"`
+	Text          string                   `json:"text,omitempty"`
+	Media         []SessionMedia           `json:"media,omitempty"`
+	After         uint64                   `json:"after,omitempty"`
+	WaitMS        int                      `json:"wait_ms,omitempty"`
+	QuestionID    string                   `json:"question_id,omitempty"`
+	Answer        *SessionAnswer           `json:"answer,omitempty"`
+	OptionID      string                   `json:"option_id,omitempty"`
+	OptionValue   string                   `json:"option_value,omitempty"`
 }
 
 type SessionAnswer struct {
@@ -129,22 +134,23 @@ type SessionCommand struct {
 }
 
 type SessionState struct {
-	Plugin          *plugins.RuntimeRef `json:"plugin,omitempty"`
-	OpenReceipt     *SessionOpenReceipt `json:"open_receipt,omitempty"`
-	ID              string              `json:"id"`
-	Binding         SessionBinding      `json:"binding"`
-	Harness         string              `json:"harness"`
-	State           SessionStatus       `json:"state"`
-	Sequence        uint64              `json:"sequence"`
-	InputAccepted   uint64              `json:"input_accepted"`
-	Settings        view.Settings       `json:"settings"`
-	ModelOption     string              `json:"model_option,omitempty"`
-	ModelChoices    []view.Choice       `json:"model_choices,omitempty"`
-	SupportsHTTPMCP bool                `json:"supports_http_mcp"`
-	Progress        view.Progress       `json:"progress"`
-	Command         *SessionCommand     `json:"command,omitempty"`
-	Questions       []SessionQuestion   `json:"questions"`
-	ProcessStopped  bool                `json:"process_stopped"`
+	NativeImport    *nativehistory.Reference `json:"native_import,omitempty"`
+	Plugin          *plugins.RuntimeRef      `json:"plugin,omitempty"`
+	OpenReceipt     *SessionOpenReceipt      `json:"open_receipt,omitempty"`
+	ID              string                   `json:"id"`
+	Binding         SessionBinding           `json:"binding"`
+	Harness         string                   `json:"harness"`
+	State           SessionStatus            `json:"state"`
+	Sequence        uint64                   `json:"sequence"`
+	InputAccepted   uint64                   `json:"input_accepted"`
+	Settings        view.Settings            `json:"settings"`
+	ModelOption     string                   `json:"model_option,omitempty"`
+	ModelChoices    []view.Choice            `json:"model_choices,omitempty"`
+	SupportsHTTPMCP bool                     `json:"supports_http_mcp"`
+	Progress        view.Progress            `json:"progress"`
+	Command         *SessionCommand          `json:"command,omitempty"`
+	Questions       []SessionQuestion        `json:"questions"`
+	ProcessStopped  bool                     `json:"process_stopped"`
 }
 
 // SessionOpenReceipt binds a fresh inspect/cancel result to the original open.

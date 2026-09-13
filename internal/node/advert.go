@@ -27,7 +27,7 @@ func (s *Server) advert() nodewire.Advert {
 	adv.Snapshot = s.snapshot()
 	adv.Features = nodewire.Features()
 	if s.sessions != nil {
-		adv.Features = append(adv.Features, nodewire.FeatureNodeSessions)
+		adv.Features = append(adv.Features, nodewire.FeatureNodeSessions, nodewire.FeatureNativeHistory)
 	}
 	s.restart.mu.Lock()
 	if s.restart.enabled && s.conf().StateDir != "" {

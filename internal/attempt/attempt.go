@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/gopact-ai/steve/internal/nativehistory"
 	"log/slog"
 	"sort"
 	"strings"
@@ -105,7 +106,8 @@ const (
 
 // Spec is what an attempt is fixed to when it opens.
 type Spec struct {
-	PluginRuntime *plugins.RuntimeRef `json:"plugin_runtime,omitempty"`
+	NativeImport  *nativehistory.Reference `json:"native_import,omitempty"`
+	PluginRuntime *plugins.RuntimeRef      `json:"plugin_runtime,omitempty"`
 	// WorkID is the caller-owned specification identity used by recovery.
 	WorkID    string               `json:"work_id,omitempty"`
 	Execution *task.ExecutionToken `json:"execution,omitempty"`
@@ -297,11 +299,8 @@ func (s *Service) Hold(ctx context.Context, region, key, holder string) (func(),
 // all or nothing: a lease that cannot be had releases the ones already
 // taken and reports which resource is busy.
 func (s *Service) Open(ctx context.Context, spec Spec) (Record, error) {
-	if spec.PluginRuntime != nil {
-		if spec.PluginRuntime.Validate() != nil || spec.PluginRuntime.Selection.Project != spec.Project || spec.PluginRuntime.Selection.Node != spec.Node || spec.PluginRuntime.Selection.Harness != spec.Harness {
-			return Record{}, errors.New("attempt plugin runtime differs from execution")
-		}
-		spec.PluginRuntime = spec.PluginRuntime.Clone()
+	if err := spec.validateRuntime(); err != nil {
+		return Record{}, err
 	}
 	if err := s.checkUnsettled(ctx, spec); err != nil {
 		return Record{}, err
@@ -1293,4 +1292,28 @@ func (r Record) PluginRuntimeID() string {
 		return ""
 	}
 	return r.PluginRuntime.ID
+}
+
+func (r Record) NativeImportID() string {
+	if r.NativeImport == nil {
+		return ""
+	}
+	return r.NativeImport.ID
+}
+
+func (spec *Spec) validateRuntime() error {
+	if spec.NativeImport != nil {
+		if err := spec.NativeImport.Validate(spec.Harness, spec.Workspace.Path); err != nil {
+			return err
+		}
+		spec.NativeImport = spec.NativeImport.Clone()
+	}
+	if spec.PluginRuntime != nil {
+		if spec.PluginRuntime.Validate() != nil || spec.PluginRuntime.Selection.Project != spec.Project || spec.PluginRuntime.Selection.Node != spec.Node || spec.PluginRuntime.Selection.Harness != spec.Harness {
+			return errors.New("attempt plugin runtime differs from execution")
+		}
+		spec.PluginRuntime = spec.PluginRuntime.Clone()
+	}
+
+	return nil
 }

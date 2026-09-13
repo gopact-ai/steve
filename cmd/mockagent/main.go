@@ -96,6 +96,9 @@ func (a *agent) NewSession(_ context.Context, req *acp.NewSessionRequest) (*acp.
 }
 
 func (a *agent) LoadSession(_ context.Context, req *acp.LoadSessionRequest) (*acp.LoadSessionResponse, error) {
+	if os.Getenv("MOCKAGENT_REJECT_LOAD") != "" {
+		return nil, fmt.Errorf("fixture refuses selected native session")
+	}
 	a.mcp.Store(string(req.SessionID), req.MCPServers)
 	return &acp.LoadSessionResponse{}, nil
 }

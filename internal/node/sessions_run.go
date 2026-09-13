@@ -10,6 +10,7 @@ import (
 
 	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/acphost"
+	"github.com/gopact-ai/steve/internal/nativehistory"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/plugins"
@@ -32,7 +33,8 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		Binding                      nodewire.SessionBinding
 		Harness, Workdir, Permission string
 		Servers                      []acp.MCPServer
-	}{req.Binding, req.Harness, req.Workdir, permissionName, req.MCPServers})
+		NativeImport                 *nativehistory.Reference `json:"native_import,omitempty"`
+	}{req.Binding, req.Harness, req.Workdir, permissionName, req.MCPServers, req.NativeImport})
 	id := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness)
 	s.mu.Lock()
 	if s.closed {
@@ -84,29 +86,15 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		s.mu.Unlock()
 		return nodewire.SessionState{}, err
 	}
-	pluginInstructions := ""
 	configHash := sessionConfigHash(req)
-	hostCfg := s.hostConfig(req.Harness, spec, broker)
-	if req.Plugin != nil {
-		if req.Plugin.ID != req.Binding.PluginRuntimeID || req.Plugin.Selection.Project != req.Binding.ProjectID || req.Plugin.Selection.Harness != req.Harness || req.Plugin.Selection.Node != req.Binding.NodeID {
-			s.mu.Unlock()
-			return nodewire.SessionState{}, plugins.ErrInvalid
-		}
-		prepared, err := s.server.pluginRuntimePool().Load(ctx, *req.Plugin)
-		if err != nil {
-			s.mu.Unlock()
-			return nodewire.SessionState{}, err
-		}
-		pluginInstructions = prepared.Instructions
-		hostCfg = acphost.Config{NoRestart: true, Command: prepared.Config.Command, Args: prepared.Config.Args, Env: prepared.Config.Env, ProcessDir: prepared.Config.ProcessDir, Permission: broker}
-		req.MCPServers = append(append([]acp.MCPServer(nil), req.MCPServers...), prepared.Servers...)
-	} else if req.Binding.PluginRuntimeID != "" {
+	hostCfg, pluginInstructions, err := s.prepareSessionHost(ctx, id, &req, spec, broker)
+	if err != nil {
 		s.mu.Unlock()
-		return nodewire.SessionState{}, plugins.ErrInvalid
+		return nodewire.SessionState{}, err
 	}
 	host := acphost.New(hostCfg)
 	one := &ownedSession{pluginInstructions: pluginInstructions, service: s, host: host, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
-	one.record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: configHash, State: nodewire.SessionState{ID: id, Plugin: req.Plugin.Clone(), Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionOpening, Questions: []nodewire.SessionQuestion{}}, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}}
+	one.record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: configHash, State: nodewire.SessionState{ID: id, NativeImport: req.NativeImport.Clone(), Plugin: req.Plugin.Clone(), Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionOpening, Questions: []nodewire.SessionQuestion{}}, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}}
 	if err := one.commitLocked(one.record); err != nil {
 		s.mu.Unlock()
 		host.Close()
@@ -134,7 +122,11 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	s, host := one.service, one.host
 	// The durable open belongs to the node. A lost caller response must not
 	// kill a successfully created agent or make an identical retry start twice.
-	native, generation, openErr := host.OpenSession(openCtx, "", acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
+	upstream := ""
+	if req.NativeImport != nil {
+		upstream = req.NativeImport.NativeID
+	}
+	native, generation, openErr := host.OpenSession(openCtx, acp.SessionID(upstream), acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
 	httpMCP := false
 	if openErr == nil {
 		// The agent that actually runs is the authority on what it accepts:
@@ -481,7 +473,8 @@ func sessionConfigHash(req nodewire.SessionRequest) string {
 		Plugin                       *plugins.RuntimeRef `json:"plugin,omitempty"`
 		Harness, Workdir, Permission string
 		Servers                      []acp.MCPServer
-	}{ref, req.Harness, req.Workdir, policy, req.MCPServers})
+		NativeImport                 *nativehistory.Reference `json:"native_import,omitempty"`
+	}{ref, req.Harness, req.Workdir, policy, req.MCPServers, req.NativeImport})
 }
 
 func (s *SessionService) processesStopped() bool {
