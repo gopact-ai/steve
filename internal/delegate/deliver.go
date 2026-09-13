@@ -87,8 +87,11 @@ func (d Delivery) Prompt() string {
 }
 
 func stateWord(state task.State) string {
-	if state == task.StateFailed {
+	switch state {
+	case task.StateFailed:
 		return "失败"
+	case task.StateCancelled:
+		return "已取消"
 	}
 	return "完成"
 }
@@ -227,11 +230,7 @@ func (s *Service) deliverBatch(ctx context.Context, deliver func(context.Context
 		Anchor: parent.AnchorMessage, Requester: parent.Requester, ChatType: parent.ChatType, Key: waiting[0].Delivery.Key}
 	ids := make([]string, 0, len(waiting))
 	for _, c := range waiting {
-		state := task.StateFailed
-		if c.State == task.StateDone {
-			state = task.StateDone
-		}
-		d.Children = append(d.Children, Delivered{Task: c.ID, Agent: c.Member, Node: c.Node, State: state,
+		d.Children = append(d.Children, Delivered{Task: c.ID, Agent: c.Member, Node: c.Node, State: c.State,
 			Elapsed: c.UpdatedAt.Sub(c.CreatedAt), Goal: c.Goal, Answer: c.Result.Answer,
 			Refs: withoutLandingTalk(c.Result.Refs), Attempt: c.Result.Attempt, Landing: landing(c)})
 		ids = append(ids, c.ID)
