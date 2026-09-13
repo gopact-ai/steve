@@ -64,6 +64,7 @@ const (
 	ProjectUnbound         Key = "project_unbound"
 	ProjectsDisabled       Key = "projects_disabled"
 	ProjectBusy            Key = "project_busy"
+	ProjectWriting         Key = "project_writing"
 	ProjectLevel           Key = "project_level"
 	AdmissionRefused       Key = "admission_refused"
 	ProjectAccess          Key = "project_access"
