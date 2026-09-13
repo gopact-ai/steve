@@ -23,9 +23,15 @@ func nodeRuntimeFixture(t *testing.T, s *Server, endpoint string) plugins.Select
 	dir := t.TempDir()
 	os.Mkdir(filepath.Join(dir, "skill"), 0700)
 	manifest := plugins.Manifest{Schema: plugins.Schema, API: plugins.API, ID: "test/runtime", Version: "1.0.0", Description: "runtime fixture", Skills: map[string]string{"skill": "skill"}}
-	if endpoint != "" {
+	if endpoint != "" && endpoint != "stdio" {
 		manifest.Settings = map[string]plugins.Setting{"token": {Description: "node token", Secret: true, Required: true}}
 		manifest.MCP = map[string]plugins.MCPServer{"api": {Transport: "http", URL: plugins.Value{Text: endpoint}, Headers: map[string]plugins.Value{"Authorization": {Secret: "token", Prefix: "Bearer "}}}}
+	}
+	if endpoint == "stdio" {
+		manifest.MCP = map[string]plugins.MCPServer{"api": {Transport: "stdio", Program: &plugins.Program{Path: "probe.py", Runtime: "python3"}}}
+		if err := os.WriteFile(filepath.Join(dir, "probe.py"), []byte("pass\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
 	}
 	raw, err := json.Marshal(manifest)
 	if err != nil {
@@ -42,7 +48,7 @@ func nodeRuntimeFixture(t *testing.T, s *Server, endpoint string) plugins.Select
 		t.Fatal(err)
 	}
 	cfg := plugins.Configuration{}
-	if endpoint != "" {
+	if endpoint != "" && endpoint != "stdio" {
 		secret, err := store.PutSecret(t.Context(), "token", "LOCAL_SECRET")
 		if err != nil {
 			t.Fatal(err)
@@ -234,5 +240,40 @@ func TestRemotePluginProcessUsesOriginalRuntimeAndRejectsOtherRuntime(t *testing
 	}
 	if err := manager.CloseSession(t.Context(), at, session.ID()); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestPluginStdioLaunchUsesRequiredACPWireFields(t *testing.T) {
+	s := NewServer(ServerConfig{Name: "worker", StateDir: t.TempDir()})
+	selection := nodeRuntimeFixture(t, s, "stdio")
+	pool := s.pluginRuntimePool()
+	defer pool.Close()
+	prepared, err := pool.Prepare(t.Context(), "stdio-profile", selection, harness.Config{Command: "fixture-agent"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	prepared, err = pool.Load(t.Context(), prepared.Ref)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(acp.NewSessionRequest{Cwd: "/workspace", MCPServers: prepared.Servers})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Servers []map[string]json.RawMessage `json:"mcpServers"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if len(wire.Servers) != 1 {
+		t.Fatalf("missing stdio server: %s", raw)
+	}
+	spec := wire.Servers[0]
+	if _, exists := spec["type"]; exists {
+		t.Fatalf("stdio is the undiscriminated ACP variant: %s", raw)
+	}
+	if string(spec["env"]) != "[]" || spec["args"] == nil || spec["command"] == nil {
+		t.Fatalf("missing required stdio launch fields: %s", raw)
 	}
 }

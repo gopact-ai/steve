@@ -177,7 +177,13 @@ func (p *PluginRuntimePool) startBroker(ctx context.Context, ref plugins.Runtime
 			<-done
 			return nil, err
 		}
-		server := acp.MCPServer{Name: name, Type: acp.MCPServerType(binding.Transport), Command: binding.Command, Args: binding.Args, URL: binding.URL}
+		server := acp.StdioMCPServer(name, binding.Command, binding.Args, nil)
+		switch binding.Transport {
+		case "http":
+			server = acp.HTTPMCPServer(name, binding.URL, nil)
+		case "sse":
+			server = acp.SSEMCPServer(name, binding.URL, nil)
+		}
 		entry.servers = append(entry.servers, server)
 	}
 	return entry, nil
