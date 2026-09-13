@@ -350,6 +350,7 @@ func (b *snapshotBuilder) taskAxes() {
 		parent[t.ID] = t.Parent
 	}
 	rolledPending, rolledUncertain := map[string]int{}, map[string]int{}
+	rolledPlan := map[string]bool{}
 	rolledLive, rolledUnsettled, rolledAttention := map[string]bool{}, map[string]bool{}, map[string]int{}
 	for _, t := range snap.Tasks {
 		waiting := attention[t.ID]
@@ -361,6 +362,9 @@ func (b *snapshotBuilder) taskAxes() {
 			}
 		}
 		for id := t.ID; id != ""; id = parent[id] {
+			if t.PlanID != "" {
+				rolledPlan[id] = true
+			}
 			if live[t.ID] {
 				rolledLive[id] = true
 			}
@@ -390,7 +394,7 @@ func (b *snapshotBuilder) taskAxes() {
 		}
 		t.Attention = rolledAttention[t.ID]
 		t.PendingResults, t.UncertainResults = rolledPending[t.ID], rolledUncertain[t.ID]
-		t.CanComplete = t.CanComplete && t.Execution == ExecutionIdle && b.attentionKnown && t.Attention == 0 && t.PendingResults == 0 && t.UncertainResults == 0 && t.PlanID == ""
+		t.CanComplete = t.CanComplete && t.Execution == ExecutionIdle && b.attentionKnown && t.Attention == 0 && t.PendingResults == 0 && t.UncertainResults == 0 && !rolledPlan[t.ID]
 		t.Lane = lane(*t)
 		if t.Lane == "pending" && !b.attentionKnown {
 			t.Lane = "unknown"

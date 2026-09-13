@@ -9,7 +9,7 @@ import (
 )
 
 func TestCompletionEntryRequiresKnownIdleAcceptedRoot(t *testing.T) {
-	for _, scenario := range []string{"ready", "child-running", "child-failed", "result-missing", "receipt-pending", "receipt-suppressed", "open-row", "activity-unknown", "attention-unknown", "live", "unsettled", "question", "plan", "done"} {
+	for _, scenario := range []string{"ready", "child-running", "child-failed", "result-missing", "receipt-pending", "receipt-suppressed", "open-row", "activity-unknown", "attention-unknown", "live", "unsettled", "question", "plan", "descendant-plan", "done"} {
 		t.Run(scenario, func(t *testing.T) {
 			list := []task.Task{
 				{ID: "root", State: task.StateRunning},
@@ -40,6 +40,8 @@ func TestCompletionEntryRequiresKnownIdleAcceptedRoot(t *testing.T) {
 				builder.snap.Inbox = []HumanRequest{{TaskID: "root"}}
 			case "plan":
 				plans["root"] = plan.Plan{ID: "plan"}
+			case "descendant-plan":
+				plans["child"] = plan.Plan{ID: "plan"}
 			case "done":
 				list[0].State = task.StateDone
 			}
