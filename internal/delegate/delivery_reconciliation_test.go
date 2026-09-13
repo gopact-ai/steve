@@ -3,11 +3,12 @@ package delegate
 import (
 	"context"
 	"errors"
-	"github.com/gopact-ai/steve/internal/agentmcp"
-	"github.com/gopact-ai/steve/internal/channel"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/agentmcp"
+	"github.com/gopact-ai/steve/internal/channel"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
@@ -185,5 +186,27 @@ func TestFailedParentRetainsChildResult(t *testing.T) {
 	w.service.ReconcileDeliveries(t.Context())
 	if box.count() != 0 || len(w.tasks.Undelivered()[parent.ID]) != 1 {
 		t.Fatal("failed parent lost or consumed result")
+	}
+}
+
+func TestCancelledResultKeepsItsStateInParentDelivery(t *testing.T) {
+	w := newWorld(t)
+	parent := w.running(t, "codex")
+	child, err := w.tasks.Create(task.Task{Parent: parent.ID, Channel: parent.Channel, Member: "builder", Origin: "delegate:" + parent.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.tasks.Advance(child.ID, task.StateCancelled); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.tasks.SetResult(child.ID, task.Result{Outcome: task.OutcomeCancelled, Answer: "cancelled by owner"}); err != nil {
+		t.Fatal(err)
+	}
+	box := &mailbox{}
+	w.service.SetDeliverer(box.deliver)
+	w.service.Flush(t.Context(), parent.ID)
+	got := box.wait(t, 1)[0]
+	if got.Children[0].State != task.StateCancelled || !strings.Contains(got.Notice(), "已取消") || !strings.Contains(got.Prompt(), "已取消") {
+		t.Fatalf("cancellation became another outcome: %+v", got)
 	}
 }
