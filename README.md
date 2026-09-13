@@ -199,10 +199,12 @@ agent 用 `steve_delegate` 交出一件有界工作；调用短暂等待后返�
 |---|---|
 | `make test` | 本地 Go 测试、竞态检查与依赖门禁。 |
 | `make test-console` | 前端依赖门禁、构建和隔离浏览器交互测试。 |
-| `make e2e-fleet` | 对已运行机群验证指定远端委派、attempt、改动、用量和落地；客户端默认及上限 **10 分钟**。 |
-| `make e2e-autonomous` | 验证自主查机群、拆解并行委派、按能力执行和主动回传；默认及上限 **20 分钟**，需要项目主目录中的 `kvtool/main.go` 和申报 `build` 的远端节点。 |
+| `make e2e-fleet` | 创建独立 hub 与 Docker 节点，用确定性 Agent 验证委派、attempt、改动、用量和落地；总期限 **25 分钟**。 |
+| `make e2e-autonomous` | 同一隔离机群验证能力调度、并行委派与主动交接；自动准备 `kvtool`，不调用真实模型。 |
+| `go run ./e2e/fleet` | 对已运行的真实机群验证指定远端委派；客户端期限 **10 分钟**。 |
+| `go run ./e2e/fleet -scenario autonomous` | 真实自动协作验证；期限 **20 分钟**，需要项目主目录中的 `kvtool/main.go` 和申报 `build` 的远端节点。 |
 
-[CI](.github/workflows/test.yml) 运行 gofmt、vet、race，以及前端构建、依赖门禁和隔离浏览器测试；不运行真实机群门禁。真实机群门禁使用已有 hub 和 node，不构建、部署或重启它们；会产生真实任务与文件。连接参数、前置工具、超时处理和 PR 证据要求见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [运维文档](docs/operations.md#门禁与-ci)。
+隔离机群门禁要求 Linux、本机 Docker 与匹配的 Go 工具链。[CI](.github/workflows/test.yml) 运行 gofmt、vet、race、前端构建、依赖门禁、隔离浏览器测试和隔离机群门禁；真实模型门禁需单独运行。真实机群门禁使用已有 hub 和 node，不构建、部署或重启它们；会产生真实任务与文件。连接参数、前置工具、超时处理和 PR 证据要求见 [CONTRIBUTING.md](CONTRIBUTING.md) 与 [运维文档](docs/operations.md#门禁与-ci)。
 
 ## 继续阅读
 

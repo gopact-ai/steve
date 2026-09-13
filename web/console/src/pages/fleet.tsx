@@ -386,6 +386,7 @@ export function FleetPage() {
     }, [consoleEvents]);
     const { act } = useIntent();
     const up = snap.nodes.filter((n) => n.up).length;
+    const versionDrift = snap.nodes.filter((n) => n.up && n.version && snap.hub.version && n.version !== snap.hub.version);
     const [adding, setAdding] = useState(false);
     const [sshOpen, setSSHOpen] = useState(false);
     const [executor, setExecutor] = useState<{ name: string; addr: string; level: string }>();
@@ -405,6 +406,7 @@ export function FleetPage() {
                 actions={<><Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => { setExecutor(undefined); setAdding(true); }}>{tr("fleet.addResource")}</Button></>} />
             <PageBody>
             <CoordinationPanel />
+            {versionDrift.length > 0 && <p role="status" className="rounded-lg bg-warning-primary px-3 py-2 text-sm text-warning-primary">{tr("fleet.versionDriftHint", { count: versionDrift.length, version: snap.hub.version || "—" })}</p>}
             {sshOpen && <SSHConnect onClose={() => setSSHOpen(false)} onChanged={refresh} onViewMachines={() => { setSSHOpen(false); setFocusMachines(true); }} onAddExecutor={(request) => { setExecutor(request); setSSHOpen(false); setAdding(true); }} />}
             {adding && <AddMachine executor={executor} hub={snap.hub.node} harnesses={hubHarnesses.length ? hubHarnesses : ["codex", "claude-code", "grok", "kimi"]} nodes={snap.nodes.filter((n) => n.role !== "hub").map((n) => n.name)} onClose={() => setAdding(false)} onDone={() => refresh()} />}
             <div id="fleet-machines" ref={machineSection} tabIndex={-1} className="min-w-0 scroll-mt-4 rounded-xl focus-visible:outline-2 focus-visible:outline-focus-ring"><TableCard.Root size="sm" className="workbench-table min-w-0">
@@ -435,7 +437,7 @@ export function FleetPage() {
                                             {n.host && n.host !== n.name && (n.ips || []).length > 0 && <span className="font-mono text-xs text-tertiary" title={(n.ips || []).join("\n")}>{(n.ips || [])[0]}{(n.ips || []).length > 1 ? ` +${(n.ips || []).length - 1}` : ""}</span>}
                                         </div>
                                     </Table.Cell>
-                                    <Table.Cell><span className="block truncate font-mono text-xs text-tertiary" title={n.version}>{n.version || "—"}</span></Table.Cell>
+                                    <Table.Cell><span className="block truncate font-mono text-xs text-tertiary" title={n.version}>{n.version || "—"}</span>{n.up && n.version && snap.hub.version && n.version !== snap.hub.version && <span className="text-xs text-warning-primary">{tr("fleet.versionDrift")}</span>}</Table.Cell>
                                     <Table.Cell><span className="text-xs text-tertiary">{n.os ? `${n.os} / ${n.arch}` : "—"}</span></Table.Cell>
                                     <Table.Cell><span title={tr("fleet.levelHint")}>{levelName(n.level || "internal", locale)}</span></Table.Cell>
                                     <Table.Cell>

@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/material"
 	"github.com/gopact-ai/steve/internal/readmodel"
+	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
@@ -22,17 +23,18 @@ type queuedExchange struct {
 	Exchange
 	// Submission identity survives edits/steering. A keyed exchange's result
 	// outlives the bounded transcript projection so restart retries can reply.
-	PayloadHash         string              `json:"payload_hash,omitempty"`
-	QuoteAliases        map[string]string   `json:"quote_aliases,omitempty"`
-	Receipt             *consoleapi.Reply   `json:"receipt,omitempty"`
-	RecoveryStopTarget  *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
-	RecoveryStop        *consoleapi.Reply   `json:"recovery_stop,omitempty"`
-	RecoveryStopPending string              `json:"recovery_stop_pending,omitempty"`
-	recoveryStopping    chan struct{}
-	ctx                 context.Context
-	cancel              context.CancelFunc
-	done                chan struct{}
-	outcome             outcome
+	PayloadHash          string              `json:"payload_hash,omitempty"`
+	QuoteAliases         map[string]string   `json:"quote_aliases,omitempty"`
+	Receipt              *consoleapi.Reply   `json:"receipt,omitempty"`
+	RecoveryStopTarget   *recoveryStopTarget `json:"recovery_stop_target,omitempty"`
+	RecoveryStop         *consoleapi.Reply   `json:"recovery_stop,omitempty"`
+	RecoveryStopPending  string              `json:"recovery_stop_pending,omitempty"`
+	ContinuationRejected bool                `json:"continuation_rejected,omitempty"`
+	recoveryStopping     chan struct{}
+	ctx                  context.Context
+	cancel               context.CancelFunc
+	done                 chan struct{}
+	outcome              outcome
 }
 
 func conversationID(conversation string) string {
@@ -94,11 +96,11 @@ func (s *Service) EnqueueCommand(ctx context.Context, conversation, input, comma
 // instead of the input; front puts the line ahead of everything still
 // waiting, behind what already ran or runs.
 type enqueueOptions struct {
-	Prompt, Key                        string
-	Front                              bool
-	Origin, Requester, ExpectedProject string
-	Refs                               []material.Ref
-	Locale                             string
+	Prompt, Key                                      string
+	Front                                            bool
+	Origin, Requester, ExpectedProject, ExpectedTask string
+	Refs                                             []material.Ref
+	Locale                                           string
 }
 
 func (s *Service) enqueue(ctx context.Context, conversation, input string, quotes []QuoteRef, options enqueueOptions) (*queuedExchange, Exchange, error) {
@@ -204,7 +206,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	}
 	e := &queuedExchange{
 		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
-			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject,
+			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject, ExpectedTask: options.ExpectedTask,
 			Refs: copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
 			Quotes: append([]QuoteRef(nil), quotes...), State: consoleapi.ExchangeQueued, EnqueuedAt: time.Now().UTC()},
 		PayloadHash: hash, ctx: s.exchangeContext(ctx), done: make(chan struct{}),
@@ -484,6 +486,7 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 	if err != nil {
 		e.State = consoleapi.ExchangeFailed
 	}
+	e.ContinuationRejected = e.ExpectedTask != "" && errors.Is(err, task.ErrContinuationUnavailable)
 	e.outcome = outcome{reply: reply, err: err}
 	if e.Key != "" {
 		e.Receipt = &reply

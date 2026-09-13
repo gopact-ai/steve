@@ -94,7 +94,9 @@ func TestNonLoopbackRequiresAToken(t *testing.T) {
 	go func() { _ = server.Serve() }()
 	t.Cleanup(func() { _ = server.Close() })
 
-	res, err := http.Get(server.URL() + "/state")
+	url := strings.Replace(server.URL(), "0.0.0.0", "127.0.0.1", 1)
+	url = strings.Replace(url, "[::]", "127.0.0.1", 1)
+	res, err := http.Get(url + "/state")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +105,7 @@ func TestNonLoopbackRequiresAToken(t *testing.T) {
 		t.Fatalf("no token = %d, want 401", res.StatusCode)
 	}
 
-	req, _ := http.NewRequest(http.MethodGet, server.URL()+"/state", nil)
+	req, _ := http.NewRequest(http.MethodGet, url+"/state", nil)
 	req.Header.Set("Authorization", "Bearer s3cret")
 	ok, err := http.DefaultClient.Do(req)
 	if err != nil {

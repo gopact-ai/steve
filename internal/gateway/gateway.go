@@ -155,7 +155,11 @@ func (g *Gateway) HandleMessage(msg feishu.InboundMessage) {
 // is holding would deadlock the two against each other — the same mistake
 // the per-conversation queue made. So only the first message of a
 // conversation takes a slot, and whoever finishes last gives it back.
-func (g *Gateway) serve(msg feishu.InboundMessage, conversation string) {
+func (g *Gateway) serve(msg feishu.InboundMessage, conversation string) error {
+	return g.serveTask(msg, conversation, "")
+}
+
+func (g *Gateway) serveTask(msg feishu.InboundMessage, conversation, expectedTask string) error {
 	g.mu.Lock()
 	first := g.serving[conversation] == 0
 	g.serving[conversation]++
@@ -175,7 +179,7 @@ func (g *Gateway) serve(msg feishu.InboundMessage, conversation string) {
 			<-g.slots
 		}
 	}()
-	g.process(msg)
+	return g.processTask(msg, expectedTask)
 }
 
 func conversationID(msg feishu.InboundMessage) string {
@@ -244,7 +248,9 @@ func (g *Gateway) seedTopic(msg feishu.InboundMessage, task string) {
 	g.process(seeded)
 }
 
-func (g *Gateway) process(msg feishu.InboundMessage) {
+func (g *Gateway) process(msg feishu.InboundMessage) error { return g.processTask(msg, "") }
+
+func (g *Gateway) processTask(msg feishu.InboundMessage, expectedTask string) error {
 	conversationID := msg.ConversationID
 	if conversationID == "" {
 		conversationID = msg.ChatID
@@ -252,7 +258,7 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 	listen := silentListen(msg)
 	if cmd, rest := protocol.ParseCommand(strings.TrimSpace(msg.Text)); cmd == protocol.CommandTopic && !listen {
 		g.seedTopic(msg, rest)
-		return
+		return nil
 	}
 	if g.gate != nil && msg.MessageID != "" {
 		g.gate.Anchor(conversationID, channel.Address{Channel: "feishu", Conversation: conversationID, Message: msg.MessageID})
@@ -262,6 +268,7 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 		Channel:        "feishu",
 		ConversationID: conversationID,
 		Input:          g.promptText(msg),
+		ExpectedTask:   expectedTask,
 		Origin:         msg.Origin,
 		MessageID:      msg.MessageID,
 		ChatID:         msg.ChatID,
@@ -283,6 +290,7 @@ func (g *Gateway) process(msg feishu.InboundMessage) {
 		slog.Error(fmt.Sprintf("gateway: turn failed: chat=%s error=%v", msg.ChatID, err), "conversation", conversationID, "chat", msg.ChatID, "message", msg.MessageID)
 	}
 	ui.finish(result, err)
+	return err
 }
 
 // maxReplyRunes keeps replies under the Feishu text message size limit so a

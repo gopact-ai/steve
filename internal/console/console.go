@@ -602,7 +602,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 		Channel:        "console",
 		ConversationID: conversation, ChatID: ChatID, MessageID: AnchorMark + exchange.ID, Input: prompt, Queue: !isInterrupt(input),
 		SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true,
-		Origin: exchange.Origin, ExpectedProject: exchange.ExpectedProject,
+		Origin: exchange.Origin, ExpectedProject: exchange.ExpectedProject, ExpectedTask: exchange.ExpectedTask,
 		Locale: exchange.Locale, Images: media,
 		OnTurnReady: func(taskID, attemptID string) {
 			identity.set(taskID, attemptID)

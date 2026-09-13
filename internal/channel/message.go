@@ -7,6 +7,10 @@ import (
 	"errors"
 )
 
+// ErrDeliveryQueued means durable ingress accepted a continuation whose parent
+// has not yet confirmed processing. Reconciliation may inspect the same key.
+var ErrDeliveryQueued = errors.New("continuation is queued for parent processing")
+
 // ErrOutcomeUnknown means a dispatched operation may have taken effect.
 // Adapters wrap it for transport failures that cannot prove non-delivery.
 var ErrOutcomeUnknown = errors.New("channel message outcome is unknown")

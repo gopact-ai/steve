@@ -440,12 +440,20 @@ func TestRunCancelsTheWorkWhenTheLeaseIsLost(t *testing.T) {
 	w.runner.block = true
 	o := w.options()
 	var lost atomic.Bool
-	o.Lost = func() { lost.Store(true) }
+	notified := make(chan struct{})
+	o.Lost = func() { lost.Store(true); close(notified) }
 	go func() {
 		time.Sleep(50 * time.Millisecond)
 		close(w.attempts.lost)
 	}()
 	res, err := Run(t.Context(), o)
+	// Lost is deliberately called after cancellation from Keep's goroutine;
+	// the cancelled run can finish before that notification is scheduled.
+	select {
+	case <-notified:
+	case <-time.After(2 * time.Second):
+		t.Fatal("lost lease notification did not complete")
+	}
 	if !errors.Is(err, context.Canceled) || !lost.Load() || res.Record.State != attempt.Failed || !res.Durable {
 		t.Fatalf("lost lease: %+v err=%v lost=%v", res, err, lost.Load())
 	}

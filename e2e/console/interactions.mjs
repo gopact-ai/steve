@@ -1492,6 +1492,89 @@ checks["process-content"] = async (f) => {
     assert.equal(f.calls.length, 0);
 };
 
+checks["board-overview"] = async (f) => {
+    const root = (id, lifecycle, lane) => ({ ...task(id, A, "scratch"), state: lifecycle, lifecycle, lane, execution: "idle" });
+    const rows = [
+        { ...root("11", "running", "needs_you"), pending_results: 2, uncertain_results: 1 },
+        root("12", "done", "ended"), root("13", "cancelled", "ended"), root("14", "paused", "set_aside"),
+        { ...root("15", "done", "ended"), archived_at: at },
+        { ...root("21", "done", "ended"), parent: "11", origin: "delegate:11", result_delivery: { state: "pending", attempts: 2, error: "Temporary delivery failure", next_attempt_at: "2026-09-06T10:00:10Z", at } },
+        { ...root("22", "done", "needs_you"), parent: "11", origin: "delegate:11", result_delivery: { state: "uncertain", attempts: 1, error: "Receipt lost: " + "long-unbroken-detail".repeat(20), at } },
+        { ...root("16", "paused", "set_aside"), parent: "15" },
+    ];
+    const state = { ...usageState(usageFixture()), tasks: rows, projects: [project("scratch")] };
+    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    await f.page.goto(`${app.url}/#/console?view=board`); await f.page.reload();
+    const summary = f.page.getByRole("region", { name: "主任务统计" });
+    await summary.getByText("主任务", { exact: true }).waitFor();
+    assert.match(await summary.innerText(), /主任务\s+5/);
+    assert.match(await summary.innerText(), /已完成\s+1/);
+    assert.match(await summary.innerText(), /已取消\s+1/);
+    assert.match(await summary.innerText(), /已暂停\s+2/);
+    await f.page.getByText("2 个结果待交接 · 1 个交接待确认", { exact: true }).waitFor();
+    await f.page.getByRole("switch", { name: "显示已归档" }).press("Space");
+    assert.match(await summary.innerText(), /主任务\s+5/);
+    assert.match(await summary.innerText(), /已完成\s+2/);
+    await f.page.screenshot({ path: path.join(output, "board-overview-wide.png"), fullPage: true });
+    const open = f.page.getByRole("button", { name: "打开任务 #11 Task 11", exact: true });
+    await open.focus(); await open.press("Enter");
+    const dialog = f.page.getByRole("dialog");
+    await dialog.getByRole("heading", { name: "结果交接", exact: true }).waitFor();
+    await dialog.getByText("Temporary delivery failure", { exact: true }).waitFor();
+    await dialog.getByText(/下次自动重试：/).waitFor();
+    await dialog.getByText(/先核对父任务会话/).waitFor();
+    for (const width of [1600, 390]) {
+        await f.page.setViewportSize({ width, height: 1000 });
+        assert.ok(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), "Long handoff details must not overflow");
+        await f.page.screenshot({ path: path.join(output, `board-handoffs-${width}.png`), fullPage: true });
+    }
+    rows[2].state = rows[2].lifecycle = "done";
+    rows[0].pending_results = 1; rows[0].uncertain_results = 0; rows[0].lane = "pending";
+    rows[6].result_delivery = { state: "delivered", at };
+    await f.emit({ kind: "task.changed" }); await f.page.clock.runFor(350);
+    await eventually(async () => (await dialog.getByText("已送达", { exact: true }).count()) === 1, "A receipt should update the open drawer");
+    await f.page.keyboard.press("Escape");
+    await open.waitFor();
+    await f.page.screenshot({ path: path.join(output, "board-overview-narrow.png"), fullPage: true });
+    await f.page.evaluate(() => {
+        localStorage.setItem("steve.ui.locale", "en");
+        window.dispatchEvent(new StorageEvent("storage", { key: "steve.ui.locale", newValue: "en", storageArea: localStorage }));
+    });
+    await f.page.getByRole("region", { name: "Root task summary" }).waitFor();
+    assert.equal(f.calls.length, 0, "Reading handoffs must not dispatch work");
+};
+
+checks["child-handoff"] = async (f) => {
+    const child = { ...task("22", A, "scratch"), state: "done", lifecycle: "done", execution: "idle", lane: "needs_you", parent: "11", result_delivery: { state: "uncertain", error: "Child receipt was lost", attempts: 2, at } };
+    const state = { ...usageState(usageFixture()), tasks: [task("11", A, "scratch"), child] };
+    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    await f.page.goto(`${app.url}/#/console?view=board&tab=all`); await f.page.reload();
+    await f.page.getByRole("row").filter({ hasText: "Task 22" }).click();
+    const dialog = f.page.getByRole("dialog");
+    await dialog.getByRole("heading", { name: "结果交接", exact: true }).waitFor();
+    await dialog.getByText("#22 → #11", { exact: true }).waitFor();
+    await dialog.getByText("Child receipt was lost", { exact: true }).waitFor();
+    await f.page.screenshot({ path: path.join(output, "child-handoff.png"), fullPage: true });
+};
+
+checks["fleet-version-drift"] = async (f) => {
+    const nodes = [
+        { name: "hub", role: "hub", up: true, version: "abc1234", harnesses: [] },
+        { name: "worker-old", role: "node", up: true, version: "def5678", harnesses: [] },
+        { name: "worker-unknown", role: "node", up: true, harnesses: [] },
+        { name: "worker-offline", role: "node", up: false, version: "old", harnesses: [] },
+    ];
+    const state = { ...usageState(usageFixture()), hub: { node: "hub", version: "abc1234", started: at }, nodes };
+    await f.page.route("**/state", (route) => route.fulfill({ json: state }));
+    await f.page.goto(`${app.url}/#/fleet`); await f.page.reload();
+    await f.page.getByText(/1 台机器与协调节点版本不同/).waitFor();
+    assert.equal(await f.page.getByText("版本不同", { exact: true }).count(), 1);
+    await f.page.screenshot({ path: path.join(output, "fleet-version-drift.png"), fullPage: true });
+    nodes[1].version = "abc1234";
+    await f.emit({ kind: "node.changed" }); await f.page.clock.runFor(350);
+    await eventually(async () => (await f.page.getByText("版本不同", { exact: true }).count()) === 0, "Drift should clear after a running process updates");
+};
+
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);
 let failed = 0;
 try {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 )
@@ -102,6 +103,11 @@ func (s *Store) SetDeliveryAuthorized(ctx context.Context, token ExecutionToken,
 		return errors.New("child belongs to another parent execution")
 	}
 	next := s.clone()
-	next.Tasks[childID].Delivery = &Delivery{State: state, Key: DeliveryKey(childID), At: s.now()}
+	t := next.Tasks[childID]
+	if t.Delivery == nil {
+		t.Delivery = &Delivery{Key: DeliveryKey(childID)}
+	}
+	t.Delivery.State, t.Delivery.At = state, s.now()
+	t.Delivery.Error, t.Delivery.NextAttemptAt = "", time.Time{}
 	return s.replaceAuthorizedLocked(ctx, token, next, guard)
 }

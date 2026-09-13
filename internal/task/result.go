@@ -1,6 +1,7 @@
 package task
 
 import (
+	"errors"
 	"fmt"
 	"slices"
 	"strings"
@@ -18,18 +19,25 @@ type Result struct {
 }
 
 // Delivery says whether a child's result has reached the conversation
-// its parent lives in. Pending is written before the attempt to deliver,
-// delivered after it succeeded: a crash between the two is retried, and
-// the delivery key keeps the retry from arriving twice.
+// its parent lives in. Pending precedes dispatch; delivered requires a confirmed
+// parent-processing receipt. Replay-safe channels retry with the same durable
+// key. An interrupted non-replay-safe send remains uncertain until confirmed
+// and is never automatically replayed.
 type Delivery struct {
-	State string    `json:"state"` // pending | delivered
-	Key   string    `json:"key,omitempty"`
-	At    time.Time `json:"at"`
+	State         string    `json:"state"` // pending | queued | delivered | suppressed | uncertain
+	Key           string    `json:"key,omitempty"`
+	At            time.Time `json:"at"`
+	Attempts      int       `json:"attempts,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	NextAttemptAt time.Time `json:"next_attempt_at,omitzero"`
 }
 
 const (
-	DeliveryPending   = "pending"
-	DeliveryDelivered = "delivered"
+	DeliveryPending    = "pending"
+	DeliveryQueued     = "queued"
+	DeliveryDelivered  = "delivered"
+	DeliverySuppressed = "suppressed"
+	DeliveryUncertain  = "uncertain"
 )
 
 // DeliveryKey names one child's delivery for good.
@@ -68,7 +76,11 @@ func (s *Store) SetDelivery(id, state string) error {
 	}
 	next := s.clone()
 	t := next.Tasks[id]
-	t.Delivery = &Delivery{State: state, Key: DeliveryKey(id), At: s.now()}
+	if t.Delivery == nil {
+		t.Delivery = &Delivery{Key: DeliveryKey(id)}
+	}
+	t.Delivery.State, t.Delivery.At = state, s.now()
+	t.Delivery.Error, t.Delivery.NextAttemptAt = "", time.Time{}
 	return s.replaceLocked(next)
 }
 
@@ -83,13 +95,30 @@ func (s *Store) Undelivered() map[string][]Task {
 		if !t.Delegated() || !t.Finished() || t.Result == nil || t.Parent == "" {
 			continue
 		}
-		if t.Delivery != nil && t.Delivery.State == DeliveryDelivered {
+		if t.Delivery != nil && (t.Delivery.State == DeliveryDelivered || t.Delivery.State == DeliverySuppressed) {
 			continue
 		}
 		out[t.Parent] = append(out[t.Parent], t)
 	}
 	for parent := range out {
-		slices.SortFunc(out[parent], func(a, b Task) int { return a.CreatedAt.Compare(b.CreatedAt) })
+		slices.SortFunc(out[parent], deliveryOrder)
 	}
 	return out
 }
+
+func deliveryOrder(a, b Task) int {
+	if order := a.CreatedAt.Compare(b.CreatedAt); order != 0 {
+		return order
+	}
+	return strings.Compare(a.ID, b.ID)
+}
+
+func sameDelivery(a, b *Delivery) bool {
+	if a == nil || b == nil {
+		return a == b
+	}
+	return *a == *b
+}
+
+// ErrContinuationUnavailable is a rejection before any parent execution was admitted.
+var ErrContinuationUnavailable = errors.New("parent continuation was not admitted")

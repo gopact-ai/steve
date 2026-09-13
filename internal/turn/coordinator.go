@@ -61,6 +61,8 @@ type Request struct {
 	Relocation *RelocationContext
 	// ExpectedProject fences an unattended submission to its creation-time project.
 	ExpectedProject string
+	// ExpectedTask binds an automatic continuation to its original task.
+	ExpectedTask string
 	// Queue makes this prompt wait for the running turn instead of
 	// interrupting it: "also do this after" rather than "stop, do this".
 	Queue   bool

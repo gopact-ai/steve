@@ -1,4 +1,11 @@
 export const boardZh = {
+ "board.totalRoots": "主任务",
+ "board.completed": "已完成",
+ "board.cancelled": "已取消",
+ "board.paused": "已暂停",
+ "board.rootSummary": "主任务统计",
+ "board.pendingResults": "{count} 个结果待交接",
+ "board.uncertainResults": "{count} 个交接待确认",
     "board.pending": "待继续",
     "board.pendingHint": "等待下一条指令或排队执行",
     "board.runningHint": "正在执行任务",
@@ -53,6 +60,13 @@ export const boardZh = {
 } as const;
 
 export const boardEn = {
+ "board.totalRoots": "Root tasks",
+ "board.completed": "Completed",
+ "board.cancelled": "Cancelled",
+ "board.paused": "Paused",
+ "board.rootSummary": "Root task summary",
+ "board.pendingResults": "{count} results awaiting handoff",
+ "board.uncertainResults": "{count} handoffs awaiting confirmation",
     "board.pending": "Ready to continue",
     "board.pendingHint": "Waiting for the next instruction or a queue slot",
     "board.runningHint": "A task is executing",

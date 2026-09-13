@@ -664,6 +664,7 @@ type Exchange struct {
 	Origin          string `json:"origin,omitempty"`
 	Requester       string `json:"requester,omitempty"`
 	ExpectedProject string `json:"expected_project,omitempty"`
+	ExpectedTask    string `json:"expected_task,omitempty"`
 	// Key is the durable submission identity within this conversation.
 	// Client command IDs and platform deliveries have separate namespaces.
 	Key        string            `json:"key,omitempty"`
