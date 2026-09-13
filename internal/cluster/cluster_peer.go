@@ -747,15 +747,16 @@ func (p *Peer) startWorker(workspaceRoot string) error {
 	if err := requireClusterLoopback(cfg.Listen); err != nil {
 		return err
 	}
-	if err := preparePeerAdapters(p.ctx, &cfg); err != nil {
-		return err
-	}
 	listener, err := net.Listen("tcp", cfg.Listen)
 	if err != nil {
 		return err
 	}
 	cfg.Listen = listener.Addr().String()
 	if err := SaveClusterJSON(p.Config.WorkerConfigFile, cfg, false); err != nil {
+		listener.Close()
+		return err
+	}
+	if err := preparePeerAdapters(p.ctx, &cfg); err != nil {
 		listener.Close()
 		return err
 	}
