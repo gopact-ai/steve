@@ -106,7 +106,10 @@ func TestMCPListenerStaysPutAndReturnsRetryableErrorDuringOutage(t *testing.T) {
 		if r.URL.Query().Get("hang") != "" {
 			requestStarted <- struct{}{}
 			<-r.Context().Done()
-			return
+			// Returning normally can synthesize an empty HTTP 200 while
+			// the disconnected tunnel is still closing. This fixture must
+			// abort its response so the proxy observes the outage.
+			panic(http.ErrAbortHandler)
 		}
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
