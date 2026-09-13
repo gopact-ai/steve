@@ -15,13 +15,13 @@ func TestDiscoveryDoesNotRunAgentsOrReadTheirPrivateData(t *testing.T) {
 		t.Fatal(err)
 	}
 	marker := filepath.Join(root, "should-not-exist")
-	for _, name := range []string{"codex", "claude", "grok", "kimi", "node", "npm"} {
+	for _, name := range []string{"codex", "claude", "grok", "dsh", "kimi", "node", "npm"} {
 		if err := os.WriteFile(filepath.Join(bin, name), []byte("#!/bin/sh\ntouch '"+marker+"'\nexit 99\n"), 0o700); err != nil {
 			t.Fatal(err)
 		}
 	}
 	candidates := DiscoverAgents(DiscoveryOptions{Path: bin, HomeDir: root})
-	if len(candidates) != 4 {
+	if len(candidates) != 5 {
 		t.Fatalf("candidates=%d", len(candidates))
 	}
 	for _, item := range candidates {
