@@ -351,7 +351,7 @@ func (s *Service) waitRegistered(ctx context.Context, entry *child, wait time.Du
 	defer func() {
 		s.mu.Lock()
 		entry.waiters--
-		id, done := entry.result.TaskID, entry.result.State == task.StateDone || entry.result.State == task.StateFailed
+		id, done := entry.result.TaskID, entry.result.State == task.StateDone || entry.result.State == task.StateFailed || entry.result.State == task.StateCancelled
 		s.mu.Unlock()
 		if done {
 			if tracked, ok := s.tasks.Get(id); ok {
