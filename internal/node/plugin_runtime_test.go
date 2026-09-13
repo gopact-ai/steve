@@ -260,6 +260,15 @@ func TestPluginStdioLaunchUsesRequiredACPWireFields(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The Go ACP client validates outbound requests by decoding them back
+	// into their typed schema before writing to the agent.
+	var checked acp.NewSessionRequest
+	if err := json.Unmarshal(raw, &checked); err != nil {
+		t.Fatalf("ACP client rejects its outgoing request: %v", err)
+	}
+	if len(checked.MCPServers) != 1 {
+		t.Fatal("ACP validation discarded the plugin server")
+	}
 	var wire struct {
 		Servers []map[string]json.RawMessage `json:"mcpServers"`
 	}
