@@ -1,6 +1,8 @@
 package nativehistory
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -25,6 +27,19 @@ func TestDshImportsRootSessionAndIndependentCompressedEventFrames(t *testing.T) 
 			encoder.Close()
 		}
 		writeFixture(t, home, name, string(raw))
+		attachment := "selected attachment bytes"
+		digest := fmt.Sprintf("%x", sha256.Sum256([]byte(attachment)))
+		attachmentPath := "attachments/v1/objects/" + digest[:2] + "/" + digest
+		writeFixture(t, home, attachmentPath, attachment)
+		refEvent := []byte(`{"type":"user","images":[{"attachmentId":"sha256:` + digest + `"}]}` + "\n")
+		if compressed {
+			encoder, _ := zstd.NewWriter(nil)
+			refEvent = encoder.EncodeAll(refEvent, nil)
+			encoder.Close()
+		}
+		raw = append(raw, refEvent...)
+		writeFixture(t, home, name, string(raw))
+		writeFixture(t, home, "attachments/v1/objects/unselected", "must stay behind")
 		writeFixture(t, home, "sessions/-work/child/session.jsonl", "{\"type\":\"session\",\"id\":\"child\",\"cwd\":\"/work\",\"origin\":\"subagent\"}\n")
 		src := Source{Harness: "dsh", Home: home}
 		entries, err := List(t.Context(), src)
@@ -43,6 +58,12 @@ func TestDshImportsRootSessionAndIndependentCompressedEventFrames(t *testing.T) 
 		got, err := os.ReadFile(filepath.Join(dest, name))
 		if err != nil || string(got) != string(raw) {
 			t.Fatal("DSH storage encoding or event frames changed")
+		}
+		if got, err := os.ReadFile(filepath.Join(dest, attachmentPath)); err != nil || string(got) != attachment {
+			t.Fatal("selected DSH attachment missing")
+		}
+		if _, err := os.Stat(filepath.Join(dest, "attachments/v1/objects/unselected")); !os.IsNotExist(err) {
+			t.Fatal("unrelated attachment copied")
 		}
 	}
 }

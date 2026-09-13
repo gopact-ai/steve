@@ -75,6 +75,21 @@ func inventory(ctx context.Context, root *os.Root, entry Entry) ([]sourceFile, e
 			return nil, err
 		}
 	}
+	if entry.Harness == "dsh" {
+		attachments, err := dshAttachments(ctx, root, files)
+		if err != nil {
+			return nil, err
+		}
+		for _, path := range attachments {
+			info, err := root.Lstat(path)
+			if err != nil {
+				return nil, err
+			}
+			if err := add(path, info); err != nil {
+				return nil, err
+			}
+		}
+	}
 	slices.SortFunc(files, func(a, b sourceFile) int { return strings.Compare(a.path, b.path) })
 	return files, nil
 }
