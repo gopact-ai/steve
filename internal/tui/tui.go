@@ -29,7 +29,8 @@ type Config struct {
 	Token string
 	// Refresh is the floor: the screen also redraws whenever the event
 	// stream says something moved, so this only covers a silent stream.
-	Refresh time.Duration
+	Refresh       time.Duration
+	CheckRedirect func(*http.Request, []*http.Request) error
 }
 
 type Model struct {
@@ -63,7 +64,7 @@ func New(cfg Config) *Model {
 	}
 	return &Model{
 		cfg:    cfg,
-		client: &http.Client{Timeout: 15 * time.Second},
+		client: &http.Client{Timeout: 15 * time.Second, CheckRedirect: cfg.CheckRedirect},
 		width:  100, height: 40,
 	}
 }
@@ -187,7 +188,7 @@ func (m *Model) stream(ctx context.Context, poke func()) error {
 	}
 	m.authorize(req)
 	// The stream is long-lived; the client's own timeout must not cut it.
-	client := &http.Client{}
+	client := &http.Client{CheckRedirect: m.cfg.CheckRedirect}
 	res, err := client.Do(req)
 	if err != nil {
 		return err

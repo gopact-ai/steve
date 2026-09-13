@@ -1,27 +1,19 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"flag"
-	"fmt"
 	"log"
-	"net/http"
-	neturl "net/url"
 	"os"
-	"os/signal"
-	"strings"
-	"syscall"
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/app"
+	"github.com/gopact-ai/steve/internal/consoleclient"
 	"github.com/gopact-ai/steve/internal/processrestart"
 	setupcmd "github.com/gopact-ai/steve/internal/setup"
-	"github.com/gopact-ai/steve/internal/tui"
 	"golang.org/x/term"
 )
 
@@ -44,8 +36,8 @@ func main() {
 // commands are the subcommands by name; anything else is `steve run`. A table
 // rather than a switch: it gives back the 10 lines the ledger verb split cost.
 var commands = map[string]func(args []string) error{
-	"setup": setup, "doctor": doctor, "top": top, "dash": dash, "desktop": desktopCmd, "peer": peerCmd, "peer-import": peerImportCmd, "peer-init": app.InitClusterCommand,
-	"ledger": ledgerCmd, "migrate": migrateCmd, "say": say, "plugins": app.PluginsCommand, "mcp-launch": app.MCPLaunchCommand,
+	"setup": setup, "doctor": doctor, "top": consoleclient.Top, "dash": consoleclient.Dash, "desktop": desktopCmd, "peer": peerCmd, "peer-import": peerImportCmd, "peer-init": app.InitClusterCommand,
+	"ledger": ledgerCmd, "migrate": migrateCmd, "say": consoleclient.Say, "plugins": app.PluginsCommand, "mcp-launch": app.MCPLaunchCommand,
 }
 
 func run(args []string) error {
@@ -94,66 +86,6 @@ func setup(args []string) error {
 	return err
 }
 
-// top renders the read model in this terminal. It is a client of the running
-// gateway's HTTP surface, not a second reader of the stores: one read model,
-// two renderers, so the terminal and the browser cannot disagree.
-func top(args []string) error {
-	flags := flag.NewFlagSet("top", flag.ContinueOnError)
-	url := flags.String("url", defaultReadModelURL, "read model URL of a running gateway")
-	token := flags.String("token", "", "token, when the read model is not on loopback")
-	refresh := flags.Duration("refresh", 5*time.Second, "redraw floor; changes also redraw immediately")
-	once := flags.Bool("once", false, "print one frame and exit")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	model := tui.New(tui.Config{URL: *url, Token: *token, Refresh: *refresh})
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-	if *once {
-		fmt.Print(model.Once(ctx))
-		return nil
-	}
-	return model.Run(ctx)
-}
-
-// dash prints the dashboard URL of a running gateway. The page is served by
-// the gateway itself, so there is no second process to keep alive.
-func dash(args []string) error {
-	flags := flag.NewFlagSet("dash", flag.ContinueOnError)
-	url := flags.String("url", defaultReadModelURL, "read model URL of a running gateway")
-	token := flags.String("token", "", "token, when the read model is not on loopback")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, *url+"/state", nil)
-	if err != nil {
-		return err
-	}
-	if *token != "" {
-		req.Header.Set("Authorization", "Bearer "+*token)
-	}
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("no gateway at %s — is `steve run` up? %w", *url, err)
-	}
-	defer res.Body.Close()
-	if res.StatusCode != http.StatusOK {
-		return fmt.Errorf("read model at %s answered %s", *url, res.Status)
-	}
-	page := *url
-	if *token != "" {
-		page += "/?token=" + neturl.QueryEscape(*token)
-	}
-	fmt.Println(page)
-	return nil
-}
-
-// defaultReadModelURL is where `steve run` puts the read model unless the
-// config says otherwise.
-const defaultReadModelURL = "http://127.0.0.1:7710"
-
 func serve(args []string) error {
 	if handled, err := maybeManagedPeer(args); handled {
 		return err
@@ -172,54 +104,4 @@ func serve(args []string) error {
 
 func isTerminal() bool {
 	return term.IsTerminal(int(os.Stdin.Fd()))
-}
-
-// say sends one line to a running gateway's console and prints the reply:
-// the page's send box, from a shell.
-func say(args []string) error {
-	flags := flag.NewFlagSet("say", flag.ContinueOnError)
-	url := flags.String("url", defaultReadModelURL, "read model URL of a running gateway")
-	token := flags.String("token", "", "token, when the read model is not on loopback")
-	conversation := flags.String("conversation", "console:main", "console conversation")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	input := strings.TrimSpace(strings.Join(flags.Args(), " "))
-	if input == "" {
-		return errors.New("usage: steve say [-url …] [-token …] <text or /verb …>")
-	}
-	body, _ := json.Marshal(map[string]string{"conversation": *conversation, "input": input}) // a map of strings always encodes
-	ctx, cancel := context.WithTimeout(context.Background(), 35*time.Minute)
-	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, *url+"/console/send", bytes.NewReader(body))
-	if err != nil {
-		return err
-	}
-	req.Header.Set("Content-Type", "application/json")
-	if *token != "" {
-		req.Header.Set("Authorization", "Bearer "+*token)
-	}
-	res, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return fmt.Errorf("no gateway at %s — is `steve run` up? %w", *url, err)
-	}
-	defer res.Body.Close()
-	var out struct {
-		Error string `json:"error"`
-		Reply struct {
-			Title string `json:"title"`
-			Text  string `json:"text"`
-		} `json:"reply"`
-	}
-	if err := json.NewDecoder(res.Body).Decode(&out); err != nil {
-		return fmt.Errorf("console at %s answered %s", *url, res.Status)
-	}
-	if out.Reply.Title != "" {
-		fmt.Println("== " + out.Reply.Title)
-	}
-	fmt.Println(out.Reply.Text)
-	if out.Error != "" {
-		return errors.New(out.Error)
-	}
-	return nil
 }
