@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"time"
@@ -35,12 +34,28 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		Harness, Workdir, Permission string
 		Servers                      []acp.MCPServer
 		NativeImport                 *nativehistory.Reference `json:"native_import,omitempty"`
-	}{req.Binding, req.Harness, req.Workdir, permissionName, req.MCPServers, req.NativeImport})
+		ResumeFrom                   string                   `json:"resume_from,omitempty"`
+	}{req.Binding, req.Harness, req.Workdir, permissionName, req.MCPServers, req.NativeImport, req.ID})
 	id := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness)
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return nodewire.SessionState{}, sessionError("closed", "node session service is closed")
+	}
+	// An archived session can supply native context only to a fresh, admitted
+	// execution. Its old input receipts remain on the source record.
+	var source *sessionRecord
+	if req.ID != "" {
+		var err error
+		source, err = s.resumeSourceLocked(req, id)
+		if err != nil {
+			s.mu.Unlock()
+			return nodewire.SessionState{}, err
+		}
+		if source == nil {
+			s.mu.Unlock()
+			return s.closedState(req)
+		}
 	}
 	if one := s.sessions[id]; one != nil {
 		s.mu.Unlock()
@@ -87,33 +102,10 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		s.mu.Unlock()
 		return nodewire.SessionState{}, err
 	}
-	configHash := sessionConfigHash(req)
-	hostCfg, pluginInstructions, err := s.prepareSessionHost(ctx, id, &req, spec, broker)
+	one, hostCfg, err := s.prepareOwnedSession(ctx, id, hash, &req, spec, broker, source)
 	if err != nil {
 		s.mu.Unlock()
 		return nodewire.SessionState{}, err
-	}
-	host := acphost.New(hostCfg)
-	one := &ownedSession{pluginInstructions: pluginInstructions, service: s, host: host, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
-	one.record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: configHash, State: nodewire.SessionState{ID: id, NativeImport: req.NativeImport.Clone(), Plugin: req.Plugin.Clone(), Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionOpening, Questions: []nodewire.SessionQuestion{}}, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}}
-	if err := one.commitLocked(one.record); err != nil {
-		// Save can fail after publishing its record. Only remove preparation
-		// when durable absence is confirmed; uncertainty retains the history.
-		if req.NativeImport != nil {
-			if _, exists, readErr := s.readRecord(id); readErr == nil && !exists {
-				_ = os.RemoveAll(filepath.Join(s.server.conf().StateDir, "native-runtimes", id))
-			}
-		}
-		s.mu.Unlock()
-		host.Close()
-		return nodewire.SessionState{}, err
-	}
-	if req.Plugin != nil {
-		if err := s.server.pluginStore().BeginRuntimeUse(ctx, *req.Plugin, "session/"+id, "session"); err != nil {
-			s.mu.Unlock()
-			host.Close()
-			return nodewire.SessionState{}, err
-		}
 	}
 	openCtx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
 	one.openCancel, one.openDone = cancel, make(chan struct{})
@@ -130,9 +122,23 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	s, host := one.service, one.host
 	// The durable open belongs to the node. A lost caller response must not
 	// kill a successfully created agent or make an identical retry start twice.
-	upstream := ""
-	if req.NativeImport != nil {
+	// Preparation has created no process. Serialize native start with an
+	// explicit cancellation and publish the new physical state first.
+	one.mu.Lock()
+	if one.record.State.State == nodewire.SessionClosing || one.record.State.State == nodewire.SessionClosed || openCtx.Err() != nil {
+		one.mu.Unlock()
+		return one.stateAfterFailedOpen(context.Canceled)
+	}
+	upstream := one.record.UpstreamID
+	if upstream == "" && req.NativeImport != nil {
 		upstream = req.NativeImport.NativeID
+	}
+	starting := one.copyLocked()
+	starting.State.ProcessStopped = false
+	err := one.commitLocked(starting)
+	one.mu.Unlock()
+	if err != nil {
+		return one.stateAfterFailedOpen(err)
 	}
 	native, generation, openErr := host.OpenSession(openCtx, acp.SessionID(upstream), acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
 	httpMCP := false
@@ -148,7 +154,10 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	}
 	one.mu.Lock()
 	next := one.copyLocked()
-	next.UpstreamID, next.Generation = string(native), generation
+	if openErr == nil {
+		next.UpstreamID = string(native)
+	}
+	next.Generation = generation
 	if openErr != nil {
 		if next.State.State != nodewire.SessionClosing && next.State.State != nodewire.SessionClosed {
 			next.State.State = nodewire.SessionInterrupted
@@ -165,12 +174,10 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	saveErr := one.commitLocked(next)
 	one.mu.Unlock()
 	if openErr != nil {
-		host.Close()
-		return one.state(""), openErr
+		return one.stateAfterFailedOpen(openErr)
 	}
 	if saveErr != nil {
-		host.Close()
-		return nodewire.SessionState{}, saveErr
+		return one.stateAfterFailedOpen(saveErr)
 	}
 	return one.state(""), nil
 }
@@ -202,6 +209,11 @@ func (one *ownedSession) prompt(req nodewire.SessionRequest) (nodewire.SessionSt
 	if req.InputSequence != one.record.State.InputAccepted+1 || len(one.record.Commands) >= 512 {
 		return nodewire.SessionState{}, sessionError("conflict", "input sequence is stale or session retention limit reached")
 	}
+	one.service.mu.Lock()
+	defer one.service.mu.Unlock()
+	if one.service.closed {
+		return nodewire.SessionState{}, sessionError("closed", "node session service is closed")
+	}
 	next := one.copyLocked()
 	next.CommandHashes[req.CommandID] = hash
 	next.Commands[req.CommandID] = nodewire.SessionCommand{ID: req.CommandID, InputSequence: req.InputSequence, State: nodewire.SessionCommandAccepted, DispatchState: "not-dispatched"}
@@ -212,13 +224,7 @@ func (one *ownedSession) prompt(req nodewire.SessionRequest) (nodewire.SessionSt
 	if err := one.commitLocked(next); err != nil {
 		return nodewire.SessionState{}, err
 	}
-	one.service.mu.Lock()
-	if one.service.closed {
-		one.service.mu.Unlock()
-		return nodewire.SessionState{}, sessionError("closed", "node session service is closed")
-	}
 	one.service.wg.Add(1)
-	one.service.mu.Unlock()
 	one.runDone = make(chan struct{})
 	done := one.runDone
 	go func() { defer one.service.wg.Done(); defer close(done); one.run(req) }()
@@ -308,8 +314,8 @@ func (one *ownedSession) run(req nodewire.SessionRequest) {
 		}
 	}
 	for i := range next.State.Questions {
-		if next.State.Questions[i].CommandID == req.CommandID && next.State.Questions[i].State == "pending" {
-			next.State.Questions[i].State = "interrupted"
+		if next.State.Questions[i].CommandID == req.CommandID && next.State.Questions[i].State == nodewire.SessionQuestionPending {
+			next.State.Questions[i].State = nodewire.SessionQuestionInterrupted
 		}
 	}
 	// A failed commit is latched in one.failure for the next request.

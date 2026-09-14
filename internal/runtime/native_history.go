@@ -11,6 +11,41 @@ import (
 	"github.com/gopact-ai/steve/internal/nativehistory"
 )
 
+// ResumeNativeHistory reuses the admitted managed home, including inputs made
+// since import. Re-materializing the original snapshot would lose that context.
+// The node must hold the exclusive resume claim before calling this helper.
+func ResumeNativeHistory(ctx context.Context, stateDir, execution string, ref nativehistory.Reference, cfg harness.Config) (harness.Config, error) {
+	if !nativehistory.StorageSupported {
+		return harness.Config{}, nativehistory.ErrUnsupported
+	}
+	if !strings.HasPrefix(execution, "ns_") || strings.ContainsAny(execution, "/\\") {
+		return harness.Config{}, errors.New("native history needs a managed execution identity")
+	}
+	key, _ := (PluginProfiles{StateDir: stateDir}).nativeHome(ref.Harness, cfg.Env)
+	if key == "" {
+		return harness.Config{}, nativehistory.ErrUnsupported
+	}
+	if err := ctx.Err(); err != nil {
+		return harness.Config{}, err
+	}
+	parent := filepath.Join(stateDir, "native-runtimes")
+	home := filepath.Join(parent, execution, "home")
+	for _, path := range []string{parent, filepath.Dir(home), home} {
+		info, err := os.Lstat(path)
+		if err != nil {
+			return harness.Config{}, err
+		}
+		if !info.IsDir() || info.Mode().Perm()&0077 != 0 {
+			return harness.Config{}, errors.New("native resume home must be a private directory")
+		}
+	}
+	cfg.Env = replaceProfileEnv(cfg.Env, key, home)
+	if HasEnv(cfg.Env, "STEVE_PLUGIN_SKILLS_DIR") {
+		cfg.Env = replaceProfileEnv(cfg.Env, "STEVE_PLUGIN_SKILLS_DIR", filepath.Join(home, "skills"))
+	}
+	return cfg, nil
+}
+
 // PrepareNativeHistory publishes one execution's isolated native home. Its
 // selected transcript comes from the immutable import; model access and skills
 // come from the currently admitted runtime, including a pinned plugin profile.

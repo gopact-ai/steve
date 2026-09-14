@@ -23,6 +23,8 @@ func completionLandingIdentity(land Landing) completionLandingKey {
 // drainers could race, leaving a terminal lock refusal alongside a successful
 // landing of the exact same result. That refusal never acquired a write lease;
 // its historical record remains intact without blocking accepted work forever.
+// Unapplied is explicit preapply-stop proof; snapshots and candidate merge paths
+// remain evidence even when no canonical write was admitted.
 func CheckTaskLandingsTx(tx *ledger.Tx, ids map[string]bool) error {
 	queue, err := tx.Bindings(pendingKind)
 	if err != nil {
@@ -61,7 +63,7 @@ func CheckTaskLandingsTx(tx *ledger.Tx, ids map[string]bool) error {
 		if land.State == LandCommitted {
 			continue
 		}
-		unwritten := land.State == LandMergeConflicted && land.Lease == nil && land.Round == 0 && land.Now == "" && land.Merged == "" && len(land.Paths) == 0 && !land.EndedAt.IsZero()
+		unwritten := land.State == LandMergeConflicted && land.Lease == nil && land.Round == 0 && !land.EndedAt.IsZero() && (land.Unapplied || (land.Now == "" && land.Merged == "" && len(land.Paths) == 0))
 		if unwritten && committed[completionLandingIdentity(land)] {
 			continue
 		}

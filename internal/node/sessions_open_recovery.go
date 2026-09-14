@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"errors"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
@@ -48,10 +49,14 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 		if req.Action == nodewire.SessionActionCancelOpen && !one.record.State.ProcessStopped {
 			return nodewire.SessionState{}, sessionError("uncertain", "original native process stop is not confirmed")
 		}
-		if req.Action == nodewire.SessionActionCancelOpen && one.record.State.State != nodewire.SessionClosed {
+		if req.Action == nodewire.SessionActionCancelOpen {
 			next := one.copyLocked()
-			next.State.State = nodewire.SessionClosed
-			if err := one.commitLocked(next); err != nil {
+			var saveErr error
+			if next.State.State != nodewire.SessionClosed {
+				next.State.State = nodewire.SessionClosed
+				saveErr = one.commitLocked(next)
+			}
+			if err := errors.Join(saveErr, s.endStoppedRuntime(next)); err != nil {
 				return nodewire.SessionState{}, err
 			}
 		}

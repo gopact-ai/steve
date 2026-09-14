@@ -71,6 +71,8 @@ type Landing struct {
 	StartedAt      time.Time     `json:"started_at"`
 	EndedAt        time.Time     `json:"ended_at,omitempty"`
 	Recoverable    bool          `json:"recoverable,omitempty"`
+	// Unapplied is durably recorded only when closing a preapply state.
+	Unapplied bool `json:"unapplied,omitempty"`
 }
 
 const (
@@ -115,7 +117,7 @@ func (s *Store) LandUnder(ctx context.Context, p project.Project, artifactID, by
 // machine above spells out. held is a canonical lock the caller lends;
 // resume is the record of a landing that recovery is finishing, which
 // keeps its identity and never records a failure of its own.
-func (s *Store) land(ctx context.Context, p project.Project, artifactID, by string, held *ledger.Lease, source *Source, resume *Landing) (Landing, error) {
+func (s *Store) land(ctx context.Context, p project.Project, artifactID, by string, held *ledger.Lease, source *Source, resume *Landing) (land Landing, err error) {
 	borrowedHolder, err := s.checkLandingWriter(ctx, p, held)
 	if err != nil {
 		return Landing{}, err
@@ -125,10 +127,15 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 		return Landing{}, err
 	}
 	defer finish()
-	land, err := s.proposeLanding(ctx, p, artifactID, by, borrowedHolder, source, resume)
+	land, err = s.proposeLanding(ctx, p, artifactID, by, borrowedHolder, source, resume)
 	if err != nil {
 		return Landing{}, err
 	}
+	defer func() {
+		if err != nil && !land.Recoverable {
+			s.closeUnappliedLanding(ctx, &land, err)
+		}
+	}()
 	unlock, err := s.lockCanonical(ctx, p, &land, held)
 	if err != nil {
 		return land, err

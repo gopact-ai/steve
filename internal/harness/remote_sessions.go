@@ -92,6 +92,11 @@ type managedSession struct {
 	stopState nodewire.SessionState
 }
 
+// NativeContextSession exposes node-verified context continuity to the ledger.
+type NativeContextSession interface {
+	NativeContextID() string
+}
+
 func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID, workdir string, servers []acp.MCPServer) (Runner, bool, error) {
 	binding, bound := NodeSessionFromContext(ctx)
 	profile := PluginProfile(ctx)
@@ -163,6 +168,18 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 }
 
 func (s *managedSession) ID() string { return s.id }
+
+// NativeContextID is node-attested continuity across managed executions.
+// Older nodes keep the managed identity for the lifetime of a native context.
+func (s *managedSession) NativeContextID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.state.ContextID != "" {
+		return s.state.ContextID
+	}
+	return s.id
+}
+
 func (s *managedSession) current(ctx context.Context) NodeSessionContext {
 	if current, ok := NodeSessionFromContext(ctx); ok {
 		return current
@@ -325,7 +342,7 @@ observe:
 			}
 		}
 		for _, q := range state.Questions {
-			if q.State != "pending" || q.CommandID != request.CommandID {
+			if q.State != nodewire.SessionQuestionPending || q.CommandID != request.CommandID {
 				continue
 			}
 			s.mu.Lock()
@@ -453,7 +470,7 @@ func (s *managedSession) collectAnswer(ctx context.Context, request nodewire.Ses
 			}
 			pending := false
 			for _, question := range state.Questions {
-				if question.ID == q.ID && question.State == "pending" {
+				if question.ID == q.ID && question.State == nodewire.SessionQuestionPending {
 					pending = true
 					break
 				}

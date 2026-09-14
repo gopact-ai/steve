@@ -28,7 +28,7 @@ func (s *Server) advert() nodewire.Advert {
 	adv.Snapshot = s.snapshot()
 	adv.Features = nodewire.Features()
 	if s.sessions != nil {
-		adv.Features = append(adv.Features, nodewire.FeatureNodeSessions)
+		adv.Features = append(adv.Features, nodewire.FeatureNodeSessions, nodewire.FeatureNativeResume)
 		if nativehistory.StorageSupported {
 			adv.Features = append(adv.Features, nodewire.FeatureNativeHistory)
 		}

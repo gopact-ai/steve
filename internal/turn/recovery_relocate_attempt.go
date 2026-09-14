@@ -340,7 +340,12 @@ func (c *Coordinator) openRelocation(ctx context.Context, req Request, r attempt
 	if err := applyRecoveryPreferences(ctx, runner, r.Preferences); err != nil {
 		return nil, r, session, true, retainedBlocked("relocation-options", "在目标原生会话设置并读回原执行的模型和选项", "目标会话不能按原设置继续任务。", err.Error(), "建议补齐目标Agent支持的模型和选项后重新检查；尚未向它发送原任务。", err)
 	}
-	r, err = c.attempts.Advance(ctx, r.ID, attempt.Running, "relocation", func(next *attempt.Record) { next.Session = runner.ID() })
+	r, err = c.attempts.Advance(ctx, r.ID, attempt.Running, "relocation", func(next *attempt.Record) {
+		next.Session = runner.ID()
+		if native, ok := runner.(harness.NativeContextSession); ok {
+			next.NativeContext = native.NativeContextID()
+		}
+	})
 	if err != nil {
 		return nil, r, session, true, err
 	}

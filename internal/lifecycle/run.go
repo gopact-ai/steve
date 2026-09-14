@@ -544,6 +544,9 @@ func (e *Execution) start(ctx context.Context) error {
 	session := e.Session
 	running, err := o.Attempts.Advance(ctx, id, attempt.Running, o.Actor, func(r *attempt.Record) {
 		r.Session = session.ID()
+		if native, ok := session.(harness.NativeContextSession); ok {
+			r.NativeContext = native.NativeContextID()
+		}
 		if arm != nil {
 			arm(r)
 		}

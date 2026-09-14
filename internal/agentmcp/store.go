@@ -42,6 +42,6 @@ type StoreTx interface {
 	// generation on every tools/call. It must not resolve a newer attempt.
 	Authorize(Binding, GrantScope) error
 	// Bind checks a first grant or explicit scope change. A change requires
-	// the previous attempt to be settled and the same native chat session.
+	// the previous attempt to be settled and the same verified native context.
 	Bind(Binding, *GrantScope, GrantScope) error
 }

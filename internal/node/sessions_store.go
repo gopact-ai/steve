@@ -122,8 +122,8 @@ func (s *SessionService) load() error {
 				}
 			}
 			for i := range record.State.Questions {
-				if record.State.Questions[i].State == "pending" {
-					record.State.Questions[i].State = "interrupted"
+				if record.State.Questions[i].State == nodewire.SessionQuestionPending {
+					record.State.Questions[i].State = nodewire.SessionQuestionInterrupted
 				}
 			}
 			if err := one.commitLocked(record); err != nil {
@@ -134,6 +134,9 @@ func (s *SessionService) load() error {
 		// receipt on disk and load it on demand rather than consuming a live slot.
 		if !record.State.ProcessStopped {
 			s.unverifiedProcesses = true
+		}
+		if err := s.endStoppedRuntime(record); err != nil {
+			return err
 		}
 
 	}
