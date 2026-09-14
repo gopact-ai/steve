@@ -608,6 +608,7 @@ func nodes(statuses []node.Status) []Node {
 // tasks converts the task list and links parents to children, so a renderer
 // can draw the tree without walking the list twice.
 func tasks(list []task.Task, plans map[string]plan.Plan) []Task {
+	completable := task.CompletionEligibility(list)
 	children := map[string][]string{}
 	for _, t := range list {
 		if t.Parent != "" {
@@ -624,7 +625,7 @@ func tasks(list []task.Task, plans map[string]plan.Plan) []Task {
 			Elapsed:     t.Budget.Elapsed.Round(time.Second).String(),
 			MaxElapse:   t.Budget.MaxElapsed.Round(time.Minute).String(),
 			UpdatedAt:   t.UpdatedAt,
-			CanComplete: task.CompletionBlocker(t, list) == nil,
+			CanComplete: completable[t.ID],
 		}
 		if t.Delegated() && t.Finished() && t.Result != nil && t.Parent != "" {
 			item.ResultDelivery = &task.Delivery{State: task.DeliveryPending, At: t.UpdatedAt}

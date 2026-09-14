@@ -126,6 +126,51 @@ func TestCompleteTaskChecksConversationEvenOnRetry(t *testing.T) {
 	}
 }
 
+func TestBareCompletionSkipsNewerTerminalRoots(t *testing.T) {
+	for _, state := range []task.State{task.StateDone, task.StateFailed, task.StateCancelled, task.StatePaused} {
+		t.Run(string(state), func(t *testing.T) {
+			c, _ := completionCoordinator(t, &fakeRunner{reply: "accepted"})
+			if _, err := handle(c, t.Context(), "older accepted work"); err != nil {
+				t.Fatal(err)
+			}
+			newer, err := c.tasks.Create(task.Task{Channel: "chat", Member: "other", ProjectID: "p", State: state})
+			if err != nil {
+				t.Fatal(err)
+			}
+			result, err := handle(c, t.Context(), "/tasks complete")
+			if err != nil || !strings.Contains(result.Text, "#1") {
+				t.Fatalf("bare completion selected terminal root %s: %+v %v", newer.ID, result, err)
+			}
+			if root, _ := c.tasks.Get("1"); !root.CompletedByUser {
+				t.Fatal("older accepted root was left open")
+			}
+		})
+	}
+}
+
+func TestDisclosurePersistenceErrorDoesNotRewriteSuccessfulAgentOutcome(t *testing.T) {
+	c, book := completionCoordinator(t, &fakeRunner{reply: "sealed answer"})
+	p, _, err := c.projects.Get(t.Context(), "p")
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Level, p.DefaultRole = project.LevelSealed, project.RoleWrite
+	if err := c.projects.Declare(t.Context(), []project.Project{p}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := book.DB().Exec(`CREATE TRIGGER reject_disclosure BEFORE INSERT ON operations WHEN NEW.kind='disclosure-request' BEGIN SELECT RAISE(ABORT, 'disclosure unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	result, err := c.Handle(t.Context(), Request{ConversationID: "chat", SenderOpenID: "guest", Input: "work", MessageID: "sealed-turn"})
+	if err == nil || !strings.Contains(err.Error(), "disclosure unavailable") || result.Text != "" {
+		t.Fatalf("disclosure failure was hidden or answer leaked: %+v %v", result, err)
+	}
+	root, ok := c.tasks.Get("1")
+	if !ok || len(root.Attempts) != 1 || root.Attempts[0].Open() || root.Attempts[0].Outcome != task.OutcomeOK {
+		t.Fatalf("disclosure persistence rewrote successful execution: %+v", root.Attempts)
+	}
+}
+
 func TestCompleteTaskRejectsActiveTurnAndRegistryReservation(t *testing.T) {
 	runner := &fakeRunner{reply: "ok", started: make(chan struct{}), done: make(chan struct{})}
 	coordinator, _ := completionCoordinator(t, runner)

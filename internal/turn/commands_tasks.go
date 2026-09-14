@@ -138,10 +138,16 @@ func (c commands) taskTarget(conversationID, id string, verb taskVerb) (task.Tas
 	}
 	// List is newest first, so the bare verb acts on what the user most
 	// plausibly has in mind — the thing they were just talking about.
+	var completed task.Task
 	for _, candidate := range c.tasks.List(conversationID) {
 		if verb == taskComplete {
 			if candidate.Parent == "" && candidate.Origin == "" {
-				return candidate, true
+				if candidate.State == task.StateRunning || candidate.State == task.StateReview {
+					return candidate, true
+				}
+				if completed.ID == "" && candidate.State == task.StateDone && candidate.CompletedByUser {
+					completed = candidate
+				}
 			}
 			continue
 		}
@@ -154,6 +160,9 @@ func (c commands) taskTarget(conversationID, id string, verb taskVerb) (task.Tas
 		if !candidate.State.Terminal() {
 			return candidate, true
 		}
+	}
+	if completed.ID != "" {
+		return completed, true // Preserve a repeated bare completion when no open root remains.
 	}
 	return task.Task{}, false
 }

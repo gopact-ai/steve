@@ -46,6 +46,27 @@ func CompletionBlocker(root Task, all []Task) error {
 	return completionBlocker(root, completionTree(root, all))
 }
 
+// CompletionEligibility indexes the forest once for a read-model snapshot.
+// Every root owns a disjoint subtree, so history is not scanned per root.
+func CompletionEligibility(all []Task) map[string]bool {
+	children := make(map[string][]Task)
+	for _, member := range all {
+		children[member.Parent] = append(children[member.Parent], member)
+	}
+	eligible := make(map[string]bool)
+	for _, root := range children[""] {
+		if root.ID == "" || root.Origin != "" || root.PreparedPlan != nil || (root.State != StateRunning && root.State != StateReview) {
+			continue
+		}
+		tree := []Task{root}
+		for i := 0; i < len(tree); i++ {
+			tree = append(tree, children[tree[i].ID]...)
+		}
+		eligible[root.ID] = completionBlocker(root, tree) == nil
+	}
+	return eligible
+}
+
 func completionBlocker(root Task, tree []Task) error {
 	if root.Parent != "" || root.Origin != "" || root.PreparedPlan != nil {
 		return ErrCompleteRoot
