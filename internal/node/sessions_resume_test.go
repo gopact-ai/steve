@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/permission"
 )
 
 func resumedFixture(t *testing.T, command string) (ServerConfig, nodewire.SessionRequest, sessionRecord) {
@@ -101,6 +102,11 @@ func TestSettledNativeContextResumesOnceAndPreservesOriginalReceipts(t *testing.
 	if repeated, err := s.sessions.Do(t.Context(), "cluster-1", input); err != nil || repeated.InputAccepted != 1 {
 		t.Fatal("fresh input receipt was replayed")
 	}
+	warm := req
+	warm.ID, warm.Binding.TaskID, warm.CommandID = current.State.ID, "warm-task", "warm/open"
+	if state, err := s.sessions.Do(t.Context(), "cluster-1", warm); err != nil || state.ID != current.State.ID || state.Binding != warm.Binding || state.ContextID != old.State.ID {
+		t.Fatalf("live continuation entered cold resume: %+v %v", state, err)
+	}
 	s.sessions.Close()
 	restarted := NewServer(cfg)
 	if err := restarted.startSessions(t.Context()); err != nil {
@@ -120,7 +126,7 @@ func TestSettledNativeContextResumesOnceAndPreservesOriginalReceipts(t *testing.
 }
 
 func TestNativeResumeRejectsUncertainSourcesAndChangedAuthorityBeforeStart(t *testing.T) {
-	for _, mode := range []string{"process", "receipt", "cancelled-input", "question", "native-id", "project", "conversation", "workdir", "policy", "coordinator", "start", "cancelled-open"} {
+	for _, mode := range []string{"process", "receipt", "cancelled-input", "question", "unknown-question", "missing-answer", "native-id", "project", "conversation", "workdir", "policy", "coordinator", "start", "cancelled-open"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg, req, record := resumedFixture(t, "/must-not-start")
 			switch mode {
@@ -136,6 +142,10 @@ func TestNativeResumeRejectsUncertainSourcesAndChangedAuthorityBeforeStart(t *te
 				record.Commands["old-input"] = c
 			case "question":
 				record.State.Questions = []nodewire.SessionQuestion{{State: "interrupted"}}
+			case "unknown-question":
+				record.State.Questions = []nodewire.SessionQuestion{{State: "unknown"}}
+			case "missing-answer":
+				record.State.Questions = []nodewire.SessionQuestion{{State: "answered"}}
 			case "native-id":
 				record.UpstreamID = ""
 			case "project":
@@ -197,5 +207,69 @@ func TestNativeResumeDoesNotFallBackToANewConversation(t *testing.T) {
 	state, err := s.sessions.Do(t.Context(), "cluster-1", inspect)
 	if err != nil || !state.ProcessStopped || state.InputAccepted != 0 {
 		t.Fatalf("failed load has no safe cancellation receipt: %+v %v", state, err)
+	}
+}
+
+func TestNativeResumePreparationHasACancellableStoppedReceipt(t *testing.T) {
+	cfg, req, source := resumedFixture(t, buildMockAgent(t))
+	saveResumeFixture(t, cfg, source)
+	s := NewServer(cfg)
+	if err := s.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.sessions.Close()
+	id := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness)
+	broker, _ := permission.New("read")
+	s.sessions.mu.Lock()
+	prepared, _, err := s.sessions.prepareOwnedSession(t.Context(), id, "reserved-open", &req, cfg.Harnesses["mock"], broker, &source)
+	s.sessions.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer prepared.host.Close()
+	// The caller fails before native start, e.g. acquiring plugin runtime use.
+	// Its published source claim and destination must remain safely cancellable.
+	inspect := req
+	inspect.ID, inspect.Action = "", nodewire.SessionActionCancelOpen
+	stopped, err := s.sessions.Do(t.Context(), "cluster-1", inspect)
+	if err != nil || !stopped.ProcessStopped || stopped.State != nodewire.SessionClosed || stopped.InputAccepted != 0 {
+		t.Fatalf("preparation could not be cancelled: %+v %v", stopped, err)
+	}
+	req.CommandID = "later/open"
+	req.Binding.TaskID = "task-3"
+	state, err := s.sessions.Do(t.Context(), "cluster-1", req)
+	if err != nil || state.InputAccepted != 0 {
+		t.Fatalf("stopped preparation stranded native history: %+v %v", state, err)
+	}
+}
+
+func TestArchivedOpenObservationRequiresExactConfiguration(t *testing.T) {
+	cfg, req, record := resumedFixture(t, "/must-not-start")
+	req.Binding = record.State.Binding
+	req.CommandID = record.OpenID
+	saveResumeFixture(t, cfg, record)
+	s := NewServer(cfg)
+	if err := s.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.sessions.Close()
+	if state, err := s.sessions.Do(t.Context(), "cluster-1", req); err != nil || state.ID != record.State.ID || state.State != nodewire.SessionInterrupted {
+		t.Fatalf("exact observation failed: %+v %v", state, err)
+	}
+	for _, mode := range []string{"command", "harness", "workdir", "policy"} {
+		changed := req
+		switch mode {
+		case "command":
+			changed.CommandID = "other/open"
+		case "harness":
+			changed.Harness = "other"
+		case "workdir":
+			changed.Workdir = t.TempDir()
+		case "policy":
+			changed.Permission = "auto"
+		}
+		if _, err := s.sessions.Do(t.Context(), "cluster-1", changed); err == nil {
+			t.Fatalf("changed %s accepted as archived observation", mode)
+		}
 	}
 }

@@ -138,6 +138,7 @@ type SessionState struct {
 	Plugin          *plugins.RuntimeRef      `json:"plugin,omitempty"`
 	OpenReceipt     *SessionOpenReceipt      `json:"open_receipt,omitempty"`
 	ID              string                   `json:"id"`
+	ContextID       string                   `json:"context_id,omitempty"`
 	Binding         SessionBinding           `json:"binding"`
 	Harness         string                   `json:"harness"`
 	State           SessionStatus            `json:"state"`

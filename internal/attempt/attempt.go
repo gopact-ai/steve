@@ -192,6 +192,7 @@ type Record struct {
 	State          State          `json:"state"`
 	Revision       int64          `json:"revision"`
 	Session        string         `json:"session,omitempty"`
+	NativeContext  string         `json:"native_context,omitempty"`
 	Leases         []ledger.Lease `json:"leases"`
 	Result         *Result        `json:"result,omitempty"`
 	// Usage is what the attempt cost, as the harness last reported it,

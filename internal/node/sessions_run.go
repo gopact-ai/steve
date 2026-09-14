@@ -122,9 +122,25 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	s, host := one.service, one.host
 	// The durable open belongs to the node. A lost caller response must not
 	// kill a successfully created agent or make an identical retry start twice.
+	// Preparation has created no process. Serialize native start with an
+	// explicit cancellation and publish the new physical state first.
+	one.mu.Lock()
+	if one.record.State.State == nodewire.SessionClosing || one.record.State.State == nodewire.SessionClosed || openCtx.Err() != nil {
+		state := one.stateLocked("")
+		one.mu.Unlock()
+		return state, context.Canceled
+	}
 	upstream := one.record.UpstreamID
 	if upstream == "" && req.NativeImport != nil {
 		upstream = req.NativeImport.NativeID
+	}
+	starting := one.copyLocked()
+	starting.State.ProcessStopped = false
+	err := one.commitLocked(starting)
+	one.mu.Unlock()
+	if err != nil {
+		host.Close()
+		return nodewire.SessionState{}, err
 	}
 	native, generation, openErr := host.OpenSession(openCtx, acp.SessionID(upstream), acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
 	httpMCP := false

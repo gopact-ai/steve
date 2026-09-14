@@ -140,7 +140,7 @@ func (t applicationMCPTx) Bind(binding agentmcp.Binding, previous *agentmcp.Gran
 	if previous == nil {
 		return nil
 	}
-	if binding.TaskID != "" || binding.DelegatedBy != "" || previous.AttemptID == next.AttemptID || previous.SessionID != next.SessionID || previous.NodeID != next.NodeID {
+	if binding.TaskID != "" || binding.DelegatedBy != "" || previous.AttemptID == next.AttemptID || previous.NodeID != next.NodeID {
 		return agentmcp.ErrGrantDenied
 	}
 	old, err := t.record(*previous)
@@ -150,11 +150,46 @@ func (t applicationMCPTx) Bind(binding agentmcp.Binding, previous *agentmcp.Gran
 	if old.Kind != attempt.KindChat || old.Agent != binding.AgentID || old.State != attempt.Bound || old.Unsettled || old.SupersededBy != "" || old.SessionSettled == nil || !*old.SessionSettled {
 		return agentmcp.ErrGrantDenied
 	}
+	current, err := t.record(next)
+	if err != nil {
+		return err
+	}
+	contextID := old.NativeContext
+	if contextID == "" {
+		contextID = old.Session
+	}
+	if current.Project != old.Project || (previous.SessionID != next.SessionID && current.NativeContext != contextID) {
+		return agentmcp.ErrGrantDenied
+	}
 	if err := task.CheckExecutionTx(t.tx, old.Execution); err != nil {
 		if errors.Is(err, task.ErrExecutionStopped) {
-			return agentmcp.ErrGrantDenied
+			return t.acceptedChat(binding, old)
 		}
 		return fmt.Errorf("validate prior MCP execution: %w", err)
+	}
+	return nil
+}
+
+// Explicit completion revokes the old execution, while accepting its work.
+// Only the exact completion epoch may transfer a settled chat grant to an
+// independently authorized new attempt. Pause/cancel remain revoked.
+func (t applicationMCPTx) acceptedChat(binding agentmcp.Binding, old attempt.Record) error {
+	raw, ok, err := t.tx.LoadDocument("tasks")
+	if err != nil {
+		return err
+	}
+	var document struct {
+		Tasks map[string]*task.Task `json:"tasks"`
+	}
+	if !ok {
+		return agentmcp.ErrGrantDenied
+	}
+	if err := json.Unmarshal(raw, &document); err != nil {
+		return err
+	}
+	work := document.Tasks[old.TaskID]
+	if work == nil || work.Parent != "" || !work.CompletedByUser || work.State != task.StateDone || work.Channel != binding.ConversationID || work.Member != binding.AgentID || work.ExecutionEpoch != old.Execution.Epoch+1 {
+		return agentmcp.ErrGrantDenied
 	}
 	return nil
 }

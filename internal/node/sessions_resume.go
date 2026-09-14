@@ -20,12 +20,15 @@ func (s *SessionService) resumeSourceLocked(req nodewire.SessionRequest, target 
 		if record.ClusterID != req.Authority.ClusterID || req.Authority.CoordinatorEpoch < record.Authority.CoordinatorEpoch || req.Authority.WriterGeneration < record.Authority.WriterGeneration || (req.Authority.CoordinatorEpoch == record.Authority.CoordinatorEpoch && req.Authority.CoordinatorNodeID != record.Authority.CoordinatorNodeID) {
 			return nil, sessionError("forbidden", "stale native context authority")
 		}
-		if record.State.Binding == req.Binding {
-			return nil, nil // Observation of the original execution stays cold.
-		}
 		before, after := record.State.Binding, req.Binding
 		if before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || before.NativeImportID != after.NativeImportID || before.PluginRuntimeID != after.PluginRuntimeID || record.State.Harness != req.Harness || record.ConfigHash != sessionConfigHash(req) {
 			return nil, sessionError("forbidden", "native context differs from the admitted session or configuration")
+		}
+		if record.State.Binding == req.Binding {
+			if record.OpenID != req.CommandID {
+				return nil, sessionError("conflict", "archived observation must identify the original open")
+			}
+			return nil, nil // Observation of the original execution stays cold.
 		}
 		if record.OpenCancelled || record.UpstreamID == "" || !record.State.ProcessStopped || (record.State.State != nodewire.SessionInterrupted && record.State.State != nodewire.SessionClosed) {
 			return nil, sessionError("uncertain", "original native process must be confirmed stopped before resuming context")
@@ -36,7 +39,7 @@ func (s *SessionService) resumeSourceLocked(req nodewire.SessionRequest, target 
 			}
 		}
 		for _, question := range record.State.Questions {
-			if question.State == "pending" || question.State == "interrupted" {
+			if question.State != "answered" || question.Answer == nil {
 				return nil, sessionError("uncertain", "original native question requires reconciliation")
 			}
 		}
