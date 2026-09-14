@@ -4,11 +4,15 @@
 @interface SteveApplication : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate>
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) WKWebView *webView;
+@property(nonatomic, strong) NSView *workspaceView;
 @property(nonatomic, strong) NSURL *serviceURL;
 @property(nonatomic, strong) NSString *accessToken;
-@property(nonatomic, strong) NSAlert *connectionAlert;
+@property(nonatomic, strong) NSProgressIndicator *loadingIndicator;
 @property(nonatomic, assign) BOOL launching;
 @property(nonatomic, assign) BOOL viewLoaded;
+@property(nonatomic, assign) BOOL awaitingWorkspace;
+@property(nonatomic, assign) BOOL showingFailure;
+@property(nonatomic, assign) NSUInteger loadGeneration;
 @end
 
 @implementation SteveApplication
@@ -73,6 +77,7 @@
 
 - (void)openWorkspace:(id)sender {
     [self showWindow];
+    if (self.awaitingWorkspace || self.showingFailure) return;
     [self connectService];
 }
 
@@ -100,6 +105,7 @@
 
 - (void)connectService {
     if (self.launching) return;
+    self.showingFailure = NO;
     self.launching = YES;
     [self showStarting];
     NSString *binary = [NSBundle.mainBundle pathForResource:@"steve" ofType:nil];
@@ -151,8 +157,8 @@
     if (self.webView && self.viewLoaded && [self isServiceURL:parts.URL] && [self.accessToken isEqualToString:token]) {
         // Reopening a closed window also checks the service, while retaining
         // the current conversation and any unsent editor content in the view.
-        self.webView.frame = self.window.contentView.bounds;
-        self.window.contentView = self.webView;
+        self.workspaceView.frame = self.window.contentView.bounds;
+        self.window.contentView = self.workspaceView;
         return YES;
     }
     self.serviceURL = parts.URL;
@@ -170,26 +176,99 @@
     self.webView.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
     self.webView.allowsBackForwardNavigationGestures = NO;
     self.viewLoaded = NO;
-    self.window.contentView = self.webView;
+    self.workspaceView = [[NSView alloc] initWithFrame:self.window.contentView.bounds];
+    self.webView.frame = self.workspaceView.bounds;
+    [self.workspaceView addSubview:self.webView];
+    self.window.contentView = self.workspaceView;
+    [self beginWorkspaceLoad];
     NSMutableURLRequest *request = [NSMutableURLRequest requestWithURL:self.serviceURL];
     [request setValue:[@"Bearer " stringByAppendingString:token] forHTTPHeaderField:@"Authorization"];
     [self.webView loadRequest:request];
     return YES;
 }
 
-- (void)showConnectionFailure:(NSString *)detail {
-    if (self.connectionAlert) return;
-    NSAlert *alert = [[NSAlert alloc] init];
-    self.connectionAlert = alert;
-    alert.messageText = @"暂时无法打开工作台";
-    alert.informativeText = detail;
-    [alert addButtonWithTitle:@"重试"];
-    [alert addButtonWithTitle:@"关闭窗口"];
-    [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
-        self.connectionAlert = nil;
-        if (response == NSAlertFirstButtonReturn) [self connectService];
-        else [self.window close];
+- (void)beginWorkspaceLoad {
+    [self endWorkspaceLoad];
+    self.awaitingWorkspace = YES;
+    self.viewLoaded = NO;
+    NSUInteger generation = ++self.loadGeneration;
+    NSRect bounds = self.webView.bounds;
+    self.loadingIndicator = [[NSProgressIndicator alloc] initWithFrame:NSMakeRect(NSMidX(bounds) - 16, NSMidY(bounds) - 16, 32, 32)];
+    self.loadingIndicator.style = NSProgressIndicatorStyleSpinning;
+    self.loadingIndicator.indeterminate = YES;
+    self.loadingIndicator.autoresizingMask = NSViewMinXMargin | NSViewMaxXMargin | NSViewMinYMargin | NSViewMaxYMargin;
+    self.loadingIndicator.accessibilityLabel = @"正在打开工作台";
+    [self.workspaceView addSubview:self.loadingIndicator];
+    [self.loadingIndicator startAnimation:nil];
+    __weak SteveApplication *weakSelf = self;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 30 * NSEC_PER_SEC), dispatch_get_main_queue(), ^{
+        SteveApplication *owner = weakSelf;
+        if (!owner || !owner.awaitingWorkspace || owner.loadGeneration != generation) return;
+        [owner endWorkspaceLoad];
+        [owner.webView stopLoading];
+        NSLog(@"Steve workspace did not render before the loading deadline");
+        [owner showConnectionFailure:@"工作台页面未能完成加载。请重试打开页面；这不会重新提交任务。"];
+    });
+}
+
+- (void)endWorkspaceLoad {
+    self.awaitingWorkspace = NO;
+    self.loadGeneration++;
+    [self.loadingIndicator stopAnimation:nil];
+    [self.loadingIndicator removeFromSuperview];
+    self.loadingIndicator = nil;
+}
+
+- (void)confirmWorkspaceReady:(WKWebView *)webView generation:(NSUInteger)generation {
+    if (webView != self.webView || !self.awaitingWorkspace || generation != self.loadGeneration) return;
+    __weak SteveApplication *weakSelf = self;
+    [webView evaluateJavaScript:@"Boolean(document.getElementById('root')?.childElementCount)" completionHandler:^(id ready, NSError *error) {
+        SteveApplication *owner = weakSelf;
+        if (!owner || webView != owner.webView || !owner.awaitingWorkspace || generation != owner.loadGeneration) return;
+        if (!error && [ready isKindOfClass:NSNumber.class] && [ready boolValue]) {
+            owner.viewLoaded = YES;
+            [owner endWorkspaceLoad];
+            return;
+        }
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, 100 * NSEC_PER_MSEC), dispatch_get_main_queue(), ^{
+            [weakSelf confirmWorkspaceReady:webView generation:generation];
+        });
     }];
+}
+
+- (void)showConnectionFailure:(NSString *)detail {
+    if (self.showingFailure) return;
+    self.showingFailure = YES;
+    self.viewLoaded = NO;
+    [self endWorkspaceLoad];
+    NSView *view = [[NSView alloc] initWithFrame:self.window.contentView.bounds];
+    view.autoresizingMask = NSViewWidthSizable | NSViewHeightSizable;
+    NSTextField *title = [NSTextField labelWithString:@"暂时无法打开工作台"];
+    title.font = [NSFont systemFontOfSize:18 weight:NSFontWeightSemibold];
+    NSTextField *message = [NSTextField wrappingLabelWithString:detail];
+    message.textColor = NSColor.secondaryLabelColor;
+    message.alignment = NSTextAlignmentCenter;
+    NSButton *retry = [NSButton buttonWithTitle:@"重试" target:self action:@selector(retryWorkspace:)];
+    NSButton *close = [NSButton buttonWithTitle:@"关闭窗口" target:self.window action:@selector(performClose:)];
+    NSStackView *buttons = [NSStackView stackViewWithViews:@[retry, close]];
+    buttons.spacing = 12;
+    NSStackView *stack = [NSStackView stackViewWithViews:@[title, message, buttons]];
+    stack.orientation = NSUserInterfaceLayoutOrientationVertical;
+    stack.alignment = NSLayoutAttributeCenterX;
+    stack.spacing = 16;
+    stack.translatesAutoresizingMaskIntoConstraints = NO;
+    [view addSubview:stack];
+    [NSLayoutConstraint activateConstraints:@[
+        [stack.centerXAnchor constraintEqualToAnchor:view.centerXAnchor],
+        [stack.centerYAnchor constraintEqualToAnchor:view.centerYAnchor],
+        [stack.widthAnchor constraintEqualToConstant:520],
+        [message.widthAnchor constraintEqualToAnchor:stack.widthAnchor]
+    ]];
+    self.window.contentView = view;
+}
+
+- (void)retryWorkspace:(id)sender {
+    [self connectService];
 }
 
 - (BOOL)isServiceURL:(NSURL *)url {
@@ -241,7 +320,12 @@
     if (webView != self.webView || ([error.domain isEqualToString:NSURLErrorDomain] && error.code == NSURLErrorCancelled)) return;
     NSLog(@"Steve workspace navigation failed (%@:%ld)", error.domain, (long)error.code);
     self.viewLoaded = NO;
+    [self endWorkspaceLoad];
     [self showConnectionFailure:@"本机服务暂时不可用。重试会连接现有服务或重新启动服务，任务进度保存在本机。"];
+}
+
+- (void)webView:(WKWebView *)webView didStartProvisionalNavigation:(WKNavigation *)navigation {
+    if (webView == self.webView && !self.awaitingWorkspace) [self beginWorkspaceLoad];
 }
 
 - (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
@@ -252,11 +336,12 @@
     if (webView != self.webView) return;
     NSLog(@"Steve workspace content process terminated");
     self.viewLoaded = NO;
+    [self endWorkspaceLoad];
     [self showConnectionFailure:@"工作台页面已意外退出。重试会重新打开页面，不会重新提交任务。已保存的草稿和任务进度会保留。"];
 }
 
 - (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
-    if (webView == self.webView) self.viewLoaded = YES;
+    [self confirmWorkspaceReady:webView generation:self.loadGeneration];
 }
 
 @end
