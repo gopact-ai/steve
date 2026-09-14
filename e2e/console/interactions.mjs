@@ -1038,7 +1038,7 @@ checks["inspector-resize"] = async (f) => {
     await noHorizontalOverflow(f.page);
 };
 
-async function reviewFixture(f) {
+async function reviewFixture(f, { open = true } = {}) {
     const changes = [
         { path: "src/main.ts", status: "M", added: 1, deleted: 1 },
         { path: "removed.txt", status: "D", added: 0, deleted: 1 },
@@ -1082,10 +1082,99 @@ async function reviewFixture(f) {
     });
     await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
     await f.page.getByRole("tab", { name: "代码", exact: true }).click();
-    await f.page.getByRole("button", { name: "查看变更", exact: true }).first().click();
-    await f.page.getByRole("dialog", { name: "代码工作区", exact: true }).waitFor();
+    if (open) {
+        const history = f.page.getByText("版本与变更", { exact: true });
+        await history.click();
+        await f.page.getByRole("button", { name: "查看变更", exact: true }).first().click();
+        await f.page.getByRole("dialog", { name: "代码工作区", exact: true }).waitFor();
+    }
     return state;
 }
+
+checks["code-all-conversation-tasks"] = async (f) => {
+    const tasks = Array.from({ length: 9 }, (_, i) => ({ ...task(String(i + 1), A, "scratch"), updated_at: `2026-09-06T10:00:0${8 - i}Z` }));
+    for (let i = 10; i < 16; i++) tasks.push({ ...task(String(i), "child-channel", "scratch"), parent: String(i - 1) });
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch")], attempts: [], landings: [] } }));
+    const readTasks = [];
+    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, (route) => {
+        const id = new URL(route.request().url()).pathname.split("/")[3]; readTasks.push(id);
+        return route.fulfill({ json: id === "15" ? [{ id: "old-output", kind: "turn", state: "bound", agent: "older-agent", base: "old-base", artifact: "old-result", started_at: at }] : [] });
+    });
+    await f.page.reload(); await f.box.waitFor();
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    await f.page.getByRole("tab", { name: "代码", exact: true }).click();
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).waitFor();
+    assert.equal(new Set(readTasks).size, 15, "Unified files include older roots and deep delegated results");
+    await f.page.getByText(/older-agent/).first().waitFor();
+};
+
+checks["code-latest-result"] = async (f) => {
+    const waiting = gate(); f.releases.push(waiting.release);
+    let readOnlyResult = false;
+    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, async (route) => {
+        if (route.request().url().includes("/22/")) { await waiting.promise; return route.fulfill({ json: [] }); }
+        return route.fulfill({ json: [
+            ...(readOnlyResult ? [{ id: "latest-read-only", agent: "reader", kind: "turn", state: "bound", base: "latest", started_at: "2026-09-06T10:02:00Z", ended_at: "2026-09-06T10:02:30Z" }] : []),
+            { id: "new-base", agent: "new-agent", kind: "turn", state: "running", base: "new-start", started_at: "2026-09-06T10:03:00Z", ended_at: "0001-01-01T00:00:00Z" },
+            { id: "newer-start", agent: "early-finish", kind: "turn", state: "done", base: "before", artifact: "early", started_at: "2026-09-06T10:01:00Z", ended_at: "2026-09-06T10:01:30Z" },
+            { id: "latest-result", agent: "late-finish", kind: "turn", state: "done", base: "before", artifact: "latest", started_at: at, ended_at: "2026-09-06T10:02:00Z" },
+        ] });
+    });
+    const reads = [];
+    await f.page.route(/\/console\/attempts\/[^/]+\//, (route) => {
+        const url = new URL(route.request().url()), attempt = url.pathname.split("/")[3]; reads.push(attempt);
+        assert.equal(route.request().method(), "GET");
+        return route.fulfill({ json: url.pathname.endsWith("/tree") ? { attempt, commit: "latest", which: "result", dir: "", entries: [] } : { attempt, base: "before", artifact: "latest", changes: [] } });
+    });
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    await f.page.getByRole("tab", { name: "代码", exact: true }).click();
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).click();
+    const workspace = f.page.getByRole("dialog", { name: "代码工作区", exact: true });
+    await workspace.getByText("空目录", { exact: true }).waitFor();
+    assert.ok(reads.length > 0 && reads.every((id) => id === "latest-result"), "Default to the latest finished result, not a newer base or earlier completion");
+    await workspace.getByRole("button", { name: "返回", exact: true }).click();
+    readOnlyResult = true; reads.length = 0;
+    await f.page.getByRole("tab", { name: "关系", exact: true }).click();
+    await f.page.getByRole("tab", { name: "代码", exact: true }).click();
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).click();
+    await workspace.getByText("空目录", { exact: true }).waitFor();
+    assert.ok(reads.length > 0 && reads.every((id) => id === "latest-read-only"), "A newer completed read-only snapshot must supersede an older artifact");
+    await workspace.getByRole("button", { name: "返回", exact: true }).click();
+    await f.pick("B");
+    await f.page.getByText("读取执行记录…", { exact: true }).waitFor();
+    assert.equal(await f.page.getByRole("button", { name: "浏览文件", exact: true }).count(), 0, "A loading conversation must not expose another conversation's files");
+    waiting.release();
+    await f.page.getByText("还没有代码快照", { exact: true }).waitFor();
+};
+
+checks["code-unified-entry"] = async (f) => {
+    await f.box.fill("Draft while browsing outputs");
+    const state = await reviewFixture(f, { open: false });
+    const panel = f.page.getByRole("complementary", { name: "详情", exact: true });
+    const browse = panel.getByRole("button", { name: "浏览文件", exact: true });
+    assert.equal(await browse.count(), 1, "Conversation files must have one entry rather than one per execution");
+    assert.equal(await panel.getByRole("button", { name: "查看变更", exact: true }).count(), 0, "Version actions should be collapsed initially");
+    const heading = panel.getByRole("heading", { name: "会话文件", exact: true });
+    const gap = await heading.evaluate((el) => el.getBoundingClientRect().top - el.closest(".workbench-inspector").querySelector(".inspector-tabs").getBoundingClientRect().bottom);
+    assert.ok(gap >= 16, "Code content needs separation from the tab bar");
+    await browse.click();
+    const workspace = f.page.getByRole("dialog", { name: "代码工作区", exact: true });
+    await workspace.getByRole("navigation", { name: "项目文件" }).getByRole("button", { name: "README.md", exact: true }).click();
+    await workspace.getByText("Unchanged project guide.", { exact: true }).waitFor();
+    await workspace.getByRole("button", { name: /选择版本/ }).click();
+    await f.page.getByRole("option", { name: /other-agent/ }).click();
+    await workspace.getByRole("navigation", { name: "项目文件" }).getByRole("button", { name: "other.txt", exact: true }).waitFor();
+    await workspace.getByRole("button", { name: "返回", exact: true }).click();
+    const history = panel.locator("summary").filter({ hasText: "版本与变更" });
+    await history.press("Enter");
+    await panel.getByRole("button", { name: "查看变更", exact: true }).first().click();
+    await workspace.getByRole("table").waitFor();
+    await workspace.getByRole("button", { name: "返回", exact: true }).click();
+    assert.equal(await browse.count(), 1);
+    assert.equal(await f.box.inputValue(), "Draft while browsing outputs");
+    assert.equal(f.calls.length, 0, "Browsing output and history must remain read-only");
+    assert.ok(state.reads.some((r) => r.endpoint === "file"));
+};
 
 checks["review-navigation"] = async (f) => {
     await f.box.fill("Draft retained while reviewing");
@@ -1162,7 +1251,7 @@ checks["review-slow-scope"] = async (f) => {
     state.failIndex = false;
     await review.getByRole("button", { name: "重试", exact: true }).click();
     await review.getByRole("table").waitFor();
-    await review.getByRole("button", { name: /选择执行/ }).click();
+    await review.getByRole("button", { name: /选择版本/ }).click();
     await f.page.getByRole("option", { name: /other-agent/ }).click();
     await review.getByRole("heading", { name: "other.txt", exact: true }).waitFor();
     await review.getByText("Other execution content", { exact: true }).first().waitFor();
@@ -1246,7 +1335,7 @@ checks["code-snapshot-states"] = async (f) => {
     const workspace = f.page.getByRole("dialog", { name: "代码工作区" });
     await workspace.getByRole("button", { name: "plain.ts", exact: true }).click();
     await workspace.getByText("// snapshot", { exact: true }).waitFor();
-    await workspace.getByRole("button", { name: /选择执行/ }).click();
+    await workspace.getByRole("button", { name: /选择版本/ }).click();
     await f.page.getByRole("option", { name: /base-agent/ }).click();
     await workspace.getByRole("button", { name: "plain.ts", exact: true }).click();
     await workspace.getByText("// start", { exact: true }).waitFor();

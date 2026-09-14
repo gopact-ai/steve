@@ -427,7 +427,7 @@ export function ConsolePage() {
     // The roots of this conversation's call graph: its tasks whose parent
     // is not itself one of them.
     const ids = new Set(mineTasks.map((t) => t.id));
-    const roots = mineTasks.filter((t) => !t.parent || !ids.has(t.parent)).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")).slice(0, 8);
+    const roots = mineTasks.filter((t) => !t.parent || !ids.has(t.parent)).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
 
     // Completion comes from the coordinator, by the rules the line will be
     // judged by; the page keeps no rules, only a short debounce.

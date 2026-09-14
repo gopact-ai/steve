@@ -101,7 +101,7 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots, onClose 
                 {tab === "graph" && (
                     roots.length ? (
                         <Panel title={t("console.workingFor")}  badge={<span className="text-xs text-tertiary">{t("console.treeHint")}</span>}>
-                            <CallGraph roots={roots} tasks={snap.tasks} plans={snap.plans} liveSteps={live?.order} onSelect={setPicked} />
+                            <CallGraph roots={roots.slice(0, 8)} tasks={snap.tasks} plans={snap.plans} liveSteps={live?.order} onSelect={setPicked} />
                         </Panel>
                     ) : <Nothing icon={GitBranch01} title={t("console.noTasks")} >{t("console.noTasksHint")}</Nothing>
                 )}

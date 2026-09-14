@@ -28,3 +28,5 @@ Steve 自己的组件，建在 Untitled UI（`components/base`、`components/app
 - 折叠一律用 `<details>` + 旋转的 `ChevronDown`，摘要行是 `text-xs`。
 - 对话内代码与输出经 `CodeBlock`；代码工作区的完整源码经 `SourceView`，差异经 `DiffView`。均由专门组件处理阅读布局。
 - 组件不发请求（`SettingsEditor` 例外，它就是一张表单）；数据由页面取好再传进来。
+
+“代码”页提供会话级文件入口，默认选择最近可用的结果；已完成但没有文件改动的执行也可以成为默认版本。版本与变更列表默认折叠，可在同一个查看器中切换历史快照。文件范围包括会话的历史任务及其委派，内容仍以所选执行的只读快照为准。
