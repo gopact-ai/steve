@@ -748,6 +748,37 @@ checks["compact-settings-alignment"] = async (f) => {
     }
 };
 
+checks["relationship-execution-state"] = async (f) => {
+    const tasks = [
+        { ...task("11", A, "scratch"), execution: "idle" },
+        task("12", A, "scratch"),
+        { ...task("13", A, "scratch"), execution: "unknown" },
+        { ...task("14", A, "scratch"), lifecycle: "done", execution: "idle" },
+        { ...task("15", A, "scratch"), parent: "12", origin: "delegate", execution: "idle" },
+    ];
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.reload(); await f.box.waitFor();
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    await f.page.getByRole("tab", { name: "关系", exact: true }).click();
+    const inspector = f.page.getByRole("complementary", { name: "详情", exact: true });
+    const row = (id) => inspector.getByRole("button").filter({ has: f.page.locator(`[title="Task ${id}"]`) });
+    const expectState = async (id, label, spins) => {
+        await row(id).getByText(label, { exact: true }).waitFor();
+        assert.equal(await row(id).locator(".animate-spin").count(), spins, `Task ${id}: ${label} must ${spins ? "show" : "not show"} execution animation`);
+    };
+    await expectState("11", "空闲", 0);
+    await expectState("12", "进行中", 1);
+    await expectState("13", "状态未知", 0);
+    await expectState("14", "已完成", 0);
+    await expectState("15", "空闲", 0);
+    tasks[1].execution = "idle";
+    await f.emit({ kind: "task.updated", task_id: "12" }); await f.page.clock.runFor(350);
+    await expectState("12", "空闲", 0);
+    tasks[1].execution = "running";
+    await f.emit({ kind: "task.updated", task_id: "12" }); await f.page.clock.runFor(350);
+    await expectState("12", "进行中", 1);
+};
+
 checks["narrow-relationships-layout"] = async (f) => {
     const node = "node-0123456789abcdef0123456789abcdef";
     const tasks = ["11", "12", "13"].map((id) => ({ ...task(id, A, "scratch"), member: "reviewer", node, lifecycle: "done", execution: "done" }));
