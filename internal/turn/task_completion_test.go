@@ -133,8 +133,11 @@ func TestBareCompletionSkipsNewerTerminalRoots(t *testing.T) {
 			if _, err := handle(c, t.Context(), "older accepted work"); err != nil {
 				t.Fatal(err)
 			}
-			newer, err := c.tasks.Create(task.Task{Channel: "chat", Member: "other", ProjectID: "p", State: state})
+			newer, err := c.tasks.Create(task.Task{Channel: "chat", Member: "other", ProjectID: "p"})
 			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := c.tasks.Advance(newer.ID, state); err != nil {
 				t.Fatal(err)
 			}
 			result, err := handle(c, t.Context(), "/tasks complete")
@@ -143,6 +146,9 @@ func TestBareCompletionSkipsNewerTerminalRoots(t *testing.T) {
 			}
 			if root, _ := c.tasks.Get("1"); !root.CompletedByUser {
 				t.Fatal("older accepted root was left open")
+			}
+			if unchanged, _ := c.tasks.Get(newer.ID); unchanged.State != state {
+				t.Fatal("bare completion changed the skipped root")
 			}
 		})
 	}
