@@ -120,7 +120,7 @@ func (c commands) tasksCmd(ctx context.Context, req Request, rest string) (Resul
 	case taskResume:
 		return c.taskPickUp(title, tracked), nil
 	case taskComplete:
-		return c.taskComplete(ctx, title, tracked)
+		return c.taskComplete(ctx, req, title, tracked)
 	}
 	return Result{Title: title, Text: c.text.T(i18n.TasksUsage, protocol.CommandTasks)}, nil
 }

@@ -12,11 +12,10 @@ import (
 	"github.com/gopact-ai/steve/internal/intent"
 	"github.com/gopact-ai/steve/internal/ledger"
 	"github.com/gopact-ai/steve/internal/project"
-	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/task"
 )
 
-func (c commands) taskComplete(ctx context.Context, title string, tracked task.Task) (Result, error) {
+func (c commands) taskComplete(ctx context.Context, req Request, title string, tracked task.Task) (Result, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	complete := func() error {
@@ -35,7 +34,7 @@ func (c commands) taskComplete(ctx context.Context, title string, tracked task.T
 		var guard func(*ledger.Tx, map[string]bool) error
 		if c.attempts != nil {
 			guard = func(tx *ledger.Tx, ids map[string]bool) error {
-				return c.checkTaskCompletionTx(tx, ids, current.Channel)
+				return c.checkTaskCompletionTx(tx, ids, current.Channel, req.ExchangeID)
 			}
 		}
 		_, err := c.tasks.CompleteRoot(ctx, current.ID, current.Channel, guard)
@@ -69,7 +68,7 @@ func (c commands) taskComplete(ctx context.Context, title string, tracked task.T
 	return Result{Title: title, Text: c.text.T(i18n.TaskCompleted, tracked.ID)}, nil
 }
 
-func (c commands) checkTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation string) error {
+func (c commands) checkTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conversation, currentExchange string) error {
 	if err := attempt.CheckTaskCompletionTx(tx, ids); err != nil {
 		return err
 	}
@@ -148,9 +147,7 @@ func (c commands) checkTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conv
 					return task.ErrCompleteAttention
 				}
 				if exchange.Conversation == conversation && !exchange.State.Terminal() {
-					_, parsed := c.ParseInput(exchange.Input)
-					verb, _, valid := parseTaskArgs(parsed.Rest)
-					if parsed.Command != protocol.CommandTasks || !valid || verb != taskComplete {
+					if currentExchange == "" || exchange.ID != currentExchange {
 						return task.ErrCompleteDelivery
 					}
 				}

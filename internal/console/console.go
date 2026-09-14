@@ -602,6 +602,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 	result, err := s.handler.Handle(ctx, turn.Request{
 		Channel:        "console",
 		ConversationID: conversation, ChatID: ChatID, MessageID: AnchorMark + exchange.ID, Input: prompt, Queue: !isInterrupt(input),
+		ExchangeID:   exchange.ID,
 		SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true,
 		Origin: exchange.Origin, ExpectedProject: exchange.ExpectedProject, ExpectedTask: exchange.ExpectedTask,
 		Locale: exchange.Locale, Images: media,

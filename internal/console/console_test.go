@@ -43,6 +43,9 @@ func TestConsoleActsAsTheOwnerAndKeepsTheExchange(t *testing.T) {
 	if req.ConversationID != "console:main" || req.SenderOpenID != "ou_owner" || !strings.HasPrefix(req.MessageID, AnchorMark) || req.ChatID != ChatID {
 		t.Fatalf("request = %+v", req)
 	}
+	if req.ExchangeID == "" || req.MessageID != AnchorMark+req.ExchangeID || reply.ExchangeID != req.ExchangeID {
+		t.Fatal("console request lost its exact durable exchange identity")
+	}
 	if _, err := s.Send(context.Background(), "console:main", "/boom"); err == nil {
 		t.Fatal("an error from the coordinator was swallowed")
 	}

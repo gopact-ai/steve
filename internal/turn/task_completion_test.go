@@ -203,6 +203,45 @@ func TestCompleteTaskRejectsActiveTurnAndRegistryReservation(t *testing.T) {
 	}
 }
 
+func TestCompletionExemptsOnlyItsOwnConsoleExchange(t *testing.T) {
+	for _, scenario := range []string{"own", "queued-completion", "running-completion", "missing-identity", "terminal-completion"} {
+		t.Run(scenario, func(t *testing.T) {
+			c, book := completionCoordinator(t, &fakeRunner{reply: "accepted"})
+			if _, err := handle(c, t.Context(), "work"); err != nil {
+				t.Fatal(err)
+			}
+			current := consoleapi.Exchange{ID: "current", Conversation: "chat", Input: "/tasks complete 1", State: consoleapi.ExchangeRunning}
+			exchanges := []consoleapi.Exchange{current}
+			if scenario != "own" && scenario != "missing-identity" {
+				other := consoleapi.Exchange{ID: "other", Conversation: "chat", Input: "/tasks complete 2", State: consoleapi.ExchangeQueued}
+				if scenario == "running-completion" {
+					other.State = consoleapi.ExchangeRunning
+				} else if scenario == "terminal-completion" {
+					other.State = consoleapi.ExchangeDone
+				}
+				exchanges = append(exchanges, other)
+			}
+			raw, err := json.Marshal(map[string]any{"exchanges": map[string][]consoleapi.Exchange{"chat": exchanges}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := book.Document("console").Save(raw); err != nil {
+				t.Fatal(err)
+			}
+			req := Request{ConversationID: "chat", Channel: "console", ExchangeID: current.ID, Input: current.Input}
+			if scenario == "missing-identity" {
+				req.ExchangeID = ""
+			}
+			_, err = c.Handle(t.Context(), req)
+			want := scenario == "own" || scenario == "terminal-completion"
+			root, _ := c.tasks.Get("1")
+			if (err == nil) != want || root.CompletedByUser != want {
+				t.Fatalf("completion queue guard: completed=%v err=%v", root.CompletedByUser, err)
+			}
+		})
+	}
+}
+
 func TestTaskCompletionDurableGuardRefusesPendingFacts(t *testing.T) {
 	for _, scenario := range []string{"reserved", "unknown", "unsettled", "question", "recovery", "continuation", "reply-pending", "queued-input", "landing", "effect", "disclosure", "plan", "corrupt"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -294,7 +333,7 @@ func TestCompletionDoesNotBlockOnItsOwnDurableCommand(t *testing.T) {
 	if err := book.Document("console").Save(raw); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := handle(coordinator, t.Context(), "/tasks complete 1"); err != nil {
+	if _, err := coordinator.Handle(t.Context(), Request{ConversationID: "chat", Channel: "console", ExchangeID: "complete", Input: "/tasks complete 1"}); err != nil {
 		t.Fatal(err)
 	}
 }

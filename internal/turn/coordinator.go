@@ -45,6 +45,9 @@ type Request struct {
 	// interrupted task can be resumed and delivered after a restart.
 	MessageID string
 	ChatID    string
+	// ExchangeID is set by the console adapter for the exact durable input
+	// being handled. Other channel message identities are not queue authority.
+	ExchangeID string
 	// CardID is the platform's own card opened for this turn, journaled
 	// so a crash can recall it instead of leaving a forever-running card.
 	CardID     string
