@@ -11,7 +11,8 @@ import (
 // archiveStoppedSession observes process exit before a warm open can rebind the
 // old execution. Pollers retain its receipts; a fresh open follows the ordinary
 // stopped-context validation and exclusive handoff path.
-func (s *SessionService) archiveStoppedSession(id string) error {
+func (s *SessionService) archiveStoppedSession(req nodewire.SessionRequest) error {
+	id := req.ID
 	s.mu.Lock()
 	one := s.sessions[id]
 	s.mu.Unlock()
@@ -26,6 +27,9 @@ func (s *SessionService) archiveStoppedSession(id string) error {
 	defer s.mu.Unlock()
 	if s.closed || s.sessions[id] != one {
 		return nil
+	}
+	if err := validateResumeSource(req, one.record); err != nil {
+		return err
 	}
 	state := one.record.State.State
 	if (state != nodewire.SessionIdle && state != nodewire.SessionInterrupted) || one.runningLocked() || one.host == nil || !one.host.AllProcessesStopped() {

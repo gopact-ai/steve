@@ -252,7 +252,7 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 		return nodewire.SessionState{}, sessionError("invalid", "invalid node session identity")
 	}
 	if req.Action == nodewire.SessionActionOpen {
-		if err := s.archiveStoppedSession(req.ID); err != nil {
+		if err := s.archiveStoppedSession(req); err != nil {
 			return nodewire.SessionState{}, err
 		}
 	}

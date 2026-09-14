@@ -19,12 +19,8 @@ func (s *SessionService) resumeSourceLocked(req nodewire.SessionRequest, target 
 		if !exists {
 			return nil, sessionError("unavailable", "original native context is not recorded")
 		}
-		if record.ClusterID != req.Authority.ClusterID || req.Authority.CoordinatorEpoch < record.Authority.CoordinatorEpoch || req.Authority.WriterGeneration < record.Authority.WriterGeneration || (req.Authority.CoordinatorEpoch == record.Authority.CoordinatorEpoch && req.Authority.CoordinatorNodeID != record.Authority.CoordinatorNodeID) {
-			return nil, sessionError("forbidden", "stale native context authority")
-		}
-		before, after := record.State.Binding, req.Binding
-		if before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || before.NativeImportID != after.NativeImportID || before.PluginRuntimeID != after.PluginRuntimeID || record.State.Harness != req.Harness || record.ConfigHash != sessionConfigHash(req) {
-			return nil, sessionError("forbidden", "native context differs from the admitted session or configuration")
+		if err := validateResumeSource(req, record); err != nil {
+			return nil, err
 		}
 		if record.State.Binding == req.Binding {
 			if record.OpenID != req.CommandID {
@@ -64,4 +60,16 @@ func (s *SessionService) resumeSourceLocked(req nodewire.SessionRequest, target 
 		id = record.ResumeTarget
 	}
 	return nil, sessionError("unavailable", "native context handoff cycle requires reconciliation")
+}
+
+// validateResumeSource checks identity without rebinding or recording process exit.
+func validateResumeSource(req nodewire.SessionRequest, record sessionRecord) error {
+	if record.ClusterID != req.Authority.ClusterID || req.Authority.CoordinatorEpoch < record.Authority.CoordinatorEpoch || req.Authority.WriterGeneration < record.Authority.WriterGeneration || (req.Authority.CoordinatorEpoch == record.Authority.CoordinatorEpoch && req.Authority.CoordinatorNodeID != record.Authority.CoordinatorNodeID) {
+		return sessionError("forbidden", "stale native context authority")
+	}
+	before, after := record.State.Binding, req.Binding
+	if before.ProjectID != after.ProjectID || before.SessionID != after.SessionID || before.NodeID != after.NodeID || before.NativeImportID != after.NativeImportID || before.PluginRuntimeID != after.PluginRuntimeID || record.State.Harness != req.Harness || record.ConfigHash != sessionConfigHash(req) {
+		return sessionError("forbidden", "native context differs from the admitted session or configuration")
+	}
+	return nil
 }

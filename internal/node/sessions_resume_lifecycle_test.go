@@ -238,7 +238,8 @@ func TestProvenProcessExitReleasesPluginUseDespiteReceiptFailure(t *testing.T) {
 				one.failure = failure
 				one.mu.Unlock()
 				if mode == "archive" {
-					err = s.sessions.archiveStoppedSession(state.ID)
+					req.ID = state.ID
+					err = s.sessions.archiveStoppedSession(req)
 				} else {
 					_, err = one.stateAfterFailedOpen(errors.New("native open failed"))
 				}
@@ -325,5 +326,44 @@ func TestLostResumeOpenAfterRestartUsesOriginalReconciliationReceipt(t *testing.
 	}
 	if len(s.sessions.sessions) != 0 {
 		t.Fatal("reconciliation restarted an old execution")
+	}
+}
+
+func TestRejectedResumeCannotArchiveAnotherSession(t *testing.T) {
+	for _, mode := range []string{"project", "conversation", "config", "authority"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg, req, old := resumedFixture(t, buildMockAgent(t))
+			saveResumeFixture(t, cfg, old)
+			s := NewServer(cfg)
+			if err := s.startSessions(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			defer s.sessions.Close()
+			first, err := s.sessions.Do(t.Context(), "cluster-1", req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			one := s.sessions.sessions[first.ID]
+			one.host.Close()
+			before := one.copyLocked()
+			req.ID = first.ID
+			switch mode {
+			case "project":
+				req.Binding.ProjectID = "other-project"
+			case "conversation":
+				req.Binding.SessionID = "other-conversation"
+			case "config":
+				req.Workdir = t.TempDir()
+			case "authority":
+				req.Authority.ClusterID = "another-cluster"
+			}
+			if _, err := s.sessions.Do(t.Context(), req.Authority.ClusterID, req); err == nil {
+				t.Fatal("unrelated resume accepted")
+			}
+			persisted, _, err := s.sessions.readRecord(first.ID)
+			if err != nil || s.sessions.sessions[first.ID] != one || !reflect.DeepEqual(before, persisted) {
+				t.Fatal("rejected caller mutated the source session", err)
+			}
+		})
 	}
 }

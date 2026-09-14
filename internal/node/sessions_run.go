@@ -126,9 +126,8 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	// explicit cancellation and publish the new physical state first.
 	one.mu.Lock()
 	if one.record.State.State == nodewire.SessionClosing || one.record.State.State == nodewire.SessionClosed || openCtx.Err() != nil {
-		state := one.stateLocked("")
 		one.mu.Unlock()
-		return state, context.Canceled
+		return one.stateAfterFailedOpen(context.Canceled)
 	}
 	upstream := one.record.UpstreamID
 	if upstream == "" && req.NativeImport != nil {
@@ -139,8 +138,7 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	err := one.commitLocked(starting)
 	one.mu.Unlock()
 	if err != nil {
-		host.Close()
-		return nodewire.SessionState{}, err
+		return one.stateAfterFailedOpen(err)
 	}
 	native, generation, openErr := host.OpenSession(openCtx, acp.SessionID(upstream), acphost.SessionConfig{Workdir: req.Workdir, MCPServers: req.MCPServers})
 	httpMCP := false
@@ -179,8 +177,7 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 		return one.stateAfterFailedOpen(openErr)
 	}
 	if saveErr != nil {
-		host.Close()
-		return nodewire.SessionState{}, saveErr
+		return one.stateAfterFailedOpen(saveErr)
 	}
 	return one.state(""), nil
 }
