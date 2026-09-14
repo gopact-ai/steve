@@ -350,6 +350,7 @@ func (b *snapshotBuilder) taskAxes() {
 		parent[t.ID] = t.Parent
 	}
 	rolledPending, rolledUncertain := map[string]int{}, map[string]int{}
+	rolledPlan := map[string]bool{}
 	rolledLive, rolledUnsettled, rolledAttention := map[string]bool{}, map[string]bool{}, map[string]int{}
 	for _, t := range snap.Tasks {
 		waiting := attention[t.ID]
@@ -361,6 +362,9 @@ func (b *snapshotBuilder) taskAxes() {
 			}
 		}
 		for id := t.ID; id != ""; id = parent[id] {
+			if t.PlanID != "" {
+				rolledPlan[id] = true
+			}
 			if live[t.ID] {
 				rolledLive[id] = true
 			}
@@ -390,6 +394,7 @@ func (b *snapshotBuilder) taskAxes() {
 		}
 		t.Attention = rolledAttention[t.ID]
 		t.PendingResults, t.UncertainResults = rolledPending[t.ID], rolledUncertain[t.ID]
+		t.CanComplete = t.CanComplete && t.Execution == ExecutionIdle && b.attentionKnown && t.Attention == 0 && t.PendingResults == 0 && t.UncertainResults == 0 && !rolledPlan[t.ID]
 		t.Lane = lane(*t)
 		if t.Lane == "pending" && !b.attentionKnown {
 			t.Lane = "unknown"
@@ -603,6 +608,7 @@ func nodes(statuses []node.Status) []Node {
 // tasks converts the task list and links parents to children, so a renderer
 // can draw the tree without walking the list twice.
 func tasks(list []task.Task, plans map[string]plan.Plan) []Task {
+	completable := task.CompletionEligibility(list)
 	children := map[string][]string{}
 	for _, t := range list {
 		if t.Parent != "" {
@@ -616,9 +622,10 @@ func tasks(list []task.Task, plans map[string]plan.Plan) []Task {
 			NodeID: t.Node, Parent: t.Parent, Children: children[t.ID],
 			Channel: t.Channel, ProjectID: t.ProjectID, Origin: t.Origin, Requester: t.Requester,
 			Turns: t.Budget.Turns, MaxTurns: t.Budget.MaxTurns,
-			Elapsed:   t.Budget.Elapsed.Round(time.Second).String(),
-			MaxElapse: t.Budget.MaxElapsed.Round(time.Minute).String(),
-			UpdatedAt: t.UpdatedAt,
+			Elapsed:     t.Budget.Elapsed.Round(time.Second).String(),
+			MaxElapse:   t.Budget.MaxElapsed.Round(time.Minute).String(),
+			UpdatedAt:   t.UpdatedAt,
+			CanComplete: completable[t.ID],
 		}
 		if t.Delegated() && t.Finished() && t.Result != nil && t.Parent != "" {
 			item.ResultDelivery = &task.Delivery{State: task.DeliveryPending, At: t.UpdatedAt}

@@ -45,6 +45,9 @@ type Request struct {
 	// interrupted task can be resumed and delivered after a restart.
 	MessageID string
 	ChatID    string
+	// ExchangeID is set by the console adapter for the exact durable input
+	// being handled. Other channel message identities are not queue authority.
+	ExchangeID string
 	// CardID is the platform's own card opened for this turn, journaled
 	// so a crash can recall it instead of leaving a forever-running card.
 	CardID     string
@@ -347,12 +350,7 @@ func (c *Coordinator) handle(ctx context.Context, req Request) (Result, error) {
 	if result, handled, err := c.commands().dispatch(ctx, req, selected, cmd, rest); handled {
 		return result, err
 	}
-	result, err := c.prompt(ctx, req, selected, prompt)
-	if err != nil {
-		return result, err
-	}
-	// Content of a sealed project leaves only with the owner's approval.
-	return c.gateDisclosure(ctx, req, result)
+	return c.prompt(ctx, req, selected, prompt)
 }
 
 func (c *Coordinator) selectAgent(conversationID, input string) (agent.Agent, string, bool, error) {

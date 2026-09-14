@@ -97,8 +97,14 @@ func (t *chatTurn) options(spec attempt.Spec, candidate roster.Candidate) lifecy
 	if c.fleet != nil {
 		fleet = c.fleet
 	}
+	var attempts lifecycle.Attempts = c.attempts
+	if req.ExpectedTask != "" {
+		attempts = continuationAttempts{Attempts: attempts, waiting: func() {
+			slog.Info("turn: parent continuation waiting for a workspace or endpoint", "task", req.ExpectedTask, "conversation", req.ConversationID)
+		}}
+	}
 	return lifecycle.Options{
-		Attempts: c.attempts, Roster: fleet, Sessions: c.runtime, Actor: "turn",
+		Attempts: attempts, Roster: fleet, Sessions: c.runtime, Actor: "turn",
 		Spec: spec,
 		// A lost lease cancels the turn, because nothing done after it
 		// could be recorded.
@@ -356,8 +362,10 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 			var busy attempt.Busy
 			if errors.As(err, &busy) {
 				holderAgent, holderTask := busy.Holder, "?"
-				if holder, herr := c.attempts.Get(parent, busy.Holder); herr == nil {
+				if holder, herr := c.attempts.Get(parent, busy.Holder); herr == nil && holder.Agent != "" && holder.TaskID != "" {
 					holderAgent, holderTask = holder.Agent, holder.TaskID
+				} else {
+					return Result{}, UserError{Text: c.text.T(i18n.ProjectWriting, t.binding.ProjectID, protocol.CommandProject)}
 				}
 				return Result{}, UserError{Text: c.text.T(i18n.ProjectBusy, t.binding.ProjectID, holderAgent, holderTask, protocol.CommandProject)}
 			}

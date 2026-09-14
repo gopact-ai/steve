@@ -40,7 +40,7 @@ func (c commands) dispatch(ctx context.Context, req Request, selected agent.Agen
 	case protocol.CommandSkills:
 		result, err = c.skillsCmd(ctx, req, selected, rest)
 	case protocol.CommandTasks:
-		result = c.tasksCmd(ctx, req, rest)
+		result, err = c.tasksCmd(ctx, req, rest)
 	case protocol.CommandEvery, protocol.CommandAt:
 		result = c.scheduleCmd(req, selected, cmd, rest)
 	case protocol.CommandSchedules:

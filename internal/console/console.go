@@ -602,6 +602,7 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 	result, err := s.handler.Handle(ctx, turn.Request{
 		Channel:        "console",
 		ConversationID: conversation, ChatID: ChatID, MessageID: AnchorMark + exchange.ID, Input: prompt, Queue: !isInterrupt(input),
+		ExchangeID:   exchange.ID,
 		SenderOpenID: requester, ChatType: protocol.ChatP2P, Mentioned: true,
 		Origin: exchange.Origin, ExpectedProject: exchange.ExpectedProject, ExpectedTask: exchange.ExpectedTask,
 		Locale: exchange.Locale, Images: media,
@@ -859,7 +860,7 @@ func (s *Service) Resume(ctx context.Context, conversation, taskID, member, noti
 		return fmt.Errorf("revive session for task #%s: %w", taskID, err)
 	}
 	slog.Info(fmt.Sprintf("console: resuming task #%s conversation=%s member=%s", taskID, conversation, member), "task", taskID, "conversation", conversation, "member", member)
-	_, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true})
+	_, _, err := s.enqueue(ctx, conversation, notice, nil, enqueueOptions{Prompt: "@" + member + " " + prompt, Front: true, ExpectedTask: taskID})
 	return err
 }
 

@@ -638,6 +638,10 @@ type Event struct {
 // Begin creates an operation in its initial state. It is itself recorded as
 // an event from "" to the initial state.
 func (l *Ledger) Begin(ctx context.Context, id, kind, initial, actor string, data any) (Operation, error) {
+	return l.BeginGuarded(ctx, id, kind, initial, actor, data, nil)
+}
+
+func (l *Ledger) BeginGuarded(ctx context.Context, id, kind, initial, actor string, data any, guard func(*Tx) error) (Operation, error) {
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return Operation{}, err
@@ -648,6 +652,11 @@ func (l *Ledger) Begin(ctx context.Context, id, kind, initial, actor string, dat
 		return Operation{}, err
 	}
 	defer tx.Rollback()
+	if guard != nil {
+		if err := guard(&Tx{l: l, ctx: ctx, tx: tx}); err != nil {
+			return Operation{}, err
+		}
+	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO operations(id, kind, state, revision, incarnation, data, created_at, updated_at) VALUES (?, ?, ?, 1, ?, ?, ?, ?)`,
 		id, kind, initial, l.Incarnation(), string(raw), now.Format(time.RFC3339Nano), now.Format(time.RFC3339Nano)); err != nil {
 		if strings.Contains(err.Error(), "UNIQUE") {

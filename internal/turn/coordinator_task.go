@@ -300,6 +300,7 @@ const (
 	taskPause
 	taskResume
 	taskCancel
+	taskComplete
 )
 
 func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked task.Task, to task.State, confirmSettlement bool) (Result, error) {

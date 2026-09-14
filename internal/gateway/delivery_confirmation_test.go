@@ -41,6 +41,22 @@ func TestDeliveryConfirmationWaitsForParentAndBindsTask(t *testing.T) {
 	}
 }
 
+func TestManualResumeRetainsExpectedTask(t *testing.T) {
+	processor := scheduledProcessor{started: make(chan turn.Request, 1), finish: make(chan struct{})}
+	gateway := New(processor)
+	gateway.BindChannel(&scheduledNotice{id: "resume-notice"})
+	defer close(processor.finish)
+	gateway.ResumeTask(Revival{TaskID: "closed-root", Member: "worker", ConversationID: "chat", ChatID: "chat", MessageID: "anchor", Requester: "owner", ChatType: "p2p", Manual: true}, func(string, string) error { return nil })
+	select {
+	case request := <-processor.started:
+		if request.ExpectedTask != "closed-root" {
+			t.Fatalf("resume lost task binding: %+v", request)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("resume was not dispatched")
+	}
+}
+
 type failedContinuationProcessor struct{ failure error }
 
 func (p failedContinuationProcessor) Handle(context.Context, turn.Request) (turn.Result, error) {

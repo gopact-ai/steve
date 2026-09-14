@@ -34,6 +34,7 @@ export interface AttemptRow { day: string; agent: string; node?: string; model?:
 export interface ResultDelivery { state: "pending" | "queued" | "delivered" | "suppressed" | "uncertain"; key?: string; at: string; attempts?: number; error?: string; next_attempt_at?: string }
 export interface Task {
     result_delivery?: ResultDelivery; pending_results?: number; uncertain_results?: number;
+    can_complete?: boolean;
     id: string; goal: string; state: string; lifecycle: string; execution: string; attention: number; lane: string;
     title?: string; priority?: "high" | "normal" | "low" | ""; labels?: string[]; archived_at?: string;
     member?: string; node?: string; channel?: string; project_id?: string; origin?: string; requester?: string; parent?: string; children?: string[];

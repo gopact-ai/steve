@@ -216,11 +216,12 @@ type Task struct {
 	Parent   string   `json:"parent,omitempty"`
 	// Result and Delivery belong to a delegated child: how it ended, and
 	// whether its parent's conversation has been told.
-	Result    *Result   `json:"result,omitempty"`
-	Delivery  *Delivery `json:"delivery,omitempty"`
-	State     State     `json:"state"`
-	Budget    Budget    `json:"budget,omitzero"`
-	Attempts  []Attempt `json:"attempts,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Result          *Result   `json:"result,omitempty"`
+	Delivery        *Delivery `json:"delivery,omitempty"`
+	State           State     `json:"state"`
+	CompletedByUser bool      `json:"completed_by_user,omitempty"`
+	Budget          Budget    `json:"budget,omitzero"`
+	Attempts        []Attempt `json:"attempts,omitempty"`
+	CreatedAt       time.Time `json:"created_at"`
+	UpdatedAt       time.Time `json:"updated_at"`
 }

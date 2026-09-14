@@ -100,13 +100,19 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	spent := &turnSpend{touch: touch}
 	req.OnProgress = spent.wrap(req.OnProgress, selected.ID)
 	t.req, t.spent, t.tracked, t.binding, t.workspace = req, spent, tracked, binding, workspace
+	var settled bool
+	var settledErr error
 	if tracked != "" {
 		defer func() {
-			if t.managed && errors.Is(err, harness.ErrStopUnconfirmed) {
+			finishErr := err
+			if settled {
+				finishErr = settledErr
+			}
+			if t.managed && errors.Is(finishErr, harness.ErrStopUnconfirmed) {
 				return
 			}
-			c.finishTask(tracked, err, spent.tokens(), spent.model())
-			c.offlineReminder(req, tracked, started, err)
+			c.finishTask(tracked, finishErr, spent.tokens(), spent.model())
+			c.offlineReminder(req, tracked, started, finishErr)
 		}()
 	}
 	if t.scope != nil {
@@ -125,8 +131,14 @@ func (c *Coordinator) prompt(parent context.Context, req Request, selected agent
 	}
 	run, runErr := lifecycle.Run(ctx, t.options(spec, candidate))
 	result, err = t.settle(parent, run, runErr)
+	// Disclosure must remain inside the active turn, but its persistence
+	// error must not rewrite the already-settled agent execution outcome.
+	settled, settledErr = true, err
 	if run.Record.ID != "" {
 		clock.report(parent, run.Record.ID)
+	}
+	if err == nil {
+		return c.gateDisclosure(parent, req, result)
 	}
 	return result, err
 }

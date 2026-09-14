@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/artifact/ops"
+	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/contentreplica"
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -784,9 +785,32 @@ func (s *Store) Defer(ctx context.Context, projectID, artifactID, by string, sou
 // returns each landing. A conflict stops that artifact but not the rest;
 // conflicted artifacts stay queued for a person to resolve.
 func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, error) {
+	// Turns, delivery callbacks and the background sweep can all drain this
+	// queue. One renewed, fenced driver must own its read/land/delete cycle.
+	ttl := s.landingDriverTTL
+	if ttl <= 0 {
+		ttl = landTTL
+	}
+	drive, err := s.ledger.Acquire(ctx, "pending-landings:"+p.ID, attempt.NewID(), ttl)
+	if err != nil {
+		return nil, err
+	}
+	ctx, stop := s.startLandingDriver(ctx, drive, ttl)
+	defer stop()
 	raw, err := s.ledger.Bindings(ctx, pendingKind)
 	if err != nil {
 		return nil, err
+	}
+	remove := func(item Pending) error {
+		id := item.Project + "/" + item.Artifact
+		return s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+			if err := tx.CheckLocalLease(drive); err != nil {
+				return err
+			}
+			// A newer deferral of this artifact retains its own source authority.
+			_, err := tx.Exec(`DELETE FROM bindings WHERE kind = ? AND id = ? AND data = ?`, pendingKind, id, string(raw[id]))
+			return err
+		})
 	}
 	var queue []Pending
 	for _, data := range raw {
@@ -804,7 +828,7 @@ func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, 
 		}
 		land, err := s.Land(ctx, p, item.Artifact, item.By, source...)
 		if errors.Is(err, task.ErrExecutionStopped) {
-			if err := s.ledger.DeleteBinding(ctx, pendingKind, item.Project+"/"+item.Artifact); err != nil {
+			if err := remove(item); err != nil {
 				return out, err
 			}
 			continue
@@ -818,9 +842,9 @@ func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, 
 			return out, err
 		}
 		out = append(out, land)
-		// The landing is committed under its durable identity; a pending
-		// record that survives is answered from that identity next sweep.
-		_ = s.ledger.DeleteBinding(ctx, pendingKind, item.Project+"/"+item.Artifact)
+		if err := remove(item); err != nil {
+			return out, err
+		}
 	}
 	return out, nil
 }
