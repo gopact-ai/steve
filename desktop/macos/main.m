@@ -6,6 +6,7 @@
 @property(nonatomic, strong) WKWebView *webView;
 @property(nonatomic, strong) NSURL *serviceURL;
 @property(nonatomic, strong) NSString *accessToken;
+@property(nonatomic, strong) NSAlert *connectionAlert;
 @property(nonatomic, assign) BOOL launching;
 @property(nonatomic, assign) BOOL viewLoaded;
 @end
@@ -177,12 +178,15 @@
 }
 
 - (void)showConnectionFailure:(NSString *)detail {
+    if (self.connectionAlert) return;
     NSAlert *alert = [[NSAlert alloc] init];
-    alert.messageText = @"暂时无法连接本机服务";
+    self.connectionAlert = alert;
+    alert.messageText = @"暂时无法打开工作台";
     alert.informativeText = detail;
     [alert addButtonWithTitle:@"重试"];
     [alert addButtonWithTitle:@"关闭窗口"];
     [alert beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        self.connectionAlert = nil;
         if (response == NSAlertFirstButtonReturn) [self connectService];
         else [self.window close];
     }];
@@ -234,11 +238,26 @@
 }
 
 - (void)webView:(WKWebView *)webView didFailProvisionalNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+    if (webView != self.webView || ([error.domain isEqualToString:NSURLErrorDomain] && error.code == NSURLErrorCancelled)) return;
+    NSLog(@"Steve workspace navigation failed (%@:%ld)", error.domain, (long)error.code);
     self.viewLoaded = NO;
-    if (error.code != NSURLErrorCancelled) [self showConnectionFailure:@"本机服务暂时不可用。重试会连接现有服务或重新启动服务，任务进度保存在本机。"];
+    [self showConnectionFailure:@"本机服务暂时不可用。重试会连接现有服务或重新启动服务，任务进度保存在本机。"];
 }
 
-- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation { self.viewLoaded = YES; }
+- (void)webView:(WKWebView *)webView didFailNavigation:(WKNavigation *)navigation withError:(NSError *)error {
+    [self webView:webView didFailProvisionalNavigation:navigation withError:error];
+}
+
+- (void)webViewWebContentProcessDidTerminate:(WKWebView *)webView {
+    if (webView != self.webView) return;
+    NSLog(@"Steve workspace content process terminated");
+    self.viewLoaded = NO;
+    [self showConnectionFailure:@"工作台页面已意外退出。重试会重新打开页面，不会重新提交任务。已保存的草稿和任务进度会保留。"];
+}
+
+- (void)webView:(WKWebView *)webView didFinishNavigation:(WKNavigation *)navigation {
+    if (webView == self.webView) self.viewLoaded = YES;
+}
 
 @end
 

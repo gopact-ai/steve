@@ -15,6 +15,8 @@ make desktop
 open /tmp/steve-app/Steve.app
 ```
 
+原生窗口的导航失败与恢复检查可在 macOS 上运行 `make test-desktop`；检查不启动服务或提交任务。
+
 首次启动会创建本机身份、私人工作目录和后台服务，本机成为协调节点。无需先配置其他机器或飞书。App 可以在没有 Agent 时打开；选择本机已经安装的工具进行登记后，即可执行任务。登记前需要在对应工具中完成登录。检测不会导入工具的登录凭据或聊天历史。
 
 从 Finder 启动时，App 会补查常见用户安装目录，包括 Kimi 的 `~/.kimi-code/bin` 和 NVM 的 `~/.nvm/versions/node/*/bin`；不会执行 shell 启动脚本。已有绝对 PATH 目录优先，未指定 NVM 版本时按已安装的数字版本从新到旧查找。检测、适配器安装与 Agent 子进程使用同一套搜索路径。
