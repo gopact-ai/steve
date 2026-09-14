@@ -653,15 +653,19 @@ checks["narrow-relationships-layout"] = async (f) => {
     const inspector = f.page.getByRole("complementary", { name: "详情", exact: true });
     for (const width of [1600, 1024]) {
         await f.page.setViewportSize({ width, height: 900 });
-        const rows = inspector.getByRole("button", { name: /Task (11|12|13|14)/ });
-        assert.equal(await rows.count(), 4, "Roots and delegated tasks remain visible");
-        const bounds = await inspector.boundingBox();
-        for (const row of await rows.all()) {
-            const box = await row.boundingBox();
-            assert.ok(box.height < 100, "A long node ID must not stretch a relationship row vertically");
-            assert.ok(box.x >= bounds.x && box.x + box.width <= bounds.x + bounds.width, "Relationship rows must stay inside the narrow inspector");
-            assert.equal(await row.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), true, "Relationship metadata must not overflow the row");
-        }
+        // Changing breakpoints replaces the docked inspector with a sheet.
+        // Read one settled layout rather than comparing detached row handles.
+        await eventually(async () => {
+            if (!await inspector.isVisible()) return false;
+            return inspector.evaluate((el) => {
+                const bounds = el.getBoundingClientRect();
+                const rows = [...el.querySelectorAll('[role="button"]')];
+                return rows.length === 4 && rows.every((row) => {
+                    const box = row.getBoundingClientRect();
+                    return box.height > 0 && box.height < 100 && box.left >= bounds.left && box.right <= bounds.right && row.scrollWidth <= row.clientWidth + 1;
+                });
+            });
+        }, "All relationship rows must remain compact and contained after a narrow-window transition");
     }
 };
 
