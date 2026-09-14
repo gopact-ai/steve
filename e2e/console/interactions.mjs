@@ -52,17 +52,18 @@ async function fixture({ history = false, running = false } = {}) {
         const input = req.postDataJSON();
         const call = { method: req.method(), path: pathname, ...input };
         if (req.method() !== "GET") f.calls.push(call);
-        const conversation = input?.conversation || url.searchParams.get("conversation") || A;
+        const initialization = pathname.match(/^\/console\/conversations\/([^/]+)\/initialize$/);
+        const conversation = initialization ? decodeURIComponent(initialization[1]) : input?.conversation || url.searchParams.get("conversation") || A;
         let current = conversations.find((c) => c.id === conversation);
         if (pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
         if (pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
         if (pathname === "/state") return route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks: [task("11", A, "scratch"), task("22", B, "home")], plans: [], projects, attempts: [], landings: [] } });
-        if (pathname === "/console/send" && input?.input.startsWith("/project use ")) {
+        if (initialization && req.method() === "PUT") {
             if (f.binding) await f.binding;
             if (f.failBinding) return route.fulfill({ status: 503, json: { error: "Project binding unavailable" } });
-            if (!current) { current = { id: conversation, title: "New project conversation", project: "home" }; conversations.push(current); }
-            current.project = input.input.slice("/project use ".length);
-            return route.fulfill({ json: { reply: { kind: "reply", conversation, at, text: `Bound ${current.project}` } } });
+            if (!current) { current = { id: conversation, title: "", project: "home" }; conversations.push(current); }
+            current.project = input.project;
+            return route.fulfill({ json: { ok: true } });
         }
         if (pathname === "/console/send") {
             if (input.input === "/cancel" && f.cancel) await f.cancel;
@@ -211,16 +212,41 @@ const checks = {
     },
     async "project-inheritance"(f) {
         await f.page.getByRole("button", { name: "新会话", exact: true }).click();
-        await eventually(() => f.calls.some((c) => c.input === "/project use scratch"), "Generic new conversation must bind the current project");
+        await eventually(() => f.calls.some((c) => c.path.endsWith("/initialize") && c.project === "scratch"), "Generic new conversation must bind the current project");
+        await f.page.locator("main header").getByText("新会话", { exact: true }).waitFor();
+        assert.equal(await f.box.inputValue(), "", "New conversation title must not populate the composer");
+        assert.equal(f.calls.filter((c) => c.path === "/console/send").length, 0, "Automatic binding must not send a chat command");
         await f.box.fill("First work");
         await f.box.press("Shift+Enter");
         await eventually(() => f.queued().length === 1, "First work must be accepted after binding");
         assert.equal(f.queued()[0].projectAtEnqueue, "scratch");
+        const id = f.queued()[0].conversation;
+        f.replies[id] = [{ id: "first-work", kind: "sent", conversation: id, input: "First work", at }];
+        await f.emit({ kind: "console.sent", conversation: id, reply_id: "first-work", text: "First work" });
+        await f.page.locator("main header").getByText("First work", { exact: true }).waitFor();
+    },
+    async "new-session-title-i18n"(f) {
+        await f.page.getByRole("button", { name: "新会话", exact: true }).click();
+        await eventually(() => f.conversations.length === 3, "Initialization must create an empty conversation");
+        await f.page.locator("main header").getByText("新会话", { exact: true }).waitFor();
+        const id = f.conversations.at(-1).id;
+        assert.equal(await f.box.inputValue(), "", "The title placeholder must not become a draft");
+        // Old explicit controls remain readable, but never become the title.
+        f.replies[id] = [{ id: "old-control", kind: "sent", conversation: id, input: "/project use scratch", at }];
+        await f.page.reload();
+        await f.page.locator("main header").getByText("新会话", { exact: true }).waitFor();
+        await f.page.getByText("/project use scratch", { exact: true }).waitFor();
+        await f.page.evaluate(() => {
+            localStorage.setItem("steve.ui.locale", "en");
+            window.dispatchEvent(new StorageEvent("storage", { key: "steve.ui.locale", newValue: "en", storageArea: localStorage }));
+        });
+        await f.page.locator("main header").getByText("New conversation", { exact: true }).waitFor();
+        assert.equal(await f.page.getByRole("textbox", { name: "Message", exact: true }).inputValue(), "");
     },
     async "binding-pending"(f) {
         const release = f.hold("binding");
         await f.page.getByRole("button", { name: "在 scratch 下新会话", exact: true }).click();
-        await eventually(() => f.calls.some((c) => c.input === "/project use scratch"), "Project binding must begin");
+        await eventually(() => f.calls.some((c) => c.path.endsWith("/initialize") && c.project === "scratch"), "Project binding must begin");
         if (await f.box.isEnabled()) { await f.box.fill("First work during binding"); await f.box.press("Shift+Enter"); }
         await delay(150);
         assert.equal(f.queued().length, 0, "Work must not be submitted before project binding returns");
@@ -234,7 +260,7 @@ const checks = {
         f.failBinding = true;
         await f.box.fill("Keep this existing draft");
         await f.page.getByRole("button", { name: "在 scratch 下新会话", exact: true }).click();
-        await eventually(() => f.calls.some((c) => c.input === "/project use scratch"), "Project binding must begin");
+        await eventually(() => f.calls.some((c) => c.path.endsWith("/initialize") && c.project === "scratch"), "Project binding must begin");
         await delay(150);
         assert.equal(await f.box.inputValue(), "Keep this existing draft", "Binding failure must preserve the original draft");
         assert.equal(await f.page.locator("main header").getByText("Conversation A", { exact: true }).count(), 1, "Binding failure must retain the original conversation");
@@ -675,7 +701,7 @@ checks["design-mobile-new-failure"] = async (f) => {
     f.failBinding = true;
     await f.page.getByRole("button", { name: "会话列表", exact: true }).click();
     await f.page.getByRole("dialog", { name: "会话列表", exact: true }).getByRole("button", { name: "新会话", exact: true }).click();
-    await eventually(() => f.calls.some((call) => call.input === "/project use scratch"), "Mobile project binding must begin");
+    await eventually(() => f.calls.some((call) => call.path.endsWith("/initialize") && call.project === "scratch"), "Mobile project binding must begin");
     await f.page.getByRole("status").filter({ hasText: "Project binding unavailable" }).waitFor();
     await visibleControl(f.box, "Message after mobile creation failure");
     assert.equal(await f.box.inputValue(), "Draft kept after mobile creation fails");

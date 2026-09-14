@@ -18,7 +18,7 @@ import { BoardPage } from "./board";
 import { Working } from "@/components/steve/trace";
 import { applyLive, type Live } from "@/lib/live";
 import { Nothing } from "@/components/steve/ui";
-import { enqueue, fetchQueue, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, fetchSelectors, setPreferences, checkSubmissionSupport, requireSubmissionSupport, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
+import { enqueue, fetchQueue, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, initializeConversation, fetchSelectors, setPreferences, checkSubmissionSupport, requireSubmissionSupport, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { Sheet } from "@/components/steve/drawer";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { useResourceRead } from "@/hooks/use-resource-read";
@@ -329,7 +329,7 @@ export function ConsolePage() {
         const id = `console:${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
         try {
             if (!project) throw new Error(t("console.projectNotReady"));
-            await send(id, `/project use ${project}`);
+            await initializeConversation(id, project);
             const data = await fetchContext(id);
             if (data.context?.project?.id !== project || !data.context.project.bound) throw new Error(t("console.bindingFailed"));
             // Do not pull the reader out of a different thread chosen while binding.
@@ -359,7 +359,7 @@ export function ConsolePage() {
         await queueAction(async () => {
             await requireSubmissionSupport();
             // Finish binding before submitting: a timer can race a slow hub.
-            if (context?.project?.id) await send(id, `/project use ${context.project.id}`);
+            if (context?.project?.id) await initializeConversation(id, context.project.id);
             await deleteQueued(q.id);
             try { await enqueue(id, q.input, q.quotes); }
             catch (e) { writeDraft(id, q.input); setQuotes(q.quotes || []); selectConversation(id); throw e; }
@@ -464,7 +464,7 @@ export function ConsolePage() {
     const recordedSteps = new Set(entries.flatMap((r) => r.process?.steps?.map((s) => s.id) || []));
     const unrecordedChildren = Object.values(delegations).map(({ step }) => step).filter((s) => !recordedSteps.has(s.id));
     const current = conversations.find((c) => c.id === conversation);
-    const title = current?.title || (entries.find((r) => r.kind === "sent")?.input?.split("\n")[0]) || t("console.newConversation");
+    const title = current?.title || (entries.find((r) => r.kind === "sent" && r.input?.trim() && !r.input.trim().startsWith("/"))?.input?.split("\n")[0]) || t("console.newConversation");
     useEffect(() => { materials.setTarget(context?.project ? { conversation, project: context.project.id, title } : null); }, [conversation, context?.project?.id, title, materials.setTarget]);
     async function upload(files: FileList | null) {
         if (!files?.length || uploading || !context?.project || !submissionSupport.material_refs) return;

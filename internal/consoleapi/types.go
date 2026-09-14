@@ -33,6 +33,11 @@ type Selectors struct {
 	Preferred map[string]string `json:"preferred,omitempty"`
 }
 
+// ConversationInitializer creates a project-bound conversation without a message.
+type ConversationInitializer interface {
+	InitializeConversation(ctx context.Context, conversation, project string) error
+}
+
 type Console interface {
 	Send(ctx context.Context, conversation, input string) (Reply, error)
 	// SendCommand is Send with an idempotency key from the page.
@@ -586,7 +591,9 @@ type HomeFile struct {
 // its first line, placed by its project and agent, and marked while a
 // line of it runs.
 type Conversation struct {
-	ID      string `json:"id"`
+	ID string `json:"id"`
+	// Title stays empty until non-command input or an explicit name supplies it.
+	// Clients display a localized "New conversation" without persisting that placeholder.
 	Title   string `json:"title"`
 	Project string `json:"project,omitempty"`
 	Agent   string `json:"agent,omitempty"`
