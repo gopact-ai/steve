@@ -23,6 +23,7 @@ func SessionOpenID(cluster, node, attempt, command, harness string) string {
 const FeatureNativeHistory = "native_history.v1"
 
 const FeatureNodeSessions = "node_sessions.v1"
+const FeatureNativeResume = "native_resume.v1"
 const StreamNodeSessions = "node_sessions"
 const NodeSessionMaxBytes = 16 << 20
 
@@ -106,14 +107,22 @@ type SessionAnswer struct {
 	Text      string `json:"text,omitempty"`
 }
 
+type SessionQuestionState string
+
+const (
+	SessionQuestionPending     SessionQuestionState = "pending"
+	SessionQuestionAnswered    SessionQuestionState = "answered"
+	SessionQuestionInterrupted SessionQuestionState = "interrupted"
+)
+
 type SessionQuestion struct {
-	ID         string          `json:"id"`
-	CommandID  string          `json:"command_id"`
-	Question   view.Question   `json:"question"`
-	Permission *permission.Ask `json:"permission,omitempty"`
-	State      string          `json:"state"`
-	Answer     *SessionAnswer  `json:"answer,omitempty"`
-	CreatedAt  time.Time       `json:"created_at"`
+	ID         string               `json:"id"`
+	CommandID  string               `json:"command_id"`
+	Question   view.Question        `json:"question"`
+	Permission *permission.Ask      `json:"permission,omitempty"`
+	State      SessionQuestionState `json:"state"`
+	Answer     *SessionAnswer       `json:"answer,omitempty"`
+	CreatedAt  time.Time            `json:"created_at"`
 }
 
 type SessionCommand struct {

@@ -319,8 +319,8 @@ func (one *ownedSession) run(req nodewire.SessionRequest) {
 		}
 	}
 	for i := range next.State.Questions {
-		if next.State.Questions[i].CommandID == req.CommandID && next.State.Questions[i].State == "pending" {
-			next.State.Questions[i].State = "interrupted"
+		if next.State.Questions[i].CommandID == req.CommandID && next.State.Questions[i].State == nodewire.SessionQuestionPending {
+			next.State.Questions[i].State = nodewire.SessionQuestionInterrupted
 		}
 	}
 	// A failed commit is latched in one.failure for the next request.

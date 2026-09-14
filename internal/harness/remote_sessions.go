@@ -342,7 +342,7 @@ observe:
 			}
 		}
 		for _, q := range state.Questions {
-			if q.State != "pending" || q.CommandID != request.CommandID {
+			if q.State != nodewire.SessionQuestionPending || q.CommandID != request.CommandID {
 				continue
 			}
 			s.mu.Lock()
@@ -470,7 +470,7 @@ func (s *managedSession) collectAnswer(ctx context.Context, request nodewire.Ses
 			}
 			pending := false
 			for _, question := range state.Questions {
-				if question.ID == q.ID && question.State == "pending" {
+				if question.ID == q.ID && question.State == nodewire.SessionQuestionPending {
 					pending = true
 					break
 				}

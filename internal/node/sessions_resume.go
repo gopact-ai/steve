@@ -9,7 +9,9 @@ import (
 // s.mu also serializes this claim with open cancellation tombstones.
 func (s *SessionService) resumeSourceLocked(req nodewire.SessionRequest, target string) (*sessionRecord, error) {
 	id := req.ID
-	for range 64 {
+	seen := map[string]bool{}
+	for !seen[id] {
+		seen[id] = true
 		record, exists, err := s.readRecord(id)
 		if err != nil {
 			return nil, err
@@ -39,7 +41,7 @@ func (s *SessionService) resumeSourceLocked(req nodewire.SessionRequest, target 
 			}
 		}
 		for _, question := range record.State.Questions {
-			if question.State != "answered" || question.Answer == nil {
+			if question.State != nodewire.SessionQuestionAnswered || question.Answer == nil {
 				return nil, sessionError("uncertain", "original native question requires reconciliation")
 			}
 		}
@@ -58,5 +60,5 @@ func (s *SessionService) resumeSourceLocked(req nodewire.SessionRequest, target 
 		}
 		id = record.ResumeTarget
 	}
-	return nil, sessionError("unavailable", "native context handoff chain requires reconciliation")
+	return nil, sessionError("unavailable", "native context handoff cycle requires reconciliation")
 }

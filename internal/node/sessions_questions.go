@@ -54,7 +54,7 @@ func (one *ownedSession) waitQuestion(ctx context.Context, question nodewire.Ses
 		return question, sessionError("unavailable", "node session question retention limit reached")
 	}
 	question.ID = "nq_" + sessionHash([]any{one.record.State.ID, question.CommandID, one.record.State.Sequence + 1})
-	question.State = "pending"
+	question.State = nodewire.SessionQuestionPending
 	question.CreatedAt = time.Now().UTC()
 	question.Question.RequestID = question.ID
 	if question.Question.Kind == "permission" {
@@ -80,9 +80,9 @@ func (one *ownedSession) waitQuestion(ctx context.Context, question nodewire.Ses
 		if q.ID != question.ID {
 			continue
 		}
-		if q.State == "pending" {
+		if q.State == nodewire.SessionQuestionPending {
 			next := one.copyLocked()
-			next.State.Questions[i].State = "interrupted"
+			next.State.Questions[i].State = nodewire.SessionQuestionInterrupted
 			if err := one.commitLocked(next); err != nil {
 				return question, err
 			}
@@ -110,7 +110,7 @@ func (one *ownedSession) answer(req nodewire.SessionRequest) (nodewire.SessionSt
 		if q.Answer != nil && *q.Answer == answer {
 			return one.stateLocked(req.CommandID), nil
 		}
-		if q.State != "pending" || one.waiters[q.ID] == nil || q.CommandID != one.record.CurrentCommand {
+		if q.State != nodewire.SessionQuestionPending || one.waiters[q.ID] == nil || q.CommandID != one.record.CurrentCommand {
 			return nodewire.SessionState{}, sessionError("conflict", "question has no live callback or was already resolved")
 		}
 		switch answer.Decision {
@@ -140,7 +140,7 @@ func (one *ownedSession) answer(req nodewire.SessionRequest) (nodewire.SessionSt
 		}
 		next := one.copyLocked()
 		next.State.Questions[i].Answer = &answer
-		next.State.Questions[i].State = "answered"
+		next.State.Questions[i].State = nodewire.SessionQuestionAnswered
 		if err := one.commitLocked(next); err != nil {
 			return nodewire.SessionState{}, err
 		}

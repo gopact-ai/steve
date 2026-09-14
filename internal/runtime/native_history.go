@@ -15,6 +15,9 @@ import (
 // since import. Re-materializing the original snapshot would lose that context.
 // The node must hold the exclusive resume claim before calling this helper.
 func ResumeNativeHistory(ctx context.Context, stateDir, execution string, ref nativehistory.Reference, cfg harness.Config) (harness.Config, error) {
+	if !nativehistory.StorageSupported {
+		return harness.Config{}, nativehistory.ErrUnsupported
+	}
 	if !strings.HasPrefix(execution, "ns_") || strings.ContainsAny(execution, "/\\") {
 		return harness.Config{}, errors.New("native history needs a managed execution identity")
 	}

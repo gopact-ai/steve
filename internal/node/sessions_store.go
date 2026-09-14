@@ -122,8 +122,8 @@ func (s *SessionService) load() error {
 				}
 			}
 			for i := range record.State.Questions {
-				if record.State.Questions[i].State == "pending" {
-					record.State.Questions[i].State = "interrupted"
+				if record.State.Questions[i].State == nodewire.SessionQuestionPending {
+					record.State.Questions[i].State = nodewire.SessionQuestionInterrupted
 				}
 			}
 			if err := one.commitLocked(record); err != nil {
