@@ -53,6 +53,7 @@ xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter \
   -arch "$task_arch" -mmacosx-version-min=13.0 -framework Cocoa -framework WebKit \
   "$task_root/desktop/macos/main.m" -o "$task_bundle/Contents/MacOS/Steve"
 cp "$task_root/desktop/macos/Info.plist" "$task_bundle/Contents/Info.plist"
+bash "$task_root/scripts/build-app-icon.sh" "$task_root/desktop/macos/Assets/AppIcon.png" "$task_bundle/Contents/Resources/AppIcon.icns"
 plutil -lint "$task_bundle/Contents/Info.plist"
 codesign --force --sign - "$task_bundle/Contents/Resources/steve"
 codesign --force --sign - "$task_bundle"
