@@ -24,6 +24,19 @@ func completionLandingIdentity(land Landing) completionLandingKey {
 // landing of the exact same result. That refusal never acquired a write lease;
 // its historical record remains intact without blocking accepted work forever.
 func CheckTaskLandingsTx(tx *ledger.Tx, ids map[string]bool) error {
+	queue, err := tx.Bindings(pendingKind)
+	if err != nil {
+		return err
+	}
+	for _, raw := range queue {
+		var pending Pending
+		if err := json.Unmarshal(raw, &pending); err != nil {
+			return err
+		}
+		if pending.Source != nil && pending.Source.Execution != nil && ids[pending.Source.Execution.TaskID] {
+			return fmt.Errorf("%w: artifact %s is queued to land", task.ErrCompleteDelivery, pending.Artifact)
+		}
+	}
 	ops, err := tx.Operations(landKind, "")
 	if err != nil {
 		return err

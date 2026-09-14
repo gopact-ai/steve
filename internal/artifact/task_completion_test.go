@@ -117,3 +117,19 @@ func TestCompletionKeepsRealLandingConflictsAndAcceptsSupersededLockRefusal(t *t
 		})
 	}
 }
+
+func TestCompletionBlocksQueuedResultsBeforeLandingHasStarted(t *testing.T) {
+	s, _ := newStore(t, &localNode{}, project.Home{Path: t.TempDir()})
+	pending := Pending{Project: "p", Artifact: "not-landed", Source: &Source{AttemptID: "child-attempt", Execution: &task.ExecutionToken{TaskID: "child", Epoch: 1}}}
+	if err := s.ledger.PutBinding(t.Context(), pendingKind, "p/not-landed", pending); err != nil {
+		t.Fatal(err)
+	}
+	for _, id := range []string{"child", "unrelated"} {
+		err := s.ledger.Update(t.Context(), func(tx *ledger.Tx) error {
+			return CheckTaskLandingsTx(tx, map[string]bool{id: true})
+		})
+		if errors.Is(err, task.ErrCompleteDelivery) != (id == "child") || (id == "unrelated" && err != nil) {
+			t.Fatalf("queued result completion for %s: %v", id, err)
+		}
+	}
+}
