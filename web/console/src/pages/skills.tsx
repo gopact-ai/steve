@@ -1,7 +1,7 @@
 import { PluginResources } from "@/components/steve/plugins/resources";
 import { useI18n } from "@/providers/locale-provider";
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, Download01, Folder, Plus, PuzzlePiece01, RefreshCw01, Server01, Trash01 } from "@untitledui/icons";
+import { ChevronDown, Download01, Folder, Plus, Zap, RefreshCw01, Server01, Trash01 } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
@@ -68,7 +68,7 @@ export function SkillsPage() {
                 <p className="text-xs text-tertiary">{tr("skills.changeHint")}</p>
                 <TableCard.Root size="sm" className="workbench-table min-w-0">
                     {!view ? <div className="px-5 py-6 text-sm text-tertiary">{tr("skills.loading")}</div> : skills.length === 0 ? (
-                        <Nothing icon={PuzzlePiece01} title={tr("skills.empty")}>{tr("skills.emptyHint")}</Nothing>
+                        <Nothing icon={Zap} title={tr("skills.empty")}>{tr("skills.emptyHint")}</Nothing>
                     ) : (
                         <Table aria-label={tr("skills.title")} size="sm" className="min-w-176 table-fixed">
                             <Table.Header>

@@ -4,7 +4,7 @@ import { SelectionProvider } from "@/providers/selection-provider";
 import { SideChatProvider } from "@/providers/side-chat-provider";
 import { lazy, Suspense, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
-import { BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
+import { BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Zap, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
 import { Sheet } from "@/components/steve/drawer";
 import { FleetProvider, IntentProvider, useFleet } from "@/lib/fleet";
 import { useI18n } from "@/providers/locale-provider";
@@ -51,7 +51,7 @@ function Shell() {
         { id: "manage", title: t("nav.manage"), items: [
             { href: "/projects", label: t("nav.projects"), icon: Folder, badge: 0 },
             { href: "/fleet", label: t("nav.fleet"), icon: Server01, badge: 0 },
-            { href: "/skills", label: t("nav.skills"), icon: PuzzlePiece01, badge: 0 },
+            { href: "/skills", label: t("nav.skills"), icon: Zap, badge: 0 },
             { href: "/plugins", label: t("nav.plugins"), icon: PuzzlePiece01, badge: 0 },
             { href: "/mcp", label: t("nav.mcp"), icon: Dataflow03, badge: 0 },
             { href: "/home", label: t("nav.home"), icon: BookOpen01, badge: 0 },
