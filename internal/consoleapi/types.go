@@ -248,8 +248,8 @@ type Admin interface {
 	AttemptDiff(ctx context.Context, attempt, path string) (FileDiff, error)
 	// TaskAttempts are a task's attempts from the ledger, newest first.
 	TaskAttempts(ctx context.Context, task string) ([]AttemptView, error)
-	// Selectors reads what an agent offers in a thread (opening a session
-	// when none is live); SetPreferences records choices and rolls the
+	// Selectors reads what an agent offers using a temporary discovery
+	// session; SetPreferences records choices and rolls the conversation's
 	// session over so the next turn honours them.
 	Selectors(ctx context.Context, conversation, agent string) (Selectors, error)
 	SetPreferences(ctx context.Context, conversation, agent string, patch map[string]string) error
