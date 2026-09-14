@@ -58,6 +58,24 @@ func TestNativeImportReceiptSurvivesTranscriptPruningAndRestart(t *testing.T) {
 	if err != nil || !found || got != first {
 		t.Fatalf("durable lookup: %+v %v %v", got, found, err)
 	}
+	lookup.Project = ""
+	got, found, err = restored.ImportedConversation(origin.Node, lookup)
+	if err != nil || !found || got != first {
+		t.Fatalf("automatic project lookup lost its resolved receipt: %+v %v %v", got, found, err)
+	}
+	for _, mutate := range []func(*consoleapi.NativeImportRequest){
+		func(r *consoleapi.NativeImportRequest) { r.Agent = "other" },
+		func(r *consoleapi.NativeImportRequest) { r.Source.Harness = "other" },
+		func(r *consoleapi.NativeImportRequest) { r.Source.Home = "/other" },
+		func(r *consoleapi.NativeImportRequest) { r.NativeID = "other" },
+		func(r *consoleapi.NativeImportRequest) { r.Revision = "other" },
+	} {
+		changed := lookup
+		mutate(&changed)
+		if _, _, err := restored.ImportedConversation(origin.Node, changed); !errors.Is(err, consoleapi.ErrQuestionConflict) {
+			t.Fatalf("automatic lookup accepted a different source: %v", err)
+		}
+	}
 	lookup.Project = "different"
 	if _, _, err := restored.ImportedConversation(origin.Node, lookup); err == nil {
 		t.Fatal("lookup changed destination")

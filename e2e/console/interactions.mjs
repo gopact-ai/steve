@@ -1651,7 +1651,7 @@ checks["fleet-version-drift"] = async (f) => {
     await eventually(async () => (await f.page.getByText("版本不同", { exact: true }).count()) === 0, "Drift should clear after a running process updates");
 };
 
-checks["native-history-import"] = async (f) => {
+async function checkNativeHistoryImport(f, autoProject = false) {
     const node = { name: "test-node", role: "node", up: true, version: "test", features: ["native_history.v1"], harnesses: [] };
     const imported = "console:import:fixture";
     const home = "/original/codex";
@@ -1669,8 +1669,14 @@ checks["native-history-import"] = async (f) => {
             return route.fulfill({ json: { entries } });
         }
         posts.push(route.request().postDataJSON());
-        if (loseReceipt) { loseReceipt = false; return route.abort("connectionreset"); }
-        f.conversations.push({ id: imported, title: "Imported conversation", project: "scratch", agent: "test-agent" });
+        if (loseReceipt) {
+            loseReceipt = false;
+            if (autoProject) {
+                state.projects.push({ ...project("imported-project"), workspaces: [{ id: "imported-work", node: "test-node", path: entries[1].workdir, kind: "canonical", agents: ["test-agent"] }] });
+            }
+            return route.abort("connectionreset");
+        }
+        f.conversations.push({ id: imported, title: "Imported conversation", project: autoProject ? "imported-project" : "scratch", agent: "test-agent" });
         f.replies[imported] = [{ id: "import-notice", conversation: imported, kind: "notice", at, text: "History imported; send your next message to continue." }];
         return route.fulfill({ json: { conversation: imported } });
     });
@@ -1687,9 +1693,12 @@ checks["native-history-import"] = async (f) => {
     await dialog.getByRole("button", { name: "查找会话", exact: true }).click();
     assert.equal(await dialog.getByRole("textbox", { name: "筛选标题、目录或会话 ID" }).inputValue(), "");
     await dialog.getByText("Unmapped session", { exact: true }).click();
-    await dialog.getByText(/没有项目匹配这个会话的目录/).waitFor();
-    assert.equal(await dialog.getByRole("button", { name: "导入并打开会话", exact: true }).isDisabled(), true);
-    await dialog.getByText("Retained context with a long title and original workspace", { exact: true }).click();
+    await dialog.getByText("导入时会自动登记原工作目录并关联项目。", { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("button", { name: "导入并打开会话", exact: true }).isEnabled(), true, "An unregistered directory must be importable without leaving the dialog");
+    if (!autoProject) {
+        await dialog.getByText("Retained context with a long title and original workspace", { exact: true }).click();
+        await dialog.getByText("将自动关联项目 scratch。", { exact: true }).waitFor();
+    }
     await f.page.screenshot({ path: path.join(output, "native-import-wide.png"), fullPage: true });
     await f.page.setViewportSize({ width: 390, height: 844 });
     await f.page.screenshot({ path: path.join(output, "native-import-narrow.png"), fullPage: true });
@@ -1699,12 +1708,20 @@ checks["native-history-import"] = async (f) => {
     await dialog.getByRole("button", { name: "导入并打开会话", exact: true }).click();
     await dialog.getByRole("alert").waitFor();
     assert.equal(posts.length, 1);
+    if (autoProject) {
+        await f.emit({ kind: "project.changed" }); await f.page.clock.runFor(350);
+        await dialog.getByText("将自动关联项目 imported-project。", { exact: true }).waitFor();
+    }
     await dialog.getByRole("button", { name: "导入并打开会话", exact: true }).click();
     await f.page.getByText("History imported; send your next message to continue.", { exact: true }).waitFor();
     assert.deepEqual(posts[0], posts[1], "Lost import receipt must retry the same command and selected history");
-    assert.equal(posts[1].source.home, home); assert.equal(posts[1].native_id, "retained-native-id");
+    assert.equal(posts[1].source.home, home); assert.equal(posts[1].native_id, autoProject ? "unmapped-native-id" : "retained-native-id");
+    assert.equal(posts[1].project, "", "The server resolves the destination from the selected history, including retries after registration");
     assert.equal(f.calls.filter((c) => c.path === "/console/send" || (c.path === "/console/queue" && c.method === "POST")).length, 0, "Import must not submit a task prompt");
 };
+
+checks["native-history-import"] = (f) => checkNativeHistoryImport(f);
+checks["native-history-auto-project"] = (f) => checkNativeHistoryImport(f, true);
 
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);
 let failed = 0;

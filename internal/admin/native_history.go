@@ -27,7 +27,7 @@ func (a *Service) NativeHistory(ctx context.Context, name string, source nativeh
 }
 
 func (a *Service) ImportNativeHistory(ctx context.Context, name string, req consoleapi.NativeImportRequest) (consoleapi.ImportedSession, error) {
-	if !a.ClusterMode || a.Coordinator == nil || a.Console == nil || a.Catalog == nil {
+	if !a.ClusterMode || a.Coordinator == nil || a.Console == nil || a.Catalog == nil || a.Projects == nil {
 		return consoleapi.ImportedSession{}, errors.New("历史会话迁移需要已启用集群的服务")
 	}
 	if previous, exists, err := a.Console.ImportedConversation(name, req); err != nil || exists {
@@ -45,25 +45,42 @@ func (a *Service) ImportNativeHistory(ctx context.Context, name string, req cons
 	if !ok || selected.ID != req.Agent || selected.Node != name || selected.Harness != req.Source.Harness {
 		return consoleapi.ImportedSession{}, errors.New("请选择运行在来源机器上且使用相同工具的 Agent")
 	}
+	var ref nativehistory.Reference
+	if req.Project == "" {
+		// The isolated snapshot is also the durable source receipt for retries
+		// after project registration fails or the original history disappears.
+		ref, err = a.Nodes.ImportNativeHistory(ctx, name, nativehistory.ImportRequest{CommandID: req.CommandID, Source: req.Source, NativeID: req.NativeID, Revision: req.Revision})
+		if err != nil {
+			return consoleapi.ImportedSession{}, err
+		}
+		if err := ref.Validate(selected.Harness, ref.SourceWorkdir); err != nil {
+			return consoleapi.ImportedSession{}, err
+		}
+		req.Project, err = a.nativeImportProject(ctx, name, target, selected, ref.SourceWorkdir)
+		if err != nil {
+			return consoleapi.ImportedSession{}, err
+		}
+	}
 	workdir, err := a.Coordinator.PreflightNativeImport(ctx, conversation, req.Project, selected)
 	if err != nil {
 		return consoleapi.ImportedSession{}, err
 	}
-	ref, err := a.Nodes.ImportNativeHistory(ctx, name, nativehistory.ImportRequest{CommandID: req.CommandID, Source: req.Source, NativeID: req.NativeID, Revision: req.Revision, Workdir: workdir})
-	if err != nil {
+	if ref.ID == "" {
+		ref, err = a.Nodes.ImportNativeHistory(ctx, name, nativehistory.ImportRequest{CommandID: req.CommandID, Source: req.Source, NativeID: req.NativeID, Revision: req.Revision, Workdir: workdir})
+		if err != nil {
+			return consoleapi.ImportedSession{}, err
+		}
+	}
+	if err := ref.Validate(selected.Harness, workdir); err != nil {
 		return consoleapi.ImportedSession{}, err
 	}
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
 	ConfigMu.RLock()
-	err = a.checkAgentNodeTarget(name, target)
-	current, exists := a.Cfg.Agents[selected.ID]
+	err = a.checkNativeImportTarget(name, target, selected)
 	ConfigMu.RUnlock()
 	if err != nil {
 		return consoleapi.ImportedSession{}, err
-	}
-	if !exists || current.Node != name || current.Harness != selected.Harness {
-		return consoleapi.ImportedSession{}, errors.New("Agent 配置已变化，请重新选择")
 	}
 	return a.Console.EnsureImportedConversation(ctx, req.CommandID, consoleapi.ImportedSession{Node: name, Project: req.Project, Agent: selected.ID, Reference: ref}, func(conversation string) error {
 		return a.Coordinator.ImportNativeSession(ctx, conversation, req.Project, selected, ref)

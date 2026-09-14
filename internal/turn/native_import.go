@@ -10,8 +10,9 @@ import (
 	"github.com/gopact-ai/steve/internal/state"
 )
 
-// PreflightNativeImport checks destination admission before the node copies any
-// source data. ImportNativeSession repeats these checks when committing binding.
+// PreflightNativeImport checks destination admission. Automatic project discovery
+// may already have frozen the source history in an isolated snapshot; no runtime
+// starts until admission. ImportNativeSession repeats these checks at binding.
 func (c *Coordinator) PreflightNativeImport(ctx context.Context, conversation, projectID string, selected agent.Agent) (string, error) {
 	if c.projects == nil || c.store == nil {
 		return "", errors.New("native import requires project and conversation storage")
@@ -68,7 +69,7 @@ func (c *Coordinator) ImportNativeSession(ctx context.Context, conversation, pro
 		return errors.New("native import command is already bound to another project")
 	}
 	if !exists {
-		binding, err = c.projects.Bind(ctx, conversation, projectID, "native-import")
+		binding, err = c.projects.BindInitial(ctx, conversation, projectID, "native-import")
 		if err != nil {
 			return err
 		}

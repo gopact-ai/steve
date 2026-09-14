@@ -484,7 +484,7 @@ export function ConsolePage() {
     const inspector = <Rail key={conversation} context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} onClose={() => setInspectorOpen(false)} />;
     return (
         <div className={`console-workbench ${side.session ? "has-side-chat" : ""}`}>
-            {importing && <NativeSessionImport agents={snap.agents} nodes={snap.nodes} projects={snap.projects} onClose={() => setImporting(false)} onImported={(id) => { setImporting(false); selectConversation(id); void loadConversations(); }} />}
+            {importing && <NativeSessionImport agents={snap.agents} nodes={snap.nodes} projects={snap.projects} onClose={() => setImporting(false)} onImported={(id) => { setImporting(false); refresh(); selectConversation(id); void loadConversations(); }} />}
             {view === "chat" && desktopSessions && !side.session && sessions()}
             {mobileSessions && !desktopSessions && <Sheet label={t("console.sessions")}  side="left" width={300} onClose={() => setMobileSessions(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("console.closeSessions")}  onClick={() => setMobileSessions(false)}><X aria-hidden="true" /></button>{sessions(false)}</Sheet>}
             {pickedTask && <TaskDrawer t={pickedTask} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === pickedTask.id)} onClose={() => setPickedTask(null)} width={RAIL_WIDTH} />}

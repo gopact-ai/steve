@@ -30,8 +30,10 @@ export function NativeSessionImport({ agents, nodes, projects, onClose, onImport
     const pending = useRef(false);
     const [error, setError] = useState("");
     const entry = entries?.find((e) => e.revision === selected);
-    const matching = entry && agent ? projects.filter((p) => p.workspaces.some((w) => w.node === agent.node && cleanNodePath(w.path) === cleanNodePath(entry.workdir) && (!w.state || w.state === "ready"))) : [];
-    const project = matching.find((p) => p.id === projectID) || (matching.length === 1 ? matching[0] : undefined);
+    const matching = entry && agent ? projects.filter((p) => p.workspaces.some((w) => w.node === agent.node && cleanNodePath(w.path) === cleanNodePath(entry.workdir))) : [];
+    const explicitProject = matching.find((p) => p.id === projectID);
+    const project = explicitProject || (matching.length === 1 ? matching[0] : undefined);
+    const needsProjectChoice = matching.length > 1 && !explicitProject;
     const visible = entries?.filter((e) => `${e.title || ""} ${e.native_id} ${e.workdir}`.toLocaleLowerCase().includes(query.toLocaleLowerCase())) || [];
     function reset() { setQuery(""); setEntries(null); setSelected(""); setProjectID(""); setError(""); }
     async function find() {
@@ -46,13 +48,14 @@ export function NativeSessionImport({ agents, nodes, projects, onClose, onImport
         finally { pending.current = false; setBusy(null); }
     }
     async function importSession() {
-        if (!agent || !entry || !project || pending.current) return;
+        if (!agent || !entry || needsProjectChoice || pending.current) return;
         pending.current = true; setBusy("import"); setError("");
         try {
             // The same selected snapshot and destination always retry the same
             // command, including after a lost response or a browser reload.
-            const command = `native:${entry.revision}:${agent.id}:${project.id}`;
-            const result = await request<{ conversation: string }>(`/console/nodes/${encodeURIComponent(agent.node!)}/native-history`, { method: "POST", body: { command_id: command, agent: agent.id, project: project.id, source: { harness: entry.harness, home: entry.source_home }, native_id: entry.native_id, revision: entry.revision } });
+            const destination = explicitProject ? `project:${explicitProject.id}` : "auto";
+            const command = `native:${entry.revision}:${agent.id}:${destination}`;
+            const result = await request<{ conversation: string }>(`/console/nodes/${encodeURIComponent(agent.node!)}/native-history`, { method: "POST", body: { command_id: command, agent: agent.id, project: explicitProject?.id || "", source: { harness: entry.harness, home: entry.source_home }, native_id: entry.native_id, revision: entry.revision } });
             onImported(result.conversation);
         } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
         finally { pending.current = false; setBusy(null); }
@@ -81,10 +84,10 @@ export function NativeSessionImport({ agents, nodes, projects, onClose, onImport
                         </Radio>)}
                     </RadioGroup>
                 </>}
-                {entry && (matching.length ? <Select label={t("nativeImport.project")} selectedKey={project?.id || null} isDisabled={!!busy} onSelectionChange={(key) => setProjectID(String(key))} items={matching.map((p) => ({ id: p.id, label: p.id }))}>
+                {entry && (matching.length > 1 ? <Select label={t("nativeImport.project")} selectedKey={explicitProject?.id || null} isDisabled={!!busy} onSelectionChange={(key) => setProjectID(String(key))} items={matching.map((p) => ({ id: p.id, label: p.id }))}>
                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
-                </Select> : <p role="status" className="text-sm text-tertiary">{t("nativeImport.noProject")}</p>)}
-                <Button isDisabled={!entry || !project || !!busy} isLoading={busy === "import"} onClick={() => void importSession()}>{busy === "import" ? t("nativeImport.importing") : t("nativeImport.import")}</Button>
+                </Select> : <p role="status" className="text-sm text-tertiary">{project ? t("nativeImport.autoAssociate", { project: project.id }) : t("nativeImport.autoRegister")}</p>)}
+                <Button isDisabled={!entry || needsProjectChoice || !!busy} isLoading={busy === "import"} onClick={() => void importSession()}>{busy === "import" ? t("nativeImport.importing") : t("nativeImport.import")}</Button>
             </>}
             {error && <p role="alert" className="break-words text-sm text-error-primary">{error}</p>}
         </div>

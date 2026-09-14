@@ -34,7 +34,7 @@ func (s *Service) ImportedConversation(node string, req consoleapi.NativeImportR
 		return consoleapi.ImportedSession{}, false, nil
 	}
 	previous := meta.NativeImport
-	if previous == nil || previous.Node != node || previous.Agent != req.Agent || previous.Project != req.Project || previous.Reference.Harness != req.Source.Harness || (req.Source.Home != "" && previous.Reference.SourceHome != req.Source.Home) || previous.Reference.NativeID != req.NativeID || previous.Reference.Revision != req.Revision {
+	if previous == nil || previous.Node != node || previous.Agent != req.Agent || (req.Project != "" && previous.Project != req.Project) || previous.Reference.Harness != req.Source.Harness || (req.Source.Home != "" && previous.Reference.SourceHome != req.Source.Home) || previous.Reference.NativeID != req.NativeID || previous.Reference.Revision != req.Revision {
 		return consoleapi.ImportedSession{}, false, consoleapi.ErrQuestionConflict
 	}
 	return *previous, true, nil
