@@ -72,8 +72,11 @@ func (c commands) checkTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conv
 	if err := attempt.CheckTaskCompletionTx(tx, ids); err != nil {
 		return err
 	}
+	if err := artifact.CheckTaskLandingsTx(tx, ids); err != nil {
+		return err
+	}
 	var operations []ledger.Operation
-	for _, kind := range []string{"landing", "intent", "disclosure-request"} {
+	for _, kind := range []string{"intent", "disclosure-request"} {
 		current, err := tx.Operations(kind, "")
 		if err != nil {
 			return err
@@ -82,14 +85,6 @@ func (c commands) checkTaskCompletionTx(tx *ledger.Tx, ids map[string]bool, conv
 	}
 	for _, operation := range operations {
 		switch operation.Kind {
-		case "landing":
-			var landing artifact.Landing
-			if err := json.Unmarshal(operation.Data, &landing); err != nil {
-				return err
-			}
-			if landing.Source != nil && landing.Source.Execution != nil && ids[landing.Source.Execution.TaskID] && operation.State != artifact.LandCommitted {
-				return task.ErrCompleteDelivery
-			}
 		case "intent":
 			var effect intent.Intent
 			if err := json.Unmarshal(operation.Data, &effect); err != nil {
