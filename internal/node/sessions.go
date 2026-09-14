@@ -117,6 +117,9 @@ type sessionRecord struct {
 	OpenHash       string                             `json:"open_hash"`
 	ConfigHash     string                             `json:"config_hash"`
 	UpstreamID     string                             `json:"upstream_id"`
+	ResumedFrom    string                             `json:"resumed_from,omitempty"`
+	ResumeTarget   string                             `json:"resume_target,omitempty"`
+	RuntimeSession string                             `json:"runtime_session,omitempty"`
 	Generation     uint64                             `json:"generation"`
 	State          nodewire.SessionState              `json:"state"`
 	CommandHashes  map[string]string                  `json:"command_hashes"`
@@ -252,6 +255,9 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 	one := s.sessions[req.ID]
 	s.mu.Unlock()
 	if one == nil {
+		if req.Action == nodewire.SessionActionOpen {
+			return s.open(ctx, principal, req)
+		}
 		return s.closedState(req)
 	}
 	one.mu.Lock()

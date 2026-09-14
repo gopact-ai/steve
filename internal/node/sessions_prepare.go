@@ -12,7 +12,7 @@ import (
 	steveruntime "github.com/gopact-ai/steve/internal/runtime"
 )
 
-func (s *SessionService) prepareSessionHost(ctx context.Context, id string, req *nodewire.SessionRequest, spec HarnessSpec, broker *permission.Broker) (acphost.Config, string, error) {
+func (s *SessionService) prepareSessionHost(ctx context.Context, id, resumeRuntime string, req *nodewire.SessionRequest, spec HarnessSpec, broker *permission.Broker) (acphost.Config, string, error) {
 	cfg := s.hostConfig(req.Harness, spec, broker)
 	instructions := ""
 	if req.NativeImport != nil {
@@ -40,7 +40,11 @@ func (s *SessionService) prepareSessionHost(ctx context.Context, id string, req 
 		return cfg, "", plugins.ErrInvalid
 	}
 	if req.NativeImport != nil {
-		isolated, err := steveruntime.PrepareNativeHistory(ctx, s.server.conf().StateDir, id, *req.NativeImport, harness.Config{Command: cfg.Command, Args: cfg.Args, Env: cfg.Env, ProcessDir: cfg.ProcessDir})
+		prepare := steveruntime.PrepareNativeHistory
+		if resumeRuntime != "" {
+			id, prepare = resumeRuntime, steveruntime.ResumeNativeHistory
+		}
+		isolated, err := prepare(ctx, s.server.conf().StateDir, id, *req.NativeImport, harness.Config{Command: cfg.Command, Args: cfg.Args, Env: cfg.Env, ProcessDir: cfg.ProcessDir})
 		if err != nil {
 			return cfg, "", err
 		}

@@ -75,4 +75,21 @@ func TestNativeRuntimeCombinesSelectedHistoryWithAdmittedAccessAndSkills(t *test
 	if _, err := PrepareNativeHistory(t.Context(), state, "ns_selected", ref, cfg); err == nil {
 		t.Fatal("existing execution overwritten")
 	}
+	write(dest, transcript, "history updated after the import\n")
+	resumed, err := ResumeNativeHistory(t.Context(), state, "ns_selected", ref, cfg)
+	if err != nil || !strings.Contains(strings.Join(resumed.Env, "\n"), "CODEX_HOME="+dest) {
+		t.Fatalf("managed native home did not resume: %v", err)
+	}
+	if raw, _ := os.ReadFile(filepath.Join(dest, transcript)); string(raw) != "history updated after the import\n" {
+		t.Fatal("resume rematerialized the old import over subsequent context")
+	}
+	if _, err := ResumeNativeHistory(t.Context(), state, "ns_missing", ref, cfg); err == nil {
+		t.Fatal("missing managed home was replaced with an empty session")
+	}
+	if err := os.Chmod(dest, 0755); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ResumeNativeHistory(t.Context(), state, "ns_selected", ref, cfg); err == nil {
+		t.Fatal("public native home accepted")
+	}
 }
