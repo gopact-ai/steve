@@ -1,7 +1,7 @@
 import { useI18n } from "@/providers/locale-provider";
 import { number, relative } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, Plus, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
@@ -177,6 +177,8 @@ function TreeHeading({ children }: { children: string }) {
 // nowhere to work — where it runs. Its menu renames or puts it away.
 function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArchive, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; onPick: (id: string) => void; norm?: { agent: string; place: string }; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
+    const [workOpen, setWorkOpen] = useState(false);
+    const workID = useId();
     const nowhere = !!c.project && !!c.agent && !c.place;
     // The second line earns its place only when it says something this
     // row does not share with its neighbours. Usually nothing does, and
@@ -192,15 +194,23 @@ function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArc
             {renaming ? (
                 <RenameBox initial={c.title} onDone={onRenamed} />
             ) : (
-                <button type="button" onClick={() => onPick(c.id)} aria-current={current ? "page" : undefined} className={`conversation-row ${current ? "is-selected" : ""}`} title={nowhere ? tr("consoleChrome.noWorkspace") : c.place ? placeLabel(c.place, locale) : undefined}>
-                    <span className="flex w-full items-baseline gap-2">
-                        {c.running && <Loading01 className="size-3 shrink-0 self-center animate-spin text-fg-brand-primary" />}
-                        {nowhere && <AlertCircle className="size-3 shrink-0 self-center text-fg-error-primary" />}
-                        <span className="min-w-0 flex-1 truncate u-title">{c.title || tr("console.newConversation")}</span>
-                        <span className="conversation-time">{c.last_at ? ago(c.last_at, locale) : tr("consoleChrome.notStarted")}</span>
-                    </span>
-                    {qualifiers.length > 0 && <span className="truncate u-meta">{qualifiers.join(" · ")}</span>}
-                </button>
+                <div className="flex items-start">
+                    {work.length > 0 ? <button type="button" onClick={() => setWorkOpen((open) => !open)}
+                        aria-expanded={workOpen} aria-controls={workID}
+                        aria-label={tr(workOpen ? "consoleChrome.collapseWork" : "consoleChrome.expandWork", { title: c.title || tr("console.newConversation") })}
+                        className="mt-2 flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-tertiary focus-visible:outline-2 focus-visible:outline-brand">
+                        <ChevronDown aria-hidden="true" className={`size-3.5 transition-transform motion-reduce:transition-none ${workOpen ? "" : "-rotate-90"}`} />
+                    </button> : <span className="w-6 shrink-0" />}
+                    <button type="button" onClick={() => onPick(c.id)} aria-current={current ? "page" : undefined} className={`conversation-row min-w-0 flex-1 ${current ? "is-selected" : ""}`} title={nowhere ? tr("consoleChrome.noWorkspace") : c.place ? placeLabel(c.place, locale) : undefined}>
+                        <span className="flex w-full items-baseline gap-2">
+                            {c.running && <Loading01 className="size-3 shrink-0 self-center animate-spin text-fg-brand-primary" />}
+                            {nowhere && <AlertCircle className="size-3 shrink-0 self-center text-fg-error-primary" />}
+                            <span className="min-w-0 flex-1 truncate u-title">{c.title || tr("console.newConversation")}</span>
+                            <span className="conversation-time">{c.last_at ? ago(c.last_at, locale) : tr("consoleChrome.notStarted")}</span>
+                        </span>
+                        {qualifiers.length > 0 && <span className="truncate u-meta">{qualifiers.join(" · ")}</span>}
+                    </button>
+                </div>
             )}
             {!renaming && (
                 <Dropdown.Root>
@@ -215,20 +225,14 @@ function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArc
                     </Dropdown.Popover>
                 </Dropdown.Root>
             )}
-            {work.length > 0 && <WorkFold threadID={c.id} work={work} childrenOf={childrenOf} onTask={onTask} />}
+            {work.length > 0 && <div id={workID} hidden={!workOpen}>{workOpen && <ThreadWork work={work} childrenOf={childrenOf} onTask={onTask} />}</div>}
         </li>
     );
 }
 
-// WorkFold is a thread's work behind one line: how much there is and
-// how it stands — running, waiting, failed — folded by default so the
-// tree stays a list of threads; open, it is the tasks with their
-// delegations indented, one line each.
-function WorkFold({ threadID, work, childrenOf, onTask }: { threadID: string; work: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
+// Work is revealed from the conversation row, including its summary counts.
+function ThreadWork({ work, childrenOf, onTask }: { work: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
-    const key = "steve.work.open." + threadID;
-    const [open, setOpen] = useState<boolean>(() => { try { return localStorage.getItem(key) === "1"; } catch { return false; } });
-    const toggle = () => { setOpen((v) => { try { localStorage.setItem(key, v ? "0" : "1"); } catch { /* ignore */ } return !v; }); };
     const all = work.flatMap((t) => [t, ...(childrenOf?.(t.id) || [])]);
     const running = all.filter((t) => t.execution === "running").length;
     const failed = all.filter((t) => taskState(t) === "failed").length;
@@ -236,27 +240,21 @@ function WorkFold({ threadID, work, childrenOf, onTask }: { threadID: string; wo
     const kids = all.length - work.length;
     return (
         <div className="ml-3 border-l border-secondary pl-2">
-            <button type="button" onClick={toggle} className="flex w-full items-center gap-1.5 rounded-md px-1.5 py-0.5 text-left u-meta text-quaternary hover:bg-primary/50 hover:text-tertiary">
-                <ChevronDown className={`size-3 shrink-0 transition ${open ? "" : "-rotate-90"}`} />
-                {/* When something is happening, that is the line. The
-                    counts are what the fold already implies — it exists
-                    because there is work — and they read as noise beside
-                    "2 失败". They come back when nothing is going on. */}
+            <div className="flex flex-wrap items-center gap-1.5 px-1.5 py-0.5 u-meta text-quaternary">
+                {/* Active work and attention take precedence over quiet task counts. */}
                 {running > 0 && <span className="flex items-center gap-1 text-fg-brand-primary"><Loading01 className="size-3 animate-spin" />{tr("consoleChrome.runningCount", { count: number(running, locale) })}</span>}
                 {waiting > 0 && <span className="text-warning-primary">{tr("consoleChrome.waitingCount", { count: number(waiting, locale) })}</span>}
                 {failed > 0 && <span className="text-error-primary">{tr("consoleChrome.failedCount", { count: number(failed, locale) })}</span>}
                 {running + waiting + failed === 0 && <span>{tr("consoleChrome.taskCount", { count: number(work.length, locale) })}{kids ? ` · ${tr("consoleChrome.delegationCount", { count: number(kids, locale) })}` : ""}</span>}
-            </button>
-            {open && (
-                <ul className="mb-1 flex flex-col">
-                    {work.map((t) => (
-                        <li key={t.id}>
-                            <TaskLine t={t} onTask={onTask} />
-                            {(childrenOf?.(t.id) || []).map((k) => <TaskLine key={k.id} t={k} onTask={onTask} child />)}
-                        </li>
-                    ))}
-                </ul>
-            )}
+            </div>
+            <ul className="mb-1 flex flex-col">
+                {work.map((t) => (
+                    <li key={t.id}>
+                        <TaskLine t={t} onTask={onTask} />
+                        {(childrenOf?.(t.id) || []).map((k) => <TaskLine key={k.id} t={k} onTask={onTask} child />)}
+                    </li>
+                ))}
+            </ul>
         </div>
     );
 }

@@ -13,7 +13,7 @@ Steve 自己的组件，建在 Untitled UI（`components/base`、`components/app
 | `message.tsx` | `UserMessage` `AssistantMessage` `InlineProcess` `ThinkingFold` | 对话区 |
 | `trace.tsx` | `Working` `Trace` `ProcessBody` `InjectedPanel` `applyLive` | 进行中的那一行、右栏过程 |
 | `composer.tsx` | `Composer` | 输入框、自适应选项区与固定的发送/停止操作 |
-| `sessions-tree.tsx` | `SessionsTree` | 可搜索的项目 → 会话列表；窄屏侧栏 |
+| `sessions-tree.tsx` | `SessionsTree` | 可搜索的项目 → 会话列表；标题旁展开任务与委派，统计和任务列表默认收起；窄屏侧栏 |
 | `rail.tsx` | `Rail` | 按需显示的详情；宽屏停靠，窄屏面板 |
 | `work-tabs.tsx` | `CodeTab` | 会话执行快照与统一代码入口 |
 | `review-workspace.tsx` | `ReviewWorkspace` | 只读文件树、文件标签、源码与 Diff 切换 |

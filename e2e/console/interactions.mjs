@@ -493,7 +493,7 @@ const checks = {
     },
     async "conversation-rename-once"(f) {
         const edit = async (title) => {
-            await f.page.getByRole("button", { name: new RegExp(`^${title}`) }).locator("..").getByRole("button", { name: "更多", exact: true }).click();
+            await f.page.getByRole("button", { name: new RegExp(`^${title}`) }).locator("xpath=ancestor::li[1]").getByRole("button", { name: "更多", exact: true }).click();
             await f.page.getByRole("menuitem", { name: "重命名", exact: true }).click();
             return f.page.getByRole("textbox", { name: "会话名称", exact: true });
         };
@@ -707,7 +707,7 @@ checks["design-mobile-child"] = async (f) => {
     await f.box.fill("Draft before viewing a child");
     await f.page.getByRole("button", { name: "会话列表", exact: true }).click();
     const sheet = f.page.getByRole("dialog", { name: "会话列表", exact: true });
-    await sheet.getByRole("button", { name: /^2 在跑$/ }).click();
+    await sheet.getByRole("button", { name: "展开 Conversation A 的任务", exact: true }).click();
     await sheet.getByRole("button", { name: /#33.*Task 33/ }).click();
     await eventually(async () => await sheet.count() === 0, "Opening a child task must dismiss mobile conversation navigation");
     await f.page.getByText("Child answer", { exact: true }).waitFor();
@@ -1924,6 +1924,39 @@ async function checkNativeHistoryImport(f, autoProject = false) {
 
 checks["native-history-import"] = (f) => checkNativeHistoryImport(f);
 checks["native-history-auto-project"] = (f) => checkNativeHistoryImport(f, true);
+
+checks["conversation-work-disclosure"] = async (f) => {
+    const tasks = [
+        { ...task("11", A, "scratch"), execution: "idle" },
+        { ...task("12", A, "scratch"), parent: "11", execution: "idle" },
+        { ...task("22", B, "home"), execution: "idle", plan_id: "plan" },
+    ];
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.addInitScript((id) => localStorage.setItem("steve.work.open." + id, "1"), A);
+    await f.page.reload();
+    const sidebar = f.page.locator(".conversation-sidebar");
+    const toggle = sidebar.getByRole("button", { name: "展开 Conversation A 的任务", exact: true });
+    await toggle.waitFor();
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(await sidebar.getByText("1 个任务 · 1 次委派", { exact: true }).count(), 0, "Task statistics must not occupy a row by default, even with an old saved expansion");
+    await f.box.fill("Retain this draft while expanding work");
+    await toggle.focus(); await f.page.keyboard.press("Enter");
+    const collapse = sidebar.getByRole("button", { name: "收起 Conversation A 的任务", exact: true });
+    assert.equal(await collapse.getAttribute("aria-expanded"), "true");
+    await sidebar.getByText("1 个任务 · 1 次委派", { exact: true }).waitFor();
+    await sidebar.getByRole("button", { name: /#12.*Task 12/ }).waitFor();
+    assert.equal(await sidebar.getByRole("button", { name: "展开 Conversation B 的任务", exact: true }).getAttribute("aria-expanded"), "false", "Expanding a thread must not expand its neighbours");
+    await collapse.press("Space");
+    assert.equal(await sidebar.getByText("1 个任务 · 1 次委派", { exact: true }).count(), 0);
+    await f.pick("B"); await f.pick("A");
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false", "Picking a conversation must not expand its work");
+    assert.equal(await f.box.inputValue(), "Retain this draft while expanding work");
+    await toggle.click();
+    await f.page.reload();
+    await toggle.waitFor();
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false", "A fresh page starts compact");
+    assert.equal(f.calls.length, 0, "Disclosure and selection must not submit work");
+};
 
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);
 let failed = 0;
