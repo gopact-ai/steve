@@ -86,6 +86,12 @@ func completionBlocker(root Task, tree []Task) error {
 		if !member.State.Terminal() {
 			return fmt.Errorf("%w: #%s", ErrCompleteChildren, member.ID)
 		}
+		// The durable cancellation itself settles work that produced no
+		// result. Execution/WAL/queue guards still require physical cleanup;
+		// cancellation never invents a successful result or delivery receipt.
+		if member.State == StateCancelled && member.Result == nil && member.Delivery == nil {
+			continue
+		}
 		if member.Result == nil || member.Delivery == nil || member.Delivery.State != DeliveryDelivered {
 			return fmt.Errorf("%w: #%s", ErrCompleteDelivery, member.ID)
 		}

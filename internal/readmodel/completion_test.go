@@ -9,7 +9,7 @@ import (
 )
 
 func TestCompletionEntryRequiresKnownIdleAcceptedRoot(t *testing.T) {
-	for _, scenario := range []string{"ready", "child-running", "child-failed", "result-missing", "receipt-pending", "receipt-suppressed", "open-row", "activity-unknown", "attention-unknown", "live", "unsettled", "question", "plan", "descendant-plan", "done"} {
+	for _, scenario := range []string{"ready", "cancelled-empty", "cancelled-result", "child-running", "child-failed", "result-missing", "receipt-pending", "receipt-suppressed", "open-row", "activity-unknown", "attention-unknown", "live", "unsettled", "question", "plan", "descendant-plan", "done"} {
 		t.Run(scenario, func(t *testing.T) {
 			list := []task.Task{
 				{ID: "root", State: task.StateRunning},
@@ -18,6 +18,11 @@ func TestCompletionEntryRequiresKnownIdleAcceptedRoot(t *testing.T) {
 			builder := snapshotBuilder{activityKnown: true, attentionKnown: true}
 			plans := map[string]plan.Plan{}
 			switch scenario {
+			case "cancelled-empty", "cancelled-result":
+				list[1].State, list[1].Delivery = task.StateCancelled, nil
+				if scenario == "cancelled-empty" {
+					list[1].Result = nil
+				}
 			case "child-running":
 				list[1].State = task.StateRunning
 			case "child-failed":
@@ -47,7 +52,7 @@ func TestCompletionEntryRequiresKnownIdleAcceptedRoot(t *testing.T) {
 			}
 			builder.snap.Tasks = tasks(list, plans)
 			builder.taskAxes()
-			if builder.snap.Tasks[0].CanComplete != (scenario == "ready") {
+			if builder.snap.Tasks[0].CanComplete != (scenario == "ready" || scenario == "cancelled-empty") {
 				t.Fatalf("%s: %+v", scenario, builder.snap.Tasks[0])
 			}
 			if builder.snap.Tasks[1].CanComplete {

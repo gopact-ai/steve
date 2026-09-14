@@ -203,6 +203,35 @@ func TestCompleteTaskRejectsActiveTurnAndRegistryReservation(t *testing.T) {
 	}
 }
 
+func TestCancelledChildWithoutResultSettlesOnlyAfterItsExecutionStops(t *testing.T) {
+	c, _ := completionCoordinator(t, &fakeRunner{reply: "accepted"})
+	if _, err := handle(c, t.Context(), "work"); err != nil {
+		t.Fatal(err)
+	}
+	child, err := c.tasks.Spawn("1", task.Task{Member: "child"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	scope, err := c.executions.Begin(t.Context(), execution.Key{TaskID: child.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := c.tasks.SetAside(child.ID, task.StateCancelled); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := handle(c, t.Context(), "/tasks complete 1"); err == nil {
+		t.Fatal("cancelled child still had an active execution")
+	}
+	scope.Finish(nil)
+	if _, err := handle(c, t.Context(), "/tasks complete 1"); err != nil {
+		t.Fatal(err)
+	}
+	closed, _ := c.tasks.Get(child.ID)
+	if closed.State != task.StateCancelled || closed.Result != nil || closed.Delivery != nil {
+		t.Fatal("parent completion invented a child result or delivery")
+	}
+}
+
 func TestCompletionExemptsOnlyItsOwnConsoleExchange(t *testing.T) {
 	for _, scenario := range []string{"own", "queued-completion", "running-completion", "missing-identity", "terminal-completion"} {
 		t.Run(scenario, func(t *testing.T) {
