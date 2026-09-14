@@ -41,6 +41,43 @@ func TestNativeResumeFollowsLongHistoryAndRejectsCycles(t *testing.T) {
 	}
 }
 
+func TestNativeResumeRetriesFromOldestSourceAcrossHandoffs(t *testing.T) {
+	cfg, req, old := resumedFixture(t, buildMockAgent(t))
+	saveResumeFixture(t, cfg, old)
+	s := NewServer(cfg)
+	if err := s.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { s.sessions.Close() }()
+	previous := old.State.ID
+	for i := range 3 {
+		req.Binding.TaskID, req.CommandID = fmt.Sprintf("task-%d", i+2), fmt.Sprintf("open-%d", i+2)
+		first, err := s.sessions.Do(t.Context(), "cluster-1", req)
+		if err != nil || first.ID == previous || first.ContextID != old.State.ID {
+			t.Fatalf("handoff %d lost original context: %+v %v", i, first, err)
+		}
+		for _, closed := range []bool{false, true} {
+			if closed {
+				stop := req
+				stop.ID, stop.Action = first.ID, nodewire.SessionActionClose
+				if _, err := s.sessions.Do(t.Context(), "cluster-1", stop); err != nil {
+					t.Fatal(err)
+				}
+				s.sessions.Close()
+				s = NewServer(cfg)
+				if err := s.startSessions(t.Context()); err != nil {
+					t.Fatal(err)
+				}
+			}
+			got, err := s.sessions.Do(t.Context(), "cluster-1", req)
+			if err != nil || got.ID != first.ID || got.ProcessStopped != closed || got.InputAccepted != 0 {
+				t.Fatalf("handoff %d retry closed=%v did not observe reserved target: %+v %v", i, closed, got, err)
+			}
+		}
+		previous = first.ID
+	}
+}
+
 func TestNativeResumeIsNotSentToOlderNode(t *testing.T) {
 	server := startNode(t, ServerConfig{Name: "worker", Token: "resume-feature", StateDir: t.TempDir(), SessionAuthorizer: &sessionAuthorityTest{epoch: 1, writer: 1}})
 	r := NewRegistry("cluster-1", map[string]Config{"worker": {Addr: server.Addr(), Token: "resume-feature"}})

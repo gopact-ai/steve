@@ -13,18 +13,30 @@ import (
 // stopped-context validation and exclusive handoff path.
 func (s *SessionService) archiveStoppedSession(id string) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	one := s.sessions[id]
+	s.mu.Unlock()
 	if one == nil {
 		return nil
 	}
 	one.mu.Lock()
 	defer one.mu.Unlock()
-	if one.record.State.State != nodewire.SessionIdle || one.runningLocked() || one.host == nil || !one.host.AllProcessesStopped() {
+	// Prompt admission also takes the session lock before the service lock.
+	// Recheck ownership after waiting; close may already have removed it.
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || s.sessions[id] != one {
+		return nil
+	}
+	state := one.record.State.State
+	if (state != nodewire.SessionIdle && state != nodewire.SessionInterrupted) || one.runningLocked() || one.host == nil || !one.host.AllProcessesStopped() {
 		return nil
 	}
 	next := one.copyLocked()
 	next.State.State, next.State.ProcessStopped = nodewire.SessionInterrupted, true
+	for id, command := range next.Commands {
+		command.ProcessStopped = true
+		next.Commands[id] = command
+	}
 	if err := one.commitLocked(next); err != nil {
 		return err
 	}

@@ -212,6 +212,11 @@ func (one *ownedSession) prompt(req nodewire.SessionRequest) (nodewire.SessionSt
 	if req.InputSequence != one.record.State.InputAccepted+1 || len(one.record.Commands) >= 512 {
 		return nodewire.SessionState{}, sessionError("conflict", "input sequence is stale or session retention limit reached")
 	}
+	one.service.mu.Lock()
+	defer one.service.mu.Unlock()
+	if one.service.closed {
+		return nodewire.SessionState{}, sessionError("closed", "node session service is closed")
+	}
 	next := one.copyLocked()
 	next.CommandHashes[req.CommandID] = hash
 	next.Commands[req.CommandID] = nodewire.SessionCommand{ID: req.CommandID, InputSequence: req.InputSequence, State: nodewire.SessionCommandAccepted, DispatchState: "not-dispatched"}
@@ -222,13 +227,7 @@ func (one *ownedSession) prompt(req nodewire.SessionRequest) (nodewire.SessionSt
 	if err := one.commitLocked(next); err != nil {
 		return nodewire.SessionState{}, err
 	}
-	one.service.mu.Lock()
-	if one.service.closed {
-		one.service.mu.Unlock()
-		return nodewire.SessionState{}, sessionError("closed", "node session service is closed")
-	}
 	one.service.wg.Add(1)
-	one.service.mu.Unlock()
 	one.runDone = make(chan struct{})
 	done := one.runDone
 	go func() { defer one.service.wg.Done(); defer close(done); one.run(req) }()

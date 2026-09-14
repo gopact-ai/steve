@@ -3,7 +3,9 @@ package node
 import (
 	"errors"
 	"reflect"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/nodewire"
@@ -11,6 +13,15 @@ import (
 )
 
 func TestSettledAgentExitUsesColdContextWithoutNodeRestart(t *testing.T) {
+	for _, interrupted := range []bool{false, true} {
+		t.Run(map[bool]string{false: "idle", true: "interrupted-settings"}[interrupted], func(t *testing.T) {
+			testSettledAgentExit(t, interrupted)
+		})
+	}
+}
+
+func testSettledAgentExit(t *testing.T, interrupted bool) {
+	t.Helper()
 	cfg, req, old := resumedFixture(t, buildMockAgent(t))
 	saveResumeFixture(t, cfg, old)
 	s := NewServer(cfg)
@@ -44,6 +55,13 @@ func TestSettledAgentExitUsesColdContextWithoutNodeRestart(t *testing.T) {
 	before, _, _ := s.sessions.readRecord(first.ID)
 	// Physical exit happens after the settled receipt, with the node still up.
 	s.sessions.sessions[first.ID].host.Close()
+	if interrupted {
+		option := req
+		option.ID, option.Action, option.OptionID, option.OptionValue = first.ID, nodewire.SessionActionOption, "mode", "default"
+		if _, err := s.sessions.Do(t.Context(), "cluster-1", option); err == nil {
+			t.Fatal("stopped agent accepted a settings change")
+		}
+	}
 	req.ID, req.Binding.TaskID, req.CommandID = first.ID, "next-task", "next-open"
 	second, err := s.sessions.Do(t.Context(), "cluster-1", req)
 	if err != nil || second.ID == first.ID || second.ContextID != old.State.ID {
@@ -51,8 +69,102 @@ func TestSettledAgentExitUsesColdContextWithoutNodeRestart(t *testing.T) {
 	}
 	current, _, _ := s.sessions.readRecord(second.ID)
 	previous, _, _ := s.sessions.readRecord(first.ID)
+	for id, command := range before.Commands {
+		command.ProcessStopped = true
+		before.Commands[id] = command
+	}
 	if current.UpstreamID != old.UpstreamID || !reflect.DeepEqual(before.Commands, previous.Commands) || previous.State.Binding != before.State.Binding {
 		t.Fatal("exit recovery replaced context or rebound old receipts")
+	}
+}
+
+func TestConcurrentLiveOpenAndPromptDoNotBlockNode(t *testing.T) {
+	cfg, req, old := resumedFixture(t, buildMockAgent(t))
+	saveResumeFixture(t, cfg, old)
+	s := NewServer(cfg)
+	if err := s.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		done := make(chan struct{})
+		go func() { s.sessions.Close(); close(done) }()
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Error("concurrent requests prevented node shutdown")
+		}
+	})
+	first, err := s.sessions.Do(t.Context(), "cluster-1", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.ID = first.ID
+	input := req
+	input.Action, input.CommandID, input.InputSequence, input.Text = nodewire.SessionActionPrompt, "racing-input", 1, "one accepted input"
+	start, done := make(chan struct{}), make(chan struct{})
+	errs := make(chan error, 64)
+	var wg sync.WaitGroup
+	for i := range 64 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			request := req
+			if i%2 == 0 {
+				request = input
+			}
+			_, err := s.sessions.Do(t.Context(), "cluster-1", request)
+			errs <- err
+		}()
+	}
+	close(start)
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("concurrent live opens and prompt retries blocked the node")
+	}
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if state := s.sessions.sessions[first.ID].state(input.CommandID); state.InputAccepted != 1 {
+		t.Fatalf("concurrent retry accepted more than one input: %+v", state)
+	}
+}
+
+func TestPromptAfterShutdownAdmissionDoesNotRecordAnAcceptedInput(t *testing.T) {
+	cfg, req, old := resumedFixture(t, buildMockAgent(t))
+	saveResumeFixture(t, cfg, old)
+	s := NewServer(cfg)
+	if err := s.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.sessions.Close()
+	first, err := s.sessions.Do(t.Context(), "cluster-1", req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	one := s.sessions.sessions[first.ID]
+	// The request already passed Do's initial check when shutdown begins.
+	s.sessions.mu.Lock()
+	s.sessions.closed = true
+	s.sessions.mu.Unlock()
+	t.Cleanup(func() {
+		s.sessions.mu.Lock()
+		s.sessions.closed = false
+		s.sessions.mu.Unlock()
+		s.sessions.Close()
+	})
+	req.ID, req.Action, req.CommandID, req.InputSequence, req.Text = first.ID, nodewire.SessionActionPrompt, "shutdown-input", 1, "must not be accepted"
+	if _, err := one.prompt(req); err == nil {
+		t.Fatal("shutdown accepted a new prompt")
+	}
+	state := one.state(req.CommandID)
+	if state.InputAccepted != 0 || state.Command != nil || state.State != nodewire.SessionIdle {
+		t.Fatal("refused prompt left an accepted input without a worker")
 	}
 }
 
