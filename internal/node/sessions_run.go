@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"slices"
 	"time"
@@ -103,52 +102,10 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		s.mu.Unlock()
 		return nodewire.SessionState{}, err
 	}
-	configHash := sessionConfigHash(req)
-	runtimeID := ""
-	if source != nil {
-		runtimeID = source.RuntimeSession
-		if runtimeID == "" {
-			runtimeID = source.State.ID
-		}
-	}
-	hostCfg, pluginInstructions, err := s.prepareSessionHost(ctx, id, runtimeID, &req, spec, broker)
+	one, hostCfg, err := s.prepareOwnedSession(ctx, id, hash, &req, spec, broker, source)
 	if err != nil {
 		s.mu.Unlock()
 		return nodewire.SessionState{}, err
-	}
-	host := acphost.New(hostCfg)
-	one := &ownedSession{pluginInstructions: pluginInstructions, service: s, host: host, changed: make(chan struct{}), waiters: map[string]chan struct{}{}}
-	one.record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenHash: hash, ConfigHash: configHash, State: nodewire.SessionState{ID: id, NativeImport: req.NativeImport.Clone(), Plugin: req.Plugin.Clone(), Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionOpening, Questions: []nodewire.SessionQuestion{}}, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}}
-	if source != nil {
-		one.record.UpstreamID, one.record.ResumedFrom, one.record.RuntimeSession = source.UpstreamID, source.State.ID, runtimeID
-		// Publish the source claim before the destination can start. A crash
-		// here permits only this exact open to finish reserving the destination.
-		source.ResumeTarget = id
-		archive := &ownedSession{service: s, record: *source, changed: make(chan struct{})}
-		if err := archive.commitLocked(*source); err != nil {
-			s.mu.Unlock()
-			host.Close()
-			return nodewire.SessionState{}, err
-		}
-	}
-	if err := one.commitLocked(one.record); err != nil {
-		// Save can fail after publishing its record. Only remove preparation
-		// when durable absence is confirmed; uncertainty retains the history.
-		if req.NativeImport != nil && source == nil {
-			if _, exists, readErr := s.readRecord(id); readErr == nil && !exists {
-				_ = os.RemoveAll(filepath.Join(s.server.conf().StateDir, "native-runtimes", id))
-			}
-		}
-		s.mu.Unlock()
-		host.Close()
-		return nodewire.SessionState{}, err
-	}
-	if req.Plugin != nil {
-		if err := s.server.pluginStore().BeginRuntimeUse(ctx, *req.Plugin, "session/"+id, "session"); err != nil {
-			s.mu.Unlock()
-			host.Close()
-			return nodewire.SessionState{}, err
-		}
 	}
 	openCtx, cancel := context.WithTimeout(s.ctx, 60*time.Second)
 	one.openCancel, one.openDone = cancel, make(chan struct{})
