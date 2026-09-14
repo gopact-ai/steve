@@ -620,6 +620,51 @@ checks["design-connection-compact"] = async (f) => {
     assert.ok(rect && rect.width > 0 && rect.height > 0 && rect.x >= 0 && rect.x + rect.width <= 1024 && rect.y + rect.height <= 900, "Connection changes must remain visible inside compact navigation");
 };
 
+checks["compact-settings-alignment"] = async (f) => {
+    await f.page.getByRole("button", { name: "收起菜单", exact: true }).click();
+    for (const width of [1600, 1024]) {
+        await f.page.setViewportSize({ width, height: 900 });
+        const sidebar = f.page.locator(".app-sidebar");
+        const settings = sidebar.getByRole("link", { name: "设置", exact: true });
+        const rail = await sidebar.boundingBox(), icon = await settings.locator("svg").boundingBox();
+        assert.ok(Math.abs(icon.x + icon.width / 2 - rail.x - rail.width / 2) <= 1, "Settings icon must share the compact navigation centerline");
+        const hit = await settings.boundingBox();
+        assert.ok(hit.width >= 36 && hit.height >= 36, "Compact settings must retain a usable hit target");
+        await settings.focus();
+        assert.equal(await settings.evaluate((el) => el === document.activeElement), true, "Settings remains keyboard reachable");
+        const expand = sidebar.getByRole("button", { name: "展开菜单", exact: true });
+        if (await expand.count()) {
+            const button = await expand.boundingBox();
+            assert.ok(button.y >= hit.y + hit.height, "Expand and settings must not compete for the same narrow row");
+        }
+    }
+};
+
+checks["narrow-relationships-layout"] = async (f) => {
+    const node = "node-0123456789abcdef0123456789abcdef";
+    const tasks = ["11", "12", "13"].map((id) => ({ ...task(id, A, "scratch"), member: "reviewer", node, lifecycle: "done", execution: "done" }));
+    tasks.push({ ...task("14", A, "scratch"), member: "helper", node, parent: "11", origin: "delegate", lifecycle: "done", execution: "done" });
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.reload();
+    await f.box.waitFor();
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    await f.page.getByRole("tab", { name: "关系", exact: true }).click();
+    await f.page.getByRole("separator", { name: "调整详情栏宽度" }).press("Home");
+    const inspector = f.page.getByRole("complementary", { name: "详情", exact: true });
+    for (const width of [1600, 1024]) {
+        await f.page.setViewportSize({ width, height: 900 });
+        const rows = inspector.getByRole("button", { name: /Task (11|12|13|14)/ });
+        assert.equal(await rows.count(), 4, "Roots and delegated tasks remain visible");
+        const bounds = await inspector.boundingBox();
+        for (const row of await rows.all()) {
+            const box = await row.boundingBox();
+            assert.ok(box.height < 100, "A long node ID must not stretch a relationship row vertically");
+            assert.ok(box.x >= bounds.x && box.x + box.width <= bounds.x + bounds.width, "Relationship rows must stay inside the narrow inspector");
+            assert.equal(await row.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), true, "Relationship metadata must not overflow the row");
+        }
+    }
+};
+
 checks["design-mobile-new-failure"] = async (f) => {
     await f.page.setViewportSize({ width: 390, height: 844 });
     await f.box.fill("Draft kept after mobile creation fails");

@@ -47,5 +47,8 @@
 .app-settings-link { display: flex; align-items: center; gap: 8px; min-height: 36px; flex: 1; color: var(--color-text-secondary); font-size: 12px; }
 .app-settings-link > svg { width: 17px; height: 17px; }
 .app-settings-link[aria-current=page] { color: var(--color-text-brand-secondary); }
+.app-sidebar.is-compact .app-sidebar-tools { flex-direction: column; }
+.app-sidebar.is-compact .app-settings-link { flex: none; justify-content: center; width: 40px; height: 40px; }
+.app-sidebar.is-compact .app-collapse { margin-left: 0; width: 40px; height: 40px; }
 @media(max-width: 900px) { .settings-layout { grid-template-columns: 164px minmax(0,1fr); gap: 24px; padding-inline: 24px; } .settings-field { grid-template-columns: minmax(0,1fr) 200px; gap: 16px; } }
 @media(max-width: 680px) { .settings-header { padding: 16px 20px; min-height: 64px; } .settings-layout { display: block; padding: 12px 20px 40px; } .settings-nav { position: static; flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 12px; margin-bottom: 16px; } .settings-nav a { flex-shrink: 0; padding-inline: 10px; } .settings-nav-label { white-space: nowrap; } .settings-nav svg { display:none; } .settings-field { grid-template-columns: minmax(0,1fr); gap: 10px; padding-block: 14px; } .settings-field label { padding-top:0; } .settings-header > div { justify-content:flex-end; } }
