@@ -37,10 +37,7 @@ func (s *SessionService) archiveStoppedSession(id string) error {
 		command.ProcessStopped = true
 		next.Commands[id] = command
 	}
-	if err := one.commitLocked(next); err != nil {
-		return err
-	}
-	if err := s.endStoppedRuntime(next); err != nil {
+	if err := errors.Join(one.commitLocked(next), s.endStoppedRuntime(next)); err != nil {
 		return err
 	}
 	delete(s.sessions, id)
@@ -54,10 +51,7 @@ func (one *ownedSession) stateAfterFailedOpen(cause error) (nodewire.SessionStat
 	defer one.mu.Unlock()
 	next := one.copyLocked()
 	next.State.ProcessStopped = one.host.AllProcessesStopped()
-	err := one.commitLocked(next)
-	if err == nil {
-		err = one.service.endStoppedRuntime(next)
-	}
+	err := errors.Join(one.commitLocked(next), one.service.endStoppedRuntime(next))
 	return one.stateLocked(""), errors.Join(cause, err)
 }
 

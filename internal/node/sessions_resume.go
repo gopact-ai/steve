@@ -48,6 +48,9 @@ func (s *SessionService) resumeSourceLocked(req nodewire.SessionRequest, target 
 		if record.ResumeTarget == "" || record.ResumeTarget == target {
 			return &record, nil
 		}
+		if s.sessions[record.ResumeTarget] != nil {
+			return nil, sessionError("uncertain", "native context handoff still has an owned session requiring reconciliation")
+		}
 		next, exists, err := s.readRecord(record.ResumeTarget)
 		if err != nil {
 			return nil, err

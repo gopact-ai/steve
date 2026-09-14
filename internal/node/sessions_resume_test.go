@@ -9,6 +9,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 )
@@ -126,7 +127,7 @@ func TestSettledNativeContextResumesOnceAndPreservesOriginalReceipts(t *testing.
 }
 
 func TestNativeResumeRejectsUncertainSourcesAndChangedAuthorityBeforeStart(t *testing.T) {
-	for _, mode := range []string{"process", "receipt", "cancelled-input", "question", "unknown-question", "missing-answer", "native-id", "project", "conversation", "workdir", "policy", "coordinator", "start", "cancelled-open"} {
+	for _, mode := range []string{"process", "receipt", "cancelled-input", "question", "unknown-question", "missing-answer", "native-id", "project", "conversation", "workdir", "policy", "mcp-binding", "coordinator", "start", "cancelled-open"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg, req, record := resumedFixture(t, "/must-not-start")
 			switch mode {
@@ -156,6 +157,10 @@ func TestNativeResumeRejectsUncertainSourcesAndChangedAuthorityBeforeStart(t *te
 				req.Workdir = t.TempDir()
 			case "policy":
 				req.Permission = "auto"
+			case "mcp-binding":
+				req.MCPServers = []acp.MCPServer{acp.HTTPMCPServer("node-tool", "http://127.0.0.1:9000/b/original-binding", nil)}
+				record.ConfigHash = sessionConfigHash(req)
+				req.MCPServers[0].URL = "http://127.0.0.1:9000/b/replacement-binding"
 			case "coordinator":
 				record.Authority.CoordinatorEpoch = 2
 			case "start":

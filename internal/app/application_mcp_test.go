@@ -285,7 +285,7 @@ func TestApplicationMCPNormalNextTurnReusesTokenOnlyAfterBoundSameSession(t *tes
 		t.Fatal(err)
 	}
 	next, nextScope := openGrantAttempt(t, book, tasks, "next", "ns_original")
-	if _, err := service.Advance(t.Context(), next.ID, attempt.Running, "test", nil); err != nil {
+	if _, err := service.Advance(t.Context(), next.ID, attempt.Running, "test", func(r *attempt.Record) { r.NativeContext = "ns_original" }); err != nil {
 		t.Fatal(err)
 	}
 	if err := gate.BindExecution(t.Context(), binding, nextScope); err != nil {

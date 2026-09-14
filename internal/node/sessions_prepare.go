@@ -2,6 +2,7 @@ package node
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 
@@ -99,7 +100,7 @@ func (s *SessionService) prepareOwnedSession(ctx context.Context, id, hash strin
 	if req.Plugin != nil {
 		if err := s.server.pluginStore().BeginRuntimeUse(ctx, *req.Plugin, "session/"+id, "session"); err != nil {
 			host.Close()
-			return nil, acphost.Config{}, err
+			return nil, acphost.Config{}, errors.Join(err, s.endStoppedRuntime(one.record))
 		}
 	}
 	return one, hostCfg, nil

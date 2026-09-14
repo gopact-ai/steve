@@ -158,7 +158,7 @@ func (t applicationMCPTx) Bind(binding agentmcp.Binding, previous *agentmcp.Gran
 	if contextID == "" {
 		contextID = old.Session
 	}
-	if current.Project != old.Project || (previous.SessionID != next.SessionID && current.NativeContext != contextID) {
+	if current.Project != old.Project || current.NativeContext != contextID {
 		return agentmcp.ErrGrantDenied
 	}
 	if err := task.CheckExecutionTx(t.tx, old.Execution); err != nil {

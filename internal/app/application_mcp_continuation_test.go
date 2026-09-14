@@ -12,7 +12,7 @@ import (
 )
 
 func TestApplicationMCPAcceptedChatContinuesOnlyWithVerifiedNativeContext(t *testing.T) {
-	for _, mode := range []string{"warm", "cold", "missing-proof", "wrong-context", "pause", "cancel", "older-epoch"} {
+	for _, mode := range []string{"warm", "cold", "missing-proof", "wrong-context", "warm-missing-proof", "warm-wrong-context", "pause", "cancel", "older-epoch"} {
 		t.Run(mode, func(t *testing.T) {
 			book, tasks := applicationGrantBook(t)
 			gate := applicationGrantGate(t, book)
@@ -64,14 +64,13 @@ func TestApplicationMCPAcceptedChatContinuesOnlyWithVerifiedNativeContext(t *tes
 				t.Fatalf("closed old execution kept tools: %d", status)
 			}
 			session, context := "ns_resumed", "ns_original"
-			if mode == "warm" {
+			if mode == "warm" || mode == "warm-missing-proof" || mode == "warm-wrong-context" {
 				session = "ns_original"
+			}
+			if mode == "missing-proof" || mode == "warm-missing-proof" {
 				context = ""
 			}
-			if mode == "missing-proof" {
-				context = ""
-			}
-			if mode == "wrong-context" {
+			if mode == "wrong-context" || mode == "warm-wrong-context" {
 				context = "ns_unrelated"
 			}
 			next, nextScope := openGrantAttempt(t, book, tasks, "next", session)

@@ -168,6 +168,92 @@ func TestPromptAfterShutdownAdmissionDoesNotRecordAnAcceptedInput(t *testing.T) 
 	}
 }
 
+func TestFailedLiveHandoffCannotForkFromAnOlderSource(t *testing.T) {
+	cfg, req, old := resumedFixture(t, "/missing-native-agent")
+	saveResumeFixture(t, cfg, old)
+	s := NewServer(cfg)
+	if err := s.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.sessions.Close()
+	if _, err := s.sessions.Do(t.Context(), "cluster-1", req); err == nil {
+		t.Fatal("missing agent unexpectedly opened")
+	}
+	source, _, _ := s.sessions.readRecord(old.State.ID)
+	first, exists, err := s.sessions.readRecord(source.ResumeTarget)
+	if err != nil || !exists || !first.State.ProcessStopped || s.sessions.sessions[first.State.ID] == nil {
+		t.Fatalf("failed open did not retain its stopped owned session: %v", err)
+	}
+	req.Binding.TaskID, req.CommandID = "third-task", "third-open"
+	if _, err := s.sessions.Do(t.Context(), "cluster-1", req); err == nil {
+		t.Fatal("unreconciled handoff forked")
+	}
+	after, _, _ := s.sessions.readRecord(first.State.ID)
+	if after.ResumeTarget != "" || len(s.sessions.sessions) != 1 {
+		t.Fatal("older source changed a claim still owned by an in-memory session")
+	}
+}
+
+func TestProvenProcessExitReleasesPluginUseDespiteReceiptFailure(t *testing.T) {
+	for _, mode := range []string{"archive", "failed-open", "prepared-cancel"} {
+		t.Run(mode, func(t *testing.T) {
+			cfg, req, old := resumedFixture(t, buildMockAgent(t))
+			s := NewServer(cfg)
+			selection := nodeRuntimeFixture(t, s, "")
+			runtime, err := s.pluginRuntimePool().Prepare(t.Context(), "native", selection, harness.Config{Command: cfg.Harnesses["mock"].Command, Permission: "read"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.closePluginRuntimes()
+			req.Plugin, req.Binding.PluginRuntimeID = runtime.Ref.Clone(), runtime.Ref.ID
+			old.State.Plugin, old.State.Binding.PluginRuntimeID = runtime.Ref.Clone(), runtime.Ref.ID
+			old.ConfigHash = sessionConfigHash(req)
+			saveResumeFixture(t, cfg, old)
+			if err := s.startSessions(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			defer s.sessions.Close()
+			state, err := s.sessions.Do(t.Context(), "cluster-1", req)
+			if err != nil {
+				t.Fatal(err)
+			}
+			one := s.sessions.sessions[state.ID]
+			one.host.Close()
+			if mode == "prepared-cancel" {
+				// Preparation may persist a use and then lose the final sync
+				// response, leaving no runtime owner and no process to stop.
+				next := one.copyLocked()
+				next.State.State, next.State.ProcessStopped = nodewire.SessionOpening, true
+				if err := one.commitLocked(next); err != nil {
+					t.Fatal(err)
+				}
+				delete(s.sessions.sessions, state.ID)
+				req.ID, req.Action = "", nodewire.SessionActionCancelOpen
+				if _, err := s.sessions.Do(t.Context(), "cluster-1", req); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				failure := errors.New("session receipt storage unavailable")
+				one.mu.Lock()
+				one.failure = failure
+				one.mu.Unlock()
+				if mode == "archive" {
+					err = s.sessions.archiveStoppedSession(state.ID)
+				} else {
+					_, err = one.stateAfterFailedOpen(errors.New("native open failed"))
+				}
+				if !errors.Is(err, failure) {
+					t.Fatalf("receipt failure was hidden: %v", err)
+				}
+			}
+			infos, err := s.pluginStore().RuntimeInfos()
+			if err != nil || len(infos) != 1 || len(infos[0].Uses) != 1 || !infos[0].Uses[0].Stopped {
+				t.Fatalf("proven exit left a live plugin use: %v", err)
+			}
+		})
+	}
+}
+
 func TestRestartReconcilesOnlyProvenStoppedPluginUses(t *testing.T) {
 	for _, stopped := range []bool{false, true} {
 		t.Run(map[bool]string{false: "unknown", true: "stopped"}[stopped], func(t *testing.T) {
