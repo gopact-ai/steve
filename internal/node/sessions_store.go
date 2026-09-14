@@ -135,6 +135,9 @@ func (s *SessionService) load() error {
 		if !record.State.ProcessStopped {
 			s.unverifiedProcesses = true
 		}
+		if err := s.endStoppedRuntime(record); err != nil {
+			return err
+		}
 
 	}
 	if len(s.sessions) > 1024 {

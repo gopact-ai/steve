@@ -202,6 +202,11 @@ func TestNativeResumeDoesNotFallBackToANewConversation(t *testing.T) {
 	if _, err := s.sessions.Do(t.Context(), "cluster-1", req); err == nil || !strings.Contains(err.Error(), "session/load") {
 		t.Fatalf("unsupported resume invented a fresh conversation: %v", err)
 	}
+	id := nodewire.SessionOpenID(req.Authority.ClusterID, req.Binding.NodeID, req.Binding.AttemptID, req.CommandID, req.Harness)
+	failed, _, err := s.sessions.readRecord(id)
+	if err != nil || !failed.State.ProcessStopped || failed.State.InputAccepted != 0 {
+		t.Fatalf("failed native load did not persist confirmed exit before returning: %+v %v", failed, err)
+	}
 	inspect := req
 	inspect.ID, inspect.Action = "", nodewire.SessionActionCancelOpen
 	state, err := s.sessions.Do(t.Context(), "cluster-1", inspect)

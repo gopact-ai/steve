@@ -21,6 +21,7 @@ func (s *Store) closeUnappliedLanding(ctx context.Context, land *Landing, cause 
 		err = json.Unmarshal(op.Data, &stored)
 		if err == nil && !stored.Recoverable && (op.State == LandProposed || op.State == LandLocked || op.State == LandMerged) {
 			stored.State, stored.Lease, stored.Error = LandMergeConflicted, nil, "interrupted before apply: "+cause.Error()
+			stored.Unapplied = true
 			stored.EndedAt = s.now().UTC()
 			_, err = s.ledger.Transition(ctx, op.ID, op.State, stored.State, land.By, nil, nil,
 				func(tx *ledger.Tx, op *ledger.Operation) error { return tx.SetData(op, stored) })

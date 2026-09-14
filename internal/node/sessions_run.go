@@ -176,8 +176,7 @@ func (one *ownedSession) openNative(openCtx context.Context, req nodewire.Sessio
 	saveErr := one.commitLocked(next)
 	one.mu.Unlock()
 	if openErr != nil {
-		host.Close()
-		return one.state(""), openErr
+		return one.stateAfterFailedOpen(openErr)
 	}
 	if saveErr != nil {
 		host.Close()

@@ -251,6 +251,11 @@ func (s *SessionService) Do(ctx context.Context, principal string, req nodewire.
 	if !sessionIDValid(req.ID) {
 		return nodewire.SessionState{}, sessionError("invalid", "invalid node session identity")
 	}
+	if req.Action == nodewire.SessionActionOpen {
+		if err := s.archiveStoppedSession(req.ID); err != nil {
+			return nodewire.SessionState{}, err
+		}
+	}
 	s.mu.Lock()
 	one := s.sessions[req.ID]
 	s.mu.Unlock()

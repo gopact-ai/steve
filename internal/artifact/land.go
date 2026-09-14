@@ -71,6 +71,8 @@ type Landing struct {
 	StartedAt      time.Time     `json:"started_at"`
 	EndedAt        time.Time     `json:"ended_at,omitempty"`
 	Recoverable    bool          `json:"recoverable,omitempty"`
+	// Unapplied is durably recorded only when closing a preapply state.
+	Unapplied bool `json:"unapplied,omitempty"`
 }
 
 const (
