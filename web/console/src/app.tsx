@@ -5,6 +5,7 @@ import { SideChatProvider } from "@/providers/side-chat-provider";
 import { lazy, Suspense, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
 import { BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Zap, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
+import appIcon from "../../../desktop/macos/Assets/AppIcon.png";
 import { Sheet } from "@/components/steve/drawer";
 import { FleetProvider, IntentProvider, useFleet } from "@/lib/fleet";
 import { useI18n } from "@/providers/locale-provider";
@@ -65,7 +66,7 @@ function Shell() {
     const coordinatedBy = coordinatorName ? t(coordinatorCurrent ? "connection.coordinatedBy" : "connection.lastCoordinator", { node: coordinatorName }) : t("connection.coordinatorUnknown");
     const navigation = (small: boolean) => <>
         <div className="app-brand">
-            <span className="app-mark" aria-hidden="true"><Terminal /></span>
+            <img className="app-mark" src={appIcon} alt="Steve" width={36} height={36} />
             {!small && <span><strong>Steve</strong><small>{t("app.workspace")}</small></span>}
         </div>
         <nav aria-label={t("nav.main")} className="app-navigation">
