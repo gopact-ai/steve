@@ -510,6 +510,88 @@ const checks = {
         await f.page.locator("main header").getByText("Renamed with blur", { exact: true }).waitFor();
         assert.equal(writes().length, 2, "A blur-only edit must issue exactly one additional rename");
     },
+    async "reasoning-preferences"(f) {
+        let reads = 0, rejectRead = true, rejectSave = false, empty = false;
+        const selected = "medium";
+        const preferences = new Map();
+        const discovery = gate(); f.releases.push(discovery.release);
+        await f.page.route("**/console/context?*", (route) => {
+            const conversation = new URL(route.request().url()).searchParams.get("conversation");
+            return route.fulfill({ json: { enabled: true, context: { conversation, project: { ...project("scratch"), bound: true }, agents: [], agent: { id: "test-agent", node: "test-node", harness: "codex", model: "gpt-6-astra", ready: true, usable: true } } } });
+        });
+        await f.page.route("**/console/selectors?*", async (route) => {
+            reads++;
+            await discovery.promise;
+            if (rejectRead) return route.fulfill({ status: 503, body: "Choices unavailable" });
+            if (empty) return route.fulfill({ json: {} }); // Go omits empty option arrays.
+            const conversation = new URL(route.request().url()).searchParams.get("conversation");
+            const preferred = preferences.get(conversation) || {};
+            return route.fulfill({ json: { model: preferred.model || "gpt-6-astra", preferred, models: [{ Value: "no-effort", Label: "Model without effort" }], options: preferred.model === "no-effort" ? [] : [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Current: preferred.reasoning_effort || selected, Choices: [{ Value: "low", Label: "Low" }, { Value: "medium", Label: "Medium" }, { Value: "high", Label: "High" }] }] } });
+        });
+        await f.page.route("**/console/preferences", (route) => {
+            const input = route.request().postDataJSON();
+            f.calls.push({ method: "PUT", path: "/console/preferences", ...input });
+            if (rejectSave) return route.fulfill({ status: 503, body: "Preferences unavailable" });
+            preferences.set(input.conversation, { ...preferences.get(input.conversation), ...input.patch });
+            return route.fulfill({ json: { ok: true } });
+        });
+        await f.page.reload();
+        const chip = f.page.getByRole("button", { name: "思考强度", exact: true });
+        await chip.waitFor();
+        assert.equal(reads, 0, "Rendering the effort chip must not open a harness session");
+        await f.page.setViewportSize({ width: 560, height: 900 });
+        await f.page.clock.runFor(350);
+        await visibleControl(chip, "Reasoning chip in a narrow window");
+        await noHorizontalOverflow(f.page);
+        await f.page.setViewportSize({ width: 1600, height: 1000 });
+        await chip.focus(); await f.page.keyboard.press("Enter");
+        await f.page.getByText("读取可选项…", { exact: true }).waitFor();
+        discovery.release();
+        await f.page.getByRole("alert").getByText("Choices unavailable", { exact: true }).waitFor();
+        await f.page.keyboard.press("Escape");
+        rejectRead = false;
+        await chip.click();
+        await f.page.getByRole("menuitem", { name: "High", exact: true }).click();
+        await eventually(async () => (await chip.innerText()).includes("High"), "Saved effort must appear on the chip");
+        const write = f.calls.find((c) => c.path === "/console/preferences");
+        assert.deepEqual(write.patch, { reasoning_effort: "high" });
+        assert.equal(write.conversation, A); assert.equal(write.agent, "test-agent");
+        rejectSave = true;
+        await chip.click(); await f.page.getByRole("menuitem", { name: "Low", exact: true }).click();
+        await f.page.getByRole("alert").getByText("Preferences unavailable", { exact: true }).waitFor();
+        assert.ok((await chip.innerText()).includes("High"), "Rejected save must preserve the previous effort");
+        rejectSave = false; rejectRead = true;
+        await chip.click(); await f.page.getByRole("menuitem", { name: "Low", exact: true }).click();
+        await f.page.getByRole("alert").getByText("Choices unavailable", { exact: true }).waitFor();
+        rejectRead = false;
+        await chip.click(); await f.page.getByRole("menuitem", { name: "Low", exact: true }).waitFor();
+        assert.ok((await chip.innerText()).includes("Low"), "Reopening after a failed refresh must recover the saved effort");
+        await f.page.keyboard.press("Escape");
+        await f.pick("B");
+        assert.equal(await chip.innerText(), "思考强度", "A different conversation must not inherit cached choices");
+        await chip.click(); await f.page.getByRole("menuitem", { name: "Medium", exact: true }).waitFor();
+        assert.ok((await chip.innerText()).includes("Medium"));
+        await f.page.keyboard.press("Escape");
+        await f.pick("A");
+        await chip.click(); await f.page.getByRole("menuitem", { name: "Low", exact: true }).waitFor();
+        assert.ok((await chip.innerText()).includes("Low"), "Returning must reload the conversation's saved effort");
+        await f.page.keyboard.press("Escape");
+        await f.page.getByRole("button", { name: "模型", exact: true }).click();
+        await f.page.getByRole("menuitem", { name: "Model without effort", exact: true }).click();
+        await eventually(async () => await chip.innerText() === "思考强度", "Model change must discard the previous model's effort choices");
+        await chip.click();
+        await f.page.getByText("当前工具或模型不支持选择思考强度", { exact: true }).waitFor();
+        await f.page.keyboard.press("Escape");
+        empty = true;
+        await f.page.reload();
+        await chip.click();
+        await f.page.getByText("当前工具或模型不支持选择思考强度", { exact: true }).waitFor();
+        await f.page.keyboard.press("Escape");
+        await f.page.getByRole("button", { name: "模型", exact: true }).click();
+        await f.page.getByText("这个 AI 工具没有暴露模型选择", { exact: true }).waitFor();
+        await f.page.keyboard.press("Escape");
+
+    },
     async "preferences-save-retry"(f) {
         let model = "model-one", reject = false;
         await f.page.route("**/console/context?*", (route) => route.fulfill({ json: { enabled: true, context: { conversation: A, project: { ...project("scratch"), bound: true }, agents: [], agent: { id: "test-agent", node: "test-node", harness: "test", model, ready: true, usable: true } } } }));
