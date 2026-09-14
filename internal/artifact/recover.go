@@ -57,6 +57,7 @@ func (s *Store) RecoverLandings(ctx context.Context) ([]Landing, error) {
 				continue
 			}
 			land.Lease = nil
+			land.Unapplied = true
 			s.failed(ctx, &land, op.State, LandMergeConflicted, "interrupted before apply; nothing was written", nil)
 			out = append(out, land)
 		case LandApplying, LandRecoveryPending:

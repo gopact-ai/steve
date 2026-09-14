@@ -7,12 +7,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/acp"
 	"github.com/gopact-ai/steve/internal/ability"
+	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
+	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/roster"
+	"github.com/gopact-ai/steve/internal/state"
+	"github.com/gopact-ai/steve/internal/task"
 )
 
 type relocationResourceProbe struct {
@@ -78,5 +83,50 @@ func TestDuplicateRelocationCannotReachOriginalDriversResources(t *testing.T) {
 	close(nodes.release)
 	if err := <-done; err == nil {
 		t.Fatal("fixture unexpectedly found another node")
+	}
+}
+
+type relocationContextRunner struct{ *fakeRunner }
+
+func (r *relocationContextRunner) NativeContextID() string { return "ns_original_context" }
+
+type relocationContextManager struct {
+	*fakeManager
+	runner *relocationContextRunner
+}
+
+func (m relocationContextManager) OpenSession(context.Context, harness.Placement, string, string, []acp.MCPServer) (harness.Runner, error) {
+	return m.runner, nil
+}
+
+func TestRelocationPersistsAttestedNativeContextForFollowingTurns(t *testing.T) {
+	c, _, _, old, req := retainedChatFixture(t)
+	tracked, err := c.tasks.Create(task.Task{Channel: "console:relocation", Member: "worker", ProjectID: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := c.tasks.ExecutionToken(tracked.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err := c.attempts.Open(t.Context(), attempt.Spec{ID: "relocation-next", TaskID: tracked.ID, TurnID: "relocation-turn", Kind: attempt.KindChat, Project: old.Project, Node: "node-b", Harness: "test", Agent: "worker", Workspace: project.Workspace{ID: "replacement", Project: "p", Node: "node-b", Path: t.TempDir(), Kind: project.KindWorktree}, Scope: attempt.ScopePathSet, Execution: &token})
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, err = c.attempts.Advance(t.Context(), record.ID, attempt.Prepared, "test", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner := &relocationContextRunner{fakeRunner: &fakeRunner{id: "ns_relocated"}}
+	c.runtime = relocationContextManager{fakeManager: &fakeManager{}, runner: runner}
+	req.ConversationID = tracked.Channel
+	session := state.Session{ConversationID: tracked.Channel, AgentID: "worker", HarnessID: "test", NodeID: "node-b", ProjectID: "p"}
+	_, _, _, known, err := c.openRelocation(t.Context(), req, record, agent.Agent{ID: "worker", Harness: "test", Node: "node-b"}, attempt.RelocationSessionConfig{}, session)
+	if err != nil || !known {
+		t.Fatalf("open relocated session: known=%v err=%v", known, err)
+	}
+	saved, err := c.attempts.Get(t.Context(), record.ID)
+	if err != nil || saved.State != attempt.Running || saved.Session != runner.ID() || saved.NativeContext != runner.NativeContextID() {
+		t.Fatalf("relocation lost attested context: session=%s context=%s state=%s err=%v", saved.Session, saved.NativeContext, saved.State, err)
 	}
 }

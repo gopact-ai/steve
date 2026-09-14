@@ -105,43 +105,55 @@ func TestPreapplyCleanupLeavesApplyingWALForRecovery(t *testing.T) {
 }
 
 func TestMergedPreapplyFailureKeepsEvidenceAndAcceptsOnlyDeliveredResult(t *testing.T) {
-	canonical := t.TempDir()
-	write(t, canonical, "file", "before")
-	s, p := newStore(t, &localNode{}, project.Home{Path: canonical})
-	tasks, err := task.OpenLedger(s.ledger, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	child, _ := tasks.Create(task.Task{Channel: "c"})
-	token, _ := tasks.ExecutionToken(child.ID)
-	source := Source{Execution: &token, AttemptID: "child"}
-	ws, err := s.Materialize(t.Context(), project.Request{Project: p.ID, Isolated: true, Owner: "child"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	write(t, ws.Path, "file", "accepted")
-	result, _, err := s.Publish(t.Context(), ws, ws.Base, "child", "result")
-	if err != nil {
-		t.Fatal(err)
-	}
-	land := Landing{ID: "merged-before-apply", State: LandMerged, Project: p.ID, Target: p.Home, Source: &source, Artifact: result.ID, Base: ws.Base, Now: ws.Base, Merged: result.ID, Paths: []string{"file"}}
-	if _, err := s.ledger.Begin(t.Context(), land.ID, landKind, land.State, "test", land); err != nil {
-		t.Fatal(err)
-	}
-	s.closeUnappliedLanding(t.Context(), &land, ledger.ErrStale)
-	if !land.Unapplied || land.Now != ws.Base || land.Merged != result.ID || len(land.Paths) != 1 {
-		t.Fatal("preapply merge evidence was erased")
-	}
-	check := func() error {
-		return s.ledger.Update(t.Context(), func(tx *ledger.Tx) error { return CheckTaskLandingsTx(tx, map[string]bool{child.ID: true}) })
-	}
-	if !errors.Is(check(), task.ErrCompleteDelivery) {
-		t.Fatal("preapply refusal was counted as delivery")
-	}
-	if _, err := s.Land(t.Context(), p, result.ID, "retry", source); err != nil {
-		t.Fatal(err)
-	}
-	if err := check(); err != nil || read(t, canonical, "file") != "accepted" {
-		t.Fatal("exact committed retry did not permit completion", err)
+	for _, recovery := range []bool{false, true} {
+		t.Run(map[bool]string{false: "live-cleanup", true: "startup-recovery"}[recovery], func(t *testing.T) {
+			canonical := t.TempDir()
+			write(t, canonical, "file", "before")
+			s, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+			tasks, err := task.OpenLedger(s.ledger, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			child, _ := tasks.Create(task.Task{Channel: "c"})
+			token, _ := tasks.ExecutionToken(child.ID)
+			source := Source{Execution: &token, AttemptID: "child"}
+			ws, err := s.Materialize(t.Context(), project.Request{Project: p.ID, Isolated: true, Owner: "child"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			write(t, ws.Path, "file", "accepted")
+			result, _, err := s.Publish(t.Context(), ws, ws.Base, "child", "result")
+			if err != nil {
+				t.Fatal(err)
+			}
+			land := Landing{ID: "merged-before-apply", State: LandMerged, Project: p.ID, Target: p.Home, Source: &source, Artifact: result.ID, Base: ws.Base, Now: ws.Base, Merged: result.ID, Paths: []string{"file"}}
+			if _, err := s.ledger.Begin(t.Context(), land.ID, landKind, land.State, "test", land); err != nil {
+				t.Fatal(err)
+			}
+			if recovery {
+				recovered, err := s.RecoverLandings(t.Context())
+				if err != nil || len(recovered) != 1 {
+					t.Fatalf("recover preapply: %+v %v", recovered, err)
+				}
+				land = recovered[0]
+			} else {
+				s.closeUnappliedLanding(t.Context(), &land, ledger.ErrStale)
+			}
+			if !land.Unapplied || land.Now != ws.Base || land.Merged != result.ID || len(land.Paths) != 1 || read(t, canonical, "file") != "before" {
+				t.Fatal("preapply stop proof or untouched workspace was lost")
+			}
+			check := func() error {
+				return s.ledger.Update(t.Context(), func(tx *ledger.Tx) error { return CheckTaskLandingsTx(tx, map[string]bool{child.ID: true}) })
+			}
+			if !errors.Is(check(), task.ErrCompleteDelivery) {
+				t.Fatal("preapply refusal was counted as delivery")
+			}
+			if _, err := s.Land(t.Context(), p, result.ID, "retry", source); err != nil {
+				t.Fatal(err)
+			}
+			if err := check(); err != nil || read(t, canonical, "file") != "accepted" {
+				t.Fatal("exact committed retry did not permit completion", err)
+			}
+		})
 	}
 }
