@@ -235,10 +235,11 @@ function QueuedLine({ q, p }: { q: Queued; p: ComposerProps }) {
     );
 }
 
-// PreferenceChips are the model and, when the harness offers one, the
-// reasoning level of the current agent in this thread. The choices come
-// from the harness itself when the chip opens; picking one is remembered
-// for this thread and takes effect from the next turn, in a fresh session.
+// PreferenceChips are the model and, when the harness offers them, the
+// approval mode and reasoning level of the current agent in this thread.
+// The choices come from the harness itself when a chip opens; picking one
+// is remembered for this thread and takes effect from the next turn, in a
+// fresh session.
 function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<ConversationContext["agent"]>; load: () => Promise<Selectors>; onPrefer?: (patch: Record<string, string>) => Promise<void> }) {
     const { t } = useI18n();
     const [sel, setSel] = useState<Selectors | null>(null);
@@ -253,12 +254,20 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
         finally { setBusy(false); }
     };
     const reasoning = sel?.options?.find((o) => /reason|effort|think/i.test(o.ID + " " + (o.Category || "") + " " + o.Name));
+    // ACP reserves the "mode" category for the agent's approval behaviour
+    // (ask, approve for me, full access); the category is advisory, so the
+    // conventional id counts too.
+    const approval = sel?.options?.find((o) => o.Category === "mode" || o.ID === "mode");
     const modelLabel = sel?.preferred?.model || sel?.model || agent.model || t("consoleChrome.model");
     const models = sel?.models ?? [];
     const choices = reasoning?.Choices ?? [];
     const effort = reasoning ? sel?.preferred?.[reasoning.ID] || reasoning.Current : undefined;
     const effortLabel = choices.find((c) => c.Value === effort)?.Label || effort;
     const reasoningLabel = t("consoleChrome.reasoningEffort");
+    const approvalChoices = approval?.Choices ?? [];
+    const approvalMode = approval ? sel?.preferred?.[approval.ID] || approval.Current : undefined;
+    const approvalModeLabel = approvalChoices.find((c) => c.Value === approvalMode)?.Label || approvalMode;
+    const approvalLabel = t("consoleChrome.approvalMode");
     return (
         <>
             <Dropdown.Root onOpenChange={(isOpen) => { if (isOpen) open(); }}>
@@ -279,6 +288,23 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
                 </Dropdown.Popover>
             </Dropdown.Root>
             {error && <span role="alert" className="text-xs text-error-primary">{error}</span>}
+            <Dropdown.Root onOpenChange={(isOpen) => { if (isOpen) open(); }}>
+                <AriaButton isDisabled={busy} aria-label={approvalLabel} className={`${chip} text-quaternary`}>
+                    <span className="max-w-40 truncate">{approvalModeLabel ? `${approvalLabel} · ${approvalModeLabel}` : approvalLabel}</span>
+                    <ChevronDown className="size-3" />
+                </AriaButton>
+                <Dropdown.Popover placement="top start" className="w-60">
+                    {error && !sel ? <div className="px-3 py-2 text-xs text-error-primary">{error}</div> : !sel ? <div className="px-3 py-2 text-xs text-quaternary">{t("consoleChrome.loadingChoices")}</div> : (
+                        <Dropdown.Menu onAction={(k) => { if (approval) void prefer({ [approval.ID]: String(k) }); }}>
+                            <Dropdown.Section>
+                                <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">{t("consoleChrome.currentOption", { name: approvalLabel, value: approvalModeLabel || t("common.unknown") })}</Dropdown.SectionHeader>
+                                {approvalChoices.length === 0 && <Dropdown.Item id="__none" label={t("consoleChrome.noApprovalSelector")} isDisabled />}
+                                {approvalChoices.map((c) => <Dropdown.Item key={c.Value} id={c.Value} label={c.Detail ? `${c.Label || c.Value} · ${c.Detail}` : (c.Label || c.Value)} />)}
+                            </Dropdown.Section>
+                        </Dropdown.Menu>
+                    )}
+                </Dropdown.Popover>
+            </Dropdown.Root>
             <Dropdown.Root onOpenChange={(isOpen) => { if (isOpen) open(); }}>
                 <AriaButton isDisabled={busy} aria-label={reasoningLabel} className={`${chip} text-quaternary`}>
                     <span className="max-w-40 truncate">{effortLabel ? `${reasoningLabel} · ${effortLabel}` : reasoningLabel}</span>

@@ -592,6 +592,49 @@ const checks = {
         await f.page.keyboard.press("Escape");
 
     },
+    async "approval-mode-preference"(f) {
+        // The harness exposes its approval behaviour as the "mode" selector;
+        // the composer must offer it beside the model and reasoning chips,
+        // save it as a preference, and say so when a tool has no such mode.
+        let modes = true;
+        const preferences = new Map();
+        await f.page.route("**/console/context?*", (route) => {
+            const conversation = new URL(route.request().url()).searchParams.get("conversation");
+            return route.fulfill({ json: { enabled: true, context: { conversation, project: { ...project("scratch"), bound: true }, agents: [], agent: { id: "test-agent", node: "test-node", harness: "codex", model: "gpt-6-astra", ready: true, usable: true } } } });
+        });
+        await f.page.route("**/console/selectors?*", (route) => {
+            const conversation = new URL(route.request().url()).searchParams.get("conversation");
+            const preferred = preferences.get(conversation) || {};
+            const options = [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Current: "high", Choices: [{ Value: "low", Label: "Low" }, { Value: "high", Label: "High" }] }];
+            if (modes) options.unshift({ ID: "mode", Name: "Mode", Category: "mode", Current: preferred.mode || "read-only", Choices: [{ Value: "read-only", Label: "Ask for approval" }, { Value: "agent", Label: "Approve for me" }, { Value: "agent-full-access", Label: "Full access" }] });
+            return route.fulfill({ json: { model: "gpt-6-astra", preferred, models: [{ Value: "gpt-6-astra", Label: "gpt-6-astra" }], options } });
+        });
+        await f.page.route("**/console/preferences", (route) => {
+            const input = route.request().postDataJSON();
+            f.calls.push({ method: "PUT", path: "/console/preferences", ...input });
+            preferences.set(input.conversation, { ...preferences.get(input.conversation), ...input.patch });
+            return route.fulfill({ json: { ok: true } });
+        });
+        await f.page.reload();
+        const chip = f.page.getByRole("button", { name: "审批", exact: true });
+        await chip.waitFor();
+        assert.equal(await chip.innerText(), "审批", "Before discovery the chip names only the selector");
+        await chip.click();
+        await f.page.getByText("审批 · 当前 Ask for approval", { exact: true }).waitFor();
+        await f.page.getByRole("menuitem", { name: "Full access", exact: true }).click();
+        await eventually(async () => (await chip.innerText()).includes("Full access"), "Saved approval mode must appear on the chip");
+        const write = f.calls.find((c) => c.path === "/console/preferences");
+        assert.deepEqual(write.patch, { mode: "agent-full-access" });
+        assert.equal(write.conversation, A); assert.equal(write.agent, "test-agent");
+        const effort = f.page.getByRole("button", { name: "思考强度", exact: true });
+        assert.ok((await effort.innerText()).includes("High"), "The reasoning chip must keep its own selector");
+        await f.pick("B");
+        assert.equal(await chip.innerText(), "审批", "A different conversation must not inherit the approval choice");
+        modes = false;
+        await chip.click();
+        await f.page.getByText("当前工具不支持切换审批模式", { exact: true }).waitFor();
+        await f.page.keyboard.press("Escape");
+    },
     async "preferences-save-retry"(f) {
         let model = "model-one", reject = false;
         await f.page.route("**/console/context?*", (route) => route.fulfill({ json: { enabled: true, context: { conversation: A, project: { ...project("scratch"), bound: true }, agents: [], agent: { id: "test-agent", node: "test-node", harness: "test", model, ready: true, usable: true } } } }));
