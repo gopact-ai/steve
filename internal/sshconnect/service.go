@@ -606,21 +606,9 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	result.Steps = append(result.Steps, Step{ID: "registration", Status: "ready", Message: registeredMessage})
 	s.progress(result)
 	if binaryReader != nil {
-		s.enter(&result, PhaseUpload, fmt.Sprintf("通过 SSH 上传节点程序（%s，%.1f MiB）", plan.Binary.OS+"/"+plan.Binary.Arch, float64(plan.Binary.Size)/(1<<20)))
-		command, _ := nodebootstrap.UploadCommand(plan.ID)
-		uploadCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-		out, err := connection.Upload(uploadCtx, command, binaryReader)
-		cancel()
-		s.output(&result, out, registration.Token)
-		if err != nil {
-			result.Steps = append(result.Steps, s.cleanupUpload(ctx, connection, plan.ID))
-			if peerRegistration {
-				return reject(fail("upload", "upload_uncertain", "节点程序上传未确认完成，接入操作已保留", "检查 SSH 连接和本次接入记录；尚未确认加入投票成员"))
-			}
-			return reject(fail("upload", "upload_uncertain", "节点安装包上传未确认完成，节点登记已保留", "确认远端没有已安装节点后，在资源页移除这条未完成登记，再重新接入"))
+		if failure := s.upload(ctx, &result, plan, connection, binaryReader, registration.Token, peerRegistration); failure != nil {
+			return reject(failure)
 		}
-		result.Steps = append(result.Steps, Step{ID: "upload", Status: "ready", Message: "节点安装包已通过 SSH 上传，安装时将核验 SHA-256"})
-		s.progress(result)
 	}
 	s.enter(&result, PhaseInstallation, "在远端执行安装脚本")
 	installCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
@@ -639,14 +627,47 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	}
 	result.Steps = append(result.Steps, Step{ID: "installation", Status: "ready", Message: "远端安装脚本已完成"})
 	s.progress(result)
+	if failure := s.verifyConnectivity(ctx, &result, plan); failure != nil {
+		return reject(failure)
+	}
+	return result, nil
+}
+
+// upload sends the node program over the fixed SSH connection and records
+// the machine's output. A failed upload is cleaned up before it is reported.
+func (s *Service) upload(ctx context.Context, result *InstallResult, plan InstallPlan, connection Connection, binary io.Reader, token string, peerRegistration bool) *StepError {
+	s.enter(result, PhaseUpload, fmt.Sprintf("通过 SSH 上传节点程序（%s，%.1f MiB）", plan.Binary.OS+"/"+plan.Binary.Arch, float64(plan.Binary.Size)/(1<<20)))
+	command, _ := nodebootstrap.UploadCommand(plan.ID)
+	uploadCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	out, err := connection.Upload(uploadCtx, command, binary)
+	cancel()
+	s.output(result, out, token)
+	if err != nil {
+		result.Steps = append(result.Steps, s.cleanupUpload(ctx, connection, plan.ID))
+		if peerRegistration {
+			return fail("upload", "upload_uncertain", "节点程序上传未确认完成，接入操作已保留", "检查 SSH 连接和本次接入记录；尚未确认加入投票成员")
+		}
+		return fail("upload", "upload_uncertain", "节点安装包上传未确认完成，节点登记已保留", "确认远端没有已安装节点后，在资源页移除这条未完成登记，再重新接入")
+	}
+	result.Steps = append(result.Steps, Step{ID: "upload", Status: "ready", Message: "节点安装包已通过 SSH 上传，安装时将核验 SHA-256"})
+	s.progress(*result)
+	return nil
+}
+
+// verifyConnectivity waits for the installed node to reach the coordinator
+// and settles the result as connected. Sub-phase reports from the backend
+// are forwarded while verification runs and ignored once it has returned.
+func (s *Service) verifyConnectivity(ctx context.Context, result *InstallResult, plan InstallPlan) *StepError {
+	verifier, peerRegistration := s.backend.(RegistrationVerifier)
 	verifyTimeout := 15 * time.Second
-	if _, ok := s.backend.(RegistrationVerifier); ok {
+	if peerRegistration {
 		verifyTimeout = 2 * time.Minute
 	}
-	s.enter(&result, PhaseConnectivity, fmt.Sprintf("等待节点连通（最多 %s）", verifyTimeout))
-	reporter := &phaseReporter{s: s, result: &result}
+	s.enter(result, PhaseConnectivity, fmt.Sprintf("等待节点连通（最多 %s）", verifyTimeout))
+	reporter := &phaseReporter{s: s, result: result}
 	verifyCtx, cancel := context.WithTimeout(WithReporter(ctx, reporter.report), verifyTimeout)
-	if verifier, ok := s.backend.(RegistrationVerifier); ok {
+	var err error
+	if peerRegistration {
 		err = verifier.VerifyRegistration(verifyCtx, plan.Request.Name, plan.ID)
 	} else {
 		err = s.backend.Verify(verifyCtx, plan.Request.Name)
@@ -656,18 +677,18 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	if err != nil {
 		var stepErr *StepError
 		if errors.As(err, &stepErr) {
-			return reject(stepErr)
+			return stepErr
 		}
-		return reject(fail("connectivity", "node_unreachable", "节点服务已启动，但协调节点尚未连通", "检查节点地址、端口和网络路由；SSH 代理连通不代表节点端口可直接访问"))
+		return fail("connectivity", "node_unreachable", "节点服务已启动，但协调节点尚未连通", "检查节点地址、端口和网络路由；SSH 代理连通不代表节点端口可直接访问")
 	}
 	result.Status, result.Connected, result.Phase = "connected", true, ""
 	message := "协调节点已完成节点协议握手"
-	if _, ok := s.backend.(RegistrationVerifier); ok {
+	if peerRegistration {
 		message = "节点已完成集群接入、状态同步和独立连接验证"
 	}
 	result.Steps = append(result.Steps, Step{ID: "connectivity", Status: "ready", Message: message})
 	result.appendLog(s.now(), "steve", message)
-	return result, nil
+	return nil
 }
 
 // progress publishes how far a running installation has come. Once the
