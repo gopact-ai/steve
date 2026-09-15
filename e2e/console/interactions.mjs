@@ -789,6 +789,8 @@ checks["compact-settings-alignment"] = async (f) => {
             assert.ok(button.y >= hit.y + hit.height, "Expand and settings must not compete for the same narrow row");
         }
     }
+    const small = await f.page.evaluate(() => [...document.querySelectorAll("button, a[href], [role=button]")].map((el) => ({ label: (el.getAttribute("aria-label") || el.textContent || "").trim().slice(0, 40), ...el.getBoundingClientRect().toJSON() })).filter((box) => box.width > 0 && box.height > 0 && (box.width < 24 || box.height < 24)));
+    assert.deepEqual(small, [], "Every visible control keeps at least a 24px target");
 };
 
 checks["relationship-execution-state"] = async (f) => {

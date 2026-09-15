@@ -96,11 +96,11 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onImport,
         return (
             <li key={p.id} className="flex flex-col">
                 <div className={`conversation-project group ${holdsCurrent && !open ? "is-current" : ""}`}>
-                    <button type="button" onClick={() => toggle(p.id)} className="flex size-5 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-primary/60" aria-expanded={open} aria-label={open ? tr("consoleChrome.collapse") : tr("consoleChrome.expand")}>
+                    <button type="button" onClick={() => toggle(p.id)} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-primary/60" aria-expanded={open} aria-label={open ? tr("consoleChrome.collapse") : tr("consoleChrome.expand")}>
                         <ChevronDown className={`size-3.5 transition ${open ? "" : "-rotate-90"}`} />
                     </button>
                     <Folder className="size-4 shrink-0 text-fg-quaternary" />
-                    <button type="button" onClick={() => toggle(p.id)} className="flex min-w-0 flex-1 flex-col text-left" title={hint || places}>
+                    <button type="button" onClick={() => toggle(p.id)} className="flex min-h-6 min-w-0 flex-1 flex-col justify-center text-left" title={hint || places}>
                         <span className="truncate u-title">{title}</span>
                     </button>
                     {threads.some((c) => c.running) && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}

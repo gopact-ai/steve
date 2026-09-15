@@ -211,7 +211,7 @@ function ProfileWorkspace({ view, onSaved }: { view: HomeView; onSaved: (doc: Pr
                             <Button size="sm" color="link-gray" isDisabled={saving === doc.id}>{tr("home.discard")}</Button>
                             <ModalOverlay isDismissable><Modal className="max-w-sm"><Dialog aria-label={tr("home.discard")}>
                                 {({ close }) => <div className="w-full rounded-xl bg-primary p-6 shadow-lg">
-                                    <h3 className="text-lg font-semibold text-primary">{tr("home.discardTitle")}</h3>
+                                    <h3 className="text-md font-semibold text-primary">{tr("home.discardTitle")}</h3>
                                     <p className="mt-2 text-sm leading-6 text-secondary">{tr("home.discardHint", { title: doc.title })}</p>
                                     <div className="mt-5 flex justify-end gap-2"><Button size="sm" color="secondary" onClick={close}>{tr("home.keepEditing")}</Button><Button size="sm" color="primary-destructive" onClick={() => { discard(); close(); }}>{tr("home.confirmDiscard")}</Button></div>
                                 </div>}
@@ -220,7 +220,7 @@ function ProfileWorkspace({ view, onSaved }: { view: HomeView; onSaved: (doc: Pr
                         {!wide && draft?.editing && <Button size="sm" color="primary" isDisabled={!dirty || over || !!saving} isLoading={saving === doc.id} onClick={() => void save()}>{tr("common.save")}</Button>}
                     </footer>
                     <details className="profile-file-info group/info">
-                        <summary className="flex min-h-11 list-none items-center gap-2 text-xs text-tertiary"><ChevronDown aria-hidden="true" className="size-4 group-open/info:rotate-180" />{tr("home.documentInfo")}</summary>
+                        <summary className="flex min-h-8 list-none items-center gap-2 text-xs text-tertiary"><ChevronDown aria-hidden="true" className="size-4 group-open/info:rotate-180" />{tr("home.documentInfo")}</summary>
                         <div className="pb-4"><KeyValue rows={[{ k: tr("home.file"), v: <Mono className="break-all">{doc.path}</Mono> }, { k: tr("home.scope"), v: doc.scope }, ...(doc.project !== undefined && view.audit ? [{ k: tr("home.audit"), v: <Mono className="break-all">{view.audit}</Mono> }] : [])]} /></div>
                     </details>
                 </section>}

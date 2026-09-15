@@ -44,9 +44,9 @@ export function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply;
             <div className="message-meta">
                 <span>{when(r.at, locale)}</span>
                 {state && <span className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""}>{state}</span>}
-                {onSelect && <button type="button" onClick={onSelect} className="hover:text-primary">{t("console.detailAction")}</button>}
+                {onSelect && <button type="button" onClick={onSelect} className="-my-1 min-h-6 min-w-6 rounded px-1 hover:text-primary">{t("console.detailAction")}</button>}
                 {r.id && r.project_id && r.revision && <MaterialActions capture={{ project: r.project_id, title: r.title || r.text.split("\n")[0].slice(0, 60) || t("materials.reply"), source: { kind: "reply", conversation: r.conversation, reply_id: r.id, revision: r.revision } }} />}
-                {!support.material_refs && onQuote && r.id && r.text && <button type="button" onClick={onQuote} className="hover:text-primary" title={t("console.quoteHint")} >{t("console.quote")}</button>}
+                {!support.material_refs && onQuote && r.id && r.text && <button type="button" onClick={onQuote} className="-my-1 min-h-6 min-w-6 rounded px-1 hover:text-primary" title={t("console.quoteHint")}>{t("console.quote")}</button>}
             </div>
         </div>
     );

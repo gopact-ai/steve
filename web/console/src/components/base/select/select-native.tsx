@@ -14,15 +14,15 @@ interface NativeSelectProps extends Omit<SelectHTMLAttributes<HTMLSelectElement>
 
 const styles = {
     sm: {
-        root: "py-2 pl-3 text-sm",
-        icon: "size-4 right-2.5 stroke-[2.25px]",
+        root: "py-1 pl-2.5 pr-7 text-sm",
+        icon: "size-4 right-2 stroke-[2.25px]",
     },
     md: {
-        root: "py-2 pl-3 text-md",
-        icon: "size-4 stroke-[2.25px] right-3",
+        root: "py-1.5 pl-3 pr-8 text-sm",
+        icon: "size-4 stroke-[2.25px] right-2.5",
     },
     lg: {
-        root: "py-2.5 px-3.5 text-md",
+        root: "py-1.5 pl-3.5 pr-9 text-md",
         icon: "size-5 right-3",
     },
 };
@@ -47,16 +47,16 @@ export const NativeSelect = ({ label, hint, options, className, selectClassName,
                     aria-describedby={hintId}
                     aria-labelledby={selectId}
                     className={cx(
-                        "appearance-none rounded-lg bg-primary font-medium text-primary shadow-xs ring-1 ring-primary outline-hidden transition duration-100 ease-linear ring-inset placeholder:text-fg-quaternary focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50",
+                        "appearance-none rounded-md bg-primary font-medium text-primary shadow-xs ring-1 ring-primary outline-hidden transition duration-100 ease-linear ring-inset placeholder:text-fg-quaternary focus-visible:ring-2 focus-visible:ring-brand disabled:cursor-not-allowed disabled:opacity-50",
 
                         styles[size].root,
 
                         // Styles when the select is within an `InputGroup`
-                        "in-data-input-wrapper:flex in-data-input-wrapper:h-full in-data-input-wrapper:gap-1 in-data-input-wrapper:bg-inherit in-data-input-wrapper:px-3 in-data-input-wrapper:py-2 in-data-input-wrapper:font-normal in-data-input-wrapper:text-tertiary in-data-input-wrapper:shadow-none in-data-input-wrapper:ring-transparent in-data-input-wrapper:in-data-[size=sm]:text-sm",
+                        "in-data-input-wrapper:flex in-data-input-wrapper:h-full in-data-input-wrapper:gap-1 in-data-input-wrapper:bg-inherit in-data-input-wrapper:px-3 in-data-input-wrapper:py-1.5 in-data-input-wrapper:font-normal in-data-input-wrapper:text-tertiary in-data-input-wrapper:shadow-none in-data-input-wrapper:ring-transparent in-data-input-wrapper:in-data-[size=sm]:text-sm",
                         // Styles for the select when `TextField` is disabled
                         "in-data-input-wrapper:group-disabled:pointer-events-none in-data-input-wrapper:group-disabled:cursor-not-allowed in-data-input-wrapper:group-disabled:bg-transparent",
                         // Common styles for sizes and border radius within `InputGroup`
-                        "in-data-input-wrapper:in-data-leading:rounded-r-none in-data-input-wrapper:in-data-trailing:rounded-l-none in-data-input-wrapper:in-data-[input-size=lg]:py-2.5 in-data-input-wrapper:in-data-[input-size=md]:py-2 in-data-input-wrapper:in-data-[input-size=md]:pl-3 in-data-input-wrapper:in-data-[input-size=sm]:text-sm",
+                        "in-data-input-wrapper:in-data-leading:rounded-r-none in-data-input-wrapper:in-data-trailing:rounded-l-none in-data-input-wrapper:in-data-[input-size=lg]:py-1.5 in-data-input-wrapper:in-data-[input-size=md]:py-1.5 in-data-input-wrapper:in-data-[input-size=md]:pl-3 in-data-input-wrapper:in-data-[input-size=sm]:py-1 in-data-input-wrapper:in-data-[input-size=sm]:text-sm",
                         // For "leading" dropdown within `InputGroup`
                         "in-data-input-wrapper:in-data-leading:pr-4.5 in-data-input-wrapper:in-data-leading:in-data-[input-size=lg]:pl-3.5 in-data-input-wrapper:in-data-leading:in-data-[input-size=md]:pr-4.5 in-data-input-wrapper:in-data-leading:in-data-[input-size=md]:pl-3 in-data-input-wrapper:in-data-leading:in-data-[input-size=sm]:pr-3.5",
                         // For "trailing" dropdown within `InputGroup`

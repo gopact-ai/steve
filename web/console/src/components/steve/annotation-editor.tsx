@@ -28,7 +28,7 @@ export function AnnotationEditor({ material, anchor, annotation, onClose, onSave
     }
     async function reload() { try { const { annotations } = await listAnnotations(material.project); const latest = annotations.find((item) => item.id === id); if (latest) { setRevision(latest.revision); setLatestBody(latest.body); setConflict(false); } } catch (error) { setError(String(error)); } }
     return <ModalOverlay isOpen isDismissable={!busy} onOpenChange={(open) => { if (!open) close(); }} className="fixed inset-0 z-[150] flex items-center justify-center bg-overlay/50 p-4"><Modal className="w-full max-w-lg rounded-xl bg-primary p-6 shadow-xl"><Dialog aria-label={t("materials.annotationTitle")} className="flex flex-col gap-4 outline-none">
-        <div><h2 className="text-lg font-semibold">{t("materials.annotationTitle")}</h2><p className="mt-1 break-words text-sm text-tertiary">{material.title} · {material.digest.slice(0, 12)}</p></div>
+        <div><h2 className="text-md font-semibold">{t("materials.annotationTitle")}</h2><p className="mt-1 break-words text-sm text-tertiary">{material.title} · {material.digest.slice(0, 12)}</p></div>
         <TextArea label={t("materials.note")} hint={t("materials.noteHint")} placeholder={t("materials.notePlaceholder")} value={body} onChange={setBody} rows={5} isDisabled={busy} />
         {error && <p role="alert" className="text-sm text-error-primary">{conflict ? t("materials.conflict") : error}</p>}
         {conflict && <Button size="sm" color="secondary" onClick={() => void reload()}>{t("materials.reload")}</Button>}

@@ -202,8 +202,8 @@ if (process.env.PURE_ONLY !== "1") {
                 const bounds = el.getBoundingClientRect();
                 const label = el.querySelector("span").getBoundingClientRect();
                 const nav = el.parentElement.getBoundingClientRect();
-                return label.right <= bounds.right - 8 && bounds.right <= nav.right && bounds.height >= 44 && el.scrollWidth <= el.clientWidth;
-            }), "English settings labels fit their navigation column and preserve the touch area");
+                return label.right <= bounds.right - 8 && bounds.right <= nav.right && bounds.height >= 36 && el.scrollWidth <= el.clientWidth;
+            }), "English settings labels fit their navigation column and keep the primary navigation row height");
         }
         await page.getByText("Interface preferences on this device. Changes apply immediately.", { exact: true }).waitFor();
         await page.setViewportSize({ width: 1280, height: 960 });
