@@ -75,10 +75,22 @@ type sshEnrollmentFixture struct {
 	completeResult      PeerEnrollmentResult
 	completeError       error
 	prepareError        error
+	previewed           PeerEnrollmentRequest
+	advance             func(*sshEnrollmentFixture)
 }
 
-func (f *sshEnrollmentFixture) PreviewPeerEnrollment(context.Context, PeerEnrollmentRequest) (PeerEnrollmentPlan, error) {
-	return f.plan, nil
+func (f *sshEnrollmentFixture) PreviewPeerEnrollment(_ context.Context, request PeerEnrollmentRequest) (PeerEnrollmentPlan, error) {
+	f.previewed = request
+	plan := f.plan
+	if request.SourceHost != "" {
+		plan.Request.SourceHost = request.SourceHost
+		plan.ReviewID = plan.reviewHash()
+	}
+	return plan, nil
+}
+
+func (f *sshEnrollmentFixture) PeerSourceCandidates(context.Context) ([]string, string) {
+	return []string{"192.0.2.1", "10.4.17.4"}, "7711"
 }
 
 func (f *sshEnrollmentFixture) PreparePeerEnrollment(_ context.Context, request PeerEnrollmentRequest, id string) (PeerEnrollmentPackage, error) {
@@ -94,6 +106,9 @@ func (f *sshEnrollmentFixture) PreparePeerEnrollment(_ context.Context, request 
 
 func (f *sshEnrollmentFixture) CompletePeerEnrollment(_ context.Context, id string) (PeerEnrollmentResult, error) {
 	f.completes++
+	if f.advance != nil {
+		f.advance(f)
+	}
 	out := f.completeResult
 	out.OperationID = id
 	return out, f.completeError

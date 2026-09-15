@@ -142,14 +142,17 @@ func boundAdvertiseAddress(configured, bound string) string {
 	return net.JoinHostPort(host, port)
 }
 
+// localAdvertiseAddresses lists this machine's IPv4 addresses, LAN
+// interfaces first and tunnels (VPN) after them: a tunnel is often the
+// only path a remote machine has back to a laptop.
 func localAdvertiseAddresses() []string {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return nil
 	}
-	var addresses []string
+	var lan, tunnels []string
 	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagPointToPoint != 0 {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
 		entries, _ := iface.Addrs()
@@ -158,17 +161,55 @@ func localAdvertiseAddresses() []string {
 			if err != nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.To4() == nil {
 				continue
 			}
-			addresses = append(addresses, ip.String())
+			if iface.Flags&net.FlagPointToPoint != 0 {
+				tunnels = append(tunnels, ip.String())
+			} else {
+				lan = append(lan, ip.String())
+			}
 		}
 	}
-	sort.Slice(addresses, func(i, j int) bool {
-		a, b := net.ParseIP(addresses[i]), net.ParseIP(addresses[j])
-		if a.IsPrivate() != b.IsPrivate() {
-			return a.IsPrivate()
+	for _, group := range [][]string{lan, tunnels} {
+		sort.Slice(group, func(i, j int) bool {
+			a, b := net.ParseIP(group[i]), net.ParseIP(group[j])
+			if a.IsPrivate() != b.IsPrivate() {
+				return a.IsPrivate()
+			}
+			return group[i] < group[j]
+		})
+	}
+	return append(lan, tunnels...)
+}
+
+// PeerSourceCandidates names the addresses a joining node might reach this
+// machine at, the registered one first, and the HTTPS port it must open.
+func (p *Peer) PeerSourceCandidates(ctx context.Context) ([]string, string) {
+	runtime := p.Runtime.Load()
+	if runtime == nil {
+		return nil, ""
+	}
+	state, err := runtime.ReadState(ctx)
+	if err != nil {
+		return nil, ""
+	}
+	source, ok := state.Members[p.Config.NodeID]
+	if !ok {
+		return nil, ""
+	}
+	endpoint, err := url.Parse(source.APIAddress)
+	if err != nil || endpoint.Port() == "" {
+		return nil, ""
+	}
+	registered, _, _ := net.SplitHostPort(source.Address)
+	var hosts []string
+	seen := map[string]bool{}
+	for _, host := range append([]string{registered}, localAdvertiseAddresses()...) {
+		if host == "" || seen[host] || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback() {
+			continue
 		}
-		return addresses[i] < addresses[j]
-	})
-	return addresses
+		seen[host] = true
+		hosts = append(hosts, host)
+	}
+	return hosts, endpoint.Port()
 }
 
 func validPeerEndpoint(address string, allowLoopback bool) error {

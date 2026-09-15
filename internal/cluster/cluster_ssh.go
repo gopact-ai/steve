@@ -6,8 +6,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"reflect"
+	"strings"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/desktop"
@@ -58,6 +60,7 @@ type peerEnrollmentService interface {
 	PreparePeerEnrollment(context.Context, PeerEnrollmentRequest, string) (PeerEnrollmentPackage, error)
 	CompletePeerEnrollment(context.Context, string) (PeerEnrollmentResult, error)
 	PeerEnrollmentStatus(context.Context, string) (PeerEnrollmentResult, error)
+	PeerSourceCandidates(context.Context) ([]string, string)
 }
 
 type peerSSHBackend struct {
@@ -65,6 +68,19 @@ type peerSSHBackend struct {
 	// Tests supply a bounded enrollment fixture and a local verified package.
 	enrollment peerEnrollmentService
 	findBinary func(string) (string, bool)
+	// stallLimit is how long an enrollment may sit in one phase before the
+	// wait gives up; zero means the default.
+	stallLimit time.Duration
+}
+
+// peerStallLimit is how long enrollment may stay in one phase. Progress
+// resets it, so a slow but moving enrollment is never cut off.
+const peerStallLimit = 5 * time.Minute
+
+// SourceEndpoints names this machine's candidate addresses, registered one
+// first, and the HTTPS port a joining node must reach.
+func (b peerSSHBackend) SourceEndpoints(ctx context.Context) ([]string, string) {
+	return b.service().PeerSourceCandidates(ctx)
 }
 
 func (b peerSSHBackend) service() peerEnrollmentService {
@@ -85,8 +101,20 @@ func peerPlanHash(plan PeerEnrollmentPlan) string {
 func (b peerSSHBackend) prepare(ctx context.Context, req sshconnect.InstallRequest, check sshconnect.CheckResult) (sshconnect.Template, nodebootstrap.PeerSpec, PeerEnrollmentPlan, error) {
 	template := sshconnect.Template{Steps: []sshconnect.Step{}, Effects: []string{}}
 	plan, err := b.service().PreviewPeerEnrollment(ctx, sshPeerEnrollmentRequest(req))
+	if err == nil && req.SourceHost == "" {
+		// The target already said which of this machine's addresses it can
+		// open; a registered address it cannot reach gives way to one it can.
+		if pick, ok := reachableSourceHost(check.SourceHosts, plan.Request.SourceHost); ok && pick != plan.Request.SourceHost {
+			req.SourceHost = pick
+			plan, err = b.service().PreviewPeerEnrollment(ctx, sshPeerEnrollmentRequest(req))
+		}
+	}
 	if err != nil {
 		template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_network", Status: "blocked", Message: err.Error(), Suggestion: "检查目标节点地址与本机独立互联地址后重新生成计划"})
+		return template, nodebootstrap.PeerSpec{}, plan, nil
+	}
+	if step, blocked := unreachableSourceStep(check.SourceHosts, plan); blocked {
+		template.Steps = append(template.Steps, step)
 		return template, nodebootstrap.PeerSpec{}, plan, nil
 	}
 	template.ReviewID = plan.ReviewID
@@ -120,7 +148,11 @@ func (b peerSSHBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 	template.Binary, template.BinaryPath = &metadata, path
 	template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_network", Status: "ready", Message: fmt.Sprintf("目标 HTTPS %s；共识连接 %s", plan.Request.PeerAddress, plan.Request.RaftAddress)})
 	if plan.UpdateSourceAddress {
-		template.Steps = append(template.Steps, sshconnect.Step{ID: "source_network", Status: "ready", Message: "本机跨机连接将使用 " + plan.Source.APIAddress + " 和 " + plan.Source.Address, Suggestion: "这些地址应可由已加入节点独立访问；安装后会逐一验证"})
+		message := "本机跨机连接将使用 " + plan.Source.APIAddress + " 和 " + plan.Source.Address
+		if _, ok := reachableSourceHost(check.SourceHosts, plan.Request.SourceHost); ok {
+			message = "目标机已确认能连到本机 " + plan.Request.SourceHost + "；" + message
+		}
+		template.Steps = append(template.Steps, sshconnect.Step{ID: "source_network", Status: "ready", Message: message, Suggestion: "这些地址应可由已加入节点独立访问；安装后会逐一验证"})
 	}
 	spec := nodebootstrap.PeerSpec{OS: metadata.OS, Arch: metadata.Arch, SHA256: metadata.SHA256, UploadID: nodebootstrap.PreviewUploadID, JoinPackage: nodebootstrap.PreviewJoinPackage}
 	template.Script, err = nodebootstrap.BuildPeer(spec)
@@ -170,18 +202,28 @@ func (b peerSSHBackend) Verify(ctx context.Context, name string) error {
 }
 
 func (b peerSSHBackend) VerifyRegistration(ctx context.Context, name, id string) error {
+	limit := b.stallLimit
+	if limit <= 0 {
+		limit = peerStallLimit
+	}
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
-	seen := ""
+	var last PeerEnrollmentResult
+	advanced, reported := time.Now(), map[string]bool{}
 	for {
 		if ctx.Err() != nil {
-			return &sshconnect.StepError{Stage: "peer_membership", Code: "peer_not_ready", Message: "节点已安装，但集群接入尚未确认完成", Suggestion: "检查 ~/.steve-peer/peer.log 与节点间 HTTPS/共识端口；保持原操作记录，恢复连接后核对接入状态"}
+			return peerWaitStopped(last, "接入等待已到上限")
 		}
 		result, err := b.service().CompletePeerEnrollment(ctx, id)
-		if result.Phase != "" && result.Phase != seen {
-			seen = result.Phase
+		if result.Phase != "" && result.Phase != last.Phase {
+			advanced, reported = time.Now(), map[string]bool{}
 			sshconnect.Report(ctx, "集群接入阶段："+peerPhaseText(result.Phase))
 		}
+		if result.Error != "" && !reported[result.Error] {
+			reported[result.Error] = true
+			sshconnect.Report(ctx, "当前问题："+result.Error)
+		}
+		last = result
 		if err == nil && result.OperationID == id && result.Name == name && result.Ready && result.Phase == "ready" {
 			return nil
 		}
@@ -197,6 +239,9 @@ func (b peerSSHBackend) VerifyRegistration(ctx context.Context, name, id string)
 		if result.Phase != "awaiting_peer" && result.Phase != "synchronizing" && result.Phase != "registering_worker" && result.Phase != "joined" {
 			return &sshconnect.StepError{Stage: "peer_membership", Code: "peer_not_ready", Message: "节点已安装，但集群接入未完成", Suggestion: "检查原操作记录和 ~/.steve-peer/peer.log，处理网络或状态同步问题后继续确认"}
 		}
+		if time.Since(advanced) > limit {
+			return peerWaitStopped(last, fmt.Sprintf("集群接入停在「%s」超过 %s 没有进展", peerPhaseText(last.Phase), limit))
+		}
 		select {
 		case <-ctx.Done():
 			continue
@@ -205,13 +250,56 @@ func (b peerSSHBackend) VerifyRegistration(ctx context.Context, name, id string)
 	}
 }
 
+// peerWaitStopped explains a wait that ended without the node joining: the
+// phase it stopped in, and the last thing that went wrong there.
+func peerWaitStopped(last PeerEnrollmentResult, why string) *sshconnect.StepError {
+	suggestion := "检查 ~/.steve-peer/peer.log 与节点间 HTTPS/共识端口；原操作记录已保留，处理后点「继续核对接入结果」，不会重新安装"
+	if last.Error != "" {
+		suggestion = "最近一次失败：" + last.Error + "。处理后点「继续核对接入结果」，不会重新安装"
+	}
+	return &sshconnect.StepError{Stage: "peer_membership", Code: "peer_not_ready", Message: "节点已安装，但" + why, Suggestion: suggestion}
+}
+
+// reachableSourceHost picks this machine's address for the plan from what
+// the target reported: the current one if the target can open it, else the
+// first it can. Without a report there is nothing to choose from.
+func reachableSourceHost(probed []sshconnect.SourceHost, current string) (string, bool) {
+	for _, host := range probed {
+		if host.Host == current && host.Reachable {
+			return current, true
+		}
+	}
+	for _, host := range probed {
+		if host.Reachable {
+			return host.Host, true
+		}
+	}
+	return "", false
+}
+
+// unreachableSourceStep blocks a plan whose source address the target
+// already failed to open, naming every address that was tried.
+func unreachableSourceStep(probed []sshconnect.SourceHost, plan PeerEnrollmentPlan) (sshconnect.Step, bool) {
+	tried, known := make([]string, 0, len(probed)), false
+	for _, host := range probed {
+		tried = append(tried, host.Host)
+		known = known || host.Host == plan.Request.SourceHost
+	}
+	if _, ok := reachableSourceHost(probed, plan.Request.SourceHost); ok || !known {
+		return sshconnect.Step{}, false
+	}
+	_, port, _ := net.SplitHostPort(strings.TrimPrefix(plan.Source.APIAddress, "https://"))
+	message := fmt.Sprintf("目标机连不上本机的 %s 端口：已从目标机试连 %s", port, strings.Join(tried, "、"))
+	return sshconnect.Step{ID: "source_network", Status: "blocked", Message: message, Suggestion: "确认两台机器在同一网络或 VPN 内、本机防火墙放行该端口；或在「本机互联地址」填写目标机能访问到的本机地址后重新检查"}, true
+}
+
 // peerPhaseText names an enrollment phase for the installation log.
 func peerPhaseText(phase string) string {
 	switch phase {
 	case "awaiting_peer":
 		return "等待节点进程首次连上协调节点"
 	case "synchronizing":
-		return "节点已连上，正在同步集群状态"
+		return "节点已连上，正在校验双向连接并同步集群状态"
 	case "registering_worker":
 		return "状态已同步，正在登记执行服务"
 	case "joined":
