@@ -10,7 +10,7 @@ import { useResourceRead } from "@/hooks/use-resource-read";
 import { useI18n } from "@/providers/locale-provider";
 import { dateTime } from "@/lib/format";
 import { levelName } from "@/lib/workspaces";
-import { checkSSH, discoverSSH, installSSH, planSSH, type SSHCheck, type SSHDiscovery, type SSHInstallRequest, type SSHInstallResult, type SSHPlan, type SSHStep } from "@/lib/api/ssh";
+import { checkSSH, discoverSSH, installSSH, planSSH, statusSSH, type SSHCheck, type SSHDiscovery, type SSHInstallRequest, type SSHInstallResult, type SSHPlan, type SSHStep } from "@/lib/api/ssh";
 
 interface SSHRecord { plan: SSHPlan; result: SSHInstallResult }
 interface SSHDraft { request: SSHInstallRequest; check?: SSHCheck; plan?: SSHPlan; attempted?: boolean; result?: SSHInstallResult; history?: SSHRecord[] }
@@ -106,6 +106,16 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
         if (!attempted && (!plan.ready || Date.parse(plan.expires_at) <= Date.now())) { setNow(Date.now()); setError(t(plan.ready ? "ssh.expired" : "ssh.blocked")); return; }
         if (!save({ ...draft, attempted: true })) return;
         acting.current = true; setBusy("install"); setError("");
+        // While the installer runs, follow it: the phase it is in and what
+        // the machine has said. Only a running installation is shown this
+        // way; the outcome comes from the install call itself.
+        const following = new AbortController();
+        const follow = () => statusSSH(plan.id, following.signal).then((live) => {
+            if (following.signal.aborted || live?.plan_id !== plan.id || live.status !== "installing") return;
+            setDraft((current) => current.plan?.id === plan.id && current.attempted && (!current.result || current.result.status === "installing") ? { ...current, result: live } : current);
+        }).catch(() => undefined);
+        const followTimer = window.setInterval(() => void follow(), 1000);
+        void follow();
         try {
             const next = await installSSH(plan.id);
             if (next?.plan_id !== plan.id) throw new Error(t("ssh.otherInstallation"));
@@ -114,7 +124,7 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
             save({ ...draft, attempted: true, result: next, history });
             if (next.registered) onChanged();
         } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
-        finally { acting.current = false; setBusy(null); }
+        finally { window.clearInterval(followTimer); following.abort(); acting.current = false; setBusy(null); }
     }
     function close() {
         if (acting.current) return;
@@ -180,9 +190,11 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
                         <div className="flex flex-wrap gap-2"><Button size="md" isDisabled={!plan.ready || expired || !!busy} onClick={() => void install()}>{t("ssh.install")}</Button><Button size="md" color="secondary" isDisabled={!!busy} onClick={() => { setError(""); save({ request: plan.request, check: usableCheck(plan.check) }); }}>{t("ssh.edit")}</Button></div>
                     </> : <>
                         <p role="status" className="text-sm font-medium text-secondary">{t(busy ? canResumeRegistration ? "ssh.recheckingConnection" : "ssh.installing" : connected ? "ssh.connectedHint" : result?.status === "installing" ? "ssh.waitingForResult" : result?.status === "needs_attention" ? result.registered ? "ssh.registered" : "ssh.unregistered" : "ssh.unconfirmed")}</p>
+                        {result && <InstallProgress result={result} />}
                         {result && <SSHSteps steps={result.steps} />}
+                        {result && <InstallLog result={result} />}
                         {canResumeRegistration && <p className="text-sm leading-6 text-secondary">{t("ssh.resumeHint")}</p>}
-                        {result?.registered && !connected && <p className="text-sm leading-6 text-tertiary">{t("ssh.attentionHint")}</p>}
+                        {result?.status === "needs_attention" && result.registered && <p className="text-sm leading-6 text-tertiary">{t("ssh.attentionHint")}</p>}
                         <p className="break-all text-xs text-quaternary">{t("ssh.planId")}: <span className="font-mono">{plan.id}</span></p>
                         <div className="flex flex-wrap gap-2">{(!terminal || canResumeRegistration) && <Button size="md" isLoading={busy === "install"} onClick={() => void install()}>{t(canResumeRegistration ? "ssh.resumeRegistration" : "ssh.checkInstallation")}</Button>}<Button size="md" color={connected ? "primary" : "secondary"} isDisabled={!!busy} onClick={close}>{t(connected ? "ssh.done" : "ssh.backToResources")}</Button>{connected && <Button size="md" color="secondary" onClick={() => setEnrolling(true)}>{t("nodeAgents.entry")}</Button>}{terminal && <Button size="md" color="tertiary" isDisabled={!!busy} onClick={() => { setError(""); save({ request: initialRequest }); }}>{t("ssh.connectAnother")}</Button>}</div>
                     </>}
@@ -193,6 +205,49 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
             </div>
         </Dialog></Modal>
     </ModalOverlay>;
+}
+
+const phaseLabels = { preflight: "ssh.phase.preflight", registration: "ssh.phase.registration", upload: "ssh.phase.upload", installation: "ssh.phase.installation", connectivity: "ssh.phase.connectivity" } as const;
+
+// InstallProgress shows where an installation is among its phases: the
+// ones behind it, the one it is in, and, for one that stopped, where.
+function InstallProgress({ result }: { result: SSHInstallResult }) {
+    const { t } = useI18n();
+    const phases = result.phases ?? [];
+    if (phases.length === 0) return null;
+    const label = (phase: string) => phase in phaseLabels ? t(phaseLabels[phase as keyof typeof phaseLabels]) : phase;
+    const index = result.phase ? phases.indexOf(result.phase) : -1;
+    const done = result.status === "connected";
+    const stopped = result.status === "needs_attention";
+    const completed = done ? phases.length : Math.max(index, 0);
+    const total = phases.length;
+    const text = done ? t("ssh.progressDone", { total }) : index >= 0 ? t(stopped ? "ssh.progressStopped" : "ssh.progressStep", { current: index + 1, total, phase: label(phases[index]) }) : "";
+    return <div className="space-y-2">
+        {text && <p className="text-sm font-medium text-primary">{text}</p>}
+        <div role="progressbar" aria-label={t("ssh.progress")} aria-valuenow={completed} aria-valuemin={0} aria-valuemax={total} aria-valuetext={text || undefined} className="h-2 w-full overflow-hidden rounded-md bg-quaternary">
+            <div style={{ transform: `translateX(-${100 - (completed * 100) / total}%)` }} className={`size-full rounded-md transition duration-300 ease-out motion-reduce:transition-none ${stopped ? "bg-fg-error-primary" : done ? "bg-fg-success-primary" : "bg-fg-brand-primary"}`} />
+        </div>
+        <ol className="flex flex-wrap gap-x-3 gap-y-1 text-xs">{phases.map((phase, i) => <li key={phase} aria-current={i === index && !done ? "step" : undefined} className={i < completed || done ? "text-secondary" : i === index ? (stopped ? "font-medium text-error-primary" : "font-medium text-primary") : "text-quaternary"}>{label(phase)}</li>)}</ol>
+    </div>;
+}
+
+// InstallLog is what the installation said, in order: Steve narrating each
+// phase and the machine's own output. Open by default when something went
+// wrong, since that is when the lines matter.
+function InstallLog({ result }: { result: SSHInstallResult }) {
+    const { t, locale } = useI18n();
+    const lines = result.log ?? [];
+    const end = useRef<HTMLDivElement>(null);
+    const stopped = result.status === "needs_attention";
+    useEffect(() => { if (result.status === "installing") end.current?.scrollIntoView({ block: "nearest" }); }, [lines.length, result.status]);
+    if (lines.length === 0) return null;
+    return <details className="rounded-lg bg-secondary p-3" open={stopped || result.status === "installing"}>
+        <summary className="cursor-pointer text-xs font-medium text-secondary focus-visible:outline-2 focus-visible:outline-focus-ring">{t("ssh.logCount", { count: lines.length })}</summary>
+        <div className="mt-2 max-h-56 overflow-auto font-mono text-xs leading-5" aria-label={t("ssh.log")}>
+            {lines.map((line, i) => <div key={i} className={`flex gap-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${line.stream === "stderr" ? "text-error-primary" : line.stream === "steve" ? "text-primary" : "text-secondary"}`}><span className="shrink-0 tabular-nums text-quaternary">{dateTime(line.at, locale, { timeStyle: "medium" })}</span><span className="min-w-0">{line.text}</span></div>)}
+            <div ref={end} />
+        </div>
+    </details>;
 }
 
 function SSHSteps({ steps }: { steps: SSHStep[] }) {

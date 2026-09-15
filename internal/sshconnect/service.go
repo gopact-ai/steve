@@ -121,6 +121,11 @@ type InstallResult struct {
 	Status     string `json:"status"`
 	Steps      []Step `json:"steps"`
 	NodeID     string `json:"node_id,omitempty"`
+	// Phase is the phase running now, or the one a failed installation
+	// stopped in; empty once connected. Phases lists them all, in order.
+	Phase  string    `json:"phase,omitempty"`
+	Phases []string  `json:"phases,omitempty"`
+	Log    []LogLine `json:"log,omitempty"`
 }
 
 // Registration is deliberately not serializable: its credential and exact
@@ -491,7 +496,7 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 		return InstallResult{}, fail("planning", "plan_not_ready", "安装计划已过期或仍有未解决的问题", "处理计划中列出的问题后重新检查")
 	}
 	stored.running = true
-	stored.result = InstallResult{PlanID: id, Name: stored.plan.Request.Name, Status: "installing", Steps: []Step{}}
+	stored.result = InstallResult{PlanID: id, Name: stored.plan.Request.Name, Status: "installing", Steps: []Step{}, Phases: phasesFor(stored.plan)}
 	plan, revision := clonePlan(stored.plan), stored.revision
 	connection := stored.connection
 	s.mu.Unlock()
@@ -521,11 +526,13 @@ func (s *Service) resumeRegistration(ctx context.Context, recovery RegistrationR
 }
 
 func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string, connection Connection) (InstallResult, error) {
-	result := InstallResult{PlanID: plan.ID, Name: plan.Request.Name, Status: "needs_attention", Steps: []Step{}}
+	result := InstallResult{PlanID: plan.ID, Name: plan.Request.Name, Status: "needs_attention", Steps: []Step{}, Phases: phasesFor(plan)}
 	reject := func(failure *StepError) (InstallResult, error) {
 		result.Steps = append(result.Steps, failure.step())
+		result.appendLog(s.now(), "steve", failure.Message+"；"+failure.Suggestion)
 		return result, failure
 	}
+	s.enter(&result, PhasePreflight, "复核 SSH 配置、机器环境和安装计划")
 	candidate, current, err := s.selected(ctx, plan.Request.Alias)
 	if err != nil {
 		return result, err
@@ -563,6 +570,7 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 		}
 		binaryReader = io.LimitReader(binary, metadata.Size)
 	}
+	s.enter(&result, PhaseRegistration, "在协调节点登记 "+plan.Request.Name)
 	registerRequest := plan.Request
 	registerRequest.ApprovedReviewID = plan.ReviewID
 	registration, err := s.backend.Register(ctx, registerRequest, check, plan.ID)
@@ -584,10 +592,12 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	result.Steps = append(result.Steps, Step{ID: "registration", Status: "ready", Message: registeredMessage})
 	s.progress(result)
 	if binaryReader != nil {
+		s.enter(&result, PhaseUpload, fmt.Sprintf("通过 SSH 上传节点程序（%s，%.1f MiB）", plan.Binary.OS+"/"+plan.Binary.Arch, float64(plan.Binary.Size)/(1<<20)))
 		command, _ := nodebootstrap.UploadCommand(plan.ID)
 		uploadCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-		_, err := connection.Upload(uploadCtx, command, binaryReader)
+		out, err := connection.Upload(uploadCtx, command, binaryReader)
 		cancel()
+		s.output(&result, out, registration.Token)
 		if err != nil {
 			result.Steps = append(result.Steps, s.cleanupUpload(ctx, connection, plan.ID))
 			if peerRegistration {
@@ -598,10 +608,13 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 		result.Steps = append(result.Steps, Step{ID: "upload", Status: "ready", Message: "节点安装包已通过 SSH 上传，安装时将核验 SHA-256"})
 		s.progress(result)
 	}
+	s.enter(&result, PhaseInstallation, "在远端执行安装脚本")
 	installCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	_, err = connection.Run(installCtx, "bash -s", registration.Script)
+	out, err := connection.Run(installCtx, "bash -s", registration.Script)
 	cancel()
+	s.output(&result, out, registration.Token)
 	if err != nil {
+		s.note(&result, "安装脚本退出异常："+err.Error())
 		if binaryReader != nil {
 			result.Steps = append(result.Steps, s.cleanupUpload(ctx, connection, plan.ID))
 		}
@@ -616,7 +629,8 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	if _, ok := s.backend.(RegistrationVerifier); ok {
 		verifyTimeout = 2 * time.Minute
 	}
-	verifyCtx, cancel := context.WithTimeout(ctx, verifyTimeout)
+	s.enter(&result, PhaseConnectivity, fmt.Sprintf("等待节点连通（最多 %s）", verifyTimeout))
+	verifyCtx, cancel := context.WithTimeout(WithReporter(ctx, func(message string) { s.note(&result, message) }), verifyTimeout)
 	if verifier, ok := s.backend.(RegistrationVerifier); ok {
 		err = verifier.VerifyRegistration(verifyCtx, plan.Request.Name, plan.ID)
 	} else {
@@ -630,12 +644,13 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 		}
 		return reject(fail("connectivity", "node_unreachable", "节点服务已启动，但协调节点尚未连通", "检查节点地址、端口和网络路由；SSH 代理连通不代表节点端口可直接访问"))
 	}
-	result.Status, result.Connected = "connected", true
+	result.Status, result.Connected, result.Phase = "connected", true, ""
 	message := "协调节点已完成节点协议握手"
 	if _, ok := s.backend.(RegistrationVerifier); ok {
 		message = "节点已完成集群接入、状态同步和独立连接验证"
 	}
 	result.Steps = append(result.Steps, Step{ID: "connectivity", Status: "ready", Message: message})
+	result.appendLog(s.now(), "steve", message)
 	return result, nil
 }
 
@@ -713,6 +728,8 @@ func clonePlan(plan InstallPlan) InstallPlan {
 
 func cloneResult(result InstallResult) InstallResult {
 	result.Steps = append([]Step{}, result.Steps...)
+	result.Phases = append([]string(nil), result.Phases...)
+	result.Log = append([]LogLine(nil), result.Log...)
 	return result
 }
 
