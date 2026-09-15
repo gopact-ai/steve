@@ -99,7 +99,6 @@ export const materialsZh = {
     "materials.replyNow": "现在答复",
     "materials.answerDeferred": "仍在等你答复，原问题保持待处理。",
     "materials.answerTarget": "直接答复这个问题，继续原任务。",
-    "materials.yourAnswer": "你的答复",
     "materials.answerStorage": "无法保存答复草稿。请允许本机存储后重试；当前内容仍保留。",
     "materials.answerUnconfirmed": "尚未确认答复是否已保存。重试会核对同一份答复。"
 } as const;
@@ -205,7 +204,6 @@ export const materialsEn = {
     "materials.replyNow": "Reply now",
     "materials.answerDeferred": "Still awaiting your reply. The original question remains open.",
     "materials.answerTarget": "Reply directly to this question and continue the original task.",
-    "materials.yourAnswer": "Your response",
     "materials.answerStorage": "The response draft could not be saved. Enable local storage and retry; your text is retained.",
     "materials.answerUnconfirmed": "This response has not been confirmed. Retrying checks the same response."
 } as const satisfies Record<keyof typeof materialsZh, string>;
