@@ -141,6 +141,32 @@ func (a *Service) AddProject(ctx context.Context, req consoleapi.AddProjectReque
 	})
 }
 
+// SetProjectHome moves a project's canonical directory on this computer.
+// Projects homed on another machine are refused; the directory must be
+// absolute and is not inspected here because the desktop prepares it
+// before asking.
+func (a *Service) SetProjectHome(ctx context.Context, projectID, path string) error {
+	path = strings.TrimSpace(path)
+	if !filepath.IsAbs(path) {
+		return errors.New("目录要写绝对路径")
+	}
+	return a.changeProjects(ctx, func(candidate *config.Config) error {
+		item, exists := candidate.Projects[projectID]
+		if !exists {
+			return fmt.Errorf("没有叫 %q 的项目", projectID)
+		}
+		if item.Home.Node != "" {
+			return fmt.Errorf("项目 %s 在机器 %s 上，目录要在那台机器上改", projectID, item.Home.Node)
+		}
+		if item.Home.Path == path {
+			return nil
+		}
+		item.Home.Path = path
+		candidate.Projects[projectID] = item
+		return nil
+	})
+}
+
 // inspect refuses an unreachable machine instead of treating unknown contents
 // as an existing directory that is safe to adopt.
 func (a *Service) inspect(ctx context.Context, nodeKey, path string) ([]nodewire.Repo, error) {

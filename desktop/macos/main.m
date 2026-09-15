@@ -1,7 +1,7 @@
 #import <Cocoa/Cocoa.h>
 #import <WebKit/WebKit.h>
 
-@interface SteveApplication : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate>
+@interface SteveApplication : NSObject <NSApplicationDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler>
 @property(nonatomic, strong) NSWindow *window;
 @property(nonatomic, strong) WKWebView *webView;
 @property(nonatomic, strong) NSView *workspaceView;
@@ -13,6 +13,7 @@
 @property(nonatomic, assign) BOOL awaitingWorkspace;
 @property(nonatomic, assign) BOOL showingFailure;
 @property(nonatomic, assign) NSUInteger loadGeneration;
+@property(nonatomic, assign) BOOL pickingDirectory;
 @end
 
 @implementation SteveApplication
@@ -170,6 +171,12 @@
     NSString *literal = [[NSString alloc] initWithData:serialized encoding:NSUTF8StringEncoding];
     NSString *script = [NSString stringWithFormat:@"sessionStorage.setItem('steve.token', (%@)[0]);", literal];
     [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:script injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    // The console asks this shell for things a page cannot do itself, such
+    // as choosing a directory by its absolute path. window.steveDesktop is
+    // the page's side of that conversation.
+    NSString *bridge = @"window.steveDesktop = { pending: {}, pickDirectory(directory) { const id = String(Math.random()).slice(2); return new Promise((resolve) => { this.pending[id] = resolve; window.webkit.messageHandlers.steve.postMessage({ action: 'pickDirectory', id, directory: directory || '' }); }); }, onDirectory(id, path) { const resolve = this.pending[id]; delete this.pending[id]; if (resolve) resolve(path); } };";
+    [configuration.userContentController addUserScript:[[WKUserScript alloc] initWithSource:bridge injectionTime:WKUserScriptInjectionTimeAtDocumentStart forMainFrameOnly:YES]];
+    [configuration.userContentController addScriptMessageHandler:self name:@"steve"];
     self.webView = [[WKWebView alloc] initWithFrame:self.window.contentView.bounds configuration:configuration];
     self.webView.navigationDelegate = self;
     self.webView.UIDelegate = self;
@@ -304,6 +311,50 @@
         else if ([action.request.URL.scheme isEqualToString:@"https"] || [action.request.URL.scheme isEqualToString:@"http"]) [NSWorkspace.sharedWorkspace openURL:action.request.URL];
     }
     return nil;
+}
+
+- (void)userContentController:(WKUserContentController *)userContentController didReceiveScriptMessage:(WKScriptMessage *)message {
+    if (![message.name isEqualToString:@"steve"] || ![message.body isKindOfClass:[NSDictionary class]]) return;
+    NSDictionary *body = message.body;
+    NSString *action = body[@"action"], *identifier = body[@"id"];
+    if (![action isKindOfClass:[NSString class]] || ![identifier isKindOfClass:[NSString class]]) return;
+    if (![action isEqualToString:@"pickDirectory"]) return;
+    // One chooser at a time: a second request while the sheet is up is
+    // answered as cancelled instead of queuing another sheet.
+    if (self.pickingDirectory) {
+        [self answerDirectoryRequest:identifier path:[NSNull null]];
+        return;
+    }
+    self.pickingDirectory = YES;
+    NSOpenPanel *panel = [NSOpenPanel openPanel];
+    panel.canChooseFiles = NO;
+    panel.canChooseDirectories = YES;
+    panel.canCreateDirectories = YES;
+    panel.allowsMultipleSelection = NO;
+    NSString *start = body[@"directory"];
+    if ([start isKindOfClass:[NSString class]] && start.length > 0) panel.directoryURL = [NSURL fileURLWithPath:start.stringByExpandingTildeInPath isDirectory:YES];
+    __weak SteveApplication *weakSelf = self;
+    [panel beginSheetModalForWindow:self.window completionHandler:^(NSModalResponse response) {
+        SteveApplication *strongSelf = weakSelf;
+        if (!strongSelf) return;
+        strongSelf.pickingDirectory = NO;
+        id path = response == NSModalResponseOK && panel.URL ? panel.URL.path : [NSNull null];
+        [strongSelf answerDirectoryRequest:identifier path:path];
+    }];
+}
+
+// answerDirectoryRequest resolves the page's promise. The path only ever
+// travels inside a JSON string literal, so quotes, backslashes and control
+// characters cannot break out of it; a path that cannot be serialized at all
+// is reported as a cancelled choice rather than left pending.
+- (void)answerDirectoryRequest:(NSString *)identifier path:(id)path {
+    if (!self.webView) return;
+    NSData *serialized = [NSJSONSerialization dataWithJSONObject:@[identifier, path] options:0 error:nil];
+    if (!serialized) serialized = [NSJSONSerialization dataWithJSONObject:@[identifier, [NSNull null]] options:0 error:nil];
+    NSString *literal = serialized ? [[NSString alloc] initWithData:serialized encoding:NSUTF8StringEncoding] : nil;
+    if (!literal) return;
+    NSString *script = [NSString stringWithFormat:@"window.steveDesktop && window.steveDesktop.onDirectory(...(%@));", literal];
+    [self.webView evaluateJavaScript:script completionHandler:nil];
 }
 
 - (void)webView:(WKWebView *)webView runOpenPanelWithParameters:(WKOpenPanelParameters *)parameters initiatedByFrame:(WKFrameInfo *)frame completionHandler:(void (^)(NSArray<NSURL *> *))completionHandler {

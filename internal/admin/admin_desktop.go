@@ -28,15 +28,64 @@ func (a *Service) desktopStatusLocked() consoleapi.DesktopStatus {
 	if !desktop.IsManagedConfig(a.Path) {
 		return consoleapi.DesktopStatus{}
 	}
-	status := consoleapi.DesktopStatus{Enabled: true, NodeID: a.Cfg.Gateway.HubID,
-		SetupRequired: len(a.Cfg.Agents) == 0, AgentCount: len(a.Cfg.Agents)}
+	stateDir := filepath.Dir(a.Path)
+	status := consoleapi.DesktopStatus{Enabled: true, NodeID: a.Cfg.Gateway.HubID, AgentCount: len(a.Cfg.Agents),
+		WorkspacePath: a.Cfg.Projects[config.DefaultProjectID(a.Cfg.Gateway.DefaultProject, a.Cfg.Projects)].Home.Path}
+	status.WorkspaceManaged = desktop.ManagedWorkspace(stateDir, status.WorkspacePath)
 	for id, item := range a.Cfg.Agents {
 		if item.Default {
 			status.DefaultAgent = id
 			break
 		}
 	}
+	progress, err := desktop.ReadSetup(stateDir)
+	if err != nil {
+		slog.Warn("desktop: setup progress unreadable, reopening the guide", "error", err)
+		progress = desktop.SetupProgress{Step: desktop.SetupSteps[0]}
+	}
+	status.Setup = &consoleapi.DesktopSetup{Step: progress.Step, Done: progress.Done}
+	status.SetupRequired = !progress.Done
 	return status
+}
+
+// DesktopSetup records the guide page to open next.
+func (a *Service) DesktopSetup(ctx context.Context, req consoleapi.DesktopSetupRequest) (consoleapi.DesktopStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return consoleapi.DesktopStatus{}, err
+	}
+	if !desktop.IsManagedConfig(a.Path) {
+		return consoleapi.DesktopStatus{}, fmt.Errorf("新手引导仅在桌面 App 中提供")
+	}
+	if err := desktop.SaveSetup(filepath.Dir(a.Path), desktop.SetupProgress{Step: req.Step, Done: req.Done}); err != nil {
+		return consoleapi.DesktopStatus{}, err
+	}
+	return a.DesktopStatus(ctx)
+}
+
+// DesktopWorkspace moves the default project to a directory the owner chose,
+// creating it when needed.
+func (a *Service) DesktopWorkspace(ctx context.Context, req consoleapi.DesktopWorkspaceRequest) (consoleapi.DesktopStatus, error) {
+	if err := ctx.Err(); err != nil {
+		return consoleapi.DesktopStatus{}, err
+	}
+	if !desktop.IsManagedConfig(a.Path) {
+		return consoleapi.DesktopStatus{}, fmt.Errorf("工作目录设置仅在桌面 App 中提供")
+	}
+	ConfigMu.RLock()
+	id := config.DefaultProjectID(a.Cfg.Gateway.DefaultProject, a.Cfg.Projects)
+	home := a.Cfg.Projects[id].Home
+	ConfigMu.RUnlock()
+	if err := desktop.CheckWorkspaceProject(id, home.Node); err != nil {
+		return consoleapi.DesktopStatus{}, err
+	}
+	path, err := desktop.PrepareWorkspace(req.Path, filepath.Dir(a.Path))
+	if err != nil {
+		return consoleapi.DesktopStatus{}, err
+	}
+	if err := a.SetProjectHome(ctx, id, path); err != nil {
+		return consoleapi.DesktopStatus{}, err
+	}
+	return a.DesktopStatus(ctx)
 }
 
 func (a *Service) DesktopDiscover(ctx context.Context) (consoleapi.DesktopDiscovery, error) {

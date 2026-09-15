@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/desktop"
 )
 
 func (s *Server) SetDesktop(service consoleapi.DesktopService) { s.desktop = service }
@@ -44,14 +45,7 @@ func (s *Server) consoleDesktopAgents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var request consoleapi.DesktopEnrollRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&request); err != nil {
-		writeDesktopError(w, err, http.StatusBadRequest)
-		return
-	}
-	if err := decoder.Decode(&struct{}{}); err != io.EOF {
-		writeDesktopError(w, errors.New("expected one enrollment object"), http.StatusBadRequest)
+	if !decodeDesktop(w, r, &request) {
 		return
 	}
 	result, err := s.desktop.DesktopEnroll(r.Context(), request)
@@ -65,4 +59,66 @@ func (s *Server) consoleDesktopAgents(w http.ResponseWriter, r *http.Request) {
 func writeDesktopError(w http.ResponseWriter, err error, status int) {
 	w.WriteHeader(status)
 	writeJSON(w, map[string]string{"error": err.Error()})
+}
+
+// consoleDesktopSetup records where the first-run guide should open next.
+func (s *Server) consoleDesktopSetup(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.desktop == nil {
+		writeDesktopError(w, errors.New("desktop setup is unavailable"), http.StatusNotImplemented)
+		return
+	}
+	var request consoleapi.DesktopSetupRequest
+	if !decodeDesktop(w, r, &request) {
+		return
+	}
+	result, err := s.desktop.DesktopSetup(r.Context(), request)
+	if err != nil {
+		writeDesktopError(w, err, desktopStatusCode(err))
+		return
+	}
+	writeJSON(w, result)
+}
+
+// consoleDesktopWorkspace moves the default project's directory on this computer.
+func (s *Server) consoleDesktopWorkspace(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.desktop == nil {
+		writeDesktopError(w, errors.New("desktop setup is unavailable"), http.StatusNotImplemented)
+		return
+	}
+	var request consoleapi.DesktopWorkspaceRequest
+	if !decodeDesktop(w, r, &request) {
+		return
+	}
+	result, err := s.desktop.DesktopWorkspace(r.Context(), request)
+	if err != nil {
+		writeDesktopError(w, err, desktopStatusCode(err))
+		return
+	}
+	writeJSON(w, result)
+}
+
+// desktopStatusCode tells a refusal of the owner's input from a failure of
+// this machine.
+func desktopStatusCode(err error) int {
+	if desktop.IsInputError(err) {
+		return http.StatusBadRequest
+	}
+	return http.StatusInternalServerError
+}
+
+// decodeDesktop reads exactly one small JSON object of the expected shape.
+func decodeDesktop(w http.ResponseWriter, r *http.Request, into any) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<10))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(into); err != nil {
+		writeDesktopError(w, err, http.StatusBadRequest)
+		return false
+	}
+	if err := decoder.Decode(&struct{}{}); err != io.EOF {
+		writeDesktopError(w, errors.New("expected one request object"), http.StatusBadRequest)
+		return false
+	}
+	return true
 }

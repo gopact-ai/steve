@@ -1,44 +1,239 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate } from "react-router";
+import { Radio, RadioGroup } from "react-aria-components";
 import { CheckCircle, Monitor01 } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
 import { Checkbox } from "@/components/base/checkbox/checkbox";
+import { Input } from "@/components/base/input/input";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
+import { SSHConnect } from "@/components/steve/ssh-connect";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import { useFleet } from "@/lib/fleet";
 import { useI18n } from "@/providers/locale-provider";
+import { useTheme } from "@/providers/theme-provider";
 import { HTTPError } from "@/lib/http";
-import { discoverDesktopAgents, enrollDesktopAgents, fetchDesktopStatus, type DesktopAgentCandidate, type DesktopStatus } from "@/lib/api/desktop";
+import { executeCoordination, fetchCoordination } from "@/lib/api/coordination";
+import { fetchNodeSettings, saveNodeSettings } from "@/lib/api/fleet";
+import { fetchHubSettings, saveHubSettings } from "@/lib/api/settings";
+import { canPickDirectory, discoverDesktopAgents, enrollDesktopAgents, fetchDesktopStatus, pickDirectory, saveDesktopSetup, saveDesktopWorkspace, setupSteps, type DesktopAgentCandidate, type DesktopStatus, type SetupStep } from "@/lib/api/desktop";
 
-// Resources can open enrollment explicitly with #/console?setup=agents.
+const message = (error: unknown) => (error instanceof Error ? error.message : String(error)).replace(/^Error: /, "");
+
+// The first-run guide opens on its own until the owner has been through it
+// once; where it stands is kept by the desktop backend, so closing the App
+// and coming back resumes at the same page. Resources can still open the
+// agents page directly with #/console?setup=agents.
 export function DesktopOnboarding() {
     const { t } = useI18n();
     const { refresh, live } = useFleet();
     const location = useLocation();
     const navigate = useNavigate();
-    const requested = new URLSearchParams(location.search).get("setup") === "agents";
+    const requested = new URLSearchParams(location.search).get("setup");
+    const entry: SetupStep | null = requested === "agents" ? "agents" : null;
     const [status, setStatus] = useState<DesktopStatus | null>(null);
     const [error, setError] = useState("");
     const [dismissed, setDismissed] = useState("");
-    const load = useResourceRead("desktop-setup", fetchDesktopStatus, (value) => { setStatus(value); setError(""); }, (error) => setError(String(error).replace(/^Error: /, "")));
+    const load = useResourceRead("desktop-setup", fetchDesktopStatus, (value) => { setStatus(value); setError(""); }, (error) => setError(message(error)));
     useEffect(() => { void load(); }, [requested, live, load]);
+    // "Finish later" keeps the guide away for this window session; the next
+    // launch of the App resumes it at the recorded page.
     let deferred = false;
-    try { deferred = !!status?.node_id && localStorage.getItem(`steve.desktop.setup-deferred:${status.node_id}`) === "1"; } catch { /* Deferring still works for the current visit. */ }
-    const open = status?.enabled && (requested || (status.setup_required && !deferred && dismissed !== status.node_id));
+    try { deferred = !!status?.node_id && sessionStorage.getItem(`steve.desktop.setup-deferred:${status.node_id}`) === "1"; } catch { /* Deferring still works for the current visit. */ }
+    const open = status?.enabled && (entry || (status.setup_required && !deferred && dismissed !== status.node_id));
     function close() {
         if (status?.node_id) {
             setDismissed(status.node_id);
-            try { localStorage.setItem(`steve.desktop.setup-deferred:${status.node_id}`, "1"); } catch { /* The current visit remains dismissed. */ }
+            try { sessionStorage.setItem(`steve.desktop.setup-deferred:${status.node_id}`, "1"); } catch { /* The current visit remains dismissed. */ }
         }
         if (requested) { const search = new URLSearchParams(location.search); search.delete("setup"); navigate({ pathname: location.pathname, search: search.toString() }, { replace: true }); }
     }
-    if (open && status) return <DesktopSetupDialog key={status.node_id} status={status} onClose={close} onRegistered={(next) => { setStatus(next); refresh(); }} />;
+    if (open && status) return <DesktopSetupDialog key={status.node_id} status={status} entry={entry} onClose={close} onStatus={(next) => { setStatus(next); refresh(); }} />;
     if (requested && (error || status?.enabled === false)) return <div role="status" className="fixed right-4 bottom-4 z-50 flex max-w-md flex-wrap items-center gap-3 rounded-lg bg-primary p-4 text-sm text-secondary shadow-lg ring-1 ring-secondary">
         <p>{error ? `${t("desktop.statusError")} ${error}` : t("desktop.unavailable")}</p>
         {error && <Button size="sm" color="secondary" onClick={() => void load()}>{t("desktop.checkAgain")}</Button>}
         <Button size="sm" color="tertiary" onClick={close}>{t("desktop.close")}</Button>
     </div>;
     return null;
+}
+
+type Page = Exclude<SetupStep, "finished">;
+const pages = setupSteps.filter((step): step is Page => step !== "finished");
+
+function DesktopSetupDialog({ status, entry, onClose, onStatus }: { status: DesktopStatus; entry: SetupStep | null; onClose: () => void; onStatus: (status: DesktopStatus) => void }) {
+    const { t } = useI18n();
+    // Opened for one page after the guide is done (Resources → register
+    // agents), the dialog shows just that page and closes when it is done.
+    const single = !!entry && !!status.setup?.done;
+    const [step, setStep] = useState<SetupStep>(entry ?? status.setup?.step ?? "identity");
+    const [busy, setBusy] = useState(false);
+    const [nested, setNested] = useState(false);
+    const [finishError, setFinishError] = useState("");
+    const heading = useRef<HTMLHeadingElement>(null);
+    useEffect(() => { heading.current?.focus({ preventScroll: true }); }, [step]);
+    // Progress is recorded as the owner moves, so a closed App reopens here.
+    // Writes are serialized so a fast "Finish" cannot be overtaken by the
+    // move onto the last page; once the guide is done nothing is written.
+    const writes = useRef(Promise.resolve());
+    function record(next: SetupStep, done = false) {
+        const write = writes.current.then(() => saveDesktopSetup(next, done));
+        writes.current = write.then(() => undefined, () => undefined);
+        return write;
+    }
+    function go(next: SetupStep) {
+        setStep(next);
+        if (!status.setup?.done) record(next).then(onStatus).catch(() => { /* The page still moves; progress is retried on the next move. */ });
+    }
+    const index = pages.indexOf(step as Page);
+    const back = !single && index > 0 ? pages[index - 1] : null;
+    const forward = !single && index >= 0 ? setupSteps[setupSteps.indexOf(step) + 1] : null;
+    async function finish() {
+        setBusy(true); setFinishError("");
+        try { onStatus(await record("finished", true)); onClose(); }
+        catch (error) { setFinishError(`${t("desktop.finishError")} ${message(error)}`); }
+        finally { setBusy(false); }
+    }
+    const shared = { status, onStatus, busy, setBusy, onNext: () => (forward ? go(forward) : onClose()), onBack: back ? () => go(back) : undefined };
+    return <ModalOverlay className="motion-reduce:animate-none motion-reduce:duration-0" isOpen isDismissable={!busy && !nested} isKeyboardDismissDisabled={busy || nested} onOpenChange={(open) => { if (!open && !busy && !nested) onClose(); }}>
+        <Modal className="max-w-xl motion-reduce:animate-none motion-reduce:duration-0"><Dialog aria-label={t("desktop.guide")} className="block overflow-hidden rounded-xl bg-primary p-0 ring-1 ring-secondary">
+            <div className="max-h-[min(760px,85dvh)] overflow-y-auto overscroll-contain p-5 sm:p-6">
+                <header className="mb-5 space-y-3">
+                    <div className="flex items-start justify-between gap-3">
+                        <Monitor01 className="size-8 text-tertiary" aria-hidden="true" />
+                        {step !== "finished" && <Button size="sm" color="tertiary" isDisabled={busy} onClick={onClose}>{t("desktop.later")}</Button>}
+                    </div>
+                    <h1 ref={heading} tabIndex={-1} className="text-xl font-semibold text-primary focus-visible:outline-2 focus-visible:outline-focus-ring">{step === "finished" ? t("desktop.finishedTitle") : t(`desktop.step.${step}`)}</h1>
+                    {step !== "finished" && !single && <SetupProgress step={step} />}
+                    {step === "identity" && <p className="text-sm leading-6 text-secondary">{t("desktop.guideIntro")}</p>}
+                </header>
+                {step === "identity" && <IdentityStep {...shared} />}
+                {step === "workspace" && <WorkspaceStep {...shared} />}
+                {step === "agents" && <AgentsStep {...shared} />}
+                {step === "machines" && <MachinesStep {...shared} nested={nested} setNested={setNested} />}
+                {step === "preferences" && <PreferencesStep {...shared} />}
+                {step === "finished" && <FinishedStep status={status} busy={busy} error={finishError} onBack={() => go("preferences")} onFinish={() => void finish()} />}
+            </div>
+        </Dialog></Modal>
+    </ModalOverlay>;
+}
+
+function SetupProgress({ step }: { step: Page }) {
+    const { t } = useI18n();
+    const index = pages.indexOf(step);
+    const text = t("desktop.stepOf", { current: index + 1, total: pages.length, step: t(`desktop.step.${step}`) });
+    return <div className="space-y-2">
+        <p id="desktop-setup-progress" className="text-xs font-medium text-tertiary">{text}</p>
+        <div role="progressbar" aria-labelledby="desktop-setup-progress" aria-valuenow={index} aria-valuemin={0} aria-valuemax={pages.length} aria-valuetext={text} className="h-1.5 w-full overflow-hidden rounded-md bg-quaternary">
+            <div style={{ transform: `translateX(-${100 - (index * 100) / pages.length}%)` }} className="size-full rounded-md bg-fg-brand-primary transition duration-300 ease-out motion-reduce:transition-none" />
+        </div>
+        <ol className="flex flex-wrap gap-x-3 gap-y-1 text-xs">{pages.map((page, i) => <li key={page} aria-current={i === index ? "step" : undefined} className={i < index ? "text-secondary" : i === index ? "font-medium text-primary" : "text-quaternary"}>{t(`desktop.step.${page}`)}</li>)}</ol>
+    </div>;
+}
+
+interface StepProps { status: DesktopStatus; onStatus: (status: DesktopStatus) => void; busy: boolean; setBusy: (busy: boolean) => void; onNext: () => void; onBack?: () => void }
+
+function StepFooter({ busy, onBack, onNext, nextLabel, onSkip, disabled, children }: { busy: boolean; onBack?: () => void; onNext?: () => void; nextLabel?: string; onSkip?: () => void; disabled?: boolean; children?: ReactNode }) {
+    const { t } = useI18n();
+    return <div className="mt-6 flex flex-wrap items-center gap-2">
+        {onNext && <Button size="md" isLoading={busy} isDisabled={disabled} onClick={onNext}>{nextLabel ?? t("desktop.next")}</Button>}
+        {onSkip && <Button size="md" color="secondary" isDisabled={busy} onClick={onSkip}>{t("desktop.skip")}</Button>}
+        {onBack && <Button size="md" color="tertiary" isDisabled={busy} onClick={onBack}>{t("desktop.back")}</Button>}
+        {children}
+    </div>;
+}
+
+// Identity: the display name lives in coordination (renaming keeps the node
+// ID), labels are the worker's capabilities. Both are read fresh here so the
+// page shows what is in force, and only what changed is written.
+function IdentityStep({ status, busy, setBusy, onNext, onBack }: StepProps) {
+    const { t } = useI18n();
+    const nodeID = status.node_id || "";
+    const [name, setName] = useState("");
+    const [labels, setLabels] = useState("");
+    const [current, setCurrent] = useState<{ name: string; revision: number; enabled: boolean; labels: string[] } | null>(null);
+    const [settings, setSettings] = useState<Awaited<ReturnType<typeof fetchNodeSettings>>["settings"] | null>(null);
+    const [error, setError] = useState("");
+    const [loading, setLoading] = useState(true);
+    useEffect(() => {
+        let alive = true;
+        (async () => {
+            try {
+                const [view, node] = await Promise.all([fetchCoordination(), fetchNodeSettings(nodeID).catch(() => null)]);
+                if (!alive) return;
+                const local = view.nodes.find((item) => item.local || item.id === nodeID);
+                const existing = node?.settings.capabilities || [];
+                setCurrent({ name: local?.name || "", revision: view.revision, enabled: view.enabled && !!local, labels: existing });
+                setSettings(node?.settings || null);
+                setName((value) => value || local?.name || "");
+                setLabels((value) => value || existing.join(", "));
+            } catch (error) { if (alive) setError(message(error)); }
+            finally { if (alive) setLoading(false); }
+        })();
+        return () => { alive = false; };
+    }, [nodeID]);
+    const parsed = labels.split(/[,，]/).map((item) => item.trim()).filter(Boolean).filter((item, i, all) => all.indexOf(item) === i);
+    async function save() {
+        const trimmed = name.trim();
+        if (current?.enabled && !trimmed) { setError(t("desktop.displayNameRequired")); return; }
+        setBusy(true); setError("");
+        try {
+            if (current?.enabled && trimmed !== current.name) {
+                const view = await fetchCoordination();
+                await executeCoordination({ kind: "name", body: { command_id: `name-${crypto.randomUUID()}`, expected_revision: view.revision, node_id: nodeID, name: trimmed } });
+                setCurrent({ ...current, name: trimmed, revision: view.revision + 1 });
+            }
+            if (settings && (parsed.length !== settings.capabilities.length || parsed.some((item, i) => item !== settings.capabilities[i]))) {
+                const saved = await saveNodeSettings(nodeID, { ...settings, capabilities: parsed });
+                setSettings(saved.settings);
+            }
+            onNext();
+        } catch (error) {
+            setError(error instanceof HTTPError && error.status === 409 ? t("fleet.renameConflict") : message(error));
+        } finally { setBusy(false); }
+    }
+    return <section className="space-y-4">
+        <p className="text-sm leading-6 text-secondary">{t("desktop.identityIntro")}</p>
+        {loading ? <p role="status" className="text-sm text-tertiary">{t("desktop.loading")}</p> : <>
+            <Input size="sm" label={t("desktop.displayName")} name="desktop-name" autoComplete="off" hint={current?.enabled ? t("desktop.displayNameHint") : t("desktop.renameUnavailable")} value={name} onChange={setName} isDisabled={busy || !current?.enabled} maxLength={64} />
+            <Input size="sm" label={t("desktop.labels")} name="desktop-labels" autoComplete="off" spellCheck="false" placeholder="gpu, intranet" hint={t("desktop.labelsHint")} value={labels} onChange={setLabels} isDisabled={busy || !settings} />
+            {parsed.length > 0 && <ul aria-label={t("desktop.labels")} className="flex flex-wrap gap-1.5">{parsed.map((item) => <li key={item} className="rounded-md bg-secondary px-2 py-0.5 text-xs text-secondary">{item}</li>)}</ul>}
+            <p className="flex min-w-0 items-center gap-2 text-xs text-tertiary"><span>{t("desktop.nodeID")}</span><span className="min-w-0 truncate font-mono text-secondary" title={nodeID}>{nodeID}</span></p>
+        </>}
+        {error && <p role="alert" className="break-words text-sm text-error-primary">{error}</p>}
+        <StepFooter busy={busy} onBack={onBack} onNext={() => void save()} disabled={loading} />
+    </section>;
+}
+
+// Workspace: the default project's directory. The macOS shell offers the
+// native chooser; elsewhere the path is typed and the backend checks it.
+function WorkspaceStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepProps) {
+    const { t } = useI18n();
+    const managed = !!status.workspace_managed;
+    const [path, setPath] = useState(managed || !status.workspace_path ? "~/Steve" : status.workspace_path);
+    const [error, setError] = useState("");
+    const [picking, setPicking] = useState(false);
+    async function choose() {
+        if (picking) return;
+        setPicking(true); setError("");
+        try { const picked = await pickDirectory(path); if (picked) setPath(picked); }
+        catch (error) { setError(message(error)); }
+        finally { setPicking(false); }
+    }
+    async function save() {
+        setBusy(true); setError("");
+        try { onStatus(await saveDesktopWorkspace(path)); onNext(); }
+        catch (error) { setError(message(error)); }
+        finally { setBusy(false); }
+    }
+    return <section className="space-y-4">
+        <p className="text-sm leading-6 text-secondary">{t("desktop.workspaceIntro")}</p>
+        <div className="flex flex-wrap items-end gap-2">
+            <Input size="sm" wrapperClassName="min-w-0 flex-1" label={t("desktop.workspacePath")} name="desktop-workspace" autoComplete="off" spellCheck="false" placeholder="~/Steve" hint={t("desktop.workspaceHint")} value={path} onChange={setPath} isDisabled={busy} />
+            {canPickDirectory() && <Button size="sm" color="secondary" className="mb-6" isDisabled={busy || picking} onClick={() => void choose()}>{t("desktop.chooseFolder")}</Button>}
+        </div>
+        {status.workspace_path && !managed && status.workspace_path !== path && <p className="text-xs text-tertiary">{t("desktop.workspaceCurrent", { path: status.workspace_path })}</p>}
+        {error && <p role="alert" className="break-words text-sm text-error-primary">{error}</p>}
+        <StepFooter busy={busy} onBack={onBack} onNext={() => void save()} disabled={!path.trim()} />
+    </section>;
 }
 
 interface EnrollmentDraft { selected: string[]; pending?: string[] }
@@ -50,9 +245,11 @@ function readEnrollment(key: string): EnrollmentDraft {
     } catch { return { selected: [] }; }
 }
 function usable(candidate: DesktopAgentCandidate) { return candidate.installed && !candidate.requires?.length && !candidate.registered; }
-function enrolled(status: DesktopStatus | undefined) { return !!status?.enabled && status.setup_required === false && status.agent_count > 0; }
 
-function DesktopSetupDialog({ status, onClose, onRegistered }: { status: DesktopStatus; onClose: () => void; onRegistered: (status: DesktopStatus) => void }) {
+// Agents: registration is confirmed by the server's count and the discovery
+// marking the chosen tools registered; a selection that was sent but not
+// confirmed is retried against that rather than registered twice.
+function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepProps) {
     const { t } = useI18n();
     const key = `steve.desktop.enrollment:${status.node_id}`;
     const [draft, setDraft] = useState(() => readEnrollment(key));
@@ -60,16 +257,15 @@ function DesktopSetupDialog({ status, onClose, onRegistered }: { status: Desktop
     const [loading, setLoading] = useState(true);
     const [discoveryError, setDiscoveryError] = useState("");
     const [error, setError] = useState("");
-    const [busy, setBusy] = useState(false);
-    const [registrationAttempted, setRegistrationAttempted] = useState(false);
-    const [result, setResult] = useState<DesktopStatus | null>(null);
+    const [attempted, setAttempted] = useState(false);
     const acting = useRef(false);
     const agentList = useRef<HTMLFieldSetElement>(null);
+    const confirmed = (current: DesktopStatus, ids: string[], candidates: DesktopAgentCandidate[]) => current.agent_count > 0 && ids.every((id) => candidates.some((item) => item.id === id && item.registered));
     const load = useResourceRead(`desktop-agents:${status.node_id}`, discoverDesktopAgents, (value) => {
         const candidates = value.agents || [];
         setAgents(candidates); setDiscoveryError(""); setLoading(false);
-        if (draft.pending?.length && enrolled(status) && draft.pending.every((id) => candidates.some((item) => item.id === id && item.registered))) finish(status);
-    }, (error) => { setDiscoveryError(String(error).replace(/^Error: /, "")); setLoading(false); });
+        if (draft.pending?.length && confirmed(status, draft.pending, candidates)) finish();
+    }, (error) => { setDiscoveryError(message(error)); setLoading(false); });
     useEffect(() => { void load(); }, [load]);
     function save(next: EnrollmentDraft) {
         setDraft(next);
@@ -77,77 +273,129 @@ function DesktopSetupDialog({ status, onClose, onRegistered }: { status: Desktop
         catch { setError(t("desktop.storageError")); return false; }
     }
     function choose(id: string, selected: boolean) {
-        setError("");
-        setRegistrationAttempted(false);
+        setError(""); setAttempted(false);
         save({ selected: selected ? [...draft.selected.filter((item) => item !== id), id] : draft.selected.filter((item) => item !== id) });
     }
-    function finish(next: DesktopStatus) {
-        setResult(next);
+    function finish() {
         try { localStorage.removeItem(key); } catch { /* The server registration is authoritative. */ }
+        setDraft({ selected: [] });
     }
     async function reconcile(ids: string[]) {
         const [current, discovery] = await Promise.all([fetchDesktopStatus(), discoverDesktopAgents()]);
         setAgents(discovery.agents || []);
-        if (enrolled(current) && ids.every((id) => discovery.agents.some((item) => item.id === id && item.registered))) { finish(current); return true; }
+        if (confirmed(current, ids, discovery.agents || [])) { onStatus(current); finish(); return true; }
         return false;
     }
     async function register() {
-        if (acting.current || result) return;
+        if (acting.current) return;
         const selected = draft.pending || draft.selected.filter((id) => agents.some((item) => item.id === id && usable(item)));
-        if (!selected.length) { setError(t("desktop.selectRequired")); agentList.current?.querySelector<HTMLInputElement>('input[type="checkbox"]:not(:disabled)')?.focus(); return; }
+        if (!selected.length) {
+            if (registeredCount > 0) { onNext(); return; }
+            setError(t("desktop.selectRequired")); agentList.current?.querySelector<HTMLInputElement>('input[type="checkbox"]:not(:disabled)')?.focus(); return;
+        }
         if (!save({ selected: draft.selected, pending: selected })) return;
         acting.current = true; setBusy(true); setError("");
         try {
-            if (draft.pending && await reconcile(selected)) return;
-            setRegistrationAttempted(true);
+            if (draft.pending && await reconcile(selected)) { onNext(); return; }
+            setAttempted(true);
             const next = await enrollDesktopAgents(selected);
-            if (!enrolled(next)) throw new Error(t("desktop.unconfirmed"));
-            finish(next);
+            if (!(next.agent_count > 0)) throw new Error(t("desktop.unconfirmed"));
+            onStatus(next); finish(); onNext();
         } catch (error) {
-            try { if (await reconcile(selected)) return; } catch { /* Keep the same selected IDs until a response is confirmed. */ }
+            try { if (await reconcile(selected)) { onNext(); return; } } catch { /* Keep the same selected IDs until a response is confirmed. */ }
             if (error instanceof HTTPError && error.status === 400) save({ selected: draft.selected });
-            setError(error instanceof Error ? error.message : String(error));
+            setError(message(error));
         } finally { acting.current = false; setBusy(false); }
     }
-    function done() { if (result) onRegistered(result); onClose(); }
+    const registeredCount = agents.filter((item) => item.registered).length;
     const unavailable = !loading && !discoveryError && !agents.some((item) => item.installed);
     const firstSelected = draft.selected.map((id) => agents.find((candidate) => candidate.id === id && usable(candidate))).find(Boolean);
-    return <ModalOverlay className="motion-reduce:animate-none motion-reduce:duration-0" isOpen isDismissable={!busy && !draft.pending} isKeyboardDismissDisabled={busy || !!draft.pending} onOpenChange={(open) => { if (!open && !busy) done(); }}>
-        <Modal className="max-w-xl motion-reduce:animate-none motion-reduce:duration-0"><Dialog aria-label={t("desktop.ready")} className="block overflow-hidden rounded-xl bg-primary p-0 ring-1 ring-secondary">
-            <div className="max-h-[min(760px,85dvh)] overflow-y-auto overscroll-contain p-5 sm:p-6">
-                <header className="mb-6 space-y-3">
-                    <Monitor01 className="size-8 text-tertiary" aria-hidden="true" />
-                    <h1 className="text-xl font-semibold text-primary">{t("desktop.ready")}</h1>
-                    <p className="text-sm leading-6 text-secondary">{t(status.setup_required ? "desktop.explanation" : "desktop.registerExplanation")}</p>
-                    <p className="flex min-w-0 items-center gap-2 text-xs text-tertiary"><span>{t("desktop.node")}</span><span className="min-w-0 truncate font-medium text-primary" title={status.node_id}>{status.node_id}</span></p>
-                </header>
-                {result ? <section className="space-y-3" aria-live="polite">
-                    <CheckCircle className="size-6 text-fg-success-primary" aria-hidden="true" />
-                    <h2 className="text-lg font-semibold text-primary">{t("desktop.success")}</h2>
-                    <p className="text-sm leading-6 text-secondary">{t("desktop.successHint")}</p>
-                    {result.default_agent && <p className="text-sm text-tertiary">{t("desktop.defaultAgent", { agent: result.default_agent })}</p>}
-                    <Button size="md" onClick={done}>{t("desktop.openWorkbench")}</Button>
-                </section> : <>
-                    <fieldset ref={agentList} className="min-w-0 space-y-3" disabled={busy || !!draft.pending}>
-                        <legend className="mb-2 text-sm font-semibold text-primary">{t("desktop.chooseAgents")}</legend>
-                        {!loading && agents.some((candidate) => candidate.installed) && <p className="text-xs leading-5 text-tertiary">{t("desktop.detectedHint")}</p>}
-                        {loading && <p role="status" className="py-3 text-sm text-tertiary">{t("desktop.loading")}</p>}
-                        {unavailable && <div className="space-y-1 rounded-lg bg-secondary p-3"><p className="text-sm font-medium text-primary">{t("desktop.empty")}</p><p className="text-xs leading-5 text-tertiary">{t("desktop.emptyHint")}</p></div>}
-                        {agents.map((candidate) => <Checkbox key={candidate.id} aria-label={candidate.name} name="desktop-agent" value={candidate.id} isSelected={candidate.registered || draft.selected.includes(candidate.id)} isDisabled={busy || !!draft.pending || !usable(candidate)} onChange={(selected) => choose(candidate.id, selected)}
-                            className="min-h-12 min-w-0 rounded-lg border border-secondary p-3 data-selected:bg-secondary [&>div:last-child]:min-w-0" label={<span className="flex min-w-0 flex-col gap-1"><span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><span>{candidate.name}</span><span className="text-xs font-normal text-tertiary">{t(candidate.registered ? "desktop.registered" : candidate.installed ? "desktop.detected" : "desktop.notInstalled")}</span></span>
-                                {candidate.requires?.length ? <span className="text-xs font-normal text-error-primary">{t("desktop.requires", { tools: candidate.requires.join(", ") })}</span> : candidate.installed && candidate.executable ? <span className="max-w-full break-all font-mono text-xs font-normal text-tertiary">{candidate.executable}</span> : null}
-                            </span>} />)}
-                    </fieldset>
-                    {discoveryError && <p role="alert" className="mt-3 break-words text-sm text-error-primary">{discoveryError}</p>}
-                    {!loading && <Button size="sm" color="tertiary" className="mt-3" isDisabled={busy || !!draft.pending} onClick={() => { setLoading(true); void load(); }}>{t("desktop.checkAgain")}</Button>}
-                    {status.agent_count === 0 && firstSelected && <p className="mt-3 text-xs leading-5 text-secondary">{t("desktop.defaultChoice", { agent: firstSelected.name })}</p>}
-                    {error && <p role="alert" className="mt-3 break-words text-sm text-error-primary">{error}</p>}
-                    {draft.pending && !busy && <p role="status" className="mt-3 text-xs leading-5 text-tertiary">{t("desktop.unconfirmed")}</p>}
-                    {busy && <p role="status" className="mt-3 text-sm text-tertiary">{t("desktop.registering")}</p>}
-                    <div className="mt-5 flex flex-wrap gap-2"><Button size="md" isLoading={busy} isDisabled={loading || !!discoveryError} onClick={() => void register()}>{t(registrationAttempted || draft.pending ? "desktop.retryRegister" : "desktop.register")}</Button><Button size="md" color="secondary" isDisabled={busy} onClick={done}>{t("desktop.registerLater")}</Button></div>
-                    <p className="mt-3 text-xs leading-5 text-quaternary">{t("desktop.selectionSaved")}</p>
-                </>}
-            </div>
-        </Dialog></Modal>
-    </ModalOverlay>;
+    return <section className="space-y-3">
+        <p className="text-sm leading-6 text-secondary">{t("desktop.explanation")}</p>
+        <fieldset ref={agentList} className="min-w-0 space-y-3" disabled={busy || !!draft.pending}>
+            <legend className="mb-2 text-sm font-semibold text-primary">{t("desktop.chooseAgents")}</legend>
+            {!loading && agents.some((candidate) => candidate.installed) && <p className="text-xs leading-5 text-tertiary">{t("desktop.detectedHint")}</p>}
+            {loading && <p role="status" className="py-3 text-sm text-tertiary">{t("desktop.loading")}</p>}
+            {unavailable && <div className="space-y-1 rounded-lg bg-secondary p-3"><p className="text-sm font-medium text-primary">{t("desktop.empty")}</p><p className="text-xs leading-5 text-tertiary">{t("desktop.emptyHint")}</p></div>}
+            {agents.map((candidate) => <Checkbox key={candidate.id} aria-label={candidate.name} name="desktop-agent" value={candidate.id} isSelected={candidate.registered || draft.selected.includes(candidate.id)} isDisabled={busy || !!draft.pending || !usable(candidate)} onChange={(selected) => choose(candidate.id, selected)}
+                className="min-h-12 min-w-0 rounded-lg border border-secondary p-3 data-selected:bg-secondary [&>div:last-child]:min-w-0" label={<span className="flex min-w-0 flex-col gap-1"><span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><span>{candidate.name}</span><span className="text-xs font-normal text-tertiary">{t(candidate.registered ? "desktop.registered" : candidate.installed ? "desktop.detected" : "desktop.notInstalled")}</span></span>
+                    {candidate.requires?.length ? <span className="text-xs font-normal text-error-primary">{t("desktop.requires", { tools: candidate.requires.join(", ") })}</span> : candidate.installed && candidate.executable ? <span className="max-w-full break-all font-mono text-xs font-normal text-tertiary">{candidate.executable}</span> : null}
+                </span>} />)}
+        </fieldset>
+        {discoveryError && <p role="alert" className="break-words text-sm text-error-primary">{discoveryError}</p>}
+        {!loading && <Button size="sm" color="tertiary" isDisabled={busy || !!draft.pending} onClick={() => { setLoading(true); void load(); }}>{t("desktop.checkAgain")}</Button>}
+        {status.agent_count === 0 && firstSelected && <p className="text-xs leading-5 text-secondary">{t("desktop.defaultChoice", { agent: firstSelected.name })}</p>}
+        {error && <p role="alert" className="break-words text-sm text-error-primary">{error}</p>}
+        {draft.pending && !busy && <p role="status" className="text-xs leading-5 text-tertiary">{t("desktop.unconfirmed")}</p>}
+        {busy && <p role="status" className="text-sm text-tertiary">{t("desktop.registering")}</p>}
+        <StepFooter busy={busy} onBack={onBack} onNext={() => void register()} nextLabel={draft.selected.length === 0 && registeredCount > 0 ? t("desktop.next") : t(attempted || draft.pending ? "desktop.retryRegister" : "desktop.register")} onSkip={registeredCount === 0 ? onNext : undefined} disabled={loading || !!discoveryError}>
+            {registeredCount === 0 && <p className="basis-full text-xs leading-5 text-quaternary">{t("desktop.agentsSkipHint")}</p>}
+        </StepFooter>
+    </section>;
+}
+
+// Machines: the SSH dialog does the work; this page only opens it and
+// counts what is connected.
+function MachinesStep({ busy, onNext, onBack, nested, setNested }: StepProps & { nested: boolean; setNested: (open: boolean) => void }) {
+    const { t } = useI18n();
+    const { snap, refresh } = useFleet();
+    const navigate = useNavigate();
+    const others = snap.nodes.filter((node) => node.role !== "hub").length;
+    return <section className="space-y-4">
+        <p className="text-sm leading-6 text-secondary">{t("desktop.machinesIntro")}</p>
+        <p className="text-sm text-primary">{others === 1 ? t("desktop.machinesConnectedOne") : others > 0 ? t("desktop.machinesConnected", { count: others }) : t("desktop.machinesNone")}</p>
+        <Button size="sm" color="secondary" isDisabled={busy} onClick={() => setNested(true)}>{t("desktop.connectMachine")}</Button>
+        {nested && <SSHConnect onClose={() => setNested(false)} onChanged={refresh} onViewMachines={() => { setNested(false); navigate("/fleet"); }} onAddExecutor={() => { setNested(false); navigate("/fleet"); }} />}
+        <StepFooter busy={busy} onBack={onBack} onNext={others > 0 ? onNext : undefined} onSkip={others > 0 ? undefined : onNext} />
+    </section>;
+}
+
+// Preferences: language is applied to this window at once and recorded for
+// the backend's messages; appearance is a window preference.
+function PreferencesStep({ busy, setBusy, onNext, onBack }: StepProps) {
+    const { t, preference, setLocale } = useI18n();
+    const { theme, setTheme } = useTheme();
+    const [error, setError] = useState("");
+    async function save() {
+        setBusy(true); setError("");
+        try {
+            const hub = await fetchHubSettings();
+            const desired = (hub.desired.gateway as Record<string, unknown> | undefined)?.locale ?? "";
+            const wanted = preference === "system" ? "" : preference;
+            if (desired !== wanted) await saveHubSettings(hub.revision, { gateway: { locale: wanted } });
+            onNext();
+        } catch (error) { setError(message(error)); }
+        finally { setBusy(false); }
+    }
+    const option = "group flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-secondary px-3 py-2 text-sm text-primary data-selected:border-brand data-selected:bg-secondary data-focus-visible:outline-2 data-focus-visible:outline-focus-ring";
+    return <section className="space-y-5">
+        <p className="text-sm leading-6 text-secondary">{t("desktop.preferencesIntro")}</p>
+        <RadioGroup aria-label={t("desktop.language")} value={preference} isDisabled={busy} onChange={(value) => setLocale(value as "system" | "zh" | "en")} className="space-y-2">
+            <span className="text-sm font-medium text-primary">{t("desktop.language")}</span>
+            <div className="flex flex-wrap gap-2">{([["system", "desktop.languageSystem"], ["zh", "desktop.languageZh"], ["en", "desktop.languageEn"]] as const).map(([value, label]) => <Radio key={value} value={value} className={option}>{t(label)}</Radio>)}</div>
+        </RadioGroup>
+        <RadioGroup aria-label={t("desktop.appearance")} value={theme} isDisabled={busy} onChange={(value) => setTheme(value as "system" | "light" | "dark")} className="space-y-2">
+            <span className="text-sm font-medium text-primary">{t("desktop.appearance")}</span>
+            <div className="flex flex-wrap gap-2">{([["system", "desktop.appearanceSystem"], ["light", "desktop.appearanceLight"], ["dark", "desktop.appearanceDark"]] as const).map(([value, label]) => <Radio key={value} value={value} className={option}>{t(label)}</Radio>)}</div>
+        </RadioGroup>
+        {error && <p role="alert" className="break-words text-sm text-error-primary">{error}</p>}
+        <StepFooter busy={busy} onBack={onBack} onNext={() => void save()} />
+    </section>;
+}
+
+function FinishedStep({ status, busy, error, onBack, onFinish }: { status: DesktopStatus; busy: boolean; error: string; onBack: () => void; onFinish: () => void }) {
+    const { t } = useI18n();
+    const { snap } = useFleet();
+    const others = snap.nodes.filter((node) => node.role !== "hub").length;
+    return <section className="space-y-4">
+        <CheckCircle className="size-6 text-fg-success-primary" aria-hidden="true" />
+        <p className="text-sm leading-6 text-secondary">{t("desktop.finishedIntro")}</p>
+        <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+            {status.workspace_path && <><dt className="text-tertiary">{t("desktop.workspacePath")}</dt><dd className="min-w-0 break-all font-mono text-xs text-secondary">{status.workspace_path}</dd></>}
+            <dt className="text-tertiary">{t("desktop.step.agents")}</dt><dd className="text-secondary">{status.agent_count === 1 ? t("desktop.summaryAgentsOne") : t("desktop.summaryAgents", { count: status.agent_count })}{status.default_agent ? ` · ${t("desktop.defaultAgent", { agent: status.default_agent })}` : ""}</dd>
+            <dt className="text-tertiary">{t("desktop.step.machines")}</dt><dd className="text-secondary">{others === 1 ? t("desktop.summaryMachinesOne") : t("desktop.summaryMachines", { count: others })}</dd>
+        </dl>
+        {error && <p role="alert" className="break-words text-sm text-error-primary">{error}</p>}
+        <StepFooter busy={busy} onBack={onBack} onNext={onFinish} nextLabel={t("desktop.finish")} />
+    </section>;
 }
