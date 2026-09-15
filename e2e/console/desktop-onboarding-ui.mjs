@@ -17,11 +17,14 @@ const candidates = () => [
     { id: "kimi", name: "Kimi Code", harness: "kimi", installed: false, requires: [], registered: false },
 ];
 async function waitFor(check, message) { for (let i = 0; i < 100; i++) { if (await check()) return; await new Promise((resolve) => setTimeout(resolve, 25)); } assert.fail(message); }
-async function fixture(enabled = true) {
+async function fixture(enabled = true, step = "identity", done = false) {
     const context = await browser.newContext({ viewport: { width: 1360, height: 980 }, serviceWorkers: "block" });
     const page = await context.newPage();
     page.setDefaultTimeout(5000);
-    const f = { context, page, status: { enabled, node_id: enabled ? "my-desktop" : "", setup_required: enabled, agent_count: 0 }, agents: candidates(), posts: [], queue: [], errors: [], reads: 0, discoveryReads: 0, discoveryError: false, reset: false, reject: false, hold: false, release: null };
+    const f = { context, page, status: { enabled, node_id: enabled ? "my-desktop" : "", setup_required: enabled && !done, agent_count: 0, workspace_path: "/Users/me/Library/Application Support/Steve/workspace", workspace_managed: true, setup: { step, done } }, agents: candidates(), posts: [], setups: [], workspaces: [], renames: [], labelSaves: [], settingsPatches: [], name: "My Desktop", labels: [], revision: 3, queue: [], errors: [], reads: 0, discoveryReads: 0, discoveryError: false, reset: false, reject: false, hold: false, release: null };
+    const coordination = () => ({ enabled: true, cluster_id: "cluster-test", node_id: "my-desktop", coordinator_id: "my-desktop", epoch: 1, revision: f.revision, authoritative: true, observed_at: at, auto_failover: false, ready: true, nodes: [{ id: "my-desktop", name: f.name, local: true, online: true, voter: true, auto_eligible: true, ready: true }], events: [] });
+    const nodeSettings = () => ({ settings: { revision: "r" + f.labelSaves.length, harnesses: {}, tools: [], mcp_servers: {}, declares: [], capabilities: f.labels } });
+    const hubSettings = () => ({ revision: "s" + f.settingsPatches.length, desired: { gateway: { locale: f.settingsPatches.at(-1)?.settings?.gateway?.locale ?? "zh" } }, effective: { gateway: { locale: "zh" } }, pending_restart: false, apply_mode: "restart", fields: [] });
     page.on("pageerror", (error) => f.errors.push(String(error)));
     await page.addInitScript((id) => {
         localStorage.setItem("steve.ui.locale", "en"); sessionStorage.setItem("steve.conversation", id);
@@ -32,15 +35,20 @@ async function fixture(enabled = true) {
         const req = route.request(), u = new URL(req.url()), p = u.pathname;
         if (u.origin !== new URL(url).origin) { f.errors.push("external " + u.origin); return route.abort(); }
         if (!p.startsWith("/console/") && !["/state", "/events"].includes(p)) return route.continue();
-        if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
+        if (p === "/console/coordination") return route.fulfill({ json: coordination() });
+        if (p === "/console/coordination/name" && req.method() === "PUT") { const body = req.postDataJSON(); f.renames.push(body); if (body.expected_revision !== f.revision) return route.fulfill({ status: 409, json: { error: "revision conflict" } }); f.name = body.name; f.revision++; return route.fulfill({ json: coordination() }); }
+        if (p === "/console/nodes/my-desktop/settings") { if (req.method() === "PUT") { const body = req.postDataJSON(); f.labelSaves.push(body); f.labels = body.capabilities; } return route.fulfill({ json: nodeSettings() }); }
+        if (p === "/console/settings") { if (req.method() === "PATCH") f.settingsPatches.push(req.postDataJSON()); return route.fulfill({ json: hubSettings() }); }
         if (p === "/console/desktop") { f.reads++; return route.fulfill({ json: f.status }); }
+        if (p === "/console/desktop/setup" && req.method() === "PUT") { const body = req.postDataJSON(); f.setups.push(body); const done = !!body.done || f.status.setup.done; f.status = { ...f.status, setup: { step: body.step, done }, setup_required: !done }; return route.fulfill({ json: f.status }); }
+        if (p === "/console/desktop/workspace" && req.method() === "PUT") { const body = req.postDataJSON(); f.workspaces.push(body); if (body.path.startsWith("/etc")) return route.fulfill({ status: 400, json: { error: "/etc 属于系统目录，请选择个人目录下的文件夹" } }); f.status = { ...f.status, workspace_path: body.path.replace(/^~/, "/Users/me"), workspace_managed: false }; return route.fulfill({ json: f.status }); }
         if (p === "/console/desktop/agents") {
             if (req.method() === "GET") { f.discoveryReads++; return f.discoveryError ? route.fulfill({ status: 503, json: { error: "Tool discovery is temporarily unavailable" } }) : route.fulfill({ json: { agents: f.agents } }); }
             const input = req.postDataJSON(); f.posts.push(input);
             if (f.hold) await new Promise((resolve) => { f.release = resolve; });
             if (f.reject) { f.reject = false; return route.fulfill({ status: 400, json: { error: "Codex is no longer installed. Refresh and select an available tool." } }); }
             for (const item of f.agents) if (input.agent_ids.includes(item.id)) item.registered = true;
-            f.status = { ...f.status, setup_required: false, agent_count: f.agents.filter((item) => item.registered).length, default_agent: input.agent_ids[0] };
+            f.status = { ...f.status, agent_count: f.agents.filter((item) => item.registered).length, default_agent: input.agent_ids[0] };
             if (f.reset) { f.reset = false; return route.abort("connectionreset"); }
             return route.fulfill({ json: f.status });
         }
@@ -69,9 +77,43 @@ try {
 
     const f = await fixture(); const page = f.page;
     await page.goto(url + "#/console");
-    const dialog = page.getByRole("dialog", { name: "This computer is ready" });
+    const dialog = page.getByRole("dialog", { name: "First-time setup" });
     await dialog.waitFor();
+    await dialog.getByRole("heading", { name: "This computer", exact: true }).waitFor();
+    await dialog.getByText("Step 1 of 5 · This computer", { exact: true }).waitFor();
+    const progress = dialog.getByRole("progressbar");
+    assert.equal(await progress.getAttribute("aria-valuenow"), "0");
+    const nameInput = dialog.getByRole("textbox", { name: "Name", exact: true });
+    await nameInput.waitFor();
+    assert.equal(await nameInput.inputValue(), "My Desktop", "the current display name is proposed");
     await dialog.getByText("my-desktop", { exact: true }).waitFor();
+    await nameInput.fill("   ");
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByText("Give this computer a name.", { exact: true }).waitFor();
+    assert.deepEqual(f.renames, []);
+    await nameInput.fill("Work laptop");
+    await dialog.getByRole("textbox", { name: "Labels", exact: true }).fill("gpu, lab, gpu");
+    await dialog.getByRole("list", { name: "Labels" }).getByText("lab", { exact: true }).waitFor();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByRole("heading", { name: "Working directory", exact: true }).waitFor();
+    assert.equal(f.renames.length, 1); assert.equal(f.renames[0].node_id, "my-desktop"); assert.equal(f.renames[0].name, "Work laptop"); assert.equal(f.renames[0].expected_revision, 3);
+    assert.deepEqual(f.labelSaves.map((item) => item.capabilities), [["gpu", "lab"]], "labels are saved once, without duplicates");
+    assert.deepEqual(f.setups, [{ step: "workspace" }], "progress is recorded as the guide moves");
+    assert.equal(await progress.getAttribute("aria-valuenow"), "1");
+
+    const workspace = dialog.getByRole("textbox", { name: "Working directory", exact: true });
+    assert.equal(await workspace.inputValue(), "~/Steve", "a directory inside Application Support is not proposed");
+    assert.equal(await dialog.getByRole("button", { name: "Choose folder…", exact: true }).count(), 0, "browsers have no native chooser");
+    await workspace.fill("/etc");
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByText("/etc 属于系统目录，请选择个人目录下的文件夹", { exact: true }).waitFor();
+    await dialog.getByRole("heading", { name: "Working directory", exact: true }).waitFor();
+    await workspace.fill("~/Steve");
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByRole("heading", { name: "Local agents", exact: true }).waitFor();
+    assert.deepEqual(f.workspaces, [{ path: "/etc" }, { path: "~/Steve" }]);
+    assert.equal(f.status.workspace_path, "/Users/me/Steve");
+
     await dialog.getByText("Tools detected on this computer. Sign-in is checked when you use them.", { exact: true }).waitFor();
     const codex = dialog.getByRole("checkbox", { name: "Codex", exact: true });
     await codex.waitFor(); assert.equal(await codex.isChecked(), false);
@@ -81,58 +123,98 @@ try {
     await dialog.getByRole("button", { name: "Register selected agents", exact: true }).click();
     await dialog.getByText("Select at least one installed tool.", { exact: true }).waitFor();
     assert.equal(await codex.evaluate((el) => document.activeElement === el), true);
-    assert.equal(await dialog.getByRole("button", { name: "Register selected agents", exact: true }).count(), 1, "empty selection has not attempted registration");
     await page.keyboard.press("Space");
     assert.equal(await codex.isChecked(), true);
     f.hold = true;
     await dialog.getByRole("button", { name: "Register selected agents", exact: true }).click();
     await waitFor(() => f.posts.length === 1, "one explicit enrollment");
     assert.deepEqual(f.posts[0], { agent_ids: ["codex"] });
-    assert.equal(await dialog.getByText("Agents registered", { exact: true }).count(), 0);
-    assert.equal(await dialog.getByRole("button", { name: "Register later", exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole("button", { name: "Finish later", exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole("heading", { name: "Local agents", exact: true }).count(), 1, "the page waits for the registration result");
     f.hold = false; f.release();
-    await dialog.getByText("Agents registered", { exact: true }).waitFor();
+    await dialog.getByRole("heading", { name: "Other machines", exact: true }).waitFor();
+    await dialog.getByText("No other machines yet", { exact: true }).waitFor();
+    await dialog.getByRole("button", { name: "Connect a machine over SSH", exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("button", { name: "Next", exact: true }).count(), 0, "without machines the only way on is to skip");
+    await dialog.getByRole("button", { name: "Skip for now", exact: true }).click();
+    await dialog.getByRole("heading", { name: "Preferences", exact: true }).waitFor();
+    await dialog.getByText("Dark", { exact: true }).click();
+    assert.equal(await page.evaluate(() => document.documentElement.classList.contains("dark-mode")), true, "appearance applies at once");
+    await dialog.getByText("English", { exact: true }).click();
+    await dialog.getByRole("button", { name: "Next", exact: true }).click();
+    await dialog.getByRole("heading", { name: "All set", exact: true }).waitFor();
+    assert.deepEqual(f.settingsPatches.map((item) => item.settings), [{ gateway: { locale: "en" } }], "the backend locale follows the chosen language");
+    await dialog.getByText("/Users/me/Steve", { exact: true }).waitFor();
+    await dialog.getByText(/^1 agent( ·|$)/).waitFor();
+    assert.deepEqual(f.setups.map((item) => item.step), ["workspace", "agents", "machines", "preferences", "finished"]);
     await dialog.getByRole("button", { name: "Open workbench", exact: true }).click();
     await dialog.waitFor({ state: "hidden" });
+    assert.deepEqual(f.setups.at(-1), { step: "finished", done: true });
     await page.reload();
     await page.getByRole("heading", { name: "First conversation", exact: true }).waitFor();
-    assert.equal(await page.getByRole("dialog").count(), 0);
+    assert.equal(await page.getByRole("dialog").count(), 0, "a finished guide stays closed");
+    await screenshot(page, "onboarding-finished");
     await f.close();
-    console.log("PASS first launch detects without enrolling, validates selection and waits for the registration result");
+    console.log("PASS the guide names the computer, sets the workspace, registers an agent, skips machines, applies preferences and finishes once");
 
-    const later = await fixture();
-    await later.page.goto(url + "#/console");
-    const laterDialog = later.page.getByRole("dialog", { name: "This computer is ready" });
-    await laterDialog.getByRole("button", { name: "Register later", exact: true }).click();
-    await laterDialog.waitFor({ state: "hidden" });
-    await later.page.reload();
-    await later.page.getByRole("heading", { name: "First conversation", exact: true }).waitFor();
-    assert.equal(await later.page.getByRole("dialog").count(), 0);
-    await later.page.goto(url + "?token=test-desktop-route#/fleet");
-    await later.page.evaluate(() => { window.navigationSentinel = "same-document"; });
-    const enrollmentLink = later.page.getByRole("link", { name: "Register local agents", exact: true });
+    const resume = await fixture(true, "machines");
+    await resume.page.goto(url + "#/console");
+    const resumeDialog = resume.page.getByRole("dialog", { name: "First-time setup" });
+    await resumeDialog.getByRole("heading", { name: "Other machines", exact: true }).waitFor();
+    await resumeDialog.getByRole("button", { name: "Back", exact: true }).click();
+    await resumeDialog.getByRole("heading", { name: "Local agents", exact: true }).waitFor();
+    assert.deepEqual(resume.setups, [{ step: "agents" }]);
+    await resumeDialog.getByRole("button", { name: "Finish later", exact: true }).click();
+    await resumeDialog.waitFor({ state: "hidden" });
+    await resume.page.reload();
+    await resume.page.getByRole("heading", { name: "First conversation", exact: true }).waitFor();
+    assert.equal(await resume.page.getByRole("dialog").count(), 0, "closing keeps the guide away for this visit");
+    await resume.page.goto(url + "?token=test-desktop-route#/fleet");
+    await resume.page.evaluate(() => { window.navigationSentinel = "same-document"; });
+    const enrollmentLink = resume.page.getByRole("link", { name: "Register local agents", exact: true });
     await enrollmentLink.waitFor();
     assert.equal(await enrollmentLink.getAttribute("href"), "#/console?setup=agents", "native link actions use a hash-router URL");
     await enrollmentLink.click();
-    await laterDialog.waitFor();
-    assert.equal(new URL(later.page.url()).hash, "#/console?setup=agents");
-    assert.equal(new URL(later.page.url()).search, "?token=test-desktop-route");
-    assert.equal(await later.page.evaluate(() => window.navigationSentinel), "same-document", "route links preserve the running document");
-    await laterDialog.getByRole("button", { name: "Register later", exact: true }).click();
-    await later.page.getByRole("link", { name: "Resources", exact: true }).click();
-    await later.page.getByRole("row", { name: /my-desktop/ }).click();
-    const machineEnrollment = later.page.getByRole("link", { name: "Register agents on this machine", exact: true });
+    await resumeDialog.getByRole("heading", { name: "Local agents", exact: true }).waitFor();
+    assert.equal(new URL(resume.page.url()).hash, "#/console?setup=agents");
+    assert.equal(new URL(resume.page.url()).search, "?token=test-desktop-route");
+    assert.equal(await resume.page.evaluate(() => window.navigationSentinel), "same-document", "route links preserve the running document");
+    await resumeDialog.getByRole("button", { name: "Finish later", exact: true }).click();
+    await resume.page.getByRole("link", { name: "Resources", exact: true }).click();
+    await resume.page.getByRole("row", { name: /my-desktop/ }).click();
+    const machineEnrollment = resume.page.getByRole("link", { name: "Register agents on this machine", exact: true });
     await machineEnrollment.focus();
-    await later.page.keyboard.press("Enter");
-    await laterDialog.waitFor();
-    assert.equal(new URL(later.page.url()).hash, "#/console?setup=agents");
-    assert.deepEqual(later.posts, []);
-    await later.close();
-    console.log("PASS postponing survives reload; resource and machine links reopen enrollment with mouse and keyboard without reloading");
+    await resume.page.keyboard.press("Enter");
+    await resumeDialog.getByRole("heading", { name: "Local agents", exact: true }).waitFor();
+    assert.equal(new URL(resume.page.url()).hash, "#/console?setup=agents");
+    assert.deepEqual(resume.posts, []);
+    await resume.close();
+    console.log("PASS the guide reopens where it stopped, goes back a page, and resource links open the agents page without reloading");
 
-    const retry = await fixture(); retry.discoveryError = true;
+    const later = await fixture(true, "finished", true);
+    await later.page.goto(url + "#/console");
+    await later.page.getByRole("heading", { name: "First conversation", exact: true }).waitFor();
+    assert.equal(await later.page.getByRole("dialog").count(), 0, "a finished guide does not open on its own");
+    await later.page.goto(url + "#/console?setup=agents");
+    const laterDialog = later.page.getByRole("dialog", { name: "First-time setup" });
+    await laterDialog.getByRole("heading", { name: "Local agents", exact: true }).waitFor();
+    assert.equal(await laterDialog.getByRole("progressbar").count(), 0, "one page opened after the guide is done shows no step progress");
+    assert.equal(await laterDialog.getByRole("button", { name: "Back", exact: true }).count(), 0);
+    await laterDialog.getByText("Codex", { exact: true }).click();
+    await laterDialog.getByRole("button", { name: "Register selected agents", exact: true }).click();
+    await laterDialog.waitFor({ state: "hidden" });
+    assert.deepEqual(later.posts, [{ agent_ids: ["codex"] }]);
+    assert.deepEqual(later.setups, [], "registering later writes no guide progress, so the guide stays finished");
+    assert.equal(later.status.setup_required, false);
+    await later.page.reload();
+    await later.page.getByRole("heading", { name: "First conversation", exact: true }).waitFor();
+    assert.equal(await later.page.getByRole("dialog").count(), 0);
+    await later.close();
+    console.log("PASS registering agents after the guide is done shows only that page and leaves the guide finished");
+
+    const retry = await fixture(true, "agents"); retry.discoveryError = true;
     await retry.page.goto(url + "#/console");
-    const retryDialog = retry.page.getByRole("dialog", { name: "This computer is ready" });
+    const retryDialog = retry.page.getByRole("dialog", { name: "First-time setup" });
     await retryDialog.getByText("Tool discovery is temporarily unavailable", { exact: true }).waitFor();
     retry.discoveryError = false;
     await retryDialog.getByRole("button", { name: "Check again", exact: true }).click();
@@ -145,14 +227,14 @@ try {
     await screenshot(retry.page, "onboarding-error");
     retry.reset = true;
     await retryDialog.getByRole("button", { name: "Retry registration", exact: true }).click();
-    await retryDialog.getByText("Agents registered", { exact: true }).waitFor();
+    await retryDialog.getByRole("heading", { name: "Other machines", exact: true }).waitFor();
     assert.deepEqual(retry.posts, [{ agent_ids: ["codex"] }, { agent_ids: ["codex"] }]);
     await retry.close();
     console.log("PASS discovery retries preserve selection and a dropped registration reply is reconciled from current registration");
 
-    const empty = await fixture(); empty.agents = [];
+    const empty = await fixture(true, "agents"); empty.agents = [];
     await empty.page.goto(url + "#/console");
-    const emptyDialog = empty.page.getByRole("dialog", { name: "This computer is ready" });
+    const emptyDialog = empty.page.getByRole("dialog", { name: "First-time setup" });
     await emptyDialog.getByText("No local agents found", { exact: true }).waitFor();
     await empty.page.setViewportSize({ width: 390, height: 844 });
     await screenshot(empty.page, "onboarding-empty-narrow");
@@ -162,20 +244,20 @@ try {
     const narrow = await fixture();
     await narrow.page.setViewportSize({ width: 390, height: 844 });
     await narrow.page.goto(url + "#/console");
-    const narrowDialog = narrow.page.getByRole("dialog", { name: "This computer is ready" });
-    await narrowDialog.getByRole("checkbox", { name: "Codex", exact: true }).waitFor();
+    const narrowDialog = narrow.page.getByRole("dialog", { name: "First-time setup" });
+    await narrowDialog.getByRole("textbox", { name: "Name", exact: true }).waitFor();
     await screenshot(narrow.page, "onboarding-narrow-light");
     await narrow.page.evaluate(() => document.documentElement.classList.add("dark-mode"));
     await narrow.page.waitForTimeout(180);
     await screenshot(narrow.page, "onboarding-narrow-dark");
-    await narrowDialog.getByRole("button", { name: "Register later", exact: true }).focus();
+    await narrowDialog.getByRole("button", { name: "Finish later", exact: true }).focus();
     await narrow.page.keyboard.press("Tab");
     assert.equal(await narrowDialog.evaluate((el) => el.contains(document.activeElement)), true);
     assert.ok(await narrowDialog.evaluate((el) => el.scrollWidth <= el.clientWidth));
     assert.ok(await narrow.page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
     await narrow.page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "zh"); localStorage.setItem("ui-theme", "dark"); });
     await narrow.page.reload();
-    await narrow.page.getByRole("dialog", { name: "本机已就绪" }).getByRole("button", { name: "登记所选 Agent", exact: true }).waitFor();
+    await narrow.page.getByRole("dialog", { name: "首次设置" }).getByText("第 1 步，共 5 步 · 本机名称", { exact: true }).waitFor();
     await screenshot(narrow.page, "onboarding-narrow-zh");
     await narrow.close();
     console.log("PASS empty discovery, narrow layouts, theme states and keyboard containment");

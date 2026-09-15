@@ -89,6 +89,8 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/desktop", s.guard(s.consoleDesktop))
 	mux.HandleFunc("GET /console/desktop/agents", s.guard(s.consoleDesktopAgents))
 	mux.HandleFunc("POST /console/desktop/agents", s.guard(s.consoleDesktopAgents))
+	mux.HandleFunc("PUT /console/desktop/setup", s.guard(s.consoleDesktopSetup))
+	mux.HandleFunc("PUT /console/desktop/workspace", s.guard(s.consoleDesktopWorkspace))
 	mux.HandleFunc("GET /console/services", s.guard(s.consoleServices))
 	mux.HandleFunc("GET /console/services/{name}/restart", s.guard(s.consoleRestart))
 	mux.HandleFunc("POST /console/services/{name}/restart", s.guard(s.consoleRestart))
@@ -124,6 +126,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("DELETE /console/agents/{id}", s.guard(s.consoleRemoveAgent))
 	mux.HandleFunc("POST /console/projects", s.guard(s.consoleAddProject))
 	mux.HandleFunc("DELETE /console/projects/{id}", s.guard(s.consoleRemoveProject))
+	mux.HandleFunc("PUT /console/projects/{id}/home", s.guard(s.consoleProjectHome))
 	mux.HandleFunc("GET /console/skills", s.guard(s.consoleSkills))
 	mux.HandleFunc("GET /console/skills/{name}", s.guard(s.consoleSkill))
 	mux.HandleFunc("PUT /console/skills/{name}", s.guard(s.consoleSetSkill))
@@ -365,6 +368,24 @@ func (s *Server) consoleAddProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := s.admin.AddProject(r.Context(), req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (s *Server) consoleProjectHome(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "not wired", http.StatusNotImplemented)
+		return
+	}
+	var req consoleapi.ProjectHomeRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := s.admin.SetProjectHome(r.Context(), r.PathValue("id"), req.Path); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

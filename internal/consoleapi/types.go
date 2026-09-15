@@ -167,6 +167,12 @@ type AddProjectRequest struct {
 	Level string `json:"level,omitempty"`
 }
 
+// ProjectHomeRequest moves a project's canonical directory on the machine
+// that holds it.
+type ProjectHomeRequest struct {
+	Path string `json:"path"`
+}
+
 // AddWorkspaceRequest is the page giving a project a copy on a machine:
 // "adopt" a directory already there, or "clone" the project into one.
 type AddWorkspaceRequest struct {
@@ -204,6 +210,8 @@ type Admin interface {
 	// RemoveProject retires one and drops it from the file.
 	AddProject(ctx context.Context, req AddProjectRequest) error
 	RemoveProject(ctx context.Context, id string) error
+	// SetProjectHome moves a project's canonical directory.
+	SetProjectHome(ctx context.Context, id, path string) error
 	// AddWorkspace gives a project a copy on a machine — a directory that
 	// is there, or one cloned into place; RemoveWorkspace forgets one.
 	AddWorkspace(ctx context.Context, projectID string, req AddWorkspaceRequest) error

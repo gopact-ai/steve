@@ -90,7 +90,7 @@ func TestDesktopDiscoveryDoesNotEnrollOrPrepareTools(t *testing.T) {
 func TestDesktopEnrollmentPersistsOnlyChosenToolsAndReplaysSafely(t *testing.T) {
 	admin, bin := desktopAdminFixture(t)
 	status, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}})
-	if err != nil || status.SetupRequired || status.AgentCount != 1 || status.DefaultAgent != "grok" {
+	if err != nil || !status.SetupRequired || status.AgentCount != 1 || status.DefaultAgent != "grok" {
 		t.Fatalf("enrollment result: %+v, %v", status, err)
 	}
 	if admin.Cfg.Harnesses["grok"].Command != filepath.Join(bin, "grok") || admin.Cfg.Harnesses["grok"].Permission != config.PermissionRead {

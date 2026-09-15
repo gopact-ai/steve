@@ -558,12 +558,21 @@ func (c *Config) applyDefaults() {
 // inferDefaultProject makes a lone project the default when the file names
 // none: with one project there is nothing else a conversation could mean.
 func (c *Config) inferDefaultProject() {
-	if c.Gateway.DefaultProject != "" || len(c.Projects) != 1 {
-		return
+	c.Gateway.DefaultProject = DefaultProjectID(c.Gateway.DefaultProject, c.Projects)
+}
+
+// DefaultProjectID is the project a conversation starts in: the preferred
+// one when it is declared, otherwise the only one there is, otherwise none.
+func DefaultProjectID(preferred string, projects map[string]Project) string {
+	if _, ok := projects[preferred]; ok {
+		return preferred
 	}
-	for id := range c.Projects {
-		c.Gateway.DefaultProject = id
+	if len(projects) == 1 {
+		for id := range projects {
+			return id
+		}
 	}
+	return ""
 }
 
 // validateSettings checks the fields that stand on their own, before the

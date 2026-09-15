@@ -8,6 +8,21 @@ type DesktopStatus struct {
 	SetupRequired bool   `json:"setup_required"`
 	AgentCount    int    `json:"agent_count"`
 	DefaultAgent  string `json:"default_agent,omitempty"`
+	// WorkspacePath is the default project's directory on this computer:
+	// where conversations work unless a project says otherwise.
+	WorkspacePath string `json:"workspace_path,omitempty"`
+	// WorkspaceManaged is set while that directory is still inside the
+	// desktop's own state directory, where a fresh installation keeps its
+	// first project until the owner chooses somewhere.
+	WorkspaceManaged bool `json:"workspace_managed,omitempty"`
+	// Setup is where the first-run guide opens next. It is empty when the
+	// desktop is not managed here.
+	Setup *DesktopSetup `json:"setup,omitempty"`
+}
+
+type DesktopSetup struct {
+	Step string `json:"step"`
+	Done bool   `json:"done"`
 }
 
 type DesktopAgentCandidate struct {
@@ -28,8 +43,22 @@ type DesktopEnrollRequest struct {
 	AgentIDs []string `json:"agent_ids"`
 }
 
+// DesktopSetupRequest records the guide page to open next; Done closes the
+// guide for good.
+type DesktopSetupRequest struct {
+	Step string `json:"step"`
+	Done bool   `json:"done,omitempty"`
+}
+
+// DesktopWorkspaceRequest moves the default project's directory.
+type DesktopWorkspaceRequest struct {
+	Path string `json:"path"`
+}
+
 type DesktopService interface {
 	DesktopStatus(context.Context) (DesktopStatus, error)
 	DesktopDiscover(context.Context) (DesktopDiscovery, error)
 	DesktopEnroll(context.Context, DesktopEnrollRequest) (DesktopStatus, error)
+	DesktopSetup(context.Context, DesktopSetupRequest) (DesktopStatus, error)
+	DesktopWorkspace(context.Context, DesktopWorkspaceRequest) (DesktopStatus, error)
 }
