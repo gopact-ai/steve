@@ -209,16 +209,23 @@ func (c *Coordinator) open(ctx context.Context, saved state.Session, selected ag
 	if err != nil {
 		return nil, err
 	}
-	// A configured model preference applies to a fresh session only: a
-	// resumed one keeps whatever the user last chose with /model. The agent
-	// is the authority on what it offers, so a preference it cannot honour
-	// is logged and skipped rather than failing the turn.
-	if saved.UpstreamID == "" && saved.NativeImport == nil {
-		// The owner's choices for this conversation sit over the agent's
-		// configured defaults.
-		if model, options := c.preferred(saved.ConversationID, selected); model != "" || len(options) > 0 {
-			harness.ApplyPreferences(ctx, runner, selected.ID, model, options)
-		}
+	// The owner's choices for this conversation sit over the agent's
+	// configured defaults. The agent is the authority on what it offers, so
+	// a preference it cannot honour is logged and skipped rather than
+	// failing the turn. A configured model preference applies to a fresh
+	// session only: a resumed one keeps whatever the user last chose with
+	// /model. Other selectors are re-applied on resume too, because the host
+	// moves every loaded session back into the mode its permission policy
+	// implies, and an approval mode chosen here must survive a restart.
+	if saved.NativeImport != nil {
+		return runner, nil
+	}
+	model, options := c.preferred(saved.ConversationID, selected)
+	if saved.UpstreamID != "" {
+		model = ""
+	}
+	if model != "" || len(options) > 0 {
+		harness.ApplyPreferences(ctx, runner, selected.ID, model, options)
 	}
 	return runner, nil
 }
