@@ -56,4 +56,10 @@ func TestAbandonDropsPlanAndTellsBackendAboutRegisteredOperation(t *testing.T) {
 	if err := svc.Abandon(t.Context(), "not-an-operation"); err == nil {
 		t.Fatal("malformed id reached the backend")
 	}
+	// Giving up is idempotent: an operation the backend no longer has is
+	// already abandoned, so the dialog can forget its copy.
+	backend.abandonErr = fail("planning", "unknown_plan", "这次接入的记录已不存在", "刷新接入记录")
+	if err := svc.Abandon(t.Context(), strings.Repeat("f", 48)); err != nil {
+		t.Fatalf("a vanished operation was not treated as abandoned: %v", err)
+	}
 }
