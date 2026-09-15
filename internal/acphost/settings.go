@@ -240,9 +240,30 @@ func (h *Host) Options(sid acp.SessionID) []acp.SessionConfigOption {
 	if state == nil {
 		return nil
 	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
-	return append([]acp.SessionConfigOption(nil), state.options...)
+	return state.currentOptions()
+}
+
+// currentOptions is a copy of the reported selectors with the mode selector
+// showing the mode actually in force. The mode moves on two channels, and a
+// current_mode_update (or a session/set_mode the host issued itself) does
+// not revise the option list; without this the selector would still claim
+// the mode the session opened in, and a preference for the real one would
+// look already applied.
+func (s *sessionState) currentOptions() []acp.SessionConfigOption {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := append([]acp.SessionConfigOption(nil), s.options...)
+	if s.modeID == "" {
+		return out
+	}
+	for i := range out {
+		isMode := (out[i].Category != nil && *out[i].Category == acp.SessionConfigOptionCategoryMode) || string(out[i].ID) == string(acp.SessionConfigOptionCategoryMode)
+		if isMode {
+			out[i].CurrentValue = acp.SessionConfigValueID(s.modeID)
+			break
+		}
+	}
+	return out
 }
 
 // ModelChoices lists the models this session can switch to, current first

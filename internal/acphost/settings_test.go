@@ -367,3 +367,25 @@ func TestDeleteSessionRemovesItFromTheAgent(t *testing.T) {
 		t.Fatalf("sessions after delete = %+v", after)
 	}
 }
+
+// The mode arrives on two channels. When only current_mode_update (or a
+// session/set_mode the host itself issued) moved it, the mode selector's
+// current value must follow, or a preference for that mode looks already
+// in force and is never re-applied.
+func TestModeChangeUpdatesModeOptionCurrent(t *testing.T) {
+	state := stateFrom(t, codexNewSession)
+	state.setMode("read-only")
+	var mode *view.Option
+	for _, o := range optionsView(state.currentOptions()) {
+		if o.Category == "mode" {
+			o := o
+			mode = &o
+		}
+	}
+	if mode == nil {
+		t.Fatal("codex session exposes no mode selector")
+	}
+	if mode.Current != "read-only" {
+		t.Fatalf("mode option current = %q, want read-only after the mode moved", mode.Current)
+	}
+}
