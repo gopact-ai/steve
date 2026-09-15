@@ -84,6 +84,20 @@ func (m *machine) read() State {
 	return cloneState(m.state)
 }
 
+// memberNames copies only the display names, so callers that render a
+// snapshot do not clone the audit log on every read.
+func (m *machine) memberNames() map[string]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	names := make(map[string]string, len(m.state.Members))
+	for id, member := range m.state.Members {
+		if member.Name != "" {
+			names[id] = member.Name
+		}
+	}
+	return names
+}
+
 func cloneState(s State) State {
 	s.Members = maps.Clone(s.Members)
 	s.Voters = maps.Clone(s.Voters)
@@ -424,9 +438,10 @@ func applyRename(s *State, c command, r *receipt) *AuditRecord {
 		r.reject("invalid", err.Error())
 		return nil
 	}
+	previous := member.Name
 	member.Name = name
 	s.Members[member.NodeID] = member
-	return &AuditRecord{Kind: "member_renamed", To: member.NodeID, Reason: name}
+	return &AuditRecord{Kind: "member_renamed", To: member.NodeID, Reason: fmt.Sprintf("%s -> %s", previous, name)}
 }
 
 func applyTransfer(s *State, c command, r *receipt) *AuditRecord {

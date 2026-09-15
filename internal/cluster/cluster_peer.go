@@ -1127,7 +1127,11 @@ func (p *Peer) SetCoordinatorEligibility(ctx context.Context, request consoleapi
 }
 
 func (p *Peer) RenameNode(ctx context.Context, request consoleapi.CoordinatorRename) (consoleapi.CoordinationView, error) {
-	_, err := p.Runtime.Load().Rename(ctx, coordination.RenameRequest{ID: request.CommandID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, NodeID: request.NodeID, Name: request.Name})
+	runtime := p.Runtime.Load()
+	if runtime == nil {
+		return consoleapi.CoordinationView{}, coordination.ErrUnavailable
+	}
+	_, err := runtime.Rename(ctx, coordination.RenameRequest{ID: request.CommandID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, NodeID: request.NodeID, Name: request.Name})
 	if err != nil {
 		return consoleapi.CoordinationView{}, err
 	}
@@ -1141,13 +1145,7 @@ func (p *Peer) MemberNames() map[string]string {
 	if runtime == nil {
 		return nil
 	}
-	names := map[string]string{}
-	for id, member := range runtime.Status().State.Members {
-		if member.Name != "" {
-			names[id] = member.Name
-		}
-	}
-	return names
+	return runtime.MemberNames()
 }
 
 func (p *Peer) serveCoordination(w http.ResponseWriter, r *http.Request) {

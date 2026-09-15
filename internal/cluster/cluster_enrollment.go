@@ -269,9 +269,6 @@ func (p *Peer) PreviewEnrollment(ctx context.Context, request PeerEnrollmentRequ
 	}
 	plan := PeerEnrollmentPlan{Request: request, ClusterID: state.ClusterID, Source: proposed, PreviousSource: source, UpdateSourceAddress: source.Address != proposed.Address || source.APIAddress != proposed.APIAddress}
 	for id, member := range state.Members {
-		if member.Name == request.Name {
-			return PeerEnrollmentPlan{}, fmt.Errorf("机群中已经有名为 %s 的节点", request.Name)
-		}
 		if member.Address == request.RaftAddress || member.APIAddress == "https://"+request.PeerAddress {
 			return PeerEnrollmentPlan{}, errors.New("目标端口已属于另一个机群成员")
 		}

@@ -226,6 +226,9 @@ func (s *Service) Status() Status {
 // TransportPeers reads Raft's durable latest membership before FSM replay has
 // caught up. Authentication cannot rely only on an older application snapshot
 // when the later Raft configuration already contains peers needed to elect.
+// MemberNames maps member IDs to display names from the local replica.
+func (s *Service) MemberNames() map[string]string { return s.fsm.memberNames() }
+
 func (s *Service) TransportPeers() map[string]string {
 	configuration := s.raft.GetConfiguration().Configuration()
 	peers := make(map[string]string, len(configuration.Servers))

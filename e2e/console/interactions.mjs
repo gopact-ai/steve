@@ -1568,7 +1568,7 @@ checks["fleet-live-activity"] = async (f) => {
 checks["fleet-display-name"] = async (f) => {
     // A machine's identity is its immutable node ID; people see the
     // coordination display name first and rename it from the drawer
-    // without touching the ID. Hubs outside a cluster show the ID alone.
+    // without touching the ID. Machines without a display name show the ID alone.
     const nodes = [
         { name: "node-4bbf207fa8525645ba6935bd07d227a7", display_name: "Steve's MacBook", role: "hub", up: true, version: "test", capabilities: ["gpu", "office"], harnesses: [] },
         { name: "node-77aa11bb22cc33dd44ee55ff66aa77bb", role: "node", up: true, version: "test", harnesses: [] },
@@ -1580,7 +1580,7 @@ checks["fleet-display-name"] = async (f) => {
     await f.page.route("**/console/coordination", (route) => route.fulfill({ json: view }));
     await f.page.route("**/console/coordination/name", (route) => {
         const body = route.request().postDataJSON(); renames.push({ method: route.request().method(), body });
-        if (renames.length === 1) return route.fulfill({ status: 409, json: { error: "The coordination revision changed. Review current state before choosing again." } });
+        if (renames.length === 1) { view.revision++; return route.fulfill({ status: 409, json: { error: "The coordination revision changed. Review current state before choosing again." } }); }
         view.revision++; view.nodes[0].name = body.name; nodes[0].display_name = body.name;
         return route.fulfill({ json: view });
     });
@@ -1606,7 +1606,7 @@ checks["fleet-display-name"] = async (f) => {
     assert.equal(renames[0].body.name, "Build box", "The name is trimmed before it is sent");
     await drawer.getByRole("button", { name: "保存名称", exact: true }).click();
     await eventually(() => renames.length === 2, "A retry after a conflict re-reads the revision and sends again");
-    assert.equal(renames[1].body.expected_revision, 4, "The retry uses the revision read at that moment");
+    assert.equal(renames[1].body.expected_revision, 5, "The retry re-reads the revision instead of reusing the stale one");
     await f.emit({ kind: "node.changed" }); await f.page.clock.runFor(350);
     await machines.getByText("Build box", { exact: true }).waitFor();
     await machines.getByText(nodes[0].name, { exact: true }).waitFor();

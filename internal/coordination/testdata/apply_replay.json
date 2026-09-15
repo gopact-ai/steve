@@ -5665,7 +5665,7 @@
         "kind": "member_renamed",
         "actor": "test",
         "to": "n2",
-        "reason": "Build box"
+        "reason": "two -\u003e Build box"
       },
       {
         "command_id": "policy-off",

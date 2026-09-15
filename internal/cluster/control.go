@@ -91,6 +91,8 @@ func (r *Runtime) SetEligibility(ctx context.Context, request coordination.Eligi
 	return result, err
 }
 
+func (r *Runtime) MemberNames() map[string]string { return r.service.MemberNames() }
+
 func (r *Runtime) Rename(ctx context.Context, request coordination.RenameRequest) (coordination.Result, error) {
 	r.rememberMembers()
 	result, err := r.service.Rename(ctx, request)

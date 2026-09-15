@@ -288,7 +288,7 @@ func TestRenameMemberReplicatesDisplayName(t *testing.T) {
 		t.Fatalf("rename must advance the membership revision: %d -> %d", state.Revision, renamed.Revision)
 	}
 	last := renamed.Audit[len(renamed.Audit)-1]
-	if last.Kind != "member_renamed" || last.To != "node-2" || last.Reason != "GPU 工作站" {
+	if last.Kind != "member_renamed" || last.To != "node-2" || !strings.HasSuffix(last.Reason, "-> GPU 工作站") {
 		t.Fatalf("rename audit record: %+v", last)
 	}
 	// The same command ID replays as the recorded receipt without a second revision bump.
