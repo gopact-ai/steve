@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/steve/internal/agenttools"
+	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 )
 
@@ -88,6 +89,10 @@ type InstallRequest struct {
 	HubURL     string `json:"-"`
 	RaftAddr   string `json:"raft_addr,omitempty"`
 	SourceHost string `json:"source_host,omitempty"`
+	// WorkspaceDir is where the new machine keeps its work: the default
+	// project directory and the root its executor runs in. A peer
+	// installation creates it; "~/" means the remote account's home.
+	WorkspaceDir string `json:"workspace_dir,omitempty"`
 	// ApprovedReviewID comes only from the service's stored plan, never JSON.
 	ApprovedReviewID string `json:"-"`
 }
@@ -152,6 +157,13 @@ type RegistrationVerifier interface {
 // install, or create a fresh operation.
 type RegistrationRecovery interface {
 	ResumeRegistration(context.Context, string) (InstallResult, error)
+}
+
+// RegistrationAbandoner gives up a registered operation that will not
+// finish: whatever the operation left behind on this side is withdrawn so
+// the machine can be enrolled again. It never touches the remote machine.
+type RegistrationAbandoner interface {
+	AbandonRegistration(context.Context, string) error
 }
 
 // Backend adapts the application's existing node registration protocol.
@@ -336,7 +348,7 @@ func (s *Service) check(ctx context.Context, c Candidate, connection Connection)
 // Plan performs fresh read-only checks and saves an expiring review snapshot.
 // A blocked plan still contains evidence and suggestions for the user.
 func (s *Service) Plan(ctx context.Context, req InstallRequest) (InstallPlan, error) {
-	if err := validateRequest(req); err != nil {
+	if err := validateRequest(req, s.installationMode); err != nil {
 		return InstallPlan{}, err
 	}
 	if s.backend == nil {
@@ -547,6 +559,51 @@ func (s *Service) resumeRegistration(ctx context.Context, recovery RegistrationR
 	return recovery.ResumeRegistration(ctx, id)
 }
 
+// Abandon gives up on a plan or operation that will not finish. A plan that
+// only previewed is forgotten; one that registered something is withdrawn
+// by the backend so the machine can be enrolled afresh. Nothing on the
+// remote machine is touched: what an earlier attempt installed there is
+// listed in the plan's steps for the user to clean up.
+func (s *Service) Abandon(ctx context.Context, id string) error {
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return fail("ssh", "closed", "SSH 接入服务已关闭", "重新启动服务后再放弃这次接入")
+	}
+	stored, ok := s.plans[id]
+	if ok && stored.running {
+		s.mu.Unlock()
+		return fail("installation", "in_progress", "这个安装计划正在执行", "等待本次执行返回结果后再放弃")
+	}
+	registered := !ok || stored.result.Registered
+	if ok {
+		if stored.timer != nil {
+			stored.timer.Stop()
+		}
+		delete(s.plans, id)
+	}
+	s.mu.Unlock()
+	if ok && stored.connection != nil {
+		// The plan is gone; a master that fails to tear down leaves only a
+		// stray directory behind.
+		_ = stored.connection.Close()
+	}
+	if !registered {
+		return nil
+	}
+	abandoner, supported := s.backend.(RegistrationAbandoner)
+	if !supported {
+		return fail("planning", "abandon_unsupported", "这类接入无法自动撤销", "在资源页移除这条登记后重新接入")
+	}
+	if len(id) != 48 {
+		return fail("planning", "unknown_plan", "无法找到原接入操作", "请从已保存的接入记录核对操作")
+	}
+	if _, err := hex.DecodeString(id); err != nil {
+		return fail("planning", "unknown_plan", "无法找到原接入操作", "请从已保存的接入记录核对操作")
+	}
+	return abandoner.AbandonRegistration(ctx, id)
+}
+
 func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string, connection Connection) (InstallResult, error) {
 	result := InstallResult{PlanID: plan.ID, Name: plan.Request.Name, Status: "needs_attention", Steps: []Step{}, Phases: phasesFor(plan)}
 	reject := func(failure *StepError) (InstallResult, error) {
@@ -743,9 +800,23 @@ func (s *Service) arguments(alias, command string) []string {
 
 var nodeNameShape = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,63}$`)
 
-func validateRequest(req InstallRequest) error {
-	if !aliasShape.MatchString(req.Alias) || !nodeNameShape.MatchString(req.Name) {
-		return fail("planning", "invalid_name", "机器别名或节点名称无效", "从发现列表选择机器，节点名称使用小写字母、数字、点、下划线和连字符")
+// validateRequest checks what the user typed before anything is opened. An
+// executor's name becomes a configuration key and keeps the key shape; a
+// peer's name is what people see for the machine, and any display name
+// will do. A workspace directory is absolute or under the remote home.
+func validateRequest(req InstallRequest, mode InstallationMode) error {
+	if !aliasShape.MatchString(req.Alias) {
+		return fail("planning", "invalid_alias", "机器别名无效", "从发现列表选择机器")
+	}
+	if mode == InstallPeer {
+		if _, err := coordination.MemberName(req.Name); err != nil {
+			return fail("planning", "invalid_name", "机器名称无效", "填写 1–64 个字符的机器名称，用来在列表里认出这台机器")
+		}
+		if req.WorkspaceDir != "" && !validWorkspaceDir(req.WorkspaceDir) {
+			return fail("planning", "invalid_workspace", "工作目录无效", "填写目标机上的绝对路径，或以 ~/ 开头的用户目录下路径，例如 ~/steve-workspace")
+		}
+	} else if !nodeNameShape.MatchString(req.Name) || req.WorkspaceDir != "" {
+		return fail("planning", "invalid_name", "节点名称无效", "节点名称使用小写字母、数字、点、下划线和连字符")
 	}
 	host, portText, err := net.SplitHostPort(req.Addr)
 	port, portErr := strconv.Atoi(portText)
@@ -764,6 +835,23 @@ func validateRequest(req InstallRequest) error {
 		}
 	}
 	return nil
+}
+
+// validWorkspaceDir accepts an absolute remote path or one under the remote
+// home, with no control characters and nothing that walks back up.
+func validWorkspaceDir(dir string) bool {
+	if len(dir) > 512 || strings.ContainsAny(dir, "\r\n\x00\t") || dir != strings.TrimSpace(dir) {
+		return false
+	}
+	if !strings.HasPrefix(dir, "/") && dir != "~" && !strings.HasPrefix(dir, "~/") {
+		return false
+	}
+	for _, part := range strings.Split(dir, "/") {
+		if part == ".." {
+			return false
+		}
+	}
+	return true
 }
 
 // peerVerifyLimit bounds one connectivity wait for a cluster enrollment.

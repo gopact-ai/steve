@@ -15,7 +15,7 @@ const at = "2026-09-07T01:00:00Z";
 const candidate = { alias: "dev-box", host_name: "10.0.0.9", user: "developer", port: 22, proxy_jump: "bastion", has_proxy_command: false, has_identity_file: true, conditional: true, source: "/test/ssh/config", line: 3 };
 const check = { candidate, reachable: true, address: "10.0.0.9", os: "linux", arch: "arm64", tools: [{ name: "bash", available: true }, { name: "nohup", available: true }], existing_installation: false, existing_paths: [], installation_mode: "peer", steps: [{ id: "ssh", status: "ready", message: "SSH connection and authentication verified" }], checked_at: at };
 const phases = ["preflight", "registration", "upload", "installation", "connectivity"];
-const f = { candidates: [candidate], checks: [], plans: [], installs: [], statuses: [], nodeAgentReads: [], errors: [], ready: false, checkError: false, discoveryError: false, reset: false, hold: false, release: null, connected: false, coordinator: "my-desktop", changedNetwork: false, phase: "upload", log: [] };
+const f = { candidates: [candidate], checks: [], plans: [], installs: [], abandons: [], statuses: [], nodeAgentReads: [], errors: [], ready: false, checkError: false, discoveryError: false, reset: false, hold: false, release: null, connected: false, coordinator: "my-desktop", changedNetwork: false, phase: "upload", log: [] };
 const finalLog = [{ at, stream: "steve", text: "Running the installer on the machine" }, { at, stream: "stdout", text: "Node process started" }, { at, stream: "stderr", text: "Node startup did not remain running; inspect ~/steve-node.log" }];
 page.on("pageerror", (error) => f.errors.push(String(error)));
 await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.sources = []; window.EventSource = class { constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() {} }; });
@@ -37,6 +37,10 @@ const routeRequest = async (route) => {
         return route.fulfill({ json: { id: "plan-" + f.plans.length, request: f.changedNetwork ? { ...request, source_host: "203.0.113.23" } : request, check, script: "mkdir -p ~/steve-bin\n# install a verified node binary", effects: ["Create node configuration on dev-box", "Start the node service on port 7701"], steps: [...check.steps, ...(f.ready ? [] : [{ id: "binary", status: "blocked", message: "No matching node package", suggestion: "Provide a Linux arm64 node package and review a new plan." }])], ready: f.ready, expires_at: "2030-01-01T00:00:00Z", binary: { os: "linux", arch: "arm64", sha256: "a".repeat(64), size: 2048 } } });
     }
     if (p === "/console/nodes/node-stable-9/agents" && req.method() === "GET") { f.nodeAgentReads.push(p); return route.fulfill({ json: { revision: "r1", agents: [] } }); }
+    if (/^\/console\/ssh\/plans\/[^/]+$/.test(p) && req.method() === "DELETE") {
+        const plan_id = p.split("/")[4]; f.abandons.push(plan_id);
+        return route.fulfill({ json: { plan_id, abandoned: true } });
+    }
     if (/^\/console\/ssh\/plans\/[^/]+$/.test(p) && req.method() === "GET") {
         const plan_id = p.split("/")[4]; f.statuses.push(plan_id);
         return route.fulfill({ json: { plan_id, name: "worker-west", registered: true, connected: false, status: "installing", phase: f.phase, phases, log: f.log, steps: [{ id: "registration", status: "ready", message: "Node registration is retained" }] } });
@@ -116,7 +120,9 @@ try {
     assert.equal(await dialog.getByRole("heading", { name: "SSH is reachable. Review how to connect this machine.", exact: true }).evaluate((el) => el === document.activeElement), true);
     assert.equal(await dialog.getByRole("textbox", { name: "Node address", exact: true }).inputValue(), "10.0.0.9:7701");
     await page.setViewportSize({ width: 780, height: 540 });
-    await dialog.getByRole("textbox", { name: "Node name", exact: true }).fill("worker-west");
+    assert.equal(await dialog.getByRole("textbox", { name: "Machine name", exact: true }).inputValue(), "dev-box", "the machine's name starts as its SSH alias");
+    assert.equal(await dialog.getByRole("textbox", { name: "Working directory", exact: true }).inputValue(), "~/steve-workspace");
+    await dialog.getByRole("textbox", { name: "Machine name", exact: true }).fill("worker-west");
     const scrollArea = dialog.locator("div.overflow-y-auto").first();
     const review = dialog.getByRole("button", { name: "Review installation", exact: true });
     await review.scrollIntoViewIfNeeded();
@@ -152,7 +158,8 @@ try {
     await dialog.getByText("Create node configuration on dev-box", { exact: true }).waitFor();
     await dialog.getByText("Start the node service on port 7701", { exact: true }).waitFor();
     await screenshot("ssh-plan-desktop");
-    assert.deepEqual(f.plans.at(-1), { alias: "dev-box", name: "worker-west", addr: "10.0.0.9:7701", raft_addr: "10.0.0.9:8802", source_host: "10.0.0.4", level: "restricted" });
+    assert.deepEqual(f.plans.at(-1), { alias: "dev-box", name: "worker-west", addr: "10.0.0.9:7701", raft_addr: "10.0.0.9:8802", source_host: "10.0.0.4", level: "restricted", workspace_dir: "~/steve-workspace" });
+    await dialog.getByText("~/steve-workspace", { exact: true }).waitFor();
     await dialog.getByText("10.0.0.9:8802", { exact: true }).waitFor();
     await dialog.getByText("10.0.0.4", { exact: true }).waitFor();
     f.hold = true; f.reset = true;
@@ -228,9 +235,18 @@ try {
     await dialog.getByRole("button", { name: "View record", exact: true }).click();
     await dialog.getByText("Registered, awaiting connection", { exact: true }).waitFor();
     check.existing_installation = false; check.existing_paths = [];
-    await dialog.getByRole("button", { name: "Back to resources", exact: true }).click();
-    await dialog.waitFor({ state: "hidden" });
+    // Giving up withdraws the operation on this side and brings the form
+    // back with the same answers, so the machine can be enrolled again.
+    await dialog.getByRole("button", { name: "Give up this connection and start over", exact: true }).click();
+    await dialog.getByRole("textbox", { name: "Machine name", exact: true }).waitFor();
+    assert.deepEqual(f.abandons, [original]);
+    assert.equal(await dialog.getByRole("textbox", { name: "Machine name", exact: true }).inputValue(), "worker-west");
+    assert.equal(await dialog.getByRole("textbox", { name: "Working directory", exact: true }).inputValue(), "~/steve-workspace");
     assert.equal(f.plans.length, 2); assert.deepEqual(f.installs, [original, original, original]);
+    await dialog.getByRole("button", { name: "Choose another machine", exact: true }).click();
+    assert.equal(await dialog.getByText(/connection records on this device/).count(), 0, "an abandoned attempt leaves no record to resume");
+    await dialog.getByRole("button", { name: "Close connection window", exact: true }).click();
+    await dialog.waitFor({ state: "hidden" });
     await page.getByRole("button", { name: "Add machine / agent", exact: true }).click();
     await page.getByRole("dialog", { name: "Add machine", exact: true }).waitFor();
     console.log("PASS known partial outcomes preserve registration and manual enrollment remains available");
@@ -246,7 +262,7 @@ try {
         const success = successPage.getByRole("dialog", { name: "Connect a machine with SSH", exact: true });
         await success.getByText("dev-box", { exact: true }).click();
         await success.getByRole("button", { name: "Check connection", exact: true }).click();
-        await success.getByRole("textbox", { name: "Node name", exact: true }).fill("worker-west");
+        await success.getByRole("textbox", { name: "Machine name", exact: true }).fill("worker-west");
         await success.getByRole("button", { name: "Review installation", exact: true }).click();
         f.connected = true;
         await success.getByRole("button", { name: "Confirm installation", exact: true }).click();
@@ -264,7 +280,7 @@ try {
         await successPage.getByRole("button", { name: "Connect with SSH", exact: true }).click();
         await success.getByText("dev-box", { exact: true }).click();
         await success.getByRole("button", { name: "Check connection", exact: true }).click();
-        await success.getByRole("textbox", { name: "Node name", exact: true }).fill("worker-second");
+        await success.getByRole("textbox", { name: "Machine name", exact: true }).fill("worker-second");
         const beforeInstall = f.installs.length;
         f.changedNetwork = true;
         await success.getByRole("button", { name: "Review installation", exact: true }).click();
@@ -369,11 +385,11 @@ try {
         check.installation_mode = undefined;
         await reviewed.getByRole("button", { name: "Check connection", exact: true }).click();
         await reviewed.getByRole("alert").getByText("The service response was incomplete. Retry the same operation.", { exact: true }).waitFor();
-        assert.equal(await reviewed.getByRole("textbox", { name: "Node name", exact: true }).count(), 0);
+        assert.equal(await reviewed.getByRole("textbox", { name: "Machine name", exact: true }).count(), 0);
         check.installation_mode = "peer";
         await reviewed.getByRole("button", { name: "Check connection", exact: true }).click();
         await reviewed.getByRole("heading", { name: "Participate in collaboration and recovery", exact: true }).waitFor();
-        assert.equal(await reviewed.getByRole("textbox", { name: "Node name", exact: true }).inputValue(), "reviewed-worker");
+        assert.equal(await reviewed.getByRole("textbox", { name: "Machine name", exact: true }).inputValue(), "reviewed-worker");
         await reviewed.getByRole("button", { name: "Allow this data and review installation", exact: true }).waitFor();
     } finally { check.installation_mode = "peer"; await reviewedContext.close(); }
     console.log("PASS editing a reviewed plan with unknown mode requires an explicit fresh check, preserving its request");

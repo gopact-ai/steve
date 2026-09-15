@@ -53,6 +53,10 @@ func (a *Service) SSHStatus(_ context.Context, id string) (sshconnect.InstallRes
 	return a.sshService().Status(id)
 }
 
+func (a *Service) SSHAbandon(ctx context.Context, id string) error {
+	return a.sshService().Abandon(ctx, id)
+}
+
 type sshNodeBackend struct{ admin *Service }
 
 func (b sshNodeBackend) Preview(ctx context.Context, req sshconnect.InstallRequest, check sshconnect.CheckResult) (sshconnect.Template, error) {

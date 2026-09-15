@@ -29,18 +29,22 @@ import (
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/coordination"
+	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 	"github.com/gopact-ai/steve/internal/project"
 )
 
 type PeerEnrollmentRequest struct {
-	Alias            string `json:"alias"`
-	Name             string `json:"name"`
-	PeerAddress      string `json:"peer_address"`
-	RaftAddress      string `json:"raft_address"`
-	SourceHost       string `json:"source_host,omitempty"`
-	Level            string `json:"level,omitempty"`
+	Alias       string `json:"alias"`
+	Name        string `json:"name"`
+	PeerAddress string `json:"peer_address"`
+	RaftAddress string `json:"raft_address"`
+	SourceHost  string `json:"source_host,omitempty"`
+	Level       string `json:"level,omitempty"`
+	// WorkspaceDir is where the machine keeps its work: its default project
+	// directory and the root its executor runs in. "~/" is the remote home.
+	WorkspaceDir     string `json:"workspace_dir,omitempty"`
 	ExpectedPlanHash string `json:"expected_plan_hash,omitempty"`
 }
 
@@ -70,6 +74,7 @@ type PeerJoinPackage struct {
 	NodeID        string                `json:"node_id"`
 	Name          string                `json:"name"`
 	StorageLevel  string                `json:"storage_level"`
+	WorkspaceDir  string                `json:"workspace_dir,omitempty"`
 	PeerListen    string                `json:"peer_listen"`
 	PeerAdvertise string                `json:"peer_advertise"`
 	RaftListen    string                `json:"raft_listen"`
@@ -237,10 +242,17 @@ func (p *Peer) PreviewPeerEnrollment(ctx context.Context, request PeerEnrollment
 
 func (p *Peer) PreviewEnrollment(ctx context.Context, request PeerEnrollmentRequest, allowLoopback bool) (PeerEnrollmentPlan, error) {
 	request.ExpectedPlanHash = ""
-	request.Name = strings.TrimSpace(request.Name)
 	request.SourceHost = strings.TrimSpace(request.SourceHost)
-	if !adminsvc.NameShape.MatchString(request.Name) {
-		return PeerEnrollmentPlan{}, errors.New("节点名称只能包含小写字母、数字、点、下划线和连字符")
+	name, err := coordination.MemberName(request.Name)
+	if err != nil {
+		return PeerEnrollmentPlan{}, errors.New("机器名称需要 1–64 个字符，不含控制字符")
+	}
+	request.Name = name
+	if request.WorkspaceDir = strings.TrimSpace(request.WorkspaceDir); request.WorkspaceDir == "" {
+		request.WorkspaceDir = DefaultPeerWorkspace
+	}
+	if err := validPeerWorkspace(request.WorkspaceDir); err != nil {
+		return PeerEnrollmentPlan{}, err
 	}
 	if err := validPeerEndpoint(request.PeerAddress, allowLoopback); err != nil {
 		return PeerEnrollmentPlan{}, err
@@ -335,7 +347,7 @@ func (p *Peer) PreviewEnrollment(ctx context.Context, request PeerEnrollmentRequ
 	if plan.UpdateSourceAddress {
 		plan.Effects = append(plan.Effects, fmt.Sprintf("将本机跨机连接地址更新为 %s 和 %s；本机工作台与执行服务继续运行", proposed.Address, proposed.APIAddress))
 	}
-	plan.Effects = append(plan.Effects, fmt.Sprintf("在目标机启动持久节点：HTTPS %s，共识 %s", request.PeerAddress, request.RaftAddress), "创建独立节点身份、机群证书和空执行服务；不会复制 Agent 登录状态", "将复制完整私有协作账本，包括任务、会话、工作配置和记忆；该节点已明确获准保存 restricted 级别数据", "先复制协作数据并验证节点间双向连接，再加入投票成员；默认不允许自动晋升", "仅在数据同步和执行服务登记完成后标记接入成功")
+	plan.Effects = append(plan.Effects, fmt.Sprintf("在目标机启动持久节点：HTTPS %s，共识 %s", request.PeerAddress, request.RaftAddress), fmt.Sprintf("在目标机创建工作目录 %s，作为这台机器的默认项目目录和执行目录", request.WorkspaceDir), "创建独立节点身份、机群证书和空执行服务；不会复制 Agent 登录状态", "将复制完整私有协作账本，包括任务、会话、工作配置和记忆；该节点已明确获准保存 restricted 级别数据", "先复制协作数据并验证节点间双向连接，再加入投票成员；默认不允许自动晋升", "仅在数据同步和执行服务登记完成后标记接入成功")
 	plan.ReviewID = plan.reviewHash()
 	return plan, nil
 }
@@ -421,7 +433,7 @@ func (p *Peer) PrepareEnrollment(ctx context.Context, request PeerEnrollmentRequ
 	}
 	_, peerPort, _ := net.SplitHostPort(plan.Request.PeerAddress)
 	_, raftPort, _ := net.SplitHostPort(plan.Request.RaftAddress)
-	bundle := PeerJoinPackage{Version: 1, OperationID: id, ClusterID: p.Config.ClusterID, NodeID: nodeID, StorageLevel: plan.Request.Level, Name: plan.Request.Name, PeerListen: net.JoinHostPort("0.0.0.0", peerPort), PeerAdvertise: plan.Request.PeerAddress, RaftListen: net.JoinHostPort("0.0.0.0", raftPort), RaftAdvertise: plan.Request.RaftAddress, CA: caPEM, Certificate: certificate, PrivateKey: leafKey, OwnerToken: p.OwnerToken, WorkerToken: workerToken, Seeds: plan.Seeds}
+	bundle := PeerJoinPackage{Version: 1, OperationID: id, ClusterID: p.Config.ClusterID, NodeID: nodeID, StorageLevel: plan.Request.Level, Name: plan.Request.Name, WorkspaceDir: plan.Request.WorkspaceDir, PeerListen: net.JoinHostPort("0.0.0.0", peerPort), PeerAdvertise: plan.Request.PeerAddress, RaftListen: net.JoinHostPort("0.0.0.0", raftPort), RaftAdvertise: plan.Request.RaftAddress, CA: caPEM, Certificate: certificate, PrivateKey: leafKey, OwnerToken: p.OwnerToken, WorkerToken: workerToken, Seeds: plan.Seeds}
 	payload, err := json.Marshal(bundle)
 	if err != nil {
 		return PeerEnrollmentPackage{}, err
@@ -618,6 +630,67 @@ func (p *Peer) PeerEnrollmentStatus(_ context.Context, id string) (PeerEnrollmen
 	defer p.enrollmentMu.Unlock()
 	record, err := p.loadEnrollment(id)
 	return record.PeerEnrollmentResult, err
+}
+
+// AbandonPeerEnrollment gives up an enrollment that did not finish. The
+// member a failed join left in the cluster is removed, so the machine's
+// ports are free to plan again, and the record is set aside rather than
+// deleted. A node that did join is a member now and leaves from the
+// resources page, where removing it is its own reviewed action.
+func (p *Peer) AbandonPeerEnrollment(ctx context.Context, id string) error {
+	p.enrollmentMu.Lock()
+	defer p.enrollmentMu.Unlock()
+	record, err := p.loadEnrollment(id)
+	if errors.Is(err, os.ErrNotExist) {
+		return errors.New("这次接入的记录已不存在，无需放弃")
+	}
+	if err != nil {
+		return err
+	}
+	if record.Ready {
+		return errors.New("这台机器已经完成接入，请在资源页移除该成员")
+	}
+	runtime := p.Runtime.Load()
+	if runtime == nil {
+		return coordination.ErrUnavailable
+	}
+	state, err := runtime.ReadState(ctx)
+	if err != nil {
+		return err
+	}
+	if _, member := state.Members[record.NodeID]; member {
+		if _, err := runtime.Remove(ctx, coordination.RemoveRequest{ID: id + "/abandon", Actor: "owner", NodeID: record.NodeID}); err != nil {
+			return fmt.Errorf("移除这次接入留下的成员失败：%w", err)
+		}
+	}
+	path := p.enrollmentPath(id)
+	archived := path + ".abandoned-" + time.Now().UTC().Format("20060102T150405Z")
+	if err := os.Rename(path, archived); err != nil {
+		return fmt.Errorf("归档接入记录失败：%w", err)
+	}
+	return nil
+}
+
+// DefaultPeerWorkspace is where a machine keeps its work unless the owner
+// chooses somewhere: a visible directory under the remote account's home.
+const DefaultPeerWorkspace = "~/steve-workspace"
+
+// validPeerWorkspace accepts an absolute remote path or one under the
+// remote home. The remote machine judges the place itself at import time,
+// with the same rules the desktop applies to its own workspace.
+func validPeerWorkspace(dir string) error {
+	if len(dir) > 512 || strings.ContainsAny(dir, "\r\n\x00\t") {
+		return errors.New("工作目录包含无效字符")
+	}
+	if !strings.HasPrefix(dir, "/") && dir != "~" && !strings.HasPrefix(dir, "~/") {
+		return errors.New("工作目录要写目标机上的绝对路径，或以 ~/ 开头，例如 ~/steve-workspace")
+	}
+	for _, part := range strings.Split(dir, "/") {
+		if part == ".." {
+			return errors.New("工作目录不能包含 ..")
+		}
+	}
+	return nil
 }
 
 type NetworkAddressRequest struct {
@@ -1044,6 +1117,10 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	if err != nil {
 		return PeerImportResult{}, err
 	}
+	workspaceInput := bundle.WorkspaceDir
+	if workspaceInput == "" {
+		workspaceInput = filepath.Join(root, "workspace")
+	}
 	configPath := filepath.Join(root, "config.json")
 	clusterPath := DefaultClusterConfigPath(configPath)
 	result := PeerImportResult{NodeID: bundle.NodeID, ConfigPath: configPath, ClusterPath: clusterPath}
@@ -1072,6 +1149,12 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	if err := os.MkdirAll(filepath.Dir(root), 0o700); err != nil {
 		return result, err
 	}
+	// The workspace is judged and created here, on the machine that owns
+	// it: the owner's answer may name places this machine refuses.
+	workspace, err := desktop.PrepareWorkspace(workspaceInput, root)
+	if err != nil {
+		return result, fmt.Errorf("workspace %q: %w", workspaceInput, err)
+	}
 	staging, err := os.MkdirTemp(filepath.Dir(root), ".peer-import-")
 	if err != nil {
 		return result, err
@@ -1084,9 +1167,9 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 		return result, err
 	}
 	disabled := false
-	app := config.Config{Agents: map[string]config.Agent{}, Harnesses: map[string]config.Harness{}, MCPServers: map[string]config.MCPServer{}, Projects: map[string]config.Project{"workspace": {Home: config.ProjectHome{Path: filepath.Join(root, "workspace")}}}, Feishu: config.Feishu{Enabled: &disabled}, Gateway: config.Gateway{HubID: bundle.NodeID, OwnerID: "owner-" + bundle.NodeID, Locale: "zh", DefaultChannel: "console", StatePath: filepath.Join(root, "state.json"), HomePath: filepath.Join(root, "home"), ReadModelAddr: "127.0.0.1:0", ReadModelToken: UIToken, PromptTimeout: config.Duration(10 * time.Minute)}}
-	worker := node.ServerConfig{Name: bundle.NodeID, Listen: "127.0.0.1:0", Token: bundle.WorkerToken, Hubs: map[string]string{bundle.ClusterID: bundle.WorkerToken}, StateDir: filepath.Join(clusterDir, "node"), WorkspaceRoot: root, Harnesses: map[string]node.HarnessSpec{}}
-	for _, dir := range []string{"cluster", "workspace", "home"} {
+	app := config.Config{Agents: map[string]config.Agent{}, Harnesses: map[string]config.Harness{}, MCPServers: map[string]config.MCPServer{}, Projects: map[string]config.Project{"workspace": {Home: config.ProjectHome{Path: workspace}}}, Feishu: config.Feishu{Enabled: &disabled}, Gateway: config.Gateway{HubID: bundle.NodeID, OwnerID: "owner-" + bundle.NodeID, Locale: "zh", DefaultChannel: "console", StatePath: filepath.Join(root, "state.json"), HomePath: filepath.Join(root, "home"), ReadModelAddr: "127.0.0.1:0", ReadModelToken: UIToken, PromptTimeout: config.Duration(10 * time.Minute)}}
+	worker := node.ServerConfig{Name: bundle.NodeID, Listen: "127.0.0.1:0", Token: bundle.WorkerToken, Hubs: map[string]string{bundle.ClusterID: bundle.WorkerToken}, StateDir: filepath.Join(clusterDir, "node"), WorkspaceRoot: workspace, Harnesses: map[string]node.HarnessSpec{}}
+	for _, dir := range []string{"cluster", "home"} {
 		if err := os.MkdirAll(filepath.Join(staging, dir), 0o700); err != nil {
 			return result, err
 		}
