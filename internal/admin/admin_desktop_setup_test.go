@@ -3,6 +3,7 @@ package admin
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/config"
@@ -113,12 +114,24 @@ func TestDesktopWorkspaceLeavesAProjectOnAnotherMachineAlone(t *testing.T) {
 	if err := (config.ProjectController{Store: admin.Projects}).Reconcile(t.Context(), admin.Cfg); err != nil {
 		t.Fatal(err)
 	}
+	// A shared declaration names this machine's own node on local projects;
+	// that is still local.
+	if admin.Cfg.Nodes == nil {
+		admin.Cfg.Nodes = map[string]config.Node{}
+	}
+	admin.Cfg.Nodes[admin.Cfg.Gateway.HubID] = config.Node{Addr: "127.0.0.1:1", Token: "t", Level: "restricted"}
 	item := admin.Cfg.Projects["workspace"]
+	item.Home = config.ProjectHome{Node: admin.Cfg.Gateway.HubID, Path: item.Home.Path}
+	admin.Cfg.Projects["workspace"] = item
+	if _, err := admin.DesktopWorkspace(t.Context(), consoleapi.DesktopWorkspaceRequest{Path: "~/Here"}); err != nil {
+		t.Fatalf("a project homed on this node by name is local: %v", err)
+	}
+	item = admin.Cfg.Projects["workspace"]
 	item.Home = config.ProjectHome{Node: "gpu-box", Path: "/srv/steve"}
 	admin.Cfg.Projects["workspace"] = item
 	_, err = admin.DesktopWorkspace(t.Context(), consoleapi.DesktopWorkspaceRequest{Path: "~/Elsewhere"})
-	if err == nil || !desktop.IsInputError(err) {
-		t.Fatalf("a remote default project is refused as the owner's request: %v", err)
+	if err == nil || !desktop.IsInputError(err) || !strings.Contains(err.Error(), "另一台机器（gpu-box）") {
+		t.Fatalf("a remote default project is refused naming the machine: %v", err)
 	}
 	home, _ := os.UserHomeDir()
 	if _, err := os.Stat(filepath.Join(home, "Elsewhere")); err == nil {

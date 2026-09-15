@@ -561,6 +561,16 @@ func (c *Config) inferDefaultProject() {
 	c.Gateway.DefaultProject = DefaultProjectID(c.Gateway.DefaultProject, c.Projects)
 }
 
+// LocalHomeNode reports whether a project home's node is this
+// application's own machine. A bootstrap configuration leaves the node
+// empty; a shared declaration names it, using the hub's node identity.
+func (c *Config) LocalHomeNode(node string) bool {
+	if node == "" || node == c.Gateway.HubID {
+		return true
+	}
+	return c.RuntimeHome != nil && node == c.RuntimeHome.Node
+}
+
 // DefaultProjectID is the project a conversation starts in: the preferred
 // one when it is declared, otherwise the only one there is, otherwise none.
 func DefaultProjectID(preferred string, projects map[string]Project) string {

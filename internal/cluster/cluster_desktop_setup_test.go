@@ -12,7 +12,9 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
+	"github.com/gopact-ai/steve/internal/platformconfig"
 )
 
 // recordingApplication stands in for the local application: it remembers
@@ -55,7 +57,7 @@ func TestClusterPeerDesktopGuideProgressAndWorkspace(t *testing.T) {
 	var mu sync.Mutex
 	options.Activate = recordingApplication(t, &calls, &mu)
 	peer := StartTestPeer(t, options)
-	WaitPeerReady(t, peer)
+	active := WaitPeerReady(t, peer)
 
 	var status consoleapi.DesktopStatus
 	code, body := PeerRequest(t, peer, http.MethodGet, "/console/desktop", nil)
@@ -75,6 +77,21 @@ func TestClusterPeerDesktopGuideProgressAndWorkspace(t *testing.T) {
 	}
 	if code, body = PeerRequest(t, peer, http.MethodPut, "/console/desktop/setup", consoleapi.DesktopSetupRequest{Step: "nowhere"}); code != http.StatusBadRequest {
 		t.Fatalf("unknown steps are refused: %d %s", code, body)
+	}
+
+	// Once the application has published the shared declaration, the local
+	// project's home names this node rather than leaving the node empty.
+	worker := peer.Worker()
+	declared := platformconfig.Declaration{Settings: (&config.Config{Gateway: config.Gateway{OwnerID: "test-owner"}}).SettingsValues(), Channels: (&config.Config{Gateway: config.Gateway{OwnerID: "test-owner"}}).ChannelSettings(),
+		Home: config.ProjectHome{Node: peer.Config.NodeID, Path: filepath.Join(installed.Paths.Root, "home")}, DefaultProject: "workspace",
+		Nodes:    map[string]config.Node{worker.Name: {Addr: worker.Address, Token: worker.Token, Level: "restricted"}},
+		Projects: map[string]config.Project{"workspace": {Level: "internal", Home: config.ProjectHome{Node: peer.Config.NodeID, Path: filepath.Join(installed.Paths.Root, "workspace")}}}}
+	if _, err := platformconfig.New(active.Ledger).Save(t.Context(), 0, declared); err != nil {
+		t.Fatal(err)
+	}
+	code, body = PeerRequest(t, peer, http.MethodGet, "/console/desktop", nil)
+	if err := json.Unmarshal(body, &status); err != nil || code != http.StatusOK || status.WorkspacePath != filepath.Join(installed.Paths.Root, "workspace") {
+		t.Fatalf("status after the declaration: %d %s %v", code, body, err)
 	}
 
 	if code, body = PeerRequest(t, peer, http.MethodPut, "/console/desktop/workspace", consoleapi.DesktopWorkspaceRequest{Path: "/etc"}); code != http.StatusBadRequest || !strings.Contains(string(body), "系统目录") {
@@ -98,6 +115,23 @@ func TestClusterPeerDesktopGuideProgressAndWorkspace(t *testing.T) {
 	defer mu.Unlock()
 	if len(calls) != 1 || calls[0] != `PUT /console/projects/workspace/home {"path":"`+want+`"}` {
 		t.Fatalf("the default project is moved through the application: %v", calls)
+	}
+
+	mu.Unlock()
+	declared.Projects["workspace"] = config.Project{Level: "internal", Home: config.ProjectHome{Node: "gpu-box", Path: "/srv/steve"}}
+	declared.Nodes["gpu-box"] = config.Node{Addr: "127.0.0.1:1", Token: "t", Level: "restricted"}
+	if _, err := platformconfig.New(active.Ledger).Save(t.Context(), 1, declared); err != nil {
+		t.Fatal(err)
+	}
+	if code, body = PeerRequest(t, peer, http.MethodPut, "/console/desktop/workspace", consoleapi.DesktopWorkspaceRequest{Path: "~/Elsewhere"}); code != http.StatusBadRequest || !strings.Contains(string(body), "另一台机器（gpu-box）") {
+		t.Fatalf("a default project homed elsewhere is refused with the machine named: %d %s", code, body)
+	}
+	if _, err := os.Stat(filepath.Join(home, "Elsewhere")); err == nil {
+		t.Fatal("nothing is created for a refused move")
+	}
+	mu.Lock()
+	if len(calls) != 1 {
+		t.Fatalf("the refused move must not reach the application: %v", calls)
 	}
 
 	code, body = PeerRequest(t, peer, http.MethodPut, "/console/desktop/setup", consoleapi.DesktopSetupRequest{Step: "finished", Done: true})

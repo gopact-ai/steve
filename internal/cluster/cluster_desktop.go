@@ -130,7 +130,7 @@ func (p *Peer) serveDesktopWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, current := p.desktopProject(d)
-	if err := desktop.CheckWorkspaceProject(id, current.Node); err != nil {
+	if err := desktop.CheckWorkspaceProject(id, current.Node == "" || current.Node == p.Config.NodeID, current.Node); err != nil {
 		desktopError(w, err)
 		return
 	}
