@@ -49,6 +49,10 @@ func (a *Service) SSHCommit(ctx context.Context, id string) (sshconnect.InstallR
 	return a.sshService().Commit(ctx, id)
 }
 
+func (a *Service) SSHStatus(_ context.Context, id string) (sshconnect.InstallResult, error) {
+	return a.sshService().Status(id)
+}
+
 type sshNodeBackend struct{ admin *Service }
 
 func (b sshNodeBackend) Preview(ctx context.Context, req sshconnect.InstallRequest, check sshconnect.CheckResult) (sshconnect.Template, error) {

@@ -14,7 +14,9 @@ const page = await context.newPage(); page.setDefaultTimeout(6500);
 const at = "2026-09-07T01:00:00Z";
 const candidate = { alias: "dev-box", host_name: "10.0.0.9", user: "developer", port: 22, proxy_jump: "bastion", has_proxy_command: false, has_identity_file: true, conditional: true, source: "/test/ssh/config", line: 3 };
 const check = { candidate, reachable: true, address: "10.0.0.9", os: "linux", arch: "arm64", tools: [{ name: "bash", available: true }, { name: "nohup", available: true }], existing_installation: false, existing_paths: [], installation_mode: "peer", steps: [{ id: "ssh", status: "ready", message: "SSH connection and authentication verified" }], checked_at: at };
-const f = { candidates: [candidate], checks: [], plans: [], installs: [], nodeAgentReads: [], errors: [], ready: false, checkError: false, discoveryError: false, reset: false, hold: false, release: null, connected: false, coordinator: "my-desktop", changedNetwork: false };
+const phases = ["preflight", "registration", "upload", "installation", "connectivity"];
+const f = { candidates: [candidate], checks: [], plans: [], installs: [], statuses: [], nodeAgentReads: [], errors: [], ready: false, checkError: false, discoveryError: false, reset: false, hold: false, release: null, connected: false, coordinator: "my-desktop", changedNetwork: false, phase: "upload", log: [] };
+const finalLog = [{ at, stream: "steve", text: "Running the installer on the machine" }, { at, stream: "stdout", text: "Node process started" }, { at, stream: "stderr", text: "Node startup did not remain running; inspect ~/steve-node.log" }];
 page.on("pageerror", (error) => f.errors.push(String(error)));
 await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.sources = []; window.EventSource = class { constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() {} }; });
 const routeRequest = async (route) => {
@@ -35,11 +37,15 @@ const routeRequest = async (route) => {
         return route.fulfill({ json: { id: "plan-" + f.plans.length, request: f.changedNetwork ? { ...request, source_host: "203.0.113.23" } : request, check, script: "mkdir -p ~/steve-bin\n# install a verified node binary", effects: ["Create node configuration on dev-box", "Start the node service on port 7701"], steps: [...check.steps, ...(f.ready ? [] : [{ id: "binary", status: "blocked", message: "No matching node package", suggestion: "Provide a Linux arm64 node package and review a new plan." }])], ready: f.ready, expires_at: "2030-01-01T00:00:00Z", binary: { os: "linux", arch: "arm64", sha256: "a".repeat(64), size: 2048 } } });
     }
     if (p === "/console/nodes/node-stable-9/agents" && req.method() === "GET") { f.nodeAgentReads.push(p); return route.fulfill({ json: { revision: "r1", agents: [] } }); }
+    if (/^\/console\/ssh\/plans\/[^/]+$/.test(p) && req.method() === "GET") {
+        const plan_id = p.split("/")[4]; f.statuses.push(plan_id);
+        return route.fulfill({ json: { plan_id, name: "worker-west", registered: true, connected: false, status: "installing", phase: f.phase, phases, log: f.log, steps: [{ id: "registration", status: "ready", message: "Node registration is retained" }] } });
+    }
     if (/^\/console\/ssh\/plans\/[^/]+\/install$/.test(p)) {
         const plan_id = p.split("/")[4]; f.installs.push(plan_id);
         if (f.hold) await new Promise((resolve) => { f.release = resolve; });
         if (f.reset) { f.reset = false; return route.abort("connectionreset"); }
-        return route.fulfill({ json: { plan_id, name: "worker-west", node_id: "node-stable-9", registered: true, connected: f.connected, status: f.connected ? "connected" : "needs_attention", steps: [{ id: "registration", status: "ready", message: "Node registration is retained" }, ...(f.connected ? [{ id: "connectivity", status: "ready", message: "Node protocol handshake completed" }] : [{ id: "connectivity", status: "blocked", message: "The node service is not reachable yet", suggestion: "Check the node address and network route in Resources." }])] } });
+        return route.fulfill({ json: { plan_id, name: "worker-west", node_id: "node-stable-9", registered: true, connected: f.connected, status: f.connected ? "connected" : "needs_attention", phase: f.connected ? "" : "connectivity", phases, log: finalLog, steps: [{ id: "registration", status: "ready", message: "Node registration is retained" }, ...(f.connected ? [{ id: "connectivity", status: "ready", message: "Node protocol handshake completed" }] : [{ id: "connectivity", status: "blocked", message: "The node service is not reachable yet", suggestion: "Check the node address and network route in Resources." }])] } });
     }
     f.errors.push(req.method() + " " + p); return route.fulfill({ status: 500, json: { error: "Unmocked API" } });
 };
@@ -155,8 +161,24 @@ try {
     await waitFor(() => f.installs.length === 1, "one explicit installation");
     await page.keyboard.press("Enter"); assert.equal(f.installs.length, 1);
     assert.equal(await dialog.getByText("Machine connected", { exact: true }).count(), 0);
+    // While the installer runs, the dialog follows the installation: which
+    // phase it is in, and what the machine has said so far.
+    await waitFor(() => f.statuses.length >= 1, "the dialog polls the installation while it runs");
+    const progress = dialog.getByRole("progressbar", { name: "Installation progress", exact: true });
+    await progress.waitFor();
+    await dialog.getByText("Step 3 of 5 · Upload node program", { exact: true }).waitFor();
+    assert.equal(await progress.getAttribute("aria-valuenow"), "2");
+    f.log = [{ at, stream: "steve", text: "Uploading node program (linux/arm64, 2 KiB)" }];
+    await dialog.getByText("Uploading node program (linux/arm64, 2 KiB)", { exact: true }).waitFor();
+    f.phase = "installation"; f.log = [...f.log, { at, stream: "stdout", text: "Verifying SHA-256" }];
+    await dialog.getByText("Step 4 of 5 · Run the installer", { exact: true }).waitFor();
+    await dialog.getByText("Verifying SHA-256", { exact: true }).waitFor();
+    await screenshot("ssh-installing");
     f.hold = false; f.release();
     await dialog.getByRole("button", { name: "Check this installation", exact: true }).waitFor();
+    const polled = f.statuses.length;
+    await page.waitForTimeout(1500);
+    assert.equal(f.statuses.length, polled, "polling stops once the install call has returned");
     const original = f.installs[0];
     f.coordinator = "new-coordinator";
     await page.reload();
@@ -164,6 +186,11 @@ try {
     await dialog.getByRole("button", { name: "Check this installation", exact: true }).click();
     await dialog.getByText("The node service is not reachable yet", { exact: true }).waitFor();
     await dialog.getByText("Registered, awaiting connection", { exact: true }).waitFor();
+    // The outcome keeps the log and the phase it stopped in, so a failure
+    // says what went wrong and where.
+    await dialog.getByText("Stopped at step 5 of 5 · Wait for the node", { exact: true }).waitFor();
+    await dialog.getByText("Node startup did not remain running; inspect ~/steve-node.log", { exact: true }).waitFor();
+    await screenshot("ssh-needs-attention-log");
     assert.equal(await scrollArea.evaluate((el) => el.scrollTop), 0, "installation result returns to outcome context");
     assert.equal(await dialog.getByRole("heading", { name: "Connection needs your attention", exact: true }).evaluate((el) => el === document.activeElement), true);
     assert.equal(await dialog.getByText("Machine connected", { exact: true }).count(), 0);
@@ -175,7 +202,11 @@ try {
     f.hold = true;
     await dialog.getByRole("button", { name: "Continue checking this connection", exact: true }).click();
     await waitFor(() => f.installs.length === 3, "resume posts the original plan");
-    assert.equal(await dialog.getByRole("button", { name: "Connect another machine", exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole("button", { name: "Back to resources", exact: true }).isDisabled(), true);
+    // Resuming follows the installation the same way a first run does.
+    f.phase = "connectivity"; f.log = [{ at, stream: "steve", text: "Cluster enrollment: synchronizing state" }];
+    await dialog.getByText("Step 5 of 5 · Wait for the node", { exact: true }).waitFor();
+    await dialog.getByText("Cluster enrollment: synchronizing state", { exact: true }).waitFor();
     f.hold = false; f.release();
     await dialog.getByText("Registered, awaiting connection", { exact: true }).waitFor();
     assert.equal(f.plans.length, planCountBeforeResume);

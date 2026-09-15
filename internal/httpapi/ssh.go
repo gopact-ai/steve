@@ -15,6 +15,7 @@ type SSHService interface {
 	SSHCheck(context.Context, string) (sshconnect.CheckResult, error)
 	SSHPlan(context.Context, sshconnect.InstallRequest) (sshconnect.InstallPlan, error)
 	SSHCommit(context.Context, string) (sshconnect.InstallResult, error)
+	SSHStatus(context.Context, string) (sshconnect.InstallResult, error)
 }
 
 func (s *Server) SetSSH(service SSHService) { s.ssh = service }
@@ -36,6 +37,7 @@ func (s *Server) sshRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /console/ssh/check", s.guard(s.sshCheck))
 	mux.HandleFunc("POST /console/ssh/plans", s.guard(s.sshPlan))
 	mux.HandleFunc("POST /console/ssh/plans/{id}/install", s.guard(s.sshInstall))
+	mux.HandleFunc("GET /console/ssh/plans/{id}", s.guard(s.sshStatus))
 }
 
 func (s *Server) sshCandidates(w http.ResponseWriter, r *http.Request) {
@@ -99,6 +101,20 @@ func (s *Server) sshInstall(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil && result.Status == "" {
 		result.Status = "needs_attention"
+	}
+	writeJSON(w, result)
+}
+
+// sshStatus reads how an installation is going: the phase it is in and
+// what the remote has said. It never starts, resumes or repeats anything.
+func (s *Server) sshStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.sshAvailable(w) {
+		return
+	}
+	result, err := s.ssh.SSHStatus(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.sshError(w, err)
+		return
 	}
 	writeJSON(w, result)
 }

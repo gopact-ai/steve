@@ -46,6 +46,9 @@ func (s peerSSHService) SSHCheck(ctx context.Context, alias string) (sshconnect.
 func (s peerSSHService) SSHPlan(ctx context.Context, req sshconnect.InstallRequest) (sshconnect.InstallPlan, error) {
 	return s.service.Plan(ctx, req)
 }
+func (s peerSSHService) SSHStatus(_ context.Context, id string) (sshconnect.InstallResult, error) {
+	return s.service.Status(id)
+}
 func (s peerSSHService) SSHCommit(ctx context.Context, id string) (sshconnect.InstallResult, error) {
 	return s.service.Commit(ctx, id)
 }
@@ -169,11 +172,16 @@ func (b peerSSHBackend) Verify(ctx context.Context, name string) error {
 func (b peerSSHBackend) VerifyRegistration(ctx context.Context, name, id string) error {
 	ticker := time.NewTicker(500 * time.Millisecond)
 	defer ticker.Stop()
+	seen := ""
 	for {
 		if ctx.Err() != nil {
 			return &sshconnect.StepError{Stage: "peer_membership", Code: "peer_not_ready", Message: "节点已安装，但集群接入尚未确认完成", Suggestion: "检查 ~/.steve-peer/peer.log 与节点间 HTTPS/共识端口；保持原操作记录，恢复连接后核对接入状态"}
 		}
 		result, err := b.service().CompletePeerEnrollment(ctx, id)
+		if result.Phase != "" && result.Phase != seen {
+			seen = result.Phase
+			sshconnect.Report(ctx, "集群接入阶段："+peerPhaseText(result.Phase))
+		}
 		if err == nil && result.OperationID == id && result.Name == name && result.Ready && result.Phase == "ready" {
 			return nil
 		}
@@ -194,6 +202,24 @@ func (b peerSSHBackend) VerifyRegistration(ctx context.Context, name, id string)
 			continue
 		case <-ticker.C:
 		}
+	}
+}
+
+// peerPhaseText names an enrollment phase for the installation log.
+func peerPhaseText(phase string) string {
+	switch phase {
+	case "awaiting_peer":
+		return "等待节点进程首次连上协调节点"
+	case "synchronizing":
+		return "节点已连上，正在同步集群状态"
+	case "registering_worker":
+		return "状态已同步，正在登记执行服务"
+	case "joined":
+		return "已加入集群，正在做独立连接验证"
+	case "ready":
+		return "接入完成"
+	default:
+		return phase
 	}
 }
 
@@ -221,4 +247,5 @@ type SSHControl interface {
 	SSHCheck(context.Context, string) (sshconnect.CheckResult, error)
 	SSHPlan(context.Context, sshconnect.InstallRequest) (sshconnect.InstallPlan, error)
 	SSHCommit(context.Context, string) (sshconnect.InstallResult, error)
+	SSHStatus(context.Context, string) (sshconnect.InstallResult, error)
 }

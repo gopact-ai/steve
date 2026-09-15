@@ -43,11 +43,14 @@ func (s OpenSSH) Upload(ctx context.Context, args []string, input io.Reader) (Ou
 	return Output{Stdout: stdout.String(), Stderr: stderr.String()}, err
 }
 
+// outputLimit bounds what is kept of a command's stdout and stderr each.
+const outputLimit = 64 << 10
+
 type boundedOutput struct{ bytes.Buffer }
 
 func (w *boundedOutput) Write(p []byte) (int, error) {
 	n := len(p)
-	if remaining := (64 << 10) - w.Len(); remaining > 0 {
+	if remaining := outputLimit - w.Len(); remaining > 0 {
 		if len(p) > remaining {
 			p = p[:remaining]
 		}
