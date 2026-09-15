@@ -574,6 +574,13 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 		return reject(fail("environment", "environment_changed", "机器环境已改变或不再满足接入条件", "重新检查并确认目标机器"))
 	}
 	s.probeSourceHosts(ctx, connection, &check)
+	if check.SourceHosts == nil {
+		// A probe the target did not finish this time says nothing new; the
+		// reviewed plan's answer stands.
+		check.SourceHosts = plan.Check.SourceHosts
+	} else if !sameSourceHosts(check.SourceHosts, plan.Check.SourceHosts) {
+		return reject(fail("environment", "source_reachability_changed", "目标机能连到的本机地址已变化", "重新检查并审阅新的安装计划"))
+	}
 	template, err := s.backend.Preview(ctx, plan.Request, check)
 	if err != nil {
 		return result, err
@@ -764,7 +771,7 @@ func validateRequest(req InstallRequest) error {
 const peerVerifyLimit = 15 * time.Minute
 
 // settledSteps keeps the steps an attempt completed and drops the ones it
-// stopped on, which the next attempt is about to answer again.
+// stopped on: the retry answers those again, and the log keeps their text.
 func settledSteps(steps []Step) []Step {
 	kept := make([]Step, 0, len(steps))
 	for _, step := range steps {
@@ -773,6 +780,18 @@ func settledSteps(steps []Step) []Step {
 		}
 	}
 	return kept
+}
+
+func sameSourceHosts(a, b []SourceHost) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func stepsReady(steps []Step) bool {

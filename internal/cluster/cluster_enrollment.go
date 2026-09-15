@@ -522,6 +522,10 @@ func (p *Peer) saveEnrollment(record peerEnrollmentRecord) error {
 	return SaveClusterJSON(p.enrollmentPath(record.OperationID), record, false)
 }
 
+// peerCatchUpSlice bounds one CompletePeerEnrollment call while the new
+// node copies the ledger; the caller polls again for the next slice.
+const peerCatchUpSlice = 3 * time.Second
+
 func (p *Peer) CompletePeerEnrollment(ctx context.Context, id string) (PeerEnrollmentResult, error) {
 	p.enrollmentMu.Lock()
 	defer p.enrollmentMu.Unlock()
@@ -542,7 +546,11 @@ func (p *Peer) CompletePeerEnrollment(ctx context.Context, id string) (PeerEnrol
 		} else {
 			record.Error = ""
 		}
-		record.Steps = append(record.Steps, PeerEnrollmentStep{At: time.Now().UTC(), Stage: stage, Message: record.Error})
+		// A poll that finds the same thing as the last one adds nothing to
+		// the record; the record is polled for as long as the wait lasts.
+		if n := len(record.Steps); n == 0 || record.Steps[n-1].Stage != stage || record.Steps[n-1].Message != record.Error {
+			record.Steps = append(record.Steps, PeerEnrollmentStep{At: time.Now().UTC(), Stage: stage, Message: record.Error})
+		}
 		saveErr := p.saveEnrollment(record)
 		return record.PeerEnrollmentResult, errors.Join(err, saveErr)
 	}
@@ -583,10 +591,17 @@ func (p *Peer) CompletePeerEnrollment(ctx context.Context, id string) (PeerEnrol
 	if err != nil {
 		return finish("synchronizing", err)
 	}
+	// The catch-up is reported in slices: each call returns within a few
+	// seconds with how far the replica has come, so a caller polling the
+	// operation sees the copy advance instead of one silent long call.
+	deadline := time.Now().Add(peerCatchUpSlice)
 	for {
 		progress, err := p.client.Probe(ctx, member)
 		if err == nil && progress.AppVersion >= state.AppVersion && progress.AppliedIndex >= state.AppliedIndex {
 			break
+		}
+		if time.Now().After(deadline) {
+			return finish("synchronizing", fmt.Errorf("%w：协作数据复制中，节点已应用 %d/%d", coordination.ErrNotReady, progress.AppliedIndex, state.AppliedIndex))
 		}
 		select {
 		case <-ctx.Done():

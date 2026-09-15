@@ -22,7 +22,10 @@ type SourceAdvisor interface {
 	SourceEndpoints(context.Context) (hosts []string, port string)
 }
 
-var probeHostShape = regexp.MustCompile(`^[A-Za-z0-9.:_-]{1,253}$`)
+var (
+	probeHostShape = regexp.MustCompile(`^[A-Za-z0-9.:_-]{1,253}$`)
+	probePortShape = regexp.MustCompile(`^[1-9][0-9]{0,4}$`)
+)
 
 const sourceProbeTimeout = 12 * time.Second
 
@@ -32,7 +35,7 @@ const sourceProbeTimeout = 12 * time.Second
 // An attempt that finished on its own is reachable when its exit status is
 // zero. The final "end" line proves the script ran to completion.
 func sourceProbeScript(port string, hosts []string) (string, bool) {
-	if len(hosts) == 0 || !regexp.MustCompile(`^[0-9]{1,5}$`).MatchString(port) {
+	if len(hosts) == 0 || !probePortShape.MatchString(port) {
 		return "", false
 	}
 	quoted := make([]string, 0, len(hosts))
@@ -48,7 +51,9 @@ func sourceProbeScript(port string, hosts []string) (string, bool) {
 	// Each attempt is the very process blocked in connect(), so killing it
 	// ends the attempt and closes its copy of stdout at once.
 	b.WriteString("for host in " + hostList + "; do\n  ( exec 3<>\"/dev/tcp/$host/$port\" ) 2>/dev/null &\n  eval \"pid_$i=$!\"\n  pids=\"$pids $!\"\n  i=$((i+1))\ndone\n")
-	b.WriteString("n=0\nwhile [ $n -lt 40 ]; do\n  alive=0\n  for p in $pids; do kill -0 \"$p\" 2>/dev/null && alive=1; done\n  [ \"$alive\" = 0 ] && break\n  sleep 0.1\n  n=$((n+1))\ndone\n")
+	// The window is measured by the shell's clock, so a sleep that refuses a
+	// fractional argument only spins for the same four seconds.
+	b.WriteString("started=$SECONDS\nwhile [ $((SECONDS-started)) -lt 4 ]; do\n  alive=0\n  for p in $pids; do kill -0 \"$p\" 2>/dev/null && alive=1; done\n  [ \"$alive\" = 0 ] && break\n  sleep 0.1\ndone\n")
 	b.WriteString("i=0\nfor host in " + hostList + "; do\n  eval \"p=\\$pid_$i\"\n  if kill -0 \"$p\" 2>/dev/null; then\n    kill \"$p\" 2>/dev/null\n  elif wait \"$p\" 2>/dev/null; then\n    printf 'STEVE_REACH\\t%s\\t1\\n' \"$host\"\n  fi\n  i=$((i+1))\ndone\n")
 	b.WriteString("wait 2>/dev/null\nprintf 'STEVE_REACH\\tend\\t1\\n'\n")
 	return b.String(), true

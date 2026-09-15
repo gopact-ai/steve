@@ -127,3 +127,37 @@ func TestResumeReplacesTheEarlierBlockedStepAndKeepsTheReadyOnes(t *testing.T) {
 		t.Fatalf("resume lost the record or kept the stale failure: %#v", second.Steps)
 	}
 }
+
+func TestCommitRejectsAPlanWhoseReachabilityChanged(t *testing.T) {
+	svc, r, b, _ := serviceFixture(t)
+	svc.backend = &advisingBackend{fakeBackend: b, hosts: []string{"192.168.0.30", "10.4.17.4"}, port: "59398"}
+	r.reachOutput = "STEVE_REACH\t10.4.17.4\t1\nSTEVE_REACH\tend\t1\n"
+	plan, err := svc.Plan(t.Context(), installRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	r.reachOutput = "STEVE_REACH\t192.168.0.30\t1\nSTEVE_REACH\tend\t1\n"
+	r.mu.Unlock()
+	result, err := svc.Commit(t.Context(), plan.ID)
+	var step *StepError
+	if !errors.As(err, &step) || step.Code != "source_reachability_changed" || result.Registered || b.registrations != 0 {
+		t.Fatalf("a changed answer from the target must stop before registration: %#v %v", result, err)
+	}
+}
+
+func TestCommitKeepsTheReviewedReachabilityWhenTheReprobeIsSilent(t *testing.T) {
+	svc, r, b, _ := serviceFixture(t)
+	svc.backend = &advisingBackend{fakeBackend: b, hosts: []string{"10.4.17.4"}, port: "59398"}
+	r.reachOutput = "STEVE_REACH\t10.4.17.4\t1\nSTEVE_REACH\tend\t1\n"
+	plan, err := svc.Plan(t.Context(), installRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.mu.Lock()
+	r.reachOutput = ""
+	r.mu.Unlock()
+	if result, err := svc.Commit(t.Context(), plan.ID); err != nil || !result.Connected {
+		t.Fatalf("a cut-off reprobe must not fail a reviewed plan: %#v %v", result, err)
+	}
+}

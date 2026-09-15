@@ -113,9 +113,11 @@ func (b peerSSHBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 		template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_network", Status: "blocked", Message: err.Error(), Suggestion: "检查目标节点地址与本机独立互联地址后重新生成计划"})
 		return template, nodebootstrap.PeerSpec{}, plan, nil
 	}
-	if step, blocked := unreachableSourceStep(check.SourceHosts, plan); blocked {
+	if step, found := unreachableSourceStep(check.SourceHosts, plan, req.SourceHost != ""); found {
 		template.Steps = append(template.Steps, step)
-		return template, nodebootstrap.PeerSpec{}, plan, nil
+		if step.Status == "blocked" {
+			return template, nodebootstrap.PeerSpec{}, plan, nil
+		}
 	}
 	template.ReviewID = plan.ReviewID
 	if template.ReviewID == "" || template.ReviewID != peerPlanHash(plan) {
@@ -149,7 +151,7 @@ func (b peerSSHBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 	template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_network", Status: "ready", Message: fmt.Sprintf("目标 HTTPS %s；共识连接 %s", plan.Request.PeerAddress, plan.Request.RaftAddress)})
 	if plan.UpdateSourceAddress {
 		message := "本机跨机连接将使用 " + plan.Source.APIAddress + " 和 " + plan.Source.Address
-		if _, ok := reachableSourceHost(check.SourceHosts, plan.Request.SourceHost); ok {
+		if pick, ok := reachableSourceHost(check.SourceHosts, plan.Request.SourceHost); ok && pick == plan.Request.SourceHost {
 			message = "目标机已确认能连到本机 " + plan.Request.SourceHost + "；" + message
 		}
 		template.Steps = append(template.Steps, sshconnect.Step{ID: "source_network", Status: "ready", Message: message, Suggestion: "这些地址应可由已加入节点独立访问；安装后会逐一验证"})
@@ -212,15 +214,21 @@ func (b peerSSHBackend) VerifyRegistration(ctx context.Context, name, id string)
 	advanced, reported := time.Now(), map[string]bool{}
 	for {
 		if ctx.Err() != nil {
-			return peerWaitStopped(last, "接入等待已到上限")
+			why := "接入等待已到上限"
+			if errors.Is(ctx.Err(), context.Canceled) {
+				why = "接入等待被中断"
+			}
+			return peerWaitStopped(last, why)
 		}
 		result, err := b.service().CompletePeerEnrollment(ctx, id)
+		// Progress is a new phase or something new said within one; the same
+		// failures repeating, however many of them alternate, is a stall.
 		if result.Phase != "" && result.Phase != last.Phase {
 			advanced, reported = time.Now(), map[string]bool{}
 			sshconnect.Report(ctx, "集群接入阶段："+peerPhaseText(result.Phase))
 		}
 		if result.Error != "" && !reported[result.Error] {
-			reported[result.Error] = true
+			reported[result.Error], advanced = true, time.Now()
 			sshconnect.Report(ctx, "当前问题："+result.Error)
 		}
 		last = result
@@ -277,19 +285,24 @@ func reachableSourceHost(probed []sshconnect.SourceHost, current string) (string
 	return "", false
 }
 
-// unreachableSourceStep blocks a plan whose source address the target
-// already failed to open, naming every address that was tried.
-func unreachableSourceStep(probed []sshconnect.SourceHost, plan PeerEnrollmentPlan) (sshconnect.Step, bool) {
+// unreachableSourceStep reports a source address the target already failed
+// to open, naming every address that was tried. An automatic choice blocks
+// the plan; an address the user typed stays, with the finding beside it,
+// since the probe can be wrong where the user is not.
+func unreachableSourceStep(probed []sshconnect.SourceHost, plan PeerEnrollmentPlan, explicit bool) (sshconnect.Step, bool) {
 	tried, known := make([]string, 0, len(probed)), false
 	for _, host := range probed {
 		tried = append(tried, host.Host)
 		known = known || host.Host == plan.Request.SourceHost
 	}
-	if _, ok := reachableSourceHost(probed, plan.Request.SourceHost); ok || !known {
+	if pick, ok := reachableSourceHost(probed, plan.Request.SourceHost); !known || ok && pick == plan.Request.SourceHost {
 		return sshconnect.Step{}, false
 	}
 	_, port, _ := net.SplitHostPort(strings.TrimPrefix(plan.Source.APIAddress, "https://"))
 	message := fmt.Sprintf("目标机连不上本机的 %s 端口：已从目标机试连 %s", port, strings.Join(tried, "、"))
+	if explicit {
+		return sshconnect.Step{ID: "source_network", Status: "ready", Message: message + "；将按填写的 " + plan.Request.SourceHost + " 继续", Suggestion: "安装后节点间会再次验证；若确认目标机能访问该地址，可以继续"}, true
+	}
 	return sshconnect.Step{ID: "source_network", Status: "blocked", Message: message, Suggestion: "确认两台机器在同一网络或 VPN 内、本机防火墙放行该端口；或在「本机互联地址」填写目标机能访问到的本机地址后重新检查"}, true
 }
 

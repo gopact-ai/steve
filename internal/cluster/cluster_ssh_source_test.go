@@ -112,3 +112,28 @@ func TestVerifyRegistrationKeepsWaitingWhilePhasesAdvance(t *testing.T) {
 		t.Fatalf("advancing phases must not be treated as a stall: %v", err)
 	}
 }
+
+func TestPeerSSHPreviewKeepsAnExplicitHostTheProbeCouldNotReach(t *testing.T) {
+	b, fixture, request, check := peerSSHFixture(t)
+	request.SourceHost = "192.0.2.1"
+	check.SourceHosts = []sshconnect.SourceHost{{Host: "192.0.2.1"}, {Host: "10.4.17.4", Reachable: true}}
+	preview, err := b.Preview(t.Context(), request, check)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fixture.previewed.SourceHost != "192.0.2.1" || preview.Script == "" {
+		t.Fatalf("an address the user typed must stand: %#v", fixture.previewed)
+	}
+	var warned bool
+	for _, step := range preview.Steps {
+		if step.Status == "blocked" {
+			t.Fatalf("an explicit address must not be blocked by the probe: %#v", step)
+		}
+		if step.ID == "source_network" && strings.Contains(step.Message, "连不上") && strings.Contains(step.Message, "192.0.2.1") {
+			warned = true
+		}
+	}
+	if !warned {
+		t.Fatalf("the finding must still be shown beside the explicit address: %#v", preview.Steps)
+	}
+}
