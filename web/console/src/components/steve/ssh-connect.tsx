@@ -108,11 +108,12 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
         acting.current = true; setBusy("install"); setError("");
         // While the installer runs, follow it: the phase it is in and what
         // the machine has said. Only a running installation is shown this
-        // way; the outcome comes from the install call itself.
+        // way; the outcome comes from the install call itself. Resuming a
+        // registration runs the same way over a needs-attention result.
         const following = new AbortController();
         const follow = () => statusSSH(plan.id, following.signal).then((live) => {
             if (following.signal.aborted || live?.plan_id !== plan.id || live.status !== "installing") return;
-            setDraft((current) => current.plan?.id === plan.id && current.attempted && (!current.result || current.result.status === "installing") ? { ...current, result: live } : current);
+            setDraft((current) => current.plan?.id === plan.id && current.attempted && current.result?.status !== "connected" ? { ...current, result: live } : current);
         }).catch(() => undefined);
         const followTimer = window.setInterval(() => void follow(), 1000);
         void follow();
@@ -120,7 +121,9 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
             const next = await installSSH(plan.id);
             if (next?.plan_id !== plan.id) throw new Error(t("ssh.otherInstallation"));
             if (typeof next.registered !== "boolean" || typeof next.connected !== "boolean" || !["connected", "needs_attention", "installing"].includes(next.status) || !Array.isArray(next.steps) || (next.status === "connected" && (!next.registered || !next.connected))) throw new Error(t("ssh.responseInvalid"));
-            const history = next.status === "connected" || next.status === "needs_attention" ? [...(draft.history || []).filter((record) => record.plan.id !== plan.id), { plan, result: next }] : draft.history;
+            // History keeps outcomes, not transcripts: the log stays with the
+            // current result and would otherwise outgrow local storage.
+            const history = next.status === "connected" || next.status === "needs_attention" ? [...(draft.history || []).filter((record) => record.plan.id !== plan.id), { plan, result: { ...next, log: undefined } }] : draft.history;
             save({ ...draft, attempted: true, result: next, history });
             if (next.registered) onChanged();
         } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
@@ -223,7 +226,7 @@ function InstallProgress({ result }: { result: SSHInstallResult }) {
     const total = phases.length;
     const text = done ? t("ssh.progressDone", { total }) : index >= 0 ? t(stopped ? "ssh.progressStopped" : "ssh.progressStep", { current: index + 1, total, phase: label(phases[index]) }) : "";
     return <div className="space-y-2">
-        {text && <p className="text-sm font-medium text-primary">{text}</p>}
+        {text && <p aria-live="polite" className="text-sm font-medium text-primary">{text}</p>}
         <div role="progressbar" aria-label={t("ssh.progress")} aria-valuenow={completed} aria-valuemin={0} aria-valuemax={total} aria-valuetext={text || undefined} className="h-2 w-full overflow-hidden rounded-md bg-quaternary">
             <div style={{ transform: `translateX(-${100 - (completed * 100) / total}%)` }} className={`size-full rounded-md transition duration-300 ease-out motion-reduce:transition-none ${stopped ? "bg-fg-error-primary" : done ? "bg-fg-success-primary" : "bg-fg-brand-primary"}`} />
         </div>
@@ -237,15 +240,15 @@ function InstallProgress({ result }: { result: SSHInstallResult }) {
 function InstallLog({ result }: { result: SSHInstallResult }) {
     const { t, locale } = useI18n();
     const lines = result.log ?? [];
-    const end = useRef<HTMLDivElement>(null);
+    const box = useRef<HTMLDivElement>(null);
     const stopped = result.status === "needs_attention";
-    useEffect(() => { if (result.status === "installing") end.current?.scrollIntoView({ block: "nearest" }); }, [lines.length, result.status]);
+    // Follow the tail inside the log box only; the dialog itself stays put.
+    useEffect(() => { if (result.status === "installing" && box.current) box.current.scrollTop = box.current.scrollHeight; }, [lines.length, result.status]);
     if (lines.length === 0) return null;
     return <details className="rounded-lg bg-secondary p-3" open={stopped || result.status === "installing"}>
         <summary className="cursor-pointer text-xs font-medium text-secondary focus-visible:outline-2 focus-visible:outline-focus-ring">{t("ssh.logCount", { count: lines.length })}</summary>
-        <div className="mt-2 max-h-56 overflow-auto font-mono text-xs leading-5" aria-label={t("ssh.log")}>
+        <div ref={box} className="mt-2 max-h-56 overflow-auto font-mono text-xs leading-5" aria-label={t("ssh.log")}>
             {lines.map((line, i) => <div key={i} className={`flex gap-3 whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${line.stream === "stderr" ? "text-error-primary" : line.stream === "steve" ? "text-primary" : "text-secondary"}`}><span className="shrink-0 tabular-nums text-quaternary">{dateTime(line.at, locale, { timeStyle: "medium" })}</span><span className="min-w-0">{line.text}</span></div>)}
-            <div ref={end} />
         </div>
     </details>;
 }

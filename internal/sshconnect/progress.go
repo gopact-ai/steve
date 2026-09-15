@@ -3,6 +3,7 @@ package sshconnect
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 )
@@ -69,11 +70,19 @@ func (s *Service) note(result *InstallResult, message string) {
 }
 
 // output records what the remote wrote, with the credential the script
-// carried replaced wherever it shows up.
+// carried replaced wherever it shows up. Output the runner cut at its
+// limit loses its last line too: a credential split at the cut would not
+// match, and a partial line says nothing a person needs.
 func (s *Service) output(result *InstallResult, out Output, secret string) {
 	at := s.now()
 	for _, stream := range []struct{ name, text string }{{"stdout", out.Stdout}, {"stderr", out.Stderr}} {
-		for _, line := range strings.Split(strings.TrimRight(stream.text, "\n"), "\n") {
+		lines := strings.Split(strings.TrimRight(stream.text, "\n"), "\n")
+		truncated := len(stream.text) >= outputLimit
+		if truncated {
+			lines = lines[:len(lines)-1]
+		}
+		for _, line := range lines {
+			line = strings.TrimRight(line, "\r")
 			if line == "" {
 				continue
 			}
@@ -82,8 +91,47 @@ func (s *Service) output(result *InstallResult, out Output, secret string) {
 			}
 			result.appendLog(at, stream.name, line)
 		}
+		if truncated {
+			result.appendLog(at, "steve", stream.name+" 输出超过上限，其余已省略")
+		}
 	}
 	s.progress(*result)
+}
+
+// noteStored narrates into a stored installation by id, for the paths
+// that have no result of their own on the stack (resuming a registration).
+func (s *Service) noteStored(id, message string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if stored := s.plans[id]; stored != nil && stored.running {
+		stored.result.appendLog(s.now(), "steve", message)
+	}
+}
+
+// phaseReporter is the Reporter handed to a backend during verification.
+// It writes into the installation's result only until the verification
+// returns; a backend that kept the context and reports late is ignored,
+// so nothing writes to the result after commit has moved on.
+type phaseReporter struct {
+	mu     sync.Mutex
+	s      *Service
+	result *InstallResult
+	closed bool
+}
+
+func (r *phaseReporter) report(message string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.closed {
+		return
+	}
+	r.s.note(r.result, message)
+}
+
+func (r *phaseReporter) close() {
+	r.mu.Lock()
+	r.closed = true
+	r.mu.Unlock()
 }
 
 func (r *InstallResult) appendLog(at time.Time, stream, text string) {

@@ -469,10 +469,24 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 		result, err := cloneResult(stored.result), stored.err
 		if recovery, ok := s.backend.(RegistrationRecovery); ok && result.Registered && !result.Connected {
 			stored.done, stored.running = false, true
-			stored.result.Status = "installing"
+			stored.result.Status, stored.result.Phase = "installing", PhaseConnectivity
+			stored.result.appendLog(s.now(), "steve", "继续确认原接入操作，不重新上传或安装")
 			s.mu.Unlock()
-			result, err = s.resumeRegistration(ctx, recovery, id)
+			result, err = s.resumeRegistration(WithReporter(ctx, func(message string) { s.noteStored(id, message) }), recovery, id)
 			s.mu.Lock()
+			// The resume answers only the outcome; the record of how the
+			// installation got here, and what was said while resuming,
+			// carries across.
+			result.Phases, result.Log = stored.result.Phases, stored.result.Log
+			if result.Connected {
+				result.Phase = ""
+				result.appendLog(s.now(), "steve", "原接入操作已确认完成")
+			} else {
+				result.Phase = PhaseConnectivity
+				if err != nil {
+					result.appendLog(s.now(), "steve", err.Error())
+				}
+			}
 			stored.done, stored.running = true, false
 			stored.result, stored.err = cloneResult(result), err
 			s.mu.Unlock()
@@ -630,13 +644,15 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 		verifyTimeout = 2 * time.Minute
 	}
 	s.enter(&result, PhaseConnectivity, fmt.Sprintf("等待节点连通（最多 %s）", verifyTimeout))
-	verifyCtx, cancel := context.WithTimeout(WithReporter(ctx, func(message string) { s.note(&result, message) }), verifyTimeout)
+	reporter := &phaseReporter{s: s, result: &result}
+	verifyCtx, cancel := context.WithTimeout(WithReporter(ctx, reporter.report), verifyTimeout)
 	if verifier, ok := s.backend.(RegistrationVerifier); ok {
 		err = verifier.VerifyRegistration(verifyCtx, plan.Request.Name, plan.ID)
 	} else {
 		err = s.backend.Verify(verifyCtx, plan.Request.Name)
 	}
 	cancel()
+	reporter.close()
 	if err != nil {
 		var stepErr *StepError
 		if errors.As(err, &stepErr) {
@@ -654,10 +670,12 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	return result, nil
 }
 
+// progress publishes how far a running installation has come. Once the
+// installation has settled, nothing may move its record back.
 func (s *Service) progress(result InstallResult) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if stored := s.plans[result.PlanID]; stored != nil {
+	if stored := s.plans[result.PlanID]; stored != nil && stored.running {
 		stored.result = cloneResult(result)
 		stored.result.Status = "installing"
 	}

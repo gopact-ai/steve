@@ -140,3 +140,102 @@ func TestInstallLogIsBounded(t *testing.T) {
 		}
 	}
 }
+
+type reportingRecovery struct {
+	*recoveryBackend
+	late func(string)
+}
+
+func (b *reportingRecovery) ResumeRegistration(ctx context.Context, id string) (InstallResult, error) {
+	Report(ctx, "集群接入阶段：正在同步集群状态")
+	return b.recoveryBackend.ResumeRegistration(ctx, id)
+}
+
+type lateReportingBackend struct {
+	*fakeBackend
+	keep context.Context
+}
+
+func (b *lateReportingBackend) Verify(ctx context.Context, name string) error {
+	b.keep = ctx
+	return b.fakeBackend.Verify(ctx, name)
+}
+
+// Resuming a registration keeps the record of how the installation got
+// here and adds what the backend says while it confirms.
+func TestResumeCarriesTheInstallationRecord(t *testing.T) {
+	svc, r, b, _ := serviceFixture(t)
+	backend := &reportingRecovery{recoveryBackend: &recoveryBackend{fakeBackend: b}}
+	svc.backend = backend
+	r.failInstall = true
+	plan, err := svc.Plan(t.Context(), installRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	first, err := svc.Commit(t.Context(), plan.ID)
+	if err == nil || !first.Registered {
+		t.Fatalf("expected partial install %#v %v", first, err)
+	}
+	result, err := svc.Commit(t.Context(), plan.ID)
+	if err != nil || !result.Connected || result.Phase != "" {
+		t.Fatalf("resume outcome = %#v %v", result, err)
+	}
+	if strings.Join(result.Phases, ",") != strings.Join(first.Phases, ",") {
+		t.Fatalf("resume lost phases: %v", result.Phases)
+	}
+	text := logText(result)
+	for _, want := range []string{"stderr: installation failed", "继续确认原接入操作", "集群接入阶段：正在同步集群状态", "原接入操作已确认完成"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("resume log lacks %q: %q", want, text)
+		}
+	}
+	if status, _ := svc.Status(plan.ID); logText(status) != text {
+		t.Fatal("status after resume differs from the returned record")
+	}
+}
+
+// A backend that reports after verification returned cannot write into a
+// settled installation, and a settled record never turns back to installing.
+func TestLateReportsAndProgressCannotReopenASettledInstallation(t *testing.T) {
+	svc, _, b, _ := serviceFixture(t)
+	backend := &lateReportingBackend{fakeBackend: b}
+	svc.backend = backend
+	plan, err := svc.Plan(t.Context(), installRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.Commit(t.Context(), plan.ID)
+	if err != nil || result.Status != "connected" {
+		t.Fatalf("commit = %#v %v", result, err)
+	}
+	Report(backend.keep, "too late")
+	svc.progress(InstallResult{PlanID: plan.ID, Status: "installing"})
+	status, err := svc.Status(plan.ID)
+	if err != nil || status.Status != "connected" || strings.Contains(logText(status), "too late") || logText(status) != logText(result) {
+		t.Fatalf("settled installation was reopened: %#v %v", status, err)
+	}
+}
+
+// Output the runner cut at its limit loses only its last, partial line, so
+// a credential split at the cut cannot slip through unredacted.
+func TestTruncatedOutputDropsThePartialLastLine(t *testing.T) {
+	svc, r, _, _ := serviceFixture(t)
+	tail := "tail test-install-"
+	filler := strings.Repeat("noise line\n", outputLimit/len("noise line\n")+1)[:outputLimit-len(tail)]
+	svc.runner = &talkativeRunner{recordingRunner: r, installStdout: filler + tail}
+	plan, err := svc.Plan(t.Context(), installRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.Commit(t.Context(), plan.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := logText(result)
+	if strings.Contains(text, "test-install-") || strings.Contains(text, "tail") {
+		t.Fatalf("partial last line survived truncation: %q", text[len(text)-300:])
+	}
+	if !strings.Contains(text, "输出超过上限") {
+		t.Fatal("truncation is not narrated")
+	}
+}

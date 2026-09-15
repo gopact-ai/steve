@@ -202,7 +202,11 @@ try {
     f.hold = true;
     await dialog.getByRole("button", { name: "Continue checking this connection", exact: true }).click();
     await waitFor(() => f.installs.length === 3, "resume posts the original plan");
-    assert.equal(await dialog.getByRole("button", { name: "Connect another machine", exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole("button", { name: "Back to resources", exact: true }).isDisabled(), true);
+    // Resuming follows the installation the same way a first run does.
+    f.phase = "connectivity"; f.log = [{ at, stream: "steve", text: "Cluster enrollment: synchronizing state" }];
+    await dialog.getByText("Step 5 of 5 · Wait for the node", { exact: true }).waitFor();
+    await dialog.getByText("Cluster enrollment: synchronizing state", { exact: true }).waitFor();
     f.hold = false; f.release();
     await dialog.getByText("Registered, awaiting connection", { exact: true }).waitFor();
     assert.equal(f.plans.length, planCountBeforeResume);
