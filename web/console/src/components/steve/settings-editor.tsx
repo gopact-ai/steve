@@ -132,7 +132,7 @@ function KeyedRows<T>({ rows, onChange, blank, render }: {
         {rows.map((row) => <div key={row.key} className="flex items-start gap-2">
             {render({ value: row.id, set: (id) => onChange(rows.map((item) => item.key === row.key ? { ...item, id } : item)) }, row.value,
                 (value) => onChange(rows.map((item) => item.key === row.key ? { ...item, value } : item)))}
-            <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip={tr("common.remove")} className="mt-1.5" onClick={() => onChange(rows.filter((item) => item.key !== row.key))} />
+            <ButtonUtility size="xs" color="tertiary" icon={Trash01} tooltip={tr("common.remove")} className="mt-0.5" onClick={() => onChange(rows.filter((item) => item.key !== row.key))} />
         </div>)}
         <div><Button size="sm" color="link-gray" iconLeading={Plus} onClick={() => onChange([...rows, { key: nextKey.current++, id: "", value: blank }])}>{tr("settingsEditor.addItem")}</Button></div>
     </div>;

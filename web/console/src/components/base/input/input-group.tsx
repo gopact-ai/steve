@@ -18,14 +18,14 @@ export const InputPrefix = ({ children, ...props }: InputPrefixProps) => (
         className={cx(
             "flex text-tertiary shadow-xs ring-1 ring-border-primary ring-inset",
             // Styles when the prefix is within an `InputGroup`
-            "in-data-input-wrapper:in-data-leading:-mr-px in-data-input-wrapper:in-data-leading:rounded-l-lg",
-            "in-data-input-wrapper:in-data-trailing:-ml-px in-data-input-wrapper:in-data-trailing:rounded-r-lg",
+            "in-data-input-wrapper:in-data-leading:-mr-px in-data-input-wrapper:in-data-leading:rounded-l-md",
+            "in-data-input-wrapper:in-data-trailing:-ml-px in-data-input-wrapper:in-data-trailing:rounded-r-md",
             // Default size styles
-            "px-3 py-2 text-md",
+            "px-3 py-1.5 text-sm",
             // Small size styles
-            "in-data-input-wrapper:in-data-[input-size=sm]:px-3 in-data-input-wrapper:in-data-[input-size=sm]:py-2 in-data-input-wrapper:in-data-[input-size=sm]:text-sm",
+            "in-data-input-wrapper:in-data-[input-size=sm]:px-2.5 in-data-input-wrapper:in-data-[input-size=sm]:py-1 in-data-input-wrapper:in-data-[input-size=sm]:text-sm",
             // Large size styles
-            "in-data-input-wrapper:in-data-[input-size=lg]:py-2.5 in-data-input-wrapper:in-data-[input-size=lg]:pr-3 in-data-input-wrapper:in-data-[input-size=lg]:pl-3.5",
+            "in-data-input-wrapper:in-data-[input-size=lg]:py-1.5 in-data-input-wrapper:in-data-[input-size=lg]:text-md in-data-input-wrapper:in-data-[input-size=lg]:pr-3 in-data-input-wrapper:in-data-[input-size=lg]:pl-3.5",
 
             props.className,
         )}

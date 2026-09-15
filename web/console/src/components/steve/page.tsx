@@ -12,7 +12,7 @@ export function PageHeader({ title, description, actions, children }: { title: s
     return (
         <header className="workbench-page-header flex min-w-0 flex-col gap-4 border-b border-secondary px-4 py-5 sm:px-6 lg:px-8">
             <div className="flex min-w-0 flex-wrap items-start gap-x-6 gap-y-3">
-                <div className="min-w-0 flex-1">
+                <div className="min-w-0 flex-1 basis-64">
                     <h1 className="text-xl font-semibold tracking-tight text-primary">{title}</h1>
                     {description && <p className="mt-1 max-w-3xl text-sm text-tertiary">{description}</p>}
                 </div>

@@ -104,7 +104,7 @@ export function CodeBlock({ code, lang, label, meta, muted, maxHeight = 320, cla
                 <Icon className="size-3.5 shrink-0" />
                 <span className="font-medium">{label ?? langName(lang)}</span>
                 {meta && <span className="truncate">· {meta}</span>}
-                <button type="button" onClick={copy} aria-label="复制" title="复制" className="ml-auto flex size-5 shrink-0 items-center justify-center rounded text-fg-quaternary transition hover:bg-primary hover:text-fg-quaternary_hover">
+                <button type="button" onClick={copy} aria-label="复制" title="复制" className="ml-auto flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary transition hover:bg-primary hover:text-fg-quaternary_hover">
                     {copied ? <Check className="size-3.5 text-fg-success-primary" /> : <Copy01 className="size-3.5" />}
                 </button>
             </div>

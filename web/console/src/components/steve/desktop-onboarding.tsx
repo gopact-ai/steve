@@ -318,7 +318,7 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
             {loading && <p role="status" className="py-3 text-sm text-tertiary">{t("desktop.loading")}</p>}
             {unavailable && <div className="space-y-1 rounded-lg bg-secondary p-3"><p className="text-sm font-medium text-primary">{t("desktop.empty")}</p><p className="text-xs leading-5 text-tertiary">{t("desktop.emptyHint")}</p></div>}
             {agents.map((candidate) => <Checkbox key={candidate.id} aria-label={candidate.name} name="desktop-agent" value={candidate.id} isSelected={candidate.registered || draft.selected.includes(candidate.id)} isDisabled={busy || !!draft.pending || !usable(candidate)} onChange={(selected) => choose(candidate.id, selected)}
-                className="min-h-12 min-w-0 rounded-lg border border-secondary p-3 data-selected:bg-secondary [&>div:last-child]:min-w-0" label={<span className="flex min-w-0 flex-col gap-1"><span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><span>{candidate.name}</span><span className="text-xs font-normal text-tertiary">{t(candidate.registered ? "desktop.registered" : candidate.installed ? "desktop.detected" : "desktop.notInstalled")}</span></span>
+                className="min-h-10 min-w-0 rounded-md border border-secondary px-3 py-2 data-selected:bg-secondary [&>div:last-child]:min-w-0" label={<span className="flex min-w-0 flex-col gap-1"><span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><span>{candidate.name}</span><span className="text-xs font-normal text-tertiary">{t(candidate.registered ? "desktop.registered" : candidate.installed ? "desktop.detected" : "desktop.notInstalled")}</span></span>
                     {candidate.requires?.length ? <span className="text-xs font-normal text-error-primary">{t("desktop.requires", { tools: candidate.requires.join(", ") })}</span> : candidate.installed && candidate.executable ? <span className="max-w-full break-all font-mono text-xs font-normal text-tertiary">{candidate.executable}</span> : null}
                 </span>} />)}
         </fieldset>
@@ -367,7 +367,7 @@ function PreferencesStep({ busy, setBusy, onNext, onBack }: StepProps) {
         } catch (error) { setError(message(error)); }
         finally { setBusy(false); }
     }
-    const option = "group flex min-h-10 cursor-pointer items-center gap-2 rounded-lg border border-secondary px-3 py-2 text-sm text-primary data-selected:border-brand data-selected:bg-secondary data-focus-visible:outline-2 data-focus-visible:outline-focus-ring";
+    const option = "group flex min-h-8 cursor-pointer items-center gap-2 rounded-md border border-secondary px-3 py-1.5 text-sm text-primary data-selected:border-brand data-selected:bg-secondary data-focus-visible:outline-2 data-focus-visible:outline-focus-ring";
     return <section className="space-y-5">
         <p className="text-sm leading-6 text-secondary">{t("desktop.preferencesIntro")}</p>
         <RadioGroup aria-label={t("desktop.language")} value={preference} isDisabled={busy} onChange={(value) => setLocale(value as "system" | "zh" | "en")} className="space-y-2">

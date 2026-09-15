@@ -133,7 +133,7 @@ export function SkillsPage() {
                                                 const skill = skillsByName.get(name);
                                                 return <li key={name} className="skill-source-row">
                                                     <button type="button" className="skill-source-name" aria-label={tr("skills.documentName", { name })} onClick={() => void fetchSkill(name).then(setOpened).catch((e) => setError(fail(e)))}><span className="block truncate text-sm font-medium text-primary" title={name}>{name}</span>{skill?.description && <span className="mt-1 line-clamp-1 text-xs text-tertiary" title={skill.description}>{skill.description}</span>}</button>
-                                                    <Toggle size="sm" aria-label={tr("skills.enableName", { name })} className="min-h-11 shrink-0 items-center" isSelected={skill?.enabled ?? false} isDisabled={busy !== ""} onChange={(value) => void run(name, () => setSkill(name, value))} />
+                                                    <Toggle size="sm" aria-label={tr("skills.enableName", { name })} className="min-h-8 shrink-0 items-center" isSelected={skill?.enabled ?? false} isDisabled={busy !== ""} onChange={(value) => void run(name, () => setSkill(name, value))} />
                                                 </li>;
                                             })}
                                             {src.skills.length === 0 && <li className="p-4 text-sm text-tertiary">{tr("skills.sourceEmpty")}</li>}

@@ -14,39 +14,39 @@ export const styles = sortCx({
             // Disabled styles
             "disabled:cursor-not-allowed disabled:opacity-50 in-data-input-wrapper:disabled:opacity-100",
             // Same as `icon` but for SSR icons that cannot be passed to the client as functions.
-            "*:data-icon:pointer-events-none *:data-icon:size-5 *:data-icon:shrink-0 *:data-icon:transition-inherit-all",
+            "*:data-icon:pointer-events-none *:data-icon:size-4 *:data-icon:shrink-0 *:data-icon:transition-inherit-all",
         ].join(" "),
-        icon: "pointer-events-none size-5 shrink-0 transition-inherit-all",
+        icon: "pointer-events-none size-4 shrink-0 transition-inherit-all",
     },
     sizes: {
         xs: {
             root: [
-                "gap-1 rounded-lg px-2.5 py-1.5 text-sm font-semibold before:rounded-[7px] data-icon-only:p-2",
-                "in-data-input-wrapper:px-3.5 in-data-input-wrapper:py-2.5 in-data-input-wrapper:data-icon-only:p-2.5",
+                "gap-1 rounded-md px-2 py-1 text-xs leading-4 font-medium before:rounded-[5px] data-icon-only:p-1",
+                "in-data-input-wrapper:px-2.5 in-data-input-wrapper:py-1.5 in-data-input-wrapper:data-icon-only:p-1.5",
                 "*:data-icon:size-4 *:data-icon:stroke-[2.25px]",
             ].join(" "),
             linkRoot: "gap-1 *:data-text:underline-offset-3",
         },
         sm: {
             root: [
-                "gap-1 rounded-lg px-3 py-2 text-sm font-semibold before:rounded-[7px] data-icon-only:p-2",
-                "in-data-input-wrapper:px-3.5 in-data-input-wrapper:py-2.5 in-data-input-wrapper:data-icon-only:p-2.5",
+                "gap-1 rounded-md px-2.5 py-1 text-sm font-medium before:rounded-[5px] data-icon-only:p-1.5",
+                "in-data-input-wrapper:px-3 in-data-input-wrapper:py-1.5 in-data-input-wrapper:data-icon-only:p-2",
             ].join(" "),
             linkRoot: "gap-1 *:data-text:underline-offset-3",
         },
         md: {
             root: [
-                "gap-1 rounded-lg px-3.5 py-2.5 text-sm font-semibold before:rounded-[7px] data-icon-only:p-2.5",
-                "in-data-input-wrapper:gap-1.5 in-data-input-wrapper:px-4 in-data-input-wrapper:text-md in-data-input-wrapper:data-icon-only:p-3",
+                "gap-1 rounded-md px-3 py-1.5 text-sm font-medium before:rounded-[5px] data-icon-only:p-2",
+                "in-data-input-wrapper:gap-1.5 in-data-input-wrapper:px-3.5 in-data-input-wrapper:data-icon-only:p-2",
             ].join(" "),
             linkRoot: "gap-1 *:data-text:underline-offset-4",
         },
         lg: {
-            root: "gap-1.5 rounded-lg px-4 py-2.5 text-md font-semibold before:rounded-[7px] data-icon-only:p-3",
+            root: "gap-1.5 rounded-lg px-3.5 py-2 text-sm font-medium before:rounded-[7px] data-icon-only:p-2 *:data-icon:size-5",
             linkRoot: "gap-1.5 *:data-text:underline-offset-4",
         },
         xl: {
-            root: "gap-1.5 rounded-lg px-4.5 py-3 text-md font-semibold before:rounded-[7px] data-icon-only:p-3.5",
+            root: "gap-1.5 rounded-lg px-4 py-2 text-md font-medium before:rounded-[7px] data-icon-only:p-2.5 *:data-icon:size-5",
             linkRoot: "gap-1.5 *:data-text:underline-offset-4",
         },
     },

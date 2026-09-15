@@ -185,7 +185,7 @@ const TableHead = ({ className, tooltip, label, children, ...props }: TableHeadP
             {(state) => (
                 <AriaGroup className="flex items-center gap-1">
                     <div className="flex items-center gap-1">
-                        {label && <span className="text-xs font-semibold whitespace-nowrap text-quaternary">{label}</span>}
+                        {label && <span className="text-xs leading-4 font-semibold text-quaternary">{label}</span>}
                         {typeof children === "function" ? children(state) : children}
                     </div>
 
