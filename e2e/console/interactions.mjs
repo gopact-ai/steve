@@ -52,17 +52,18 @@ async function fixture({ history = false, running = false } = {}) {
         const input = req.postDataJSON();
         const call = { method: req.method(), path: pathname, ...input };
         if (req.method() !== "GET") f.calls.push(call);
-        const conversation = input?.conversation || url.searchParams.get("conversation") || A;
+        const initialization = pathname.match(/^\/console\/conversations\/([^/]+)\/initialize$/);
+        const conversation = initialization ? decodeURIComponent(initialization[1]) : input?.conversation || url.searchParams.get("conversation") || A;
         let current = conversations.find((c) => c.id === conversation);
         if (pathname === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
         if (pathname === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
         if (pathname === "/state") return route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks: [task("11", A, "scratch"), task("22", B, "home")], plans: [], projects, attempts: [], landings: [] } });
-        if (pathname === "/console/send" && input?.input.startsWith("/project use ")) {
+        if (initialization && req.method() === "PUT") {
             if (f.binding) await f.binding;
             if (f.failBinding) return route.fulfill({ status: 503, json: { error: "Project binding unavailable" } });
-            if (!current) { current = { id: conversation, title: "New project conversation", project: "home" }; conversations.push(current); }
-            current.project = input.input.slice("/project use ".length);
-            return route.fulfill({ json: { reply: { kind: "reply", conversation, at, text: `Bound ${current.project}` } } });
+            if (!current) { current = { id: conversation, title: "", project: "home" }; conversations.push(current); }
+            current.project = input.project;
+            return route.fulfill({ json: { ok: true } });
         }
         if (pathname === "/console/send") {
             if (input.input === "/cancel" && f.cancel) await f.cancel;
@@ -211,16 +212,41 @@ const checks = {
     },
     async "project-inheritance"(f) {
         await f.page.getByRole("button", { name: "新会话", exact: true }).click();
-        await eventually(() => f.calls.some((c) => c.input === "/project use scratch"), "Generic new conversation must bind the current project");
+        await eventually(() => f.calls.some((c) => c.path.endsWith("/initialize") && c.project === "scratch"), "Generic new conversation must bind the current project");
+        await f.page.locator("main header").getByText("新会话", { exact: true }).waitFor();
+        assert.equal(await f.box.inputValue(), "", "New conversation title must not populate the composer");
+        assert.equal(f.calls.filter((c) => c.path === "/console/send").length, 0, "Automatic binding must not send a chat command");
         await f.box.fill("First work");
         await f.box.press("Shift+Enter");
         await eventually(() => f.queued().length === 1, "First work must be accepted after binding");
         assert.equal(f.queued()[0].projectAtEnqueue, "scratch");
+        const id = f.queued()[0].conversation;
+        f.replies[id] = [{ id: "first-work", kind: "sent", conversation: id, input: "First work", at }];
+        await f.emit({ kind: "console.sent", conversation: id, reply_id: "first-work", text: "First work" });
+        await f.page.locator("main header").getByText("First work", { exact: true }).waitFor();
+    },
+    async "new-session-title-i18n"(f) {
+        await f.page.getByRole("button", { name: "新会话", exact: true }).click();
+        await eventually(() => f.conversations.length === 3, "Initialization must create an empty conversation");
+        await f.page.locator("main header").getByText("新会话", { exact: true }).waitFor();
+        const id = f.conversations.at(-1).id;
+        assert.equal(await f.box.inputValue(), "", "The title placeholder must not become a draft");
+        // Old explicit controls remain readable, but never become the title.
+        f.replies[id] = [{ id: "old-control", kind: "sent", conversation: id, input: "/project use scratch", at }];
+        await f.page.reload();
+        await f.page.locator("main header").getByText("新会话", { exact: true }).waitFor();
+        await f.page.getByText("/project use scratch", { exact: true }).waitFor();
+        await f.page.evaluate(() => {
+            localStorage.setItem("steve.ui.locale", "en");
+            window.dispatchEvent(new StorageEvent("storage", { key: "steve.ui.locale", newValue: "en", storageArea: localStorage }));
+        });
+        await f.page.locator("main header").getByText("New conversation", { exact: true }).waitFor();
+        assert.equal(await f.page.getByRole("textbox", { name: "Message", exact: true }).inputValue(), "");
     },
     async "binding-pending"(f) {
         const release = f.hold("binding");
         await f.page.getByRole("button", { name: "在 scratch 下新会话", exact: true }).click();
-        await eventually(() => f.calls.some((c) => c.input === "/project use scratch"), "Project binding must begin");
+        await eventually(() => f.calls.some((c) => c.path.endsWith("/initialize") && c.project === "scratch"), "Project binding must begin");
         if (await f.box.isEnabled()) { await f.box.fill("First work during binding"); await f.box.press("Shift+Enter"); }
         await delay(150);
         assert.equal(f.queued().length, 0, "Work must not be submitted before project binding returns");
@@ -234,7 +260,7 @@ const checks = {
         f.failBinding = true;
         await f.box.fill("Keep this existing draft");
         await f.page.getByRole("button", { name: "在 scratch 下新会话", exact: true }).click();
-        await eventually(() => f.calls.some((c) => c.input === "/project use scratch"), "Project binding must begin");
+        await eventually(() => f.calls.some((c) => c.path.endsWith("/initialize") && c.project === "scratch"), "Project binding must begin");
         await delay(150);
         assert.equal(await f.box.inputValue(), "Keep this existing draft", "Binding failure must preserve the original draft");
         assert.equal(await f.page.locator("main header").getByText("Conversation A", { exact: true }).count(), 1, "Binding failure must retain the original conversation");
@@ -467,7 +493,7 @@ const checks = {
     },
     async "conversation-rename-once"(f) {
         const edit = async (title) => {
-            await f.page.getByRole("button", { name: new RegExp(`^${title}`) }).locator("..").getByRole("button", { name: "更多", exact: true }).click();
+            await f.page.getByRole("button", { name: new RegExp(`^${title}`) }).locator("xpath=ancestor::li[1]").getByRole("button", { name: "更多", exact: true }).click();
             await f.page.getByRole("menuitem", { name: "重命名", exact: true }).click();
             return f.page.getByRole("textbox", { name: "会话名称", exact: true });
         };
@@ -483,6 +509,88 @@ const checks = {
         await f.box.click();
         await f.page.locator("main header").getByText("Renamed with blur", { exact: true }).waitFor();
         assert.equal(writes().length, 2, "A blur-only edit must issue exactly one additional rename");
+    },
+    async "reasoning-preferences"(f) {
+        let reads = 0, rejectRead = true, rejectSave = false, empty = false;
+        const selected = "medium";
+        const preferences = new Map();
+        const discovery = gate(); f.releases.push(discovery.release);
+        await f.page.route("**/console/context?*", (route) => {
+            const conversation = new URL(route.request().url()).searchParams.get("conversation");
+            return route.fulfill({ json: { enabled: true, context: { conversation, project: { ...project("scratch"), bound: true }, agents: [], agent: { id: "test-agent", node: "test-node", harness: "codex", model: "gpt-6-astra", ready: true, usable: true } } } });
+        });
+        await f.page.route("**/console/selectors?*", async (route) => {
+            reads++;
+            await discovery.promise;
+            if (rejectRead) return route.fulfill({ status: 503, body: "Choices unavailable" });
+            if (empty) return route.fulfill({ json: {} }); // Go omits empty option arrays.
+            const conversation = new URL(route.request().url()).searchParams.get("conversation");
+            const preferred = preferences.get(conversation) || {};
+            return route.fulfill({ json: { model: preferred.model || "gpt-6-astra", preferred, models: [{ Value: "no-effort", Label: "Model without effort" }], options: preferred.model === "no-effort" ? [] : [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Current: preferred.reasoning_effort || selected, Choices: [{ Value: "low", Label: "Low" }, { Value: "medium", Label: "Medium" }, { Value: "high", Label: "High" }] }] } });
+        });
+        await f.page.route("**/console/preferences", (route) => {
+            const input = route.request().postDataJSON();
+            f.calls.push({ method: "PUT", path: "/console/preferences", ...input });
+            if (rejectSave) return route.fulfill({ status: 503, body: "Preferences unavailable" });
+            preferences.set(input.conversation, { ...preferences.get(input.conversation), ...input.patch });
+            return route.fulfill({ json: { ok: true } });
+        });
+        await f.page.reload();
+        const chip = f.page.getByRole("button", { name: "思考强度", exact: true });
+        await chip.waitFor();
+        assert.equal(reads, 0, "Rendering the effort chip must not open a harness session");
+        await f.page.setViewportSize({ width: 560, height: 900 });
+        await f.page.clock.runFor(350);
+        await visibleControl(chip, "Reasoning chip in a narrow window");
+        await noHorizontalOverflow(f.page);
+        await f.page.setViewportSize({ width: 1600, height: 1000 });
+        await chip.focus(); await f.page.keyboard.press("Enter");
+        await f.page.getByText("读取可选项…", { exact: true }).waitFor();
+        discovery.release();
+        await f.page.getByRole("alert").getByText("Choices unavailable", { exact: true }).waitFor();
+        await f.page.keyboard.press("Escape");
+        rejectRead = false;
+        await chip.click();
+        await f.page.getByRole("menuitem", { name: "High", exact: true }).click();
+        await eventually(async () => (await chip.innerText()).includes("High"), "Saved effort must appear on the chip");
+        const write = f.calls.find((c) => c.path === "/console/preferences");
+        assert.deepEqual(write.patch, { reasoning_effort: "high" });
+        assert.equal(write.conversation, A); assert.equal(write.agent, "test-agent");
+        rejectSave = true;
+        await chip.click(); await f.page.getByRole("menuitem", { name: "Low", exact: true }).click();
+        await f.page.getByRole("alert").getByText("Preferences unavailable", { exact: true }).waitFor();
+        assert.ok((await chip.innerText()).includes("High"), "Rejected save must preserve the previous effort");
+        rejectSave = false; rejectRead = true;
+        await chip.click(); await f.page.getByRole("menuitem", { name: "Low", exact: true }).click();
+        await f.page.getByRole("alert").getByText("Choices unavailable", { exact: true }).waitFor();
+        rejectRead = false;
+        await chip.click(); await f.page.getByRole("menuitem", { name: "Low", exact: true }).waitFor();
+        assert.ok((await chip.innerText()).includes("Low"), "Reopening after a failed refresh must recover the saved effort");
+        await f.page.keyboard.press("Escape");
+        await f.pick("B");
+        assert.equal(await chip.innerText(), "思考强度", "A different conversation must not inherit cached choices");
+        await chip.click(); await f.page.getByRole("menuitem", { name: "Medium", exact: true }).waitFor();
+        assert.ok((await chip.innerText()).includes("Medium"));
+        await f.page.keyboard.press("Escape");
+        await f.pick("A");
+        await chip.click(); await f.page.getByRole("menuitem", { name: "Low", exact: true }).waitFor();
+        assert.ok((await chip.innerText()).includes("Low"), "Returning must reload the conversation's saved effort");
+        await f.page.keyboard.press("Escape");
+        await f.page.getByRole("button", { name: "模型", exact: true }).click();
+        await f.page.getByRole("menuitem", { name: "Model without effort", exact: true }).click();
+        await eventually(async () => await chip.innerText() === "思考强度", "Model change must discard the previous model's effort choices");
+        await chip.click();
+        await f.page.getByText("当前工具或模型不支持选择思考强度", { exact: true }).waitFor();
+        await f.page.keyboard.press("Escape");
+        empty = true;
+        await f.page.reload();
+        await chip.click();
+        await f.page.getByText("当前工具或模型不支持选择思考强度", { exact: true }).waitFor();
+        await f.page.keyboard.press("Escape");
+        await f.page.getByRole("button", { name: "模型", exact: true }).click();
+        await f.page.getByText("这个 AI 工具没有暴露模型选择", { exact: true }).waitFor();
+        await f.page.keyboard.press("Escape");
+
     },
     async "preferences-save-retry"(f) {
         let model = "model-one", reject = false;
@@ -599,7 +707,7 @@ checks["design-mobile-child"] = async (f) => {
     await f.box.fill("Draft before viewing a child");
     await f.page.getByRole("button", { name: "会话列表", exact: true }).click();
     const sheet = f.page.getByRole("dialog", { name: "会话列表", exact: true });
-    await sheet.getByRole("button", { name: /^2 在跑$/ }).click();
+    await sheet.getByRole("button", { name: "展开 Conversation A 的任务", exact: true }).click();
     await sheet.getByRole("button", { name: /#33.*Task 33/ }).click();
     await eventually(async () => await sheet.count() === 0, "Opening a child task must dismiss mobile conversation navigation");
     await f.page.getByText("Child answer", { exact: true }).waitFor();
@@ -620,13 +728,93 @@ checks["design-connection-compact"] = async (f) => {
     assert.ok(rect && rect.width > 0 && rect.height > 0 && rect.x >= 0 && rect.x + rect.width <= 1024 && rect.y + rect.height <= 900, "Connection changes must remain visible inside compact navigation");
 };
 
+checks["compact-settings-alignment"] = async (f) => {
+    await f.page.getByRole("button", { name: "收起菜单", exact: true }).click();
+    for (const width of [1600, 1024]) {
+        await f.page.setViewportSize({ width, height: 900 });
+        const sidebar = f.page.locator(".app-sidebar");
+        const settings = sidebar.getByRole("link", { name: "设置", exact: true });
+        const rail = await sidebar.boundingBox(), icon = await settings.locator("svg").boundingBox();
+        assert.ok(Math.abs(icon.x + icon.width / 2 - rail.x - rail.width / 2) <= 1, "Settings icon must share the compact navigation centerline");
+        const hit = await settings.boundingBox();
+        assert.ok(hit.width >= 36 && hit.height >= 36, "Compact settings must retain a usable hit target");
+        await settings.focus();
+        assert.equal(await settings.evaluate((el) => el === document.activeElement), true, "Settings remains keyboard reachable");
+        const expand = sidebar.getByRole("button", { name: "展开菜单", exact: true });
+        if (await expand.count()) {
+            const button = await expand.boundingBox();
+            assert.ok(button.y >= hit.y + hit.height, "Expand and settings must not compete for the same narrow row");
+        }
+    }
+};
+
+checks["relationship-execution-state"] = async (f) => {
+    const tasks = [
+        { ...task("11", A, "scratch"), execution: "idle" },
+        task("12", A, "scratch"),
+        { ...task("13", A, "scratch"), execution: "unknown" },
+        { ...task("14", A, "scratch"), lifecycle: "done", execution: "idle" },
+        { ...task("15", A, "scratch"), parent: "12", origin: "delegate", execution: "idle" },
+    ];
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.reload(); await f.box.waitFor();
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    await f.page.getByRole("tab", { name: "关系", exact: true }).click();
+    const inspector = f.page.getByRole("complementary", { name: "详情", exact: true });
+    const row = (id) => inspector.getByRole("button").filter({ has: f.page.locator(`[title="Task ${id}"]`) });
+    const expectState = async (id, label, spins) => {
+        await row(id).getByText(label, { exact: true }).waitFor();
+        assert.equal(await row(id).locator(".animate-spin").count(), spins, `Task ${id}: ${label} must ${spins ? "show" : "not show"} execution animation`);
+    };
+    await expectState("11", "空闲", 0);
+    await expectState("12", "进行中", 1);
+    await expectState("13", "状态未知", 0);
+    await expectState("14", "已完成", 0);
+    await expectState("15", "空闲", 0);
+    tasks[1].execution = "idle";
+    await f.emit({ kind: "task.updated", task_id: "12" }); await f.page.clock.runFor(350);
+    await expectState("12", "空闲", 0);
+    tasks[1].execution = "running";
+    await f.emit({ kind: "task.updated", task_id: "12" }); await f.page.clock.runFor(350);
+    await expectState("12", "进行中", 1);
+};
+
+checks["narrow-relationships-layout"] = async (f) => {
+    const node = "node-0123456789abcdef0123456789abcdef";
+    const tasks = ["11", "12", "13"].map((id) => ({ ...task(id, A, "scratch"), member: "reviewer", node, lifecycle: "done", execution: "done" }));
+    tasks.push({ ...task("14", A, "scratch"), member: "helper", node, parent: "11", origin: "delegate", lifecycle: "done", execution: "done" });
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.reload();
+    await f.box.waitFor();
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    await f.page.getByRole("tab", { name: "关系", exact: true }).click();
+    await f.page.getByRole("separator", { name: "调整详情栏宽度" }).press("Home");
+    const inspector = f.page.getByRole("complementary", { name: "详情", exact: true });
+    for (const width of [1600, 1024]) {
+        await f.page.setViewportSize({ width, height: 900 });
+        // Changing breakpoints replaces the docked inspector with a sheet.
+        // Read one settled layout rather than comparing detached row handles.
+        await eventually(async () => {
+            if (!await inspector.isVisible()) return false;
+            return inspector.evaluate((el) => {
+                const bounds = el.getBoundingClientRect();
+                const rows = [...el.querySelectorAll('[role="button"]')];
+                return rows.length === 4 && rows.every((row) => {
+                    const box = row.getBoundingClientRect();
+                    return box.height > 0 && box.height < 100 && box.left >= bounds.left && box.right <= bounds.right && row.scrollWidth <= row.clientWidth + 1;
+                });
+            });
+        }, "All relationship rows must remain compact and contained after a narrow-window transition");
+    }
+};
+
 checks["design-mobile-new-failure"] = async (f) => {
     await f.page.setViewportSize({ width: 390, height: 844 });
     await f.box.fill("Draft kept after mobile creation fails");
     f.failBinding = true;
     await f.page.getByRole("button", { name: "会话列表", exact: true }).click();
     await f.page.getByRole("dialog", { name: "会话列表", exact: true }).getByRole("button", { name: "新会话", exact: true }).click();
-    await eventually(() => f.calls.some((call) => call.input === "/project use scratch"), "Mobile project binding must begin");
+    await eventually(() => f.calls.some((call) => call.path.endsWith("/initialize") && call.project === "scratch"), "Mobile project binding must begin");
     await f.page.getByRole("status").filter({ hasText: "Project binding unavailable" }).waitFor();
     await visibleControl(f.box, "Message after mobile creation failure");
     assert.equal(await f.box.inputValue(), "Draft kept after mobile creation fails");
@@ -850,7 +1038,7 @@ checks["inspector-resize"] = async (f) => {
     await noHorizontalOverflow(f.page);
 };
 
-async function reviewFixture(f) {
+async function reviewFixture(f, { open = true } = {}) {
     const changes = [
         { path: "src/main.ts", status: "M", added: 1, deleted: 1 },
         { path: "removed.txt", status: "D", added: 0, deleted: 1 },
@@ -894,10 +1082,99 @@ async function reviewFixture(f) {
     });
     await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
     await f.page.getByRole("tab", { name: "代码", exact: true }).click();
-    await f.page.getByRole("button", { name: "查看变更", exact: true }).first().click();
-    await f.page.getByRole("dialog", { name: "代码工作区", exact: true }).waitFor();
+    if (open) {
+        const history = f.page.getByText("版本与变更", { exact: true });
+        await history.click();
+        await f.page.getByRole("button", { name: "查看变更", exact: true }).first().click();
+        await f.page.getByRole("dialog", { name: "代码工作区", exact: true }).waitFor();
+    }
     return state;
 }
+
+checks["code-all-conversation-tasks"] = async (f) => {
+    const tasks = Array.from({ length: 9 }, (_, i) => ({ ...task(String(i + 1), A, "scratch"), updated_at: `2026-09-06T10:00:0${8 - i}Z` }));
+    for (let i = 10; i < 16; i++) tasks.push({ ...task(String(i), "child-channel", "scratch"), parent: String(i - 1) });
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch")], attempts: [], landings: [] } }));
+    const readTasks = [];
+    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, (route) => {
+        const id = new URL(route.request().url()).pathname.split("/")[3]; readTasks.push(id);
+        return route.fulfill({ json: id === "15" ? [{ id: "old-output", kind: "turn", state: "bound", agent: "older-agent", base: "old-base", artifact: "old-result", started_at: at }] : [] });
+    });
+    await f.page.reload(); await f.box.waitFor();
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    await f.page.getByRole("tab", { name: "代码", exact: true }).click();
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).waitFor();
+    assert.equal(new Set(readTasks).size, 15, "Unified files include older roots and deep delegated results");
+    await f.page.getByText(/older-agent/).first().waitFor();
+};
+
+checks["code-latest-result"] = async (f) => {
+    const waiting = gate(); f.releases.push(waiting.release);
+    let readOnlyResult = false;
+    await f.page.route(/\/console\/tasks\/[^/]+\/attempts$/, async (route) => {
+        if (route.request().url().includes("/22/")) { await waiting.promise; return route.fulfill({ json: [] }); }
+        return route.fulfill({ json: [
+            ...(readOnlyResult ? [{ id: "latest-read-only", agent: "reader", kind: "turn", state: "bound", base: "latest", started_at: "2026-09-06T10:02:00Z", ended_at: "2026-09-06T10:02:30Z" }] : []),
+            { id: "new-base", agent: "new-agent", kind: "turn", state: "running", base: "new-start", started_at: "2026-09-06T10:03:00Z", ended_at: "0001-01-01T00:00:00Z" },
+            { id: "newer-start", agent: "early-finish", kind: "turn", state: "done", base: "before", artifact: "early", started_at: "2026-09-06T10:01:00Z", ended_at: "2026-09-06T10:01:30Z" },
+            { id: "latest-result", agent: "late-finish", kind: "turn", state: "done", base: "before", artifact: "latest", started_at: at, ended_at: "2026-09-06T10:02:00Z" },
+        ] });
+    });
+    const reads = [];
+    await f.page.route(/\/console\/attempts\/[^/]+\//, (route) => {
+        const url = new URL(route.request().url()), attempt = url.pathname.split("/")[3]; reads.push(attempt);
+        assert.equal(route.request().method(), "GET");
+        return route.fulfill({ json: url.pathname.endsWith("/tree") ? { attempt, commit: "latest", which: "result", dir: "", entries: [] } : { attempt, base: "before", artifact: "latest", changes: [] } });
+    });
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    await f.page.getByRole("tab", { name: "代码", exact: true }).click();
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).click();
+    const workspace = f.page.getByRole("dialog", { name: "代码工作区", exact: true });
+    await workspace.getByText("空目录", { exact: true }).waitFor();
+    assert.ok(reads.length > 0 && reads.every((id) => id === "latest-result"), "Default to the latest finished result, not a newer base or earlier completion");
+    await workspace.getByRole("button", { name: "返回", exact: true }).click();
+    readOnlyResult = true; reads.length = 0;
+    await f.page.getByRole("tab", { name: "关系", exact: true }).click();
+    await f.page.getByRole("tab", { name: "代码", exact: true }).click();
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).click();
+    await workspace.getByText("空目录", { exact: true }).waitFor();
+    assert.ok(reads.length > 0 && reads.every((id) => id === "latest-read-only"), "A newer completed read-only snapshot must supersede an older artifact");
+    await workspace.getByRole("button", { name: "返回", exact: true }).click();
+    await f.pick("B");
+    await f.page.getByText("读取执行记录…", { exact: true }).waitFor();
+    assert.equal(await f.page.getByRole("button", { name: "浏览文件", exact: true }).count(), 0, "A loading conversation must not expose another conversation's files");
+    waiting.release();
+    await f.page.getByText("还没有代码快照", { exact: true }).waitFor();
+};
+
+checks["code-unified-entry"] = async (f) => {
+    await f.box.fill("Draft while browsing outputs");
+    const state = await reviewFixture(f, { open: false });
+    const panel = f.page.getByRole("complementary", { name: "详情", exact: true });
+    const browse = panel.getByRole("button", { name: "浏览文件", exact: true });
+    assert.equal(await browse.count(), 1, "Conversation files must have one entry rather than one per execution");
+    assert.equal(await panel.getByRole("button", { name: "查看变更", exact: true }).count(), 0, "Version actions should be collapsed initially");
+    const heading = panel.getByRole("heading", { name: "会话文件", exact: true });
+    const gap = await heading.evaluate((el) => el.getBoundingClientRect().top - el.closest(".workbench-inspector").querySelector(".inspector-tabs").getBoundingClientRect().bottom);
+    assert.ok(gap >= 16, "Code content needs separation from the tab bar");
+    await browse.click();
+    const workspace = f.page.getByRole("dialog", { name: "代码工作区", exact: true });
+    await workspace.getByRole("navigation", { name: "项目文件" }).getByRole("button", { name: "README.md", exact: true }).click();
+    await workspace.getByText("Unchanged project guide.", { exact: true }).waitFor();
+    await workspace.getByRole("button", { name: /选择版本/ }).click();
+    await f.page.getByRole("option", { name: /other-agent/ }).click();
+    await workspace.getByRole("navigation", { name: "项目文件" }).getByRole("button", { name: "other.txt", exact: true }).waitFor();
+    await workspace.getByRole("button", { name: "返回", exact: true }).click();
+    const history = panel.locator("summary").filter({ hasText: "版本与变更" });
+    await history.press("Enter");
+    await panel.getByRole("button", { name: "查看变更", exact: true }).first().click();
+    await workspace.getByRole("table").waitFor();
+    await workspace.getByRole("button", { name: "返回", exact: true }).click();
+    assert.equal(await browse.count(), 1);
+    assert.equal(await f.box.inputValue(), "Draft while browsing outputs");
+    assert.equal(f.calls.length, 0, "Browsing output and history must remain read-only");
+    assert.ok(state.reads.some((r) => r.endpoint === "file"));
+};
 
 checks["review-navigation"] = async (f) => {
     await f.box.fill("Draft retained while reviewing");
@@ -974,7 +1251,7 @@ checks["review-slow-scope"] = async (f) => {
     state.failIndex = false;
     await review.getByRole("button", { name: "重试", exact: true }).click();
     await review.getByRole("table").waitFor();
-    await review.getByRole("button", { name: /选择执行/ }).click();
+    await review.getByRole("button", { name: /选择版本/ }).click();
     await f.page.getByRole("option", { name: /other-agent/ }).click();
     await review.getByRole("heading", { name: "other.txt", exact: true }).waitFor();
     await review.getByText("Other execution content", { exact: true }).first().waitFor();
@@ -1058,7 +1335,7 @@ checks["code-snapshot-states"] = async (f) => {
     const workspace = f.page.getByRole("dialog", { name: "代码工作区" });
     await workspace.getByRole("button", { name: "plain.ts", exact: true }).click();
     await workspace.getByText("// snapshot", { exact: true }).waitFor();
-    await workspace.getByRole("button", { name: /选择执行/ }).click();
+    await workspace.getByRole("button", { name: /选择版本/ }).click();
     await f.page.getByRole("option", { name: /base-agent/ }).click();
     await workspace.getByRole("button", { name: "plain.ts", exact: true }).click();
     await workspace.getByText("// start", { exact: true }).waitFor();
@@ -1576,7 +1853,7 @@ checks["fleet-version-drift"] = async (f) => {
     await eventually(async () => (await f.page.getByText("版本不同", { exact: true }).count()) === 0, "Drift should clear after a running process updates");
 };
 
-checks["native-history-import"] = async (f) => {
+async function checkNativeHistoryImport(f, autoProject = false) {
     const node = { name: "test-node", role: "node", up: true, version: "test", features: ["native_history.v1"], harnesses: [] };
     const imported = "console:import:fixture";
     const home = "/original/codex";
@@ -1594,8 +1871,14 @@ checks["native-history-import"] = async (f) => {
             return route.fulfill({ json: { entries } });
         }
         posts.push(route.request().postDataJSON());
-        if (loseReceipt) { loseReceipt = false; return route.abort("connectionreset"); }
-        f.conversations.push({ id: imported, title: "Imported conversation", project: "scratch", agent: "test-agent" });
+        if (loseReceipt) {
+            loseReceipt = false;
+            if (autoProject) {
+                state.projects.push({ ...project("imported-project"), workspaces: [{ id: "imported-work", node: "test-node", path: entries[1].workdir, kind: "canonical", agents: ["test-agent"] }] });
+            }
+            return route.abort("connectionreset");
+        }
+        f.conversations.push({ id: imported, title: "Imported conversation", project: autoProject ? "imported-project" : "scratch", agent: "test-agent" });
         f.replies[imported] = [{ id: "import-notice", conversation: imported, kind: "notice", at, text: "History imported; send your next message to continue." }];
         return route.fulfill({ json: { conversation: imported } });
     });
@@ -1612,9 +1895,12 @@ checks["native-history-import"] = async (f) => {
     await dialog.getByRole("button", { name: "查找会话", exact: true }).click();
     assert.equal(await dialog.getByRole("textbox", { name: "筛选标题、目录或会话 ID" }).inputValue(), "");
     await dialog.getByText("Unmapped session", { exact: true }).click();
-    await dialog.getByText(/没有项目匹配这个会话的目录/).waitFor();
-    assert.equal(await dialog.getByRole("button", { name: "导入并打开会话", exact: true }).isDisabled(), true);
-    await dialog.getByText("Retained context with a long title and original workspace", { exact: true }).click();
+    await dialog.getByText("导入时会自动登记原工作目录并关联项目。", { exact: true }).waitFor();
+    assert.equal(await dialog.getByRole("button", { name: "导入并打开会话", exact: true }).isEnabled(), true, "An unregistered directory must be importable without leaving the dialog");
+    if (!autoProject) {
+        await dialog.getByText("Retained context with a long title and original workspace", { exact: true }).click();
+        await dialog.getByText("将自动关联项目 scratch。", { exact: true }).waitFor();
+    }
     await f.page.screenshot({ path: path.join(output, "native-import-wide.png"), fullPage: true });
     await f.page.setViewportSize({ width: 390, height: 844 });
     await f.page.screenshot({ path: path.join(output, "native-import-narrow.png"), fullPage: true });
@@ -1624,11 +1910,52 @@ checks["native-history-import"] = async (f) => {
     await dialog.getByRole("button", { name: "导入并打开会话", exact: true }).click();
     await dialog.getByRole("alert").waitFor();
     assert.equal(posts.length, 1);
+    if (autoProject) {
+        await f.emit({ kind: "project.changed" }); await f.page.clock.runFor(350);
+        await dialog.getByText("将自动关联项目 imported-project。", { exact: true }).waitFor();
+    }
     await dialog.getByRole("button", { name: "导入并打开会话", exact: true }).click();
     await f.page.getByText("History imported; send your next message to continue.", { exact: true }).waitFor();
     assert.deepEqual(posts[0], posts[1], "Lost import receipt must retry the same command and selected history");
-    assert.equal(posts[1].source.home, home); assert.equal(posts[1].native_id, "retained-native-id");
+    assert.equal(posts[1].source.home, home); assert.equal(posts[1].native_id, autoProject ? "unmapped-native-id" : "retained-native-id");
+    assert.equal(posts[1].project, "", "The server resolves the destination from the selected history, including retries after registration");
     assert.equal(f.calls.filter((c) => c.path === "/console/send" || (c.path === "/console/queue" && c.method === "POST")).length, 0, "Import must not submit a task prompt");
+};
+
+checks["native-history-import"] = (f) => checkNativeHistoryImport(f);
+checks["native-history-auto-project"] = (f) => checkNativeHistoryImport(f, true);
+
+checks["conversation-work-disclosure"] = async (f) => {
+    const tasks = [
+        { ...task("11", A, "scratch"), execution: "idle" },
+        { ...task("12", A, "scratch"), parent: "11", execution: "idle" },
+        { ...task("22", B, "home"), execution: "idle", plan_id: "plan" },
+    ];
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node" }, nodes: [], agents: [], tasks, plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.addInitScript((id) => localStorage.setItem("steve.work.open." + id, "1"), A);
+    await f.page.reload();
+    const sidebar = f.page.locator(".conversation-sidebar");
+    const toggle = sidebar.getByRole("button", { name: "展开 Conversation A 的任务", exact: true });
+    await toggle.waitFor();
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+    assert.equal(await sidebar.getByText("1 个任务 · 1 次委派", { exact: true }).count(), 0, "Task statistics must not occupy a row by default, even with an old saved expansion");
+    await f.box.fill("Retain this draft while expanding work");
+    await toggle.focus(); await f.page.keyboard.press("Enter");
+    const collapse = sidebar.getByRole("button", { name: "收起 Conversation A 的任务", exact: true });
+    assert.equal(await collapse.getAttribute("aria-expanded"), "true");
+    await sidebar.getByText("1 个任务 · 1 次委派", { exact: true }).waitFor();
+    await sidebar.getByRole("button", { name: /#12.*Task 12/ }).waitFor();
+    assert.equal(await sidebar.getByRole("button", { name: "展开 Conversation B 的任务", exact: true }).getAttribute("aria-expanded"), "false", "Expanding a thread must not expand its neighbours");
+    await collapse.press("Space");
+    assert.equal(await sidebar.getByText("1 个任务 · 1 次委派", { exact: true }).count(), 0);
+    await f.pick("B"); await f.pick("A");
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false", "Picking a conversation must not expand its work");
+    assert.equal(await f.box.inputValue(), "Retain this draft while expanding work");
+    await toggle.click();
+    await f.page.reload();
+    await toggle.waitFor();
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false", "A fresh page starts compact");
+    assert.equal(f.calls.length, 0, "Disclosure and selection must not submit work");
 };
 
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);

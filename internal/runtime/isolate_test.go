@@ -118,6 +118,43 @@ func TestPrepareCodexLinksAuthAndIsolatesSkills(t *testing.T) {
 	}
 }
 
+func TestCodexLoginAfterRuntimePreparation(t *testing.T) {
+	source := t.TempDir()
+	// A plugin profile and an imported native session retain their own homes.
+	// All of them must see a later login without being prepared again.
+	homes := []string{source}
+	for range 3 {
+		home := t.TempDir()
+		if err := PrepareCodex(home, homes[len(homes)-1]); err != nil {
+			t.Fatal(err)
+		}
+		homes = append(homes, home)
+	}
+	for _, value := range []string{"first-login", "refreshed-login"} {
+		temp := filepath.Join(source, "new-auth")
+		if err := os.WriteFile(temp, []byte(value), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.Rename(temp, filepath.Join(source, "auth.json")); err != nil {
+			t.Fatal(err)
+		}
+		for _, home := range homes[1:] {
+			raw, err := os.ReadFile(filepath.Join(home, "auth.json"))
+			if err != nil || string(raw) != value {
+				t.Fatalf("prepared runtime did not observe login: %q, %v", raw, err)
+			}
+		}
+	}
+	if err := os.Remove(filepath.Join(source, "auth.json")); err != nil {
+		t.Fatal(err)
+	}
+	for _, home := range homes[1:] {
+		if _, err := os.ReadFile(filepath.Join(home, "auth.json")); !os.IsNotExist(err) {
+			t.Fatalf("prepared runtime retained logged-out credentials: %v", err)
+		}
+	}
+}
+
 func TestApplyEnvDoesNotOverrideExisting(t *testing.T) {
 	stateDir := t.TempDir()
 	got := ApplyEnv(nil, harness.Codex, stateDir)

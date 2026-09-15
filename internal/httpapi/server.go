@@ -111,6 +111,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("POST /console/queue/{id}/steer", s.guard(s.consoleSteer))
 	mux.HandleFunc("GET /console/replies", s.guard(s.consoleReplies))
 	mux.HandleFunc("GET /console/conversations", s.guard(s.consoleConversations))
+	mux.HandleFunc("PUT /console/conversations/{id}/initialize", s.guard(s.consoleInitializeConversation))
 	mux.HandleFunc("PUT /console/conversations/{id}", s.guard(s.consoleUpdateConversation))
 	mux.HandleFunc("POST /console/nodes", s.guard(s.consoleAddNode))
 	mux.HandleFunc("DELETE /console/nodes/{name}", s.guard(s.consoleRemoveNode))

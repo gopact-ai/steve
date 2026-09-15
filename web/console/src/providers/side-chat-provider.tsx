@@ -8,11 +8,11 @@ import type { Material, MaterialRef } from "@/lib/types";
 import { useI18n } from "./locale-provider";
 
 export interface SideChatOpen { material: Material; ref: MaterialRef; excerpt: string; originConversation?: string }
-export interface SideSession { id: string; project: string; title: string; excerpt: string; originConversation?: string; bindingCommandID: string; bindingLocale: Locale; selectedAgent?: string; agentCommandID?: string; agentReviewRequired?: boolean; agentPrepared?: boolean; bound: boolean; binding?: boolean; error?: string }
+export interface SideSession { id: string; project: string; title: string; excerpt: string; originConversation?: string; bindingLocale: Locale; selectedAgent?: string; agentCommandID?: string; agentReviewRequired?: boolean; agentPrepared?: boolean; bound: boolean; binding?: boolean; error?: string }
 interface SideChatValue { session: SideSession | null; open: (input: SideChatOpen) => Promise<void>; close: () => void; ensureBound: (session: SideSession) => Promise<void>; acceptWorkbenchAgent: (session: SideSession) => Promise<void>; report: (id: string, error: string) => void }
 const Context = createContext<SideChatValue | null>(null);
 const storageKey = "steve.side-conversations";
-function readSessions(): Record<string, SideSession> { const saved = JSON.parse(localStorage.getItem(storageKey) || "{}"); return Object.fromEntries(Object.entries(saved).filter(([project, item]) => item && typeof (item as SideSession).id === "string" && (item as SideSession).id.startsWith("console:side-") && (item as SideSession).project === project && typeof (item as SideSession).title === "string" && typeof (item as SideSession).excerpt === "string" && typeof (item as SideSession).bindingCommandID === "string").map(([project, item]) => [project, { ...(item as SideSession), binding: false, bindingLocale: (item as SideSession).bindingLocale === "zh" ? "zh" : "en" }])); }
+function readSessions(): Record<string, SideSession> { const saved = JSON.parse(localStorage.getItem(storageKey) || "{}"); return Object.fromEntries(Object.entries(saved).filter(([project, item]) => item && typeof (item as SideSession).id === "string" && (item as SideSession).id.startsWith("console:side-") && (item as SideSession).project === project && typeof (item as SideSession).title === "string" && typeof (item as SideSession).excerpt === "string").map(([project, item]) => [project, { ...(item as SideSession), binding: false, bindingLocale: (item as SideSession).bindingLocale === "zh" ? "zh" : "en" }])); }
 function initial(): Record<string, SideSession> { try { return readSessions(); } catch { return {}; } }
 const unique = () => { try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(36).slice(2)}`; } };
 
@@ -34,7 +34,7 @@ export function SideChatProvider({ children }: { children: ReactNode }) {
         if (input.ref.id !== input.material.id) throw new Error(t("sideChat.invalidSource"));
         const project = input.material.project;
         const latest = await change((latest) => {
-            const entry = (Object.hasOwn(latest, project) ? latest[project] : undefined) || { id: `console:side-${unique()}`, project, title: input.material.title, excerpt: "", originConversation: input.originConversation, bindingCommandID: `side-binding-${unique()}`, bindingLocale: locale, bound: false };
+            const entry = (Object.hasOwn(latest, project) ? latest[project] : undefined) || { id: `console:side-${unique()}`, project, title: input.material.title, excerpt: "", originConversation: input.originConversation, bindingLocale: locale, bound: false };
             return { ...latest, [project]: { ...entry, excerpt: input.excerpt.slice(0, 2000), error: undefined } };
         });
         const entry = latest[project];
@@ -54,7 +54,7 @@ export function SideChatProvider({ children }: { children: ReactNode }) {
             if (!latest || latest.id !== session.id) throw new UnsentRequestError(t("sideChat.projectChanged"));
             await patch(session.id, { binding: true, error: undefined });
             try {
-                if (!latest.bound) await bindSideConversation(session.id, session.project, latest.bindingCommandID, latest.bindingLocale);
+                if (!latest.bound) await bindSideConversation(session.id, session.project, latest.bindingLocale);
                 let { context } = await fetchContext(session.id);
                 if (context?.conversation !== session.id || context?.project?.id !== session.project || !context.project.bound) throw new UnsentRequestError(t(latest.bound ? "sideChat.projectChanged" : "sideChat.boundFailed"));
                 if (!latest.agentPrepared) {

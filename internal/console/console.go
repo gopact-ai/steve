@@ -389,12 +389,8 @@ func (s *Service) Summaries(ctx context.Context) []consoleapi.Conversation {
 		c := consoleapi.Conversation{ID: name, Count: len(list), Running: s.running[name] > 0, Title: m.Title, TitleBy: m.TitleBy, Archived: m.Archived}
 		// The name is the first thing the owner said that was not a verb:
 		// "/fleet" names nothing, "把登录页改成深色" does.
-		first := ""
 		for _, r := range list {
 			if r.Kind == "sent" {
-				if first == "" {
-					first = r.Input
-				}
 				if c.Title == "" && m.Title == "" && !strings.HasPrefix(strings.TrimSpace(r.Input), "/") {
 					c.Title = clipTitle(r.Input)
 				}
@@ -403,11 +399,8 @@ func (s *Service) Summaries(ctx context.Context) []consoleapi.Conversation {
 				c.LastAt = r.At
 			}
 		}
-		if c.Title == "" && first != "" {
-			c.Title = clipTitle(first)
-		}
-		if c.Title == "" {
-			c.Title = strings.TrimPrefix(name, Prefix)
+		if len(list) == 0 {
+			c.LastAt = m.UpdatedAt
 		}
 		out = append(out, c)
 	}

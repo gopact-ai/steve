@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/state"
 	"github.com/gopact-ai/steve/internal/view"
 )
 
@@ -75,8 +76,8 @@ func (c *Coordinator) SetPreferences(ctx context.Context, conversationID, agentI
 }
 
 // Selectors are what the agent's harness offers to choose from, read
-// from a live session — opened for the purpose when there is none —
-// with what is currently set. Model choices come first.
+// from a throwaway session with the conversation's preferences applied.
+// Model choices come first; discovery never resumes a task's session.
 type Selectors struct {
 	Model   string        `json:"model,omitempty"`
 	Models  []view.Choice `json:"models,omitempty"`
@@ -98,10 +99,24 @@ func (c *Coordinator) Selectors(parent context.Context, conversationID, agentID 
 		return Selectors{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
 	defer c.clearActive(conversationID, selected.ID)
-	runner, err := c.openForCommand(ctx, req, selected)
+	_, workspace, err := c.resolveWorkspace(ctx, req, selected)
 	if err != nil {
 		return Selectors{}, err
 	}
+	// A retained node-owned session belongs to an admitted execution.
+	// Reading choices must not resume it, inherit an import, or expose
+	// the conversation's MCP tools to an unrelated discovery session.
+	runner, err := c.open(ctx, state.Session{ConversationID: conversationID}, selected, workspace.Path, nil)
+	if err != nil {
+		return Selectors{}, UserError{Text: c.text.T(i18n.SelectorsUnavailable, selected.ID, err)}
+	}
+	defer func() {
+		cleanup, cancel := context.WithTimeout(context.WithoutCancel(ctx), 10*time.Second)
+		defer cancel()
+		if err := c.runtime.CloseSession(cleanup, placement(selected), runner.ID()); err != nil {
+			slog.Error("turn: close selector discovery session", "agent", selected.ID, "node", selected.Node, "error", err)
+		}
+	}()
 	configurable, ok := runner.(harness.Configurable)
 	if !ok {
 		return Selectors{}, nil

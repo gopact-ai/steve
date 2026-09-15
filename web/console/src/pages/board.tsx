@@ -6,7 +6,6 @@ import { Table, TableCard } from "@/components/application/table/table";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
-import { ProgressBarBase } from "@/components/base/progress-indicators/progress-indicators";
 import { Toggle } from "@/components/base/toggle/toggle";
 import { relative, when } from "@/lib/format";
 import { useFleet, useIntent } from "@/lib/fleet";
@@ -126,7 +125,6 @@ function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () 
     const { t: tr, locale } = useI18n();
     const { snap } = useFleet();
     const meta = useTaskMeta(t);
-    const pct = t.max_turns ? Math.min(100, Math.round((100 * t.turns) / t.max_turns)) : 0;
     const now = snap.agents.flatMap((a) => a.activities || []).find((a) => a.task_id === t.id);
     const steps = plan?.steps || [];
     const done = steps.filter((s) => s.state === "done").length;
@@ -159,9 +157,8 @@ function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () 
                 )}
                 {!!t.pending_results && <div className={`text-xs ${t.uncertain_results ? "text-warning-primary" : "text-tertiary"}`}>{tr("board.pendingResults", { count: t.pending_results })}{t.uncertain_results ? ` · ${tr("board.uncertainResults", { count: t.uncertain_results })}` : ""}</div>}
                 {steps.length > 0 && <div className="text-xs text-tertiary">{tr("board.stepProgress", { done, total: steps.length })}</div>}
-                <div className="flex items-center gap-2 u-meta text-quaternary">
-                    <span className="w-16">{tr("board.turnCount", { count: t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns })}</span>
-                    <ProgressBarBase value={pct} className="flex-1" progressClassName={pct > 80 ? "bg-warning-solid" : undefined} />
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1 u-meta whitespace-nowrap text-quaternary">
+                    <span>{tr("board.turnCount", { count: t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns })}</span>
                     <span>{t.elapsed}</span>
                     <span>{spend(t.tokens, locale)}</span>
                 </div>

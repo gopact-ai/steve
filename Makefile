@@ -31,9 +31,12 @@ test-console:
 	npm --prefix web/console run test:plugins
 	npm --prefix web/console run test:selection
 
-.PHONY: desktop
+.PHONY: desktop test-desktop
 desktop:
 	./scripts/build-desktop.sh
+
+test-desktop:
+	bash scripts/test-desktop.sh
 
 # The three-host suite. Machines come from e2e/fleetlab: a container per
 # node by default, or ones you name through STEVE_LAB_<NODE>_ADDR and

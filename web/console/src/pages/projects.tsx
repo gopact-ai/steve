@@ -51,7 +51,7 @@ export function ProjectsPage() {
                             <Table.Head id="repos" label={tr("projects.repositories")} className="w-[20%]" />
                             <Table.Head id="mode" label={tr("projects.settings")} className="w-[14%]" />
                             <Table.Head id="tasks" label={tr("projects.activeTasks")} className="w-[12%]" />
-                            <Table.Head id="actions" label="" className="w-[10%]" />
+                            <Table.Head id="actions" label="" className="sticky right-0 z-10 w-44 bg-secondary" />
                         </Table.Header>
                         <Table.Body items={work.map((p) => ({ ...p, key: p.id }))}>
                             {(p) => {
@@ -59,7 +59,7 @@ export function ProjectsPage() {
                                 const workspace = p.workspaces.find((w) => w.kind === "canonical") ?? p.workspaces[0];
                                 const workspaceState = p.workspaces.find((w) => w.state === "failed") ?? p.workspaces.find((w) => w.state && w.state !== "ready");
                                 return (
-                                    <Table.Row id={p.id} className="cursor-pointer">
+                                    <Table.Row id={p.id} className="cursor-pointer bg-primary">
                                         <Table.Cell>
                                             <div className="flex min-w-0 items-center gap-2">
                                                 <span className="truncate font-medium text-primary" title={p.id}>{p.id}</span>
@@ -79,7 +79,7 @@ export function ProjectsPage() {
                                         <Table.Cell><RepoChips repos={p.repos} /></Table.Cell>
                                         <Table.Cell><div className="flex flex-col gap-1 text-xs"><span className="truncate text-secondary" title={labelsFor(locale).repo[p.repo] || p.repo}>{p.repo === "inplace" ? tr("projects.editInPlace") : p.repo === "isolated" ? tr("projects.isolated") : p.repo}</span><span className="text-tertiary" title={tr("projects.levelHint")}>{levelName(p.level, locale)}</span></div></Table.Cell>
                                         <Table.Cell><span className="text-sm tabular-nums text-secondary" title={tasks.map((t) => `#${t.id} ${t.title || t.goal}`).join("\n")}>{tasks.length || "—"}</span></Table.Cell>
-                                        <Table.Cell><Button size="sm" color="link-color" onClick={() => newSession(p.id)}>{tr("projects.newConversation")}</Button></Table.Cell>
+                                        <Table.Cell className="sticky right-0 bg-inherit text-right"><Button size="sm" color="link-color" onClick={() => newSession(p.id)}>{tr("projects.newConversation")}</Button></Table.Cell>
                                     </Table.Row>
                                 );
                             }}
@@ -88,10 +88,10 @@ export function ProjectsPage() {
                 )}
             </TableCard.Root>
             {home && (
-                <div className="workbench-panel flex min-w-0 flex-wrap items-center gap-4 rounded-lg bg-primary px-4 py-4 ring-1 ring-secondary">
+                <div className="workbench-panel flex min-w-0 flex-wrap items-center gap-4 rounded-lg bg-primary px-5 py-4 ring-1 ring-secondary">
                     <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2"><span className="text-sm font-semibold text-primary">{tr("projects.personal")}</span><Mono className="text-quaternary">{home.id}</Mono><Badge type="modern" size="sm" color="gray">{levelName(home.level, locale)}</Badge></div>
-                        <div className="mt-0.5 text-xs text-tertiary">{tr("projects.personalHint")}<Mono>{home.path}</Mono></div>
+                        <div className="mt-0.5 break-words text-xs text-tertiary">{tr("projects.personalHint")}<Mono>{home.path}</Mono></div>
                     </div>
                     <Button size="sm" color="link-color" onClick={() => newSession(home.id)}>{tr("projects.newConversation")}</Button>
                 </div>

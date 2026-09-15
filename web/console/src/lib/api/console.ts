@@ -56,6 +56,13 @@ export async function requireSubmissionSupport(): Promise<SubmissionSupport> {
     return support;
 }
 export const updateConversation = (id: string, body: { title?: string; archived?: boolean }) => write<{ ok: boolean }>(`/console/conversations/${encodeURIComponent(id)}`, { method: "PUT", body });
+// The conversation ID is the initialization identity. Retrying the same
+// project is harmless; a late retry cannot switch an existing conversation.
+export async function initializeConversation(id: string, project: string, locale?: string): Promise<void> {
+    await requireSubmissionSupport();
+    const result = await request<{ ok: boolean }>(`/console/conversations/${encodeURIComponent(id)}/initialize`, { method: "PUT", body: { project }, headers: locale ? { "Accept-Language": locale } : undefined });
+    if (result?.ok !== true) throw new Error("Invalid conversation initialization acknowledgement");
+}
 export const fetchSelectors = (conversation: string, agent: string, signal?: AbortSignal) => request<Selectors>(`/console/selectors?${channelQuery(conversation)}&agent=${encodeURIComponent(agent)}`, { signal });
 export const setPreferences = (conversation: string, agent: string, patch: Record<string, string>) => write<{ ok: boolean; note?: string }>("/console/preferences", { method: "PUT", body: { conversation, agent, patch } });
 

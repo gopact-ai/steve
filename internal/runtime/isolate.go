@@ -252,9 +252,11 @@ func PrepareKimi(dest, userKimi string) error {
 
 func linkAuth(dest, userHome, name string) error {
 	src := filepath.Join(userHome, name)
-	if _, err := os.Stat(src); err != nil {
-		return nil
+	if _, err := os.Stat(src); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("inspect %s: %w", name, err)
 	}
+	// Keep the link even before the first login. Nested runtime homes must
+	// observe later login, credential replacement and logout at the source.
 	link := filepath.Join(dest, name)
 	// Drop the previous link first; not-exist is the usual answer, and any
 	// other failure resurfaces from Symlink as an existing path.

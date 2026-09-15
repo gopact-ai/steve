@@ -15,7 +15,7 @@ import type { ConversationContext, Exchange, Project, QuoteRef, Selectors, Sugge
 export type Queued = Exchange;
 
 export interface ComposerProps {
-    // Selectors are fetched when the model chip opens — that may open a
+    // Selectors are fetched when either preference chip opens — that may open a
     // session — and a choice is a preference for this thread's agent.
     onSelectors?: () => Promise<Selectors>;
     onPrefer?: (patch: Record<string, string>) => Promise<void>;
@@ -248,12 +248,17 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
     const prefer = async (patch: Record<string, string>) => {
         if (busy || !onPrefer) return;
         setBusy(true); setError("");
-        try { await onPrefer(patch); setSel(await load()); }
+        try { await onPrefer(patch); setSel(null); setSel(await load()); }
         catch (e) { setError(String(e).replace(/^Error: /, "")); }
         finally { setBusy(false); }
     };
-    const reasoning = sel?.options.find((o) => /reason|effort|think/i.test(o.ID + " " + (o.Category || "") + " " + o.Name));
-    const modelLabel = sel?.preferred?.model || agent.model || t("consoleChrome.model");
+    const reasoning = sel?.options?.find((o) => /reason|effort|think/i.test(o.ID + " " + (o.Category || "") + " " + o.Name));
+    const modelLabel = sel?.preferred?.model || sel?.model || agent.model || t("consoleChrome.model");
+    const models = sel?.models ?? [];
+    const choices = reasoning?.Choices ?? [];
+    const effort = reasoning ? sel?.preferred?.[reasoning.ID] || reasoning.Current : undefined;
+    const effortLabel = choices.find((c) => c.Value === effort)?.Label || effort;
+    const reasoningLabel = t("consoleChrome.reasoningEffort");
     return (
         <>
             <Dropdown.Root onOpenChange={(isOpen) => { if (isOpen) open(); }}>
@@ -266,30 +271,31 @@ function PreferenceChips({ agent, load, onPrefer }: { agent: NonNullable<Convers
                         <Dropdown.Menu onAction={(k) => void prefer({ model: String(k) })}>
                             <Dropdown.Section>
                                 <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">{t("consoleChrome.currentModel", { model: sel.model || t("common.unknown") })}{sel.preferred?.model ? ` · ${t("consoleChrome.preferred", { model: sel.preferred.model })}` : ""}</Dropdown.SectionHeader>
-                                {sel.models.length === 0 && <Dropdown.Item id="__none" label={t("consoleChrome.noModelSelector")} isDisabled />}
-                                {sel.models.map((c) => <Dropdown.Item key={c.Value} id={c.Value} label={c.Detail ? `${c.Label || c.Value} · ${c.Detail}` : (c.Label || c.Value)} />)}
+                                {models.length === 0 && <Dropdown.Item id="__none" label={t("consoleChrome.noModelSelector")} isDisabled />}
+                                {models.map((c) => <Dropdown.Item key={c.Value} id={c.Value} label={c.Detail ? `${c.Label || c.Value} · ${c.Detail}` : (c.Label || c.Value)} />)}
                             </Dropdown.Section>
                         </Dropdown.Menu>
                     )}
                 </Dropdown.Popover>
             </Dropdown.Root>
             {error && <span role="alert" className="text-xs text-error-primary">{error}</span>}
-            {reasoning && (
-                <Dropdown.Root>
-                    <AriaButton isDisabled={busy} aria-label={reasoning.Name} className={`${chip} text-quaternary`}>
-                        <span className="max-w-32 truncate">{sel?.preferred?.[reasoning.ID] || reasoning.Current || reasoning.Name}</span>
-                        <ChevronDown className="size-3" />
-                    </AriaButton>
-                    <Dropdown.Popover placement="top start" className="w-60">
-                        <Dropdown.Menu onAction={(k) => void prefer({ [reasoning.ID]: String(k) })}>
+            <Dropdown.Root onOpenChange={(isOpen) => { if (isOpen) open(); }}>
+                <AriaButton isDisabled={busy} aria-label={reasoningLabel} className={`${chip} text-quaternary`}>
+                    <span className="max-w-40 truncate">{effortLabel ? `${reasoningLabel} · ${effortLabel}` : reasoningLabel}</span>
+                    <ChevronDown className="size-3" />
+                </AriaButton>
+                <Dropdown.Popover placement="top start" className="w-60">
+                    {error && !sel ? <div className="px-3 py-2 text-xs text-error-primary">{error}</div> : !sel ? <div className="px-3 py-2 text-xs text-quaternary">{t("consoleChrome.loadingChoices")}</div> : (
+                        <Dropdown.Menu onAction={(k) => { if (reasoning) void prefer({ [reasoning.ID]: String(k) }); }}>
                             <Dropdown.Section>
-                                <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">{t("consoleChrome.currentOption", { name: reasoning.Name, value: reasoning.Current || t("common.unknown") })}</Dropdown.SectionHeader>
-                                {reasoning.Choices.map((c) => <Dropdown.Item key={c.Value} id={c.Value} label={c.Detail ? `${c.Label || c.Value} · ${c.Detail}` : (c.Label || c.Value)} />)}
+                                <Dropdown.SectionHeader className="px-2 py-1 u-meta text-quaternary">{t("consoleChrome.currentOption", { name: reasoningLabel, value: effortLabel || t("common.unknown") })}</Dropdown.SectionHeader>
+                                {choices.length === 0 && <Dropdown.Item id="__none" label={t("consoleChrome.noReasoningSelector")} isDisabled />}
+                                {choices.map((c) => <Dropdown.Item key={c.Value} id={c.Value} label={c.Detail ? `${c.Label || c.Value} · ${c.Detail}` : (c.Label || c.Value)} />)}
                             </Dropdown.Section>
                         </Dropdown.Menu>
-                    </Dropdown.Popover>
-                </Dropdown.Root>
-            )}
+                    )}
+                </Dropdown.Popover>
+            </Dropdown.Root>
         </>
     );
 }

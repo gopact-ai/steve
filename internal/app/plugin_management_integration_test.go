@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -13,12 +14,42 @@ import (
 
 func checkPeerPluginTurn(t *testing.T, peer *cluster.Peer, conversation, command, version string) {
 	t.Helper()
-	var result struct {
-		Reply consoleapi.Reply `json:"reply"`
+	var submitted consoleapi.Exchange
+	pluginPeerJSON(t, peer, http.MethodPost, "/console/queue", consoleapi.Submission{Conversation: conversation, Input: "plugincheck manual review", CommandID: command}, &submitted)
+	if submitted.ID == "" {
+		t.Fatal("plugin turn was not admitted")
 	}
-	pluginPeerJSON(t, peer, http.MethodPost, "/console/send", consoleapi.Submission{Conversation: conversation, Input: "plugincheck manual review", CommandID: command}, &result)
-	if result.Reply.Error != "" || !strings.Contains(result.Reply.Text, "PLUGIN_SKILL_github_"+version) || !strings.Contains(result.Reply.Text, "REVIEW_EVIDENCE/team-tools/"+version) {
-		t.Fatalf("manual review used wrong package version: %+v", result.Reply)
+	// Admission has a short HTTP deadline; a replicated agent turn can take
+	// longer. Follow the accepted exchange without submitting its input again.
+	var finished consoleapi.Exchange
+	for deadline := time.Now().Add(time.Minute); time.Now().Before(deadline); {
+		var listing struct {
+			Queue []consoleapi.Exchange `json:"queue"`
+		}
+		pluginPeerJSON(t, peer, http.MethodGet, "/console/queue?conversation="+conversation, nil, &listing)
+		for _, exchange := range listing.Queue {
+			if exchange.ID == submitted.ID && exchange.State.Terminal() {
+				finished = exchange
+				break
+			}
+		}
+		if finished.ID != "" {
+			break
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	var replies struct {
+		Replies []consoleapi.Reply `json:"replies"`
+	}
+	pluginPeerJSON(t, peer, http.MethodGet, "/console/replies?conversation="+conversation, nil, &replies)
+	var result consoleapi.Reply
+	for _, reply := range replies.Replies {
+		if reply.ID == finished.ReplyID && reply.ExchangeID == submitted.ID {
+			result = reply
+		}
+	}
+	if finished.State != consoleapi.ExchangeDone || result.ID == "" || result.Error != "" || !strings.Contains(result.Text, "PLUGIN_SKILL_github_"+version) || !strings.Contains(result.Text, "REVIEW_EVIDENCE/team-tools/"+version) {
+		t.Fatalf("manual review did not finish with the expected package version: exchange=%s reply=%+v", submitted.ID, result)
 	}
 }
 

@@ -24,13 +24,14 @@ function TaskNode({ t, tasks, plans, depth, liveSteps, seen, onSelect }: { t: Ta
     seen.add(t.id);
     const plan = plans.find((p) => p.task_id === t.id);
     const children = tasks.filter((c) => c.parent === t.id);
-    const running = t.execution === "running" || t.lifecycle === "running";
+    // An open task can be idle between turns, even with a retained session.
+    const running = t.execution === "running";
     return (
         <div className="flex flex-col gap-1.5">
             <div className={`flex min-w-0 flex-col gap-0.5 rounded-md ${onSelect ? "-mx-1.5 cursor-pointer px-1.5 py-0.5 hover:bg-secondary" : ""}`} onClick={onSelect ? () => onSelect(t) : undefined} role={onSelect ? "button" : undefined} title={onSelect ? tr("tasks.details") : undefined}>
-                <div className="flex min-w-0 items-center gap-2 text-sm">
+                <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-sm">
                     <Who agent={t.member || "steve"} node={t.member ? t.node : undefined} running={running} />
-                    <span className="text-xs text-tertiary">{kindOf(t, tr)}</span>
+                    <span className="whitespace-nowrap text-xs text-tertiary">{kindOf(t, tr)}</span>
                     <span className="ml-auto flex shrink-0 items-center gap-1.5">
                         <StateBadge state={taskState(t)} />
                         <Mono className="text-quaternary">#{t.id}</Mono>
@@ -77,10 +78,12 @@ function kindOf(t: Task, tr: Translator): string {
 function Who({ agent, node, running, small }: { agent?: string; node?: string; running?: boolean; small?: boolean }) {
     const { t: tr } = useI18n();
     return (
-        <span className={`inline-flex shrink-0 items-center gap-1 rounded-md bg-secondary px-1.5 ${small ? "py-0 u-meta" : "py-0.5 text-xs"} font-medium text-primary`}>
-            {running && <Loading01 className="size-3 animate-spin text-fg-brand-primary" />}
-            {agent || tr("tasks.unplaced")}
-            {node && <span className="font-normal text-tertiary">@ {node}</span>}
+        <span className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-secondary px-1.5 ${small ? "py-0 u-meta" : "py-0.5 text-xs"} font-medium text-primary`}>
+            {running && <Loading01 aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none text-fg-brand-primary" />}
+            <span className="truncate" title={node ? `${agent || tr("tasks.unplaced")} @ ${node}` : agent}>
+                {agent || tr("tasks.unplaced")}
+                {node && <span className="font-normal text-tertiary"> @ {node}</span>}
+            </span>
         </span>
     );
 }

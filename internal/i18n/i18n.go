@@ -238,6 +238,7 @@ const (
 	CardQuestionHint       Key = "card_question_hint"
 	ModelCurrent           Key = "model_current"
 	ModelUnsupported       Key = "model_unsupported"
+	SelectorsUnavailable   Key = "selectors_unavailable"
 	ModelUnknown           Key = "model_unknown"
 	ModelSwitched          Key = "model_switched"
 	ModelAmbiguous         Key = "model_ambiguous"

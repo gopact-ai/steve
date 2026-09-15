@@ -33,6 +33,11 @@ type Selectors struct {
 	Preferred map[string]string `json:"preferred,omitempty"`
 }
 
+// ConversationInitializer creates a project-bound conversation without a message.
+type ConversationInitializer interface {
+	InitializeConversation(ctx context.Context, conversation, project string) error
+}
+
 type Console interface {
 	Send(ctx context.Context, conversation, input string) (Reply, error)
 	// SendCommand is Send with an idempotency key from the page.
@@ -248,8 +253,8 @@ type Admin interface {
 	AttemptDiff(ctx context.Context, attempt, path string) (FileDiff, error)
 	// TaskAttempts are a task's attempts from the ledger, newest first.
 	TaskAttempts(ctx context.Context, task string) ([]AttemptView, error)
-	// Selectors reads what an agent offers in a thread (opening a session
-	// when none is live); SetPreferences records choices and rolls the
+	// Selectors reads what an agent offers using a temporary discovery
+	// session; SetPreferences records choices and rolls the conversation's
 	// session over so the next turn honours them.
 	Selectors(ctx context.Context, conversation, agent string) (Selectors, error)
 	SetPreferences(ctx context.Context, conversation, agent string, patch map[string]string) error
@@ -586,7 +591,9 @@ type HomeFile struct {
 // its first line, placed by its project and agent, and marked while a
 // line of it runs.
 type Conversation struct {
-	ID      string `json:"id"`
+	ID string `json:"id"`
+	// Title stays empty until non-command input or an explicit name supplies it.
+	// Clients display a localized "New conversation" without persisting that placeholder.
 	Title   string `json:"title"`
 	Project string `json:"project,omitempty"`
 	Agent   string `json:"agent,omitempty"`

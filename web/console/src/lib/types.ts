@@ -133,8 +133,8 @@ export interface Exchange {
 }
 export interface QuoteRef { conversation: string; reply_id: string; title?: string; excerpt?: string }
 export interface Choice { Value: string; Label: string; Detail?: string }
-export interface SelectorOption { ID: string; Name: string; Category?: string; Current?: string; Choices: Choice[] }
-export interface Selectors { model?: string; models: Choice[]; options: SelectorOption[]; preferred?: Record<string, string> }
+export interface SelectorOption { ID: string; Name: string; Category?: string; Current?: string; Choices?: Choice[] | null }
+export interface Selectors { model?: string; models?: Choice[]; options?: SelectorOption[]; preferred?: Record<string, string> }
 export interface StepProcess extends StepInfo, Progress { id: string }
 export interface Process { reasoning?: string; tools?: ToolCall[]; timeline?: Span[]; steps?: StepProcess[] }
 export interface Event {

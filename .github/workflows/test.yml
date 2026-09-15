@@ -34,6 +34,13 @@ jobs:
         working-directory: web/console
       - run: npm run test:streaming && npm run test:ui && npm run test:task-completion && npm run test:architecture && npm run test:settings && npm run test:materials && npm run test:questions && npm run test:desktop && npm run test:ssh && npm run test:coordination && npm run test:node-agents && npm run test:plugins && npm run test:selection
         working-directory: web/console
+  desktop:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test-desktop
+      - name: Package app icon
+        run: bash scripts/build-app-icon.sh desktop/macos/Assets/AppIcon.png "$RUNNER_TEMP/AppIcon.icns"
   fleet:
     runs-on: ubuntu-latest
     steps:
