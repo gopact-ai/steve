@@ -155,7 +155,7 @@ func (a *Service) SetProjectHome(ctx context.Context, projectID, path string) er
 		if !exists {
 			return fmt.Errorf("没有叫 %q 的项目", projectID)
 		}
-		if item.Home.Node != "" {
+		if !candidate.LocalHomeNode(item.Home.Node) {
 			return fmt.Errorf("项目 %s 在机器 %s 上，目录要在那台机器上改", projectID, item.Home.Node)
 		}
 		if item.Home.Path == path {

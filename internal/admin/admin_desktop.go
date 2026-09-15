@@ -74,8 +74,9 @@ func (a *Service) DesktopWorkspace(ctx context.Context, req consoleapi.DesktopWo
 	ConfigMu.RLock()
 	id := config.DefaultProjectID(a.Cfg.Gateway.DefaultProject, a.Cfg.Projects)
 	home := a.Cfg.Projects[id].Home
+	local := a.Cfg.LocalHomeNode(home.Node)
 	ConfigMu.RUnlock()
-	if err := desktop.CheckWorkspaceProject(id, home.Node); err != nil {
+	if err := desktop.CheckWorkspaceProject(id, local, home.Node); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
 	path, err := desktop.PrepareWorkspace(req.Path, filepath.Dir(a.Path))

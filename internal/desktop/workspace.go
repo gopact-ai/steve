@@ -27,12 +27,13 @@ func refuse(format string, args ...any) error {
 
 // CheckWorkspaceProject confirms there is a default project and that it
 // lives on this computer; the workspace page only ever moves a local one.
-func CheckWorkspaceProject(id, node string) error {
+// local tells whether the project's home node is this machine.
+func CheckWorkspaceProject(id string, local bool, node string) error {
 	if id == "" {
 		return refuse("没有默认项目，无法设置工作目录")
 	}
-	if node != "" {
-		return refuse("默认项目在机器 %s 上，工作目录要在那台机器上设置", node)
+	if !local {
+		return refuse("默认项目「%s」的目录在另一台机器（%s）上，不能从这台电脑修改。请在那台机器上设置，或先在「项目」里把默认项目换成本机的项目。", id, node)
 	}
 	return nil
 }
