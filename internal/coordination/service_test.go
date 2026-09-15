@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -263,5 +264,56 @@ func TestAutomaticFailoverUsesQuorumAndEligibleCaughtUpNode(t *testing.T) {
 	last := state.Audit[len(state.Audit)-1]
 	if last.Kind != "coordinator_transferred" || last.From != "node-1" || last.To != "node-2" || last.Actor != "system" {
 		t.Fatalf("missing automatic transfer audit: %+v", last)
+	}
+}
+
+func TestRenameMemberReplicatesDisplayName(t *testing.T) {
+	c := newTestCluster(t, 3)
+	n := c.leader()
+	state, err := n.ReadState(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := n.Rename(context.Background(), RenameRequest{ID: "rename-1", Actor: "user", ExpectedRevision: state.Revision, NodeID: "node-2", Name: "  GPU 工作站  "}); err != nil {
+		t.Fatal(err)
+	}
+	renamed, err := n.ReadState(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if renamed.Members["node-2"].Name != "GPU 工作站" {
+		t.Fatalf("rename did not trim and store the display name: %+v", renamed.Members["node-2"])
+	}
+	if renamed.Revision != state.Revision+1 {
+		t.Fatalf("rename must advance the membership revision: %d -> %d", state.Revision, renamed.Revision)
+	}
+	last := renamed.Audit[len(renamed.Audit)-1]
+	if last.Kind != "member_renamed" || last.To != "node-2" || !strings.HasSuffix(last.Reason, "-> GPU 工作站") {
+		t.Fatalf("rename audit record: %+v", last)
+	}
+	// The same command ID replays as the recorded receipt without a second revision bump.
+	if _, err := n.Rename(context.Background(), RenameRequest{ID: "rename-1", Actor: "user", ExpectedRevision: state.Revision, NodeID: "node-2", Name: "  GPU 工作站  "}); err != nil {
+		t.Fatal(err)
+	}
+	eventually(t, time.Second, func() bool { return c.nodes["node-3"].Status().State.Members["node-2"].Name == "GPU 工作站" })
+	if _, err := n.Rename(context.Background(), RenameRequest{ID: "rename-stale", Actor: "user", ExpectedRevision: state.Revision, NodeID: "node-2", Name: "stale"}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale revision must be rejected as a conflict: %v", err)
+	}
+	for name, request := range map[string]RenameRequest{
+		"unknown member": {ID: "rename-unknown", Actor: "user", ExpectedRevision: renamed.Revision, NodeID: "node-9", Name: "ghost"},
+		"blank name":     {ID: "rename-blank", Actor: "user", ExpectedRevision: renamed.Revision, NodeID: "node-2", Name: " \t"},
+		"control chars":  {ID: "rename-control", Actor: "user", ExpectedRevision: renamed.Revision, NodeID: "node-2", Name: "bad\nname"},
+		"too long":       {ID: "rename-long", Actor: "user", ExpectedRevision: renamed.Revision, NodeID: "node-2", Name: strings.Repeat("长", 65)},
+	} {
+		if _, err := n.Rename(context.Background(), request); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("%s must be rejected as invalid: %v", name, err)
+		}
+	}
+	final, err := n.ReadState(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if final.Revision != renamed.Revision || final.Members["node-2"].Name != "GPU 工作站" {
+		t.Fatalf("rejected renames must leave state untouched: %+v", final.Members["node-2"])
 	}
 }

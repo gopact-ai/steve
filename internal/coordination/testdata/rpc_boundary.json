@@ -294,6 +294,24 @@
     ]
   },
   {
+    "Name": "rename-decode",
+    "Status": 400,
+    "Header": {
+      "Cache-Control": [
+        "no-store"
+      ],
+      "Content-Type": [
+        "application/json"
+      ]
+    },
+    "Body": "{\"code\":\"invalid\",\"message\":\"coordination: invalid request: invalid command body\"}\n",
+    "Read": true,
+    "Closed": true,
+    "Authorized": [
+      "peer:rename"
+    ]
+  },
+  {
     "Name": "join-decode",
     "Status": 400,
     "Header": {

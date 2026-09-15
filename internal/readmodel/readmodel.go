@@ -190,7 +190,10 @@ const (
 
 type Node struct {
 	Name string `json:"name"`
-	Role string `json:"role"`
+	// DisplayName is what people call this machine; Name stays the
+	// identity that tasks, projects and agents refer to.
+	DisplayName string `json:"display_name,omitempty"`
+	Role        string `json:"role"`
 	// Version is the steve build the machine runs.
 	Version string `json:"version,omitempty"`
 	// Addr is where the hub dials the node; Host and IPs are what the
@@ -376,8 +379,11 @@ type Sources struct {
 	Hub    Hub
 	Roster *roster.Roster
 	Nodes  NodeSource
-	Tasks  *task.Store
-	Plans  PlanSource
+	// NodeNames maps node identities to display names when the hub is a
+	// cluster member; nil when machines have no name besides their identity.
+	NodeNames func() map[string]string
+	Tasks     *task.Store
+	Plans     PlanSource
 	// Ledger is where attempts and landings are read from.
 	Ledger LedgerSource
 	// HubAdvert describes the hub machine now, not at startup: a harness

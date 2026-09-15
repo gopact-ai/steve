@@ -79,7 +79,12 @@ func (b *snapshotBuilder) fleet() {
 			}
 		}
 	}
+	var names map[string]string
+	if m.src.NodeNames != nil {
+		names = m.src.NodeNames()
+	}
 	for i := range snap.Nodes {
+		snap.Nodes[i].DisplayName = names[snap.Nodes[i].Name]
 		m.observedModels(&snap.Nodes[i])
 	}
 	// Absence is a fact too: every list is present, empty or not, so a

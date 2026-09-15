@@ -33,6 +33,7 @@ import { MaterialPreview } from "@/components/steve/material-shelf";
 import { QuestionPanel } from "@/components/steve/question-panel";
 import type { MaterialRef } from "@/lib/types";
 import { HTTPError, isRejectedRequest } from "@/lib/http";
+import { useNodeLabel } from "@/lib/node-name";
 import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, StepProcess, Exchange } from "@/lib/types";
 
 // ConsolePage is composition: it owns the conversation, the transcript,
@@ -40,6 +41,7 @@ import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, 
 // columns from components/steve. Nothing here draws.
 export function ConsolePage() {
     const { snap, refresh, live: connection, hubUpdated } = useFleet();
+    const nodeLabelOf = useNodeLabel();
     const consoleEvents = useConsoleEvents();
     const { t, locale } = useI18n();
     const materials = useMaterial();
@@ -497,7 +499,7 @@ export function ConsolePage() {
                     <button type="button" className="workbench-icon-button" aria-label={t("console.sessions")}  title={t("console.sessions")}  onClick={() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(true)}><LayoutLeft aria-hidden="true" /></button>
                     <div className="console-heading">
                     <h1 title={title}>{title}</h1>
-                    {context?.project && <div className="console-location" title={context.agent?.place ? placeLabel(context.agent.place, locale) : context.project.path}>{context.project.id} · {context.agent?.place ? placeLabel(context.agent.place, locale) : context.project.node}</div>}
+                    {context?.project && <div className="console-location" title={context.agent?.place ? placeLabel(context.agent.place, locale) : context.project.path}>{context.project.id} · {context.agent?.place ? placeLabel(context.agent.place, locale) : nodeLabelOf(context.project.node)}</div>}
                     </div>
                     {current?.archived && (
                         <span className="flex items-center gap-1.5">

@@ -164,6 +164,11 @@ func (c *Client) SetEligibility(ctx context.Context, request EligibilityRequest)
 	err := c.route(ctx, "eligibility", request, &result)
 	return result, err
 }
+func (c *Client) Rename(ctx context.Context, request RenameRequest) (Result, error) {
+	var result Result
+	err := c.route(ctx, "rename", request, &result)
+	return result, err
+}
 func (c *Client) Join(ctx context.Context, request JoinRequest) (Result, error) {
 	var result Result
 	err := c.route(ctx, "join", request, &result)

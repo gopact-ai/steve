@@ -3,6 +3,7 @@ import { Badge } from "@/components/base/badges/badges";
 import type { BadgeColors } from "@/components/base/badges/badge-types";
 import type { FC } from "react";
 import { useFleet } from "@/lib/fleet";
+import { nodeLabelIn } from "@/lib/node-name";
 import { useI18n } from "@/providers/locale-provider";
 import type { MessageKey } from "@/lib/i18n";
 
@@ -81,7 +82,8 @@ export const StateBadge = ({ state, size = "sm" }: { state: string; size?: "sm" 
 // The model's empty node is the hub's own machine; name it, never the role.
 export const Where = ({ node }: { node?: string }) => {
     const { snap } = useFleet();
-    return <span className="font-mono text-xs text-tertiary">{node || snap.hub.node || "—"}</span>;
+    const id = node || snap.hub.node;
+    return <span className="font-mono text-xs text-tertiary" title={id || undefined}>{id ? nodeLabelIn(snap.nodes, id) : "—"}</span>;
 };
 
 export const Mono = ({ children, className }: { children: ReactNode; className?: string }) => (

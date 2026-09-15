@@ -55,7 +55,7 @@ func TestRPCRequestBoundaryGolden(t *testing.T) {
 		{name: "writer-spoof", action: "writer", method: "POST", body: `{"caller_node_id":"other"}`},
 		{name: "app-spoof", action: "app", method: "POST", body: `{"caller_node_id":"other"}`},
 	}
-	for _, action := range []string{"transfer", "policy", "eligibility", "join", "remove", "address"} {
+	for _, action := range []string{"transfer", "policy", "eligibility", "rename", "join", "remove", "address"} {
 		cases = append(cases, struct {
 			name, action, method, body, owner string
 			plain                             bool

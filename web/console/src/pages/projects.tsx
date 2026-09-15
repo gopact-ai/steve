@@ -12,6 +12,7 @@ import { Select } from "@/components/base/select/select";
 import { addProject, addWorkspace, removeProject, removeWorkspace } from "@/lib/api/projects";
 import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
+import { nodeLabelIn, useNodeLabel } from "@/lib/node-name";
 import type { Project, Repo, Workspace } from "@/lib/types";
 import { kindWord, workspaceState as workspaceStateLabel, levelName } from "@/lib/workspaces";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
@@ -28,6 +29,7 @@ import { Mono, Nothing, StateBadge, taskState } from "@/components/steve/ui";
 export function ProjectsPage() {
     const { t: tr, locale } = useI18n();
     const { snap, refresh } = useFleet();
+    const nodeLabelOf = useNodeLabel();
     const navigate = useNavigate();
     const [opened, setOpened] = useState<string | null>(null);
     const [adding, setAdding] = useState(false);
@@ -67,9 +69,9 @@ export function ProjectsPage() {
                                             </div>
                                         </Table.Cell>
                                         <Table.Cell>
-                                            <div className="flex min-w-0 flex-col gap-1" title={p.workspaces.map((w) => `${kindWord(w.kind, locale)} · ${w.node}\n${w.path}`).join("\n\n")}>
+                                            <div className="flex min-w-0 flex-col gap-1" title={p.workspaces.map((w) => `${kindWord(w.kind, locale)} · ${nodeLabelOf(w.node)}\n${w.path}`).join("\n\n")}>
                                                 <div className="flex min-w-0 items-center gap-2">
-                                                    <span className="truncate text-xs text-primary">{workspace?.node || p.node}</span>
+                                                    <span className="truncate text-xs text-primary" title={workspace?.node || p.node}>{nodeLabelOf(workspace?.node || p.node)}</span>
                                                     {p.workspaces.length > 1 && <span className="shrink-0 text-xs text-tertiary">+{p.workspaces.length - 1}</span>}
                                                     {workspaceState?.state && <span className={`shrink-0 u-meta ${workspaceState.state === "failed" ? "text-error-primary" : "text-tertiary"}`}>{workspaceStateLabel(workspaceState.state, locale)}</span>}
                                                 </div>
@@ -106,6 +108,7 @@ export function ProjectsPage() {
 // about it, and who can work there.
 function WorkspaceCard({ w, project, onChanged }: { w: Workspace; project: string; onChanged: () => void }) {
     const { t: tr, locale } = useI18n();
+    const nodeLabelOf = useNodeLabel();
     const [removing, setRemoving] = useState(false);
     const [error, setError] = useState("");
     const missing = w.repos?.length === 1 && w.repos[0].missing;
@@ -117,7 +120,7 @@ function WorkspaceCard({ w, project, onChanged }: { w: Workspace; project: strin
         <li className="flex min-w-0 flex-col gap-2 rounded-lg bg-secondary/40 px-3 py-3">
             <div className="flex min-w-0 flex-wrap items-center gap-2">
                 <Badge type="pill-color" size="sm" color={w.kind === "canonical" ? "brand" : "gray"}>{kindWord(w.kind, locale)}</Badge>
-                <span className="text-sm font-medium text-primary">{w.node}</span>
+                <span className="text-sm font-medium text-primary" title={w.node}>{nodeLabelOf(w.node)}</span>
                 <Mono className="truncate text-tertiary" >{w.path}</Mono>
                 {w.state === "provisioning" && <span className="flex items-center gap-1 u-meta"><Loading01 className="size-3 animate-spin text-fg-brand-primary" />{tr("projects.cloning")}</span>}
                 {w.state === "failed" && <Badge type="pill-color" size="sm" color="error">{tr("projects.cloneFailed")}</Badge>}
@@ -181,6 +184,7 @@ function RepoChips({ repos }: { repos?: Repo[] }) {
 function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () => void; onNewSession: () => void }) {
     const { t: tr, locale } = useI18n();
     const { snap, refresh } = useFleet();
+    const nodeLabelOf = useNodeLabel();
     const [removing, setRemoving] = useState(false);
     const [error, setError] = useState("");
     const [addingWorkspace, setAddingWorkspace] = useState(false);
@@ -193,7 +197,7 @@ function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () =
     const grants = snap.facts.grants.filter((g) => g.project === p.id);
     const stepAgents = snap.agents.filter((a) => a.eligible && (p.repo === "isolated" || a.node === p.node)).map((a) => a.id);
     return (
-        <Drawer width={600} title={<><span className="text-base font-semibold text-primary">{p.id}</span>{p.default && <Badge type="pill-color" size="sm" color="brand">{tr("projects.defaultProject")}</Badge>}<Badge type="modern" size="sm" color="gray">{levelName(p.level, locale)}</Badge></>} subtitle={<><div className="mt-0.5 text-xs text-tertiary">{p.workspaces.length === 1 ? <>{tr("projects.primaryOnly", { node: p.node })}</> : <>{tr("projects.workspaceSummary", { count: p.workspaces.length, node: p.node, copies: p.workspaces.filter((w) => w.kind !== "canonical").map((w) => w.node).join(", ") })}</>}</div></>} actions={<><Button size="sm" color="primary" onClick={onNewSession}>{tr("projects.newConversation")}</Button></>} onClose={onClose}>
+        <Drawer width={600} title={<><span className="text-base font-semibold text-primary">{p.id}</span>{p.default && <Badge type="pill-color" size="sm" color="brand">{tr("projects.defaultProject")}</Badge>}<Badge type="modern" size="sm" color="gray">{levelName(p.level, locale)}</Badge></>} subtitle={<><div className="mt-0.5 text-xs text-tertiary">{p.workspaces.length === 1 ? <>{tr("projects.primaryOnly", { node: nodeLabelOf(p.node) })}</> : <>{tr("projects.workspaceSummary", { count: p.workspaces.length, node: nodeLabelOf(p.node), copies: p.workspaces.filter((w) => w.kind !== "canonical").map((w) => nodeLabelOf(w.node)).join(", ") })}</>}</div></>} actions={<><Button size="sm" color="primary" onClick={onNewSession}>{tr("projects.newConversation")}</Button></>} onClose={onClose}>
                 <DrawerSection title={tr("projects.workspaces")} aside={<Button size="sm" color="link-color" iconLeading={Plus} onClick={() => setAddingWorkspace(true)}>{tr("projects.addCopy")}</Button>}>
                     {addingWorkspace && <AddWorkspace p={p} onClose={() => setAddingWorkspace(false)} onDone={() => refresh()} />}
                     <ul className="flex flex-col gap-3">
@@ -241,7 +245,7 @@ function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void;
     const { snap } = useFleet();
     const home = p.workspaces.find((w) => w.kind === "canonical");
     const taken = new Set(p.workspaces.map((w) => w.node));
-    const machines = [{ id: snap.hub.node, label: `${snap.hub.node}（${tr("connection.coordinator")}）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.name }))].filter((m) => !taken.has(m.id));
+    const machines = [{ id: snap.hub.node, label: `${nodeLabelIn(snap.nodes, snap.hub.node)}（${tr("connection.coordinator")}）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.display_name ? `${n.display_name} · ${n.name}` : n.name }))].filter((m) => !taken.has(m.id));
     const [node, setNode] = useState(machines[0]?.id || "");
     const [path, setPath] = useState("");
     const [origin, setOrigin] = useState<"adopt" | "clone">("adopt");
@@ -260,7 +264,7 @@ function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void;
                         <div className="flex items-start gap-3">
                             <div className="min-w-0 flex-1">
                                 <div className="text-base font-semibold text-primary">{tr("projects.addWorkspaceFor", { project: p.id })}</div>
-                                <div className="mt-0.5 text-xs text-tertiary">{tr("projects.primaryHint", { node: home?.node || "—" })}</div>
+                                <div className="mt-0.5 text-xs text-tertiary">{tr("projects.primaryHint", { node: home ? nodeLabelIn(snap.nodes, home.node) : "—" })}</div>
                             </div>
                             <Button size="sm" color="tertiary" iconLeading={X} onClick={onClose} aria-label={tr("common.close")} />
                         </div>
@@ -308,7 +312,7 @@ function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => vo
             onDone();
         } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
     }
-    const machines = [{ id: snap.hub.node, label: `${snap.hub.node}（${tr("connection.coordinator")}）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.name }))];
+    const machines = [{ id: snap.hub.node, label: `${nodeLabelIn(snap.nodes, snap.hub.node)}（${tr("connection.coordinator")}）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.display_name ? `${n.display_name} · ${n.name}` : n.name }))];
     return (
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
             <Modal className="max-w-xl">

@@ -24,6 +24,7 @@ type command struct {
 	Transfer                   TransferRequest      `json:"transfer,omitempty"`
 	Policy                     PolicyRequest        `json:"policy,omitempty"`
 	Eligibility                EligibilityRequest   `json:"eligibility,omitempty"`
+	Rename                     RenameRequest        `json:"rename,omitempty"`
 	Remove                     RemoveRequest        `json:"remove,omitempty"`
 	Address                    MemberAddressRequest `json:"address,omitempty"`
 	App                        AppCommand           `json:"app,omitempty"`
@@ -81,6 +82,20 @@ func (m *machine) read() State {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return cloneState(m.state)
+}
+
+// memberNames copies only the display names, so callers that render a
+// snapshot do not clone the audit log on every read.
+func (m *machine) memberNames() map[string]string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	names := make(map[string]string, len(m.state.Members))
+	for id, member := range m.state.Members {
+		if member.Name != "" {
+			names[id] = member.Name
+		}
+	}
+	return names
 }
 
 func cloneState(s State) State {
@@ -175,6 +190,8 @@ func (m *machine) applyCommand(c command, index uint64, r *receipt) (*AuditRecor
 		return applyPolicy(s, c, r), nil
 	case "eligibility":
 		return applyEligibility(s, c, r), nil
+	case "rename":
+		return applyRename(s, c, r), nil
 	case "transfer":
 		return applyTransfer(s, c, r), nil
 	case "writer":
@@ -404,6 +421,27 @@ func applyEligibility(s *State, c command, r *receipt) *AuditRecord {
 		event.Kind = "automatic_eligibility_granted"
 	}
 	return event
+}
+
+func applyRename(s *State, c command, r *receipt) *AuditRecord {
+	if c.Rename.ExpectedRevision != s.Revision {
+		r.reject("conflict", "membership revision changed")
+		return nil
+	}
+	member, ok := s.Members[c.Rename.NodeID]
+	if !ok {
+		r.reject("invalid", "node is not a member")
+		return nil
+	}
+	name, err := MemberName(c.Rename.Name)
+	if err != nil {
+		r.reject("invalid", err.Error())
+		return nil
+	}
+	previous := member.Name
+	member.Name = name
+	s.Members[member.NodeID] = member
+	return &AuditRecord{Kind: "member_renamed", To: member.NodeID, Reason: fmt.Sprintf("%s -> %s", previous, name)}
 }
 
 func applyTransfer(s *State, c command, r *receipt) *AuditRecord {

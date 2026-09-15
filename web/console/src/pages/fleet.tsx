@@ -15,6 +15,9 @@ import { TextArea } from "@/components/base/textarea/textarea";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { removeNode } from "@/lib/api/fleet";
+import { executeCoordination, fetchCoordination } from "@/lib/api/coordination";
+import { HTTPError } from "@/lib/http";
+import { nodeLabel } from "@/lib/node-name";
 import { number, relative, when } from "@/lib/format";
 import { addAgent, addNode, removeAgent, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
@@ -285,15 +288,48 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
     const [editing, setEditing] = useState(false);
     const [removing, setRemoving] = useState(false);
     const [removeError, setRemoveError] = useState("");
+    const [renaming, setRenaming] = useState(false);
+    const [nameDraft, setNameDraft] = useState("");
+    const [nameBusy, setNameBusy] = useState(false);
+    const [nameError, setNameError] = useState("");
+    // Renaming changes the coordination display name only; the node ID
+    // is the machine's identity and stays as it is. The revision is read
+    // right before the write so a concurrent membership change is refused.
+    async function rename() {
+        const name = nameDraft.trim();
+        if (!name) { setNameError(tr("fleet.displayNameRequired")); return; }
+        setNameBusy(true); setNameError("");
+        try {
+            const view = await fetchCoordination();
+            if (!view.enabled) throw new Error(tr("fleet.renameNeedsCluster"));
+            await executeCoordination({ kind: "name", body: { command_id: `name-${crypto.randomUUID()}`, expected_revision: view.revision, node_id: n.name, name } });
+            setRenaming(false); onChanged();
+        } catch (e) {
+            setNameError(e instanceof HTTPError && e.status === 409 ? tr("fleet.renameConflict") : String(e).replace(/^Error: /, ""));
+        } finally { setNameBusy(false); }
+    }
     async function remove() {
         setRemoveError("");
         try { await removeNode(n.name); onChanged(); onClose(); } catch (e) { setRemoveError(String(e).replace(/^Error: /, "")); setRemoving(false); }
     }
     return (
-        <Drawer title={<><span className="text-base font-semibold text-primary">{n.name}</span>
+        <Drawer title={<><span className="text-base font-semibold text-primary">{nodeLabel(n)}</span>
                         <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role === "hub" ? tr("connection.coordinator") : tr("fleet.machine")}</Badge>
-                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{!n.up && n.last_error && <div className="mt-1 text-xs text-error-primary">{n.last_error}</div>}</>} actions={<>{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>{tr("fleet.editConfiguration")}</Button>}</>} onClose={onClose}>
+                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{n.display_name && <div className="mt-0.5"><Mono className="text-tertiary">{n.name}</Mono></div>}{!n.up && n.last_error && <div className="mt-1 text-xs text-error-primary">{n.last_error}</div>}</>} actions={<>{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>{tr("fleet.editConfiguration")}</Button>}</>} onClose={onClose}>
+                {renaming ? (
+                    <form className="flex flex-col gap-2 rounded-lg border border-secondary p-3" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
+                        <Input label={tr("fleet.displayName")} hint={tr("fleet.displayNameHint")} value={nameDraft} onChange={setNameDraft} maxLength={64} isDisabled={nameBusy} autoFocus />
+                        {nameError && <div role="alert" className="text-xs text-error-primary">{nameError}</div>}
+                        <div className="flex justify-end gap-2">
+                            <Button size="sm" color="secondary" isDisabled={nameBusy} onClick={() => { setRenaming(false); setNameError(""); }}>{tr("common.cancel")}</Button>
+                            <Button size="sm" color="primary" type="submit" isLoading={nameBusy}>{tr("fleet.saveName")}</Button>
+                        </div>
+                    </form>
+                ) : null}
                 <KeyValue dense rows={[
+                    ...(n.display_name ? [{ k: tr("fleet.displayName"), v: <div className="flex min-w-0 flex-wrap items-center gap-2"><span className="truncate">{n.display_name}</span>{!renaming && <Button size="sm" color="link-color" onClick={() => { setNameDraft(n.display_name || ""); setNameError(""); setRenaming(true); }}>{tr("fleet.rename")}</Button>}</div>, hint: tr("fleet.displayNameHint") }] : []),
+                    { k: tr("fleet.nodeID"), v: <Mono>{n.name}</Mono>, hint: tr("fleet.nodeIDHint") },
+                    { k: tr("fleet.labels"), v: <Chips items={(n.capabilities || []).map((id) => ({ id }))} empty={<span className="text-quaternary">{tr("fleet.noLabels")}</span>} />, hint: tr("fleet.labelsHint") },
                     { k: tr("fleet.hostname"), v: n.host || "—" },
                     { k: "IP", v: (n.ips || []).length ? <div className="flex flex-col">{(n.ips || []).map((ip) => <Mono key={ip}>{ip}</Mono>)}</div> : "—" },
                     { k: tr("fleet.hubAddress"), v: n.addr ? <Mono>{n.addr}</Mono> : <span className="text-quaternary">{tr("fleet.localHub")}</span> },
@@ -426,8 +462,9 @@ export function FleetPage() {
                             {(n) => (
                                 <Table.Row id={n.name} className="cursor-pointer">
                                     <Table.Cell>
-                                        <div className="flex min-w-0 flex-col gap-1">
-                                            <span className="truncate font-medium text-primary" title={n.name}>{n.name}</span>
+                                        <div className="flex min-w-0 flex-col gap-0.5">
+                                            <span className="truncate font-medium text-primary" title={nodeLabel(n)}>{nodeLabel(n)}</span>
+                                            {n.display_name && <span className="truncate font-mono text-xs text-tertiary" title={n.name}>{n.name}</span>}
                                             <span className="text-xs text-tertiary">{n.role === "hub" ? tr("connection.coordinator") : tr("fleet.machine")}</span>
                                         </div>
                                     </Table.Cell>

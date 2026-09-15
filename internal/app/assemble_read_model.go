@@ -15,7 +15,8 @@ import (
 	steveview "github.com/gopact-ai/steve/internal/view"
 )
 
-func assembleReadModel(boot runtimeAssembly, storage ledgerAssembly, machines fleetAssembly, modelInfo modelsAssembly, work executionAssembly, planning plansAssembly) (readModelAssembly, error) {
+func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledgerAssembly, machines fleetAssembly, modelInfo modelsAssembly, work executionAssembly, planning plansAssembly) (readModelAssembly, error) {
+	environment := input.Environment()
 	background := boot.Background()
 	book := boot.Book()
 	cfg := boot.Config()
@@ -49,7 +50,7 @@ func assembleReadModel(boot runtimeAssembly, storage ledgerAssembly, machines fl
 		HubAdvert: func() nodewire.Advert { return adminsvc.ObservedHubAdvert(cfg, observation) },
 		Repos:     repos.Get, HomeProject: adminsvc.HomeProjectID, DefaultProject: cfg.Gateway.DefaultProject,
 		Models: seen,
-		Roster: fleet, Nodes: nodes, Tasks: tasks, Plans: plans,
+		Roster: fleet, Nodes: nodes, NodeNames: memberNames(environment), Tasks: tasks, Plans: plans,
 		Ledger:       readmodel.Ledger{Book: book, Attempts: attempts, Artifacts: artifacts, Projects: projects, Intents: intents},
 		Schedules:    schedules,
 		Observations: book.Document("observations"),
@@ -114,3 +115,12 @@ func (v *readModelValues) Repos() *adminsvc.RepoCache { return v.repos }
 func (v *readModelValues) Shipper() *adminsvc.SkillShipper { return v.shipper }
 
 func (v *readModelValues) View() *readmodel.Model { return v.view }
+
+// memberNames exposes cluster display names to the read model; a hub
+// outside a cluster has none.
+func memberNames(environment *Environment) func() map[string]string {
+	if environment == nil || environment.Coordination == nil {
+		return nil
+	}
+	return environment.Coordination.MemberNames
+}

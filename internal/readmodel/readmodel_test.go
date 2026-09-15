@@ -216,3 +216,22 @@ func TestSnapshotShowsObservedModelsAndRepairs(t *testing.T) {
 		t.Fatalf("hub row = %+v", hub)
 	}
 }
+
+func TestSnapshotCarriesMemberDisplayNames(t *testing.T) {
+	m := fixture(t)
+	m.src.NodeNames = func() map[string]string { return map[string]string{"hub-1": "我的 Mac", "node-a": "GPU 工作站"} }
+	snap := m.Snapshot(t.Context())
+	got := map[string]string{}
+	for _, n := range snap.Nodes {
+		got[n.Name] = n.DisplayName
+	}
+	want := map[string]string{"hub-1": "我的 Mac", "node-a": "GPU 工作站", "node-b": ""}
+	for name, display := range want {
+		if got[name] != display {
+			t.Fatalf("display name of %s = %q, want %q (all: %v)", name, got[name], display, got)
+		}
+	}
+	if snap.Nodes[0].Name != "hub-1" {
+		t.Fatalf("names stay the identity; hub row = %+v", snap.Nodes[0])
+	}
+}

@@ -97,6 +97,10 @@ func TestApplyReplayIsDeterministic(t *testing.T) {
 	apply(command{Kind: "eligibility", ID: "eligible-n3", Eligibility: EligibilityRequest{ID: "eligible-n3", NodeID: "n3", Eligible: true, ExpectedRevision: rev()}})
 	apply(command{Kind: "policy", ID: "policy-on", Policy: PolicyRequest{ID: "policy-on", Enabled: true, ExpectedRevision: rev()}})
 	apply(command{Kind: "eligibility", ID: "eligible-n3-off", Eligibility: EligibilityRequest{ID: "eligible-n3-off", NodeID: "n3", Eligible: false, ExpectedRevision: rev()}})
+	apply(command{Kind: "rename", ID: "rename-stale", Rename: RenameRequest{ID: "rename-stale", NodeID: "n2", Name: "stale", ExpectedRevision: 1}})
+	apply(command{Kind: "rename", ID: "rename-stranger", Rename: RenameRequest{ID: "rename-stranger", NodeID: "n9", Name: "stranger", ExpectedRevision: rev()}})
+	apply(command{Kind: "rename", ID: "rename-blank", Rename: RenameRequest{ID: "rename-blank", NodeID: "n2", Name: "   ", ExpectedRevision: rev()}})
+	apply(command{Kind: "rename", ID: "rename-n2", Rename: RenameRequest{ID: "rename-n2", NodeID: "n2", Name: "  Build box  ", ExpectedRevision: rev()}})
 	apply(command{Kind: "policy", ID: "policy-off", Policy: PolicyRequest{ID: "policy-off", Enabled: false, ExpectedRevision: rev()}})
 
 	apply(command{Kind: "writer", ID: "writer-epoch", Writer: WriterRequest{ID: "writer-epoch", CallerNodeID: "n1", CoordinatorEpoch: 9}})

@@ -226,6 +226,9 @@ func (s *Service) Status() Status {
 // TransportPeers reads Raft's durable latest membership before FSM replay has
 // caught up. Authentication cannot rely only on an older application snapshot
 // when the later Raft configuration already contains peers needed to elect.
+// MemberNames maps member IDs to display names from the local replica.
+func (s *Service) MemberNames() map[string]string { return s.fsm.memberNames() }
+
 func (s *Service) TransportPeers() map[string]string {
 	configuration := s.raft.GetConfiguration().Configuration()
 	peers := make(map[string]string, len(configuration.Servers))
@@ -377,6 +380,17 @@ func (s *Service) SetEligibility(ctx context.Context, request EligibilityRequest
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 	return s.submit(ctx, command{Kind: "eligibility", ID: request.ID, Actor: request.Actor, Fingerprint: fingerprint("eligibility", request), Eligibility: request})
+}
+
+// Rename records a member's display name. The command is validated again
+// when applied, so every replica rejects the same names.
+func (s *Service) Rename(ctx context.Context, request RenameRequest) (Result, error) {
+	if _, err := MemberName(request.Name); err != nil {
+		return Result{}, err
+	}
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	return s.submit(ctx, command{Kind: "rename", ID: request.ID, Actor: request.Actor, Fingerprint: fingerprint("rename", request), Rename: request})
 }
 
 func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Result, error) {

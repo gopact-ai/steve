@@ -1126,6 +1126,28 @@ func (p *Peer) SetCoordinatorEligibility(ctx context.Context, request consoleapi
 	return p.Coordination(ctx)
 }
 
+func (p *Peer) RenameNode(ctx context.Context, request consoleapi.CoordinatorRename) (consoleapi.CoordinationView, error) {
+	runtime := p.Runtime.Load()
+	if runtime == nil {
+		return consoleapi.CoordinationView{}, coordination.ErrUnavailable
+	}
+	_, err := runtime.Rename(ctx, coordination.RenameRequest{ID: request.CommandID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, NodeID: request.NodeID, Name: request.Name})
+	if err != nil {
+		return consoleapi.CoordinationView{}, err
+	}
+	return p.Coordination(ctx)
+}
+
+// MemberNames reads the display names this replica last synchronized. A
+// replica that is not caught up shows a name at most one rename behind.
+func (p *Peer) MemberNames() map[string]string {
+	runtime := p.Runtime.Load()
+	if runtime == nil {
+		return nil
+	}
+	return runtime.MemberNames()
+}
+
 func (p *Peer) serveCoordination(w http.ResponseWriter, r *http.Request) {
 	var view consoleapi.CoordinationView
 	var err error
@@ -1160,6 +1182,12 @@ func (p *Peer) serveCoordination(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		view, err = p.SetCoordinatorEligibility(r.Context(), request)
+	case r.Method == http.MethodPut && r.URL.Path == "/console/coordination/name":
+		var request consoleapi.CoordinatorRename
+		if !decode(&request) {
+			return
+		}
+		view, err = p.RenameNode(r.Context(), request)
 	default:
 		http.NotFound(w, r)
 		return
