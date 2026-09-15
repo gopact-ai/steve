@@ -1,6 +1,7 @@
 package cluster
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -148,7 +149,59 @@ func TestAbandonPeerEnrollmentArchivesTheRecordAndRefusesAJoinedNode(t *testing.
 	if err := peer.saveEnrollment(record); err != nil {
 		t.Fatal(err)
 	}
-	if err := peer.AbandonPeerEnrollment(t.Context(), "second-try"); err == nil || !strings.Contains(err.Error(), "资源页") {
+	if err := peer.AbandonPeerEnrollment(t.Context(), "second-try"); !errors.Is(err, ErrEnrollmentJoined) {
 		t.Fatalf("a joined node was abandoned from the enrollment dialog: %v", err)
+	}
+}
+
+func TestAbandonPeerEnrollmentRemovesTheMemberAFailedJoinLeftBehind(t *testing.T) {
+	root := ClusterPeerTestDir(t)
+	options, _ := testPeerOptions(t, filepath.Join(root, "source"), nil)
+	var starts atomic.Int32
+	options.Activate = testPeerApplication(t, &starts)
+	source := StartTestPeer(t, options)
+	WaitPeerReady(t, source)
+	// A machine that got as far as joining but never finished enrolling
+	// stays in the cluster; the record still points at it.
+	second, _ := testPeerOptions(t, filepath.Join(root, "second"), source)
+	second.Activate = func(context.Context, Activation, func(PeerApplicationEndpoint) error) (Deactivate, error) {
+		return nil, nil
+	}
+	orphan := StartTestPeer(t, second)
+	if _, err := source.Join(t.Context(), coordination.JoinRequest{ID: "join-orphan", Actor: "owner", Member: coordination.Member{NodeID: orphan.Config.NodeID, Address: orphan.Config.RaftAddress, APIAddress: orphan.Config.PeerURL}}); err != nil {
+		t.Fatal(err)
+	}
+	peerAddress, raftAddress := FreeEnrollmentPorts(t)
+	request := PeerEnrollmentRequest{Name: "orphaned", PeerAddress: peerAddress, RaftAddress: raftAddress, SourceHost: "127.0.0.1", Level: "restricted"}
+	plan, err := source.PreviewEnrollment(t.Context(), request, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = plan.Request
+	request.ExpectedPlanHash = plan.ReviewID
+	if _, err := source.PrepareEnrollment(t.Context(), request, "orphan-op", true); err != nil {
+		t.Fatal(err)
+	}
+	record, _ := source.loadEnrollment("orphan-op")
+	record.NodeID, record.Phase = orphan.Config.NodeID, "synchronizing"
+	if err := source.saveEnrollment(record); err != nil {
+		t.Fatal(err)
+	}
+	state, _ := source.Runtime.Load().ReadState(t.Context())
+	if _, member := state.Members[orphan.Config.NodeID]; !member {
+		t.Fatal("fixture: the orphan is not a member")
+	}
+	if err := source.AbandonPeerEnrollment(t.Context(), "orphan-op"); err != nil {
+		t.Fatal(err)
+	}
+	state, _ = source.Runtime.Load().ReadState(t.Context())
+	if _, member := state.Members[orphan.Config.NodeID]; member {
+		t.Fatal("abandoning left the orphan member in the cluster")
+	}
+	if _, err := source.loadEnrollment("orphan-op"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("abandoned record still answers: %v", err)
+	}
+	if _, err := source.PreviewEnrollment(t.Context(), PeerEnrollmentRequest{Name: "again", PeerAddress: orphan.Config.PeerAddress, RaftAddress: orphan.Config.RaftAddress, SourceHost: "127.0.0.1", Level: "restricted"}, true); err != nil {
+		t.Fatalf("the orphan's ports are still taken: %v", err)
 	}
 }

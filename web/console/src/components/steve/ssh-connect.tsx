@@ -76,6 +76,9 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
     const connected = result?.registered === true && result.connected === true && result.status === "connected";
     const canResumeRegistration = plan?.check.installation_mode === "peer" && attempted && result?.registered === true && !result.connected && result.status === "needs_attention";
     const terminal = connected || result?.status === "needs_attention";
+    // Only a cluster enrollment can be withdrawn from here; an execution-only
+    // node's registration is removed on the resources page.
+    const canAbandon = plan?.check.installation_mode === "peer" && result?.status === "needs_attention";
     function save(next: SSHDraft) {
         next = { ...next, history: next.history || draft.history || [] };
         setDraft(next);
@@ -222,9 +225,9 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
                         {result && <InstallLog result={result} />}
                         {canResumeRegistration && <p className="text-sm leading-6 text-secondary">{t("ssh.resumeHint")}</p>}
                         {result?.status === "needs_attention" && result.registered && <p className="text-sm leading-6 text-tertiary">{t("ssh.attentionHint")}</p>}
-                        {result?.status === "needs_attention" && <p className="text-sm leading-6 text-tertiary">{t("ssh.abandonHint")}</p>}
+                        {canAbandon && <p className="text-sm leading-6 text-tertiary">{t(result.registered ? "ssh.abandonHint" : "ssh.abandonPlanHint")}</p>}
                         <p className="break-all text-xs text-quaternary">{t("ssh.planId")}: <span className="font-mono">{plan.id}</span></p>
-                        <div className="flex flex-wrap gap-2">{(!terminal || canResumeRegistration) && <Button size="md" isLoading={busy === "install"} onClick={() => void install()}>{t(canResumeRegistration ? "ssh.resumeRegistration" : "ssh.checkInstallation")}</Button>}{result?.status === "needs_attention" && <Button size="md" color="secondary-destructive" isLoading={busy === "abandon"} isDisabled={busy !== null && busy !== "abandon"} onClick={() => void abandon()}>{t("ssh.abandon")}</Button>}<Button size="md" color={connected ? "primary" : "secondary"} isDisabled={!!busy} onClick={close}>{t(connected ? "ssh.done" : "ssh.backToResources")}</Button>{connected && <Button size="md" color="secondary" onClick={() => setEnrolling(true)}>{t("nodeAgents.entry")}</Button>}{terminal && <Button size="md" color="tertiary" isDisabled={!!busy} onClick={() => { setError(""); save({ request: initialRequest }); }}>{t("ssh.connectAnother")}</Button>}</div>
+                        <div className="flex flex-wrap gap-2">{(!terminal || canResumeRegistration) && <Button size="md" isLoading={busy === "install"} onClick={() => void install()}>{t(canResumeRegistration ? "ssh.resumeRegistration" : "ssh.checkInstallation")}</Button>}{canAbandon && <Button size="md" color="secondary-destructive" isLoading={busy === "abandon"} isDisabled={busy !== null && busy !== "abandon"} onClick={() => void abandon()}>{t("ssh.abandon")}</Button>}<Button size="md" color={connected ? "primary" : "secondary"} isDisabled={!!busy} onClick={close}>{t(connected ? "ssh.done" : "ssh.backToResources")}</Button>{connected && <Button size="md" color="secondary" onClick={() => setEnrolling(true)}>{t("nodeAgents.entry")}</Button>}{terminal && <Button size="md" color="tertiary" isDisabled={!!busy} onClick={() => { setError(""); save({ request: initialRequest }); }}>{t("ssh.connectAnother")}</Button>}</div>
                     </>}
                 </section>}
                 {busy && busy !== "install" && <p role="status" className="mt-3 text-sm text-tertiary">{t(busy === "check" ? "ssh.checking" : busy === "abandon" ? "ssh.abandoning" : "ssh.planning")}</p>}

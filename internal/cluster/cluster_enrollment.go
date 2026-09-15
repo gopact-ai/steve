@@ -33,6 +33,7 @@ import (
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/platformconfig"
 	"github.com/gopact-ai/steve/internal/project"
+	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
 type PeerEnrollmentRequest struct {
@@ -642,13 +643,13 @@ func (p *Peer) AbandonPeerEnrollment(ctx context.Context, id string) error {
 	defer p.enrollmentMu.Unlock()
 	record, err := p.loadEnrollment(id)
 	if errors.Is(err, os.ErrNotExist) {
-		return errors.New("这次接入的记录已不存在，无需放弃")
+		return ErrEnrollmentGone
 	}
 	if err != nil {
 		return err
 	}
 	if record.Ready {
-		return errors.New("这台机器已经完成接入，请在资源页移除该成员")
+		return ErrEnrollmentJoined
 	}
 	runtime := p.Runtime.Load()
 	if runtime == nil {
@@ -673,7 +674,15 @@ func (p *Peer) AbandonPeerEnrollment(ctx context.Context, id string) error {
 
 // DefaultPeerWorkspace is where a machine keeps its work unless the owner
 // chooses somewhere: a visible directory under the remote account's home.
-const DefaultPeerWorkspace = "~/steve-workspace"
+const DefaultPeerWorkspace = sshconnect.DefaultWorkspaceDir
+
+// ErrEnrollmentGone says there is no such enrollment to give up; a caller
+// that only knows the operation ID has nothing left to do.
+var ErrEnrollmentGone = errors.New("这次接入的记录已不存在，无需放弃")
+
+// ErrEnrollmentJoined says the machine is a member now: leaving the cluster
+// is its own reviewed action on the resources page, not an enrollment undo.
+var ErrEnrollmentJoined = errors.New("这台机器已经完成接入，请在资源页移除该成员")
 
 // validPeerWorkspace accepts an absolute remote path or one under the
 // remote home. The remote machine judges the place itself at import time,
@@ -1097,7 +1106,7 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	canonical, _ := json.Marshal(bundle)
 	digest := sha256.Sum256(canonical)
 	packageHash := hex.EncodeToString(digest[:])
-	if bundle.Version != 1 || bundle.OperationID == "" || bundle.ClusterID == "" || bundle.NodeID == "" || len(bundle.OwnerToken) < 32 || len(bundle.WorkerToken) < 32 || len(bundle.Seeds) == 0 {
+	if bundle.Version != 1 || bundle.OperationID == "" || bundle.ClusterID == "" || bundle.NodeID == "" || bundle.WorkspaceDir == "" || len(bundle.OwnerToken) < 32 || len(bundle.WorkerToken) < 32 || len(bundle.Seeds) == 0 {
 		return PeerImportResult{}, errors.New("incomplete peer enrollment package")
 	}
 	if bundle.StorageLevel != "restricted" && bundle.StorageLevel != "sealed" {
@@ -1116,10 +1125,6 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	root, err := filepath.Abs(stateDir)
 	if err != nil {
 		return PeerImportResult{}, err
-	}
-	workspaceInput := bundle.WorkspaceDir
-	if workspaceInput == "" {
-		workspaceInput = filepath.Join(root, "workspace")
 	}
 	configPath := filepath.Join(root, "config.json")
 	clusterPath := DefaultClusterConfigPath(configPath)
@@ -1151,9 +1156,9 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	}
 	// The workspace is judged and created here, on the machine that owns
 	// it: the owner's answer may name places this machine refuses.
-	workspace, err := desktop.PrepareWorkspace(workspaceInput, root)
+	workspace, err := desktop.PrepareWorkspace(bundle.WorkspaceDir, root)
 	if err != nil {
-		return result, fmt.Errorf("workspace %q: %w", workspaceInput, err)
+		return result, fmt.Errorf("workspace %q: %w", bundle.WorkspaceDir, err)
 	}
 	staging, err := os.MkdirTemp(filepath.Dir(root), ".peer-import-")
 	if err != nil {

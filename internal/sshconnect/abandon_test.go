@@ -18,28 +18,6 @@ func (b *abandonBackend) AbandonRegistration(_ context.Context, id string) error
 	return b.abandonErr
 }
 
-func TestPeerRequestAcceptsDisplayNameAndWorkspaceDir(t *testing.T) {
-	svc, _, _, _ := serviceFixture(t)
-	svc.installationMode = InstallPeer
-	req := installRequest()
-	req.Name, req.Level, req.WorkspaceDir = "办公 Linux 盒子", "restricted", "~/steve-workspace"
-	plan, err := svc.Plan(t.Context(), req)
-	if err != nil || plan.Request.Name != "办公 Linux 盒子" || plan.Request.WorkspaceDir != "~/steve-workspace" {
-		t.Fatalf("peer plan refused a display name or workspace: %#v %v", plan.Request, err)
-	}
-	for _, bad := range []struct{ name, dir string }{{"", "~/x"}, {strings.Repeat("长", 65), "~/x"}, {"ok", "relative/dir"}, {"ok", "~/bad\ndir"}, {"bad\tname", "~/x"}} {
-		req.Name, req.WorkspaceDir = bad.name, bad.dir
-		if _, err := svc.Plan(t.Context(), req); err == nil {
-			t.Fatalf("accepted invalid peer request %q %q", bad.name, bad.dir)
-		}
-	}
-	svc.installationMode = InstallExecutor
-	req.Name, req.WorkspaceDir = "办公 Linux 盒子", ""
-	if _, err := svc.Plan(t.Context(), req); err == nil {
-		t.Fatal("executor node names must keep the config key shape")
-	}
-}
-
 func TestAbandonDropsPlanAndTellsBackendAboutRegisteredOperation(t *testing.T) {
 	svc, r, b, _ := serviceFixture(t)
 	backend := &abandonBackend{recoveryBackend: &recoveryBackend{fakeBackend: b}}

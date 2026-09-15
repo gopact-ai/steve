@@ -25,6 +25,11 @@ import (
 // PreviewToken stands in for the credential created only during Commit.
 const PreviewToken = "pending-node-token"
 
+// DefaultWorkspaceDir is where a newly enrolled machine keeps its work
+// unless the owner chooses somewhere: a visible directory under the remote
+// account's home.
+const DefaultWorkspaceDir = "~/steve-workspace"
+
 type Step struct {
 	ID         string `json:"id"`
 	Status     string `json:"status"`
@@ -351,6 +356,9 @@ func (s *Service) Plan(ctx context.Context, req InstallRequest) (InstallPlan, er
 	if err := validateRequest(req, s.installationMode); err != nil {
 		return InstallPlan{}, err
 	}
+	if s.installationMode == InstallPeer && req.WorkspaceDir == "" {
+		req.WorkspaceDir = DefaultWorkspaceDir
+	}
 	if s.backend == nil {
 		return InstallPlan{}, fail("planning", "not_configured", "节点接入尚未配置", "配置节点注册服务后重试")
 	}
@@ -576,6 +584,24 @@ func (s *Service) Abandon(ctx context.Context, id string) error {
 		return fail("installation", "in_progress", "这个安装计划正在执行", "等待本次执行返回结果后再放弃")
 	}
 	registered := !ok || stored.result.Registered
+	s.mu.Unlock()
+	if registered {
+		// A refusal changes nothing: the plan stays exactly as it was.
+		abandoner, supported := s.backend.(RegistrationAbandoner)
+		if !supported {
+			return fail("planning", "abandon_unsupported", "这类接入无法自动撤销", "在资源页移除这条登记后重新接入")
+		}
+		if _, err := hex.DecodeString(id); err != nil || len(id) != 48 {
+			return fail("planning", "unknown_plan", "无法找到原接入操作", "请从已保存的接入记录核对操作")
+		}
+		abandonCtx, cancel := context.WithTimeout(ctx, abandonLimit)
+		defer cancel()
+		if err := abandoner.AbandonRegistration(abandonCtx, id); err != nil {
+			return err
+		}
+	}
+	s.mu.Lock()
+	stored, ok = s.plans[id]
 	if ok {
 		if stored.timer != nil {
 			stored.timer.Stop()
@@ -588,21 +614,12 @@ func (s *Service) Abandon(ctx context.Context, id string) error {
 		// stray directory behind.
 		_ = stored.connection.Close()
 	}
-	if !registered {
-		return nil
-	}
-	abandoner, supported := s.backend.(RegistrationAbandoner)
-	if !supported {
-		return fail("planning", "abandon_unsupported", "这类接入无法自动撤销", "在资源页移除这条登记后重新接入")
-	}
-	if len(id) != 48 {
-		return fail("planning", "unknown_plan", "无法找到原接入操作", "请从已保存的接入记录核对操作")
-	}
-	if _, err := hex.DecodeString(id); err != nil {
-		return fail("planning", "unknown_plan", "无法找到原接入操作", "请从已保存的接入记录核对操作")
-	}
-	return abandoner.AbandonRegistration(ctx, id)
+	return nil
 }
+
+// abandonLimit bounds the withdrawal of a registered operation, which may
+// have to remove a member from the cluster.
+const abandonLimit = 30 * time.Second
 
 func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string, connection Connection) (InstallResult, error) {
 	result := InstallResult{PlanID: plan.ID, Name: plan.Request.Name, Status: "needs_attention", Steps: []Step{}, Phases: phasesFor(plan)}
@@ -815,8 +832,10 @@ func validateRequest(req InstallRequest, mode InstallationMode) error {
 		if req.WorkspaceDir != "" && !validWorkspaceDir(req.WorkspaceDir) {
 			return fail("planning", "invalid_workspace", "工作目录无效", "填写目标机上的绝对路径，或以 ~/ 开头的用户目录下路径，例如 ~/steve-workspace")
 		}
-	} else if !nodeNameShape.MatchString(req.Name) || req.WorkspaceDir != "" {
+	} else if !nodeNameShape.MatchString(req.Name) {
 		return fail("planning", "invalid_name", "节点名称无效", "节点名称使用小写字母、数字、点、下划线和连字符")
+	} else if req.WorkspaceDir != "" {
+		return fail("planning", "invalid_workspace", "执行节点不支持指定工作目录", "留空工作目录；执行节点在 ~/steve-bin 下运行")
 	}
 	host, portText, err := net.SplitHostPort(req.Addr)
 	port, portErr := strconv.Atoi(portText)

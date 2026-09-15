@@ -329,8 +329,17 @@ func peerPhaseText(phase string) string {
 	}
 }
 
+// AbandonRegistration withdraws an enrollment; the two refusals a user can
+// act on are reported as findings rather than service failures.
 func (b peerSSHBackend) AbandonRegistration(ctx context.Context, id string) error {
-	return b.service().AbandonPeerEnrollment(ctx, id)
+	err := b.service().AbandonPeerEnrollment(ctx, id)
+	switch {
+	case errors.Is(err, ErrEnrollmentGone):
+		return &sshconnect.StepError{Stage: "planning", Code: "unknown_plan", Message: err.Error(), Suggestion: "刷新接入记录；这次接入没有留下需要撤回的东西"}
+	case errors.Is(err, ErrEnrollmentJoined):
+		return &sshconnect.StepError{Stage: "peer_membership", Code: "already_joined", Message: err.Error(), Suggestion: "在资源页的机群成员里移除这台机器；接入对话框不能撤销已完成的接入"}
+	}
+	return err
 }
 
 func (b peerSSHBackend) ResumeRegistration(ctx context.Context, id string) (sshconnect.InstallResult, error) {
