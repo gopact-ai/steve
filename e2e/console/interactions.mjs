@@ -1152,6 +1152,7 @@ checks["code-unified-entry"] = async (f) => {
     const state = await reviewFixture(f, { open: false });
     const panel = f.page.getByRole("complementary", { name: "详情", exact: true });
     const browse = panel.getByRole("button", { name: "浏览文件", exact: true });
+    await browse.waitFor();
     assert.equal(await browse.count(), 1, "Conversation files must have one entry rather than one per execution");
     assert.equal(await panel.getByRole("button", { name: "查看变更", exact: true }).count(), 0, "Version actions should be collapsed initially");
     const heading = panel.getByRole("heading", { name: "会话文件", exact: true });
