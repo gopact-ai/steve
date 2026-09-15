@@ -112,13 +112,26 @@ function QuestionCard({ question, refresh, onResolved }: { question: PendingQues
         } finally { acting.current = false; setBusy(false); }
     }
 
+    const kindLabel = t(permission ? "materials.permission" : active ? "materials.pending" : "materials.question");
+    const title = question.title?.trim() || "";
+    // A resolved request is a record, not a prompt: one line says what was
+    // asked and what was answered; the original wording stays a click away.
+    if (!active) return <article className="question-card question-done" aria-labelledby={titleId}>
+        <div className="question-done-row">
+            {title && <span className="question-kind">{kindLabel}</span>}
+            <h3 id={titleId}>{title || kindLabel}</h3>
+            <span className="question-done-outcome"><span role="status">{t(`materials.${question.state}`)}</span>{response && <><span aria-hidden="true">·</span><span className="question-done-answer">{response}</span></>}</span>
+            <time className="question-done-time" dateTime={question.updated_at}>{dateTime(question.updated_at, locale, { dateStyle: "short", timeStyle: "short" })}</time>
+        </div>
+        {question.message.trim() && <details className="question-context"><summary>{t("materials.questionContext")}</summary><Md text={question.message} className="question-message" /></details>}
+    </article>;
     return <article className={`question-card ${permission ? "question-permission" : ""}`} aria-labelledby={titleId}>
         <header className="question-header">
-            <span className="question-kind">{t(permission ? "materials.permission" : active ? "materials.pending" : "materials.question")}</span>
-            <h3 id={titleId}>{question.title || t(permission ? "materials.permission" : "materials.question")}</h3>
+            {title && <span className="question-kind">{kindLabel}</span>}
+            <h3 id={titleId}>{title || kindLabel}</h3>
         </header>
         {!deferred && (active && writing && question.options.length > 0 ? <details className="question-context"><summary>{t("materials.questionContext")}</summary><Md text={question.message} className="question-message" /></details> : <Md text={question.message} className="question-message" />)}
-        {active ? deferred ? <div className="question-deferred">
+        {deferred ? <div className="question-deferred">
             <p role="status">{t("materials.answerDeferred")}</p>
             <Button size="sm" color="secondary" onClick={() => edit({ deferred: false })}>{t("materials.replyNow")}</Button>
         </div> : <div className="question-response">
@@ -143,7 +156,7 @@ function QuestionCard({ question, refresh, onResolved }: { question: PendingQues
                     <Button size="sm" color="tertiary" onClick={() => edit({ deferred: true })}>{t("materials.answerLater")}</Button>
                 </>}
             </div>}
-        </div> : <div className="question-resolved"><p role="status">{t(`materials.${question.state}`)}</p>{response && <div className="question-saved-answer"><span>{t("materials.yourAnswer")}</span><p>{response}</p></div>}</div>}
-        {active && question.kind !== "recovery" && question.deadline && !question.deadline.startsWith("0001-") && <p className="question-deadline">{t("materials.deadline", { time: dateTime(question.deadline, locale, { dateStyle: "short", timeStyle: "short" }) })}</p>}
+        </div>}
+        {question.kind !== "recovery" && question.deadline && !question.deadline.startsWith("0001-") && <p className="question-deadline">{t("materials.deadline", { time: dateTime(question.deadline, locale, { dateStyle: "short", timeStyle: "short" }) })}</p>}
     </article>;
 }

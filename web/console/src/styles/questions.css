@@ -34,9 +34,16 @@
 .question-history summary { color: var(--color-text-tertiary); font-size: 12px; }
 .question-history-items { display: flex; flex-direction: column; gap: 12px; margin-top: 12px; }
 .question-history .question-card { background: var(--color-bg-secondary); border: 0; border-radius: 8px; }
-.question-resolved { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; color: var(--color-text-tertiary); font-size: 12px; }
-.question-saved-answer { padding: 12px; border-radius: 8px; background: var(--color-bg-primary); }
-.question-saved-answer > p { margin-top: 4px; color: var(--color-text-primary); font-size: 14px; white-space: pre-wrap; }
+.question-done { padding: 10px 12px; }
+.question-history .question-done { background: transparent; border-radius: 6px; }
+.question-history .question-done:hover { background: var(--color-bg-secondary); }
+.question-history-items { gap: 4px; margin-top: 8px; }
+.question-done-row { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; column-gap: 10px; row-gap: 2px; }
+.question-done-row h3 { min-width: 0; color: var(--color-text-primary); font-size: 14px; font-weight: 500; line-height: 1.5; }
+.question-done-outcome { display: inline-flex; min-width: 0; align-items: baseline; gap: 6px; color: var(--color-text-tertiary); font-size: 12px; }
+.question-done-answer { min-width: 0; color: var(--color-text-secondary); font-size: 13px; overflow-wrap: anywhere; }
+.question-done-time { margin-left: auto; color: var(--color-text-quaternary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.question-done .question-context { margin-top: 4px; }
 
 .question-context summary { min-height: 32px; color: var(--color-text-tertiary); font-size: 12px; }
 .question-context .question-message { margin-top: 8px; }

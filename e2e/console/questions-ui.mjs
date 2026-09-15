@@ -203,6 +203,27 @@ try {
     assert.equal(Object.hasOwn(f.answers.at(-1), "choice"), false);
     console.log("PASS permission choices cannot be replaced by unconstrained text");
 
+    // A permission request without a title reads as one heading, shows the
+    // command it is about, and once decided collapses to a single line.
+    f.questions = [makeQuestion("q-command", { title: "", kind: "permission", message: "```sh\nsystem_profiler SPHardwareDataType\n```\n\ncwd: `/work/p`", options: [{ id: "allow_once", label: "Yes, proceed" }, { id: "reject_once", label: "No", kind: "reject_once" }] })];
+    await page.evaluate((event) => window.emit(event), { kind: "console.question", conversation, text: "q-command", at });
+    await panel.getByRole("heading", { name: "Permission request", exact: true }).waitFor();
+    assert.equal(await panel.getByText("Permission request", { exact: true }).count(), 1, "an untitled request does not repeat its kind as a kicker");
+    await panel.getByText("system_profiler SPHardwareDataType", { exact: true }).waitFor();
+    await screenshot("question-command-pending");
+    await panel.getByText("Yes, proceed", { exact: true }).click();
+    await panel.getByRole("button", { name: "Submit response", exact: true }).click();
+    await panel.getByText("1 recent resolved requests", { exact: true }).waitFor();
+    await panel.getByText("1 recent resolved requests", { exact: true }).click();
+    const done = panel.locator(".question-done");
+    await done.getByText("Answered", { exact: true }).waitFor();
+    await done.getByText("Yes, proceed", { exact: true }).waitFor();
+    assert.equal(await done.getByRole("heading", { name: "Permission request", exact: true }).count(), 1);
+    assert.equal(await done.getByText("system_profiler SPHardwareDataType", { exact: true }).isVisible(), false, "the original wording is collapsed behind a disclosure");
+    assert.ok((await done.boundingBox()).height < 80, "a resolved request is a single compact row");
+    await screenshot("question-command-done");
+    console.log("PASS untitled permission requests read as one heading and collapse once decided");
+
     await show(makeQuestion("q-narrow", { title: "A decision with long context", message: explanation + "\n\n" + "Long-environment-hostname-".repeat(30) }));
     await page.getByRole("link", { name: "Coordinated by dev-box", exact: true }).first().waitFor();
     await page.setViewportSize({ width: 390, height: 844 });

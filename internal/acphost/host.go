@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -600,17 +601,129 @@ func (ch *clientHandler) RequestPermission(ctx context.Context, req *acp.Request
 	return &acp.RequestPermissionResponse{Outcome: outcome}, nil
 }
 
+// permissionReasonLimit bounds the Markdown a permission question carries;
+// the full tool input still reaches the transcript through the tool record.
+const permissionReasonLimit = 4096
+
+// permissionReason turns a tool call into the Markdown a person reads
+// before approving it: the command and where it runs, the files it edits,
+// the agent's stated purpose. Inputs no field name explains are shown as
+// JSON rather than hidden, since approving blind is worse than reading JSON.
 func permissionReason(call acp.ToolCallUpdate) string {
-	if call.Locations == nil {
-		return ""
-	}
-	parts := make([]string, 0, len(*call.Locations))
-	for _, loc := range *call.Locations {
-		if loc.Path != "" {
-			parts = append(parts, loc.Path)
+	var lines []string
+	files := map[string]bool{}
+	addFile := func(path string) {
+		if path = strings.TrimSpace(path); path != "" && !files[path] {
+			files[path] = true
+			lines = append(lines, "- `"+path+"`")
 		}
 	}
-	return strings.Join(parts, ", ")
+	if input, ok := call.RawInput.(map[string]any); ok && len(input) > 0 {
+		rest := map[string]any{}
+		for key, value := range input {
+			rest[key] = value
+		}
+		if command := commandText(input, rest); command != "" {
+			lines = append(lines, "```sh\n"+command+"\n```")
+		}
+		for _, key := range []string{"cwd", "workdir", "working_directory"} {
+			if dir, ok := rest[key].(string); ok && strings.TrimSpace(dir) != "" {
+				lines = append(lines, "cwd: `"+strings.TrimSpace(dir)+"`")
+				delete(rest, key)
+				break
+			}
+		}
+		for _, key := range []string{"description", "reason", "justification", "purpose"} {
+			if text, ok := rest[key].(string); ok && strings.TrimSpace(text) != "" {
+				lines = append(lines, strings.TrimSpace(text))
+				delete(rest, key)
+			}
+		}
+		for _, key := range []string{"file_path", "filePath", "path", "notebook_path", "target_file"} {
+			if path, ok := rest[key].(string); ok {
+				addFile(path)
+				delete(rest, key)
+			}
+		}
+		if paths, ok := rest["paths"].([]any); ok {
+			for _, path := range paths {
+				if text, ok := path.(string); ok {
+					addFile(text)
+				}
+			}
+			delete(rest, "paths")
+		}
+		// File contents and edits are too large to read here and appear as
+		// diffs in the transcript; the remaining fields are what the agent
+		// asked for and are shown as they are.
+		for _, key := range []string{"content", "old_string", "new_string", "edits", "old_str", "new_str", "contents", "text"} {
+			delete(rest, key)
+		}
+		if len(lines) == 0 && len(rest) > 0 {
+			if raw, err := json.MarshalIndent(rest, "", "  "); err == nil {
+				lines = append(lines, "```json\n"+string(raw)+"\n```")
+			}
+		}
+	} else if text := formatAny(call.RawInput); text != "" {
+		lines = append(lines, "```\n"+text+"\n```")
+	}
+	if call.Content != nil {
+		for _, item := range *call.Content {
+			switch item.Type {
+			case acp.ToolCallContentTypeDiff:
+				addFile(item.Path)
+			case acp.ToolCallContentTypeContent:
+				if item.Content.Type == acp.ContentBlockTypeText && strings.TrimSpace(item.Content.Text) != "" {
+					lines = append(lines, strings.TrimSpace(item.Content.Text))
+				}
+			}
+		}
+	}
+	if call.Locations != nil {
+		for _, loc := range *call.Locations {
+			addFile(loc.Path)
+		}
+	}
+	reason := strings.Join(lines, "\n\n")
+	if len(reason) > permissionReasonLimit {
+		cut := permissionReasonLimit
+		for cut > 0 && !utf8.RuneStart(reason[cut]) {
+			cut--
+		}
+		reason = reason[:cut] + "…"
+		// A truncated fence would swallow the rest of the page.
+		if strings.Count(reason, "```")%2 == 1 {
+			reason += "\n```"
+		}
+	}
+	return reason
+}
+
+// commandText renders the command a tool call wants to run, whether the
+// agent sent it as one string or as argv, and removes it from rest.
+func commandText(input, rest map[string]any) string {
+	for _, key := range []string{"command", "cmd", "commandLine", "script"} {
+		value, ok := input[key]
+		if !ok {
+			continue
+		}
+		delete(rest, key)
+		switch v := value.(type) {
+		case string:
+			return strings.TrimSpace(v)
+		case []any:
+			parts := make([]string, 0, len(v))
+			for _, part := range v {
+				text := fmt.Sprint(part)
+				if strings.ContainsAny(text, " \t\"'$`\\") {
+					text = strconv.Quote(text)
+				}
+				parts = append(parts, text)
+			}
+			return strings.Join(parts, " ")
+		}
+	}
+	return ""
 }
 
 // ensureStarted launches the subprocess and performs ACP initialize if needed.
