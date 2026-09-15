@@ -16,6 +16,7 @@ type SSHService interface {
 	SSHPlan(context.Context, sshconnect.InstallRequest) (sshconnect.InstallPlan, error)
 	SSHCommit(context.Context, string) (sshconnect.InstallResult, error)
 	SSHStatus(context.Context, string) (sshconnect.InstallResult, error)
+	SSHAbandon(context.Context, string) error
 }
 
 func (s *Server) SetSSH(service SSHService) { s.ssh = service }
@@ -38,6 +39,7 @@ func (s *Server) sshRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /console/ssh/plans", s.guard(s.sshPlan))
 	mux.HandleFunc("POST /console/ssh/plans/{id}/install", s.guard(s.sshInstall))
 	mux.HandleFunc("GET /console/ssh/plans/{id}", s.guard(s.sshStatus))
+	mux.HandleFunc("DELETE /console/ssh/plans/{id}", s.guard(s.sshAbandon))
 }
 
 func (s *Server) sshCandidates(w http.ResponseWriter, r *http.Request) {
@@ -117,6 +119,19 @@ func (s *Server) sshStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, result)
+}
+
+// sshAbandon gives up a plan or operation that will not finish, so the
+// machine can be enrolled again. The remote machine is left as it is.
+func (s *Server) sshAbandon(w http.ResponseWriter, r *http.Request) {
+	if !s.sshAvailable(w) {
+		return
+	}
+	if err := s.ssh.SSHAbandon(r.Context(), r.PathValue("id")); err != nil {
+		s.sshError(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"plan_id": r.PathValue("id"), "abandoned": true})
 }
 
 func (s *Server) sshAvailable(w http.ResponseWriter) bool {

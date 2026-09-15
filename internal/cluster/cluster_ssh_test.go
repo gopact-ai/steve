@@ -89,6 +89,8 @@ func (f *sshEnrollmentFixture) PreviewPeerEnrollment(_ context.Context, request 
 	return plan, nil
 }
 
+func (f *sshEnrollmentFixture) AbandonPeerEnrollment(context.Context, string) error { return nil }
+
 func (f *sshEnrollmentFixture) PeerSourceCandidates(context.Context) ([]string, string) {
 	return []string{"192.0.2.1", "10.4.17.4"}, "7711"
 }

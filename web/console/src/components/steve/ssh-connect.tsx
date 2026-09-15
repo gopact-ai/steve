@@ -10,7 +10,7 @@ import { useResourceRead } from "@/hooks/use-resource-read";
 import { useI18n } from "@/providers/locale-provider";
 import { dateTime } from "@/lib/format";
 import { levelName } from "@/lib/workspaces";
-import { checkSSH, discoverSSH, installSSH, planSSH, statusSSH, type SSHCheck, type SSHDiscovery, type SSHInstallRequest, type SSHInstallResult, type SSHPlan, type SSHStep } from "@/lib/api/ssh";
+import { abandonSSH, checkSSH, discoverSSH, installSSH, planSSH, statusSSH, type SSHCheck, type SSHDiscovery, type SSHInstallRequest, type SSHInstallResult, type SSHPlan, type SSHStep } from "@/lib/api/ssh";
 
 interface SSHRecord { plan: SSHPlan; result: SSHInstallResult }
 interface SSHDraft { request: SSHInstallRequest; check?: SSHCheck; plan?: SSHPlan; attempted?: boolean; result?: SSHInstallResult; history?: SSHRecord[] }
@@ -27,8 +27,14 @@ function readDraft(): SSHDraft {
     } catch { return { request: initialRequest }; }
 }
 function addressFor(host?: string) { return host ? `${host.includes(":") ? `[${host}]` : host}:7701` : ""; }
-function suggestedName(alias: string) { return alias.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[^a-z0-9]+/, "").slice(0, 64); }
-function sameRequest(a: SSHInstallRequest, b: SSHInstallRequest) { return a.alias === b.alias && a.name === b.name && a.addr === b.addr && a.level === b.level && (a.raft_addr || "") === (b.raft_addr || "") && (a.source_host || "") === (b.source_host || ""); }
+// A machine's name is what people see for it; the SSH alias is the natural
+// first guess. An execution-only node's name is a configuration key.
+const defaultWorkspace = "~/steve-workspace";
+const executorNameShape = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+function suggestedName(alias: string) { return alias.trim().slice(0, 64); }
+function executorName(name: string) { return name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[^a-z0-9]+/, "").slice(0, 64); }
+function validWorkspace(dir: string) { return dir.length <= 512 && !/[\r\n\t\0]/.test(dir) && (dir.startsWith("/") || dir === "~" || dir.startsWith("~/")) && !dir.split("/").includes(".."); }
+function sameRequest(a: SSHInstallRequest, b: SSHInstallRequest) { return a.alias === b.alias && a.name === b.name && a.addr === b.addr && a.level === b.level && (a.raft_addr || "") === (b.raft_addr || "") && (a.source_host || "") === (b.source_host || "") && (a.workspace_dir || "") === (b.workspace_dir || ""); }
 
 export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }: { onClose: () => void; onChanged: () => void; onViewMachines: () => void; onAddExecutor: (request: SSHInstallRequest) => void }) {
     const { t, locale } = useI18n();
@@ -38,7 +44,7 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
     const [loading, setLoading] = useState(true);
     const [readError, setReadError] = useState("");
     const [error, setError] = useState("");
-    const [busy, setBusy] = useState<"check" | "plan" | "install" | null>(null);
+    const [busy, setBusy] = useState<"check" | "plan" | "install" | "abandon" | null>(null);
     const acting = useRef(false);
     const scrollArea = useRef<HTMLDivElement>(null);
     const stageHeading = useRef<HTMLHeadingElement>(null);
@@ -70,6 +76,9 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
     const connected = result?.registered === true && result.connected === true && result.status === "connected";
     const canResumeRegistration = plan?.check.installation_mode === "peer" && attempted && result?.registered === true && !result.connected && result.status === "needs_attention";
     const terminal = connected || result?.status === "needs_attention";
+    // Only a cluster enrollment can be withdrawn from here; an execution-only
+    // node's registration is removed on the resources page.
+    const canAbandon = plan?.check.installation_mode === "peer" && result?.status === "needs_attention";
     function save(next: SSHDraft) {
         next = { ...next, history: next.history || draft.history || [] };
         setDraft(next);
@@ -84,15 +93,18 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
         try {
             const checked = await checkSSH(request.alias);
             if (!checked?.candidate || checked.candidate.alias !== request.alias || !Array.isArray(checked.steps) || (checked.reachable && !usableCheck(checked))) throw new Error(t("ssh.responseInvalid"));
-            save({ request: { ...request, name: request.name || suggestedName(request.alias), addr: request.addr || addressFor(checked.address) }, check: checked });
+            const peer = checked.installation_mode === "peer";
+            const name = request.name || suggestedName(request.alias);
+            save({ request: { ...request, name: peer ? name : executorName(name), addr: request.addr || addressFor(checked.address), workspace_dir: peer ? request.workspace_dir || defaultWorkspace : undefined }, check: checked });
         } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
         finally { acting.current = false; setBusy(null); }
     }
     async function preparePlan(allowPeerData = false) {
         if (acting.current || attempted || !check?.reachable || existingInstallation || (needsPeerConsent && !allowPeerData)) return;
-        const body = { ...request, ...(needsPeerConsent && allowPeerData ? { level: "restricted" } : {}), name: request.name.trim(), addr: request.addr.trim(), raft_addr: request.raft_addr?.trim() || undefined, source_host: request.source_host?.trim() || undefined };
-        if (!/^[a-z0-9][a-z0-9._-]{0,63}$/.test(body.name)) { setError(t("ssh.nameInvalid")); fields.current?.querySelector<HTMLInputElement>('input[name="ssh-node-name"]')?.focus(); return; }
+        const body = { ...request, ...(needsPeerConsent && allowPeerData ? { level: "restricted" } : {}), name: request.name.trim(), addr: request.addr.trim(), raft_addr: request.raft_addr?.trim() || undefined, source_host: request.source_host?.trim() || undefined, workspace_dir: peerInstallation ? request.workspace_dir?.trim() || defaultWorkspace : undefined };
+        if (peerInstallation ? body.name.length === 0 || [...body.name].length > 64 : !executorNameShape.test(body.name)) { setError(t(peerInstallation ? "ssh.machineNameInvalid" : "ssh.nameInvalid")); fields.current?.querySelector<HTMLInputElement>('input[name="ssh-node-name"]')?.focus(); return; }
         if (!body.addr) { setError(t("ssh.addressRequired")); fields.current?.querySelector<HTMLInputElement>('input[name="ssh-node-address"]')?.focus(); return; }
+        if (body.workspace_dir && !validWorkspace(body.workspace_dir)) { setError(t("ssh.workspaceInvalid")); fields.current?.querySelector<HTMLInputElement>('input[name="ssh-workspace"]')?.focus(); return; }
         acting.current = true; setBusy("plan"); setError("");
         try {
             const next = await planSSH(body);
@@ -129,6 +141,20 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
         } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
         finally { window.clearInterval(followTimer); following.abort(); acting.current = false; setBusy(null); }
     }
+    // abandon gives up on an installation that will not finish: the plan
+    // or operation is withdrawn on this side and the form comes back with
+    // the same answers, so the machine can be enrolled again. Nothing on
+    // the remote machine is changed.
+    async function abandon() {
+        if (acting.current || !plan) return;
+        acting.current = true; setBusy("abandon"); setError("");
+        try {
+            await abandonSSH(plan.id);
+            save({ request: plan.request, check: usableCheck(plan.check), history: (draft.history || []).filter((record) => record.plan.id !== plan.id) });
+            onChanged();
+        } catch (error) { setError(error instanceof Error ? error.message : String(error)); }
+        finally { acting.current = false; setBusy(null); }
+    }
     function close() {
         if (acting.current) return;
         if (connected) save({ request: initialRequest });
@@ -163,8 +189,9 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
                         {relatedHistory.length > 0 && <div className="space-y-3 rounded-lg border border-secondary p-3"><p className="text-xs leading-5 text-tertiary">{t("ssh.relatedHistory")}</p>{relatedHistory.toReversed().map((record) => <div key={record.plan.id} className="flex min-w-0 flex-wrap items-center justify-between gap-2"><span className="break-all text-sm text-secondary">{record.plan.request.name}</span><Button size="sm" color="secondary" isDisabled={!!busy} onClick={() => { setError(""); save({ request: record.plan.request, check: record.plan.check, plan: record.plan, attempted: true, result: record.result }); }}>{t("ssh.viewRecord")}</Button></div>)}</div>}
                         <div className="flex flex-wrap gap-2"><Button size="md" isLoading={busy === "check"} onClick={() => void testConnection()}>{t("ssh.recheck")}</Button><Button size="md" color="secondary" isDisabled={!!busy} onClick={onViewMachines}>{t("ssh.viewMachines")}</Button></div>
                     </> : <SSHSteps steps={check.steps} />}
-                    {check.reachable && !existingInstallation && <><Input size="sm" label={t("ssh.name")} name="ssh-node-name" autoComplete="off" spellCheck="false" placeholder="worker-west…" hint={t("ssh.nameHint")} value={request.name} onChange={(name) => edit({ name })} isDisabled={!!busy} />
+                    {check.reachable && !existingInstallation && <><Input size="sm" label={t(peerInstallation ? "ssh.machineName" : "ssh.name")} name="ssh-node-name" autoComplete="off" spellCheck="false" placeholder={peerInstallation ? t("ssh.machineNamePlaceholder") : "worker-west…"} hint={t(peerInstallation ? "ssh.machineNameHint" : "ssh.nameHint")} value={request.name} onChange={(name) => edit({ name })} isDisabled={!!busy} />
                         <Input size="sm" label={t("ssh.address")} name="ssh-node-address" autoComplete="off" spellCheck="false" placeholder="192.0.2.7:7701…" hint={t("ssh.addressHint")} value={request.addr} onChange={(addr) => edit({ addr })} isDisabled={!!busy} />
+                        {peerInstallation && <Input size="sm" label={t("ssh.workspace")} name="ssh-workspace" autoComplete="off" spellCheck="false" placeholder={defaultWorkspace} hint={t("ssh.workspaceHint")} value={request.workspace_dir ?? defaultWorkspace} onChange={(workspace_dir) => edit({ workspace_dir })} isDisabled={!!busy} />}
                         <details className="rounded-lg border border-secondary p-3">
                             <summary className="cursor-pointer text-sm font-medium text-secondary focus-visible:outline-2 focus-visible:outline-focus-ring">{t("ssh.networkSettings")}</summary>
                             <div className="mt-4 space-y-4">
@@ -179,7 +206,7 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
                 </section>}
                 {plan && <section className="space-y-4">
                     <h2 ref={stageHeading} tabIndex={-1} className="text-base font-semibold text-primary focus-visible:outline-2 focus-visible:outline-focus-ring">{t(connected ? "ssh.connected" : result?.status === "needs_attention" ? "ssh.attention" : "ssh.plan")}</h2>
-                    <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs"><dt className="text-tertiary">{t("ssh.name")}</dt><dd className="break-all font-medium text-primary">{plan.request.name}</dd><dt className="text-tertiary">SSH</dt><dd className="break-all text-secondary">{plan.request.alias}</dd><dt className="text-tertiary">{t("ssh.address")}</dt><dd className="break-all font-mono text-secondary">{plan.request.addr}</dd><dt className="text-tertiary">{t("ssh.level")}</dt><dd className="text-secondary">{levelName(plan.request.level, locale)}</dd></dl>
+                    <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs"><dt className="text-tertiary">{t(plan.check.installation_mode === "peer" ? "ssh.machineName" : "ssh.name")}</dt><dd className="break-all font-medium text-primary">{plan.request.name}</dd><dt className="text-tertiary">SSH</dt><dd className="break-all text-secondary">{plan.request.alias}</dd><dt className="text-tertiary">{t("ssh.address")}</dt><dd className="break-all font-mono text-secondary">{plan.request.addr}</dd>{plan.request.workspace_dir && <><dt className="text-tertiary">{t("ssh.workspace")}</dt><dd className="break-all font-mono text-secondary">{plan.request.workspace_dir}</dd></>}<dt className="text-tertiary">{t("ssh.level")}</dt><dd className="text-secondary">{levelName(plan.request.level, locale)}</dd></dl>
                     {(plan.request.raft_addr || plan.request.source_host) && <dl className="grid min-w-0 grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
                         {plan.request.raft_addr && <><dt className="text-tertiary">{t("ssh.raftAddress")}</dt><dd className="break-all font-mono text-secondary">{plan.request.raft_addr}</dd></>}
                         {plan.request.source_host && <><dt className="text-tertiary">{t("ssh.sourceHost")}</dt><dd className="break-all font-mono text-secondary">{plan.request.source_host}</dd></>}
@@ -198,11 +225,12 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
                         {result && <InstallLog result={result} />}
                         {canResumeRegistration && <p className="text-sm leading-6 text-secondary">{t("ssh.resumeHint")}</p>}
                         {result?.status === "needs_attention" && result.registered && <p className="text-sm leading-6 text-tertiary">{t("ssh.attentionHint")}</p>}
+                        {canAbandon && <p className="text-sm leading-6 text-tertiary">{t(result.registered ? "ssh.abandonHint" : "ssh.abandonPlanHint")}</p>}
                         <p className="break-all text-xs text-quaternary">{t("ssh.planId")}: <span className="font-mono">{plan.id}</span></p>
-                        <div className="flex flex-wrap gap-2">{(!terminal || canResumeRegistration) && <Button size="md" isLoading={busy === "install"} onClick={() => void install()}>{t(canResumeRegistration ? "ssh.resumeRegistration" : "ssh.checkInstallation")}</Button>}<Button size="md" color={connected ? "primary" : "secondary"} isDisabled={!!busy} onClick={close}>{t(connected ? "ssh.done" : "ssh.backToResources")}</Button>{connected && <Button size="md" color="secondary" onClick={() => setEnrolling(true)}>{t("nodeAgents.entry")}</Button>}{terminal && <Button size="md" color="tertiary" isDisabled={!!busy} onClick={() => { setError(""); save({ request: initialRequest }); }}>{t("ssh.connectAnother")}</Button>}</div>
+                        <div className="flex flex-wrap gap-2">{(!terminal || canResumeRegistration) && <Button size="md" isLoading={busy === "install"} onClick={() => void install()}>{t(canResumeRegistration ? "ssh.resumeRegistration" : "ssh.checkInstallation")}</Button>}{canAbandon && <Button size="md" color="secondary-destructive" isLoading={busy === "abandon"} isDisabled={busy !== null && busy !== "abandon"} onClick={() => void abandon()}>{t("ssh.abandon")}</Button>}<Button size="md" color={connected ? "primary" : "secondary"} isDisabled={!!busy} onClick={close}>{t(connected ? "ssh.done" : "ssh.backToResources")}</Button>{connected && <Button size="md" color="secondary" onClick={() => setEnrolling(true)}>{t("nodeAgents.entry")}</Button>}{terminal && <Button size="md" color="tertiary" isDisabled={!!busy} onClick={() => { setError(""); save({ request: initialRequest }); }}>{t("ssh.connectAnother")}</Button>}</div>
                     </>}
                 </section>}
-                {busy && busy !== "install" && <p role="status" className="mt-3 text-sm text-tertiary">{t(busy === "check" ? "ssh.checking" : "ssh.planning")}</p>}
+                {busy && busy !== "install" && <p role="status" className="mt-3 text-sm text-tertiary">{t(busy === "check" ? "ssh.checking" : busy === "abandon" ? "ssh.abandoning" : "ssh.planning")}</p>}
                 {enrolling && connected && result && <NodeAgentEnrollment node={result.node_id || result.name} name={result.name} onClose={() => setEnrolling(false)} onRegistered={onChanged} />}
                 {error && <p role="alert" className="mt-3 break-words text-sm text-error-primary">{error}</p>}
             </div>

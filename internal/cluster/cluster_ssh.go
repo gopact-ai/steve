@@ -54,12 +54,16 @@ func (s peerSSHService) SSHStatus(_ context.Context, id string) (sshconnect.Inst
 func (s peerSSHService) SSHCommit(ctx context.Context, id string) (sshconnect.InstallResult, error) {
 	return s.service.Commit(ctx, id)
 }
+func (s peerSSHService) SSHAbandon(ctx context.Context, id string) error {
+	return s.service.Abandon(ctx, id)
+}
 
 type peerEnrollmentService interface {
 	PreviewPeerEnrollment(context.Context, PeerEnrollmentRequest) (PeerEnrollmentPlan, error)
 	PreparePeerEnrollment(context.Context, PeerEnrollmentRequest, string) (PeerEnrollmentPackage, error)
 	CompletePeerEnrollment(context.Context, string) (PeerEnrollmentResult, error)
 	PeerEnrollmentStatus(context.Context, string) (PeerEnrollmentResult, error)
+	AbandonPeerEnrollment(context.Context, string) error
 	PeerSourceCandidates(context.Context) ([]string, string)
 }
 
@@ -91,7 +95,7 @@ func (b peerSSHBackend) service() peerEnrollmentService {
 }
 
 func sshPeerEnrollmentRequest(req sshconnect.InstallRequest) PeerEnrollmentRequest {
-	return PeerEnrollmentRequest{Alias: req.Alias, Name: req.Name, PeerAddress: req.Addr, RaftAddress: req.RaftAddr, SourceHost: req.SourceHost, Level: req.Level}
+	return PeerEnrollmentRequest{Alias: req.Alias, Name: req.Name, PeerAddress: req.Addr, RaftAddress: req.RaftAddr, SourceHost: req.SourceHost, Level: req.Level, WorkspaceDir: req.WorkspaceDir}
 }
 
 func peerPlanHash(plan PeerEnrollmentPlan) string {
@@ -125,6 +129,7 @@ func (b peerSSHBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 	}
 	template.Effects = append(template.Effects, plan.Effects...)
 	template.Effects = append(template.Effects, "通过 SSH 上传完整节点程序，校验后导入私有身份包到 ~/.steve-peer；执行日志保存到 ~/.steve-peer/peer.log")
+	template.Steps = append(template.Steps, sshconnect.Step{ID: "workspace", Status: "ready", Message: "工作目录 " + plan.Request.WorkspaceDir + "；目标机会在安装时创建，并拒绝系统目录或家目录本身"})
 	find := b.findBinary
 	if find == nil {
 		find = desktop.BundledPeerBinary
@@ -190,7 +195,7 @@ func (b peerSSHBackend) Register(ctx context.Context, req sshconnect.InstallRequ
 		return result, err
 	}
 	var bundle PeerJoinPackage
-	if registered.Plan.ReviewID != plan.ReviewID || peerPlanHash(registered.Plan) != plan.ReviewID || json.Unmarshal(registered.Payload, &bundle) != nil || bundle.OperationID != installID || bundle.NodeID != registered.NodeID || bundle.ClusterID != plan.ClusterID || bundle.Name != plan.Request.Name || bundle.StorageLevel != plan.Request.Level || bundle.PeerAdvertise != plan.Request.PeerAddress || bundle.RaftAdvertise != plan.Request.RaftAddress || !reflect.DeepEqual(bundle.Seeds, plan.Seeds) {
+	if registered.Plan.ReviewID != plan.ReviewID || peerPlanHash(registered.Plan) != plan.ReviewID || json.Unmarshal(registered.Payload, &bundle) != nil || bundle.OperationID != installID || bundle.NodeID != registered.NodeID || bundle.ClusterID != plan.ClusterID || bundle.Name != plan.Request.Name || bundle.WorkspaceDir != plan.Request.WorkspaceDir || bundle.StorageLevel != plan.Request.Level || bundle.PeerAdvertise != plan.Request.PeerAddress || bundle.RaftAdvertise != plan.Request.RaftAddress || !reflect.DeepEqual(bundle.Seeds, plan.Seeds) {
 		return result, errors.New("私有入组包与已审阅网络计划不同，安装已停止")
 	}
 	result.Token = base64.StdEncoding.EncodeToString(registered.Payload)
@@ -324,6 +329,19 @@ func peerPhaseText(phase string) string {
 	}
 }
 
+// AbandonRegistration withdraws an enrollment; the two refusals a user can
+// act on are reported as findings rather than service failures.
+func (b peerSSHBackend) AbandonRegistration(ctx context.Context, id string) error {
+	err := b.service().AbandonPeerEnrollment(ctx, id)
+	switch {
+	case errors.Is(err, ErrEnrollmentGone):
+		return &sshconnect.StepError{Stage: "planning", Code: "unknown_plan", Message: err.Error(), Suggestion: "刷新接入记录；这次接入没有留下需要撤回的东西"}
+	case errors.Is(err, ErrEnrollmentJoined):
+		return &sshconnect.StepError{Stage: "peer_membership", Code: "already_joined", Message: err.Error(), Suggestion: "在资源页的机群成员里移除这台机器；接入对话框不能撤销已完成的接入"}
+	}
+	return err
+}
+
 func (b peerSSHBackend) ResumeRegistration(ctx context.Context, id string) (sshconnect.InstallResult, error) {
 	record, err := b.service().PeerEnrollmentStatus(ctx, id)
 	if err != nil {
@@ -349,4 +367,5 @@ type SSHControl interface {
 	SSHPlan(context.Context, sshconnect.InstallRequest) (sshconnect.InstallPlan, error)
 	SSHCommit(context.Context, string) (sshconnect.InstallResult, error)
 	SSHStatus(context.Context, string) (sshconnect.InstallResult, error)
+	SSHAbandon(context.Context, string) error
 }
