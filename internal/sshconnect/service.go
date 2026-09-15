@@ -596,7 +596,10 @@ func (s *Service) Abandon(ctx context.Context, id string) error {
 		}
 		abandonCtx, cancel := context.WithTimeout(ctx, abandonLimit)
 		defer cancel()
-		if err := abandoner.AbandonRegistration(abandonCtx, id); err != nil {
+		var step *StepError
+		if err := abandoner.AbandonRegistration(abandonCtx, id); err != nil && !(errors.As(err, &step) && step.Code == "unknown_plan") {
+			// An operation the backend no longer has is already gone; only
+			// a refusal to withdraw one that exists is a finding.
 			return err
 		}
 	}
