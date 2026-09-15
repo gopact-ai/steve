@@ -142,14 +142,17 @@ func boundAdvertiseAddress(configured, bound string) string {
 	return net.JoinHostPort(host, port)
 }
 
+// localAdvertiseAddresses lists this machine's IPv4 addresses, LAN
+// interfaces first and tunnels (VPN) after them: a tunnel is often the
+// only path a remote machine has back to a laptop.
 func localAdvertiseAddresses() []string {
 	interfaces, err := net.Interfaces()
 	if err != nil {
 		return nil
 	}
-	var addresses []string
+	var lan, tunnels []string
 	for _, iface := range interfaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 || iface.Flags&net.FlagPointToPoint != 0 {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
 			continue
 		}
 		entries, _ := iface.Addrs()
@@ -158,17 +161,55 @@ func localAdvertiseAddresses() []string {
 			if err != nil || ip.IsLoopback() || ip.IsUnspecified() || ip.IsLinkLocalUnicast() || ip.To4() == nil {
 				continue
 			}
-			addresses = append(addresses, ip.String())
+			if iface.Flags&net.FlagPointToPoint != 0 {
+				tunnels = append(tunnels, ip.String())
+			} else {
+				lan = append(lan, ip.String())
+			}
 		}
 	}
-	sort.Slice(addresses, func(i, j int) bool {
-		a, b := net.ParseIP(addresses[i]), net.ParseIP(addresses[j])
-		if a.IsPrivate() != b.IsPrivate() {
-			return a.IsPrivate()
+	for _, group := range [][]string{lan, tunnels} {
+		sort.Slice(group, func(i, j int) bool {
+			a, b := net.ParseIP(group[i]), net.ParseIP(group[j])
+			if a.IsPrivate() != b.IsPrivate() {
+				return a.IsPrivate()
+			}
+			return group[i] < group[j]
+		})
+	}
+	return append(lan, tunnels...)
+}
+
+// PeerSourceCandidates names the addresses a joining node might reach this
+// machine at, the registered one first, and the HTTPS port it must open.
+func (p *Peer) PeerSourceCandidates(ctx context.Context) ([]string, string) {
+	runtime := p.Runtime.Load()
+	if runtime == nil {
+		return nil, ""
+	}
+	state, err := runtime.ReadState(ctx)
+	if err != nil {
+		return nil, ""
+	}
+	source, ok := state.Members[p.Config.NodeID]
+	if !ok {
+		return nil, ""
+	}
+	endpoint, err := url.Parse(source.APIAddress)
+	if err != nil || endpoint.Port() == "" {
+		return nil, ""
+	}
+	registered, _, _ := net.SplitHostPort(source.Address)
+	var hosts []string
+	seen := map[string]bool{}
+	for _, host := range append([]string{registered}, localAdvertiseAddresses()...) {
+		if host == "" || seen[host] || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback() {
+			continue
 		}
-		return addresses[i] < addresses[j]
-	})
-	return addresses
+		seen[host] = true
+		hosts = append(hosts, host)
+	}
+	return hosts, endpoint.Port()
 }
 
 func validPeerEndpoint(address string, allowLoopback bool) error {
@@ -481,6 +522,10 @@ func (p *Peer) saveEnrollment(record peerEnrollmentRecord) error {
 	return SaveClusterJSON(p.enrollmentPath(record.OperationID), record, false)
 }
 
+// peerCatchUpSlice bounds one CompletePeerEnrollment call while the new
+// node copies the ledger; the caller polls again for the next slice.
+const peerCatchUpSlice = 3 * time.Second
+
 func (p *Peer) CompletePeerEnrollment(ctx context.Context, id string) (PeerEnrollmentResult, error) {
 	p.enrollmentMu.Lock()
 	defer p.enrollmentMu.Unlock()
@@ -501,7 +546,11 @@ func (p *Peer) CompletePeerEnrollment(ctx context.Context, id string) (PeerEnrol
 		} else {
 			record.Error = ""
 		}
-		record.Steps = append(record.Steps, PeerEnrollmentStep{At: time.Now().UTC(), Stage: stage, Message: record.Error})
+		// A poll that finds the same thing as the last one adds nothing to
+		// the record; the record is polled for as long as the wait lasts.
+		if n := len(record.Steps); n == 0 || record.Steps[n-1].Stage != stage || record.Steps[n-1].Message != record.Error {
+			record.Steps = append(record.Steps, PeerEnrollmentStep{At: time.Now().UTC(), Stage: stage, Message: record.Error})
+		}
 		saveErr := p.saveEnrollment(record)
 		return record.PeerEnrollmentResult, errors.Join(err, saveErr)
 	}
@@ -542,10 +591,17 @@ func (p *Peer) CompletePeerEnrollment(ctx context.Context, id string) (PeerEnrol
 	if err != nil {
 		return finish("synchronizing", err)
 	}
+	// The catch-up is reported in slices: each call returns within a few
+	// seconds with how far the replica has come, so a caller polling the
+	// operation sees the copy advance instead of one silent long call.
+	deadline := time.Now().Add(peerCatchUpSlice)
 	for {
 		progress, err := p.client.Probe(ctx, member)
 		if err == nil && progress.AppVersion >= state.AppVersion && progress.AppliedIndex >= state.AppliedIndex {
 			break
+		}
+		if time.Now().After(deadline) {
+			return finish("synchronizing", fmt.Errorf("%w：协作数据复制中，节点已应用 %d/%d", coordination.ErrNotReady, progress.AppliedIndex, state.AppliedIndex))
 		}
 		select {
 		case <-ctx.Done():

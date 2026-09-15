@@ -24,6 +24,7 @@ type recordingRunner struct {
 	mu          sync.Mutex
 	calls       []recordedCommand
 	checkOutput string
+	reachOutput string
 	failInstall bool
 	failUpload  bool
 	stderr      string
@@ -64,6 +65,9 @@ func (r *recordingRunner) Run(_ context.Context, args []string, stdin string) (O
 			probe = completeProbe
 		}
 		return Output{Stdout: probe}, nil
+	}
+	if strings.Contains(stdin, "STEVE_REACH") {
+		return Output{Stdout: r.reachOutput}, nil
 	}
 	if r.failInstall {
 		return Output{Stderr: "installation failed with secret-value"}, errors.New("SSH exit")

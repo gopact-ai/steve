@@ -50,8 +50,11 @@ type CheckResult struct {
 	ExistingPaths        []string               `json:"existing_paths"`
 	ExistingNode         *ExistingNodeRecord    `json:"existing_node,omitempty"`
 	InstallationMode     InstallationMode       `json:"installation_mode"`
-	Steps                []Step                 `json:"steps"`
-	CheckedAt            time.Time              `json:"checked_at"`
+	// SourceHosts is what the target said about reaching this machine; nil
+	// when the backend did not ask or the target could not answer.
+	SourceHosts []SourceHost `json:"source_hosts,omitempty"`
+	Steps       []Step       `json:"steps"`
+	CheckedAt   time.Time    `json:"checked_at"`
 }
 
 // ExistingNodeRecord contains unverified values from fixed configuration
@@ -359,6 +362,7 @@ func (s *Service) Plan(ctx context.Context, req InstallRequest) (InstallPlan, er
 	if err != nil {
 		return InstallPlan{Request: req, Check: check, Steps: check.Steps}, err
 	}
+	s.probeSourceHosts(ctx, connection, &check)
 	template, err := s.backend.Preview(ctx, req, check)
 	if err != nil {
 		return InstallPlan{}, err
@@ -470,6 +474,9 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 		if recovery, ok := s.backend.(RegistrationRecovery); ok && result.Registered && !result.Connected {
 			stored.done, stored.running = false, true
 			stored.result.Status, stored.result.Phase = "installing", PhaseConnectivity
+			// The failure being retried is no longer a finding; what the
+			// earlier attempt did settle stays on record.
+			stored.result.Steps = settledSteps(stored.result.Steps)
 			stored.result.appendLog(s.now(), "steve", "继续确认原接入操作，不重新上传或安装")
 			s.mu.Unlock()
 			result, err = s.resumeRegistration(WithReporter(ctx, func(message string) { s.noteStored(id, message) }), recovery, id)
@@ -478,6 +485,7 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 			// installation got here, and what was said while resuming,
 			// carries across.
 			result.Phases, result.Log = stored.result.Phases, stored.result.Log
+			result.Steps = append(append([]Step{}, stored.result.Steps...), result.Steps...)
 			if result.Connected {
 				result.Phase = ""
 				result.appendLog(s.now(), "steve", "原接入操作已确认完成")
@@ -534,7 +542,7 @@ func (s *Service) resumeRegistration(ctx context.Context, recovery RegistrationR
 	if _, err := hex.DecodeString(id); err != nil {
 		return InstallResult{}, fail("planning", "unknown_plan", "无法找到原接入操作", "请从已保存的接入记录核对操作")
 	}
-	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
+	ctx, cancel := context.WithTimeout(ctx, peerVerifyLimit)
 	defer cancel()
 	return recovery.ResumeRegistration(ctx, id)
 }
@@ -564,6 +572,14 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	}
 	if check.OS != plan.Check.OS || check.Arch != plan.Check.Arch || check.Address != plan.Check.Address || check.User != plan.Check.User || !stepsReady(check.Steps) {
 		return reject(fail("environment", "environment_changed", "机器环境已改变或不再满足接入条件", "重新检查并确认目标机器"))
+	}
+	s.probeSourceHosts(ctx, connection, &check)
+	if check.SourceHosts == nil {
+		// A probe the target did not finish this time says nothing new; the
+		// reviewed plan's answer stands.
+		check.SourceHosts = plan.Check.SourceHosts
+	} else if !sameSourceHosts(check.SourceHosts, plan.Check.SourceHosts) {
+		return reject(fail("environment", "source_reachability_changed", "目标机能连到的本机地址已变化", "重新检查并审阅新的安装计划"))
 	}
 	template, err := s.backend.Preview(ctx, plan.Request, check)
 	if err != nil {
@@ -660,10 +676,14 @@ func (s *Service) upload(ctx context.Context, result *InstallResult, plan Instal
 func (s *Service) verifyConnectivity(ctx context.Context, result *InstallResult, plan InstallPlan) *StepError {
 	verifier, peerRegistration := s.backend.(RegistrationVerifier)
 	verifyTimeout := 15 * time.Second
+	message := fmt.Sprintf("等待节点连通（最多 %s）", verifyTimeout)
 	if peerRegistration {
-		verifyTimeout = 2 * time.Minute
+		// Cluster enrollment keeps going as long as it makes progress; the
+		// verifier stops it on a stall, this cap only bounds the request.
+		verifyTimeout = peerVerifyLimit
+		message = "等待节点接入集群；只要阶段还在推进就持续检测"
 	}
-	s.enter(result, PhaseConnectivity, fmt.Sprintf("等待节点连通（最多 %s）", verifyTimeout))
+	s.enter(result, PhaseConnectivity, message)
 	reporter := &phaseReporter{s: s, result: result}
 	verifyCtx, cancel := context.WithTimeout(WithReporter(ctx, reporter.report), verifyTimeout)
 	var err error
@@ -682,7 +702,7 @@ func (s *Service) verifyConnectivity(ctx context.Context, result *InstallResult,
 		return fail("connectivity", "node_unreachable", "节点服务已启动，但协调节点尚未连通", "检查节点地址、端口和网络路由；SSH 代理连通不代表节点端口可直接访问")
 	}
 	result.Status, result.Connected, result.Phase = "connected", true, ""
-	message := "协调节点已完成节点协议握手"
+	message = "协调节点已完成节点协议握手"
 	if peerRegistration {
 		message = "节点已完成集群接入、状态同步和独立连接验证"
 	}
@@ -744,6 +764,34 @@ func validateRequest(req InstallRequest) error {
 		}
 	}
 	return nil
+}
+
+// peerVerifyLimit bounds one connectivity wait for a cluster enrollment.
+// The enrollment verifier gives up earlier when nothing advances.
+const peerVerifyLimit = 15 * time.Minute
+
+// settledSteps keeps the steps an attempt completed and drops the ones it
+// stopped on: the retry answers those again, and the log keeps their text.
+func settledSteps(steps []Step) []Step {
+	kept := make([]Step, 0, len(steps))
+	for _, step := range steps {
+		if step.Status != "blocked" {
+			kept = append(kept, step)
+		}
+	}
+	return kept
+}
+
+func sameSourceHosts(a, b []SourceHost) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
 }
 
 func stepsReady(steps []Step) bool {
