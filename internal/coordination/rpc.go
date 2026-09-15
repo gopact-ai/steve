@@ -61,7 +61,7 @@ func (h *rpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.failure(w, http.StatusMethodNotAllowed, ErrInvalid)
 		return
 	}
-	if action != "app" && action != "writer" && action != "transfer" && action != "policy" && action != "eligibility" && action != "join" && action != "remove" && action != "address" {
+	if action != "app" && action != "writer" && action != "transfer" && action != "policy" && action != "eligibility" && action != "rename" && action != "join" && action != "remove" && action != "address" {
 		http.NotFound(w, r)
 		return
 	}
@@ -125,6 +125,13 @@ func (h *rpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		request.Actor = actor
 		result, err = h.service.SetEligibility(r.Context(), request)
+	case "rename":
+		var request RenameRequest
+		if !h.decodeCommand(w, r, &request) {
+			return
+		}
+		request.Actor = actor
+		result, err = h.service.Rename(r.Context(), request)
 	case "join":
 		var request JoinRequest
 		if !h.decodeCommand(w, r, &request) {

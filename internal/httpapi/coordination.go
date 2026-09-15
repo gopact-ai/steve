@@ -15,6 +15,7 @@ func (s *Server) coordinationRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /console/coordination/transfer", s.guard(s.consoleCoordinationTransfer))
 	mux.HandleFunc("PUT /console/coordination/policy", s.guard(s.consoleCoordinationPolicy))
 	mux.HandleFunc("PUT /console/coordination/eligibility", s.guard(s.consoleCoordinationEligibility))
+	mux.HandleFunc("PUT /console/coordination/name", s.guard(s.consoleCoordinationRename))
 }
 
 func (s *Server) consoleCoordination(w http.ResponseWriter, r *http.Request) {
@@ -61,6 +62,18 @@ func (s *Server) consoleCoordinationEligibility(w http.ResponseWriter, r *http.R
 		return
 	}
 	view, err := s.coordination.SetCoordinatorEligibility(r.Context(), request)
+	s.coordinationResult(w, view, err)
+}
+
+func (s *Server) consoleCoordinationRename(w http.ResponseWriter, r *http.Request) {
+	if !s.coordinationAvailable(w) {
+		return
+	}
+	var request consoleapi.CoordinatorRename
+	if !decodeSSH(w, r, &request) {
+		return
+	}
+	view, err := s.coordination.RenameNode(r.Context(), request)
 	s.coordinationResult(w, view, err)
 }
 

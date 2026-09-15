@@ -5,8 +5,12 @@ package coordination
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/hashicorp/raft"
 )
@@ -67,6 +71,28 @@ type Member struct {
 	AutoEligible  bool   `json:"auto_eligible"`
 	FailureDomain string `json:"failure_domain"`
 	StorageLevel  string `json:"storage_level"`
+}
+
+// MemberNameLimit bounds a display name in characters, not bytes, so
+// names in any script get the same room.
+const MemberNameLimit = 64
+
+// MemberName trims a requested display name and rejects blank, oversized
+// or control-character names with ErrInvalid.
+func MemberName(requested string) (string, error) {
+	name := strings.TrimSpace(requested)
+	if name == "" {
+		return "", fmt.Errorf("%w: display name is required", ErrInvalid)
+	}
+	if utf8.RuneCountInString(name) > MemberNameLimit {
+		return "", fmt.Errorf("%w: display name exceeds %d characters", ErrInvalid, MemberNameLimit)
+	}
+	for _, r := range name {
+		if unicode.IsControl(r) {
+			return "", fmt.Errorf("%w: display name contains control characters", ErrInvalid)
+		}
+	}
+	return name, nil
 }
 
 type Assignment struct {
@@ -190,6 +216,16 @@ type RemoveRequest struct {
 	ID     string `json:"id"`
 	Actor  string `json:"actor"`
 	NodeID string `json:"node_id"`
+}
+
+// RenameRequest changes the name people see for a member. The node ID it
+// names stays the identity every task, project and agent refers to.
+type RenameRequest struct {
+	ID               string `json:"id"`
+	Actor            string `json:"actor"`
+	ExpectedRevision uint64 `json:"expected_revision"`
+	NodeID           string `json:"node_id"`
+	Name             string `json:"name"`
 }
 
 type MemberAddressRequest struct {

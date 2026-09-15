@@ -74,7 +74,7 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	if err != nil {
 		return nil, err
 	}
-	readModel, err := assembleReadModel(runtime, ledger, fleet, models, execution, plans)
+	readModel, err := assembleReadModel(input, runtime, ledger, fleet, models, execution, plans)
 	if err != nil {
 		return nil, err
 	}

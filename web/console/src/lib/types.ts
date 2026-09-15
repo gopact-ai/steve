@@ -13,7 +13,7 @@ export interface AbilitySnapshot {
     coverage: Record<string, string>; offers: Capability[]; features?: string[]; source?: string;
 }
 export interface Node {
-    name: string; role?: string; version?: string; addr?: string; host?: string; ips?: string[]; up: boolean; since?: string; os?: string; arch?: string;
+    name: string; display_name?: string; role?: string; version?: string; addr?: string; host?: string; ips?: string[]; up: boolean; since?: string; os?: string; arch?: string;
     capabilities?: string[]; harnesses?: Harness[]; last_error?: string; level?: string; region?: string; snapshot?: AbilitySnapshot;
     features?: string[]; health?: Health;
 }

@@ -61,9 +61,22 @@ type CoordinatorEligibility struct {
 	Eligible         bool   `json:"eligible"`
 }
 
+// CoordinatorRename sets the name people see for a member; the node ID
+// stays what tasks, projects and agents refer to.
+type CoordinatorRename struct {
+	CommandID        string `json:"command_id"`
+	ExpectedRevision uint64 `json:"expected_revision"`
+	NodeID           string `json:"node_id"`
+	Name             string `json:"name"`
+}
+
 type CoordinationService interface {
 	Coordination(context.Context) (CoordinationView, error)
 	TransferCoordinator(context.Context, CoordinatorTransfer) (CoordinationView, error)
 	SetAutoFailover(context.Context, CoordinatorPolicy) (CoordinationView, error)
 	SetCoordinatorEligibility(context.Context, CoordinatorEligibility) (CoordinationView, error)
+	RenameNode(context.Context, CoordinatorRename) (CoordinationView, error)
+	// MemberNames maps member node IDs to their display names from the
+	// locally replicated state, without probing any peer.
+	MemberNames() map[string]string
 }

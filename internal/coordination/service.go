@@ -379,6 +379,17 @@ func (s *Service) SetEligibility(ctx context.Context, request EligibilityRequest
 	return s.submit(ctx, command{Kind: "eligibility", ID: request.ID, Actor: request.Actor, Fingerprint: fingerprint("eligibility", request), Eligibility: request})
 }
 
+// Rename records a member's display name. The command is validated again
+// when applied, so every replica rejects the same names.
+func (s *Service) Rename(ctx context.Context, request RenameRequest) (Result, error) {
+	if _, err := MemberName(request.Name); err != nil {
+		return Result{}, err
+	}
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	return s.submit(ctx, command{Kind: "rename", ID: request.ID, Actor: request.Actor, Fingerprint: fingerprint("rename", request), Rename: request})
+}
+
 func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Result, error) {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
