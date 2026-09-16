@@ -87,7 +87,7 @@ func (s *Service) ContinuationReceipt(conversation, taskID, key string) (bool, e
 }
 
 func (s *Service) continuationLocked(conversation, key string) *queuedExchange {
-	for _, e := range s.exchanges[conversationID(conversation)] {
+	for _, e := range s.exchanges[ConversationID(conversation)] {
 		if key != "" && e.Key == key {
 			return e
 		}

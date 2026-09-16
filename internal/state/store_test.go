@@ -3,6 +3,8 @@ package state
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/gopact-ai/steve/internal/ledger"
 )
 
 func TestStorePersistsConversationSessions(t *testing.T) {
@@ -216,5 +218,50 @@ func TestPreferencesPersistPerAgent(t *testing.T) {
 	}
 	if other := again.Preferences("chat", "claude"); len(other) != 0 {
 		t.Fatalf("another agent's preferences = %v", other)
+	}
+}
+
+func TestDeleteConversationForgetsSessionsAndPreferences(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "state.json")
+	store, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSession(Session{ConversationID: "console:one", AgentID: "steve", HarnessID: "codex", UpstreamID: "ns_1", Workspace: "/work"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.ArchiveSession("console:one", "steve", "2026-09-17T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetPreferences("console:one", "steve", map[string]string{"model": "gpt-6"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SaveSession(Session{ConversationID: "console:two", AgentID: "steve", HarnessID: "codex", UpstreamID: "ns_2", Workspace: "/work"}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := store.DeleteConversation("console:one"); err != nil {
+		t.Fatalf("delete conversation: %v", err)
+	}
+
+	reopened, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := reopened.Conversation("console:one")
+	if len(gone.Sessions) != 0 || len(gone.Archived) != 0 || len(gone.Preferences) != 0 {
+		t.Fatalf("conversation survived deletion: %#v", gone)
+	}
+	if kept := reopened.Conversation("console:two"); len(kept.Sessions) != 1 {
+		t.Fatalf("another conversation was deleted: %#v", kept)
+	}
+	refs, err := PluginReferences(&ledger.FileDocument{Path: path})
+	if err != nil {
+		t.Fatalf("plugin references: %v", err)
+	}
+	for _, ref := range refs {
+		if ref.Conversation == "console:one" {
+			t.Fatalf("deleted conversation still holds a plugin reference: %#v", ref)
+		}
 	}
 }

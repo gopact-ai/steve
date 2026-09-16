@@ -268,9 +268,24 @@ func (a *Service) RemoveWorkspace(ctx context.Context, projectID, nodeName strin
 	})
 }
 
+// RemoveProject deletes a project and the threads that work in it. A
+// thread outlives nothing: its workspace, its tasks and its agent
+// sessions are all the project's, so leaving it behind would list work
+// nobody can open. The directory on disk is not touched.
 func (a *Service) RemoveProject(ctx context.Context, id string) error {
 	if id == HomeProjectID {
 		return fmt.Errorf("%s 是 Steve 自己的家，不能移除", id)
+	}
+	ConfigMu.RLock()
+	isDefault := id == a.Cfg.Gateway.DefaultProject
+	ConfigMu.RUnlock()
+	if isDefault {
+		return fmt.Errorf("%s 是默认项目，不能移除", id)
+	}
+	for _, conversation := range a.conversationsOf(ctx, id) {
+		if err := a.DeleteConversation(ctx, conversation); err != nil {
+			return fmt.Errorf("删除项目 %s 的会话 %s 失败：%w", id, conversation, err)
+		}
 	}
 	return a.changeProjects(ctx, func(candidate *config.Config) error {
 		if id == candidate.Gateway.DefaultProject {

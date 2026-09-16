@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { useI18n } from "@/providers/locale-provider";
 import { ModalOverlay, Modal, Dialog } from "react-aria-components";
 import { X } from "@untitledui/icons";
 
@@ -10,12 +11,13 @@ export function Sheet({ label, side = "right", width = 480, onClose, children }:
     </ModalOverlay>;
 }
 
-export function Drawer({ title, subtitle, actions, onClose, width = 520, children }: { title: ReactNode; subtitle?: ReactNode; actions?: ReactNode; onClose: () => void; width?: number; children: ReactNode }) {
-    return <Sheet label={typeof title === "string" ? title : "详细信息"} width={width} onClose={onClose}>
+export function Drawer({ title, label, subtitle, actions, onClose, width = 520, children }: { title: ReactNode; label?: string; subtitle?: ReactNode; actions?: ReactNode; onClose: () => void; width?: number; children: ReactNode }) {
+    const { t: tr } = useI18n();
+    return <Sheet label={label || (typeof title === "string" ? title : tr("common.details"))} width={width} onClose={onClose}>
         <div className="workbench-drawer-header">
             <div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2">{title}</div>{subtitle}</div>
             {actions}
-            <button type="button" className="workbench-icon-button" aria-label="关闭" onClick={onClose}><X aria-hidden="true" /></button>
+            <button type="button" className="workbench-icon-button" aria-label={tr("common.close")} onClick={onClose}><X aria-hidden="true" /></button>
         </div>
         <div className="workbench-drawer-body">{children}</div>
     </Sheet>;

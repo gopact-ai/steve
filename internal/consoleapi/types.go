@@ -210,6 +210,9 @@ type Admin interface {
 	// RemoveProject retires one and drops it from the file.
 	AddProject(ctx context.Context, req AddProjectRequest) error
 	RemoveProject(ctx context.Context, id string) error
+	// DeleteConversation removes a thread and what only it held: its
+	// agent sessions, its tasks, its schedules and its transcript.
+	DeleteConversation(ctx context.Context, conversation string) error
 	// SetProjectHome moves a project's canonical directory.
 	SetProjectHome(ctx context.Context, id, path string) error
 	// AddWorkspace gives a project a copy on a machine — a directory that

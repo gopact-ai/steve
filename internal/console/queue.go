@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"errors"
+	"fmt"
 	"maps"
 	"strings"
 	"time"
@@ -37,7 +38,9 @@ type queuedExchange struct {
 	outcome              outcome
 }
 
-func conversationID(conversation string) string {
+// ConversationID is a conversation's full identity: the console's own
+// prefix and the name, whichever half the caller has.
+func ConversationID(conversation string) string {
 	if conversation == "" {
 		return Prefix + "main"
 	}
@@ -108,7 +111,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	if s.owner == "" {
 		return nil, Exchange{}, errors.New("the console needs feishu.owner_open_id: it acts as the owner")
 	}
-	conversation = conversationID(conversation)
+	conversation = ConversationID(conversation)
 	input, prompt, quotes, hash := submission(input, prompt, quotes)
 	s.mu.Lock()
 	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
@@ -219,6 +222,9 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 
 func (s *Service) acceptExchangeLocked(e *queuedExchange, front bool) (*queuedExchange, Exchange, error) {
 	conversation := e.Conversation
+	if s.sealed[conversation] {
+		return nil, Exchange{}, fmt.Errorf("%w: %s is being deleted", consoleapi.ErrBusy, conversation)
+	}
 	var err error
 	list := s.exchanges[conversation]
 	at := len(list)
@@ -257,7 +263,7 @@ func (s *Service) Queue(conversation string) []Exchange {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := []Exchange{}
-	list := s.exchanges[conversationID(conversation)]
+	list := s.exchanges[ConversationID(conversation)]
 	remaining := keep
 	for i := len(list) - 1; i >= 0; i-- {
 		e := list[i]
