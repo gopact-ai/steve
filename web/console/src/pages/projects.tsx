@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useI18n } from "@/providers/locale-provider";
 import { labelsFor } from "@/lib/labels";
 import { DotsHorizontal, Folder, GitBranch01, Loading01, Plus, Trash01, X } from "@untitledui/icons";
@@ -38,18 +38,22 @@ export function ProjectsPage() {
     const navigate = useNavigate();
     const [opened, setOpened] = useState<string | null>(null);
     const [adding, setAdding] = useState(false);
-    // The threads are read here so the confirmation can say what a delete
-    // takes with it; the list itself lives on the console page.
-    const [threads, setThreads] = useState<Conversation[]>([]);
+    const [threads, setThreads] = useState<Conversation[] | null>(null);
     const [removing, setRemoving] = useState<Project | null>(null);
-    useEffect(() => { fetchConversations().then((data) => setThreads(data.conversations || [])).catch(() => setThreads([])); }, [snap.projects]);
     async function remove(p: Project) {
         await removeProject(p.id);
         refresh();
     }
     // The question stands alone: whatever was being read about the project
-    // closes first, so the only thing left on screen is the decision.
-    function ask(p: Project) { setOpened(null); setRemoving(p); }
+    // closes first, so the only thing left on screen is the decision. The
+    // threads are counted only now, for this one question, and until they
+    // arrive the question does not claim a number it does not have.
+    async function ask(p: Project) {
+        setOpened(null);
+        setThreads(null);
+        setRemoving(p);
+        try { setThreads((await fetchConversations()).conversations || []); } catch { setThreads(null); }
+    }
     const work = snap.projects.filter((p) => !p.home).sort((a, b) => a.node.localeCompare(b.node) || a.id.localeCompare(b.id));
     const home = snap.projects.find((p) => p.home);
     const current = opened ? snap.projects.find((p) => p.id === opened) : undefined;
@@ -108,7 +112,7 @@ export function ProjectsPage() {
                                                         <DotsHorizontal className="size-3.5" />
                                                     </AriaButton>
                                                     <Dropdown.Popover placement="bottom end" className="w-44">
-                                                        <Dropdown.Menu onAction={(k) => { if (k === "delete") ask(p); }}>
+                                                        <Dropdown.Menu onAction={(k) => { if (k === "delete") void ask(p); }}>
                                                             <Dropdown.Item id="delete" label={tr("projects.removeProject")} icon={Trash01} isDisabled={!!p.default} />
                                                         </Dropdown.Menu>
                                                     </Dropdown.Popover>
@@ -131,13 +135,15 @@ export function ProjectsPage() {
                     <Button size="sm" color="link-color" onClick={() => newSession(home.id)}>{tr("projects.newConversation")}</Button>
                 </div>
             )}
-            {current && <ProjectDrawer p={current} onClose={() => setOpened(null)} onNewSession={() => newSession(current.id)} onRemove={() => ask(current)} />}
+            {current && <ProjectDrawer p={current} onClose={() => setOpened(null)} onNewSession={() => newSession(current.id)} onRemove={() => void ask(current)} />}
             {removing && <ConfirmDialog title={tr("projects.removeTitle", { project: removing.id })} confirmLabel={tr("projects.removeProject")}
-                body={tr("projects.removeConfirm", {
-                    threads: threads.filter((c) => c.project === removing.id).length,
-                    tasks: snap.tasks.filter((t) => t.project_id === removing.id).length,
-                    path: removing.path,
-                })}
+                body={threads === null
+                    ? tr("projects.removeConfirmCounting", { tasks: snap.tasks.filter((t) => t.project_id === removing.id).length, path: removing.path })
+                    : tr("projects.removeConfirm", {
+                        threads: threads.filter((c) => c.project === removing.id).length,
+                        tasks: snap.tasks.filter((t) => t.project_id === removing.id).length,
+                        path: removing.path,
+                    })}
                 onConfirm={() => remove(removing)} onClose={() => setRemoving(null)} />}
             </PageBody>
         </div>
