@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"time"
 
@@ -30,11 +31,15 @@ func (s *Service) InitializeConversation(ctx context.Context, conversation, proj
 	if !ok {
 		return errors.New("conversation initialization is not available")
 	}
-	conversation = conversationID(conversation)
+	conversation = ConversationID(conversation)
 	s.mu.Lock()
 	if s.closing || s.maintenance || s.recoveryStoppedLocked() {
 		s.mu.Unlock()
 		return consoleapi.ErrConsoleClosing
+	}
+	if s.sealed[conversation] {
+		s.mu.Unlock()
+		return fmt.Errorf("%w: %s is being deleted", consoleapi.ErrBusy, conversation)
 	}
 	if err := ctx.Err(); err != nil {
 		s.mu.Unlock()

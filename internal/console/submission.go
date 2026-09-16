@@ -25,7 +25,7 @@ func submission(input, prompt string, quotes []QuoteRef) (string, string, []Quot
 	}
 	refs := make([]QuoteRef, len(quotes))
 	for i, q := range quotes {
-		refs[i] = QuoteRef{Conversation: conversationID(q.Conversation), ReplyID: q.ReplyID}
+		refs[i] = QuoteRef{Conversation: ConversationID(q.Conversation), ReplyID: q.ReplyID}
 	}
 	raw, _ := json.Marshal(struct {
 		Input, Prompt string

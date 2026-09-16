@@ -502,6 +502,21 @@ func (s *Store) DeleteSession(conversationID, agentID string) error {
 	return s.replaceLocked(next)
 }
 
+// DeleteConversation forgets a conversation: its open sessions, the
+// archived ones and the owner's choices in it. The agent sessions behind
+// them must already be closed — this drops the records that would resume
+// them, so a deleted thread cannot be reopened by anything.
+func (s *Store) DeleteConversation(conversationID string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if _, ok := s.data.Conversations[conversationID]; !ok {
+		return nil
+	}
+	next := cloneData(s.data)
+	delete(next.Conversations, conversationID)
+	return s.replaceLocked(next)
+}
+
 func (s *Store) replaceLocked(next data) error {
 	raw, err := json.MarshalIndent(next, "", "  ")
 	if err != nil {

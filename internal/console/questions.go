@@ -50,7 +50,7 @@ func (s *Service) Questions(conversation string) []consoleapi.PendingQuestion {
 	defer s.mu.Unlock()
 	questions := []consoleapi.PendingQuestion{}
 	for _, q := range s.questions {
-		if q.Principal == s.owner && (conversation == "" || q.Conversation == conversationID(conversation)) {
+		if q.Principal == s.owner && (conversation == "" || q.Conversation == ConversationID(conversation)) {
 			questions = append(questions, copyQuestion(q))
 		}
 	}

@@ -1,20 +1,24 @@
 import { useState } from "react";
 import { useI18n } from "@/providers/locale-provider";
 import { labelsFor } from "@/lib/labels";
-import { Folder, GitBranch01, Loading01, Plus, X } from "@untitledui/icons";
+import { DotsHorizontal, Folder, GitBranch01, Loading01, Plus, Trash01, X } from "@untitledui/icons";
+import { Button as AriaButton } from "react-aria-components";
 import { useNavigate } from "react-router";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
+import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
+import { fetchConversations } from "@/lib/api/console";
 import { addProject, addWorkspace, removeProject, removeWorkspace } from "@/lib/api/projects";
 import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import { nodeLabelIn, useNodeLabel } from "@/lib/node-name";
-import type { Project, Repo, Workspace } from "@/lib/types";
+import type { Conversation, Project, Repo, Workspace } from "@/lib/types";
 import { kindWord, workspaceState as workspaceStateLabel, levelName } from "@/lib/workspaces";
+import { ConfirmDialog } from "@/components/steve/confirm";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
 import { WorkspaceDirectoryField } from "@/components/steve/workspace-directory";
 import { CodeBlock } from "@/components/steve/markdown";
@@ -34,6 +38,22 @@ export function ProjectsPage() {
     const navigate = useNavigate();
     const [opened, setOpened] = useState<string | null>(null);
     const [adding, setAdding] = useState(false);
+    const [threads, setThreads] = useState<Conversation[] | null>(null);
+    const [removing, setRemoving] = useState<Project | null>(null);
+    async function remove(p: Project) {
+        await removeProject(p.id);
+        refresh();
+    }
+    // The question stands alone: whatever was being read about the project
+    // closes first, so the only thing left on screen is the decision. The
+    // threads are counted only now, for this one question, and until they
+    // arrive the question does not claim a number it does not have.
+    async function ask(p: Project) {
+        setOpened(null);
+        setThreads(null);
+        setRemoving(p);
+        try { setThreads((await fetchConversations()).conversations || []); } catch { setThreads(null); }
+    }
     const work = snap.projects.filter((p) => !p.home).sort((a, b) => a.node.localeCompare(b.node) || a.id.localeCompare(b.id));
     const home = snap.projects.find((p) => p.home);
     const current = opened ? snap.projects.find((p) => p.id === opened) : undefined;
@@ -47,7 +67,9 @@ export function ProjectsPage() {
             {adding && <AddProject onClose={() => setAdding(false)} onDone={() => refresh()} />}
             <TableCard.Root size="sm" className="workbench-table min-w-0">
                 {work.length === 0 ? <Nothing icon={Folder} title={tr("projects.empty")}>{tr("projects.emptyHint")}</Nothing> : (
-                    <Table aria-label={tr("nav.projects")} size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
+                    <Table aria-label={tr("nav.projects")} size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace"
+                        selectedKeys={opened ? [opened] : []}
+                        onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
                         <Table.Header>
                             <Table.Head id="name" label={tr("projects.name")} className="w-[18%]" isRowHeader />
                             <Table.Head id="where" label={tr("projects.workspaces")} className="w-[26%]" />
@@ -82,7 +104,21 @@ export function ProjectsPage() {
                                         <Table.Cell><RepoChips repos={p.repos} /></Table.Cell>
                                         <Table.Cell><div className="flex flex-col gap-1 text-xs"><span className="truncate text-secondary" title={labelsFor(locale).repo[p.repo] || p.repo}>{p.repo === "inplace" ? tr("projects.editInPlace") : p.repo === "isolated" ? tr("projects.isolated") : p.repo}</span><span className="text-tertiary" title={tr("projects.levelHint")}>{levelName(p.level, locale)}</span></div></Table.Cell>
                                         <Table.Cell><span className="text-sm tabular-nums text-secondary" title={tasks.map((t) => `#${t.id} ${t.title || t.goal}`).join("\n")}>{tasks.length || "—"}</span></Table.Cell>
-                                        <Table.Cell className="sticky right-0 bg-inherit text-right"><Button size="sm" color="link-color" onClick={() => newSession(p.id)}>{tr("projects.newConversation")}</Button></Table.Cell>
+                                        <Table.Cell className="sticky right-0 bg-inherit">
+                                            <div className="flex items-center justify-end gap-1">
+                                                <Button size="sm" color="link-color" onClick={() => newSession(p.id)}>{tr("projects.newConversation")}</Button>
+                                                <Dropdown.Root>
+                                                    <AriaButton aria-label={tr("projects.menu", { project: p.id })} className="workbench-icon-button">
+                                                        <DotsHorizontal className="size-3.5" />
+                                                    </AriaButton>
+                                                    <Dropdown.Popover placement="bottom end" className="w-44">
+                                                        <Dropdown.Menu onAction={(k) => { if (k === "delete") void ask(p); }}>
+                                                            <Dropdown.Item id="delete" label={tr("projects.removeProject")} icon={Trash01} isDisabled={!!p.default} />
+                                                        </Dropdown.Menu>
+                                                    </Dropdown.Popover>
+                                                </Dropdown.Root>
+                                            </div>
+                                        </Table.Cell>
                                     </Table.Row>
                                 );
                             }}
@@ -99,7 +135,16 @@ export function ProjectsPage() {
                     <Button size="sm" color="link-color" onClick={() => newSession(home.id)}>{tr("projects.newConversation")}</Button>
                 </div>
             )}
-            {current && <ProjectDrawer p={current} onClose={() => setOpened(null)} onNewSession={() => newSession(current.id)} />}
+            {current && <ProjectDrawer p={current} onClose={() => setOpened(null)} onNewSession={() => newSession(current.id)} onRemove={() => void ask(current)} />}
+            {removing && <ConfirmDialog title={tr("projects.removeTitle", { project: removing.id })} confirmLabel={tr("projects.removeProject")}
+                body={threads === null
+                    ? tr("projects.removeConfirmCounting", { tasks: snap.tasks.filter((t) => t.project_id === removing.id).length, path: removing.path })
+                    : tr("projects.removeConfirm", {
+                        threads: threads.filter((c) => c.project === removing.id).length,
+                        tasks: snap.tasks.filter((t) => t.project_id === removing.id).length,
+                        path: removing.path,
+                    })}
+                onConfirm={() => remove(removing)} onClose={() => setRemoving(null)} />}
             </PageBody>
         </div>
     );
@@ -182,23 +227,17 @@ function RepoChips({ repos }: { repos?: Repo[] }) {
     );
 }
 
-function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () => void; onNewSession: () => void }) {
+function ProjectDrawer({ p, onClose, onNewSession, onRemove }: { p: Project; onClose: () => void; onNewSession: () => void; onRemove: () => void }) {
     const { t: tr, locale } = useI18n();
     const { snap, refresh } = useFleet();
     const nodeLabelOf = useNodeLabel();
-    const [removing, setRemoving] = useState(false);
-    const [error, setError] = useState("");
     const [addingWorkspace, setAddingWorkspace] = useState(false);
-    async function remove() {
-        setError("");
-        try { await removeProject(p.id); refresh(); onClose(); } catch (e) { setError(String(e).replace(/^Error: /, "")); setRemoving(false); }
-    }
     const tasks = snap.tasks.filter((t) => t.project_id === p.id && t.lane !== "ended");
     const landings = snap.landings.filter((l) => l.project === p.id).slice(0, 5);
     const grants = snap.facts.grants.filter((g) => g.project === p.id);
     const stepAgents = snap.agents.filter((a) => a.eligible && (p.repo === "isolated" || a.node === p.node)).map((a) => a.id);
     return (
-        <Drawer width={600} title={<><span className="text-base font-semibold text-primary">{p.id}</span>{p.default && <Badge type="pill-color" size="sm" color="brand">{tr("projects.defaultProject")}</Badge>}<Badge type="modern" size="sm" color="gray">{levelName(p.level, locale)}</Badge></>} subtitle={<><div className="mt-0.5 text-xs text-tertiary">{p.workspaces.length === 1 ? <>{tr("projects.primaryOnly", { node: nodeLabelOf(p.node) })}</> : <>{tr("projects.workspaceSummary", { count: p.workspaces.length, node: nodeLabelOf(p.node), copies: p.workspaces.filter((w) => w.kind !== "canonical").map((w) => nodeLabelOf(w.node)).join(", ") })}</>}</div></>} actions={<><Button size="sm" color="primary" onClick={onNewSession}>{tr("projects.newConversation")}</Button></>} onClose={onClose}>
+        <Drawer width={600} label={p.id} title={<><span className="text-base font-semibold text-primary">{p.id}</span>{p.default && <Badge type="pill-color" size="sm" color="brand">{tr("projects.defaultProject")}</Badge>}<Badge type="modern" size="sm" color="gray">{levelName(p.level, locale)}</Badge></>} subtitle={<><div className="mt-0.5 text-xs text-tertiary">{p.workspaces.length === 1 ? <>{tr("projects.primaryOnly", { node: nodeLabelOf(p.node) })}</> : <>{tr("projects.workspaceSummary", { count: p.workspaces.length, node: nodeLabelOf(p.node), copies: p.workspaces.filter((w) => w.kind !== "canonical").map((w) => nodeLabelOf(w.node)).join(", ") })}</>}</div></>} actions={<><Button size="sm" color="primary" onClick={onNewSession}>{tr("projects.newConversation")}</Button></>} onClose={onClose}>
                 <DrawerSection title={tr("projects.workspaces")} aside={<Button size="sm" color="link-color" iconLeading={Plus} onClick={() => setAddingWorkspace(true)}>{tr("projects.addCopy")}</Button>}>
                     {addingWorkspace && <AddWorkspace p={p} onClose={() => setAddingWorkspace(false)} onDone={() => refresh()} />}
                     <ul className="flex flex-col gap-3">
@@ -221,14 +260,8 @@ function ProjectDrawer({ p, onClose, onNewSession }: { p: Project; onClose: () =
                 <section className="rounded-lg bg-secondary/40 p-3">
                     <div className="flex min-w-0 flex-wrap items-center gap-3">
                         <div className="flex-1 text-xs text-tertiary">{tr("projects.removeHint")}{tasks.length ? tr("projects.remainingTasks", { count: tasks.length }) : ""}</div>
-                        {removing ? (
-                            <>
-                                <Button size="sm" color="secondary" onClick={() => setRemoving(false)}>{tr("common.cancel")}</Button>
-                                <Button size="sm" color="primary-destructive" onClick={() => void remove()}>{tr("projects.confirmRemove")}</Button>
-                            </>
-                        ) : <Button size="sm" color="secondary-destructive" isDisabled={!!p.default} onClick={() => setRemoving(true)}>{tr("projects.removeProject")}</Button>}
+                        <Button size="sm" color="secondary-destructive" isDisabled={!!p.default} onClick={onRemove}>{tr("projects.removeProject")}</Button>
                     </div>
-                    {error && <div role="alert" className="mt-2 text-xs text-error-primary">{error}</div>}
                 </section>
                 <DrawerSection title={tr("projects.recentMerges")}>
                     {landings.length === 0 ? <div className="text-xs text-quaternary">{tr("projects.none")}</div> : (

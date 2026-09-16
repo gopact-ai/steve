@@ -56,6 +56,9 @@ export async function requireSubmissionSupport(): Promise<SubmissionSupport> {
     return support;
 }
 export const updateConversation = (id: string, body: { title?: string; archived?: boolean }) => write<{ ok: boolean }>(`/console/conversations/${encodeURIComponent(id)}`, { method: "PUT", body });
+// Deleting a thread also ends what only it held: its agent sessions, the
+// tasks it opened and the schedules that fire into it.
+export const deleteConversation = (id: string) => write<{ ok: boolean }>(`/console/conversations/${encodeURIComponent(id)}`, { method: "DELETE" });
 // The conversation ID is the initialization identity. Retrying the same
 // project is harmless; a late retry cannot switch an existing conversation.
 export async function initializeConversation(id: string, project: string, locale?: string): Promise<void> {

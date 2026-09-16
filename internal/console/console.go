@@ -91,6 +91,9 @@ type Service struct {
 	mu      sync.Mutex
 	replies map[string][]consoleapi.Reply
 	meta    map[string]Meta
+	// sealed names the conversations being deleted right now; they take
+	// no new work until the delete finishes or gives up.
+	sealed map[string]bool
 	// anchor tells the agents' messaging server which line a turn runs
 	// under, so an agent's channel_send lands on the page as a milestone
 	// instead of being refused for having no conversation.
@@ -682,7 +685,7 @@ func (w *process) step(step consoleapi.StepProcess) {
 // UpdateStep keeps a child's snapshot with the reply that launched it,
 // even after that turn ends or another turn starts in the conversation.
 func (s *Service) UpdateStep(conversation, taskID string, step consoleapi.StepProcess) {
-	conversation = conversationID(conversation)
+	conversation = ConversationID(conversation)
 	step.ID = "#" + taskID
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -845,7 +848,7 @@ func (s *Service) publishReply(r consoleapi.Reply) {
 // whatever else waits, addressed to the task's member, answered like any
 // other line.
 func (s *Service) Resume(ctx context.Context, conversation, taskID, member, notice, prompt string, revive func(conversationID, member string) error) error {
-	conversation = conversationID(conversation)
+	conversation = ConversationID(conversation)
 	if member == "" {
 		return fmt.Errorf("task #%s not resumable: no member", taskID)
 	}

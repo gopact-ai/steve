@@ -23,7 +23,8 @@
         "test:node-agents": "node ../../e2e/console/node-agents-ui.mjs",
         "test:selection": "node ../../e2e/console/selection.mjs && node ../../e2e/console/selection-ui.mjs && node ../../e2e/console/side-chat-ui.mjs && node ../../e2e/console/changes-card.mjs",
         "test:plugins": "node ../../e2e/console/plugins-ui.mjs",
-        "test:projects": "node ../../e2e/console/projects-directory-ui.mjs"
+        "test:projects": "node ../../e2e/console/projects-directory-ui.mjs",
+        "test:delete": "node ../../e2e/console/delete-ui.mjs"
     },
     "dependencies": {
         "@tailwindcss/typography": "^0.5.19",

@@ -18,7 +18,7 @@ import { BoardPage } from "./board";
 import { Working } from "@/components/steve/trace";
 import { applyLive, type Live } from "@/lib/live";
 import { Nothing } from "@/components/steve/ui";
-import { enqueue, fetchQueue, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, initializeConversation, fetchSelectors, setPreferences, checkSubmissionSupport, requireSubmissionSupport, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
+import { enqueue, fetchQueue, deleteConversation, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, initializeConversation, fetchSelectors, setPreferences, checkSubmissionSupport, requireSubmissionSupport, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { Sheet } from "@/components/steve/drawer";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { useResourceRead } from "@/hooks/use-resource-read";
@@ -321,6 +321,20 @@ export function ConsolePage() {
         window.setTimeout(() => box.current?.focus(), 0);
     }
 
+    // Deleting a thread takes its tasks, schedules and agent sessions with
+    // it, so the reader is moved to another thread rather than left looking
+    // at a transcript that no longer exists. A refusal is reported by the
+    // dialog that asked, so it is not swallowed here.
+    async function removeConversation(id: string) {
+        await deleteConversation(id);
+        const remaining = conversations.filter((c) => c.id !== id);
+        setConversations(remaining);
+        loadConversations();
+        if (id !== activeConversation.current) return;
+        if (remaining.length > 0) selectConversation(remaining[0].id);
+        else await newSession();
+    }
+
     async function newSession(project = context?.project?.id) {
         if (creatingRequest.current) return;
         setMobileSessions(false);
@@ -481,6 +495,7 @@ export function ConsolePage() {
 
     const sessions = (collapsed = sessionsCollapsed) => <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={selectConversation} onNew={(project) => void newSession(project)} creating={creating} onImport={() => { setMobileSessions(false); setImporting(true); }}
                 onUpdate={(id, patch) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}
+                onDelete={removeConversation}
                 collapsed={collapsed} onToggle={() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(false)}
                 tasks={snap.tasks} onTask={(t) => { setMobileSessions(false); if (t.parent && stepOf(t.id)) { setChild(t); setPickedTask(null); } else setPickedTask(t); }} />;
     const inspector = <Rail key={conversation} context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} onClose={() => setInspectorOpen(false)} />;

@@ -115,6 +115,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/conversations", s.guard(s.consoleConversations))
 	mux.HandleFunc("PUT /console/conversations/{id}/initialize", s.guard(s.consoleInitializeConversation))
 	mux.HandleFunc("PUT /console/conversations/{id}", s.guard(s.consoleUpdateConversation))
+	mux.HandleFunc("DELETE /console/conversations/{id}", s.guard(s.consoleDeleteConversation))
 	mux.HandleFunc("POST /console/nodes", s.guard(s.consoleAddNode))
 	mux.HandleFunc("DELETE /console/nodes/{name}", s.guard(s.consoleRemoveNode))
 	mux.HandleFunc("GET /console/nodes/{name}/native-history", s.guard(s.consoleNativeHistory))
@@ -1169,6 +1170,22 @@ func (s *Server) consoleUpdateConversation(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if err := s.console.Update(r.Context(), r.PathValue("id"), patch); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, map[string]any{"ok": true})
+}
+
+// consoleDeleteConversation removes a thread for good. The admin owns it:
+// a thread is deleted with the sessions, tasks and schedules it holds,
+// and only the admin can reach all of them.
+func (s *Server) consoleDeleteConversation(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "administration is not enabled", http.StatusNotImplemented)
+		return
+	}
+	if err := s.admin.DeleteConversation(r.Context(), r.PathValue("id")); err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}

@@ -2,13 +2,14 @@ import { useI18n } from "@/providers/locale-provider";
 import { number, relative } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import { useEffect, useId, useRef, useState } from "react";
-import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, Plus, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
+import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, Plus, Trash01, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { Input } from "@/components/base/input/input";
 import type { Conversation, Project, Task } from "@/lib/types";
 import { taskState } from "./ui";
 import { kindWord, placeLabel } from "@/lib/workspaces";
+import { ConfirmDialog } from "./confirm";
 
 // ConversationPatch is what a row can change about its conversation.
 export type ConversationPatch = { title?: string; archived?: boolean };
@@ -57,7 +58,7 @@ function notable(t: Task, all: Task[]): boolean {
     return t.execution === "running" || (t.attention || 0) > 0 || !!t.plan_id || (t.origin || "").startsWith("schedule") || all.some((c) => c.parent === t.id);
 }
 
-export function SessionsTree({ list, projects, current, onPick, onNew, onImport, onUpdate, collapsed, onToggle, creating, tasks = [], onTask }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onImport?: () => void; onUpdate: (id: string, patch: ConversationPatch) => void; collapsed?: boolean; onToggle?: () => void; creating?: boolean; tasks?: Task[]; onTask?: (t: Task) => void }) {
+export function SessionsTree({ list, projects, current, onPick, onNew, onImport, onUpdate, onDelete, collapsed, onToggle, creating, tasks = [], onTask }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onImport?: () => void; onUpdate: (id: string, patch: ConversationPatch) => void; onDelete: (id: string) => Promise<void>; collapsed?: boolean; onToggle?: () => void; creating?: boolean; tasks?: Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
     const [folded, setFolded] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem("steve.folded") || "{}"); } catch { return {}; } });
     const toggle = (id: string) => setFolded((f) => { const next = { ...f, [id]: !f[id] }; try { localStorage.setItem("steve.folded", JSON.stringify(next)); } catch { /* ignore */ } return next; });
@@ -83,7 +84,7 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onImport,
     const row = (c: Conversation, norm?: { agent: string; place: string }) => (
         <Thread key={c.id} c={c} current={c.id === current} onPick={onPick} norm={norm}
             renaming={renaming === c.id} onRename={() => setRenaming(c.id)} onRenamed={(title) => { setRenaming(null); if (title !== null) onUpdate(c.id, { title }); }}
-            onArchive={(archived) => onUpdate(c.id, { archived })}
+            onArchive={(archived) => onUpdate(c.id, { archived })} onDelete={() => onDelete(c.id)}
             work={workOf(c)} childrenOf={(id) => tasks.filter((t) => t.parent === id)} onTask={onTask} />
     );
     const node = (p: Project, title: string, hint?: string) => {
@@ -175,9 +176,10 @@ function TreeHeading({ children }: { children: string }) {
 // Thread is one conversation: its name, its agent, when it last spoke,
 // and — when the project is in more than one place, or the agent has
 // nowhere to work — where it runs. Its menu renames or puts it away.
-function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArchive, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; onPick: (id: string) => void; norm?: { agent: string; place: string }; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
+function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArchive, onDelete, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; onPick: (id: string) => void; norm?: { agent: string; place: string }; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; onDelete: () => Promise<void>; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
     const [workOpen, setWorkOpen] = useState(false);
+    const [confirming, setConfirming] = useState(false);
     const workID = useId();
     const nowhere = !!c.project && !!c.agent && !c.place;
     // The second line earns its place only when it says something this
@@ -218,14 +220,18 @@ function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArc
                         <DotsHorizontal className="size-3.5" />
                     </AriaButton>
                     <Dropdown.Popover placement="bottom end" className="w-44">
-                        <Dropdown.Menu onAction={(k) => { if (k === "rename") onRename(); else if (k === "archive") onArchive(!c.archived); }}>
+                        <Dropdown.Menu onAction={(k) => { if (k === "rename") onRename(); else if (k === "archive") onArchive(!c.archived); else if (k === "delete") setConfirming(true); }}>
                             <Dropdown.Item id="rename" label={tr("consoleChrome.rename")} icon={Edit05} />
                             <Dropdown.Item id="archive" label={c.archived ? tr("console.unarchive") : tr("consoleChrome.archive")} icon={Archive} />
+                            <Dropdown.Item id="delete" label={tr("common.delete")} icon={Trash01} />
                         </Dropdown.Menu>
                     </Dropdown.Popover>
                 </Dropdown.Root>
             )}
             {work.length > 0 && <div id={workID} hidden={!workOpen}>{workOpen && <ThreadWork work={work} childrenOf={childrenOf} onTask={onTask} />}</div>}
+            {confirming && <ConfirmDialog title={tr("consoleChrome.deleteTitle")} confirmLabel={tr("common.delete")}
+                body={tr("consoleChrome.deleteHint", { title: c.title || tr("console.newConversation"), tasks: number(work.length, locale) })}
+                onConfirm={onDelete} onClose={() => setConfirming(false)} />}
         </li>
     );
 }

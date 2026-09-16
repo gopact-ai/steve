@@ -12,6 +12,7 @@ import (
 	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/i18n"
+	"strings"
 	"time"
 )
 
@@ -175,4 +176,16 @@ func (c *Coordinator) clearActive(conversationID, agentID string) {
 	delete(c.cancels, key)
 }
 
-func sessionKey(conversationID, agentID string) string { return conversationID + "\x00" + agentID }
+// keySeparator joins a conversation and an agent into the key the
+// running-turn maps use; nothing may appear in either half.
+const keySeparator = "\x00"
+
+func sessionKey(conversationID, agentID string) string {
+	return conversationID + keySeparator + agentID
+}
+
+// conversationOfKey is the conversation half of a session key.
+func conversationOfKey(key string) string {
+	conversation, _, _ := strings.Cut(key, keySeparator)
+	return conversation
+}
