@@ -1,6 +1,18 @@
 package nodewire
 
+import "path"
+
 type FileOp string
+
+// ProjectsDir is where a machine keeps the projects it holds: one
+// directory per project under the machine's workspace, apart from the
+// worktrees and state the machine puts there too.
+func ProjectsDir(workspaceRoot string) string {
+	if workspaceRoot == "" {
+		return ""
+	}
+	return path.Join(workspaceRoot, "projects")
+}
 
 const (
 	FileMkdir       FileOp = "mkdir"

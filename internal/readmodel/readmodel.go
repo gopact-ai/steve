@@ -218,6 +218,9 @@ type Node struct {
 	Features []string `json:"features,omitempty"`
 	// Health is the machine's room to work, as of its last advert.
 	Health *nodewire.Health `json:"health,omitempty"`
+	// ProjectsRoot is the directory this machine keeps projects under; a
+	// project names a directory relative to it.
+	ProjectsRoot string `json:"projects_root,omitempty"`
 }
 
 type Harness struct {

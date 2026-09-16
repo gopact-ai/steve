@@ -127,6 +127,13 @@ func TestNodeMutationsSynchronizeWithConfigurationReaders(t *testing.T) {
 
 func TestRemoveNodeRechecksProjectPlacementAfterPendingDeclaration(t *testing.T) {
 	admin := nodeAdminFixture(t)
+	server := startAgentAdminNode(t, map[string]node.HarnessSpec{})
+	admin.Cfg.Nodes = map[string]config.Node{"node-test": {Addr: server.Addr(), Token: "test-node-token", Level: "internal"}}
+	if err := config.Save(admin.Path, admin.Cfg); err != nil {
+		t.Fatal(err)
+	}
+	admin.Nodes = node.NewRegistry("hub-test", admin.Cfg.NodeConfigs())
+	t.Cleanup(admin.Nodes.Close)
 	book, err := ledger.Open(t.TempDir(), ledger.Options{})
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +155,7 @@ func TestRemoveNodeRechecksProjectPlacementAfterPendingDeclaration(t *testing.T)
 	}
 	declared := make(chan error, 1)
 	go func() {
-		declared <- admin.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "project-test", Node: "node-test", Path: "/test/node-project"})
+		declared <- admin.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "project-test", Node: "node-test", Path: "node-project"})
 	}()
 	<-entered
 	removed := make(chan error, 1)

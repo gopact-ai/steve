@@ -168,7 +168,7 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 			p.Close()
 		}
 	}()
-	if err := p.startWorker(filepath.Dir(application.Gateway.StatePath)); err != nil {
+	if err := p.startWorker(application.LocalWorkspaceRoot()); err != nil {
 		return nil, err
 	}
 	raftListener, err := net.Listen("tcp", settings.RaftBindAddress)

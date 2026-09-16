@@ -71,14 +71,14 @@ func TestAutomaticCoordinatorLossPreservesHealthyTaskAndReturningDesktop(t *test
 	if _, err := first.SetAutoFailover(t.Context(), consoleapi.CoordinatorPolicy{CommandID: "enable-auto", ExpectedRevision: current.Revision, Enabled: true}); err != nil {
 		t.Fatal(err)
 	}
-	workdir := filepath.Join(thirdInstallation.Paths.Root, "remote-work")
+	workdir := filepath.Join(thirdInstallation.Paths.Root, "projects", "remote-work")
 	if err := os.MkdirAll(workdir, 0o700); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.WriteFile(filepath.Join(workdir, "README.md"), []byte("isolated task project\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	status, body := PeerRequest(t, first, http.MethodPost, "/console/projects", consoleapi.AddProjectRequest{ID: "remote-work", Node: third.Config.NodeID, Path: workdir, Repo: "inplace", Level: "internal"})
+	status, body := PeerRequest(t, first, http.MethodPost, "/console/projects", consoleapi.AddProjectRequest{ID: "remote-work", Node: third.Config.NodeID, Path: "remote-work", Repo: "inplace", Level: "internal"})
 	if status != http.StatusOK {
 		t.Fatalf("create remote project: %d %s", status, body)
 	}

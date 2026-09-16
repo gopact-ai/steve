@@ -571,6 +571,14 @@ func (c *Config) LocalHomeNode(node string) bool {
 	return c.RuntimeHome != nil && node == c.RuntimeHome.Node
 }
 
+// LocalWorkspaceRoot is this machine's workspace: where it keeps the work
+// it holds, projects included. It is derived from this machine's own state
+// directory, never from a declaration a shared configuration carries,
+// which names directories on whichever machine wrote it.
+func (c *Config) LocalWorkspaceRoot() string {
+	return filepath.Dir(c.Gateway.StatePath)
+}
+
 // DefaultProjectID is the project a conversation starts in: the preferred
 // one when it is declared, otherwise the only one there is, otherwise none.
 func DefaultProjectID(preferred string, projects map[string]Project) string {

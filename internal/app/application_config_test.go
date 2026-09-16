@@ -31,7 +31,10 @@ func TestSharedProjectRegistrationResolvesCoordinatorToPhysicalNode(t *testing.T
 			if err := (config.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
 				t.Fatal(err)
 			}
-			req := consoleapi.AddProjectRequest{ID: "new", Node: requestedNode, Path: t.TempDir(), Level: "internal", Repo: "inplace"}
+			req := consoleapi.AddProjectRequest{ID: "new", Node: requestedNode, Path: "new-service", Level: "internal", Repo: "inplace"}
+			// The directory named is relative; the machine that holds the
+			// project resolves it under its own workspace.
+			suffix := filepath.Join("projects", "new-service")
 			for range 2 {
 				if err := a.AddProject(t.Context(), req); err != nil {
 					t.Fatalf("register/retry project on coordinator: %v", err)
@@ -41,11 +44,11 @@ func TestSharedProjectRegistrationResolvesCoordinatorToPhysicalNode(t *testing.T
 			if err != nil || !found {
 				t.Fatalf("load shared configuration: found=%v err=%v", found, err)
 			}
-			if home := stored.Projects[req.ID].Home; home.Node != "node-a" || home.Path != req.Path {
+			if home := stored.Projects[req.ID].Home; home.Node != "node-a" || !filepath.IsAbs(home.Path) || !strings.HasSuffix(home.Path, suffix) {
 				t.Fatalf("persisted project lost physical home: %+v", home)
 			}
 			p, found, err := a.Projects.Get(t.Context(), req.ID)
-			if err != nil || !found || p.Home.Node != "node-a" || p.Home.Path != req.Path {
+			if err != nil || !found || p.Home.Node != "node-a" || p.Home.Path != stored.Projects[req.ID].Home.Path {
 				t.Fatalf("project projection disagrees with shared declaration: found=%v home=%+v err=%v", found, p.Home, err)
 			}
 		})

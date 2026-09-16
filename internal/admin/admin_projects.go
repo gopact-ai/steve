@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -113,15 +112,17 @@ func (a *Service) AddProject(ctx context.Context, req consoleapi.AddProjectReque
 	if id == HomeProjectID {
 		return fmt.Errorf("%s 是 Steve 自己的家，不能再声明", id)
 	}
-	path := strings.TrimSpace(req.Path)
-	if path == "" || !(strings.HasPrefix(path, "/") || strings.HasPrefix(path, "~")) {
-		return errors.New("目录要写绝对路径")
-	}
 	nodeKey := a.nodeKey(req.Node)
-	if (nodeKey == "" || a.ClusterMode && nodeKey == NodeName()) && strings.HasPrefix(path, "~") {
-		if home, err := os.UserHomeDir(); err == nil {
-			path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
-		}
+	dir := strings.TrimSpace(req.Path)
+	if dir == "" {
+		dir = id
+	}
+	path, err := a.projectPath(ctx, nodeKey, dir)
+	if err != nil {
+		return err
+	}
+	if err := a.makeProjectDir(ctx, nodeKey, path); err != nil {
+		return err
 	}
 	level := project.Level(req.Level).OrDefault()
 	repo := project.RepoMode(req.Repo)
@@ -142,13 +143,21 @@ func (a *Service) AddProject(ctx context.Context, req consoleapi.AddProjectReque
 }
 
 // SetProjectHome moves a project's canonical directory on this computer.
-// Projects homed on another machine are refused; the directory must be
-// absolute and is not inspected here because the desktop prepares it
-// before asking.
-func (a *Service) SetProjectHome(ctx context.Context, projectID, path string) error {
-	path = strings.TrimSpace(path)
+// Projects homed on another machine are refused. The directory is named
+// under this machine's workspace, the way every project's is, and made if
+// it is not there yet — except for the workspace itself, which the desktop
+// guide prepares and hands over whole.
+func (a *Service) SetProjectHome(ctx context.Context, projectID, dir string) error {
+	path := strings.TrimSpace(dir)
 	if !filepath.IsAbs(path) {
-		return errors.New("目录要写绝对路径")
+		resolved, err := a.projectPath(ctx, "", dir)
+		if err != nil {
+			return err
+		}
+		if err := a.makeProjectDir(ctx, "", resolved); err != nil {
+			return err
+		}
+		path = resolved
 	}
 	return a.changeProjects(ctx, func(candidate *config.Config) error {
 		item, exists := candidate.Projects[projectID]
@@ -179,14 +188,14 @@ func (a *Service) inspect(ctx context.Context, nodeKey, path string) ([]nodewire
 }
 
 func (a *Service) AddWorkspace(ctx context.Context, projectID string, req consoleapi.AddWorkspaceRequest) error {
-	nodeKey, path := a.nodeKey(req.Node), strings.TrimSpace(req.Path)
-	if path == "" {
-		return errors.New("目录不能为空")
+	nodeKey := a.nodeKey(req.Node)
+	dir := strings.TrimSpace(req.Path)
+	if dir == "" {
+		dir = projectID
 	}
-	if nodeKey == "" && strings.HasPrefix(path, "~") {
-		if home, err := os.UserHomeDir(); err == nil {
-			path = filepath.Join(home, strings.TrimPrefix(strings.TrimPrefix(path, "~"), "/"))
-		}
+	path, err := a.projectPath(ctx, nodeKey, dir)
+	if err != nil {
+		return err
 	}
 	origin := req.Origin
 	if origin == "" || origin == "adopt" {
@@ -195,6 +204,11 @@ func (a *Service) AddWorkspace(ctx context.Context, projectID string, req consol
 		origin = string(project.OriginCloned)
 	} else {
 		return fmt.Errorf("未知工作区来源 %q", origin)
+	}
+	if origin == string(project.OriginAdopted) {
+		if err := a.makeProjectDir(ctx, nodeKey, path); err != nil {
+			return err
+		}
 	}
 	return a.changeProjects(ctx, func(candidate *config.Config) error {
 		item, exists := candidate.Projects[projectID]
@@ -209,11 +223,6 @@ func (a *Service) AddWorkspace(ctx context.Context, projectID string, req consol
 				return fmt.Errorf("项目 %s 在 %s 已有副本", projectID, nodeKey)
 			}
 		}
-		found, err := a.inspect(ctx, nodeKey, path)
-		if err != nil {
-			return fmt.Errorf("检查工作区失败：%w", err)
-		}
-		missing := len(found) == 1 && found[0].Missing
 		ws := config.ProjectWorkspace{Node: nodeKey, Path: path, Origin: origin}
 		if origin == string(project.OriginCloned) {
 			p, ok, err := a.Projects.Get(ctx, projectID)
@@ -227,11 +236,13 @@ func (a *Service) AddWorkspace(ctx context.Context, projectID string, req consol
 			if ws.Source == "" {
 				return fmt.Errorf("项目 %s 没有可以克隆的来源", projectID)
 			}
-			if !missing {
+			found, err := a.inspect(ctx, nodeKey, path)
+			if err != nil {
+				return fmt.Errorf("检查工作区失败：%w", err)
+			}
+			if missing := len(found) == 1 && found[0].Missing; !missing {
 				return fmt.Errorf("%s 上已经有 %s；克隆需要尚不存在的目录", nodewire.Place(nodeKey), path)
 			}
-		} else if missing {
-			return fmt.Errorf("%s 上没有目录 %s，无法认领", nodewire.Place(nodeKey), path)
 		}
 		item.Workspaces = append(item.Workspaces, ws)
 		candidate.Projects[projectID] = item
