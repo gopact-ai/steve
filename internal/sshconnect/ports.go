@@ -11,8 +11,8 @@ import (
 // Linker is implemented by a backend whose node the coordinator reaches
 // through the enrolling SSH session rather than the network: the session
 // carries the cluster protocol both ways, so neither machine needs a route
-// to the other. Link opens that session with its port forwards and returns
-// once it is up; the machine's node is installed only after that.
+// to the other. Link opens that session, which runs the installed program
+// on the machine as its far end, and returns once it is up.
 type Linker interface {
 	Link(ctx context.Context, installID string, registration Registration) error
 }

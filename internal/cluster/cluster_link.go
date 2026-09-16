@@ -47,7 +47,7 @@ func (p *Peer) openLink(nodeID string, link PeerLink) *sshconnect.Link {
 		p.Mu.RLock()
 		current := p.links[nodeID] == opened
 		p.Mu.RUnlock()
-		if current && len(status.Outbound) == 2 {
+		if current && len(status.Outbound) == 2 && status.Outbound[0].Listen != "" && status.Outbound[1].Listen != "" {
 			p.routes.Set(nodeID, coordination.Route{Raft: status.Outbound[0].Listen, API: status.Outbound[1].Listen})
 		}
 	}

@@ -698,17 +698,6 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	}
 	result.Steps = append(result.Steps, Step{ID: "registration", Status: "ready", Message: registeredMessage})
 	s.progress(result)
-	if linker, ok := s.backend.(Linker); ok {
-		s.enter(&result, PhaseLink, "通过这次接入的 SSH 会话建立两台机器之间的隧道；之后的集群通信都走这条隧道，不依赖网络路由")
-		linkCtx, cancel := context.WithTimeout(ctx, linkLimit)
-		err := linker.Link(linkCtx, plan.ID, registration)
-		cancel()
-		if err != nil {
-			return reject(fail("link", "link_failed", "SSH 隧道未能建立："+err.Error(), "检查这台机器的 sshd 是否允许端口转发（AllowTcpForwarding），以及这个别名能否免交互登录；然后放弃这次接入并重新检查、接入"))
-		}
-		result.Steps = append(result.Steps, Step{ID: "link", Status: "ready", Message: "SSH 隧道已建立，集群通信将经由这条隧道"})
-		s.progress(result)
-	}
 	if binaryReader != nil {
 		if failure := s.upload(ctx, &result, plan, connection, binaryReader, registration.Token, peerRegistration); failure != nil {
 			return reject(failure)
@@ -731,6 +720,17 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	}
 	result.Steps = append(result.Steps, Step{ID: "installation", Status: "ready", Message: "远端安装脚本已完成"})
 	s.progress(result)
+	if linker, ok := s.backend.(Linker); ok {
+		s.enter(&result, PhaseLink, "在这次接入的 SSH 会话上运行刚安装的节点程序，两台机器之间的集群通信都承载在这条会话里，不依赖网络路由或 sshd 的端口转发")
+		linkCtx, cancel := context.WithTimeout(ctx, linkLimit)
+		err := linker.Link(linkCtx, plan.ID, registration)
+		cancel()
+		if err != nil {
+			return reject(fail("link", "link_failed", "SSH 隧道未能建立："+err.Error(), "确认这个别名能免交互登录并执行命令，且远端 ~/.steve-peer/bin/steve 是本次安装的版本（旧版没有 link 命令）；然后放弃这次接入并重新检查、接入"))
+		}
+		result.Steps = append(result.Steps, Step{ID: "link", Status: "ready", Message: "SSH 隧道已建立，集群通信将经由这条隧道"})
+		s.progress(result)
+	}
 	if failure := s.verifyConnectivity(ctx, &result, plan); failure != nil {
 		return reject(failure)
 	}

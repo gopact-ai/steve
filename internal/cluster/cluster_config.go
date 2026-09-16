@@ -58,8 +58,8 @@ type PeerConfig struct {
 	// answers at a loopback port that exists only on this machine.
 	Routes map[string]coordination.Route `json:"routes,omitempty"`
 	// Links are the SSH sessions this node keeps to machines it enrolled,
-	// by the machine's node ID. The cluster protocol between the two rides
-	// on each session's port forwards, so neither needs a route to the
+	// by the machine's node ID. The cluster protocol between the two is
+	// multiplexed over each session, so neither needs a route to the
 	// other; only the SSH alias has to keep working.
 	Links map[string]PeerLink `json:"links,omitempty"`
 }
