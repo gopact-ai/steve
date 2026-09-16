@@ -16,6 +16,7 @@ import { nodeLabelIn, useNodeLabel } from "@/lib/node-name";
 import type { Project, Repo, Workspace } from "@/lib/types";
 import { kindWord, workspaceState as workspaceStateLabel, levelName } from "@/lib/workspaces";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
+import { MachineDirectoryField } from "@/components/steve/machine-directory";
 import { CodeBlock } from "@/components/steve/markdown";
 import { Chips, KeyValue, PageBody, PageHeader } from "@/components/steve/page";
 import { Mono, Nothing, StateBadge, taskState } from "@/components/steve/ui";
@@ -278,7 +279,7 @@ function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void;
                                     items={[{ id: "adopt", label: tr("projects.adopt") }, { id: "clone", label: tr("projects.clone") }]}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
-                                <Input size="sm" label={tr("projects.directory")} placeholder="/home/me/work/my-service" value={path} onChange={setPath} autoFocus hint={tr("projects.absolutePath")} />
+                                <MachineDirectoryField node={node} label={tr("projects.directory")} hint={tr("projects.absolutePath")} placeholder="/home/me/work/my-service" value={path} onChange={setPath} isDisabled={busy} newFolder={origin === "clone"} autoFocus />
                             </div>
                         )}
                         {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
@@ -331,7 +332,7 @@ function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => vo
                                 <Select size="sm" label={tr("projects.machine")} selectedKey={node} onSelectionChange={(k) => k && setNode(String(k))} items={machines}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
-                                <Input size="sm" label={tr("projects.directory")} placeholder="/home/me/work/my-service" value={path} onChange={setPath} hint={tr("projects.pathHint")} />
+                                <MachineDirectoryField node={node} label={tr("projects.directory")} hint={tr("projects.pathHint")} placeholder="/home/me/work/my-service" value={path} onChange={setPath} isDisabled={busy} />
                                 <Select size="sm" label={tr("projects.executionMode")} hint={tr("projects.modeHint")} selectedKey={repo} onSelectionChange={(k) => k && setRepo(String(k))} items={[{ id: "inplace", label: labelsFor(locale).repo.inplace }, { id: "isolated", label: labelsFor(locale).repo.isolated }]}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>

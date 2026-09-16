@@ -135,3 +135,52 @@ func TestBrowseRejectsPathsItWouldNotUseAsAWorkspace(t *testing.T) {
 }
 
 func asStep(err error, step **StepError) bool { return errors.As(err, step) }
+
+// aliasBackend knows which alias a machine is reached through, the way the
+// cluster does from the links it keeps.
+type aliasBackend struct {
+	fakeBackend
+	aliases map[string]string
+}
+
+func (b *aliasBackend) MachineAlias(nodeID string) (string, error) {
+	alias, ok := b.aliases[nodeID]
+	if !ok {
+		return "", errors.New("本机没有记录到这台机器的 SSH 隧道")
+	}
+	return alias, nil
+}
+
+// A directory can be picked for a machine that is already part of the
+// cluster, named by node ID: the alias it was enrolled through is the
+// backend's to know, and a machine without one is refused before anything
+// is run.
+func TestBrowseFindsTheAliasOfAnEnrolledMachine(t *testing.T) {
+	home := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(home, "work"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := configFixture(t, map[string]string{"config": "Host dev\nHostName dev.example\n"})
+	backend := &aliasBackend{aliases: map[string]string{"node-dev": "dev"}}
+	svc := New(Options{ConfigPath: path, Runner: &browseShellRunner{home: home}, Backend: backend})
+	t.Cleanup(func() { _ = svc.Close() })
+	listing, err := svc.Browse(t.Context(), BrowseRequest{Node: "node-dev"})
+	if err != nil || len(listing.Entries) != 1 || listing.Entries[0].Name != "work" {
+		t.Fatalf("listing = %+v %v", listing, err)
+	}
+	var step *StepError
+	_, err = svc.Browse(t.Context(), BrowseRequest{Node: "node-other"})
+	if !asStep(err, &step) || step.Code != "browse_target" {
+		t.Fatalf("a machine without a tunnel was not refused: %v", err)
+	}
+	_, err = svc.Browse(t.Context(), BrowseRequest{Alias: "dev", Node: "node-dev"})
+	if !asStep(err, &step) || step.Code != "browse_ambiguous" {
+		t.Fatalf("naming two machines at once was accepted: %v", err)
+	}
+	plain := New(Options{ConfigPath: path, Runner: &browseShellRunner{home: home}, Backend: &fakeBackend{}})
+	t.Cleanup(func() { _ = plain.Close() })
+	_, err = plain.Browse(t.Context(), BrowseRequest{Node: "node-dev"})
+	if !asStep(err, &step) || step.Code != "browse_unsupported" {
+		t.Fatalf("a backend that knows no aliases was not refused: %v", err)
+	}
+}
