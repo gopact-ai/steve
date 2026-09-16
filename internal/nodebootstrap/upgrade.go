@@ -14,9 +14,13 @@ type UpgradeSpec struct {
 }
 
 // BuildPeerUpgrade is the script that swaps a peer's program. The peer's
-// state and configuration stay as they are; only the binary changes. The
-// previous program is kept next to the new one and put back, and started
-// again, when the new one does not stay up.
+// state and configuration stay as they are; only the binary changes. A
+// program that was running when it is replaced is kept as steve.previous
+// and put back, and started again, when the new one does not stay up. A
+// program found not running is not trusted that far: it is set aside as
+// steve.rejected and an earlier steve.previous stays the fallback, so
+// upgrading again after a failed upgrade cannot lose the last program
+// known to work.
 func BuildPeerUpgrade(spec UpgradeSpec) (string, error) {
 	if !uploadShape.MatchString(spec.UploadID) {
 		return "", fmt.Errorf("invalid peer upload ID")
@@ -69,17 +73,26 @@ if [ "${actual%%%% *}" != '%s' ]; then
 fi
 `, spec.UploadID, unamePattern(spec.OS, spec.Arch), spec.SHA256)
 	b.WriteString(`chmod 700 "$binary_tmp"
+# Staged next to the installed program first: from here on every move is
+# a rename within one directory, so the installed path is never half a file.
+mv -f "$binary_tmp" "$state_dir/bin/steve.new"
 start_peer() {
   nohup "$state_dir/bin/steve" peer --config "$state_dir/config.json" --cluster-config "$state_dir/config.json.cluster.json" >> "$state_dir/peer.log" 2>&1 < /dev/null &
   peer_pid=$!
-  sleep 1
+  sleep 3
   kill -0 "$peer_pid" 2>/dev/null
 }
 # Only this account's peer started from this installation is stopped; the
 # link session the coordinator holds open is replaced from its side.
-running=$(pgrep -u "$(id -u)" -f "^$state_dir/bin/steve peer " || true)
-mv -f "$state_dir/bin/steve" "$state_dir/bin/steve.previous"
-mv -f "$binary_tmp" "$state_dir/bin/steve"
+pattern=$(printf '%s' "$state_dir/bin/steve peer " | sed 's#[][\.*^$+?(){}|]#\\&#g')
+running=$(pgrep -u "$(id -u)" -f "^$pattern" || true)
+if [ -n "$running" ] || [ ! -f "$state_dir/bin/steve.previous" ]; then
+  mv -f "$state_dir/bin/steve" "$state_dir/bin/steve.previous"
+else
+  echo 'No peer is running; the installed program is set aside and the earlier one stays the fallback.'
+  mv -f "$state_dir/bin/steve" "$state_dir/bin/steve.rejected"
+fi
+mv -f "$state_dir/bin/steve.new" "$state_dir/bin/steve"
 if [ -n "$running" ]; then
   echo "Stopping peer process $running."
   kill -TERM $running 2>/dev/null || true
@@ -99,12 +112,16 @@ if start_peer; then
 fi
 echo 'The new program did not stay running; restoring the previous one.' >&2
 mv -f "$state_dir/bin/steve" "$state_dir/bin/steve.rejected"
+if [ ! -f "$state_dir/bin/steve.previous" ]; then
+  echo 'There is no previous program to restore; the peer is down. Inspect ~/.steve-peer/peer.log.' >&2
+  exit 28
+fi
 mv -f "$state_dir/bin/steve.previous" "$state_dir/bin/steve"
 if start_peer; then
   echo 'Previous program restarted; inspect ~/.steve-peer/peer.log for why the new one exited.' >&2
   exit 26
 fi
-echo 'Neither program stayed running; inspect ~/.steve-peer/peer.log.' >&2
+echo 'Neither program stayed running; the peer is down. Inspect ~/.steve-peer/peer.log.' >&2
 exit 28
 `)
 	return b.String(), nil

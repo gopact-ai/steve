@@ -52,16 +52,16 @@ func TestPeerUpgradeScriptRequiresVerifiedInputs(t *testing.T) {
 	}
 }
 
-// installedPeer lays out ~/.steve-peer with the test binary as the peer
-// program and starts it the way the install script does.
-func installedPeer(t *testing.T) (home string, pid string) {
+// layoutPeer lays out ~/.steve-peer with the test binary as the peer
+// program, the way the install script leaves it, without starting it.
+func layoutPeer(t *testing.T) (home string, program []byte) {
 	t.Helper()
 	home = t.TempDir()
 	self, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
 	}
-	program, err := os.ReadFile(self)
+	program, err = os.ReadFile(self)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,15 +78,21 @@ func installedPeer(t *testing.T) (home string, pid string) {
 	if err := os.Mkdir(filepath.Join(home, "steve-bin"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = exec.Command("pkill", "-KILL", "-f", "^"+state+"/bin/steve peer ").Run() })
+	return home, program
+}
+
+// installedPeer lays out ~/.steve-peer and starts the peer from it.
+func installedPeer(t *testing.T) (home string, pid string) {
+	t.Helper()
+	home, _ = layoutPeer(t)
 	start := exec.Command("bash", "-c", `nohup "$HOME/.steve-peer/bin/steve" peer --config "$HOME/.steve-peer/config.json" >> "$HOME/.steve-peer/peer.log" 2>&1 < /dev/null & echo $!`)
 	start.Env = append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1")
 	out, err := start.Output()
 	if err != nil {
 		t.Fatal(err)
 	}
-	pid = strings.TrimSpace(string(out))
-	t.Cleanup(func() { _ = exec.Command("pkill", "-KILL", "-f", "^"+state+"/bin/steve peer ").Run() })
-	return home, pid
+	return home, strings.TrimSpace(string(out))
 }
 
 func stageUpload(t *testing.T, home, id string, content []byte) string {
@@ -174,6 +180,41 @@ func TestPeerUpgradeScriptRestoresThePreviousProgramWhenTheNewOneExits(t *testin
 			t.Fatalf("the previous program was not restarted: old %s, running %v\n%s", oldPID, pids, out)
 		}
 		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// After an upgrade whose program died later than the script watched, the
+// machine has no peer running, a broken program installed and the last
+// working one as steve.previous. Upgrading again must not rotate the
+// broken program into steve.previous: when the next program fails too,
+// the machine comes back on the one that worked.
+func TestPeerUpgradeScriptKeepsTheLastWorkingProgramWhenNoPeerRuns(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("peer upgrade runs on linux and darwin")
+	}
+	home, program := layoutPeer(t)
+	bin := filepath.Join(home, ".steve-peer", "bin")
+	if err := os.Rename(filepath.Join(bin, "steve"), filepath.Join(bin, "steve.previous")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "steve"), []byte("#!/bin/sh\nexit 3\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	spec := upgradeSpec()
+	spec.SHA256 = stageUpload(t, home, spec.UploadID, []byte("#!/bin/sh\nexit 1\n"))
+	out, err := runUpgrade(t, home, spec)
+	var exit *exec.ExitError
+	if err == nil || !errors.As(err, &exit) || exit.ExitCode() != 26 {
+		t.Fatalf("expected exit 26 after falling back to the working program, got %v\n%s", err, out)
+	}
+	if restored, _ := os.ReadFile(filepath.Join(bin, "steve")); string(restored) != string(program) {
+		t.Fatalf("the last working program was not put back:\n%s", out)
+	}
+	if !strings.Contains(out, "No peer is running") {
+		t.Fatalf("the script did not say why the installed program was set aside:\n%s", out)
+	}
+	if _, err := os.Stat(filepath.Join(bin, "steve.new")); !os.IsNotExist(err) {
+		t.Fatal("the staged program was left behind")
 	}
 }
 

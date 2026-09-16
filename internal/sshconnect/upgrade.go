@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os/exec"
+	"slices"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
@@ -61,9 +62,8 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 		return InstallResult{}, fail("ssh", "closed", "SSH 接入服务已关闭", "重新启动服务后再升级")
 	}
 	if previous := s.plans[s.upgrades[nodeID]]; previous != nil && previous.running {
-		result := cloneResult(previous.result)
 		s.mu.Unlock()
-		return result, fail("installation", "in_progress", "这台机器正在升级", "等待本次升级返回结果")
+		return InstallResult{}, fail("installation", "in_progress", "这台机器正在升级", "等待本次升级返回结果")
 	}
 	stored := &storedPlan{plan: InstallPlan{ID: id, Request: InstallRequest{Name: nodeID}}, running: true, result: InstallResult{PlanID: id, Name: nodeID, NodeID: nodeID, Status: "installing", Steps: []Step{}, Phases: upgradePhases}}
 	s.plans[id] = stored
@@ -76,11 +76,15 @@ func (s *Service) Upgrade(ctx context.Context, nodeID string) (InstallResult, er
 	s.mu.Lock()
 	stored.running, stored.done = false, true
 	stored.result, stored.err = cloneResult(result), err
+	// The record stays readable for as long as an installation plan would.
+	stored.plan.ExpiresAt = s.now().Add(s.ttl).UTC()
+	stored.timer = time.AfterFunc(s.ttl, func() { s.expire(id) })
 	s.mu.Unlock()
 	return result, err
 }
 
-// UpgradeStatus reads how a machine's latest upgrade is going, or went.
+// UpgradeStatus reads how a machine's latest upgrade is going, or how its
+// last one went until that record expires.
 func (s *Service) UpgradeStatus(nodeID string) (InstallResult, error) {
 	s.mu.Lock()
 	id, ok := s.upgrades[nodeID]
@@ -119,7 +123,7 @@ func (s *Service) upgrade(ctx context.Context, backend UpgradeBackend, id, nodeI
 	if check.OS == "" || check.Arch == "" {
 		return reject(fail("preflight", "platform", "无法识别这台机器的平台", "只支持 Linux 或 macOS 的 amd64/arm64 机器"))
 	}
-	if !hasPath(check.ExistingPaths, "~/.steve-peer") {
+	if !slices.Contains(check.ExistingPaths, "~/.steve-peer") {
 		return reject(fail("preflight", "peer_missing", "机器上没有 ~/.steve-peer，不是一台已接入的节点", "先通过 SSH 接入这台机器"))
 	}
 	if !check.HasTool("sha256sum") && !check.HasTool("shasum") {
@@ -155,7 +159,7 @@ func (s *Service) upgrade(ctx context.Context, backend UpgradeBackend, id, nodeI
 	cancel()
 	reporter.close()
 	if err != nil {
-		return reject(fail("connectivity", "upgrade_unconfirmed", "程序已替换，但机器还没有以新版本回到集群："+err.Error(), "稍后在机器列表核对版本；隧道会自动重连，不需要重复升级"))
+		return reject(fail("connectivity", "upgrade_unconfirmed", "程序已替换，但机器还没有以新版本回到集群："+err.Error(), "稍后在机器列表核对版本；仍不见新版本就查看机器上的 ~/.steve-peer/peer.log，再次升级会保留原来能运行的程序作为回退"))
 	}
 	result.Status, result.Connected, result.Phase = "connected", true, ""
 	message := "机器已运行 " + target.Version + " 并回到集群"
@@ -173,7 +177,9 @@ func (s *Service) swapProgram(ctx context.Context, result *InstallResult, connec
 		return fail("installation", "script", "无法生成升级脚本："+err.Error(), "检查节点程序的平台信息")
 	}
 	s.enter(result, PhaseInstallation, "校验 SHA-256 后替换 ~/.steve-peer/bin/steve 并重启节点进程；新程序起不来会自动换回旧程序")
-	installCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	// Between stopping the peer and starting it again the machine is down;
+	// an owner closing the page must not cut the script off there.
+	installCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Minute)
 	out, err := connection.Run(installCtx, "bash -s", script)
 	cancel()
 	s.output(result, out, "")
@@ -184,10 +190,18 @@ func (s *Service) swapProgram(ctx context.Context, result *InstallResult, connec
 	}
 	result.Steps = append(result.Steps, s.cleanupUpload(ctx, connection, id))
 	var exit *exec.ExitError
-	if errors.As(err, &exit) && exit.ExitCode() == 26 {
-		return fail("installation", "upgrade_rejected", "新程序没有保持运行，机器已换回原来的程序", "查看上面的输出和机器上的 ~/.steve-peer/peer.log")
+	code := 0
+	if errors.As(err, &exit) {
+		code = exit.ExitCode()
 	}
-	return fail("installation", "upgrade_uncertain", "升级脚本退出异常："+err.Error(), "检查机器上的 ~/.steve-peer/peer.log 和进程状态；SSH 断开后重启可能仍在进行")
+	switch code {
+	case 26:
+		return fail("installation", "upgrade_rejected", "新程序没有保持运行，机器已换回原来的程序", "查看上面的输出和机器上的 ~/.steve-peer/peer.log")
+	case 28:
+		return fail("installation", "upgrade_down", "新程序没有保持运行，也没能换回原来的程序，机器上的节点进程已停止", "登录机器查看 ~/.steve-peer/peer.log，手动启动 ~/.steve-peer/bin/steve.previous 或重新接入")
+	default:
+		return fail("installation", "upgrade_uncertain", "升级脚本退出异常："+err.Error(), "检查机器上的 ~/.steve-peer/peer.log 和进程状态；SSH 断开后重启可能仍在进行")
+	}
 }
 
 func stepOf(err error) *StepError {
@@ -196,13 +210,4 @@ func stepOf(err error) *StepError {
 		return step
 	}
 	return fail("preflight", "upgrade_failed", err.Error(), "处理后重新升级")
-}
-
-func hasPath(paths []string, want string) bool {
-	for _, path := range paths {
-		if path == want {
-			return true
-		}
-	}
-	return false
 }

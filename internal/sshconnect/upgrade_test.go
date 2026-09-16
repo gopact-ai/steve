@@ -6,7 +6,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // upgradeBackend enrolls nothing; it only answers where a machine is and
@@ -17,6 +19,10 @@ type upgradeBackend struct {
 	upgraded    []string
 	upgradedErr error
 	binaryPath  string
+	// hold keeps Upgraded from returning until closed; holding counts the
+	// calls waiting there.
+	hold    chan struct{}
+	holding atomic.Int32
 }
 
 func (b *upgradeBackend) UpgradeTarget(_ context.Context, nodeID string) (UpgradeTarget, error) {
@@ -28,6 +34,10 @@ func (b *upgradeBackend) UpgradeTarget(_ context.Context, nodeID string) (Upgrad
 
 func (b *upgradeBackend) Upgraded(ctx context.Context, nodeID string) error {
 	Report(ctx, "隧道已恢复")
+	if b.hold != nil {
+		b.holding.Add(1)
+		<-b.hold
+	}
 	b.upgraded = append(b.upgraded, nodeID)
 	return b.upgradedErr
 }
@@ -128,5 +138,62 @@ func TestUpgradeReportsAnUnconfirmedReturn(t *testing.T) {
 	}
 	if !strings.Contains(step.Message, "5035948") {
 		t.Fatal("the backend's reason is not carried to the owner")
+	}
+}
+
+// The script tells a rollback apart from a peer it could not bring back;
+// the owner is told which of the two the machine is in.
+func TestUpgradeTellsARollbackFromAPeerLeftDown(t *testing.T) {
+	for exit, code := range map[int]string{26: "upgrade_rejected", 28: "upgrade_down", 22: "upgrade_uncertain"} {
+		svc, runner, backend, _ := upgradeFixture(t)
+		runner.swapExit = exit
+		result, err := svc.Upgrade(t.Context(), "node-1")
+		var step *StepError
+		if !errors.As(err, &step) || step.Code != code || result.Connected || len(backend.upgraded) != 0 {
+			t.Fatalf("exit %d: %#v %v", exit, result, err)
+		}
+	}
+}
+
+// A second upgrade of a machine still being upgraded is refused outright,
+// and the record of a finished upgrade goes away like a plan does.
+func TestUpgradeRunsOncePerMachineAndItsRecordExpires(t *testing.T) {
+	svc, runner, backend, _ := upgradeFixture(t)
+	svc.ttl = 50 * time.Millisecond
+	release := make(chan struct{})
+	backend.hold = release
+	first := make(chan error, 1)
+	go func() { _, err := svc.Upgrade(context.Background(), "node-1"); first <- err }()
+	deadline := time.Now().Add(5 * time.Second)
+	for backend.holding.Load() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatal("the first upgrade never reached the backend")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	result, err := svc.Upgrade(t.Context(), "node-1")
+	var step *StepError
+	if !errors.As(err, &step) || step.Code != "in_progress" || result.Status != "" {
+		t.Fatalf("second upgrade = %#v %v", result, err)
+	}
+	close(release)
+	if err := <-first; err != nil {
+		t.Fatal(err)
+	}
+	if _, err := svc.UpgradeStatus("node-1"); err != nil {
+		t.Fatalf("a finished upgrade is readable: %v", err)
+	}
+	deadline = time.Now().Add(5 * time.Second)
+	for {
+		if _, err := svc.UpgradeStatus("node-1"); err != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("the finished upgrade's record never expired")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if calls := len(runner.calls); calls == 0 {
+		t.Fatal("nothing ran")
 	}
 }
