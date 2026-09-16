@@ -84,8 +84,11 @@ try {
     // A conversation is deleted from its own row, after the same question.
     await page.goto(url + "#/console");
     const thread = page.getByRole("listitem").filter({ hasText: "the doomed thread" }).last();
-    await thread.hover();
-    await thread.getByRole("button", { name: "More" }).click();
+    const more = thread.getByRole("button", { name: "More" });
+    // An action nobody can see is an action nobody has: the row's menu
+    // does not wait for a pointer to appear.
+    assert.ok(await more.evaluate((el) => Number(getComputedStyle(el).opacity) > 0.2), "a conversation's actions are legible before it is hovered");
+    await more.click();
     await page.getByRole("menuitem", { name: "Delete", exact: true }).click();
     const threadConfirm = page.getByRole("dialog", { name: /Delete this conversation/ });
     await assert.doesNotReject(threadConfirm.getByText(/the doomed thread/).waitFor());

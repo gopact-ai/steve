@@ -133,7 +133,9 @@ button:enabled, summary { cursor: pointer; }
 .conversation-section-label { padding: 16px 10px 6px; font-size: 11px; font-weight: 600; color: var(--color-text-tertiary); }
 .conversation-project { display: flex; align-items: center; gap: 4px; min-height: 36px; padding: 2px 4px; border-radius: 6px; }
 .conversation-project .u-title { font-size: 12px; font-weight: 550; }
-.conversation-project-new { width: 28px; height: 28px; opacity: 0; }
+/* A row's own actions stay visible: an action nobody can see is an
+   action nobody has. They sit back until the row is under the pointer. */
+.conversation-project-new { width: 28px; height: 28px; opacity: .45; transition: opacity 120ms; }
 .conversation-project:hover .conversation-project-new, .conversation-project:focus-within .conversation-project-new { opacity: 1; }
 .conversation-row { display: flex; flex-direction: column; width: 100%; min-height: 42px; gap: 3px; padding: 9px 29px 9px 9px; text-align: left; border-radius: 7px; transition: background-color 120ms; }
 .conversation-row .u-title { font-size: 13px; font-weight: 450; }
@@ -141,7 +143,7 @@ button:enabled, summary { cursor: pointer; }
 .conversation-row.is-selected { background: var(--selected-surface); }
 .conversation-row.is-selected .u-title { font-weight: 550; color: var(--selected-text); }
 .conversation-time { font-size: 10px; white-space: nowrap; color: var(--color-text-quaternary); }
-.conversation-more { position: absolute; right: 2px; top: 8px; width: 26px; height: 26px; opacity: 0; }
+.conversation-more { position: absolute; right: 2px; top: 8px; width: 26px; height: 26px; opacity: .45; transition: opacity 120ms; }
 .group\/thread:hover .conversation-more, .group\/thread:focus-within .conversation-more { opacity: 1; }
 .console-content { display: grid; min-width: 0; min-height: 0; flex: 1; grid-template-columns: minmax(0, 1fr); }
 .console-content.with-inspector { grid-template-columns: minmax(0, 1fr) auto; }
