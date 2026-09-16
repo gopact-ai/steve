@@ -57,6 +57,10 @@ func (a *Service) SSHAbandon(ctx context.Context, id string) error {
 	return a.sshService().Abandon(ctx, id)
 }
 
+func (a *Service) SSHBrowse(ctx context.Context, req sshconnect.BrowseRequest) (sshconnect.Listing, error) {
+	return a.sshService().Browse(ctx, req)
+}
+
 type sshNodeBackend struct{ admin *Service }
 
 func (b sshNodeBackend) Preview(ctx context.Context, req sshconnect.InstallRequest, check sshconnect.CheckResult) (sshconnect.Template, error) {

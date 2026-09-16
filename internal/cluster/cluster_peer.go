@@ -599,10 +599,22 @@ func (p *Peer) remoteTransport(member coordination.Member) (*http.Transport, *ur
 		if err != nil {
 			return nil, nil, err
 		}
-		transport = &http.Transport{TLSClientConfig: tlsConfig, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second}
+		transport = &http.Transport{TLSClientConfig: tlsConfig, DialContext: p.peerDial(member.NodeID, 5*time.Second), TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second}
 		p.peerTransports[key] = transport
 	}
 	return transport, origin, nil
+}
+
+// peerDial connects to another node at the address it advertises. This
+// node's own advertised address is often one only other machines can route
+// to (a VPN tunnel address), so calls aimed at itself go over loopback; the
+// mutual TLS identity check still proves the port serves this node.
+func (p *Peer) peerDial(nodeID string, timeout time.Duration) coordination.DialFunc {
+	dial := (&net.Dialer{Timeout: timeout}).DialContext
+	if nodeID == p.Config.NodeID {
+		return coordination.LoopbackDial(dial)
+	}
+	return dial
 }
 
 func (p *Peer) staticPage(w http.ResponseWriter, r *http.Request) {

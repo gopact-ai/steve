@@ -684,7 +684,7 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	result.Registered = registration.Name != ""
 	result.NodeID = registration.NodeID
 	if err != nil {
-		return reject(fail("registration", "registration_failed", "节点登记未完整完成", "检查资源页中的登记状态后处理；本次没有自动重试安装"))
+		return reject(fail("registration", "registration_failed", "节点登记未完整完成："+err.Error(), "检查资源页中的登记状态后处理；本次没有自动重试安装"))
 	}
 	normalized := strings.ReplaceAll(registration.Script, registration.Token, PreviewToken)
 	normalized = strings.ReplaceAll(normalized, plan.ID, nodebootstrap.PreviewUploadID)

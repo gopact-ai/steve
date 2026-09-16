@@ -15,7 +15,7 @@ const at = "2026-09-07T01:00:00Z";
 const candidate = { alias: "dev-box", host_name: "10.0.0.9", user: "developer", port: 22, proxy_jump: "bastion", has_proxy_command: false, has_identity_file: true, conditional: true, source: "/test/ssh/config", line: 3 };
 const check = { candidate, reachable: true, address: "10.0.0.9", os: "linux", arch: "arm64", tools: [{ name: "bash", available: true }, { name: "nohup", available: true }], existing_installation: false, existing_paths: [], installation_mode: "peer", steps: [{ id: "ssh", status: "ready", message: "SSH connection and authentication verified" }], checked_at: at };
 const phases = ["preflight", "registration", "upload", "installation", "connectivity"];
-const f = { candidates: [candidate], checks: [], plans: [], installs: [], abandons: [], statuses: [], nodeAgentReads: [], errors: [], ready: false, checkError: false, discoveryError: false, reset: false, hold: false, release: null, connected: false, coordinator: "my-desktop", changedNetwork: false, phase: "upload", log: [] };
+const f = { candidates: [candidate], checks: [], plans: [], installs: [], abandons: [], browses: [], statuses: [], nodeAgentReads: [], errors: [], ready: false, checkError: false, discoveryError: false, reset: false, hold: false, release: null, connected: false, coordinator: "my-desktop", changedNetwork: false, phase: "upload", log: [] };
 const finalLog = [{ at, stream: "steve", text: "Running the installer on the machine" }, { at, stream: "stdout", text: "Node process started" }, { at, stream: "stderr", text: "Node startup did not remain running; inspect ~/steve-node.log" }];
 page.on("pageerror", (error) => f.errors.push(String(error)));
 await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "en"); window.sources = []; window.EventSource = class { constructor() { window.sources.push(this); setTimeout(() => this.onopen?.(), 0); } close() {} }; });
@@ -35,6 +35,13 @@ const routeRequest = async (route) => {
     if (p === "/console/ssh/plans") {
         const request = req.postDataJSON(); f.plans.push(request);
         return route.fulfill({ json: { id: "plan-" + f.plans.length, request: f.changedNetwork ? { ...request, source_host: "203.0.113.23" } : request, check, script: "mkdir -p ~/steve-bin\n# install a verified node binary", effects: ["Create node configuration on dev-box", "Start the node service on port 7701"], steps: [...check.steps, ...(f.ready ? [] : [{ id: "binary", status: "blocked", message: "No matching node package", suggestion: "Provide a Linux arm64 node package and review a new plan." }])], ready: f.ready, expires_at: "2030-01-01T00:00:00Z", binary: { os: "linux", arch: "arm64", sha256: "a".repeat(64), size: 2048 } } });
+    }
+    if (p === "/console/ssh/browse") {
+        const { alias, path: target } = req.postDataJSON(); f.browses.push({ alias, path: target });
+        const tree = { "~": { path: "/home/dev", display: "~", parent: "/home", entries: ["Projects", "work"] }, "~/work": { path: "/home/dev/work", display: "~/work", parent: "/home/dev", entries: ["other", "steve"] }, "/home/dev/work": { path: "/home/dev/work", display: "~/work", parent: "/home/dev", entries: ["other", "steve"] }, "/home/dev/Projects": { path: "/home/dev/Projects", display: "~/Projects", parent: "/home/dev", entries: [] } };
+        const node = tree[target];
+        if (!node) return route.fulfill({ status: 400, json: { error: "No directory " + target + " on the machine, or this account may not enter it; choose another directory", step: { stage: "environment", code: "directory_unavailable", message: "No directory " + target + " on the machine", suggestion: "choose another directory" } } });
+        return route.fulfill({ json: { path: node.path, display: node.display, home: "/home/dev", parent: node.parent, writable: node.display !== "~/Projects", entries: node.entries.map((name) => ({ name, path: node.path + "/" + name })) } });
     }
     if (p === "/console/nodes/node-stable-9/agents" && req.method() === "GET") { f.nodeAgentReads.push(p); return route.fulfill({ json: { revision: "r1", agents: [] } }); }
     if (/^\/console\/ssh\/plans\/[^/]+$/.test(p) && req.method() === "DELETE") {
@@ -123,6 +130,21 @@ try {
     assert.equal(await dialog.getByRole("textbox", { name: "Machine name", exact: true }).inputValue(), "dev-box", "the machine's name starts as its SSH alias");
     assert.equal(await dialog.getByRole("textbox", { name: "Working directory", exact: true }).inputValue(), "~/steve-workspace");
     await dialog.getByRole("textbox", { name: "Machine name", exact: true }).fill("worker-west");
+    // The working directory can be picked from what the machine has: open
+    // the browser at the current field value (climbing to the nearest
+    // existing ancestor), walk into a folder, and name a new one inside it.
+    await dialog.getByRole("button", { name: "Browse…", exact: true }).click();
+    await dialog.getByRole("button", { name: "work", exact: true }).waitFor();
+    // Development StrictMode mounts twice; the aborted duplicate is not a step.
+    assert.deepEqual(f.browses.filter((b, i) => i === 0 || b.path !== f.browses[i - 1].path), [{ alias: "dev-box", path: "~/steve-workspace" }, { alias: "dev-box", path: "~" }], "a folder that does not exist yet opens at its parent");
+    await dialog.getByRole("button", { name: "work", exact: true }).click();
+    await dialog.getByRole("button", { name: "steve", exact: true }).waitFor();
+    await dialog.getByRole("textbox", { name: "New folder here (optional)", exact: true }).fill("agent-runs");
+    await dialog.getByText("Will use: ~/work/agent-runs", { exact: true }).waitFor();
+    await dialog.getByRole("button", { name: "Use this directory", exact: true }).click();
+    assert.equal(await dialog.getByRole("textbox", { name: "Working directory", exact: true }).inputValue(), "~/work/agent-runs");
+    assert.equal(await dialog.getByRole("textbox", { name: "Working directory", exact: true }).evaluate((el) => el === document.activeElement), true, "focus returns to the field that was filled");
+    await dialog.getByRole("textbox", { name: "Working directory", exact: true }).fill("~/steve-workspace");
     const scrollArea = dialog.locator("div.overflow-y-auto").first();
     const review = dialog.getByRole("button", { name: "Review installation", exact: true });
     await review.scrollIntoViewIfNeeded();

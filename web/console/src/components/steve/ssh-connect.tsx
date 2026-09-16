@@ -1,7 +1,8 @@
 import { NodeAgentEnrollment } from "@/components/steve/node-agent-enrollment";
+import { RemoteDirectoryPicker } from "@/components/steve/remote-directory-picker";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Radio, RadioGroup } from "react-aria-components";
-import { CheckCircle, XCircle, X } from "@untitledui/icons";
+import { CheckCircle, FolderSearch, XCircle, X } from "@untitledui/icons";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
@@ -45,6 +46,7 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
     const [readError, setReadError] = useState("");
     const [error, setError] = useState("");
     const [busy, setBusy] = useState<"check" | "plan" | "install" | "abandon" | null>(null);
+    const [browsing, setBrowsing] = useState(false);
     const acting = useRef(false);
     const scrollArea = useRef<HTMLDivElement>(null);
     const stageHeading = useRef<HTMLHeadingElement>(null);
@@ -191,7 +193,10 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
                     </> : <SSHSteps steps={check.steps} />}
                     {check.reachable && !existingInstallation && <><Input size="sm" label={t(peerInstallation ? "ssh.machineName" : "ssh.name")} name="ssh-node-name" autoComplete="off" spellCheck="false" placeholder={peerInstallation ? t("ssh.machineNamePlaceholder") : "worker-west…"} hint={t(peerInstallation ? "ssh.machineNameHint" : "ssh.nameHint")} value={request.name} onChange={(name) => edit({ name })} isDisabled={!!busy} />
                         <Input size="sm" label={t("ssh.address")} name="ssh-node-address" autoComplete="off" spellCheck="false" placeholder="192.0.2.7:7701…" hint={t("ssh.addressHint")} value={request.addr} onChange={(addr) => edit({ addr })} isDisabled={!!busy} />
-                        {peerInstallation && <Input size="sm" label={t("ssh.workspace")} name="ssh-workspace" autoComplete="off" spellCheck="false" placeholder={defaultWorkspace} hint={t("ssh.workspaceHint")} value={request.workspace_dir ?? defaultWorkspace} onChange={(workspace_dir) => edit({ workspace_dir })} isDisabled={!!busy} />}
+                        {peerInstallation && <div className="space-y-3">
+                            <div className="space-y-1.5"><div className="flex items-end gap-2"><div className="min-w-0 flex-1"><Input size="sm" label={t("ssh.workspace")} name="ssh-workspace" aria-describedby="ssh-workspace-hint" autoComplete="off" spellCheck="false" placeholder={defaultWorkspace} value={request.workspace_dir ?? defaultWorkspace} onChange={(workspace_dir) => edit({ workspace_dir })} isDisabled={!!busy} /></div><Button size="sm" color="secondary" iconLeading={FolderSearch} aria-expanded={browsing} isDisabled={!!busy} onClick={() => setBrowsing((open) => !open)}>{t("ssh.browse")}</Button></div><p id="ssh-workspace-hint" className="text-xs text-tertiary">{t("ssh.workspaceHint")}</p></div>
+                            {browsing && <RemoteDirectoryPicker alias={request.alias} initialPath={(request.workspace_dir ?? defaultWorkspace).trim() || defaultWorkspace} isDisabled={!!busy} onPick={(workspace_dir) => { edit({ workspace_dir }); setBrowsing(false); fields.current?.querySelector<HTMLInputElement>('input[name="ssh-workspace"]')?.focus(); }} onClose={() => setBrowsing(false)} />}
+                        </div>}
                         <details className="rounded-lg border border-secondary p-3">
                             <summary className="cursor-pointer text-sm font-medium text-secondary focus-visible:outline-2 focus-visible:outline-focus-ring">{t("ssh.networkSettings")}</summary>
                             <div className="mt-4 space-y-4">

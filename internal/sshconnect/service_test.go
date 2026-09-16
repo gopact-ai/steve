@@ -79,7 +79,7 @@ type fakeBackend struct {
 	mu                           sync.Mutex
 	registrations, verifications int
 	script                       string
-	verifyErr                    error
+	verifyErr, registerErr       error
 	binaryPath                   string
 	reviewID                     string
 	approvedReviewID             string
@@ -106,6 +106,9 @@ func (b *fakeBackend) Register(_ context.Context, req InstallRequest, _ CheckRes
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.registrations++
+	if b.registerErr != nil {
+		return Registration{}, b.registerErr
+	}
 	b.approvedReviewID = req.ApprovedReviewID
 	script := b.script
 	if script == "" {
@@ -631,5 +634,37 @@ func TestPeerRequestAcceptsDisplayNameAndWorkspaceDir(t *testing.T) {
 	req.Name, req.WorkspaceDir = "办公 Linux 盒子", ""
 	if _, err := svc.Plan(t.Context(), req); err == nil {
 		t.Fatal("executor node names must keep the config key shape")
+	}
+}
+
+// A registration that stops on this machine's side names the reason in the
+// step and in the install log, so the person can see whether it was their
+// network, an address, or the coordinator.
+func TestFailedRegistrationNamesTheRealReason(t *testing.T) {
+	svc, _, b, _ := serviceFixture(t)
+	b.registerErr = errors.New("更新本机可达地址 10.200.152.106 失败：connect: no route to host")
+	plan, err := svc.Plan(t.Context(), installRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.Commit(t.Context(), plan.ID)
+	if err == nil || result.Status != "needs_attention" {
+		t.Fatalf("registration failure not reported: %#v %v", result, err)
+	}
+	var blocked *Step
+	for i := range result.Steps {
+		if result.Steps[i].ID == "registration" && result.Steps[i].Status == "blocked" {
+			blocked = &result.Steps[i]
+		}
+	}
+	if blocked == nil || !strings.Contains(blocked.Message, "10.200.152.106") || !strings.Contains(blocked.Message, "no route to host") {
+		t.Fatalf("the step hides the reason: %+v", result.Steps)
+	}
+	var logged bool
+	for _, line := range result.Log {
+		logged = logged || strings.Contains(line.Text, "no route to host")
+	}
+	if !logged {
+		t.Fatalf("the install log hides the reason: %+v", result.Log)
 	}
 }
