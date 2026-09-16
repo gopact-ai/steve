@@ -17,6 +17,7 @@ type SSHService interface {
 	SSHCommit(context.Context, string) (sshconnect.InstallResult, error)
 	SSHStatus(context.Context, string) (sshconnect.InstallResult, error)
 	SSHAbandon(context.Context, string) error
+	SSHBrowse(context.Context, sshconnect.BrowseRequest) (sshconnect.Listing, error)
 }
 
 func (s *Server) SetSSH(service SSHService) { s.ssh = service }
@@ -40,6 +41,7 @@ func (s *Server) sshRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /console/ssh/plans/{id}/install", s.guard(s.sshInstall))
 	mux.HandleFunc("GET /console/ssh/plans/{id}", s.guard(s.sshStatus))
 	mux.HandleFunc("DELETE /console/ssh/plans/{id}", s.guard(s.sshAbandon))
+	mux.HandleFunc("POST /console/ssh/browse", s.guard(s.sshBrowse))
 }
 
 func (s *Server) sshCandidates(w http.ResponseWriter, r *http.Request) {
@@ -132,6 +134,24 @@ func (s *Server) sshAbandon(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"plan_id": r.PathValue("id"), "abandoned": true})
+}
+
+// sshBrowse lists the directories under one remote path so the workspace
+// can be picked from what the machine actually has. It reads only.
+func (s *Server) sshBrowse(w http.ResponseWriter, r *http.Request) {
+	if !s.sshAvailable(w) {
+		return
+	}
+	var request sshconnect.BrowseRequest
+	if !decodeSSH(w, r, &request) {
+		return
+	}
+	result, err := s.ssh.SSHBrowse(r.Context(), request)
+	if err != nil {
+		s.sshError(w, err)
+		return
+	}
+	writeJSON(w, result)
 }
 
 func (s *Server) sshAvailable(w http.ResponseWriter) bool {

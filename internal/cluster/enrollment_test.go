@@ -205,3 +205,37 @@ func TestAbandonPeerEnrollmentRemovesTheMemberAFailedJoinLeftBehind(t *testing.T
 		t.Fatalf("the orphan's ports are still taken: %v", err)
 	}
 }
+
+// The source host a plan advertises is the address the joining machine can
+// reach; a laptop on a VPN frequently cannot connect to that address itself.
+// Re-registering this node at it must still succeed: the process answering
+// there is this one, so its own checks go over loopback.
+func TestPeerEnrollmentMovesThisNodeToAnAddressOnlyOtherMachinesCanRoute(t *testing.T) {
+	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var starts atomic.Int32
+	options.Activate = testPeerApplication(t, &starts)
+	peer := StartTestPeer(t, options)
+	WaitPeerReady(t, peer)
+	peerAddress, raftAddress := FreeEnrollmentPorts(t)
+	request := PeerEnrollmentRequest{Name: "vpn-peer", PeerAddress: peerAddress, RaftAddress: raftAddress, SourceHost: "only-others-can-route.invalid", Level: "restricted"}
+	plan, err := peer.PreviewEnrollment(t.Context(), request, true)
+	if err != nil || !plan.UpdateSourceAddress {
+		t.Fatalf("plan does not move this node: %+v %v", plan, err)
+	}
+	request = plan.Request
+	request.ExpectedPlanHash = plan.ReviewID
+	if _, err := peer.PrepareEnrollment(t.Context(), request, "vpn-plan", true); err != nil {
+		t.Fatalf("re-registering this node at the advertised host failed: %v", err)
+	}
+	state, err := peer.Runtime.Load().ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := state.Members[peer.Config.NodeID]; !strings.HasPrefix(got.Address, "only-others-can-route.invalid:") || !strings.HasPrefix(got.APIAddress, "https://only-others-can-route.invalid:") {
+		t.Fatalf("this node is not registered at the advertised host: %+v", got)
+	}
+	record, err := peer.loadEnrollment("vpn-plan")
+	if err != nil || !record.SourceReady || record.Error != "" {
+		t.Fatalf("enrollment record: %+v %v", record, err)
+	}
+}

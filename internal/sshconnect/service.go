@@ -209,6 +209,8 @@ type Service struct {
 	plans            map[string]*storedPlan
 	closed           bool
 	installationMode InstallationMode
+	// An upload lives as long as bytes keep moving; these pace the watch.
+	uploadTick, uploadStall, uploadReport time.Duration
 }
 
 func New(options Options) *Service {
@@ -221,7 +223,7 @@ func New(options Options) *Service {
 	if options.InstallationMode == "" {
 		options.InstallationMode = InstallExecutor
 	}
-	return &Service{configPath: options.ConfigPath, runner: options.Runner, backend: options.Backend, ttl: options.PlanTTL, now: time.Now, plans: map[string]*storedPlan{}, installationMode: options.InstallationMode}
+	return &Service{configPath: options.ConfigPath, runner: options.Runner, backend: options.Backend, ttl: options.PlanTTL, now: time.Now, plans: map[string]*storedPlan{}, installationMode: options.InstallationMode, uploadTick: time.Second, uploadStall: uploadStallLimit, uploadReport: uploadReportEvery}
 }
 
 func (s *Service) Discover(ctx context.Context) (Discovery, error) {
@@ -684,7 +686,7 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	result.Registered = registration.Name != ""
 	result.NodeID = registration.NodeID
 	if err != nil {
-		return reject(fail("registration", "registration_failed", "节点登记未完整完成", "检查资源页中的登记状态后处理；本次没有自动重试安装"))
+		return reject(fail("registration", "registration_failed", "节点登记未完整完成："+err.Error(), "检查资源页中的登记状态后处理；本次没有自动重试安装"))
 	}
 	normalized := strings.ReplaceAll(registration.Script, registration.Token, PreviewToken)
 	normalized = strings.ReplaceAll(normalized, plan.ID, nodebootstrap.PreviewUploadID)
@@ -728,19 +730,32 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 
 // upload sends the node program over the fixed SSH connection and records
 // the machine's output. A failed upload is cleaned up before it is reported.
+// A laptop pushing tens of MiB through a VPN can take many minutes, so the
+// upload has no fixed budget: it goes on while bytes move and ends when
+// they stop for uploadStall.
 func (s *Service) upload(ctx context.Context, result *InstallResult, plan InstallPlan, connection Connection, binary io.Reader, token string, peerRegistration bool) *StepError {
-	s.enter(result, PhaseUpload, fmt.Sprintf("通过 SSH 上传节点程序（%s，%.1f MiB）", plan.Binary.OS+"/"+plan.Binary.Arch, float64(plan.Binary.Size)/(1<<20)))
+	s.enter(result, PhaseUpload, fmt.Sprintf("通过 SSH 上传节点程序（%s，%.1f MiB）；链路慢时会持续上传并汇报进度", plan.Binary.OS+"/"+plan.Binary.Arch, float64(plan.Binary.Size)/(1<<20)))
 	command, _ := nodebootstrap.UploadCommand(plan.ID)
-	uploadCtx, cancel := context.WithTimeout(ctx, 3*time.Minute)
-	out, err := connection.Upload(uploadCtx, command, binary)
+	uploadCtx, cancel := context.WithTimeout(ctx, uploadLimit)
+	metered := &meteredReader{Reader: binary}
+	settle := s.watchUpload(uploadCtx, cancel, result, metered, plan.Binary.Size)
+	out, err := connection.Upload(uploadCtx, command, metered)
+	stalled := settle()
 	cancel()
 	s.output(result, out, token)
 	if err != nil {
-		result.Steps = append(result.Steps, s.cleanupUpload(ctx, connection, plan.ID))
-		if peerRegistration {
-			return fail("upload", "upload_uncertain", "节点程序上传未确认完成，接入操作已保留", "检查 SSH 连接和本次接入记录；尚未确认加入投票成员")
+		if stalled {
+			s.note(result, fmt.Sprintf("上传停滞超过 %s（已传 %.1f / %.1f MiB），已中止", s.uploadStall.Round(time.Second), mib(metered.read.Load()), mib(plan.Binary.Size)))
 		}
-		return fail("upload", "upload_uncertain", "节点安装包上传未确认完成，节点登记已保留", "确认远端没有已安装节点后，在资源页移除这条未完成登记，再重新接入")
+		result.Steps = append(result.Steps, s.cleanupUpload(ctx, connection, plan.ID))
+		reason := "未确认完成"
+		if stalled {
+			reason = "停滞后已中止"
+		}
+		if peerRegistration {
+			return fail("upload", "upload_uncertain", "节点程序上传"+reason+"，接入操作已保留", "检查 SSH 连接和本次接入记录；尚未确认加入投票成员")
+		}
+		return fail("upload", "upload_uncertain", "节点安装包上传"+reason+"，节点登记已保留", "确认远端没有已安装节点后，在资源页移除这条未完成登记，再重新接入")
 	}
 	result.Steps = append(result.Steps, Step{ID: "upload", Status: "ready", Message: "节点安装包已通过 SSH 上传，安装时将核验 SHA-256"})
 	s.progress(*result)
@@ -810,7 +825,7 @@ func (s *Service) cleanupUpload(ctx context.Context, connection Connection, id s
 }
 
 func (s *Service) arguments(alias, command string) []string {
-	args := []string{"-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=8", "-o", "ConnectionAttempts=1", "-o", "PermitLocalCommand=no", "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "RemoteCommand=none", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "UpdateHostKeys=no", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2"}
+	args := []string{"-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=8", "-o", "ConnectionAttempts=1", "-o", "PermitLocalCommand=no", "-o", "ClearAllForwardings=yes", "-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "RemoteCommand=none", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "UpdateHostKeys=no", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2", "-o", "Compression=yes"}
 	if s.configPath != "" {
 		path, _ := filepath.Abs(s.configPath)
 		args = append(args, "-F", path)

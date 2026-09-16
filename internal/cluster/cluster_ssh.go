@@ -57,6 +57,9 @@ func (s peerSSHService) SSHCommit(ctx context.Context, id string) (sshconnect.In
 func (s peerSSHService) SSHAbandon(ctx context.Context, id string) error {
 	return s.service.Abandon(ctx, id)
 }
+func (s peerSSHService) SSHBrowse(ctx context.Context, req sshconnect.BrowseRequest) (sshconnect.Listing, error) {
+	return s.service.Browse(ctx, req)
+}
 
 type peerEnrollmentService interface {
 	PreviewPeerEnrollment(context.Context, PeerEnrollmentRequest) (PeerEnrollmentPlan, error)
@@ -368,4 +371,5 @@ type SSHControl interface {
 	SSHCommit(context.Context, string) (sshconnect.InstallResult, error)
 	SSHStatus(context.Context, string) (sshconnect.InstallResult, error)
 	SSHAbandon(context.Context, string) error
+	SSHBrowse(context.Context, sshconnect.BrowseRequest) (sshconnect.Listing, error)
 }

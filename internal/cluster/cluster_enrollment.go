@@ -496,6 +496,11 @@ func (p *Peer) prepareSourceNetworkOnce(ctx context.Context, record *peerEnrollm
 		err = p.persistAdvertisement(wanted.Address, wanted.APIAddress)
 	}
 	if err != nil {
+		host, _, splitErr := net.SplitHostPort(wanted.Address)
+		if splitErr != nil {
+			host = wanted.Address
+		}
+		err = fmt.Errorf("更新本机可达地址 %s 失败：%w", host, err)
 		record.Phase = "source_network"
 		record.Error = err.Error()
 		if saveErr := p.saveEnrollment(*record); saveErr != nil {
@@ -910,9 +915,11 @@ func (p *Peer) serveNetworkCheck(w http.ResponseWriter, r *http.Request) {
 			tlsConfig, err = p.identity.ClientConfig(member.NodeID)
 			if err == nil {
 				var connection net.Conn
-				connection, err = (&tls.Dialer{Config: tlsConfig}).DialContext(ctx, "tcp", member.Address)
-				if connection != nil {
-					connection.Close()
+				connection, err = p.peerDial(member.NodeID, true, 3*time.Second)(ctx, "tcp", member.Address)
+				if err == nil {
+					secured := tls.Client(connection, tlsConfig)
+					err = secured.HandshakeContext(ctx)
+					secured.Close()
 				}
 			}
 		}

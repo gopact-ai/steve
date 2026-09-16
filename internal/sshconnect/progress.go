@@ -2,8 +2,11 @@ package sshconnect
 
 import (
 	"context"
+	"fmt"
+	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 	"unicode/utf8"
 )
@@ -162,4 +165,90 @@ func Report(ctx context.Context, message string) {
 	if report, ok := ctx.Value(reporterKey{}).(func(string)); ok && report != nil {
 		report(message)
 	}
+}
+
+// Upload pacing. A thin VPN link delivers a few hundred KiB/s at best, so
+// the upload is bounded by movement, with a generous ceiling behind it.
+// Movement is measured where the SSH client reads; once it has read the
+// last byte, it still pushes its buffered window to the remote and waits
+// for the remote to finish, and nothing is left to count during that tail,
+// so only the ceiling bounds it.
+const (
+	uploadStallLimit  = 90 * time.Second
+	uploadReportEvery = 10 * time.Second
+	uploadLimit       = 90 * time.Minute
+)
+
+// meteredReader counts what the SSH client has taken so far and notes when
+// it has taken everything.
+type meteredReader struct {
+	io.Reader
+	read    atomic.Int64
+	drained atomic.Bool
+}
+
+func (m *meteredReader) Read(p []byte) (int, error) {
+	n, err := m.Reader.Read(p)
+	m.read.Add(int64(n))
+	if err == io.EOF {
+		m.drained.Store(true)
+	}
+	return n, err
+}
+
+func mib(n int64) float64 { return float64(n) / (1 << 20) }
+
+// watchUpload narrates the upload's progress into the install log and ends
+// it when bytes stop moving. The returned settle stops the watch and says
+// whether a stall, rather than anything else, ended the upload. Until
+// settle returns, the watch is the only writer of result.
+func (s *Service) watchUpload(ctx context.Context, cancel context.CancelFunc, result *InstallResult, metered *meteredReader, size int64) (settle func() bool) {
+	stop, done := make(chan struct{}), make(chan struct{})
+	var stalled atomic.Bool
+	go func() {
+		defer close(done)
+		ticker := time.NewTicker(s.uploadTick)
+		defer ticker.Stop()
+		started := time.Now()
+		last, movedAt, reportedAt, reported := int64(0), started, started, int64(0)
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			case now := <-ticker.C:
+				read := metered.read.Load()
+				if read != last {
+					last, movedAt = read, now
+				} else if !metered.drained.Load() && now.Sub(movedAt) >= s.uploadStall {
+					stalled.Store(true)
+					cancel()
+					return
+				}
+				if now.Sub(reportedAt) < s.uploadReport {
+					continue
+				}
+				s.note(result, uploadProgress(read, size, read-reported, now.Sub(reportedAt)))
+				reportedAt, reported = now, read
+			}
+		}
+	}()
+	return func() bool {
+		close(stop)
+		<-done
+		return stalled.Load()
+	}
+}
+
+func uploadProgress(read, size, delta int64, window time.Duration) string {
+	if window <= 0 || delta <= 0 {
+		return fmt.Sprintf("已上传 %.1f / %.1f MiB，等待远端接收…", mib(read), mib(size))
+	}
+	rate := float64(delta) / window.Seconds()
+	remaining := time.Duration(float64(size-read) / rate * float64(time.Second)).Round(time.Second)
+	if remaining < 0 {
+		remaining = 0
+	}
+	return fmt.Sprintf("已上传 %.1f / %.1f MiB（%.2f MiB/s，预计还需 %s）", mib(read), mib(size), rate/(1<<20), remaining)
 }

@@ -204,7 +204,8 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	p.identity = identity
 	seeds := append([]coordination.Member(nil), p.Config.Seeds...)
 	seeds = append(seeds, coordination.Member{NodeID: p.Config.NodeID, Address: p.Config.RaftAddress, APIAddress: p.Config.PeerURL, Name: p.Config.Name})
-	p.client, err = coordination.NewClient(coordination.ClientConfig{TLS: identity, Members: seeds, ControlHeaders: func(context.Context, string) (http.Header, error) {
+	selfHost, _, _ := net.SplitHostPort(peerListener.Addr().String())
+	p.client, err = coordination.NewClient(coordination.ClientConfig{TLS: identity, Members: seeds, SelfHost: selfHost, ControlHeaders: func(context.Context, string) (http.Header, error) {
 		return http.Header{"Authorization": []string{"Bearer " + p.OwnerToken}}, nil
 	}})
 	if err != nil {
@@ -599,10 +600,31 @@ func (p *Peer) remoteTransport(member coordination.Member) (*http.Transport, *ur
 		if err != nil {
 			return nil, nil, err
 		}
-		transport = &http.Transport{TLSClientConfig: tlsConfig, DialContext: (&net.Dialer{Timeout: 5 * time.Second}).DialContext, TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second}
+		transport = &http.Transport{TLSClientConfig: tlsConfig, DialContext: p.peerDial(member.NodeID, false, 5*time.Second), TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second}
 		p.peerTransports[key] = transport
 	}
 	return transport, origin, nil
+}
+
+// peerDial connects to another node at the address it advertises. This
+// node's own advertised address is often one only other machines can route
+// to (a VPN tunnel address), so calls aimed at itself go to the host the
+// matching listener is bound to (the peer API listener, or the Raft
+// listener for raft); the mutual TLS identity check still proves the port
+// serves this node.
+func (p *Peer) peerDial(nodeID string, raft bool, timeout time.Duration) coordination.DialFunc {
+	dial := (&net.Dialer{Timeout: timeout}).DialContext
+	if nodeID != p.Config.NodeID {
+		return dial
+	}
+	// Bind addresses are fixed when the listeners open, before anything
+	// dials; remoteTransport calls this while holding p.Mu.
+	bound := p.Config.PeerBindAddress
+	if raft {
+		bound = p.Config.RaftBindAddress
+	}
+	bindHost, _, _ := net.SplitHostPort(bound)
+	return coordination.SelfDial(bindHost, dial)
 }
 
 func (p *Peer) staticPage(w http.ResponseWriter, r *http.Request) {
