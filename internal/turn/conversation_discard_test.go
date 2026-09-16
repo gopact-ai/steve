@@ -2,6 +2,7 @@ package turn
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 	"time"
@@ -19,11 +20,12 @@ import (
 type closeRecorder struct {
 	*fakeManager
 	closed []string
+	refuse error
 }
 
 func (m *closeRecorder) CloseSession(_ context.Context, _ harness.Placement, id string) error {
 	m.closed = append(m.closed, id)
-	return nil
+	return m.refuse
 }
 
 func discardFixture(t *testing.T) (*Coordinator, *closeRecorder, *task.Store, *schedule.Store) {
@@ -101,5 +103,64 @@ func TestDiscardConversationRefusesWhileATurnRuns(t *testing.T) {
 	}
 	if _, ok := tasks.Get(created.ID); !ok {
 		t.Fatalf("refused discard still deleted task %s", created.ID)
+	}
+}
+
+// A machine that cannot be reached must not make a conversation
+// permanent: the attempt is made, and the delete finishes without it.
+func TestDiscardConversationSurvivesAnUnreachableMachine(t *testing.T) {
+	c, manager, tasks, _ := discardFixture(t)
+	manager.refuse = errors.New("node is offline")
+	if err := c.store.SaveSession(state.Session{ConversationID: "console:one", AgentID: "worker", HarnessID: "mock", UpstreamID: "ns_1", Workspace: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := tasks.Create(task.Task{Goal: "ship it", Channel: "console:one", Member: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.DiscardConversation(context.Background(), "console:one"); err != nil {
+		t.Fatalf("discard: %v", err)
+	}
+
+	if len(manager.closed) != 1 {
+		t.Fatalf("closed sessions = %v; want one attempt", manager.closed)
+	}
+	if _, ok := tasks.Get(created.ID); ok {
+		t.Fatalf("task %s survived its conversation", created.ID)
+	}
+	if sessions := c.store.Conversation("console:one").Sessions; len(sessions) != 0 {
+		t.Fatalf("session records survived: %+v", sessions)
+	}
+}
+
+// Nothing is ended for a delete that will be refused: an executing task
+// stops the discard before any agent session is closed, because a node
+// session is authorized by the task it belongs to.
+func TestDiscardConversationRefusesExecutingWorkBeforeClosingAnything(t *testing.T) {
+	c, manager, tasks, _ := discardFixture(t)
+	if err := c.store.SaveSession(state.Session{ConversationID: "console:one", AgentID: "worker", HarnessID: "mock", UpstreamID: "ns_1", Workspace: t.TempDir()}); err != nil {
+		t.Fatal(err)
+	}
+	created, err := tasks.Create(task.Task{Goal: "ship it", Channel: "console:one", Member: "worker"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := tasks.Begin(created.ID, "worker", "hub", "sess-1"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := c.DiscardConversation(context.Background(), "console:one"); !errors.Is(err, task.ErrExecuting) {
+		t.Fatalf("discard error = %v; want %v", err, task.ErrExecuting)
+	}
+
+	if len(manager.closed) != 0 {
+		t.Fatalf("closed sessions = %v; want none", manager.closed)
+	}
+	if _, ok := tasks.Get(created.ID); !ok {
+		t.Fatalf("refused discard still deleted task %s", created.ID)
+	}
+	if sessions := c.store.Conversation("console:one").Sessions; len(sessions) != 1 {
+		t.Fatalf("refused discard dropped session records: %+v", sessions)
 	}
 }

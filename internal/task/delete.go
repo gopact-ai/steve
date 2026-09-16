@@ -20,6 +20,37 @@ var ErrExecuting = errors.New("task is executing")
 func (s *Store) DeleteChannel(channel string) ([]string, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	ids, err := s.deletableLocked(channel)
+	if err != nil {
+		return nil, err
+	}
+	if len(ids) == 0 {
+		return ids, nil
+	}
+	next := s.clone()
+	for _, id := range ids {
+		delete(next.Tasks, id)
+		delete(next.Meta, id)
+	}
+	if err := s.replaceLocked(next); err != nil {
+		return nil, err
+	}
+	return ids, nil
+}
+
+// ChannelIdle reports what a conversation opened as safe to delete: no
+// task of it, or delegated from it, has an attempt open. The caller asks
+// before ending anything else, so a refusal costs the owner nothing.
+func (s *Store) ChannelIdle(channel string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := s.deletableLocked(channel)
+	return err
+}
+
+// deletableLocked is the conversation's tasks and everything delegated
+// from them, in order, or ErrExecuting for the first one still running.
+func (s *Store) deletableLocked(channel string) ([]string, error) {
 	doomed := map[string]bool{}
 	for id, stored := range s.data.Tasks {
 		if stored.Channel == channel {
@@ -44,16 +75,5 @@ func (s *Store) DeleteChannel(channel string) ([]string, error) {
 		ids = append(ids, id)
 	}
 	sort.Slice(ids, func(i, j int) bool { return lessID(ids[i], ids[j]) })
-	if len(ids) == 0 {
-		return ids, nil
-	}
-	next := s.clone()
-	for _, id := range ids {
-		delete(next.Tasks, id)
-		delete(next.Meta, id)
-	}
-	if err := s.replaceLocked(next); err != nil {
-		return nil, err
-	}
 	return ids, nil
 }

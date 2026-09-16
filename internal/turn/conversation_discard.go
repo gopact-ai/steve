@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/harness"
@@ -13,14 +14,16 @@ import (
 // because a turn of it is still running.
 var ErrConversationBusy = errors.New("conversation has a turn in flight")
 
-// DiscardConversation ends a conversation for good. The tasks it opened
-// go first — with everything delegated from them, and only if none is
-// executing — then every agent session it holds is closed on the machine
-// that runs it, the schedules that fire into it are dropped, and the
-// records that would resume any of it are forgotten.
+// DiscardConversation ends a conversation for good. Everything that can
+// refuse is asked first — a turn in flight, a task still executing — so
+// nothing is destroyed for a delete that will not happen. Then the agent
+// sessions it holds are closed on the machines that run them, the tasks
+// it opened go with everything delegated from them, the schedules that
+// fire into it are dropped, and the records that would resume any of it
+// are forgotten.
 //
-// Each step is safe to repeat: a discard interrupted by an unreachable
-// machine finishes when it is called again.
+// Sessions close before the tasks are deleted, because a node session is
+// authorized by the task it belongs to.
 func (c *Coordinator) DiscardConversation(ctx context.Context, conversationID string) error {
 	if strings.TrimSpace(conversationID) == "" {
 		return errors.New("conversation is required")
@@ -29,12 +32,17 @@ func (c *Coordinator) DiscardConversation(ctx context.Context, conversationID st
 		return fmt.Errorf("%w: %s", ErrConversationBusy, conversationID)
 	}
 	if c.tasks != nil {
-		if _, err := c.tasks.DeleteChannel(conversationID); err != nil {
+		if err := c.tasks.ChannelIdle(conversationID); err != nil {
 			return err
 		}
 	}
 	if err := c.closeConversationSessions(ctx, conversationID); err != nil {
 		return err
+	}
+	if c.tasks != nil {
+		if _, err := c.tasks.DeleteChannel(conversationID); err != nil {
+			return err
+		}
 	}
 	if c.schedules != nil {
 		for _, job := range c.schedules.List(conversationID) {
@@ -68,17 +76,20 @@ func (c *Coordinator) busyWith(conversationID string) bool {
 // closeConversationSessions ends the agent processes the conversation
 // holds. An archived session was already closed; only the live ones have
 // a process to reach.
+//
+// A machine that cannot be reached is reported and the record goes
+// anyway. The alternative is a conversation nobody can ever delete
+// because one of its agents ran somewhere that is now offline.
 func (c *Coordinator) closeConversationSessions(ctx context.Context, conversationID string) error {
 	if c.store == nil || c.runtime == nil {
 		return nil
 	}
 	for agentID, session := range c.store.Conversation(conversationID).Sessions {
-		if session.UpstreamID == "" {
-			continue
-		}
-		place := harness.Placement{Node: session.NodeID, Harness: session.HarnessID}
-		if err := c.runtime.CloseSession(ctx, place, session.UpstreamID); err != nil {
-			return fmt.Errorf("close %s session of %s: %w", agentID, conversationID, err)
+		if session.UpstreamID != "" {
+			place := harness.Placement{Node: session.NodeID, Harness: session.HarnessID}
+			if err := c.runtime.CloseSession(ctx, place, session.UpstreamID); err != nil {
+				slog.Error(fmt.Sprintf("turn: close %s session while deleting %s: %v", agentID, conversationID, err), "conversation", conversationID, "agent", agentID, "node", session.NodeID)
+			}
 		}
 		if err := c.store.DeleteSession(conversationID, agentID); err != nil {
 			return err
