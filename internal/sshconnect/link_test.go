@@ -106,7 +106,7 @@ func waitLink(t *testing.T, link *Link, want func(LinkStatus) bool) LinkStatus {
 // session going down: the next session binds the same ports.
 func TestLinkComesUpReconnectsAndKeepsItsLocalPorts(t *testing.T) {
 	sessions := &fakeSessions{}
-	link := OpenLink(t.Context(), LinkSpec{Alias: "dev", Inbound: []PortForward{{Listen: "127.0.0.1:59407", Target: "127.0.0.1:7712"}}, Outbound: []PortForward{{Target: "127.0.0.1:7702"}, {Target: "127.0.0.1:7701"}}}, LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return 10 * time.Millisecond }})
+	link := OpenLink(t.Context(), LinkSpec{Alias: "dev", Inbound: []PortForward{{Listen: "127.0.0.1:25407", Target: "127.0.0.1:7712"}}, Outbound: []PortForward{{Target: "127.0.0.1:7702"}, {Target: "127.0.0.1:7701"}}}, LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return 10 * time.Millisecond }})
 	t.Cleanup(link.Close)
 	first := link.Status()
 	if len(first.Outbound) != 2 || first.Outbound[0].Listen == "" || first.Outbound[0].Listen == first.Outbound[1].Listen {
@@ -118,7 +118,7 @@ func TestLinkComesUpReconnectsAndKeepsItsLocalPorts(t *testing.T) {
 		t.Fatalf("link did not come up: %v", err)
 	}
 	args := strings.Join(sessions.launches[0], " ")
-	for _, want := range []string{"-N", "-o BatchMode=yes", "-o ExitOnForwardFailure=yes", "-R 127.0.0.1:59407:127.0.0.1:7712", "-L " + first.Outbound[0].Listen + ":127.0.0.1:7702", "-L " + first.Outbound[1].Listen + ":127.0.0.1:7701", "-- dev"} {
+	for _, want := range []string{"-N", "-o BatchMode=yes", "-o ExitOnForwardFailure=yes", "-R 127.0.0.1:25407:127.0.0.1:7712", "-L " + first.Outbound[0].Listen + ":127.0.0.1:7702", "-L " + first.Outbound[1].Listen + ":127.0.0.1:7701", "-- dev"} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("session arguments lack %q: %s", want, args)
 		}
@@ -142,7 +142,7 @@ func TestLinkComesUpReconnectsAndKeepsItsLocalPorts(t *testing.T) {
 // port is taken) leaves the link down with the reason, and waiting on it
 // ends with that reason rather than the deadline alone.
 func TestLinkReportsWhyItCannotComeUp(t *testing.T) {
-	sessions := &fakeSessions{refuse: errors.New("remote port forwarding failed for listen port 59407")}
+	sessions := &fakeSessions{refuse: errors.New("remote port forwarding failed for listen port 25407")}
 	link := OpenLink(t.Context(), LinkSpec{Alias: "dev", Outbound: []PortForward{{Target: "127.0.0.1:7702"}}}, LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return 10 * time.Millisecond }})
 	t.Cleanup(link.Close)
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)

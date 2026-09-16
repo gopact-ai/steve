@@ -131,7 +131,7 @@ func (f *sshEnrollmentFixture) PeerEnrollmentStatus(_ context.Context, id string
 func peerSSHFixture(t *testing.T) (peerSSHBackend, *sshEnrollmentFixture, sshconnect.InstallRequest, sshconnect.CheckResult) {
 	t.Helper()
 	request := sshconnect.InstallRequest{Alias: "dev", Name: "remote", Addr: "192.0.2.5:7701", Level: "restricted"}
-	resolved := PeerEnrollmentRequest{Alias: request.Alias, Name: request.Name, PeerAddress: request.Addr, RaftAddress: "192.0.2.5:7702", HubRoute: coordination.Route{Raft: "127.0.0.1:59407", API: "127.0.0.1:59408"}, Level: "restricted"}
+	resolved := PeerEnrollmentRequest{Alias: request.Alias, Name: request.Name, PeerAddress: request.Addr, RaftAddress: "192.0.2.5:7702", HubRoute: coordination.Route{Raft: "127.0.0.1:25407", API: "127.0.0.1:25408"}, Level: "restricted"}
 	source := coordination.Member{NodeID: "local", Address: "192.0.2.1:7712", APIAddress: "https://192.0.2.1:7711"}
 	fixture := &sshEnrollmentFixture{plan: PeerEnrollmentPlan{Request: resolved, ClusterID: "test-cluster", Seeds: []coordination.Member{source}, Effects: []string{"两台机器经由 SSH 会话互联"}}, packageValue: PeerJoinPackage{Version: 1, ClusterID: "test-cluster", NodeID: "node-new", Name: "remote", StorageLevel: "restricted", PeerAdvertise: resolved.PeerAddress, RaftAdvertise: resolved.RaftAddress, Seeds: []coordination.Member{source}, PrivateKey: []byte("private-leaf-key"), OwnerToken: "private-owner-token", WorkerToken: "private-worker-token"}, completeResult: PeerEnrollmentResult{NodeID: "node-new", Name: "remote", Phase: "ready", Ready: true}}
 	fixture.plan.ReviewID = fixture.plan.reviewHash()
@@ -140,7 +140,7 @@ func peerSSHFixture(t *testing.T) (peerSSHBackend, *sshEnrollmentFixture, sshcon
 	backend := peerSSHBackend{enrollment: fixture, findBinary: func(string) (string, bool) { return binary, true }}
 	check := SshCheckFixture()
 	check.Tools = append(check.Tools, sshconnect.Tool{Name: "base64", Available: true})
-	check.FreeLoopbackPorts = []int{59407, 59408, 59409}
+	check.FreeLoopbackPorts = []int{25407, 25408, 25409}
 	return backend, fixture, request, check
 }
 

@@ -28,7 +28,6 @@ type enrollmentChildCommand struct {
 	Action    string                        `json:"action"`
 	ID        string                        `json:"id,omitempty"`
 	Request   cluster.PeerEnrollmentRequest `json:"request"`
-	Address   cluster.NetworkAddressRequest `json:"address"`
 	ReplyPath string                        `json:"reply_path"`
 }
 type enrollmentChildReply struct {
@@ -88,8 +87,6 @@ func TestClusterEnrollmentPeerProcess(t *testing.T) {
 			result.Plan = prepared.Plan
 		case "complete":
 			result.Result, err = peer.CompletePeerEnrollment(callCtx, command.ID)
-		case "address":
-			_, err = peer.SetNetworkAddress(callCtx, command.Address)
 		case "state":
 			result.State, err = peer.Runtime.Load().ReadState(callCtx)
 		default:
@@ -247,23 +244,6 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 	before := source.call(enrollmentChildCommand{Action: "state"})
 	if before.Error != "" {
 		t.Fatal(before.Error)
-	}
-	var changed enrollmentChildReply
-	for attempt := 0; attempt < 5; attempt++ {
-		latest := source.call(enrollmentChildCommand{Action: "state"})
-		if latest.Error != "" {
-			t.Fatal(latest.Error)
-		}
-		changed = source.call(enrollmentChildCommand{Action: "address", Address: cluster.NetworkAddressRequest{ID: fmt.Sprintf("source-verified-address-%d", attempt), ExpectedRevision: latest.State.Revision, Host: "localhost"}})
-		if !strings.Contains(changed.Error, coordination.ErrConflict.Error()) {
-			break
-		}
-	}
-	if changed.Error != "" {
-		t.Fatal(changed.Error)
-	}
-	if changed.Worker != ready.Worker || changed.Generation != ready.Generation {
-		t.Fatal("address update restarted the worker or business application")
 	}
 	var importedNodes []cluster.PeerImportResult
 	var importedProcesses []*enrollmentProcess

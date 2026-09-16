@@ -704,7 +704,7 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 		err := linker.Link(linkCtx, plan.ID, registration)
 		cancel()
 		if err != nil {
-			return reject(fail("link", "link_failed", "SSH 隧道未能建立："+err.Error(), "检查这台机器的 SSH 配置是否允许端口转发（sshd 的 AllowTcpForwarding）；接入操作已保留，处理后可重新接入"))
+			return reject(fail("link", "link_failed", "SSH 隧道未能建立："+err.Error(), "检查这台机器的 sshd 是否允许端口转发（AllowTcpForwarding），以及这个别名能否免交互登录；然后放弃这次接入并重新检查、接入"))
 		}
 		result.Steps = append(result.Steps, Step{ID: "link", Status: "ready", Message: "SSH 隧道已建立，集群通信将经由这条隧道"})
 		s.progress(result)

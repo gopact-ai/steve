@@ -124,7 +124,7 @@ func hubRouteFor(req sshconnect.InstallRequest, check sshconnect.CheckResult) (c
 	if check.FreeLoopbackPorts == nil {
 		return coordination.Route{}, &sshconnect.Step{ID: "peer_link", Status: "blocked", Message: "未能确认目标机上可供 SSH 隧道使用的回环端口", Suggestion: "确认目标机有 bash，且允许通过 SSH 转发端口后重新检查"}
 	}
-	return coordination.Route{}, &sshconnect.Step{ID: "peer_link", Status: "blocked", Message: "目标机回环地址上 59407–59426 之间没有两个空闲端口供 SSH 隧道使用", Suggestion: "释放这段端口，或为目标节点换一组端口后重新检查"}
+	return coordination.Route{}, &sshconnect.Step{ID: "peer_link", Status: "blocked", Message: fmt.Sprintf("目标机回环地址上 %d–%d 之间没有两个空闲端口供 SSH 隧道使用", sshconnect.FirstLoopbackPort, sshconnect.LastLoopbackPort), Suggestion: "释放这段端口，或为目标节点换一组端口后重新检查"}
 }
 
 func peerPlanHash(plan PeerEnrollmentPlan) string {

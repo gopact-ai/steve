@@ -205,8 +205,3 @@ func TestAbandonPeerEnrollmentRemovesTheMemberAFailedJoinLeftBehind(t *testing.T
 		t.Fatalf("the orphan's ports are still taken: %v", err)
 	}
 }
-
-// The source host a plan advertises is the address the joining machine can
-// reach; a laptop on a VPN frequently cannot connect to that address itself.
-// Re-registering this node at it must still succeed: the process answering
-// there is this one, so its own checks go over loopback.

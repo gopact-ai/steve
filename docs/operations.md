@@ -282,7 +282,7 @@ steve run -config /home/me/steve-bin/config.json
 
 必须显式选择 `restricted` 或 `sealed`，表示这台机器可保存私有协作账本。默认 Raft 和 peer HTTPS 在 loopback 自动选择端口，适用于单个协调者管理远端 worker；若要加入其他完整 peer，初始化时用 `-raft-address <可达地址>:7801 -peer-address <可达地址>:7802` 指定本机可绑定且互相可达的地址。`peer-init` 只初始化第一个 peer；添加其他成员使用控制台现有的机群加入流程。
 
-`<config>.cluster.json` 还可包含 `routes` 与 `links`。`routes` 以成员 node ID 为键，记录本机访问该成员时实际使用的 `raft` / `api` 地址（例如隧道在本机 loopback 上的端口），优先于成员自己公布的地址；`links` 以被接入机器的 node ID 为键，记录本机为它维持的 SSH 会话：`alias` 是 SSH 别名，`remote` 是本机监听在对方 loopback 上出现的地址，`peer` 是对方监听在其自身 loopback 上的地址。启动时本机会按 `links` 重新打开会话，并把本机侧的 loopback 端口写入运行中的路由表；通过控制台 SSH 接入的机器会自动写入这两项，手动接入的独立执行节点不需要。
+`<config>.cluster.json` 还可包含 `routes` 与 `links`。`routes` 以成员 node ID 为键，记录本机访问该成员时实际使用的 `raft` / `api` 地址（例如隧道在本机 loopback 上的端口），优先于成员自己公布的地址；`links` 以被接入机器的 node ID 为键，记录本机为它维持的 SSH 会话：`alias` 是 SSH 别名，`remote` 是本机监听在对方 loopback 上出现的地址，`peer` 是对方监听在其自身 loopback 上的地址。启动时本机会按 `links` 重新打开会话，并把本机侧的 loopback 端口写入运行中的路由表；通过控制台 SSH 接入的机器会自动写入这两项，手动接入的独立执行节点不需要。隧道在被接入机器一侧监听 `127.0.0.1`；若该机 sshd 配置了 `GatewayPorts yes`，OpenSSH 会忽略客户端指定的绑定地址而监听所有接口，应改为 `no` 或 `clientspecified`。本机异常退出后残留的 ssh 会话会占住这些端口，下次启动时本机会先结束带有相同转发参数的残留会话再重开。
 
 重复相同初始化返回原身份；配置不一致会报错。初始化中断时使用原参数重试，已发布的证书会复用。peer 已运行后不要删除 sidecar 重新生成身份，也不要移走 sidecar 退回独立模式；恢复应使用包含集群状态的完整备份。
 

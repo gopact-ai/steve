@@ -56,7 +56,7 @@ func (p *Peer) openLink(nodeID string, link PeerLink) *sshconnect.Link {
 		p.links = map[string]*sshconnect.Link{}
 	}
 	previous := p.links[nodeID]
-	opened = sshconnect.OpenLink(p.ctx, p.linkSpec(link), sshconnect.LinkOptions{Launch: p.Options.SSHLaunch, OnChange: route})
+	opened = sshconnect.OpenLink(p.linkCtx, p.linkSpec(link), sshconnect.LinkOptions{Launch: p.Options.SSHLaunch, OnChange: route})
 	p.links[nodeID] = opened
 	p.Mu.Unlock()
 	route(opened.Status())
@@ -70,6 +70,10 @@ func (p *Peer) openLink(nodeID string, link PeerLink) *sshconnect.Link {
 // it; a link already open with the same description is kept as it is.
 func (p *Peer) setLink(nodeID string, link PeerLink) (*sshconnect.Link, error) {
 	p.Mu.Lock()
+	if p.closing {
+		p.Mu.Unlock()
+		return nil, errors.New("本节点正在关闭")
+	}
 	current, open := p.links[nodeID]
 	same := open && p.Config.Links[nodeID] == link
 	if !same {

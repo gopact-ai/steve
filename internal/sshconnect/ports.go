@@ -17,12 +17,19 @@ type Linker interface {
 	Link(ctx context.Context, installID string, registration Registration) error
 }
 
-// loopbackPortCandidates are the ports on the target's loopback the link
-// may bind for this machine's listeners. Ports the target's own node will
-// use are excluded by the backend when it picks.
+// The link binds this machine's listeners on the target's loopback at one
+// of these ports. They sit below every ephemeral range (Linux hands out
+// 32768 and up, macOS 49152 and up), so an outgoing connection on the
+// target cannot take a port while the session is down; the target's own
+// node ports are excluded by the backend when it picks.
+const (
+	FirstLoopbackPort = 25407
+	LastLoopbackPort  = 25426
+)
+
 var loopbackPortCandidates = func() []int {
-	ports := make([]int, 0, 20)
-	for port := 59407; port < 59427; port++ {
+	ports := make([]int, 0, LastLoopbackPort-FirstLoopbackPort+1)
+	for port := FirstLoopbackPort; port <= LastLoopbackPort; port++ {
 		ports = append(ports, port)
 	}
 	return ports

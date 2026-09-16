@@ -401,19 +401,31 @@ func validHubRoute(route coordination.Route) (bool, error) {
 	if route.Raft == "" && route.API == "" {
 		return false, nil
 	}
+	if err := loopbackRoute(route); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// loopbackRoute accepts two distinct loopback host:port addresses with
+// real ports: a tunnel's ends are fixed ports, never 0.
+func loopbackRoute(route coordination.Route) error {
 	for _, address := range []string{route.Raft, route.API} {
-		host, _, err := net.SplitHostPort(address)
+		host, port, err := net.SplitHostPort(address)
 		if err != nil {
-			return false, errors.New("SSH 隧道端口需要写成 host:port")
+			return errors.New("SSH 隧道端口需要写成 host:port")
 		}
 		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
-			return false, errors.New("SSH 隧道端口必须在目标机的回环地址上")
+			return errors.New("SSH 隧道端口必须在目标机的回环地址上")
+		}
+		if number, err := strconv.Atoi(port); err != nil || number <= 0 || number > 65535 {
+			return errors.New("SSH 隧道端口必须是 1 到 65535 之间的固定端口")
 		}
 	}
 	if route.Raft == route.API {
-		return false, errors.New("SSH 隧道的共识与 HTTPS 端口必须不同")
+		return errors.New("SSH 隧道的共识与 HTTPS 端口必须不同")
 	}
-	return true, nil
+	return nil
 }
 
 func (p *Peer) enrollmentPath(id string) string {
@@ -606,74 +618,6 @@ func validPeerWorkspace(dir string) error {
 		}
 	}
 	return nil
-}
-
-type NetworkAddressRequest struct {
-	ID               string `json:"id"`
-	ExpectedRevision uint64 `json:"expected_revision"`
-	Host             string `json:"host"`
-}
-
-func (p *Peer) SetNetworkAddress(ctx context.Context, request NetworkAddressRequest) (coordination.Result, error) {
-	if request.ID == "" || request.Host == "" || strings.ContainsAny(request.Host, "/\\\x00\r\n\t ") {
-		return coordination.Result{}, coordination.ErrInvalid
-	}
-	boundHost, _, _ := net.SplitHostPort(p.Config.RaftBindAddress)
-	boundIP := net.ParseIP(boundHost)
-	if boundIP == nil || !boundIP.IsUnspecified() {
-		return coordination.Result{}, errors.New("当前共识监听绑定到单一地址，需要先完成明确的监听配置变更")
-	}
-	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, request.Host)
-	if err != nil || len(addresses) == 0 {
-		return coordination.Result{}, errors.New("本机连接地址无法解析")
-	}
-	local := map[string]bool{}
-	for _, address := range localAdvertiseAddresses() {
-		local[address] = true
-	}
-	for _, address := range addresses {
-		if !address.IP.IsLoopback() && !local[address.IP.String()] {
-			return coordination.Result{}, errors.New("请选择本机网络接口上实际存在的地址")
-		}
-	}
-	if net.ParseIP(request.Host).IsUnspecified() {
-		return coordination.Result{}, errors.New("请选择本机网络接口上实际存在的地址")
-	}
-	state, err := p.Runtime.Load().ReadState(ctx)
-	if err != nil {
-		return coordination.Result{}, err
-	}
-	member := state.Members[p.Config.NodeID]
-	_, raftPort, _ := net.SplitHostPort(member.Address)
-	peerURL, _ := url.Parse(member.APIAddress)
-	if peerURL == nil {
-		return coordination.Result{}, coordination.ErrInvalid
-	}
-	newRaft := net.JoinHostPort(request.Host, raftPort)
-	newAPI := "https://" + net.JoinHostPort(request.Host, peerURL.Port())
-	result, err := p.Runtime.Load().UpdateMemberAddress(ctx, coordination.MemberAddressRequest{ID: request.ID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, NodeID: p.Config.NodeID, Address: newRaft, APIAddress: newAPI})
-	if err != nil {
-		return result, err
-	}
-	return result, p.persistAdvertisement(newRaft, newAPI)
-}
-
-func (p *Peer) persistAdvertisement(newRaft, newAPI string) error {
-	p.raftAdvertisement.Store(newRaft)
-	p.peerAdvertisement.Store(newAPI)
-	endpoint, err := url.Parse(newAPI)
-	if err != nil {
-		return err
-	}
-	p.Mu.Lock()
-	saved := p.Config
-	saved.RaftAddress = newRaft
-	saved.PeerAddress = endpoint.Host
-	saved.PeerURL = newAPI
-	err = SaveClusterJSON(p.Options.ClusterPath, saved, false)
-	p.Mu.Unlock()
-	p.client.RememberMembers([]coordination.Member{{NodeID: p.Config.NodeID, Name: p.Config.Name, Address: newRaft, APIAddress: newAPI}})
-	return err
 }
 
 func (p *Peer) validateJoiningNetwork(ctx context.Context, candidate coordination.Member) error {

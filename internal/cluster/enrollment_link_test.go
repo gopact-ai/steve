@@ -22,16 +22,21 @@ import (
 type fakeTunnels struct {
 	mu       sync.Mutex
 	sessions []*fakeTunnel
+	// onKill, when set, is called as a session ends.
+	onKill func()
 }
 
 type fakeTunnel struct {
 	listeners []net.Listener
 	done      chan struct{}
 	once      sync.Once
+	onKill    func()
 }
 
 func (f *fakeTunnels) Start(_ context.Context, args []string) (sshconnect.Process, error) {
-	session := &fakeTunnel{done: make(chan struct{})}
+	f.mu.Lock()
+	session := &fakeTunnel{done: make(chan struct{}), onKill: f.onKill}
+	f.mu.Unlock()
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] != "-L" && args[i] != "-R" {
 			continue
@@ -80,11 +85,20 @@ func (s *fakeTunnel) Wait() (string, error) {
 
 func (s *fakeTunnel) Kill() {
 	s.once.Do(func() {
+		if s.onKill != nil {
+			s.onKill()
+		}
 		for _, l := range s.listeners {
 			l.Close()
 		}
 		close(s.done)
 	})
+}
+
+func (f *fakeTunnels) session(i int) *fakeTunnel {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.sessions[i]
 }
 
 func (f *fakeTunnels) count() int {
@@ -247,5 +261,89 @@ func TestAbandoningAnEnrollmentDropsItsLink(t *testing.T) {
 	case <-tunnels.sessions[0].done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("the abandoned session was not ended")
+	}
+}
+
+// A hub that restarts reopens the session to every machine it enrolled
+// and routes to it at the new session's ports; when it stops, the session
+// is ended only after the runtime has said its goodbyes through it.
+func TestARestartedHubReopensItsLinksAndClosesThemAfterTheRuntime(t *testing.T) {
+	tunnels := &fakeTunnels{}
+	hubOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var activations atomic.Int32
+	hubOptions.Activate = testPeerApplication(t, &activations)
+	hubOptions.SSHLaunch = tunnels
+	hub, err := OpenPeer(context.Background(), hubOptions)
+	if err != nil {
+		t.Fatal(err)
+	}
+	WaitPeerReady(t, hub)
+	peerAddress, raftAddress := FreeEnrollmentPorts(t)
+	hubRaftOnMachine, hubAPIOnMachine := FreeEnrollmentPorts(t)
+	request := PeerEnrollmentRequest{Alias: "box", Name: "box", PeerAddress: peerAddress, RaftAddress: raftAddress, HubRoute: coordination.Route{Raft: hubRaftOnMachine, API: hubAPIOnMachine}, Level: "restricted"}
+	plan, err := hub.PreviewEnrollment(t.Context(), request, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = plan.Request
+	request.ExpectedPlanHash = plan.ReviewID
+	prepared, err := hub.PrepareEnrollment(t.Context(), request, "survives-restart", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := hub.OpenEnrollmentLink(ctx, "survives-restart"); err != nil {
+		t.Fatal(err)
+	}
+	var runtimeClosedFirst atomic.Bool
+	first := tunnels.session(0)
+	runtime := hub.Runtime.Load()
+	tunnels.mu.Lock()
+	tunnels.onKill = func() {
+		select {
+		case <-runtime.closeDone:
+			runtimeClosedFirst.Store(true)
+		default:
+		}
+	}
+	first.onKill = tunnels.onKill
+	tunnels.mu.Unlock()
+	if err := hub.Close(); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-first.done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("stopping the hub did not end its session")
+	}
+	if !runtimeClosedFirst.Load() {
+		t.Fatal("the session was ended before the runtime closed; its last messages had no way through")
+	}
+
+	tunnels.mu.Lock()
+	tunnels.onKill = nil
+	tunnels.mu.Unlock()
+	restarted := StartTestPeer(t, hubOptions)
+	WaitPeerReady(t, restarted)
+	restarted.Mu.RLock()
+	link := restarted.links[prepared.NodeID]
+	restarted.Mu.RUnlock()
+	if link == nil {
+		t.Fatal("the restarted hub did not reopen the link")
+	}
+	if err := link.WaitConnected(ctx); err != nil {
+		t.Fatal(err)
+	}
+	route, ok := restarted.routes.Lookup(prepared.NodeID)
+	if !ok || tunnels.count() != 2 {
+		t.Fatalf("the restarted hub has no route through a new session: %+v %v (%d sessions)", route, ok, tunnels.count())
+	}
+	listens := map[string]bool{}
+	for _, l := range tunnels.session(1).listeners {
+		listens[l.Addr().String()] = true
+	}
+	if !listens[route.Raft] || !listens[route.API] {
+		t.Fatalf("the route %+v does not point at the new session's listeners %v", route, listens)
 	}
 }

@@ -18,13 +18,13 @@ import (
 // reviewed plan and the registered one agree.
 func TestPeerSSHPreviewRoutesTheMachineToThisNodeThroughTheSession(t *testing.T) {
 	b, fixture, request, check := peerSSHFixture(t)
-	request.Addr, request.RaftAddr = "192.0.2.5:59407", ""
-	check.FreeLoopbackPorts = []int{59407, 59408, 59409, 59410, 59411}
+	request.Addr, request.RaftAddr = "192.0.2.5:25407", ""
+	check.FreeLoopbackPorts = []int{25407, 25408, 25409, 25410, 25411}
 	preview, err := b.Preview(t.Context(), request, check)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := coordination.Route{Raft: "127.0.0.1:59409", API: "127.0.0.1:59410"}
+	want := coordination.Route{Raft: "127.0.0.1:25409", API: "127.0.0.1:25410"}
 	if fixture.previewed.HubRoute != want {
 		t.Fatalf("the tunnel ports were not chosen around the node's own: %+v", fixture.previewed.HubRoute)
 	}
@@ -33,7 +33,7 @@ func TestPeerSSHPreviewRoutesTheMachineToThisNodeThroughTheSession(t *testing.T)
 		if step.Status == "blocked" {
 			t.Fatalf("a routed plan must not be blocked: %#v", step)
 		}
-		described = described || step.ID == "peer_link" && strings.Contains(step.Message, "59409") && strings.Contains(step.Message, "59410")
+		described = described || step.ID == "peer_link" && strings.Contains(step.Message, "25409") && strings.Contains(step.Message, "25410")
 	}
 	if !described || preview.Script == "" {
 		t.Fatalf("the plan does not tell the user about the tunnel: %#v", preview.Steps)
@@ -46,7 +46,7 @@ func TestPeerSSHPreviewRoutesTheMachineToThisNodeThroughTheSession(t *testing.T)
 
 func TestPeerSSHPreviewBlocksWhenTheMachineHasNoPortsForTheSession(t *testing.T) {
 	b, _, request, check := peerSSHFixture(t)
-	for _, free := range [][]int{nil, {59407}} {
+	for _, free := range [][]int{nil, {25407}} {
 		check.FreeLoopbackPorts = free
 		preview, err := b.Preview(t.Context(), request, check)
 		if err != nil {

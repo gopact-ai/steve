@@ -28,7 +28,7 @@ func (b *linkingBackend) Link(_ context.Context, id string, registration Registr
 func linkingFixture(t *testing.T) (*Service, *recordingRunner, *linkingBackend) {
 	t.Helper()
 	path := configFixture(t, map[string]string{"config": "Host dev\nHostName dev.example\n"})
-	runner := &recordingRunner{portOutput: "STEVE_PORT\t59407\tbusy\nSTEVE_PORT\t59408\tfree\nSTEVE_PORT\t59409\tfree\nSTEVE_PORT\tend\tfree\n"}
+	runner := &recordingRunner{portOutput: "STEVE_PORT\t25407\tbusy\nSTEVE_PORT\t25408\tfree\nSTEVE_PORT\t25409\tfree\nSTEVE_PORT\tend\tfree\n"}
 	backend := &linkingBackend{fakeBackend: &fakeBackend{}}
 	svc := New(Options{ConfigPath: path, Runner: runner, Backend: backend})
 	t.Cleanup(func() { _ = svc.Close() })
@@ -41,7 +41,7 @@ func TestLinkComesUpAfterRegistrationAndBeforeTheMachineIsTouched(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := plan.Check.FreeLoopbackPorts; len(got) != 2 || got[0] != 59408 || got[1] != 59409 {
+	if got := plan.Check.FreeLoopbackPorts; len(got) != 2 || got[0] != 25408 || got[1] != 25409 {
 		t.Fatalf("the check did not record the machine's free loopback ports: %v", got)
 	}
 	result, err := svc.Commit(t.Context(), plan.ID)
@@ -76,7 +76,7 @@ func TestLinkComesUpAfterRegistrationAndBeforeTheMachineIsTouched(t *testing.T) 
 
 func TestLinkFailureKeepsTheRegistrationAndInstallsNothing(t *testing.T) {
 	svc, r, b := linkingFixture(t)
-	b.linkErr = errors.New("remote port forwarding failed for listen port 59408")
+	b.linkErr = errors.New("remote port forwarding failed for listen port 25408")
 	plan, err := svc.Plan(t.Context(), installRequest())
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +86,7 @@ func TestLinkFailureKeepsTheRegistrationAndInstallsNothing(t *testing.T) {
 		t.Fatalf("commit = %#v %v", result, err)
 	}
 	var failed *StepError
-	if !errors.As(err, &failed) || failed.Code != "link_failed" || !strings.Contains(failed.Message, "59408") {
+	if !errors.As(err, &failed) || failed.Code != "link_failed" || !strings.Contains(failed.Message, "25408") {
 		t.Fatalf("the failure does not name the link: %v", err)
 	}
 	for _, call := range r.calls {

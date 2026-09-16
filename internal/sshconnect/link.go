@@ -5,10 +5,12 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
 	"os/exec"
-	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -58,9 +60,15 @@ type Launcher interface {
 	Start(context.Context, []string) (Process, error)
 }
 
+// A Reaper ends sessions a previous process of this program left behind:
+// they hold the remote ports a new session needs, so it could never come
+// up. Launchers that leave nothing behind need not implement it.
+type Reaper interface {
+	Reap(inbound []PortForward)
+}
+
 type LinkOptions struct {
-	ConfigPath string
-	Launch     Launcher
+	Launch Launcher
 	// Backoff is how long to wait before attempt n (n >= 1) after the
 	// previous session ended; nil means 1 s doubling to 30 s.
 	Backoff func(attempt int) time.Duration
@@ -91,7 +99,9 @@ func defaultLinkBackoff(attempt int) time.Duration {
 }
 
 // OpenLink chooses the local ports at once and starts keeping the session
-// up. The status's Outbound is complete before OpenLink returns.
+// up. The status's Outbound is complete before OpenLink returns; a port
+// taken by something else while the session is down is replaced, and the
+// change reported, before the next attempt.
 func OpenLink(ctx context.Context, spec LinkSpec, options LinkOptions) *Link {
 	if options.Launch == nil {
 		options.Launch = OpenSSH{}
@@ -113,16 +123,46 @@ func chooseListeners(outbound []PortForward) []PortForward {
 	chosen := make([]PortForward, len(outbound))
 	for i, forward := range outbound {
 		chosen[i] = forward
-		if forward.Listen != "" {
-			continue
-		}
-		chosen[i].Listen = "127.0.0.1:0"
-		if listener, err := net.Listen("tcp", "127.0.0.1:0"); err == nil {
-			chosen[i].Listen = listener.Addr().String()
-			listener.Close()
+		if forward.Listen == "" {
+			chosen[i].Listen = freeLoopbackPort()
 		}
 	}
 	return chosen
+}
+
+func freeLoopbackPort() string {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return "127.0.0.1:0"
+	}
+	defer listener.Close()
+	return listener.Addr().String()
+}
+
+// refreshListeners replaces every chosen outbound port that something else
+// has bound meanwhile: the ssh client could not bind it either, and with
+// ExitOnForwardFailure the session would end at once, every time. Ports
+// the spec names are kept as they are.
+func (l *Link) refreshListeners() {
+	l.mu.Lock()
+	outbound := append([]PortForward(nil), l.status.Outbound...)
+	l.mu.Unlock()
+	changed := false
+	for i, forward := range outbound {
+		if l.spec.Outbound[i].Listen != "" {
+			continue
+		}
+		listener, err := net.Listen("tcp", forward.Listen)
+		if err == nil {
+			listener.Close()
+			continue
+		}
+		outbound[i].Listen = freeLoopbackPort()
+		changed = true
+	}
+	if changed {
+		l.update(func(s *LinkStatus) { s.Outbound = outbound })
+	}
 }
 
 func (l *Link) Status() LinkStatus {
@@ -178,7 +218,11 @@ func (l *Link) update(change func(*LinkStatus)) {
 func (l *Link) run(ctx context.Context) {
 	defer close(l.done)
 	defer l.update(func(s *LinkStatus) { s.Connected = false; s.Since = time.Now() })
+	if reaper, ok := l.options.Launch.(Reaper); ok {
+		reaper.Reap(l.spec.Inbound)
+	}
 	for attempt := 1; ; attempt++ {
+		l.refreshListeners()
 		l.update(func(s *LinkStatus) { s.Attempts = attempt })
 		began := time.Now()
 		err := l.session(ctx)
@@ -206,8 +250,10 @@ func (l *Link) run(ctx context.Context) {
 
 // session runs one SSH session to its end and says why it ended. The
 // session counts as up once this machine's first outbound listener
-// accepts, which the ssh client only does after it has authenticated and
-// (with ExitOnForwardFailure) every remote forward is in place.
+// accepts, which the ssh client only does after it has authenticated. The
+// remote forwards are confirmed shortly after; one that fails ends the
+// session (ExitOnForwardFailure), so the status can go up and straight
+// down again, and the reason is the session's last stderr line.
 func (l *Link) session(ctx context.Context) error {
 	process, err := l.options.Launch.Start(ctx, l.arguments())
 	if err != nil {
@@ -281,12 +327,8 @@ func (l *Link) readiness(ctx context.Context, ended <-chan struct{}) bool {
 // the session, and the reason is reported.
 func (l *Link) arguments() []string {
 	args := []string{"-N", "-T", "-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=yes", "-o", "ConnectTimeout=8", "-o", "ConnectionAttempts=1", "-o", "PermitLocalCommand=no", "-o", "ForwardAgent=no", "-o", "ForwardX11=no", "-o", "RemoteCommand=none", "-o", "ControlMaster=no", "-o", "ControlPath=none", "-o", "UpdateHostKeys=no", "-o", "ExitOnForwardFailure=yes", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=3"}
-	if l.options.ConfigPath != "" {
-		path, _ := filepath.Abs(l.options.ConfigPath)
-		args = append(args, "-F", path)
-	}
 	for _, forward := range l.spec.Inbound {
-		args = append(args, "-R", forward.Listen+":"+forward.Target)
+		args = append(args, "-R", inboundArgument(forward))
 	}
 	for _, forward := range l.Status().Outbound {
 		args = append(args, "-L", forward.Listen+":"+forward.Target)
@@ -304,20 +346,79 @@ func lastLine(output string) string {
 	return ""
 }
 
-// Start runs the ssh client as a long-lived session.
+func inboundArgument(forward PortForward) string { return forward.Listen + ":" + forward.Target }
+
+// Start runs the ssh client as a long-lived session. A proxy helper the
+// alias starts inherits stderr; WaitDelay keeps Wait from following it
+// after the client itself was killed.
 func (s OpenSSH) Start(_ context.Context, args []string) (Process, error) {
-	binary := s.Binary
-	if binary == "" {
-		binary = "ssh"
-	}
-	command := exec.Command(binary, args...)
+	command := exec.Command(s.binary(), args...)
 	stderr := &boundedOutput{}
 	command.Stderr = stderr
 	command.Stdin = nil
+	command.WaitDelay = time.Second
 	if err := command.Start(); err != nil {
 		return nil, err
 	}
 	return &sshProcess{command: command, stderr: stderr}, nil
+}
+
+func (s OpenSSH) binary() string {
+	if s.Binary != "" {
+		return s.Binary
+	}
+	return "ssh"
+}
+
+// Reap ends ssh clients of a previous process of this program that still
+// hold this link's remote forwards: a crash leaves them running, and the
+// machine's sshd would refuse the same ports to the new session. A process
+// is one of ours when its command line carries every one of the link's -R
+// arguments, which no other use of ssh shares.
+func (s OpenSSH) Reap(inbound []PortForward) {
+	if len(inbound) == 0 {
+		return
+	}
+	for _, pid := range strayProcesses(s.binary(), inbound) {
+		if process, err := os.FindProcess(pid); err == nil {
+			_ = process.Signal(syscall.SIGTERM)
+		}
+	}
+}
+
+// strayProcesses lists other processes running binary with every forward
+// on their command line, from ps, which macOS and Linux both have.
+func strayProcesses(binary string, inbound []PortForward) []int {
+	output, err := exec.Command("ps", "-axo", "pid=,args=").Output()
+	if err != nil {
+		return nil
+	}
+	var pids []int
+	for _, line := range strings.Split(string(output), "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 2 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil || pid == os.Getpid() {
+			continue
+		}
+		command := strings.Join(fields[1:], " ")
+		if !strings.HasSuffix(fields[1], binary) {
+			continue
+		}
+		stray := true
+		for _, forward := range inbound {
+			if !strings.Contains(command, " -R "+inboundArgument(forward)+" ") {
+				stray = false
+				break
+			}
+		}
+		if stray {
+			pids = append(pids, pid)
+		}
+	}
+	return pids
 }
 
 type sshProcess struct {

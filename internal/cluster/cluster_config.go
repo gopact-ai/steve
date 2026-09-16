@@ -28,6 +28,7 @@ import (
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/desktop"
+	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
 type PeerConfig struct {
@@ -115,11 +116,13 @@ func LoadClusterPeerConfig(path string) (PeerConfig, error) {
 		}
 	}
 	for nodeID, link := range config.Links {
-		if nodeID == config.NodeID || link.Alias == "" {
+		if nodeID == config.NodeID || !sshconnect.ValidAlias(link.Alias) {
 			return config, fmt.Errorf("invalid link to node %s", nodeID)
 		}
-		for _, address := range []string{link.Remote.Raft, link.Remote.API, link.Peer.Raft, link.Peer.API} {
-			if _, _, err := net.SplitHostPort(address); err != nil {
+		// Both ends are loopback ports: Remote is handed to ssh -R, and a
+		// listener on any other address would expose this node's ports.
+		for _, route := range []coordination.Route{link.Remote, link.Peer} {
+			if err := loopbackRoute(route); err != nil {
 				return config, fmt.Errorf("invalid link to node %s: %w", nodeID, err)
 			}
 		}
