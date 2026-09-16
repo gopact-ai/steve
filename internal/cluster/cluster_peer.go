@@ -229,7 +229,7 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	if err != nil {
 		return nil, err
 	}
-	runtime, err := Open(Config{LedgerDir: filepath.Dir(application.Gateway.StatePath), Coordination: coordination.Config{ClusterID: p.Config.ClusterID, NodeID: p.Config.NodeID, FailureDomain: p.Config.FailureDomain, StorageLevel: p.Config.StorageLevel, DataDir: filepath.Join(p.Config.DataDir, "raft"), APIAddress: p.Config.PeerURL, Name: p.Config.Name, Bootstrap: p.Config.Bootstrap, StreamLayer: stream, Probe: p.client.Probe, ValidateJoin: p.validateJoiningNetwork, ValidateAddress: p.validateMemberAddress, AuthorizeReplica: p.authorizeLedgerReplica, RaftConfig: options.RaftConfig}, Client: p.client, Activate: p.activate, PollInterval: options.PollInterval})
+	runtime, err := Open(Config{LedgerDir: filepath.Dir(application.Gateway.StatePath), Coordination: coordination.Config{ClusterID: p.Config.ClusterID, NodeID: p.Config.NodeID, Build: nodewire.Version(), FailureDomain: p.Config.FailureDomain, StorageLevel: p.Config.StorageLevel, DataDir: filepath.Join(p.Config.DataDir, "raft"), APIAddress: p.Config.PeerURL, Name: p.Config.Name, Bootstrap: p.Config.Bootstrap, StreamLayer: stream, Probe: p.client.Probe, ValidateJoin: p.validateJoiningNetwork, ValidateAddress: p.validateMemberAddress, AuthorizeReplica: p.authorizeLedgerReplica, RaftConfig: options.RaftConfig}, Client: p.client, Activate: p.activate, PollInterval: options.PollInterval})
 	if err != nil {
 		return nil, err
 	}
@@ -727,11 +727,15 @@ func (p *Peer) Coordination(ctx context.Context) (consoleapi.CoordinationView, e
 		}
 		var progress coordination.Progress
 		var probeErr error
+		offline := "暂时无法连接"
 		if item.Local {
 			status := runtime.Status()
 			progress = status.Progress()
 			if !status.Healthy {
+				// This machine is right here; saying it cannot be reached
+				// hides that its own cluster service stopped.
 				probeErr = coordination.ErrUnavailable
+				offline = "本机的集群服务已停止，重启 App 后恢复"
 			}
 		} else {
 			probeCtx, cancel := context.WithTimeout(ctx, time.Second)
@@ -741,7 +745,7 @@ func (p *Peer) Coordination(ctx context.Context) (consoleapi.CoordinationView, e
 		item.Online = probeErr == nil
 		item.Ready = item.Online && progress.AppliedIndex >= state.AppliedIndex && progress.AppVersion >= state.AppVersion && !state.Removing[id]
 		if !item.Online {
-			item.Reason = "暂时无法连接"
+			item.Reason = offline
 		} else if !item.Ready {
 			item.Reason = "正在同步协作记录"
 		}

@@ -46,7 +46,7 @@ func (b peerSSHBackend) MachineAlias(nodeID string) (string, error) {
 }
 
 // Upgraded reopens the link so the machine's end of it runs the new
-// program too, then waits until the machine reports this build.
+// program too, then waits until the machine itself reports this build.
 func (b peerSSHBackend) Upgraded(ctx context.Context, nodeID string) error {
 	link, ok := b.peer.link(nodeID)
 	if !ok {
@@ -56,8 +56,8 @@ func (b peerSSHBackend) Upgraded(ctx context.Context, nodeID string) error {
 	if err := b.peer.openLink(nodeID, link).WaitConnected(ctx); err != nil {
 		return fmt.Errorf("SSH 隧道未能重新建立：%w", err)
 	}
-	sshconnect.Report(ctx, "隧道已恢复，等待机器以新版本上报")
-	return awaitBuildWithin(ctx, b.peer.refresher, awaitAskLimit, time.Second, nodeID, nodewire.Version())
+	sshconnect.Report(ctx, "隧道已恢复，等待机器以新版本回到集群")
+	return awaitBuildWithin(ctx, b.peer.askBuild(nodeID), awaitAskLimit, time.Second, nodewire.Version())
 }
 
 func (p *Peer) link(nodeID string) (PeerLink, bool) {
@@ -67,69 +67,65 @@ func (p *Peer) link(nodeID string) (PeerLink, bool) {
 	return link, ok
 }
 
-type advertRefresh func(ctx context.Context, nodeID string) (nodewire.Advert, error)
-
-// refresher is how this node, while it coordinates, asks a member for a
-// fresh advert; nil when it does not coordinate.
-func (p *Peer) refresher() advertRefresh {
-	p.Mu.RLock()
-	defer p.Mu.RUnlock()
-	if p.Application == nil || p.Application.Admin == nil {
-		return nil
+// askBuild asks a member's own cluster service, over the link this node
+// keeps to it, which build it runs. The answer comes from the machine,
+// so confirming an upgrade does not depend on this node coordinating.
+func (p *Peer) askBuild(nodeID string) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		runtime := p.Runtime.Load()
+		if runtime == nil {
+			return "", errors.New("本机的集群服务没有运行")
+		}
+		member, ok := runtime.Status().Members[nodeID]
+		if !ok {
+			return "", errors.New("集群成员里没有这台机器")
+		}
+		status, err := p.client.Status(ctx, member)
+		if err != nil {
+			return "", err
+		}
+		return status.Build, nil
 	}
-	return p.Application.Admin.Nodes.Refresh
 }
 
-// awaitAskLimit bounds one ask for a machine's advert: a connection the
-// registry still holds through the old link may never answer, and the
-// next ask dials again.
+// awaitAskLimit bounds one ask for a machine's build: a connection held
+// through the old link may never answer, and the next ask dials again.
 const awaitAskLimit = 10 * time.Second
 
-// awaitBuildWithin asks the machine for its advert, every interval and
-// each ask bounded by askLimit, until it answers with the wanted build.
-// The registry dials again after the restart, so every ask reaches
-// whatever process is up now. Restarting a member that led the cluster
-// makes this node's application rebuild for a few seconds; the refresher
-// is taken fresh before every ask and its absence is waited out.
-func awaitBuildWithin(ctx context.Context, refresher func() advertRefresh, askLimit, interval time.Duration, nodeID, version string) error {
+// awaitBuildWithin asks the machine which build it runs, every interval and
+// each ask bounded by askLimit, until it answers with the wanted one. A
+// machine that answers without naming a build is still running the program
+// it had before this build started reporting one.
+func awaitBuildWithin(ctx context.Context, ask func(context.Context) (string, error), askLimit, interval time.Duration, version string) error {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	seen, said := "", ""
-	waiting := false
+	answered := false
 	for {
-		if refresh := refresher(); refresh == nil {
-			waiting = true
-			if said != "rebuilding" {
-				said = "rebuilding"
-				sshconnect.Report(ctx, "本机的协调服务正在重启，等它恢复后再询问")
-			}
-		} else {
-			waiting = false
-			askCtx, cancel := context.WithTimeout(ctx, askLimit)
-			advert, err := refresh(askCtx, nodeID)
-			timedOut := askCtx.Err() != nil
-			cancel()
-			switch {
-			case err == nil && advert.BuildVersion == version:
-				return nil
-			case err == nil:
-				seen = advert.BuildVersion
-			case ctx.Err() != nil:
-			case timedOut && said != "timeout":
-				said = "timeout"
-				sshconnect.Report(ctx, "机器一直没有应答，重新询问")
-			case !timedOut && err.Error() != said:
-				said = err.Error()
-				sshconnect.Report(ctx, "机器暂未应答："+said)
-			}
+		askCtx, cancel := context.WithTimeout(ctx, askLimit)
+		build, err := ask(askCtx)
+		timedOut := askCtx.Err() != nil
+		cancel()
+		switch {
+		case err == nil && build == version:
+			return nil
+		case err == nil:
+			answered, seen = true, build
+		case ctx.Err() != nil:
+		case timedOut && said != "timeout":
+			said = "timeout"
+			sshconnect.Report(ctx, "机器一直没有应答，重新询问")
+		case !timedOut && err.Error() != said:
+			said = err.Error()
+			sshconnect.Report(ctx, "机器暂未应答："+said)
 		}
 		select {
 		case <-ctx.Done():
 			switch {
 			case seen != "":
 				return fmt.Errorf("机器仍报告版本 %s", seen)
-			case waiting:
-				return errors.New("本机的协调服务一直没有恢复，无法确认机器的版本")
+			case answered:
+				return errors.New("机器仍在运行升级前的旧版本程序")
 			}
 			return errors.New("机器还没有重新应答")
 		case <-ticker.C:
