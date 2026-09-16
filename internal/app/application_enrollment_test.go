@@ -269,7 +269,7 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 	var importedProcesses []*enrollmentProcess
 	for index, name := range []string{"peer-alpha", "peer-beta"} {
 		peerAddress, raftAddress := FreeEnrollmentPorts(t)
-		request := cluster.PeerEnrollmentRequest{Alias: name, Name: name, PeerAddress: peerAddress, RaftAddress: raftAddress, SourceHost: "localhost", Level: "restricted"}
+		request := cluster.PeerEnrollmentRequest{Alias: name, Name: name, PeerAddress: peerAddress, RaftAddress: raftAddress, Level: "restricted"}
 		preview := source.call(enrollmentChildCommand{Action: "preview", Request: request})
 		if preview.Error != "" {
 			t.Fatal(preview.Error)

@@ -56,6 +56,21 @@ type PeerConfig struct {
 	// addresses they advertise, by node ID: the hub behind an SSH tunnel
 	// answers at a loopback port that exists only on this machine.
 	Routes map[string]coordination.Route `json:"routes,omitempty"`
+	// Links are the SSH sessions this node keeps to machines it enrolled,
+	// by the machine's node ID. The cluster protocol between the two rides
+	// on each session's port forwards, so neither needs a route to the
+	// other; only the SSH alias has to keep working.
+	Links map[string]PeerLink `json:"links,omitempty"`
+}
+
+// PeerLink describes one machine's session. Remote is where this node's
+// Raft and API listeners appear on the machine's loopback; Peer is where
+// the machine's own listeners answer on its loopback. The loopback ports
+// on this side are chosen when the link opens and live in the route table.
+type PeerLink struct {
+	Alias  string             `json:"alias"`
+	Remote coordination.Route `json:"remote"`
+	Peer   coordination.Route `json:"peer"`
 }
 
 func DefaultClusterConfigPath(configPath string) string { return configPath + ".cluster.json" }
@@ -96,6 +111,16 @@ func LoadClusterPeerConfig(path string) (PeerConfig, error) {
 		for _, address := range []string{route.Raft, route.API} {
 			if _, _, err := net.SplitHostPort(address); err != nil {
 				return config, fmt.Errorf("invalid route to node %s: %w", nodeID, err)
+			}
+		}
+	}
+	for nodeID, link := range config.Links {
+		if nodeID == config.NodeID || link.Alias == "" {
+			return config, fmt.Errorf("invalid link to node %s", nodeID)
+		}
+		for _, address := range []string{link.Remote.Raft, link.Remote.API, link.Peer.Raft, link.Peer.API} {
+			if _, _, err := net.SplitHostPort(address); err != nil {
+				return config, fmt.Errorf("invalid link to node %s: %w", nodeID, err)
 			}
 		}
 	}

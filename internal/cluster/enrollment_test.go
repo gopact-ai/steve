@@ -20,7 +20,7 @@ func TestPeerEnrollmentReviewChangesFailBeforeIssuingIdentity(t *testing.T) {
 	peer := StartTestPeer(t, options)
 	WaitPeerReady(t, peer)
 	peerAddress, raftAddress := FreeEnrollmentPorts(t)
-	request := PeerEnrollmentRequest{Name: "reviewed-peer", PeerAddress: peerAddress, RaftAddress: raftAddress, SourceHost: "127.0.0.1", Level: "restricted"}
+	request := PeerEnrollmentRequest{Name: "reviewed-peer", PeerAddress: peerAddress, RaftAddress: raftAddress, Level: "restricted"}
 	plan, err := peer.PreviewEnrollment(t.Context(), request, true)
 	if err != nil {
 		t.Fatal(err)
@@ -58,7 +58,7 @@ func TestPeerEnrollmentTakesADisplayNameAndAWorkspaceForTheMachine(t *testing.T)
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	workspace := filepath.Join(home, "work", "steve")
-	request := PeerEnrollmentRequest{Name: "  办公 Linux 盒子 ", PeerAddress: peerAddress, RaftAddress: raftAddress, SourceHost: "127.0.0.1", Level: "restricted"}
+	request := PeerEnrollmentRequest{Name: "  办公 Linux 盒子 ", PeerAddress: peerAddress, RaftAddress: raftAddress, Level: "restricted"}
 	plan, err := peer.PreviewEnrollment(t.Context(), request, true)
 	if err != nil || plan.Request.Name != "办公 Linux 盒子" || plan.Request.WorkspaceDir != "~/steve-workspace" {
 		t.Fatalf("a display name and a default workspace: %+v %v", plan.Request, err)
@@ -121,7 +121,7 @@ func TestAbandonPeerEnrollmentArchivesTheRecordAndRefusesAJoinedNode(t *testing.
 	peer := StartTestPeer(t, options)
 	WaitPeerReady(t, peer)
 	peerAddress, raftAddress := FreeEnrollmentPorts(t)
-	request := PeerEnrollmentRequest{Name: "abandoned", PeerAddress: peerAddress, RaftAddress: raftAddress, SourceHost: "127.0.0.1", Level: "restricted"}
+	request := PeerEnrollmentRequest{Name: "abandoned", PeerAddress: peerAddress, RaftAddress: raftAddress, Level: "restricted"}
 	plan, err := peer.PreviewEnrollment(t.Context(), request, true)
 	if err != nil {
 		t.Fatal(err)
@@ -172,7 +172,7 @@ func TestAbandonPeerEnrollmentRemovesTheMemberAFailedJoinLeftBehind(t *testing.T
 		t.Fatal(err)
 	}
 	peerAddress, raftAddress := FreeEnrollmentPorts(t)
-	request := PeerEnrollmentRequest{Name: "orphaned", PeerAddress: peerAddress, RaftAddress: raftAddress, SourceHost: "127.0.0.1", Level: "restricted"}
+	request := PeerEnrollmentRequest{Name: "orphaned", PeerAddress: peerAddress, RaftAddress: raftAddress, Level: "restricted"}
 	plan, err := source.PreviewEnrollment(t.Context(), request, true)
 	if err != nil {
 		t.Fatal(err)
@@ -201,7 +201,7 @@ func TestAbandonPeerEnrollmentRemovesTheMemberAFailedJoinLeftBehind(t *testing.T
 	if _, err := source.loadEnrollment("orphan-op"); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("abandoned record still answers: %v", err)
 	}
-	if _, err := source.PreviewEnrollment(t.Context(), PeerEnrollmentRequest{Name: "again", PeerAddress: orphan.Config.PeerAddress, RaftAddress: orphan.Config.RaftAddress, SourceHost: "127.0.0.1", Level: "restricted"}, true); err != nil {
+	if _, err := source.PreviewEnrollment(t.Context(), PeerEnrollmentRequest{Name: "again", PeerAddress: orphan.Config.PeerAddress, RaftAddress: orphan.Config.RaftAddress, Level: "restricted"}, true); err != nil {
 		t.Fatalf("the orphan's ports are still taken: %v", err)
 	}
 }
@@ -210,32 +210,3 @@ func TestAbandonPeerEnrollmentRemovesTheMemberAFailedJoinLeftBehind(t *testing.T
 // reach; a laptop on a VPN frequently cannot connect to that address itself.
 // Re-registering this node at it must still succeed: the process answering
 // there is this one, so its own checks go over loopback.
-func TestPeerEnrollmentMovesThisNodeToAnAddressOnlyOtherMachinesCanRoute(t *testing.T) {
-	options, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
-	var starts atomic.Int32
-	options.Activate = testPeerApplication(t, &starts)
-	peer := StartTestPeer(t, options)
-	WaitPeerReady(t, peer)
-	peerAddress, raftAddress := FreeEnrollmentPorts(t)
-	request := PeerEnrollmentRequest{Name: "vpn-peer", PeerAddress: peerAddress, RaftAddress: raftAddress, SourceHost: "only-others-can-route.invalid", Level: "restricted"}
-	plan, err := peer.PreviewEnrollment(t.Context(), request, true)
-	if err != nil || !plan.UpdateSourceAddress {
-		t.Fatalf("plan does not move this node: %+v %v", plan, err)
-	}
-	request = plan.Request
-	request.ExpectedPlanHash = plan.ReviewID
-	if _, err := peer.PrepareEnrollment(t.Context(), request, "vpn-plan", true); err != nil {
-		t.Fatalf("re-registering this node at the advertised host failed: %v", err)
-	}
-	state, err := peer.Runtime.Load().ReadState(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := state.Members[peer.Config.NodeID]; !strings.HasPrefix(got.Address, "only-others-can-route.invalid:") || !strings.HasPrefix(got.APIAddress, "https://only-others-can-route.invalid:") {
-		t.Fatalf("this node is not registered at the advertised host: %+v", got)
-	}
-	record, err := peer.loadEnrollment("vpn-plan")
-	if err != nil || !record.SourceReady || record.Error != "" {
-		t.Fatalf("enrollment record: %+v %v", record, err)
-	}
-}

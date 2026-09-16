@@ -56,11 +56,12 @@ type CheckResult struct {
 	ExistingPaths        []string               `json:"existing_paths"`
 	ExistingNode         *ExistingNodeRecord    `json:"existing_node,omitempty"`
 	InstallationMode     InstallationMode       `json:"installation_mode"`
-	// SourceHosts is what the target said about reaching this machine; nil
-	// when the backend did not ask or the target could not answer.
-	SourceHosts []SourceHost `json:"source_hosts,omitempty"`
-	Steps       []Step       `json:"steps"`
-	CheckedAt   time.Time    `json:"checked_at"`
+	// FreeLoopbackPorts are ports on the target's loopback a link could
+	// bind for this machine's listeners; nil when the backend does not link
+	// or the target could not answer.
+	FreeLoopbackPorts []int     `json:"free_loopback_ports,omitempty"`
+	Steps             []Step    `json:"steps"`
+	CheckedAt         time.Time `json:"checked_at"`
 }
 
 // ExistingNodeRecord contains unverified values from fixed configuration
@@ -87,13 +88,12 @@ func (c CheckResult) HasTool(name string) bool {
 }
 
 type InstallRequest struct {
-	Alias      string `json:"alias"`
-	Name       string `json:"name"`
-	Addr       string `json:"addr"`
-	Level      string `json:"level,omitempty"`
-	HubURL     string `json:"-"`
-	RaftAddr   string `json:"raft_addr,omitempty"`
-	SourceHost string `json:"source_host,omitempty"`
+	Alias    string `json:"alias"`
+	Name     string `json:"name"`
+	Addr     string `json:"addr"`
+	Level    string `json:"level,omitempty"`
+	HubURL   string `json:"-"`
+	RaftAddr string `json:"raft_addr,omitempty"`
 	// WorkspaceDir is where the new machine keeps its work: the default
 	// project directory and the root its executor runs in. A peer
 	// installation creates it; "~/" means the remote account's home.
@@ -384,7 +384,7 @@ func (s *Service) Plan(ctx context.Context, req InstallRequest) (InstallPlan, er
 	if err != nil {
 		return InstallPlan{Request: req, Check: check, Steps: check.Steps}, err
 	}
-	s.probeSourceHosts(ctx, connection, &check)
+	s.probeLoopbackPorts(ctx, connection, &check)
 	template, err := s.backend.Preview(ctx, req, check)
 	if err != nil {
 		return InstallPlan{}, err
@@ -540,7 +540,7 @@ func (s *Service) Commit(ctx context.Context, id string) (InstallResult, error) 
 		return InstallResult{}, fail("planning", "plan_not_ready", "安装计划已过期或仍有未解决的问题", "处理计划中列出的问题后重新检查")
 	}
 	stored.running = true
-	stored.result = InstallResult{PlanID: id, Name: stored.plan.Request.Name, Status: "installing", Steps: []Step{}, Phases: phasesFor(stored.plan)}
+	stored.result = InstallResult{PlanID: id, Name: stored.plan.Request.Name, Status: "installing", Steps: []Step{}, Phases: s.phasesFor(stored.plan)}
 	plan, revision := clonePlan(stored.plan), stored.revision
 	connection := stored.connection
 	s.mu.Unlock()
@@ -627,7 +627,7 @@ func (s *Service) Abandon(ctx context.Context, id string) error {
 const abandonLimit = 30 * time.Second
 
 func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string, connection Connection) (InstallResult, error) {
-	result := InstallResult{PlanID: plan.ID, Name: plan.Request.Name, Status: "needs_attention", Steps: []Step{}, Phases: phasesFor(plan)}
+	result := InstallResult{PlanID: plan.ID, Name: plan.Request.Name, Status: "needs_attention", Steps: []Step{}, Phases: s.phasesFor(plan)}
 	reject := func(failure *StepError) (InstallResult, error) {
 		result.Steps = append(result.Steps, failure.step())
 		result.appendLog(s.now(), "steve", failure.Message+"；"+failure.Suggestion)
@@ -652,13 +652,11 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	if check.OS != plan.Check.OS || check.Arch != plan.Check.Arch || check.Address != plan.Check.Address || check.User != plan.Check.User || !stepsReady(check.Steps) {
 		return reject(fail("environment", "environment_changed", "机器环境已改变或不再满足接入条件", "重新检查并确认目标机器"))
 	}
-	s.probeSourceHosts(ctx, connection, &check)
-	if check.SourceHosts == nil {
+	s.probeLoopbackPorts(ctx, connection, &check)
+	if check.FreeLoopbackPorts == nil {
 		// A probe the target did not finish this time says nothing new; the
 		// reviewed plan's answer stands.
-		check.SourceHosts = plan.Check.SourceHosts
-	} else if !sameSourceHosts(check.SourceHosts, plan.Check.SourceHosts) {
-		return reject(fail("environment", "source_reachability_changed", "目标机能连到的本机地址已变化", "重新检查并审阅新的安装计划"))
+		check.FreeLoopbackPorts = plan.Check.FreeLoopbackPorts
 	}
 	template, err := s.backend.Preview(ctx, plan.Request, check)
 	if err != nil {
@@ -700,6 +698,17 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	}
 	result.Steps = append(result.Steps, Step{ID: "registration", Status: "ready", Message: registeredMessage})
 	s.progress(result)
+	if linker, ok := s.backend.(Linker); ok {
+		s.enter(&result, PhaseLink, "通过这次接入的 SSH 会话建立两台机器之间的隧道；之后的集群通信都走这条隧道，不依赖网络路由")
+		linkCtx, cancel := context.WithTimeout(ctx, linkLimit)
+		err := linker.Link(linkCtx, plan.ID, registration)
+		cancel()
+		if err != nil {
+			return reject(fail("link", "link_failed", "SSH 隧道未能建立："+err.Error(), "检查这台机器的 SSH 配置是否允许端口转发（sshd 的 AllowTcpForwarding）；接入操作已保留，处理后可重新接入"))
+		}
+		result.Steps = append(result.Steps, Step{ID: "link", Status: "ready", Message: "SSH 隧道已建立，集群通信将经由这条隧道"})
+		s.progress(result)
+	}
 	if binaryReader != nil {
 		if failure := s.upload(ctx, &result, plan, connection, binaryReader, registration.Token, peerRegistration); failure != nil {
 			return reject(failure)
@@ -895,6 +904,10 @@ func validWorkspaceDir(dir string) bool {
 // The enrollment verifier gives up earlier when nothing advances.
 const peerVerifyLimit = 15 * time.Minute
 
+// linkLimit bounds bringing the SSH tunnel up during an installation: a
+// second authentication over a link that just carried the check.
+const linkLimit = 90 * time.Second
+
 // settledSteps keeps the steps an attempt completed and drops the ones it
 // stopped on: the retry answers those again, and the log keeps their text.
 func settledSteps(steps []Step) []Step {
@@ -905,18 +918,6 @@ func settledSteps(steps []Step) []Step {
 		}
 	}
 	return kept
-}
-
-func sameSourceHosts(a, b []SourceHost) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
 }
 
 func stepsReady(steps []Step) bool {

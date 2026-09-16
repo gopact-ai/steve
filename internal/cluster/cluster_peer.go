@@ -65,6 +65,9 @@ type PeerOptions struct {
 	SSHHandler       func(SSHControl, string, string) (http.Handler, error)
 	ConfigPath       string
 	ClusterPath      string
+	// SSHLaunch starts the sessions behind this node's links; nil means
+	// the platform ssh client. Tests supply sessions without a network.
+	SSHLaunch sshconnect.Launcher
 	// Activate is injectable for integration tests and alternate application
 	// runners. The endpoint must be loopback and stop must join every user of
 	// the activation's ledger before returning.
@@ -86,6 +89,7 @@ type Peer struct {
 	Runtime           atomic.Pointer[Runtime]
 	client            *coordination.Client
 	routes            *coordination.RouteTable
+	links             map[string]*sshconnect.Link
 	identity          coordination.TLSOptions
 	OwnerToken        string
 	UIToken           string
@@ -207,6 +211,10 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	seeds = append(seeds, coordination.Member{NodeID: p.Config.NodeID, Address: p.Config.RaftAddress, APIAddress: p.Config.PeerURL, Name: p.Config.Name})
 	selfHost, _, _ := net.SplitHostPort(peerListener.Addr().String())
 	p.routes = coordination.NewRouteTable(p.Config.Routes)
+	p.links = map[string]*sshconnect.Link{}
+	for nodeID, link := range p.Config.Links {
+		p.openLink(nodeID, link)
+	}
 	p.client, err = coordination.NewClient(coordination.ClientConfig{TLS: identity, Members: seeds, SelfHost: selfHost, Routes: p.routes, ControlHeaders: func(context.Context, string) (http.Header, error) {
 		return http.Header{"Authorization": []string{"Bearer " + p.OwnerToken}}, nil
 	}})
@@ -324,6 +332,15 @@ func (p *Peer) Close() error {
 		}
 		if runtime := p.Runtime.Load(); runtime != nil {
 			p.closeErr = errors.Join(p.closeErr, runtime.Close())
+		}
+		// The links outlive the runtime, so its last words to the other
+		// nodes still get through.
+		p.Mu.Lock()
+		links := p.links
+		p.links = nil
+		p.Mu.Unlock()
+		for _, link := range links {
+			link.Close()
 		}
 		if p.workerDone != nil {
 			if p.workerListener != nil {

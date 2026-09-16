@@ -7,56 +7,60 @@ import (
 	"testing"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
-func TestPeerSSHPreviewPicksTheSourceHostTheTargetCanReach(t *testing.T) {
+// The machine reaches this node through the enrolling SSH session, at two
+// loopback ports of its own. They come from what the machine reported
+// free, skipping the ports its own node will bind on every interface, and
+// the plan says so; the same check always yields the same ports, so the
+// reviewed plan and the registered one agree.
+func TestPeerSSHPreviewRoutesTheMachineToThisNodeThroughTheSession(t *testing.T) {
 	b, fixture, request, check := peerSSHFixture(t)
-	check.SourceHosts = []sshconnect.SourceHost{{Host: "192.0.2.1"}, {Host: "10.4.17.4", Reachable: true}}
+	request.Addr, request.RaftAddr = "192.0.2.5:59407", ""
+	check.FreeLoopbackPorts = []int{59407, 59408, 59409, 59410, 59411}
 	preview, err := b.Preview(t.Context(), request, check)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if fixture.previewed.SourceHost != "10.4.17.4" {
-		t.Fatalf("preview kept an address the target cannot reach: %#v", fixture.previewed)
+	want := coordination.Route{Raft: "127.0.0.1:59409", API: "127.0.0.1:59410"}
+	if fixture.previewed.HubRoute != want {
+		t.Fatalf("the tunnel ports were not chosen around the node's own: %+v", fixture.previewed.HubRoute)
 	}
+	var described bool
 	for _, step := range preview.Steps {
 		if step.Status == "blocked" {
-			t.Fatalf("a reachable address must not block the plan: %#v", preview.Steps)
+			t.Fatalf("a routed plan must not be blocked: %#v", step)
 		}
+		described = described || step.ID == "peer_link" && strings.Contains(step.Message, "59409") && strings.Contains(step.Message, "59410")
 	}
-	hosts, port := b.SourceEndpoints(t.Context())
-	if len(hosts) == 0 || hosts[0] != "192.0.2.1" || port != "7711" {
-		t.Fatalf("advisor must offer the registered address first: %v %s", hosts, port)
+	if !described || preview.Script == "" {
+		t.Fatalf("the plan does not tell the user about the tunnel: %#v", preview.Steps)
 	}
-}
-
-func TestPeerSSHPreviewKeepsTheRegisteredHostWhenItIsReachable(t *testing.T) {
-	b, fixture, request, check := peerSSHFixture(t)
-	check.SourceHosts = []sshconnect.SourceHost{{Host: "192.0.2.1", Reachable: true}, {Host: "10.4.17.4", Reachable: true}}
-	if _, err := b.Preview(t.Context(), request, check); err != nil {
-		t.Fatal(err)
-	}
-	if fixture.previewed.SourceHost != "" {
-		t.Fatalf("a reachable registered address needs no change: %#v", fixture.previewed)
+	again, err := b.Preview(t.Context(), request, check)
+	if err != nil || again.ReviewID != preview.ReviewID {
+		t.Fatalf("the same check gave a different plan: %v", err)
 	}
 }
 
-func TestPeerSSHPreviewBlocksWhenTheTargetReachesNoLocalAddress(t *testing.T) {
+func TestPeerSSHPreviewBlocksWhenTheMachineHasNoPortsForTheSession(t *testing.T) {
 	b, _, request, check := peerSSHFixture(t)
-	check.SourceHosts = []sshconnect.SourceHost{{Host: "192.0.2.1"}, {Host: "192.168.0.30"}}
-	preview, err := b.Preview(t.Context(), request, check)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var blocked *sshconnect.Step
-	for i := range preview.Steps {
-		if preview.Steps[i].Status == "blocked" {
-			blocked = &preview.Steps[i]
+	for _, free := range [][]int{nil, {59407}} {
+		check.FreeLoopbackPorts = free
+		preview, err := b.Preview(t.Context(), request, check)
+		if err != nil {
+			t.Fatal(err)
 		}
-	}
-	if blocked == nil || blocked.ID != "source_network" || !strings.Contains(blocked.Message, "192.0.2.1") || !strings.Contains(blocked.Message, "192.168.0.30") {
-		t.Fatalf("an unreachable workstation must be named before installation: %#v", preview.Steps)
+		var blocked *sshconnect.Step
+		for i := range preview.Steps {
+			if preview.Steps[i].Status == "blocked" {
+				blocked = &preview.Steps[i]
+			}
+		}
+		if blocked == nil || blocked.ID != "peer_link" || preview.Script != "" {
+			t.Fatalf("free=%v: a machine without tunnel ports must block before installation: %#v", free, preview.Steps)
+		}
 	}
 }
 
@@ -110,30 +114,5 @@ func TestVerifyRegistrationKeepsWaitingWhilePhasesAdvance(t *testing.T) {
 	}
 	if err := b.VerifyRegistration(context.Background(), "remote", strings.Repeat("a", 48)); err != nil {
 		t.Fatalf("advancing phases must not be treated as a stall: %v", err)
-	}
-}
-
-func TestPeerSSHPreviewKeepsAnExplicitHostTheProbeCouldNotReach(t *testing.T) {
-	b, fixture, request, check := peerSSHFixture(t)
-	request.SourceHost = "192.0.2.1"
-	check.SourceHosts = []sshconnect.SourceHost{{Host: "192.0.2.1"}, {Host: "10.4.17.4", Reachable: true}}
-	preview, err := b.Preview(t.Context(), request, check)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if fixture.previewed.SourceHost != "192.0.2.1" || preview.Script == "" {
-		t.Fatalf("an address the user typed must stand: %#v", fixture.previewed)
-	}
-	var warned bool
-	for _, step := range preview.Steps {
-		if step.Status == "blocked" {
-			t.Fatalf("an explicit address must not be blocked by the probe: %#v", step)
-		}
-		if step.ID == "source_network" && strings.Contains(step.Message, "连不上") && strings.Contains(step.Message, "192.0.2.1") {
-			warned = true
-		}
-	}
-	if !warned {
-		t.Fatalf("the finding must still be shown beside the explicit address: %#v", preview.Steps)
 	}
 }
