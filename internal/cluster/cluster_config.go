@@ -89,6 +89,16 @@ func LoadClusterPeerConfig(path string) (PeerConfig, error) {
 	if _, _, err := net.SplitHostPort(config.PeerAddress); err != nil {
 		return config, errors.New("invalid cluster peer address")
 	}
+	for nodeID, route := range config.Routes {
+		if nodeID == config.NodeID {
+			return config, errors.New("cluster configuration routes this node to itself")
+		}
+		for _, address := range []string{route.Raft, route.API} {
+			if _, _, err := net.SplitHostPort(address); err != nil {
+				return config, fmt.Errorf("invalid route to node %s: %w", nodeID, err)
+			}
+		}
+	}
 	if config.RaftBindAddress == "" {
 		config.RaftBindAddress = config.RaftAddress
 	}

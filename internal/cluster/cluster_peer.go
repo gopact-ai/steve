@@ -95,7 +95,7 @@ type Peer struct {
 	localTransport    *http.Transport
 	Mu                sync.RWMutex
 	Application       *PeerApplicationEndpoint
-	peerTransports    map[string]*http.Transport
+	peerTransports    map[string]peerTransport
 	ctx               context.Context
 	cancel            context.CancelFunc
 	closeOnce         sync.Once
@@ -153,7 +153,7 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	p := &Peer{Options: options, Config: settings, OwnerToken: string(owner), UIToken: application.Gateway.ReadModelToken, ctx: ctx, cancel: cancel, unlock: unlock, Errors: make(chan error, 1), peerTransports: map[string]*http.Transport{}, localTransport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, IdleConnTimeout: 30 * time.Second}}
+	p := &Peer{Options: options, Config: settings, OwnerToken: string(owner), UIToken: application.Gateway.ReadModelToken, ctx: ctx, cancel: cancel, unlock: unlock, Errors: make(chan error, 1), peerTransports: map[string]peerTransport{}, localTransport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, IdleConnTimeout: 30 * time.Second}}
 	p.workerPrincipals = map[string]*workerPrincipal{}
 	defer func() {
 		if runErr != nil {
@@ -338,8 +338,8 @@ func (p *Peer) Close() error {
 		}
 		p.localTransport.CloseIdleConnections()
 		p.Mu.Lock()
-		for _, transport := range p.peerTransports {
-			transport.CloseIdleConnections()
+		for _, pooled := range p.peerTransports {
+			pooled.transport.CloseIdleConnections()
 		}
 		p.Mu.Unlock()
 		if p.unpublish != nil {
@@ -593,19 +593,37 @@ func (p *Peer) remoteTransport(member coordination.Member) (*http.Transport, *ur
 	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
 		return nil, nil, errors.New("coordinator has no valid HTTPS peer endpoint")
 	}
+	route, _ := p.routes.Lookup(member.NodeID)
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
-	key := member.NodeID + "\x00" + member.APIAddress
-	transport := p.peerTransports[key]
-	if transport == nil {
+	// One transport per node. Mutual TLS proves whatever answers is that
+	// node, so identity is not the concern; idle connections are. They may
+	// sit on a tunnel that has since gone or on an address the node left,
+	// so when the address or route changes the transport is rebuilt.
+	pooled, ok := p.peerTransports[member.NodeID]
+	if ok && (pooled.address != member.APIAddress || pooled.route != route.API) {
+		pooled.transport.CloseIdleConnections()
+		delete(p.peerTransports, member.NodeID)
+		ok = false
+	}
+	if !ok {
 		tlsConfig, err := p.identity.ClientConfig(member.NodeID)
 		if err != nil {
 			return nil, nil, err
 		}
-		transport = &http.Transport{TLSClientConfig: tlsConfig, DialContext: p.peerDial(member.NodeID, false, 5*time.Second), TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second}
-		p.peerTransports[key] = transport
+		transport := &http.Transport{TLSClientConfig: tlsConfig, DialContext: p.peerDial(member.NodeID, false, 5*time.Second), TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second}
+		pooled = peerTransport{transport: transport, address: member.APIAddress, route: route.API}
+		p.peerTransports[member.NodeID] = pooled
 	}
-	return transport, origin, nil
+	return pooled.transport, origin, nil
+}
+
+// peerTransport is the transport kept for one other node and the address
+// and route it was built to reach.
+type peerTransport struct {
+	transport *http.Transport
+	address   string
+	route     string
 }
 
 // peerDial connects to another node. The address it is handed is what the

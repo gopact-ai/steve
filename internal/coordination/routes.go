@@ -35,9 +35,9 @@ func NewRouteTable(routes map[string]Route) *RouteTable {
 	return t
 }
 
-// Route answers where this node connects to nodeID, if not at what the
+// Lookup answers where this node connects to nodeID, if not at what the
 // node advertises.
-func (t *RouteTable) Route(nodeID string) (Route, bool) {
+func (t *RouteTable) Lookup(nodeID string) (Route, bool) {
 	if t == nil {
 		return Route{}, false
 	}
@@ -47,13 +47,20 @@ func (t *RouteTable) Route(nodeID string) (Route, bool) {
 	return route, ok
 }
 
+// Set and Delete on a nil table do nothing: a nil table is read-only.
 func (t *RouteTable) Set(nodeID string, route Route) {
+	if t == nil {
+		return
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	t.routes[nodeID] = route
 }
 
 func (t *RouteTable) Delete(nodeID string) {
+	if t == nil {
+		return
+	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	delete(t.routes, nodeID)
@@ -87,7 +94,7 @@ func (t *RouteTable) APIDial(nodeID string, dial DialFunc) DialFunc {
 
 func (t *RouteTable) dial(nodeID string, dial DialFunc, pick func(Route) string) DialFunc {
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
-		if route, ok := t.Route(nodeID); ok && pick(route) != "" {
+		if route, ok := t.Lookup(nodeID); ok && pick(route) != "" {
 			address = pick(route)
 		}
 		return dial(ctx, network, address)

@@ -37,6 +37,14 @@ func TestClientFollowsThisNodesRouteToAPeerInsteadOfTheAdvertisedAddress(t *test
 	if _, err := client.Probe(ctx, Member{NodeID: "node-2", APIAddress: unroutable}); !errors.Is(err, ErrUnavailable) {
 		t.Fatalf("without a route the advertised address is dialed: %v", err)
 	}
+	// The route changed, so the pooled client was replaced, not kept beside a
+	// new one: one client per node, whatever the route history.
+	client.mu.Lock()
+	kept := len(client.clients)
+	client.mu.Unlock()
+	if kept != 1 {
+		t.Fatalf("expected one pooled client for node-2, kept %d", kept)
+	}
 }
 
 func TestRaftDialsAPeerThroughThisNodesRoute(t *testing.T) {

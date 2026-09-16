@@ -115,6 +115,8 @@ func (o TLSOptions) ClientConfig(expectedNodeID string) (*tls.Config, error) {
 		// The address can change independently of node identity. VerifyConnection
 		// performs the full CA/EKU/time validation and exact URI identity check
 		// in place of DNS hostname validation; it also runs on resumed sessions.
+		// No ServerName is set on purpose: a connection may arrive through a
+		// tunnel at a loopback address, and the URI SAN, not SNI, names the node.
 		InsecureSkipVerify: true,
 		VerifyConnection: func(state tls.ConnectionState) error {
 			if len(state.PeerCertificates) == 0 {
