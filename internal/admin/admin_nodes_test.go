@@ -227,3 +227,33 @@ func TestRemoveNodeLeavesTheClusterWithTheConfiguration(t *testing.T) {
 		t.Fatalf("the machine did not leave the cluster with its configuration: kept=%v removed=%v", kept, members.removed)
 	}
 }
+
+// When the machine has left the cluster but writing the configuration
+// fails, the machine stays on the page and the next attempt finishes the
+// job: leaving is asked again (the cluster treats a non-member as cleanup
+// only) and the configuration goes this time.
+func TestRemoveNodeRetriesAfterAFailedConfigurationWrite(t *testing.T) {
+	admin := nodeAdminFixture(t)
+	members := &recordingMembers{}
+	admin.Members = members
+	writes := 0
+	admin.WriteConfigContext = func(ctx context.Context, path string, cfg *config.Config) error {
+		writes++
+		if writes == 1 {
+			return errors.New("disk full")
+		}
+		return config.Save(path, cfg)
+	}
+	if err := admin.RemoveNode(t.Context(), "node-test"); err == nil || !strings.Contains(err.Error(), "disk full") {
+		t.Fatalf("a failed configuration write was not reported: %v", err)
+	}
+	if _, kept := admin.Cfg.Nodes["node-test"]; !kept {
+		t.Fatal("the configuration was dropped although it was never written")
+	}
+	if err := admin.RemoveNode(t.Context(), "node-test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, kept := admin.Cfg.Nodes["node-test"]; kept || len(members.removed) != 2 {
+		t.Fatalf("the retry did not finish the removal: kept=%v removed=%v", kept, members.removed)
+	}
+}

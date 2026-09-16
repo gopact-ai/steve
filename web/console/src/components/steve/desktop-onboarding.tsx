@@ -12,7 +12,7 @@ import { useFleet } from "@/lib/fleet";
 import { useI18n } from "@/providers/locale-provider";
 import { useTheme } from "@/providers/theme-provider";
 import { HTTPError } from "@/lib/http";
-import { executeCoordination, fetchCoordination } from "@/lib/api/coordination";
+import { fetchCoordination } from "@/lib/api/coordination";
 import { fetchNodeSettings, removeNode, saveNodeSettings } from "@/lib/api/fleet";
 import { renameMachine } from "@/lib/machines";
 import { nodeLabel } from "@/lib/node-name";
@@ -153,7 +153,7 @@ function IdentityStep({ status, busy, setBusy, onNext, onBack }: StepProps) {
     const nodeID = status.node_id || "";
     const [name, setName] = useState("");
     const [labels, setLabels] = useState("");
-    const [current, setCurrent] = useState<{ name: string; revision: number; enabled: boolean; labels: string[] } | null>(null);
+    const [current, setCurrent] = useState<{ name: string; enabled: boolean; labels: string[] } | null>(null);
     const [settings, setSettings] = useState<Awaited<ReturnType<typeof fetchNodeSettings>>["settings"] | null>(null);
     const [error, setError] = useState("");
     const [loading, setLoading] = useState(true);
@@ -165,7 +165,7 @@ function IdentityStep({ status, busy, setBusy, onNext, onBack }: StepProps) {
                 if (!alive) return;
                 const local = view.nodes.find((item) => item.local || item.id === nodeID);
                 const existing = node?.settings.capabilities || [];
-                setCurrent({ name: local?.name || "", revision: view.revision, enabled: view.enabled && !!local, labels: existing });
+                setCurrent({ name: local?.name || "", enabled: view.enabled && !!local, labels: existing });
                 setSettings(node?.settings || null);
                 setName((value) => value || local?.name || "");
                 setLabels((value) => value || existing.join(", "));
@@ -181,18 +181,16 @@ function IdentityStep({ status, busy, setBusy, onNext, onBack }: StepProps) {
         setBusy(true); setError("");
         try {
             if (current?.enabled && trimmed !== current.name) {
-                const view = await fetchCoordination();
-                await executeCoordination({ kind: "name", body: { command_id: `name-${crypto.randomUUID()}`, expected_revision: view.revision, node_id: nodeID, name: trimmed } });
-                setCurrent({ ...current, name: trimmed, revision: view.revision + 1 });
+                await renameMachine(nodeID, trimmed, t);
+                setCurrent({ ...current, name: trimmed });
             }
             if (settings && (parsed.length !== settings.capabilities.length || parsed.some((item, i) => item !== settings.capabilities[i]))) {
                 const saved = await saveNodeSettings(nodeID, { ...settings, capabilities: parsed });
                 setSettings(saved.settings);
             }
             onNext();
-        } catch (error) {
-            setError(error instanceof HTTPError && error.status === 409 ? t("fleet.renameConflict") : message(error));
-        } finally { setBusy(false); }
+        } catch (error) { setError(message(error)); }
+        finally { setBusy(false); }
     }
     return <section className="space-y-4">
         <p className="text-sm leading-6 text-secondary">{t("desktop.identityIntro")}</p>
@@ -372,8 +370,8 @@ function MachineRow({ node, busy, onChanged }: { node: Node; busy: boolean; onCh
     async function remove() {
         setPending(true); setError("");
         try { await removeNode(node.name); onChanged(); }
-        catch (e) { setError(message(e)); setRemoving(false); }
-        finally { setPending(false); }
+        catch (e) { setError(message(e)); }
+        finally { setPending(false); setRemoving(false); }
     }
     const disabled = busy || pending;
     return <li className="space-y-2 px-3 py-2.5">
@@ -385,19 +383,19 @@ function MachineRow({ node, busy, onChanged }: { node: Node; busy: boolean; onCh
             <StateBadge state={node.up ? "up" : "down"} />
             {!renaming && !removing && <div className="flex items-center gap-1">
                 <Button size="sm" color="link-color" isDisabled={disabled} onClick={() => { setDraft(node.display_name || ""); setError(""); setRenaming(true); }}>{t("fleet.rename")}</Button>
-                <Button size="sm" color="link-destructive" isDisabled={disabled} onClick={() => { setError(""); setRemoving(true); }}>{t("desktop.machineRemove")}</Button>
+                <Button size="sm" color="link-destructive" isDisabled={disabled} onClick={() => { setError(""); setRemoving(true); }}>{t("common.remove")}</Button>
             </div>}
         </div>
         {!node.up && node.last_error && <p className="break-words text-xs text-error-primary">{node.last_error}</p>}
         {renaming && <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
             <Input aria-label={t("fleet.displayName")} value={draft} onChange={setDraft} maxLength={64} isDisabled={disabled} autoFocus wrapperClassName="min-w-48 flex-1" />
-            <Button size="sm" color="primary" type="submit" isLoading={pending}>{t("fleet.saveName")}</Button>
+            <Button size="sm" color="primary" type="submit" isDisabled={disabled} isLoading={pending}>{t("fleet.saveName")}</Button>
             <Button size="sm" color="secondary" isDisabled={disabled} onClick={() => { setRenaming(false); setError(""); }}>{t("common.cancel")}</Button>
         </form>}
         {removing && <div className="flex flex-wrap items-center gap-2">
             <span className="flex-1 text-xs text-tertiary">{t("desktop.machineRemoveHint")}</span>
             <Button size="sm" color="secondary" isDisabled={disabled} onClick={() => setRemoving(false)}>{t("common.cancel")}</Button>
-            <Button size="sm" color="primary-destructive" isLoading={pending} onClick={() => void remove()}>{t("fleet.confirmRemove")}</Button>
+            <Button size="sm" color="primary-destructive" isDisabled={disabled} isLoading={pending} onClick={() => void remove()}>{t("fleet.confirmRemove")}</Button>
         </div>}
         {error && <p role="alert" className="break-words text-xs text-error-primary">{error}</p>}
     </li>;

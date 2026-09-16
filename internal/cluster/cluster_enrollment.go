@@ -566,21 +566,8 @@ func (p *Peer) AbandonPeerEnrollment(ctx context.Context, id string) error {
 	if record.Ready {
 		return ErrEnrollmentJoined
 	}
-	runtime := p.Runtime.Load()
-	if runtime == nil {
-		return coordination.ErrUnavailable
-	}
-	state, err := runtime.ReadState(ctx)
-	if err != nil {
-		return err
-	}
-	if _, member := state.Members[record.NodeID]; member {
-		if _, err := runtime.Remove(ctx, coordination.RemoveRequest{ID: id + "/abandon", Actor: "owner", NodeID: record.NodeID}); err != nil {
-			return fmt.Errorf("移除这次接入留下的成员失败：%w", err)
-		}
-	}
-	if err := p.dropLink(record.NodeID); err != nil {
-		return fmt.Errorf("关闭这次接入的 SSH 隧道失败：%w", err)
+	if err := p.leaveCluster(ctx, id+"/abandon", record.NodeID); err != nil {
+		return fmt.Errorf("收回这次接入失败：%w", err)
 	}
 	path := p.enrollmentPath(id)
 	archived := path + ".abandoned-" + time.Now().UTC().Format("20060102T150405Z")
