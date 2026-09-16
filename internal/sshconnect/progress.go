@@ -38,13 +38,14 @@ const (
 
 func (s *Service) phasesFor(plan InstallPlan) []string {
 	phases := []string{PhasePreflight, PhaseRegistration}
-	if _, ok := s.backend.(Linker); ok {
-		phases = append(phases, PhaseLink)
-	}
 	if plan.Binary != nil {
 		phases = append(phases, PhaseUpload)
 	}
-	return append(phases, PhaseInstallation, PhaseConnectivity)
+	phases = append(phases, PhaseInstallation)
+	if _, ok := s.backend.(Linker); ok {
+		phases = append(phases, PhaseLink)
+	}
+	return append(phases, PhaseConnectivity)
 }
 
 // Status reports how an installation is going without touching it: the

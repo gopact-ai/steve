@@ -8,8 +8,9 @@ import (
 )
 
 // linkingBackend is a backend whose node is reached through the enrolling
-// SSH session: the installation must bring the tunnel up after the
-// registration and before anything is sent to the machine.
+// SSH session: the far end of the tunnel is the program the installation
+// puts on the machine, so the tunnel comes up after the installation and
+// before the node is expected to have joined.
 type linkingBackend struct {
 	*fakeBackend
 	linkErr   error
@@ -35,7 +36,7 @@ func linkingFixture(t *testing.T) (*Service, *recordingRunner, *linkingBackend) 
 	return svc, runner, backend
 }
 
-func TestLinkComesUpAfterRegistrationAndBeforeTheMachineIsTouched(t *testing.T) {
+func TestLinkComesUpAfterTheInstallationAndBeforeConnectivity(t *testing.T) {
 	svc, r, b := linkingFixture(t)
 	plan, err := svc.Plan(t.Context(), installRequest())
 	if err != nil {
@@ -56,27 +57,26 @@ func TestLinkComesUpAfterRegistrationAndBeforeTheMachineIsTouched(t *testing.T) 
 		order = append(order, step.ID)
 	}
 	joined := strings.Join(order, " ")
-	if !strings.Contains(joined, "registration link installation") {
-		t.Fatalf("the link did not come between registration and installation: %s", joined)
+	if !strings.Contains(joined, "installation link") || strings.HasSuffix(joined, "link") {
+		t.Fatalf("the link did not come between installation and connectivity: %s", joined)
 	}
-	if !strings.Contains(strings.Join(result.Phases, " "), "registration link installation") {
+	if !strings.Contains(strings.Join(result.Phases, " "), "installation link connectivity") {
 		t.Fatalf("phases do not show the link: %v", result.Phases)
 	}
-	// The install script is the last thing sent; the link comes before it.
 	installs := 0
 	for _, call := range r.calls {
 		if strings.Contains(call.stdin, "node_token") {
 			installs++
 		}
 	}
-	if installs != 1 {
-		t.Fatalf("installed %d times", installs)
+	if installs != 1 || b.verifications != 1 {
+		t.Fatalf("installed %d times, verified %d times", installs, b.verifications)
 	}
 }
 
-func TestLinkFailureKeepsTheRegistrationAndInstallsNothing(t *testing.T) {
+func TestLinkFailureKeepsTheInstalledNodeAndSkipsConnectivity(t *testing.T) {
 	svc, r, b := linkingFixture(t)
-	b.linkErr = errors.New("remote port forwarding failed for listen port 25408")
+	b.linkErr = errors.New("远端链路程序没有启动: EOF")
 	plan, err := svc.Plan(t.Context(), installRequest())
 	if err != nil {
 		t.Fatal(err)
@@ -86,12 +86,16 @@ func TestLinkFailureKeepsTheRegistrationAndInstallsNothing(t *testing.T) {
 		t.Fatalf("commit = %#v %v", result, err)
 	}
 	var failed *StepError
-	if !errors.As(err, &failed) || failed.Code != "link_failed" || !strings.Contains(failed.Message, "25408") {
+	if !errors.As(err, &failed) || failed.Code != "link_failed" || !strings.Contains(failed.Message, "没有启动") {
 		t.Fatalf("the failure does not name the link: %v", err)
 	}
+	installs := 0
 	for _, call := range r.calls {
 		if strings.Contains(call.stdin, "node_token") {
-			t.Fatal("the machine was installed without a link")
+			installs++
 		}
+	}
+	if installs != 1 || b.verifications != 0 {
+		t.Fatalf("installed %d times, verified %d times; the node was installed and connectivity was not checked", installs, b.verifications)
 	}
 }

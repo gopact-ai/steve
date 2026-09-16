@@ -1,91 +1,22 @@
-package sshconnect
+package sshconnect_test
 
 import (
+	"bufio"
 	"context"
 	"errors"
+	"io"
 	"net"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/gopact-ai/steve/internal/sshconnect"
+	"github.com/gopact-ai/steve/internal/sshconnect/linktest"
+	"github.com/hashicorp/yamux"
 )
 
-// fakeSessions stands in for the ssh client: each launch opens the -L
-// listeners the arguments ask for and stays up until the test drops it.
-type fakeSessions struct {
-	mu       sync.Mutex
-	launches [][]string
-	current  *fakeSession
-	refuse   error
-}
-
-type fakeSession struct {
-	listeners []net.Listener
-	done      chan struct{}
-	once      sync.Once
-	err       error
-}
-
-func (f *fakeSessions) Start(_ context.Context, args []string) (Process, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.launches = append(f.launches, args)
-	if f.refuse != nil {
-		return nil, f.refuse
-	}
-	session := &fakeSession{done: make(chan struct{})}
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] != "-L" {
-			continue
-		}
-		listen, _, _ := strings.Cut(args[i+1], ":127.0.0.1:")
-		listener, err := net.Listen("tcp", listen)
-		if err != nil {
-			for _, l := range session.listeners {
-				l.Close()
-			}
-			return nil, err
-		}
-		session.listeners = append(session.listeners, listener)
-	}
-	f.current = session
-	return session, nil
-}
-
-func (f *fakeSessions) drop(err error) {
-	f.mu.Lock()
-	session := f.current
-	f.mu.Unlock()
-	session.end(err)
-}
-
-func (f *fakeSessions) count() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.launches)
-}
-
-func (s *fakeSession) end(err error) {
-	s.once.Do(func() {
-		s.err = err
-		for _, l := range s.listeners {
-			l.Close()
-		}
-		close(s.done)
-	})
-}
-
-func (s *fakeSession) Wait() (string, error) {
-	<-s.done
-	if s.err != nil {
-		return s.err.Error(), s.err
-	}
-	return "", nil
-}
-
-func (s *fakeSession) Kill() { s.end(errors.New("killed")) }
-
-func waitLink(t *testing.T, link *Link, want func(LinkStatus) bool) LinkStatus {
+func waitLink(t *testing.T, link *sshconnect.Link, want func(sshconnect.LinkStatus) bool) sshconnect.LinkStatus {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for {
@@ -100,13 +31,76 @@ func waitLink(t *testing.T, link *Link, want func(LinkStatus) bool) LinkStatus {
 	}
 }
 
-// A link is up once this machine's side of the tunnel accepts connections.
-// The loopback ports it chose are what the route table points at, so they
-// are known before the session is even attempted, and they survive the
-// session going down: the next session binds the same ports.
+// echoServer answers on a free loopback port by writing back what it reads.
+func echoServer(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	go func() {
+		for {
+			connection, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			go func() {
+				_, _ = io.Copy(connection, connection)
+				connection.Close()
+			}()
+		}
+	}()
+	return listener.Addr().String()
+}
+
+func freePort(t *testing.T) string {
+	t.Helper()
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	return listener.Addr().String()
+}
+
+// echoThrough dials address, sends a line and expects it back.
+func echoThrough(t *testing.T, address, line string) error {
+	t.Helper()
+	connection, err := net.DialTimeout("tcp", address, 2*time.Second)
+	if err != nil {
+		return err
+	}
+	defer connection.Close()
+	_ = connection.SetDeadline(time.Now().Add(3 * time.Second))
+	if _, err := io.WriteString(connection, line+"\n"); err != nil {
+		return err
+	}
+	got, err := bufio.NewReader(connection).ReadString('\n')
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(got) != line {
+		t.Fatalf("echo through %s returned %q", address, got)
+	}
+	return nil
+}
+
+// A link is up once the far end has announced itself over the session and
+// answers through the multiplexer. The loopback ports this machine chose
+// are what the route table points at, so they are bound before the
+// session is even attempted, and they survive the session going down: the
+// same listeners carry the next session's streams.
 func TestLinkComesUpReconnectsAndKeepsItsLocalPorts(t *testing.T) {
-	sessions := &fakeSessions{}
-	link := OpenLink(t.Context(), LinkSpec{Alias: "dev", Inbound: []PortForward{{Listen: "127.0.0.1:25407", Target: "127.0.0.1:7712"}}, Outbound: []PortForward{{Target: "127.0.0.1:7702"}, {Target: "127.0.0.1:7701"}}}, LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return 10 * time.Millisecond }})
+	sessions := &linktest.Launcher{Junk: "Welcome to box\nLast login: never\n"}
+	var mu sync.Mutex
+	var seen []sshconnect.LinkStatus
+	record := func(status sshconnect.LinkStatus) {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, status)
+	}
+	link := sshconnect.OpenLink(t.Context(), sshconnect.LinkSpec{Alias: "dev", Inbound: []sshconnect.PortForward{{Listen: "127.0.0.1:25407", Target: "127.0.0.1:7712"}}, Outbound: []sshconnect.PortForward{{Target: "127.0.0.1:7702"}, {Target: "127.0.0.1:7701"}}}, sshconnect.LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return 10 * time.Millisecond }, OnChange: record})
 	t.Cleanup(link.Close)
 	first := link.Status()
 	if len(first.Outbound) != 2 || first.Outbound[0].Listen == "" || first.Outbound[0].Listen == first.Outbound[1].Listen {
@@ -117,41 +111,136 @@ func TestLinkComesUpReconnectsAndKeepsItsLocalPorts(t *testing.T) {
 	if err := link.WaitConnected(ctx); err != nil {
 		t.Fatalf("link did not come up: %v", err)
 	}
-	args := strings.Join(sessions.launches[0], " ")
-	for _, want := range []string{"-N", "-o BatchMode=yes", "-o ExitOnForwardFailure=yes", "-R 127.0.0.1:25407:127.0.0.1:7712", "-L " + first.Outbound[0].Listen + ":127.0.0.1:7702", "-L " + first.Outbound[1].Listen + ":127.0.0.1:7701", "-- dev"} {
+	args := strings.Join(sessions.Launches()[0], " ")
+	for _, want := range []string{"-T", "-o BatchMode=yes", "-o ClearAllForwardings=yes", `-- dev exec "$HOME/.steve-peer/bin/steve" link --listen '127.0.0.1:25407=127.0.0.1:7712' --allow '127.0.0.1:7702' --allow '127.0.0.1:7701'`} {
 		if !strings.Contains(args, want) {
 			t.Fatalf("session arguments lack %q: %s", want, args)
 		}
 	}
-	sessions.drop(errors.New("connection closed by remote host"))
-	down := waitLink(t, link, func(s LinkStatus) bool { return !s.Connected })
-	if !strings.Contains(down.LastError, "connection closed") {
-		t.Fatalf("the reason the session ended was not kept: %+v", down)
+	if strings.Contains(args, "-N") || strings.Contains(args, "-R") || strings.Contains(args, "-L") {
+		t.Fatalf("the session still asks sshd for port forwards: %s", args)
 	}
-	again := waitLink(t, link, func(s LinkStatus) bool { return s.Connected && s.Attempts >= 2 })
-	if again.Outbound[0].Listen != first.Outbound[0].Listen || sessions.count() < 2 {
-		t.Fatalf("the second session did not bind the same local ports: %+v vs %+v", again, first)
+	sessions.Drop(errors.New("connection closed by remote host"))
+	again := waitLink(t, link, func(s sshconnect.LinkStatus) bool { return s.Connected && s.Attempts >= 2 })
+	mu.Lock()
+	var down *sshconnect.LinkStatus
+	for i := range seen {
+		if !seen[i].Connected && seen[i].LastError != "" {
+			down = &seen[i]
+		}
+	}
+	mu.Unlock()
+	if down == nil || !strings.Contains(down.LastError, "connection closed") {
+		t.Fatalf("the reason the session ended was not reported: %+v", down)
+	}
+	if again.Outbound[0].Listen != first.Outbound[0].Listen || sessions.Count() < 2 {
+		t.Fatalf("the second session does not use the same local ports: %+v vs %+v", again, first)
 	}
 	link.Close()
 	if status := link.Status(); status.Connected {
 		t.Fatalf("closed link still reports connected: %+v", status)
 	}
+	if _, err := net.DialTimeout("tcp", first.Outbound[0].Listen, time.Second); err == nil {
+		t.Fatal("a closed link still holds its local port")
+	}
 }
 
-// A session the client cannot even start (the alias is gone, the remote
-// port is taken) leaves the link down with the reason, and waiting on it
-// ends with that reason rather than the deadline alone.
+// Traffic crosses the link in both directions: a connection to one of
+// this machine's local ports reaches the machine's target, and a
+// connection to the machine's listener reaches this machine's target.
+// While the session is down, a dial at a local port is refused at once.
+func TestLinkCarriesTrafficBothWaysAndRefusesWhileDown(t *testing.T) {
+	hubEcho, machineEcho := echoServer(t), echoServer(t)
+	inbound := freePort(t)
+	sessions := &linktest.Launcher{}
+	link := sshconnect.OpenLink(t.Context(), sshconnect.LinkSpec{Alias: "dev", Inbound: []sshconnect.PortForward{{Listen: inbound, Target: hubEcho}}, Outbound: []sshconnect.PortForward{{Target: machineEcho}}}, sshconnect.LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return time.Hour }})
+	t.Cleanup(link.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	if err := link.WaitConnected(ctx); err != nil {
+		t.Fatal(err)
+	}
+	outbound := link.Status().Outbound[0].Listen
+	if err := echoThrough(t, outbound, "to the machine"); err != nil {
+		t.Fatalf("outbound traffic did not cross the link: %v", err)
+	}
+	if err := echoThrough(t, inbound, "to the hub"); err != nil {
+		t.Fatalf("inbound traffic did not cross the link: %v", err)
+	}
+	sessions.Drop(errors.New("connection reset"))
+	waitLink(t, link, func(s sshconnect.LinkStatus) bool { return !s.Connected })
+	began := time.Now()
+	err := echoThrough(t, outbound, "nobody home")
+	if err == nil || time.Since(began) > time.Second {
+		t.Fatalf("a dial while the session is down did not fail fast: err=%v after %s", err, time.Since(began))
+	}
+}
+
+// A session the client cannot even start (the alias is gone, ssh refuses)
+// leaves the link down with the reason, and waiting on it ends with that
+// reason rather than the deadline alone.
 func TestLinkReportsWhyItCannotComeUp(t *testing.T) {
-	sessions := &fakeSessions{refuse: errors.New("remote port forwarding failed for listen port 25407")}
-	link := OpenLink(t.Context(), LinkSpec{Alias: "dev", Outbound: []PortForward{{Target: "127.0.0.1:7702"}}}, LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return 10 * time.Millisecond }})
+	sessions := &linktest.Launcher{Refuse: errors.New("ssh: Could not resolve hostname dev")}
+	link := sshconnect.OpenLink(t.Context(), sshconnect.LinkSpec{Alias: "dev", Outbound: []sshconnect.PortForward{{Target: "127.0.0.1:7702"}}}, sshconnect.LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return 10 * time.Millisecond }})
 	t.Cleanup(link.Close)
 	ctx, cancel := context.WithTimeout(t.Context(), 200*time.Millisecond)
 	defer cancel()
 	err := link.WaitConnected(ctx)
-	if err == nil || !strings.Contains(err.Error(), "remote port forwarding failed") {
+	if err == nil || !strings.Contains(err.Error(), "Could not resolve hostname") {
 		t.Fatalf("the wait did not say why: %v", err)
 	}
 	if status := link.Status(); status.Connected || status.Attempts < 2 {
 		t.Fatalf("link did not keep trying: %+v", status)
+	}
+}
+
+// The far end only opens the targets it was told to allow: a stream that
+// names anything else is closed unanswered, and one that names an allowed
+// target is connected to it.
+func TestFarEndOpensOnlyAllowedTargets(t *testing.T) {
+	allowed, forbidden := echoServer(t), echoServer(t)
+	farIn, hubOut := io.Pipe()
+	hubIn, farOut := io.Pipe()
+	ctx, cancel := context.WithCancel(t.Context())
+	served := make(chan error, 1)
+	go func() { served <- sshconnect.ServeLink(ctx, farIn, farOut, nil, []string{allowed}) }()
+	reader := bufio.NewReader(hubIn)
+	if banner, err := reader.ReadString('\n'); err != nil || strings.TrimSpace(banner) != "STEVE-LINK/1" {
+		t.Fatalf("the far end did not announce itself: %q %v", banner, err)
+	}
+	config := yamux.DefaultConfig()
+	config.LogOutput = io.Discard
+	client, err := yamux.Client(struct {
+		io.Reader
+		io.WriteCloser
+	}{reader, hubOut}, config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	open := func(target string) *yamux.Stream {
+		stream, err := client.OpenStream()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := io.WriteString(stream, target+"\nping\n"); err != nil {
+			t.Fatal(err)
+		}
+		_ = stream.SetReadDeadline(time.Now().Add(3 * time.Second))
+		return stream
+	}
+	if got, err := bufio.NewReader(open(allowed)).ReadString('\n'); err != nil || got != "ping\n" {
+		t.Fatalf("an allowed target was not reached: %q %v", got, err)
+	}
+	if got, err := bufio.NewReader(open(forbidden)).ReadString('\n'); err != io.EOF || got != "" {
+		t.Fatalf("a target outside the allowed list was answered: %q %v", got, err)
+	}
+	cancel()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("the far end did not stop with its context")
 	}
 }

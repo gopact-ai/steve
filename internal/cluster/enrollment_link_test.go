@@ -2,119 +2,25 @@ package cluster
 
 import (
 	"context"
-	"errors"
-	"io"
-	"net"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/coordination"
-	"github.com/gopact-ai/steve/internal/sshconnect"
+	"github.com/gopact-ai/steve/internal/sshconnect/linktest"
 	"github.com/hashicorp/raft"
 )
-
-// fakeTunnels stands in for the ssh client. Both ends of a test live on
-// one machine, so every -L and -R forward becomes a local TCP proxy from
-// its listen address to its target: exactly what the session would do.
-type fakeTunnels struct {
-	mu       sync.Mutex
-	sessions []*fakeTunnel
-	// onKill, when set, is called as a session ends.
-	onKill func()
-}
-
-type fakeTunnel struct {
-	listeners []net.Listener
-	done      chan struct{}
-	once      sync.Once
-	onKill    func()
-}
-
-func (f *fakeTunnels) Start(_ context.Context, args []string) (sshconnect.Process, error) {
-	f.mu.Lock()
-	session := &fakeTunnel{done: make(chan struct{}), onKill: f.onKill}
-	f.mu.Unlock()
-	for i := 0; i+1 < len(args); i++ {
-		if args[i] != "-L" && args[i] != "-R" {
-			continue
-		}
-		listen, target, ok := strings.Cut(args[i+1], ":127.0.0.1:")
-		if !ok {
-			return nil, errors.New("unexpected forward " + args[i+1])
-		}
-		listener, err := net.Listen("tcp", listen)
-		if err != nil {
-			session.Kill()
-			return nil, err
-		}
-		session.listeners = append(session.listeners, listener)
-		go proxyTo(listener, "127.0.0.1:"+target)
-	}
-	f.mu.Lock()
-	f.sessions = append(f.sessions, session)
-	f.mu.Unlock()
-	return session, nil
-}
-
-func proxyTo(listener net.Listener, target string) {
-	for {
-		client, err := listener.Accept()
-		if err != nil {
-			return
-		}
-		go func() {
-			upstream, err := net.Dial("tcp", target)
-			if err != nil {
-				client.Close()
-				return
-			}
-			go func() { io.Copy(upstream, client); upstream.Close() }()
-			io.Copy(client, upstream)
-			client.Close()
-		}()
-	}
-}
-
-func (s *fakeTunnel) Wait() (string, error) {
-	<-s.done
-	return "", errors.New("killed")
-}
-
-func (s *fakeTunnel) Kill() {
-	s.once.Do(func() {
-		if s.onKill != nil {
-			s.onKill()
-		}
-		for _, l := range s.listeners {
-			l.Close()
-		}
-		close(s.done)
-	})
-}
-
-func (f *fakeTunnels) session(i int) *fakeTunnel {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.sessions[i]
-}
-
-func (f *fakeTunnels) count() int {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return len(f.sessions)
-}
 
 // A machine enrolled over SSH never has to reach this node on the network:
 // the hub advertises an address nobody can route to, and the enrollment
 // still completes because the two talk through the session's forwards.
-// The link is recorded before the machine is installed, so a restart of
-// the hub reopens it, and the machine's package tells it to reach the hub
-// at the tunnel ports rather than at what the hub advertises.
+// The machine's package tells its node to reach the hub at the tunnel
+// ports rather than at what the hub advertises; the node starts before the
+// link is up, as it does on a real machine, and joins once it is. The link
+// is recorded so that a restart of the hub reopens it.
 func TestEnrollmentOverSSHCarriesTheClusterProtocolThroughTheSession(t *testing.T) {
-	tunnels := &fakeTunnels{}
+	tunnels := &linktest.Launcher{}
 	hubOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	hubConfig, err := LoadClusterPeerConfig(hubOptions.ClusterPath)
 	if err != nil {
@@ -162,6 +68,8 @@ func TestEnrollmentOverSSHCarriesTheClusterProtocolThroughTheSession(t *testing.
 		t.Fatalf("the machine was not told to reach the hub through the tunnel: %+v", nodeConfig.Routes)
 	}
 
+	nodeOptions := PeerOptions{ConfigPath: imported.ConfigPath, ClusterPath: imported.ClusterPath, RaftConfig: raft.DefaultConfig(), PollInterval: 25 * time.Millisecond, TestFailureDomain: func() (string, error) { return "test-domain-box", nil }, Activate: testPeerApplication(t, &activations)}
+	node := StartTestPeer(t, nodeOptions)
 	linkCtx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 	defer cancel()
 	if err := hub.OpenEnrollmentLink(linkCtx, id); err != nil {
@@ -179,12 +87,10 @@ func TestEnrollmentOverSSHCarriesTheClusterProtocolThroughTheSession(t *testing.
 		t.Fatalf("the link was not recorded for the next start: %+v", saved.Links)
 	}
 	// The same enrollment asking again keeps the session it has.
-	if err := hub.OpenEnrollmentLink(linkCtx, id); err != nil || tunnels.count() != 1 {
-		t.Fatalf("a second request replaced a working link: %v (%d sessions)", err, tunnels.count())
+	if err := hub.OpenEnrollmentLink(linkCtx, id); err != nil || tunnels.Count() != 1 {
+		t.Fatalf("a second request replaced a working link: %v (%d sessions)", err, tunnels.Count())
 	}
 
-	nodeOptions := PeerOptions{ConfigPath: imported.ConfigPath, ClusterPath: imported.ClusterPath, RaftConfig: raft.DefaultConfig(), PollInterval: 25 * time.Millisecond, TestFailureDomain: func() (string, error) { return "test-domain-box", nil }, Activate: testPeerApplication(t, &activations)}
-	node := StartTestPeer(t, nodeOptions)
 	// The enrollment goes from waiting for the node, through the join and
 	// its mesh check, to registering the worker; that last step needs the
 	// real application, which this fixture does not run. Everything before
@@ -216,7 +122,7 @@ func TestEnrollmentOverSSHCarriesTheClusterProtocolThroughTheSession(t *testing.
 // Giving up an enrollment closes its session and forgets the link and the
 // route, so nothing keeps dialing a machine that is not coming.
 func TestAbandoningAnEnrollmentDropsItsLink(t *testing.T) {
-	tunnels := &fakeTunnels{}
+	tunnels := &linktest.Launcher{}
 	hubOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var activations atomic.Int32
 	hubOptions.Activate = testPeerApplication(t, &activations)
@@ -258,7 +164,7 @@ func TestAbandoningAnEnrollmentDropsItsLink(t *testing.T) {
 		t.Fatal("the abandoned link would be reopened at the next start")
 	}
 	select {
-	case <-tunnels.sessions[0].done:
+	case <-tunnels.Ended(0):
 	case <-time.After(2 * time.Second):
 		t.Fatal("the abandoned session was not ended")
 	}
@@ -268,7 +174,7 @@ func TestAbandoningAnEnrollmentDropsItsLink(t *testing.T) {
 // and routes to it at the new session's ports; when it stops, the session
 // is ended only after the runtime has said its goodbyes through it.
 func TestARestartedHubReopensItsLinksAndClosesThemAfterTheRuntime(t *testing.T) {
-	tunnels := &fakeTunnels{}
+	tunnels := &linktest.Launcher{}
 	hubOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
 	var activations atomic.Int32
 	hubOptions.Activate = testPeerApplication(t, &activations)
@@ -297,23 +203,19 @@ func TestARestartedHubReopensItsLinksAndClosesThemAfterTheRuntime(t *testing.T) 
 		t.Fatal(err)
 	}
 	var runtimeClosedFirst atomic.Bool
-	first := tunnels.session(0)
 	runtime := hub.Runtime.Load()
-	tunnels.mu.Lock()
-	tunnels.onKill = func() {
+	tunnels.SetOnEnd(func() {
 		select {
 		case <-runtime.closeDone:
 			runtimeClosedFirst.Store(true)
 		default:
 		}
-	}
-	first.onKill = tunnels.onKill
-	tunnels.mu.Unlock()
+	})
 	if err := hub.Close(); err != nil {
 		t.Fatal(err)
 	}
 	select {
-	case <-first.done:
+	case <-tunnels.Ended(0):
 	case <-time.After(2 * time.Second):
 		t.Fatal("stopping the hub did not end its session")
 	}
@@ -321,9 +223,7 @@ func TestARestartedHubReopensItsLinksAndClosesThemAfterTheRuntime(t *testing.T) 
 		t.Fatal("the session was ended before the runtime closed; its last messages had no way through")
 	}
 
-	tunnels.mu.Lock()
-	tunnels.onKill = nil
-	tunnels.mu.Unlock()
+	tunnels.SetOnEnd(nil)
 	restarted := StartTestPeer(t, hubOptions)
 	WaitPeerReady(t, restarted)
 	restarted.Mu.RLock()
@@ -336,14 +236,11 @@ func TestARestartedHubReopensItsLinksAndClosesThemAfterTheRuntime(t *testing.T) 
 		t.Fatal(err)
 	}
 	route, ok := restarted.routes.Lookup(prepared.NodeID)
-	if !ok || tunnels.count() != 2 {
-		t.Fatalf("the restarted hub has no route through a new session: %+v %v (%d sessions)", route, ok, tunnels.count())
+	if !ok || tunnels.Count() != 2 {
+		t.Fatalf("the restarted hub has no route through a new session: %+v %v (%d sessions)", route, ok, tunnels.Count())
 	}
-	listens := map[string]bool{}
-	for _, l := range tunnels.session(1).listeners {
-		listens[l.Addr().String()] = true
-	}
-	if !listens[route.Raft] || !listens[route.API] {
-		t.Fatalf("the route %+v does not point at the new session's listeners %v", route, listens)
+	outbound := link.Status().Outbound
+	if len(outbound) != 2 || route.Raft != outbound[0].Listen || route.API != outbound[1].Listen {
+		t.Fatalf("the route %+v does not point at the reopened link's listeners %v", route, outbound)
 	}
 }
