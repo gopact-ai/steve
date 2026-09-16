@@ -85,6 +85,7 @@ type Peer struct {
 	Config            PeerConfig
 	Runtime           atomic.Pointer[Runtime]
 	client            *coordination.Client
+	routes            *coordination.RouteTable
 	identity          coordination.TLSOptions
 	OwnerToken        string
 	UIToken           string
@@ -205,13 +206,14 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	seeds := append([]coordination.Member(nil), p.Config.Seeds...)
 	seeds = append(seeds, coordination.Member{NodeID: p.Config.NodeID, Address: p.Config.RaftAddress, APIAddress: p.Config.PeerURL, Name: p.Config.Name})
 	selfHost, _, _ := net.SplitHostPort(peerListener.Addr().String())
-	p.client, err = coordination.NewClient(coordination.ClientConfig{TLS: identity, Members: seeds, SelfHost: selfHost, ControlHeaders: func(context.Context, string) (http.Header, error) {
+	p.routes = coordination.NewRouteTable(p.Config.Routes)
+	p.client, err = coordination.NewClient(coordination.ClientConfig{TLS: identity, Members: seeds, SelfHost: selfHost, Routes: p.routes, ControlHeaders: func(context.Context, string) (http.Header, error) {
 		return http.Header{"Authorization": []string{"Bearer " + p.OwnerToken}}, nil
 	}})
 	if err != nil {
 		return nil, err
 	}
-	stream, err := coordination.NewTLSStreamLayer(&advertisedPeerListener{Listener: raftListener, address: &p.raftAdvertisement}, identity, p.resolveRaftPeer)
+	stream, err := coordination.NewTLSStreamLayer(&advertisedPeerListener{Listener: raftListener, address: &p.raftAdvertisement}, identity, p.resolveRaftPeer, p.routes)
 	if err != nil {
 		return nil, err
 	}
@@ -606,16 +608,20 @@ func (p *Peer) remoteTransport(member coordination.Member) (*http.Transport, *ur
 	return transport, origin, nil
 }
 
-// peerDial connects to another node at the address it advertises. This
-// node's own advertised address is often one only other machines can route
-// to (a VPN tunnel address), so calls aimed at itself go to the host the
-// matching listener is bound to (the peer API listener, or the Raft
-// listener for raft); the mutual TLS identity check still proves the port
-// serves this node.
+// peerDial connects to another node. The address it is handed is what the
+// node advertises; this node's route to it wins when there is one (an SSH
+// tunnel ending at a loopback port here). This node's own advertised
+// address is often one only other machines can route to (a VPN tunnel
+// address), so calls aimed at itself go to the host the matching listener
+// is bound to (the peer API listener, or the Raft listener for raft). The
+// mutual TLS identity check still proves the port serves the node meant.
 func (p *Peer) peerDial(nodeID string, raft bool, timeout time.Duration) coordination.DialFunc {
 	dial := (&net.Dialer{Timeout: timeout}).DialContext
 	if nodeID != p.Config.NodeID {
-		return dial
+		if raft {
+			return p.routes.RaftDial(nodeID, dial)
+		}
+		return p.routes.APIDial(nodeID, dial)
 	}
 	// Bind addresses are fixed when the listeners open, before anything
 	// dials; remoteTransport calls this while holding p.Mu.

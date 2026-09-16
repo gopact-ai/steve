@@ -27,7 +27,11 @@ type ClientConfig struct {
 	// SelfHost is the host this node's own HTTPS listener is bound to. Calls
 	// aimed at this node go there instead of the advertised address; empty or
 	// unspecified means loopback.
-	SelfHost         string
+	SelfHost string
+	// Routes is where this node connects to nodes it cannot reach at what
+	// they advertise; nil means every node is dialed at its advertised
+	// address.
+	Routes           *RouteTable
 	Timeout          time.Duration
 	MaxAttempts      int
 	MaxResponseBytes int64
@@ -277,7 +281,10 @@ func (c *Client) peerClient(member Member) (*http.Client, string, error) {
 	if err != nil || address.Scheme != "https" || address.Host == "" || address.User != nil || address.RawQuery != "" || address.Fragment != "" || (address.Path != "" && address.Path != "/") {
 		return nil, "", fmt.Errorf("%w: peer API address must be an HTTPS origin", ErrInvalid)
 	}
-	key := member.NodeID + "\x00" + address.String()
+	// A route is part of the key: pooled connections to the old way there
+	// must not serve the new one.
+	route, _ := c.config.Routes.Route(member.NodeID)
+	key := member.NodeID + "\x00" + address.String() + "\x00" + route.API
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	client := c.clients[key]
@@ -287,8 +294,11 @@ func (c *Client) peerClient(member Member) (*http.Client, string, error) {
 			return nil, "", err
 		}
 		dial := (&net.Dialer{Timeout: c.config.Timeout}).DialContext
-		if member.NodeID == c.config.TLS.NodeID {
+		switch {
+		case member.NodeID == c.config.TLS.NodeID:
 			dial = SelfDial(c.config.SelfHost, dial)
+		case route.API != "":
+			dial = c.config.Routes.APIDial(member.NodeID, dial)
 		}
 		transport := &http.Transport{TLSClientConfig: config, DialContext: dial, TLSHandshakeTimeout: c.config.Timeout, ResponseHeaderTimeout: c.config.Timeout, IdleConnTimeout: 30 * time.Second, MaxIdleConnsPerHost: 4}
 		client = &http.Client{Transport: transport, Timeout: c.config.Timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}

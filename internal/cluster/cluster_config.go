@@ -52,6 +52,10 @@ type PeerConfig struct {
 	OwnerTokenFile   string                `json:"owner_token_file"`
 	WorkerConfigFile string                `json:"worker_config_file"`
 	Seeds            []coordination.Member `json:"seeds"`
+	// Routes is where this node connects to members it cannot reach at the
+	// addresses they advertise, by node ID: the hub behind an SSH tunnel
+	// answers at a loopback port that exists only on this machine.
+	Routes map[string]coordination.Route `json:"routes,omitempty"`
 }
 
 func DefaultClusterConfigPath(configPath string) string { return configPath + ".cluster.json" }

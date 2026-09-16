@@ -162,7 +162,7 @@ func testNodes(t *testing.T, count int) []*clusterNode {
 		if err != nil {
 			t.Fatal(err)
 		}
-		stream, err := coordination.NewTLSStreamLayer(n.listener, n.options, n.client.PeerID)
+		stream, err := coordination.NewTLSStreamLayer(n.listener, n.options, n.client.PeerID, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
