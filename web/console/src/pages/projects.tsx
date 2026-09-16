@@ -279,7 +279,7 @@ function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void;
                                     items={[{ id: "adopt", label: tr("projects.adopt") }, { id: "clone", label: tr("projects.clone") }]}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
-                                <MachineDirectoryField node={node} label={tr("projects.directory")} hint={tr("projects.absolutePath")} placeholder="/home/me/work/my-service" value={path} onChange={setPath} isDisabled={busy} autoFocus />
+                                <MachineDirectoryField node={node} label={tr("projects.directory")} hint={tr("projects.absolutePath")} placeholder="/home/me/work/my-service" value={path} onChange={setPath} isDisabled={busy} newFolder={origin === "clone"} autoFocus />
                             </div>
                         )}
                         {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}

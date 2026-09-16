@@ -10,6 +10,7 @@ import { SSHConnect } from "@/components/steve/ssh-connect";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import { useFleet } from "@/lib/fleet";
 import { useI18n } from "@/providers/locale-provider";
+import { message } from "@/lib/http";
 import { useTheme } from "@/providers/theme-provider";
 import { HTTPError } from "@/lib/http";
 import { fetchCoordination } from "@/lib/api/coordination";
@@ -21,7 +22,6 @@ import type { Node } from "@/lib/types";
 import { fetchHubSettings, saveHubSettings } from "@/lib/api/settings";
 import { canPickDirectory, discoverDesktopAgents, enrollDesktopAgents, fetchDesktopStatus, pickDirectory, saveDesktopSetup, saveDesktopWorkspace, setupSteps, type DesktopAgentCandidate, type DesktopStatus, type SetupStep } from "@/lib/api/desktop";
 
-const message = (error: unknown) => (error instanceof Error ? error.message : String(error)).replace(/^Error: /, "");
 
 // The first-run guide opens on its own until the owner has been through it
 // once; where it stands is kept by the desktop backend, so closing the App

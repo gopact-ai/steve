@@ -173,6 +173,10 @@ func TestBrowseFindsTheAliasOfAnEnrolledMachine(t *testing.T) {
 	if !asStep(err, &step) || step.Code != "browse_target" {
 		t.Fatalf("a machine without a tunnel was not refused: %v", err)
 	}
+	_, err = svc.Browse(t.Context(), BrowseRequest{Alias: "dev", Node: "node-dev"})
+	if !asStep(err, &step) || step.Code != "browse_ambiguous" {
+		t.Fatalf("naming two machines at once was accepted: %v", err)
+	}
 	plain := New(Options{ConfigPath: path, Runner: &browseShellRunner{home: home}, Backend: &fakeBackend{}})
 	t.Cleanup(func() { _ = plain.Close() })
 	_, err = plain.Browse(t.Context(), BrowseRequest{Node: "node-dev"})

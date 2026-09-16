@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/sshconnect"
@@ -15,15 +14,10 @@ import (
 
 // Only a member this node keeps a link to can be upgraded from here, over
 // that link's alias and with the program bundled for the member's platform;
-// this node itself is not, and neither is anything while this node does
-// not coordinate, since only the coordinator can confirm the new version.
+// this node itself is not.
 func TestUpgradeTargetNamesTheLinkAliasAndRefusesSelf(t *testing.T) {
 	peer := &Peer{Config: PeerConfig{NodeID: "node-hub", Links: map[string]PeerLink{"node-dev": {Alias: "dev", Remote: coordination.Route{Raft: "127.0.0.1:25407", API: "127.0.0.1:25408"}}}}}
 	backend := peerSSHBackend{peer: peer, findBinary: func(platform string) (string, bool) { return "/bundle/" + platform, platform == "linux/amd64" }}
-	if _, err := backend.UpgradeTarget(t.Context(), "node-dev"); err == nil || !strings.Contains(err.Error(), "协调节点") {
-		t.Fatalf("a node that does not coordinate was not refused: %v", err)
-	}
-	peer.Application = &PeerApplicationEndpoint{Admin: &adminsvc.Service{}}
 	target, err := backend.UpgradeTarget(t.Context(), "node-dev")
 	if err != nil || target.Alias != "dev" || target.Version == "" {
 		t.Fatalf("target = %#v %v", target, err)
@@ -84,5 +78,14 @@ func TestAwaitBuildAsksAgainUntilTheMachineReportsTheBuild(t *testing.T) {
 	err := awaitBuildWithin(short, stale, time.Second, 50*time.Millisecond, "node-dev", "new5678")
 	if err == nil || !strings.Contains(err.Error(), "old1234") {
 		t.Fatalf("running out of time did not name the version seen: %v", err)
+	}
+	// A coordinator that never comes back is this node's problem, not the
+	// machine's, and saying so is what tells the two apart.
+	none := func() advertRefresh { return nil }
+	short2, cancel2 := context.WithTimeout(t.Context(), 150*time.Millisecond)
+	defer cancel2()
+	err = awaitBuildWithin(short2, none, time.Second, 50*time.Millisecond, "node-dev", "new5678")
+	if err == nil || !strings.Contains(err.Error(), "协调服务") {
+		t.Fatalf("a coordinator that never returned was blamed on the machine: %v", err)
 	}
 }

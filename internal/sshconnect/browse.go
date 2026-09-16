@@ -93,6 +93,9 @@ func (s *Service) browseAlias(req BrowseRequest) (string, error) {
 	if node == "" {
 		return req.Alias, nil
 	}
+	if strings.TrimSpace(req.Alias) != "" {
+		return "", fail("configuration", "browse_ambiguous", "一次只能指定一台机器", "只填 SSH 别名，或只填节点 ID")
+	}
 	backend, ok := s.backend.(AliasBackend)
 	if !ok {
 		return "", fail("configuration", "browse_unsupported", "这类接入的机器无法从这里浏览目录", "直接填写目标机上的绝对路径")

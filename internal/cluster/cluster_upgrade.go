@@ -13,13 +13,12 @@ import (
 
 // UpgradeTarget names how a member is reached for an upgrade: the alias of
 // the link this node keeps to it. Only machines enrolled over SSH have one;
-// this node itself is upgraded by replacing the App.
+// this node itself is upgraded by replacing the App. Whether this node
+// coordinates is not asked here: it may stop and start coordinating while
+// the upgrade runs, and the wait for the new build lives with that.
 func (b peerSSHBackend) UpgradeTarget(_ context.Context, nodeID string) (sshconnect.UpgradeTarget, error) {
 	if nodeID == b.peer.Config.NodeID {
 		return sshconnect.UpgradeTarget{}, errors.New("本机随 App 一起升级，不从这里升级")
-	}
-	if b.peer.refresher() == nil {
-		return sshconnect.UpgradeTarget{}, errors.New("本机现在不是协调节点，无法确认机器升级后的版本")
 	}
 	alias, err := b.MachineAlias(nodeID)
 	if err != nil {
@@ -96,13 +95,16 @@ func awaitBuildWithin(ctx context.Context, refresher func() advertRefresh, askLi
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	seen, said := "", ""
+	waiting := false
 	for {
 		if refresh := refresher(); refresh == nil {
+			waiting = true
 			if said != "rebuilding" {
 				said = "rebuilding"
 				sshconnect.Report(ctx, "本机的协调服务正在重启，等它恢复后再询问")
 			}
 		} else {
+			waiting = false
 			askCtx, cancel := context.WithTimeout(ctx, askLimit)
 			advert, err := refresh(askCtx, nodeID)
 			timedOut := askCtx.Err() != nil
@@ -123,8 +125,11 @@ func awaitBuildWithin(ctx context.Context, refresher func() advertRefresh, askLi
 		}
 		select {
 		case <-ctx.Done():
-			if seen != "" {
+			switch {
+			case seen != "":
 				return fmt.Errorf("机器仍报告版本 %s", seen)
+			case waiting:
+				return errors.New("本机的协调服务一直没有恢复，无法确认机器的版本")
 			}
 			return errors.New("机器还没有重新应答")
 		case <-ticker.C:
