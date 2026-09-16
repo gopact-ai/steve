@@ -23,7 +23,11 @@ type ClientConfig struct {
 	Members []Member
 	// ControlHeaders obtains owner authorization only for administrative calls.
 	// These headers travel over a node-identity-verified mutual TLS connection.
-	ControlHeaders   func(context.Context, string) (http.Header, error)
+	ControlHeaders func(context.Context, string) (http.Header, error)
+	// SelfHost is the host this node's own HTTPS listener is bound to. Calls
+	// aimed at this node go there instead of the advertised address; empty or
+	// unspecified means loopback.
+	SelfHost         string
 	Timeout          time.Duration
 	MaxAttempts      int
 	MaxResponseBytes int64
@@ -284,7 +288,7 @@ func (c *Client) peerClient(member Member) (*http.Client, string, error) {
 		}
 		dial := (&net.Dialer{Timeout: c.config.Timeout}).DialContext
 		if member.NodeID == c.config.TLS.NodeID {
-			dial = LoopbackDial(dial)
+			dial = SelfDial(c.config.SelfHost, dial)
 		}
 		transport := &http.Transport{TLSClientConfig: config, DialContext: dial, TLSHandshakeTimeout: c.config.Timeout, ResponseHeaderTimeout: c.config.Timeout, IdleConnTimeout: 30 * time.Second, MaxIdleConnsPerHost: 4}
 		client = &http.Client{Transport: transport, Timeout: c.config.Timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
@@ -341,16 +345,20 @@ func (c *Client) request(ctx context.Context, member Member, action string, body
 // DialFunc connects to a network address; it matches net.Dialer.DialContext.
 type DialFunc func(ctx context.Context, network, address string) (net.Conn, error)
 
-// LoopbackDial connects to the local port behind an address this node
+// SelfDial connects to the local listener behind an address this node
 // advertises for itself. A machine cannot always route to its own address
 // (a VPN tunnel address is reachable from every other machine but often not
 // from the laptop itself), and the process answering there is this one
-// anyway. Mutual TLS still verifies the node identity on the connection, so
-// the check keeps proving the port serves this node.
-func LoopbackDial(dial DialFunc) DialFunc {
+// anyway. bindHost is where the listener really is; a wildcard or empty
+// host means loopback. Mutual TLS still verifies the node identity on the
+// connection, so the check keeps proving the port serves this node.
+func SelfDial(bindHost string, dial DialFunc) DialFunc {
+	if ip := net.ParseIP(bindHost); bindHost == "" || ip != nil && ip.IsUnspecified() {
+		bindHost = "127.0.0.1"
+	}
 	return func(ctx context.Context, network, address string) (net.Conn, error) {
 		if _, port, err := net.SplitHostPort(address); err == nil {
-			address = net.JoinHostPort("127.0.0.1", port)
+			address = net.JoinHostPort(bindHost, port)
 		}
 		return dial(ctx, network, address)
 	}

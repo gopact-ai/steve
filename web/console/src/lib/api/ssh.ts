@@ -15,5 +15,5 @@ export const statusSSH = (id: string, signal?: AbortSignal) => request<SSHInstal
 export const installSSH = (id: string) => request<SSHInstallResult>(`/console/ssh/plans/${encodeURIComponent(id)}/install`, { method: "POST" });
 export const abandonSSH = (id: string) => request<{ plan_id: string; abandoned: boolean }>(`/console/ssh/plans/${encodeURIComponent(id)}`, { method: "DELETE" });
 export interface SSHListingEntry { name: string; path: string }
-export interface SSHListing { path: string; display: string; home: string; parent?: string; writable: boolean; entries: SSHListingEntry[]; truncated?: boolean }
+export interface SSHListing { path: string; display: string; home: string; parent?: string; requested?: string; writable: boolean; entries: SSHListingEntry[]; truncated?: boolean }
 export const browseSSH = (alias: string, path: string, signal?: AbortSignal) => request<SSHListing>("/console/ssh/browse", { method: "POST", body: { alias, path }, signal });

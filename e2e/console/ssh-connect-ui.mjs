@@ -39,9 +39,10 @@ const routeRequest = async (route) => {
     if (p === "/console/ssh/browse") {
         const { alias, path: target } = req.postDataJSON(); f.browses.push({ alias, path: target });
         const tree = { "~": { path: "/home/dev", display: "~", parent: "/home", entries: ["Projects", "work"] }, "~/work": { path: "/home/dev/work", display: "~/work", parent: "/home/dev", entries: ["other", "steve"] }, "/home/dev/work": { path: "/home/dev/work", display: "~/work", parent: "/home/dev", entries: ["other", "steve"] }, "/home/dev/Projects": { path: "/home/dev/Projects", display: "~/Projects", parent: "/home/dev", entries: [] } };
-        const node = tree[target];
-        if (!node) return route.fulfill({ status: 400, json: { error: "No directory " + target + " on the machine, or this account may not enter it; choose another directory", step: { stage: "environment", code: "directory_unavailable", message: "No directory " + target + " on the machine", suggestion: "choose another directory" } } });
-        return route.fulfill({ json: { path: node.path, display: node.display, home: "/home/dev", parent: node.parent, writable: node.display !== "~/Projects", entries: node.entries.map((name) => ({ name, path: node.path + "/" + name })) } });
+        // The machine opens the nearest existing ancestor of a directory it
+        // does not have yet and says what was asked for.
+        const node = tree[target] ?? tree["~"];
+        return route.fulfill({ json: { path: node.path, display: node.display, home: "/home/dev", parent: node.parent, requested: tree[target] ? undefined : target, writable: node.display !== "~/Projects", entries: node.entries.map((name) => ({ name, path: node.path + "/" + name })) } });
     }
     if (p === "/console/nodes/node-stable-9/agents" && req.method() === "GET") { f.nodeAgentReads.push(p); return route.fulfill({ json: { revision: "r1", agents: [] } }); }
     if (/^\/console\/ssh\/plans\/[^/]+$/.test(p) && req.method() === "DELETE") {
@@ -131,12 +132,14 @@ try {
     assert.equal(await dialog.getByRole("textbox", { name: "Working directory", exact: true }).inputValue(), "~/steve-workspace");
     await dialog.getByRole("textbox", { name: "Machine name", exact: true }).fill("worker-west");
     // The working directory can be picked from what the machine has: open
-    // the browser at the current field value (climbing to the nearest
-    // existing ancestor), walk into a folder, and name a new one inside it.
+    // the browser at the current field value (the machine opens the nearest
+    // existing ancestor in one round trip), walk into a folder, and name a
+    // new one inside it.
     await dialog.getByRole("button", { name: "Browse…", exact: true }).click();
     await dialog.getByRole("button", { name: "work", exact: true }).waitFor();
+    await dialog.getByText("The machine has no ~/steve-workspace yet; this is its nearest existing parent. Name a folder below to create it during installation.", { exact: true }).waitFor();
     // Development StrictMode mounts twice; the aborted duplicate is not a step.
-    assert.deepEqual(f.browses.filter((b, i) => i === 0 || b.path !== f.browses[i - 1].path), [{ alias: "dev-box", path: "~/steve-workspace" }, { alias: "dev-box", path: "~" }], "a folder that does not exist yet opens at its parent");
+    assert.deepEqual(f.browses.filter((b, i) => i === 0 || b.path !== f.browses[i - 1].path), [{ alias: "dev-box", path: "~/steve-workspace" }], "one round trip opens the nearest existing ancestor");
     await dialog.getByRole("button", { name: "work", exact: true }).click();
     await dialog.getByRole("button", { name: "steve", exact: true }).waitFor();
     await dialog.getByRole("textbox", { name: "New folder here (optional)", exact: true }).fill("agent-runs");

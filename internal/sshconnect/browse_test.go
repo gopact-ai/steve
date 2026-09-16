@@ -3,6 +3,7 @@ package sshconnect
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -75,10 +76,31 @@ func TestBrowseListsRemoteDirectoriesRelativeToTheAccountHome(t *testing.T) {
 		t.Fatalf("root listing: %+v %v", listing, err)
 	}
 
-	_, err = svc.Browse(t.Context(), BrowseRequest{Alias: "dev", Path: "~/does-not-exist"})
-	var step *StepError
-	if !asStep(err, &step) || step.Code != "directory_unavailable" {
-		t.Fatalf("a missing directory is a finding, not a crash: %v", err)
+	// A directory that does not exist yet opens at its nearest existing
+	// ancestor in the same round trip, and says what was asked for.
+	listing, err = svc.Browse(t.Context(), BrowseRequest{Alias: "dev", Path: "~/does-not-exist/deeper"})
+	if err != nil || listing.Path != home || listing.Display != "~" || listing.Requested != "~/does-not-exist/deeper" {
+		t.Fatalf("a missing directory opens at its nearest ancestor: %+v %v", listing, err)
+	}
+	listing, err = svc.Browse(t.Context(), BrowseRequest{Alias: "dev", Path: "~/work"})
+	if err != nil || listing.Requested != "" {
+		t.Fatalf("an existing directory is not reported as climbed: %+v %v", listing, err)
+	}
+}
+
+func TestBrowseStopsListingAfterTheLimitSoTheEndMarkerAlwaysArrives(t *testing.T) {
+	home := t.TempDir()
+	for i := 0; i < maxBrowseEntries+25; i++ {
+		if err := os.Mkdir(filepath.Join(home, fmt.Sprintf("d%04d", i)), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	path := configFixture(t, map[string]string{"config": "Host dev\nHostName dev.example\n"})
+	svc := New(Options{ConfigPath: path, Runner: &browseShellRunner{home: home}, Backend: &fakeBackend{}})
+	t.Cleanup(func() { _ = svc.Close() })
+	listing, err := svc.Browse(t.Context(), BrowseRequest{Alias: "dev"})
+	if err != nil || !listing.Truncated || len(listing.Entries) != maxBrowseEntries {
+		t.Fatalf("truncated listing: %d entries truncated=%v err=%v", len(listing.Entries), listing.Truncated, err)
 	}
 }
 
@@ -88,12 +110,13 @@ func TestBrowseRejectsPathsItWouldNotUseAsAWorkspace(t *testing.T) {
 	svc := New(Options{ConfigPath: path, Runner: runner, Backend: &fakeBackend{}})
 	t.Cleanup(func() { _ = svc.Close() })
 	for _, bad := range []string{"relative", "~/../etc", "/tmp/a\nb", "/tmp/$(touch pwned)", "/tmp/`id`", "/tmp/'q'"} {
-		_, err := svc.Browse(t.Context(), BrowseRequest{Alias: "dev", Path: bad})
+		listing, err := svc.Browse(t.Context(), BrowseRequest{Alias: "dev", Path: bad})
 		var step *StepError
 		if bad == "/tmp/$(touch pwned)" || bad == "/tmp/`id`" || bad == "/tmp/'q'" {
-			// Odd but legal names travel to the shell as data only.
-			if err == nil || !asStep(err, &step) || step.Code != "directory_unavailable" {
-				t.Fatalf("%q: %v", bad, err)
+			// Odd but legal names travel to the shell as data only; none of
+			// them exist, so the listing opens at /tmp.
+			if err != nil || listing.Requested != bad || !strings.HasSuffix(listing.Path, "/tmp") {
+				t.Fatalf("%q: %+v %v", bad, listing, err)
 			}
 			continue
 		}

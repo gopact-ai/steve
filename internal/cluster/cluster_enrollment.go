@@ -496,7 +496,10 @@ func (p *Peer) prepareSourceNetworkOnce(ctx context.Context, record *peerEnrollm
 		err = p.persistAdvertisement(wanted.Address, wanted.APIAddress)
 	}
 	if err != nil {
-		host, _, _ := net.SplitHostPort(wanted.Address)
+		host, _, splitErr := net.SplitHostPort(wanted.Address)
+		if splitErr != nil {
+			host = wanted.Address
+		}
 		err = fmt.Errorf("更新本机可达地址 %s 失败：%w", host, err)
 		record.Phase = "source_network"
 		record.Error = err.Error()

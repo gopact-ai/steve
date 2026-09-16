@@ -204,7 +204,8 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	p.identity = identity
 	seeds := append([]coordination.Member(nil), p.Config.Seeds...)
 	seeds = append(seeds, coordination.Member{NodeID: p.Config.NodeID, Address: p.Config.RaftAddress, APIAddress: p.Config.PeerURL, Name: p.Config.Name})
-	p.client, err = coordination.NewClient(coordination.ClientConfig{TLS: identity, Members: seeds, ControlHeaders: func(context.Context, string) (http.Header, error) {
+	selfHost, _, _ := net.SplitHostPort(peerListener.Addr().String())
+	p.client, err = coordination.NewClient(coordination.ClientConfig{TLS: identity, Members: seeds, SelfHost: selfHost, ControlHeaders: func(context.Context, string) (http.Header, error) {
 		return http.Header{"Authorization": []string{"Bearer " + p.OwnerToken}}, nil
 	}})
 	if err != nil {
@@ -607,12 +608,16 @@ func (p *Peer) remoteTransport(member coordination.Member) (*http.Transport, *ur
 
 // peerDial connects to another node at the address it advertises. This
 // node's own advertised address is often one only other machines can route
-// to (a VPN tunnel address), so calls aimed at itself go over loopback; the
-// mutual TLS identity check still proves the port serves this node.
+// to (a VPN tunnel address), so calls aimed at itself go to the host its
+// listener is bound to; the mutual TLS identity check still proves the port
+// serves this node.
 func (p *Peer) peerDial(nodeID string, timeout time.Duration) coordination.DialFunc {
 	dial := (&net.Dialer{Timeout: timeout}).DialContext
 	if nodeID == p.Config.NodeID {
-		return coordination.LoopbackDial(dial)
+		// The bind address is fixed when the listener opens, before anything
+		// dials; remoteTransport calls this while holding p.Mu.
+		bindHost, _, _ := net.SplitHostPort(p.Config.PeerBindAddress)
+		return coordination.SelfDial(bindHost, dial)
 	}
 	return dial
 }

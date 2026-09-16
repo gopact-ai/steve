@@ -19,12 +19,15 @@ type BrowseRequest struct {
 
 // Listing is what the machine reported about one directory: where it is,
 // the visible directories beneath it, and whether this account could create
-// a folder in it.
+// a folder in it. When the requested directory does not exist yet, the
+// listing is of its nearest existing ancestor and Requested names what was
+// asked for, shown the way Display is.
 type Listing struct {
 	Path      string  `json:"path"`
 	Display   string  `json:"display"`
 	Home      string  `json:"home"`
 	Parent    string  `json:"parent,omitempty"`
+	Requested string  `json:"requested,omitempty"`
 	Writable  bool    `json:"writable"`
 	Entries   []Entry `json:"entries"`
 	Truncated bool    `json:"truncated,omitempty"`
@@ -84,9 +87,11 @@ func validBrowsePath(dir string) error {
 	return nil
 }
 
-// browseScript lists one directory. The path travels as data: printf
-// rebuilds it from octal escapes, so a name that looks like shell syntax is
-// still just a name. Globbing stays on for the listing itself.
+// browseScript lists one directory in a single round trip. The path travels
+// as data: printf rebuilds it from octal escapes, so a name that looks like
+// shell syntax is still just a name. A directory that does not exist yet
+// opens at its nearest existing ancestor, and the listing stops after
+// maxBrowseEntries so the end marker always fits in the bounded output.
 func browseScript(target string) string {
 	var escaped strings.Builder
 	for _, b := range []byte(target) {
@@ -98,15 +103,27 @@ case "$target" in
   '~/'*) target=$HOME/${target#'~/'} ;;
 esac
 printf 'STEVE_BROWSE\thome\t%s\n' "$HOME"
-if ! cd -- "$target" 2>/dev/null; then
-  printf 'STEVE_BROWSE\tmissing\t1\n'
-  printf 'STEVE_BROWSE\tend\t1\n'
-  exit 0
-fi
+requested=$target
+while ! cd -- "$target" 2>/dev/null; do
+  if [ "$target" = / ]; then
+    printf 'STEVE_BROWSE\tmissing\t1\n'
+    printf 'STEVE_BROWSE\tend\t1\n'
+    exit 0
+  fi
+  target=${target%/*}
+  [ -n "$target" ] || target=/
+done
+if [ "$target" != "$requested" ]; then printf 'STEVE_BROWSE\trequested\t%s\n' "$requested"; fi
 printf 'STEVE_BROWSE\tpath\t%s\n' "$PWD"
 if [ -w . ]; then printf 'STEVE_BROWSE\twritable\t1\n'; fi
+count=0
 for entry in *; do
   [ -d "$entry" ] || continue
+  count=$((count + 1))
+  if [ "$count" -gt ` + fmt.Sprint(maxBrowseEntries) + ` ]; then
+    printf 'STEVE_BROWSE\ttruncated\t1\n'
+    break
+  fi
   printf 'STEVE_BROWSE\tdir\t%s\n' "$entry"
 done
 printf 'STEVE_BROWSE\tend\t1\n'
@@ -130,6 +147,10 @@ func parseListing(output, requested string) (Listing, error) {
 			listing.Writable = value == "1"
 		case "missing":
 			missing = value == "1"
+		case "requested":
+			listing.Requested = value
+		case "truncated":
+			listing.Truncated = value == "1"
 		case "end":
 			ended = value == "1"
 		case "dir":
@@ -142,7 +163,7 @@ func parseListing(output, requested string) (Listing, error) {
 		return Listing{}, fail("environment", "invalid_listing", "SSH 已连接，但未收到完整的目录列表", "确认该账号允许运行标准 POSIX shell 后重试")
 	}
 	if missing || listing.Path == "" {
-		return Listing{}, fail("environment", "directory_unavailable", "目标机上没有 "+requested+" 这个目录，或当前账号无权进入", "选择另一个目录，或先在目标机上创建它")
+		return Listing{}, fail("environment", "directory_unavailable", "当前账号进不了目标机上 "+requested+" 及其任何上级目录", "换一个这个账号能进入的目录")
 	}
 	sort.Slice(listing.Entries, func(i, j int) bool {
 		return strings.ToLower(listing.Entries[i].Name) < strings.ToLower(listing.Entries[j].Name)
@@ -157,12 +178,19 @@ func parseListing(output, requested string) (Listing, error) {
 		listing.Parent = path.Dir(listing.Path)
 	}
 	listing.Display = displayPath(listing.Path, listing.Home)
+	if listing.Requested != "" {
+		listing.Requested = displayPath(listing.Requested, listing.Home)
+	}
 	return listing, nil
 }
 
 // displayPath shows the account home as ~, the way the workspace field
 // expects it to be written.
 func displayPath(dir, home string) string {
+	dir = path.Clean(dir)
+	if home != "" {
+		home = path.Clean(home)
+	}
 	switch {
 	case home == "" || home == "/":
 		return dir

@@ -9,7 +9,10 @@ import { browseSSH, type SSHListing } from "@/lib/api/ssh";
 // alias so the workspace can be chosen from what is really there. Picking a
 // directory writes it into the field with the home shown as ~; a new folder
 // name is appended to the open directory and created during installation.
-export function RemoteDirectoryPicker({ alias, initialPath, isDisabled, onPick, onClose }: { alias: string; initialPath: string; isDisabled?: boolean; onPick: (path: string) => void; onClose: () => void }) {
+// A directory the field names but the machine does not have yet opens at
+// its nearest existing ancestor (the machine resolves that in one round
+// trip), so the person lands next to where they meant to go.
+export function RemoteDirectoryPicker({ id, alias, initialPath, isDisabled, onPick, onClose }: { id?: string; alias: string; initialPath: string; isDisabled?: boolean; onPick: (path: string) => void; onClose: () => void }) {
     const { t } = useI18n();
     const [listing, setListing] = useState<SSHListing | null>(null);
     const [loading, setLoading] = useState(true);
@@ -17,10 +20,7 @@ export function RemoteDirectoryPicker({ alias, initialPath, isDisabled, onPick, 
     const [newFolder, setNewFolder] = useState("");
     const heading = useRef<HTMLHeadingElement>(null);
     const controller = useRef<AbortController | null>(null);
-    // A directory the field names but the machine does not have yet opens
-    // at the nearest existing ancestor, so the person lands next to where
-    // they meant to go.
-    async function open(path: string, climb = false) {
+    async function open(path: string) {
         controller.current?.abort();
         const current = new AbortController();
         controller.current = current;
@@ -31,22 +31,23 @@ export function RemoteDirectoryPicker({ alias, initialPath, isDisabled, onPick, 
             setListing(next); setNewFolder("");
         } catch (e) {
             if (current.signal.aborted) return;
-            const parent = climb ? parentOf(path) : null;
-            if (parent) return open(parent, true);
             setError(e instanceof Error ? e.message : String(e));
         } finally { if (!current.signal.aborted) setLoading(false); }
     }
+    // The picker opens once per machine at the field's value at that moment;
+    // later edits to the field do not move the open directory.
     useEffect(() => {
-        void open(initialPath, true);
+        void open(initialPath);
         heading.current?.focus();
         return () => controller.current?.abort();
-        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [alias]);
     const folderName = newFolder.trim();
-    const folderValid = folderName === "" || (!/[/\\\0\r\n\t]/.test(folderName) && folderName !== "." && folderName !== "..");
+    // The same rule the workspace field and the backend apply: no path
+    // separator, no control characters, and not . or ..
+    const folderValid = folderName === "" || (!/[/\0\r\n\t]/.test(folderName) && folderName !== "." && folderName !== "..");
     const picked = listing ? (folderName ? `${listing.display === "/" ? "" : listing.display}/${folderName}` : listing.display) : "";
     const busy = loading || !!isDisabled;
-    return <section aria-label={t("ssh.browseTitle")} className="space-y-3 rounded-lg border border-secondary p-3">
+    return <section id={id} aria-label={t("ssh.browseTitle")} className="space-y-3 rounded-lg border border-secondary p-3">
         <div className="flex items-start justify-between gap-3">
             <div className="min-w-0"><h3 ref={heading} tabIndex={-1} className="text-sm font-semibold text-primary focus-visible:outline-2 focus-visible:outline-focus-ring">{t("ssh.browseTitle")}</h3><p className="mt-1 text-xs leading-5 text-tertiary">{t("ssh.browseHint")}</p></div>
             <Button size="sm" color="tertiary" isDisabled={!!isDisabled} onClick={onClose}>{t("ssh.browseCancel")}</Button>
@@ -56,6 +57,7 @@ export function RemoteDirectoryPicker({ alias, initialPath, isDisabled, onPick, 
             <p className="min-w-0 flex-1 truncate font-mono text-xs text-secondary" title={listing?.path}>{listing?.display || (loading ? t("ssh.browseLoading") : "")}</p>
             {listing && !listing.writable && <span className="shrink-0 text-xs text-warning-primary">{t("ssh.browseReadOnly")}</span>}
         </div>
+        {!loading && listing?.requested && <p role="status" className="text-xs text-tertiary">{t("ssh.browseClimbed", { path: listing.requested })}</p>}
         <div className="max-h-56 overflow-y-auto rounded-md bg-secondary" aria-busy={loading}>
             {loading && <p role="status" className="p-3 text-xs text-tertiary">{t("ssh.browseLoading")}</p>}
             {!loading && error && <p role="alert" className="break-words p-3 text-xs text-error-primary">{error}</p>}
@@ -71,8 +73,3 @@ export function RemoteDirectoryPicker({ alias, initialPath, isDisabled, onPick, 
     </section>;
 }
 
-function parentOf(path: string): string | null {
-    if (path === "/" || path === "~" || !path.includes("/")) return null;
-    const parent = path.replace(/\/+[^/]*\/*$/, "");
-    return parent === "" ? "/" : parent;
-}
