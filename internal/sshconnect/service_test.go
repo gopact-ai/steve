@@ -28,6 +28,11 @@ type recordingRunner struct {
 	failInstall bool
 	failUpload  bool
 	stderr      string
+	// slowUpload paces the upload: one small chunk per interval, the way a
+	// thin link delivers bytes. stallUpload takes a few bytes then hangs
+	// until the context ends, the way a dead link behaves.
+	slowUpload  time.Duration
+	stallUpload bool
 }
 
 type fixtureConnection struct {
@@ -118,10 +123,35 @@ func (b *fakeBackend) Register(_ context.Context, req InstallRequest, _ CheckRes
 	return Registration{Name: "remote", Token: "test-install-secret", Script: strings.ReplaceAll(script, PreviewToken, "test-install-secret"), ReviewID: b.reviewID}, nil
 }
 
-func (r *recordingRunner) Upload(_ context.Context, args []string, input io.Reader) (Output, error) {
+func (r *recordingRunner) Upload(ctx context.Context, args []string, input io.Reader) (Output, error) {
+	r.mu.Lock()
+	slow, stall := r.slowUpload, r.stallUpload
+	r.mu.Unlock()
+	var data []byte
+	var err error
+	switch {
+	case stall:
+		chunk := make([]byte, 8)
+		n, _ := io.ReadFull(input, chunk)
+		data = chunk[:n]
+		<-ctx.Done()
+		err = ctx.Err()
+	case slow > 0:
+		chunk := make([]byte, 8)
+		for err == nil {
+			var n int
+			n, err = input.Read(chunk)
+			data = append(data, chunk[:n]...)
+			time.Sleep(slow)
+		}
+		if err == io.EOF {
+			err = nil
+		}
+	default:
+		data, err = io.ReadAll(input)
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	data, err := io.ReadAll(input)
 	r.calls = append(r.calls, recordedCommand{args: append([]string(nil), args...), stdin: string(data), upload: true})
 	if r.failUpload {
 		return Output{}, errors.New("lost upload connection")
@@ -666,5 +696,74 @@ func TestFailedRegistrationNamesTheRealReason(t *testing.T) {
 	}
 	if !logged {
 		t.Fatalf("the install log hides the reason: %+v", result.Log)
+	}
+}
+
+func uploadFixture(t *testing.T) (*Service, *recordingRunner, *fakeBackend) {
+	t.Helper()
+	svc, r, b, _ := serviceFixture(t)
+	raw := make([]byte, 64)
+	copy(raw, []byte{0x7f, 'E', 'L', 'F', 2, 1, 1})
+	raw[16], raw[18], raw[20], raw[52] = 2, 62, 1, 64
+	b.binaryPath = filepath.Join(t.TempDir(), "node")
+	if err := os.WriteFile(b.binaryPath, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	b.script = "# upload " + nodebootstrap.PreviewUploadID + "\nnode_token='" + PreviewToken + "'\n"
+	return svc, r, b
+}
+
+// A laptop pushing 60 MiB through a VPN can take ten minutes and more. The
+// upload keeps going while bytes move and tells the person how far it is.
+func TestUploadKeepsGoingWhileBytesMoveAndReportsProgress(t *testing.T) {
+	svc, r, _ := uploadFixture(t)
+	svc.uploadTick, svc.uploadStall, svc.uploadReport = 5*time.Millisecond, 250*time.Millisecond, 20*time.Millisecond
+	r.slowUpload = 15 * time.Millisecond // 64 bytes in 8-byte chunks: about 120 ms, far past any fixed budget of 100 ms
+	plan, err := svc.Plan(t.Context(), installRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.Commit(t.Context(), plan.ID)
+	if err != nil || !result.Registered {
+		t.Fatalf("a slow but moving upload was cut off: %#v %v", result, err)
+	}
+	var uploaded, progressed bool
+	for _, step := range result.Steps {
+		uploaded = uploaded || step.ID == "upload" && step.Status == "ready"
+	}
+	for _, line := range result.Log {
+		progressed = progressed || strings.Contains(line.Text, "已上传")
+	}
+	if !uploaded || !progressed {
+		t.Fatalf("upload = %v, progress reported = %v: %+v", uploaded, progressed, result.Log)
+	}
+}
+
+func TestUploadStallEndsItInsteadOfWaitingForever(t *testing.T) {
+	svc, r, _ := uploadFixture(t)
+	svc.uploadTick, svc.uploadStall, svc.uploadReport = 5*time.Millisecond, 100*time.Millisecond, time.Hour
+	r.stallUpload = true
+	plan, err := svc.Plan(t.Context(), installRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	started := time.Now()
+	result, err := svc.Commit(t.Context(), plan.ID)
+	if err == nil || result.Connected || time.Since(started) > 5*time.Second {
+		t.Fatalf("a stalled upload did not end: %#v %v after %s", result, err, time.Since(started))
+	}
+	var blocked *Step
+	for i := range result.Steps {
+		if result.Steps[i].ID == "upload" && result.Steps[i].Status == "blocked" {
+			blocked = &result.Steps[i]
+		}
+	}
+	if blocked == nil || !strings.Contains(blocked.Message, "停滞") {
+		t.Fatalf("the stall is not named: %+v", result.Steps)
+	}
+	for _, call := range r.calls {
+		if !call.upload && strings.Contains(call.stdin, "node_token") {
+			t.Fatal("a stalled upload started the installer")
+		}
 	}
 }
