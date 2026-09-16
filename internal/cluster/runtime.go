@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -82,6 +83,7 @@ type Runtime struct {
 	restoring    bool
 	ready        bool
 	closed       bool
+	retryIn      time.Duration
 	lastError    error
 	closeError   error
 	cleanupError error
@@ -274,7 +276,7 @@ func (r *Runtime) run() {
 				if err := r.retire(); err != nil {
 					r.shutdown(err)
 				} else if err := r.activate(state.Coordinator, version, state.WriterGeneration); err != nil {
-					r.shutdown(err)
+					r.holdActivation(err)
 				}
 			}
 		}
@@ -355,9 +357,38 @@ func (r *Runtime) activate(assignment coordination.Assignment, version, expected
 	}
 	g.Version = position.Version
 	r.ready = true
+	r.retryIn = 0
 	r.lastError = nil
 	r.notifyLocked()
 	return nil
+}
+
+// holdActivation keeps this replica in the cluster when its own application
+// could not be built. Consensus is a separate lifecycle: the node keeps
+// replicating and voting, the business generation stays inactive with the
+// reason readable, and the next attempt waits out a delay that grows to
+// thirty seconds so a build that keeps failing does not spin.
+func (r *Runtime) holdActivation(cause error) {
+	slog.Error(fmt.Sprintf("cluster: business generation did not start: %v", cause), "node", r.config.Coordination.NodeID)
+	r.invalidate(cause, false)
+	if err := r.retire(); err != nil {
+		r.shutdown(err)
+		return
+	}
+	r.mu.Lock()
+	if r.retryIn *= 2; r.retryIn < 5*r.config.PollInterval {
+		r.retryIn = 5 * r.config.PollInterval
+	} else if r.retryIn > 30*time.Second {
+		r.retryIn = 30 * time.Second
+	}
+	delay := r.retryIn
+	r.mu.Unlock()
+	timer := time.NewTimer(delay)
+	defer timer.Stop()
+	select {
+	case <-r.ctx.Done():
+	case <-timer.C:
+	}
 }
 
 type activationResult struct {

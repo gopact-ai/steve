@@ -165,6 +165,8 @@ type Status struct {
 	LeaderID      string `json:"leader_id"`
 	LeaderAddress string `json:"leader_address"`
 	IsLeader      bool   `json:"is_leader"`
+	// Build is the program build this node runs, as it names itself.
+	Build         string `json:"build,omitempty"`
 	Healthy       bool   `json:"healthy"`
 	FailureDomain string `json:"failure_domain"`
 	StorageLevel  string `json:"storage_level"`
@@ -247,8 +249,11 @@ type Config struct {
 	AdvertiseAddress string
 	APIAddress       string
 	Name             string
-	Bootstrap        bool
-	Application      Application
+	// Build is the program build this node runs; peers read it from Status
+	// to tell which program a machine came back on.
+	Build       string
+	Bootstrap   bool
+	Application Application
 	// Probe must authenticate the remote node and report its actual FSM progress.
 	Probe func(context.Context, Member) (Progress, error)
 	// ValidateJoin runs after the candidate has caught up as a nonvoter and

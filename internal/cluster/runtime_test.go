@@ -17,6 +17,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -363,23 +364,35 @@ func TestCloseIsBoundedAndKeepsLedgerOpenUntilBusinessStops(t *testing.T) {
 	nodes[0].runtime.Store(nil)
 }
 
-func TestActivationFailureStopsRuntimeInsteadOfReusingPartialStores(t *testing.T) {
+// A local application that cannot be built is this node's own trouble: the
+// replica keeps replicating and voting, says why it is not ready, and builds
+// again on the next attempt instead of dropping out of the cluster.
+func TestActivationFailureKeepsTheReplicaAndBuildsAgain(t *testing.T) {
 	nodes := testNodes(t, 1)
 	failure := errors.New("cannot rebuild business stores")
-	nodes[0].config.Activate = func(context.Context, Activation) (Deactivate, error) { return nil, failure }
+	build := nodes[0].config.Activate
+	var attempts atomic.Int64
+	var observed Status
+	nodes[0].config.Activate = func(ctx context.Context, activation Activation) (Deactivate, error) {
+		switch attempts.Add(1) {
+		case 1:
+			return nil, failure
+		case 2:
+			observed = activation.Runtime.Status()
+			return nil, failure
+		}
+		return build(ctx, activation)
+	}
 	r := openNode(t, nodes[0])
-	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
-	defer cancel()
-	if _, err := r.WaitReady(ctx); !errors.Is(err, failure) {
-		t.Fatalf("activation failure was not exposed: %v", err)
+	active := ready(t, r)
+	if observed.Closed || !observed.Healthy || !strings.Contains(observed.LastError, failure.Error()) {
+		t.Fatalf("a failed build did not leave a healthy replica: %+v", observed)
 	}
-	if r.Status().Ready || !r.Status().Closed {
-		t.Fatal("partially constructed application stayed active")
+	if err := active.Ledger.Document("rebuilt").Save([]byte("value")); err != nil {
+		t.Fatalf("the generation that finally activated cannot write: %v", err)
 	}
-	// The error was asserted above; suppress the fixture's duplicate report.
-	nodes[0].runtime.Store(nil)
-	if err := r.Close(); !errors.Is(err, failure) {
-		t.Fatalf("closed runtime lost the activation error: %v", err)
+	if status := r.Status(); !status.Ready || status.Closed || status.LastError != "" {
+		t.Fatalf("a recovered runtime still reports its earlier failure: %+v", status)
 	}
 }
 

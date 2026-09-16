@@ -220,7 +220,7 @@ func checkIdentity(c Config) error {
 func (s *Service) Status() Status {
 	address, id := s.raft.LeaderWithID()
 	healthy := !s.closed.Load() && s.fsm.healthy() && s.raft.State() != raft.Shutdown
-	return Status{State: s.fsm.read(), NodeID: s.config.NodeID, Address: string(s.transport.LocalAddr()), LeaderID: string(id), LeaderAddress: string(address), IsLeader: healthy && s.raft.State() == raft.Leader, Healthy: healthy, FailureDomain: s.config.FailureDomain, StorageLevel: s.config.StorageLevel}
+	return Status{State: s.fsm.read(), NodeID: s.config.NodeID, Address: string(s.transport.LocalAddr()), LeaderID: string(id), LeaderAddress: string(address), IsLeader: healthy && s.raft.State() == raft.Leader, Build: s.config.Build, Healthy: healthy, FailureDomain: s.config.FailureDomain, StorageLevel: s.config.StorageLevel}
 }
 
 // TransportPeers reads Raft's durable latest membership before FSM replay has
