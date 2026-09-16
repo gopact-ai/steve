@@ -9,9 +9,10 @@ import (
 	"net"
 	"net/http"
 	"reflect"
-	"strings"
+	"strconv"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/desktop"
 	"github.com/gopact-ai/steve/internal/nodebootstrap"
 	"github.com/gopact-ai/steve/internal/sshconnect"
@@ -67,7 +68,7 @@ type peerEnrollmentService interface {
 	CompletePeerEnrollment(context.Context, string) (PeerEnrollmentResult, error)
 	PeerEnrollmentStatus(context.Context, string) (PeerEnrollmentResult, error)
 	AbandonPeerEnrollment(context.Context, string) error
-	PeerSourceCandidates(context.Context) ([]string, string)
+	OpenEnrollmentLink(context.Context, string) error
 }
 
 type peerSSHBackend struct {
@@ -84,12 +85,6 @@ type peerSSHBackend struct {
 // resets it, so a slow but moving enrollment is never cut off.
 const peerStallLimit = 5 * time.Minute
 
-// SourceEndpoints names this machine's candidate addresses, registered one
-// first, and the HTTPS port a joining node must reach.
-func (b peerSSHBackend) SourceEndpoints(ctx context.Context) ([]string, string) {
-	return b.service().PeerSourceCandidates(ctx)
-}
-
 func (b peerSSHBackend) service() peerEnrollmentService {
 	if b.enrollment != nil {
 		return b.enrollment
@@ -97,8 +92,39 @@ func (b peerSSHBackend) service() peerEnrollmentService {
 	return b.peer
 }
 
-func sshPeerEnrollmentRequest(req sshconnect.InstallRequest) PeerEnrollmentRequest {
-	return PeerEnrollmentRequest{Alias: req.Alias, Name: req.Name, PeerAddress: req.Addr, RaftAddress: req.RaftAddr, SourceHost: req.SourceHost, Level: req.Level, WorkspaceDir: req.WorkspaceDir}
+func sshPeerEnrollmentRequest(req sshconnect.InstallRequest, hubRoute coordination.Route) PeerEnrollmentRequest {
+	return PeerEnrollmentRequest{Alias: req.Alias, Name: req.Name, PeerAddress: req.Addr, RaftAddress: req.RaftAddr, HubRoute: hubRoute, Level: req.Level, WorkspaceDir: req.WorkspaceDir}
+}
+
+// hubRouteFor picks, from the loopback ports the machine reported free,
+// the two at which this node's listeners will appear there. Ports the
+// machine's own node will listen on are passed over, since that node
+// binds every interface. The choice is a function of the check alone, so
+// the plan a user reviews and the one that is registered agree.
+func hubRouteFor(req sshconnect.InstallRequest, check sshconnect.CheckResult) (coordination.Route, *sshconnect.Step) {
+	taken := map[string]bool{}
+	if _, port, err := net.SplitHostPort(req.Addr); err == nil {
+		taken[port] = true
+		if n, err := strconv.Atoi(port); err == nil {
+			taken[strconv.Itoa(n+1)] = true
+		}
+	}
+	if _, port, err := net.SplitHostPort(req.RaftAddr); err == nil {
+		taken[port] = true
+	}
+	var picked []string
+	for _, port := range check.FreeLoopbackPorts {
+		if text := strconv.Itoa(port); !taken[text] {
+			picked = append(picked, net.JoinHostPort("127.0.0.1", text))
+		}
+		if len(picked) == 2 {
+			return coordination.Route{Raft: picked[0], API: picked[1]}, nil
+		}
+	}
+	if check.FreeLoopbackPorts == nil {
+		return coordination.Route{}, &sshconnect.Step{ID: "peer_link", Status: "blocked", Message: "未能确认目标机上可供 SSH 隧道使用的回环端口", Suggestion: "确认目标机有 bash，且允许通过 SSH 转发端口后重新检查"}
+	}
+	return coordination.Route{}, &sshconnect.Step{ID: "peer_link", Status: "blocked", Message: fmt.Sprintf("目标机回环地址上 %d–%d 之间没有两个空闲端口供 SSH 隧道使用", sshconnect.FirstLoopbackPort, sshconnect.LastLoopbackPort), Suggestion: "释放这段端口，或为目标节点换一组端口后重新检查"}
 }
 
 func peerPlanHash(plan PeerEnrollmentPlan) string {
@@ -107,24 +133,15 @@ func peerPlanHash(plan PeerEnrollmentPlan) string {
 
 func (b peerSSHBackend) prepare(ctx context.Context, req sshconnect.InstallRequest, check sshconnect.CheckResult) (sshconnect.Template, nodebootstrap.PeerSpec, PeerEnrollmentPlan, error) {
 	template := sshconnect.Template{Steps: []sshconnect.Step{}, Effects: []string{}}
-	plan, err := b.service().PreviewPeerEnrollment(ctx, sshPeerEnrollmentRequest(req))
-	if err == nil && req.SourceHost == "" {
-		// The target already said which of this machine's addresses it can
-		// open; a registered address it cannot reach gives way to one it can.
-		if pick, ok := reachableSourceHost(check.SourceHosts, plan.Request.SourceHost); ok && pick != plan.Request.SourceHost {
-			req.SourceHost = pick
-			plan, err = b.service().PreviewPeerEnrollment(ctx, sshPeerEnrollmentRequest(req))
-		}
+	hubRoute, blocked := hubRouteFor(req, check)
+	if blocked != nil {
+		template.Steps = append(template.Steps, *blocked)
+		return template, nodebootstrap.PeerSpec{}, PeerEnrollmentPlan{}, nil
 	}
+	plan, err := b.service().PreviewPeerEnrollment(ctx, sshPeerEnrollmentRequest(req, hubRoute))
 	if err != nil {
-		template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_network", Status: "blocked", Message: err.Error(), Suggestion: "检查目标节点地址与本机独立互联地址后重新生成计划"})
+		template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_network", Status: "blocked", Message: err.Error(), Suggestion: "检查目标节点地址后重新生成计划"})
 		return template, nodebootstrap.PeerSpec{}, plan, nil
-	}
-	if step, found := unreachableSourceStep(check.SourceHosts, plan, req.SourceHost != ""); found {
-		template.Steps = append(template.Steps, step)
-		if step.Status == "blocked" {
-			return template, nodebootstrap.PeerSpec{}, plan, nil
-		}
 	}
 	template.ReviewID = plan.ReviewID
 	if template.ReviewID == "" || template.ReviewID != peerPlanHash(plan) {
@@ -157,13 +174,7 @@ func (b peerSSHBackend) prepare(ctx context.Context, req sshconnect.InstallReque
 	}
 	template.Binary, template.BinaryPath = &metadata, path
 	template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_network", Status: "ready", Message: fmt.Sprintf("目标 HTTPS %s；共识连接 %s", plan.Request.PeerAddress, plan.Request.RaftAddress)})
-	if plan.UpdateSourceAddress {
-		message := "本机跨机连接将使用 " + plan.Source.APIAddress + " 和 " + plan.Source.Address
-		if pick, ok := reachableSourceHost(check.SourceHosts, plan.Request.SourceHost); ok && pick == plan.Request.SourceHost {
-			message = "目标机已确认能连到本机 " + plan.Request.SourceHost + "；" + message
-		}
-		template.Steps = append(template.Steps, sshconnect.Step{ID: "source_network", Status: "ready", Message: message, Suggestion: "这些地址应可由已加入节点独立访问；安装后会逐一验证"})
-	}
+	template.Steps = append(template.Steps, sshconnect.Step{ID: "peer_link", Status: "ready", Message: fmt.Sprintf("两台机器经由 SSH 会话互联：本机在目标机上以 %s 和 %s 出现", hubRoute.Raft, hubRoute.API), Suggestion: "本机换网络或开关 VPN 都不影响；只要这个 SSH 别名能连上，隧道会自动重连"})
 	spec := nodebootstrap.PeerSpec{OS: metadata.OS, Arch: metadata.Arch, SHA256: metadata.SHA256, UploadID: nodebootstrap.PreviewUploadID, JoinPackage: nodebootstrap.PreviewJoinPackage}
 	template.Script, err = nodebootstrap.BuildPeer(spec)
 	return template, spec, plan, err
@@ -198,13 +209,38 @@ func (b peerSSHBackend) Register(ctx context.Context, req sshconnect.InstallRequ
 		return result, err
 	}
 	var bundle PeerJoinPackage
-	if registered.Plan.ReviewID != plan.ReviewID || peerPlanHash(registered.Plan) != plan.ReviewID || json.Unmarshal(registered.Payload, &bundle) != nil || bundle.OperationID != installID || bundle.NodeID != registered.NodeID || bundle.ClusterID != plan.ClusterID || bundle.Name != plan.Request.Name || bundle.WorkspaceDir != plan.Request.WorkspaceDir || bundle.StorageLevel != plan.Request.Level || bundle.PeerAdvertise != plan.Request.PeerAddress || bundle.RaftAdvertise != plan.Request.RaftAddress || !reflect.DeepEqual(bundle.Seeds, plan.Seeds) {
+	if registered.Plan.ReviewID != plan.ReviewID || peerPlanHash(registered.Plan) != plan.ReviewID || json.Unmarshal(registered.Payload, &bundle) != nil || bundle.OperationID != installID || bundle.NodeID != registered.NodeID || bundle.ClusterID != plan.ClusterID || bundle.Name != plan.Request.Name || bundle.WorkspaceDir != plan.Request.WorkspaceDir || bundle.StorageLevel != plan.Request.Level || bundle.PeerAdvertise != plan.Request.PeerAddress || bundle.RaftAdvertise != plan.Request.RaftAddress || !reflect.DeepEqual(bundle.Seeds, plan.Seeds) || !routesToOneOf(bundle.Routes, plan.Seeds, plan.Request.HubRoute) {
 		return result, errors.New("私有入组包与已审阅网络计划不同，安装已停止")
 	}
 	result.Token = base64.StdEncoding.EncodeToString(registered.Payload)
 	spec.JoinPackage, spec.UploadID = result.Token, installID
 	result.Script, err = nodebootstrap.BuildPeer(spec)
 	return result, err
+}
+
+// routesToOneOf says the package routes exactly one member, a seed, at
+// the reviewed tunnel ports: the node preparing it names itself, and the
+// review saw only the ports.
+func routesToOneOf(routes map[string]coordination.Route, seeds []coordination.Member, want coordination.Route) bool {
+	for nodeID, route := range routes {
+		if route != want {
+			return false
+		}
+		known := false
+		for _, seed := range seeds {
+			known = known || seed.NodeID == nodeID
+		}
+		if !known {
+			return false
+		}
+	}
+	return len(routes) == 1
+}
+
+// Link brings up the SSH session the enrolled machine and this node talk
+// through, before anything is installed on the machine.
+func (b peerSSHBackend) Link(ctx context.Context, installID string, _ sshconnect.Registration) error {
+	return b.service().OpenEnrollmentLink(ctx, installID)
 }
 
 func (b peerSSHBackend) Verify(ctx context.Context, name string) error {
@@ -274,44 +310,6 @@ func peerWaitStopped(last PeerEnrollmentResult, why string) *sshconnect.StepErro
 		suggestion = "最近一次失败：" + last.Error + "。处理后点「继续核对接入结果」，不会重新安装"
 	}
 	return &sshconnect.StepError{Stage: "peer_membership", Code: "peer_not_ready", Message: "节点已安装，但" + why, Suggestion: suggestion}
-}
-
-// reachableSourceHost picks this machine's address for the plan from what
-// the target reported: the current one if the target can open it, else the
-// first it can. Without a report there is nothing to choose from.
-func reachableSourceHost(probed []sshconnect.SourceHost, current string) (string, bool) {
-	for _, host := range probed {
-		if host.Host == current && host.Reachable {
-			return current, true
-		}
-	}
-	for _, host := range probed {
-		if host.Reachable {
-			return host.Host, true
-		}
-	}
-	return "", false
-}
-
-// unreachableSourceStep reports a source address the target already failed
-// to open, naming every address that was tried. An automatic choice blocks
-// the plan; an address the user typed stays, with the finding beside it,
-// since the probe can be wrong where the user is not.
-func unreachableSourceStep(probed []sshconnect.SourceHost, plan PeerEnrollmentPlan, explicit bool) (sshconnect.Step, bool) {
-	tried, known := make([]string, 0, len(probed)), false
-	for _, host := range probed {
-		tried = append(tried, host.Host)
-		known = known || host.Host == plan.Request.SourceHost
-	}
-	if pick, ok := reachableSourceHost(probed, plan.Request.SourceHost); !known || ok && pick == plan.Request.SourceHost {
-		return sshconnect.Step{}, false
-	}
-	_, port, _ := net.SplitHostPort(strings.TrimPrefix(plan.Source.APIAddress, "https://"))
-	message := fmt.Sprintf("目标机连不上本机的 %s 端口：已从目标机试连 %s", port, strings.Join(tried, "、"))
-	if explicit {
-		return sshconnect.Step{ID: "source_network", Status: "ready", Message: message + "；将按填写的 " + plan.Request.SourceHost + " 继续", Suggestion: "安装后节点间会再次验证；若确认目标机能访问该地址，可以继续"}, true
-	}
-	return sshconnect.Step{ID: "source_network", Status: "blocked", Message: message, Suggestion: "确认两台机器在同一网络或 VPN 内、本机防火墙放行该端口；或在「本机互联地址」填写目标机能访问到的本机地址后重新检查"}, true
 }
 
 // peerPhaseText names an enrollment phase for the installation log.

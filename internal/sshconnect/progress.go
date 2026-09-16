@@ -16,6 +16,7 @@ import (
 const (
 	PhasePreflight    = "preflight"
 	PhaseRegistration = "registration"
+	PhaseLink         = "link"
 	PhaseUpload       = "upload"
 	PhaseInstallation = "installation"
 	PhaseConnectivity = "connectivity"
@@ -35,8 +36,11 @@ const (
 	redactedMarker  = "[redacted]"
 )
 
-func phasesFor(plan InstallPlan) []string {
+func (s *Service) phasesFor(plan InstallPlan) []string {
 	phases := []string{PhasePreflight, PhaseRegistration}
+	if _, ok := s.backend.(Linker); ok {
+		phases = append(phases, PhaseLink)
+	}
 	if plan.Binary != nil {
 		phases = append(phases, PhaseUpload)
 	}
@@ -54,7 +58,7 @@ func (s *Service) Status(id string) (InstallResult, error) {
 		return InstallResult{}, fail("planning", "unknown_plan", "安装计划不存在或已过期", "重新检查机器并生成计划")
 	}
 	if !stored.running && !stored.done {
-		return InstallResult{PlanID: id, Name: stored.plan.Request.Name, Status: "planned", Steps: []Step{}, Phases: phasesFor(stored.plan)}, nil
+		return InstallResult{PlanID: id, Name: stored.plan.Request.Name, Status: "planned", Steps: []Step{}, Phases: s.phasesFor(stored.plan)}, nil
 	}
 	return cloneResult(stored.result), nil
 }

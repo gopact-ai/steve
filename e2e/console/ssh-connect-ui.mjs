@@ -34,7 +34,7 @@ const routeRequest = async (route) => {
     }
     if (p === "/console/ssh/plans") {
         const request = req.postDataJSON(); f.plans.push(request);
-        return route.fulfill({ json: { id: "plan-" + f.plans.length, request: f.changedNetwork ? { ...request, source_host: "203.0.113.23" } : request, check, script: "mkdir -p ~/steve-bin\n# install a verified node binary", effects: ["Create node configuration on dev-box", "Start the node service on port 7701"], steps: [...check.steps, ...(f.ready ? [] : [{ id: "binary", status: "blocked", message: "No matching node package", suggestion: "Provide a Linux arm64 node package and review a new plan." }])], ready: f.ready, expires_at: "2030-01-01T00:00:00Z", binary: { os: "linux", arch: "arm64", sha256: "a".repeat(64), size: 2048 } } });
+        return route.fulfill({ json: { id: "plan-" + f.plans.length, request: f.changedNetwork ? { ...request, raft_addr: "203.0.113.23:8802" } : request, check, script: "mkdir -p ~/steve-bin\n# install a verified node binary", effects: ["Create node configuration on dev-box", "Start the node service on port 7701"], steps: [...check.steps, ...(f.ready ? [] : [{ id: "binary", status: "blocked", message: "No matching node package", suggestion: "Provide a Linux arm64 node package and review a new plan." }])], ready: f.ready, expires_at: "2030-01-01T00:00:00Z", binary: { os: "linux", arch: "arm64", sha256: "a".repeat(64), size: 2048 } } });
     }
     if (p === "/console/ssh/browse") {
         const { alias, path: target } = req.postDataJSON(); f.browses.push({ alias, path: target });
@@ -164,18 +164,17 @@ try {
     await dialog.getByRole("button", { name: "Edit connection details", exact: true }).click();
     await page.setViewportSize({ width: 780, height: 540 });
     await dialog.getByText("Advanced network settings", { exact: true }).click();
-    await dialog.getByRole("textbox", { name: "Election address", exact: true }).fill(" 10.0.0.9:8802 ");
-    const sourceHost = dialog.getByRole("textbox", { name: "This machine’s network address", exact: true });
-    await sourceHost.scrollIntoViewIfNeeded();
-    await sourceHost.focus();
+    const raftAddress = dialog.getByRole("textbox", { name: "Election address", exact: true });
+    await raftAddress.scrollIntoViewIfNeeded();
+    await raftAddress.focus();
     const formScroll = await scrollArea.evaluate((el) => el.scrollTop);
     assert.ok(formScroll > 0);
-    await sourceHost.fill(" 10.0.0.4 ");
+    await raftAddress.fill(" 10.0.0.9:8802 ");
     assert.equal(await scrollArea.evaluate((el) => el.scrollTop), formScroll, "editing keeps the current field in place");
-    assert.equal(await sourceHost.evaluate((el) => el === document.activeElement), true);
+    assert.equal(await raftAddress.evaluate((el) => el === document.activeElement), true);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.ok(await dialog.evaluate((el) => el.scrollWidth <= el.clientWidth));
-    await dialog.getByRole("textbox", { name: "This machine’s network address", exact: true }).scrollIntoViewIfNeeded();
+    await raftAddress.scrollIntoViewIfNeeded();
     await screenshot("ssh-network-narrow");
     await page.setViewportSize({ width: 1440, height: 1000 });
     f.ready = true;
@@ -183,10 +182,9 @@ try {
     await dialog.getByText("Create node configuration on dev-box", { exact: true }).waitFor();
     await dialog.getByText("Start the node service on port 7701", { exact: true }).waitFor();
     await screenshot("ssh-plan-desktop");
-    assert.deepEqual(f.plans.at(-1), { alias: "dev-box", name: "worker-west", addr: "10.0.0.9:7701", raft_addr: "10.0.0.9:8802", source_host: "10.0.0.4", level: "restricted", workspace_dir: "~/steve-workspace" });
+    assert.deepEqual(f.plans.at(-1), { alias: "dev-box", name: "worker-west", addr: "10.0.0.9:7701", raft_addr: "10.0.0.9:8802", level: "restricted", workspace_dir: "~/steve-workspace" });
     await dialog.getByText("~/steve-workspace", { exact: true }).waitFor();
     await dialog.getByText("10.0.0.9:8802", { exact: true }).waitFor();
-    await dialog.getByText("10.0.0.4", { exact: true }).waitFor();
     f.hold = true; f.reset = true;
     const install = dialog.getByRole("button", { name: "Confirm installation", exact: true });
     await install.focus(); await page.keyboard.press("Enter");

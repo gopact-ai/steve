@@ -35,7 +35,7 @@ const executorNameShape = /^[a-z0-9][a-z0-9._-]{0,63}$/;
 function suggestedName(alias: string) { return alias.trim().slice(0, 64); }
 function executorName(name: string) { return name.toLowerCase().replace(/[^a-z0-9._-]+/g, "-").replace(/^[^a-z0-9]+/, "").slice(0, 64); }
 function validWorkspace(dir: string) { return dir.length <= 512 && !/[\r\n\t\0]/.test(dir) && (dir.startsWith("/") || dir === "~" || dir.startsWith("~/")) && !dir.split("/").includes(".."); }
-function sameRequest(a: SSHInstallRequest, b: SSHInstallRequest) { return a.alias === b.alias && a.name === b.name && a.addr === b.addr && a.level === b.level && (a.raft_addr || "") === (b.raft_addr || "") && (a.source_host || "") === (b.source_host || "") && (a.workspace_dir || "") === (b.workspace_dir || ""); }
+function sameRequest(a: SSHInstallRequest, b: SSHInstallRequest) { return a.alias === b.alias && a.name === b.name && a.addr === b.addr && a.level === b.level && (a.raft_addr || "") === (b.raft_addr || "") && (a.workspace_dir || "") === (b.workspace_dir || ""); }
 
 export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }: { onClose: () => void; onChanged: () => void; onViewMachines: () => void; onAddExecutor: (request: SSHInstallRequest) => void }) {
     const { t, locale } = useI18n();
@@ -103,7 +103,7 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
     }
     async function preparePlan(allowPeerData = false) {
         if (acting.current || attempted || !check?.reachable || existingInstallation || (needsPeerConsent && !allowPeerData)) return;
-        const body = { ...request, ...(needsPeerConsent && allowPeerData ? { level: "restricted" } : {}), name: request.name.trim(), addr: request.addr.trim(), raft_addr: request.raft_addr?.trim() || undefined, source_host: request.source_host?.trim() || undefined, workspace_dir: peerInstallation ? request.workspace_dir?.trim() || defaultWorkspace : undefined };
+        const body = { ...request, ...(needsPeerConsent && allowPeerData ? { level: "restricted" } : {}), name: request.name.trim(), addr: request.addr.trim(), raft_addr: request.raft_addr?.trim() || undefined, workspace_dir: peerInstallation ? request.workspace_dir?.trim() || defaultWorkspace : undefined };
         if (peerInstallation ? body.name.length === 0 || [...body.name].length > 64 : !executorNameShape.test(body.name)) { setError(t(peerInstallation ? "ssh.machineNameInvalid" : "ssh.nameInvalid")); fields.current?.querySelector<HTMLInputElement>('input[name="ssh-node-name"]')?.focus(); return; }
         if (!body.addr) { setError(t("ssh.addressRequired")); fields.current?.querySelector<HTMLInputElement>('input[name="ssh-node-address"]')?.focus(); return; }
         if (body.workspace_dir && !validWorkspace(body.workspace_dir)) { setError(t("ssh.workspaceInvalid")); fields.current?.querySelector<HTMLInputElement>('input[name="ssh-workspace"]')?.focus(); return; }
@@ -202,7 +202,6 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
                             <div className="mt-4 space-y-4">
                                 <p className="text-xs leading-5 text-tertiary">{t("ssh.networkHint")}</p>
                                 <Input size="sm" label={t("ssh.raftAddress")} name="ssh-raft-address" autoComplete="off" spellCheck="false" placeholder="192.0.2.7:7702…" hint={t("ssh.raftAddressHint")} value={request.raft_addr || ""} onChange={(raft_addr) => edit({ raft_addr })} isDisabled={!!busy} />
-                                <Input size="sm" label={t("ssh.sourceHost")} name="ssh-source-host" autoComplete="off" spellCheck="false" placeholder="192.0.2.4…" hint={t("ssh.sourceHostHint")} value={request.source_host || ""} onChange={(source_host) => edit({ source_host })} isDisabled={!!busy} />
                             </div>
                         </details>
                         {peerInstallation ? <div className="space-y-3 rounded-lg bg-secondary p-4"><h3 className="text-sm font-semibold text-primary">{t("ssh.peerScope")}</h3><p className="text-sm leading-6 text-secondary">{t("ssh.peerScopeHint")}</p><p className="text-xs leading-5 text-tertiary">{t("ssh.peerScopeLogin")}</p><p className="text-xs leading-5 text-tertiary">{t("ssh.peerScopeAuto")}</p>{needsPeerConsent && <p className="text-sm leading-6 text-secondary">{t("ssh.peerConsent", { level: levelName(request.level, locale) })}</p>}</div> : <ExecutionDataLevel value={request.level} isDisabled={!!busy} onChange={(level) => edit({ level })} />}</>}
@@ -212,9 +211,8 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
                 {plan && <section className="space-y-4">
                     <h2 ref={stageHeading} tabIndex={-1} className="text-base font-semibold text-primary focus-visible:outline-2 focus-visible:outline-focus-ring">{t(connected ? "ssh.connected" : result?.status === "needs_attention" ? "ssh.attention" : "ssh.plan")}</h2>
                     <dl className="grid min-w-0 grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-xs"><dt className="text-tertiary">{t(plan.check.installation_mode === "peer" ? "ssh.machineName" : "ssh.name")}</dt><dd className="break-all font-medium text-primary">{plan.request.name}</dd><dt className="text-tertiary">SSH</dt><dd className="break-all text-secondary">{plan.request.alias}</dd><dt className="text-tertiary">{t("ssh.address")}</dt><dd className="break-all font-mono text-secondary">{plan.request.addr}</dd>{plan.request.workspace_dir && <><dt className="text-tertiary">{t("ssh.workspace")}</dt><dd className="break-all font-mono text-secondary">{plan.request.workspace_dir}</dd></>}<dt className="text-tertiary">{t("ssh.level")}</dt><dd className="text-secondary">{levelName(plan.request.level, locale)}</dd></dl>
-                    {(plan.request.raft_addr || plan.request.source_host) && <dl className="grid min-w-0 grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
-                        {plan.request.raft_addr && <><dt className="text-tertiary">{t("ssh.raftAddress")}</dt><dd className="break-all font-mono text-secondary">{plan.request.raft_addr}</dd></>}
-                        {plan.request.source_host && <><dt className="text-tertiary">{t("ssh.sourceHost")}</dt><dd className="break-all font-mono text-secondary">{plan.request.source_host}</dd></>}
+                    {plan.request.raft_addr && <dl className="grid min-w-0 grid-cols-[minmax(0,auto)_minmax(0,1fr)] gap-x-4 gap-y-2 text-xs">
+                        <dt className="text-tertiary">{t("ssh.raftAddress")}</dt><dd className="break-all font-mono text-secondary">{plan.request.raft_addr}</dd>
                     </dl>}
                     {!attempted ? <>
                         <div><h3 className="mb-2 text-sm font-semibold text-primary">{t("ssh.effects")}</h3><ul className="list-disc space-y-1 pl-5 text-sm leading-6 text-secondary">{plan.effects.map((effect, index) => <li key={index} className="break-words">{effect}</li>)}</ul></div>
@@ -243,7 +241,7 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
     </ModalOverlay>;
 }
 
-const phaseLabels = { preflight: "ssh.phase.preflight", registration: "ssh.phase.registration", upload: "ssh.phase.upload", installation: "ssh.phase.installation", connectivity: "ssh.phase.connectivity" } as const;
+const phaseLabels = { preflight: "ssh.phase.preflight", registration: "ssh.phase.registration", link: "ssh.phase.link", upload: "ssh.phase.upload", installation: "ssh.phase.installation", connectivity: "ssh.phase.connectivity" } as const;
 
 // InstallProgress shows where an installation is among its phases: the
 // ones behind it, the one it is in, and, for one that stopped, where.

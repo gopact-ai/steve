@@ -77,13 +77,15 @@ type sshEnrollmentFixture struct {
 	prepareError        error
 	previewed           PeerEnrollmentRequest
 	advance             func(*sshEnrollmentFixture)
+	linked              []string
+	linkError           error
 }
 
 func (f *sshEnrollmentFixture) PreviewPeerEnrollment(_ context.Context, request PeerEnrollmentRequest) (PeerEnrollmentPlan, error) {
 	f.previewed = request
 	plan := f.plan
-	if request.SourceHost != "" {
-		plan.Request.SourceHost = request.SourceHost
+	if request.HubRoute != plan.Request.HubRoute {
+		plan.Request.HubRoute = request.HubRoute
 		plan.ReviewID = plan.reviewHash()
 	}
 	return plan, nil
@@ -91,8 +93,9 @@ func (f *sshEnrollmentFixture) PreviewPeerEnrollment(_ context.Context, request 
 
 func (f *sshEnrollmentFixture) AbandonPeerEnrollment(context.Context, string) error { return nil }
 
-func (f *sshEnrollmentFixture) PeerSourceCandidates(context.Context) ([]string, string) {
-	return []string{"192.0.2.1", "10.4.17.4"}, "7711"
+func (f *sshEnrollmentFixture) OpenEnrollmentLink(_ context.Context, id string) error {
+	f.linked = append(f.linked, id)
+	return f.linkError
 }
 
 func (f *sshEnrollmentFixture) PreparePeerEnrollment(_ context.Context, request PeerEnrollmentRequest, id string) (PeerEnrollmentPackage, error) {
@@ -102,6 +105,9 @@ func (f *sshEnrollmentFixture) PreparePeerEnrollment(_ context.Context, request 
 	f.prepares++
 	pkg := f.packageValue
 	pkg.OperationID = id
+	if pkg.Routes == nil && request.HubRoute.Raft != "" {
+		pkg.Routes = map[string]coordination.Route{"local": request.HubRoute}
+	}
 	raw, _ := json.Marshal(pkg)
 	return PeerEnrollmentPackage{NodeID: pkg.NodeID, Payload: raw, Plan: f.plan}, f.prepareError
 }
@@ -125,15 +131,16 @@ func (f *sshEnrollmentFixture) PeerEnrollmentStatus(_ context.Context, id string
 func peerSSHFixture(t *testing.T) (peerSSHBackend, *sshEnrollmentFixture, sshconnect.InstallRequest, sshconnect.CheckResult) {
 	t.Helper()
 	request := sshconnect.InstallRequest{Alias: "dev", Name: "remote", Addr: "192.0.2.5:7701", Level: "restricted"}
-	resolved := PeerEnrollmentRequest{Alias: request.Alias, Name: request.Name, PeerAddress: request.Addr, RaftAddress: "192.0.2.5:7702", SourceHost: "192.0.2.1", Level: "restricted"}
+	resolved := PeerEnrollmentRequest{Alias: request.Alias, Name: request.Name, PeerAddress: request.Addr, RaftAddress: "192.0.2.5:7702", HubRoute: coordination.Route{Raft: "127.0.0.1:25407", API: "127.0.0.1:25408"}, Level: "restricted"}
 	source := coordination.Member{NodeID: "local", Address: "192.0.2.1:7712", APIAddress: "https://192.0.2.1:7711"}
-	fixture := &sshEnrollmentFixture{plan: PeerEnrollmentPlan{Request: resolved, ClusterID: "test-cluster", Source: source, Seeds: []coordination.Member{source}, UpdateSourceAddress: true, Effects: []string{"更新本机跨机地址为192.0.2.1，随后验证所有节点独立互联"}}, packageValue: PeerJoinPackage{Version: 1, ClusterID: "test-cluster", NodeID: "node-new", Name: "remote", StorageLevel: "restricted", PeerAdvertise: resolved.PeerAddress, RaftAdvertise: resolved.RaftAddress, Seeds: []coordination.Member{source}, PrivateKey: []byte("private-leaf-key"), OwnerToken: "private-owner-token", WorkerToken: "private-worker-token"}, completeResult: PeerEnrollmentResult{NodeID: "node-new", Name: "remote", Phase: "ready", Ready: true}}
+	fixture := &sshEnrollmentFixture{plan: PeerEnrollmentPlan{Request: resolved, ClusterID: "test-cluster", Seeds: []coordination.Member{source}, Effects: []string{"两台机器经由 SSH 会话互联"}}, packageValue: PeerJoinPackage{Version: 1, ClusterID: "test-cluster", NodeID: "node-new", Name: "remote", StorageLevel: "restricted", PeerAdvertise: resolved.PeerAddress, RaftAdvertise: resolved.RaftAddress, Seeds: []coordination.Member{source}, PrivateKey: []byte("private-leaf-key"), OwnerToken: "private-owner-token", WorkerToken: "private-worker-token"}, completeResult: PeerEnrollmentResult{NodeID: "node-new", Name: "remote", Phase: "ready", Ready: true}}
 	fixture.plan.ReviewID = fixture.plan.reviewHash()
 	request.ApprovedReviewID = fixture.plan.ReviewID
 	binary := InstallBinaryFixture(t)
 	backend := peerSSHBackend{enrollment: fixture, findBinary: func(string) (string, bool) { return binary, true }}
 	check := SshCheckFixture()
 	check.Tools = append(check.Tools, sshconnect.Tool{Name: "base64", Available: true})
+	check.FreeLoopbackPorts = []int{25407, 25408, 25409}
 	return backend, fixture, request, check
 }
 
@@ -204,7 +211,7 @@ func TestPeerSSHRecoverUsesStoredOperationWithoutPreparingAnotherNode(t *testing
 
 func TestPeerSSHFailureAfterPreparingIdentityRetainsOperation(t *testing.T) {
 	b, fixture, request, check := peerSSHFixture(t)
-	fixture.prepareError = errors.New("source network update was not confirmed")
+	fixture.prepareError = errors.New("enrollment record could not be saved")
 	registration, err := b.Register(t.Context(), request, check, strings.Repeat("f", 48))
 	if err == nil || registration.Name != "remote" || registration.NodeID != "node-new" || registration.Script != "" || registration.Token != "" {
 		t.Fatalf("partial preparation lost receipt or returned install script: %#v %v", registration, err)
@@ -214,8 +221,7 @@ func TestPeerSSHFailureAfterPreparingIdentityRetainsOperation(t *testing.T) {
 func TestPeerSSHRejectsFreshPlanBeforeAnyPrepareSideEffect(t *testing.T) {
 	b, fixture, request, check := peerSSHFixture(t)
 	approved := request.ApprovedReviewID
-	fixture.plan.Request.SourceHost = "192.0.2.99"
-	fixture.plan.Source.APIAddress = "https://192.0.2.99:7711"
+	fixture.plan.Request.WorkspaceDir = "~/elsewhere"
 	fixture.plan.ReviewID = fixture.plan.reviewHash()
 	if fixture.plan.ReviewID == approved {
 		t.Fatal("fixture did not change review ID")

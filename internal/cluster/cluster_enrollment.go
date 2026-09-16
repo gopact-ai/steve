@@ -13,7 +13,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log/slog"
 	"maps"
 	"net"
 	"net/http"
@@ -41,8 +40,12 @@ type PeerEnrollmentRequest struct {
 	Name        string `json:"name"`
 	PeerAddress string `json:"peer_address"`
 	RaftAddress string `json:"raft_address"`
-	SourceHost  string `json:"source_host,omitempty"`
 	Level       string `json:"level,omitempty"`
+	// HubRoute is where the machine reaches this node: the loopback ports
+	// on the machine at which this node's Raft and API listeners appear
+	// through the SSH session the enrollment opens. Set for every machine
+	// enrolled over SSH; the machine never has to route to this node.
+	HubRoute coordination.Route `json:"hub_route"`
 	// WorkspaceDir is where the machine keeps its work: its default project
 	// directory and the root its executor runs in. "~/" is the remote home.
 	WorkspaceDir     string `json:"workspace_dir,omitempty"`
@@ -50,14 +53,11 @@ type PeerEnrollmentRequest struct {
 }
 
 type PeerEnrollmentPlan struct {
-	Request             PeerEnrollmentRequest `json:"request"`
-	ClusterID           string                `json:"cluster_id"`
-	Source              coordination.Member   `json:"source"`
-	Seeds               []coordination.Member `json:"seeds"`
-	UpdateSourceAddress bool                  `json:"update_source_address"`
-	Effects             []string              `json:"effects"`
-	PreviousSource      coordination.Member   `json:"previous_source"`
-	ReviewID            string                `json:"review_id"`
+	Request   PeerEnrollmentRequest `json:"request"`
+	ClusterID string                `json:"cluster_id"`
+	Seeds     []coordination.Member `json:"seeds"`
+	Effects   []string              `json:"effects"`
+	ReviewID  string                `json:"review_id"`
 }
 
 // PeerEnrollmentPackage is kept between the owner service and SSH stdin. It is
@@ -86,6 +86,9 @@ type PeerJoinPackage struct {
 	OwnerToken    string                `json:"owner_token"`
 	WorkerToken   string                `json:"worker_token"`
 	Seeds         []coordination.Member `json:"seeds"`
+	// Routes is where the machine connects to members it cannot reach at
+	// the addresses they advertise: this node, through the SSH session.
+	Routes map[string]coordination.Route `json:"routes,omitempty"`
 }
 
 type PeerEnrollmentStep struct {
@@ -106,13 +109,10 @@ type PeerEnrollmentResult struct {
 
 type peerEnrollmentRecord struct {
 	PeerEnrollmentResult
-	Request        PeerEnrollmentRequest              `json:"request"`
-	Fingerprint    string                             `json:"fingerprint"`
-	Package        []byte                             `json:"package"`
-	Plan           PeerEnrollmentPlan                 `json:"plan"`
-	SourceRequest  *coordination.MemberAddressRequest `json:"source_request,omitempty"`
-	SourceAttempts int                                `json:"source_attempts"`
-	SourceReady    bool                               `json:"source_ready"`
+	Request     PeerEnrollmentRequest `json:"request"`
+	Fingerprint string                `json:"fingerprint"`
+	Package     []byte                `json:"package"`
+	Plan        PeerEnrollmentPlan    `json:"plan"`
 }
 
 type advertisedPeerListener struct {
@@ -186,38 +186,6 @@ func localAdvertiseAddresses() []string {
 	return append(lan, tunnels...)
 }
 
-// PeerSourceCandidates names the addresses a joining node might reach this
-// machine at, the registered one first, and the HTTPS port it must open.
-func (p *Peer) PeerSourceCandidates(ctx context.Context) ([]string, string) {
-	runtime := p.Runtime.Load()
-	if runtime == nil {
-		return nil, ""
-	}
-	state, err := runtime.ReadState(ctx)
-	if err != nil {
-		return nil, ""
-	}
-	source, ok := state.Members[p.Config.NodeID]
-	if !ok {
-		return nil, ""
-	}
-	endpoint, err := url.Parse(source.APIAddress)
-	if err != nil || endpoint.Port() == "" {
-		return nil, ""
-	}
-	registered, _, _ := net.SplitHostPort(source.Address)
-	var hosts []string
-	seen := map[string]bool{}
-	for _, host := range append([]string{registered}, localAdvertiseAddresses()...) {
-		if host == "" || seen[host] || net.ParseIP(host) != nil && net.ParseIP(host).IsLoopback() {
-			continue
-		}
-		seen[host] = true
-		hosts = append(hosts, host)
-	}
-	return hosts, endpoint.Port()
-}
-
 func validPeerEndpoint(address string, allowLoopback bool) error {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
@@ -243,7 +211,6 @@ func (p *Peer) PreviewPeerEnrollment(ctx context.Context, request PeerEnrollment
 
 func (p *Peer) PreviewEnrollment(ctx context.Context, request PeerEnrollmentRequest, allowLoopback bool) (PeerEnrollmentPlan, error) {
 	request.ExpectedPlanHash = ""
-	request.SourceHost = strings.TrimSpace(request.SourceHost)
 	name, err := coordination.MemberName(request.Name)
 	if err != nil {
 		return PeerEnrollmentPlan{}, errors.New("机器名称需要 1–64 个字符，不含控制字符")
@@ -272,6 +239,10 @@ func (p *Peer) PreviewEnrollment(ctx context.Context, request PeerEnrollmentRequ
 	if request.PeerAddress == request.RaftAddress {
 		return PeerEnrollmentPlan{}, errors.New("HTTPS 与共识端口必须不同")
 	}
+	routed, err := validHubRoute(request.HubRoute)
+	if err != nil {
+		return PeerEnrollmentPlan{}, err
+	}
 	level := project.Level(request.Level).OrDefault()
 	if level != project.LevelPublic && level != project.LevelInternal && level != project.LevelRestricted && level != project.LevelSealed {
 		return PeerEnrollmentPlan{}, errors.New("节点数据等级不合法")
@@ -291,37 +262,13 @@ func (p *Peer) PreviewEnrollment(ctx context.Context, request PeerEnrollmentRequ
 	if err := p.authorizeLedgerReplica(ctx, coordination.Member{StorageLevel: request.Level}); err != nil {
 		return PeerEnrollmentPlan{}, err
 	}
-	source, ok := state.Members[p.Config.NodeID]
-	if !ok {
+	if _, ok := state.Members[p.Config.NodeID]; !ok {
 		return PeerEnrollmentPlan{}, errors.New("本机尚未加入机群")
-	}
-	if request.SourceHost == "" {
-		host, _, err := net.SplitHostPort(source.Address)
-		if err != nil {
-			return PeerEnrollmentPlan{}, fmt.Errorf("本机登记的地址 %q 无法解析: %w", source.Address, err)
-		}
-		request.SourceHost = host
-		if !allowLoopback && net.ParseIP(request.SourceHost).IsLoopback() {
-			if choices := localAdvertiseAddresses(); len(choices) > 0 {
-				request.SourceHost = choices[0]
-			}
-		}
-	}
-	_, raftPort, _ := net.SplitHostPort(source.Address)
-	sourceURL, _ := url.Parse(source.APIAddress)
-	if sourceURL == nil {
-		return PeerEnrollmentPlan{}, errors.New("本机没有可用的 HTTPS 地址")
-	}
-	proposed := source
-	proposed.Address = net.JoinHostPort(request.SourceHost, raftPort)
-	proposed.APIAddress = "https://" + net.JoinHostPort(request.SourceHost, sourceURL.Port())
-	if err := validPeerEndpoint(proposed.Address, allowLoopback); err != nil {
-		return PeerEnrollmentPlan{}, err
 	}
 	if p.Config.CAKeyFile == "" {
 		return PeerEnrollmentPlan{}, errors.New("请从保管机群签发密钥的原始 App 接入新节点")
 	}
-	plan := PeerEnrollmentPlan{Request: request, ClusterID: state.ClusterID, Source: proposed, PreviousSource: source, UpdateSourceAddress: source.Address != proposed.Address || source.APIAddress != proposed.APIAddress}
+	plan := PeerEnrollmentPlan{Request: request, ClusterID: state.ClusterID}
 	for id, member := range state.Members {
 		if member.Address == request.RaftAddress || member.APIAddress == "https://"+request.PeerAddress {
 			return PeerEnrollmentPlan{}, errors.New("目标端口已属于另一个机群成员")
@@ -329,24 +276,25 @@ func (p *Peer) PreviewEnrollment(ctx context.Context, request PeerEnrollmentRequ
 		if state.Voters[id] == "" {
 			continue
 		}
-		if id == p.Config.NodeID {
-			member = proposed
-		}
-		if err := validPeerEndpoint(member.Address, allowLoopback); err != nil {
-			return PeerEnrollmentPlan{}, fmt.Errorf("节点 %s 尚未设置跨机可达地址：%w", member.NodeID, err)
-		}
-		endpoint, err := url.Parse(member.APIAddress)
-		if err != nil || endpoint.Scheme != "https" {
-			return PeerEnrollmentPlan{}, errors.New("机群成员缺少 HTTPS 地址")
-		}
-		if err := validPeerEndpoint(endpoint.Host, allowLoopback); err != nil {
-			return PeerEnrollmentPlan{}, err
+		// The machine reaches this node through the session, whatever this
+		// node advertises; the other members it must reach on its own.
+		if id != p.Config.NodeID || !routed {
+			if err := validPeerEndpoint(member.Address, allowLoopback); err != nil {
+				return PeerEnrollmentPlan{}, fmt.Errorf("节点 %s 尚未设置跨机可达地址：%w", member.NodeID, err)
+			}
+			endpoint, err := url.Parse(member.APIAddress)
+			if err != nil || endpoint.Scheme != "https" {
+				return PeerEnrollmentPlan{}, errors.New("机群成员缺少 HTTPS 地址")
+			}
+			if err := validPeerEndpoint(endpoint.Host, allowLoopback); err != nil {
+				return PeerEnrollmentPlan{}, err
+			}
 		}
 		plan.Seeds = append(plan.Seeds, member)
 	}
 	sort.Slice(plan.Seeds, func(i, j int) bool { return plan.Seeds[i].NodeID < plan.Seeds[j].NodeID })
-	if plan.UpdateSourceAddress {
-		plan.Effects = append(plan.Effects, fmt.Sprintf("将本机跨机连接地址更新为 %s 和 %s；本机工作台与执行服务继续运行", proposed.Address, proposed.APIAddress))
+	if routed {
+		plan.Effects = append(plan.Effects, fmt.Sprintf("两台机器经由这次接入的 SSH 会话互联：本机在目标机上以 %s（共识）和 %s（HTTPS）出现，目标机在本机上以回环端口出现；无论本机在哪个网络、是否开着 VPN，都不需要能直接路由到对方", request.HubRoute.Raft, request.HubRoute.API))
 	}
 	plan.Effects = append(plan.Effects, fmt.Sprintf("在目标机启动持久节点：HTTPS %s，共识 %s", request.PeerAddress, request.RaftAddress), fmt.Sprintf("在目标机创建工作目录 %s，作为这台机器的默认项目目录和执行目录", request.WorkspaceDir), "创建独立节点身份、机群证书和空执行服务；不会复制 Agent 登录状态", "将复制完整私有协作账本，包括任务、会话、工作配置和记忆；该节点已明确获准保存 restricted 级别数据", "先复制协作数据并验证节点间双向连接，再加入投票成员；默认不允许自动晋升", "仅在数据同步和执行服务登记完成后标记接入成功")
 	plan.ReviewID = plan.reviewHash()
@@ -377,9 +325,6 @@ func (p *Peer) PrepareEnrollment(ctx context.Context, request PeerEnrollmentRequ
 	if existing, err := p.loadEnrollment(id); err == nil {
 		if existing.Fingerprint != fingerprint {
 			return PeerEnrollmentPackage{}, coordination.ErrCommandConflict
-		}
-		if err := p.prepareSourceNetwork(ctx, &existing); err != nil {
-			return PeerEnrollmentPackage{NodeID: existing.NodeID, Payload: existing.Package, Plan: existing.Plan}, err
 		}
 		return PeerEnrollmentPackage{NodeID: existing.NodeID, Payload: existing.Package, Plan: existing.Plan}, nil
 	} else if !errors.Is(err, os.ErrNotExist) {
@@ -435,84 +380,52 @@ func (p *Peer) PrepareEnrollment(ctx context.Context, request PeerEnrollmentRequ
 	_, peerPort, _ := net.SplitHostPort(plan.Request.PeerAddress)
 	_, raftPort, _ := net.SplitHostPort(plan.Request.RaftAddress)
 	bundle := PeerJoinPackage{Version: 1, OperationID: id, ClusterID: p.Config.ClusterID, NodeID: nodeID, StorageLevel: plan.Request.Level, Name: plan.Request.Name, WorkspaceDir: plan.Request.WorkspaceDir, PeerListen: net.JoinHostPort("0.0.0.0", peerPort), PeerAdvertise: plan.Request.PeerAddress, RaftListen: net.JoinHostPort("0.0.0.0", raftPort), RaftAdvertise: plan.Request.RaftAddress, CA: caPEM, Certificate: certificate, PrivateKey: leafKey, OwnerToken: p.OwnerToken, WorkerToken: workerToken, Seeds: plan.Seeds}
+	if plan.Request.HubRoute.Raft != "" {
+		bundle.Routes = map[string]coordination.Route{p.Config.NodeID: plan.Request.HubRoute}
+	}
 	payload, err := json.Marshal(bundle)
 	if err != nil {
 		return PeerEnrollmentPackage{}, err
 	}
-	record := peerEnrollmentRecord{PeerEnrollmentResult: PeerEnrollmentResult{OperationID: id, NodeID: nodeID, Name: plan.Request.Name, Phase: "prepared", Steps: []PeerEnrollmentStep{{At: time.Now().UTC(), Stage: "prepared", Message: "用户已确认接入，独立节点身份和私有入组包已生成"}}}, Request: plan.Request, Fingerprint: fingerprint, Package: payload, Plan: plan, SourceReady: !plan.UpdateSourceAddress}
+	record := peerEnrollmentRecord{PeerEnrollmentResult: PeerEnrollmentResult{OperationID: id, NodeID: nodeID, Name: plan.Request.Name, Phase: "prepared", Steps: []PeerEnrollmentStep{{At: time.Now().UTC(), Stage: "prepared", Message: "用户已确认接入，独立节点身份和私有入组包已生成"}}}, Request: plan.Request, Fingerprint: fingerprint, Package: payload, Plan: plan}
 	if err := p.saveEnrollment(record); err != nil {
 		return PeerEnrollmentPackage{}, err
-	}
-	if err := p.prepareSourceNetwork(ctx, &record); err != nil {
-		return PeerEnrollmentPackage{NodeID: nodeID, Payload: payload, Plan: plan}, err
 	}
 	return PeerEnrollmentPackage{NodeID: nodeID, Payload: payload, Plan: plan}, nil
 }
 
-func (p *Peer) prepareSourceNetwork(ctx context.Context, record *peerEnrollmentRecord) error {
-	var err error
-	for attempt := 0; attempt < 3; attempt++ {
-		err = p.prepareSourceNetworkOnce(ctx, record)
-		if !errors.Is(err, coordination.ErrConflict) || ctx.Err() != nil {
-			return err
-		}
+// validHubRoute accepts a route that is either absent or a pair of
+// loopback host:port addresses on the machine. It answers whether the
+// enrollment is routed.
+func validHubRoute(route coordination.Route) (bool, error) {
+	if route.Raft == "" && route.API == "" {
+		return false, nil
 	}
-	return err
+	if err := loopbackRoute(route); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
-func (p *Peer) prepareSourceNetworkOnce(ctx context.Context, record *peerEnrollmentRecord) error {
-	if record.SourceReady {
-		return nil
-	}
-	state, err := p.Runtime.Load().ReadState(ctx)
-	if err != nil {
-		return err
-	}
-	current := state.Members[p.Config.NodeID]
-	wanted := record.Plan.Source
-	if current.Address == wanted.Address && current.APIAddress == wanted.APIAddress {
-		if err := p.persistAdvertisement(current.Address, current.APIAddress); err != nil {
-			return err
+// loopbackRoute accepts two distinct loopback host:port addresses with
+// real ports: a tunnel's ends are fixed ports, never 0.
+func loopbackRoute(route coordination.Route) error {
+	for _, address := range []string{route.Raft, route.API} {
+		host, port, err := net.SplitHostPort(address)
+		if err != nil {
+			return errors.New("SSH 隧道端口需要写成 host:port")
 		}
-		record.SourceReady = true
-		return p.saveEnrollment(*record)
-	}
-	if current.Address != record.Plan.PreviousSource.Address || current.APIAddress != record.Plan.PreviousSource.APIAddress {
-		return fmt.Errorf("%w: 本机地址已由另一操作改变，请重新审阅", coordination.ErrConflict)
-	}
-	pending, hasPending := state.PendingAddresses[p.Config.NodeID]
-	if hasPending && (record.SourceRequest == nil || pending.ID != record.SourceRequest.ID) {
-		return fmt.Errorf("%w: 本机另一个地址更新尚未完成", coordination.ErrConflict)
-	}
-	if !hasPending {
-		record.SourceAttempts++
-		record.SourceRequest = &coordination.MemberAddressRequest{ID: fmt.Sprintf("%s/source-address/%d", record.OperationID, record.SourceAttempts), Actor: "owner", ExpectedRevision: state.Revision, NodeID: p.Config.NodeID, Address: wanted.Address, APIAddress: wanted.APIAddress}
-		if err := p.saveEnrollment(*record); err != nil {
-			return err
+		if ip := net.ParseIP(host); ip == nil || !ip.IsLoopback() {
+			return errors.New("SSH 隧道端口必须在目标机的回环地址上")
+		}
+		if number, err := strconv.Atoi(port); err != nil || number <= 0 || number > 65535 {
+			return errors.New("SSH 隧道端口必须是 1 到 65535 之间的固定端口")
 		}
 	}
-	_, err = p.Runtime.Load().UpdateMemberAddress(ctx, *record.SourceRequest)
-	if err == nil {
-		err = p.persistAdvertisement(wanted.Address, wanted.APIAddress)
+	if route.Raft == route.API {
+		return errors.New("SSH 隧道的共识与 HTTPS 端口必须不同")
 	}
-	if err != nil {
-		host, _, splitErr := net.SplitHostPort(wanted.Address)
-		if splitErr != nil {
-			host = wanted.Address
-		}
-		err = fmt.Errorf("更新本机可达地址 %s 失败：%w", host, err)
-		record.Phase = "source_network"
-		record.Error = err.Error()
-		if saveErr := p.saveEnrollment(*record); saveErr != nil {
-			slog.Warn(fmt.Sprintf("cluster: enrollment %s: source_network failure not recorded: %v", record.OperationID, saveErr), "operation", record.OperationID)
-		}
-		return err
-	}
-	record.SourceReady = true
-	record.Error = ""
-	record.Phase = "prepared"
-	record.Steps = append(record.Steps, PeerEnrollmentStep{At: time.Now().UTC(), Stage: "source_network", Message: "本机可达地址已更新，工作台和执行服务持续运行"})
-	return p.saveEnrollment(*record)
+	return nil
 }
 
 func (p *Peer) enrollmentPath(id string) string {
@@ -553,9 +466,6 @@ func (p *Peer) CompletePeerEnrollment(ctx context.Context, id string) (PeerEnrol
 	}
 	if record.Ready {
 		return record.PeerEnrollmentResult, nil
-	}
-	if err := p.prepareSourceNetwork(ctx, &record); err != nil {
-		return record.PeerEnrollmentResult, err
 	}
 	finish := func(stage string, err error) (PeerEnrollmentResult, error) {
 		record.Phase = stage
@@ -669,6 +579,9 @@ func (p *Peer) AbandonPeerEnrollment(ctx context.Context, id string) error {
 			return fmt.Errorf("移除这次接入留下的成员失败：%w", err)
 		}
 	}
+	if err := p.dropLink(record.NodeID); err != nil {
+		return fmt.Errorf("关闭这次接入的 SSH 隧道失败：%w", err)
+	}
 	path := p.enrollmentPath(id)
 	archived := path + ".abandoned-" + time.Now().UTC().Format("20060102T150405Z")
 	if err := os.Rename(path, archived); err != nil {
@@ -705,74 +618,6 @@ func validPeerWorkspace(dir string) error {
 		}
 	}
 	return nil
-}
-
-type NetworkAddressRequest struct {
-	ID               string `json:"id"`
-	ExpectedRevision uint64 `json:"expected_revision"`
-	Host             string `json:"host"`
-}
-
-func (p *Peer) SetNetworkAddress(ctx context.Context, request NetworkAddressRequest) (coordination.Result, error) {
-	if request.ID == "" || request.Host == "" || strings.ContainsAny(request.Host, "/\\\x00\r\n\t ") {
-		return coordination.Result{}, coordination.ErrInvalid
-	}
-	boundHost, _, _ := net.SplitHostPort(p.Config.RaftBindAddress)
-	boundIP := net.ParseIP(boundHost)
-	if boundIP == nil || !boundIP.IsUnspecified() {
-		return coordination.Result{}, errors.New("当前共识监听绑定到单一地址，需要先完成明确的监听配置变更")
-	}
-	addresses, err := net.DefaultResolver.LookupIPAddr(ctx, request.Host)
-	if err != nil || len(addresses) == 0 {
-		return coordination.Result{}, errors.New("本机连接地址无法解析")
-	}
-	local := map[string]bool{}
-	for _, address := range localAdvertiseAddresses() {
-		local[address] = true
-	}
-	for _, address := range addresses {
-		if !address.IP.IsLoopback() && !local[address.IP.String()] {
-			return coordination.Result{}, errors.New("请选择本机网络接口上实际存在的地址")
-		}
-	}
-	if net.ParseIP(request.Host).IsUnspecified() {
-		return coordination.Result{}, errors.New("请选择本机网络接口上实际存在的地址")
-	}
-	state, err := p.Runtime.Load().ReadState(ctx)
-	if err != nil {
-		return coordination.Result{}, err
-	}
-	member := state.Members[p.Config.NodeID]
-	_, raftPort, _ := net.SplitHostPort(member.Address)
-	peerURL, _ := url.Parse(member.APIAddress)
-	if peerURL == nil {
-		return coordination.Result{}, coordination.ErrInvalid
-	}
-	newRaft := net.JoinHostPort(request.Host, raftPort)
-	newAPI := "https://" + net.JoinHostPort(request.Host, peerURL.Port())
-	result, err := p.Runtime.Load().UpdateMemberAddress(ctx, coordination.MemberAddressRequest{ID: request.ID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, NodeID: p.Config.NodeID, Address: newRaft, APIAddress: newAPI})
-	if err != nil {
-		return result, err
-	}
-	return result, p.persistAdvertisement(newRaft, newAPI)
-}
-
-func (p *Peer) persistAdvertisement(newRaft, newAPI string) error {
-	p.raftAdvertisement.Store(newRaft)
-	p.peerAdvertisement.Store(newAPI)
-	endpoint, err := url.Parse(newAPI)
-	if err != nil {
-		return err
-	}
-	p.Mu.Lock()
-	saved := p.Config
-	saved.RaftAddress = newRaft
-	saved.PeerAddress = endpoint.Host
-	saved.PeerURL = newAPI
-	err = SaveClusterJSON(p.Options.ClusterPath, saved, false)
-	p.Mu.Unlock()
-	p.client.RememberMembers([]coordination.Member{{NodeID: p.Config.NodeID, Name: p.Config.Name, Address: newRaft, APIAddress: newAPI}})
-	return err
 }
 
 func (p *Peer) validateJoiningNetwork(ctx context.Context, candidate coordination.Member) error {
@@ -1128,6 +973,11 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	if err := validatePeerCertificate(bundle); err != nil {
 		return PeerImportResult{}, err
 	}
+	for nodeID, route := range bundle.Routes {
+		if routed, err := validHubRoute(route); err != nil || !routed || nodeID == bundle.NodeID {
+			return PeerImportResult{}, errors.New("enrollment package carries an invalid route")
+		}
+	}
 
 	root, err := filepath.Abs(stateDir)
 	if err != nil {
@@ -1173,7 +1023,7 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	}
 	defer os.RemoveAll(staging)
 	clusterDir := filepath.Join(root, "cluster")
-	settings := PeerConfig{Version: 1, ClusterID: bundle.ClusterID, NodeID: bundle.NodeID, StorageLevel: bundle.StorageLevel, Name: bundle.Name, DataDir: clusterDir, RaftAddress: bundle.RaftAdvertise, PeerAddress: bundle.PeerAdvertise, RaftBindAddress: bundle.RaftListen, PeerBindAddress: bundle.PeerListen, PeerURL: "https://" + bundle.PeerAdvertise, UIAddress: "127.0.0.1:0", CACertFile: filepath.Join(clusterDir, "ca.pem"), CertFile: filepath.Join(clusterDir, "node.pem"), KeyFile: filepath.Join(clusterDir, "node-key.pem"), OwnerTokenFile: filepath.Join(clusterDir, "owner-control-token"), WorkerConfigFile: filepath.Join(clusterDir, "node.json"), Seeds: bundle.Seeds}
+	settings := PeerConfig{Version: 1, ClusterID: bundle.ClusterID, NodeID: bundle.NodeID, StorageLevel: bundle.StorageLevel, Name: bundle.Name, DataDir: clusterDir, RaftAddress: bundle.RaftAdvertise, PeerAddress: bundle.PeerAdvertise, RaftBindAddress: bundle.RaftListen, PeerBindAddress: bundle.PeerListen, PeerURL: "https://" + bundle.PeerAdvertise, UIAddress: "127.0.0.1:0", CACertFile: filepath.Join(clusterDir, "ca.pem"), CertFile: filepath.Join(clusterDir, "node.pem"), KeyFile: filepath.Join(clusterDir, "node-key.pem"), OwnerTokenFile: filepath.Join(clusterDir, "owner-control-token"), WorkerConfigFile: filepath.Join(clusterDir, "node.json"), Seeds: bundle.Seeds, Routes: bundle.Routes}
 	UIToken, err := ClusterRandomToken()
 	if err != nil {
 		return result, err

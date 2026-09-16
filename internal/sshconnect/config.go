@@ -50,6 +50,11 @@ type Discovery struct {
 func (d Discovery) String() string { raw, _ := json.Marshal(d); return string(raw) }
 
 var aliasShape = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,252}$`)
+
+// ValidAlias says whether alias is a name ssh can be given safely: it
+// cannot start with a dash or carry whitespace or shell characters.
+func ValidAlias(alias string) bool { return aliasShape.MatchString(alias) }
+
 var proxyJumpShape = regexp.MustCompile(`^[a-zA-Z0-9._:@,\[\]%-]+$`)
 
 type directive struct {

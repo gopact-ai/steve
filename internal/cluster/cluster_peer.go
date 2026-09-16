@@ -65,6 +65,9 @@ type PeerOptions struct {
 	SSHHandler       func(SSHControl, string, string) (http.Handler, error)
 	ConfigPath       string
 	ClusterPath      string
+	// SSHLaunch starts the sessions behind this node's links; nil means
+	// the platform ssh client. Tests supply sessions without a network.
+	SSHLaunch sshconnect.Launcher
 	// Activate is injectable for integration tests and alternate application
 	// runners. The endpoint must be loopback and stop must join every user of
 	// the activation's ledger before returning.
@@ -80,24 +83,29 @@ type PeerOptions struct {
 }
 
 type Peer struct {
-	localSSH          *sshconnect.Service
-	Options           PeerOptions
-	Config            PeerConfig
-	Runtime           atomic.Pointer[Runtime]
-	client            *coordination.Client
-	routes            *coordination.RouteTable
-	identity          coordination.TLSOptions
-	OwnerToken        string
-	UIToken           string
-	UiURL             string
-	peerServer        *http.Server
-	uiServer          *http.Server
-	localTransport    *http.Transport
-	Mu                sync.RWMutex
-	Application       *PeerApplicationEndpoint
-	peerTransports    map[string]peerTransport
-	ctx               context.Context
-	cancel            context.CancelFunc
+	localSSH       *sshconnect.Service
+	Options        PeerOptions
+	Config         PeerConfig
+	Runtime        atomic.Pointer[Runtime]
+	client         *coordination.Client
+	routes         *coordination.RouteTable
+	links          map[string]*sshconnect.Link
+	identity       coordination.TLSOptions
+	OwnerToken     string
+	UIToken        string
+	UiURL          string
+	peerServer     *http.Server
+	uiServer       *http.Server
+	localTransport *http.Transport
+	Mu             sync.RWMutex
+	Application    *PeerApplicationEndpoint
+	peerTransports map[string]peerTransport
+	ctx            context.Context
+	cancel         context.CancelFunc
+	// Links live on their own context: they are closed after the
+	// runtime, so its last words to tunnelled members still get through.
+	linkCtx           context.Context
+	linkCancel        context.CancelFunc
 	closeOnce         sync.Once
 	closeErr          error
 	unpublish         func()
@@ -111,7 +119,6 @@ type Peer struct {
 	closing           bool
 	workerPrincipals  map[string]*workerPrincipal
 	raftAdvertisement atomic.Value
-	peerAdvertisement atomic.Value
 	enrollmentMu      sync.Mutex
 	content           *contentreplica.Store
 	contentOnce       sync.Once
@@ -153,7 +160,8 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	p := &Peer{Options: options, Config: settings, OwnerToken: string(owner), UIToken: application.Gateway.ReadModelToken, ctx: ctx, cancel: cancel, unlock: unlock, Errors: make(chan error, 1), peerTransports: map[string]peerTransport{}, localTransport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, IdleConnTimeout: 30 * time.Second}}
+	linkCtx, linkCancel := context.WithCancel(parent)
+	p := &Peer{Options: options, Config: settings, OwnerToken: string(owner), UIToken: application.Gateway.ReadModelToken, ctx: ctx, cancel: cancel, linkCtx: linkCtx, linkCancel: linkCancel, unlock: unlock, Errors: make(chan error, 1), peerTransports: map[string]peerTransport{}, localTransport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, IdleConnTimeout: 30 * time.Second}}
 	p.workerPrincipals = map[string]*workerPrincipal{}
 	defer func() {
 		if runErr != nil {
@@ -207,6 +215,10 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	seeds = append(seeds, coordination.Member{NodeID: p.Config.NodeID, Address: p.Config.RaftAddress, APIAddress: p.Config.PeerURL, Name: p.Config.Name})
 	selfHost, _, _ := net.SplitHostPort(peerListener.Addr().String())
 	p.routes = coordination.NewRouteTable(p.Config.Routes)
+	p.links = map[string]*sshconnect.Link{}
+	for nodeID, link := range p.Config.Links {
+		p.openLink(nodeID, link)
+	}
 	p.client, err = coordination.NewClient(coordination.ClientConfig{TLS: identity, Members: seeds, SelfHost: selfHost, Routes: p.routes, ControlHeaders: func(context.Context, string) (http.Header, error) {
 		return http.Header{"Authorization": []string{"Bearer " + p.OwnerToken}}, nil
 	}})
@@ -263,7 +275,6 @@ func (p *Peer) recordBoundAddresses(raftListener, peerListener, uiListener net.L
 		p.Config.PeerURL = advertised.String()
 	}
 	p.raftAdvertisement.Store(p.Config.RaftAddress)
-	p.peerAdvertisement.Store(p.Config.PeerURL)
 	p.UiURL = "http://" + p.Config.UIAddress
 }
 
@@ -324,6 +335,14 @@ func (p *Peer) Close() error {
 		}
 		if runtime := p.Runtime.Load(); runtime != nil {
 			p.closeErr = errors.Join(p.closeErr, runtime.Close())
+		}
+		p.linkCancel()
+		p.Mu.Lock()
+		links := p.links
+		p.links = nil
+		p.Mu.Unlock()
+		for _, link := range links {
+			link.Close()
 		}
 		if p.workerDone != nil {
 			if p.workerListener != nil {
