@@ -158,8 +158,8 @@ func splice(connection net.Conn, stream *yamux.Stream, streamReader io.Reader) {
 	go func() {
 		defer wait.Done()
 		_, _ = io.Copy(connection, streamReader)
-		if half, ok := connection.(interface{ CloseWrite() error }); ok {
-			_ = half.CloseWrite()
+		if tcp, ok := connection.(*net.TCPConn); ok {
+			_ = tcp.CloseWrite()
 		} else {
 			connection.Close()
 		}

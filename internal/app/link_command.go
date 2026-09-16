@@ -1,4 +1,4 @@
-package main
+package app
 
 import (
 	"context"
@@ -11,10 +11,10 @@ import (
 	"github.com/gopact-ai/steve/internal/sshconnect"
 )
 
-// linkCmd is the far end of an SSH link: the hub runs it on this machine
-// over the session it opened and multiplexes the cluster protocol through
-// its stdin and stdout. It ends with the session.
-func linkCmd(args []string) error {
+// LinkCommand is `steve link`, the far end of an SSH link: the hub runs it
+// on this machine over the session it opened and multiplexes the cluster
+// protocol through its stdin and stdout. It ends with the session.
+func LinkCommand(args []string) error {
 	flags := flag.NewFlagSet("link", flag.ContinueOnError)
 	var listens, allowed repeatedFlag
 	flags.Var(&listens, "listen", "listen=target: accept connections at listen here and carry them to target on the hub (repeatable)")
