@@ -30,14 +30,24 @@ import (
 	"github.com/gopact-ai/steve/internal/turn"
 )
 
+// A MemberRemover takes a machine out of the cluster: its membership and
+// the session and route this node keeps to it. A machine that is not a
+// member is only cleaned up.
+type MemberRemover interface {
+	RemoveMember(ctx context.Context, nodeID string) error
+}
+
 // Service adds machines and agents from the page: the running
 // registry and catalog take them at once, and the config file records
 // them so a restart keeps them. A new machine gets a token of its own
 // and one command to run.
 type Service struct {
-	PluginLibrary      *plugins.Library
-	Observation        *LocalObservation
-	ClusterMode        bool
+	PluginLibrary *plugins.Library
+	Observation   *LocalObservation
+	ClusterMode   bool
+	// Members, when set, takes a removed machine out of the cluster along
+	// with whatever this node keeps for it.
+	Members            MemberRemover
 	ssh                *sshconnect.Service
 	releases           consoleapi.ReleaseProvider
 	Owner              string

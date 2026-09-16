@@ -76,6 +76,10 @@ type CoordinationService interface {
 	SetAutoFailover(context.Context, CoordinatorPolicy) (CoordinationView, error)
 	SetCoordinatorEligibility(context.Context, CoordinatorEligibility) (CoordinationView, error)
 	RenameNode(context.Context, CoordinatorRename) (CoordinationView, error)
+	// RemoveMember takes a machine out of the cluster along with whatever
+	// this node keeps for it; a machine that is not a member is only
+	// cleaned up.
+	RemoveMember(ctx context.Context, nodeID string) error
 	// MemberNames maps member node IDs to their display names from the
 	// locally replicated state, without probing any peer.
 	MemberNames() map[string]string

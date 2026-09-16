@@ -15,8 +15,7 @@ import { TextArea } from "@/components/base/textarea/textarea";
 import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { removeNode } from "@/lib/api/fleet";
-import { executeCoordination, fetchCoordination } from "@/lib/api/coordination";
-import { HTTPError } from "@/lib/http";
+import { renameMachine } from "@/lib/machines";
 import { nodeLabel } from "@/lib/node-name";
 import { number, relative, when } from "@/lib/format";
 import { addAgent, addNode, removeAgent, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
@@ -292,21 +291,11 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
     const [nameDraft, setNameDraft] = useState("");
     const [nameBusy, setNameBusy] = useState(false);
     const [nameError, setNameError] = useState("");
-    // Renaming changes the coordination display name only; the node ID
-    // is the machine's identity and stays as it is. The revision is read
-    // right before the write so a concurrent membership change is refused.
     async function rename() {
-        const name = nameDraft.trim();
-        if (!name) { setNameError(tr("fleet.displayNameRequired")); return; }
         setNameBusy(true); setNameError("");
-        try {
-            const view = await fetchCoordination();
-            if (!view.enabled) throw new Error(tr("fleet.renameNeedsCluster"));
-            await executeCoordination({ kind: "name", body: { command_id: `name-${crypto.randomUUID()}`, expected_revision: view.revision, node_id: n.name, name } });
-            setRenaming(false); onChanged();
-        } catch (e) {
-            setNameError(e instanceof HTTPError && e.status === 409 ? tr("fleet.renameConflict") : String(e).replace(/^Error: /, ""));
-        } finally { setNameBusy(false); }
+        try { await renameMachine(n.name, nameDraft, tr); setRenaming(false); onChanged(); }
+        catch (e) { setNameError(String(e).replace(/^Error: /, "")); }
+        finally { setNameBusy(false); }
     }
     async function remove() {
         setRemoveError("");

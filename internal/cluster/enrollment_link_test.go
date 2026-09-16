@@ -117,6 +117,24 @@ func TestEnrollmentOverSSHCarriesTheClusterProtocolThroughTheSession(t *testing.
 	if _, ok := hub.LinkStatuses()[node.Config.NodeID]; !ok {
 		t.Fatal("the link to a joined machine was dropped")
 	}
+	// Removed from the page, the machine leaves the cluster and its link
+	// and route go with it.
+	if err := hub.RemoveMember(t.Context(), node.Config.NodeID); err != nil {
+		t.Fatal(err)
+	}
+	state, err = hub.Runtime.Load().ReadState(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, member := state.Members[node.Config.NodeID]; member {
+		t.Fatal("the removed machine is still a member")
+	}
+	if _, ok := hub.LinkStatuses()[node.Config.NodeID]; ok {
+		t.Fatal("the link to a removed machine remains")
+	}
+	if _, ok := hub.routes.Lookup(node.Config.NodeID); ok {
+		t.Fatal("the route to a removed machine remains")
+	}
 }
 
 // Giving up an enrollment closes its session and forgets the link and the
@@ -242,5 +260,61 @@ func TestARestartedHubReopensItsLinksAndClosesThemAfterTheRuntime(t *testing.T) 
 	outbound := link.Status().Outbound
 	if len(outbound) != 2 || route.Raft != outbound[0].Listen || route.API != outbound[1].Listen {
 		t.Fatalf("the route %+v does not point at the reopened link's listeners %v", route, outbound)
+	}
+}
+
+// Removing a machine from the page takes it out of the cluster and ends
+// the session and route this node kept for it; a machine that was never a
+// member is only cleaned up, and this node cannot remove itself.
+func TestRemovingAMemberEndsItsLinkAndRoute(t *testing.T) {
+	tunnels := &linktest.Launcher{}
+	hubOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	var activations atomic.Int32
+	hubOptions.Activate = testPeerApplication(t, &activations)
+	hubOptions.SSHLaunch = tunnels
+	hub := StartTestPeer(t, hubOptions)
+	WaitPeerReady(t, hub)
+	if err := hub.RemoveMember(t.Context(), hub.Config.NodeID); err == nil {
+		t.Fatal("this node removed itself")
+	}
+	peerAddress, raftAddress := FreeEnrollmentPorts(t)
+	hubRaftOnMachine, hubAPIOnMachine := FreeEnrollmentPorts(t)
+	request := PeerEnrollmentRequest{Alias: "box", Name: "box", PeerAddress: peerAddress, RaftAddress: raftAddress, HubRoute: coordination.Route{Raft: hubRaftOnMachine, API: hubAPIOnMachine}, Level: "restricted"}
+	plan, err := hub.PreviewEnrollment(t.Context(), request, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request = plan.Request
+	request.ExpectedPlanHash = plan.ReviewID
+	prepared, err := hub.PrepareEnrollment(t.Context(), request, "to-remove", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	if err := hub.OpenEnrollmentLink(ctx, "to-remove"); err != nil {
+		t.Fatal(err)
+	}
+	// Not yet a member: only the link and route are dropped.
+	if err := hub.RemoveMember(t.Context(), prepared.NodeID); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := hub.routes.Lookup(prepared.NodeID); ok {
+		t.Fatal("the route to a removed machine remains")
+	}
+	if _, ok := hub.LinkStatuses()[prepared.NodeID]; ok {
+		t.Fatal("the link to a removed machine remains")
+	}
+	saved, err := LoadClusterPeerConfig(hubOptions.ClusterPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := saved.Links[prepared.NodeID]; ok {
+		t.Fatal("the removed link would be reopened at the next start")
+	}
+	select {
+	case <-tunnels.Ended(0):
+	case <-time.After(2 * time.Second):
+		t.Fatal("the removed machine's session was not ended")
 	}
 }

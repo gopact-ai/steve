@@ -272,7 +272,9 @@ func (a *Service) AddNode(ctx context.Context, req consoleapi.AddNodeRequest) (c
 }
 
 // RemoveNode forgets a machine. Nothing may still live on it: an agent
-// placed there, a project homed there or with a copy there, keep it.
+// placed there, a project homed there or with a copy there, keep it. A
+// machine in the cluster leaves it first; when the cluster refuses, the
+// configuration is kept so the machine stays on the page to try again.
 func (a *Service) RemoveNode(ctx context.Context, name string) error {
 	name = strings.TrimSpace(name)
 	if name == "" || name == NodeName() || name == "hub" {
@@ -306,12 +308,22 @@ func (a *Service) RemoveNode(ctx context.Context, name string) error {
 			}
 		}
 	}
-	ConfigMu.Lock()
-	saved, inConfig := a.Cfg.Nodes[name]
+	ConfigMu.RLock()
+	_, inConfig := a.Cfg.Nodes[name]
+	ConfigMu.RUnlock()
 	if !inConfig {
-		ConfigMu.Unlock()
 		return fmt.Errorf("没有叫 %q 的机器", name)
 	}
+	// Leaving the cluster can take a consensus round; readers of the
+	// configuration need not wait for it, the administration lock already
+	// keeps the machine from gaining new occupants meanwhile.
+	if a.Members != nil {
+		if err := a.Members.RemoveMember(ctx, name); err != nil {
+			return fmt.Errorf("机器 %s 尚未退出集群：%w", name, err)
+		}
+	}
+	ConfigMu.Lock()
+	saved := a.Cfg.Nodes[name]
 	delete(a.Cfg.Nodes, name)
 	saveErr := a.persistConfigContext(ctx, a.Cfg)
 	if saveErr != nil && !config.Committed(saveErr) {
