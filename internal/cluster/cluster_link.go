@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strconv"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/sshconnect"
@@ -156,4 +158,32 @@ func (p *Peer) OpenEnrollmentLink(ctx context.Context, id string) error {
 		return err
 	}
 	return opened.WaitConnected(ctx)
+}
+
+// RemoveMember takes a machine out of the cluster and closes what this
+// node keeps for it: its link and its route. A machine that is not a
+// member is only cleaned up. This node cannot remove itself here; the
+// coordinator role moves first, from the coordination page.
+func (p *Peer) RemoveMember(ctx context.Context, nodeID string) error {
+	if nodeID == p.Config.NodeID {
+		return errors.New("不能移除本机自己")
+	}
+	runtime := p.Runtime.Load()
+	if runtime == nil {
+		return coordination.ErrUnavailable
+	}
+	state, err := runtime.ReadState(ctx)
+	if err != nil {
+		return err
+	}
+	if _, member := state.Members[nodeID]; member {
+		id := "remove-" + nodeID + "-" + strconv.FormatInt(time.Now().UnixNano(), 36)
+		if _, err := runtime.Remove(ctx, coordination.RemoveRequest{ID: id, Actor: "owner", NodeID: nodeID}); err != nil {
+			return err
+		}
+	}
+	if err := p.dropLink(nodeID); err != nil {
+		return fmt.Errorf("关闭到这台机器的 SSH 隧道失败：%w", err)
+	}
+	return nil
 }

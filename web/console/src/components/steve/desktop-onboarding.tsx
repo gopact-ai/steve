@@ -13,7 +13,11 @@ import { useI18n } from "@/providers/locale-provider";
 import { useTheme } from "@/providers/theme-provider";
 import { HTTPError } from "@/lib/http";
 import { executeCoordination, fetchCoordination } from "@/lib/api/coordination";
-import { fetchNodeSettings, saveNodeSettings } from "@/lib/api/fleet";
+import { fetchNodeSettings, removeNode, saveNodeSettings } from "@/lib/api/fleet";
+import { renameMachine } from "@/lib/machines";
+import { nodeLabel } from "@/lib/node-name";
+import { Mono, StateBadge } from "@/components/steve/ui";
+import type { Node } from "@/lib/types";
 import { fetchHubSettings, saveHubSettings } from "@/lib/api/settings";
 import { canPickDirectory, discoverDesktopAgents, enrollDesktopAgents, fetchDesktopStatus, pickDirectory, saveDesktopSetup, saveDesktopWorkspace, setupSteps, type DesktopAgentCandidate, type DesktopStatus, type SetupStep } from "@/lib/api/desktop";
 
@@ -334,20 +338,69 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
     </section>;
 }
 
-// Machines: the SSH dialog does the work; this page only opens it and
-// counts what is connected.
+// Machines: the SSH dialog does the connecting; this page lists what is
+// connected so a machine can be renamed or taken out again without leaving
+// the guide.
 function MachinesStep({ busy, onNext, onBack, nested, setNested }: StepProps & { nested: boolean; setNested: (open: boolean) => void }) {
     const { t } = useI18n();
     const { snap, refresh } = useFleet();
     const navigate = useNavigate();
-    const others = snap.nodes.filter((node) => node.role !== "hub").length;
+    const others = snap.nodes.filter((node) => node.role !== "hub");
     return <section className="space-y-4">
         <p className="text-sm leading-6 text-secondary">{t("desktop.machinesIntro")}</p>
-        <p className="text-sm text-primary">{others === 1 ? t("desktop.machinesConnectedOne") : others > 0 ? t("desktop.machinesConnected", { count: others }) : t("desktop.machinesNone")}</p>
+        {others.length === 0 ? <p className="text-sm text-primary">{t("desktop.machinesNone")}</p>
+            : <ul className="divide-y divide-secondary rounded-lg border border-secondary">{others.map((node) => <MachineRow key={node.name} node={node} busy={busy} onChanged={refresh} />)}</ul>}
         <Button size="sm" color="secondary" isDisabled={busy} onClick={() => setNested(true)}>{t("desktop.connectMachine")}</Button>
         {nested && <SSHConnect onClose={() => setNested(false)} onChanged={refresh} onViewMachines={() => { setNested(false); navigate("/fleet"); }} onAddExecutor={() => { setNested(false); navigate("/fleet"); }} />}
-        <StepFooter busy={busy} onBack={onBack} onNext={others > 0 ? onNext : undefined} onSkip={others > 0 ? undefined : onNext} />
+        <StepFooter busy={busy} onBack={onBack} onNext={others.length > 0 ? onNext : undefined} onSkip={others.length > 0 ? undefined : onNext} />
     </section>;
+}
+
+function MachineRow({ node, busy, onChanged }: { node: Node; busy: boolean; onChanged: () => void }) {
+    const { t } = useI18n();
+    const [renaming, setRenaming] = useState(false);
+    const [draft, setDraft] = useState("");
+    const [removing, setRemoving] = useState(false);
+    const [pending, setPending] = useState(false);
+    const [error, setError] = useState("");
+    async function rename() {
+        setPending(true); setError("");
+        try { await renameMachine(node.name, draft, t); setRenaming(false); onChanged(); }
+        catch (e) { setError(message(e)); }
+        finally { setPending(false); }
+    }
+    async function remove() {
+        setPending(true); setError("");
+        try { await removeNode(node.name); onChanged(); }
+        catch (e) { setError(message(e)); setRemoving(false); }
+        finally { setPending(false); }
+    }
+    const disabled = busy || pending;
+    return <li className="space-y-2 px-3 py-2.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1">
+            <div className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate text-sm font-medium text-primary" title={nodeLabel(node)}>{nodeLabel(node)}</span>
+                {node.display_name && <Mono className="text-tertiary">{node.name}</Mono>}
+            </div>
+            <StateBadge state={node.up ? "up" : "down"} />
+            {!renaming && !removing && <div className="flex items-center gap-1">
+                <Button size="sm" color="link-color" isDisabled={disabled} onClick={() => { setDraft(node.display_name || ""); setError(""); setRenaming(true); }}>{t("fleet.rename")}</Button>
+                <Button size="sm" color="link-destructive" isDisabled={disabled} onClick={() => { setError(""); setRemoving(true); }}>{t("desktop.machineRemove")}</Button>
+            </div>}
+        </div>
+        {!node.up && node.last_error && <p className="break-words text-xs text-error-primary">{node.last_error}</p>}
+        {renaming && <form className="flex flex-wrap items-end gap-2" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
+            <Input aria-label={t("fleet.displayName")} value={draft} onChange={setDraft} maxLength={64} isDisabled={disabled} autoFocus wrapperClassName="min-w-48 flex-1" />
+            <Button size="sm" color="primary" type="submit" isLoading={pending}>{t("fleet.saveName")}</Button>
+            <Button size="sm" color="secondary" isDisabled={disabled} onClick={() => { setRenaming(false); setError(""); }}>{t("common.cancel")}</Button>
+        </form>}
+        {removing && <div className="flex flex-wrap items-center gap-2">
+            <span className="flex-1 text-xs text-tertiary">{t("desktop.machineRemoveHint")}</span>
+            <Button size="sm" color="secondary" isDisabled={disabled} onClick={() => setRemoving(false)}>{t("common.cancel")}</Button>
+            <Button size="sm" color="primary-destructive" isLoading={pending} onClick={() => void remove()}>{t("fleet.confirmRemove")}</Button>
+        </div>}
+        {error && <p role="alert" className="break-words text-xs text-error-primary">{error}</p>}
+    </li>;
 }
 
 // Preferences: language is applied to this window at once and recorded for

@@ -3,6 +3,7 @@ package admin
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"runtime"
@@ -191,5 +192,38 @@ func TestRemoveNodeRefusesUnknownProjectOccupancy(t *testing.T) {
 	}
 	if len(admin.Nodes.Names()) != 1 {
 		t.Fatal("failed occupancy check removed the runtime node")
+	}
+}
+
+type recordingMembers struct {
+	removed []string
+	err     error
+}
+
+func (m *recordingMembers) RemoveMember(_ context.Context, nodeID string) error {
+	m.removed = append(m.removed, nodeID)
+	return m.err
+}
+
+// A machine that joined the cluster leaves it when it is removed from the
+// page: its membership and the session this node keeps to it go with its
+// configuration, so nothing keeps dialing it. When the cluster refuses,
+// the configuration is kept, so the machine stays visible to try again.
+func TestRemoveNodeLeavesTheClusterWithTheConfiguration(t *testing.T) {
+	admin := nodeAdminFixture(t)
+	members := &recordingMembers{err: errors.New("transfer coordination before removing this node")}
+	admin.Members = members
+	if err := admin.RemoveNode(t.Context(), "node-test"); err == nil || !strings.Contains(err.Error(), "transfer coordination") {
+		t.Fatalf("a refused membership removal did not stop the removal: %v", err)
+	}
+	if _, kept := admin.Cfg.Nodes["node-test"]; !kept {
+		t.Fatal("the configuration was dropped although the machine is still a member")
+	}
+	members.err = nil
+	if err := admin.RemoveNode(t.Context(), "node-test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, kept := admin.Cfg.Nodes["node-test"]; kept || len(members.removed) != 2 || members.removed[1] != "node-test" {
+		t.Fatalf("the machine did not leave the cluster with its configuration: kept=%v removed=%v", kept, members.removed)
 	}
 }

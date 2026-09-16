@@ -89,6 +89,7 @@ func assembleConsole(life lifetime, input inputAssembly, boot runtimeAssembly, s
 		admin.WriteConfigContext = environment.WriteConfigContext
 		admin.ConfigRevision = environment.ConfigurationRevision
 		admin.ClusterMode = true
+		admin.Members = environment.Coordination
 	}
 	admin.HomeLoader, admin.SharedHome = profile.Home, profile.Shared
 	dashboard.SetAdmin(admin)
