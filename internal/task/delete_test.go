@@ -51,6 +51,9 @@ func TestDeleteChannelRefusesWorkInFlight(t *testing.T) {
 		t.Fatalf("begin: %v", err)
 	}
 
+	if err := store.ChannelIdle("console:one"); err == nil {
+		t.Fatalf("called a conversation with an open attempt idle")
+	}
 	if _, err := store.DeleteChannel("console:one"); err == nil {
 		t.Fatalf("deleted a conversation whose task is executing")
 	}
