@@ -33,6 +33,10 @@ type recordingRunner struct {
 	// until the context ends, the way a dead link behaves.
 	slowUpload  time.Duration
 	stallUpload bool
+	// tailUpload takes every byte at once and then holds the session open
+	// that long before answering, the way ssh keeps pushing its buffered
+	// window to the remote after the local reader is drained.
+	tailUpload time.Duration
 }
 
 type fixtureConnection struct {
@@ -125,11 +129,18 @@ func (b *fakeBackend) Register(_ context.Context, req InstallRequest, _ CheckRes
 
 func (r *recordingRunner) Upload(ctx context.Context, args []string, input io.Reader) (Output, error) {
 	r.mu.Lock()
-	slow, stall := r.slowUpload, r.stallUpload
+	slow, stall, tail := r.slowUpload, r.stallUpload, r.tailUpload
 	r.mu.Unlock()
 	var data []byte
 	var err error
 	switch {
+	case tail > 0:
+		data, err = io.ReadAll(input)
+		select {
+		case <-time.After(tail):
+		case <-ctx.Done():
+			err = ctx.Err()
+		}
 	case stall:
 		chunk := make([]byte, 8)
 		n, _ := io.ReadFull(input, chunk)
@@ -736,6 +747,28 @@ func TestUploadKeepsGoingWhileBytesMoveAndReportsProgress(t *testing.T) {
 	}
 	if !uploaded || !progressed {
 		t.Fatalf("upload = %v, progress reported = %v: %+v", uploaded, progressed, result.Log)
+	}
+}
+
+// After the local reader is drained, ssh still pushes its buffered window to
+// the remote and waits for it to land; on a thin link that tail takes a
+// while with nothing left to count. It is not a stall.
+func TestUploadTailAfterTheLastByteIsNotAStall(t *testing.T) {
+	svc, r, _ := uploadFixture(t)
+	svc.uploadTick, svc.uploadStall, svc.uploadReport = 5*time.Millisecond, 100*time.Millisecond, time.Hour
+	r.tailUpload = 400 * time.Millisecond
+	plan, err := svc.Plan(t.Context(), installRequest())
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := svc.Commit(t.Context(), plan.ID)
+	if err != nil || !result.Registered {
+		t.Fatalf("the tail of an upload was treated as a stall: %#v %v", result, err)
+	}
+	for _, step := range result.Steps {
+		if step.ID == "upload" && step.Status != "ready" {
+			t.Fatalf("upload step: %+v", step)
+		}
 	}
 }
 

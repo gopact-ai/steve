@@ -915,7 +915,7 @@ func (p *Peer) serveNetworkCheck(w http.ResponseWriter, r *http.Request) {
 			tlsConfig, err = p.identity.ClientConfig(member.NodeID)
 			if err == nil {
 				var connection net.Conn
-				connection, err = p.peerDial(member.NodeID, 3*time.Second)(ctx, "tcp", member.Address)
+				connection, err = p.peerDial(member.NodeID, true, 3*time.Second)(ctx, "tcp", member.Address)
 				if err == nil {
 					secured := tls.Client(connection, tlsConfig)
 					err = secured.HandshakeContext(ctx)

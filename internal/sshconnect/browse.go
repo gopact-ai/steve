@@ -168,14 +168,14 @@ func parseListing(output, requested string) (Listing, error) {
 	sort.Slice(listing.Entries, func(i, j int) bool {
 		return strings.ToLower(listing.Entries[i].Name) < strings.ToLower(listing.Entries[j].Name)
 	})
-	if len(listing.Entries) > maxBrowseEntries {
-		listing.Entries, listing.Truncated = listing.Entries[:maxBrowseEntries], true
-	}
 	for i := range listing.Entries {
 		listing.Entries[i].Path = path.Join(listing.Path, listing.Entries[i].Name)
 	}
 	if listing.Path != "/" {
 		listing.Parent = path.Dir(listing.Path)
+	}
+	if listing.Home != "" {
+		listing.Home = path.Clean(listing.Home)
 	}
 	listing.Display = displayPath(listing.Path, listing.Home)
 	if listing.Requested != "" {

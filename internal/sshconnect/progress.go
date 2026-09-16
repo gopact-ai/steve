@@ -169,21 +169,30 @@ func Report(ctx context.Context, message string) {
 
 // Upload pacing. A thin VPN link delivers a few hundred KiB/s at best, so
 // the upload is bounded by movement, with a generous ceiling behind it.
+// Movement is measured where the SSH client reads; once it has read the
+// last byte, it still pushes its buffered window to the remote and waits
+// for the remote to finish, and nothing is left to count during that tail,
+// so only the ceiling bounds it.
 const (
 	uploadStallLimit  = 90 * time.Second
 	uploadReportEvery = 10 * time.Second
 	uploadLimit       = 90 * time.Minute
 )
 
-// meteredReader counts what the SSH client has taken so far.
+// meteredReader counts what the SSH client has taken so far and notes when
+// it has taken everything.
 type meteredReader struct {
 	io.Reader
-	read atomic.Int64
+	read    atomic.Int64
+	drained atomic.Bool
 }
 
 func (m *meteredReader) Read(p []byte) (int, error) {
 	n, err := m.Reader.Read(p)
 	m.read.Add(int64(n))
+	if err == io.EOF {
+		m.drained.Store(true)
+	}
 	return n, err
 }
 
@@ -212,7 +221,7 @@ func (s *Service) watchUpload(ctx context.Context, cancel context.CancelFunc, re
 				read := metered.read.Load()
 				if read != last {
 					last, movedAt = read, now
-				} else if now.Sub(movedAt) >= s.uploadStall {
+				} else if !metered.drained.Load() && now.Sub(movedAt) >= s.uploadStall {
 					stalled.Store(true)
 					cancel()
 					return
