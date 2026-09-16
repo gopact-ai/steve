@@ -17,3 +17,5 @@ export const abandonSSH = (id: string) => request<{ plan_id: string; abandoned: 
 export interface SSHListingEntry { name: string; path: string }
 export interface SSHListing { path: string; display: string; home: string; parent?: string; requested?: string; writable: boolean; entries: SSHListingEntry[]; truncated?: boolean }
 export const browseSSH = (alias: string, path: string, signal?: AbortSignal) => request<SSHListing>("/console/ssh/browse", { method: "POST", body: { alias, path }, signal });
+export const upgradeSSH = (nodeID: string) => request<SSHInstallResult>(`/console/ssh/upgrades/${encodeURIComponent(nodeID)}`, { method: "POST" });
+export const upgradeStatusSSH = (nodeID: string, signal?: AbortSignal) => request<SSHInstallResult>(`/console/ssh/upgrades/${encodeURIComponent(nodeID)}`, { signal, cache: "no-store" });

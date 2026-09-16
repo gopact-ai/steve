@@ -200,13 +200,15 @@ type storedPlan struct {
 }
 
 type Service struct {
-	configPath       string
-	runner           Runner
-	backend          Backend
-	ttl              time.Duration
-	now              func() time.Time
-	mu               sync.Mutex
-	plans            map[string]*storedPlan
+	configPath string
+	runner     Runner
+	backend    Backend
+	ttl        time.Duration
+	now        func() time.Time
+	mu         sync.Mutex
+	plans      map[string]*storedPlan
+	// upgrades is the latest upgrade operation of each machine, by node ID.
+	upgrades         map[string]string
 	closed           bool
 	installationMode InstallationMode
 	// An upload lives as long as bytes keep moving; these pace the watch.
@@ -699,7 +701,13 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 	result.Steps = append(result.Steps, Step{ID: "registration", Status: "ready", Message: registeredMessage})
 	s.progress(result)
 	if binaryReader != nil {
-		if failure := s.upload(ctx, &result, plan, connection, binaryReader, registration.Token, peerRegistration); failure != nil {
+		uncertain := func(reason string) *StepError {
+			if peerRegistration {
+				return fail("upload", "upload_uncertain", "节点程序上传"+reason+"，接入操作已保留", "检查 SSH 连接和本次接入记录；尚未确认加入投票成员")
+			}
+			return fail("upload", "upload_uncertain", "节点安装包上传"+reason+"，节点登记已保留", "确认远端没有已安装节点后，在资源页移除这条未完成登记，再重新接入")
+		}
+		if failure := s.upload(ctx, &result, plan, connection, binaryReader, registration.Token, uncertain); failure != nil {
 			return reject(failure)
 		}
 	}
@@ -738,11 +746,12 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 }
 
 // upload sends the node program over the fixed SSH connection and records
-// the machine's output. A failed upload is cleaned up before it is reported.
+// the machine's output. A failed upload is cleaned up before it is reported
+// as what the caller makes of an upload that "未确认完成" or "停滞后已中止".
 // A laptop pushing tens of MiB through a VPN can take many minutes, so the
 // upload has no fixed budget: it goes on while bytes move and ends when
 // they stop for uploadStall.
-func (s *Service) upload(ctx context.Context, result *InstallResult, plan InstallPlan, connection Connection, binary io.Reader, token string, peerRegistration bool) *StepError {
+func (s *Service) upload(ctx context.Context, result *InstallResult, plan InstallPlan, connection Connection, binary io.Reader, token string, uncertain func(reason string) *StepError) *StepError {
 	s.enter(result, PhaseUpload, fmt.Sprintf("通过 SSH 上传节点程序（%s，%.1f MiB）；链路慢时会持续上传并汇报进度", plan.Binary.OS+"/"+plan.Binary.Arch, float64(plan.Binary.Size)/(1<<20)))
 	command, _ := nodebootstrap.UploadCommand(plan.ID)
 	uploadCtx, cancel := context.WithTimeout(ctx, uploadLimit)
@@ -761,10 +770,7 @@ func (s *Service) upload(ctx context.Context, result *InstallResult, plan Instal
 		if stalled {
 			reason = "停滞后已中止"
 		}
-		if peerRegistration {
-			return fail("upload", "upload_uncertain", "节点程序上传"+reason+"，接入操作已保留", "检查 SSH 连接和本次接入记录；尚未确认加入投票成员")
-		}
-		return fail("upload", "upload_uncertain", "节点安装包上传"+reason+"，节点登记已保留", "确认远端没有已安装节点后，在资源页移除这条未完成登记，再重新接入")
+		return uncertain(reason)
 	}
 	result.Steps = append(result.Steps, Step{ID: "upload", Status: "ready", Message: "节点安装包已通过 SSH 上传，安装时将核验 SHA-256"})
 	s.progress(*result)
