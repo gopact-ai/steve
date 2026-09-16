@@ -245,7 +245,7 @@ const phaseLabels = { preflight: "ssh.phase.preflight", registration: "ssh.phase
 
 // InstallProgress shows where an installation is among its phases: the
 // ones behind it, the one it is in, and, for one that stopped, where.
-function InstallProgress({ result }: { result: SSHInstallResult }) {
+export function InstallProgress({ result }: { result: SSHInstallResult }) {
     const { t } = useI18n();
     const phases = result.phases ?? [];
     if (phases.length === 0) return null;
@@ -268,7 +268,7 @@ function InstallProgress({ result }: { result: SSHInstallResult }) {
 // InstallLog is what the installation said, in order: Steve narrating each
 // phase and the machine's own output. Open by default when something went
 // wrong, since that is when the lines matter.
-function InstallLog({ result }: { result: SSHInstallResult }) {
+export function InstallLog({ result }: { result: SSHInstallResult }) {
     const { t, locale } = useI18n();
     const lines = result.log ?? [];
     const box = useRef<HTMLDivElement>(null);
@@ -284,7 +284,7 @@ function InstallLog({ result }: { result: SSHInstallResult }) {
     </details>;
 }
 
-function SSHSteps({ steps }: { steps: SSHStep[] }) {
+export function SSHSteps({ steps }: { steps: SSHStep[] }) {
     const { t } = useI18n();
     return <ul aria-label={t("ssh.steps")} className="space-y-3 rounded-lg bg-secondary p-3">{steps.map((step, index) => <li key={`${step.id}-${index}`} className="flex min-w-0 gap-2">
         {step.status === "ready" ? <CheckCircle className="mt-0.5 size-4 shrink-0 text-fg-success-primary" aria-hidden="true" /> : <XCircle className="mt-0.5 size-4 shrink-0 text-fg-error-primary" aria-hidden="true" />}

@@ -4,8 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -28,6 +30,9 @@ type recordingRunner struct {
 	failInstall bool
 	failUpload  bool
 	stderr      string
+	// swapExit ends the peer upgrade script with that exit status, the
+	// way the script reports a rollback or a peer left down.
+	swapExit int
 	// slowUpload paces the upload: one small chunk per interval, the way a
 	// thin link delivers bytes. stallUpload takes a few bytes then hangs
 	// until the context ends, the way a dead link behaves.
@@ -80,6 +85,9 @@ func (r *recordingRunner) Run(_ context.Context, args []string, stdin string) (O
 	}
 	if r.failInstall {
 		return Output{Stderr: "installation failed with secret-value"}, errors.New("SSH exit")
+	}
+	if r.swapExit != 0 && strings.Contains(stdin, "steve.previous") {
+		return Output{Stderr: "The new program did not stay running"}, exec.Command("sh", "-c", fmt.Sprintf("exit %d", r.swapExit)).Run()
 	}
 	return Output{Stdout: "Node process started"}, nil
 }

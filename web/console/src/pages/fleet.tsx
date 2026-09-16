@@ -1,6 +1,7 @@
 import { NodeAgentEnrollment } from "@/components/steve/node-agent-enrollment";
 import { CoordinationPanel } from "@/components/steve/coordination-panel";
 import { ExecutionDataLevel, SSHConnect } from "@/components/steve/ssh-connect";
+import { MachineUpgrade } from "@/components/steve/machine-upgrade";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "@/providers/locale-provider";
 import type { Translator } from "@/lib/i18n";
@@ -280,7 +281,7 @@ function merge(items: Capability[]): { c: Capability; scopes: string[] }[] {
 // MachineRow is one line per machine: who it is, where, which build and
 // system, what it may handle, how much room it has, whether it is here.
 // What it offers is a click away, in the drawer, where there is room.
-function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => void; onChanged: () => void }) {
+function MachineDrawer({ n, hubVersion, onUpgrade, onClose, onChanged }: { n: NodeT; hubVersion?: string; onUpgrade: (n: NodeT) => void; onClose: () => void; onChanged: () => void }) {
     const { t: tr, locale } = useI18n();
     const [enrolling, setEnrolling] = useState(false);
     const h = n.health;
@@ -304,7 +305,7 @@ function MachineDrawer({ n, onClose, onChanged }: { n: NodeT; onClose: () => voi
     return (
         <Drawer title={<><span className="text-base font-semibold text-primary">{nodeLabel(n)}</span>
                         <Badge type="pill-color" size="sm" color={n.role === "hub" ? "brand" : "gray"}>{n.role === "hub" ? tr("connection.coordinator") : tr("fleet.machine")}</Badge>
-                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{n.display_name && <div className="mt-0.5"><Mono className="text-tertiary">{n.name}</Mono></div>}{!n.up && n.last_error && <div className="mt-1 text-xs text-error-primary">{n.last_error}</div>}</>} actions={<>{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>{tr("fleet.editConfiguration")}</Button>}</>} onClose={onClose}>
+                        <StateBadge state={n.up ? "up" : "down"} /></>} subtitle={<>{n.display_name && <div className="mt-0.5"><Mono className="text-tertiary">{n.name}</Mono></div>}{!n.up && n.last_error && <div className="mt-1 text-xs text-error-primary">{n.last_error}</div>}</>} actions={<>{n.role !== "hub" && n.up && n.version && hubVersion && n.version !== hubVersion && <Button size="sm" color="secondary" onClick={() => onUpgrade(n)}>{tr("fleet.upgradeTo", { version: hubVersion })}</Button>}{!editing && <Button size="sm" color="secondary" iconLeading={Edit05} isDisabled={!n.up} onClick={() => setEditing(true)}>{tr("fleet.editConfiguration")}</Button>}</>} onClose={onClose}>
                 {renaming ? (
                     <form className="flex flex-col gap-2 rounded-lg border border-secondary p-3" onSubmit={(e) => { e.preventDefault(); void rename(); }}>
                         <Input label={tr("fleet.displayName")} hint={tr("fleet.displayNameHint")} value={nameDraft} onChange={setNameDraft} maxLength={64} isDisabled={nameBusy} autoFocus />
@@ -413,6 +414,7 @@ export function FleetPage() {
     const up = snap.nodes.filter((n) => n.up).length;
     const versionDrift = snap.nodes.filter((n) => n.up && n.version && snap.hub.version && n.version !== snap.hub.version);
     const [adding, setAdding] = useState(false);
+    const [upgrading, setUpgrading] = useState<NodeT[] | null>(null);
     const [sshOpen, setSSHOpen] = useState(false);
     const [executor, setExecutor] = useState<{ name: string; addr: string; level: string }>();
     const [focusMachines, setFocusMachines] = useState(false);
@@ -431,7 +433,8 @@ export function FleetPage() {
                 actions={<><Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => { setExecutor(undefined); setAdding(true); }}>{tr("fleet.addResource")}</Button></>} />
             <PageBody>
             <CoordinationPanel />
-            {versionDrift.length > 0 && <p role="status" className="rounded-lg bg-warning-primary px-3 py-2 text-sm text-warning-primary">{tr("fleet.versionDriftHint", { count: versionDrift.length, version: snap.hub.version || "—" })}</p>}
+            {versionDrift.length > 0 && <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-warning-primary px-3 py-2 text-sm text-warning-primary"><span className="min-w-0 flex-1">{tr("fleet.versionDriftHint", { count: versionDrift.length, version: snap.hub.version || "—" })}</span><Button size="sm" color="secondary" onClick={() => setUpgrading(versionDrift.filter((n) => n.role !== "hub"))}>{tr("fleet.upgradeAll")}</Button></div>}
+            {upgrading && <MachineUpgrade nodes={upgrading} version={snap.hub.version || "—"} onClose={() => setUpgrading(null)} onChanged={refresh} />}
             {sshOpen && <SSHConnect onClose={() => setSSHOpen(false)} onChanged={refresh} onViewMachines={() => { setSSHOpen(false); setFocusMachines(true); }} onAddExecutor={(request) => { setExecutor(request); setSSHOpen(false); setAdding(true); }} />}
             {adding && <AddMachine executor={executor} hub={snap.hub.node} harnesses={hubHarnesses.length ? hubHarnesses : ["codex", "claude-code", "grok", "kimi"]} nodes={snap.nodes.filter((n) => n.role !== "hub").map((n) => n.name)} onClose={() => setAdding(false)} onDone={() => refresh()} />}
             <div id="fleet-machines" ref={machineSection} tabIndex={-1} className="min-w-0 scroll-mt-4 rounded-xl focus-visible:outline-2 focus-visible:outline-focus-ring"><TableCard.Root size="sm" className="workbench-table min-w-0">
@@ -478,7 +481,7 @@ export function FleetPage() {
                     </Table>
                 )}
             </TableCard.Root></div>
-            {opened && snap.nodes.find((n) => n.name === opened) && <MachineDrawer n={snap.nodes.find((n) => n.name === opened)!} onClose={() => setOpened(null)} onChanged={() => refresh()} />}
+            {opened && snap.nodes.find((n) => n.name === opened) && <MachineDrawer n={snap.nodes.find((n) => n.name === opened)!} hubVersion={snap.hub.version} onUpgrade={(n) => setUpgrading([n])} onClose={() => setOpened(null)} onChanged={() => refresh()} />}
 
             <TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title="Agent" badge={`${snap.agents.length}`} />

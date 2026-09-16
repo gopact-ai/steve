@@ -162,3 +162,13 @@ func (b sshNodeBackend) Verify(ctx context.Context, name string) error {
 		}
 	}
 }
+
+// SSHUpgrade and SSHUpgradeStatus answer for the executor backend too: it
+// upgrades nothing, and the service says so.
+func (a *Service) SSHUpgrade(ctx context.Context, nodeID string) (sshconnect.InstallResult, error) {
+	return a.sshService().Upgrade(ctx, nodeID)
+}
+
+func (a *Service) SSHUpgradeStatus(_ context.Context, nodeID string) (sshconnect.InstallResult, error) {
+	return a.sshService().UpgradeStatus(nodeID)
+}

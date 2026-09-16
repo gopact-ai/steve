@@ -18,6 +18,10 @@ type SSHService interface {
 	SSHStatus(context.Context, string) (sshconnect.InstallResult, error)
 	SSHAbandon(context.Context, string) error
 	SSHBrowse(context.Context, sshconnect.BrowseRequest) (sshconnect.Listing, error)
+	// SSHUpgrade brings an enrolled machine to this build and returns when
+	// that has settled; SSHUpgradeStatus reads how far it has come.
+	SSHUpgrade(context.Context, string) (sshconnect.InstallResult, error)
+	SSHUpgradeStatus(context.Context, string) (sshconnect.InstallResult, error)
 }
 
 func (s *Server) SetSSH(service SSHService) { s.ssh = service }
@@ -42,6 +46,8 @@ func (s *Server) sshRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /console/ssh/plans/{id}", s.guard(s.sshStatus))
 	mux.HandleFunc("DELETE /console/ssh/plans/{id}", s.guard(s.sshAbandon))
 	mux.HandleFunc("POST /console/ssh/browse", s.guard(s.sshBrowse))
+	mux.HandleFunc("POST /console/ssh/upgrades/{node}", s.guard(s.sshUpgrade))
+	mux.HandleFunc("GET /console/ssh/upgrades/{node}", s.guard(s.sshUpgradeStatus))
 }
 
 func (s *Server) sshCandidates(w http.ResponseWriter, r *http.Request) {
@@ -188,4 +194,28 @@ func decodeSSH(w http.ResponseWriter, r *http.Request, value any) bool {
 		return false
 	}
 	return true
+}
+
+func (s *Server) sshUpgrade(w http.ResponseWriter, r *http.Request) {
+	if !s.sshAvailable(w) {
+		return
+	}
+	result, err := s.ssh.SSHUpgrade(r.Context(), r.PathValue("node"))
+	if err != nil && result.Status == "" {
+		s.sshError(w, err)
+		return
+	}
+	writeJSON(w, result)
+}
+
+func (s *Server) sshUpgradeStatus(w http.ResponseWriter, r *http.Request) {
+	if !s.sshAvailable(w) {
+		return
+	}
+	result, err := s.ssh.SSHUpgradeStatus(r.Context(), r.PathValue("node"))
+	if err != nil {
+		s.sshError(w, err)
+		return
+	}
+	writeJSON(w, result)
 }

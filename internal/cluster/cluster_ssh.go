@@ -61,6 +61,12 @@ func (s peerSSHService) SSHAbandon(ctx context.Context, id string) error {
 func (s peerSSHService) SSHBrowse(ctx context.Context, req sshconnect.BrowseRequest) (sshconnect.Listing, error) {
 	return s.service.Browse(ctx, req)
 }
+func (s peerSSHService) SSHUpgrade(ctx context.Context, nodeID string) (sshconnect.InstallResult, error) {
+	return s.service.Upgrade(ctx, nodeID)
+}
+func (s peerSSHService) SSHUpgradeStatus(_ context.Context, nodeID string) (sshconnect.InstallResult, error) {
+	return s.service.UpgradeStatus(nodeID)
+}
 
 type peerEnrollmentService interface {
 	PreviewPeerEnrollment(context.Context, PeerEnrollmentRequest) (PeerEnrollmentPlan, error)
@@ -370,4 +376,6 @@ type SSHControl interface {
 	SSHStatus(context.Context, string) (sshconnect.InstallResult, error)
 	SSHAbandon(context.Context, string) error
 	SSHBrowse(context.Context, sshconnect.BrowseRequest) (sshconnect.Listing, error)
+	SSHUpgrade(context.Context, string) (sshconnect.InstallResult, error)
+	SSHUpgradeStatus(context.Context, string) (sshconnect.InstallResult, error)
 }
