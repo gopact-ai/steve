@@ -885,8 +885,13 @@ func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, erro
 	if err != nil {
 		return nil, err
 	}
-	connection, err := (&tls.Dialer{Config: tlsConfig}).DialContext(ctx, "tcp", origin.Host)
+	plain, err := p.peerDial(nodeID, false, 5*time.Second)(ctx, "tcp", origin.Host)
 	if err != nil {
+		return nil, err
+	}
+	connection := tls.Client(plain, tlsConfig)
+	if err := connection.HandshakeContext(ctx); err != nil {
+		plain.Close()
 		return nil, err
 	}
 	stop := context.AfterFunc(ctx, func() { connection.Close() })

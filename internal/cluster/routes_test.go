@@ -1,6 +1,9 @@
 package cluster
 
 import (
+	"context"
+	"errors"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -76,4 +79,56 @@ func TestANodeJoinsThroughItsRouteWhenTheHubAdvertisesAnAddressItCannotReach(t *
 	if hubURL.Hostname() != "only-a-tunnel-reaches-it.invalid" {
 		t.Fatalf("the hub's advertised address changed: %s", hub.Config.PeerURL)
 	}
+}
+
+// The other direction: the machine behind the tunnel advertises an address
+// the hub cannot route to, and the hub reaches it at a loopback port of its
+// own. Everything the hub does to that node, from status checks to the
+// worker tunnel it opens to run tasks there, has to follow the route.
+func TestTheHubReachesANodeThroughItsRouteWhenTheNodeAdvertisesAnAddressItCannotReach(t *testing.T) {
+	var activations atomic.Int32
+	hubOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), nil)
+	hubOptions.Activate = testPeerApplication(t, &activations)
+	hub := StartTestPeer(t, hubOptions)
+	WaitPeerReady(t, hub)
+
+	nodeOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), hub)
+	nodeConfig, err := LoadClusterPeerConfig(nodeOptions.ClusterPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The node binds where it did; only the host it tells the cluster
+	// changes, as with a machine that advertises a LAN address the hub is
+	// not on.
+	nodeConfig.RaftBindAddress, nodeConfig.PeerBindAddress = nodeConfig.RaftAddress, nodeConfig.PeerAddress
+	_, raftPort, _ := net.SplitHostPort(nodeConfig.RaftAddress)
+	_, peerPort, _ := net.SplitHostPort(nodeConfig.PeerAddress)
+	nodeConfig.RaftAddress = net.JoinHostPort("only-a-tunnel-reaches-it.invalid", raftPort)
+	nodeConfig.PeerAddress = net.JoinHostPort("only-a-tunnel-reaches-it.invalid", peerPort)
+	nodeConfig.PeerURL = "https://" + nodeConfig.PeerAddress
+	if err := SaveClusterJSON(nodeOptions.ClusterPath, nodeConfig, false); err != nil {
+		t.Fatal(err)
+	}
+	nodeOptions.Activate = testPeerApplication(t, &activations)
+	node := StartTestPeer(t, nodeOptions)
+	member := coordination.Member{NodeID: node.Config.NodeID, Name: node.Config.Name, Address: node.Config.RaftAddress, APIAddress: node.Config.PeerURL}
+	if _, err := hub.Join(t.Context(), coordination.JoinRequest{ID: "join-unrouted", Actor: "owner", Member: member}); err == nil {
+		t.Fatal("without a route the hub joined a node it cannot reach")
+	}
+	hub.routes.Set(node.Config.NodeID, coordination.Route{Raft: node.Config.RaftBindAddress, API: node.Config.PeerBindAddress})
+	if _, err := hub.Join(t.Context(), coordination.JoinRequest{ID: "join-routed", Actor: "owner", Member: member}); err != nil {
+		t.Fatalf("the hub did not join the node through its route: %v", err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	connection, err := hub.DialWorker(ctx, node.Config.NodeID)
+	if err != nil {
+		var dialErr *net.OpError
+		if errors.As(err, &dialErr) {
+			t.Fatalf("the worker tunnel did not follow the route: %v", err)
+		}
+		t.Logf("worker tunnel reached the node through the route and was answered: %v", err)
+		return
+	}
+	connection.Close()
 }
