@@ -24,7 +24,10 @@ import (
 func startAgentAdminNode(t *testing.T, harnesses map[string]node.HarnessSpec) *node.Server {
 	t.Helper()
 	dir := t.TempDir()
-	cfg := node.ServerConfig{Name: "node-test", Token: "test-node-token", Listen: "127.0.0.1:0", StateDir: filepath.Join(dir, "state"), Source: filepath.Join(dir, "node.json"), Harnesses: harnesses}
+	cfg := node.ServerConfig{Name: "node-test", Token: "test-node-token", Listen: "127.0.0.1:0", StateDir: filepath.Join(dir, "state"), WorkspaceRoot: filepath.Join(dir, "workspace"), Source: filepath.Join(dir, "node.json"), Harnesses: harnesses}
+	if err := os.MkdirAll(cfg.WorkspaceRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	raw, err := json.Marshal(cfg)
 	if err != nil {
 		t.Fatal(err)

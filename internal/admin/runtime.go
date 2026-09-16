@@ -90,6 +90,7 @@ func ObservedHubAdvert(cfg *config.Config, observation *LocalObservation) nodewi
 	adv.Features = nodewire.Features()
 	adv.OwnSkills = node.OwnSkills(5 * time.Minute)
 	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
+	adv.WorkspaceRoot = cfg.LocalWorkspaceRoot()
 	adv.Health = node.CheckHealth("", adv.StateDir)
 	return adv
 }

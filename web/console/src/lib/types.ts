@@ -15,7 +15,7 @@ export interface AbilitySnapshot {
 export interface Node {
     name: string; display_name?: string; role?: string; version?: string; addr?: string; host?: string; ips?: string[]; up: boolean; since?: string; os?: string; arch?: string;
     capabilities?: string[]; harnesses?: Harness[]; last_error?: string; level?: string; region?: string; snapshot?: AbilitySnapshot;
-    features?: string[]; health?: Health;
+    features?: string[]; health?: Health; projects_root?: string;
 }
 export interface Activity {
     agent: string; attempt_id?: string; kind?: string; workspace?: string; task_id?: string; step_id?: string; conversation?: string;

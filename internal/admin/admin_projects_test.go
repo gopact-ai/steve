@@ -19,6 +19,7 @@ func projectAdminFixture(t *testing.T, options ...ledger.Options) (*Service, *le
 	admin := agentAdminFixture(t)
 	admin.Cfg.Nodes = map[string]config.Node{"remote": {Addr: "127.0.0.1:1", Token: "test"}}
 	admin.Cfg.Gateway.HomePath = filepath.Join(t.TempDir(), "home")
+	admin.Cfg.Gateway.StatePath = filepath.Join(filepath.Dir(admin.Path), "state.json")
 	admin.Cfg.Gateway.DefaultProject = "p"
 	admin.Cfg.Projects = map[string]config.Project{
 		"p":      {Home: config.ProjectHome{Node: "remote", Path: "/remote-project"}, Workspaces: []config.ProjectWorkspace{{Path: t.TempDir()}}},
@@ -71,11 +72,11 @@ func TestProjectManagementFileFailureLeavesCandidateUnpublished(t *testing.T) {
 			a.WriteConfig = func(string, *config.Config) error { return cause }
 			switch name {
 			case "add-project":
-				err = a.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "new", Path: t.TempDir()})
+				err = a.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "new", Path: "new"})
 			case "remove-project":
 				err = a.RemoveProject(t.Context(), "remove")
 			case "add-workspace":
-				err = a.AddWorkspace(t.Context(), "p", consoleapi.AddWorkspaceRequest{Path: t.TempDir()})
+				err = a.AddWorkspace(t.Context(), "p", consoleapi.AddWorkspaceRequest{Path: "p"})
 			case "remove-workspace":
 				err = a.RemoveWorkspace(t.Context(), "p", "")
 			}
@@ -106,7 +107,7 @@ func TestProjectManagementRetryReconcilesCommittedCandidate(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	req := consoleapi.AddProjectRequest{ID: "new", Path: t.TempDir()}
+	req := consoleapi.AddProjectRequest{ID: "new", Path: "new"}
 	var pending *config.ProjectionPendingError
 	if err := a.AddProject(t.Context(), req); !errors.As(err, &pending) {
 		t.Fatalf("committed failure missing pending receipt: %v", err)

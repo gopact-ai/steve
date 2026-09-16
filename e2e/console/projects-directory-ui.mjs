@@ -1,5 +1,6 @@
-// The project dialogs pick a directory on the machine they name; every API
-// call stays inside the fixture.
+// A project's directory is named under the workspace of the machine it
+// belongs to, never picked as a path of its own; every API call stays
+// inside the fixture.
 import assert from "node:assert/strict";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,7 +15,7 @@ const page = await context.newPage(); page.setDefaultTimeout(7000);
 const at = "2026-09-16T00:00:00Z";
 // The coordinator runs on the Linux machine while the console runs on the
 // Mac: which machine is "this machine" cannot be read from who coordinates.
-const nodes = [{ name: "node-linux", display_name: "Build box", role: "hub", up: true, version: "test" }, { name: "node-mac", display_name: "My Mac", role: "worker", up: true, version: "test" }];
+const nodes = [{ name: "node-linux", display_name: "Build box", role: "hub", up: true, version: "test", projects_root: "/home/dev/steve-workspace/projects" }, { name: "node-mac", display_name: "My Mac", role: "worker", up: true, version: "test", projects_root: "/Users/me/Steve/projects" }];
 const f = { browses: [], picks: [], projects: [], errors: [] };
 page.on("pageerror", (error) => f.errors.push(String(error)));
 await page.addInitScript(() => {
@@ -46,30 +47,27 @@ try {
     const dialog = page.getByRole("dialog", { name: "Add project", exact: true });
     await dialog.getByRole("textbox", { name: "Name", exact: true }).fill("my-service");
 
-    // The machine that coordinates is not this one: it is browsed over SSH,
-    // by node ID, and only folders it already has can be picked.
-    await dialog.getByRole("button", { name: "Browse…", exact: true }).click();
-    await dialog.getByRole("button", { name: "work", exact: true }).click();
-    // StrictMode opens the picker twice in dev; only the sequence matters.
-    const opened = f.browses.filter((b, i) => i === 0 || b.path !== f.browses[i - 1].path);
-    assert.deepEqual(opened, [{ node: "node-linux", path: "~" }, { node: "node-linux", path: "/home/dev/work" }], "browsing must name the machine by node id");
-    assert.equal(await dialog.getByRole("textbox", { name: /New folder here/ }).count(), 0, "a project directory is adopted, not created");
-    await dialog.getByRole("button", { name: "Use this directory", exact: true }).click();
-    await assert.doesNotReject(dialog.getByRole("textbox", { name: "Directory", exact: true }).and(page.locator('input[value="~/work"]')).waitFor());
+    // The directory a project gets is the same relative directory on every
+    // machine, so there is nothing to browse for: the machine's workspace
+    // is shown, the project's own name fills the rest.
+    assert.equal(await dialog.getByRole("button", { name: "Browse…", exact: true }).count(), 0, "a project directory is not browsed");
+    assert.equal(await dialog.getByRole("button", { name: "Choose folder…", exact: true }).count(), 0, "a project directory is not chosen from the system");
+    await assert.doesNotReject(dialog.getByText("/home/dev/steve-workspace/projects/my-service", { exact: true }).waitFor());
 
-    // This machine has no tunnel to itself; it opens the system chooser.
+    // Another machine resolves the same project under its own workspace.
     await dialog.getByRole("button", { name: /Machine/ }).click();
     await page.getByRole("option", { name: /My Mac/ }).click();
-    assert.equal(await dialog.getByRole("button", { name: "Browse…", exact: true }).count(), 0, "this machine is not browsed over SSH");
-    await dialog.getByRole("button", { name: "Choose folder…", exact: true }).click();
-    await assert.doesNotReject(page.locator('input[value="/Users/me/work/mac-service"]').waitFor());
-    assert.deepEqual(await page.evaluate(() => window.pickedWith), ["~/work"], "the chooser opens where the field points");
+    await assert.doesNotReject(dialog.getByText("/Users/me/Steve/projects/my-service", { exact: true }).waitFor());
+
+    await dialog.getByRole("textbox", { name: "Directory", exact: true }).fill("team/my-service");
+    await assert.doesNotReject(dialog.getByText("/Users/me/Steve/projects/team/my-service", { exact: true }).waitFor());
 
     await dialog.getByRole("button", { name: "Add project", exact: true }).click();
     await assert.doesNotReject(dialog.getByText(/my-service/).first().waitFor());
-    assert.deepEqual(f.projects, [{ id: "my-service", node: "node-mac", path: "/Users/me/work/mac-service", repo: "inplace", level: "internal" }]);
+    assert.deepEqual(f.projects, [{ id: "my-service", node: "node-mac", path: "team/my-service", repo: "inplace", level: "internal" }]);
+    assert.deepEqual(f.browses, [], "the project dialog never browses a machine");
     assert.deepEqual(f.errors, []);
-    console.log("PASS project directories are picked on the machine they belong to");
+    console.log("PASS project directories are named under the machine's workspace");
 } finally {
     await context.close(); await browser.close(); await server.close();
 }
