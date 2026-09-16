@@ -157,8 +157,10 @@ func splice(connection net.Conn, stream *yamux.Stream, streamReader io.Reader) {
 	}()
 	go func() {
 		defer wait.Done()
-		_, _ = io.Copy(connection, streamReader)
-		if tcp, ok := connection.(*net.TCPConn); ok {
+		_, err := io.Copy(connection, streamReader)
+		// The stream ending in error is the link going away, which the
+		// connection should see as a broken peer rather than a clean end.
+		if tcp, ok := connection.(*net.TCPConn); ok && err == nil {
 			_ = tcp.CloseWrite()
 		} else {
 			connection.Close()
@@ -185,8 +187,9 @@ func (b *bridge) close() {
 // the hub, announces itself on stdout, and then multiplexes the session:
 // connections accepted here go to the hub, and the hub's streams go to
 // the allowed targets on this machine. It returns when the session ends,
-// when the hub stops answering keepalives, or when ctx ends.
-func ServeLink(ctx context.Context, stdin io.Reader, stdout io.WriteCloser, listens []PortForward, allowed []string) error {
+// when the hub stops answering keepalives, or when ctx ends; the
+// multiplexer's own messages go to logs.
+func ServeLink(ctx context.Context, stdin io.Reader, stdout io.WriteCloser, logs io.Writer, listens []PortForward, allowed []string) error {
 	b := newBridge(allowed)
 	defer b.close()
 	for i, forward := range listens {
@@ -200,16 +203,19 @@ func ServeLink(ctx context.Context, stdin io.Reader, stdout io.WriteCloser, list
 	if _, err := io.WriteString(stdout, linkBanner+"\n"); err != nil {
 		return err
 	}
-	session, err := yamux.Server(stdio{stdin, stdout}, muxConfig())
+	session, err := yamux.Server(stdio{stdin, stdout}, muxConfig(logs))
 	if err != nil {
 		return err
 	}
-	defer session.Close()
 	b.attach(session)
 	select {
 	case <-session.CloseChan():
 		return nil
 	case <-ctx.Done():
+		// Closing the session would wait for a read of stdin that only
+		// the hub can end; closing stdout tells the hub instead, and the
+		// process exiting releases everything else.
+		_ = stdout.Close()
 		return nil
 	}
 }

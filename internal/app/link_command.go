@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"flag"
+	"log"
 	"os"
 	"os/signal"
 	"syscall"
@@ -33,9 +34,17 @@ func LinkCommand(args []string) error {
 		}
 		forwards = append(forwards, forward)
 	}
+	for _, target := range allowed {
+		if err := sshconnect.CheckAddress(target); err != nil {
+			return err
+		}
+	}
+	// What this command writes on stderr reaches the hub as the reason the
+	// link ended; it wants no timestamps.
+	log.SetFlags(0)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
 	defer stop()
-	return sshconnect.ServeLink(ctx, os.Stdin, os.Stdout, forwards, allowed)
+	return sshconnect.ServeLink(ctx, os.Stdin, os.Stdout, os.Stderr, forwards, allowed)
 }
 
 type repeatedFlag []string

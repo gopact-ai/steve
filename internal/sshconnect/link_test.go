@@ -203,7 +203,7 @@ func TestFarEndOpensOnlyAllowedTargets(t *testing.T) {
 	hubIn, farOut := io.Pipe()
 	ctx, cancel := context.WithCancel(t.Context())
 	served := make(chan error, 1)
-	go func() { served <- sshconnect.ServeLink(ctx, farIn, farOut, nil, []string{allowed}) }()
+	go func() { served <- sshconnect.ServeLink(ctx, farIn, farOut, io.Discard, nil, []string{allowed}) }()
 	reader := bufio.NewReader(hubIn)
 	if banner, err := reader.ReadString('\n'); err != nil || strings.TrimSpace(banner) != "STEVE-LINK/1" {
 		t.Fatalf("the far end did not announce itself: %q %v", banner, err)
@@ -242,5 +242,64 @@ func TestFarEndOpensOnlyAllowedTargets(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("the far end did not stop with its context")
+	}
+}
+
+// A far end that cannot bind a listen address (something on the machine
+// holds the port) ends the session at once, and the link keeps the reason.
+func TestLinkReportsAFarEndThatCannotBindItsPort(t *testing.T) {
+	taken, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer taken.Close()
+	sessions := &linktest.Launcher{}
+	link := sshconnect.OpenLink(t.Context(), sshconnect.LinkSpec{Alias: "dev", Inbound: []sshconnect.PortForward{{Listen: taken.Addr().String(), Target: "127.0.0.1:7712"}}}, sshconnect.LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return 10 * time.Millisecond }})
+	t.Cleanup(link.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 300*time.Millisecond)
+	defer cancel()
+	err = link.WaitConnected(ctx)
+	if err == nil || !strings.Contains(err.Error(), "监听 "+taken.Addr().String()+" 失败") {
+		t.Fatalf("the far end's reason was not kept: %v", err)
+	}
+	if status := link.Status(); status.Connected || status.Attempts < 2 {
+		t.Fatalf("link did not keep trying: %+v", status)
+	}
+}
+
+// Shell output ahead of the banner is skipped only up to the reader's
+// buffer: a login that floods stdout ends the attempt with a reason
+// instead of being read without bound.
+func TestLinkGivesUpOnAFarEndThatFloodsStdout(t *testing.T) {
+	sessions := &linktest.Launcher{Junk: strings.Repeat("x", 65<<10)}
+	link := sshconnect.OpenLink(t.Context(), sshconnect.LinkSpec{Alias: "dev"}, sshconnect.LinkOptions{Launch: sessions, Backoff: func(int) time.Duration { return time.Hour }})
+	t.Cleanup(link.Close)
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Second)
+	defer cancel()
+	err := link.WaitConnected(ctx)
+	if err == nil || !strings.Contains(err.Error(), "输出过多") {
+		t.Fatalf("the flood was not refused: %v", err)
+	}
+}
+
+// Told to stop, the far end returns without waiting for the hub to do
+// anything: on the machine, sshd may never close its stdin.
+func TestFarEndStopsWithItsContextWhileTheHubIsSilent(t *testing.T) {
+	farIn, _ := io.Pipe()
+	hubIn, farOut := io.Pipe()
+	ctx, cancel := context.WithCancel(t.Context())
+	served := make(chan error, 1)
+	go func() { served <- sshconnect.ServeLink(ctx, farIn, farOut, io.Discard, nil, nil) }()
+	if _, err := bufio.NewReader(hubIn).ReadString('\n'); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	select {
+	case err := <-served:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("the far end waited for the hub before stopping")
 	}
 }

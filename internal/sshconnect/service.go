@@ -726,7 +726,7 @@ func (s *Service) commit(ctx context.Context, plan InstallPlan, revision string,
 		err := linker.Link(linkCtx, plan.ID, registration)
 		cancel()
 		if err != nil {
-			return reject(fail("link", "link_failed", "SSH 隧道未能建立："+err.Error(), "确认这个别名能免交互登录并执行命令，且远端 ~/.steve-peer/bin/steve 可运行；然后放弃这次接入并重新检查、接入"))
+			return reject(fail("link", "link_failed", "SSH 隧道未能建立："+err.Error(), "确认这个别名能免交互登录并执行命令，且远端 ~/.steve-peer/bin/steve 是本次安装的版本（旧版没有 link 命令）；然后放弃这次接入并重新检查、接入"))
 		}
 		result.Steps = append(result.Steps, Step{ID: "link", Status: "ready", Message: "SSH 隧道已建立，集群通信将经由这条隧道"})
 		s.progress(result)

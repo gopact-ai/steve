@@ -264,10 +264,15 @@ func (l *Link) session(ctx context.Context) error {
 		case <-ctx.Done():
 		}
 		l.bridge.detach()
-		_ = mux.Close()
 	}
+	// The session's end closes its pipes, which is what lets the
+	// multiplexer's reader return; only then can it be closed without
+	// waiting on the far end.
 	process.Kill()
 	<-ended
+	if mux != nil {
+		_ = mux.Close()
+	}
 	reason := lastLine(stderr)
 	switch {
 	case ctx.Err() != nil:
@@ -293,7 +298,7 @@ func (l *Link) ready(ctx context.Context, process *Session, ended <-chan struct{
 			result <- readyOutcome{err: err}
 			return
 		}
-		mux, err := yamux.Client(stdio{reader, process.Stdin}, muxConfig())
+		mux, err := yamux.Client(stdio{reader, process.Stdin}, muxConfig(io.Discard))
 		if err != nil {
 			result <- readyOutcome{err: err}
 			return
@@ -335,12 +340,16 @@ type readyOutcome struct {
 }
 
 // awaitBanner reads lines until the far end announces itself. The
-// reader's buffer bounds how much shell chatter is tolerated before it.
+// reader's buffer bounds how much shell chatter is tolerated before it,
+// whether as many lines or as one line without end.
 func awaitBanner(reader *bufio.Reader) error {
 	read := 0
 	for {
-		line, err := reader.ReadString('\n')
-		if strings.TrimSpace(line) == linkBanner {
+		line, err := reader.ReadSlice('\n')
+		if errors.Is(err, bufio.ErrBufferFull) {
+			return errors.New("远端在链路程序启动前输出过多")
+		}
+		if strings.TrimSpace(string(line)) == linkBanner {
 			return nil
 		}
 		if err != nil {
@@ -352,15 +361,20 @@ func awaitBanner(reader *bufio.Reader) error {
 	}
 }
 
-func muxConfig() *yamux.Config {
+// muxConfig is the multiplexer's configuration on both ends: each pings
+// the other every 15 s and gives the session up after 30 s without an
+// answer, which is how a dead hub or machine is noticed.
+func muxConfig(logs io.Writer) *yamux.Config {
 	config := yamux.DefaultConfig()
 	config.KeepAliveInterval = 15 * time.Second
 	config.ConnectionWriteTimeout = 30 * time.Second
-	config.LogOutput = io.Discard
+	config.LogOutput = logs
 	return config
 }
 
-// stdio is a session's two pipes as the one connection yamux wants.
+// stdio is a session's two pipes as the one connection yamux wants. Its
+// Close ends only the write side: the read side is a pipe the process on
+// the other end owns, and returns once that process is gone.
 type stdio struct {
 	io.Reader
 	io.WriteCloser
@@ -399,14 +413,15 @@ func ParseForward(text string) (PortForward, error) {
 	}
 	forward := PortForward{Listen: listen, Target: target}
 	for _, address := range []string{listen, target} {
-		if err := checkAddress(address); err != nil {
+		if err := CheckAddress(address); err != nil {
 			return PortForward{}, err
 		}
 	}
 	return forward, nil
 }
 
-func checkAddress(address string) error {
+// CheckAddress accepts a fixed host:port.
+func CheckAddress(address string) error {
 	host, port, err := net.SplitHostPort(address)
 	if err != nil {
 		return fmt.Errorf("%q 需要写成 host:port", address)

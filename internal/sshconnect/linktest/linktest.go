@@ -6,7 +6,6 @@ package linktest
 
 import (
 	"context"
-	"errors"
 	"io"
 	"strings"
 	"sync"
@@ -58,7 +57,7 @@ func (l *Launcher) Start(_ context.Context, args []string) (*sshconnect.Session,
 		if junk != "" {
 			_, _ = io.WriteString(farOut, junk)
 		}
-		err := sshconnect.ServeLink(ctx, farIn, farOut, listens, allowed)
+		err := sshconnect.ServeLink(ctx, farIn, farOut, io.Discard, listens, allowed)
 		far.end(err)
 	}()
 	l.mu.Lock()
@@ -72,7 +71,8 @@ func (l *Launcher) Start(_ context.Context, args []string) (*sshconnect.Session,
 			}
 			return "", nil
 		},
-		Kill: func() { far.end(errors.New("killed")) }}, nil
+		// A killed ssh client writes nothing more on stderr.
+		Kill: func() { far.end(nil) }}, nil
 }
 
 // end stops the far end and closes its pipes, so the hub's reads fail.
