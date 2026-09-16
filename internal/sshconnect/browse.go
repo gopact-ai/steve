@@ -10,11 +10,20 @@ import (
 	"unicode/utf8"
 )
 
-// BrowseRequest names a directory on the machine behind an SSH alias. An
-// empty path means the account's home.
+// BrowseRequest names a directory on a machine: one behind an SSH alias
+// while it is being enrolled, or one already in the cluster, named by node
+// ID, whose alias the backend knows. An empty path means the account's
+// home.
 type BrowseRequest struct {
-	Alias string `json:"alias"`
+	Alias string `json:"alias,omitempty"`
+	Node  string `json:"node,omitempty"`
 	Path  string `json:"path"`
+}
+
+// AliasBackend is offered by a backend that knows which SSH alias an
+// enrolled machine is reached through.
+type AliasBackend interface {
+	MachineAlias(nodeID string) (string, error)
 }
 
 // Listing is what the machine reported about one directory: where it is,
@@ -47,7 +56,11 @@ const (
 // Browse lists the directories under one path on the remote machine so a
 // person can pick a workspace instead of typing it blind. It reads only.
 func (s *Service) Browse(ctx context.Context, req BrowseRequest) (Listing, error) {
-	c, _, err := s.selected(ctx, req.Alias)
+	alias, err := s.browseAlias(req)
+	if err != nil {
+		return Listing{}, err
+	}
+	c, _, err := s.selected(ctx, alias)
 	if err != nil {
 		return Listing{}, err
 	}
@@ -70,6 +83,25 @@ func (s *Service) Browse(ctx context.Context, req BrowseRequest) (Listing, error
 		return Listing{}, connectionError(ctx, output.Stderr)
 	}
 	return parseListing(output.Stdout, target)
+}
+
+// browseAlias is the alias to reach the machine the request names: its own
+// when the machine is being enrolled, or the one the backend keeps for a
+// machine already in the cluster.
+func (s *Service) browseAlias(req BrowseRequest) (string, error) {
+	node := strings.TrimSpace(req.Node)
+	if node == "" {
+		return req.Alias, nil
+	}
+	backend, ok := s.backend.(AliasBackend)
+	if !ok {
+		return "", fail("configuration", "browse_unsupported", "这类接入的机器无法从这里浏览目录", "直接填写目标机上的绝对路径")
+	}
+	alias, err := backend.MachineAlias(node)
+	if err != nil {
+		return "", fail("configuration", "browse_target", err.Error(), "直接填写目标机上的绝对路径")
+	}
+	return alias, nil
 }
 
 func validBrowsePath(dir string) error {

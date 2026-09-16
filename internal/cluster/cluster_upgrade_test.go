@@ -39,11 +39,13 @@ func TestUpgradeTargetNamesTheLinkAliasAndRefusesSelf(t *testing.T) {
 	}
 }
 
-// The wait keeps asking until the machine answers with the wanted build;
+// The wait keeps asking until the machine answers with the wanted build:
 // an ask that hangs is given up on so the next one can reach the restarted
-// process, and running out of time names the version last seen.
+// process, a few seconds without a coordinator (the application rebuilds
+// when the restarted member led the cluster) are waited out, and running
+// out of time names the version last seen.
 func TestAwaitBuildAsksAgainUntilTheMachineReportsTheBuild(t *testing.T) {
-	asks := 0
+	asks, turns := 0, 0
 	refresh := func(ctx context.Context, nodeID string) (nodewire.Advert, error) {
 		asks++
 		switch asks {
@@ -57,16 +59,25 @@ func TestAwaitBuildAsksAgainUntilTheMachineReportsTheBuild(t *testing.T) {
 		}
 		return nodewire.Advert{BuildVersion: "new5678"}, nil
 	}
+	refresher := func() advertRefresh {
+		turns++
+		if turns == 4 || turns == 5 {
+			return nil
+		}
+		return refresh
+	}
 	var reported []string
 	ctx := sshconnect.WithReporter(t.Context(), func(text string) { reported = append(reported, text) })
-	if err := awaitBuildWithin(ctx, refresh, 3*time.Second, 50*time.Millisecond, "node-dev", "new5678"); err != nil {
+	if err := awaitBuildWithin(ctx, refresher, 3*time.Second, 50*time.Millisecond, "node-dev", "new5678"); err != nil {
 		t.Fatalf("the machine's new build was not accepted: %v (asks=%d)", err, asks)
 	}
-	if asks != 4 || len(reported) != 2 || !strings.Contains(reported[0], "connection reset") || !strings.Contains(reported[1], "重新询问") {
-		t.Fatalf("asks=%d reported=%v", asks, reported)
+	if asks != 4 || turns != 6 || len(reported) != 3 || !strings.Contains(reported[0], "connection reset") || !strings.Contains(reported[1], "重新询问") || !strings.Contains(reported[2], "协调服务正在重启") {
+		t.Fatalf("asks=%d turns=%d reported=%v", asks, turns, reported)
 	}
-	stale := func(context.Context, string) (nodewire.Advert, error) {
-		return nodewire.Advert{BuildVersion: "old1234"}, nil
+	stale := func() advertRefresh {
+		return func(context.Context, string) (nodewire.Advert, error) {
+			return nodewire.Advert{BuildVersion: "old1234"}, nil
+		}
 	}
 	short, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer cancel()

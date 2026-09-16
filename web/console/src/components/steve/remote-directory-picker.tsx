@@ -3,16 +3,17 @@ import { ArrowUp, Folder } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { useI18n } from "@/providers/locale-provider";
-import { browseSSH, type SSHListing } from "@/lib/api/ssh";
+import { browseSSH, type BrowseTarget, type SSHListing } from "@/lib/api/ssh";
 
-// RemoteDirectoryPicker walks the directories of the machine behind an SSH
-// alias so the workspace can be chosen from what is really there. Picking a
+// RemoteDirectoryPicker walks the directories of a machine — one being
+// enrolled, behind an SSH alias, or one already in the cluster, by node ID
+// — so the workspace can be chosen from what is really there. Picking a
 // directory writes it into the field with the home shown as ~; a new folder
 // name is appended to the open directory and created during installation.
 // A directory the field names but the machine does not have yet opens at
 // its nearest existing ancestor (the machine resolves that in one round
 // trip), so the person lands next to where they meant to go.
-export function RemoteDirectoryPicker({ id, alias, initialPath, isDisabled, onPick, onClose }: { id?: string; alias: string; initialPath: string; isDisabled?: boolean; onPick: (path: string) => void; onClose: () => void }) {
+export function RemoteDirectoryPicker({ id, target, initialPath, isDisabled, onPick, onClose }: { id?: string; target: BrowseTarget; initialPath: string; isDisabled?: boolean; onPick: (path: string) => void; onClose: () => void }) {
     const { t } = useI18n();
     const [listing, setListing] = useState<SSHListing | null>(null);
     const [loading, setLoading] = useState(true);
@@ -26,7 +27,7 @@ export function RemoteDirectoryPicker({ id, alias, initialPath, isDisabled, onPi
         controller.current = current;
         setLoading(true); setError("");
         try {
-            const next = await browseSSH(alias, path, current.signal);
+            const next = await browseSSH(target, path, current.signal);
             if (current.signal.aborted) return;
             setListing(next); setNewFolder("");
         } catch (e) {
@@ -36,11 +37,12 @@ export function RemoteDirectoryPicker({ id, alias, initialPath, isDisabled, onPi
     }
     // The picker opens once per machine at the field's value at that moment;
     // later edits to the field do not move the open directory.
+    const machine = target.alias ?? target.node;
     useEffect(() => {
         void open(initialPath);
         heading.current?.focus();
         return () => controller.current?.abort();
-    }, [alias]);
+    }, [machine]);
     const folderName = newFolder.trim();
     // The same rule the workspace field and the backend apply: no path
     // separator, no control characters, and not . or ..

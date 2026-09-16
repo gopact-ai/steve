@@ -16,6 +16,9 @@ export const installSSH = (id: string) => request<SSHInstallResult>(`/console/ss
 export const abandonSSH = (id: string) => request<{ plan_id: string; abandoned: boolean }>(`/console/ssh/plans/${encodeURIComponent(id)}`, { method: "DELETE" });
 export interface SSHListingEntry { name: string; path: string }
 export interface SSHListing { path: string; display: string; home: string; parent?: string; requested?: string; writable: boolean; entries: SSHListingEntry[]; truncated?: boolean }
-export const browseSSH = (alias: string, path: string, signal?: AbortSignal) => request<SSHListing>("/console/ssh/browse", { method: "POST", body: { alias, path }, signal });
+// A directory is browsed on a machine being enrolled, named by its SSH
+// alias, or on one already in the cluster, named by node ID.
+export type BrowseTarget = { alias: string; node?: never } | { node: string; alias?: never };
+export const browseSSH = (target: BrowseTarget, path: string, signal?: AbortSignal) => request<SSHListing>("/console/ssh/browse", { method: "POST", body: { ...target, path }, signal });
 export const upgradeSSH = (nodeID: string) => request<SSHInstallResult>(`/console/ssh/upgrades/${encodeURIComponent(nodeID)}`, { method: "POST" });
 export const upgradeStatusSSH = (nodeID: string, signal?: AbortSignal) => request<SSHInstallResult>(`/console/ssh/upgrades/${encodeURIComponent(nodeID)}`, { signal, cache: "no-store" });
