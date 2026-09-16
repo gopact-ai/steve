@@ -65,7 +65,9 @@ func TestAwaitBuildAsksAgainUntilTheMachineReportsTheBuild(t *testing.T) {
 	if asks != 4 || len(reported) != 2 || !strings.Contains(reported[0], "connection reset") || !strings.Contains(reported[1], "重新询问") {
 		t.Fatalf("asks=%d reported=%v", asks, reported)
 	}
-	stale := func(context.Context, string) (nodewire.Advert, error) { return nodewire.Advert{BuildVersion: "old1234"}, nil }
+	stale := func(context.Context, string) (nodewire.Advert, error) {
+		return nodewire.Advert{BuildVersion: "old1234"}, nil
+	}
 	short, cancel := context.WithTimeout(t.Context(), 150*time.Millisecond)
 	defer cancel()
 	err := awaitBuildWithin(short, stale, time.Second, 50*time.Millisecond, "node-dev", "new5678")
