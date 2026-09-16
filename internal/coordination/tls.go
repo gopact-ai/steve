@@ -115,6 +115,8 @@ func (o TLSOptions) ClientConfig(expectedNodeID string) (*tls.Config, error) {
 		// The address can change independently of node identity. VerifyConnection
 		// performs the full CA/EKU/time validation and exact URI identity check
 		// in place of DNS hostname validation; it also runs on resumed sessions.
+		// No ServerName is set on purpose: a connection may arrive through a
+		// tunnel at a loopback address, and the URI SAN, not SNI, names the node.
 		InsecureSkipVerify: true,
 		VerifyConnection: func(state tls.ConnectionState) error {
 			if len(state.PeerCertificates) == 0 {
@@ -144,6 +146,7 @@ type TLSStreamLayer struct {
 	options     TLSOptions
 	server      *tls.Config
 	peerID      func(raft.ServerAddress) string
+	routes      *RouteTable
 	mu          sync.Mutex
 	closed      bool
 	connections map[*handshakeConnection]struct{}
@@ -151,7 +154,9 @@ type TLSStreamLayer struct {
 
 // NewTLSStreamLayer owns listener on success. peerID resolves an advertised
 // Raft address to its expected stable node ID from trusted seeds/membership.
-func NewTLSStreamLayer(listener net.Listener, options TLSOptions, peerID func(raft.ServerAddress) string) (*TLSStreamLayer, error) {
+// routes is where this node connects to peers it cannot reach at what they
+// advertise; nil dials every peer at its advertised address.
+func NewTLSStreamLayer(listener net.Listener, options TLSOptions, peerID func(raft.ServerAddress) string, routes *RouteTable) (*TLSStreamLayer, error) {
 	if listener == nil || peerID == nil || options.AuthorizePeer == nil {
 		return nil, fmt.Errorf("%w: listener, peer identity resolver and Raft peer authorization are required", ErrInvalid)
 	}
@@ -176,7 +181,7 @@ func NewTLSStreamLayer(listener net.Listener, options TLSOptions, peerID func(ra
 		}
 		return nil
 	}
-	return &TLSStreamLayer{listener: listener, options: options, server: server, peerID: peerID, connections: map[*handshakeConnection]struct{}{}}, nil
+	return &TLSStreamLayer{listener: listener, options: options, server: server, peerID: peerID, routes: routes, connections: map[*handshakeConnection]struct{}{}}, nil
 }
 
 func (s *TLSStreamLayer) Accept() (net.Conn, error) {
@@ -274,17 +279,17 @@ func (s *TLSStreamLayer) Dial(address raft.ServerAddress, timeout time.Duration)
 	if timeout <= 0 {
 		timeout = s.options.HandshakeTimeout
 	}
-	dialer := tls.Dialer{NetDialer: &net.Dialer{Timeout: timeout}, Config: config}
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
-	connection, err := dialer.DialContext(ctx, "tcp", string(address))
+	dial := s.routes.RaftDial(peerID, (&net.Dialer{Timeout: timeout}).DialContext)
+	connection, err := dial(ctx, "tcp", string(address))
 	if err != nil {
 		return nil, err
 	}
-	secure, ok := connection.(*tls.Conn)
-	if !ok {
-		connection.Close()
-		return nil, fmt.Errorf("%w: expected TLS connection", ErrInvalid)
+	secure := tls.Client(connection, config)
+	if err := secure.HandshakeContext(ctx); err != nil {
+		secure.Close()
+		return nil, err
 	}
 	return s.track(secure)
 }

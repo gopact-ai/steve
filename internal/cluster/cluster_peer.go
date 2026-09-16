@@ -85,6 +85,7 @@ type Peer struct {
 	Config            PeerConfig
 	Runtime           atomic.Pointer[Runtime]
 	client            *coordination.Client
+	routes            *coordination.RouteTable
 	identity          coordination.TLSOptions
 	OwnerToken        string
 	UIToken           string
@@ -94,7 +95,7 @@ type Peer struct {
 	localTransport    *http.Transport
 	Mu                sync.RWMutex
 	Application       *PeerApplicationEndpoint
-	peerTransports    map[string]*http.Transport
+	peerTransports    map[string]peerTransport
 	ctx               context.Context
 	cancel            context.CancelFunc
 	closeOnce         sync.Once
@@ -152,7 +153,7 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(parent)
-	p := &Peer{Options: options, Config: settings, OwnerToken: string(owner), UIToken: application.Gateway.ReadModelToken, ctx: ctx, cancel: cancel, unlock: unlock, Errors: make(chan error, 1), peerTransports: map[string]*http.Transport{}, localTransport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, IdleConnTimeout: 30 * time.Second}}
+	p := &Peer{Options: options, Config: settings, OwnerToken: string(owner), UIToken: application.Gateway.ReadModelToken, ctx: ctx, cancel: cancel, unlock: unlock, Errors: make(chan error, 1), peerTransports: map[string]peerTransport{}, localTransport: &http.Transport{Proxy: nil, DialContext: (&net.Dialer{Timeout: time.Second}).DialContext, IdleConnTimeout: 30 * time.Second}}
 	p.workerPrincipals = map[string]*workerPrincipal{}
 	defer func() {
 		if runErr != nil {
@@ -205,13 +206,14 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	seeds := append([]coordination.Member(nil), p.Config.Seeds...)
 	seeds = append(seeds, coordination.Member{NodeID: p.Config.NodeID, Address: p.Config.RaftAddress, APIAddress: p.Config.PeerURL, Name: p.Config.Name})
 	selfHost, _, _ := net.SplitHostPort(peerListener.Addr().String())
-	p.client, err = coordination.NewClient(coordination.ClientConfig{TLS: identity, Members: seeds, SelfHost: selfHost, ControlHeaders: func(context.Context, string) (http.Header, error) {
+	p.routes = coordination.NewRouteTable(p.Config.Routes)
+	p.client, err = coordination.NewClient(coordination.ClientConfig{TLS: identity, Members: seeds, SelfHost: selfHost, Routes: p.routes, ControlHeaders: func(context.Context, string) (http.Header, error) {
 		return http.Header{"Authorization": []string{"Bearer " + p.OwnerToken}}, nil
 	}})
 	if err != nil {
 		return nil, err
 	}
-	stream, err := coordination.NewTLSStreamLayer(&advertisedPeerListener{Listener: raftListener, address: &p.raftAdvertisement}, identity, p.resolveRaftPeer)
+	stream, err := coordination.NewTLSStreamLayer(&advertisedPeerListener{Listener: raftListener, address: &p.raftAdvertisement}, identity, p.resolveRaftPeer, p.routes)
 	if err != nil {
 		return nil, err
 	}
@@ -336,8 +338,8 @@ func (p *Peer) Close() error {
 		}
 		p.localTransport.CloseIdleConnections()
 		p.Mu.Lock()
-		for _, transport := range p.peerTransports {
-			transport.CloseIdleConnections()
+		for _, pooled := range p.peerTransports {
+			pooled.transport.CloseIdleConnections()
 		}
 		p.Mu.Unlock()
 		if p.unpublish != nil {
@@ -591,31 +593,53 @@ func (p *Peer) remoteTransport(member coordination.Member) (*http.Transport, *ur
 	if err != nil || origin.Scheme != "https" || origin.Host == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
 		return nil, nil, errors.New("coordinator has no valid HTTPS peer endpoint")
 	}
+	route, _ := p.routes.Lookup(member.NodeID)
 	p.Mu.Lock()
 	defer p.Mu.Unlock()
-	key := member.NodeID + "\x00" + member.APIAddress
-	transport := p.peerTransports[key]
-	if transport == nil {
+	// One transport per node. Mutual TLS proves whatever answers is that
+	// node, so identity is not the concern; idle connections are. They may
+	// sit on a tunnel that has since gone or on an address the node left,
+	// so when the address or route changes the transport is rebuilt.
+	pooled, ok := p.peerTransports[member.NodeID]
+	if ok && (pooled.address != member.APIAddress || pooled.route != route.API) {
+		pooled.transport.CloseIdleConnections()
+		delete(p.peerTransports, member.NodeID)
+		ok = false
+	}
+	if !ok {
 		tlsConfig, err := p.identity.ClientConfig(member.NodeID)
 		if err != nil {
 			return nil, nil, err
 		}
-		transport = &http.Transport{TLSClientConfig: tlsConfig, DialContext: p.peerDial(member.NodeID, false, 5*time.Second), TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second}
-		p.peerTransports[key] = transport
+		transport := &http.Transport{TLSClientConfig: tlsConfig, DialContext: p.peerDial(member.NodeID, false, 5*time.Second), TLSHandshakeTimeout: 5 * time.Second, ResponseHeaderTimeout: 30 * time.Second, IdleConnTimeout: 30 * time.Second}
+		pooled = peerTransport{transport: transport, address: member.APIAddress, route: route.API}
+		p.peerTransports[member.NodeID] = pooled
 	}
-	return transport, origin, nil
+	return pooled.transport, origin, nil
 }
 
-// peerDial connects to another node at the address it advertises. This
-// node's own advertised address is often one only other machines can route
-// to (a VPN tunnel address), so calls aimed at itself go to the host the
-// matching listener is bound to (the peer API listener, or the Raft
-// listener for raft); the mutual TLS identity check still proves the port
-// serves this node.
+// peerTransport is the transport kept for one other node and the address
+// and route it was built to reach.
+type peerTransport struct {
+	transport *http.Transport
+	address   string
+	route     string
+}
+
+// peerDial connects to another node. The address it is handed is what the
+// node advertises; this node's route to it wins when there is one (an SSH
+// tunnel ending at a loopback port here). This node's own advertised
+// address is often one only other machines can route to (a VPN tunnel
+// address), so calls aimed at itself go to the host the matching listener
+// is bound to (the peer API listener, or the Raft listener for raft). The
+// mutual TLS identity check still proves the port serves the node meant.
 func (p *Peer) peerDial(nodeID string, raft bool, timeout time.Duration) coordination.DialFunc {
 	dial := (&net.Dialer{Timeout: timeout}).DialContext
 	if nodeID != p.Config.NodeID {
-		return dial
+		if raft {
+			return p.routes.RaftDial(nodeID, dial)
+		}
+		return p.routes.APIDial(nodeID, dial)
 	}
 	// Bind addresses are fixed when the listeners open, before anything
 	// dials; remoteTransport calls this while holding p.Mu.
@@ -861,8 +885,13 @@ func (p *Peer) DialWorker(parent context.Context, nodeID string) (net.Conn, erro
 	if err != nil {
 		return nil, err
 	}
-	connection, err := (&tls.Dialer{Config: tlsConfig}).DialContext(ctx, "tcp", origin.Host)
+	plain, err := p.peerDial(nodeID, false, 5*time.Second)(ctx, "tcp", origin.Host)
 	if err != nil {
+		return nil, err
+	}
+	connection := tls.Client(plain, tlsConfig)
+	if err := connection.HandshakeContext(ctx); err != nil {
+		plain.Close()
 		return nil, err
 	}
 	stop := context.AfterFunc(ctx, func() { connection.Close() })

@@ -27,7 +27,11 @@ type ClientConfig struct {
 	// SelfHost is the host this node's own HTTPS listener is bound to. Calls
 	// aimed at this node go there instead of the advertised address; empty or
 	// unspecified means loopback.
-	SelfHost         string
+	SelfHost string
+	// Routes is where this node connects to nodes it cannot reach at what
+	// they advertise; nil means every node is dialed at its advertised
+	// address.
+	Routes           *RouteTable
 	Timeout          time.Duration
 	MaxAttempts      int
 	MaxResponseBytes int64
@@ -38,7 +42,17 @@ type Client struct {
 	mu      sync.Mutex
 	members map[string]Member
 	leader  string
-	clients map[string]*http.Client
+	clients map[string]pooledClient
+}
+
+// pooledClient is the HTTP client this node keeps for one other node,
+// together with the address and route it was built to reach. When either
+// changes the client is rebuilt: its idle connections point at the old way
+// there (a torn-down tunnel, a previous address) and must not be reused.
+type pooledClient struct {
+	client  *http.Client
+	address string
+	route   string
 }
 
 func NewClient(config ClientConfig) (*Client, error) {
@@ -54,7 +68,7 @@ func NewClient(config ClientConfig) (*Client, error) {
 	if config.MaxResponseBytes <= 0 {
 		config.MaxResponseBytes = 64 << 20
 	}
-	client := &Client{config: config, members: map[string]Member{}, clients: map[string]*http.Client{}}
+	client := &Client{config: config, members: map[string]Member{}, clients: map[string]pooledClient{}}
 	client.RememberMembers(config.Members)
 	return client, nil
 }
@@ -83,8 +97,8 @@ func (c *Client) PeerID(address raft.ServerAddress) string {
 func (c *Client) Close() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	for _, client := range c.clients {
-		client.CloseIdleConnections()
+	for _, pooled := range c.clients {
+		pooled.client.CloseIdleConnections()
 	}
 }
 
@@ -277,24 +291,33 @@ func (c *Client) peerClient(member Member) (*http.Client, string, error) {
 	if err != nil || address.Scheme != "https" || address.Host == "" || address.User != nil || address.RawQuery != "" || address.Fragment != "" || (address.Path != "" && address.Path != "/") {
 		return nil, "", fmt.Errorf("%w: peer API address must be an HTTPS origin", ErrInvalid)
 	}
-	key := member.NodeID + "\x00" + address.String()
+	route, _ := c.config.Routes.Lookup(member.NodeID)
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	client := c.clients[key]
-	if client == nil {
+	pooled, ok := c.clients[member.NodeID]
+	if ok && (pooled.address != address.String() || pooled.route != route.API) {
+		pooled.client.CloseIdleConnections()
+		delete(c.clients, member.NodeID)
+		ok = false
+	}
+	if !ok {
 		config, err := c.config.TLS.ClientConfig(member.NodeID)
 		if err != nil {
 			return nil, "", err
 		}
 		dial := (&net.Dialer{Timeout: c.config.Timeout}).DialContext
-		if member.NodeID == c.config.TLS.NodeID {
+		switch {
+		case member.NodeID == c.config.TLS.NodeID:
 			dial = SelfDial(c.config.SelfHost, dial)
+		case route.API != "":
+			dial = c.config.Routes.APIDial(member.NodeID, dial)
 		}
 		transport := &http.Transport{TLSClientConfig: config, DialContext: dial, TLSHandshakeTimeout: c.config.Timeout, ResponseHeaderTimeout: c.config.Timeout, IdleConnTimeout: 30 * time.Second, MaxIdleConnsPerHost: 4}
-		client = &http.Client{Transport: transport, Timeout: c.config.Timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
-		c.clients[key] = client
+		client := &http.Client{Transport: transport, Timeout: c.config.Timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+		pooled = pooledClient{client: client, address: address.String(), route: route.API}
+		c.clients[member.NodeID] = pooled
 	}
-	return client, strings.TrimSuffix(address.String(), "/"), nil
+	return pooled.client, strings.TrimSuffix(address.String(), "/"), nil
 }
 
 func (c *Client) request(ctx context.Context, member Member, action string, body []byte, headers http.Header, output any) (*rpcFailure, error) {

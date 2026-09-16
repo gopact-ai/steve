@@ -133,7 +133,7 @@ func newTLSTestCluster(t *testing.T, count int) *tlsTestCluster {
 				}
 			}
 			return client.PeerID(address)
-		})
+		}, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -321,7 +321,7 @@ func TestUnjoinedClusterCertificateCannotSendRaftRPC(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream, err := NewTLSStreamLayer(listener, identity, func(raft.ServerAddress) string { return "node-1" })
+	stream, err := NewTLSStreamLayer(listener, identity, func(raft.ServerAddress) string { return "node-1" }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func TestRevokingRaftPeerClosesExistingAuthenticatedConnections(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	stream, err := NewTLSStreamLayer(listener, serverIdentity, func(raft.ServerAddress) string { return "client" })
+	stream, err := NewTLSStreamLayer(listener, serverIdentity, func(raft.ServerAddress) string { return "client" }, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

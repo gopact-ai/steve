@@ -52,6 +52,10 @@ type PeerConfig struct {
 	OwnerTokenFile   string                `json:"owner_token_file"`
 	WorkerConfigFile string                `json:"worker_config_file"`
 	Seeds            []coordination.Member `json:"seeds"`
+	// Routes is where this node connects to members it cannot reach at the
+	// addresses they advertise, by node ID: the hub behind an SSH tunnel
+	// answers at a loopback port that exists only on this machine.
+	Routes map[string]coordination.Route `json:"routes,omitempty"`
 }
 
 func DefaultClusterConfigPath(configPath string) string { return configPath + ".cluster.json" }
@@ -84,6 +88,16 @@ func LoadClusterPeerConfig(path string) (PeerConfig, error) {
 	}
 	if _, _, err := net.SplitHostPort(config.PeerAddress); err != nil {
 		return config, errors.New("invalid cluster peer address")
+	}
+	for nodeID, route := range config.Routes {
+		if nodeID == config.NodeID {
+			return config, errors.New("cluster configuration routes this node to itself")
+		}
+		for _, address := range []string{route.Raft, route.API} {
+			if _, _, err := net.SplitHostPort(address); err != nil {
+				return config, fmt.Errorf("invalid route to node %s: %w", nodeID, err)
+			}
+		}
 	}
 	if config.RaftBindAddress == "" {
 		config.RaftBindAddress = config.RaftAddress
