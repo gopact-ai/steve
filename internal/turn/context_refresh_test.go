@@ -54,9 +54,12 @@ func TestFirstConversationContinuesAfterIdentityGeneration(t *testing.T) {
 	}
 }
 
-func TestIdentityEditRefreshesOnlySettledSession(t *testing.T) {
+// An identity edit reaches the conversation's session whether the previous
+// turn ended cleanly or was interrupted: once nothing is still writing to it,
+// the uncertainty is over and the session keeps its history.
+func TestIdentityEditRefreshesTheConversationSession(t *testing.T) {
 	for _, tainted := range []bool{false, true} {
-		t.Run(map[bool]string{false: "settled", true: "uncertain"}[tainted], func(t *testing.T) {
+		t.Run(map[bool]string{false: "settled", true: "interrupted"}[tainted], func(t *testing.T) {
 			dir := t.TempDir()
 			if err := home.Bootstrap(dir, "owner"); err != nil {
 				t.Fatal(err)
@@ -64,7 +67,7 @@ func TestIdentityEditRefreshesOnlySettledSession(t *testing.T) {
 			if err := home.WriteIdentity(dir, "# Soul\noriginal assistant", "# User\noriginal name"); err != nil {
 				t.Fatal(err)
 			}
-			c, store, runner := homeCoordinator(t, dir, "owner")
+			c, store, _ := homeCoordinator(t, dir, "owner")
 			req := Request{ConversationID: "dm", Input: "hello", SenderOpenID: "owner", ChatType: protocol.ChatP2P}
 			first, err := c.Handle(t.Context(), req)
 			if err != nil {
@@ -79,14 +82,11 @@ func TestIdentityEditRefreshesOnlySettledSession(t *testing.T) {
 				t.Fatal(err)
 			}
 			second, err := c.Handle(t.Context(), req)
-			if tainted {
-				if err == nil || len(runner.seen()) != 1 {
-					t.Fatal("uncertain execution was retried")
-				}
-				return
-			}
 			if err != nil {
 				t.Fatal(err)
+			}
+			if store.Conversation("dm").Sessions["codex"].Tainted {
+				t.Fatal("session stayed uncertain after a finished turn")
 			}
 			if second.Injected.Session != first.Injected.Session || !strings.Contains(second.Injected.Instructions, "updated name") {
 				t.Fatal("profile edit lost history or stale identity")

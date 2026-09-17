@@ -391,6 +391,16 @@ func (t *chatTurn) settle(parent context.Context, run lifecycle.Result, err erro
 		}
 		return t.result, nil
 	}
+	if !run.Driven && !t.finished && t.session.UpstreamID != "" {
+		// The session was armed but no prompt ever reached it: this turn
+		// left it exactly as the previous one did. Clearing the taint is
+		// what keeps the next message working instead of dead-ending the
+		// conversation on "start a new session first".
+		t.session.Tainted = false
+		if stateErr := c.store.SaveSession(t.session); stateErr != nil {
+			slog.Error(fmt.Sprintf("turn: save undriven session state: %v", stateErr), "attempt", run.Record.ID, "conversation", req.ConversationID, "agent", selected.ID)
+		}
+	}
 	if run.Driven && !t.finished {
 		switch {
 		case errors.Is(err, harness.ErrStopUnconfirmed):

@@ -170,7 +170,14 @@ func (t *chatTurn) prepareSession(ctx context.Context) error {
 	}
 	t.clock.mark("assemble")
 	if saved.Tainted {
-		return UserError{Text: c.text.T(i18n.Tainted, protocol.CommandNew)}
+		cleared, taintErr := c.clearSettledTaint(ctx, req.ConversationID, selected.ID, saved)
+		if taintErr != nil {
+			return taintErr
+		}
+		if !cleared {
+			return UserError{Text: c.text.T(i18n.Tainted, protocol.CommandNew)}
+		}
+		saved.Tainted = false
 	}
 	contextChanged := saved.HarnessID != "" && (saved.NativeImport == nil || saved.UpstreamID != "") && saved.CapabilityHash != capabilities.Fingerprint
 	if contextChanged {
@@ -274,6 +281,30 @@ func (c *Coordinator) gateExtras(ctx context.Context, conversationID string, sel
 		}
 	}
 	return c.gate.Extras(conversationID, selected.ID, token, endpoint), token, nil
+}
+
+// clearSettledTaint lets a conversation carry on after an interrupted turn.
+// The taint only records that the previous turn never reported how it ended.
+// Once no attempt on that session is still live or awaiting confirmation,
+// nothing can still be writing to it, and reopening it is the same accepted
+// risk the recovery path takes: the agent replays its own history on load.
+func (c *Coordinator) clearSettledTaint(ctx context.Context, conversationID, agentID string, saved state.Session) (bool, error) {
+	if c.attempts == nil || saved.UpstreamID == "" {
+		return false, nil
+	}
+	live, err := c.attempts.Live(ctx)
+	if err != nil {
+		return false, err
+	}
+	for _, r := range live {
+		if r.Session == saved.UpstreamID || r.NativeContext == saved.UpstreamID {
+			return false, nil
+		}
+	}
+	if err := c.store.ClearTaint(conversationID, agentID); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func newAgentToken() (string, error) {

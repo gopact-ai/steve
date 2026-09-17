@@ -71,10 +71,6 @@ func TestReviveSessionClearsTaintSoTheTurnRuns(t *testing.T) {
 	runner := &fakeRunner{reply: "resumed"}
 	manager := &fakeManager{runners: map[string]*fakeRunner{"codex": runner}}
 	coordinator := newCoordinatorIn(t, map[string]string{"codex": workspace}, catalog, store, capability.NewAssembler(nil), manager, time.Minute)
-	// Tainted blocks the turn until the resume path clears it.
-	if _, err := handle(coordinator, t.Context(), "继续"); err == nil {
-		t.Fatal("tainted session ran without revive")
-	}
 	if err := coordinator.ReviveSession("chat", "codex"); err != nil {
 		t.Fatal(err)
 	}
