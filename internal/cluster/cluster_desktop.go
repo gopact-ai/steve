@@ -166,10 +166,10 @@ func (p *Peer) serveDesktopWorkspace(w http.ResponseWriter, r *http.Request) {
 	p.writeDesktopStatus(w)
 }
 
-// setLocalWorkspaceRoot records where this machine keeps its work, in the
-// running execution service and in the configuration it starts from, so a
-// restart agrees with what is running. The node is told first: it is what
-// every directory question is answered from.
+// setLocalWorkspaceRoot records where this machine keeps its work. The
+// execution service owns the choice — its own file carries it across a
+// restart, and every directory question is answered from what it reports
+// — so it is told first and the running application is told after.
 func (p *Peer) setLocalWorkspaceRoot(ctx context.Context, root string) error {
 	if p.worker != nil {
 		if err := p.worker.SetWorkspaceRoot(root); err != nil {
@@ -181,21 +181,16 @@ func (p *Peer) setLocalWorkspaceRoot(ctx context.Context, root string) error {
 		p.Mu.RLock()
 		application := p.Application
 		p.Mu.RUnlock()
-		if application != nil && application.Admin != nil && application.Admin.Nodes != nil {
-			if _, err := application.Admin.Nodes.Refresh(ctx, p.Config.NodeID); err != nil {
-				slog.Warn("desktop: the execution service did not report its new workspace directory", "error", err)
+		if application != nil && application.Admin != nil {
+			application.Admin.SetLocalWorkspaceRoot(root)
+			if application.Admin.Nodes != nil {
+				if _, err := application.Admin.Nodes.Refresh(ctx, p.Config.NodeID); err != nil {
+					slog.Warn("desktop: the execution service did not report its new workspace directory", "error", err)
+				}
 			}
 		}
 	}
-	cfg, err := config.Load(p.Options.ConfigPath)
-	if err != nil {
-		return err
-	}
-	if cfg.Gateway.WorkspaceRoot == root {
-		return nil
-	}
-	cfg.Gateway.WorkspaceRoot = root
-	return config.Save(p.Options.ConfigPath, cfg)
+	return nil
 }
 
 func (p *Peer) writeDesktopStatus(w http.ResponseWriter) {
