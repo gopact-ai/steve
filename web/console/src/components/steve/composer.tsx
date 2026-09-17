@@ -5,6 +5,7 @@ import { ArrowUp, ChevronDown, CornerDownRight, DotsHorizontal, Edit05, Folder, 
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import type { ConversationContext, Exchange, Project, QuoteRef, Selectors, Suggestion, Verb } from "@/lib/types";
+import { plain } from "@/lib/plain";
 
 // Composer is the console's input, in the proportions of a chat app's:
 // a textarea that grows, a row of small round controls under it — the
@@ -87,7 +88,7 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                 {p.quotes && p.quotes.length > 0 && (
                     <ul className="flex flex-wrap gap-1.5 px-3 pt-3">
                         {p.quotes.map((x) => (
-                            <li key={x.conversation + x.reply_id} className="flex max-w-full items-center gap-1.5 rounded-lg border-l-2 border-brand bg-secondary px-2 py-1 text-xs text-secondary" title={x.excerpt}>
+                            <li key={x.conversation + x.reply_id} className="flex max-w-full items-center gap-1.5 rounded-lg border-l-2 border-brand bg-secondary px-2 py-1 text-xs text-secondary" title={x.excerpt ? plain(x.excerpt) : undefined}>
                                 <span className="shrink-0 text-quaternary">{t("consoleChrome.quotedFrom", { title: x.title || x.conversation })}</span>
                                 <span className="min-w-0 truncate">{x.excerpt}</span>
                                 <button type="button" onClick={() => p.onDropQuote?.(x)} className="shrink-0 text-quaternary hover:text-primary" aria-label={t("consoleChrome.dropQuote")}>×</button>
