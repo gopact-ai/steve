@@ -343,3 +343,46 @@ func (s *Server) adoptMCP(source, name string) error {
 	ownMCP.Get(0)
 	return nil
 }
+
+// SetWorkspaceRoot moves where this machine keeps its work. The owner
+// picks the directory once, in the desktop guide or the workspace page;
+// from here on everything this node runs, and every project directory it
+// is asked to make, lives under it. The node's own file records the
+// choice so a restart agrees with the running process.
+func (s *Server) SetWorkspaceRoot(root string) error {
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return errors.New("a workspace directory is required")
+	}
+	if !filepath.IsAbs(root) {
+		return fmt.Errorf("workspace directory %q must be an absolute path", root)
+	}
+	s.settingsMu.Lock()
+	defer s.settingsMu.Unlock()
+	next := s.conf()
+	if next.WorkspaceRoot == root {
+		return nil
+	}
+	next.WorkspaceRoot = root
+	var writeErr error
+	if next.Source != "" {
+		current, err := nodeSettingsFileRevision(next.Source)
+		if err != nil {
+			return fmt.Errorf("read node configuration revision: %w", err)
+		}
+		if current != s.settingsFileRevision {
+			return fmt.Errorf("%w: node configuration was edited externally; restart before saving", nodewire.ErrSettingsRevisionConflict)
+		}
+		writeErr = writeConfig(next)
+		if writeErr != nil && !settingsCommitted(writeErr) {
+			return writeErr
+		}
+		s.settingsFileRevision, _ = nodeSettingsFileRevision(next.Source)
+	}
+	s.cfg.Store(&next)
+	slog.Info(fmt.Sprintf("steve-node: workspace directory is now %s", root), "workspace", root)
+	return writeErr
+}
+
+// WorkspaceRoot is where this machine keeps its work right now.
+func (s *Server) WorkspaceRoot() string { return s.conf().WorkspaceRoot }
