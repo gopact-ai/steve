@@ -17,7 +17,7 @@ import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { removeNode } from "@/lib/api/fleet";
 import { renameMachine } from "@/lib/machines";
-import { nodeLabel } from "@/lib/node-name";
+import { nodeLabel, nodeLabelIn } from "@/lib/node-name";
 import { number, relative, when } from "@/lib/format";
 import { addAgent, addNode, removeAgent, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
@@ -520,7 +520,7 @@ export function FleetPage() {
                                 <Table.Cell>
                                     {withLiveActivity(a.activities, liveActivity[a.id]).length ? withLiveActivity(a.activities, liveActivity[a.id]).map((x) => <div key={x.attempt_id} className="truncate text-xs text-secondary" title={x.detail}>#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since, locale)}</div>) : <span className="text-xs text-quaternary">{a.activity_known === false ? tr("fleet.activityUnknown") : tr("fleet.idle")}</span>}
                                 </Table.Cell>
-                                <Table.Cell><div className="flex min-w-0 flex-col gap-1"><span className="truncate text-xs text-secondary" title={a.node || snap.hub.node}>{a.node || snap.hub.node}</span><span className="truncate text-xs text-tertiary">{a.harness}</span></div></Table.Cell>
+                                <Table.Cell><div className="flex min-w-0 flex-col gap-1"><span className="truncate text-xs text-secondary" title={a.node || snap.hub.node}>{nodeLabelIn(snap.nodes, a.node || snap.hub.node)}</span><span className="truncate text-xs text-tertiary">{a.harness}</span></div></Table.Cell>
                                 <Table.Cell>
                                     <div className="flex flex-col">
                                         {a.preferred ? <span className="truncate text-primary" title={tr("fleet.fixedModel", { model: a.preferred })}>{a.preferred}</span> : <span className="text-quaternary" title={tr("fleet.unPinnedHint")}>{tr("fleet.unpinned")}</span>}
