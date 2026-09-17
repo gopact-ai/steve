@@ -471,3 +471,36 @@ func TestQueueDoesNotAcceptOrMutateUndurableWork(t *testing.T) {
 	awaitExchange(t, s, first.ID)
 	awaitExchange(t, s, waiting.ID)
 }
+
+// Stopping a turn is an act on that turn, not a line of the conversation:
+// the control and its receipt stay in the ledger, marked so no transcript
+// draws them, while ordinary work stays visible.
+func TestStopControlIsRecordedButNotDrawn(t *testing.T) {
+	h := &queueHandler{started: make(chan *queueCall, 8)}
+	s := New(h, "owner", nil)
+	work := enqueueForTest(t, s, "main", "查一下部署状态")
+	running := nextCall(t, h)
+	stop := enqueueForTest(t, s, "main", "/cancel")
+	control := nextCall(t, h)
+	control.finish <- nil
+	awaitExchange(t, s, stop.ID)
+	running.finish <- nil
+	awaitExchange(t, s, work.ID)
+	drawn, silent := 0, 0
+	for _, r := range s.Replies("main") {
+		if r.Silent {
+			silent++
+			if r.ExchangeID != stop.ID {
+				t.Fatalf("hid a line of %s: %+v", r.ExchangeID, r)
+			}
+			continue
+		}
+		drawn++
+		if r.ExchangeID != work.ID {
+			t.Fatalf("drew a line of %s: %+v", r.ExchangeID, r)
+		}
+	}
+	if silent != 2 || drawn != 2 {
+		t.Fatalf("recorded %d silent and %d drawn lines; want the stop and its receipt hidden and the turn kept", silent, drawn)
+	}
+}

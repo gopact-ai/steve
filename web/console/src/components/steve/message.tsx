@@ -1,9 +1,9 @@
 import { SelectionSurface } from "@/providers/selection-provider";
 import { selectionForReply } from "@/lib/selection";
-import { memo, useSyncExternalStore } from "react";
+import { memo, useState, useSyncExternalStore } from "react";
 import { getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { useI18n } from "@/providers/locale-provider";
-import { ChevronDown } from "@untitledui/icons";
+import { Check, ChevronDown, Copy01, Edit03 } from "@untitledui/icons";
 import { when } from "@/lib/format";
 import type { Process, Reply, StepProcess } from "@/lib/types";
 import { ChangesFold } from "./changes";
@@ -16,11 +16,40 @@ import { MaterialReferences } from "./material-shelf";
 import { MaterialActions } from "./material-actions";
 import { ThinkingFold } from "./thinking-fold";
 
-// UserMessage is what the person typed: a bubble on the right.
-export const UserMessage = memo(function UserMessage({ text }: { text: string }) {
+// CopyLine copies one line of the transcript. A blocked clipboard is said
+// where the click happened: nothing else on the page would show it.
+function CopyLine({ text }: { text: string }) {
+    const { t } = useI18n();
+    const [state, setState] = useState<"" | "copied" | "failed">("");
+    function copy() {
+        const writing = navigator.clipboard?.writeText(text);
+        if (!writing) { setState("failed"); return; }
+        void writing.then(() => { setState("copied"); window.setTimeout(() => setState(""), 1500); }).catch(() => setState("failed"));
+    }
+    return <>
+        <button type="button" onClick={copy} className="message-line-action" aria-label={t("console.copy")} title={t("console.copy")}>
+            {state === "copied" ? <Check aria-hidden="true" className="size-3.5 text-fg-success-primary" /> : <Copy01 aria-hidden="true" className="size-3.5" />}
+        </button>
+        {state === "failed" && <span role="alert" className="text-error-primary">{t("console.copyFailed")}</span>}
+    </>;
+}
+
+// UserMessage is what the person typed: a bubble on the right, with the
+// time it was sent and the two things one wants from a line already gone —
+// a copy of it, and it back in the box to say again, differently.
+export const UserMessage = memo(function UserMessage({ r, onEdit }: { r: Reply; onEdit?: (r: Reply) => void }) {
+    const { t, locale } = useI18n();
+    const text = r.input || "";
     return (
         <div className="message-user">
-            <div className="message-user-body"><Md text={text} /></div>
+            <div className="message-user-stack">
+                <div className="message-user-body"><Md text={text} /></div>
+                <div className="message-user-meta">
+                    <span>{when(r.at, locale)}</span>
+                    <CopyLine text={text} />
+                    {onEdit && text && <button type="button" onClick={() => onEdit(r)} className="message-line-action" aria-label={t("console.editResend")} title={t("console.editResend")}><Edit03 aria-hidden="true" className="size-3.5" /></button>}
+                </div>
+            </div>
         </div>
     );
 });
@@ -44,6 +73,7 @@ export const AssistantMessage = memo(function AssistantMessage({ r, selected, on
             <div className="message-meta">
                 <span>{when(r.at, locale)}</span>
                 {state && <span className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""}>{state}</span>}
+                {r.text && <CopyLine text={r.text} />}
                 {onSelect && (r.process || r.injected) && <button type="button" onClick={() => onSelect(r)} className="-my-1 min-h-6 min-w-6 rounded px-1 hover:text-primary">{t("console.detailAction")}</button>}
                 {r.id && r.project_id && r.revision && <MaterialActions capture={{ project: r.project_id, title: r.title || r.text.split("\n")[0].slice(0, 60) || t("materials.reply"), source: { kind: "reply", conversation: r.conversation, reply_id: r.id, revision: r.revision } }} />}
                 {!support.material_refs && onQuote && r.id && r.text && <button type="button" onClick={() => onQuote(r)} className="-my-1 min-h-6 min-w-6 rounded px-1 hover:text-primary" title={t("console.quoteHint")}>{t("console.quote")}</button>}

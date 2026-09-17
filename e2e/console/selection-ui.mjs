@@ -98,11 +98,11 @@ try {
  await side.getByRole('button',{name:'Close side chat',exact:true}).click();
  console.log('PASS side question uses separate same-project conversation and preserves main context');
  await page.getByRole('button',{name:/Review changes/}).first().click();
- await page.getByRole('dialog',{name:'Code workspace',exact:true}).waitFor();
+ await page.getByRole('dialog',{name:'Artifact workspace',exact:true}).waitFor();
  const summaryBox=await page.locator('.review-summary').boundingBox(),workspaceBox=await page.locator('.review-workspace').boundingBox();assert.ok(summaryBox.height<80&&summaryBox.width>1500&&workspaceBox.x<5,'Summary must sit above the full-width review workspace');
  const deleted=page.locator('code[data-selection-before="1"]').first();await select(deleted,'old');await bar.getByRole('button',{name:'Add to chat',exact:true}).click();await waitFor(()=>f.captures.at(-1)?.source.commit===base,'deleted selection captures base');
  await page.getByRole('button',{name:'Source',exact:true}).click();await page.locator('.source-text').first().waitFor();await select(page.locator('.source-code'),'second');await bar.getByRole('button',{name:'Add to chat',exact:true}).click();await waitFor(()=>f.captures.at(-1)?.source.commit===after,'source selection captures result');
- await select(page.locator('.source-code'),'third');await bar.getByRole('button',{name:'Ask in side chat',exact:true}).click();await page.getByRole('dialog',{name:'Code workspace',exact:true}).locator('[data-side-chat]').waitFor();
+ await select(page.locator('.source-code'),'third');await bar.getByRole('button',{name:'Ask in side chat',exact:true}).click();await page.getByRole('dialog',{name:'Artifact workspace',exact:true}).locator('[data-side-chat]').waitFor();
  await side.getByRole('button',{name:'Close side chat',exact:true}).click();
  await page.setViewportSize({width:780,height:540});
  await page.getByRole('button',{name:'Diff',exact:true}).click();
@@ -136,7 +136,7 @@ try {
  await select(page.locator('.source-code'),'third');await bar.getByRole('button',{name:'Ask in side chat',exact:true}).click();
  await page.setViewportSize({width:390,height:844});assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),true);await side.getByRole('button',{name:'Close side chat',exact:true}).click();await select(page.locator('.source-code'),'second');const box=await bar.boundingBox();assert.ok(box.x>=0&&box.x+box.width<=390&&box.y>=0&&box.y+box.height<=844);
  await page.screenshot({path:'/tmp/steve-selection-review-mobile.png'});console.log('PASS source/deleted-side references, Review side chat and narrow toolbar placement');
- await page.keyboard.press('Escape');await page.getByRole('dialog',{name:'Code workspace',exact:true}).getByRole('button',{name:'Back',exact:true}).click();await page.setViewportSize({width:1600,height:1000});
+ await page.keyboard.press('Escape');await page.getByRole('dialog',{name:'Artifact workspace',exact:true}).getByRole('button',{name:'Back',exact:true}).click();await page.setViewportSize({width:1600,height:1000});
  const draft=page.getByRole('textbox',{name:'Message',exact:true});await draft.fill('Keep this draft while the project changes');
  const saved=await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.drafts')).materials[A],A),writes=f.posts.length,captures=f.captures.length;
  f.captureGate=new Promise(resolve=>f.releaseCapture=resolve);

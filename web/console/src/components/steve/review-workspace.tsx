@@ -38,7 +38,7 @@ export function ReviewWorkspace({ request, onClose }: { request: ReviewRequest; 
         <Modal className="review-modal"><Dialog aria-label={t("console.review")}  className="review-dialog">
             <header className="review-header">
                 <Button size="sm" color="tertiary" iconLeading={ArrowLeft} onClick={onClose}>{t("console.back")}</Button>
-                <div className="review-title"><Code02 aria-hidden="true" className="size-4 text-fg-tertiary" /><h1>{t("console.code")}</h1><span>{t("console.readOnlySnapshot")}</span></div>
+                <div className="review-title"><Code02 aria-hidden="true" className="size-4 text-fg-tertiary" /><h1>{t("console.artifacts")}</h1><span>{t("console.readOnlySnapshot")}</span></div>
                 <div className="review-attempt"><Select aria-label={t("console.chooseAttempt")}  size="sm" selectedKey={attempt} onSelectionChange={(key) => key && setAttempt(String(key))} items={options}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
             </header>
             <div className="review-with-side"><div className="review-primary"><SnapshotWorkspace key={`${attempt}:${revision}`} attempt={attempt} choice={options.find((item) => item.id === attempt)} request={request}

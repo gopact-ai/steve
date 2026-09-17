@@ -846,7 +846,7 @@ func (s *Service) publishReply(r consoleapi.Reply) {
 		if r.Kind == "sent" {
 			text = r.Input
 		}
-		s.model.Publish(readmodel.Event{At: r.At, Kind: "console." + r.Kind, Conversation: r.Conversation, Text: text, Format: r.Format, Title: r.Title, ReplyID: r.ID, ExchangeID: r.ExchangeID})
+		s.model.Publish(readmodel.Event{At: r.At, Kind: "console." + r.Kind, Conversation: r.Conversation, Text: text, Format: r.Format, Title: r.Title, ReplyID: r.ID, ExchangeID: r.ExchangeID, Silent: r.Silent})
 	}
 }
 

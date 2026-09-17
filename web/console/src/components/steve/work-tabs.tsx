@@ -51,7 +51,7 @@ function attemptLabel(a: AttemptView & { task: string }, tasks: Task[], tr: Tran
     return `#${a.task}${t?.parent ? tr("consoleChrome.delegatedSuffix") : ""} · ${who || a.kind} · ${when(a.started_at, locale)}`;
 }
 
-export function CodeTab({ roots, all }: { roots: Task[]; all: Task[] }) {
+export function ArtifactsTab({ roots, all }: { roots: Task[]; all: Task[] }) {
     const { t, locale } = useI18n();
     const nodeLabelOf = useNodeLabel();
     const { attempts, error, loading, retry } = useAttempts(roots, all);
@@ -65,7 +65,7 @@ export function CodeTab({ roots, all }: { roots: Task[]; all: Task[] }) {
         {error ? <div role="alert" className="text-sm text-error-primary">{error}<Button size="sm" color="secondary" onClick={retry}>{t("common.retry")}</Button></div>
             : loading && !attempts.length ? <p role="status" className="text-sm text-tertiary">{t("consoleChrome.loadingExecutions")}</p>
                 : !latest ? <Nothing icon={File02} title={t("consoleChrome.noSnapshots")}>{t("consoleChrome.noSnapshotsHint")}</Nothing> : <>
-                    <div className="mb-4"><h2 className="text-sm font-semibold text-primary">{t("consoleChrome.codeWorkspace")}</h2><p className="mt-1 text-xs leading-relaxed text-tertiary">{t("consoleChrome.codeHint")}</p></div>
+                    <div className="mb-4"><h2 className="text-sm font-semibold text-primary">{t("consoleChrome.artifactWorkspace")}</h2><p className="mt-1 text-xs leading-relaxed text-tertiary">{t("consoleChrome.artifactHint")}</p></div>
                     <Button size="sm" color="primary" iconLeading={File02} onClick={() => review(latest, "files")}>{t("consoleChrome.browseFiles")}</Button>
                     <p className="mt-3 text-xs text-tertiary">{latest.artifact ? t("consoleChrome.endSnapshot") : t("consoleChrome.startSnapshot")}</p>
                     <p className="mt-1 text-xs leading-5 text-secondary [overflow-wrap:anywhere]">{attemptLabel(latest, all, t, locale, nodeLabelOf)}</p>

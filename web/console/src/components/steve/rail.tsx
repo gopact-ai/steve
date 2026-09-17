@@ -13,7 +13,7 @@ import { TaskDrawer } from "./task-drawer";
 import { useI18n } from "@/providers/locale-provider";
 import { MaterialShelf } from "./material-shelf";
 import { getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
-import { CodeTab } from "./work-tabs";
+import { ArtifactsTab } from "./work-tabs";
 
 // RAIL_WIDTH is the console's right column; a drawer opened from it is
 // the same width, so the side of the page does not jump.
@@ -23,7 +23,7 @@ import { InjectedPanel, ProcessBody, Working } from "./trace";
 import type { Live } from "@/lib/live";
 import { Mono, Nothing, Where } from "./ui";
 
-export type RailTab = "context" | "trace" | "graph" | "code" | "materials";
+export type RailTab = "context" | "trace" | "graph" | "artifacts" | "materials";
 
 // Rail is the console's right column: the session's facts, the trace of
 // the line in flight or the one picked, and the call graph of who is
@@ -44,7 +44,7 @@ export const Rail = memo(function Rail({ context, live, plans, reply, tab, setTa
             <div className="inspector-heading"><strong>{t("console.details")}</strong><button type="button" className="workbench-icon-button" aria-label={t("console.closeDetails")}  onClick={onClose}><X aria-hidden="true" /></button></div>
             <div className="inspector-tabs">
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as RailTab)}>
-                    <TabList type="button-border" size="sm" items={[{ id: "context", label: t("console.conversation") }, { id: "trace", label: t("console.trace") }, { id: "graph", label: t("console.graph") }, { id: "code", label: t("console.code") }, ...(support.material_refs ? [{ id: "materials", label: t("materials.shelf") }] : [])]}>{(item) => <Tab {...item} />}</TabList>
+                    <TabList type="button-border" size="sm" items={[{ id: "context", label: t("console.conversation") }, { id: "trace", label: t("console.trace") }, { id: "graph", label: t("console.graph") }, { id: "artifacts", label: t("console.artifacts") }, ...(support.material_refs ? [{ id: "materials", label: t("materials.shelf") }] : [])]}>{(item) => <Tab {...item} />}</TabList>
                 </Tabs>
             </div>
             <div className="inspector-body">
@@ -99,7 +99,7 @@ export const Rail = memo(function Rail({ context, live, plans, reply, tab, setTa
                     ) : <Nothing icon={MessageChatSquare} title={t("console.noTrace")} >{t("console.noTraceHint")}</Nothing>
                 )}
                 {tab === "materials" && support.material_refs && context?.project && <MaterialShelf key={context.project.id} project={context.project.id} />}
-                {tab === "code" && <CodeTab roots={roots} all={snap.tasks} />}
+                {tab === "artifacts" && <ArtifactsTab roots={roots} all={snap.tasks} />}
                 {tab === "graph" && (
                     roots.length ? (
                         <Panel title={t("console.workingFor")}  badge={<span className="text-xs text-tertiary">{t("console.treeHint")}</span>}>

@@ -11,6 +11,7 @@ import (
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/material"
+	"github.com/gopact-ai/steve/internal/protocol"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/turn"
@@ -68,6 +69,15 @@ func (s *Service) parseInput(input string) (string, turn.ParsedInput) {
 		return parser.ParseInput(input)
 	}
 	return turn.ParseAddressedInput(input)
+}
+
+// stopControl is a line that only stops work: pressing stop sends one.
+// The transcript stays what was said and answered, so the control and its
+// receipt are kept but not drawn; the turn it stopped already says it was
+// stopped.
+func (s *Service) stopControl(input string) bool {
+	_, parsed := s.parseInput(input)
+	return parsed.Command == protocol.CommandCancel
 }
 
 func (s *Service) immediate(input string) bool {
@@ -378,7 +388,7 @@ func (s *Service) startLocked(e *queuedExchange) error {
 	previous := s.replies[conversation]
 	e.State, e.StartedAt = consoleapi.ExchangeRunning, time.Now().UTC()
 	s.running[conversation]++
-	sent := s.recordLocked(consoleapi.Reply{At: e.StartedAt, Conversation: conversation, ProjectID: e.ExpectedProject, ExchangeID: e.ID, Input: e.Input, Kind: "sent", Refs: copyRefs(e.Refs), Materials: copyMaterials(e.Materials)})
+	sent := s.recordLocked(consoleapi.Reply{At: e.StartedAt, Conversation: conversation, ProjectID: e.ExpectedProject, ExchangeID: e.ID, Input: e.Input, Kind: "sent", Silent: s.stopControl(e.Input), Refs: copyRefs(e.Refs), Materials: copyMaterials(e.Materials)})
 	if err := s.save(); err != nil {
 		e.State, e.StartedAt = consoleapi.ExchangeQueued, time.Time{}
 		s.running[conversation]--
@@ -475,6 +485,7 @@ func (s *Service) finish(e *queuedExchange, reply consoleapi.Reply, err error) {
 		delete(s.processes, e.ID)
 	}
 	reply.At, reply.Kind, reply.Conversation, reply.ExchangeID = time.Now().UTC(), "reply", e.Conversation, e.ID
+	reply.Silent = s.stopControl(e.Input)
 	if reply.ProjectID == "" {
 		reply.ProjectID = e.ExpectedProject
 	}
