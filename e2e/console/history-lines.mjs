@@ -32,7 +32,7 @@ test("a machine that simply went away does not read as an error", () => {
     assert.equal(closed.title, "dev-sg 断开连接");
     assert.equal(closed.note, "连接已关闭");
     const broke = read({ at: "", kind: "observe.node.down", subject: "node-9e10", text: "…", data: { reason: "dial tcp: i/o timeout" } });
-    assert.equal(broke.note, "dial tcp: i/o timeout");
+    assert.equal(broke.note, "与 dev-sg 的连接中途断开");
 });
 
 test("a failed skill bundle says so, and keeps the reason", () => {
@@ -85,4 +85,25 @@ test("an unknown kind is shown as the server wrote it rather than guessed at", (
     assert.equal(line.title, "the server said this");
     assert.equal(line.family, "other");
     assert.equal(familyOf({ at: "", kind: "observe.content.degraded", subject: "x", text: "" }), "content");
+});
+
+test("a transport failure names the machine instead of quoting the socket", () => {
+    // The record a real upgrade produced: the node restarted while the
+    // bundle was in flight, and Go wrote the node ID and both addresses.
+    const raw = 'node "node-9e10" at 127.0.0.1:37633: read tcp 127.0.0.1:64624->127.0.0.1:64612: read: connection reset by peer';
+    const line = read({ at: "", kind: "observe.node.skills", subject: "node-9e10", text: raw, data: { hash: "3a654c44c9c9", error: raw } });
+    assert.equal(line.title, "dev-sg 安装技能包失败");
+    assert.equal(line.note, "与 dev-sg 的连接中途断开");
+    assert.equal(read({ at: "", kind: "observe.node.skills", subject: "node-9e10", text: raw, data: { error: raw } }, "en").note, "the link to dev-sg dropped part-way through");
+});
+
+test("an unrecognised failure keeps its words but loses the plumbing", () => {
+    const line = read({
+        at: "", kind: "observe.node.skills", subject: "node-9e10", text: "…",
+        data: { error: 'bundle rejected by node "node-9e10" at 10.251.239.109:7701: checksum mismatch' },
+    });
+    assert.equal(line.note, 'bundle rejected by node "dev-sg": checksum mismatch');
+    // A node nobody can name keeps its ID: it is still searchable.
+    const unknown = read({ at: "", kind: "observe.node.skills", subject: "node-abcd", text: "…", data: { error: "node-0123456789abcdef0123456789abcdef refused the bundle" } });
+    assert.equal(unknown.note, "node-0123456789abcdef0123456789abcdef refused the bundle");
 });
