@@ -61,9 +61,17 @@ func (p *Peer) localDesktopStatus() (consoleapi.DesktopStatus, error) {
 		return consoleapi.DesktopStatus{}, err
 	}
 	stateDir := filepath.Dir(p.Options.ConfigPath)
-	_, home := p.desktopProject(d)
-	result := consoleapi.DesktopStatus{Enabled: true, NodeID: p.Config.NodeID, AgentCount: len(d.Agents), WorkspacePath: home.Path,
-		WorkspaceManaged: desktop.ManagedWorkspace(stateDir, home.Path)}
+	// The workspace the guide asks about is this machine's own directory,
+	// which is where every project it holds is made. Until the execution
+	// service is up to say, the default project's home is the best answer
+	// there is.
+	workspace := p.WorkerWorkspaceRoot()
+	if workspace == "" {
+		_, home := p.desktopProject(d)
+		workspace = home.Path
+	}
+	result := consoleapi.DesktopStatus{Enabled: true, NodeID: p.Config.NodeID, AgentCount: len(d.Agents), WorkspacePath: workspace,
+		WorkspaceManaged: desktop.ManagedWorkspace(stateDir, workspace)}
 	for id, item := range d.Agents {
 		if item.Default {
 			result.DefaultAgent = id
@@ -132,29 +140,29 @@ func (p *Peer) serveDesktopWorkspace(w http.ResponseWriter, r *http.Request) {
 		HTTPError(w, err)
 		return
 	}
-	id, current := p.desktopProject(d)
-	if err := desktop.CheckWorkspaceProject(id, current.Node == "" || current.Node == p.Config.NodeID, current.Node); err != nil {
-		desktopError(w, err)
-		return
-	}
 	path, err := desktop.PrepareWorkspace(request.Path, filepath.Dir(p.Options.ConfigPath))
 	if err != nil {
 		desktopError(w, err)
 		return
 	}
-	// The directory the owner chose is this machine's workspace, not just
-	// the default project's home: every other project's copy is made
-	// under it too, which is what keeps the same project the same
-	// relative directory on every machine.
+	// The directory the owner chose is this machine's workspace: where it
+	// keeps everything it works on, with each project a directory under
+	// it. It is a fact about this computer, so it is recorded whatever the
+	// default project happens to be.
 	if err := p.setLocalWorkspaceRoot(r.Context(), path); err != nil {
 		HTTPError(w, err)
 		return
 	}
-	if current.Path != path {
+	// The default project moves in with it, as any project on this machine
+	// would: named under the workspace rather than being the workspace, so
+	// the next project to arrive has somewhere to go that is not inside it.
+	// A default project that lives on another machine is left where it is.
+	id, current := p.desktopProject(d)
+	if id != "" && (current.Node == "" || current.Node == p.Config.NodeID) && !strings.HasPrefix(current.Path, path+string(filepath.Separator)) {
 		var result struct {
 			OK bool `json:"ok"`
 		}
-		if err := p.applicationJSON(r.Context(), http.MethodPut, "/console/projects/"+url.PathEscape(id)+"/home", consoleapi.ProjectHomeRequest{Path: path}, &result); err != nil {
+		if err := p.applicationJSON(r.Context(), http.MethodPut, "/console/projects/"+url.PathEscape(id)+"/home", consoleapi.ProjectHomeRequest{Path: id}, &result); err != nil {
 			HTTPError(w, err)
 			return
 		}

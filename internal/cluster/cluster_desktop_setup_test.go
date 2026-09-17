@@ -64,7 +64,7 @@ func TestClusterPeerDesktopGuideProgressAndWorkspace(t *testing.T) {
 	if err := json.Unmarshal(body, &status); err != nil || code != http.StatusOK {
 		t.Fatalf("status: %d %s %v", code, body, err)
 	}
-	if !status.Enabled || !status.SetupRequired || status.Setup == nil || status.Setup.Step != "identity" || status.WorkspacePath != filepath.Join(installed.Paths.Root, "workspace") || !status.WorkspaceManaged {
+	if !status.Enabled || !status.SetupRequired || status.Setup == nil || status.Setup.Step != "identity" || status.WorkspacePath != installed.Paths.Root || !status.WorkspaceManaged {
 		t.Fatalf("a fresh desktop opens the guide and names its still-managed workspace: %+v", status)
 	}
 
@@ -90,7 +90,7 @@ func TestClusterPeerDesktopGuideProgressAndWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 	code, body = PeerRequest(t, peer, http.MethodGet, "/console/desktop", nil)
-	if err := json.Unmarshal(body, &status); err != nil || code != http.StatusOK || status.WorkspacePath != filepath.Join(installed.Paths.Root, "workspace") {
+	if err := json.Unmarshal(body, &status); err != nil || code != http.StatusOK || status.WorkspacePath != installed.Paths.Root {
 		t.Fatalf("status after the declaration: %d %s %v", code, body, err)
 	}
 
@@ -126,8 +126,8 @@ func TestClusterPeerDesktopGuideProgressAndWorkspace(t *testing.T) {
 	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(calls) != 1 || calls[0] != `PUT /console/projects/workspace/home {"path":"`+want+`"}` {
-		t.Fatalf("the default project is moved through the application: %v", calls)
+	if len(calls) != 1 || calls[0] != `PUT /console/projects/workspace/home {"path":"workspace"}` {
+		t.Fatalf("the default project moves in under the workspace, not onto it: %v", calls)
 	}
 
 	mu.Unlock()
@@ -136,15 +136,16 @@ func TestClusterPeerDesktopGuideProgressAndWorkspace(t *testing.T) {
 	if _, err := platformconfig.New(active.Ledger).Save(t.Context(), 1, declared); err != nil {
 		t.Fatal(err)
 	}
-	if code, body = PeerRequest(t, peer, http.MethodPut, "/console/desktop/workspace", consoleapi.DesktopWorkspaceRequest{Path: "~/Elsewhere"}); code != http.StatusBadRequest || !strings.Contains(string(body), "另一台机器（gpu-box）") {
-		t.Fatalf("a default project homed elsewhere is refused with the machine named: %d %s", code, body)
+	elsewhere := filepath.Join(home, "Elsewhere")
+	if code, body = PeerRequest(t, peer, http.MethodPut, "/console/desktop/workspace", consoleapi.DesktopWorkspaceRequest{Path: "~/Elsewhere"}); code != http.StatusOK {
+		t.Fatalf("where this computer works is its own to choose: %d %s", code, body)
 	}
-	if _, err := os.Stat(filepath.Join(home, "Elsewhere")); err == nil {
-		t.Fatal("nothing is created for a refused move")
+	if root := peer.worker.WorkspaceRoot(); root != elsewhere {
+		t.Fatalf("the new choice did not reach the execution service: %s", root)
 	}
 	mu.Lock()
 	if len(calls) != 1 {
-		t.Fatalf("the refused move must not reach the application: %v", calls)
+		t.Fatalf("a default project on another machine must not be moved: %v", calls)
 	}
 
 	code, body = PeerRequest(t, peer, http.MethodPut, "/console/desktop/setup", consoleapi.DesktopSetupRequest{Step: "finished", Done: true})
