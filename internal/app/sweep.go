@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"strings"
 	"time"
 
@@ -45,7 +46,9 @@ func sweepLandings(ctx context.Context, projects *project.Store, artifacts *arti
 		for _, p := range list {
 			landed, err := artifacts.LandPending(ctx, p)
 			for _, l := range landed {
-				view.Observe("landing", p.ID, fmt.Sprintf("queued result %s landed into %s: %s (%d paths)", l.Artifact[:12], p.ID, l.State, len(l.Paths)))
+				// Keys: artifact, project, state, paths.
+				view.Observe("landing", p.ID, fmt.Sprintf("queued result %s landed into %s: %s (%d paths)", l.Artifact[:12], p.ID, l.State, len(l.Paths)),
+					map[string]string{"artifact": l.Artifact[:12], "project": p.ID, "state": l.State, "paths": strconv.Itoa(len(l.Paths))})
 				slog.Info(fmt.Sprintf("sweep: landing %s of %s into %s: %s (%d paths)", l.ID, l.Artifact[:12], p.ID, l.State, len(l.Paths)), "landing", l.ID, "artifact", l.Artifact, "project", p.ID)
 			}
 			if err != nil && !errors.Is(err, ledger.ErrHeld) {
@@ -97,7 +100,9 @@ func sweepWorktrees(ctx context.Context, artifacts *artifact.Store, attempts *at
 		slog.Error(fmt.Sprintf("sweep: worktrees on %s: %v", where, err), "node", where)
 	}
 	if len(removed) > 0 {
-		view.Observe("worktree.sweep", where, fmt.Sprintf("removed %d orphaned worktree(s): %s", len(removed), strings.Join(removed, ", ")))
+		// Keys: count, items.
+		view.Observe("worktree.sweep", where, fmt.Sprintf("removed %d orphaned worktree(s): %s", len(removed), strings.Join(removed, ", ")),
+			map[string]string{"count": strconv.Itoa(len(removed)), "items": strings.Join(removed, "\n")})
 		slog.Info(fmt.Sprintf("sweep: removed %d orphaned worktree(s) on %s: %s", len(removed), where, strings.Join(removed, ", ")), "node", where)
 	}
 }

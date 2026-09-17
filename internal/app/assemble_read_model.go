@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/ability"
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/node"
@@ -60,8 +61,16 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 	}
 	// A machine's abilities changing is history too: a tool that vanished
 	// explains the placement that failed after it.
-	nodes.SetDriftObserver(func(name string, changes []string) {
-		view.Observe("node.manifest", name, name+": "+strings.Join(changes, "; "))
+	// Keys: changes — one change per line, each "key\tfrom\tto"; an empty
+	// from means the ability appeared, an empty to means it went away.
+	nodes.SetDriftObserver(func(name string, changes []ability.Change) {
+		said := make([]string, 0, len(changes))
+		rows := make([]string, 0, len(changes))
+		for _, c := range changes {
+			said = append(said, c.String())
+			rows = append(rows, c.Key+"\t"+c.From+"\t"+c.To)
+		}
+		view.Observe("node.manifest", name, name+": "+strings.Join(said, "; "), map[string]string{"changes": strings.Join(rows, "\n")})
 	})
 	// Skills are the hub's to enable and every machine's to have: each
 	// node gets the enabled set as a content-addressed bundle when it
@@ -81,7 +90,9 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 	// Machines coming and going are history, not just log lines.
 	nodes.SetObserver(func(s node.Status) {
 		if s.Up {
-			view.Observe("node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion))
+			// Keys: host, os, arch, build.
+			view.Observe("node.up", s.Name, fmt.Sprintf("%s connected: %s %s/%s, build %s", s.Name, s.Advert.Hostname, s.Advert.OS, s.Advert.Arch, s.Advert.BuildVersion),
+				map[string]string{"host": s.Advert.Hostname, "os": s.Advert.OS, "arch": s.Advert.Arch, "build": s.Advert.BuildVersion})
 			background.Go(func(ctx context.Context) { shipper.Ship(ctx, s.Name) })
 			// A machine that comes back may hold worktrees of attempts that
 			// died with the connection; nothing else ever returns for them.
@@ -90,7 +101,8 @@ func assembleReadModel(input inputAssembly, boot runtimeAssembly, storage ledger
 			}
 			return
 		}
-		view.Observe("node.down", s.Name, fmt.Sprintf("%s disconnected: %s", s.Name, s.LastError))
+		// Keys: reason.
+		view.Observe("node.down", s.Name, fmt.Sprintf("%s disconnected: %s", s.Name, s.LastError), map[string]string{"reason": s.LastError})
 	})
 	stepRunner.SetObserver(func(req exec.StepRequest, p steveview.Progress) {
 		view.StepProgress(req.TaskID, req.PlanID, req.StepID, req.Agent, req.Node, p)

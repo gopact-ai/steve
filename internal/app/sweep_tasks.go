@@ -28,7 +28,9 @@ func sweepIdleTasks(ctx context.Context, tasks *task.Store, attempts *attempt.Se
 		for _, t := range tasks.CloseIdle(idleTaskAge, live) {
 			slog.Info(fmt.Sprintf("steve: task #%s closed after %s without a word", t.ID, idleTaskAge), "task", t.ID)
 			if view != nil {
-				view.Observe("task.idle", t.ID, fmt.Sprintf("task #%s (%s) closed: quiet for more than %s", t.ID, t.Member, idleTaskAge))
+				// Keys: task, member, idle.
+				view.Observe("task.idle", t.ID, fmt.Sprintf("task #%s (%s) closed: quiet for more than %s", t.ID, t.Member, idleTaskAge),
+					map[string]string{"task": t.ID, "member": t.Member, "idle": idleTaskAge.String()})
 			}
 		}
 		select {

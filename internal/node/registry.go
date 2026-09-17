@@ -90,11 +90,11 @@ type Registry struct {
 	// or down with a reason. History is made of these. drift hears what
 	// changed in a node's manifest between two adverts.
 	observe func(Status)
-	drift   func(node string, changes []string)
+	drift   func(node string, changes []ability.Change)
 }
 
 // SetDriftObserver installs where manifest changes are reported.
-func (r *Registry) SetDriftObserver(drift func(node string, changes []string)) {
+func (r *Registry) SetDriftObserver(drift func(node string, changes []ability.Change)) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.drift = drift
@@ -148,11 +148,7 @@ func (r *Registry) noteDrift(name string, adv nodewire.Advert) {
 	if len(changes) == 0 {
 		return
 	}
-	lines := make([]string, 0, len(changes))
-	for _, c := range changes {
-		lines = append(lines, c.String())
-	}
-	drift(name, lines)
+	drift(name, changes)
 }
 
 // SetObserver installs where connectivity changes are reported.

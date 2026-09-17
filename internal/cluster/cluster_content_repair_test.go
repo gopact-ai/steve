@@ -107,7 +107,7 @@ func TestContentRepairSurvivesSecondaryLossThenOriginalLoss(t *testing.T) {
 	source.Options.ContentRepairInterval = 25 * time.Millisecond
 	var eventMu sync.Mutex
 	var events []string
-	stop := source.StartContentRepair(active, func(kind, _, message string) {
+	stop := source.StartContentRepair(active, func(kind, _, message string, _ map[string]string) {
 		eventMu.Lock()
 		events = append(events, kind+": "+message)
 		eventMu.Unlock()
@@ -239,7 +239,9 @@ func TestContentRepairReportsUnavailableAndContinuesIndependentObjects(t *testin
 		}
 	}
 	var observations []string
-	worker, err := peers[0].newContentRepair(active, func(kind, _, message string) { observations = append(observations, kind+": "+message) })
+	worker, err := peers[0].newContentRepair(active, func(kind, _, message string, _ map[string]string) {
+		observations = append(observations, kind+": "+message)
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -387,7 +389,7 @@ func TestContentRepairLocalFailuresAreVisibleWithoutClaimingRemoteDataLost(t *te
 				}
 			}
 			var events []string
-			worker, err := peers[0].newContentRepair(active, func(kind, _, message string) { events = append(events, kind+": "+message) })
+			worker, err := peers[0].newContentRepair(active, func(kind, _, message string, _ map[string]string) { events = append(events, kind+": "+message) })
 			if err != nil {
 				t.Fatal(err)
 			}

@@ -66,7 +66,8 @@ func runChannel(boot runtimeAssembly, storage ledgerAssembly, identity homeAssem
 	slog.Info("steve: starting Feishu long connection")
 	if err := channel.Start(ctx); err != nil && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
 		slog.Error(fmt.Sprintf("steve: Feishu connection failed; Console remains available: %v", err))
-		view.Observe("channel.error", "feishu", "Feishu connection failed; check channel credentials and restart the Hub")
+		// Keys: channel.
+		view.Observe("channel.error", "feishu", "Feishu connection failed; check channel credentials and restart the Hub", map[string]string{"channel": "feishu"})
 		channelSettings.SetRuntimeError("Feishu connection failed; check the channel configuration and restart the Hub")
 		<-ctx.Done()
 	}
