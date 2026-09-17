@@ -10,6 +10,7 @@ import { SSHConnect } from "@/components/steve/ssh-connect";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import { useFleet } from "@/lib/fleet";
 import { useI18n } from "@/providers/locale-provider";
+import type { Translator } from "@/lib/i18n";
 import { message } from "@/lib/http";
 import { useTheme } from "@/providers/theme-provider";
 import { HTTPError } from "@/lib/http";
@@ -257,6 +258,10 @@ function readEnrollment(key: string): EnrollmentDraft {
     } catch { return { selected: [] }; }
 }
 function usable(candidate: DesktopAgentCandidate) { return candidate.installed && !candidate.requires?.length && !candidate.registered; }
+// localAgents is how many agents run on this computer. A backend that does
+// not report it yet only ever registered local agents, so the total stands
+// in for it.
+function localAgents(status: DesktopStatus) { return status.local_agent_count ?? status.agent_count; }
 
 // Agents: each chosen tool becomes an agent with the name it answers to in
 // chat and, optionally, what it is good for. One of them is the default.
@@ -272,10 +277,11 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
     const [discoveryError, setDiscoveryError] = useState("");
     const [error, setError] = useState("");
     const [attempted, setAttempted] = useState(false);
+    const [mode, setMode] = useState<"local" | "remote">("local");
     const acting = useRef(false);
     const agentList = useRef<HTMLFieldSetElement>(null);
     const form = useRef<HTMLDivElement>(null);
-    const confirmed = (current: DesktopStatus, ids: string[], candidates: DesktopAgentCandidate[]) => current.agent_count > 0 && ids.every((id) => candidates.some((item) => item.id === id && item.registered));
+    const confirmed = (current: DesktopStatus, ids: string[], candidates: DesktopAgentCandidate[]) => localAgents(current) > 0 && ids.every((id) => candidates.some((item) => item.id === id && item.registered));
     const load = useResourceRead(`desktop-agents:${status.node_id}`, discoverDesktopAgents, (value) => {
         const candidates = value.agents || [];
         setAgents(candidates); setDiscoveryError(""); setLoading(false);
@@ -321,7 +327,7 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
             if (taken.has(name)) { setError(t("desktop.agentNameDuplicate", { name })); focusField(id, "name"); return null; }
             taken.add(name);
             const about = (draft.about?.[id] || "").trim();
-            out.push({ candidate_id: id, agent_id: name, ...(about ? { about } : {}), ...(id === primary ? { default: true } : {}) });
+            out.push({ candidate_id: id, agent_id: name, ...(about ? { about } : {}), ...(id === primary && (draft.primary === id || !status.default_agent) ? { default: true } : {}) });
         }
         return out;
     }
@@ -340,7 +346,7 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
             if (draft.pending && await reconcile(ids)) { onNext(); return; }
             setAttempted(true);
             const next = await enrollDesktopAgents(selected);
-            if (!(next.agent_count > 0)) throw new Error(t("desktop.unconfirmed"));
+            if (!(localAgents(next) > 0)) throw new Error(t("desktop.unconfirmed"));
             onStatus(next); finish(); onNext();
         } catch (error) {
             try { if (await reconcile(ids)) { onNext(); return; } } catch { /* Keep the same selection until a response is confirmed. */ }
@@ -352,8 +358,15 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
     const unavailable = !loading && !discoveryError && !agents.some((item) => item.installed);
     const locked = busy || !!draft.pending;
     const radio = "group flex min-h-8 cursor-pointer items-center gap-2 rounded-md border border-secondary px-3 py-1.5 text-sm text-primary data-selected:border-brand data-selected:bg-secondary data-focus-visible:outline-2 data-focus-visible:outline-focus-ring";
+    const choice = "group flex cursor-pointer items-start gap-2 rounded-lg border border-secondary px-3 py-2.5 text-sm text-primary data-selected:border-brand data-selected:bg-secondary data-focus-visible:outline-2 data-focus-visible:outline-focus-ring";
     return <section className="space-y-3" ref={form}>
         <p className="text-sm leading-6 text-secondary">{t("desktop.explanation")}</p>
+        {registeredCount === 0 && <RadioGroup aria-label={t("desktop.modeLabel")} value={mode} isDisabled={locked} onChange={(value) => { setError(""); setAttempted(false); setMode(value as "local" | "remote"); }} className="flex flex-col gap-2">
+            {([["local", "desktop.modeLocal", "desktop.modeLocalHint"], ["remote", "desktop.modeRemote", "desktop.modeRemoteHint"]] as const).map(([value, label, hint]) => <Radio key={value} value={value} className={choice}>
+                <span className="flex min-w-0 flex-col gap-0.5"><span className="font-medium">{t(label)}</span><span className="text-xs leading-5 text-tertiary">{t(hint)}</span></span>
+            </Radio>)}
+        </RadioGroup>}
+        {mode === "remote" ? <StepFooter busy={busy} onBack={onBack} onNext={onNext} nextLabel={t("desktop.modeRemoteNext")} /> : <>
         <fieldset ref={agentList} className="min-w-0 space-y-3" disabled={locked}>
             <legend className="mb-2 text-sm font-semibold text-primary">{t("desktop.chooseAgents")}</legend>
             {!loading && agents.some((candidate) => candidate.installed) && <p className="text-xs leading-5 text-tertiary">{t("desktop.detectedHint")}</p>}
@@ -377,29 +390,29 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
                 <span className="text-sm font-medium text-primary">{t("desktop.defaultAgentLabel")}</span>
                 <div className="flex flex-wrap gap-2">{chosen.map((id) => <Radio key={id} value={id} className={radio}>{shown(id)}</Radio>)}</div>
                 <span className="block text-xs leading-5 text-tertiary">{t("desktop.defaultAgentHint")}</span>
-            </RadioGroup> : status.agent_count === 0 && primary && <p className="text-xs leading-5 text-secondary">{t("desktop.defaultChoice", { agent: shown(primary) })}</p>}
+            </RadioGroup> : !status.default_agent && primary && <p className="text-xs leading-5 text-secondary">{t("desktop.defaultChoice", { agent: shown(primary) })}</p>}
         </div>}
         {discoveryError && <p role="alert" className="break-words text-sm text-error-primary">{discoveryError}</p>}
         {!loading && <Button size="sm" color="tertiary" isDisabled={locked} onClick={() => { setLoading(true); void load(); }}>{t("desktop.checkAgain")}</Button>}
         {error && <p role="alert" className="break-words text-sm text-error-primary">{error}</p>}
         {draft.pending && !busy && error !== t("desktop.unconfirmed") && <p role="status" className="text-xs leading-5 text-tertiary">{t("desktop.unconfirmed")}</p>}
         {busy && <p role="status" className="text-sm text-tertiary">{t("desktop.registering")}</p>}
-        <StepFooter busy={busy} onBack={onBack} onNext={() => void register()} nextLabel={chosen.length === 0 && registeredCount > 0 ? t("desktop.next") : t(attempted || draft.pending ? "desktop.retryRegister" : "desktop.register")} onSkip={registeredCount === 0 ? onNext : undefined} disabled={loading || !!discoveryError}>
-            {registeredCount === 0 && <p className="basis-full text-xs leading-5 text-quaternary">{t("desktop.agentsSkipHint")}</p>}
-        </StepFooter>
+        <StepFooter busy={busy} onBack={onBack} onNext={() => void register()} nextLabel={chosen.length === 0 && registeredCount > 0 ? t("desktop.next") : t(attempted || draft.pending ? "desktop.retryRegister" : "desktop.register")} disabled={loading || !!discoveryError} />
+        </>}
     </section>;
 }
 
 // Machines: the SSH dialog does the connecting; this page lists what is
 // connected so a machine can be renamed or taken out again without leaving
 // the guide.
-function MachinesStep({ busy, onNext, onBack, nested, setNested }: StepProps & { nested: boolean; setNested: (open: boolean) => void }) {
+function MachinesStep({ status, busy, onNext, onBack, nested, setNested }: StepProps & { nested: boolean; setNested: (open: boolean) => void }) {
     const { t } = useI18n();
     const { snap, refresh } = useFleet();
     const navigate = useNavigate();
     const others = snap.nodes.filter((node) => node.role !== "hub");
     return <section className="space-y-4">
         <p className="text-sm leading-6 text-secondary">{t("desktop.machinesIntro")}</p>
+        {status.agent_count === 0 && <p className="rounded-lg bg-secondary p-3 text-sm leading-6 text-primary">{t("desktop.machinesNeeded")}</p>}
         {others.length === 0 ? <p className="text-sm text-primary">{t("desktop.machinesNone")}</p>
             : <ul className="divide-y divide-secondary rounded-lg border border-secondary">{others.map((node) => <MachineRow key={node.name} node={node} busy={busy} onChanged={refresh} />)}</ul>}
         <Button size="sm" color="secondary" isDisabled={busy} onClick={() => setNested(true)}>{t("desktop.connectMachine")}</Button>
@@ -488,6 +501,14 @@ function PreferencesStep({ busy, setBusy, onNext, onBack }: StepProps) {
     </section>;
 }
 
+function agentSummary(status: DesktopStatus, t: Translator) {
+    const local = localAgents(status), remote = status.agent_count - local;
+    if (status.agent_count === 0) return t("desktop.summaryNoAgents");
+    if (remote <= 0) return local === 1 ? t("desktop.summaryAgentsOne") : t("desktop.summaryAgents", { count: local });
+    if (local === 0) return remote === 1 ? t("desktop.summaryAgentsRemoteOne") : t("desktop.summaryAgentsRemote", { count: remote });
+    return t("desktop.summaryAgentsSplit", { local, remote });
+}
+
 function FinishedStep({ status, busy, error, onBack, onFinish }: { status: DesktopStatus; busy: boolean; error: string; onBack: () => void; onFinish: () => void }) {
     const { t } = useI18n();
     const { snap } = useFleet();
@@ -497,9 +518,10 @@ function FinishedStep({ status, busy, error, onBack, onFinish }: { status: Deskt
         <p className="text-sm leading-6 text-secondary">{t("desktop.finishedIntro")}</p>
         <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
             {status.workspace_path && <><dt className="text-tertiary">{t("desktop.workspacePath")}</dt><dd className="min-w-0 break-all font-mono text-xs text-secondary">{status.workspace_path}</dd></>}
-            <dt className="text-tertiary">{t("desktop.step.agents")}</dt><dd className="text-secondary">{status.agent_count === 1 ? t("desktop.summaryAgentsOne") : t("desktop.summaryAgents", { count: status.agent_count })}{status.default_agent ? ` · ${t("desktop.defaultAgent", { agent: status.default_agent })}` : ""}</dd>
+            <dt className="text-tertiary">{t("desktop.step.agents")}</dt><dd className="text-secondary">{agentSummary(status, t)}{status.default_agent ? ` · ${t("desktop.defaultAgent", { agent: status.default_agent })}` : ""}</dd>
             <dt className="text-tertiary">{t("desktop.step.machines")}</dt><dd className="text-secondary">{others === 1 ? t("desktop.summaryMachinesOne") : t("desktop.summaryMachines", { count: others })}</dd>
         </dl>
+        {status.agent_count === 0 && <p className="rounded-lg bg-secondary p-3 text-sm leading-6 text-primary">{t("desktop.summaryNoAgentsHint")}</p>}
         {error && <p role="alert" className="break-words text-sm text-error-primary">{error}</p>}
         <StepFooter busy={busy} onBack={onBack} onNext={onFinish} nextLabel={t("desktop.finish")} />
     </section>;

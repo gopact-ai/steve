@@ -68,6 +68,9 @@ func (p *Peer) localDesktopStatus() (consoleapi.DesktopStatus, error) {
 		if item.Default {
 			result.DefaultAgent = id
 		}
+		if item.Node == p.Config.NodeID {
+			result.LocalAgentCount++
+		}
 	}
 	progress, err := desktop.ReadSetup(stateDir)
 	if err != nil {

@@ -31,6 +31,11 @@ func (a *Service) desktopStatusLocked() consoleapi.DesktopStatus {
 	stateDir := filepath.Dir(a.Path)
 	status := consoleapi.DesktopStatus{Enabled: true, NodeID: a.Cfg.Gateway.HubID, AgentCount: len(a.Cfg.Agents),
 		WorkspacePath: a.Cfg.Projects[config.DefaultProjectID(a.Cfg.Gateway.DefaultProject, a.Cfg.Projects)].Home.Path}
+	for _, item := range a.Cfg.Agents {
+		if item.Node == "" {
+			status.LocalAgentCount++
+		}
+	}
 	status.WorkspaceManaged = desktop.ManagedWorkspace(stateDir, status.WorkspacePath)
 	for id, item := range a.Cfg.Agents {
 		if item.Default {

@@ -266,6 +266,28 @@ try {
     await many.close();
     console.log("PASS each chosen tool is named, described and one of them is made the default");
 
+    const client = await fixture(true, "agents");
+    await client.page.goto(url + "#/console");
+    const clientDialog = client.page.getByRole("dialog", { name: "First-time setup" });
+    await clientDialog.getByRole("checkbox", { name: "Codex", exact: true }).waitFor();
+    await clientDialog.getByText("No agents here, only connect remote machines", { exact: true }).click();
+    assert.equal(await clientDialog.getByRole("checkbox", { name: "Codex", exact: true }).count(), 0, "the tool list is out of the way once this computer is only a console");
+    await clientDialog.getByRole("button", { name: "Next: connect a machine", exact: true }).click();
+    await clientDialog.getByRole("heading", { name: "Other machines", exact: true }).waitFor();
+    await clientDialog.getByText("No agents are registered here yet. Connect a machine so there is someone to do the work.", { exact: true }).waitFor();
+    await clientDialog.getByRole("button", { name: "Skip for now", exact: true }).click();
+    await clientDialog.getByRole("heading", { name: "Preferences", exact: true }).waitFor();
+    await clientDialog.getByRole("button", { name: "Next", exact: true }).click();
+    await clientDialog.getByRole("heading", { name: "All set", exact: true }).waitFor();
+    await clientDialog.getByText("No agents yet", { exact: true }).waitFor();
+    assert.deepEqual(client.setups.map((item) => item.step), ["machines", "preferences", "finished"]);
+    await clientDialog.getByRole("button", { name: "Open workbench", exact: true }).click();
+    await clientDialog.waitFor({ state: "hidden" });
+    assert.deepEqual(client.posts, [], "choosing to stay a console registers nothing");
+    assert.equal(client.status.setup_required, false, "a console with no agents of its own is a finished setup");
+    await client.close();
+    console.log("PASS a computer with no agents of its own can finish the guide as a console for remote machines");
+
     const empty = await fixture(true, "agents"); empty.agents = [];
     await empty.page.goto(url + "#/console");
     const emptyDialog = empty.page.getByRole("dialog", { name: "First-time setup" });

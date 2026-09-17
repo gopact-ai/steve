@@ -160,7 +160,7 @@ func TestClusterPeerDesktopEnrollmentKeepsTheNameTheOwnerChose(t *testing.T) {
 	if err := json.Unmarshal(body, &result); err != nil {
 		t.Fatal(err)
 	}
-	if result.AgentCount != 1 || result.DefaultAgent != "scout" {
+	if result.AgentCount != 1 || result.LocalAgentCount != 1 || result.DefaultAgent != "scout" {
 		t.Fatalf("enrollment answered without the registration it made: %s", body)
 	}
 	declaration, err := peer.DesktopDeclaration()

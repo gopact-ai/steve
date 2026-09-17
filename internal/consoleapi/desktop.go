@@ -7,7 +7,11 @@ type DesktopStatus struct {
 	NodeID        string `json:"node_id,omitempty"`
 	SetupRequired bool   `json:"setup_required"`
 	AgentCount    int    `json:"agent_count"`
-	DefaultAgent  string `json:"default_agent,omitempty"`
+	// LocalAgentCount is how many of those agents run on this computer.
+	// It is zero on a machine that only drives agents elsewhere, which is
+	// a supported way to run the desktop App.
+	LocalAgentCount int    `json:"local_agent_count"`
+	DefaultAgent    string `json:"default_agent,omitempty"`
 	// WorkspacePath is the default project's directory on this computer:
 	// where conversations work unless a project says otherwise.
 	WorkspacePath string `json:"workspace_path,omitempty"`
