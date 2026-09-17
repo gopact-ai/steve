@@ -2,8 +2,6 @@ package app
 
 import (
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -53,13 +51,9 @@ func checkPeerPluginTurn(t *testing.T, peer *cluster.Peer, conversation, command
 	}
 }
 
-func checkPeerPluginProjectIsolation(t *testing.T, coordinator, worker *cluster.Peer) {
+func checkPeerPluginProjectIsolation(t *testing.T, coordinator *cluster.Peer) {
 	t.Helper()
-	path := filepath.Join(filepath.Dir(worker.Config.DataDir), "projects", "unrelated")
-	if err := os.MkdirAll(path, 0700); err != nil {
-		t.Fatal(err)
-	}
-	pluginPeerJSON(t, coordinator, http.MethodPost, "/console/projects", consoleapi.AddProjectRequest{ID: "unrelated", Node: worker.Config.NodeID, Path: "unrelated", Repo: "inplace", Level: "internal"}, nil)
+	pluginPeerJSON(t, coordinator, http.MethodPost, "/console/projects", consoleapi.AddProjectRequest{ID: "unrelated", Path: "unrelated", Repo: "inplace", Level: "internal"}, nil)
 	conversation := "console:plugin-project-isolation"
 	pluginPeerJSON(t, coordinator, http.MethodPost, "/console/send", consoleapi.Submission{Conversation: conversation, Input: "/project use unrelated", CommandID: "isolation-project"}, nil)
 	var result struct {

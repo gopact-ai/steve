@@ -179,6 +179,7 @@ const (
 	FleetRepairHint        Key = "fleet_repair_hint"
 	VerbNew                Key = "verb_new"
 	ContextNotHome         Key = "context_not_home"
+	ContextWillAttach      Key = "context_will_attach"
 	SuggestUsable          Key = "suggest_usable"
 	VerbClear              Key = "verb_clear"
 	VerbStatus             Key = "verb_status"

@@ -171,16 +171,19 @@ type coordinatorState struct {
 	// that has no request to read it from.
 	modes map[string]home.Mode
 	// memory is what Steve remembers, by scope; nil until wired.
-	memory      *memory.Service
-	schedules   *schedule.Store
-	supervisor  Supervisor
-	plans       *plan.Store
-	fleet       *roster.Roster
-	refresher   Refresher
-	files       MachineFiles
-	probeOne    func(ctx context.Context, node, harness string) error
-	probeAll    func(ctx context.Context) []models.Result
-	projects    *project.Store
+	memory     *memory.Service
+	schedules  *schedule.Store
+	supervisor Supervisor
+	plans      *plan.Store
+	fleet      *roster.Roster
+	refresher  Refresher
+	files      MachineFiles
+	probeOne   func(ctx context.Context, node, harness string) error
+	probeAll   func(ctx context.Context) []models.Result
+	projects   *project.Store
+	// attach gives a project a directory on the machine an agent runs on
+	// when it has none there; nil refuses the turn instead.
+	attach      func(ctx context.Context, projectID, node string) error
 	attempts    *attempt.Service
 	artifacts   *artifact.Store
 	intents     *intent.Service
@@ -251,6 +254,13 @@ func (c *Coordinator) SetProjects(store *project.Store, defaultID, homeID string
 	c.projects = store
 	c.defaultProject = defaultID
 	c.homeProject = homeID
+}
+
+// SetWorkspaceAttach wires what gives a project a directory on a machine
+// that has none. Without it a turn on such a machine is refused, which is
+// how a hub with no management service still behaves.
+func (c *Coordinator) SetWorkspaceAttach(attach func(ctx context.Context, projectID, node string) error) {
+	c.attach = attach
 }
 
 func (c *Coordinator) SetSkills(live *skills.Live) {

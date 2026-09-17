@@ -78,9 +78,13 @@ func TestAutomaticCoordinatorLossPreservesHealthyTaskAndReturningDesktop(t *test
 	if err := os.WriteFile(filepath.Join(workdir, "README.md"), []byte("isolated task project\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	status, body := PeerRequest(t, first, http.MethodPost, "/console/projects", consoleapi.AddProjectRequest{ID: "remote-work", Node: third.Config.NodeID, Path: "remote-work", Repo: "inplace", Level: "internal"})
+	status, body := PeerRequest(t, first, http.MethodPost, "/console/projects", consoleapi.AddProjectRequest{ID: "remote-work", Path: "remote-work", Repo: "inplace", Level: "internal"})
 	if status != http.StatusOK {
-		t.Fatalf("create remote project: %d %s", status, body)
+		t.Fatalf("create project: %d %s", status, body)
+	}
+	status, body = PeerRequest(t, first, http.MethodPost, "/console/projects/remote-work/workspaces", consoleapi.AddWorkspaceRequest{Node: third.Config.NodeID, Origin: "adopt"})
+	if status != http.StatusOK {
+		t.Fatalf("give the remote machine a copy: %d %s", status, body)
 	}
 	status, body = PeerRequest(t, first, http.MethodPost, "/console/agents", consoleapi.AddAgentRequest{ID: "worker", Node: third.Config.NodeID, Harness: "mock"})
 	if status != http.StatusOK {
