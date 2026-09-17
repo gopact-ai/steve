@@ -223,6 +223,15 @@ try {
     await running.getByText("Inspecting installation requirements", { exact: true }).waitFor();
     assert.equal(await running.getAttribute("title"), "Inspecting installation requirements\n\nChecking pnpm first.", "A running thought's tooltip must read as words, not as markdown source");
 
+    // The window on a running thought is six lines deep: long reasoning
+    // scrolls inside it rather than being cut to a sentence and a half.
+    const reasoned = Array.from({ length: 12 }, (_, i) => `Reasoning line ${i + 1} about the workspace layout.`).join("\n\n");
+    await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { phase: "running", answer: finalAnswer, timeline: [{ kind: "thought", text: reasoned, at }] } });
+    await running.getByText("Reasoning line 12 about the workspace layout.", { exact: true }).waitFor();
+    const window = await running.evaluate((el) => ({ shown: el.clientHeight, content: el.scrollHeight, line: parseFloat(getComputedStyle(el.querySelector("p")).lineHeight) }));
+    assert.ok(Math.abs(window.shown / window.line - 6) < 0.6, `A running thought must show about six lines, not ${(window.shown / window.line).toFixed(1)}`);
+    assert.ok(window.content > window.shown, "Reasoning longer than the window must scroll inside it");
+
     // A transcript-only server still sends a usable answer without timeline data.
     await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { phase: "running", answer: "Answer without timeline" } });
     await page.getByText("Answer without timeline", { exact: true }).waitFor();
