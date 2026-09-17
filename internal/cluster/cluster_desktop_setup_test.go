@@ -111,12 +111,18 @@ func TestClusterPeerDesktopGuideProgressAndWorkspace(t *testing.T) {
 	if info, err := os.Stat(want); err != nil || !info.IsDir() {
 		t.Fatalf("the directory is created before the project moves: %v", err)
 	}
-	saved, err := config.Load(peer.Options.ConfigPath)
-	if err != nil || saved.LocalWorkspaceRoot() != want {
-		t.Fatalf("the chosen directory did not become this machine's workspace: %q %v", saved.Gateway.WorkspaceRoot, err)
-	}
 	if root := peer.worker.WorkspaceRoot(); root != want {
 		t.Fatalf("the running execution service still works in %s", root)
+	}
+	if root := peer.WorkerWorkspaceRoot(); root != want {
+		t.Fatalf("the application would be built for %s", root)
+	}
+	var stored struct {
+		WorkspaceRoot string `json:"workspace_root"`
+	}
+	raw, err := os.ReadFile(peer.Config.WorkerConfigFile)
+	if err != nil || json.Unmarshal(raw, &stored) != nil || stored.WorkspaceRoot != want {
+		t.Fatalf("the choice was not written where a restart reads it: %q %v", stored.WorkspaceRoot, err)
 	}
 	mu.Lock()
 	defer mu.Unlock()

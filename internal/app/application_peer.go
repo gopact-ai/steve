@@ -42,6 +42,9 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 			cfg.Nodes = map[string]config.Node{}
 		}
 		cfg.Nodes[p.Worker().Name] = config.Node{Addr: p.Worker().Address, Token: p.Worker().Token}
+		if root := p.WorkerWorkspaceRoot(); root != "" {
+			cfg.Gateway.WorkspaceRoot = root
+		}
 		if err := stateConfig.Configure(cfg); err != nil {
 			return err
 		}

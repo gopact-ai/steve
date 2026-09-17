@@ -16,6 +16,11 @@ import (
 type ApplicationHost interface {
 	consoleapi.CoordinationService
 	Worker() PeerWorkerDescriptor
+	// WorkerWorkspaceRoot is the directory this machine keeps its work
+	// in, as the execution service running here has it. It is the answer
+	// to every question about where a directory on this machine goes, so
+	// the application is given it rather than deriving one of its own.
+	WorkerWorkspaceRoot() string
 	ApplicationConfigPath() string
 	ApplicationClusterID() string
 	ConfigureApplication(*config.Config, Activation) error
@@ -29,7 +34,13 @@ type ApplicationHost interface {
 }
 
 func (p *Peer) ApplicationConfigPath() string { return p.Options.ConfigPath }
-func (p *Peer) ApplicationClusterID() string  { return p.Config.ClusterID }
+func (p *Peer) WorkerWorkspaceRoot() string {
+	if p.worker == nil {
+		return ""
+	}
+	return p.worker.WorkspaceRoot()
+}
+func (p *Peer) ApplicationClusterID() string { return p.Config.ClusterID }
 func (p *Peer) ConfigureApplication(cfg *config.Config, activation Activation) error {
 	if p.Options.ConfigureApplication != nil {
 		return p.Options.ConfigureApplication(cfg, activation)

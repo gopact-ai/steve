@@ -336,3 +336,16 @@ func (a *Service) prepareDesktopAgents(ctx context.Context, statePath string, se
 	}
 	return nil
 }
+
+// SetLocalWorkspaceRoot records where this machine keeps its work for the
+// application already running. The durable record belongs to the execution
+// service's own file; this keeps the answers given before the next restart
+// in step with it.
+func (a *Service) SetLocalWorkspaceRoot(root string) {
+	if strings.TrimSpace(root) == "" {
+		return
+	}
+	ConfigMu.Lock()
+	defer ConfigMu.Unlock()
+	a.Cfg.Gateway.WorkspaceRoot = root
+}
