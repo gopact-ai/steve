@@ -291,7 +291,7 @@ try {
         await success.getByRole("button", { name: "Confirm installation", exact: true }).click();
         // A connected machine goes straight on to registering an agent there;
         // until one exists, nothing can be assigned to the machine.
-        const enrollment = successPage.getByRole("dialog", { name: "Register an agent on worker-west", exact: true });
+        const enrollment = successPage.getByRole("dialog", { name: "Register agents on worker-west", exact: true });
         await enrollment.getByText("No usable tools found on this machine", { exact: true }).waitFor();
         assert.ok(f.nodeAgentReads.length > 0);
         assert.deepEqual([...new Set(f.nodeAgentReads)], ["/console/nodes/node-stable-9/agents"]);
