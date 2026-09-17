@@ -493,7 +493,7 @@ export function ConsolePage() {
     const toolbarStatus = stopState?.uncertain ? t("console.stopUncertain") : status || contextError || conversationsError || (queueReadError?.conversation === conversation ? readErrorText(queueReadError.error) : "") || (replyReadError?.conversation === conversation ? readErrorText(replyReadError.error) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "");
     const listed = conversations.some((c) => c.id === conversation) ? conversations : [{ id: conversation, title: t("console.newConversation"), last_at: "", count: 0, running: false, project: context?.project?.id, agent: context?.agent?.id }, ...conversations];
 
-    const sessions = (collapsed = sessionsCollapsed) => <SessionsTree list={listed} projects={snap.projects} current={conversation} onPick={selectConversation} onNew={(project) => void newSession(project)} creating={creating} onImport={() => { setMobileSessions(false); setImporting(true); }}
+    const sessions = (collapsed = sessionsCollapsed, resizable = true) => <SessionsTree resizable={resizable} list={listed} projects={snap.projects} current={conversation} onPick={selectConversation} onNew={(project) => void newSession(project)} creating={creating} onImport={() => { setMobileSessions(false); setImporting(true); }}
                 onUpdate={(id, patch) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}
                 onDelete={removeConversation}
                 collapsed={collapsed} onToggle={() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(false)}
@@ -503,7 +503,7 @@ export function ConsolePage() {
         <div className={`console-workbench ${side.session ? "has-side-chat" : ""}`}>
             {importing && <NativeSessionImport agents={snap.agents} nodes={snap.nodes} projects={snap.projects} onClose={() => setImporting(false)} onImported={(id) => { setImporting(false); refresh(); selectConversation(id); void loadConversations(); }} />}
             {view === "chat" && desktopSessions && !side.session && sessions()}
-            {mobileSessions && !desktopSessions && <Sheet label={t("console.sessions")}  side="left" width={300} onClose={() => setMobileSessions(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("console.closeSessions")}  onClick={() => setMobileSessions(false)}><X aria-hidden="true" /></button>{sessions(false)}</Sheet>}
+            {mobileSessions && !desktopSessions && <Sheet label={t("console.sessions")}  side="left" width={300} onClose={() => setMobileSessions(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("console.closeSessions")}  onClick={() => setMobileSessions(false)}><X aria-hidden="true" /></button>{sessions(false, false)}</Sheet>}
             {pickedTask && <TaskDrawer t={pickedTask} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === pickedTask.id)} onClose={() => setPickedTask(null)} width={RAIL_WIDTH} />}
 
             <div className="console-main">

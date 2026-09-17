@@ -7,6 +7,8 @@ import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "r
 import { BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Zap, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
 import appIcon from "../../../desktop/macos/Assets/AppIcon.png";
 import { Sheet } from "@/components/steve/drawer";
+import { PaneResizer } from "@/components/steve/pane-resizer";
+import { usePaneWidth } from "@/hooks/use-pane-width";
 import { FleetProvider, IntentProvider, useFleet } from "@/lib/fleet";
 import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
@@ -22,6 +24,12 @@ import { HomePage } from "@/pages/home";
 import { SettingsPage } from "@/pages/settings";
 import { MaterialProvider } from "@/providers/material-provider";
 import { ReviewProvider } from "@/components/steve/review-context";
+
+// The menu is narrow by default and stays readable down to an icon-and-
+// label minimum; past that the compact rail is the better answer.
+const NAV_WIDTH = 208;
+const NAV_MIN = 168;
+const NAV_MAX = 360;
 
 const PluginsPage = lazy(() => import("@/pages/plugins").then((module) => ({ default: module.PluginsPage })));
 
@@ -39,6 +47,7 @@ function Shell() {
     const tablet = useBreakpoint("sm");
     const [navCollapsed, setNavCollapsed] = useState(() => { try { return localStorage.getItem("steve.nav.collapsed") === "1"; } catch { return false; } });
     const [mobileNav, setMobileNav] = useState(false);
+    const [navWidth, setNavWidth] = usePaneWidth("steve.nav.width", NAV_WIDTH, NAV_MIN, NAV_MAX);
     const compact = navCollapsed || !desktop;
     const running = snap.tasks.filter((t) => t.execution === "running" && !t.parent).length;
     const up = snap.nodes.filter((n) => n.up).length;
@@ -102,7 +111,10 @@ function Shell() {
     </>;
     return <div className="workbench-shell">
         <a className="skip-link" href="#main-content" onClick={(event) => { event.preventDefault(); document.getElementById("main-content")?.focus(); }}>{t("nav.skip")}</a>
-        {tablet && <aside className={`app-sidebar ${compact ? "is-compact" : ""}`}>{navigation(compact)}</aside>}
+        {tablet && <aside className={`app-sidebar ${compact ? "is-compact" : ""}`} style={compact ? undefined : { width: navWidth }}>
+            {navigation(compact)}
+            {!compact && <PaneResizer width={navWidth} onChange={setNavWidth} min={NAV_MIN} max={NAV_MAX} initial={NAV_WIDTH} label={t("nav.resize")} />}
+        </aside>}
         {!tablet && <div className="app-mobile-bar"><button type="button" className="workbench-icon-button" aria-label={t("nav.menu")} onClick={() => setMobileNav(true)}><Menu01 aria-hidden="true" /></button><strong>Steve</strong><a href="#/fleet" className="max-w-[60%] truncate rounded px-1 py-2 text-xs text-tertiary hover:text-primary" title={t("connection.coordinatorRole")}>{coordinatedBy}</a><span className={`connection-dot ${live === "live" ? "connected" : ""}`} title={connection} /></div>}
         {mobileNav && !tablet && <Sheet label={t("nav.menu")} side="left" width={260} onClose={() => setMobileNav(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("nav.close")} onClick={() => setMobileNav(false)}><X aria-hidden="true" /></button><div className="app-sidebar is-mobile">{navigation(false)}</div></Sheet>}
         <main id="main-content" tabIndex={-1} className="app-main">
