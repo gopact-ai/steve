@@ -37,6 +37,23 @@ type DesktopAgentCandidate struct {
 	Installed  bool     `json:"installed"`
 	Requires   []string `json:"requires,omitempty"`
 	Registered bool     `json:"registered"`
+	// Model, Models and Selectors are what this tool was last seen offering
+	// on this computer. A tool that has never run here offers no choice yet,
+	// and the agent then follows the tool's own default.
+	Model     string                 `json:"model,omitempty"`
+	Models    []string               `json:"models,omitempty"`
+	Selectors []DesktopAgentSelector `json:"selectors,omitempty"`
+}
+
+// DesktopAgentSelector is one option besides the model that a tool exposes,
+// such as reasoning effort.
+type DesktopAgentSelector struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Category string   `json:"category,omitempty"`
+	Current  string   `json:"current,omitempty"`
+	Choices  []string `json:"choices,omitempty"`
+	Values   []string `json:"values,omitempty"`
 }
 
 type DesktopDiscovery struct {
@@ -50,7 +67,12 @@ type DesktopEnrollAgent struct {
 	CandidateID string `json:"candidate_id"`
 	AgentID     string `json:"agent_id,omitempty"`
 	About       string `json:"about,omitempty"`
-	Default     bool   `json:"default,omitempty"`
+	// Model is the model this agent prefers, and Options pins the tool's
+	// other selectors such as reasoning effort. Both are what the machine
+	// last reported the tool offers; leaving them empty keeps its default.
+	Model   string            `json:"model,omitempty"`
+	Options map[string]string `json:"options,omitempty"`
+	Default bool              `json:"default,omitempty"`
 }
 
 // DesktopEnrollRequest carries the owner's choice. Agents is what the guide

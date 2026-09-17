@@ -27,6 +27,24 @@ type Candidate struct {
 	Requires   []string `json:"requires,omitempty"`
 	Configured bool     `json:"configured"`
 	Registered bool     `json:"registered"`
+	// Model, Models and Selectors are what this tool was last seen offering
+	// on the machine. The machine itself does not fill them in; the
+	// coordinator adds what it has observed, so a tool that has never run
+	// there simply offers no choice yet.
+	Model     string              `json:"model,omitempty"`
+	Models    []string            `json:"models,omitempty"`
+	Selectors []CandidateSelector `json:"selectors,omitempty"`
+}
+
+// CandidateSelector is one option besides the model that a tool exposes,
+// such as reasoning effort.
+type CandidateSelector struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Category string   `json:"category,omitempty"`
+	Current  string   `json:"current,omitempty"`
+	Choices  []string `json:"choices,omitempty"`
+	Values   []string `json:"values,omitempty"`
 }
 
 type Discovery struct {
@@ -34,10 +52,37 @@ type Discovery struct {
 	Agents   []Candidate `json:"agents"`
 }
 
+// EnrollAgent is one agent the owner asked for: which discovered tool it
+// runs, what it is called, what it is for, and which model and options it
+// should prefer.
+type EnrollAgent struct {
+	CandidateID string            `json:"candidate_id"`
+	AgentID     string            `json:"agent_id"`
+	About       string            `json:"about,omitempty"`
+	Model       string            `json:"model,omitempty"`
+	Options     map[string]string `json:"options,omitempty"`
+	Default     bool              `json:"default,omitempty"`
+}
+
+// EnrollRequest registers agents on one machine in a single pass. The
+// single-agent fields are what an older page sends.
 type EnrollRequest struct {
-	CandidateID      string `json:"candidate_id"`
-	AgentID          string `json:"agent_id"`
-	ExpectedRevision string `json:"expected_revision"`
+	CandidateID      string        `json:"candidate_id,omitempty"`
+	AgentID          string        `json:"agent_id,omitempty"`
+	Agents           []EnrollAgent `json:"agents,omitempty"`
+	ExpectedRevision string        `json:"expected_revision"`
+}
+
+// Requested is the batch to register, with a single-agent request folded
+// into it so both shapes take the same path.
+func (r EnrollRequest) Requested() []EnrollAgent {
+	if len(r.Agents) > 0 {
+		return r.Agents
+	}
+	if r.CandidateID == "" {
+		return nil
+	}
+	return []EnrollAgent{{CandidateID: r.CandidateID, AgentID: r.AgentID}}
 }
 
 // InstallRequest crosses the node transport. Commands, paths, environment and
@@ -48,11 +93,12 @@ type InstallRequest struct {
 }
 
 type Enrollment struct {
-	CandidateID string `json:"candidate_id"`
-	AgentID     string `json:"agent_id,omitempty"`
-	Harness     string `json:"harness"`
-	Revision    string `json:"revision"`
-	Registered  bool   `json:"registered"`
+	CandidateID string   `json:"candidate_id"`
+	AgentID     string   `json:"agent_id,omitempty"`
+	Agents      []string `json:"agents,omitempty"`
+	Harness     string   `json:"harness"`
+	Revision    string   `json:"revision"`
+	Registered  bool     `json:"registered"`
 }
 
 type Options struct{ Path, HomeDir string }

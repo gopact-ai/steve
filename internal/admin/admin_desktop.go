@@ -102,14 +102,22 @@ func (a *Service) DesktopDiscover(ctx context.Context) (consoleapi.DesktopDiscov
 		return consoleapi.DesktopDiscovery{}, fmt.Errorf("本机 Agent 发现仅在桌面 App 中提供")
 	}
 	candidates := desktop.DiscoverAgents(desktop.DiscoveryOptions{})
+	offers := a.harnessOffers(ctx, "")
 	ConfigMu.RLock()
 	defer ConfigMu.RUnlock()
 	result := consoleapi.DesktopDiscovery{Agents: make([]consoleapi.DesktopAgentCandidate, 0, len(candidates))}
 	for _, item := range candidates {
-		result.Agents = append(result.Agents, consoleapi.DesktopAgentCandidate{
+		candidate := consoleapi.DesktopAgentCandidate{
 			ID: item.ID, Name: item.Name, Harness: item.Harness, Executable: item.Executable,
 			Installed: item.Installed, Requires: item.Requires, Registered: localHarnessRegistered(a.Cfg.Agents, item.Harness),
-		})
+		}
+		if offered, ok := offers[item.Harness]; ok {
+			candidate.Model, candidate.Models = offered.Model, offered.Models
+			for _, selector := range offered.Selectors {
+				candidate.Selectors = append(candidate.Selectors, consoleapi.DesktopAgentSelector{ID: selector.ID, Name: selector.Name, Category: selector.Category, Current: selector.Current, Choices: selector.Choices, Values: selector.Values})
+			}
+		}
+		result.Agents = append(result.Agents, candidate)
 	}
 	return result, nil
 }
@@ -257,6 +265,10 @@ func planDesktopAgents(requested []consoleapi.DesktopEnrollAgent, candidates map
 			registered.Aliases = nil
 		}
 		registered.About = strings.TrimSpace(want.About)
+		registered.Model = strings.TrimSpace(want.Model)
+		if len(want.Options) > 0 {
+			registered.Options = maps.Clone(want.Options)
+		}
 		plan.agents[name] = registered
 		plan.order = append(plan.order, name)
 		plan.tools = append(plan.tools, item.Harness)

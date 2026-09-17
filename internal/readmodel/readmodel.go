@@ -230,9 +230,22 @@ type Harness struct {
 	Version string `json:"version,omitempty"`
 	// Model is what the harness was last seen running here; Models what
 	// it offers, declared or observed.
-	Model   string   `json:"model,omitempty"`
-	Models  []string `json:"models,omitempty"`
-	Missing string   `json:"missing,omitempty"`
+	Model  string   `json:"model,omitempty"`
+	Models []string `json:"models,omitempty"`
+	// Selectors are the other options the tool exposed here, such as
+	// reasoning effort, so an agent can be given one when it is registered.
+	Selectors []HarnessSelector `json:"selectors,omitempty"`
+	Missing   string            `json:"missing,omitempty"`
+}
+
+// HarnessSelector is one option a tool offers on a machine, as last seen.
+type HarnessSelector struct {
+	ID       string   `json:"id"`
+	Name     string   `json:"name"`
+	Category string   `json:"category,omitempty"`
+	Current  string   `json:"current,omitempty"`
+	Choices  []string `json:"choices,omitempty"`
+	Values   []string `json:"values,omitempty"`
 }
 
 type Agent struct {

@@ -5,6 +5,7 @@ import { CheckCircle, Monitor01 } from "@untitledui/icons";
 import { Button } from "@/components/base/buttons/button";
 import { Checkbox } from "@/components/base/checkbox/checkbox";
 import { Input } from "@/components/base/input/input";
+import { Select } from "@/components/base/select/select";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { SSHConnect } from "@/components/steve/ssh-connect";
 import { useResourceRead } from "@/hooks/use-resource-read";
@@ -240,8 +241,8 @@ function WorkspaceStep({ status, onStatus, busy, setBusy, onNext, onBack }: Step
 }
 
 const agentName = /^[a-z0-9][a-z0-9._-]{0,63}$/;
-interface EnrollAgent { candidate_id: string; agent_id: string; about?: string; default?: boolean }
-interface EnrollmentDraft { selected: string[]; names?: Record<string, string>; about?: Record<string, string>; primary?: string; pending?: EnrollAgent[] }
+interface EnrollAgent { candidate_id: string; agent_id: string; about?: string; model?: string; options?: Record<string, string>; default?: boolean }
+interface EnrollmentDraft { selected: string[]; names?: Record<string, string>; about?: Record<string, string>; models?: Record<string, string>; options?: Record<string, Record<string, string>>; primary?: string; pending?: EnrollAgent[] }
 function readEnrollment(key: string): EnrollmentDraft {
     try {
         const saved = JSON.parse(localStorage.getItem(key) || "null");
@@ -327,7 +328,9 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
             if (taken.has(name)) { setError(t("desktop.agentNameDuplicate", { name })); focusField(id, "name"); return null; }
             taken.add(name);
             const about = (draft.about?.[id] || "").trim();
-            out.push({ candidate_id: id, agent_id: name, ...(about ? { about } : {}), ...(id === primary && (draft.primary === id || !status.default_agent) ? { default: true } : {}) });
+            const model = draft.models?.[id] || "";
+            const options = Object.fromEntries(Object.entries(draft.options?.[id] || {}).filter(([, value]) => value));
+            out.push({ candidate_id: id, agent_id: name, ...(about ? { about } : {}), ...(model ? { model } : {}), ...(Object.keys(options).length ? { options } : {}), ...(id === primary && (draft.primary === id || !status.default_agent) ? { default: true } : {}) });
         }
         return out;
     }
@@ -380,11 +383,17 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
         {chosen.length > 0 && <div className="space-y-3">
             {chosen.map((id) => {
                 const candidate = agents.find((item) => item.id === id);
-                return <div key={id} className="space-y-3 rounded-lg border border-secondary p-3">
-                    <p className="text-sm font-medium text-primary">{candidate?.name || id}</p>
+                const models = candidate?.models || [];
+                return <fieldset key={id} disabled={locked} className="min-w-0 space-y-3 rounded-lg border border-secondary p-3">
+                    <legend className="px-1 text-sm font-medium text-primary">{candidate?.name || id}</legend>
                     <Input size="sm" label={t("desktop.agentName")} name={`desktop-agent-name-${id}`} autoComplete="off" spellCheck="false" hint={t("desktop.agentNameHint")} maxLength={64} value={nameOf(id)} isDisabled={locked} onChange={(value) => edit({ names: { ...draft.names, [id]: value } })} />
                     <Input size="sm" label={t("desktop.agentAbout")} name={`desktop-agent-about-${id}`} autoComplete="off" placeholder={t("desktop.agentAboutPlaceholder")} hint={t("desktop.agentAboutHint")} maxLength={120} value={draft.about?.[id] || ""} isDisabled={locked} onChange={(value) => edit({ about: { ...draft.about, [id]: value } })} />
-                </div>;
+                    {models.length > 0 ? <Select size="sm" label={t("desktop.agentModel")} hint={t("desktop.agentModelHint")} selectedKey={draft.models?.[id] || "__default"} isDisabled={locked} onSelectionChange={(selection) => { if (selection) edit({ models: { ...draft.models, [id]: String(selection) === "__default" ? "" : String(selection) } }); }}
+                        items={[{ id: "__default", label: t("desktop.agentModelDefault", { model: candidate?.model || "—" }) }, ...models.map((model) => ({ id: model, label: model }))]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select>
+                        : <p className="text-xs leading-5 text-tertiary">{t("desktop.agentModelUnknown")}</p>}
+                    {(candidate?.selectors || []).map((selector) => <Select key={selector.id} size="sm" label={selector.name || selector.id} selectedKey={draft.options?.[id]?.[selector.id] || "__default"} isDisabled={locked} onSelectionChange={(selection) => { if (selection) edit({ options: { ...draft.options, [id]: { ...draft.options?.[id], [selector.id]: String(selection) === "__default" ? "" : String(selection) } } }); }}
+                        items={[{ id: "__default", label: t("desktop.agentOptionDefault", { value: selector.current || "—" }) }, ...(selector.values || []).map((value, index) => ({ id: value, label: selector.choices?.[index] || value }))]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select>)}
+                </fieldset>;
             })}
             {chosen.length > 1 ? <RadioGroup aria-label={t("desktop.defaultAgentLabel")} value={primary} isDisabled={locked} onChange={(value) => edit({ primary: value })} className="space-y-2">
                 <span className="text-sm font-medium text-primary">{t("desktop.defaultAgentLabel")}</span>

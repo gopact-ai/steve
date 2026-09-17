@@ -13,7 +13,8 @@ const context = await browser.newContext({ viewport: { width: 1440, height: 1000
 const page = await context.newPage(); page.setDefaultTimeout(6000);
 const at = "2026-09-07T01:00:00Z";
 const candidates = () => [
-    { id: "codex", name: "Codex", harness: "codex", executable: "/remote/bin/codex", adapter: "codex-acp", installed: true, requires: [], configured: false, registered: false },
+    { id: "codex", name: "Codex", harness: "codex", executable: "/remote/bin/codex", adapter: "codex-acp", installed: true, requires: [], configured: false, registered: false, model: "gpt-5-codex", models: ["gpt-5-codex", "gpt-5-codex-mini"], selectors: [{ id: "effort", name: "Reasoning effort", category: "effort", current: "medium", choices: ["Medium", "High"], values: ["medium", "high"] }] },
+    { id: "gemini", name: "Gemini CLI", harness: "gemini", executable: "/remote/bin/gemini", adapter: "gemini-acp", installed: true, requires: [], configured: false, registered: false },
     { id: "claude", name: "Claude Code", harness: "claude-code", executable: "/remote/bin/claude", adapter: "claude-agent-acp", installed: true, requires: ["npm"], configured: false, registered: false },
     { id: "kimi", name: "Kimi Code", harness: "kimi", installed: false, requires: [], configured: false, registered: false },
 ];
@@ -33,11 +34,13 @@ await page.route("**/*", async (route) => {
         const body = req.postDataJSON(); f.posts.push(body);
         if (f.hold) await new Promise((resolve) => { f.release = resolve; });
         assert.equal(body.expected_revision, f.revision);
-        f.agents[0].configured = true; f.revision = "node-r2";
+        const chosen = body.agents.map((item) => item.candidate_id);
+        for (const item of f.agents) if (chosen.includes(item.id)) item.configured = true;
+        f.revision = "node-r2";
         if (f.partial) { f.partial = false; return route.fulfill({ status: 400, json: { error: "The node tool was prepared but Agent registration could not be saved" } }); }
-        f.agents[0].registered = true;
+        for (const item of f.agents) if (chosen.includes(item.id)) item.registered = true;
         if (f.reset) { f.reset = false; return route.abort("connectionreset"); }
-        return route.fulfill({ json: { candidate_id: body.candidate_id, agent_id: body.agent_id, harness: "codex", revision: f.revision, registered: true } });
+        return route.fulfill({ json: { candidate_id: chosen[chosen.length - 1], agent_id: body.agents[body.agents.length - 1].agent_id, agents: body.agents.map((item) => item.agent_id), harness: "codex", revision: f.revision, registered: true } });
     }
     f.errors.push(req.method() + " " + p); return route.fulfill({ status: 500, json: { error: "Unmocked API" } });
 });
@@ -45,7 +48,7 @@ async function waitFor(check, message) { for (let i = 0; i < 120; i++) { if (awa
 async function open() {
     await page.getByRole("row", { name: /build-node/ }).click();
     await page.getByRole("button", { name: "Register agents on this machine", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Register an agent on build-node", exact: true });
+    const dialog = page.getByRole("dialog", { name: "Register agents on build-node", exact: true });
     await dialog.waitFor(); return dialog;
 }
 async function screenshot(name) { if (!process.env.NODE_AGENT_SCREENSHOTS) return; await mkdir(process.env.NODE_AGENT_SCREENSHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.NODE_AGENT_SCREENSHOTS, name + ".png"), animations: "disabled" }); }
@@ -55,45 +58,61 @@ try {
     await dialog.getByText("/remote/bin/codex", { exact: true }).waitFor();
     assert.equal(f.posts.length, 0);
     await dialog.getByText("Tool presence is checked on this machine. Sign-in is checked when the agent runs.", { exact: true }).waitFor();
-    assert.equal(await dialog.getByRole("radio", { name: "Claude Code", exact: true }).isDisabled(), true);
-    assert.equal(await dialog.getByRole("radio", { name: "Kimi Code", exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole("checkbox", { name: "Claude Code", exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole("checkbox", { name: "Kimi Code", exact: true }).isDisabled(), true);
     await dialog.getByText("Codex", { exact: true }).click();
-    await dialog.getByRole("textbox", { name: "Agent name", exact: true }).fill("remote-codex");
-    await dialog.getByText("Register remote-codex on build-node using Codex. Any required adapter will be prepared on that machine.", { exact: true }).waitFor();
+    await dialog.getByText("Gemini CLI", { exact: true }).click();
+    const codex = dialog.getByRole("group", { name: "Codex", exact: true });
+    const gemini = dialog.getByRole("group", { name: "Gemini CLI", exact: true });
+    assert.equal(await codex.getByRole("textbox", { name: "Agent name", exact: true }).inputValue(), "build-node-codex");
+    assert.equal(await gemini.getByRole("textbox", { name: "Agent name", exact: true }).inputValue(), "build-node-gemini");
+    await gemini.getByText("This machine has not reported the models this tool offers yet. You can choose one in settings after registering.", { exact: true }).waitFor();
+    await codex.getByRole("textbox", { name: "Agent name", exact: true }).fill("remote-codex");
+    await codex.getByRole("textbox", { name: "What it is for", exact: true }).fill("runs tests");
+    await codex.getByRole("button", { name: /Model$/ }).click();
+    await page.getByRole("option", { name: "gpt-5-codex-mini", exact: true }).click();
+    await codex.getByRole("button", { name: /Reasoning effort$/ }).click();
+    await page.getByRole("option", { name: "High", exact: true }).click();
+    await dialog.getByText("remote-codex", { exact: true }).click();
+    console.log("PASS multiple tools, per-agent naming, model and effort selection");
+
     f.hold = true; f.partial = true;
-    await dialog.getByRole("button", { name: "Register agent", exact: true }).focus(); await page.keyboard.press("Enter");
+    await dialog.getByRole("button", { name: "Register selected agents", exact: true }).focus(); await page.keyboard.press("Enter");
     await waitFor(() => f.posts.length === 1, "one registration");
     await page.keyboard.press("Enter"); assert.equal(f.posts.length, 1);
-    assert.equal(await dialog.getByText("Agent registered", { exact: true }).count(), 0);
+    assert.equal(await dialog.getByText("Registration complete", { exact: true }).count(), 0);
+    assert.deepEqual(f.posts[0], { agents: [{ candidate_id: "codex", agent_id: "remote-codex", about: "runs tests", model: "gpt-5-codex-mini", options: { effort: "high" }, default: true }, { candidate_id: "gemini", agent_id: "build-node-gemini" }], expected_revision: "node-r1" });
     f.hold = false; f.release();
     await dialog.getByRole("button", { name: "Check and retry registration", exact: true }).waitFor();
-    await dialog.getByText("Runtime configured; Agent registration still needs confirmation.", { exact: true }).waitFor();
-    assert.equal(await dialog.getByRole("textbox", { name: "Agent name", exact: true }).inputValue(), "remote-codex");
-    console.log("PASS node-local discovery, required tooling, explicit enrollment and no premature success");
+    await dialog.getByText("Runtime configured", { exact: true }).first().waitFor();
+    await dialog.getByText("Registration is unconfirmed. The tools and Agent names are retained. Retrying reads the latest configuration and checks the same registration.", { exact: true }).waitFor();
+    assert.equal(await codex.getByRole("textbox", { name: "Agent name", exact: true }).inputValue(), "remote-codex");
+    console.log("PASS explicit enrollment posts one batch and never reports premature success");
 
     await page.reload(); dialog = await open();
     await dialog.getByRole("button", { name: "Check and retry registration", exact: true }).waitFor();
-    assert.equal(await dialog.getByRole("textbox", { name: "Agent name", exact: true }).inputValue(), "remote-codex");
-    assert.equal(await dialog.getByRole("textbox", { name: "Agent name", exact: true }).isDisabled(), true);
+    assert.equal(await dialog.getByRole("group", { name: "Codex", exact: true }).getByRole("textbox", { name: "Agent name", exact: true }).inputValue(), "remote-codex");
+    assert.equal(await dialog.getByRole("group", { name: "Codex", exact: true }).getByRole("textbox", { name: "Agent name", exact: true }).isDisabled(), true);
     f.reset = true;
     await dialog.getByRole("button", { name: "Check and retry registration", exact: true }).click();
     await waitFor(() => f.posts.length === 2, "retry after partial preparation");
     await dialog.getByRole("button", { name: "Check and retry registration", exact: true }).waitFor();
-    assert.deepEqual(f.posts[1], { candidate_id: "codex", agent_id: "remote-codex", expected_revision: "node-r2" });
-    assert.equal(await dialog.getByText("Agent registered", { exact: true }).count(), 0, "candidate registered flag does not acknowledge an exact agent ID");
+    assert.deepEqual(f.posts[1], { ...f.posts[0], expected_revision: "node-r2" });
+    assert.equal(await dialog.getByText("Registration complete", { exact: true }).count(), 0, "candidate registered flag does not acknowledge an exact agent ID");
     await dialog.getByRole("button", { name: "Check and retry registration", exact: true }).click();
-    await dialog.getByText("Agent registered", { exact: true }).waitFor();
+    await dialog.getByText("Registration complete", { exact: true }).waitFor();
     assert.equal(f.posts.length, 3);
     assert.deepEqual(f.posts[2], f.posts[1]);
+    await dialog.getByText("remote-codex、build-node-gemini is registered on build-node. Sign-in and permission requirements will be handled on first execution.", { exact: true }).waitFor();
     await dialog.getByRole("button", { name: "Done", exact: true }).click();
     await dialog.waitFor({ state: "hidden" });
     await page.getByRole("button", { name: "Register agents on this machine", exact: true }).waitFor();
-    console.log("PASS partial and unknown outcomes refresh the revision but preserve candidate and Agent identity");
+    console.log("PASS partial and unknown outcomes refresh the revision but preserve the same batch");
 
     await page.getByRole("button", { name: "Register agents on this machine", exact: true }).click();
-    dialog = page.getByRole("dialog", { name: "Register an agent on build-node", exact: true });
-    await dialog.getByText("Registered", { exact: true }).waitFor();
-    assert.equal(await dialog.getByRole("radio", { name: "Codex", exact: true }).isDisabled(), true);
+    dialog = page.getByRole("dialog", { name: "Register agents on build-node", exact: true });
+    await dialog.getByText("Registered", { exact: true }).first().waitFor();
+    assert.equal(await dialog.getByRole("checkbox", { name: "Codex", exact: true }).isDisabled(), true);
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await dialog.evaluate((el) => { const box = el.getBoundingClientRect(); const hit = document.elementFromPoint(box.x + box.width / 2, box.y + 30); return el.contains(hit); }), true, "the enrollment dialog must be painted above the machine drawer");
     await screenshot("node-agents-narrow-light");
@@ -108,7 +127,7 @@ try {
     await dialog.getByText("The node is temporarily unreachable", { exact: true }).waitFor();
     f.discoveryError = false;
     await dialog.getByRole("button", { name: "Refresh tools", exact: true }).click();
-    await dialog.getByText("Registered", { exact: true }).waitFor();
+    await dialog.getByText("Registered", { exact: true }).first().waitFor();
     assert.deepEqual(f.errors, []);
     console.log("PASS registered state, nested-dialog focus, narrow themes and actionable read errors");
 } catch (error) { console.log("DEBUG", JSON.stringify(f.errors), await page.locator("body").innerText()); throw error; }
