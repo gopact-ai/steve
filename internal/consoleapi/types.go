@@ -625,6 +625,9 @@ type Conversation struct {
 	// whether the owner put it away.
 	TitleBy  string `json:"title_by,omitempty"`
 	Archived bool   `json:"archived,omitempty"`
+	// Questions counts what this thread is waiting for the owner to
+	// answer, so a sidebar can mark the threads that need a person.
+	Questions int `json:"questions,omitempty"`
 }
 
 // ConversationPatch is what the owner may change about a conversation: its

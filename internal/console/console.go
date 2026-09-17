@@ -386,10 +386,19 @@ func (s *Service) Conversations() []string {
 // so a fresh page shows the project and agent each thread would use.
 func (s *Service) Summaries(ctx context.Context) []consoleapi.Conversation {
 	s.mu.Lock()
+	// A thread that is waiting on its owner looks no different from one
+	// that is merely quiet, unless the sidebar is told how many answers
+	// it owes.
+	waiting := map[string]int{}
+	for _, q := range s.questions {
+		if q.Principal == s.owner && q.State == "pending" {
+			waiting[q.Conversation]++
+		}
+	}
 	var out []consoleapi.Conversation
 	for name, list := range s.replies {
 		m := s.meta[name]
-		c := consoleapi.Conversation{ID: name, Count: len(list), Running: s.running[name] > 0, Title: m.Title, TitleBy: m.TitleBy, Archived: m.Archived}
+		c := consoleapi.Conversation{ID: name, Count: len(list), Running: s.running[name] > 0, Title: m.Title, TitleBy: m.TitleBy, Archived: m.Archived, Questions: waiting[ConversationID(name)]}
 		// The name is the first thing the owner said that was not a verb:
 		// "/fleet" names nothing, "把登录页改成深色" does.
 		for _, r := range list {

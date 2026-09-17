@@ -1,6 +1,6 @@
 import { useI18n } from "@/providers/locale-provider";
 import { ChevronDown } from "@untitledui/icons";
-import { CodeBlock } from "@/components/steve/markdown";
+import { CodeBlock } from "@/components/steve/code-block";
 import type { MCPTool } from "@/lib/types";
 
 export function MCPToolList({ tools, summaries }: { tools: MCPTool[]; summaries?: Record<string, string> }) {

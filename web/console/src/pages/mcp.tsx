@@ -9,7 +9,7 @@ import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { Select } from "@/components/base/select/select";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
-import { CodeBlock } from "@/components/steve/markdown";
+import { CodeBlock } from "@/components/steve/code-block";
 import { MCPToolList } from "@/components/steve/mcp-tools";
 import { Chips, KeyValue, PageBody, PageHeader, Panel } from "@/components/steve/page";
 import { Mono, Nothing, Where } from "@/components/steve/ui";

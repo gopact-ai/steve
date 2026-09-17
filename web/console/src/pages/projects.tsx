@@ -21,7 +21,7 @@ import { kindWord, workspaceState as workspaceStateLabel, levelName } from "@/li
 import { ConfirmDialog } from "@/components/steve/confirm";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
 import { projectDirName, WorkspaceDirectoryField, WorkspaceDirectoryPreview } from "@/components/steve/workspace-directory";
-import { CodeBlock } from "@/components/steve/markdown";
+import { CodeBlock } from "@/components/steve/code-block";
 import { Chips, KeyValue, PageBody, PageHeader } from "@/components/steve/page";
 import { Mono, Nothing, StateBadge, taskState } from "@/components/steve/ui";
 

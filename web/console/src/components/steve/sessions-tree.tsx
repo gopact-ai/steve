@@ -2,7 +2,7 @@ import { useI18n } from "@/providers/locale-provider";
 import { number, relative } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
 import { memo, useEffect, useId, useRef, useState } from "react";
-import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, Plus, Trash01, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
+import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, MessageQuestionCircle, Plus, Trash01, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { Input } from "@/components/base/input/input";
@@ -65,6 +65,41 @@ function usual(threads: Conversation[], locale: Locale, nodeName: (id: string) =
     };
 }
 
+// A run that ends while its owner is reading another thread has
+// something to show and no way to say so. The list watches each thread
+// stop running and keeps the ones that stopped unseen, until the owner
+// opens that thread. Kept in storage so closing the window does not
+// silently drop the news.
+const UNSEEN = "steve.unseen";
+
+function storedUnseen(): Set<string> {
+    try {
+        const raw: unknown = JSON.parse(localStorage.getItem(UNSEEN) || "[]");
+        return new Set(Array.isArray(raw) ? raw.filter((item): item is string => typeof item === "string") : []);
+    } catch { return new Set(); }
+}
+
+function useUnseen(list: Conversation[], current: string) {
+    const [unseen, setUnseen] = useState<Set<string>>(storedUnseen);
+    const running = useRef<Map<string, boolean>>(new Map());
+    useEffect(() => {
+        const finished: string[] = [];
+        for (const c of list) {
+            if (running.current.get(c.id) && !c.running && c.id !== current) finished.push(c.id);
+            running.current.set(c.id, c.running);
+        }
+        const alive = new Set(list.map((c) => c.id));
+        setUnseen((was) => {
+            const next = new Set([...was].filter((id) => alive.has(id)));
+            for (const id of finished) next.add(id);
+            next.delete(current);
+            return next.size === was.size && [...next].every((id) => was.has(id)) ? was : next;
+        });
+    }, [list, current]);
+    useEffect(() => { try { localStorage.setItem(UNSEEN, JSON.stringify([...unseen])); } catch { /* The mark is a courtesy, not state worth failing over. */ } }, [unseen]);
+    return unseen;
+}
+
 function notable(t: Task, all: Task[]): boolean {
     return t.execution === "running" || (t.attention || 0) > 0 || !!t.plan_id || (t.origin || "").startsWith("schedule") || all.some((c) => c.parent === t.id);
 }
@@ -79,6 +114,7 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
     const query = search.trim().toLocaleLowerCase();
     const matches = (c: Conversation) => !query || `${c.title} ${c.project || ""} ${c.agent || ""}`.toLocaleLowerCase().includes(query);
     const [renaming, setRenaming] = useState<string | null>(null);
+    const unseen = useUnseen(list, current);
     // An archived thread stays under 已归档 even while it is open: moving
     // it back under its project would look like it had been unarchived.
     const archived = list.filter((c) => c.archived && matches(c));
@@ -95,7 +131,7 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
     const orphans = [...byProject.entries()].filter(([k]) => !known.has(k)).flatMap(([, v]) => v);
     const workOf = (c: Conversation) => tasks.filter((t) => t.channel === c.id && !t.parent && notable(t, tasks));
     const row = (c: Conversation, norm?: { agent: string; place: string }) => (
-        <Thread key={c.id} c={c} current={c.id === current} onPick={onPick} norm={norm}
+        <Thread key={c.id} c={c} current={c.id === current} unseen={unseen.has(c.id)} onPick={onPick} norm={norm}
             renaming={renaming === c.id} onRename={() => setRenaming(c.id)} onRenamed={(title) => { setRenaming(null); if (title !== null) onUpdate(c.id, { title }); }}
             onArchive={(archived) => onUpdate(c.id, { archived })} onDelete={() => onDelete(c.id)}
             work={workOf(c)} childrenOf={(id) => tasks.filter((t) => t.parent === id)} onTask={onTask} />
@@ -190,7 +226,7 @@ function TreeHeading({ children }: { children: string }) {
 // Thread is one conversation: its name, its agent, when it last spoke,
 // and — when the project is in more than one place, or the agent has
 // nowhere to work — where it runs. Its menu renames or puts it away.
-function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArchive, onDelete, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; onPick: (id: string) => void; norm?: { agent: string; place: string }; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; onDelete: () => Promise<void>; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
+function Thread({ c, current, unseen, onPick, norm, renaming, onRename, onRenamed, onArchive, onDelete, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; unseen?: boolean; onPick: (id: string) => void; norm?: { agent: string; place: string }; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; onDelete: () => Promise<void>; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
     const nodeLabelOf = useNodeLabel();
     const [workOpen, setWorkOpen] = useState(false);
@@ -218,12 +254,16 @@ function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArc
                         className="mt-2 flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-tertiary focus-visible:outline-2 focus-visible:outline-brand">
                         <ChevronDown aria-hidden="true" className={`size-3.5 transition-transform motion-reduce:transition-none ${workOpen ? "" : "-rotate-90"}`} />
                     </button> : <span className="w-6 shrink-0" />}
-                    <button type="button" onClick={() => onPick(c.id)} aria-current={current ? "page" : undefined} className={`conversation-row min-w-0 flex-1 ${current ? "is-selected" : ""}`} title={nowhere ? tr("consoleChrome.noWorkspace") : c.place ? placeLabel(c.place, locale, nodeLabelOf) : undefined}>
+                    <button type="button" onClick={() => onPick(c.id)} aria-current={current ? "page" : undefined} className={`conversation-row min-w-0 flex-1 ${current ? "is-selected" : ""}`} title={c.questions ? tr("consoleChrome.awaitingReply", { count: number(c.questions, locale) }) : !c.running && unseen ? tr("consoleChrome.newResult") : nowhere ? tr("consoleChrome.noWorkspace") : c.place ? placeLabel(c.place, locale, nodeLabelOf) : undefined}>
                         <span className="flex w-full items-baseline gap-2">
                             {c.running && <Loading01 className="size-3 shrink-0 self-center animate-spin text-fg-brand-primary" />}
                             {nowhere && <AlertCircle className="size-3 shrink-0 self-center text-fg-error-primary" />}
                             <span className="min-w-0 flex-1 truncate u-title">{c.title || tr("console.newConversation")}</span>
-                            <span className="conversation-time">{c.last_at ? ago(c.last_at, locale) : tr("consoleChrome.notStarted")}</span>
+                            {!!c.questions && <MessageQuestionCircle aria-label={tr("consoleChrome.awaitingReply", { count: number(c.questions, locale) })} className="size-3.5 shrink-0 self-center text-fg-warning-primary" />}
+                            {!c.running && !c.questions && unseen && <span aria-label={tr("consoleChrome.newResult")} className="conversation-unseen" />}
+                            {c.running
+                                ? <span className="conversation-running">{tr("consoleChrome.running")}</span>
+                                : <span className="conversation-time">{c.last_at ? ago(c.last_at, locale) : tr("consoleChrome.notStarted")}</span>}
                         </span>
                         {qualifiers.length > 0 && <span className="truncate u-meta">{qualifiers.join(" · ")}</span>}
                     </button>
