@@ -1592,8 +1592,10 @@ checks["composer-keys"] = async (f) => {
     await f.box.press("Enter");
     assert.equal(f.queued().length, 0, "Enter must not send while an input method is composing");
     await f.box.evaluate((box) => box.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })));
+    const settledDraft = await f.box.inputValue();
     await f.box.press("Enter");
     assert.equal(f.queued().length, 0, "The Enter that lands with compositionend must not send either");
+    assert.equal(await f.box.inputValue(), settledDraft, "That same Enter must not leave a stray newline behind either");
     await f.page.clock.runFor(50);
     await f.box.press("Enter");
     await eventually(() => f.queued().length === 1, "Enter sends once the composition has settled");
