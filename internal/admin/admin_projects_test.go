@@ -76,7 +76,7 @@ func TestProjectManagementFileFailureLeavesCandidateUnpublished(t *testing.T) {
 			case "remove-project":
 				err = a.RemoveProject(t.Context(), "remove")
 			case "add-workspace":
-				err = a.AddWorkspace(t.Context(), "p", consoleapi.AddWorkspaceRequest{Path: "p"})
+				err = a.AddWorkspace(t.Context(), "p", consoleapi.AddWorkspaceRequest{})
 			case "remove-workspace":
 				err = a.RemoveWorkspace(t.Context(), "p", "")
 			}

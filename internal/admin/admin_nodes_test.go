@@ -125,7 +125,7 @@ func TestNodeMutationsSynchronizeWithConfigurationReaders(t *testing.T) {
 	}
 }
 
-func TestRemoveNodeRechecksProjectPlacementAfterPendingDeclaration(t *testing.T) {
+func TestRemoveNodeRechecksProjectPlacementAfterAPendingCopy(t *testing.T) {
 	admin := nodeAdminFixture(t)
 	server := startAgentAdminNode(t, map[string]node.HarnessSpec{})
 	admin.Cfg.Nodes = map[string]config.Node{"node-test": {Addr: server.Addr(), Token: "test-node-token", Level: "internal"}}
@@ -140,6 +140,9 @@ func TestRemoveNodeRechecksProjectPlacementAfterPendingDeclaration(t *testing.T)
 	}
 	t.Cleanup(func() { _ = book.Close() })
 	admin.Projects = project.Open(book)
+	if err := admin.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "project-test", Path: "node-project"}); err != nil {
+		t.Fatal(err)
+	}
 	entered, release := make(chan struct{}), make(chan struct{})
 	var once sync.Once
 	unblock := func() { once.Do(func() { close(release) }) }
@@ -155,7 +158,7 @@ func TestRemoveNodeRechecksProjectPlacementAfterPendingDeclaration(t *testing.T)
 	}
 	declared := make(chan error, 1)
 	go func() {
-		declared <- admin.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "project-test", Node: "node-test", Path: "node-project"})
+		declared <- admin.AddWorkspace(t.Context(), "project-test", consoleapi.AddWorkspaceRequest{Node: "node-test"})
 	}()
 	<-entered
 	removed := make(chan error, 1)

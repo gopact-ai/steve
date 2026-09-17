@@ -157,8 +157,10 @@ type AgentSpec struct {
 	MCPServers []string          `json:"mcp_servers"`
 }
 
-// AddProjectRequest is the page declaring a project: a name, the machine
-// and directory it lives in, how agents may change it, its data level.
+// AddProjectRequest is the page declaring a project: a name, the directory
+// it lives in under the coordinator's workspace, how agents may change it,
+// its data level. Node names the coordinator, which is where a project's
+// canonical directory is made; other machines get a copy of their own.
 type AddProjectRequest struct {
 	ID    string `json:"id"`
 	Node  string `json:"node,omitempty"`
@@ -175,9 +177,10 @@ type ProjectHomeRequest struct {
 
 // AddWorkspaceRequest is the page giving a project a copy on a machine:
 // "adopt" a directory already there, or "clone" the project into one.
+// The directory is not asked for: a copy uses the project's own directory
+// name under the chosen machine's workspace, so every machine agrees.
 type AddWorkspaceRequest struct {
 	Node   string `json:"node,omitempty"`
-	Path   string `json:"path"`
 	Origin string `json:"origin,omitempty"`
 }
 

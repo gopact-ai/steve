@@ -20,7 +20,7 @@ import type { Conversation, Project, Repo, Workspace } from "@/lib/types";
 import { kindWord, workspaceState as workspaceStateLabel, levelName } from "@/lib/workspaces";
 import { ConfirmDialog } from "@/components/steve/confirm";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
-import { WorkspaceDirectoryField } from "@/components/steve/workspace-directory";
+import { projectDirName, WorkspaceDirectoryField, WorkspaceDirectoryPreview } from "@/components/steve/workspace-directory";
 import { CodeBlock } from "@/components/steve/markdown";
 import { Chips, KeyValue, PageBody, PageHeader } from "@/components/steve/page";
 import { Mono, Nothing, StateBadge, taskState } from "@/components/steve/ui";
@@ -281,14 +281,14 @@ function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void;
     const taken = new Set(p.workspaces.map((w) => w.node));
     const machines = [{ id: snap.hub.node, label: `${nodeLabelIn(snap.nodes, snap.hub.node)}（${tr("connection.coordinator")}）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.display_name ? `${n.display_name} · ${n.name}` : n.name }))].filter((m) => !taken.has(m.id));
     const [node, setNode] = useState(machines[0]?.id || "");
-    const [path, setPath] = useState("");
     const [origin, setOrigin] = useState<"adopt" | "clone">("adopt");
     const [busy, setBusy] = useState(false);
     const [error, setError] = useState("");
     const remote = p.repos?.find((r) => r.path === ".")?.remote;
+    const dir = projectDirName(snap.nodes.find((n) => n.name === (home?.node || snap.hub.node))?.projects_root || "", home?.path || "", p.id);
     async function submit() {
         setBusy(true); setError("");
-        try { await addWorkspace(p.id, { node, path: path.trim(), origin }); onDone(); onClose(); } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
+        try { await addWorkspace(p.id, { node, origin }); onDone(); onClose(); } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
     }
     return (
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
@@ -312,7 +312,7 @@ function AddWorkspace({ p, onClose, onDone }: { p: Project; onClose: () => void;
                                     items={[{ id: "adopt", label: tr("projects.adopt") }, { id: "clone", label: tr("projects.clone") }]}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
-                                <WorkspaceDirectoryField node={node} fallback={p.id} value={path} onChange={setPath} isDisabled={busy} autoFocus />
+                                <WorkspaceDirectoryPreview node={node} dir={dir} />
                             </div>
                         )}
                         {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
@@ -331,7 +331,7 @@ function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => vo
     const { t: tr, locale } = useI18n();
     const { snap } = useFleet();
     const [id, setID] = useState("");
-    const [node, setNode] = useState(snap.hub.node);
+    const node = snap.hub.node;
     const [path, setPath] = useState("");
     const [level, setLevel] = useState("internal");
     const [repo, setRepo] = useState("inplace");
@@ -346,7 +346,6 @@ function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => vo
             onDone();
         } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
     }
-    const machines = [{ id: snap.hub.node, label: `${nodeLabelIn(snap.nodes, snap.hub.node)}（${tr("connection.coordinator")}）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.display_name ? `${n.display_name} · ${n.name}` : n.name }))];
     return (
         <ModalOverlay isOpen onOpenChange={(open) => { if (!open) onClose(); }} isDismissable>
             <Modal className="max-w-xl">
@@ -362,10 +361,8 @@ function AddProject({ onClose, onDone }: { onClose: () => void; onDone: () => vo
                         {done ? <div className="text-sm text-primary">{tr("projects.added", { project: id.trim() })}</div> : (
                             <div className="grid grid-cols-1 gap-4">
                                 <Input size="sm" label={tr("projects.name")} placeholder="my-service" value={id} onChange={setID} autoFocus hint={tr("projects.nameHint")} />
-                                <Select size="sm" label={tr("projects.machine")} selectedKey={node} onSelectionChange={(k) => k && setNode(String(k))} items={machines}>
-                                    {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
-                                </Select>
                                 <WorkspaceDirectoryField node={node} fallback={id} value={path} onChange={setPath} isDisabled={busy} />
+                                <p className="text-xs text-tertiary">{tr("projects.coordinatorHome", { node: nodeLabelIn(snap.nodes, node) })}</p>
                                 <Select size="sm" label={tr("projects.executionMode")} hint={tr("projects.modeHint")} selectedKey={repo} onSelectionChange={(k) => k && setRepo(String(k))} items={[{ id: "inplace", label: labelsFor(locale).repo.inplace }, { id: "isolated", label: labelsFor(locale).repo.isolated }]}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>

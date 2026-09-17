@@ -16,7 +16,8 @@ const at = "2026-09-16T00:00:00Z";
 // The coordinator runs on the Linux machine while the console runs on the
 // Mac: which machine is "this machine" cannot be read from who coordinates.
 const nodes = [{ name: "node-linux", display_name: "Build box", role: "hub", up: true, version: "test", projects_root: "/home/dev/steve-workspace/projects" }, { name: "node-mac", display_name: "My Mac", role: "worker", up: true, version: "test", projects_root: "/Users/me/Steve/projects" }];
-const f = { browses: [], picks: [], projects: [], errors: [] };
+const existing = { id: "atlas", node: "node-linux", path: "/home/dev/steve-workspace/projects/team/atlas", level: "internal", repo: "inplace", agents: [], repos: [], workspaces: [{ id: "atlas@node-linux", node: "node-linux", path: "/home/dev/steve-workspace/projects/team/atlas", kind: "canonical", repos: [], agents: [] }] };
+const f = { browses: [], picks: [], projects: [], copies: [], errors: [] };
 page.on("pageerror", (error) => f.errors.push(String(error)));
 await page.addInitScript(() => {
     localStorage.setItem("steve.ui.locale", "en");
@@ -28,7 +29,7 @@ await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
     if (u.origin !== new URL(url).origin) { f.errors.push("external " + u.origin); return route.abort(); }
     if (!p.startsWith("/console/") && !["/state", "/events"].includes(p)) return route.continue();
-    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "node-linux", version: "test" }, nodes, agents: [], projects: [], tasks: [], plans: [], attempts: [], landings: [] } });
+    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "node-linux", version: "test" }, nodes, agents: [], projects: [existing], tasks: [], plans: [], attempts: [], landings: [] } });
     if (p === "/console/queue") return route.fulfill({ json: { queue: [], submission_keys: true } });
     if (p === "/console/desktop") return route.fulfill({ json: { enabled: true, node_id: "node-mac", setup_required: false, agent_count: 1 } });
     if (p === "/console/coordination") return route.fulfill({ json: { enabled: true, cluster_id: "cluster-test", node_id: "node-mac", coordinator_id: "node-linux", epoch: 1, revision: 1, authoritative: true, observed_at: at, auto_failover: false, ready: true, nodes: [], events: [] } });
@@ -39,6 +40,7 @@ await page.route("**/*", async (route) => {
         return route.fulfill({ json: { ...at_, home, writable: true, entries: entries.map((name) => ({ name, path: at_.path + "/" + name })) } });
     }
     if (p === "/console/projects" && req.method() === "POST") { f.projects.push(req.postDataJSON()); return route.fulfill({ json: { ok: true } }); }
+    if (p === "/console/projects/atlas/workspaces" && req.method() === "POST") { f.copies.push(req.postDataJSON()); return route.fulfill({ json: { ok: true } }); }
     return route.continue();
 });
 try {
@@ -54,20 +56,34 @@ try {
     assert.equal(await dialog.getByRole("button", { name: "Choose folder…", exact: true }).count(), 0, "a project directory is not chosen from the system");
     await assert.doesNotReject(dialog.getByText("/home/dev/steve-workspace/projects/my-service", { exact: true }).waitFor());
 
-    // Another machine resolves the same project under its own workspace.
-    await dialog.getByRole("button", { name: /Machine/ }).click();
-    await page.getByRole("option", { name: /My Mac/ }).click();
-    await assert.doesNotReject(dialog.getByText("/Users/me/Steve/projects/my-service", { exact: true }).waitFor());
+    // The home is the coordinator's, so a project cannot be declared into
+    // a directory on a machine the others never look at.
+    assert.equal(await dialog.getByRole("button", { name: /Machine/ }).count(), 0, "a project home is not placed on another machine");
+    await assert.doesNotReject(dialog.getByText(/coordinator Build box/).waitFor());
 
     await dialog.getByRole("textbox", { name: "Directory", exact: true }).fill("team/my-service");
-    await assert.doesNotReject(dialog.getByText("/Users/me/Steve/projects/team/my-service", { exact: true }).waitFor());
+    await assert.doesNotReject(dialog.getByText("/home/dev/steve-workspace/projects/team/my-service", { exact: true }).waitFor());
 
     await dialog.getByRole("button", { name: "Add project", exact: true }).click();
     await assert.doesNotReject(dialog.getByText(/my-service/).first().waitFor());
-    assert.deepEqual(f.projects, [{ id: "my-service", node: "node-mac", path: "team/my-service", repo: "inplace", level: "internal" }]);
+    assert.deepEqual(f.projects, [{ id: "my-service", node: "node-linux", path: "team/my-service", repo: "inplace", level: "internal" }]);
     assert.deepEqual(f.browses, [], "the project dialog never browses a machine");
     assert.deepEqual(f.errors, []);
-    console.log("PASS project directories are named under the machine's workspace");
+    console.log("PASS a project is named once, under the coordinator's workspace");
+
+    // A copy keeps the project's own relative directory, so the same work
+    // sits at the same place on every machine.
+    await page.getByRole("button", { name: "Done", exact: true }).click();
+    await page.getByRole("row", { name: /atlas/ }).first().click();
+    await page.getByRole("button", { name: "Add copy", exact: true }).first().click();
+    const copy = page.getByRole("dialog", { name: "Add workspace for atlas", exact: true });
+    await copy.waitFor();
+    assert.equal(await copy.getByRole("textbox", { name: "Directory", exact: true }).count(), 0, "a copy does not name its own directory");
+    await assert.doesNotReject(copy.getByText("/Users/me/Steve/projects/team/atlas", { exact: true }).waitFor());
+    await copy.getByRole("button", { name: "Add workspace", exact: true }).click();
+    assert.deepEqual(f.copies, [{ node: "node-mac", origin: "adopt" }]);
+    assert.deepEqual(f.errors, []);
+    console.log("PASS a copy reuses the project directory on the machine that receives it");
 } finally {
     await context.close(); await browser.close(); await server.close();
 }
