@@ -215,6 +215,14 @@ try {
     await page.locator('[data-span-kind="thought"]').getByText(thought, { exact: true }).waitFor();
     assert.equal(await page.locator('[data-span-kind="tool"]').count(), 1, "The tool activity remains in the process timeline");
     assert.equal(await page.getByText(intermediate + finalAnswer, { exact: true }).count(), 0, "Do not repeat the concatenated narration beneath the timeline");
+    // A tooltip cannot render markdown, so the heading an agent writes into
+    // its own thought has to reach the tooltip as words, not as asterisks.
+    const written = "**Inspecting installation requirements**\n\nChecking `pnpm` first.";
+    await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { phase: "running", answer: finalAnswer, timeline: [{ kind: "thought", text: written, at }] } });
+    const running = page.locator('[data-span-kind="thought"]').last();
+    await running.getByText("Inspecting installation requirements", { exact: true }).waitFor();
+    assert.equal(await running.getAttribute("title"), "Inspecting installation requirements\n\nChecking pnpm first.", "A running thought's tooltip must read as words, not as markdown source");
+
     // A transcript-only server still sends a usable answer without timeline data.
     await f.emit({ kind: "console.progress", exchange_id: "stream-turn", progress: { phase: "running", answer: "Answer without timeline" } });
     await page.getByText("Answer without timeline", { exact: true }).waitFor();

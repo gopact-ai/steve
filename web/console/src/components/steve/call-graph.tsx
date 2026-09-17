@@ -4,6 +4,7 @@ import { Loading01 } from "@untitledui/icons";
 import type { Plan, Task } from "@/lib/types";
 import { Mono, StateBadge, taskState } from "@/components/steve/ui";
 import { useNodeLabel } from "@/lib/node-name";
+import { plain } from "@/lib/plain";
 
 // CallGraph is who asked whom: a task, the plan steps it split into and
 // which agent on which machine took each, and the tasks its agent handed
@@ -49,7 +50,7 @@ function TaskNode({ t, tasks, plans, depth, liveSteps, seen, onSelect }: { t: Ta
                                 <Who agent={s.agent} node={s.node} running={s.state === "running" || liveSteps?.includes(s.id)} small />
                                 <span className="ml-auto shrink-0"><StateBadge state={s.state} /></span>
                             </div>
-                            <div className="ml-4 line-clamp-1 u-meta text-secondary" title={s.goal}>{s.goal}</div>
+                            <div className="ml-4 line-clamp-1 u-meta text-secondary" title={s.goal ? plain(s.goal) : undefined}>{s.goal}</div>
                             {s.needs?.length ? <div className="ml-4 u-meta text-quaternary">{tr("tasks.dependencies", { items: s.needs.join(", ") })}{s.merge?.length ? tr("tasks.mergeSuffix", { items: s.merge.join(", ") }) : ""}</div> : null}
                         </li>
                     ))}

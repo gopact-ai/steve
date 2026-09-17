@@ -6,6 +6,7 @@ import { ChangesFold } from "./changes";
 import { Md } from "./markdown";
 import { Trace } from "./progress-view";
 import { useFollowTail } from "@/hooks/use-follow-tail";
+import { plain } from "@/lib/plain";
 
 // DelegationCard is one delegated child as the transcript shows it: a
 // folding line — who is on it and where, its state, how long — and
@@ -39,7 +40,7 @@ export function DelegationCard({ id, info, progress, live, open }: {
                 <span className="shrink-0 font-medium text-primary">{t("consoleChrome.delegation", { id })}</span>
                 {who && <span className="min-w-0 truncate font-mono text-secondary" title={who}>{who}</span>}
                 <Badge type="pill-color" size="sm" color={tones[state] ?? "gray"}>{label ? t(label) : state}</Badge>
-                {goal && <span className="min-w-0 truncate text-tertiary group-open/child:hidden" title={info.goal}>{goal}</span>}
+                {goal && <span className="min-w-0 truncate text-tertiary group-open/child:hidden" title={info.goal ? plain(info.goal) : undefined}>{goal}</span>}
                 <span className="ml-auto flex shrink-0 items-center gap-2 text-quaternary">
                     {info.elapsed && <span>{info.elapsed}</span>}
                     <ChevronDown className="size-3.5 transition group-open/child:rotate-180" />

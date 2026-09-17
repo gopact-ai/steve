@@ -13,6 +13,7 @@ import { useNodeLabel } from "@/lib/node-name";
 import { ConfirmDialog } from "./confirm";
 import { PaneResizer } from "./pane-resizer";
 import { usePaneWidth } from "@/hooks/use-pane-width";
+import { plain } from "@/lib/plain";
 
 // The session list holds a project name, a thread title and the time
 // beside it; below the minimum the title has nothing left to show, and
@@ -287,7 +288,7 @@ function TaskLine({ t, onTask, child }: { t: Task; onTask?: (t: Task) => void; c
     const running = t.execution === "running";
     const state = taskState(t);
     return (
-        <button type="button" onClick={onTask ? () => onTask(t) : undefined} className={`flex w-full items-center gap-1.5 rounded-md py-0.5 pr-1.5 text-left u-meta ${child ? "pl-5" : "pl-1.5"} ${onTask ? "hover:bg-primary/50" : ""}`} title={t.title || t.goal}>
+        <button type="button" onClick={onTask ? () => onTask(t) : undefined} className={`flex w-full items-center gap-1.5 rounded-md py-0.5 pr-1.5 text-left u-meta ${child ? "pl-5" : "pl-1.5"} ${onTask ? "hover:bg-primary/50" : ""}`} title={plain(t.title || t.goal || "") || undefined}>
             {running ? <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" /> : state === "done" ? <CheckCircle className="size-3 shrink-0 text-fg-success-primary" /> : state === "failed" ? <span className="size-2 shrink-0 rounded-full bg-error-solid" /> : <span className="size-2 shrink-0 rounded-full bg-quaternary" />}
             <span className="shrink-0 font-mono text-quaternary">#{t.id}</span>
             <span className="min-w-0 shrink-0 truncate text-tertiary">{child ? "→ " : ""}{t.member || "steve"}{t.node ? `@${nodeLabelOf(t.node)}` : ""}</span>
