@@ -3,7 +3,7 @@ import { request } from "../http";
 export type SetupStep = "identity" | "workspace" | "agents" | "machines" | "preferences" | "finished";
 export const setupSteps: SetupStep[] = ["identity", "workspace", "agents", "machines", "preferences", "finished"];
 export interface DesktopSetup { step: SetupStep; done: boolean }
-export interface DesktopStatus { enabled: boolean; node_id?: string; setup_required: boolean; agent_count: number; default_agent?: string; workspace_path?: string; workspace_managed?: boolean; setup?: DesktopSetup }
+export interface DesktopStatus { enabled: boolean; node_id?: string; setup_required: boolean; agent_count: number; local_agent_count?: number; default_agent?: string; workspace_path?: string; workspace_managed?: boolean; setup?: DesktopSetup }
 export interface DesktopAgentCandidate { id: string; name: string; harness: string; executable?: string; installed: boolean; requires?: string[]; registered: boolean }
 export const fetchDesktopStatus = (signal?: AbortSignal) => request<DesktopStatus>("/console/desktop", { signal, cache: "no-store" });
 export const discoverDesktopAgents = (signal?: AbortSignal) => request<{ agents: DesktopAgentCandidate[] }>("/console/desktop/agents", { signal, cache: "no-store" });
