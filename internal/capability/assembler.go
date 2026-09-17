@@ -46,6 +46,7 @@ type Assembler struct {
 	servers map[string]MCPServer
 	home    home.Loader
 	skills  skillFingerprinter
+	locale  home.Locale
 }
 
 // SetServers replaces the MCP servers the hub machine can start.
@@ -65,6 +66,14 @@ func NewAssembler(servers map[string]MCPServer) *Assembler {
 
 func (a *Assembler) SetHome(loader home.Loader) *Assembler {
 	a.home = loader
+	return a
+}
+
+// SetLocale is the language the person reads in. It travels with every
+// session, including a delegated child's, because an agent that is not told
+// otherwise thinks in English no matter who it is talking to.
+func (a *Assembler) SetLocale(locale home.Locale) *Assembler {
+	a.locale = locale
 	return a
 }
 
@@ -118,23 +127,26 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 	if snap.Identity != "" {
 		parts = append(parts, snap.Identity)
 	}
+	if a.locale != "" {
+		parts = append(parts, home.LanguageRule(a.locale))
+	}
+	// Configured is what this agent itself was given: its own prompt and the
+	// skills mapped onto it. Platform guidance — the identity, the language
+	// rule, the messaging server's instructions — is prompt context around
+	// that, not part of the agent's native session configuration.
+	configured := []string{}
 	if selected.SystemPrompt != "" {
-		parts = append(parts, selected.SystemPrompt)
+		configured = append(configured, selected.SystemPrompt)
 	}
 	for _, root := range selected.Skills {
 		data, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
 		if err != nil {
 			return Capabilities{}, fmt.Errorf("read skill %q: %w", root, err)
 		}
-		parts = append(parts, string(data))
+		configured = append(configured, string(data))
 	}
-	// Platform guidance is prompt context, not native session configuration.
-	// Capture the configured agent instructions before appending that guidance.
-	sessionParts := parts
-	if snap.Identity != "" {
-		sessionParts = parts[1:]
-	}
-	sessionInstructions := strings.Join(sessionParts, "\n\n")
+	parts = append(parts, configured...)
+	sessionInstructions := strings.Join(configured, "\n\n")
 	for _, extra := range extras {
 		if strings.TrimSpace(extra.Instructions) != "" {
 			parts = append(parts, extra.Instructions)

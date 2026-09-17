@@ -285,3 +285,49 @@ func TestPlatformGuidanceRefreshKeepsSessionConfiguration(t *testing.T) {
 		t.Fatal("changed MCP connection can reuse stale native session")
 	}
 }
+
+// An agent that is not told which language the person reads will reason in
+// English whatever it answers in, so the rule ships with every session —
+// including a delegated child's, which is assembled the same way.
+func TestLanguageRuleTravelsWithEverySession(t *testing.T) {
+	skillDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("Use the repo conventions."), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	selected := agent.Agent{ID: "codex", Config: agent.Config{SystemPrompt: "You are Codex.", Skills: []string{skillDir}}}
+
+	silent, err := NewAssembler(nil).Assemble(selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(silent.Instructions, "# Language") {
+		t.Fatal("an unconfigured locale must not invent one")
+	}
+
+	chinese, err := NewAssembler(nil).SetLocale(home.LocaleZH).Assemble(selected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(chinese.Instructions, "用中文思考") {
+		t.Fatalf("chinese sessions must ask for chinese reasoning: %q", chinese.Instructions)
+	}
+	english, err := NewAssembler(nil).SetLocale(home.LocaleEN).AssembleMode(selected, home.ModeNone)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(english.Instructions, "Think and reply in English") {
+		t.Fatalf("english sessions must ask for english reasoning: %q", english.Instructions)
+	}
+	// The agent's own configuration did not change, so a running session is
+	// not asked to restart; only the surrounding guidance did.
+	if chinese.SessionFingerprint != english.SessionFingerprint || chinese.SessionFingerprint != silent.SessionFingerprint {
+		t.Fatal("language guidance must not count as session configuration")
+	}
+	if chinese.Fingerprint == english.Fingerprint {
+		t.Fatal("a different language must be visible in the capability hash")
+	}
+	// Skills and the configured prompt still reach the agent.
+	if !strings.Contains(chinese.Instructions, "You are Codex.") || !strings.Contains(chinese.Instructions, "Use the repo conventions.") {
+		t.Fatalf("language guidance displaced agent configuration: %q", chinese.Instructions)
+	}
+}

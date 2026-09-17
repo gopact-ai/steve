@@ -25,7 +25,7 @@ func assembleHome(input inputAssembly, boot runtimeAssembly) (homeAssembly, erro
 	}
 	var assembler *capability.Assembler
 	if environment != nil {
-		assembler = cfg.CapabilityAssembler().SetHome(profile.Home)
+		assembler = cfg.CapabilityAssembler().SetHome(profile.Home).SetLocale(profile.Locale)
 		if live != nil && live.Map != nil {
 			assembler.SetSkills(live.Map)
 		}

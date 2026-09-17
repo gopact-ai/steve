@@ -18,6 +18,9 @@ type applicationMemory struct {
 	Service *memory.Service
 	Home    home.Loader
 	Shared  *memory.LedgerStore
+	// Locale is the language this deployment reads in. Identity files are
+	// written in it, and every assembled session is told to think in it.
+	Locale home.Locale
 }
 
 // prepareApplicationMemory chooses one authority per deployment. Cluster
@@ -29,7 +32,7 @@ func prepareApplicationMemory(ctx context.Context, cfg *config.Config, book *led
 	}
 	memoryDir := filepath.Join(filepath.Dir(cfg.Gateway.StatePath), "memory")
 	if book == nil {
-		return applicationMemory{Service: memory.NewService(memory.NewMarkdown(cfg.Gateway.HomePath, memoryDir), filepath.Join(memoryDir, "audit.jsonl")), Home: home.Dir{Path: cfg.Gateway.HomePath, Locale: locale}}, nil
+		return applicationMemory{Service: memory.NewService(memory.NewMarkdown(cfg.Gateway.HomePath, memoryDir), filepath.Join(memoryDir, "audit.jsonl")), Home: home.Dir{Path: cfg.Gateway.HomePath, Locale: locale}, Locale: locale}, nil
 	}
 	shared := memory.NewLedgerStore(book)
 	shared.SetWriteGuard(func(ctx context.Context, tx *ledger.Tx) error {
@@ -97,5 +100,5 @@ func prepareApplicationMemory(ctx context.Context, cfg *config.Config, book *led
 	editable := home.EditableReader{Reader: reader, SaveIdentity: func(ctx context.Context, soul, user string) error {
 		return shared.WriteIdentity(ctx, soul, user, memory.Actor{By: "onboard"})
 	}}
-	return applicationMemory{Service: memory.NewService(shared, ""), Home: editable, Shared: shared}, nil
+	return applicationMemory{Service: memory.NewService(shared, ""), Home: editable, Shared: shared, Locale: locale}, nil
 }
