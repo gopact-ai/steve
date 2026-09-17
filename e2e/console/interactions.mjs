@@ -1857,6 +1857,9 @@ checks["process-content"] = async (f) => {
     await message.getByText("Checking the file", { exact: true }).waitFor();
     await message.getByText("Opening the file", { exact: true }).waitFor();
     assert.equal(await message.locator('[data-span-kind="tool"]').count(), 1, "Actual tool activity remains inspectable");
+    // The activity line already says what the group did; the rows under it
+    // must not repeat the same sentence in a second fold.
+    assert.equal(await message.getByText("调用了 1 次工具", { exact: true }).count(), 1, "A tool activity states what it did once, not once per nested fold");
     assert.equal(await message.getByText("Checked answer", { exact: true }).count(), 1, "The final answer is not repeated inside the trace");
     assert.equal(await message.getByText("empty-step", { exact: true }).count(), 0, "Empty plan steps must not leave a heading");
     const signature = message.getByText("test-agent @ 工作本 · GPT-5.6-Sol", { exact: true });

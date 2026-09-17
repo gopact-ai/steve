@@ -65,12 +65,25 @@ function fold(rows: Row[]): Entry[] {
 // Past this many visible lines the list scrolls instead of growing.
 const visibleRows = 12;
 
-export function ToolCalls({ tools, title, defaultOpen = true }: { tools: ToolCall[]; title?: string; defaultOpen?: boolean }) {
+// ToolRowList is the rows on their own, for a caller that already said
+// what the group did — the timeline's activity line does — so that the
+// same sentence is not printed twice, one fold inside the other.
+export function ToolRowList({ tools }: { tools: ToolCall[] }) {
     const { locale } = useI18n();
     if (!tools.length) return null;
     const entries = fold(tools.map((tool) => describe(tool, locale)));
-    const running = tools.some((t) => t.status !== "completed" && t.status !== "failed");
     const bounded = entries.length > visibleRows;
+    return (
+        <ul className={`mt-1 flex flex-col border-l border-secondary pl-2 ${bounded ? "max-h-80 overflow-y-auto" : ""}`}>
+            {entries.map((e, i) => "row" in e ? <ToolRow key={e.row.t.id || i} row={e.row} /> : <FoldedRows key={e.rows[0].t.id || i} rows={e.rows} />)}
+        </ul>
+    );
+}
+
+export function ToolCalls({ tools, title, defaultOpen = true }: { tools: ToolCall[]; title?: string; defaultOpen?: boolean }) {
+    const { locale } = useI18n();
+    if (!tools.length) return null;
+    const running = tools.some((t) => t.status !== "completed" && t.status !== "failed");
     return (
         <details open={defaultOpen} className="group/calls min-w-0">
             <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-xs text-tertiary hover:text-primary">
@@ -78,9 +91,7 @@ export function ToolCalls({ tools, title, defaultOpen = true }: { tools: ToolCal
                 <span>{title ?? headingOf(tools, locale)}</span>
                 <ChevronDown className="size-3.5 shrink-0 transition group-open/calls:rotate-180" />
             </summary>
-            <ul className={`mt-1 flex flex-col border-l border-secondary pl-2 ${bounded ? "max-h-80 overflow-y-auto" : ""}`}>
-                {entries.map((e, i) => "row" in e ? <ToolRow key={e.row.t.id || i} row={e.row} /> : <FoldedRows key={e.rows[0].t.id || i} rows={e.rows} />)}
-            </ul>
+            <ToolRowList tools={tools} />
         </details>
     );
 }
