@@ -129,4 +129,4 @@ func parseVerdict(answer string) (string, string) {
 	return "", ""
 }
 
-func nodeLabel(node string) string { return nodewire.Place(node) }
+func nodeLabel(node string) string { return nodewire.Name(node) }

@@ -23,6 +23,9 @@ func assembleAdministration(life lifetime, input inputAssembly, boot runtimeAsse
 	dashboard := page.Dashboard()
 	materials := page.Materials()
 	admin.Materials, admin.Console, admin.Owner = materials, cons, cfg.EffectiveOwnerID()
+	// A turn on a machine the project is not on gives it a directory there
+	// instead of refusing: the project follows the agent that was chosen.
+	work.Coordinator().SetWorkspaceAttach(admin.EnsureProjectWorkspace)
 	admin.MaterialLevel = cfg.HubLevel()
 	cons.SetMaterials(materials, admin.AuthorizeMaterials)
 	cons.SetDefaultLocale(cfg.EffectiveLocale())

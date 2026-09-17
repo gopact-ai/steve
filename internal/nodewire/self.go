@@ -12,6 +12,8 @@ import (
 var (
 	selfMu   sync.RWMutex
 	selfName string
+	namesMu  sync.RWMutex
+	nameList func() map[string]string
 )
 
 // SetSelf names this process's own machine. The hub is a node too — the one
@@ -28,6 +30,34 @@ func Self() string {
 	selfMu.RLock()
 	defer selfMu.RUnlock()
 	return selfName
+}
+
+// SetNames installs where the names people gave their machines are read
+// from: node identity to display name. A node identity is stable and
+// unique, which is why it is what the model stores; it is also unreadable,
+// which is why nothing said to a person should end at it.
+func SetNames(names func() map[string]string) {
+	namesMu.Lock()
+	defer namesMu.Unlock()
+	nameList = names
+}
+
+// Name is a machine as its owner calls it: the name given when it was
+// enrolled, falling back to the identity when the machine has no name yet.
+// Use it in anything a person reads; use Place where the result is also
+// an identifier.
+func Name(node string) string {
+	place := Place(node)
+	namesMu.RLock()
+	names := nameList
+	namesMu.RUnlock()
+	if names == nil {
+		return place
+	}
+	if given := names()[place]; given != "" {
+		return given
+	}
+	return place
 }
 
 // Place renders a node name for people. The empty node means "this

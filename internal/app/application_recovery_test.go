@@ -221,7 +221,7 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 		t.Fatalf("new conversation did not close the original native session: %+v %v; response=%s", closed, err, body)
 	}
 	checkRetainedMCP(t, mcpURL, agentToken, http.StatusUnauthorized)
-	checkPeerPluginProjectIsolation(t, second, first)
+	checkPeerPluginProjectIsolation(t, second)
 	checkPeerPluginRollbackAndRemoval(t, second, conversation)
 }
 

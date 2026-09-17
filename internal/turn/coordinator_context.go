@@ -325,6 +325,11 @@ func (c *Coordinator) Context(ctx context.Context, conversationID string) (Conte
 			} else if current != nil {
 				if ws, err := current.Place(cand.Node); err == nil {
 					choice.Place = &Placement{Workspace: ws.ID, Kind: string(ws.Kind), Node: nodewire.Place(ws.Node)}
+				} else if c.attach != nil && current.Level.OrDefault() != project.LevelSealed {
+					// The project will be given a directory on this
+					// machine the first time work runs there, so the
+					// agent is a choice, not a dead end.
+					choice.Because = c.text.T(i18n.ContextWillAttach, current.ID, nodewire.Name(cand.Node))
 				} else {
 					places := nodewire.Place(current.Home.Node)
 					var notHome project.NotHomeError
@@ -332,7 +337,7 @@ func (c *Coordinator) Context(ctx context.Context, conversationID string) (Conte
 						places = notHome.PlaceList()
 					}
 					choice.Usable = false
-					choice.Because = c.text.T(i18n.ContextNotHome, current.ID, places, choice.Node)
+					choice.Because = c.text.T(i18n.ContextNotHome, current.ID, places, nodewire.Name(cand.Node))
 				}
 			}
 			out.Agents = append(out.Agents, choice)

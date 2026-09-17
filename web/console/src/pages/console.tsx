@@ -335,7 +335,15 @@ export function ConsolePage() {
         else await newSession();
     }
 
-    async function newSession(project = context?.project?.id) {
+    // startingProject is what a fresh thread opens in when nothing else
+    // says: the thread being read, else the default project, else the one
+    // project there is. A console that knows a project never refuses to
+    // open a thread for want of one.
+    function startingProject() {
+        return context?.project?.id || snap.projects.find((p) => p.default)?.id || snap.projects.find((p) => !p.home)?.id || snap.projects[0]?.id;
+    }
+
+    async function newSession(project = startingProject()) {
         if (creatingRequest.current) return;
         setMobileSessions(false);
         creatingRequest.current = true;
@@ -500,7 +508,7 @@ export function ConsolePage() {
     // the current closure; a memoised column is then only drawn again when
     // something it shows has actually changed.
     const pickConversation = useEventCallback((id: string) => selectConversation(id));
-    const openNewSession = useEventCallback((project?: string) => void newSession(project));
+    const openNewSession = useEventCallback((project?: string) => void newSession(project || startingProject()));
     const openImport = useEventCallback(() => { setMobileSessions(false); setImporting(true); });
     const patchConversation = useEventCallback((id: string, patch: { title?: string; archived?: boolean }) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, ""))));
     const dropConversation = useEventCallback((id: string) => removeConversation(id));
