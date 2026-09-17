@@ -67,11 +67,15 @@ func grantRPC(t *testing.T, gate *agentmcp.Server, token, method string) int {
 }
 func openGrantAttempt(t *testing.T, book *ledger.Ledger, tasks *task.Store, id, session string) (attempt.Record, agentmcp.GrantScope) {
 	t.Helper()
+	return openGrantAttemptOn(t, book, tasks, id, session, "node-a")
+}
+func openGrantAttemptOn(t *testing.T, book *ledger.Ledger, tasks *task.Store, id, session, node string) (attempt.Record, agentmcp.GrantScope) {
+	t.Helper()
 	work, err := tasks.Create(task.Task{Channel: "chat", Member: "agent", ProjectID: "project"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tasks.Begin(work.ID, "agent", "node-a", ""); err != nil {
+	if _, err := tasks.Begin(work.ID, "agent", node, ""); err != nil {
 		t.Fatal(err)
 	}
 	token, err := tasks.ExecutionToken(work.ID)
@@ -79,7 +83,7 @@ func openGrantAttempt(t *testing.T, book *ledger.Ledger, tasks *task.Store, id, 
 		t.Fatal(err)
 	}
 	service := attempt.New(book)
-	record, err := service.Open(t.Context(), attempt.Spec{ID: id, TaskID: work.ID, TurnID: id + "-input", Execution: &token, Kind: attempt.KindChat, Project: "project", Node: "node-a", Agent: "agent", Harness: "test", Scope: attempt.ScopeNone, Workspace: project.Workspace{ID: id + "-workspace", Project: "project", Node: "node-a", Kind: project.KindWorktree, Path: filepath.Join(t.TempDir(), id)}})
+	record, err := service.Open(t.Context(), attempt.Spec{ID: id, TaskID: work.ID, TurnID: id + "-input", Execution: &token, Kind: attempt.KindChat, Project: "project", Node: node, Agent: "agent", Harness: "test", Scope: attempt.ScopeNone, Workspace: project.Workspace{ID: id + "-workspace", Project: "project", Node: node, Kind: project.KindWorktree, Path: filepath.Join(t.TempDir(), id)}})
 	if err != nil {
 		t.Fatal(err)
 	}

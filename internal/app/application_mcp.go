@@ -140,56 +140,38 @@ func (t applicationMCPTx) Bind(binding agentmcp.Binding, previous *agentmcp.Gran
 	if previous == nil {
 		return nil
 	}
-	if binding.TaskID != "" || binding.DelegatedBy != "" || previous.AttemptID == next.AttemptID || previous.NodeID != next.NodeID {
+	if binding.TaskID != "" || binding.DelegatedBy != "" || previous.AttemptID == next.AttemptID {
 		return agentmcp.ErrGrantDenied
 	}
 	old, err := t.record(*previous)
 	if err != nil {
 		return err
 	}
-	if old.Kind != attempt.KindChat || old.Agent != binding.AgentID || old.State != attempt.Bound || old.Unsettled || old.SupersededBy != "" || old.SessionSettled == nil || !*old.SessionSettled {
+	// The next scope is already authorized on its own: same conversation,
+	// same agent, a running attempt that holds its lease on a live task. All
+	// the previous turn has to prove is that it can no longer act, so the
+	// token cannot be shared by two live executions. A turn that was
+	// cancelled, interrupted or had to move to another node or a fresh
+	// native session is just as over as one that finished cleanly, and the
+	// conversation has to keep working afterwards.
+	if old.Kind != attempt.KindChat || old.Agent != binding.AgentID || old.Unsettled || old.SessionSettled == nil || !*old.SessionSettled || !endedChat(old, next) {
 		return agentmcp.ErrGrantDenied
 	}
-	current, err := t.record(next)
-	if err != nil {
-		return err
-	}
-	contextID := old.NativeContext
-	if contextID == "" {
-		contextID = old.Session
-	}
-	if current.Project != old.Project || current.NativeContext != contextID {
-		return agentmcp.ErrGrantDenied
-	}
-	if err := task.CheckExecutionTx(t.tx, old.Execution); err != nil {
-		if errors.Is(err, task.ErrExecutionStopped) {
-			return t.acceptedChat(binding, old)
-		}
+	if err := task.CheckExecutionTx(t.tx, old.Execution); err != nil && !errors.Is(err, task.ErrExecutionStopped) {
 		return fmt.Errorf("validate prior MCP execution: %w", err)
 	}
 	return nil
 }
 
-// Explicit completion revokes the old execution, while accepting its work.
-// Only the exact completion epoch may transfer a settled chat grant to an
-// independently authorized new attempt. Pause/cancel remain revoked.
-func (t applicationMCPTx) acceptedChat(binding agentmcp.Binding, old attempt.Record) error {
-	raw, ok, err := t.tx.LoadDocument("tasks")
-	if err != nil {
-		return err
+// endedChat says the previous chat attempt reached a state it can never run
+// out of again. Superseded counts only when the new attempt is its declared
+// successor, because any other successor may still be live.
+func endedChat(old attempt.Record, next agentmcp.GrantScope) bool {
+	switch old.State {
+	case attempt.Bound, attempt.Failed, attempt.Expired, attempt.BindConflict:
+		return old.SupersededBy == "" || old.SupersededBy == next.AttemptID
+	case attempt.Superseded:
+		return old.SupersededBy == next.AttemptID
 	}
-	var document struct {
-		Tasks map[string]*task.Task `json:"tasks"`
-	}
-	if !ok {
-		return agentmcp.ErrGrantDenied
-	}
-	if err := json.Unmarshal(raw, &document); err != nil {
-		return err
-	}
-	work := document.Tasks[old.TaskID]
-	if work == nil || work.Parent != "" || !work.CompletedByUser || work.State != task.StateDone || work.Channel != binding.ConversationID || work.Member != binding.AgentID || work.ExecutionEpoch != old.Execution.Epoch+1 {
-		return agentmcp.ErrGrantDenied
-	}
-	return nil
+	return false
 }
