@@ -137,6 +137,15 @@ func (m *Manager) openNodeSession(ctx context.Context, at Placement, upstreamID,
 	request := nodewire.SessionRequest{Action: nodewire.SessionActionOpen, NativeImport: binding.NativeImport.Clone(), Plugin: profile, Authority: binding.Authority, Binding: binding.Binding, ID: upstreamID, Harness: at.Harness, Workdir: workdir, MCPServers: servers, Permission: policy, CommandID: binding.CommandID + "/open"}
 	state, err := transport.NodeSession(ctx, node, request)
 	if err != nil {
+		// The node answering that it reserved nothing is a stronger
+		// statement than not reaching the node at all: it holds for a
+		// resumed context too, because the refusal is decided before the
+		// source record is claimed. Treating it as an uncertain open
+		// would quarantine a writer that provably never existed.
+		var refused *nodewire.SessionOpenNotStarted
+		if errors.As(err, &refused) {
+			return nil, true, fmt.Errorf("node-owned session was not opened: %w", err)
+		}
 		var notSent *nodewire.SessionNotDispatched
 		if upstreamID == "" && errors.As(err, &notSent) {
 			return nil, true, fmt.Errorf("node-owned session was not opened: %w", err)

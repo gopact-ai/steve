@@ -17,9 +17,21 @@ import (
 	"github.com/gopact-ai/steve/internal/view"
 )
 
+// notStarted marks an open refusal the node decided before it reserved
+// anything for that open. The durable record is written before any native
+// process starts, so such a refusal proves no agent runs for it. Callers
+// use that to retry instead of quarantining the original writer, which is
+// why it is attached only where this function has provably written nothing.
+func notStarted(err error) error {
+	if err == nil {
+		return nil
+	}
+	return &nodewire.SessionOpenNotStarted{Cause: err}
+}
+
 func (s *SessionService) open(ctx context.Context, principal string, req nodewire.SessionRequest) (nodewire.SessionState, error) {
 	if !sessionNameValid(req.CommandID) || req.Workdir == "" || req.Harness == "" {
-		return nodewire.SessionState{}, sessionError("invalid", "open needs an idempotent command, harness and workspace")
+		return nodewire.SessionState{}, notStarted(sessionError("invalid", "open needs an idempotent command, harness and workspace"))
 	}
 	permissionName := req.Permission
 	if permissionName == "" {
@@ -27,7 +39,7 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 	}
 	broker, err := permission.New(permissionName)
 	if err != nil {
-		return nodewire.SessionState{}, err
+		return nodewire.SessionState{}, notStarted(err)
 	}
 	hash := sessionHash(struct {
 		Binding                      nodewire.SessionBinding
@@ -40,7 +52,7 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
-		return nodewire.SessionState{}, sessionError("closed", "node session service is closed")
+		return nodewire.SessionState{}, notStarted(sessionError("closed", "node session service is closed"))
 	}
 	// An archived session can supply native context only to a fresh, admitted
 	// execution. Its old input receipts remain on the source record.
@@ -50,11 +62,12 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 		source, err = s.resumeSourceLocked(req, id)
 		if err != nil {
 			s.mu.Unlock()
-			return nodewire.SessionState{}, err
+			return nodewire.SessionState{}, notStarted(err)
 		}
 		if source == nil {
 			s.mu.Unlock()
-			return s.closedState(req)
+			state, err := s.closedState(req)
+			return state, notStarted(err)
 		}
 	}
 	if one := s.sessions[id]; one != nil {
@@ -71,11 +84,11 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 	}
 	if closed, exists, err := s.readRecord(id); err != nil {
 		s.mu.Unlock()
-		return nodewire.SessionState{}, err
+		return nodewire.SessionState{}, notStarted(err)
 	} else if exists {
 		s.mu.Unlock()
 		if closed.OpenCancelled {
-			return nodewire.SessionState{}, sessionError("cancelled", "the original native open was durably cancelled before creation")
+			return nodewire.SessionState{}, notStarted(sessionError("cancelled", "the original native open was durably cancelled before creation"))
 		}
 		if closed.OpenHash != hash {
 			return nodewire.SessionState{}, sessionError("conflict", "open command already used with different input")
@@ -87,12 +100,12 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 	}
 	if len(s.sessions) >= 1024 {
 		s.mu.Unlock()
-		return nodewire.SessionState{}, sessionError("unavailable", "node session retention limit reached")
+		return nodewire.SessionState{}, notStarted(sessionError("unavailable", "node session retention limit reached"))
 	}
 	spec, ok := s.server.conf().Harnesses[req.Harness]
 	if !ok || spec.Command == "" {
 		s.mu.Unlock()
-		return nodewire.SessionState{}, sessionError("unavailable", "harness is not registered on this node")
+		return nodewire.SessionState{}, notStarted(sessionError("unavailable", "harness is not registered on this node"))
 	}
 	// Observing a previously accepted open is permitted during reconciliation;
 	// creating a native process requires a fresh execution admission as well.
@@ -100,7 +113,7 @@ func (s *SessionService) open(ctx context.Context, principal string, req nodewir
 	start.Action = nodewire.SessionActionStart
 	if err := s.authorize(ctx, principal, start); err != nil {
 		s.mu.Unlock()
-		return nodewire.SessionState{}, err
+		return nodewire.SessionState{}, notStarted(err)
 	}
 	one, hostCfg, err := s.prepareOwnedSession(ctx, id, hash, &req, spec, broker, source)
 	if err != nil {

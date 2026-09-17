@@ -3,9 +3,27 @@ package harness
 import (
 	"context"
 	"errors"
+	"fmt"
 
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
+
+// ErrNodeOpenAbsent means the node answered and holds no record of the
+// original open. It reserves its durable record before any native process
+// starts, so nothing runs for that open — but a record it never received
+// cannot prove the request was cancelled either, which is why sealing the
+// open is still what settles it.
+var ErrNodeOpenAbsent = errors.New("the node answered and has no record of the original open")
+
+// classifyOpenRecovery keeps the node's own classification reachable, so
+// recovery can tell a node that answered from a node that never replied.
+func classifyOpenRecovery(err error) error {
+	var coded interface{ SessionErrorCode() string }
+	if errors.As(err, &coded) && coded.SessionErrorCode() == "absent" {
+		return fmt.Errorf("%w: %w", ErrNodeOpenAbsent, err)
+	}
+	return err
+}
 
 // ReconcileNodeOpen only inspects or cancels the exact admitted open command.
 // It never starts a native session or reconstructs an input to replay.
@@ -32,7 +50,7 @@ func (m *Manager) ReconcileNodeOpen(ctx context.Context, at Placement, workdir s
 	req := nodewire.SessionRequest{Action: action, Authority: binding.Authority, Binding: binding.Binding, Harness: at.Harness, CommandID: binding.CommandID + "/open"}
 	state, err := transport.NodeSession(ctx, at.Node, req)
 	if err != nil {
-		return nodewire.SessionState{}, err
+		return nodewire.SessionState{}, classifyOpenRecovery(err)
 	}
 	proof := state.OpenReceipt
 	expected := nodewire.SessionOpenID(binding.Authority.ClusterID, at.Node, binding.Binding.AttemptID, req.CommandID, at.Harness)

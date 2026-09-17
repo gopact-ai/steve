@@ -28,7 +28,7 @@ func (s *SessionService) reconcileOpen(ctx context.Context, req nodewire.Session
 		}
 		if !exists {
 			if req.Action != nodewire.SessionActionCancelOpen {
-				return nodewire.SessionState{}, sessionError("unavailable", "original open is not recorded; absence alone does not confirm cancellation")
+				return nodewire.SessionState{}, sessionError("absent", "original open is not recorded; absence alone does not confirm cancellation")
 			}
 			one = &ownedSession{service: s, changed: make(chan struct{})}
 			record = sessionRecord{Format: 1, ClusterID: req.Authority.ClusterID, Authority: req.Authority, OpenID: req.CommandID, OpenCancelled: true, CommandHashes: map[string]string{}, Commands: map[string]nodewire.SessionCommand{}, State: nodewire.SessionState{ID: id, Binding: req.Binding, Harness: req.Harness, State: nodewire.SessionClosed, ProcessStopped: true, Questions: []nodewire.SessionQuestion{}}}

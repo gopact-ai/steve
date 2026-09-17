@@ -25,8 +25,12 @@ type SessionAuthorizer interface {
 
 type SessionError struct{ Code, Message string }
 
-func (e *SessionError) Error() string         { return "node session: " + e.Message }
-func sessionError(code, message string) error { return &SessionError{code, message} }
+func (e *SessionError) Error() string { return "node session: " + e.Message }
+
+// SessionErrorCode lets packages that must not import the node reach the
+// classification the node itself put on a refusal.
+func (e *SessionError) SessionErrorCode() string { return e.Code }
+func sessionError(code, message string) error    { return &SessionError{code, message} }
 
 type SessionService struct {
 	server              *Server

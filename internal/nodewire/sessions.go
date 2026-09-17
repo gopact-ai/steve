@@ -115,6 +115,13 @@ const (
 	SessionQuestionInterrupted SessionQuestionState = "interrupted"
 )
 
+// Settled reports a question that can no longer change. An interrupted
+// question belongs to a native process the node already saw stop, so no
+// answer can still reach it.
+func (s SessionQuestionState) Settled() bool {
+	return s == SessionQuestionAnswered || s == SessionQuestionInterrupted
+}
+
 type SessionQuestion struct {
 	ID         string               `json:"id"`
 	CommandID  string               `json:"command_id"`
@@ -177,6 +184,9 @@ type SessionReply struct {
 	State           *SessionState `json:"state,omitempty"`
 	ErrorCode       string        `json:"error_code,omitempty"`
 	Error           string        `json:"error,omitempty"`
+	// NotStarted marks a refusal the node decided before it reserved
+	// anything for the open: no durable record, no runtime, no process.
+	NotStarted bool `json:"not_started,omitempty"`
 }
 
 // SessionAuthorization is a reply on the same authenticated RPC stream. It is
@@ -192,3 +202,13 @@ type SessionNotDispatched struct{ Cause error }
 
 func (e *SessionNotDispatched) Error() string { return e.Cause.Error() }
 func (e *SessionNotDispatched) Unwrap() error { return e.Cause }
+
+// SessionOpenNotStarted is the node's own answer that it refused an open
+// before reserving anything for it. The node writes its durable record
+// before any native process starts, so this refusal proves that no agent
+// runs for that open and none ever will. The original writer needs no
+// quarantine and the execution may be retried.
+type SessionOpenNotStarted struct{ Cause error }
+
+func (e *SessionOpenNotStarted) Error() string { return e.Cause.Error() }
+func (e *SessionOpenNotStarted) Unwrap() error { return e.Cause }
