@@ -96,7 +96,7 @@ try {
         assert.equal(await card.locator(".changes-card-body").isVisible(), true);
         assert.equal(f.reads.filter((r) => r.type === "changes").length, 1, "Folding never refetches the index");
         await card.getByRole("button", { name: `Review ${files[1].path}`, exact: true }).click();
-        const review = page.getByRole("dialog", { name: "Code workspace", exact: true });
+        const review = page.getByRole("dialog", { name: "Artifact workspace", exact: true });
         await review.getByText("historical result", { exact: true }).waitFor();
         assert.ok(f.reads.some((r) => r.attempt === "history-attempt" && r.type === "diff" && r.path === files[1].path));
         assert.ok(f.reads.every((r) => r.attempt !== "active-current"), "Review cannot substitute the currently active task's attempt");
@@ -168,7 +168,7 @@ try {
         const f = await fixture([reply()], {failReview:true});
         await f.page.getByRole("textbox",{name:"Message",exact:true}).fill("Keep this draft");
         await f.card.getByRole("button",{name:"Review changes",exact:true}).click();
-        await f.page.getByRole("alert").getByText(/code workspace could not load/).waitFor();
+        await f.page.getByRole("alert").getByText(/artifact workspace could not load/).waitFor();
         await f.page.getByRole("heading",{name:"Changes conversation",exact:true}).waitFor();
         assert.equal(await f.page.getByRole("textbox",{name:"Message",exact:true}).inputValue(),"Keep this draft");
         await f.page.getByRole("alert").getByRole("button",{name:"Back",exact:true}).click();

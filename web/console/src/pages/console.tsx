@@ -20,6 +20,7 @@ import { applyLive, type Live } from "@/lib/live";
 import { Nothing } from "@/components/steve/ui";
 import { enqueue, fetchQueue, deleteConversation, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, initializeConversation, fetchSelectors, setPreferences, checkSubmissionSupport, requireSubmissionSupport, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { Sheet } from "@/components/steve/drawer";
+import { ConfirmDialog } from "@/components/steve/confirm";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { useEventCallback } from "@/hooks/use-event-callback";
 import { useResourceRead } from "@/hooks/use-resource-read";
@@ -87,7 +88,9 @@ export function ConsolePage() {
     const [conversationsError, setConversationsError] = useState("");
     const [live, setLive] = useState<Live | null>(null);
     const [delegations, setDelegations] = useState<Delegations>({});
-    const transcript = entries.map((r) => withDelegations(r, delegations));
+    // Stopping a turn is an act on that turn: the control and its receipt
+    // stay in the ledger, the transcript stays what was said and answered.
+    const transcript = entries.filter((r) => !r.silent).map((r) => withDelegations(r, delegations));
     const [context, setContext] = useState<ConversationContext | null>(null);
     const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
     const [pick, setPick] = useState(0);
@@ -104,6 +107,10 @@ export function ConsolePage() {
     const [mobileSessions, setMobileSessions] = useState(false);
     const [inspectorOpen, setInspectorOpen] = useState(false);
     useEffect(() => { if (!reviewing && materials.sideRequest && context?.project && materials.sideRequest.project === context.project.id) { setInspectorOpen(true); setTab("materials"); } }, [materials.sideRequest, reviewing, context?.project?.id]);
+    // A line already sent cannot be taken back, but it can be said again:
+    // editing puts it back in the box. Text already typed there is not
+    // thrown away without asking.
+    const [replacingDraft, setReplacingDraft] = useState<string | null>(null);
     const [pickedTask, setPickedTask] = useState<Task | null>(null);
     // A delegated child picked from the tree takes the middle column:
     // its card, open, from the reply that carried it.
@@ -278,7 +285,7 @@ export function ConsolePage() {
                     continue;
                 }
                 const kind = ev.kind.slice("console.".length);
-                const r: Reply = { id: ev.reply_id, exchange_id: ev.exchange_id, at: ev.at, conversation, kind, title: ev.title, text: kind === "sent" ? "" : ev.text || "", format: ev.format, input: kind === "sent" ? ev.text : undefined };
+                const r: Reply = { id: ev.reply_id, exchange_id: ev.exchange_id, at: ev.at, conversation, kind, title: ev.title, text: kind === "sent" ? "" : ev.text || "", format: ev.format, input: kind === "sent" ? ev.text : undefined, silent: ev.silent };
                 const index = next.findIndex((x) => r.id ? x.id === r.id : r.exchange_id ? x.exchange_id === r.exchange_id && x.kind === r.kind : x.at === r.at && x.kind === r.kind);
                 if (index < 0) next.push(r);
                 else next[index] = { ...next[index], ...r };
@@ -526,6 +533,16 @@ export function ConsolePage() {
     const openTask = useEventCallback((task: Task) => { setMobileSessions(false); if (task.parent && stepOf(task.id)) { setChild(task); setPickedTask(null); } else setPickedTask(task); });
     const closeInspector = useEventCallback(() => setInspectorOpen(false));
     const selectReply = useEventCallback((r: Reply) => { setSelectedReply(r); setTab("trace"); setInspectorOpen(true); });
+    const placeDraft = (value: string) => {
+        setText(value);
+        window.setTimeout(() => { const box_ = box.current; if (!box_) return; box_.focus(); box_.setSelectionRange(box_.value.length, box_.value.length); }, 0);
+    };
+    const editSent = useEventCallback((r: Reply) => {
+        const value = (r.input || "").trim();
+        if (!value) return;
+        if (text.trim() && text.trim() !== value) { setReplacingDraft(value); return; }
+        placeDraft(value);
+    });
     const quoteReply = useEventCallback((r: Reply) => { if (!r.id) return; void setQuotes((list) => list.some((x) => x.reply_id === r.id) ? list : [...list, { conversation, reply_id: r.id!, title: current?.title || conversation, excerpt: (r.text || "").replace(/\s+/g, " ").slice(0, 80) }]); });
     const changeText = useEventCallback((value: string) => setText(value));
     // Pasting a screenshot into the box attaches it, the way the attach
@@ -561,6 +578,8 @@ export function ConsolePage() {
     const inspector = <Rail key={conversation} context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} onClose={closeInspector} />;
     return (
         <div className={`console-workbench ${side.session ? "has-side-chat" : ""}`}>
+            {replacingDraft !== null && <ConfirmDialog title={t("console.replaceDraftTitle")} body={t("console.replaceDraftBody")} confirmLabel={t("console.replaceDraft")}
+                onConfirm={async () => placeDraft(replacingDraft)} onClose={() => setReplacingDraft(null)} />}
             {importing && <NativeSessionImport agents={snap.agents} nodes={snap.nodes} projects={snap.projects} onClose={() => setImporting(false)} onImported={(id) => { setImporting(false); refresh(); selectConversation(id); void loadConversations(); }} />}
             {view === "chat" && desktopSessions && !side.session && sessions()}
             {mobileSessions && !desktopSessions && <Sheet label={t("console.sessions")}  side="left" width={300} onClose={() => setMobileSessions(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("console.closeSessions")}  onClick={() => setMobileSessions(false)}><X aria-hidden="true" /></button>{sessions(false, false)}</Sheet>}
@@ -611,7 +630,7 @@ export function ConsolePage() {
                                 </div>
                             )}
                             <div className="transcript-messages">
-                                {transcript.map((r, i) => r.kind === "sent" ? <UserMessage key={r.id || i} text={r.input || ""} /> : <AssistantMessage key={r.id || i} r={r} selected={shownProcess?.id === r.id} onSelect={selectReply} onQuote={quoteReply} />)}
+                                {transcript.map((r, i) => r.kind === "sent" ? <UserMessage key={r.id || i} r={r} onEdit={editSent} /> : <AssistantMessage key={r.id || i} r={r} selected={shownProcess?.id === r.id} onSelect={selectReply} onQuote={quoteReply} />)}
                                 {unrecordedChildren.map((s) => <DelegationCard key={s.id} id={s.id} info={s} progress={s} />)}
                                 {live && <Working live={live} plans={runningPlans} compact />}
                             </div>

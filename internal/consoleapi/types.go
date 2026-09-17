@@ -652,6 +652,11 @@ type Reply struct {
 	Format       string    `json:"format,omitempty"` // markdown (default) | text
 	Error        string    `json:"error,omitempty"`
 	Kind         string    `json:"kind"` // reply | milestone | notice
+	// Silent keeps a line out of the transcript without keeping it out of
+	// the ledger: stopping a turn is an act on the turn, not a thing said
+	// in the conversation, so "/cancel" and its receipt are recorded and
+	// auditable but never drawn as messages.
+	Silent bool `json:"silent,omitempty"`
 	// Process is how the reply was made, for the page to unfold; Injected
 	// what the agent was given for the turn.
 	Process  *Process  `json:"process,omitempty"`

@@ -140,7 +140,7 @@ export interface StepProcess extends StepInfo, Progress { id: string }
 export interface Process { reasoning?: string; tools?: ToolCall[]; timeline?: Span[]; steps?: StepProcess[] }
 export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
-    state?: string; conversation?: string; text?: string; format?: "markdown" | "text"; title?: string; detail?: string; data?: Record<string, string>; progress?: Progress; step?: StepInfo & Partial<StepProcess>; reply_id?: string; exchange_id?: string;
+    state?: string; conversation?: string; text?: string; format?: "markdown" | "text"; title?: string; detail?: string; data?: Record<string, string>; progress?: Progress; step?: StepInfo & Partial<StepProcess>; reply_id?: string; exchange_id?: string; silent?: boolean;
     // n is the page's own arrival counter, so a reader can keep a cursor
     // over a buffer that is trimmed from the front.
     n?: number;
@@ -153,6 +153,9 @@ export interface Injected {
 export interface Reply {
     id?: string; exchange_id?: string; at: string; conversation: string; input?: string; title?: string; text: string; format?: "markdown" | "text"; error?: string; kind: string; process?: Process; injected?: Injected;
     changes?: ChangeSummary; project_id?: string; revision?: string; refs?: MaterialRef[]; materials?: FrozenMaterial[];
+    // A silent line is kept by the server but never drawn: stopping a turn
+    // is an act on that turn, not a message in the conversation.
+    silent?: boolean;
 }
 export interface Snapshot {
     at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[]; projects: Project[];
