@@ -1,10 +1,14 @@
 import type { ReactNode } from "react";
 import { createContext, useContext, useEffect, useState } from "react";
 
-type Theme = "light" | "dark" | "system";
+import { isTheme, paletteOf, type Scheme, type ThemeId } from "@/lib/themes";
+
+type Theme = ThemeId;
 
 interface ThemeContextType {
     theme: Theme;
+    /** Light or dark, after "system" and any palette have been resolved. */
+    scheme: Scheme;
     setTheme: (theme: Theme) => void;
 }
 
@@ -23,7 +27,7 @@ export const useTheme = (): ThemeContextType => {
 interface ThemeProviderProps {
     children: ReactNode;
     /**
-     * The class to add to the root element when the theme is dark
+     * The class to add to the root element when the theme reads as dark
      * @default "dark-mode"
      */
     darkModeClass?: string;
@@ -39,29 +43,39 @@ interface ThemeProviderProps {
     storageKey?: string;
 }
 
+// The scheme is stored next to the theme so the boot script in index.html
+// can paint the right background before this module is even parsed,
+// without carrying a copy of the palette table.
+export const schemeKey = "ui-theme-scheme";
+
+const systemScheme = (): Scheme => (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
+const schemeOf = (theme: Theme): Scheme => (theme === "system" ? systemScheme() : theme === "light" || theme === "dark" ? theme : paletteOf(theme)?.scheme ?? "light");
+
 export const ThemeProvider = ({ children, defaultTheme = "system", storageKey = "ui-theme", darkModeClass = "dark-mode" }: ThemeProviderProps) => {
     const [theme, setTheme] = useState<Theme>(() => {
         if (typeof window !== "undefined") {
-            const savedTheme = localStorage.getItem(storageKey) as Theme | null;
-            return savedTheme || defaultTheme;
+            const saved = localStorage.getItem(storageKey);
+            return saved && isTheme(saved) ? saved : defaultTheme;
         }
         return defaultTheme;
     });
+    const [scheme, setScheme] = useState<Scheme>(() => (typeof window === "undefined" ? "light" : schemeOf(theme)));
 
     useEffect(() => {
         const applyTheme = () => {
             const root = window.document.documentElement;
+            const palette = paletteOf(theme);
+            const resolved = schemeOf(theme);
 
-            if (theme === "system") {
-                const systemTheme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+            if (palette) root.dataset.theme = palette.id;
+            else delete root.dataset.theme;
+            root.classList.toggle(darkModeClass, resolved === "dark");
+            setScheme(resolved);
 
-                root.classList.toggle(darkModeClass, systemTheme === "dark");
-                localStorage.removeItem(storageKey);
-            } else {
-                root.classList.toggle(darkModeClass, theme === "dark");
-                localStorage.setItem(storageKey, theme);
-            }
-            document.querySelector('meta[name="theme-color"]')?.setAttribute("content", root.classList.contains(darkModeClass) ? "#232428" : "#f5f5f7");
+            if (theme === "system") localStorage.removeItem(storageKey);
+            else localStorage.setItem(storageKey, theme);
+            localStorage.setItem(schemeKey, resolved);
+            document.querySelector('meta[name="theme-color"]')?.setAttribute("content", getComputedStyle(root).getPropertyValue("--color-bg-primary").trim() || (resolved === "dark" ? "#232428" : "#f5f5f7"));
         };
 
         applyTheme();
@@ -79,5 +93,5 @@ export const ThemeProvider = ({ children, defaultTheme = "system", storageKey = 
         return () => mediaQuery.removeEventListener("change", handleChange);
     }, [theme]);
 
-    return <ThemeContext.Provider value={{ theme, setTheme }}>{children}</ThemeContext.Provider>;
+    return <ThemeContext.Provider value={{ theme, scheme, setTheme }}>{children}</ThemeContext.Provider>;
 };

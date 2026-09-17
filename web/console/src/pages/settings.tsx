@@ -16,6 +16,7 @@ import { HTTPError } from "@/lib/http";
 import { errorText, type LocalePreference } from "@/lib/i18n";
 import { settingGroups, settingValue, settingsInputs, settingsPatch, type SettingPath } from "@/lib/settings-values";
 import { useI18n } from "@/providers/locale-provider";
+import { PALETTES, type ThemeId } from "@/lib/themes";
 import { useTheme } from "@/providers/theme-provider";
 
 type Group = "hub" | "channels";
@@ -140,7 +141,7 @@ export function SettingsPage() {
             {section === "general" && <>
                 <div className="settings-section-heading"><div><h2>{t("settingsPage.section.general")}</h2><p>{t("settingsPage.localPreferences")}</p></div></div>
                 <div className="settings-field"><div><label>{t("settings.language")}</label><p>{t("settingsPage.localLanguageHint")}</p></div><Select size="sm" aria-label={t("settings.language")} selectedKey={preference} onSelectionChange={(key) => { if (key) setLocale(String(key) as LocalePreference); }} items={[{ id: "system", label: t("settings.system") }, { id: "zh", label: "简体中文" }, { id: "en", label: "English" }]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
-                <div className="settings-field"><label>{t("settings.appearance")}</label><Select size="sm" aria-label={t("settings.appearance")} selectedKey={theme} onSelectionChange={(key) => { if (key) setTheme(String(key) as "system" | "light" | "dark"); }} items={(["system", "light", "dark"] as const).map((id) => ({ id, label: t(`settings.${id}`) }))}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
+                <div className="settings-field"><label>{t("settings.appearance")}</label><Select size="sm" aria-label={t("settings.appearance")} selectedKey={theme} onSelectionChange={(key) => { if (key) setTheme(String(key) as ThemeId); }} items={[...(["system", "light", "dark"] as const).map((id) => ({ id: id as ThemeId, label: t(`settings.${id}`) })), ...PALETTES.map((p) => ({ id: p.id as ThemeId, label: p.name }))]}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select></div>
                 <section className="settings-subsection"><h3>{t("settingsPage.hubDefaults")}</h3>{rows(["gateway.locale"])}</section>
                 <details className="settings-advanced"><summary>{t("settingsPage.identityDetails")}</summary><dl><dt>{t("settingsPage.owner")}</dt><dd><code>{hub ? settingValue(hub.effective, "gateway.owner_id") || "—" : "—"}</code></dd><dt>{t("settingsPage.revision")}</dt><dd><code>{hub?.revision || "—"}</code></dd></dl><p>{t("settingsPage.ownerHint")}</p></details>
                 {saveBar}

@@ -1607,6 +1607,81 @@ checks["composer-keys"] = async (f) => {
     await f.page.locator(".message-user-body strong", { hasText: "second" }).waitFor();
 };
 
+checks["theme-palettes"] = async (f) => {
+    // A palette is picked from the toolbar, survives a reload before the
+    // app has even booted, and stays legible: every scheme shipped here is
+    // measured rather than eyeballed, so adding one cannot quietly ship an
+    // unreadable console.
+    await f.page.setViewportSize({ width: 1280, height: 900 });
+    const open = f.page.getByRole("button", { name: /^主题/ });
+    await open.click();
+    await f.page.getByRole("menuitemradio", { name: "Dracula", exact: true }).click();
+    await eventually(async () => await f.page.evaluate(() => document.documentElement.dataset.theme) === "dracula", "Picking a palette applies it");
+    assert.ok(await f.page.evaluate(() => document.documentElement.classList.contains("dark-mode")), "A dark palette reads as dark mode");
+    await f.page.reload({ waitUntil: "commit" });
+    assert.equal(await f.page.evaluate(() => document.documentElement.dataset.theme), "dracula", "The palette is painted before the app boots, so a reload never flashes");
+    await open.click();
+    await f.page.getByRole("menuitemradio", { name: "Atom One Light", exact: true }).click();
+    await eventually(async () => !(await f.page.evaluate(() => document.documentElement.classList.contains("dark-mode"))), "A light palette drops dark mode");
+
+    // Every palette the stylesheet defines must also be offered, and the
+    // menu must not offer one the stylesheet never defined.
+    const defined = await f.page.evaluate(() => {
+        const ids = new Set();
+        for (const sheet of [...document.styleSheets]) {
+            let rules = []; try { rules = [...sheet.cssRules]; } catch { continue; }
+            for (const rule of rules) for (const hit of (rule.selectorText || "").matchAll(/\[data-theme="([^"]+)"\]/g)) ids.add(hit[1]);
+        }
+        return [...ids];
+    });
+    assert.ok(defined.length >= 8, `The stylesheet must define the palettes: ${JSON.stringify(defined)}`);
+    await open.click();
+    const offered = await f.page.evaluate(() => [...document.querySelectorAll('[role="menuitemradio"]')].map((n) => n.getAttribute("data-key") || n.id));
+    await f.page.keyboard.press("Escape");
+    for (const id of defined) assert.ok(offered.includes(id), `The menu must offer ${id}, which the stylesheet defines`);
+
+    // The browser resolves color-mix() into whatever space it likes, so the
+    // colours are rasterised and read back as plain sRGB rather than parsed.
+    const contrast = await f.page.evaluate((ids) => {
+        const probe = document.createElement("div");
+        document.body.append(probe);
+        const canvas = document.createElement("canvas");
+        canvas.width = canvas.height = 1;
+        const paint = canvas.getContext("2d", { willReadFrequently: true });
+        const luminance = (token) => {
+            probe.style.backgroundColor = `var(${token})`;
+            paint.clearRect(0, 0, 1, 1);
+            paint.fillStyle = getComputedStyle(probe).backgroundColor;
+            paint.fillRect(0, 0, 1, 1);
+            const [r, g, b] = [...paint.getImageData(0, 0, 1, 1).data].slice(0, 3).map((v) => v / 255).map((c) => (c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4));
+            return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        };
+        const ratio = (a, b) => { const [x, y] = [luminance(a), luminance(b)].sort((m, n) => n - m); return (x + 0.05) / (y + 0.05); };
+        const previous = document.documentElement.dataset.theme;
+        const report = {};
+        for (const id of ids) {
+            document.documentElement.dataset.theme = id;
+            report[id] = {
+                body: ratio("--color-text-primary", "--color-bg-primary"),
+                muted: ratio("--color-text-tertiary", "--color-bg-primary"),
+                faint: ratio("--color-text-quaternary", "--color-bg-primary"),
+                accent: ratio("--color-bg-brand-solid", "--color-bg-primary"),
+                line: ratio("--color-border-primary", "--color-bg-primary"),
+                sidebar: ratio("--color-text-primary", "--sidebar-surface"),
+            };
+        }
+        if (previous) document.documentElement.dataset.theme = previous; else delete document.documentElement.dataset.theme;
+        probe.remove();
+        return report;
+    }, defined);
+    const floor = { body: 7, muted: 4.5, faint: 3.2, accent: 3, line: 1.2, sidebar: 7 };
+    for (const [id, measured] of Object.entries(contrast)) {
+        for (const [role, value] of Object.entries(measured)) {
+            assert.ok(value >= floor[role], `${id} is not legible: ${role} contrast is ${value.toFixed(2)}, below ${floor[role]}`);
+        }
+    }
+};
+
 checks["composer-columns"] = async (f) => {
     // The control row answers two questions. Where the message goes reads
     // from the left; how the turn will run reads from the right and ends at

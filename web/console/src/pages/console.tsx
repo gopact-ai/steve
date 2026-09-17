@@ -4,6 +4,7 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, use
 import { useLocation, useNavigate } from "react-router";
 import { LayoutLeft, LayoutRight, MessageChatSquare, X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
+import { ThemeMenu } from "@/components/steve/theme-menu";
 import { Composer, type Queued } from "@/components/steve/composer";
 import { AssistantMessage, UserMessage } from "@/components/steve/message";
 import { Rail, type RailTab } from "@/components/steve/rail";
@@ -602,6 +603,7 @@ export function ConsolePage() {
                         </span>
                     )}
                     <span role="status" className="console-status" title={toolbarStatus}>{toolbarStatus}</span>
+                    <ThemeMenu />
                     <span className="workbench-segmented" role="group" aria-label={t("console.workView")} >
                         <button type="button" onClick={() => navigate("/console")} aria-pressed>{t("console.conversation")}</button>
                         <button type="button" onClick={() => navigate("/console?view=board")} aria-pressed={false}>{t("console.board")}</button>
