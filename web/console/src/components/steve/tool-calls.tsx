@@ -1,7 +1,7 @@
 import { useI18n } from "@/providers/locale-provider";
 import { translate, type Locale } from "@/lib/i18n";
 import { number } from "@/lib/format";
-import { CheckCircle, ChevronDown, Loading01, XCircle } from "@untitledui/icons";
+import { AlertCircle, CheckCircle, ChevronDown, Loading01 } from "@untitledui/icons";
 import type { ToolCall } from "@/lib/types";
 import { formatToolText, type Shown } from "@/lib/tooltext";
 import { toolFailed } from "@/lib/activity";
@@ -85,6 +85,15 @@ export function ToolCalls({ tools, title, defaultOpen = true }: { tools: ToolCal
     );
 }
 
+// A call that came back with an error is ordinary: the agent reads the
+// message and tries something else. So a failed row is marked quietly —
+// a grey outline, not a red cross — and keeps the alarm colours for the
+// failures a person has to act on, like a task or a node going down.
+function FailedMark() {
+    const { t } = useI18n();
+    return <span title={t("consoleChrome.toolFailed")} className="flex shrink-0"><AlertCircle aria-label={t("consoleChrome.toolFailed")} className="size-3.5 text-fg-quaternary" /></span>;
+}
+
 function FoldedRows({ rows }: { rows: Row[] }) {
     const { locale } = useI18n();
     const first = rows[0];
@@ -94,7 +103,7 @@ function FoldedRows({ rows }: { rows: Row[] }) {
         <li className="min-w-0">
             <details className="group/fold">
                 <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md px-1.5 py-1 text-xs hover:bg-secondary">
-                    {running ? <Loading01 className="size-3.5 shrink-0 animate-spin text-fg-brand-primary" /> : failed ? <XCircle className="size-3.5 shrink-0 text-fg-error-primary" /> : <CheckCircle className="size-3.5 shrink-0 text-fg-success-primary" />}
+                    {running ? <Loading01 className="size-3.5 shrink-0 animate-spin text-fg-brand-primary" /> : failed ? <FailedMark /> : <CheckCircle className="size-3.5 shrink-0 text-fg-success-primary" />}
                     <span className="shrink-0 text-tertiary">{first.verb}</span>
                     <span className="min-w-0 truncate font-mono text-secondary" title={first.text}>{first.text}</span>
                     <span className="shrink-0 rounded-full bg-secondary px-1.5 u-meta">×{number(rows.length, locale)}</span>
@@ -116,7 +125,7 @@ function ToolRow({ row }: { row: Row }) {
         <li className="min-w-0">
             <details className="group/row">
                 <summary className={`flex list-none items-center gap-2 rounded-md px-1.5 py-1 text-xs ${expandable ? "cursor-pointer hover:bg-secondary" : ""}`}>
-                    {row.failed ? <XCircle className="size-3.5 shrink-0 text-fg-error-primary" /> : t.status === "completed" ? <CheckCircle className="size-3.5 shrink-0 text-fg-success-primary" /> : <Loading01 className="size-3.5 shrink-0 animate-spin text-fg-brand-primary" />}
+                    {row.failed ? <FailedMark /> : t.status === "completed" ? <CheckCircle className="size-3.5 shrink-0 text-fg-success-primary" /> : <Loading01 className="size-3.5 shrink-0 animate-spin text-fg-brand-primary" />}
                     <span className="shrink-0 text-tertiary">{row.verb}</span>
                     <span className="min-w-0 truncate font-mono text-secondary" title={row.text}>{row.text}</span>
                     {row.output?.meta && <span className="shrink-0 text-quaternary">{row.output.meta}</span>}
