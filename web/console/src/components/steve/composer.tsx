@@ -124,8 +124,13 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                     placeholder={p.disabled ? t("consoleChrome.preparing") : p.busy ? (p.queueing === false ? t("consoleChrome.processing") : t("consoleChrome.queuePlaceholder")) : t("consoleChrome.placeholder")}
                     onChange={(e) => p.onChange(e.target.value)}
                     onKeyDown={(e) => {
+                        // While an input method is composing the keystroke is
+                        // its own: let it through untouched.
                         if (composing.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
-                        if (e.key === "Enter" && Date.now() - settled.current < COMPOSITION_SETTLE_MS) return;
+                        // Just after one settles, an Enter is the tail of that
+                        // confirmation. It must neither send nor leave a stray
+                        // newline behind, so it is swallowed outright.
+                        if (e.key === "Enter" && Date.now() - settled.current < COMPOSITION_SETTLE_MS) { e.preventDefault(); return; }
                         p.onKey(e);
                     }}
                     onPaste={(e: ClipboardEvent<HTMLTextAreaElement>) => { const files = Array.from(e.clipboardData?.files ?? []); if (files.length) p.onPasteFiles?.(files); }}

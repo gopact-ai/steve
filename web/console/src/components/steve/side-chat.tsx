@@ -107,7 +107,11 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
                 onCompositionEnd={() => { composing.current = false; settled.current = Date.now(); }}
                 onKeyDown={(event) => {
                     if (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-                    if (event.key === "Enter" && !event.shiftKey && Date.now() - settled.current >= 20) { event.preventDefault(); void submit(); }
+                    if (event.key !== "Enter" || event.shiftKey) return;
+                    event.preventDefault();
+                    // An Enter that lands right after a composition settles is
+                    // the tail of confirming a candidate, not an instruction.
+                    if (Date.now() - settled.current >= 20) void submit();
                 }} />
             <div className="mt-2 flex items-center gap-2"><span role="status" className="min-w-0 flex-1 text-xs text-tertiary">{blocked ? t("sideChat.unavailable") : session.binding ? t("sideChat.binding") : pending?.active ? t("sideChat.sending") : stop?.error || stop?.message || ""}</span>{(busy || stop?.uncertain) && <Button size="sm" color="secondary" isDisabled={stop?.active} onClick={() => void cancel()}>{t(stop?.active ? "sideChat.stopping" : "sideChat.stop")}</Button>}<Button size="sm" isDisabled={blocked || !!pending || isStopPending(session.id) || (!text.trim() && !refs.length)} onClick={() => void submit()}>{t(busy ? "sideChat.queue" : "sideChat.send")}</Button></div>
             {session.agentReviewRequired && <div className="mt-2 space-y-2 text-xs"><p>{t("sideChat.chooseAgent")}</p><Button size="sm" color="secondary" onClick={() => void side.acceptWorkbenchAgent(session).catch((error) => side.report(session.id, error instanceof Error ? error.message : String(error)))}>{t("sideChat.checkChosenAgent")}</Button></div>}
