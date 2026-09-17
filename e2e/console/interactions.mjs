@@ -1607,6 +1607,34 @@ checks["composer-keys"] = async (f) => {
     await f.page.locator(".message-user-body strong", { hasText: "second" }).waitFor();
 };
 
+checks["composer-columns"] = async (f) => {
+    // The control row answers two questions. Where the message goes reads
+    // from the left; how the turn will run reads from the right and ends at
+    // the send button. Too narrow for two groups and the row closes ranks,
+    // so no control is stranded in the middle of an empty row.
+    await f.page.route("**/console/context?*", (route) => route.fulfill({ json: { enabled: true, context: { conversation: A, project: { ...project("scratch"), bound: true }, agents: [], agent: { id: "test-agent", node: "test-node", harness: "codex", model: "gpt-6-astra", ready: true, usable: true } } } }));
+    await f.page.route("**/console/selectors?*", (route) => route.fulfill({ json: { model: "gpt-6-astra", preferred: {}, models: [{ Value: "gpt-6-astra", Label: "gpt-6-astra" }], options: [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Current: "high", Choices: [{ Value: "high", Label: "High" }] }] } }));
+    await f.page.setViewportSize({ width: 1280, height: 900 });
+    await f.page.reload();
+    const project_ = f.page.getByRole("button", { name: "项目", exact: true });
+    const agent = f.page.getByRole("button", { name: "Agent", exact: true });
+    const model = f.page.getByRole("button", { name: "模型", exact: true });
+    const queue = f.page.getByRole("button", { name: "排队", exact: true }).first();
+    const send = f.page.locator('button[aria-label="发送"]');
+    await model.waitFor();
+    const box = async (locator) => await locator.boundingBox();
+    const [left, right, tail, button] = [await box(agent), await box(model), await box(queue), await box(send)];
+    assert.ok(right.x - (left.x + left.width) > 80, `The run controls must sit apart from the message controls: ${JSON.stringify({ left, right })}`);
+    assert.ok(button.x - (tail.x + tail.width) < 24, `The last run control must meet the send button: ${JSON.stringify({ tail, button })}`);
+    assert.ok((await box(project_)).x < right.x, "The project stays on the left of the row");
+    await f.page.setViewportSize({ width: 520, height: 900 });
+    await eventually(async () => {
+        const [near, far] = [await box(agent), await box(model)];
+        return far.y > near.y + 4 || far.x - (near.x + near.width) < 40;
+    }, "A composer too narrow for two groups must close the gap instead of stranding controls");
+    await noHorizontalOverflow(f.page);
+};
+
 checks["fleet-live-activity"] = async (f) => {
     // The activity column follows streamed progress, ahead of the 10 s
     // snapshot floor, and without re-reading /state per chunk.
