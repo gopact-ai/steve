@@ -5,12 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"strings"
 
 	"github.com/gopact-ai/steve/internal/agenttools"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/node"
 	"github.com/gopact-ai/steve/internal/nodewire"
+	"github.com/gopact-ai/steve/internal/readmodel"
 )
 
 func (a *Service) nodeForAgentEnrollment(name string) (config.Node, error) {
@@ -64,39 +66,93 @@ func (a *Service) NodeAgents(ctx context.Context, name string) (agenttools.Disco
 			}
 		}
 	}
+	a.describeOffers(ctx, name, discovered.Agents)
 	return discovered, nil
 }
 
-// EnrollNodeAgent saves the logical Agent only after the selected node has
-// installed and atomically published its own declaration. If the coordinator
-// file cannot be saved, the installed tool stays available for a safe retry.
-func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttools.EnrollRequest) (agenttools.Enrollment, error) {
-	id := strings.ToLower(strings.TrimSpace(req.AgentID))
-	if !NameShape.MatchString(id) {
-		return agenttools.Enrollment{}, errors.New("Agent 名只能是小写字母、数字、点、下划线、连字符")
+// describeOffers adds what each tool was last seen offering on the machine,
+// so the owner can pick a model and a reasoning effort while registering
+// rather than going back into settings afterwards. A tool that has never run
+// there offers nothing yet, which the page shows as such.
+func (a *Service) describeOffers(ctx context.Context, name string, candidates []agenttools.Candidate) {
+	if len(candidates) == 0 {
+		return
 	}
-	canonical, ok := agenttools.Lookup(req.CandidateID)
-	if !ok {
-		return agenttools.Enrollment{}, agenttools.ErrUnsupported
+	offers := a.harnessOffers(ctx, name)
+	for i := range candidates {
+		harness, ok := offers[candidates[i].Harness]
+		if !ok {
+			continue
+		}
+		candidates[i].Model = harness.Model
+		candidates[i].Models = harness.Models
+		for _, selector := range harness.Selectors {
+			candidates[i].Selectors = append(candidates[i].Selectors, agenttools.CandidateSelector{ID: selector.ID, Name: selector.Name, Category: selector.Category, Current: selector.Current, Choices: selector.Choices, Values: selector.Values})
+		}
+	}
+}
+
+// harnessOffers is what each tool on one machine was last seen offering.
+// An empty machine name reads this computer, which the read model files
+// under the hub. Nothing is offered before a tool has run there.
+func (a *Service) harnessOffers(ctx context.Context, name string) map[string]readmodel.Harness {
+	offers := map[string]readmodel.Harness{}
+	if a.View == nil {
+		return offers
+	}
+	for _, item := range a.View.Snapshot(ctx).Nodes {
+		if name == "" && item.Role != readmodel.RoleHub || name != "" && item.Name != name {
+			continue
+		}
+		for _, harness := range item.Harnesses {
+			offers[harness.ID] = harness
+		}
+	}
+	return offers
+}
+
+// EnrollNodeAgent saves the logical Agents only after the selected node has
+// installed and atomically published its own declaration. Every requested
+// agent is validated before anything is installed, and the coordinator's
+// configuration is written once, so a partial batch cannot be saved. If that
+// write fails, the installed tools stay available for a safe retry.
+func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttools.EnrollRequest) (agenttools.Enrollment, error) {
+	requested := req.Requested()
+	if len(requested) == 0 {
+		return agenttools.Enrollment{}, errors.New("请选择要登记的 Agent")
 	}
 	target, err := a.nodeForAgentEnrollment(name)
 	if err != nil {
 		return agenttools.Enrollment{}, err
 	}
-	ConfigMu.RLock()
-	existing, exists := a.Cfg.Agents[id]
-	ConfigMu.RUnlock()
-	if exists && (existing.Node != name || existing.Harness != canonical.Harness) {
-		return agenttools.Enrollment{}, fmt.Errorf("Agent 名称 %s 已被占用", id)
-	}
 	if a.Catalog == nil {
 		return agenttools.Enrollment{}, errors.New("Agent 服务尚未就绪")
 	}
-	result, installErr := a.Nodes.EnrollAgent(ctx, name, agenttools.InstallRequest{CandidateID: req.CandidateID, ExpectedRevision: req.ExpectedRevision})
-	if installErr != nil && !node.SettingsCommitted(installErr) {
-		return result, installErr
+	ConfigMu.RLock()
+	existing := maps.Clone(a.Cfg.Agents)
+	ConfigMu.RUnlock()
+	planned, err := planNodeAgents(name, requested, existing)
+	if err != nil {
+		return agenttools.Enrollment{}, err
 	}
-	result.AgentID = id
+	// Each installation publishes a new node declaration, so the revision the
+	// next one must match is the one the previous receipt reported.
+	revision := req.ExpectedRevision
+	var result agenttools.Enrollment
+	var installErr error
+	for _, item := range planned.order {
+		receipt, err := a.Nodes.EnrollAgent(ctx, name, agenttools.InstallRequest{CandidateID: planned.candidates[item], ExpectedRevision: revision})
+		if err != nil && !node.SettingsCommitted(err) {
+			return receipt, err
+		}
+		installErr = errors.Join(installErr, err)
+		if receipt.Revision != "" {
+			revision = receipt.Revision
+		}
+		receipt.AgentID = item
+		result = receipt
+	}
+	result.Agents = planned.order
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
 	ConfigMu.Lock()
@@ -107,19 +163,27 @@ func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttoo
 	if err := ctx.Err(); err != nil {
 		return result, err
 	}
-	if existing, ok := a.Cfg.Agents[id]; ok {
-		if existing.Node != name || existing.Harness != canonical.Harness {
-			return result, fmt.Errorf("Agent 名称 %s 已被占用", id)
+	candidate := *a.Cfg
+	candidate.Agents = make(map[string]config.Agent, len(a.Cfg.Agents)+len(planned.order))
+	maps.Copy(candidate.Agents, a.Cfg.Agents)
+	added := false
+	for _, id := range planned.order {
+		if current, ok := candidate.Agents[id]; ok {
+			if current.Node != name || current.Harness != planned.agents[id].Harness {
+				return result, fmt.Errorf("Agent 名称 %s 已被占用", id)
+			}
+			continue
 		}
+		entry := planned.agents[id]
+		entry.Default = len(candidate.Agents) == 0
+		candidate.Agents[id] = entry
+		added = true
+	}
+	if !added {
 		result.Registered = true
 		return result, installErr
 	}
-	candidate := *a.Cfg
-	candidate.Agents = make(map[string]config.Agent, len(a.Cfg.Agents)+1)
-	for name, item := range a.Cfg.Agents {
-		candidate.Agents[name] = item
-	}
-	candidate.Agents[id] = config.Agent{Node: name, Harness: canonical.Harness, Default: len(candidate.Agents) == 0}
+	applyDefault(candidate.Agents, planned.preferred, planned.order)
 	prepared, err := candidate.AgentCatalog()
 	if err != nil {
 		return result, err
@@ -131,8 +195,55 @@ func (a *Service) EnrollNodeAgent(ctx context.Context, name string, req agenttoo
 	a.Cfg.Agents = candidate.Agents
 	a.Catalog.Publish(prepared)
 	result.Registered = true
-	slog.Info(fmt.Sprintf("steve: selected agent registered agent=%s node=%s harness=%s", id, name, canonical.Harness), "agent", id, "node", name, "harness", canonical.Harness)
+	slog.Info(fmt.Sprintf("steve: selected agents registered agents=%s node=%s", strings.Join(planned.order, ","), name), "node", name)
 	return result, errors.Join(installErr, saveErr)
+}
+
+// nodeAgentPlan is the validated batch: the config entry for each agent, the
+// discovered tool it came from, the order the owner chose and the default.
+type nodeAgentPlan struct {
+	agents     map[string]config.Agent
+	candidates map[string]string
+	order      []string
+	preferred  string
+}
+
+// planNodeAgents checks every requested agent against the supported tools and
+// the names already in use, before anything is installed on the machine.
+func planNodeAgents(node string, requested []agenttools.EnrollAgent, existing map[string]config.Agent) (nodeAgentPlan, error) {
+	plan := nodeAgentPlan{agents: map[string]config.Agent{}, candidates: map[string]string{}}
+	seen := map[string]bool{}
+	for _, want := range requested {
+		canonical, ok := agenttools.Lookup(want.CandidateID)
+		if !ok {
+			return nodeAgentPlan{}, agenttools.ErrUnsupported
+		}
+		id := strings.ToLower(strings.TrimSpace(want.AgentID))
+		if id == "" {
+			id = want.CandidateID
+		}
+		if !NameShape.MatchString(id) {
+			return nodeAgentPlan{}, fmt.Errorf("Agent 名 %q 只能是小写字母、数字、点、下划线、连字符", want.AgentID)
+		}
+		if seen[id] {
+			return nodeAgentPlan{}, fmt.Errorf("Agent 名称 %s 在这次登记里出现了两次", id)
+		}
+		seen[id] = true
+		if current, ok := existing[id]; ok && (current.Node != node || current.Harness != canonical.Harness) {
+			return nodeAgentPlan{}, fmt.Errorf("Agent 名称 %s 已被占用", id)
+		}
+		entry := config.Agent{Node: node, Harness: canonical.Harness, About: strings.TrimSpace(want.About), Model: strings.TrimSpace(want.Model)}
+		if len(want.Options) > 0 {
+			entry.Options = maps.Clone(want.Options)
+		}
+		plan.agents[id] = entry
+		plan.candidates[id] = want.CandidateID
+		plan.order = append(plan.order, id)
+		if want.Default {
+			plan.preferred = id
+		}
+	}
+	return plan, nil
 }
 
 func (a *Service) checkRemoteHarness(ctx context.Context, nodeID, harnessID string) (config.Node, error) {

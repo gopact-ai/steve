@@ -4,7 +4,8 @@ export type SetupStep = "identity" | "workspace" | "agents" | "machines" | "pref
 export const setupSteps: SetupStep[] = ["identity", "workspace", "agents", "machines", "preferences", "finished"];
 export interface DesktopSetup { step: SetupStep; done: boolean }
 export interface DesktopStatus { enabled: boolean; node_id?: string; setup_required: boolean; agent_count: number; local_agent_count?: number; default_agent?: string; workspace_path?: string; workspace_managed?: boolean; setup?: DesktopSetup }
-export interface DesktopAgentCandidate { id: string; name: string; harness: string; executable?: string; installed: boolean; requires?: string[]; registered: boolean }
+export interface DesktopAgentSelector { id: string; name: string; category?: string; current?: string; choices?: string[]; values?: string[] }
+export interface DesktopAgentCandidate { id: string; name: string; harness: string; executable?: string; installed: boolean; requires?: string[]; registered: boolean; model?: string; models?: string[]; selectors?: DesktopAgentSelector[] }
 export const fetchDesktopStatus = (signal?: AbortSignal) => request<DesktopStatus>("/console/desktop", { signal, cache: "no-store" });
 export const discoverDesktopAgents = (signal?: AbortSignal) => request<{ agents: DesktopAgentCandidate[] }>("/console/desktop/agents", { signal, cache: "no-store" });
 export interface DesktopEnrollAgent { candidate_id: string; agent_id: string; about?: string; default?: boolean }
