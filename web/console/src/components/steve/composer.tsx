@@ -1,6 +1,6 @@
 import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
-import { memo, useState, type ClipboardEvent, type KeyboardEvent, type RefObject } from "react";
+import { memo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type RefObject } from "react";
 import { ArrowUp, ChevronDown, CornerDownRight, DotsHorizontal, Edit05, Folder, MessageChatSquare, Plus, Square, Trash01 } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
@@ -61,9 +61,20 @@ export interface ComposerProps {
 
 const chip = "composer-chip";
 
+// How long after a composition settles the box stays deaf to Enter.
+const COMPOSITION_SETTLE_MS = 20;
+
 export const Composer = memo(function Composer(p: ComposerProps) {
     const { t } = useI18n();
     const nodeLabelOf = useNodeLabel();
+    // Enter sends, so the box has to be certain the keystroke is the
+    // owner's and not an input method confirming a candidate. Engines
+    // disagree on whether that Enter arrives before or after
+    // compositionend, so the box also stays deaf to Enter for a moment
+    // after a composition settles — long enough to cover the confirming
+    // keystroke, far shorter than a person's next deliberate press.
+    const composing = useRef(false);
+    const settled = useRef(0);
     return (
         <div className="composer">
             {p.suggestions.length > 0 && (
@@ -104,13 +115,19 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                 )}
                 <textarea
                     ref={p.boxRef}
+                    onCompositionStart={() => { composing.current = true; }}
+                    onCompositionEnd={() => { composing.current = false; settled.current = Date.now(); }}
                     aria-label={t("consoleChrome.message")}
                     value={p.value}
                     rows={1}
                     disabled={p.disabled || (p.busy && p.queueing === false)}
                     placeholder={p.disabled ? t("consoleChrome.preparing") : p.busy ? (p.queueing === false ? t("consoleChrome.processing") : t("consoleChrome.queuePlaceholder")) : t("consoleChrome.placeholder")}
                     onChange={(e) => p.onChange(e.target.value)}
-                    onKeyDown={p.onKey}
+                    onKeyDown={(e) => {
+                        if (composing.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                        if (e.key === "Enter" && Date.now() - settled.current < COMPOSITION_SETTLE_MS) return;
+                        p.onKey(e);
+                    }}
                     onPaste={(e: ClipboardEvent<HTMLTextAreaElement>) => { const files = Array.from(e.clipboardData?.files ?? []); if (files.length) p.onPasteFiles?.(files); }}
                     className="composer-textarea"
                 />

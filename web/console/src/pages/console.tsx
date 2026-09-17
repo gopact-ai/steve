@@ -496,9 +496,9 @@ export function ConsolePage() {
             }
             if (e.key === "Escape") { e.preventDefault(); setSuggestions([]); return; }
         }
-        // Enter is a newline — and the key an input method confirms a
-        // candidate with; Shift+Enter sends.
-        if (e.key === "Enter" && e.shiftKey) { e.preventDefault(); void submit(); }
+        // Enter sends, Shift+Enter is a newline. The composer has already
+        // swallowed the Enter an input method confirms a candidate with.
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); void submit(); }
     }
 
     const lastWithProcess = [...entries].reverse().find((r) => r.kind === "reply" && (r.process || r.injected));
