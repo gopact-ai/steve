@@ -174,9 +174,6 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                             </Dropdown.Menu>
                         </Dropdown.Popover>
                     </Dropdown.Root>
-                    <button type="button" onClick={p.onToggleQueueing} aria-pressed={p.queueing !== false} className={`${chip} shrink-0 whitespace-nowrap text-quaternary`} title={p.queueing === false ? t("consoleChrome.enableQueue") : t("consoleChrome.disableQueue")}>
-                        <CornerDownRight className="size-3.5" aria-hidden="true" /><span>{p.queueing === false ? t("consoleChrome.noQueue") : t("consoleChrome.queue")}</span>
-                    </button>
                     <Dropdown.Root>
                         <AriaButton isDisabled={p.disabled || p.pending} aria-label="Agent" className={`${chip} text-secondary`}>
                             <span>{p.agent?.id || "Agent"}</span>
@@ -195,7 +192,11 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                             </Dropdown.Menu>
                         </Dropdown.Popover>
                     </Dropdown.Root>
+                    </div><div className="composer-run">
                     {p.agent && p.onSelectors && <PreferenceChips key={p.preferenceKey || p.agent.id} agent={p.agent} load={p.onSelectors} onPrefer={p.onPrefer} />}
+                    <button type="button" onClick={p.onToggleQueueing} aria-pressed={p.queueing !== false} className={`${chip} shrink-0 whitespace-nowrap text-quaternary`} title={p.queueing === false ? t("consoleChrome.enableQueue") : t("consoleChrome.disableQueue")}>
+                        <CornerDownRight className="size-3.5" aria-hidden="true" /><span>{p.queueing === false ? t("consoleChrome.noQueue") : t("consoleChrome.queue")}</span>
+                    </button>
                     </div><div className="composer-actions">
                     {p.busy && (
                         <button type="button" aria-label={p.stopping ? t("consoleChrome.stopping") : t("consoleChrome.stop")} title={p.stopping ? t("console.stopping") : t("consoleChrome.stopHint")} disabled={p.stopping} onClick={p.onStop}
