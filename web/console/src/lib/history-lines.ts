@@ -49,9 +49,27 @@ function operationWord(id: string, tr: Translator): string {
     return tr("history.opGeneric");
 }
 
+// An error arrives as the runtime wrote it: a node ID, a dial address,
+// a syscall. A reader wants the machine and the gist; the untouched
+// original stays on the row's tooltip for whoever needs the address.
+const nodeID = /node-[0-9a-f]{4,}/g;
+const address = /\s*at \d{1,3}(?:\.\d{1,3}){3}:\d+/g;
+const linkLost = /connection reset by peer|broken pipe|use of closed network connection|unexpected EOF|connection refused|no route to host|i\/o timeout|context deadline exceeded/i;
+
+function problemWord(raw: string, machine: string, tr: Translator, nodeName: (id: string) => string): string {
+    if (!raw) return "";
+    if (linkLost.test(raw)) return tr("history.problemLink", { machine });
+    if (/permission denied|not permitted/i.test(raw)) return tr("history.problemDenied", { machine });
+    if (/no space left/i.test(raw)) return tr("history.problemSpace", { machine });
+    // Nothing recognised: keep the words, drop the plumbing.
+    // A node nobody can name keeps its ID: it is still searchable.
+    return raw.replace(nodeID, nodeName).replace(address, "").trim();
+}
+
 // A machine that simply went away says so as "disconnected"; anything
-// else is a real error and is shown as it came.
-const reasonWord = (reason: string, tr: Translator) => reason === "disconnected" || reason === "" ? tr("history.reasonClosed") : reason;
+// else is a real error and is read as one.
+const reasonWord = (reason: string, machine: string, tr: Translator, nodeName: (id: string) => string) =>
+    reason === "disconnected" || reason === "" ? tr("history.reasonClosed") : problemWord(reason, machine, tr, nodeName);
 
 // One manifest change, encoded as "key\tfrom\tto".
 function abilityWord(row: string, tr: Translator): string {
@@ -85,14 +103,14 @@ export function describeHistory(entry: HistoryEntry, tr: Translator, nodeName: (
             return {
                 family: "machine", tone: "bad", label: tr("history.kindNodeDown"),
                 title: tr("history.lineNodeDown", { machine }),
-                facts: [], note: reasonWord(d.reason ?? "", tr),
+                facts: [], note: reasonWord(d.reason ?? "", machine, tr, nodeName),
             };
         case "node.skills": {
             if (d.error) {
                 return {
                     family: "skills", tone: "bad", label: tr("history.kindSkills"),
                     title: tr("history.lineSkillsFailed", { machine }),
-                    facts: d.hash ? [tr("history.factBundle", { hash: d.hash })] : [], note: d.error,
+                    facts: d.hash ? [tr("history.factBundle", { hash: d.hash })] : [], note: problemWord(d.error, machine, tr, nodeName),
                 };
             }
             return {
@@ -137,7 +155,7 @@ export function describeHistory(entry: HistoryEntry, tr: Translator, nodeName: (
         case "channel.error":
             return {
                 family: "other", tone: "bad", label: tr("history.kindChannel"),
-                title: tr("history.lineChannel"), facts: [], note: entry.text,
+                title: tr("history.lineChannel"), facts: [], note: problemWord(entry.text, d.channel || machine, tr, nodeName),
             };
         case "ledger": {
             const id = entry.operation || subject;
