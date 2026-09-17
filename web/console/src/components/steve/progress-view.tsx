@@ -7,7 +7,7 @@ import { Md } from "./markdown";
 import { plain } from "@/lib/plain";
 import { useNodeLabel, whoIs } from "@/lib/node-name";
 import { ThinkingFold } from "./thinking-fold";
-import { ToolCalls } from "./tool-calls";
+import { ToolCalls, ToolRowList } from "./tool-calls";
 
 // Trace is one agent's progress: its checklist, its thinking summary,
 // its tool calls, and (for a plain turn) the answer forming.
@@ -49,7 +49,7 @@ function Activity({ tools }: { tools: ToolCall[] }) {
                 {summary.running && <Loading01 className="size-3 shrink-0 animate-spin" />}
                 <ChevronDown className="size-3.5 shrink-0 transition group-open/activity:rotate-180" />
             </summary>
-            <div className="ml-2 border-l border-secondary pl-3"><ToolCalls tools={tools} /></div>
+            <div className="ml-2"><ToolRowList tools={tools} /></div>
         </details>
     );
 }
