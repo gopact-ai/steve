@@ -2,7 +2,7 @@ import { NodeAgentEnrollment } from "@/components/steve/node-agent-enrollment";
 import { CoordinationPanel } from "@/components/steve/coordination-panel";
 import { ExecutionDataLevel, SSHConnect } from "@/components/steve/ssh-connect";
 import { MachineUpgrade } from "@/components/steve/machine-upgrade";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "@/providers/locale-provider";
 import type { Translator } from "@/lib/i18n";
 import { levelName } from "@/lib/workspaces";
@@ -412,15 +412,8 @@ export function FleetPage() {
     // Streamed progress keeps the activity column current between the
     // snapshot re-reads; the buffer is trimmed from the front, so the
     // cursor is an arrival number, not an index.
-    const consoleEvents = useConsoleEvents();
     const [liveActivity, setLiveActivity] = useState<Record<string, LiveActivity>>({});
-    const seenEvent = useRef(0);
-    useEffect(() => {
-        const fresh = consoleEvents.filter((ev) => (ev.n ?? 0) > seenEvent.current);
-        if (!fresh.length) return;
-        seenEvent.current = fresh[fresh.length - 1].n ?? seenEvent.current;
-        setLiveActivity((current) => fresh.reduce(applyActivity, current));
-    }, [consoleEvents]);
+    useConsoleEvents((fresh) => setLiveActivity((current) => fresh.reduce(applyActivity, current)));
     const { act } = useIntent();
     const up = snap.nodes.filter((n) => n.up).length;
     const versionDrift = snap.nodes.filter((n) => n.up && n.version && snap.hub.version && n.version !== snap.hub.version);

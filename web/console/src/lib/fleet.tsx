@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { emptySnapshot, fetchState } from "./api/fleet";
 import { eventsURL, HTTPError } from "./http";
 import { useResourceRead } from "@/hooks/use-resource-read";
@@ -15,7 +15,83 @@ interface FleetState {
 }
 
 const FleetContext = createContext<FleetState | null>(null);
-const ConsoleEventsContext = createContext<Event[] | null>(null);
+const ConsoleFeedContext = createContext<ConsoleFeed | null>(null);
+
+// A streaming turn sends a fragment of text many times a second. Held in
+// React state those fragments re-rendered every reader on every fragment,
+// which is what made the console drop frames while work ran. The buffer
+// lives outside React instead: readers subscribe, and once a frame they
+// are handed whatever arrived since they last looked, in one batch.
+const KEPT = 400;
+
+// Text arrives faster than anyone can read it, and every update re-lays
+// out the whole answer so far. Fragments are handed over at a rate a
+// reader can follow; anything that is not just more text — a reply, a
+// question, a change to the queue — is not held back.
+const TEXT_INTERVAL = 80;
+
+export type ConsoleReader = (batch: Event[]) => void;
+
+export class ConsoleFeed {
+    private kept: Event[] = [];
+    private arrived = 0;
+    private readers = new Map<ConsoleReader, number>();
+    private frame: number | null = null;
+    private timer: number | null = null;
+    private urgent = false;
+    private holding = false;
+    private delivered = 0;
+
+    push(event: Event) {
+        this.kept.push({ ...event, n: ++this.arrived });
+        if (this.kept.length > KEPT) this.kept.splice(0, this.kept.length - KEPT);
+        if (!isStreamingProgress(event)) {
+            this.urgent = true;
+            // A reply does not wait behind the rate text is handed over at.
+            if (this.holding && this.timer !== null) { clearTimeout(this.timer); this.timer = null; this.holding = false; }
+        }
+        this.wake();
+    }
+
+    // A reader that replays sees what is already buffered, so a page opened
+    // in the middle of a turn still knows about the turn it walked in on.
+    read(reader: ConsoleReader, replay: boolean): () => void {
+        this.readers.set(reader, replay ? 0 : this.arrived);
+        if (replay && this.kept.length) { this.urgent = true; this.wake(); }
+        return () => { this.readers.delete(reader); };
+    }
+
+    stop() {
+        if (this.frame !== null) cancelAnimationFrame(this.frame);
+        if (this.timer !== null) clearTimeout(this.timer);
+        this.frame = this.timer = null;
+        this.holding = false;
+    }
+
+    private wake() {
+        if (this.frame !== null || this.timer !== null) return;
+        // A hidden tab is given no frames; its readers still need the events.
+        if (typeof document !== "undefined" && document.hidden) {
+            this.timer = window.setTimeout(() => { this.timer = null; this.deliver(); }, 250);
+            return;
+        }
+        const wait = this.urgent ? 0 : Math.max(0, TEXT_INTERVAL - (performance.now() - this.delivered));
+        if (wait > 0) { this.holding = true; this.timer = window.setTimeout(() => { this.timer = null; this.holding = false; this.wake(); }, wait); return; }
+        this.frame = requestAnimationFrame(() => { this.frame = null; this.deliver(); });
+    }
+
+    private deliver() {
+        this.urgent = false;
+        this.delivered = performance.now();
+        for (const [reader, cursor] of [...this.readers]) {
+            if (!this.readers.has(reader)) continue;
+            const batch = this.kept.filter((event) => (event.n ?? 0) > cursor);
+            if (!batch.length) continue;
+            this.readers.set(reader, batch[batch.length - 1].n ?? cursor);
+            reader(batch);
+        }
+    }
+}
 
 // The snapshot is re-read when the stream says something moved, with a
 // polling floor in case the stream drops silently.
@@ -23,7 +99,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
     const [snap, setSnap] = useState<Snapshot>(emptySnapshot);
     const [live, setLive] = useState<Live>("connecting");
     const [events, setEvents] = useState<Event[]>([]);
-    const [consoleEvents, setConsoleEvents] = useState<Event[]>([]);
+    const [feed] = useState(() => new ConsoleFeed());
     const pending = useRef<number | null>(null);
     const firstVersion = useRef<string | null>(null);
     const [hubUpdated, setHubUpdated] = useState(false);
@@ -49,7 +125,6 @@ export function FleetProvider({ children }: { children: ReactNode }) {
         const floor = window.setInterval(() => void load(), 10000);
         let source: EventSource | null = null;
         let retry: number | null = null;
-        let arrived = 0;
         let reconnecting = false;
         const connect = () => {
             source = new EventSource(eventsURL());
@@ -61,7 +136,7 @@ export function FleetProvider({ children }: { children: ReactNode }) {
                 const ev = JSON.parse(e.data) as Event;
                 // The console follows its own traffic and the progress of
                 // work asked from it; everything else is the activity feed.
-                if (ev.kind.startsWith("console.") || ev.kind === "step.progress" || ev.kind === "delegate.progress") setConsoleEvents((list) => [...list.slice(-399), { ...ev, n: ++arrived }]);
+                if (ev.kind.startsWith("console.") || ev.kind === "step.progress" || ev.kind === "delegate.progress") feed.push(ev);
                 else setEvents((list) => [ev, ...list].slice(0, 300));
                 // Text snapshots carry no fleet lifecycle changes. Re-reading
                 // /state here also invalidates every snapshot consumer.
@@ -75,11 +150,11 @@ export function FleetProvider({ children }: { children: ReactNode }) {
             };
         };
         connect();
-        return () => { window.clearInterval(floor); source?.close(); if (retry) window.clearTimeout(retry); if (pending.current) window.clearTimeout(pending.current); };
-    }, [load, refresh]);
+        return () => { window.clearInterval(floor); source?.close(); feed.stop(); if (retry) window.clearTimeout(retry); if (pending.current) window.clearTimeout(pending.current); };
+    }, [load, refresh, feed]);
 
     const value = useMemo(() => ({ snap, live, events, refresh, hubUpdated }), [snap, live, events, refresh, hubUpdated]);
-    return <FleetContext.Provider value={value}><ConsoleEventsContext.Provider value={consoleEvents}>{children}</ConsoleEventsContext.Provider></FleetContext.Provider>;
+    return <FleetContext.Provider value={value}><ConsoleFeedContext.Provider value={feed}>{children}</ConsoleFeedContext.Provider></FleetContext.Provider>;
 }
 
 export function useFleet(): FleetState {
@@ -88,10 +163,16 @@ export function useFleet(): FleetState {
     return ctx;
 }
 
-export function useConsoleEvents(): Event[] {
-    const events = useContext(ConsoleEventsContext);
-    if (!events) throw new Error("useConsoleEvents outside FleetProvider");
-    return events;
+// useConsoleEvents hands a component the console events that arrived since
+// its last turn at them, a frame at a time. The reader may close over
+// anything it likes: the latest one is always the one called.
+export function useConsoleEvents(reader: ConsoleReader, options?: { replay?: boolean }) {
+    const feed = useContext(ConsoleFeedContext);
+    if (!feed) throw new Error("useConsoleEvents outside FleetProvider");
+    const latest = useRef(reader);
+    useLayoutEffect(() => { latest.current = reader; });
+    const replay = options?.replay !== false;
+    useEffect(() => feed.read((batch) => latest.current(batch), replay), [feed, replay]);
 }
 
 export function isStreamingProgress(event: Event): boolean {

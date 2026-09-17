@@ -1,6 +1,6 @@
 import { SelectionSurface } from "@/providers/selection-provider";
 import { selectionForReply } from "@/lib/selection";
-import { useSyncExternalStore } from "react";
+import { memo, useSyncExternalStore } from "react";
 import { getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { useI18n } from "@/providers/locale-provider";
 import { ChevronDown } from "@untitledui/icons";
@@ -17,18 +17,18 @@ import { MaterialActions } from "./material-actions";
 import { ThinkingFold } from "./thinking-fold";
 
 // UserMessage is what the person typed: a bubble on the right.
-export function UserMessage({ text }: { text: string }) {
+export const UserMessage = memo(function UserMessage({ text }: { text: string }) {
     return (
         <div className="message-user">
             <div className="message-user-body"><Md text={text} /></div>
         </div>
     );
-}
+});
 
 // AssistantMessage is one line from Steve, laid out the way Codex lays
 // out a turn: first what the agent did (its thinking summary and tool
 // calls, folding), then what it said, then a small meta line.
-export function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply; selected?: boolean; onSelect?: () => void; onQuote?: () => void }) {
+export const AssistantMessage = memo(function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply; selected?: boolean; onSelect?: (r: Reply) => void; onQuote?: (r: Reply) => void }) {
     const { t, locale } = useI18n();
     const support = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
     const state = r.error ? (/cancelled|canceled|context canceled/i.test(r.error) ? t("console.stopped") : t("console.unfinished")) : r.kind === "notice" ? t("console.notice") : r.kind === "milestone" ? t("console.milestone") : "";
@@ -44,13 +44,13 @@ export function AssistantMessage({ r, selected, onSelect, onQuote }: { r: Reply;
             <div className="message-meta">
                 <span>{when(r.at, locale)}</span>
                 {state && <span className={r.error && state !== t("console.stopped") ? "text-error-primary" : ""}>{state}</span>}
-                {onSelect && <button type="button" onClick={onSelect} className="-my-1 min-h-6 min-w-6 rounded px-1 hover:text-primary">{t("console.detailAction")}</button>}
+                {onSelect && (r.process || r.injected) && <button type="button" onClick={() => onSelect(r)} className="-my-1 min-h-6 min-w-6 rounded px-1 hover:text-primary">{t("console.detailAction")}</button>}
                 {r.id && r.project_id && r.revision && <MaterialActions capture={{ project: r.project_id, title: r.title || r.text.split("\n")[0].slice(0, 60) || t("materials.reply"), source: { kind: "reply", conversation: r.conversation, reply_id: r.id, revision: r.revision } }} />}
-                {!support.material_refs && onQuote && r.id && r.text && <button type="button" onClick={onQuote} className="-my-1 min-h-6 min-w-6 rounded px-1 hover:text-primary" title={t("console.quoteHint")}>{t("console.quote")}</button>}
+                {!support.material_refs && onQuote && r.id && r.text && <button type="button" onClick={() => onQuote(r)} className="-my-1 min-h-6 min-w-6 rounded px-1 hover:text-primary" title={t("console.quoteHint")}>{t("console.quote")}</button>}
             </div>
         </div>
     );
-}
+});
 
 // InlineProcess is the doing, in the transcript: the thinking summary
 // folded, then for a planned turn one group per step, then the turn's

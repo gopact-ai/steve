@@ -1,6 +1,6 @@
 import { useSideChat } from "@/providers/side-chat-provider";
 import { SideChatPanel } from "@/components/steve/side-chat";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type SetStateAction } from "react";
 import { useLocation, useNavigate } from "react-router";
 import { LayoutLeft, LayoutRight, MessageChatSquare, X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
@@ -21,6 +21,7 @@ import { Nothing } from "@/components/steve/ui";
 import { enqueue, fetchQueue, deleteConversation, deleteQueued, editQueued, steerQueued, fetchContext, fetchConversations, fetchReplies, fetchSuggest, fetchVerbs, send, updateConversation, initializeConversation, fetchSelectors, setPreferences, checkSubmissionSupport, requireSubmissionSupport, getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { Sheet } from "@/components/steve/drawer";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
+import { useEventCallback } from "@/hooks/use-event-callback";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import { placeLabel } from "@/lib/workspaces";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
@@ -42,7 +43,6 @@ import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, 
 export function ConsolePage() {
     const { snap, refresh, live: connection, hubUpdated } = useFleet();
     const nodeLabelOf = useNodeLabel();
-    const consoleEvents = useConsoleEvents();
     const { t, locale } = useI18n();
     const materials = useMaterial();
     const side = useSideChat();
@@ -109,7 +109,7 @@ export function ConsolePage() {
     };
     // The server owns execution; every tab projects the same durable queue.
     const [exchanges, setExchanges] = useState<Exchange[]>([]);
-    const queue = exchanges.filter((e) => e.conversation === conversation && e.state === "queued");
+    const queue = useMemo(() => exchanges.filter((e) => e.conversation === conversation && e.state === "queued"), [exchanges, conversation]);
     const recoveryState = exchanges.find((entry) => entry.conversation === conversation && ["recovering", "awaiting-user"].includes(entry.state))?.state;
     const busy = !!live || exchanges.some((e) => e.conversation === conversation && ["running", "recovering", "awaiting-user"].includes(e.state));
     const activeConversation = useRef(conversation);
@@ -243,11 +243,11 @@ export function ConsolePage() {
     // The context depends on the fleet: an agent coming up changes who can work here.
     useEffect(() => { loadContext(); }, [snap.at, loadContext]);
 
-    useEffect(() => {
-        // The buffer is trimmed from the front, so the cursor is the
-        // arrival number of the last event handled, not an index.
-        const fresh = consoleEvents.filter((ev) => (ev.n ?? 0) > seen.current);
-        if (fresh.length) seen.current = fresh[fresh.length - 1].n ?? seen.current;
+    // Events arrive in the batch that a frame's worth of streaming made,
+    // so a turn writing quickly costs one pass here, not one per fragment.
+    // The transcript read is cursored on the last arrival number handled.
+    useConsoleEvents((fresh) => {
+        seen.current = fresh[fresh.length - 1].n ?? seen.current;
         if (fresh.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.meta" || ev.kind === "console.queue")) loadConversations();
         const mine = fresh.filter((ev) => ev.conversation === conversation);
         if (!mine.length) return;
@@ -276,7 +276,7 @@ export function ConsolePage() {
             }
             return next.slice(-200);
         });
-    }, [consoleEvents, conversation, loadConversations, loadQueue, loadReplies, loadContext, refresh]);
+    });
 
     useLayoutEffect(() => {
         if (followTranscript.current && transcriptBox.current) {
@@ -434,16 +434,18 @@ export function ConsolePage() {
         } finally { refresh(); }
     }
 
-    const settled = ["done", "failed", "skipped", "cancelled"];
-    const mineTasks = snap.tasks.filter((t) => t.channel === conversation);
-    const runningPlans = snap.plans.filter((p) => {
-        const task = mineTasks.find((t) => t.id === p.task_id);
-        return task && (p.steps || []).some((s) => !settled.includes(s.state));
-    });
     // The roots of this conversation's call graph: its tasks whose parent
     // is not itself one of them.
-    const ids = new Set(mineTasks.map((t) => t.id));
-    const roots = mineTasks.filter((t) => !t.parent || !ids.has(t.parent)).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+    const { runningPlans, roots } = useMemo(() => {
+        const settled = ["done", "failed", "skipped", "cancelled"];
+        const mine = snap.tasks.filter((t) => t.channel === conversation);
+        const plans = snap.plans.filter((p) => {
+            const task = mine.find((t) => t.id === p.task_id);
+            return task && (p.steps || []).some((s) => !settled.includes(s.state));
+        });
+        const ids = new Set(mine.map((t) => t.id));
+        return { runningPlans: plans, roots: mine.filter((t) => !t.parent || !ids.has(t.parent)).sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || "")) };
+    }, [snap.tasks, snap.plans, conversation]);
 
     // Completion comes from the coordinator, by the rules the line will be
     // judged by; the page keeps no rules, only a short debounce.
@@ -491,14 +493,45 @@ export function ConsolePage() {
         finally { setUploading(false); }
     }
     const toolbarStatus = stopState?.uncertain ? t("console.stopUncertain") : status || contextError || conversationsError || (queueReadError?.conversation === conversation ? readErrorText(queueReadError.error) : "") || (replyReadError?.conversation === conversation ? readErrorText(replyReadError.error) : "") || stopState?.error || stopState?.message || (creating ? t("console.creating") : stopping ? t("console.stopping") : submission?.active ? t("console.sending") : recoveryState ? t(recoveryState === "recovering" ? "console.recovering" : "status.awaitingHuman") : live || busy ? t("console.working") : "");
-    const listed = conversations.some((c) => c.id === conversation) ? conversations : [{ id: conversation, title: t("console.newConversation"), last_at: "", count: 0, running: false, project: context?.project?.id, agent: context?.agent?.id }, ...conversations];
+    const listed = useMemo(() => conversations.some((c) => c.id === conversation) ? conversations : [{ id: conversation, title: t("console.newConversation"), last_at: "", count: 0, running: false, project: context?.project?.id, agent: context?.agent?.id }, ...conversations], [conversations, conversation, t, context?.project?.id, context?.agent?.id]);
+    const agents = useMemo(() => context?.agents ?? [], [context?.agents]);
 
-    const sessions = (collapsed = sessionsCollapsed, resizable = true) => <SessionsTree resizable={resizable} list={listed} projects={snap.projects} current={conversation} onPick={selectConversation} onNew={(project) => void newSession(project)} creating={creating} onImport={() => { setMobileSessions(false); setImporting(true); }}
-                onUpdate={(id, patch) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, "")))}
-                onDelete={removeConversation}
-                collapsed={collapsed} onToggle={() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(false)}
-                tasks={snap.tasks} onTask={(t) => { setMobileSessions(false); if (t.parent && stepOf(t.id)) { setChild(t); setPickedTask(null); } else setPickedTask(t); }} />;
-    const inspector = <Rail key={conversation} context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} onClose={() => setInspectorOpen(false)} />;
+    // Handlers keep one identity for the life of the page and always run
+    // the current closure; a memoised column is then only drawn again when
+    // something it shows has actually changed.
+    const pickConversation = useEventCallback((id: string) => selectConversation(id));
+    const openNewSession = useEventCallback((project?: string) => void newSession(project));
+    const openImport = useEventCallback(() => { setMobileSessions(false); setImporting(true); });
+    const patchConversation = useEventCallback((id: string, patch: { title?: string; archived?: boolean }) => void updateConversation(id, patch).then(loadConversations).catch((e) => setStatus(String(e).replace(/^Error: /, ""))));
+    const dropConversation = useEventCallback((id: string) => removeConversation(id));
+    const toggleSessions = useEventCallback(() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(false));
+    const openTask = useEventCallback((task: Task) => { setMobileSessions(false); if (task.parent && stepOf(task.id)) { setChild(task); setPickedTask(null); } else setPickedTask(task); });
+    const closeInspector = useEventCallback(() => setInspectorOpen(false));
+    const selectReply = useEventCallback((r: Reply) => { setSelectedReply(r); setTab("trace"); setInspectorOpen(true); });
+    const quoteReply = useEventCallback((r: Reply) => { if (!r.id) return; void setQuotes((list) => list.some((x) => x.reply_id === r.id) ? list : [...list, { conversation, reply_id: r.id!, title: current?.title || conversation, excerpt: (r.text || "").replace(/\s+/g, " ").slice(0, 80) }]); });
+    const changeText = useEventCallback((value: string) => setText(value));
+    const submitLine = useEventCallback(() => void submit());
+    const stopLine = useEventCallback(() => void stop());
+    const dropQuote = useEventCallback((q: { reply_id: string }) => void setQuotes((list) => list.filter((y) => y.reply_id !== q.reply_id)));
+    const toggleQueueing = useEventCallback(() => setQueueing(!queueing));
+    const steerLine = useEventCallback((q: Queued) => steer(q));
+    const dropQueued = useEventCallback((q: Queued) => void queueAction(() => deleteQueued(q.id)));
+    const editQueuedLine = useEventCallback(async (q: Queued, input: string) => { try { await editQueued(q.id, input); } finally { await loadQueue(); } });
+    const openSideChat = useEventCallback((q: Queued) => void sideChat(q));
+    const applySuggestion = useEventCallback((item: Suggestion) => apply(item));
+    const runVerb = useEventCallback((cmd: string) => { setText(cmd + " "); box.current?.focus(); });
+    const chooseProject = useEventCallback((id: string) => void submit(`/project use ${id}`));
+    const chooseAgent = useEventCallback((id: string) => void submit(`/use ${id}`));
+    const pressKey = useEventCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => onKey(e));
+    const loadSelectors = useEventCallback(() => fetchSelectors(conversation, context!.agent!.id));
+    const prefer = useEventCallback(async (patch: Record<string, string>) => { if (!context?.agent) return; const r = await setPreferences(conversation, context.agent.id, patch); if (activeConversation.current === conversation) { setStatus(r.note || t("console.preferenceSaved")); loadContext(); } });
+
+    const sessions = (collapsed = sessionsCollapsed, resizable = true) => <SessionsTree resizable={resizable} list={listed} projects={snap.projects} current={conversation} onPick={pickConversation} onNew={openNewSession} creating={creating} onImport={openImport}
+                onUpdate={patchConversation}
+                onDelete={dropConversation}
+                collapsed={collapsed} onToggle={toggleSessions}
+                tasks={snap.tasks} onTask={openTask} />;
+    const inspector = <Rail key={conversation} context={context} live={live} plans={runningPlans} reply={shownProcess} tab={tab} setTab={setTab} roots={roots} onClose={closeInspector} />;
     return (
         <div className={`console-workbench ${side.session ? "has-side-chat" : ""}`}>
             {importing && <NativeSessionImport agents={snap.agents} nodes={snap.nodes} projects={snap.projects} onClose={() => setImporting(false)} onImported={(id) => { setImporting(false); refresh(); selectConversation(id); void loadConversations(); }} />}
@@ -551,8 +584,7 @@ export function ConsolePage() {
                                 </div>
                             )}
                             <div className="transcript-messages">
-                                {transcript.map((r, i) => r.kind === "sent" ? <UserMessage key={r.id || i} text={r.input || ""} /> : <AssistantMessage key={r.id || i} r={r} selected={shownProcess?.id === r.id} onSelect={(r.process || r.injected) ? () => { setSelectedReply(r); setTab("trace"); setInspectorOpen(true); } : undefined}
-                                    onQuote={r.id ? () => setQuotes((list) => list.some((x) => x.reply_id === r.id) ? list : [...list, { conversation, reply_id: r.id!, title: current?.title || conversation, excerpt: (r.text || "").replace(/\s+/g, " ").slice(0, 80) }]) : undefined} />)}
+                                {transcript.map((r, i) => r.kind === "sent" ? <UserMessage key={r.id || i} text={r.input || ""} /> : <AssistantMessage key={r.id || i} r={r} selected={shownProcess?.id === r.id} onSelect={selectReply} onQuote={quoteReply} />)}
                                 {unrecordedChildren.map((s) => <DelegationCard key={s.id} id={s.id} info={s} progress={s} />)}
                                 {live && <Working live={live} plans={runningPlans} compact />}
                             </div>
@@ -582,20 +614,20 @@ export function ConsolePage() {
                             {submissionSupport.material_refs && <div className="mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-3"><label className="cursor-pointer rounded-md px-2 py-1 text-xs text-tertiary hover:bg-secondary">{uploading ? t("materials.uploading") : t("materials.upload")}<input type="file" multiple className="sr-only" disabled={uploading} aria-label={t("materials.upload")} onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} /></label><span className="text-xs text-quaternary">{t("materials.uploadHint")}</span></div>}
                             {openedMaterial && context?.project && <MaterialPreview project={context.project.id} anchor={openedMaterial} onClose={() => setOpenedMaterial(null)} />}
                             <Composer
-                                value={text} hasMaterials={draftMaterials.length > 0} onChange={setText} onSubmit={() => void submit()} onStop={() => void stop()}
-                                busy={busy} pending={!!submission} stopping={stopping} disabled={creating || !context || !canSubmit} boxRef={box} onKey={onKey}
-                                quotes={quotes} onDropQuote={(x) => setQuotes((list) => list.filter((y) => y.reply_id !== x.reply_id))}
-                                queue={queue} queueing={queueing} onToggleQueueing={() => setQueueing(!queueing)}
-                                onSteer={steer} onDropQueued={(q) => void queueAction(() => deleteQueued(q.id))}
-                                onEditQueued={async (q, input) => { try { await editQueued(q.id, input); } finally { await loadQueue(); } }}
-                                onSideChat={(q) => void sideChat(q)}
-                                suggestions={suggestions} pick={pick} onApply={apply}
-                                verbs={verbs} onVerb={(cmd) => { setText(cmd + " "); box.current?.focus(); }}
-                                projects={snap.projects} project={context?.project} onProject={(id) => void submit(`/project use ${id}`)}
-                                agents={context?.agents ?? []} agent={context?.agent} onAgent={(id) => void submit(`/use ${id}`)}
+                                value={text} hasMaterials={draftMaterials.length > 0} onChange={changeText} onSubmit={submitLine} onStop={stopLine}
+                                busy={busy} pending={!!submission} stopping={stopping} disabled={creating || !context || !canSubmit} boxRef={box} onKey={pressKey}
+                                quotes={quotes} onDropQuote={dropQuote}
+                                queue={queue} queueing={queueing} onToggleQueueing={toggleQueueing}
+                                onSteer={steerLine} onDropQueued={dropQueued}
+                                onEditQueued={editQueuedLine}
+                                onSideChat={openSideChat}
+                                suggestions={suggestions} pick={pick} onApply={applySuggestion}
+                                verbs={verbs} onVerb={runVerb}
+                                projects={snap.projects} project={context?.project} onProject={chooseProject}
+                                agents={agents} agent={context?.agent} onAgent={chooseAgent}
                                 preferenceKey={`${conversation}:${context?.agent?.id || ""}`}
-                                onSelectors={context?.agent ? () => fetchSelectors(conversation, context.agent!.id) : undefined}
-                                onPrefer={async (patch) => { if (!context?.agent) return; const r = await setPreferences(conversation, context.agent.id, patch); if (activeConversation.current === conversation) { setStatus(r.note || t("console.preferenceSaved")); loadContext(); } }}
+                                onSelectors={context?.agent ? loadSelectors : undefined}
+                                onPrefer={prefer}
                             />
                         </div>
                     </div>
