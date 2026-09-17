@@ -7,7 +7,8 @@ export interface DesktopStatus { enabled: boolean; node_id?: string; setup_requi
 export interface DesktopAgentCandidate { id: string; name: string; harness: string; executable?: string; installed: boolean; requires?: string[]; registered: boolean }
 export const fetchDesktopStatus = (signal?: AbortSignal) => request<DesktopStatus>("/console/desktop", { signal, cache: "no-store" });
 export const discoverDesktopAgents = (signal?: AbortSignal) => request<{ agents: DesktopAgentCandidate[] }>("/console/desktop/agents", { signal, cache: "no-store" });
-export const enrollDesktopAgents = (agent_ids: string[]) => request<DesktopStatus>("/console/desktop/agents", { method: "POST", body: { agent_ids } });
+export interface DesktopEnrollAgent { candidate_id: string; agent_id: string; about?: string; default?: boolean }
+export const enrollDesktopAgents = (agents: DesktopEnrollAgent[]) => request<DesktopStatus>("/console/desktop/agents", { method: "POST", body: { agents } });
 export const saveDesktopSetup = (step: SetupStep, done = false) => request<DesktopStatus>("/console/desktop/setup", { method: "PUT", body: done ? { step, done } : { step } });
 export const saveDesktopWorkspace = (path: string) => request<DesktopStatus>("/console/desktop/workspace", { method: "PUT", body: { path } });
 

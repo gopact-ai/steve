@@ -47,8 +47,9 @@ async function fixture(enabled = true, step = "identity", done = false) {
             const input = req.postDataJSON(); f.posts.push(input);
             if (f.hold) await new Promise((resolve) => { f.release = resolve; });
             if (f.reject) { f.reject = false; return route.fulfill({ status: 400, json: { error: "Codex is no longer installed. Refresh and select an available tool." } }); }
-            for (const item of f.agents) if (input.agent_ids.includes(item.id)) item.registered = true;
-            f.status = { ...f.status, agent_count: f.agents.filter((item) => item.registered).length, default_agent: input.agent_ids[0] };
+            const chosen = input.agents || (input.agent_ids || []).map((id) => ({ candidate_id: id, agent_id: id }));
+            for (const item of f.agents) if (chosen.some((pick) => pick.candidate_id === item.id)) item.registered = true;
+            f.status = { ...f.status, agent_count: f.agents.filter((item) => item.registered).length, default_agent: (chosen.find((pick) => pick.default) || chosen[0])?.agent_id };
             if (f.reset) { f.reset = false; return route.abort("connectionreset"); }
             return route.fulfill({ json: f.status });
         }
@@ -125,10 +126,15 @@ try {
     assert.equal(await codex.evaluate((el) => document.activeElement === el), true);
     await page.keyboard.press("Space");
     assert.equal(await codex.isChecked(), true);
+    const codexName = dialog.getByRole("textbox", { name: "Name", exact: true });
+    assert.equal(await codexName.inputValue(), "codex", "the tool's own id is proposed as the agent name");
+    await codexName.fill("Coder");
+    assert.equal(await dialog.getByRole("radiogroup", { name: "Default agent", exact: true }).count(), 0, "a single agent needs no default chooser");
+    await dialog.getByText("coder will be the default after registration.", { exact: true }).waitFor();
     f.hold = true;
     await dialog.getByRole("button", { name: "Register selected agents", exact: true }).click();
     await waitFor(() => f.posts.length === 1, "one explicit enrollment");
-    assert.deepEqual(f.posts[0], { agent_ids: ["codex"] });
+    assert.deepEqual(f.posts[0], { agents: [{ candidate_id: "codex", agent_id: "coder", default: true }] }, "the name the owner typed is what is registered");
     assert.equal(await dialog.getByRole("button", { name: "Finish later", exact: true }).isDisabled(), true);
     assert.equal(await dialog.getByRole("heading", { name: "Local agents", exact: true }).count(), 1, "the page waits for the registration result");
     f.hold = false; f.release();
@@ -203,7 +209,7 @@ try {
     await laterDialog.getByText("Codex", { exact: true }).click();
     await laterDialog.getByRole("button", { name: "Register selected agents", exact: true }).click();
     await laterDialog.waitFor({ state: "hidden" });
-    assert.deepEqual(later.posts, [{ agent_ids: ["codex"] }]);
+    assert.deepEqual(later.posts, [{ agents: [{ candidate_id: "codex", agent_id: "codex", default: true }] }]);
     assert.deepEqual(later.setups, [], "registering later writes no guide progress, so the guide stays finished");
     assert.equal(later.status.setup_required, false);
     await later.page.reload();
@@ -228,9 +234,37 @@ try {
     retry.reset = true;
     await retryDialog.getByRole("button", { name: "Retry registration", exact: true }).click();
     await retryDialog.getByRole("heading", { name: "Other machines", exact: true }).waitFor();
-    assert.deepEqual(retry.posts, [{ agent_ids: ["codex"] }, { agent_ids: ["codex"] }]);
+    assert.deepEqual(retry.posts, [{ agents: [{ candidate_id: "codex", agent_id: "codex", default: true }] }, { agents: [{ candidate_id: "codex", agent_id: "codex", default: true }] }]);
     await retry.close();
     console.log("PASS discovery retries preserve selection and a dropped registration reply is reconciled from current registration");
+
+    const many = await fixture(true, "agents");
+    many.agents = [
+        { id: "codex", name: "Codex", harness: "codex-acp", executable: "/test/bin/codex", installed: true, requires: [], registered: false },
+        { id: "claude", name: "Claude Code", harness: "claude-code", executable: "/test/bin/claude", installed: true, requires: [], registered: false },
+    ];
+    await many.page.goto(url + "#/console");
+    const manyDialog = many.page.getByRole("dialog", { name: "First-time setup" });
+    await manyDialog.getByRole("checkbox", { name: "Codex", exact: true }).waitFor();
+    await manyDialog.getByText("Codex", { exact: true }).click();
+    await manyDialog.getByText("Claude Code", { exact: true }).click();
+    const manyNames = manyDialog.getByRole("textbox", { name: "Name", exact: true });
+    assert.equal(await manyNames.count(), 2, "every chosen tool gets its own name");
+    await manyNames.nth(0).fill("reviewer");
+    await manyNames.nth(1).fill("reviewer");
+    await manyDialog.getByRole("button", { name: "Register selected agents", exact: true }).click();
+    await manyDialog.getByText("An agent is already called reviewer. Pick another name.", { exact: true }).waitFor();
+    assert.deepEqual(many.posts, [], "a name claimed twice is refused before anything is registered");
+    await manyNames.nth(1).fill("Coder");
+    await manyDialog.getByRole("textbox", { name: "Good for", exact: true }).nth(1).fill("frontend work");
+    const chooser = manyDialog.getByRole("radiogroup", { name: "Default agent", exact: true });
+    await chooser.getByText("coder", { exact: true }).click();
+    await manyDialog.getByRole("button", { name: "Register selected agents", exact: true }).click();
+    await manyDialog.getByRole("heading", { name: "Other machines", exact: true }).waitFor();
+    assert.deepEqual(many.posts, [{ agents: [{ candidate_id: "codex", agent_id: "reviewer" }, { candidate_id: "claude", agent_id: "coder", about: "frontend work", default: true }] }]);
+    assert.equal(many.status.default_agent, "coder", "the chosen agent is the default, not the first one picked");
+    await many.close();
+    console.log("PASS each chosen tool is named, described and one of them is made the default");
 
     const empty = await fixture(true, "agents"); empty.agents = [];
     await empty.page.goto(url + "#/console");

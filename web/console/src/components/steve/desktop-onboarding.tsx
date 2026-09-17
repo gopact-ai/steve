@@ -238,19 +238,31 @@ function WorkspaceStep({ status, onStatus, busy, setBusy, onNext, onBack }: Step
     </section>;
 }
 
-interface EnrollmentDraft { selected: string[]; pending?: string[] }
+const agentName = /^[a-z0-9][a-z0-9._-]{0,63}$/;
+interface EnrollAgent { candidate_id: string; agent_id: string; about?: string; default?: boolean }
+interface EnrollmentDraft { selected: string[]; names?: Record<string, string>; about?: Record<string, string>; primary?: string; pending?: EnrollAgent[] }
 function readEnrollment(key: string): EnrollmentDraft {
     try {
         const saved = JSON.parse(localStorage.getItem(key) || "null");
         const strings = (value: unknown): value is string[] => Array.isArray(value) && value.every((item) => typeof item === "string");
-        return { selected: strings(saved?.selected) ? saved.selected : [], ...(strings(saved?.pending) ? { pending: saved.pending } : {}) };
+        const texts = (value: unknown): value is Record<string, string> => !!value && typeof value === "object" && !Array.isArray(value) && Object.values(value).every((item) => typeof item === "string");
+        const chosen = (value: unknown): value is EnrollAgent[] => Array.isArray(value) && value.every((item) => item && typeof item.candidate_id === "string" && typeof item.agent_id === "string");
+        return {
+            selected: strings(saved?.selected) ? saved.selected : [],
+            ...(texts(saved?.names) ? { names: saved.names } : {}),
+            ...(texts(saved?.about) ? { about: saved.about } : {}),
+            ...(typeof saved?.primary === "string" ? { primary: saved.primary } : {}),
+            ...(chosen(saved?.pending) ? { pending: saved.pending } : {}),
+        };
     } catch { return { selected: [] }; }
 }
 function usable(candidate: DesktopAgentCandidate) { return candidate.installed && !candidate.requires?.length && !candidate.registered; }
 
-// Agents: registration is confirmed by the server's count and the discovery
-// marking the chosen tools registered; a selection that was sent but not
-// confirmed is retried against that rather than registered twice.
+// Agents: each chosen tool becomes an agent with the name it answers to in
+// chat and, optionally, what it is good for. One of them is the default.
+// Registration is confirmed by the server's count and the discovery marking
+// the chosen tools registered; a selection that was sent but not confirmed
+// is retried against that rather than registered twice.
 function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepProps) {
     const { t } = useI18n();
     const key = `steve.desktop.enrollment:${status.node_id}`;
@@ -262,11 +274,12 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
     const [attempted, setAttempted] = useState(false);
     const acting = useRef(false);
     const agentList = useRef<HTMLFieldSetElement>(null);
+    const form = useRef<HTMLDivElement>(null);
     const confirmed = (current: DesktopStatus, ids: string[], candidates: DesktopAgentCandidate[]) => current.agent_count > 0 && ids.every((id) => candidates.some((item) => item.id === id && item.registered));
     const load = useResourceRead(`desktop-agents:${status.node_id}`, discoverDesktopAgents, (value) => {
         const candidates = value.agents || [];
         setAgents(candidates); setDiscoveryError(""); setLoading(false);
-        if (draft.pending?.length && confirmed(status, draft.pending, candidates)) finish();
+        if (draft.pending?.length && confirmed(status, draft.pending.map((item) => item.candidate_id), candidates)) finish();
     }, (error) => { setDiscoveryError(message(error)); setLoading(false); });
     useEffect(() => { void load(); }, [load]);
     function save(next: EnrollmentDraft) {
@@ -276,8 +289,10 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
     }
     function choose(id: string, selected: boolean) {
         setError(""); setAttempted(false);
-        save({ selected: selected ? [...draft.selected.filter((item) => item !== id), id] : draft.selected.filter((item) => item !== id) });
+        const chosen = selected ? [...draft.selected.filter((item) => item !== id), id] : draft.selected.filter((item) => item !== id);
+        save({ ...draft, selected: chosen, names: { ...draft.names, [id]: draft.names?.[id] ?? id }, ...(draft.primary === id && !selected ? { primary: undefined } : {}) });
     }
+    function edit(next: Partial<EnrollmentDraft>) { setError(""); setAttempted(false); save({ ...draft, ...next }); }
     function finish() {
         try { localStorage.removeItem(key); } catch { /* The server registration is authoritative. */ }
         setDraft({ selected: [] });
@@ -288,49 +303,88 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
         if (confirmed(current, ids, discovery.agents || [])) { onStatus(current); finish(); return true; }
         return false;
     }
+    const chosen = draft.selected.filter((id) => agents.some((item) => item.id === id && usable(item)));
+    const nameOf = (id: string) => draft.names?.[id] ?? id;
+    // shown is the name as it will be registered, so the default chooser and
+    // the summary line never promise a name the server would not accept.
+    const shown = (id: string) => nameOf(id).trim().toLowerCase() || id;
+    const primary = chosen.includes(draft.primary || "") ? draft.primary! : chosen[0] || "";
+    function focusField(id: string, field: "name" | "about") { form.current?.querySelector<HTMLInputElement>(`input[name="desktop-agent-${field}-${id}"]`)?.focus(); }
+    // build turns the selection into what the server registers, refusing a
+    // name it could not answer to and a name claimed twice in one go.
+    function build(): EnrollAgent[] | null {
+        const taken = new Set<string>();
+        const out: EnrollAgent[] = [];
+        for (const id of chosen) {
+            const name = nameOf(id).trim().toLowerCase();
+            if (!agentName.test(name)) { setError(t("desktop.agentNameInvalid", { name: nameOf(id).trim() || id })); focusField(id, "name"); return null; }
+            if (taken.has(name)) { setError(t("desktop.agentNameDuplicate", { name })); focusField(id, "name"); return null; }
+            taken.add(name);
+            const about = (draft.about?.[id] || "").trim();
+            out.push({ candidate_id: id, agent_id: name, ...(about ? { about } : {}), ...(id === primary ? { default: true } : {}) });
+        }
+        return out;
+    }
     async function register() {
         if (acting.current) return;
-        const selected = draft.pending || draft.selected.filter((id) => agents.some((item) => item.id === id && usable(item)));
+        const selected = draft.pending || build();
+        if (!selected) return;
         if (!selected.length) {
             if (registeredCount > 0) { onNext(); return; }
             setError(t("desktop.selectRequired")); agentList.current?.querySelector<HTMLInputElement>('input[type="checkbox"]:not(:disabled)')?.focus(); return;
         }
-        if (!save({ selected: draft.selected, pending: selected })) return;
+        if (!save({ ...draft, pending: selected })) return;
+        const ids = selected.map((item) => item.candidate_id);
         acting.current = true; setBusy(true); setError("");
         try {
-            if (draft.pending && await reconcile(selected)) { onNext(); return; }
+            if (draft.pending && await reconcile(ids)) { onNext(); return; }
             setAttempted(true);
             const next = await enrollDesktopAgents(selected);
             if (!(next.agent_count > 0)) throw new Error(t("desktop.unconfirmed"));
             onStatus(next); finish(); onNext();
         } catch (error) {
-            try { if (await reconcile(selected)) { onNext(); return; } } catch { /* Keep the same selected IDs until a response is confirmed. */ }
-            if (error instanceof HTTPError && error.status === 400) save({ selected: draft.selected });
+            try { if (await reconcile(ids)) { onNext(); return; } } catch { /* Keep the same selection until a response is confirmed. */ }
+            if (error instanceof HTTPError && error.status === 400) save({ ...draft, pending: undefined });
             setError(message(error));
         } finally { acting.current = false; setBusy(false); }
     }
     const registeredCount = agents.filter((item) => item.registered).length;
     const unavailable = !loading && !discoveryError && !agents.some((item) => item.installed);
-    const firstSelected = draft.selected.map((id) => agents.find((candidate) => candidate.id === id && usable(candidate))).find(Boolean);
-    return <section className="space-y-3">
+    const locked = busy || !!draft.pending;
+    const radio = "group flex min-h-8 cursor-pointer items-center gap-2 rounded-md border border-secondary px-3 py-1.5 text-sm text-primary data-selected:border-brand data-selected:bg-secondary data-focus-visible:outline-2 data-focus-visible:outline-focus-ring";
+    return <section className="space-y-3" ref={form}>
         <p className="text-sm leading-6 text-secondary">{t("desktop.explanation")}</p>
-        <fieldset ref={agentList} className="min-w-0 space-y-3" disabled={busy || !!draft.pending}>
+        <fieldset ref={agentList} className="min-w-0 space-y-3" disabled={locked}>
             <legend className="mb-2 text-sm font-semibold text-primary">{t("desktop.chooseAgents")}</legend>
             {!loading && agents.some((candidate) => candidate.installed) && <p className="text-xs leading-5 text-tertiary">{t("desktop.detectedHint")}</p>}
             {loading && <p role="status" className="py-3 text-sm text-tertiary">{t("desktop.loading")}</p>}
             {unavailable && <div className="space-y-1 rounded-lg bg-secondary p-3"><p className="text-sm font-medium text-primary">{t("desktop.empty")}</p><p className="text-xs leading-5 text-tertiary">{t("desktop.emptyHint")}</p></div>}
-            {agents.map((candidate) => <Checkbox key={candidate.id} aria-label={candidate.name} name="desktop-agent" value={candidate.id} isSelected={candidate.registered || draft.selected.includes(candidate.id)} isDisabled={busy || !!draft.pending || !usable(candidate)} onChange={(selected) => choose(candidate.id, selected)}
+            {agents.map((candidate) => <Checkbox key={candidate.id} aria-label={candidate.name} name="desktop-agent" value={candidate.id} isSelected={candidate.registered || draft.selected.includes(candidate.id)} isDisabled={locked || !usable(candidate)} onChange={(selected) => choose(candidate.id, selected)}
                 className="min-h-10 min-w-0 rounded-md border border-secondary px-3 py-2 data-selected:bg-secondary [&>div:last-child]:min-w-0" label={<span className="flex min-w-0 flex-col gap-1"><span className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1"><span>{candidate.name}</span><span className="text-xs font-normal text-tertiary">{t(candidate.registered ? "desktop.registered" : candidate.installed ? "desktop.detected" : "desktop.notInstalled")}</span></span>
                     {candidate.requires?.length ? <span className="text-xs font-normal text-error-primary">{t("desktop.requires", { tools: candidate.requires.join(", ") })}</span> : candidate.installed && candidate.executable ? <span className="max-w-full break-all font-mono text-xs font-normal text-tertiary">{candidate.executable}</span> : null}
                 </span>} />)}
         </fieldset>
+        {chosen.length > 0 && <div className="space-y-3">
+            {chosen.map((id) => {
+                const candidate = agents.find((item) => item.id === id);
+                return <div key={id} className="space-y-3 rounded-lg border border-secondary p-3">
+                    <p className="text-sm font-medium text-primary">{candidate?.name || id}</p>
+                    <Input size="sm" label={t("desktop.agentName")} name={`desktop-agent-name-${id}`} autoComplete="off" spellCheck="false" hint={t("desktop.agentNameHint")} maxLength={64} value={nameOf(id)} isDisabled={locked} onChange={(value) => edit({ names: { ...draft.names, [id]: value } })} />
+                    <Input size="sm" label={t("desktop.agentAbout")} name={`desktop-agent-about-${id}`} autoComplete="off" placeholder={t("desktop.agentAboutPlaceholder")} hint={t("desktop.agentAboutHint")} maxLength={120} value={draft.about?.[id] || ""} isDisabled={locked} onChange={(value) => edit({ about: { ...draft.about, [id]: value } })} />
+                </div>;
+            })}
+            {chosen.length > 1 ? <RadioGroup aria-label={t("desktop.defaultAgentLabel")} value={primary} isDisabled={locked} onChange={(value) => edit({ primary: value })} className="space-y-2">
+                <span className="text-sm font-medium text-primary">{t("desktop.defaultAgentLabel")}</span>
+                <div className="flex flex-wrap gap-2">{chosen.map((id) => <Radio key={id} value={id} className={radio}>{shown(id)}</Radio>)}</div>
+                <span className="block text-xs leading-5 text-tertiary">{t("desktop.defaultAgentHint")}</span>
+            </RadioGroup> : status.agent_count === 0 && primary && <p className="text-xs leading-5 text-secondary">{t("desktop.defaultChoice", { agent: shown(primary) })}</p>}
+        </div>}
         {discoveryError && <p role="alert" className="break-words text-sm text-error-primary">{discoveryError}</p>}
-        {!loading && <Button size="sm" color="tertiary" isDisabled={busy || !!draft.pending} onClick={() => { setLoading(true); void load(); }}>{t("desktop.checkAgain")}</Button>}
-        {status.agent_count === 0 && firstSelected && <p className="text-xs leading-5 text-secondary">{t("desktop.defaultChoice", { agent: firstSelected.name })}</p>}
+        {!loading && <Button size="sm" color="tertiary" isDisabled={locked} onClick={() => { setLoading(true); void load(); }}>{t("desktop.checkAgain")}</Button>}
         {error && <p role="alert" className="break-words text-sm text-error-primary">{error}</p>}
         {draft.pending && !busy && <p role="status" className="text-xs leading-5 text-tertiary">{t("desktop.unconfirmed")}</p>}
         {busy && <p role="status" className="text-sm text-tertiary">{t("desktop.registering")}</p>}
-        <StepFooter busy={busy} onBack={onBack} onNext={() => void register()} nextLabel={draft.selected.length === 0 && registeredCount > 0 ? t("desktop.next") : t(attempted || draft.pending ? "desktop.retryRegister" : "desktop.register")} onSkip={registeredCount === 0 ? onNext : undefined} disabled={loading || !!discoveryError}>
+        <StepFooter busy={busy} onBack={onBack} onNext={() => void register()} nextLabel={chosen.length === 0 && registeredCount > 0 ? t("desktop.next") : t(attempted || draft.pending ? "desktop.retryRegister" : "desktop.register")} onSkip={registeredCount === 0 ? onNext : undefined} disabled={loading || !!discoveryError}>
             {registeredCount === 0 && <p className="basis-full text-xs leading-5 text-quaternary">{t("desktop.agentsSkipHint")}</p>}
         </StepFooter>
     </section>;

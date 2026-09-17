@@ -87,6 +87,56 @@ func TestDesktopDiscoveryDoesNotEnrollOrPrepareTools(t *testing.T) {
 	}
 }
 
+func TestDesktopEnrollmentTakesTheNamesAndDefaultTheOwnerChose(t *testing.T) {
+	admin, _ := desktopAdminFixture(t)
+	status, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{Agents: []consoleapi.DesktopEnrollAgent{
+		{CandidateID: "grok", AgentID: "reviewer", About: "代码评审"},
+		{CandidateID: "kimi", AgentID: "coder", Default: true},
+	}})
+	if err != nil || status.AgentCount != 2 || status.DefaultAgent != "coder" {
+		t.Fatalf("enrollment result: %+v, %v", status, err)
+	}
+	reviewer, ok := admin.Cfg.Agents["reviewer"]
+	if !ok || reviewer.Harness != "grok" || reviewer.About != "代码评审" || reviewer.Default {
+		t.Fatalf("named agent: %+v (present %v)", reviewer, ok)
+	}
+	if len(reviewer.Aliases) != 0 {
+		t.Fatalf("a renamed agent kept the tool's own name as an alias: %v", reviewer.Aliases)
+	}
+	coder := admin.Cfg.Agents["coder"]
+	if coder.Harness != "kimi" || !coder.Default {
+		t.Fatalf("chosen default: %+v", coder)
+	}
+	if _, taken := admin.Cfg.Agents["grok"]; taken {
+		t.Fatal("the tool id was registered alongside the name the owner chose")
+	}
+	catalog, err := admin.Cfg.AgentCatalog()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(catalog.List()) != 2 {
+		t.Fatalf("catalog holds %d agents", len(catalog.List()))
+	}
+}
+
+func TestDesktopEnrollmentRefusesNamesItCannotAnswerTo(t *testing.T) {
+	admin, _ := desktopAdminFixture(t)
+	for _, name := range []string{"Review Bot", "-grok", "grok/one"} {
+		if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{Agents: []consoleapi.DesktopEnrollAgent{{CandidateID: "grok", AgentID: name}}}); err == nil {
+			t.Fatalf("name %q was accepted", name)
+		}
+	}
+	if len(admin.Cfg.Agents) != 0 {
+		t.Fatalf("a refused name still registered something: %v", admin.Cfg.Agents)
+	}
+	if _, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{Agents: []consoleapi.DesktopEnrollAgent{
+		{CandidateID: "grok", AgentID: "same"},
+		{CandidateID: "kimi", AgentID: "same"},
+	}}); err == nil {
+		t.Fatal("two agents were registered under one name")
+	}
+}
+
 func TestDesktopEnrollmentPersistsOnlyChosenToolsAndReplaysSafely(t *testing.T) {
 	admin, bin := desktopAdminFixture(t)
 	status, err := admin.DesktopEnroll(t.Context(), consoleapi.DesktopEnrollRequest{AgentIDs: []string{"grok"}})

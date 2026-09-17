@@ -289,13 +289,19 @@ try {
         await success.getByRole("button", { name: "Review installation", exact: true }).click();
         f.connected = true;
         await success.getByRole("button", { name: "Confirm installation", exact: true }).click();
-        await success.getByText("Machine connected", { exact: true }).waitFor();
-        await success.getByRole("button", { name: "Register agents on this machine", exact: true }).click();
+        // A connected machine goes straight on to registering an agent there;
+        // until one exists, nothing can be assigned to the machine.
         const enrollment = successPage.getByRole("dialog", { name: "Register an agent on worker-west", exact: true });
         await enrollment.getByText("No usable tools found on this machine", { exact: true }).waitFor();
         assert.ok(f.nodeAgentReads.length > 0);
         assert.deepEqual([...new Set(f.nodeAgentReads)], ["/console/nodes/node-stable-9/agents"]);
         await enrollment.getByRole("button", { name: "Close", exact: true }).click();
+        await enrollment.waitFor({ state: "hidden" });
+        await success.getByText("Machine connected", { exact: true }).waitFor();
+        await success.getByRole("button", { name: "Register agents on this machine", exact: true }).click();
+        await enrollment.getByText("No usable tools found on this machine", { exact: true }).waitFor();
+        await enrollment.getByRole("button", { name: "Close", exact: true }).click();
+        await enrollment.waitFor({ state: "hidden" });
         await success.getByRole("button", { name: "Done", exact: true }).click();
         await success.waitFor({ state: "hidden" });
         assert.equal(f.plans.length, 3); assert.equal(f.installs.at(-1), "plan-3");

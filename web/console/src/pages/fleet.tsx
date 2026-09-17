@@ -22,7 +22,7 @@ import { number, relative, when } from "@/lib/format";
 import { addAgent, addNode, removeAgent, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
 import { applyActivity, withLiveActivity, type LiveActivity } from "@/lib/live";
-import type { AbilitySnapshot, Agent, Attempt, Capability, Condition, Node as NodeT } from "@/lib/types";
+import type { AbilitySnapshot, Agent, Attempt, Capability, Condition, Node as NodeT, Snapshot } from "@/lib/types";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
 import { Chips, KeyValue, PageBody, PageHeader } from "@/components/steve/page";
 import { ListEditor, SettingsEditor } from "@/components/steve/settings-editor";
@@ -55,6 +55,18 @@ function selectorName(a: Agent, id: string): string {
     return (a.selectors || []).find((s) => s.id === id)?.name || id;
 }
 
+// machineOptions lists where an agent can run. A machine is named the way
+// people named it, with its node ID underneath, so a dropdown never asks
+// anyone to recognise a hash.
+function machineOptions(snap: Snapshot, tr: Translator): { id: string; label: string; supportingText?: string }[] {
+    const hub = snap.nodes.find((n) => n.name === snap.hub.node);
+    const hubName = hub ? nodeLabel(hub) : snap.hub.node;
+    return [
+        { id: "__hub", label: `${hubName}（${tr("connection.coordinator")}）`, ...(hubName === snap.hub.node ? {} : { supportingText: snap.hub.node }) },
+        ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: nodeLabel(n), ...(n.display_name ? { supportingText: n.name } : {}) })),
+    ];
+}
+
 // AgentDrawer is one agent in full, and the place to change it: where it
 // runs, with which AI tool and model, what its machine must offer, which
 // MCP servers it uses. Saved changes reach the running catalog at once
@@ -70,7 +82,6 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
     const [spec, setSpec] = useState<AgentSpec>({ harness: a.harness, node: a.node === snap.hub.node ? "" : a.node || "", model: a.preferred || "", options: { ...(a.options || {}) }, about: a.about || "", requires: a.requires || [], mcp_servers: a.mcp_servers || [] });
     const extras = (a.selectors || []).filter((sel) => sel.category !== "model" && (sel.choices || []).length > 0);
     const harnesses = Array.from(new Set([...snap.agents.map((x) => x.harness), a.harness])).filter(Boolean).sort();
-    const nodes = snap.nodes.filter((n) => n.role !== "hub").map((n) => n.name);
     const canTake = levelOrder.slice(0, levelOrder.indexOf(a.level || "internal") + 1).map((l) => levelName(l, locale)).join("、");
     async function save() {
         setBusy(true); setError("");
@@ -120,8 +131,8 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
                     </>
                 ) : (
                     <div className="flex flex-col gap-4">
-                        <Select size="sm" label={tr("fleet.machine")} hint={tr("fleet.machineHint")} selectedKey={spec.node || "__hub"} onSelectionChange={(k) => setSpec({ ...spec, node: !k || String(k) === "__hub" ? "" : String(k) })} items={[{ id: "__hub", label: `${snap.hub.node}（${tr("connection.coordinator")}）` }, ...nodes.map((n) => ({ id: n, label: n }))]}>
-                            {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                        <Select size="sm" label={tr("fleet.machine")} hint={tr("fleet.machineHint")} selectedKey={spec.node || "__hub"} onSelectionChange={(k) => setSpec({ ...spec, node: !k || String(k) === "__hub" ? "" : String(k) })} items={machineOptions(snap, tr)}>
+                            {(item) => <Select.Item id={item.id} supportingText={item.supportingText}>{item.label}</Select.Item>}
                         </Select>
                         <Select size="sm" label={tr("fleet.aiTool")} hint={tr("fleet.harnessHint")} selectedKey={spec.harness} onSelectionChange={(k) => k && setSpec({ ...spec, harness: String(k) })} items={harnesses.map((h) => ({ id: h, label: h }))}>
                             {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
@@ -162,7 +173,7 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
 // AddMachine is a dialog, not a snippet: the hub registers the machine
 // and writes its own config; what comes back is the one command to run
 // on that machine. An agent can be added the same way.
-function AddMachine({ hub, harnesses, nodes, executor, onClose, onDone }: { hub: string; harnesses: string[]; nodes: string[]; executor?: { name: string; addr: string; level: string }; onClose: () => void; onDone: () => void }) {
+function AddMachine({ machines, harnesses, executor, onClose, onDone }: { machines: { id: string; label: string; supportingText?: string }[]; harnesses: string[]; executor?: { name: string; addr: string; level: string }; onClose: () => void; onDone: () => void }) {
     const { t: tr, locale } = useI18n();
     const [mode, setMode] = useState<"machine" | "agent">("machine");
     const [name, setName] = useState(executor?.name || "");
@@ -229,12 +240,12 @@ function AddMachine({ hub, harnesses, nodes, executor, onClose, onDone }: { hub:
                                 <Select size="sm" label={tr("fleet.aiTool")} hint={tr("fleet.harnessHint")} selectedKey={harness} onSelectionChange={(k) => k && setHarness(String(k))} items={harnesses.map((h) => ({ id: h, label: h }))}>
                                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                                 </Select>
-                                <Select size="sm" label={tr("fleet.machine")} hint={tr("fleet.chooseMachineHint")} selectedKey={node || "__hub"} onSelectionChange={(k) => setNode(!k || String(k) === "__hub" ? "" : String(k))} items={[{ id: "__hub", label: `${hub}（${tr("connection.coordinator")}）` }, ...nodes.map((n) => ({ id: n, label: n }))]}>
-                                    {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
+                                <Select size="sm" label={tr("fleet.machine")} hint={tr("fleet.chooseMachineHint")} selectedKey={node || "__hub"} onSelectionChange={(k) => setNode(!k || String(k) === "__hub" ? "" : String(k))} items={machines}>
+                                    {(item) => <Select.Item id={item.id} supportingText={item.supportingText}>{item.label}</Select.Item>}
                                 </Select>
                             </div>
                         )}
-                        {mode === "agent" && done && <div className="text-sm text-primary">{tr("fleet.agentAdded", { agent: agent.trim(), harness, node: node || hub })}</div>}
+                        {mode === "agent" && done && <div className="text-sm text-primary">{tr("fleet.agentAdded", { agent: agent.trim(), harness, node: machines.find((m) => m.id === (node || "__hub"))?.label || node })}</div>}
                         {error && <div role="alert" className="text-sm text-error-primary">{error}</div>}
                         <div className="flex justify-end gap-2">
                             <Button size="sm" color="secondary" onClick={onClose}>{result || done ? tr("fleet.done") : tr("common.cancel")}</Button>
@@ -436,7 +447,7 @@ export function FleetPage() {
             {versionDrift.length > 0 && <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-warning-primary px-3 py-2 text-sm text-warning-primary"><span className="min-w-0 flex-1">{tr("fleet.versionDriftHint", { count: versionDrift.length, version: snap.hub.version || "—" })}</span><Button size="sm" color="secondary" onClick={() => setUpgrading(versionDrift.filter((n) => n.role !== "hub"))}>{tr("fleet.upgradeAll")}</Button></div>}
             {upgrading && <MachineUpgrade nodes={upgrading} version={snap.hub.version || "—"} onClose={() => setUpgrading(null)} onChanged={refresh} />}
             {sshOpen && <SSHConnect onClose={() => setSSHOpen(false)} onChanged={refresh} onViewMachines={() => { setSSHOpen(false); setFocusMachines(true); }} onAddExecutor={(request) => { setExecutor(request); setSSHOpen(false); setAdding(true); }} />}
-            {adding && <AddMachine executor={executor} hub={snap.hub.node} harnesses={hubHarnesses.length ? hubHarnesses : ["codex", "claude-code", "grok", "kimi"]} nodes={snap.nodes.filter((n) => n.role !== "hub").map((n) => n.name)} onClose={() => setAdding(false)} onDone={() => refresh()} />}
+            {adding && <AddMachine executor={executor} machines={machineOptions(snap, tr)} harnesses={hubHarnesses.length ? hubHarnesses : ["codex", "claude-code", "grok", "kimi"]} onClose={() => setAdding(false)} onDone={() => refresh()} />}
             <div id="fleet-machines" ref={machineSection} tabIndex={-1} className="min-w-0 scroll-mt-4 rounded-xl focus-visible:outline-2 focus-visible:outline-focus-ring"><TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title={tr("fleet.machine")} badge={tr("fleet.online", { online: up, total: snap.nodes.length })} />
                 {snap.nodes.length === 0 ? <Nothing icon={Server01} title={tr("fleet.noMachines")}>{tr("fleet.noMachinesHint")}</Nothing> : (

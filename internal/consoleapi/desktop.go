@@ -39,8 +39,22 @@ type DesktopDiscovery struct {
 	Agents []DesktopAgentCandidate `json:"agents"`
 }
 
+// DesktopEnrollAgent registers one discovered tool. AgentID is the name the
+// agent answers to in chat, About says what it is good for so the planner
+// can pick it, and Default makes it the agent a conversation starts with.
+type DesktopEnrollAgent struct {
+	CandidateID string `json:"candidate_id"`
+	AgentID     string `json:"agent_id,omitempty"`
+	About       string `json:"about,omitempty"`
+	Default     bool   `json:"default,omitempty"`
+}
+
+// DesktopEnrollRequest carries the owner's choice. Agents is what the guide
+// sends; AgentIDs is the same choice without names, kept so an older client
+// still registers its tools under their own IDs.
 type DesktopEnrollRequest struct {
-	AgentIDs []string `json:"agent_ids"`
+	AgentIDs []string             `json:"agent_ids,omitempty"`
+	Agents   []DesktopEnrollAgent `json:"agents,omitempty"`
 }
 
 // DesktopSetupRequest records the guide page to open next; Done closes the
