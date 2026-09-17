@@ -9,6 +9,7 @@ import { Input } from "@/components/base/input/input";
 import type { Conversation, Project, Task } from "@/lib/types";
 import { taskState } from "./ui";
 import { kindWord, placeLabel } from "@/lib/workspaces";
+import { useNodeLabel } from "@/lib/node-name";
 import { ConfirmDialog } from "./confirm";
 
 // ConversationPatch is what a row can change about its conversation.
@@ -36,7 +37,7 @@ export type ConversationPatch = { title?: string; archived?: boolean };
 // So a row says nothing about its agent or its place while it matches
 // the usual one, and the list states its own norm by leaving it out. The
 // exception is then visible because it is the only row that speaks.
-function usual(threads: Conversation[], locale: Locale): { agent: string; place: string } {
+function usual(threads: Conversation[], locale: Locale, nodeName: (id: string) => string): { agent: string; place: string } {
     const common = (pick: (c: Conversation) => string) => {
         const counts = new Map<string, number>();
         for (const c of threads) {
@@ -50,7 +51,7 @@ function usual(threads: Conversation[], locale: Locale): { agent: string; place:
     };
     return {
         agent: common((c) => c.agent || ""),
-        place: common((c) => (c.place ? placeLabel(c.place, locale) : "")),
+        place: common((c) => (c.place ? placeLabel(c.place, locale, nodeName) : "")),
     };
 }
 
@@ -60,6 +61,7 @@ function notable(t: Task, all: Task[]): boolean {
 
 export function SessionsTree({ list, projects, current, onPick, onNew, onImport, onUpdate, onDelete, collapsed, onToggle, creating, tasks = [], onTask }: { list: Conversation[]; projects: Project[]; current: string; onPick: (id: string) => void; onNew: (project?: string) => void; onImport?: () => void; onUpdate: (id: string, patch: ConversationPatch) => void; onDelete: (id: string) => Promise<void>; collapsed?: boolean; onToggle?: () => void; creating?: boolean; tasks?: Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
+    const nodeLabelOf = useNodeLabel();
     const [folded, setFolded] = useState<Record<string, boolean>>(() => { try { return JSON.parse(localStorage.getItem("steve.folded") || "{}"); } catch { return {}; } });
     const toggle = (id: string) => setFolded((f) => { const next = { ...f, [id]: !f[id] }; try { localStorage.setItem("steve.folded", JSON.stringify(next)); } catch { /* ignore */ } return next; });
     const [search, setSearch] = useState("");
@@ -89,11 +91,11 @@ export function SessionsTree({ list, projects, current, onPick, onNew, onImport,
     );
     const node = (p: Project, title: string, hint?: string) => {
         const threads = byProject.get(p.id) || [];
-        const norm = usual(threads, locale);
+        const norm = usual(threads, locale, nodeLabelOf);
         const open = !!query || !folded[p.id];
         if (query && !threads.length) return null;
         const holdsCurrent = threads.some((c) => c.id === current);
-        const places = p.workspaces.map((w) => `${kindWord(w.kind, locale)} ${w.node}`).join(" · ");
+        const places = p.workspaces.map((w) => `${kindWord(w.kind, locale)} ${nodeLabelOf(w.node)}`).join(" · ");
         return (
             <li key={p.id} className="flex flex-col">
                 <div className={`conversation-project group ${holdsCurrent && !open ? "is-current" : ""}`}>
@@ -178,6 +180,7 @@ function TreeHeading({ children }: { children: string }) {
 // nowhere to work — where it runs. Its menu renames or puts it away.
 function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArchive, onDelete, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; onPick: (id: string) => void; norm?: { agent: string; place: string }; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; onDelete: () => Promise<void>; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
+    const nodeLabelOf = useNodeLabel();
     const [workOpen, setWorkOpen] = useState(false);
     const [confirming, setConfirming] = useState(false);
     const workID = useId();
@@ -185,7 +188,7 @@ function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArc
     // The second line earns its place only when it says something this
     // row does not share with its neighbours. Usually nothing does, and
     // then the row is one line: a title and when it last moved.
-    const place = c.place ? placeLabel(c.place, locale) : "";
+    const place = c.place ? placeLabel(c.place, locale, nodeLabelOf) : "";
     const qualifiers = [
         c.archived ? tr("console.archived") : "",
         norm && c.agent && c.agent !== norm.agent ? c.agent : "",
@@ -203,7 +206,7 @@ function Thread({ c, current, onPick, norm, renaming, onRename, onRenamed, onArc
                         className="mt-2 flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-tertiary focus-visible:outline-2 focus-visible:outline-brand">
                         <ChevronDown aria-hidden="true" className={`size-3.5 transition-transform motion-reduce:transition-none ${workOpen ? "" : "-rotate-90"}`} />
                     </button> : <span className="w-6 shrink-0" />}
-                    <button type="button" onClick={() => onPick(c.id)} aria-current={current ? "page" : undefined} className={`conversation-row min-w-0 flex-1 ${current ? "is-selected" : ""}`} title={nowhere ? tr("consoleChrome.noWorkspace") : c.place ? placeLabel(c.place, locale) : undefined}>
+                    <button type="button" onClick={() => onPick(c.id)} aria-current={current ? "page" : undefined} className={`conversation-row min-w-0 flex-1 ${current ? "is-selected" : ""}`} title={nowhere ? tr("consoleChrome.noWorkspace") : c.place ? placeLabel(c.place, locale, nodeLabelOf) : undefined}>
                         <span className="flex w-full items-baseline gap-2">
                             {c.running && <Loading01 className="size-3 shrink-0 self-center animate-spin text-fg-brand-primary" />}
                             {nowhere && <AlertCircle className="size-3 shrink-0 self-center text-fg-error-primary" />}
@@ -269,13 +272,14 @@ function ThreadWork({ work, childrenOf, onTask }: { work: Task[]; childrenOf?: (
 // stands; the goal is the tooltip. A delegation is the same line,
 // indented, marked as handed on.
 function TaskLine({ t, onTask, child }: { t: Task; onTask?: (t: Task) => void; child?: boolean }) {
+    const nodeLabelOf = useNodeLabel();
     const running = t.execution === "running";
     const state = taskState(t);
     return (
         <button type="button" onClick={onTask ? () => onTask(t) : undefined} className={`flex w-full items-center gap-1.5 rounded-md py-0.5 pr-1.5 text-left u-meta ${child ? "pl-5" : "pl-1.5"} ${onTask ? "hover:bg-primary/50" : ""}`} title={t.title || t.goal}>
             {running ? <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" /> : state === "done" ? <CheckCircle className="size-3 shrink-0 text-fg-success-primary" /> : state === "failed" ? <span className="size-2 shrink-0 rounded-full bg-error-solid" /> : <span className="size-2 shrink-0 rounded-full bg-quaternary" />}
             <span className="shrink-0 font-mono text-quaternary">#{t.id}</span>
-            <span className="min-w-0 shrink-0 truncate text-tertiary">{child ? "→ " : ""}{t.member || "steve"}{t.node ? `@${t.node}` : ""}</span>
+            <span className="min-w-0 shrink-0 truncate text-tertiary">{child ? "→ " : ""}{t.member || "steve"}{t.node ? `@${nodeLabelOf(t.node)}` : ""}</span>
             <span className="min-w-0 truncate text-secondary">{t.title || t.goal}</span>
         </button>
     );

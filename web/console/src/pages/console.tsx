@@ -514,7 +514,7 @@ export function ConsolePage() {
                     <button type="button" className="workbench-icon-button" aria-label={t("console.sessions")}  title={t("console.sessions")}  onClick={() => desktopSessions ? setSessionsCollapsed(!sessionsCollapsed) : setMobileSessions(true)}><LayoutLeft aria-hidden="true" /></button>
                     <div className="console-heading">
                     <h1 title={title}>{title}</h1>
-                    {context?.project && <div className="console-location" title={context.agent?.place ? placeLabel(context.agent.place, locale) : context.project.path}>{context.project.id} · {context.agent?.place ? placeLabel(context.agent.place, locale) : nodeLabelOf(context.project.node)}</div>}
+                    {context?.project && <div className="console-location" title={context.agent?.place ? placeLabel(context.agent.place, locale, nodeLabelOf) : context.project.path}>{context.project.id} · {context.agent?.place ? placeLabel(context.agent.place, locale, nodeLabelOf) : nodeLabelOf(context.project.node)}</div>}
                     </div>
                     {current?.archived && (
                         <span className="flex items-center gap-1.5">

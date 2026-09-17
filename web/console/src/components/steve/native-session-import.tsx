@@ -9,6 +9,7 @@ import { request } from "@/lib/http";
 import { relative } from "@/lib/format";
 import type { Agent, Node, Project } from "@/lib/types";
 import { useI18n } from "@/providers/locale-provider";
+import { nodeLabelIn } from "@/lib/node-name";
 
 interface HistoryEntry {
     native_id: string; harness: string; source_home: string; workdir: string;
@@ -68,7 +69,7 @@ export function NativeSessionImport({ agents, nodes, projects, onClose, onImport
         <div className="workbench-drawer-body flex flex-col gap-4">
             <p className="text-sm text-tertiary">{t("nativeImport.hint")}</p>
             {!available.length ? <p role="status" className="text-sm text-tertiary">{t("nativeImport.unavailable")}</p> : <>
-                <Select label={t("nativeImport.agent")} selectedKey={effectiveAgentID} isDisabled={!!busy} onSelectionChange={(key) => { setAgentID(String(key)); reset(); }} items={available.map((a) => ({ id: a.id, label: `${a.id} · ${a.harness} · ${a.node}` }))}>
+                <Select label={t("nativeImport.agent")} selectedKey={effectiveAgentID} isDisabled={!!busy} onSelectionChange={(key) => { setAgentID(String(key)); reset(); }} items={available.map((a) => ({ id: a.id, label: `${a.id} · ${a.harness} · ${nodeLabelIn(nodes, a.node || "")}` }))}>
                     {(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}
                 </Select>
                 <Input label={t("nativeImport.source")} hint={t("nativeImport.sourceHint")} value={home} isDisabled={!!busy} onChange={(value) => { setHome(value); reset(); }} />
