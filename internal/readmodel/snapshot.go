@@ -102,7 +102,7 @@ func (b *snapshotBuilder) agents(ctx context.Context) {
 		for _, c := range m.src.Roster.All(ctx) {
 			a := Agent{
 				ID: c.Agent.ID, Node: m.place(c.Node), Harness: c.Harness, Snapshot: c.Snapshot,
-				Model: c.Model, Models: c.Models, Eligible: c.Eligible, Why: c.Why,
+				Model: c.Model, Models: c.Models, Eligible: c.Eligible, Why: c.Why, Reason: c.Reason, ReasonDetail: c.ReasonDetail,
 				Requires: c.Agent.Requires, Level: string(c.Level.OrDefault()), Slots: c.Slots, Region: c.Region,
 				Preferred: c.Agent.Model, Observed: c.Observed, MCPServers: c.Agent.MCPServers, Default: c.Agent.Default,
 				Options: c.Agent.Options, Selectors: c.Selectors, About: c.Agent.About,

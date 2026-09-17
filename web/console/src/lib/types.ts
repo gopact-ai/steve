@@ -24,6 +24,7 @@ export interface Activity {
 export interface Condition { atom: string; met: boolean; code?: string; detail?: string }
 export interface Agent {
     id: string; node?: string; harness: string; model?: string; models?: string[]; eligible: boolean; why?: string;
+    reason?: string; reason_detail?: string;
     requires?: string[]; level?: string; slots?: number; region?: string; repair?: string; activities?: Activity[]; busy?: number; activity_known?: boolean; snapshot?: AbilitySnapshot;
     preferred?: string; observed?: string; conditions?: Condition[]; mcp_servers?: string[]; default?: boolean;
     options?: Record<string, string>; selectors?: Selector[]; about?: string;

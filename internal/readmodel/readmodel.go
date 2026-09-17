@@ -260,7 +260,12 @@ type Agent struct {
 	Model    string   `json:"model,omitempty"`
 	Eligible bool     `json:"eligible"`
 	Why      string   `json:"why,omitempty"`
-	Requires []string `json:"requires,omitempty"`
+	// Reason is Why as a code a page can translate, with ReasonDetail as
+	// its one free part (the error a machine reported, the model asked
+	// for). Readers that cannot translate it still have Why.
+	Reason       string   `json:"reason,omitempty"`
+	ReasonDetail string   `json:"reason_detail,omitempty"`
+	Requires     []string `json:"requires,omitempty"`
 	// Preferred is the model the agent's configuration pins, applied at
 	// session open; Observed is what the harness was last seen running.
 	// Conditions are Requires judged against the machine, one by one.
