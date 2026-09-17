@@ -42,10 +42,10 @@ function Activity({ tools }: { tools: ToolCall[] }) {
     const summary = activity(tools, locale);
     return (
         <details data-span-kind="tool" className="group/activity min-w-0">
-            <summary className={`flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-xs ${summary.failed ? "text-error-primary" : "text-tertiary hover:text-primary"}`}>
+            <summary className="flex cursor-pointer list-none items-center gap-1.5 py-0.5 text-xs text-tertiary hover:text-primary">
                 {summary.kinds.map((kind) => { const Icon = activityIcons[kind]; return <Icon key={kind} className="size-3.5 shrink-0" />; })}
                 <span className="min-w-0 truncate" title={summary.text}>{summary.text}</span>
-                {summary.failed && <span className="shrink-0">{t("consoleChrome.hasFailure")}</span>}
+                {summary.failed && <span className="shrink-0 text-quaternary">{t("consoleChrome.hasFailure")}</span>}
                 {summary.running && <Loading01 className="size-3 shrink-0 animate-spin" />}
                 <ChevronDown className="size-3.5 shrink-0 transition group-open/activity:rotate-180" />
             </summary>

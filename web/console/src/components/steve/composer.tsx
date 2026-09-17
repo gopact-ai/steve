@@ -1,6 +1,6 @@
 import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
-import { memo, useState, type KeyboardEvent, type RefObject } from "react";
+import { memo, useState, type ClipboardEvent, type KeyboardEvent, type RefObject } from "react";
 import { ArrowUp, ChevronDown, CornerDownRight, DotsHorizontal, Edit05, Folder, MessageChatSquare, Plus, Square, Trash01 } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
@@ -33,6 +33,10 @@ export interface ComposerProps {
     onToggleQueueing?: () => void;
     value: string;
     hasMaterials?: boolean;
+    // A screenshot on the clipboard is an attachment, not text: the page
+    // uploads it the way the attach button does. Text pasted alongside it
+    // is still typed into the box.
+    onPasteFiles?: (files: File[]) => void;
     onChange: (s: string) => void;
     onSubmit: () => void;
     onStop: () => void;
@@ -107,6 +111,7 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                     placeholder={p.disabled ? t("consoleChrome.preparing") : p.busy ? (p.queueing === false ? t("consoleChrome.processing") : t("consoleChrome.queuePlaceholder")) : t("consoleChrome.placeholder")}
                     onChange={(e) => p.onChange(e.target.value)}
                     onKeyDown={p.onKey}
+                    onPaste={(e: ClipboardEvent<HTMLTextAreaElement>) => { const files = Array.from(e.clipboardData?.files ?? []); if (files.length) p.onPasteFiles?.(files); }}
                     className="composer-textarea"
                 />
                 <div className="composer-controls"><div className="composer-options">

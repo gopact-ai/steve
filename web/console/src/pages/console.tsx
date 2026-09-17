@@ -40,6 +40,15 @@ import type { Conversation, ConversationContext, Reply, Suggestion, Verb, Task, 
 // ConsolePage is composition: it owns the conversation, the transcript,
 // the line in flight and the composer's text, and lays out the three
 // columns from components/steve. Nothing here draws.
+// Browsers hand over every pasted screenshot as "image.png", so a stamped
+// name keeps one paste apart from the next in the draft row.
+function stamped(file: File): File {
+    if (file.name && !/^(image|clipboard|screenshot)\.[a-z\d]+$/i.test(file.name)) return file;
+    const ext = (file.name.split(".").pop() || file.type.split("/")[1] || "png").toLowerCase().replace(/\+xml$/, "");
+    const at = new Date(), pad = (n: number) => String(n).padStart(2, "0");
+    return new File([file], `pasted-${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}-${pad(at.getHours())}${pad(at.getMinutes())}${pad(at.getSeconds())}.${ext === "jpeg" ? "jpg" : ext}`, { type: file.type });
+}
+
 export function ConsolePage() {
     const { snap, refresh, live: connection, hubUpdated } = useFleet();
     const nodeLabelOf = useNodeLabel();
@@ -492,11 +501,12 @@ export function ConsolePage() {
     const current = conversations.find((c) => c.id === conversation);
     const title = current?.title || (entries.find((r) => r.kind === "sent" && r.input?.trim() && !r.input.trim().startsWith("/"))?.input?.split("\n")[0]) || t("console.newConversation");
     useEffect(() => { materials.setTarget(context?.project ? { conversation, project: context.project.id, title } : null); }, [conversation, context?.project?.id, title, materials.setTarget]);
-    async function upload(files: FileList | null) {
-        if (!files?.length || uploading || !context?.project || !submissionSupport.material_refs) return;
+    async function upload(files: FileList | File[] | null) {
+        const chosen = Array.from(files ?? []);
+        if (!chosen.length || uploading || !context?.project || !submissionSupport.material_refs) return;
         const target = { conversation, project: context.project.id, title };
         setUploading(true); setStatus("");
-        try { for (const file of Array.from(files)) { const material = await uploadMaterial(target.project, file, locale); await materials.add(material, { id: material.id }, target); } }
+        try { for (const file of chosen) { const material = await uploadMaterial(target.project, file, locale); await materials.add(material, { id: material.id }, target); } }
         catch (error) { setStatus(error instanceof Error ? error.message : String(error)); }
         finally { setUploading(false); }
     }
@@ -518,6 +528,15 @@ export function ConsolePage() {
     const selectReply = useEventCallback((r: Reply) => { setSelectedReply(r); setTab("trace"); setInspectorOpen(true); });
     const quoteReply = useEventCallback((r: Reply) => { if (!r.id) return; void setQuotes((list) => list.some((x) => x.reply_id === r.id) ? list : [...list, { conversation, reply_id: r.id!, title: current?.title || conversation, excerpt: (r.text || "").replace(/\s+/g, " ").slice(0, 80) }]); });
     const changeText = useEventCallback((value: string) => setText(value));
+    // Pasting a screenshot into the box attaches it, the way the attach
+    // button would; when the agent cannot take attachments the paste says
+    // so instead of being swallowed.
+    const pasteFiles = useEventCallback((files: File[]) => {
+        if (!files.length) return;
+        if (!submissionSupport.material_refs) { setStatus(t("materials.pasteUnsupported")); return; }
+        if (!context?.project) { setStatus(t("materials.noTarget")); return; }
+        void upload(files.map(stamped));
+    });
     const submitLine = useEventCallback(() => void submit());
     const stopLine = useEventCallback(() => void stop());
     const dropQuote = useEventCallback((q: { reply_id: string }) => void setQuotes((list) => list.filter((y) => y.reply_id !== q.reply_id)));
@@ -622,7 +641,7 @@ export function ConsolePage() {
                             {submissionSupport.material_refs && <div className="mx-auto mb-2 flex max-w-3xl flex-wrap items-center gap-3"><label className="cursor-pointer rounded-md px-2 py-1 text-xs text-tertiary hover:bg-secondary">{uploading ? t("materials.uploading") : t("materials.upload")}<input type="file" multiple className="sr-only" disabled={uploading} aria-label={t("materials.upload")} onChange={(event) => { void upload(event.target.files); event.target.value = ""; }} /></label><span className="text-xs text-quaternary">{t("materials.uploadHint")}</span></div>}
                             {openedMaterial && context?.project && <MaterialPreview project={context.project.id} anchor={openedMaterial} onClose={() => setOpenedMaterial(null)} />}
                             <Composer
-                                value={text} hasMaterials={draftMaterials.length > 0} onChange={changeText} onSubmit={submitLine} onStop={stopLine}
+                                value={text} hasMaterials={draftMaterials.length > 0} onChange={changeText} onPasteFiles={pasteFiles} onSubmit={submitLine} onStop={stopLine}
                                 busy={busy} pending={!!submission} stopping={stopping} disabled={creating || !context || !canSubmit} boxRef={box} onKey={pressKey}
                                 quotes={quotes} onDropQuote={dropQuote}
                                 queue={queue} queueing={queueing} onToggleQueueing={toggleQueueing}
