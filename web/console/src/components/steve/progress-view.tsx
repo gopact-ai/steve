@@ -58,7 +58,8 @@ function Activity({ tools }: { tools: ToolCall[] }) {
 // writes them as **bold headings** — so it is rendered, not shown raw,
 // and trimmed: a chunk that starts with blank lines must not paint them.
 // A finished thought is a line of small text that wraps if it must; only
-// a running one is a window that follows its tail, and only that window
+// a running one is a window that follows its tail — six lines of it, deep
+// enough to hold a whole thought rather than its last sentence — and only that window
 // hides anything worth a tooltip — one that cannot render the markdown
 // it is given, so it is given the words without the marks.
 function ThoughtSpan({ text, live }: { text: string; live?: boolean }) {
@@ -66,7 +67,7 @@ function ThoughtSpan({ text, live }: { text: string; live?: boolean }) {
     const shown = text.trim();
     const { followTail: _, ...scroll } = useFollowTail(shown, live);
     return <div {...(live ? scroll : {})} data-span-kind="thought" tabIndex={live ? 0 : undefined} aria-label={t("consoleChrome.thinking")} title={live ? plain(shown) : undefined}
-        className={`break-words text-xs text-tertiary [&_p]:my-0 [&_p]:leading-5 ${live ? "max-h-16 overflow-y-auto [overflow-anchor:none]" : ""}`}>
+        className={`break-words text-xs text-tertiary [&_p]:my-0 [&_p]:leading-5 ${live ? "max-h-30 overflow-y-auto [overflow-anchor:none]" : ""}`}>
         <Md size="xs" text={shown} className="text-tertiary" />
     </div>;
 }
