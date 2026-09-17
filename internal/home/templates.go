@@ -147,6 +147,26 @@ Skills 由 Steve 映射（/skills），不继承宿主 IDE。改完后发 /new�
 默认工具权限允许读、拒绝写。写 MEMORY.md 被拒绝时，把建议的修改写在回复里，让用户自己贴进文件。`
 }
 
+// LanguageRule is the one line that has to reach every agent, whatever it is
+// and wherever it runs: think and answer in the language the person is using.
+// A coding agent left to itself reasons in English, and the person then reads
+// an English thought summary above a Chinese answer. Code and identifiers are
+// exempt — translating a path helps nobody.
+func LanguageRule(locale Locale) string {
+	if locale == LocaleEN {
+		return `# Language
+
+- Think and reply in English: reasoning summaries, progress notes, the final answer, and any prose meant for a person.
+- Leave code, commands, paths, identifiers, and quoted output as they are; do not translate them.
+- If the person writes in another language, follow them from that message on.`
+	}
+	return `# Language
+
+- 用中文思考、用中文回复：思考摘要、进度说明、最终答案，以及任何写给人看的话。
+- 代码、命令、路径、标识符、原样引用的输出保持原文，不要翻译。
+- 用户改用别的语言时，从那句话起跟着他改。`
+}
+
 func ListenUnmentioned(locale Locale) string {
 	if locale == LocaleEN {
 		return "You were not @mentioned. Reply only if this message clearly addresses you, asks you, or needs your action. Otherwise output no text."

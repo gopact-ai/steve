@@ -84,7 +84,7 @@ func wireHome(cfg *config.Config, live *skills.Live) (*capability.Assembler, err
 	if err := home.BootstrapLocale(cfg.Gateway.HomePath, cfg.EffectiveOwnerID(), locale); err != nil {
 		return nil, err
 	}
-	assembler := cfg.CapabilityAssembler().SetHome(home.Dir{Path: cfg.Gateway.HomePath, Locale: locale})
+	assembler := cfg.CapabilityAssembler().SetHome(home.Dir{Path: cfg.Gateway.HomePath, Locale: locale}).SetLocale(locale)
 	if live != nil && live.Map != nil {
 		assembler.SetSkills(live.Map)
 	}
