@@ -34,6 +34,7 @@ type retainedDelegateSessions struct {
 	initialResult            bool
 	resumeError              error
 	stopSettled              bool
+	processStopped           bool
 	resumeEntered            chan struct{}
 }
 
@@ -85,7 +86,15 @@ func (s *retainedDelegateSessions) InspectRetained(ctx context.Context) (nodewir
 			epoch = lease.Epoch
 		}
 	}
-	return nodewire.SessionState{ID: s.ID(), Harness: r.Harness, State: "running", InputAccepted: 1, Binding: nodewire.SessionBinding{ProjectID: r.Project, SessionID: attempt.RetainedSessionID(tracked.Channel, tracked.ID, r.Agent), TaskID: r.TaskID, AttemptID: r.ID, NodeID: r.Node, ExecutionEpoch: epoch, TaskEpoch: r.Execution.Epoch}, Command: &nodewire.SessionCommand{ID: r.TurnID, InputSequence: 1, State: "running"}}, nil
+	state := nodewire.SessionState{ID: s.ID(), Harness: r.Harness, State: nodewire.SessionRunning, InputAccepted: 1, Binding: nodewire.SessionBinding{ProjectID: r.Project, SessionID: attempt.RetainedSessionID(tracked.Channel, tracked.ID, r.Agent), TaskID: r.TaskID, AttemptID: r.ID, NodeID: r.Node, ExecutionEpoch: epoch, TaskEpoch: r.Execution.Epoch}, Command: &nodewire.SessionCommand{ID: r.TurnID, InputSequence: 1, State: nodewire.SessionCommandRunning}}
+	s.mu.Lock()
+	stopped := s.processStopped
+	s.mu.Unlock()
+	if stopped {
+		state.State, state.ProcessStopped = nodewire.SessionInterrupted, true
+		state.Command.State, state.Command.ProcessStopped = nodewire.SessionCommandUncertain, true
+	}
+	return state, nil
 }
 func (s *retainedDelegateSessions) ResumeTurn(ctx context.Context, _ permission.AskFunc, _ acphost.AskUserFunc, progress func(view.Progress)) (string, []string, error) {
 	s.mu.Lock()
@@ -636,5 +645,71 @@ func TestRetainedDelegateSettledFailureClearsStaleRecoveryQuestion(t *testing.T)
 	service.mu.Unlock()
 	if notice != nil {
 		t.Fatalf("stale recovery notice kept after settlement: %+v", notice)
+	}
+}
+
+// A node that says the process behind a child is gone, while its command never
+// reported an outcome, ends that child instead of asking forever: there is
+// nothing left on the node to wait for, and the parent needs to know so the
+// work can be run again.
+func TestRetainedDelegateStoppedNodeProcessEndsTheChildInsteadOfRetryingForever(t *testing.T) {
+	w, sessions, parent, child := detachedDelegateFixture(t)
+	sessions.mu.Lock()
+	sessions.processStopped = true
+	sessions.mu.Unlock()
+	service := recoveredDelegateService(t, w, sessions)
+	service.SetRecoveryQuestion(func(_ context.Context, q RecoveryQuestion) (view.Answer, error) {
+		t.Errorf("stopped node process asked for reconciliation: %+v", q)
+		return view.Answer{Value: "wait"}, nil
+	})
+	var mu sync.Mutex
+	var deliveries []Delivery
+	service.SetDeliverer(func(_ context.Context, d Delivery) error {
+		mu.Lock()
+		deliveries = append(deliveries, d)
+		mu.Unlock()
+		return nil
+	})
+	if err := service.RecoverRetained(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	stored := awaitDelegateResult(t, w.tasks, child.TaskID)
+	if stored.State != task.StateFailed || stored.Attempts[0].Open() || stored.Attempts[0].Outcome != task.OutcomeError {
+		t.Fatalf("stopped child was not closed: %+v", stored)
+	}
+	if !strings.Contains(stored.Result.Answer, "重新执行") {
+		t.Fatalf("stopped child has no readable explanation: %+v", stored.Result)
+	}
+	records, err := w.attempts.ForTask(t.Context(), child.TaskID)
+	if err != nil || len(records) != 1 {
+		t.Fatal(err)
+	}
+	settled := records[0]
+	if settled.State != attempt.Failed || settled.Unsettled || settled.SessionSettled == nil || !*settled.SessionSettled {
+		t.Fatalf("stopped execution stayed unsettled: %+v", settled)
+	}
+	if receipt, ok, err := w.attempts.TaskStopReceipt(t.Context(), settled.ID); err != nil || !ok || receipt.Kind != "native-process-stopped" {
+		t.Fatalf("missing native stop receipt: %+v %v %v", receipt, ok, err)
+	}
+	for range 3 {
+		if err := service.RecoverRetained(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		service.RedeliverPending(t.Context())
+		time.Sleep(10 * time.Millisecond)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(deliveries) != 1 || len(deliveries[0].Children) != 1 || deliveries[0].Children[0].Task != child.TaskID || deliveries[0].Children[0].State != task.StateFailed {
+		t.Fatalf("stopped child was delivered %d times: %+v", len(deliveries), deliveries)
+	}
+	charged, _ := w.tasks.Get(parent.ID)
+	if charged.Budget.Tokens.Total != 0 {
+		t.Fatalf("stopped child charged unreported usage: %+v", charged.Budget)
+	}
+	sessions.mu.Lock()
+	defer sessions.mu.Unlock()
+	if sessions.prompts != 1 || sessions.resumes != 0 {
+		t.Fatalf("stopped child was replayed: prompt=%d resume=%d", sessions.prompts, sessions.resumes)
 	}
 }
