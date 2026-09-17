@@ -8,11 +8,13 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/ability"
 	"github.com/gopact-ai/steve/internal/home"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/protocol"
+	"github.com/gopact-ai/steve/internal/roster"
 )
 
 // Context is where a conversation stands: which project it works in, on
@@ -288,6 +290,42 @@ type Placement struct {
 	Node      string
 }
 
+// blocked says why an agent cannot take this conversation, in the
+// reader's language and naming the machine the way its owner named it.
+// The roster's own sentence is English shorthand for logs; a person
+// reading the agent list needs the machine and the missing thing.
+func (c *Coordinator) blocked(cand roster.Candidate) string {
+	if cand.Eligible {
+		return ""
+	}
+	where := nodewire.Name(cand.Node)
+	switch cand.Reason {
+	case roster.ReasonRequirements:
+		missing := cand.Why
+		if req, err := ability.Compile(cand.Agent.Requires); err == nil {
+			missing = strings.Join(cand.Match(req).UnmetAtoms(), c.text.T(i18n.ListSeparator))
+		}
+		return c.text.T(i18n.AgentLacks, where, missing)
+	case roster.ReasonNodeDown:
+		detail := ""
+		if cand.ReasonDetail != "" {
+			detail = "：" + cand.ReasonDetail
+		}
+		return c.text.T(i18n.AgentNodeDown, where, detail)
+	case roster.ReasonUnknownNode:
+		return c.text.T(i18n.AgentNodeUnknown)
+	case roster.ReasonHarness:
+		return c.text.T(i18n.AgentHarnessMissing, where, cand.ReasonDetail)
+	case roster.ReasonDisk:
+		return c.text.T(i18n.AgentDiskFull, where, cand.ReasonDetail)
+	case roster.ReasonModel:
+		return c.text.T(i18n.AgentModelMissing, where, cand.ReasonDetail)
+	case roster.ReasonBadRequirement:
+		return c.text.T(i18n.AgentBadRequirement, cand.ReasonDetail)
+	}
+	return cand.Why
+}
+
 // Context answers for one conversation.
 func (c *Coordinator) Context(ctx context.Context, conversationID string) (Context, error) {
 	c = c.localized(i18n.ContextLocale(ctx))
@@ -318,10 +356,10 @@ func (c *Coordinator) Context(ctx context.Context, conversationID string) (Conte
 		for _, cand := range c.fleet.All(ctx) {
 			choice := AgentChoice{
 				ID: cand.Agent.ID, Node: nodewire.Place(cand.Node), Harness: cand.Harness, Model: cand.Model,
-				Ready: cand.Eligible, Why: cand.Why, Usable: cand.Eligible, Current: cand.Agent.ID == active,
+				Ready: cand.Eligible, Why: c.blocked(cand), Usable: cand.Eligible, Current: cand.Agent.ID == active,
 			}
 			if !cand.Eligible {
-				choice.Because = cand.Why
+				choice.Because = choice.Why
 			} else if current != nil {
 				if ws, err := current.Place(cand.Node); err == nil {
 					choice.Place = &Placement{Workspace: ws.ID, Kind: string(ws.Kind), Node: nodewire.Place(ws.Node)}

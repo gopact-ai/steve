@@ -19,7 +19,8 @@ import { removeNode } from "@/lib/api/fleet";
 import { renameMachine } from "@/lib/machines";
 import { nodeLabel, nodeLabelIn } from "@/lib/node-name";
 import { number, relative, when } from "@/lib/format";
-import { addAgent, addNode, removeAgent, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
+import { addAgent, addNode, fetchNodeSettings, removeAgent, saveNodeSettings, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
+import { conditionWords, missingTags, troubleWords } from "@/lib/agent-trouble";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
 import { applyActivity, withLiveActivity, type LiveActivity } from "@/lib/live";
 import type { AbilitySnapshot, Agent, Attempt, Capability, Condition, Node as NodeT, Snapshot } from "@/lib/types";
@@ -40,9 +41,9 @@ function Conditions({ a }: { a: Agent }) {
     return (
         <div className="flex flex-wrap gap-1">
             {judged.map((c) => (
-                <span key={c.atom} title={c.met ? tr("fleet.conditionMet") : tr("fleet.conditionUnmet", { reason: c.code ? ": " + c.code : "", detail: c.detail ? " · " + c.detail : "" })}
-                    className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 font-mono text-xs ${c.met ? "bg-secondary text-primary" : "bg-error-primary text-error-primary ring-1 ring-error ring-inset"}`}>
-                    {c.met ? <CheckCircle className="size-3 text-fg-success-primary" /> : <XCircle className="size-3 text-fg-error-primary" />}{c.atom}
+                <span key={c.atom} title={`${c.atom}${c.met ? " · " + tr("fleet.conditionMet") : " · " + tr("fleet.conditionUnmet", { reason: c.code ? ": " + c.code : "", detail: c.detail ? " · " + c.detail : "" })}`}
+                    className={`inline-flex items-center gap-1 rounded-md px-1.5 py-0.5 text-xs ${c.met ? "bg-secondary text-primary" : "bg-error-primary text-error-primary ring-1 ring-error ring-inset"}`}>
+                    {c.met ? <CheckCircle className="size-3 text-fg-success-primary" /> : <XCircle className="size-3 text-fg-error-primary" />}{conditionWords(c, tr)}
                 </span>
             ))}
         </div>
@@ -65,6 +66,53 @@ function machineOptions(snap: Snapshot, tr: Translator): { id: string; label: st
         { id: "__hub", label: `${hubName}（${tr("connection.coordinator")}）`, ...(hubName === snap.hub.node ? {} : { supportingText: snap.hub.node }) },
         ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: nodeLabel(n), ...(n.display_name ? { supportingText: n.name } : {}) })),
     ];
+}
+
+// TroubleLine is the same reason in one line, for a table row.
+function TroubleLine({ a }: { a: Agent }) {
+    const { t: tr } = useI18n();
+    const { snap } = useFleet();
+    const words = troubleWords(a, nodeLabelIn(snap.nodes, a.node || snap.hub.node), tr);
+    if (!words) return null;
+    return <span className="truncate text-xs text-error-primary" title={words}>{words}</span>;
+}
+
+// AgentTrouble is why an agent cannot run, said plainly, with the repair
+// when the repair is one the owner can make here: a machine that never
+// declared a label can be given it now, instead of sending someone to
+// hunt through two settings pages for the word they already typed.
+function AgentTrouble({ a, onChanged }: { a: Agent; onChanged: () => void }) {
+    const { t: tr } = useI18n();
+    const { snap } = useFleet();
+    const [busy, setBusy] = useState(false);
+    const [error, setError] = useState("");
+    if (a.eligible) return null;
+    const node = a.node || snap.hub.node;
+    const machine = nodeLabelIn(snap.nodes, node);
+    const tags = missingTags(a);
+    const words = troubleWords(a, machine, tr);
+    async function label() {
+        setBusy(true); setError("");
+        try {
+            const { settings } = await fetchNodeSettings(node);
+            const have = settings.capabilities || [];
+            const add = tags.filter((tag) => !have.some((held) => held.toLowerCase() === tag.toLowerCase()));
+            await saveNodeSettings(node, { ...settings, capabilities: [...have, ...add] });
+            onChanged();
+        } catch (e) { setError(String(e).replace(/^Error: /, "")); } finally { setBusy(false); }
+    }
+    return (
+        <div className="mt-1 flex flex-col gap-1">
+            {words && <div className="text-xs text-error-primary">{words}</div>}
+            {tags.length > 0 && (
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                    <span className="text-xs text-tertiary">{tr("fleet.labelFixHint")}</span>
+                    <Button size="sm" color="link-color" isLoading={busy} onClick={() => void label()}>{tr("fleet.labelFix", { machine })}</Button>
+                </div>
+            )}
+            {error && <div role="alert" className="text-xs text-error-primary">{error}</div>}
+        </div>
+    );
 }
 
 // AgentDrawer is one agent in full, and the place to change it: where it
@@ -96,7 +144,7 @@ function AgentDrawer({ a, live, onClose, onChanged }: { a: Agent; live?: LiveAct
     return (
         <Drawer title={<><span className="text-base font-semibold text-primary">{a.id}</span>
                         {a.default && <Badge type="pill-color" size="sm" color="brand">{tr("common.default")}</Badge>}
-                        <StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} /></>} subtitle={<>{a.why && <div className="mt-1 text-xs text-error-primary">{a.why}</div>}</>} actions={<><Button size="sm" color="secondary" onClick={() => fill("@" + a.id + " ")}>{tr("fleet.assign")}</Button>
+                        <StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} /></>} subtitle={<AgentTrouble a={a} onChanged={onChanged} />} actions={<><Button size="sm" color="secondary" onClick={() => fill("@" + a.id + " ")}>{tr("fleet.assign")}</Button>
                 {!editing && <Button size="sm" color="secondary" iconLeading={Edit05} onClick={() => setEditing(true)}>{tr("common.edit")}</Button>}</>} onClose={onClose}>
                 {!editing ? (
                     <>
@@ -509,7 +557,7 @@ export function FleetPage() {
                                         {a.about && <span className="line-clamp-1 max-w-64 text-xs text-tertiary" title={a.about}>{a.about}</span>}
                                     </div>
                                 </Table.Cell>
-                                <Table.Cell><div className="flex min-w-0 flex-col gap-1"><div><StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />{a.busy ? <span className="ml-1 text-xs text-tertiary">{a.busy}{a.slots ? `/${a.slots}` : ""}</span> : null}</div>{a.why && <span className="truncate text-xs text-error-primary" title={a.why}>{a.why}</span>}{a.repair && <Button size="sm" color="link-color" onClick={(e: React.MouseEvent) => { e.stopPropagation(); act(`/repair ${a.id}`); }}>{tr("fleet.repairAgent", { agent: a.repair })}</Button>}</div></Table.Cell>
+                                <Table.Cell><div className="flex min-w-0 flex-col gap-1"><div><StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />{a.busy ? <span className="ml-1 text-xs text-tertiary">{a.busy}{a.slots ? `/${a.slots}` : ""}</span> : null}</div>{!a.eligible && <TroubleLine a={a} />}{a.repair && <Button size="sm" color="link-color" onClick={(e: React.MouseEvent) => { e.stopPropagation(); act(`/repair ${a.id}`); }}>{tr("fleet.repairAgent", { agent: a.repair })}</Button>}</div></Table.Cell>
                                 <Table.Cell>
                                     {withLiveActivity(a.activities, liveActivity[a.id]).length ? withLiveActivity(a.activities, liveActivity[a.id]).map((x) => <div key={x.attempt_id} className="truncate text-xs text-secondary" title={x.detail}>#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since, locale)}</div>) : <span className="text-xs text-quaternary">{a.activity_known === false ? tr("fleet.activityUnknown") : tr("fleet.idle")}</span>}
                                 </Table.Cell>

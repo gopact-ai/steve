@@ -206,6 +206,19 @@ type MatchResult struct {
 // OK is true only when everything was met.
 func (m MatchResult) OK() bool { return m.Verdict == True }
 
+// UnmetAtoms names just the atoms that failed or could not be decided,
+// without the codes: a message for a person says what is missing, and
+// leaves why to the page that can show it in full.
+func (m MatchResult) UnmetAtoms() []string {
+	var out []string
+	for _, a := range m.Atoms {
+		if a.Verdict != True {
+			out = append(out, a.Atom)
+		}
+	}
+	return out
+}
+
 // Unmet lists the atoms that failed or could not be decided, in words a
 // message can use.
 func (m MatchResult) Unmet() string {
@@ -320,6 +333,27 @@ func not(v Verdict) Verdict {
 	}
 }
 
+// named says whether a capability's id answers the atom. Tags are words
+// people type by hand, in one screen for the machine and another for the
+// agent, so "Linux" and "linux" are the same tag; every other kind is an
+// identifier and stays exact.
+func named(a Atom, id string) bool {
+	switch {
+	case a.ID != "":
+		if a.Kind == Tag {
+			return strings.EqualFold(id, a.ID)
+		}
+		return id == a.ID
+	case a.Prefix != "":
+		if a.Kind == Tag {
+			return len(id) >= len(a.Prefix) && strings.EqualFold(id[:len(a.Prefix)], a.Prefix)
+		}
+		return strings.HasPrefix(id, a.Prefix)
+	default:
+		return true
+	}
+}
+
 func evalAtom(a Atom, s *Snapshot, scope string, now time.Time) AtomResult {
 	res := AtomResult{Atom: a.String(), Verdict: False}
 	if !a.Kind.Schedulable() {
@@ -340,7 +374,7 @@ func evalAtom(a Atom, s *Snapshot, scope string, now time.Time) AtomResult {
 		if c.Kind != a.Kind {
 			continue
 		}
-		if !(a.ID != "" && c.ID == a.ID || a.Prefix != "" && strings.HasPrefix(c.ID, a.Prefix) || a.ID == "" && a.Prefix == "") {
+		if !named(a, c.ID) {
 			continue
 		}
 		if a.Kind.scoped() && scope != "" && c.Scope != scope {

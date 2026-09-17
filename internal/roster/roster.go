@@ -47,6 +47,11 @@ type Candidate struct {
 	Node     string
 	Up       bool
 	Eligible bool
+	// Reason is Why in a form a reader can translate: a short code with
+	// the one moving part it needs. Why stays the technical sentence for
+	// logs and the API's older readers.
+	Reason       string
+	ReasonDetail string
 	// Why explains an ineligible candidate: the node is down, the harness
 	// is missing there, a required capability is absent.
 	Why          string
@@ -395,6 +400,19 @@ func (r *Roster) Explain(ctx context.Context, requires []string) string {
 	return strings.Join(reasons, "; ")
 }
 
+// Reasons an agent cannot run, in a form a page can translate. The
+// particulars a reader needs — which machine, which requirements — are
+// already on the candidate, so only the one free part travels here.
+const (
+	ReasonRequirements   = "requirements"
+	ReasonUnknownNode    = "node_unknown"
+	ReasonNodeDown       = "node_down"
+	ReasonHarness        = "harness_missing"
+	ReasonDisk           = "disk_full"
+	ReasonModel          = "model_missing"
+	ReasonBadRequirement = "bad_requirement"
+)
+
 func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hub place, levels map[string]project.Level) Candidate {
 	c := Candidate{Agent: a, Node: a.Node, Harness: a.Harness, Model: a.Model, Eligible: true, Level: levels[a.Node].OrDefault()}
 	if a.Model != "" {
@@ -416,12 +434,14 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 			c.Command, c.Missing = harnessCommand(hub.advert, a.Harness)
 			if missing := harnessTrouble(hub.advert, a.Harness); missing != "" {
 				c.Eligible, c.Why = false, missing
+				c.Reason, c.ReasonDetail = ReasonHarness, missing
 				return c
 			}
 			if offered := harnessModels(hub.advert, a.Harness); len(offered) > 0 {
 				c.Models = offered
 				if a.Model != "" && !slices.Contains(offered, a.Model) {
 					c.Eligible, c.Why = false, "this machine does not offer model "+a.Model
+					c.Reason, c.ReasonDetail = ReasonModel, a.Model
 					return c
 				}
 			}
@@ -430,6 +450,7 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 		status, known := byNode[a.Node]
 		if !known {
 			c.Eligible, c.Why = false, "node "+a.Node+" is not configured"
+			c.Reason = ReasonUnknownNode
 			return c
 		}
 		c.Up = status.Up
@@ -442,16 +463,19 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 			if status.LastError != "" {
 				c.Why += ": " + status.LastError
 			}
+			c.Reason, c.ReasonDetail = ReasonNodeDown, status.LastError
 			return c
 		}
 		if missing := harnessTrouble(status.Advert, a.Harness); missing != "" {
 			c.Eligible, c.Why = false, missing
+			c.Reason, c.ReasonDetail = ReasonHarness, missing
 			return c
 		}
 		// Capacity is not capability: a machine with no room for a
 		// worktree is not a machine to place work on today.
 		if h := status.Advert.Health; h != nil && h.DiskTotal > 0 && h.DiskFree < MinDiskFree {
 			c.Eligible, c.Why = false, fmt.Sprintf("disk nearly full on %s: %s free", nodewire.Place(a.Node), gigabytes(h.DiskFree))
+			c.Reason, c.ReasonDetail = ReasonDisk, gigabytes(h.DiskFree)
 			return c
 		}
 		c.Slots = harnessSlots(status.Advert, a.Harness)
@@ -464,6 +488,7 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 			if a.Model != "" && !slices.Contains(offered, a.Model) {
 				c.Eligible = false
 				c.Why = "node " + a.Node + " does not offer model " + a.Model
+				c.Reason, c.ReasonDetail = ReasonModel, a.Model
 				return c
 			}
 		}
@@ -472,9 +497,11 @@ func describe(a agent.Agent, byNode map[string]node.Status, hubCaps []string, hu
 	c.addModels(c.Models, "", time.Time{})
 	if req, err := ability.Compile(a.Requires); err != nil {
 		c.Eligible, c.Why = false, err.Error()
+		c.Reason, c.ReasonDetail = ReasonBadRequirement, err.Error()
 	} else if m := c.Match(req); !m.OK() {
 		c.Eligible = false
 		c.Why = "lacks " + m.Unmet()
+		c.Reason = ReasonRequirements
 	}
 	return c
 }

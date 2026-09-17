@@ -289,6 +289,8 @@
       "repair": "builder",
       "eligible": false,
       "why": "\"absent-bin\" not on this node's PATH",
+      "reason": "harness_missing",
+      "reason_detail": "\"absent-bin\" not on this node's PATH",
       "level": "internal",
       "activity_known": true,
       "snapshot": {
