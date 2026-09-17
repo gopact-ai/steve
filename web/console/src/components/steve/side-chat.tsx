@@ -38,28 +38,24 @@ function SideLive({ live }: { live: Live }) {
 export function SideChatPanel({ onOpenMain }: { onOpenMain?: () => void } = {}) { const { session } = useSideChat(); return session ? <SideConversation key={session.id} session={session} onOpenMain={onOpenMain} /> : null; }
 function SideConversation({ session, onOpenMain }: { session: SideSession; onOpenMain?: () => void }) {
     const { t, locale } = useI18n(); const side = useSideChat(); const { live } = useFleet();
-    const consoleEvents = useConsoleEvents();
     const draftIssue = useDraftIssue(session.id);
     const savedDraft = useSavedDraft(session.id);
     const text = useDraft(session.id), refs = useMaterials(session.id), pending = useSubmission(session.id), stops = useStops(), stop = stops[session.id];
     const support = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
     const [replies, setReplies] = useState<Reply[]>([]), [queue, setQueue] = useState<Exchange[]>([]), [readError, setReadError] = useState(""), [loaded, setLoaded] = useState(false);
-    const [turn, setTurn] = useState<Live | null>(null); const seen = useRef(0);
+    const [turn, setTurn] = useState<Live | null>(null);
     const input = useRef<HTMLTextAreaElement>(null), transcript = useRef<HTMLDivElement>(null), follow = useRef(true);
     const load = useResourceRead(`side:${session.id}`, async (signal) => Promise.all([fetchReplies(session.id, signal), fetchQueue(session.id, signal)]), ([history, exchanges]) => { setReplies(history.replies || []); setQueue(exchanges.queue || []); reconcileSubmission(session.id, exchanges.queue || []); setReadError(""); setLoaded(true); }, (error) => { setReadError(error instanceof Error ? error.message : String(error)); setLoaded(true); });
-    const event = consoleEvents.findLast((entry) => entry.conversation === session.id && !isStreamingProgress(entry))?.n;
     useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 3000); return () => window.clearInterval(timer); }, [load, live]);
-    useEffect(() => { void load(); }, [event, load]);
     // The side conversation streams like the main one: its progress events
     // fold into a live view that the reply replaces. The buffer is trimmed
     // from the front, so the cursor is an arrival number, not an index.
-    useEffect(() => {
-        const fresh = consoleEvents.filter((entry) => (entry.n ?? 0) > seen.current);
-        if (!fresh.length) return;
-        seen.current = fresh[fresh.length - 1].n ?? seen.current;
+    useConsoleEvents((fresh) => {
         const mine = fresh.filter((entry) => entry.conversation === session.id);
-        if (mine.length) setTurn((current) => mine.reduce(applyLive, current));
-    }, [consoleEvents, session.id]);
+        if (!mine.length) return;
+        setTurn((current) => mine.reduce(applyLive, current));
+        if (mine.some((entry) => !isStreamingProgress(entry))) void load();
+    });
     useEffect(() => { if (follow.current && transcript.current) transcript.current.scrollTop = transcript.current.scrollHeight; }, [replies, queue, turn]);
     useEffect(() => { if (stop && !stop.active) void load(); }, [stop, load]);
     const busy = queue.some((entry) => ["running", "recovering", "awaiting-user"].includes(entry.state));

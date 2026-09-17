@@ -1,6 +1,6 @@
 import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
-import { useState, type KeyboardEvent, type RefObject } from "react";
+import { memo, useState, type KeyboardEvent, type RefObject } from "react";
 import { ArrowUp, ChevronDown, CornerDownRight, DotsHorizontal, Edit05, Folder, MessageChatSquare, Plus, Square, Trash01 } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
@@ -55,7 +55,7 @@ export interface ComposerProps {
 
 const chip = "composer-chip";
 
-export function Composer(p: ComposerProps) {
+export const Composer = memo(function Composer(p: ComposerProps) {
     const { t } = useI18n();
     return (
         <div className="composer">
@@ -183,7 +183,7 @@ export function Composer(p: ComposerProps) {
             </div>
         </div>
     );
-}
+});
 
 
 // Editing never removes a durable entry. Another tab may start or delete

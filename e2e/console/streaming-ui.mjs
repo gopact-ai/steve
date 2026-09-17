@@ -13,6 +13,19 @@ const server = await createServer({
     plugins: [{ name: "streaming-render-measurements", enforce: "pre", transform(source, id) {
         if (id.endsWith("/components/steve/markdown.tsx")) return source.replace('const raw = String(file.value);', 'const raw = String(file.value); globalThis.__markdownParses ??= {}; globalThis.__markdownParses[raw] = (globalThis.__markdownParses[raw] || 0) + 1;');
         if (id.endsWith("/src/app.tsx")) return source.replace('function Shell() {', 'function Shell() { globalThis.__shellRenders = (globalThis.__shellRenders || 0) + 1;');
+        // The columns either side of the transcript show nothing that a
+        // fragment of streamed text can change. Counting their renders is
+        // how that stays true.
+        if (id.endsWith("/components/steve/composer.tsx")) {
+            const open = "export const Composer = memo(function Composer(p: ComposerProps) {";
+            assert.ok(source.includes(open), "Composer instrumentation must wrap the real composer");
+            return source.replace(open, open + " globalThis.__composerRenders = (globalThis.__composerRenders || 0) + 1;");
+        }
+        if (id.endsWith("/components/steve/sessions-tree.tsx")) {
+            const open = "const [width, setWidth] = usePaneWidth(";
+            assert.ok(source.includes(open), "Session list instrumentation must wrap the real list");
+            return source.replace(open, "globalThis.__sessionRenders = (globalThis.__sessionRenders || 0) + 1;\n    " + open);
+        }
         if (id.endsWith("/src/pages/console.tsx")) {
             // A completion barrier for held HTTP/lock races, including rejected
             // snapshots. No wall-clock delay can establish this boundary.
@@ -166,7 +179,7 @@ try {
     await f.emit({ kind: "console.sent", exchange_id: "stream-turn", text: "Streaming test" });
     await page.clock.runFor(500);
     await delay(100);
-    const before = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders }));
+    const before = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders, composer: window.__composerRenders, sessions: window.__sessionRenders }));
     assert.ok(Object.keys(before.parses).filter((text) => text.startsWith("Conversation A history")).length === 35, "Instrumentation must observe the actual Markdown parser");
     assert.ok(before.shell > 0, "Instrumentation must observe the actual shell renderer");
     const reads = f.stateReads;
@@ -179,14 +192,17 @@ try {
         await page.clock.runFor(300);
     }
     await delay(100);
-    const after = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders }));
+    const after = await page.evaluate(() => ({ parses: { ...window.__markdownParses }, shell: window.__shellRenders, composer: window.__composerRenders, sessions: window.__sessionRenders }));
     const historyParses = Object.entries(after.parses).filter(([text]) => text.startsWith("Conversation A history")).reduce((sum, [text, count]) => sum + count - (before.parses[text] || 0), 0);
-    const measurements = { streamMilliseconds: Math.round(performance.now() - start), stateReads: f.stateReads - reads, historicalMarkdownParses: historyParses, shellRenders: after.shell - before.shell };
+    const measurements = { streamMilliseconds: Math.round(performance.now() - start), stateReads: f.stateReads - reads, historicalMarkdownParses: historyParses, shellRenders: after.shell - before.shell, composerRenders: after.composer - before.composer, sessionRenders: after.sessions - before.sessions };
     console.log(JSON.stringify(measurements));
     if (process.env.BASELINE !== "1") {
         assert.equal(measurements.stateReads, 0, "Streaming text must not refetch the fleet snapshot");
         assert.equal(historyParses, 0, "Streaming text must not reparse unchanged Markdown history");
         assert.equal(measurements.shellRenders, 0, "Streaming text must not rerender the fleet shell");
+        assert.ok(before.composer > 0 && before.sessions > 0, "Instrumentation must observe the real composer and session list");
+        assert.equal(measurements.composerRenders, 0, "Streaming text must not rerender the composer");
+        assert.equal(measurements.sessionRenders, 0, "Streaming text must not rerender the session list");
     }
     const intermediate = "I will inspect the configuration.";
     const thought = "Checking the selected workspace.";

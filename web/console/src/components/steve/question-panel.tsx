@@ -15,7 +15,6 @@ import "@/styles/questions.css";
 export function QuestionPanel({ conversation }: { conversation: string }) {
     const { t } = useI18n();
     const { live } = useFleet();
-    const consoleEvents = useConsoleEvents();
     const [items, setItems] = useState<PendingQuestion[]>([]);
     const [error, setError] = useState("");
     const load = useResourceRead(`questions:${conversation}`, (signal) => questions(conversation, signal), (value) => {
@@ -27,9 +26,8 @@ export function QuestionPanel({ conversation }: { conversation: string }) {
         });
         setError("");
     }, (error) => setError(String(error)));
-    const latest = consoleEvents.findLast((event) => event.kind === "console.question" && event.conversation === conversation)?.n;
     useEffect(() => { void load(); const timer = window.setInterval(() => void load(), 5000); return () => window.clearInterval(timer); }, [conversation, live, load]);
-    useEffect(() => { void load(); }, [latest, load]);
+    useConsoleEvents((fresh) => { if (fresh.some((event) => event.kind === "console.question" && event.conversation === conversation)) void load(); });
     const pending = items.filter((question) => question.state === "pending").sort((a, b) => a.created_at.localeCompare(b.created_at));
     const history = items.filter((question) => question.state !== "pending").sort((a, b) => b.updated_at.localeCompare(a.updated_at)).slice(0, 5);
     function resolved(question: PendingQuestion) {
