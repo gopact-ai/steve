@@ -1607,6 +1607,69 @@ checks["composer-keys"] = async (f) => {
     await f.page.locator(".message-user-body strong", { hasText: "second" }).waitFor();
 };
 
+checks["composer-markdown"] = async (f) => {
+    // The draft is markdown, and the box says so while it is typed. The
+    // paint is a second copy of the same characters under a transparent
+    // textarea, so the one thing that can never slip is that the two wrap
+    // at exactly the same places — otherwise the caret stops standing in
+    // the letter it is in.
+    const paint = f.page.locator(".composer-paint");
+    const draft = "## 发布 **v0.4**\n- 升级 `steve-node`，这一行要长到必须折行，长到在窄窗口里也必须折行，这样两层的换行才有得可比\n- [x] 备份已确认\n> *注意*：2 * 3 * 4 is 24，node_modules 不是强调\n```sh\nnpm run build\n```";
+    await f.box.fill(draft);
+    // Everything an inline layout is decided by has to agree, and the two
+    // have to end up the same height for the same draft. The first catches
+    // a typography or padding change, the second catches the rest.
+    const LAYOUT = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "fontVariantLigatures", "fontKerning", "lineHeight",
+        "letterSpacing", "wordSpacing", "textIndent", "textTransform", "whiteSpace", "overflowWrap", "wordBreak", "tabSize", "direction",
+        "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "borderLeftWidth", "borderRightWidth"];
+    const wraps = async (where) => {
+        assert.equal(await paint.evaluate((el) => el.innerText), await f.box.inputValue(), `The paint is the draft itself (${where})`);
+        const [written, painted] = await f.page.evaluate((keys) => [document.querySelector(".composer-textarea"), document.querySelector(".composer-paint")]
+            .map((el) => [el.scrollHeight, el.clientWidth, ...keys.map((k) => getComputedStyle(el)[k])]), LAYOUT);
+        assert.deepEqual(painted, written, `The paint wraps where the box wraps (${where})`);
+    };
+    await wraps("wide");
+    await f.box.fill("把这段写得足够长，长到在任何宽度下都会折成好几行：" + "升级节点、校验产物、确认回滚脚本、再通知值班同学。".repeat(8) + " " + "steve-node".repeat(12));
+    await wraps("long");
+    await f.box.fill(draft);
+    await f.page.setViewportSize({ width: 760, height: 900 });
+    await wraps("narrow");
+    await f.page.setViewportSize({ width: 1280, height: 900 });
+
+    assert.equal((await paint.locator(".md-heading").allInnerTexts()).join(""), "发布 **v0.4**", "A heading line reads as a heading, marks and all");
+    assert.equal(await paint.locator(".md-strong").first().innerText(), "v0.4", "Bold is bold, marks and all");
+    assert.equal(await paint.locator(".md-code").first().innerText(), "steve-node", "A code span is a code span");
+    assert.equal(await paint.locator(".md-code-block").first().innerText(), "npm run build", "A fence holds its lines");
+    assert.equal(await paint.locator(".md-ticked").first().innerText(), "[x] ", "A ticked box is ticked");
+    // Arithmetic and paths are not markdown, in the box as in a tooltip.
+    assert.equal(await paint.locator(".md-em").count(), 1, "Only the emphasis is emphasis");
+    const dimmed = await paint.locator(".md-mark").first().evaluate((el) => getComputedStyle(el).color);
+    const body = await paint.evaluate((el) => getComputedStyle(el).color);
+    assert.notEqual(dimmed, body, "Marks are dimmed rather than hidden, so nothing moves");
+
+    // A newline inside a list carries the list; an item left empty ends it.
+    await f.box.fill("- first");
+    await f.box.press("Shift+Enter");
+    assert.equal(await f.box.inputValue(), "- first\n- ", "Shift+Enter continues the list");
+    await f.box.type("second");
+    await f.box.press("Shift+Enter");
+    await f.box.press("Shift+Enter");
+    assert.equal(await f.box.inputValue(), "- first\n- second\n", "An empty item takes its marker back");
+    assert.equal(f.queued().length, 0, "None of that sends");
+    await f.box.fill("1. one");
+    await f.box.press("Shift+Enter");
+    assert.equal(await f.box.inputValue(), "1. one\n2. ", "A numbered list counts on");
+
+    // While an input method is composing, the candidate lives in the box
+    // and the paint stands aside, or the person types into nothing.
+    await f.box.evaluate((box) => box.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
+    assert.ok(await f.page.locator(".composer-box.is-composing").count(), "Composing is visible to the stylesheet");
+    assert.ok(await paint.evaluate((el) => getComputedStyle(el).visibility === "hidden"), "The paint stands aside while composing");
+    assert.ok(await f.box.evaluate((el) => getComputedStyle(el).color !== "rgba(0, 0, 0, 0)"), "And the box shows its own text meanwhile");
+    await f.box.evaluate((box) => box.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })));
+    assert.ok(await paint.evaluate((el) => getComputedStyle(el).visibility === "visible"), "Once it settles the paint comes back");
+};
+
 checks["theme-palettes"] = async (f) => {
     // A palette is picked from the toolbar, survives a reload before the
     // app has even booted, and stays legible: every scheme shipped here is
