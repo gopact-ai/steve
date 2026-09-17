@@ -124,9 +124,14 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                     placeholder={p.disabled ? t("consoleChrome.preparing") : p.busy ? (p.queueing === false ? t("consoleChrome.processing") : t("consoleChrome.queuePlaceholder")) : t("consoleChrome.placeholder")}
                     onChange={(e) => p.onChange(e.target.value)}
                     onKeyDown={(e) => {
-                        // While an input method is composing the keystroke is
-                        // its own: let it through untouched.
-                        if (composing.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) return;
+                        // While an input method is composing the keystroke
+                        // belongs to it. Enter is still swallowed: confirming a
+                        // candidate happens below the DOM, so the only thing a
+                        // default action could add here is a stray newline.
+                        if (composing.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) {
+                            if (e.key === "Enter") e.preventDefault();
+                            return;
+                        }
                         // Just after one settles, an Enter is the tail of that
                         // confirmation. It must neither send nor leave a stray
                         // newline behind, so it is swallowed outright.
