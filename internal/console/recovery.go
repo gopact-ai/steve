@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/gopact-ai/acp"
@@ -220,6 +222,14 @@ type exchangeRecovery struct {
 	// relocation plan they were asked about, so a different plan asks anew.
 	quiet       bool
 	waitingPlan string
+
+	// asked and repeats remember the block the owner last saw, so a check
+	// that comes back with the same answer says so instead of looking
+	// like fresh news. stopped carries back why a stop the owner asked
+	// for did not finish; it is written by the stop's own goroutine.
+	asked   string
+	repeats int
+	stopped chan string
 }
 
 func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver RetainedChatDriver) {
@@ -234,7 +244,7 @@ func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver
 	if s.anchor != nil {
 		s.anchor(exchange.Conversation, ChatID, AnchorMark+exchange.ID)
 	}
-	r := &exchangeRecovery{s: s, ctx: ctx, e: e, exchange: exchange, work: work, stream: stream, driver: driver}
+	r := &exchangeRecovery{s: s, ctx: ctx, e: e, exchange: exchange, work: work, stream: stream, driver: driver, stopped: make(chan string, 1)}
 	for {
 		if ctx.Err() != nil {
 			r.detach(ctx.Err())
@@ -459,6 +469,13 @@ func (r *exchangeRecovery) consult(blocked *turn.RecoveryBlocked, identity *ques
 	}
 	question := blocked.Question
 	question.Kind = "recovery"
+	if question.Message == r.asked {
+		r.repeats++
+	} else {
+		r.asked, r.repeats = question.Message, 1
+	}
+	question.Message = r.explain(question.Message, blocked.Cause)
+	question.Choices = append(append([]view.Choice{}, question.Choices...), stopChoice(r.exchange.Locale))
 	answer, err := r.s.askUser(r.ctx, identity.binding(), question)
 	if err != nil {
 		if r.ctx.Err() != nil {
@@ -467,11 +484,87 @@ func (r *exchangeRecovery) consult(blocked *turn.RecoveryBlocked, identity *ques
 		r.detach(err)
 		return false
 	}
+	// Stopping is the one answer that can end a recovery nothing else can
+	// resolve. It runs beside this worker, because finishing a stop waits
+	// for this worker to release the exchange.
+	if answer.Value == "stop" {
+		r.stopOriginal()
+		r.quiet = true
+		return r.wait()
+	}
 	// Free-form advice is retained in the question record. Without an
 	// explicit retry choice, make one fresh observation and then wait
 	// quietly instead of repeatedly asking the same unresolved question.
 	r.quiet = answer.Value != "retry"
 	return true
+}
+
+// explain adds to a block what the owner needs in order to decide: the
+// failure the check actually reported, whether this check said anything
+// new, and what became of a stop they already asked for.
+func (r *exchangeRecovery) explain(message string, cause error) string {
+	en := r.exchange.Locale == "en"
+	select {
+	case note := <-r.stopped:
+		if note != "" {
+			message += line(en, "\n\n上一次「停止并取消原执行」没有完成：", "\n\nThe last stop did not finish: ") + note
+		}
+	default:
+	}
+	if cause != nil {
+		if detail := clipDetail(strings.TrimSpace(cause.Error())); detail != "" && !strings.Contains(message, detail) {
+			message += line(en, "\n\n本次检查报告的失败：", "\n\nWhat the check reported: ") + detail
+		}
+	}
+	if r.repeats > 1 {
+		message += line(en, "\n\n这已经是第 ", "\n\nThis is check number ") + strconv.Itoa(r.repeats) +
+			line(en, " 次检查，结果与上一次相同。再检查一次大概率还是同样的结果；要结束这一回合，选择「停止并取消原执行」。", ", and it came back the same as the last one. Another check is unlikely to differ; to end this turn, choose to stop and cancel the original run.")
+	}
+	return message
+}
+
+func line(en bool, zh, english string) string {
+	if en {
+		return english
+	}
+	return zh
+}
+
+// clipDetail keeps a reported failure readable in a question card.
+func clipDetail(detail string) string {
+	const limit = 300
+	runes := []rune(detail)
+	if len(runes) <= limit {
+		return detail
+	}
+	return string(runes[:limit]) + "…"
+}
+
+func stopChoice(locale string) view.Choice {
+	if locale == "en" {
+		return view.Choice{Value: "stop", Label: "Stop and cancel the original run", Detail: "Have the node seal the original open command, confirm the cancellation, and end this turn."}
+	}
+	return view.Choice{Value: "stop", Label: "停止并取消原执行", Detail: "让节点封存原创建指令并核实取消结果，然后结束这一回合。"}
+}
+
+// stopOriginal performs the owner's stop next to this worker and brings
+// back why it did not finish, so the next question says so.
+func (r *exchangeRecovery) stopOriginal() {
+	requester := r.s.owner
+	if r.exchange.Requester != "" {
+		requester = r.exchange.Requester
+	}
+	ctx := r.s.exchangeContext(r.ctx)
+	r.s.workers.Add(1)
+	go func() {
+		defer r.s.workers.Done()
+		if err := r.s.cancelRecovering(ctx, r.e, requester); err != nil {
+			select {
+			case r.stopped <- clipDetail(strings.TrimSpace(err.Error())):
+			default:
+			}
+		}
+	}()
 }
 
 // wait lets a quiet recovery observe the execution again every so often,
