@@ -5,12 +5,14 @@ import { activity, type ActivityKind } from "@/lib/activity";
 import type { Process, Progress, Span, ToolCall } from "@/lib/types";
 import { Md } from "./markdown";
 import { plain } from "@/lib/plain";
+import { useNodeLabel, whoIs } from "@/lib/node-name";
 import { ThinkingFold } from "./thinking-fold";
 import { ToolCalls } from "./tool-calls";
 
 // Trace is one agent's progress: its checklist, its thinking summary,
 // its tool calls, and (for a plain turn) the answer forming.
 export function Trace({ p, showAnswer, live, thinkingOpen = true, omitText }: { p: Progress; showAnswer?: boolean; live?: boolean; thinkingOpen?: boolean; omitText?: number }) {
+    const nodeLabelOf = useNodeLabel();
     return (
         <div className="flex min-w-0 flex-col gap-2">
             {p.plan?.length ? (
@@ -27,7 +29,7 @@ export function Trace({ p, showAnswer, live, thinkingOpen = true, omitText }: { 
                 {p.reasoning?.trim() && <ThinkingFold text={p.reasoning} open={thinkingOpen} live={live} />}
                 {p.tools?.length ? <ToolCalls tools={p.tools} /> : null}
             </>}
-            {(p.agent || p.node || p.model) && <div className="break-words text-xs text-quaternary">{[[p.agent, p.node].filter(Boolean).join(" @ "), p.model].filter(Boolean).join(" · ")}</div>}
+            {(p.agent || p.node || p.model) && <div className="break-words text-xs text-quaternary" title={p.node || undefined}>{[whoIs(nodeLabelOf, p.agent, p.node), p.model].filter(Boolean).join(" · ")}</div>}
             {showAnswer && p.answer && <Md text={p.answer} />}
         </div>
     );

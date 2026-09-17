@@ -7,6 +7,7 @@ import { Md } from "./markdown";
 import { Trace } from "./progress-view";
 import { useFollowTail } from "@/hooks/use-follow-tail";
 import { plain } from "@/lib/plain";
+import { useNodeLabel, whoIs } from "@/lib/node-name";
 
 // DelegationCard is one delegated child as the transcript shows it: a
 // folding line — who is on it and where, its state, how long — and
@@ -20,13 +21,14 @@ export function DelegationCard({ id, info, progress, live, open }: {
     id: string; info: StepInfo; progress?: Progress; live?: boolean; open?: boolean;
 }) {
     const { t } = useI18n();
+    const nodeLabelOf = useNodeLabel();
     const state = info.state || (live ? "running" : "done");
     const label = labels[state as keyof typeof labels];
     const running = state === "running";
     // The body is a window, not a well: a long child scrolls inside it,
     // following its tail while it runs until the reader scrolls.
     const { followTail: _follow, ...bodyScroll } = useFollowTail(`${progress?.timeline?.length ?? 0}:${progress?.tools?.length ?? 0}:${(progress?.reasoning || "").length}`, running);
-    const who = [progress?.agent, progress?.node].filter(Boolean).join(" @ ");
+    const who = whoIs(nodeLabelOf, progress?.agent, progress?.node);
     const goal = (info.goal || "").trim().split("\n")[0];
     const timeline = progress?.timeline;
     // While running, narration stays in place. Only a completed child's

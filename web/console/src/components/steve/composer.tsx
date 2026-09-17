@@ -6,6 +6,7 @@ import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import type { ConversationContext, Exchange, Project, QuoteRef, Selectors, Suggestion, Verb } from "@/lib/types";
 import { plain } from "@/lib/plain";
+import { useNodeLabel } from "@/lib/node-name";
 
 // Composer is the console's input, in the proportions of a chat app's:
 // a textarea that grows, a row of small round controls under it — the
@@ -58,6 +59,7 @@ const chip = "composer-chip";
 
 export const Composer = memo(function Composer(p: ComposerProps) {
     const { t } = useI18n();
+    const nodeLabelOf = useNodeLabel();
     return (
         <div className="composer">
             {p.suggestions.length > 0 && (
@@ -153,7 +155,7 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                                 {(p.agents ?? []).map((a) => (
                                     <Dropdown.Item key={a.id} id={a.id} textValue={a.id} isDisabled={!a.usable}>
                                         <div className="flex min-w-0 flex-col">
-                                            <span className="text-sm text-primary">{a.id} <span className="text-xs text-quaternary">{a.node} · {a.harness}{a.model ? " · " + a.model : ""}</span></span>
+                                            <span className="text-sm text-primary">{a.id} <span className="text-xs text-quaternary">{a.node ? nodeLabelOf(a.node) : ""} · {a.harness}{a.model ? " · " + a.model : ""}</span></span>
                                             {!a.usable && <span className="truncate text-xs text-tertiary">{a.because || a.why}</span>}
                                         </div>
                                     </Dropdown.Item>

@@ -10,6 +10,7 @@ import { Sheet } from "@/components/steve/drawer";
 import { PaneResizer } from "@/components/steve/pane-resizer";
 import { usePaneWidth } from "@/hooks/use-pane-width";
 import { FleetProvider, IntentProvider, useFleet } from "@/lib/fleet";
+import { nodeLabelIn } from "@/lib/node-name";
 import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
@@ -104,7 +105,7 @@ function Shell() {
             </div>}
             <div className="app-sidebar-tools">
                 <a href="#/settings?section=general" className="app-settings-link" aria-label={t("settingsPage.centerTitle")} title={small ? t("settingsPage.centerTitle") : undefined} aria-current={location.pathname === "/settings" ? "page" : undefined} onClick={() => setMobileNav(false)}><Settings01 aria-hidden="true" />{!small && <span>{t("settingsPage.centerTitle")}</span>}</a>
-                {!small && <span className="app-version" title={snap.hub.node}>{snap.hub.version || "—"}</span>}
+                {!small && <span className="app-version" title={nodeLabelIn(snap.nodes, snap.hub.node)}>{snap.hub.version || "—"}</span>}
                 {desktop && <button type="button" className="workbench-icon-button app-collapse" aria-label={small ? t("nav.expand") : t("nav.collapse")} title={small ? t("nav.expand") : t("nav.collapse")} onClick={() => { const next = !navCollapsed; setNavCollapsed(next); try { localStorage.setItem("steve.nav.collapsed", next ? "1" : "0"); } catch { /* Preference is optional. */ } }}><ChevronLeftDouble className={small ? "rotate-180" : ""} aria-hidden="true" /></button>}
             </div>
         </div>

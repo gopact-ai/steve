@@ -11,7 +11,8 @@ import { CodeBlock, Md } from "./markdown";
 import { Chips, KeyValue, Panel } from "./page";
 import { Trace, hasTraceContent, finalTextIndex } from "./progress-view";
 import { ToolCalls, headingOf } from "./tool-calls";
-import { Mono, StateBadge } from "./ui";
+import { Mono, StateBadge, Where } from "./ui";
+import { useNodeLabel, whoIs } from "@/lib/node-name";
 
 function useElapsed(since: string): number {
     const [now, setNow] = useState(Date.now());
@@ -25,6 +26,7 @@ function useElapsed(since: string): number {
 // full trace, step by step.
 export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; compact?: boolean }) {
     const { t, locale } = useI18n();
+    const nodeLabelOf = useNodeLabel();
     const elapsed = useElapsed(live.since);
     const steps: Step[] = plans.flatMap((p) => p.steps || []);
     const latest = live.turn ?? (live.order.length ? live.steps[live.order[live.order.length - 1]] : undefined);
@@ -76,7 +78,7 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
                                 <div className="flex items-center gap-2 text-sm">
                                     <StateBadge state={s.state} />
                                     <span className="font-medium text-primary">{s.id}</span>
-                                    <span className="text-xs text-tertiary">{s.agent || "—"}{s.node ? ` @ ${s.node}` : ""}</span>
+                                    <span className="text-xs text-tertiary" title={s.node || undefined}>{whoIs(nodeLabelOf, s.agent, s.node) || "—"}</span>
                                 </div>
                                 {live.steps[s.id] && <Trace p={live.steps[s.id]} live />}
                             </div>
@@ -110,13 +112,14 @@ function ThinkingTail({ text }: { text: string }) {
 // omitFinalText leaves the turn's last narration out: in the transcript
 // it is the reply itself, printed right under the fold.
 export function ProcessBody({ process, omitFinalText }: { process: Process; omitFinalText?: boolean }) {
+    const nodeLabelOf = useNodeLabel();
     const steps = (process.steps || []).filter((step) => step.kind === "delegate" || hasTraceContent(step));
     const finalText = omitFinalText ? finalTextIndex(process) : undefined;
     return (
         <div className="flex flex-col gap-3">
             {steps.map((s) => s.kind === "delegate" ? <DelegationCard key={s.id} id={s.id} info={s} progress={s} /> : (
                 <div key={s.id} className="flex flex-col gap-1.5">
-                    <div className="text-xs font-medium text-primary">{s.id} <span className="font-normal text-tertiary">{[s.agent, s.node].filter(Boolean).join(" @ ")}</span></div>
+                    <div className="text-xs font-medium text-primary">{s.id} <span className="font-normal text-tertiary" title={s.node || undefined}>{whoIs(nodeLabelOf, s.agent, s.node)}</span></div>
                     <Trace p={{ reasoning: s.reasoning, tools: s.tools, timeline: s.timeline, plan: s.plan }} />
                 </div>
             ))}
@@ -136,7 +139,7 @@ export function InjectedPanel({ at, in: x }: { at: string; in: Injected }) {
     return (
         <Panel title={t("consoleChrome.injectedAt", { time: when(at, locale) })} badge={<span className="text-xs text-tertiary">{x.new_session ? t("console.newConversation") : t("consoleChrome.reusedSession")}</span>}>
             <KeyValue dense rows={[
-                { k: "Agent", v: <span>{x.agent} <span className="text-tertiary">· {x.harness}{x.node ? " @ " + x.node : ""}</span></span> },
+                { k: "Agent", v: <span>{x.agent} <span className="text-tertiary">· {x.harness}{x.node ? <> @ <Where node={x.node} /></> : null}</span></span> },
                 { k: t("console.project"), v: x.project ? <span>{x.project} <Mono className="text-tertiary">{x.workspace}</Mono></span> : <span className="text-quaternary">—</span> },
                 { k: t("consoleChrome.model"), v: x.model ? <span>{t("consoleChrome.pinnedModel", { model: x.model })}</span> : <span className="text-quaternary">{t("consoleChrome.defaultModel")}</span> },
                 ...(opts.length ? [{ k: t("consoleChrome.options"), v: <span>{opts.map(([k, v]) => `${k}=${v}`).join(" · ")}</span> }] : []),
