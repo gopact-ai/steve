@@ -178,61 +178,13 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	harnesses := maps.Clone(a.Cfg.Harnesses)
 	statePath := a.Cfg.Gateway.StatePath
 	ConfigMu.RUnlock()
-	addedAgents := make(map[string]config.Agent)
-	addedHarnesses := make(map[string]config.Harness)
-	var selected, agentIDs []string
-	// preferred is the agent the owner marked as the default. It is only
-	// honoured once that agent has actually been registered here.
-	var preferred string
-	seen := make(map[string]bool, len(requested))
-	for _, want := range requested {
-		candidateID := strings.TrimSpace(want.CandidateID)
-		if seen[candidateID] {
-			continue
-		}
-		seen[candidateID] = true
-		item, ok := candidates[candidateID]
-		if !ok {
-			return consoleapi.DesktopStatus{}, fmt.Errorf("不支持的本机 Agent %q，请刷新后重新选择", candidateID)
-		}
-		name := strings.ToLower(strings.TrimSpace(want.AgentID))
-		if name == "" {
-			name = candidateID
-		}
-		if !NameShape.MatchString(name) {
-			return consoleapi.DesktopStatus{}, fmt.Errorf("Agent 名 %q 只能是小写字母、数字、点、下划线、连字符", name)
-		}
-		if localHarnessRegistered(agents, item.Harness) {
-			continue
-		}
-		if _, exists := agents[name]; exists {
-			return consoleapi.DesktopStatus{}, fmt.Errorf("Agent 名称 %s 已被占用，请换一个名字", name)
-		}
-		registered, tool, err := desktop.Registration(item)
-		if err != nil {
-			return consoleapi.DesktopStatus{}, err
-		}
-		if configured, exists := harnesses[item.Harness]; exists {
-			if configured.Adapter != tool.Adapter || tool.Adapter == "" && (configured.Command != tool.Command || !slices.Equal(configured.Args, tool.Args)) {
-				return consoleapi.DesktopStatus{}, fmt.Errorf("%s 的现有工具配置与本次发现不同，请先在资源中检查配置", item.Name)
-			}
-		} else {
-			addedHarnesses[item.Harness] = tool
-		}
-		// A renamed agent does not also squat the tool's own ID, so that
-		// name stays free for another agent later.
-		if name != candidateID {
-			registered.Aliases = nil
-		}
-		registered.About = strings.TrimSpace(want.About)
-		agents[name] = registered
-		addedAgents[name] = registered
-		agentIDs = append(agentIDs, name)
-		selected = append(selected, item.Harness)
-		if want.Default {
-			preferred = name
-		}
+	plan, err := planDesktopAgents(requested, candidates, agents, harnesses)
+	if err != nil {
+		return consoleapi.DesktopStatus{}, err
 	}
+	addedAgents, addedHarnesses := plan.agents, plan.harnesses
+	selected, agentIDs, preferred := plan.tools, plan.order, plan.preferred
+	maps.Copy(agents, addedAgents)
 	if len(addedAgents) == 0 {
 		return a.DesktopStatus(ctx)
 	}
@@ -243,7 +195,81 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	if err := a.prepareDesktopAgents(ctx, statePath, selected, addedHarnesses); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
+	return a.saveDesktopAgents(ctx, addedAgents, addedHarnesses, agentIDs, preferred)
+}
 
+// desktopAgentPlan is what the owner's selection turns into once every
+// candidate is re-discovered on this machine: the agents to add, the tools
+// they need, the order the names were chosen in and the requested default.
+type desktopAgentPlan struct {
+	agents    map[string]config.Agent
+	harnesses map[string]config.Harness
+	tools     []string
+	order     []string
+	preferred string
+}
+
+// planDesktopAgents validates the selection against what this machine
+// actually has, before anything is installed or saved. It reads the current
+// agents and tools; it does not change them.
+func planDesktopAgents(requested []consoleapi.DesktopEnrollAgent, candidates map[string]desktop.AgentCandidate, agents map[string]config.Agent, harnesses map[string]config.Harness) (desktopAgentPlan, error) {
+	plan := desktopAgentPlan{agents: map[string]config.Agent{}, harnesses: map[string]config.Harness{}}
+	seen := make(map[string]bool, len(requested))
+	taken := make(map[string]bool, len(requested))
+	for _, want := range requested {
+		candidateID := strings.TrimSpace(want.CandidateID)
+		if seen[candidateID] {
+			continue
+		}
+		seen[candidateID] = true
+		item, ok := candidates[candidateID]
+		if !ok {
+			return desktopAgentPlan{}, fmt.Errorf("不支持的本机 Agent %q，请刷新后重新选择", candidateID)
+		}
+		name := strings.ToLower(strings.TrimSpace(want.AgentID))
+		if name == "" {
+			name = candidateID
+		}
+		if !NameShape.MatchString(name) {
+			return desktopAgentPlan{}, fmt.Errorf("Agent 名 %q 只能是小写字母、数字、点、下划线、连字符", name)
+		}
+		if localHarnessRegistered(agents, item.Harness) {
+			continue
+		}
+		if _, exists := agents[name]; exists || taken[name] {
+			return desktopAgentPlan{}, fmt.Errorf("Agent 名称 %s 已被占用，请换一个名字", name)
+		}
+		taken[name] = true
+		registered, tool, err := desktop.Registration(item)
+		if err != nil {
+			return desktopAgentPlan{}, err
+		}
+		if configured, exists := harnesses[item.Harness]; exists {
+			if configured.Adapter != tool.Adapter || tool.Adapter == "" && (configured.Command != tool.Command || !slices.Equal(configured.Args, tool.Args)) {
+				return desktopAgentPlan{}, fmt.Errorf("%s 的现有工具配置与本次发现不同，请先在资源中检查配置", item.Name)
+			}
+		} else {
+			plan.harnesses[item.Harness] = tool
+		}
+		// A renamed agent does not also squat the tool's own ID, so that
+		// name stays free for another agent later.
+		if name != candidateID {
+			registered.Aliases = nil
+		}
+		registered.About = strings.TrimSpace(want.About)
+		plan.agents[name] = registered
+		plan.order = append(plan.order, name)
+		plan.tools = append(plan.tools, item.Harness)
+		if want.Default {
+			plan.preferred = name
+		}
+	}
+	return plan, nil
+}
+
+// saveDesktopAgents commits the prepared agents under the configuration lock,
+// rebuilding from whatever else was saved while adapters were installing.
+func (a *Service) saveDesktopAgents(ctx context.Context, addedAgents map[string]config.Agent, addedHarnesses map[string]config.Harness, agentIDs []string, preferred string) (consoleapi.DesktopStatus, error) {
 	ConfigMu.Lock()
 	defer ConfigMu.Unlock()
 	if err := ctx.Err(); err != nil {

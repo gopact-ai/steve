@@ -46,7 +46,7 @@ func TestUnauthorizedStorageLevelReceivesNoApplicationBaseline(t *testing.T) {
 			}
 			source.mu.Unlock()
 			peer := addUnjoinedTestReplica(t, cluster, "low-trust-domain", level)
-			_, err := leader.Join(t.Context(), JoinRequest{ID: "low-trust-join", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address}})
+			_, err := leader.Join(t.Context(), JoinRequest{ID: "low-trust-join", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address, Voting: true}})
 			if !errors.Is(err, ErrInvalid) {
 				t.Fatalf("low-trust full replica accepted: %v", err)
 			}
@@ -69,7 +69,7 @@ func TestReplicaPolicyRunsBeforeMembershipOrSnapshot(t *testing.T) {
 		checked.Store(true)
 		return errors.New("shared ledger contains excluded data")
 	}
-	_, err := leader.Join(t.Context(), JoinRequest{ID: "policy-rejected", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address}})
+	_, err := leader.Join(t.Context(), JoinRequest{ID: "policy-rejected", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address, Voting: true}})
 	if !checked.Load() || !errors.Is(err, ErrInvalid) {
 		t.Fatalf("replica policy was not enforced: %v", err)
 	}
@@ -95,7 +95,7 @@ func TestApplicationWritesContinueWhileJoiningPeerVerifiesNetwork(t *testing.T) 
 	}
 	joined := make(chan error, 1)
 	go func() {
-		_, err := leader.Join(t.Context(), JoinRequest{ID: "slow-network-check", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address}})
+		_, err := leader.Join(t.Context(), JoinRequest{ID: "slow-network-check", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address, Voting: true}})
 		joined <- err
 	}()
 	select {
@@ -134,7 +134,7 @@ func TestJoiningReplicaCannotVoteBeforeNetworkValidation(t *testing.T) {
 		}
 		return nil
 	}
-	request := JoinRequest{ID: "mesh-checked-join", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address}}
+	request := JoinRequest{ID: "mesh-checked-join", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address, Voting: true}}
 	if _, err := leader.Join(context.Background(), request); !errors.Is(err, ErrNotReady) {
 		t.Fatalf("network validation failure was hidden: %v", err)
 	}
@@ -166,7 +166,7 @@ func TestDifferentNodeIDsOnOnePhysicalMachineCannotBecomeTwoVoters(t *testing.T)
 	cluster := newTestCluster(t, 1)
 	leader := cluster.leader()
 	peer := addUnjoinedTestReplica(t, cluster, leader.Status().FailureDomain)
-	_, err := leader.Join(context.Background(), JoinRequest{ID: "same-machine", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address}})
+	_, err := leader.Join(context.Background(), JoinRequest{ID: "same-machine", Actor: "owner", Member: Member{NodeID: "new-node", Address: peer.Status().Address, Voting: true}})
 	if !errors.Is(err, ErrInvalid) {
 		t.Fatalf("duplicate physical failure domain was accepted: %v", err)
 	}

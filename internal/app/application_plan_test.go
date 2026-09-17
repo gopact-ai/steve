@@ -66,7 +66,7 @@ func testPlanHandover(t *testing.T, llm bool) {
 	thirdOptions.ConfigureApplication = options.ConfigureApplication
 	third := StartTestPeer(t, thirdOptions)
 	for _, peer := range []*cluster.Peer{second, third} {
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-plan-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL}}); err != nil {
+		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-plan-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL, Voting: true}}); err != nil {
 			t.Fatal(err)
 		}
 		if err := first.RegisterEnrolledWorker(t.Context(), peer.Config.NodeID, "restricted"); err != nil {

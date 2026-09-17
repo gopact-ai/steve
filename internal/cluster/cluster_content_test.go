@@ -43,7 +43,7 @@ func contentPeers(t *testing.T) ([]*Peer, Activation) {
 		peers = append(peers, peer)
 		if i == 0 {
 			WaitPeerReady(t, peer)
-		} else if _, err := source.Join(t.Context(), coordination.JoinRequest{ID: "content-join-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Name: peer.Config.Name, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL}}); err != nil {
+		} else if _, err := source.Join(t.Context(), coordination.JoinRequest{ID: "content-join-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Name: peer.Config.Name, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL, Voting: true}}); err != nil {
 			t.Fatal(err)
 		}
 	}

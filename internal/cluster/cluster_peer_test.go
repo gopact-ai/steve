@@ -255,7 +255,7 @@ func TestClusterPeerThreeMembersTransferAndProxyThroughOriginalGateway(t *testin
 	thirdOptions.Activate = testPeerApplication(t, &thirdActivations)
 	third := StartTestPeer(t, thirdOptions)
 	for _, peer := range []*Peer{second, third} {
-		_, err := first.Join(context.Background(), coordination.JoinRequest{ID: "join-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Name: peer.Config.Name, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL}})
+		_, err := first.Join(context.Background(), coordination.JoinRequest{ID: "join-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Name: peer.Config.Name, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL, Voting: true}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -337,14 +337,14 @@ func TestClusterPeerRestartCanVoteWithMemberAddedAfterItsSnapshot(t *testing.T) 
 	secondOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), first)
 	secondOptions.Activate = testPeerApplication(t, &starts)
 	second := StartTestPeer(t, secondOptions)
-	_, err := first.Join(context.Background(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: coordination.Member{NodeID: second.Config.NodeID, Address: second.Config.RaftAddress, APIAddress: second.Config.PeerURL}})
+	_, err := first.Join(context.Background(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: coordination.Member{NodeID: second.Config.NodeID, Address: second.Config.RaftAddress, APIAddress: second.Config.PeerURL, Voting: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	thirdOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), first)
 	thirdOptions.Activate = testPeerApplication(t, &starts)
 	third := StartTestPeer(t, thirdOptions)
-	_, err = first.Join(context.Background(), coordination.JoinRequest{ID: "join-third", Actor: "owner", Member: coordination.Member{NodeID: third.Config.NodeID, Address: third.Config.RaftAddress, APIAddress: third.Config.PeerURL}})
+	_, err = first.Join(context.Background(), coordination.JoinRequest{ID: "join-third", Actor: "owner", Member: coordination.Member{NodeID: third.Config.NodeID, Address: third.Config.RaftAddress, APIAddress: third.Config.PeerURL, Voting: true}})
 	if err != nil {
 		t.Fatal(err)
 	}

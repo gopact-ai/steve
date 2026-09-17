@@ -70,12 +70,22 @@ type CoordinatorRename struct {
 	Name             string `json:"name"`
 }
 
+// CoordinatorVoting grants or revokes a machine's vote in the cluster.
+// A machine needs one before it can take over as coordinator.
+type CoordinatorVoting struct {
+	CommandID        string `json:"command_id"`
+	ExpectedRevision uint64 `json:"expected_revision"`
+	NodeID           string `json:"node_id"`
+	Voting           bool   `json:"voting"`
+}
+
 type CoordinationService interface {
 	Coordination(context.Context) (CoordinationView, error)
 	TransferCoordinator(context.Context, CoordinatorTransfer) (CoordinationView, error)
 	SetAutoFailover(context.Context, CoordinatorPolicy) (CoordinationView, error)
 	SetCoordinatorEligibility(context.Context, CoordinatorEligibility) (CoordinationView, error)
 	RenameNode(context.Context, CoordinatorRename) (CoordinationView, error)
+	SetNodeVoting(context.Context, CoordinatorVoting) (CoordinationView, error)
 	// RemoveMember takes a machine out of the cluster along with whatever
 	// this node keeps for it; a machine that is not a member is only
 	// cleaned up.

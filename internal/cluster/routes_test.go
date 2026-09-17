@@ -54,7 +54,7 @@ func TestANodeJoinsThroughItsRouteWhenTheHubAdvertisesAnAddressItCannotReach(t *
 	}
 	nodeOptions.Activate = testPeerApplication(t, &activations)
 	node := StartTestPeer(t, nodeOptions)
-	member := coordination.Member{NodeID: node.Config.NodeID, Name: node.Config.Name, Address: node.Config.RaftAddress, APIAddress: node.Config.PeerURL}
+	member := coordination.Member{NodeID: node.Config.NodeID, Name: node.Config.Name, Address: node.Config.RaftAddress, APIAddress: node.Config.PeerURL, Voting: true}
 	if _, err := hub.Join(t.Context(), coordination.JoinRequest{ID: "join-through-route", Actor: "owner", Member: member}); err != nil {
 		t.Fatalf("the node did not join through its route: %v", err)
 	}
@@ -111,7 +111,7 @@ func TestTheHubReachesANodeThroughItsRouteWhenTheNodeAdvertisesAnAddressItCannot
 	}
 	nodeOptions.Activate = testPeerApplication(t, &activations)
 	node := StartTestPeer(t, nodeOptions)
-	member := coordination.Member{NodeID: node.Config.NodeID, Name: node.Config.Name, Address: node.Config.RaftAddress, APIAddress: node.Config.PeerURL}
+	member := coordination.Member{NodeID: node.Config.NodeID, Name: node.Config.Name, Address: node.Config.RaftAddress, APIAddress: node.Config.PeerURL, Voting: true}
 	if _, err := hub.Join(t.Context(), coordination.JoinRequest{ID: "join-unrouted", Actor: "owner", Member: member}); err == nil {
 		t.Fatal("without a route the hub joined a node it cannot reach")
 	}

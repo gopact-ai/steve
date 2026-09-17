@@ -20,6 +20,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/config"
+	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/hashicorp/raft"
 )
@@ -301,8 +302,10 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 	if state.Error != "" {
 		t.Fatal(state.Error)
 	}
-	if len(state.State.Voters) != 3 || state.State.AutoFailover {
-		t.Fatalf("unexpected membership/policy: %d voters automatic=%v", len(state.State.Voters), state.State.AutoFailover)
+	// Machines that join over an enrollment session replicate the ledger
+	// without holding a vote, so quorum stays on the node that enrolled them.
+	if len(state.State.Replicas) != 3 || len(state.State.Voters) != 1 || state.State.AutoFailover {
+		t.Fatalf("unexpected membership/policy: %d replicas %d voters automatic=%v", len(state.State.Replicas), len(state.State.Voters), state.State.AutoFailover)
 	}
 	for _, node := range importedNodes {
 		member := state.State.Members[node.NodeID]
@@ -317,6 +320,34 @@ func TestPeerEnrollmentThreeProcessesReplicateAndRegisterWorkers(t *testing.T) {
 	saved, err := cluster.LoadClusterPeerConfig(cluster.DefaultClusterConfigPath(source.configPath))
 	if err != nil {
 		t.Fatal(err)
+	}
+	// A machine joins replicating only. Taking over as coordinator means
+	// first being given a vote, which is an explicit decision.
+	call := func(method, path, body string) (int, []byte) {
+		t.Helper()
+		request, err := http.NewRequest(method, "http://"+saved.UIAddress+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		request.Header.Set("Authorization", "Bearer "+declaration.Gateway.ReadModelToken)
+		response, err := (&http.Client{Timeout: 15 * time.Second}).Do(request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		data, _ := io.ReadAll(response.Body)
+		response.Body.Close()
+		return response.StatusCode, data
+	}
+	if status, data := call(http.MethodPost, "/console/coordination/transfer", fmt.Sprintf(`{"command_id":"before-vote","expected_epoch":%d,"target_node_id":%q}`, state.State.Coordinator.Epoch, importedNodes[0].NodeID)); status == http.StatusOK {
+		t.Fatalf("a machine without a vote was handed the coordinator role: %s", data)
+	}
+	viewStatus, viewBody := call(http.MethodGet, "/console/coordination", "")
+	var view consoleapi.CoordinationView
+	if viewStatus != http.StatusOK || json.Unmarshal(viewBody, &view) != nil {
+		t.Fatalf("read coordination: HTTP %d %s", viewStatus, viewBody)
+	}
+	if status, data := call(http.MethodPut, "/console/coordination/voting", fmt.Sprintf(`{"command_id":"grant-vote","expected_revision":%d,"node_id":%q,"voting":true}`, view.Revision, importedNodes[0].NodeID)); status != http.StatusOK {
+		t.Fatalf("the machine could not be given a vote: HTTP %d %s", status, data)
 	}
 	requestBody := fmt.Sprintf(`{"command_id":"to-enrolled-peer","expected_epoch":%d,"target_node_id":%q}`, state.State.Coordinator.Epoch, importedNodes[0].NodeID)
 	request, err := http.NewRequest(http.MethodPost, "http://"+saved.UIAddress+"/console/coordination/transfer", strings.NewReader(requestBody))

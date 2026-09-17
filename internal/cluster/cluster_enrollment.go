@@ -482,7 +482,7 @@ func (p *Peer) CompletePeerEnrollment(ctx context.Context, id string) (PeerEnrol
 		saveErr := p.saveEnrollment(record)
 		return record.PeerEnrollmentResult, errors.Join(err, saveErr)
 	}
-	member := coordination.Member{NodeID: record.NodeID, Name: record.Name, Address: record.Request.RaftAddress, APIAddress: "https://" + record.Request.PeerAddress, AutoEligible: false, StorageLevel: record.Request.Level}
+	member := coordination.Member{NodeID: record.NodeID, Name: record.Name, Address: record.Request.RaftAddress, APIAddress: "https://" + record.Request.PeerAddress, AutoEligible: false, StorageLevel: record.Request.Level, Voting: false}
 	status, err := p.client.Status(ctx, member)
 	if err != nil {
 		return finish("awaiting_peer", fmt.Errorf("等待新节点启动并提供机群 HTTPS 服务：%w", err))
@@ -876,7 +876,7 @@ func (p *Peer) RegisterEnrolledWorker(ctx context.Context, nodeID, level string)
 		return err
 	}
 	member, ok := state.Members[nodeID]
-	if !ok || state.Voters[nodeID] == "" {
+	if !ok || state.Replicas[nodeID] == "" {
 		return coordination.ErrNotReady
 	}
 	worker, err := p.FetchWorker(ctx, member)

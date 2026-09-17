@@ -334,7 +334,7 @@ func TestContentRepairUpgradesSingleMachineManifestAfterJoiningPeers(t *testing.
 			return nil, nil
 		}
 		peer := StartTestPeer(t, options)
-		if _, err := source.Join(t.Context(), coordination.JoinRequest{ID: "join-" + name, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL}}); err != nil {
+		if _, err := source.Join(t.Context(), coordination.JoinRequest{ID: "join-" + name, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL, Voting: true}}); err != nil {
 			t.Fatal(err)
 		}
 		worker := peer.Worker()

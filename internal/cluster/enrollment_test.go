@@ -168,7 +168,7 @@ func TestAbandonPeerEnrollmentRemovesTheMemberAFailedJoinLeftBehind(t *testing.T
 		return nil, nil
 	}
 	orphan := StartTestPeer(t, second)
-	if _, err := source.Join(t.Context(), coordination.JoinRequest{ID: "join-orphan", Actor: "owner", Member: coordination.Member{NodeID: orphan.Config.NodeID, Address: orphan.Config.RaftAddress, APIAddress: orphan.Config.PeerURL}}); err != nil {
+	if _, err := source.Join(t.Context(), coordination.JoinRequest{ID: "join-orphan", Actor: "owner", Member: coordination.Member{NodeID: orphan.Config.NodeID, Address: orphan.Config.RaftAddress, APIAddress: orphan.Config.PeerURL, Voting: true}}); err != nil {
 		t.Fatal(err)
 	}
 	peerAddress, raftAddress := FreeEnrollmentPorts(t)
