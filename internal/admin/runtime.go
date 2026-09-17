@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -186,7 +187,7 @@ func SelectorsOf(options []steveview.Option) []models.Selector {
 type SkillShipper struct {
 	Nodes   *node.Registry
 	Live    *skills.Live
-	Observe func(kind, subject, text string)
+	Observe func(kind, subject, text string, data map[string]string)
 
 	mu     sync.Mutex
 	bundle skills.Bundle
@@ -248,12 +249,14 @@ func (s *SkillShipper) Ship(ctx context.Context, name string) {
 		}
 		slog.Error(fmt.Sprintf("steve: skills to %s: %v", name, err), "node", name)
 		if s.Observe != nil {
-			s.Observe("node.skills", name, fmt.Sprintf("%s: skills %s not materialized: %v", name, b.Hash[:12], err))
+			// Keys: hash, error.
+			s.Observe("node.skills", name, fmt.Sprintf("%s: skills %s not materialized: %v", name, b.Hash[:12], err), map[string]string{"hash": b.Hash[:12], "error": err.Error()})
 		}
 		return
 	}
 	if s.Observe != nil {
-		s.Observe("node.skills", name, fmt.Sprintf("%s: skills %s materialized (%d skills)", name, b.Hash[:12], len(b.Skills)))
+		// Keys: hash, count.
+		s.Observe("node.skills", name, fmt.Sprintf("%s: skills %s materialized (%d skills)", name, b.Hash[:12], len(b.Skills)), map[string]string{"hash": b.Hash[:12], "count": strconv.Itoa(len(b.Skills))})
 	}
 }
 

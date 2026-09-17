@@ -105,7 +105,7 @@ export interface AgentChoice {
 export interface ConversationContext { conversation: string; project?: ContextProject; agent?: AgentChoice; agents: AgentChoice[] }
 export interface Verb { command: string; args?: string; summary: string }
 export interface Suggestion { label: string; args?: string; detail?: string; insert: string; muted?: boolean }
-export interface HistoryEntry { at: string; seq?: number; kind: string; subject?: string; text: string; actor?: string; operation?: string; from?: string; to?: string }
+export interface HistoryEntry { at: string; seq?: number; kind: string; subject?: string; text: string; actor?: string; operation?: string; from?: string; to?: string; data?: Record<string, string> }
 export interface ToolCall { id?: string; kind?: string; name?: string; detail?: string; status: string; input?: string; output?: string }
 export interface PlanLine { text: string; status: string }
 export interface Span { kind: "text" | "thought" | "tool"; text?: string; tool?: string; at: string }
@@ -139,7 +139,7 @@ export interface StepProcess extends StepInfo, Progress { id: string }
 export interface Process { reasoning?: string; tools?: ToolCall[]; timeline?: Span[]; steps?: StepProcess[] }
 export interface Event {
     at: string; kind: string; seq?: number; run_id?: string; task_id?: string; plan_id?: string; step_id?: string;
-    state?: string; conversation?: string; text?: string; format?: "markdown" | "text"; title?: string; detail?: string; progress?: Progress; step?: StepInfo & Partial<StepProcess>; reply_id?: string; exchange_id?: string;
+    state?: string; conversation?: string; text?: string; format?: "markdown" | "text"; title?: string; detail?: string; data?: Record<string, string>; progress?: Progress; step?: StepInfo & Partial<StepProcess>; reply_id?: string; exchange_id?: string;
     // n is the page's own arrival counter, so a reader can keep a cursor
     // over a buffer that is trimmed from the front.
     n?: number;

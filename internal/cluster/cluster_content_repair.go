@@ -19,7 +19,7 @@ import (
 )
 
 type contentRepairReport struct{ Examined, Healthy, Repaired, Degraded, Unavailable, Skipped int }
-type ContentRepairObservation func(kind, subject, text string)
+type ContentRepairObservation func(kind, subject, text string, data map[string]string)
 type contentRepairWorker struct {
 	peer           *Peer
 	active         Activation
@@ -89,7 +89,8 @@ func (w *contentRepairWorker) notice(ctx context.Context, id, status, message st
 	}
 	slog.Info(fmt.Sprintf("content repair: object=%s status=%s %s", id, status, message), "object", id, "status", status)
 	if w.observe != nil {
-		w.observe("content."+status, id, message)
+		// Keys: object.
+		w.observe("content."+status, id, message, map[string]string{"object": id})
 	}
 }
 

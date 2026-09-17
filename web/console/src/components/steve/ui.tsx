@@ -5,78 +5,21 @@ import type { FC } from "react";
 import { useFleet } from "@/lib/fleet";
 import { nodeLabelIn } from "@/lib/node-name";
 import { useI18n } from "@/providers/locale-provider";
-import type { MessageKey } from "@/lib/i18n";
+import { colorOf, stateWordIn } from "@/lib/states";
 
-// One vocabulary of colours for every state the ledger speaks.
-export function colorOf(state: string): BadgeColors {
-    switch (state) {
-        case "done": case "bound": case "committed": case "verified": case "up": case "ready": case "pass": case "succeeded":
-            return "success";
-        case "failed": case "down": case "lost": case "expired": case "bind-conflict": case "fail":
-        case "merge-conflicted": case "apply-conflicted": case "commit-conflicted": case "cancelled": case "outcome-unknown":
-            return "error";
-        case "running": case "applying": case "transferring": case "present": case "prepared": case "leased": case "verifying": case "locked": case "merged":
-            return "blue";
-        case "quarantined": case "paused": case "blocked": case "review": case "recovery-pending": case "proposed":
-            return "warning";
-        default:
-            return "gray";
-    }
+export { colorOf, stateWordIn } from "@/lib/states";
+
+// useStateWord is stateWordIn bound to the page's language.
+export function useStateWord(): (state: string) => string {
+    const { t } = useI18n();
+    return (state: string) => stateWordIn(state, t);
 }
-
-const stateWords = {
-    "draft": "status.draft",
-    "running": "status.inProgress",
-    "unknown": "status.unknown",
-    "blocked": "status.blocked",
-    "review": "status.review",
-    "done": "status.done",
-    "failed": "status.failed",
-    "paused": "status.paused",
-    "cancelled": "status.cancelled",
-    "pending": "status.pending",
-    "dispatching": "status.dispatching",
-    "accepted": "status.accepted",
-    "ready": "status.ready",
-    "verifying": "status.verifying",
-    "awaiting-human": "status.awaitingHuman",
-    "skipped": "status.skipped",
-    "up": "status.up",
-    "down": "status.down",
-    "ready_agent": "status.available",
-    "blocked_agent": "status.unavailable",
-    "idle": "status.idle",
-    "bound": "status.bound",
-    "committed": "status.committed",
-    "verified": "status.verified",
-    "pass": "status.pass",
-    "fail": "status.fail",
-    "succeeded": "status.succeeded",
-    "leased": "status.leased",
-    "prepared": "status.prepared",
-    "applying": "status.applying",
-    "transferring": "status.transferring",
-    "present": "status.present",
-    "lost": "status.lost",
-    "expired": "status.expired",
-    "merge-conflicted": "status.mergeConflict",
-    "apply-conflicted": "status.applyConflict",
-    "commit-conflicted": "status.commitConflict",
-    "bind-conflict": "status.bindConflict",
-    "outcome-unknown": "status.outcomeUnknown",
-    "merged": "status.merged",
-    "locked": "status.locked",
-    "quarantined": "status.quarantined",
-    "proposed": "status.proposed",
-    "recovery-pending": "status.recoveryPending"
-} as const satisfies Record<string, MessageKey>;
 
 // StateBadge shows a state in the page's words; the internal word is the
 // tooltip, for anyone reading logs alongside.
 export const StateBadge = ({ state, size = "sm" }: { state: string; size?: "sm" | "md" }) => {
     const { t } = useI18n();
-    const key = stateWords[state as keyof typeof stateWords];
-    return <span title={state}><Badge type="pill-color" size={size} color={colorOf(state)}>{key ? t(key) : state}</Badge></span>;
+    return <span title={state}><Badge type="pill-color" size={size} color={colorOf(state) as BadgeColors}>{stateWordIn(state, t)}</Badge></span>;
 };
 
 // The model's empty node is the hub's own machine; name it, never the role.

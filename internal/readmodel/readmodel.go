@@ -477,6 +477,9 @@ type Event struct {
 	Title      string `json:"title,omitempty"`
 	Rev        int    `json:"rev,omitempty"`
 	Detail     string `json:"detail,omitempty"`
+	// Data carries an observation's facts apart from its sentence, so a
+	// live page can say them the same way the history page does.
+	Data map[string]string `json:"data,omitempty"`
 }
 
 const recentKept = 200
@@ -677,25 +680,34 @@ type SourceHealth struct {
 // HistoryEntry is one thing that happened, in words, with the record
 // behind it: a ledger transition or a connectivity observation.
 type HistoryEntry struct {
-	At        time.Time `json:"at"`
-	Seq       int64     `json:"seq,omitempty"`
-	Kind      string    `json:"kind"`
-	Subject   string    `json:"subject,omitempty"`
-	Text      string    `json:"text"`
-	Actor     string    `json:"actor,omitempty"`
-	Operation string    `json:"operation,omitempty"`
-	From      string    `json:"from,omitempty"`
-	To        string    `json:"to,omitempty"`
+	At        time.Time         `json:"at"`
+	Seq       int64             `json:"seq,omitempty"`
+	Kind      string            `json:"kind"`
+	Subject   string            `json:"subject,omitempty"`
+	Text      string            `json:"text"`
+	Actor     string            `json:"actor,omitempty"`
+	Operation string            `json:"operation,omitempty"`
+	From      string            `json:"from,omitempty"`
+	To        string            `json:"to,omitempty"`
+	Data      map[string]string `json:"data,omitempty"`
 }
 
 // Observation is a connectivity fact worth remembering: a machine came
 // up with a build, went down with a reason, a probe answered. Kept in a
 // ledger document so history survives the process.
+//
+// Text is one English sentence, for logs and for readers of the raw
+// document. Data carries the same facts apart, so a page can say them
+// in the reader's language with the machine's own name rather than
+// parsing the sentence back. The keys are per kind and documented at
+// each call site; a reader that meets an unknown kind falls back to
+// Text, which is why Text is never omitted.
 type Observation struct {
-	At      time.Time `json:"at"`
-	Kind    string    `json:"kind"`
-	Subject string    `json:"subject"`
-	Text    string    `json:"text"`
+	At      time.Time         `json:"at"`
+	Kind    string            `json:"kind"`
+	Subject string            `json:"subject"`
+	Text    string            `json:"text"`
+	Data    map[string]string `json:"data,omitempty"`
 }
 
 // Project is where work happens: a directory on one machine, with a data
@@ -1033,8 +1045,8 @@ func (m *Model) Publish(ev Event) {
 
 // Observe records a connectivity fact and tells the page. The list is
 // kept in the ledger document so a restart does not forget it.
-func (m *Model) Observe(kind, subject, text string) {
-	obs := Observation{At: time.Now().UTC(), Kind: kind, Subject: subject, Text: text}
+func (m *Model) Observe(kind, subject, text string, data map[string]string) {
+	obs := Observation{At: time.Now().UTC(), Kind: kind, Subject: subject, Text: text, Data: data}
 	m.mu.Lock()
 	m.observations = append(m.observations, obs)
 	if len(m.observations) > observationsKept {
@@ -1049,7 +1061,7 @@ func (m *Model) Observe(kind, subject, text string) {
 			}
 		}
 	}
-	m.Publish(Event{Kind: "observe." + kind, Detail: text, Text: subject})
+	m.Publish(Event{Kind: "observe." + kind, Detail: text, Text: subject, Data: data})
 }
 
 const observationsKept = 1000
@@ -1113,7 +1125,7 @@ func (m *Model) History(ctx context.Context, before int64, limit int) ([]History
 		if !ceiling.IsZero() && o.At.After(ceiling) {
 			continue
 		}
-		out = append(out, HistoryEntry{At: o.At, Kind: "observe." + o.Kind, Subject: o.Subject, Text: o.Text})
+		out = append(out, HistoryEntry{At: o.At, Kind: "observe." + o.Kind, Subject: o.Subject, Text: o.Text, Data: o.Data})
 	}
 	m.mu.Unlock()
 	sort.SliceStable(out, func(i, j int) bool { return out[i].At.After(out[j].At) })
