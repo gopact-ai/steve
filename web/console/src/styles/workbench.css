@@ -137,7 +137,14 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .conversation-search { padding: 0 12px 8px; }
 .conversation-search [data-input] { background: var(--color-bg-tertiary); }
 .conversation-tree { flex: 1; min-height: 0; overflow-y: auto; overflow-x: hidden; padding: 0 9px 16px; }
-.conversation-section-label { padding: 16px 10px 6px; font-size: 11px; font-weight: 600; color: var(--color-text-tertiary); }
+.conversation-section-label { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 16px 6px 6px 10px; font-size: 11px; font-weight: 600; color: var(--color-text-tertiary); }
+/* The list's own control sits back until it is wanted, like the row
+   actions beside it, and never leaves a gap when it fades. */
+.conversation-arrange { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex-shrink: 0; border-radius: 6px; color: var(--color-fg-quaternary); opacity: .45; transition: opacity 120ms, background-color 120ms; cursor: pointer; }
+.conversation-tree:hover .conversation-arrange, .conversation-arrange:hover, .conversation-arrange[data-focus-visible], .conversation-arrange[data-pressed] { opacity: 1; }
+.conversation-arrange:hover { background: var(--color-bg-tertiary); }
+.conversation-arrange[data-focus-visible] { outline: 2px solid var(--color-border-brand); outline-offset: 2px; }
+.conversation-arrange-label { display: block; padding: 6px 14px 2px; font-size: 11px; font-weight: 600; color: var(--color-text-quaternary); }
 .conversation-project { display: flex; align-items: center; gap: 4px; min-height: 36px; padding: 2px 4px; border-radius: 6px; }
 .conversation-project .u-title { font-size: 12px; font-weight: 550; }
 /* A row's own actions stay visible: an action nobody can see is an
@@ -321,7 +328,7 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
     .composer-chip { max-width: 130px; }
     .composer-actions { align-self: flex-end; }
     .workbench-drawer-header, .workbench-drawer-body { padding: 18px; }
-    .conversation-project-new, .conversation-more { opacity: 1; }
+    .conversation-project-new, .conversation-more, .conversation-arrange { opacity: 1; }
 }
 @media (max-width: 639px) {
     .workbench-shell { flex-direction: column; }

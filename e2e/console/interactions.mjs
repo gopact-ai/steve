@@ -2030,6 +2030,67 @@ async function checkNativeHistoryImport(f, autoProject = false) {
 checks["native-history-import"] = (f) => checkNativeHistoryImport(f);
 checks["native-history-auto-project"] = (f) => checkNativeHistoryImport(f, true);
 
+// The sidebar reads the same threads along more than one axis: the
+// project tree it has always had, and — for "what moved last" or "what
+// is that machine busy with" — grouping by machine or Agent, ordering by
+// time, attention or name. The arrangement is the reader's and it is
+// remembered; arranging never submits anything.
+checks["sessions-arrangement"] = async (f) => {
+    const threads = [
+        { id: A, title: "Conversation A", project: "scratch", agent: "builder", place: { workspace: "w-a", kind: "canonical", node: "node-one" }, last_at: "2026-09-06T09:00:00Z", count: 1, running: false, questions: 2 },
+        { id: B, title: "Conversation B", project: "home", agent: "scout", place: { workspace: "w-b", kind: "copy", node: "node-two" }, last_at: "2026-09-06T11:00:00Z", count: 1, running: false },
+        { id: "console:interaction-c", title: "Conversation C", project: "scratch", agent: "builder", place: { workspace: "w-c", kind: "copy", node: "node-one" }, last_at: "2026-09-06T10:00:00Z", count: 1, running: false },
+    ];
+    const nodes = [{ name: "node-one", display_name: "树莓派" }, { name: "node-two", display_name: "工作站" }];
+    await f.page.route("**/console/conversations", (route) => route.fulfill({ json: { enabled: true, conversations: threads } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "node-one" }, nodes, agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.reload();
+    const sidebar = f.page.locator(".conversation-sidebar");
+    const titles = () => sidebar.locator(".conversation-row .u-title").allInnerTexts();
+    const heading = () => sidebar.locator(".conversation-section-label").first().innerText();
+    const arrange = sidebar.getByRole("button", { name: /^排列/ });
+    await arrange.waitFor();
+    assert.match(await heading(), /项目/, "The project tree stays the arrangement a fresh reader gets");
+    assert.equal(await sidebar.getByRole("button", { name: "在 scratch 下新会话", exact: true }).count(), 1);
+
+    // Grouping and order are two choices in one visit, so the menu holds open.
+    await arrange.click();
+    await f.page.getByRole("menuitemradio", { name: "按机器", exact: true }).click();
+    assert.equal(await f.page.getByRole("menuitemradio", { name: "名称", exact: true }).count(), 1, "The menu holds open so both choices can be made at once");
+    await f.page.keyboard.press("Escape");
+    assert.match(await heading(), /按机器/);
+    await sidebar.getByText("树莓派", { exact: true }).waitFor();
+    await sidebar.getByText("工作站", { exact: true }).waitFor();
+    assert.deepEqual(await titles(), ["Conversation B", "Conversation C", "Conversation A"], "The machine with the freshest thread leads, and inside it the freshest thread");
+    await sidebar.getByText("scratch", { exact: true }).first().waitFor();
+    await sidebar.getByText("scratch · 主目录", { exact: true }).waitFor();
+    assert.equal(await sidebar.getByText(/主目录 · 树莓派/).count(), 0, "Under a machine's own heading the machine is not said twice");
+
+    // Flat and by time is the plain answer to "what moved last".
+    await arrange.click();
+    await f.page.getByRole("menuitemradio", { name: "不分组", exact: true }).click();
+    await f.page.keyboard.press("Escape");
+    assert.deepEqual(await titles(), ["Conversation B", "Conversation C", "Conversation A"]);
+    assert.equal(await sidebar.getByRole("button", { name: "在 scratch 下新会话", exact: true }).count(), 0);
+
+    // What owes the owner an answer outranks what merely spoke last.
+    await arrange.click();
+    await f.page.getByRole("menuitemradio", { name: "待处理优先", exact: true }).click();
+    await f.page.keyboard.press("Escape");
+    assert.deepEqual(await titles(), ["Conversation A", "Conversation B", "Conversation C"]);
+    await arrange.click();
+    await f.page.getByRole("menuitemradio", { name: "名称", exact: true }).click();
+    await f.page.keyboard.press("Escape");
+    assert.deepEqual(await titles(), ["Conversation A", "Conversation B", "Conversation C"]);
+
+    // A list that forgets how it was arranged is arranged again every morning.
+    await f.page.reload();
+    await sidebar.getByRole("button", { name: /^排列/ }).waitFor();
+    assert.match(await heading(), /会话/);
+    assert.deepEqual(await titles(), ["Conversation A", "Conversation B", "Conversation C"]);
+    assert.equal(f.calls.length, 0, "Arranging the list must not submit work");
+};
+
 checks["conversation-work-disclosure"] = async (f) => {
     const tasks = [
         { ...task("11", A, "scratch"), execution: "idle" },
