@@ -1589,8 +1589,10 @@ checks["composer-keys"] = async (f) => {
     assert.equal(await f.box.inputValue(), "first line\n", "Shift+Enter inserts a newline");
     await f.box.type("**second** line");
     await f.box.evaluate((box) => box.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
+    const composingDraft = await f.box.inputValue();
     await f.box.press("Enter");
     assert.equal(f.queued().length, 0, "Enter must not send while an input method is composing");
+    assert.equal(await f.box.inputValue(), composingDraft, "Nor may it leave a newline behind while composing");
     await f.box.evaluate((box) => box.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })));
     const settledDraft = await f.box.inputValue();
     await f.box.press("Enter");

@@ -106,7 +106,10 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
             <TextArea textAreaRef={input} aria-label={t("sideChat.message")} placeholder={t("sideChat.placeholder")} value={text} onChange={(value) => { void updateDraft(session.id, value); }} rows={3} isDisabled={blocked} onCompositionStart={() => { composing.current = true; }}
                 onCompositionEnd={() => { composing.current = false; settled.current = Date.now(); }}
                 onKeyDown={(event) => {
-                    if (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+                    if (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
+                        if (event.key === "Enter") event.preventDefault();
+                        return;
+                    }
                     if (event.key !== "Enter" || event.shiftKey) return;
                     event.preventDefault();
                     // An Enter that lands right after a composition settles is
