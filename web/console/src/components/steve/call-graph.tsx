@@ -3,6 +3,7 @@ import { useI18n } from "@/providers/locale-provider";
 import { Loading01 } from "@untitledui/icons";
 import type { Plan, Task } from "@/lib/types";
 import { Mono, StateBadge, taskState } from "@/components/steve/ui";
+import { useNodeLabel } from "@/lib/node-name";
 
 // CallGraph is who asked whom: a task, the plan steps it split into and
 // which agent on which machine took each, and the tasks its agent handed
@@ -77,12 +78,14 @@ function kindOf(t: Task, tr: Translator): string {
 
 function Who({ agent, node, running, small }: { agent?: string; node?: string; running?: boolean; small?: boolean }) {
     const { t: tr } = useI18n();
+    const nodeLabelOf = useNodeLabel();
+    const where = node ? nodeLabelOf(node) : "";
     return (
         <span className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded-md bg-secondary px-1.5 ${small ? "py-0 u-meta" : "py-0.5 text-xs"} font-medium text-primary`}>
             {running && <Loading01 aria-hidden="true" className="size-3 shrink-0 animate-spin motion-reduce:animate-none text-fg-brand-primary" />}
-            <span className="truncate" title={node ? `${agent || tr("tasks.unplaced")} @ ${node}` : agent}>
+            <span className="truncate" title={where ? `${agent || tr("tasks.unplaced")} @ ${where}` : agent}>
                 {agent || tr("tasks.unplaced")}
-                {node && <span className="font-normal text-tertiary"> @ {node}</span>}
+                {where && <span className="font-normal text-tertiary"> @ {where}</span>}
             </span>
         </span>
     );

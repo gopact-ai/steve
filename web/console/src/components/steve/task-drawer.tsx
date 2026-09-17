@@ -6,6 +6,7 @@ import { Button } from "@/components/base/buttons/button";
 import { send } from "@/lib/api/console";
 import { short, when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
+import { nodeLabelIn } from "@/lib/node-name";
 import { fmtSeconds, fmtTokens, label, spend, labelsFor } from "@/lib/labels";
 import type { Plan, Task } from "@/lib/types";
 import { TaskDeliveries } from "./task-deliveries";
@@ -69,7 +70,7 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                     {meta.error && <div role="alert" className="mt-1 text-xs text-error-primary">{meta.error}</div>}
                     {error && <div role="alert" className="mt-1 text-xs text-error-primary">{error}</div>}
                     {result && <div role="status" className="mt-1 text-xs text-secondary">{result}</div>}
-                    <div className="mt-1 text-xs text-tertiary">{t.member} @ {t.node || snap.hub.node} {tr("tasks.projectPrefix")}{t.project_id || "—"} · {label(labelsFor(locale).origin, t.origin || "chat")} {tr("tasks.conversationPrefix")}{t.channel}</div></>} onClose={onClose}>
+                    <div className="mt-1 text-xs text-tertiary">{t.member} @ {nodeLabelIn(snap.nodes, t.node || snap.hub.node)} {tr("tasks.projectPrefix")}{t.project_id || "—"} · {label(labelsFor(locale).origin, t.origin || "chat")} {tr("tasks.conversationPrefix")}{t.channel}</div></>} onClose={onClose}>
                 <DrawerSection title={tr("tasks.result")}>
                     <div className="flex flex-col gap-1 text-sm">
                         <Row k={tr("tasks.execution")} v={t.execution === "running" ? tr("tasks.running") : t.execution === "unknown" ? tr("tasks.unknown") : tr("tasks.idle")} />
@@ -96,7 +97,7 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                         <ol className="flex flex-col divide-y divide-secondary rounded-lg ring-1 ring-secondary">
                             {plan.steps.map((s) => (
                                 <li key={s.id} className="flex flex-col gap-1 px-3 py-2">
-                                    <div className="flex items-center gap-2"><StateBadge state={s.state} /><span className="font-medium text-primary">{s.id}</span><span className="text-xs text-tertiary">{s.agent || "—"}{s.node ? ` @ ${s.node}` : ""}</span>{s.verify && <span className="ml-auto u-meta text-quaternary">{tr("tasks.verification")}{s.verify}</span>}</div>
+                                    <div className="flex items-center gap-2"><StateBadge state={s.state} /><span className="font-medium text-primary">{s.id}</span><span className="text-xs text-tertiary">{s.agent || "—"}{s.node ? ` @ ${nodeLabelIn(snap.nodes, s.node)}` : ""}</span>{s.verify && <span className="ml-auto u-meta text-quaternary">{tr("tasks.verification")}{s.verify}</span>}</div>
                                     <div className="line-clamp-3 text-xs text-secondary">{s.goal}</div>
                                     {s.error && <div className="text-xs text-error-primary">{s.error}</div>}
                                     {s.usage && <div className="u-meta text-quaternary">{s.usage.model} · {fmtTokens(s.usage.tokens.total, locale)} tok · {fmtSeconds(s.usage.seconds, locale)}</div>}

@@ -11,7 +11,7 @@ import { short, when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import type { HistoryEntry } from "@/lib/types";
 import { PageBody, PageHeader } from "@/components/steve/page";
-import { Mono, Nothing, StateBadge } from "@/components/steve/ui";
+import { Mono, Nothing, StateBadge, Where } from "@/components/steve/ui";
 
 // HistoryPage answers "what happened, who did it, how did it end". The
 // timeline reads the ledger journal and the connectivity observations,
@@ -75,7 +75,7 @@ export function HistoryPage() {
                         {f.reservations.length === 0 ? <Nothing icon={Zap} title={tr("history.none")} /> : (
                             <Table aria-label={tr("history.reserved")} size="sm">
                                 <Table.Header><Table.Head id="key" label={tr("history.key")} isRowHeader /><Table.Head id="where" label={tr("history.machineTool")} /><Table.Head id="slots" label={tr("history.slots")} /><Table.Head id="for" label={tr("history.for")} /><Table.Head id="exp" label={tr("history.expires")} /></Table.Header>
-                                <Table.Body items={f.reservations}>{(r) => <Table.Row id={r.id}><Table.Cell><Mono>{r.key}</Mono></Table.Cell><Table.Cell>{r.node} · {r.harness}</Table.Cell><Table.Cell>{r.slots}</Table.Cell><Table.Cell>{r.for}</Table.Cell><Table.Cell><span className="text-tertiary">{when(r.expires_at, locale)}</span></Table.Cell></Table.Row>}</Table.Body>
+                                <Table.Body items={f.reservations}>{(r) => <Table.Row id={r.id}><Table.Cell><Mono>{r.key}</Mono></Table.Cell><Table.Cell><Where node={r.node} /> · {r.harness}</Table.Cell><Table.Cell>{r.slots}</Table.Cell><Table.Cell>{r.for}</Table.Cell><Table.Cell><span className="text-tertiary">{when(r.expires_at, locale)}</span></Table.Cell></Table.Row>}</Table.Body>
                             </Table>
                         )}
                     </TableCard.Root>
@@ -102,7 +102,7 @@ export function HistoryPage() {
                         {f.replicas.length === 0 ? <Nothing icon={Database01} title={tr("history.none")} /> : (
                             <Table aria-label={tr("history.replicas")} size="sm">
                                 <Table.Header><Table.Head id="artifact" label={tr("history.artifact")} isRowHeader /><Table.Head id="node" label={tr("history.machine")} /><Table.Head id="gen" label={tr("history.generation")} /><Table.Head id="state" label={tr("history.state")} /><Table.Head id="at" label={tr("history.time")} /></Table.Header>
-                                <Table.Body items={f.replicas.map((r, i) => ({ ...r, id: `${r.artifact}-${r.node}-${i}` }))}>{(r) => <Table.Row id={r.id}><Table.Cell><Mono>{short(r.artifact)}</Mono></Table.Cell><Table.Cell>{r.node}</Table.Cell><Table.Cell>{r.generation}</Table.Cell><Table.Cell><StateBadge state={r.state} /></Table.Cell><Table.Cell><span className="text-tertiary">{when(r.at, locale)}</span></Table.Cell></Table.Row>}</Table.Body>
+                                <Table.Body items={f.replicas.map((r, i) => ({ ...r, id: `${r.artifact}-${r.node}-${i}` }))}>{(r) => <Table.Row id={r.id}><Table.Cell><Mono>{short(r.artifact)}</Mono></Table.Cell><Table.Cell><Where node={r.node} /></Table.Cell><Table.Cell>{r.generation}</Table.Cell><Table.Cell><StateBadge state={r.state} /></Table.Cell><Table.Cell><span className="text-tertiary">{when(r.at, locale)}</span></Table.Cell></Table.Row>}</Table.Body>
                             </Table>
                         )}
                     </TableCard.Root>

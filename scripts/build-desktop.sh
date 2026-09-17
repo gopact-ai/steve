@@ -31,7 +31,10 @@ task_bundle="$task_stage/Steve.app"
 mkdir -p "$task_bundle/Contents/MacOS" "$task_bundle/Contents/Resources"
 
 if [[ "${STEVE_DESKTOP_SKIP_CONSOLE_BUILD:-0}" != 1 ]]; then
-  (cd "$task_root/web/console" && npm ci --no-audit --no-fund && npm run build)
+  # The lockfile pins the host each package came from. A local npm mirror
+  # would otherwise be substituted for it, and a package the mirror does not
+  # carry fails the install after node_modules has already been emptied.
+  (cd "$task_root/web/console" && npm ci --no-audit --no-fund --replace-registry-host=never && npm run build)
 fi
 
 (cd "$task_root" && GOOS=darwin GOARCH="$task_goarch" CGO_ENABLED=0 "${GO:-go}" build -trimpath -o "$task_bundle/Contents/Resources/steve" ./cmd/steve)

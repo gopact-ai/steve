@@ -12,10 +12,11 @@ import { Drawer, DrawerSection } from "@/components/steve/drawer";
 import { CodeBlock } from "@/components/steve/markdown";
 import { MCPToolList } from "@/components/steve/mcp-tools";
 import { Chips, KeyValue, PageBody, PageHeader, Panel } from "@/components/steve/page";
-import { Mono, Nothing } from "@/components/steve/ui";
+import { Mono, Nothing, Where } from "@/components/steve/ui";
 import { adoptMCP, fetchMCP, installMCP, probeMCP, removeMCP, searchMCPRegistry } from "@/lib/api/mcp";
 import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
+import { nodeLabel, nodeLabelIn } from "@/lib/node-name";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import type { MCPDeployment, MCPRegistryEntry, MCPView } from "@/lib/types";
 
@@ -90,7 +91,7 @@ const steveToolSummaries: Record<string, string> = {
                                 {(d) => (
                                     <Table.Row id={d.node + "/" + d.name} className="cursor-pointer">
                                         <Table.Cell><span className="font-medium text-primary">{d.name}</span>{d.same_name_elsewhere && <span className="ml-1 u-meta text-quaternary" title={tr("mcp.sameNameHint")}>{tr("mcp.sameName")}</span>}</Table.Cell>
-                                        <Table.Cell><Mono>{d.node}</Mono></Table.Cell>
+                                        <Table.Cell><Where node={d.node} /></Table.Cell>
                                         <Table.Cell><span className="text-xs text-secondary">{typeWord(d.type, tr)}</span></Table.Cell>
                                         <Table.Cell><Mono className="block max-w-xs truncate text-tertiary" >{d.command || d.url || "—"}</Mono></Table.Cell>
                                         <Table.Cell><Chips items={d.agents.map((a) => ({ id: a }))} empty={<span className="text-xs text-quaternary">{tr("mcp.unused")}</span>} /></Table.Cell>
@@ -219,7 +220,7 @@ function RegistryPanel({ onInstalled }: { onInstalled: () => void }) {
     const [values, setValues] = useState<Record<string, string>>({});
     const [error, setError] = useState("");
     const [installing, setInstalling] = useState(false);
-    const machines = [{ id: snap.hub.node, label: `${snap.hub.node}（${tr("connection.coordinator")}）` }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: n.name }))];
+    const machines = [{ id: snap.hub.node, label: `${nodeLabelIn(snap.nodes, snap.hub.node)}（${tr("connection.coordinator")}）`, supportingText: snap.hub.node }, ...snap.nodes.filter((n) => n.role !== "hub").map((n) => ({ id: n.name, label: nodeLabel(n), supportingText: n.display_name ? n.name : undefined }))];
     function search() {
         setSearching(true); setError("");
         void searchMCPRegistry(q).then((r) => setResults(r.entries)).catch((e) => setError(fail(e))).finally(() => setSearching(false));

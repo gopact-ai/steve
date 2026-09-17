@@ -4,6 +4,7 @@ import { Badge } from "@/components/base/badges/badges";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
+import { useNodeLabel } from "@/lib/node-name";
 import { label, zh } from "@/lib/labels";
 import { placeLabel } from "@/lib/workspaces";
 import type { ConversationContext, Plan, Reply, Task } from "@/lib/types";
@@ -31,6 +32,7 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots, onClose 
     const [picked, setPicked] = useState<Task | null>(null);
     const { snap } = useFleet();
     const { t, locale } = useI18n();
+    const nodeLabelOf = useNodeLabel();
     const support = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
     // The trace tab takes over while something runs, and returns to
     // context when the user asks.
@@ -54,7 +56,7 @@ export function Rail({ context, live, plans, reply, tab, setTab, roots, onClose 
                                     { k: t("console.name"), v: <span className="font-medium">{context.project.id}</span> },
                                     { k: t("console.projectHost"), v: <Mono>{context.project.node}</Mono> },
                                     { k: t("console.canonical"), v: <Mono className="text-secondary">{context.project.path}</Mono> },
-                                    { k: t("console.workspace"), v: context.agent?.place ? placeLabel(context.agent.place, locale) : t("console.notSelected") },
+                                    { k: t("console.workspace"), v: context.agent?.place ? placeLabel(context.agent.place, locale, nodeLabelOf) : t("console.notSelected") },
                                     { k: t("console.workMode"), v: label(zh.repo, context.project.repo), hint: t("console.workModeHint") },
                                     { k: t("console.level"), v: context.project.level },
                                 ]} />

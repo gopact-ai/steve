@@ -118,6 +118,28 @@ func localHarnessRegistered(agents map[string]config.Agent, harnessID string) bo
 	return false
 }
 
+// applyDefault leaves exactly one agent marked as the default: the one the
+// owner chose, or the first agent registered here when nothing held it yet.
+// A catalog without a default is refused, so this runs on every candidate
+// map before it is validated.
+func applyDefault(agents map[string]config.Agent, preferred string, added []string) {
+	if preferred == "" {
+		for _, item := range agents {
+			if item.Default {
+				return
+			}
+		}
+		if len(added) == 0 {
+			return
+		}
+		preferred = added[0]
+	}
+	for id, item := range agents {
+		item.Default = id == preferred
+		agents[id] = item
+	}
+}
+
 func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrollRequest) (consoleapi.DesktopStatus, error) {
 	a.Mu.Lock()
 	defer a.Mu.Unlock()
@@ -127,7 +149,13 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	if !desktop.IsManagedConfig(a.Path) {
 		return consoleapi.DesktopStatus{}, fmt.Errorf("本机 Agent 注册仅在桌面 App 中提供")
 	}
-	if len(req.AgentIDs) == 0 {
+	requested := req.Agents
+	if len(requested) == 0 {
+		for _, id := range req.AgentIDs {
+			requested = append(requested, consoleapi.DesktopEnrollAgent{CandidateID: id})
+		}
+	}
+	if len(requested) == 0 {
 		return consoleapi.DesktopStatus{}, fmt.Errorf("请选择要注册的本机 Agent")
 	}
 	if a.Manager == nil || a.Catalog == nil {
@@ -148,22 +176,32 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	addedAgents := make(map[string]config.Agent)
 	addedHarnesses := make(map[string]config.Harness)
 	var selected, agentIDs []string
-	seen := make(map[string]bool, len(req.AgentIDs))
-	for _, id := range req.AgentIDs {
-		id = strings.TrimSpace(id)
-		if seen[id] {
+	// preferred is the agent the owner marked as the default. It is only
+	// honoured once that agent has actually been registered here.
+	var preferred string
+	seen := make(map[string]bool, len(requested))
+	for _, want := range requested {
+		candidateID := strings.TrimSpace(want.CandidateID)
+		if seen[candidateID] {
 			continue
 		}
-		seen[id] = true
-		item, ok := candidates[id]
+		seen[candidateID] = true
+		item, ok := candidates[candidateID]
 		if !ok {
-			return consoleapi.DesktopStatus{}, fmt.Errorf("不支持的本机 Agent %q，请刷新后重新选择", id)
+			return consoleapi.DesktopStatus{}, fmt.Errorf("不支持的本机 Agent %q，请刷新后重新选择", candidateID)
+		}
+		name := strings.ToLower(strings.TrimSpace(want.AgentID))
+		if name == "" {
+			name = candidateID
+		}
+		if !NameShape.MatchString(name) {
+			return consoleapi.DesktopStatus{}, fmt.Errorf("Agent 名 %q 只能是小写字母、数字、点、下划线、连字符", name)
 		}
 		if localHarnessRegistered(agents, item.Harness) {
 			continue
 		}
-		if _, exists := agents[id]; exists {
-			return consoleapi.DesktopStatus{}, fmt.Errorf("Agent 名称 %s 已被占用，请在资源中检查现有 Agent", id)
+		if _, exists := agents[name]; exists {
+			return consoleapi.DesktopStatus{}, fmt.Errorf("Agent 名称 %s 已被占用，请换一个名字", name)
 		}
 		registered, tool, err := desktop.Registration(item)
 		if err != nil {
@@ -176,15 +214,24 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 		} else {
 			addedHarnesses[item.Harness] = tool
 		}
-		registered.Default = len(agents) == 0
-		agents[id] = registered
-		addedAgents[id] = registered
-		agentIDs = append(agentIDs, id)
+		// A renamed agent does not also squat the tool's own ID, so that
+		// name stays free for another agent later.
+		if name != candidateID {
+			registered.Aliases = nil
+		}
+		registered.About = strings.TrimSpace(want.About)
+		agents[name] = registered
+		addedAgents[name] = registered
+		agentIDs = append(agentIDs, name)
 		selected = append(selected, item.Harness)
+		if want.Default {
+			preferred = name
+		}
 	}
 	if len(addedAgents) == 0 {
 		return a.DesktopStatus(ctx)
 	}
+	applyDefault(agents, preferred, agentIDs)
 	if _, err := (&config.Config{Agents: agents}).AgentCatalog(); err != nil {
 		return consoleapi.DesktopStatus{}, err
 	}
@@ -205,10 +252,9 @@ func (a *Service) DesktopEnroll(ctx context.Context, req consoleapi.DesktopEnrol
 	candidate.Harnesses = make(map[string]config.Harness, len(a.Cfg.Harnesses)+len(addedHarnesses))
 	maps.Copy(candidate.Harnesses, a.Cfg.Harnesses)
 	for _, id := range agentIDs {
-		item := addedAgents[id]
-		item.Default = len(candidate.Agents) == 0
-		candidate.Agents[id] = item
+		candidate.Agents[id] = addedAgents[id]
 	}
+	applyDefault(candidate.Agents, preferred, agentIDs)
 	maps.Copy(candidate.Harnesses, addedHarnesses)
 	preparedCatalog, err := candidate.AgentCatalog()
 	if err != nil {

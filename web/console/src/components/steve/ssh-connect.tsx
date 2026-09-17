@@ -76,6 +76,16 @@ export function SSHConnect({ onClose, onChanged, onViewMachines, onAddExecutor }
     useEffect(() => { if (!plan) return; const ms = Date.parse(plan.expires_at) - Date.now(); if (ms <= 0) return; const timer = window.setTimeout(() => setNow(Date.now()), Math.min(ms + 1, 2_147_483_647)); return () => window.clearTimeout(timer); }, [plan]);
     const expired = !!plan && Date.parse(plan.expires_at) <= now;
     const connected = result?.registered === true && result.connected === true && result.status === "connected";
+    // Connecting a machine is only half of it: until an agent is registered
+    // there, nothing can be assigned to it. The registration opens by itself
+    // the first time a machine reports connected, and stays closed once it
+    // has been dealt with.
+    const offered = useRef("");
+    useEffect(() => {
+        if (!connected || !plan || offered.current === plan.id) return;
+        offered.current = plan.id;
+        setEnrolling(true);
+    }, [connected, plan]);
     const canResumeRegistration = plan?.check.installation_mode === "peer" && attempted && result?.registered === true && !result.connected && result.status === "needs_attention";
     const terminal = connected || result?.status === "needs_attention";
     // Only a cluster enrollment can be withdrawn from here; an execution-only

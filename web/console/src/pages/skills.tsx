@@ -15,6 +15,7 @@ import { Mono, Nothing } from "@/components/steve/ui";
 import { addSkillPath, addSkillSource, fetchMachineSkills, fetchSkill, fetchSkills, importSkill, refreshMachineSkills, removeSkillPath, removeSkillSource, setSkill, updateSkillSources } from "@/lib/api/skills";
 import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
+import { nodeLabelIn } from "@/lib/node-name";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import type { MachineSkills, SkillDoc, SkillView, SkillsView } from "@/lib/types";
 
@@ -200,7 +201,7 @@ export function SkillsPage() {
                     </Panel>
                     <Panel title={tr("skills.syncStatus")} description={tr("skills.syncHint")} className="skill-settings-panel">
                         <ul className="skill-settings-list" aria-label={tr("skills.syncNodes")}>
-                            <li className="skill-settings-row"><Server01 aria-hidden="true" className="size-4 shrink-0 text-fg-tertiary" /><span className="min-w-0 flex-1 break-words text-sm font-medium text-primary">{snap.hub.node}</span><Badge type="modern" size="sm" color="gray">{tr("skills.syncSource")}</Badge></li>
+                            <li className="skill-settings-row"><Server01 aria-hidden="true" className="size-4 shrink-0 text-fg-tertiary" /><span className="min-w-0 flex-1 break-words text-sm font-medium text-primary">{nodeLabelIn(snap.nodes, snap.hub.node)}</span><Badge type="modern" size="sm" color="gray">{tr("skills.syncSource")}</Badge></li>
                             {(view?.nodes ?? []).map((n) => (
                                 <li key={n.name} className="skill-settings-row">
                                     <Server01 aria-hidden="true" className="size-4 shrink-0 text-fg-tertiary" />

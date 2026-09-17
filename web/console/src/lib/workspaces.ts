@@ -18,5 +18,8 @@ export function levelName(level: string, locale: Locale): string {
     return key ? translate(locale, key) : level;
 }
 
-// placeLabel is "主目录 · hub" or "副本 · node-a".
-export function placeLabel(w: Placement | Workspace, locale: Locale = "zh"): string { return `${kindWord(w.kind, locale)} · ${w.node}`; }
+// placeLabel is "主目录 · 工作本" or "副本 · dev". Given a resolver, the
+// machine is named the way people named it; without one its node ID stands.
+export function placeLabel(w: Placement | Workspace, locale: Locale = "zh", name: (id: string) => string = (id) => id): string {
+    return `${kindWord(w.kind, locale)} · ${name(w.node)}`;
+}

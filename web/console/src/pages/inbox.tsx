@@ -4,6 +4,7 @@ import { Badge } from "@/components/base/badges/badges";
 import { Button } from "@/components/base/buttons/button";
 import { when } from "@/lib/format";
 import { useFleet, useIntent } from "@/lib/fleet";
+import { nodeLabelIn } from "@/lib/node-name";
 import { label, labelsFor } from "@/lib/labels";
 import { PageBody, PageHeader } from "@/components/steve/page";
 import { Nothing } from "@/components/steve/ui";
@@ -36,7 +37,7 @@ export function InboxPage() {
                                 <div className="min-w-0 flex-1">
                                     <div className="break-words text-sm font-medium text-primary">{r.summary}</div>
                                     {r.type === "writer" && <div className="mt-2 flex flex-col gap-1 text-xs text-secondary">
-                                        <p>{tr("inbox.machine")}<span className="font-mono">{r.node || "—"}</span></p>
+                                        <p>{tr("inbox.machine")}<span className="font-mono">{r.node ? nodeLabelIn(snap.nodes, r.node) : "—"}</span></p>
                                         <p className="break-all">{tr("inbox.directory")}<span className="font-mono">{r.workspace || "—"}</span></p>
                                         <p className="break-all">{tr("inbox.execution")}<span className="font-mono">{r.attempt_id || r.source}</span></p>
                                         <p className="mt-1 leading-5 text-tertiary">{tr("inbox.writerHint")}<a className="underline" href="https://github.com/gopact-ai/steve/blob/master/docs/operations.md#隔离执行与复制操作" target="_blank" rel="noreferrer">{tr("inbox.recoveryGuide")}</a>{tr("inbox.writerSteps")}</p>
