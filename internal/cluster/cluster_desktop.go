@@ -237,8 +237,27 @@ func (p *Peer) serveDesktopLocal(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "one enrollment is required", http.StatusBadRequest)
 			return
 		}
-		for _, id := range request.AgentIDs {
-			if err := p.enrollDesktopAgent(r.Context(), id); err != nil {
+		// The guide sends names, uses and which one is the default;
+		// AgentIDs is the same choice from an older client, under the
+		// tools' own IDs.
+		requested := request.Agents
+		if len(requested) == 0 {
+			for _, id := range request.AgentIDs {
+				requested = append(requested, consoleapi.DesktopEnrollAgent{CandidateID: id})
+			}
+		}
+		if len(requested) == 0 {
+			http.Error(w, "请选择要注册的本机 Agent", http.StatusBadRequest)
+			return
+		}
+		seen := make(map[string]bool, len(requested))
+		for _, want := range requested {
+			want.CandidateID = strings.TrimSpace(want.CandidateID)
+			if want.CandidateID == "" || seen[want.CandidateID] {
+				continue
+			}
+			seen[want.CandidateID] = true
+			if err := p.enrollDesktopAgent(r.Context(), want); err != nil {
 				HTTPError(w, err)
 				return
 			}
@@ -254,7 +273,8 @@ func (p *Peer) serveDesktopLocal(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func (p *Peer) enrollDesktopAgent(ctx context.Context, candidateID string) error {
+func (p *Peer) enrollDesktopAgent(ctx context.Context, want consoleapi.DesktopEnrollAgent) error {
+	candidateID := want.CandidateID
 	d, err := p.DesktopDeclaration()
 	if err != nil {
 		return err
@@ -273,8 +293,18 @@ func (p *Peer) enrollDesktopAgent(ctx context.Context, candidateID string) error
 	if err != nil {
 		return err
 	}
-	agentID := candidateID
+	// A name the owner typed is the name they will call it by, so a
+	// collision is reported rather than worked around. A tool enrolled
+	// under its own ID may still be placed beside a namesake.
+	agentID := strings.ToLower(strings.TrimSpace(want.AgentID))
+	named := agentID != ""
+	if !named {
+		agentID = candidateID
+	}
 	if _, exists := d.Agents[agentID]; exists {
+		if named {
+			return fmt.Errorf("Agent 名称 %s 已被占用，请换一个名字", agentID)
+		}
 		suffix := p.Config.NodeID
 		if len(suffix) > 10 {
 			suffix = suffix[len(suffix)-10:]
@@ -284,7 +314,7 @@ func (p *Peer) enrollDesktopAgent(ctx context.Context, candidateID string) error
 	var result struct {
 		OK bool `json:"ok"`
 	}
-	err = p.applicationJSON(ctx, http.MethodPost, "/console/agents", consoleapi.AddAgentRequest{ID: agentID, Harness: installed.Harness, Node: p.Config.NodeID}, &result)
+	err = p.applicationJSON(ctx, http.MethodPost, "/console/agents", consoleapi.AddAgentRequest{ID: agentID, Harness: installed.Harness, Node: p.Config.NodeID, About: strings.TrimSpace(want.About), Default: want.Default}, &result)
 	if err != nil {
 		// The tool can already be installed even when declaration delivery was
 		// interrupted. Only a matching shared Agent declaration confirms it.

@@ -127,3 +127,54 @@ func TestClusterPeerDesktopEnrollmentRunsTaskInDefaultWorkspace(t *testing.T) {
 		t.Fatalf("worker cannot reach initial desktop workspace: %s", workerConfig.WorkspaceRoot)
 	}
 }
+
+// The guide sends the name the owner typed, what the agent is for and
+// which one a conversation starts with. A peer that only read the older
+// list of tool IDs registered nothing and still answered OK, which the
+// guide could only report as "registration unconfirmed".
+func TestClusterPeerDesktopEnrollmentKeepsTheNameTheOwnerChose(t *testing.T) {
+	dir := ClusterPeerTestDir(t)
+	bin := filepath.Join(dir, "mockagent")
+	build := exec.Command("go", "build", "-o", bin, "github.com/gopact-ai/steve/cmd/mockagent")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build isolated ACP fixture: %v %s", err, output)
+	}
+	tools := filepath.Join(dir, "tools")
+	if err := os.Mkdir(tools, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(bin, filepath.Join(tools, "grok")); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", tools+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HOME", dir)
+	options, installed := testPeerOptions(t, filepath.Join(dir, "app"), nil)
+	peer := StartTestPeer(t, options)
+	WaitPeerReady(t, peer)
+	request := consoleapi.DesktopEnrollRequest{Agents: []consoleapi.DesktopEnrollAgent{{CandidateID: "grok", AgentID: "scout", About: "代码审查", Default: true}}}
+	status, body := PeerRequest(t, peer, http.MethodPost, "/console/desktop/agents", request)
+	if status != http.StatusOK {
+		t.Fatalf("register the chosen local tool: %d %s", status, body)
+	}
+	var result consoleapi.DesktopStatus
+	if err := json.Unmarshal(body, &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.AgentCount != 1 || result.DefaultAgent != "scout" {
+		t.Fatalf("enrollment answered without the registration it made: %s", body)
+	}
+	declaration, err := peer.DesktopDeclaration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	agent, ok := declaration.Agents["scout"]
+	if !ok {
+		t.Fatalf("the chosen name was not registered: %v", declaration.Agents)
+	}
+	if agent.Node != installed.NodeID || agent.Harness != "grok" || agent.About != "代码审查" || !agent.Default {
+		t.Fatalf("placement, use or default lost in enrollment: %+v", agent)
+	}
+	if _, taken := declaration.Agents["grok"]; taken {
+		t.Fatal("a renamed agent must not also hold the tool's own ID")
+	}
+}

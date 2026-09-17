@@ -120,7 +120,17 @@ func (a *Service) AddAgent(ctx context.Context, req consoleapi.AddAgentRequest) 
 		if _, exists := agents[id]; exists {
 			return fmt.Errorf("Agent %s 已经存在", id)
 		}
-		agents[id] = config.Agent{Harness: req.Harness, Node: req.Node, Model: req.Model, Default: len(agents) == 0}
+		agents[id] = config.Agent{Harness: req.Harness, Node: req.Node, Model: req.Model, About: strings.TrimSpace(req.About), Default: req.Default || len(agents) == 0}
+		// Exactly one agent is the default, so an agent asked for that
+		// place takes it from whoever held it.
+		if req.Default {
+			for other, item := range agents {
+				if other != id && item.Default {
+					item.Default = false
+					agents[other] = item
+				}
+			}
+		}
 		return nil
 	})
 	if err == nil || config.Committed(err) {
