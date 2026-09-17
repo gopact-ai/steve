@@ -188,6 +188,11 @@ type AddAgentRequest struct {
 	Harness string `json:"harness"`
 	Node    string `json:"node,omitempty"`
 	Model   string `json:"model,omitempty"`
+	// About says what the agent is good for, so planning can pick it.
+	About string `json:"about,omitempty"`
+	// Default makes this the agent a conversation starts with. The first
+	// agent registered holds that place even when this is not asked for.
+	Default bool `json:"default,omitempty"`
 }
 
 // Admin changes the fleet at runtime and persists the change: the page

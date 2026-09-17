@@ -382,7 +382,7 @@ function AgentsStep({ status, onStatus, busy, setBusy, onNext, onBack }: StepPro
         {discoveryError && <p role="alert" className="break-words text-sm text-error-primary">{discoveryError}</p>}
         {!loading && <Button size="sm" color="tertiary" isDisabled={locked} onClick={() => { setLoading(true); void load(); }}>{t("desktop.checkAgain")}</Button>}
         {error && <p role="alert" className="break-words text-sm text-error-primary">{error}</p>}
-        {draft.pending && !busy && <p role="status" className="text-xs leading-5 text-tertiary">{t("desktop.unconfirmed")}</p>}
+        {draft.pending && !busy && error !== t("desktop.unconfirmed") && <p role="status" className="text-xs leading-5 text-tertiary">{t("desktop.unconfirmed")}</p>}
         {busy && <p role="status" className="text-sm text-tertiary">{t("desktop.registering")}</p>}
         <StepFooter busy={busy} onBack={onBack} onNext={() => void register()} nextLabel={chosen.length === 0 && registeredCount > 0 ? t("desktop.next") : t(attempted || draft.pending ? "desktop.retryRegister" : "desktop.register")} onSkip={registeredCount === 0 ? onNext : undefined} disabled={loading || !!discoveryError}>
             {registeredCount === 0 && <p className="basis-full text-xs leading-5 text-quaternary">{t("desktop.agentsSkipHint")}</p>}
