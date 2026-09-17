@@ -1,8 +1,8 @@
 import { useI18n } from "@/providers/locale-provider";
 import { number, relative } from "@/lib/format";
 import type { Locale } from "@/lib/i18n";
-import { memo, useEffect, useId, useRef, useState } from "react";
-import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, MessageQuestionCircle, Plus, Trash01, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
+import { type FC, memo, useEffect, useId, useRef, useState } from "react";
+import { AlertCircle, Archive, CheckCircle, ChevronDown, DotsHorizontal, Edit05, Folder, Loading01, MessageQuestionCircle, Plus, Server01, SwitchVertical01, Trash01, Users01, ChevronLeftDouble, ChevronRightDouble } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { Input } from "@/components/base/input/input";
@@ -100,6 +100,58 @@ function useUnseen(list: Conversation[], current: string) {
     return unseen;
 }
 
+// The project tree answers "what am I working on"; it does not answer
+// "what moved last" or "what is machine A busy with". Those are the same
+// threads read along a different axis, so the list keeps one arrangement:
+// what it groups by, and what it orders by inside a group. The choice is
+// the reader's and it is remembered, because a list that forgets how it
+// was arranged is a list you have to arrange again every morning.
+export type Grouping = "project" | "node" | "agent" | "none";
+export type Ordering = "recent" | "attention" | "title";
+export type Arrangement = { group: Grouping; sort: Ordering };
+
+const ARRANGEMENT = "steve.sessions.arrangement";
+const GROUPINGS: Grouping[] = ["project", "node", "agent", "none"];
+const ORDERINGS: Ordering[] = ["recent", "attention", "title"];
+const DEFAULT_ARRANGEMENT: Arrangement = { group: "project", sort: "recent" };
+
+function storedArrangement(): Arrangement {
+    try {
+        const raw: unknown = JSON.parse(localStorage.getItem(ARRANGEMENT) || "{}");
+        const held = raw as Partial<Arrangement>;
+        return {
+            group: GROUPINGS.includes(held.group as Grouping) ? (held.group as Grouping) : DEFAULT_ARRANGEMENT.group,
+            sort: ORDERINGS.includes(held.sort as Ordering) ? (held.sort as Ordering) : DEFAULT_ARRANGEMENT.sort,
+        };
+    } catch { return DEFAULT_ARRANGEMENT; }
+}
+
+function useArrangement(): [Arrangement, (next: Arrangement) => void] {
+    const [arrangement, setArrangement] = useState<Arrangement>(storedArrangement);
+    const keep = (next: Arrangement) => {
+        setArrangement(next);
+        try { localStorage.setItem(ARRANGEMENT, JSON.stringify(next)); } catch { /* The arrangement is a convenience, not state worth failing over. */ }
+    };
+    return [arrangement, keep];
+}
+
+const spoke = (c: Conversation) => (c.last_at ? Date.parse(c.last_at) : 0);
+
+// A thread that owes the owner an answer outranks one that is merely
+// running, and a running one outranks one that has gone quiet.
+const urgency = (c: Conversation) => (c.questions ? 0 : c.running ? 1 : 2);
+
+function ordered(list: Conversation[], sort: Ordering, locale: Locale): Conversation[] {
+    const out = [...list];
+    if (sort === "title") return out.sort((a, b) => (a.title || "").localeCompare(b.title || "", locale) || spoke(b) - spoke(a));
+    if (sort === "attention") return out.sort((a, b) => urgency(a) - urgency(b) || spoke(b) - spoke(a));
+    return out.sort((a, b) => spoke(b) - spoke(a));
+}
+
+// A bucket is one heading and the threads under it, for the arrangements
+// that do not follow the project tree.
+type Bucket = { key: string; label: string; icon: FC<{ className?: string }>; items: Conversation[] };
+
 function notable(t: Task, all: Task[]): boolean {
     return t.execution === "running" || (t.attention || 0) > 0 || !!t.plan_id || (t.origin || "").startsWith("schedule") || all.some((c) => c.parent === t.id);
 }
@@ -114,7 +166,9 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
     const query = search.trim().toLocaleLowerCase();
     const matches = (c: Conversation) => !query || `${c.title} ${c.project || ""} ${c.agent || ""}`.toLocaleLowerCase().includes(query);
     const [renaming, setRenaming] = useState<string | null>(null);
+    const [arrangement, setArrangement] = useArrangement();
     const unseen = useUnseen(list, current);
+    const sorted = (items: Conversation[]) => ordered(items, arrangement.sort, locale);
     // An archived thread stays under 已归档 even while it is open: moving
     // it back under its project would look like it had been unarchived.
     const archived = list.filter((c) => c.archived && matches(c));
@@ -130,14 +184,14 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
     const known = new Set(projects.map((p) => p.id));
     const orphans = [...byProject.entries()].filter(([k]) => !known.has(k)).flatMap(([, v]) => v);
     const workOf = (c: Conversation) => tasks.filter((t) => t.channel === c.id && !t.parent && notable(t, tasks));
-    const row = (c: Conversation, norm?: { agent: string; place: string }) => (
-        <Thread key={c.id} c={c} current={c.id === current} unseen={unseen.has(c.id)} onPick={onPick} norm={norm}
+    const row = (c: Conversation, norm?: { agent: string; place: string }, note?: string, grouped?: boolean) => (
+        <Thread key={c.id} c={c} current={c.id === current} unseen={unseen.has(c.id)} onPick={onPick} norm={norm} note={note} inMachine={grouped}
             renaming={renaming === c.id} onRename={() => setRenaming(c.id)} onRenamed={(title) => { setRenaming(null); if (title !== null) onUpdate(c.id, { title }); }}
             onArchive={(archived) => onUpdate(c.id, { archived })} onDelete={() => onDelete(c.id)}
             work={workOf(c)} childrenOf={(id) => tasks.filter((t) => t.parent === id)} onTask={onTask} />
     );
     const node = (p: Project, title: string, hint?: string) => {
-        const threads = byProject.get(p.id) || [];
+        const threads = sorted(byProject.get(p.id) || []);
         const norm = usual(threads, locale, nodeLabelOf);
         const open = !!query || !folded[p.id];
         if (query && !threads.length) return null;
@@ -167,6 +221,61 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
             </li>
         );
     };
+    // Machine and Agent read the same threads along another axis. The
+    // bucket with the freshest thread leads, so the arrangement that was
+    // asked for — what moved last — survives the grouping.
+    const nodeOf = (c: Conversation) => c.place?.node || projects.find((p) => p.id === c.project)?.node || "";
+    const buckets = (): Bucket[] => {
+        const by = arrangement.group === "node" ? nodeOf : (c: Conversation) => c.agent || "";
+        const icon = arrangement.group === "node" ? Server01 : Users01;
+        const held = new Map<string, Conversation[]>();
+        for (const c of live) {
+            const key = by(c);
+            held.set(key, [...(held.get(key) || []), c]);
+        }
+        return [...held.entries()]
+            .map(([key, items]) => ({
+                key: `${arrangement.group}:${key}`,
+                label: key ? (arrangement.group === "node" ? nodeLabelOf(key) : key) : tr("consoleChrome.unarranged"),
+                icon,
+                items: sorted(items),
+            }))
+            .sort((a, b) => spoke(b.items[0]) - spoke(a.items[0]));
+    };
+    const bucketNode = (b: Bucket) => {
+        const norm = usual(b.items, locale, nodeLabelOf);
+        const open = !!query || !folded[b.key];
+        const holdsCurrent = b.items.some((c) => c.id === current);
+        const Icon = b.icon;
+        return (
+            <li key={b.key} className="flex flex-col">
+                <div className={`conversation-project group ${holdsCurrent && !open ? "is-current" : ""}`}>
+                    <button type="button" onClick={() => toggle(b.key)} className="flex size-6 shrink-0 items-center justify-center rounded text-fg-quaternary hover:bg-primary/60" aria-expanded={open} aria-label={open ? tr("consoleChrome.collapse") : tr("consoleChrome.expand")}>
+                        <ChevronDown className={`size-3.5 transition ${open ? "" : "-rotate-90"}`} />
+                    </button>
+                    <Icon className="size-4 shrink-0 text-fg-quaternary" />
+                    <button type="button" onClick={() => toggle(b.key)} className="flex min-h-6 min-w-0 flex-1 flex-col justify-center text-left">
+                        <span className="truncate u-title">{b.label}</span>
+                    </button>
+                    {b.items.some((c) => c.running) && <Loading01 className="size-3 shrink-0 animate-spin text-fg-brand-primary" />}
+                    <span className="shrink-0 pr-1.5 u-meta text-quaternary">{number(b.items.length, locale)}</span>
+                </div>
+                {open && (
+                    <ul className="ml-4 flex flex-col gap-0.5 border-l border-secondary pl-2">
+                        {b.items.map((c) => row(c, norm, c.project, arrangement.group === "node"))}
+                    </ul>
+                )}
+            </li>
+        );
+    };
+    const headings: Record<Grouping, string> = {
+        project: tr("console.project"),
+        node: tr("consoleChrome.byMachine"),
+        agent: tr("consoleChrome.byAgent"),
+        none: tr("console.conversation"),
+    };
+    const arrange = <ArrangeMenu value={arrangement} onChange={setArrangement} />;
+
     if (collapsed) {
         return (
             <aside className="conversation-sidebar is-collapsed">
@@ -188,21 +297,30 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
             {onImport && <button type="button" onClick={onImport} className="mx-3 mb-2 rounded-md px-2 py-1.5 text-left text-xs text-tertiary hover:bg-secondary focus-visible:outline-2 focus-visible:outline-brand">{tr("nativeImport.open")}</button>}
             <div className="conversation-search"><Input size="sm" aria-label={tr("consoleChrome.searchConversations")} placeholder={tr("consoleChrome.searchPlaceholder")} value={search} onChange={setSearch} /></div>
             <div className="conversation-tree">
-                <TreeHeading>{tr("console.project")}</TreeHeading>
+                <TreeHeading action={arrange}>{headings[arrangement.group]}</TreeHeading>
                 {query && !live.length && !archived.length && <p className="px-3 py-4 text-sm text-tertiary">{tr("consoleChrome.noMatches")}</p>}
-                <ul className="flex flex-col gap-0.5">{work.map((p) => node(p, p.id))}</ul>
-                {orphans.length > 0 && (
+                {arrangement.group === "project" ? (
                     <>
-                        <TreeHeading>{tr("consoleChrome.unassigned")}</TreeHeading>
-                        <ul className="ml-2 flex flex-col gap-0.5">{orphans.map((c) => row(c))}</ul>
+                        <ul className="flex flex-col gap-0.5">{work.map((p) => node(p, p.id))}</ul>
+                        {orphans.length > 0 && (
+                            <>
+                                <TreeHeading>{tr("consoleChrome.unassigned")}</TreeHeading>
+                                <ul className="ml-2 flex flex-col gap-0.5">{sorted(orphans).map((c) => row(c))}</ul>
+                            </>
+                        )}
+                        {home && (
+                            <>
+                                <TreeHeading>{tr("consoleChrome.privateChat")}</TreeHeading>
+                                <ul className="flex flex-col gap-0.5">{node(home, home.id, tr("consoleChrome.homeHint"))}</ul>
+                            </>
+                        )}
                     </>
+                ) : arrangement.group === "none" ? (
+                    <ul className="ml-2 flex flex-col gap-0.5">{sorted(live).map((c) => row(c, usual(live, locale, nodeLabelOf), c.project))}</ul>
+                ) : (
+                    <ul className="flex flex-col gap-0.5">{buckets().map(bucketNode)}</ul>
                 )}
-                {home && (
-                    <>
-                        <TreeHeading>{tr("consoleChrome.privateChat")}</TreeHeading>
-                        <ul className="flex flex-col gap-0.5">{node(home, home.id, tr("consoleChrome.homeHint"))}</ul>
-                    </>
-                )}
+                {arrangement.group !== "project" && !live.length && !query && <p className="px-3 py-4 text-sm text-tertiary">{tr("consoleChrome.noConversations")}</p>}
                 {archived.length > 0 && (
                     <details className="group/archived mt-3" open={archivedOpen || undefined}>
                         <summary className="flex cursor-pointer list-none items-center gap-1 px-2 py-1 u-label hover:text-tertiary">
@@ -210,7 +328,7 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
                             <span>{tr("consoleChrome.archivedCount", { count: number(archived.length, locale) })}</span>
                             <ChevronDown className="size-3 transition group-open/archived:rotate-180" />
                         </summary>
-                        <ul className="ml-2 flex flex-col gap-0.5 opacity-80">{archived.map((c) => row(c))}</ul>
+                        <ul className="ml-2 flex flex-col gap-0.5 opacity-80">{sorted(archived).map((c) => row(c))}</ul>
                     </details>
                 )}
             </div>
@@ -219,14 +337,61 @@ export const SessionsTree = memo(function SessionsTree({ list, projects, current
     );
 });
 
-function TreeHeading({ children }: { children: string }) {
-    return <div className="conversation-section-label">{children}</div>;
+function TreeHeading({ children, action }: { children: string; action?: React.ReactNode }) {
+    return (
+        <div className="conversation-section-label">
+            <span className="min-w-0 truncate">{children}</span>
+            {action}
+        </div>
+    );
+}
+
+// ArrangeMenu is the list's own control: what it groups by, and what it
+// orders by inside a group. It sits on the heading it changes, not in
+// the search field, because it arranges the list rather than filters it.
+function ArrangeMenu({ value, onChange }: { value: Arrangement; onChange: (next: Arrangement) => void }) {
+    const { t: tr } = useI18n();
+    const groups: Record<Grouping, string> = {
+        project: tr("consoleChrome.byProject"),
+        node: tr("consoleChrome.byMachine"),
+        agent: tr("consoleChrome.byAgent"),
+        none: tr("consoleChrome.byNothing"),
+    };
+    const sorts: Record<Ordering, string> = {
+        recent: tr("consoleChrome.byRecent"),
+        attention: tr("consoleChrome.byAttention"),
+        title: tr("consoleChrome.byName"),
+    };
+    return (
+        <Dropdown.Root>
+            <AriaButton className="conversation-arrange" aria-label={`${tr("consoleChrome.arrange")}: ${groups[value.group]} · ${sorts[value.sort]}`}>
+                <SwitchVertical01 className="size-3.5" />
+            </AriaButton>
+            <Dropdown.Popover placement="bottom end" className="w-48">
+                <Dropdown.Menu aria-label={tr("consoleChrome.arrange")}>
+                    {/* Grouping and order are two choices, and a reader who
+                        opens this usually changes both, so the menu holds. */}
+                    <Dropdown.Section selectionMode="single" disallowEmptySelection shouldCloseOnSelect={false} selectedKeys={[value.group]}
+                        onSelectionChange={(keys) => { const pick = [...keys][0]; if (pick) onChange({ ...value, group: pick as Grouping }); }}>
+                        <Dropdown.SectionHeader className="conversation-arrange-label">{tr("consoleChrome.groupBy")}</Dropdown.SectionHeader>
+                        {GROUPINGS.map((g) => <Dropdown.Item key={g} id={g} label={groups[g]} />)}
+                    </Dropdown.Section>
+                    <Dropdown.Separator />
+                    <Dropdown.Section selectionMode="single" disallowEmptySelection shouldCloseOnSelect={false} selectedKeys={[value.sort]}
+                        onSelectionChange={(keys) => { const pick = [...keys][0]; if (pick) onChange({ ...value, sort: pick as Ordering }); }}>
+                        <Dropdown.SectionHeader className="conversation-arrange-label">{tr("consoleChrome.sortBy")}</Dropdown.SectionHeader>
+                        {ORDERINGS.map((o) => <Dropdown.Item key={o} id={o} label={sorts[o]} />)}
+                    </Dropdown.Section>
+                </Dropdown.Menu>
+            </Dropdown.Popover>
+        </Dropdown.Root>
+    );
 }
 
 // Thread is one conversation: its name, its agent, when it last spoke,
 // and — when the project is in more than one place, or the agent has
 // nowhere to work — where it runs. Its menu renames or puts it away.
-function Thread({ c, current, unseen, onPick, norm, renaming, onRename, onRenamed, onArchive, onDelete, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; unseen?: boolean; onPick: (id: string) => void; norm?: { agent: string; place: string }; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; onDelete: () => Promise<void>; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
+function Thread({ c, current, unseen, onPick, norm, note, inMachine, renaming, onRename, onRenamed, onArchive, onDelete, work = [], childrenOf, onTask }: { c: Conversation; current: boolean; unseen?: boolean; onPick: (id: string) => void; norm?: { agent: string; place: string }; note?: string; inMachine?: boolean; renaming: boolean; onRename: () => void; onRenamed: (title: string | null) => void; onArchive: (archived: boolean) => void; onDelete: () => Promise<void>; work?: Task[]; childrenOf?: (id: string) => Task[]; onTask?: (t: Task) => void }) {
     const { t: tr, locale } = useI18n();
     const nodeLabelOf = useNodeLabel();
     const [workOpen, setWorkOpen] = useState(false);
@@ -237,10 +402,16 @@ function Thread({ c, current, unseen, onPick, norm, renaming, onRename, onRename
     // row does not share with its neighbours. Usually nothing does, and
     // then the row is one line: a title and when it last moved.
     const place = c.place ? placeLabel(c.place, locale, nodeLabelOf) : "";
+    // Under a machine's own heading the machine's name is already said;
+    // what the row still owes the reader is which kind of workspace.
+    const shownPlace = c.place && inMachine ? kindWord(c.place.kind, locale) : place;
     const qualifiers = [
+        // Grouped by machine or by Agent, the project is the one thing a
+        // row no longer says by where it sits, so it says it itself.
+        note || "",
         c.archived ? tr("console.archived") : "",
         norm && c.agent && c.agent !== norm.agent ? c.agent : "",
-        norm && place && place !== norm.place ? place : "",
+        norm && place && place !== norm.place ? shownPlace : "",
     ].filter(Boolean);
     return (
         <li className="group/thread relative">
