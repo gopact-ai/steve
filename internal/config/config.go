@@ -128,6 +128,13 @@ type Gateway struct {
 	PromptTimeout Duration `json:"prompt_timeout"`
 	StatePath     string   `json:"state_path"`
 	HomePath      string   `json:"home_path,omitempty"`
+	// WorkspaceRoot is the directory this machine keeps its work in: the
+	// one its owner chose, with every project under it. It describes this
+	// machine's filesystem and is never taken from a shared declaration,
+	// which names directories on whichever machine wrote it. Empty falls
+	// back to the state directory, which is where a fresh installation
+	// works until its owner picks somewhere.
+	WorkspaceRoot string `json:"workspace_root,omitempty"`
 	// TaskMaxTurns and TaskMaxElapsed raise the per-task budget for long
 	// running work; zero keeps the built-in defaults.
 	TaskMaxTurns   int      `json:"task_max_turns,omitempty"`
@@ -576,6 +583,9 @@ func (c *Config) LocalHomeNode(node string) bool {
 // directory, never from a declaration a shared configuration carries,
 // which names directories on whichever machine wrote it.
 func (c *Config) LocalWorkspaceRoot() string {
+	if root := strings.TrimSpace(c.Gateway.WorkspaceRoot); root != "" {
+		return root
+	}
 	return filepath.Dir(c.Gateway.StatePath)
 }
 
@@ -754,6 +764,9 @@ func (c *Config) resolvePaths() {
 		c.Gateway.HomePath = filepath.Join(filepath.Dir(c.Gateway.StatePath), "home")
 	}
 	c.Gateway.HomePath = absolute(c.Gateway.HomePath)
+	if c.Gateway.WorkspaceRoot != "" {
+		c.Gateway.WorkspaceRoot = absolute(c.Gateway.WorkspaceRoot)
+	}
 	for id, item := range c.Agents {
 		for i, skill := range item.Skills {
 			item.Skills[i] = absolute(skill)
