@@ -1,0 +1,176 @@
+/* PALETTES
+ *
+ * The built-in light and dark schemes live in workbench.css. A palette is
+ * a third thing: a scheme people already know from their editor, carried
+ * over so this console feels like the rest of their desk.
+ *
+ * Every palette states only the colours the scheme is actually known by —
+ * its background, its panel, its rule, its text, its accent, and the four
+ * colours its syntax highlighting is recognised by. Everything else the
+ * interface needs is derived from those by one formula below, so a new
+ * palette cannot drift structurally from the others: hovers always move
+ * toward the text colour, borders always toward the background, and a
+ * light scheme needs no special casing anywhere.
+ *
+ * --seed-light and --seed-dark are the two ends of the palette's own grey
+ * ramp. They are written in absolute terms (light end first) because the
+ * dark-mode layer in theme.css inverts that ramp for dark schemes.
+ */
+
+:root[data-theme] {
+    /* SURFACES */
+    --color-bg-primary: var(--seed-bg);
+    --color-bg-secondary: var(--seed-sunken);
+    --color-bg-tertiary: var(--seed-raised);
+    --color-bg-quaternary: color-mix(in oklab, var(--seed-raised) 62%, var(--seed-line));
+    --color-bg-primary_hover: color-mix(in oklab, var(--seed-bg) 92%, var(--seed-text));
+    --color-bg-secondary_hover: color-mix(in oklab, var(--seed-sunken) 90%, var(--seed-text));
+    --color-bg-active: color-mix(in oklab, var(--seed-select) 80%, var(--seed-bg));
+    --color-bg-brand-solid: var(--seed-accent);
+    --color-bg-brand-solid_hover: color-mix(in oklab, var(--seed-accent) 84%, var(--seed-text));
+    --color-bg-brand-primary: color-mix(in oklab, var(--seed-accent) 18%, var(--seed-bg));
+    --color-bg-brand-secondary: color-mix(in oklab, var(--seed-accent) 26%, var(--seed-bg));
+    --sidebar-surface: var(--seed-sunken);
+    --toolbar-surface: color-mix(in oklab, var(--seed-bg) 70%, var(--seed-sunken));
+    --selected-surface: var(--seed-select);
+    --selected-text: color-mix(in oklab, var(--seed-accent) 55%, var(--seed-text));
+
+    /* LINES */
+    --color-border-primary: var(--seed-line);
+    --color-border-secondary: color-mix(in oklab, var(--seed-line) 62%, var(--seed-bg));
+    --color-border-tertiary: color-mix(in oklab, var(--seed-line) 38%, var(--seed-bg));
+    --color-border-brand: var(--seed-accent);
+    --color-focus-ring: var(--seed-accent);
+
+    /* TEXT AND ICONS */
+    --color-text-primary: var(--seed-text);
+    --color-text-secondary: color-mix(in oklab, var(--seed-text) 76%, var(--seed-muted));
+    --color-text-tertiary: var(--seed-muted);
+    --color-text-quaternary: color-mix(in oklab, var(--seed-muted) 84%, var(--seed-bg));
+    --color-text-placeholder: color-mix(in oklab, var(--seed-muted) 70%, var(--seed-bg));
+    --color-text-brand-primary: color-mix(in oklab, var(--seed-accent) 80%, var(--seed-text));
+    --color-text-brand-secondary: var(--seed-accent);
+    --color-fg-primary: var(--seed-text);
+    --color-fg-secondary: color-mix(in oklab, var(--seed-text) 70%, var(--seed-muted));
+    --color-fg-tertiary: var(--seed-muted);
+    --color-fg-quaternary: color-mix(in oklab, var(--seed-muted) 84%, var(--seed-bg));
+    --color-fg-brand-primary: var(--seed-accent);
+    --color-fg-brand-secondary: color-mix(in oklab, var(--seed-accent) 84%, var(--seed-text));
+
+    /* THE ACCENT RAMP, lightest first, the way the token layer expects it */
+    --color-brand-50: color-mix(in oklab, var(--seed-accent) 10%, white);
+    --color-brand-100: color-mix(in oklab, var(--seed-accent) 20%, white);
+    --color-brand-200: color-mix(in oklab, var(--seed-accent) 35%, white);
+    --color-brand-300: color-mix(in oklab, var(--seed-accent) 55%, white);
+    --color-brand-400: color-mix(in oklab, var(--seed-accent) 75%, white);
+    --color-brand-500: var(--seed-accent);
+    --color-brand-600: color-mix(in oklab, var(--seed-accent) 86%, black);
+    --color-brand-700: color-mix(in oklab, var(--seed-accent) 72%, black);
+    --color-brand-800: color-mix(in oklab, var(--seed-accent) 58%, black);
+    --color-brand-900: color-mix(in oklab, var(--seed-accent) 44%, black);
+    --color-brand-950: color-mix(in oklab, var(--seed-accent) 30%, black);
+
+    /* THE PALETTE'S OWN GREY RAMP, same direction */
+    --color-neutral-25: color-mix(in oklab, var(--seed-light) 96%, white);
+    --color-neutral-50: var(--seed-light);
+    --color-neutral-100: color-mix(in oklab, var(--seed-light) 88%, var(--seed-dark));
+    --color-neutral-200: color-mix(in oklab, var(--seed-light) 76%, var(--seed-dark));
+    --color-neutral-300: color-mix(in oklab, var(--seed-light) 62%, var(--seed-dark));
+    --color-neutral-400: color-mix(in oklab, var(--seed-light) 50%, var(--seed-dark));
+    --color-neutral-500: color-mix(in oklab, var(--seed-light) 40%, var(--seed-dark));
+    --color-neutral-600: color-mix(in oklab, var(--seed-light) 30%, var(--seed-dark));
+    --color-neutral-700: color-mix(in oklab, var(--seed-light) 22%, var(--seed-dark));
+    --color-neutral-800: color-mix(in oklab, var(--seed-light) 14%, var(--seed-dark));
+    --color-neutral-900: color-mix(in oklab, var(--seed-light) 7%, var(--seed-dark));
+    --color-neutral-950: var(--seed-dark);
+
+    --sheet-shadow: -10px 0 48px color-mix(in oklab, var(--seed-dark) 45%, transparent);
+}
+
+/* Code keeps the colours the scheme is recognised by. */
+:root[data-theme] .source-view .hljs-comment,
+:root[data-theme] .source-view .hljs-quote { color: var(--seed-comment); }
+:root[data-theme] .source-view .hljs-keyword,
+:root[data-theme] .source-view .hljs-selector-tag,
+:root[data-theme] .source-view .hljs-meta,
+:root[data-theme] .source-view .hljs-doctag { color: var(--seed-keyword); }
+:root[data-theme] .source-view .hljs-string,
+:root[data-theme] .source-view .hljs-regexp,
+:root[data-theme] .source-view .hljs-addition { color: var(--seed-string); }
+:root[data-theme] .source-view .hljs-number,
+:root[data-theme] .source-view .hljs-literal,
+:root[data-theme] .source-view .hljs-symbol,
+:root[data-theme] .source-view .hljs-attr,
+:root[data-theme] .source-view .hljs-attribute,
+:root[data-theme] .source-view .hljs-type,
+:root[data-theme] .source-view .hljs-built_in { color: var(--seed-number); }
+
+:root[data-theme="vscode-dark"] {
+    --seed-bg: #1f1f1f; --seed-sunken: #181818; --seed-raised: #2a2a2a; --seed-line: #3c3c3c;
+    --seed-text: #d4d4d4; --seed-muted: #9d9d9d; --seed-accent: #3794ff; --seed-select: #264f78;
+    --seed-light: #f3f3f3; --seed-dark: #141414;
+    --seed-keyword: #569cd6; --seed-string: #ce9178; --seed-number: #b5cea8; --seed-comment: #6a9955;
+}
+
+:root[data-theme="one-dark"] {
+    --seed-bg: #282c34; --seed-sunken: #21252b; --seed-raised: #2c313a; --seed-line: #3e4451;
+    --seed-text: #cdd3de; --seed-muted: #969dad; --seed-accent: #61afef; --seed-select: #3e4a5c;
+    --seed-light: #f0f2f5; --seed-dark: #1b1e24;
+    --seed-keyword: #c678dd; --seed-string: #98c379; --seed-number: #d19a66; --seed-comment: #7b828f;
+}
+
+:root[data-theme="one-light"] {
+    --seed-bg: #fafafa; --seed-sunken: #eff0f1; --seed-raised: #e8e9ea; --seed-line: #cfd0d3;
+    --seed-text: #383a42; --seed-muted: #6b707c; --seed-accent: #4078f2; --seed-select: #d7e3fb;
+    --seed-light: #fbfbfc; --seed-dark: #2b2d33;
+    --seed-keyword: #a626a4; --seed-string: #50a14f; --seed-number: #986801; --seed-comment: #8b8f99;
+}
+
+:root[data-theme="dracula"] {
+    --seed-bg: #282a36; --seed-sunken: #21222c; --seed-raised: #343746; --seed-line: #44475a;
+    --seed-text: #f8f8f2; --seed-muted: #9aa3c4; --seed-accent: #bd93f9; --seed-select: #44475a;
+    --seed-light: #f8f8f2; --seed-dark: #1b1c24;
+    --seed-keyword: #ff79c6; --seed-string: #f1fa8c; --seed-number: #bd93f9; --seed-comment: #7f8bb5;
+}
+
+:root[data-theme="nord"] {
+    --seed-bg: #2e3440; --seed-sunken: #272c36; --seed-raised: #3b4252; --seed-line: #434c5e;
+    --seed-text: #eceff4; --seed-muted: #a4aec2; --seed-accent: #88c0d0; --seed-select: #434c5e;
+    --seed-light: #eceff4; --seed-dark: #22272f;
+    --seed-keyword: #81a1c1; --seed-string: #a3be8c; --seed-number: #b48ead; --seed-comment: #7c8aa3;
+}
+
+:root[data-theme="tokyo-night"] {
+    --seed-bg: #1a1b26; --seed-sunken: #16161e; --seed-raised: #24283b; --seed-line: #2f334d;
+    --seed-text: #c0caf5; --seed-muted: #8189b3; --seed-accent: #7aa2f7; --seed-select: #283457;
+    --seed-light: #d5dbf5; --seed-dark: #121219;
+    --seed-keyword: #bb9af7; --seed-string: #9ece6a; --seed-number: #ff9e64; --seed-comment: #6b74a0;
+}
+
+:root[data-theme="solarized-dark"] {
+    --seed-bg: #002b36; --seed-sunken: #00212b; --seed-raised: #073642; --seed-line: #10485a;
+    --seed-text: #eee8d5; --seed-muted: #93a1a1; --seed-accent: #268bd2; --seed-select: #0a4657;
+    --seed-light: #fdf6e3; --seed-dark: #001b23;
+    --seed-keyword: #859900; --seed-string: #2aa198; --seed-number: #d33682; --seed-comment: #7d9094;
+}
+
+:root[data-theme="solarized-light"] {
+    --seed-bg: #fdf6e3; --seed-sunken: #f3ecd8; --seed-raised: #eee8d5; --seed-line: #ded6bf;
+    --seed-text: #073642; --seed-muted: #586e75; --seed-accent: #268bd2; --seed-select: #dfe6d4;
+    --seed-light: #fdf6e3; --seed-dark: #002b36;
+    --seed-keyword: #859900; --seed-string: #2aa198; --seed-number: #d33682; --seed-comment: #93a1a1;
+}
+
+:root[data-theme="gruvbox-dark"] {
+    --seed-bg: #282828; --seed-sunken: #1d2021; --seed-raised: #32302f; --seed-line: #504945;
+    --seed-text: #ebdbb2; --seed-muted: #a89984; --seed-accent: #83a598; --seed-select: #3c3836;
+    --seed-light: #fbf1c7; --seed-dark: #1b1b1b;
+    --seed-keyword: #fb4934; --seed-string: #b8bb26; --seed-number: #d3869b; --seed-comment: #928374;
+}
+
+:root[data-theme="monokai"] {
+    --seed-bg: #272822; --seed-sunken: #1e1f1c; --seed-raised: #34352e; --seed-line: #49483e;
+    --seed-text: #f8f8f2; --seed-muted: #a6a28c; --seed-accent: #66d9ef; --seed-select: #49483e;
+    --seed-light: #f8f8f2; --seed-dark: #1a1b17;
+    --seed-keyword: #f92672; --seed-string: #e6db74; --seed-number: #ae81ff; --seed-comment: #8c876b;
+}

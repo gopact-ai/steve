@@ -349,3 +349,6 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 @media (prefers-reduced-motion: reduce) {
     .workbench-shell *, .workbench-overlay, .workbench-sheet { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
+.theme-row { display: flex; min-width: 0; align-items: center; gap: 8px; }
+.theme-swatch { display: inline-flex; flex-shrink: 0; overflow: hidden; width: 26px; height: 14px; border-radius: 4px; border: 1px solid var(--color-border-primary); }
+.theme-swatch > span { display: block; width: 33.333%; height: 100%; }
