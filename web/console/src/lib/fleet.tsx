@@ -3,6 +3,7 @@ import { emptySnapshot, fetchState } from "./api/fleet";
 import { eventsURL, HTTPError } from "./http";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import type { Event, Snapshot } from "./types";
+import { NodeNamesContext, useNodeNames } from "./node-name";
 
 export type Live = "connecting" | "live" | "reconnecting" | "unauthorized";
 
@@ -154,7 +155,8 @@ export function FleetProvider({ children }: { children: ReactNode }) {
     }, [load, refresh, feed]);
 
     const value = useMemo(() => ({ snap, live, events, refresh, hubUpdated }), [snap, live, events, refresh, hubUpdated]);
-    return <FleetContext.Provider value={value}><ConsoleFeedContext.Provider value={feed}>{children}</ConsoleFeedContext.Provider></FleetContext.Provider>;
+    const names = useNodeNames(snap.nodes);
+    return <FleetContext.Provider value={value}><NodeNamesContext.Provider value={names}><ConsoleFeedContext.Provider value={feed}>{children}</ConsoleFeedContext.Provider></NodeNamesContext.Provider></FleetContext.Provider>;
 }
 
 export function useFleet(): FleetState {

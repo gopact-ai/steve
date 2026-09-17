@@ -16,6 +16,7 @@ import { Mono, Nothing, Where } from "@/components/steve/ui";
 import { adoptMCP, fetchMCP, installMCP, probeMCP, removeMCP, searchMCPRegistry } from "@/lib/api/mcp";
 import { when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
+import { useNodeLabel } from "@/lib/node-name";
 import { nodeLabel, nodeLabelIn } from "@/lib/node-name";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import type { MCPDeployment, MCPRegistryEntry, MCPView } from "@/lib/types";
@@ -172,10 +173,11 @@ function State({ d }: { d: MCPDeployment }) {
 // probe found, who attaches, and the probe and remove actions.
 function DeploymentDrawer({ d, onClose, busy, onProbe, onRemove }: { d: MCPDeployment; onClose: () => void; busy: string; onProbe: () => void; onRemove: () => void }) {
     const { t: tr, locale } = useI18n();
+    const nodeLabelOf = useNodeLabel();
     const [removing, setRemoving] = useState(false);
     return (
         <Drawer width={640} title={<><span className="text-base font-semibold text-primary">{d.name}</span><Badge type="modern" size="sm" color="gray">{typeWord(d.type, tr)}</Badge><State d={d} /></>}
-            subtitle={<><div className="mt-0.5 text-xs text-tertiary">{tr("mcp.onMachine", { node: d.node })}</div></>}
+            subtitle={<><div className="mt-0.5 text-xs text-tertiary">{tr("mcp.onMachine", { node: nodeLabelOf(d.node) })}</div></>}
             actions={<><Button size="sm" color="secondary" iconLeading={RefreshCw01} isLoading={busy === "probe:" + d.node + d.name} isDisabled={busy !== ""} onClick={onProbe}>{tr("mcp.probe")}</Button></>} onClose={onClose}>
             <KeyValue dense rows={[
                 { k: tr("mcp.endpoint"), v: <Mono className="break-all">{d.command ? [d.command, ...(d.args || [])].join(" ") : d.url || "—"}</Mono> },
@@ -195,7 +197,7 @@ function DeploymentDrawer({ d, onClose, busy, onProbe, onRemove }: { d: MCPDeplo
             </DrawerSection>
             <section className="rounded-lg bg-secondary/40 p-3">
                 <div className="flex min-w-0 flex-wrap items-center gap-3">
-                    <div className="flex-1 text-xs text-tertiary">{tr("mcp.removeHint", { node: d.node })}</div>
+                    <div className="flex-1 text-xs text-tertiary">{tr("mcp.removeHint", { node: nodeLabelOf(d.node) })}</div>
                     {removing ? (<><Button size="sm" color="secondary" onClick={() => setRemoving(false)}>{tr("common.cancel")}</Button><Button size="sm" color="primary-destructive" isLoading={busy === "rm:" + d.node + d.name} onClick={onRemove}>{tr("mcp.confirmDelete")}</Button></>)
                         : <Button size="sm" color="secondary-destructive" iconLeading={Trash01} isDisabled={d.agents.length > 0 || busy !== ""} onClick={() => setRemoving(true)}>{tr("common.delete")}</Button>}
                 </div>

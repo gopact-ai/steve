@@ -1842,8 +1842,11 @@ checks["empty-process"] = async (f) => {
 };
 
 checks["process-content"] = async (f) => {
-    const process = { tools: [{ id: "read", title: "Read file", status: "completed", output: "file content" }], timeline: [{ kind: "thought", text: "Checking the file", at }, { kind: "text", text: "Opening the file", at }, { kind: "tool", tool: "read", at }, { kind: "text", text: "Checked answer", at }], steps: [{ id: "empty-step", timeline: [{ kind: "thought", text: " ", at }] }] };
+    const process = { agent: "test-agent", node: "node-7f3c9a", model: "GPT-5.6-Sol", tools: [{ id: "read", title: "Read file", status: "completed", output: "file content" }], timeline: [{ kind: "thought", text: "Checking the file", at }, { kind: "text", text: "Opening the file", at }, { kind: "tool", tool: "read", at }, { kind: "text", text: "Checked answer", at }], steps: [{ id: "empty-step", timeline: [{ kind: "thought", text: " ", at }] }] };
     f.replies[A] = [{ id: "trace", kind: "reply", conversation: A, at, text: "Checked answer", process }];
+    // People know a machine by the name they gave it. Every attribution
+    // shows that name; the node ID is only the tooltip.
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [{ name: "node-7f3c9a", display_name: "工作本", role: "hub", up: true, version: "test" }], agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
     await f.page.reload();
     const message = f.page.locator(".message-assistant");
     await message.getByText("Checked answer", { exact: true }).waitFor();
@@ -1854,6 +1857,9 @@ checks["process-content"] = async (f) => {
     assert.equal(await message.locator('[data-span-kind="tool"]').count(), 1, "Actual tool activity remains inspectable");
     assert.equal(await message.getByText("Checked answer", { exact: true }).count(), 1, "The final answer is not repeated inside the trace");
     assert.equal(await message.getByText("empty-step", { exact: true }).count(), 0, "Empty plan steps must not leave a heading");
+    const signature = message.getByText("test-agent @ 工作本 · GPT-5.6-Sol", { exact: true });
+    await signature.waitFor();
+    assert.equal(await signature.getAttribute("title"), "node-7f3c9a", "The machine's ID stays available as the tooltip");
     await toggle.press("Enter");
     await f.startRunning();
     await f.page.getByText("正在准备执行…", { exact: true }).waitFor();

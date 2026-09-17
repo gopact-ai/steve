@@ -21,7 +21,7 @@ export const RAIL_WIDTH = 360;
 import { Chips, KeyValue, Panel } from "./page";
 import { InjectedPanel, ProcessBody, Working } from "./trace";
 import type { Live } from "@/lib/live";
-import { Mono, Nothing } from "./ui";
+import { Mono, Nothing, Where } from "./ui";
 
 export type RailTab = "context" | "trace" | "graph" | "code" | "materials";
 
@@ -54,7 +54,7 @@ export const Rail = memo(function Rail({ context, live, plans, reply, tab, setTa
                             {context.project ? (
                                 <KeyValue dense rows={[
                                     { k: t("console.name"), v: <span className="font-medium">{context.project.id}</span> },
-                                    { k: t("console.projectHost"), v: <Mono>{context.project.node}</Mono> },
+                                    { k: t("console.projectHost"), v: <Where node={context.project.node} /> },
                                     { k: t("console.canonical"), v: <Mono className="text-secondary">{context.project.path}</Mono> },
                                     { k: t("console.workspace"), v: context.agent?.place ? placeLabel(context.agent.place, locale, nodeLabelOf) : t("console.notSelected") },
                                     { k: t("console.workMode"), v: label(zh.repo, context.project.repo), hint: t("console.workModeHint") },
@@ -67,7 +67,7 @@ export const Rail = memo(function Rail({ context, live, plans, reply, tab, setTa
                             {context.agent ? (
                                 <KeyValue dense rows={[
                                     { k: t("console.name"), v: <span className="font-medium">{context.agent.id}</span> },
-                                    { k: t("console.machine"), v: <Mono>{context.agent.node}</Mono> },
+                                    { k: t("console.machine"), v: <Where node={context.agent.node} /> },
                                     { k: t("console.harness"), v: context.agent.harness },
                                     { k: t("console.model"), v: context.agent.model || <span className="text-quaternary">{t("console.unobserved")}</span> },
                                     { k: t("console.state"), v: context.agent.ready ? <span className="text-success-primary">{t("console.ready")}</span> : <span className="text-error-primary">{t("console.unavailablePrefix")} · {context.agent.why}</span> },
@@ -76,7 +76,7 @@ export const Rail = memo(function Rail({ context, live, plans, reply, tab, setTa
                         </Panel>
                         <Panel title={t("console.usableAgents")} >
                             <div className="flex flex-col gap-2 text-sm">
-                                <Chips items={usable.map((a) => ({ id: a.id, title: `${a.node} · ${a.harness}` }))} empty={<span className="text-error-primary">{t("console.noUsableAgents")}</span>} />
+                                <Chips items={usable.map((a) => ({ id: a.id, title: `${a.node ? nodeLabelOf(a.node) : ""} · ${a.harness}` }))} empty={<span className="text-error-primary">{t("console.noUsableAgents")}</span>} />
                                 {elsewhere.length > 0 && (
                                     <ul className="flex flex-col gap-1 text-xs text-tertiary">
                                         {elsewhere.map((a) => <li key={a.id}><Mono className="text-quaternary">{a.id}</Mono> <span>{a.because || a.why}</span></li>)}

@@ -14,6 +14,7 @@ import { useResourceRead } from "@/hooks/use-resource-read";
 import { fetchPlugins, preparePlugin, savePlugin } from "@/lib/api/plugins";
 import { useFleet } from "@/lib/fleet";
 import { useCoordination } from "@/lib/coordination";
+import { nodeLabel, nodeLabelIn } from "@/lib/node-name";
 import { when } from "@/lib/format";
 import type { PluginInstallationView, PluginPackage, PluginsView } from "@/lib/plugin-types";
 import { useI18n } from "@/providers/locale-provider";
@@ -27,8 +28,8 @@ export function PluginsPage() {
     useEffect(() => { void load(); }, [load, snap.at]);
     const records = view?.packages ?? []; const installations = view?.installations ?? [];
     const nodeMap = new Map<string, string>();
-    if (!coordination?.enabled) nodeMap.set("", `${t("plugins.local")} · ${snap.hub.node || "hub"}`);
-    for (const node of snap.nodes) if (coordination?.enabled || node.name !== snap.hub.node) nodeMap.set(node.name, node.name);
+    if (!coordination?.enabled) nodeMap.set("", `${t("plugins.local")} · ${nodeLabelIn(snap.nodes, snap.hub.node) || "hub"}`);
+    for (const node of snap.nodes) if (coordination?.enabled || node.name !== snap.hub.node) nodeMap.set(node.name, nodeLabel(node));
     for (const item of installations) for (const node of Object.keys(item.installation.targets)) if (!nodeMap.has(node)) nodeMap.set(node, node || t("plugins.local"));
     const nodes = [...nodeMap].map(([id, label]) => ({ id, label }));
     const usageItem=installations.find((item)=>item.id===params.get("usage"));
