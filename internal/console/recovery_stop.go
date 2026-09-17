@@ -129,6 +129,71 @@ func (s *Service) stopRecovering(ctx context.Context, control Exchange, requeste
 	return result, true, err
 }
 
+// cancelRecovering is the same stop the console's stop control performs,
+// reached from the recovery question instead. It runs beside the recovery
+// worker, never inside it: finishing a stop waits for that worker to
+// release the exchange. It reports what kept the stop from finishing.
+func (s *Service) cancelRecovering(ctx context.Context, target *queuedExchange, requester string) error {
+	s.mu.Lock()
+	if target.RecoveryStop != nil {
+		s.mu.Unlock()
+		return nil
+	}
+	if target.recoveryStopping != nil {
+		s.mu.Unlock()
+		return errors.New("the original recovery task is already stopping")
+	}
+	if requester == "" || requester != s.owner || (target.Requester != "" && target.Requester != requester) {
+		s.mu.Unlock()
+		return errors.New("recovery requires the original requester")
+	}
+	if target.State.Terminal() {
+		s.mu.Unlock()
+		return errors.New("original stop target has already finished without a stop receipt")
+	}
+	driver := s.recoveryDriver
+	target.recoveryStopping = make(chan struct{})
+	var released sync.Once
+	release := func() {
+		released.Do(func() {
+			s.mu.Lock()
+			close(target.recoveryStopping)
+			target.recoveryStopping = nil
+			s.mu.Unlock()
+		})
+	}
+	defer release()
+	original := copyExchange(target.Exchange)
+	s.mu.Unlock()
+	stopper, ok := driver.(retainedStopDriver)
+	if !ok {
+		return errors.New("stopping the original recovery task is unavailable")
+	}
+	candidate, found, err := s.findRetained(ctx, driver, original)
+	if err != nil || !found {
+		return errors.Join(harness.ErrStopUnconfirmed, err)
+	}
+	s.mu.Lock()
+	previous := target.RecoveryStopPending
+	target.RecoveryStopPending = "Stop requested; waiting for confirmation from the original task and its children."
+	if saveErr := s.save(); saveErr != nil {
+		target.RecoveryStopPending = previous
+		s.mu.Unlock()
+		return saveErr
+	}
+	s.mu.Unlock()
+	result, err := stopper.StopRetainedTask(ctx, candidate.TaskID, turn.Request{Channel: "console", ConversationID: original.Conversation, MessageID: AnchorMark + original.ID, SenderOpenID: requester, ExpectedProject: original.ExpectedProject, Locale: original.Locale})
+	if err != nil {
+		s.mu.Lock()
+		target.RecoveryStopPending = err.Error()
+		saveErr := s.save()
+		s.mu.Unlock()
+		return errors.Join(err, saveErr)
+	}
+	_, err = s.finishRecoveryStop(ctx, target, result, release)
+	return err
+}
+
 func (s *Service) finishRecoveryStop(ctx context.Context, target *queuedExchange, result turn.Result, release func()) (turn.Result, error) {
 	reply := consoleapi.Reply{Text: result.Text, Title: result.Title}
 	s.mu.Lock()

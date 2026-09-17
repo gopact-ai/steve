@@ -261,9 +261,11 @@ function Thread({ c, current, unseen, onPick, norm, renaming, onRename, onRename
                             <span className="min-w-0 flex-1 truncate u-title">{c.title || tr("console.newConversation")}</span>
                             {!!c.questions && <MessageQuestionCircle aria-label={tr("consoleChrome.awaitingReply", { count: number(c.questions, locale) })} className="size-3.5 shrink-0 self-center text-fg-warning-primary" />}
                             {!c.running && !c.questions && unseen && <span aria-label={tr("consoleChrome.newResult")} className="conversation-unseen" />}
-                            {c.running
-                                ? <span className="conversation-running">{tr("consoleChrome.running")}</span>
-                                : <span className="conversation-time">{c.last_at ? ago(c.last_at, locale) : tr("consoleChrome.notStarted")}</span>}
+                            {c.questions
+                                ? <span className="conversation-waiting">{tr("consoleChrome.waitingOnYou")}</span>
+                                : c.running
+                                    ? <span className="conversation-running">{tr("consoleChrome.running")}</span>
+                                    : <span className="conversation-time">{c.last_at ? ago(c.last_at, locale) : tr("consoleChrome.notStarted")}</span>}
                         </span>
                         {qualifiers.length > 0 && <span className="truncate u-meta">{qualifiers.join(" · ")}</span>}
                     </button>
