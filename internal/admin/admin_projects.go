@@ -113,6 +113,9 @@ func (a *Service) AddProject(ctx context.Context, req consoleapi.AddProjectReque
 		return fmt.Errorf("%s 是 Steve 自己的家，不能再声明", id)
 	}
 	nodeKey := a.nodeKey(req.Node)
+	if !a.localMachine(nodeKey) {
+		return fmt.Errorf("项目的主目录建在协调者上；其它机器用「添加工作区」按同一相对目录对齐")
+	}
 	dir := strings.TrimSpace(req.Path)
 	if dir == "" {
 		dir = id
@@ -189,9 +192,9 @@ func (a *Service) inspect(ctx context.Context, nodeKey, path string) ([]nodewire
 
 func (a *Service) AddWorkspace(ctx context.Context, projectID string, req consoleapi.AddWorkspaceRequest) error {
 	nodeKey := a.nodeKey(req.Node)
-	dir := strings.TrimSpace(req.Path)
-	if dir == "" {
-		dir = projectID
+	dir, err := a.projectDirName(ctx, projectID)
+	if err != nil {
+		return err
 	}
 	path, err := a.projectPath(ctx, nodeKey, dir)
 	if err != nil {

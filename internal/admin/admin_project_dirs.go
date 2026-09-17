@@ -84,6 +84,34 @@ func (a *Service) projectPath(ctx context.Context, nodeKey, dir string) (string,
 	return path.Join(nodewire.ProjectsDir(root), clean), nil
 }
 
+// projectDirName is the directory a project is known by, relative to a
+// machine's projects root. A copy on another machine reuses it, so the
+// same project is the same relative directory everywhere and an agent
+// that moves still finds its work. A home that predates this rule, or the
+// workspace handed over whole by the desktop guide, falls back to the
+// project's own name.
+func (a *Service) projectDirName(ctx context.Context, projectID string) (string, error) {
+	ConfigMu.RLock()
+	item, exists := a.Cfg.Projects[projectID]
+	ConfigMu.RUnlock()
+	if !exists {
+		return "", fmt.Errorf("没有叫 %q 的项目", projectID)
+	}
+	root, err := a.workspaceRootOf(ctx, item.Home.Node)
+	if err != nil {
+		// A home on a machine that cannot answer right now still gets a
+		// copy: its directory falls back to the project name, which is
+		// what an unnamed directory has always resolved to.
+		return projectID, nil
+	}
+	prefix := strings.TrimSuffix(nodewire.ProjectsDir(root), "/") + "/"
+	rel := strings.TrimPrefix(item.Home.Path, prefix)
+	if rel == item.Home.Path || rel == "" {
+		return projectID, nil
+	}
+	return rel, nil
+}
+
 // makeProjectDir creates the directory a project was given, on whichever
 // machine holds it. A directory that is not there yet is the normal case:
 // the owner names a project, the machine makes room for it.

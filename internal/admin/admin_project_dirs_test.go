@@ -70,7 +70,7 @@ func TestAddWorkspaceMakesTheDirectoryItAdopts(t *testing.T) {
 	if err := (config.ProjectController{Store: a.Projects}).Reconcile(t.Context(), a.Cfg); err != nil {
 		t.Fatal(err)
 	}
-	if err := a.AddWorkspace(t.Context(), "p", consoleapi.AddWorkspaceRequest{Path: "p"}); err != nil {
+	if err := a.AddWorkspace(t.Context(), "p", consoleapi.AddWorkspaceRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	want := filepath.Join(nodewire.ProjectsDir(a.Cfg.LocalWorkspaceRoot()), "p")
@@ -83,9 +83,10 @@ func TestAddWorkspaceMakesTheDirectoryItAdopts(t *testing.T) {
 	}
 }
 
-// Another machine's workspace is what that machine says it is, so a
-// project's directory is resolved where it will actually be used.
-func TestAddProjectResolvesAnotherMachineWorkspaceFromItsAdvert(t *testing.T) {
+// A project is named once, on the coordinator. Another machine's copy is
+// the same relative directory under the workspace that machine reports,
+// so an agent that moves finds the project where it expects it.
+func TestAddWorkspaceResolvesAnotherMachineWorkspaceFromItsAdvert(t *testing.T) {
 	server := startAgentAdminNode(t, map[string]node.HarnessSpec{})
 	a, _ := projectAdminFixture(t)
 	a.Cfg.Nodes["node-test"] = config.Node{Addr: server.Addr(), Token: "test-node-token"}
@@ -98,15 +99,34 @@ func TestAddProjectResolvesAnotherMachineWorkspaceFromItsAdvert(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := a.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "new", Node: "node-test", Path: "new-service"}); err != nil {
+	if err := a.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "new", Path: "new-service"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := a.AddWorkspace(t.Context(), "new", consoleapi.AddWorkspaceRequest{Node: "node-test"}); err != nil {
 		t.Fatal(err)
 	}
 	want := filepath.Join(nodewire.ProjectsDir(advert.WorkspaceRoot), "new-service")
-	if got := a.Cfg.Projects["new"].Home; got.Node != "node-test" || got.Path != want {
-		t.Fatalf("project on another machine landed at %+v, want %q", got, want)
+	copies := a.Cfg.Projects["new"].Workspaces
+	if len(copies) != 1 || copies[0].Node != "node-test" || copies[0].Path != want {
+		t.Fatalf("copy on another machine landed at %+v, want %q", copies, want)
 	}
 	if info, err := os.Stat(want); err != nil || !info.IsDir() {
 		t.Fatalf("the directory was not made on that machine: %v", err)
+	}
+}
+
+// A project's canonical directory belongs to the coordinator. Naming
+// another machine is refused, because the copy flow is what keeps the
+// same relative directory on every machine.
+func TestAddProjectRefusesAHomeOnAnotherMachine(t *testing.T) {
+	a, _ := projectAdminFixture(t)
+	a.Cfg.Nodes["node-test"] = config.Node{Addr: "127.0.0.1:1", Token: "test-node-token"}
+	err := a.AddProject(t.Context(), consoleapi.AddProjectRequest{ID: "new", Node: "node-test", Path: "new-service"})
+	if err == nil {
+		t.Fatal("a project was homed on another machine")
+	}
+	if _, exists := a.Cfg.Projects["new"]; exists {
+		t.Fatal("the refused project was saved anyway")
 	}
 }
 
