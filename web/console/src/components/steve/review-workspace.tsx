@@ -11,6 +11,7 @@ import { fetchAttemptChanges, fetchAttemptDiff, fetchAttemptFile } from "@/lib/a
 import type { ChangeIndex, FileDiff, FileView, TreeEntry } from "@/lib/types";
 import { CodeTree } from "./code-tree";
 import { DiffView } from "./diff-view";
+import { FilePreview, previewKind } from "./file-preview";
 import { MaterialActions } from "./material-actions";
 import { SourceView, type SourceReadingState } from "./source-view";
 import "@/styles/review.css";
@@ -26,7 +27,7 @@ export interface ReviewRequest {
 }
 const fail = (error: unknown) => String(error).replace(/^Error: /, "");
 
-type Mode = "source" | "diff";
+type Mode = "source" | "diff" | "preview";
 
 export function ReviewWorkspace({ request, onClose }: { request: ReviewRequest; onClose: () => void }) {
     const { t } = useI18n();
@@ -86,7 +87,11 @@ function SnapshotWorkspace({ attempt, choice, request, fresh, reload }: { attemp
     const recordEntries = useCallback((entries: TreeEntry[]) => setKinds((all) => ({ ...all, ...Object.fromEntries(entries.map((entry) => [entry.path, entry.kind])) })), []);
     const activePath = path || (autoSelect && scope === "changes" ? index?.changes[0]?.path || "" : "");
     const change = index?.changes.find((item) => item.path === activePath);
-    const mode = modes[activePath] || (scope === "changes" ? "diff" : "source");
+    // A report, a page or a diagram is meant to be read as what it is, so
+    // a file that can be rendered opens rendered; a change still opens as
+    // a diff, which is what the reviewer came for.
+    const rendered = previewKind(activePath);
+    const mode = modes[activePath] || (scope === "changes" ? "diff" : rendered ? "preview" : "source");
     const fileKey = JSON.stringify([attempt, snapshot.commit, activePath]);
     const contentKey = JSON.stringify([activePath, mode]);
     const source = files[activePath];
@@ -110,7 +115,7 @@ function SnapshotWorkspace({ attempt, choice, request, fresh, reload }: { attemp
         return () => { gone = true; };
     }, [attempt, index, retry, acceptSnapshot]);
     useEffect(() => {
-        if (!activePath || stale || (mode === "diff" && (!change || change.binary || diff)) || (mode === "source" && (change?.status === "D" || repository || source))) return;
+        if (!activePath || stale || (mode === "diff" && (!change || change.binary || diff)) || (mode !== "diff" && (change?.status === "D" || repository || source))) return;
         let gone = false;
         setContentError(null);
         if (mode === "diff") {
@@ -151,7 +156,7 @@ function SnapshotWorkspace({ attempt, choice, request, fresh, reload }: { attemp
             {!desktop && <div className="review-mobile-files"><Button size="sm" color="secondary" iconLeading={Folder} aria-expanded={showFiles} onClick={() => setShowFiles((value) => !value)}>{showFiles ? t("console.hideFiles") : t("console.fileNavigation")}</Button><span className="truncate text-xs text-tertiary">{activePath || t("console.chooseFile")}</span></div>}
             <aside className="review-files" aria-label={t("console.fileNavigation")}  hidden={!navigatorVisible}>
                 <div className="code-navigation-tabs workbench-segmented" role="group" aria-label={t("console.fileScope")}><button type="button" aria-pressed={scope === "files"} onClick={() => chooseScope("files")}>{t("console.allFiles")}</button><button type="button" aria-pressed={scope === "changes"} onClick={() => chooseScope("changes")}>{t("console.onlyChanges")}</button></div>
-                <div hidden={scope !== "files"} className="code-tree-pane"><CodeTree attempt={attempt} path={activePath} index={index} acceptSnapshot={acceptSnapshot} onEntries={recordEntries} onOpen={(file, kind) => chooseFile(file, "source", kind)} /></div>
+                <div hidden={scope !== "files"} className="code-tree-pane"><CodeTree attempt={attempt} path={activePath} index={index} acceptSnapshot={acceptSnapshot} onEntries={recordEntries} onOpen={(file, kind) => chooseFile(file, previewKind(file) ? "preview" : "source", kind)} /></div>
                 <div hidden={scope !== "changes"} className="code-changes-pane">
                     <div className="px-3 pb-3"><Input size="sm" icon={SearchSm} aria-label={t("console.filterChanges")}  placeholder={t("console.filterChangesPlaceholder")}  value={query} onChange={setQuery} /></div>
                     {indexError ? <div role="alert" className="code-tree-state"><p>{indexError}</p>{retryButton}<p>{t("console.readAllHint")}</p></div> : !index ? <p role="status" className="code-tree-state">{t("console.readingChanges")}</p> : <>
@@ -170,7 +175,11 @@ function SnapshotWorkspace({ attempt, choice, request, fresh, reload }: { attemp
                 {activePath && <header className="review-file-header"><div className="min-w-0 flex-1"><h2 className="break-words font-mono text-sm text-primary [overflow-wrap:anywhere]">{activePath}</h2><p className="mt-1 text-xs text-tertiary">{sourceStatus}{change && !change.binary ? ` · +${change.added} −${change.deleted}` : ""}</p></div>
                     <div className="review-file-actions">
                         {capture(change?.status === "D" ? index?.base : snapshot.commit) && <MaterialActions capture={capture(change?.status === "D" ? index?.base : snapshot.commit)} />}
-                        {change && <span className="workbench-segmented" role="group" aria-label={t("console.readingMode")} ><button type="button" aria-pressed={mode === "source"} disabled={change.status === "D" || repository || (mode === "diff" && !kinds[activePath] && !diff && !change.binary)} title={repository ? t("console.nestedCommitOnly") : change.status === "D" ? t("console.deletedNoSource") : t("console.readCompleteFile")} onClick={() => setModes((all) => ({ ...all, [activePath]: "source" }))}>{t("console.source")}</button><button type="button" aria-pressed={mode === "diff"} onClick={() => setModes((all) => ({ ...all, [activePath]: "diff" }))}>Diff</button></span>}
+                        {(change || rendered) && <span className="workbench-segmented" role="group" aria-label={t("console.readingMode")} >
+                            {rendered && <button type="button" aria-pressed={mode === "preview"} disabled={change?.status === "D" || repository} title={change?.status === "D" ? t("console.deletedNoSource") : t("console.previewLabel", { path: activePath })} onClick={() => setModes((all) => ({ ...all, [activePath]: "preview" }))}>{t("console.preview")}</button>}
+                            <button type="button" aria-pressed={mode === "source"} disabled={change?.status === "D" || repository || (mode === "diff" && !!change && !kinds[activePath] && !diff && !change.binary)} title={repository ? t("console.nestedCommitOnly") : change?.status === "D" ? t("console.deletedNoSource") : t("console.readCompleteFile")} onClick={() => setModes((all) => ({ ...all, [activePath]: "source" }))}>{t("console.source")}</button>
+                            {change && <button type="button" aria-pressed={mode === "diff"} onClick={() => setModes((all) => ({ ...all, [activePath]: "diff" }))}>Diff</button>}
+                        </span>}
                         {mode === "diff" && change && <>
                             {wide && <span className="workbench-segmented" role="group" aria-label={t("console.diffLayout")} ><button type="button" aria-pressed={layout === "unified"} onClick={() => chooseLayout("unified")}>{t("console.unified")}</button><button type="button" aria-pressed={layout === "split"} onClick={() => chooseLayout("split")}>{t("console.split")}</button></span>}
                             <Button size="sm" color="secondary" aria-pressed={reviewed.has(fileKey)} iconLeading={reviewed.has(fileKey) ? Check : undefined} onClick={() => setReviewed((current) => { const next = new Set(current); if (next.has(fileKey)) next.delete(fileKey); else next.add(fileKey); return next; })}>{reviewed.has(fileKey) ? t("console.reviewed") : t("console.markViewed")}</Button>
@@ -178,9 +187,10 @@ function SnapshotWorkspace({ attempt, choice, request, fresh, reload }: { attemp
                     </div>
                 </header>}
                 {mode === "diff" && diff?.truncated && <p role="status" className="review-notice">{t("console.partialDiff")}</p>}
-                <div ref={content} className="review-code-scroll" data-mode={mode} tabIndex={0} aria-label={mode === "source" ? t("console.sourceContent") : t("console.diffContent")}>
+                <div ref={content} className="review-code-scroll" data-mode={mode} tabIndex={0} aria-label={mode === "diff" ? t("console.diffContent") : mode === "preview" ? t("console.previewLabel", { path: activePath }) : t("console.sourceContent")}>
                     {!activePath ? <div className="review-empty"><Code02 aria-hidden="true" className="size-8 text-fg-tertiary" /><h2 className="font-medium text-primary">{t("console.chooseFile")}</h2><p>{t("console.chooseFileHint")}</p></div>
                         : contentError?.key === contentKey ? <div role="alert" className="review-empty"><p>{contentError.text}</p>{retryButton}</div>
+                            : mode === "preview" ? repository ? <div className="review-empty">{t("console.nestedSourceUnavailable")}</div> : source ? <FilePreview file={source} kind={rendered ?? "markdown"} /> : <div role="status" className="review-empty">{t("console.readingSource")}</div>
                             : mode === "source" ? repository ? <div className="review-empty">{t("console.nestedSourceUnavailable")}</div> : change?.status === "D" ? <div className="review-empty">{t("console.deletedReadDiff")}</div> : source ? <SourceView key={fileKey} file={source} capture={capture(source.commit)} readingState={readingStates.current[activePath]} onReadingStateChange={(value) => { readingStates.current[activePath] = value; }} /> : <div role="status" className="review-empty">{t("console.readingSource")}</div>
                                 : indexError ? <div role="alert" className="review-empty"><p>{indexError}</p>{retryButton}<Button size="sm" color="link-gray" onClick={() => { chooseScope("files"); setModes((all) => ({ ...all, [activePath]: "source" })); }}>{t("console.readSource")}</Button></div>
                                     : !index ? <div role="status" className="review-empty">{t("console.readingChanges")}</div>

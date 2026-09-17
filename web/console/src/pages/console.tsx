@@ -637,6 +637,7 @@ export function ConsolePage() {
                                 onSelectors={context?.agent ? loadSelectors : undefined}
                                 onPrefer={prefer}
                             />
+                            {(busy || stopping) && <p role="status" className="composer-running"><span>{stopping ? t("console.stopping") : recoveryState === "recovering" ? t("console.recovering") : recoveryState ? t("status.awaitingHuman") : t("console.runningNow")}</span></p>}
                         </div>
                     </div>
                     {!side.session && inspectorOpen && dockInspector && <ResizableInspector>{inspector}</ResizableInspector>}

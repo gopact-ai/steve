@@ -145,7 +145,7 @@ export interface Event {
     // over a buffer that is trimmed from the front.
     n?: number;
 }
-export interface Conversation { id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean; place?: Placement; title_by?: "agent" | "user" | string; archived?: boolean }
+export interface Conversation { id: string; title: string; project?: string; agent?: string; last_at: string; count: number; running: boolean; place?: Placement; title_by?: "agent" | "user" | string; archived?: boolean; questions?: number }
 export interface Injected {
     project?: string; workspace?: string; agent: string; node?: string; harness: string; model?: string; options?: Record<string, string>;
     session?: string; new_session: boolean; instructions_sent: boolean; instructions?: string; instructions_bytes: number; mcp_servers?: string[]; fingerprint?: string; prompt?: string;

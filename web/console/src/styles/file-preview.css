@@ -1,0 +1,10 @@
+.file-preview { display: flex; min-height: 0; min-width: 0; flex: 1; flex-direction: column; gap: 8px; padding: 16px clamp(12px, 2vw, 28px) 32px; }
+.file-preview-prose { min-width: 0; max-width: 78ch; }
+.file-preview-notice { border-radius: 8px; background: var(--color-bg-warning-primary); padding: 6px 10px; font-size: 12px; color: var(--color-text-secondary); }
+.file-preview-empty { padding: 32px; text-align: center; font-size: 14px; color: var(--color-text-tertiary); }
+.file-preview-frame { min-height: 60vh; width: 100%; flex: 1; border: 1px solid var(--color-border-secondary); border-radius: 10px; background: #fff; }
+
+.mermaid-figure { margin: 8px 0; display: flex; flex-direction: column; gap: 6px; overflow: hidden; border: 1px solid var(--color-border-secondary); border-radius: 10px; background: var(--color-bg-secondary); padding: 12px; }
+.mermaid-canvas { overflow: auto; }
+.mermaid-canvas svg { max-width: 100%; height: auto; }
+.mermaid-source > summary { cursor: pointer; font-size: 12px; color: var(--color-text-quaternary); }

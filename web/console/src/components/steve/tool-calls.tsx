@@ -5,7 +5,7 @@ import { CheckCircle, ChevronDown, Loading01, XCircle } from "@untitledui/icons"
 import type { ToolCall } from "@/lib/types";
 import { formatToolText, type Shown } from "@/lib/tooltext";
 import { toolFailed } from "@/lib/activity";
-import { CodeBlock } from "./markdown";
+import { CodeBlock } from "./code-block";
 
 // ToolCalls is a group of tool calls as the transcript shows them, the
 // way Codex does: one folding line saying how many commands ran, and

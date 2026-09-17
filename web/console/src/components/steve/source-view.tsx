@@ -7,7 +7,7 @@ import { MaterialActions, type CaptureSpec } from "./material-actions";
 import { MaterialPreview } from "./material-shelf";
 import { captureMaterial } from "@/lib/api/material";
 import { Button } from "@/components/base/buttons/button";
-import { langName } from "@/components/steve/markdown";
+import { langName } from "@/components/steve/code-block";
 import { sourceLanguage, sourceLines } from "@/lib/source-language";
 import type { FileView } from "@/lib/types";
 import "@/styles/source-view.css";
