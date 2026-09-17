@@ -25,6 +25,7 @@ type command struct {
 	Policy                     PolicyRequest        `json:"policy,omitempty"`
 	Eligibility                EligibilityRequest   `json:"eligibility,omitempty"`
 	Rename                     RenameRequest        `json:"rename,omitempty"`
+	Voting                     VotingRequest        `json:"voting,omitempty"`
 	Remove                     RemoveRequest        `json:"remove,omitempty"`
 	Address                    MemberAddressRequest `json:"address,omitempty"`
 	App                        AppCommand           `json:"app,omitempty"`
@@ -75,7 +76,7 @@ type machine struct {
 }
 
 func newMachine(clusterID string, app Application) *machine {
-	return &machine{state: State{ClusterID: clusterID, Members: map[string]Member{}, Voters: map[string]string{}, Removing: map[string]bool{}, PendingAddresses: map[string]MemberAddressRequest{}}, receipts: map[string]receipt{}, app: app, failed: make(chan struct{}), membershipChanged: make(chan struct{}, 1)}
+	return &machine{state: State{ClusterID: clusterID, Members: map[string]Member{}, Replicas: map[string]string{}, Voters: map[string]string{}, Removing: map[string]bool{}, PendingAddresses: map[string]MemberAddressRequest{}}, receipts: map[string]receipt{}, app: app, failed: make(chan struct{}), membershipChanged: make(chan struct{}, 1)}
 }
 
 func (m *machine) read() State {
@@ -100,6 +101,7 @@ func (m *machine) memberNames() map[string]string {
 
 func cloneState(s State) State {
 	s.Members = maps.Clone(s.Members)
+	s.Replicas = maps.Clone(s.Replicas)
 	s.Voters = maps.Clone(s.Voters)
 	s.Removing = maps.Clone(s.Removing)
 	s.PendingAddresses = maps.Clone(s.PendingAddresses)
@@ -192,6 +194,8 @@ func (m *machine) applyCommand(c command, index uint64, r *receipt) (*AuditRecor
 		return applyEligibility(s, c, r), nil
 	case "rename":
 		return applyRename(s, c, r), nil
+	case "voting":
+		return applyVoting(s, c, r), nil
 	case "transfer":
 		return applyTransfer(s, c, r), nil
 	case "writer":
@@ -248,7 +252,7 @@ func bumpsRevision(kind string) bool {
 // re-reads.
 func changesMembership(kind string) bool {
 	switch kind {
-	case "initialize", "join_prepare", "join", "remove", "address":
+	case "initialize", "join_prepare", "join", "remove", "address", "voting":
 		return true
 	}
 	return false
@@ -308,7 +312,11 @@ func applyJoinPrepare(s *State, c command, r *receipt) *AuditRecord {
 }
 
 func applyJoin(s *State, c command, r *receipt) *AuditRecord {
-	if s.Voters[c.Member.NodeID] != c.Member.Address {
+	if s.Replicas[c.Member.NodeID] != c.Member.Address {
+		r.reject("conflict", "member has not joined the replication configuration")
+		return nil
+	}
+	if c.Member.Voting && s.Voters[c.Member.NodeID] != c.Member.Address {
 		r.reject("conflict", "member has not joined the voting configuration")
 		return nil
 	}
@@ -330,8 +338,8 @@ func applyRemovePrepare(s *State, c command, r *receipt) *AuditRecord {
 }
 
 func applyRemove(s *State, c command, r *receipt) *AuditRecord {
-	if _, ok := s.Voters[c.Remove.NodeID]; ok {
-		r.reject("conflict", "member is still in the voting configuration")
+	if _, ok := s.Replicas[c.Remove.NodeID]; ok {
+		r.reject("conflict", "member is still in the replication configuration")
 		return nil
 	}
 	if s.Coordinator.NodeID == c.Remove.NodeID {
@@ -350,8 +358,8 @@ func applyAddressPrepare(s *State, c command, r *receipt) *AuditRecord {
 		r.reject("conflict", "member address revision changed")
 		return nil
 	}
-	if _, ok := s.Members[request.NodeID]; !ok || s.Voters[request.NodeID] == "" || s.Removing[request.NodeID] {
-		r.reject("invalid", "address changes require an active voting member")
+	if _, ok := s.Members[request.NodeID]; !ok || s.Replicas[request.NodeID] == "" || s.Removing[request.NodeID] {
+		r.reject("invalid", "address changes require an active member")
 		return nil
 	}
 	if pending, ok := s.PendingAddresses[request.NodeID]; ok && pending.ID != request.ID {
@@ -374,8 +382,8 @@ func applyAddress(s *State, c command, r *receipt) *AuditRecord {
 		r.reject("conflict", "address update preparation differs")
 		return nil
 	}
-	if s.Voters[request.NodeID] != request.Address {
-		r.reject("conflict", "voting configuration has not adopted the new address")
+	if s.Replicas[request.NodeID] != request.Address {
+		r.reject("conflict", "replication configuration has not adopted the new address")
 		return nil
 	}
 	member := s.Members[request.NodeID]
@@ -442,6 +450,39 @@ func applyRename(s *State, c command, r *receipt) *AuditRecord {
 	member.Name = name
 	s.Members[member.NodeID] = member
 	return &AuditRecord{Kind: "member_renamed", To: member.NodeID, Reason: fmt.Sprintf("%s -> %s", previous, name)}
+}
+
+// applyVoting records whether a member should hold a vote. Raft has already
+// changed the configuration when this commits; the flag is what survives a
+// restart and what tells the coordinator which members to keep demoted.
+func applyVoting(s *State, c command, r *receipt) *AuditRecord {
+	request := c.Voting
+	member, ok := s.Members[request.NodeID]
+	if !ok || s.Removing[request.NodeID] {
+		r.reject("invalid", "node is not an active member")
+		return nil
+	}
+	if request.Voting && s.Voters[request.NodeID] != member.Address {
+		r.reject("conflict", "member has not joined the voting configuration")
+		return nil
+	}
+	if !request.Voting {
+		if s.Coordinator.NodeID == request.NodeID {
+			r.reject("invalid", "the coordinator keeps its vote")
+			return nil
+		}
+		if s.Voters[request.NodeID] != "" {
+			r.reject("conflict", "member is still in the voting configuration")
+			return nil
+		}
+	}
+	member.Voting = request.Voting
+	s.Members[request.NodeID] = member
+	event := &AuditRecord{Kind: "member_vote_revoked", To: request.NodeID}
+	if request.Voting {
+		event.Kind = "member_vote_granted"
+	}
+	return event
 }
 
 func applyTransfer(s *State, c command, r *receipt) *AuditRecord {
@@ -541,8 +582,10 @@ func (m *machine) StoreConfiguration(index uint64, c raft.Configuration) {
 	m.state.ConfigurationIndex = index
 	m.state.AppliedIndex = index
 	m.state.Revision++
+	m.state.Replicas = make(map[string]string, len(c.Servers))
 	m.state.Voters = make(map[string]string, len(c.Servers))
 	for _, server := range c.Servers {
+		m.state.Replicas[string(server.ID)] = string(server.Address)
 		if server.Suffrage == raft.Voter {
 			m.state.Voters[string(server.ID)] = string(server.Address)
 		}
@@ -598,6 +641,11 @@ func (m *machine) Restore(reader io.ReadCloser) error {
 			m.fail(fmt.Errorf("restore application: %w", err))
 			return fmt.Errorf("restore application: %w", err)
 		}
+	}
+	if data.State.Replicas == nil {
+		// Snapshots written before non-voting members existed record only
+		// voters, and back then every member was one.
+		data.State.Replicas = maps.Clone(data.State.Voters)
 	}
 	m.state = data.State
 	m.receipts = data.Receipts

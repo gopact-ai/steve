@@ -71,6 +71,12 @@ type Member struct {
 	AutoEligible  bool   `json:"auto_eligible"`
 	FailureDomain string `json:"failure_domain"`
 	StorageLevel  string `json:"storage_level"`
+	// Voting says whether this member should hold a Raft vote. A member
+	// that only replicates the ledger keeps quorum at the nodes that can
+	// answer instantly, so a slow or tunnelled link cannot cost the
+	// cluster its leader. Members recorded before this field existed decode
+	// as non-voting and the coordinator demotes them, except itself.
+	Voting bool `json:"voting"`
 }
 
 // MemberNameLimit bounds a display name in characters, not bytes, so
@@ -116,18 +122,21 @@ type State struct {
 	ClusterID string `json:"cluster_id"`
 	// Revision versions membership, coordinator assignment and policy only.
 	// Application writes use AppVersion and WriterGeneration instead.
-	Revision           uint64                          `json:"revision"`
-	AppliedIndex       uint64                          `json:"applied_index"`
-	ConfigurationIndex uint64                          `json:"configuration_index"`
-	Members            map[string]Member               `json:"members"`
-	Voters             map[string]string               `json:"voters"`
-	Removing           map[string]bool                 `json:"removing"`
-	PendingAddresses   map[string]MemberAddressRequest `json:"pending_addresses"`
-	Coordinator        Assignment                      `json:"coordinator"`
-	AutoFailover       bool                            `json:"auto_failover"`
-	AppVersion         uint64                          `json:"app_version"`
-	WriterGeneration   uint64                          `json:"writer_generation"`
-	Audit              []AuditRecord                   `json:"audit"`
+	Revision           uint64            `json:"revision"`
+	AppliedIndex       uint64            `json:"applied_index"`
+	ConfigurationIndex uint64            `json:"configuration_index"`
+	Members            map[string]Member `json:"members"`
+	// Replicas holds every server in the Raft configuration, voting or not,
+	// while Voters holds only those with a vote.
+	Replicas         map[string]string               `json:"replicas"`
+	Voters           map[string]string               `json:"voters"`
+	Removing         map[string]bool                 `json:"removing"`
+	PendingAddresses map[string]MemberAddressRequest `json:"pending_addresses"`
+	Coordinator      Assignment                      `json:"coordinator"`
+	AutoFailover     bool                            `json:"auto_failover"`
+	AppVersion       uint64                          `json:"app_version"`
+	WriterGeneration uint64                          `json:"writer_generation"`
+	Audit            []AuditRecord                   `json:"audit"`
 }
 
 func (s State) CanAutoFailover() bool {
@@ -212,6 +221,17 @@ type JoinRequest struct {
 	ID     string `json:"id"`
 	Actor  string `json:"actor"`
 	Member Member `json:"member"`
+}
+
+// VotingRequest grants or revokes a member's Raft vote. Machines join
+// without one so that quorum stays with the nodes that answer instantly;
+// a machine has to be promoted before it can take the coordinator role.
+type VotingRequest struct {
+	ID               string `json:"id"`
+	Actor            string `json:"actor"`
+	ExpectedRevision uint64 `json:"expected_revision"`
+	NodeID           string `json:"node_id"`
+	Voting           bool   `json:"voting"`
 }
 
 type RemoveRequest struct {

@@ -62,7 +62,7 @@ func newTestCluster(t *testing.T, count int, applications ...func(string, string
 	leader := c.leader()
 	for i := 1; i < count; i++ {
 		id := fmt.Sprintf("node-%d", i+1)
-		_, err := leader.Join(context.Background(), JoinRequest{ID: "join-" + id, Actor: "user", Member: Member{NodeID: id, Address: c.nodes[id].Status().Address}})
+		_, err := leader.Join(context.Background(), JoinRequest{ID: "join-" + id, Actor: "user", Member: Member{NodeID: id, Address: c.nodes[id].Status().Address, Voting: true}})
 		if err != nil {
 			t.Fatal(err)
 		}

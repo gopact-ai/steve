@@ -106,7 +106,7 @@ func newPartitionCluster(t *testing.T) (*testCluster, *partitionNetwork) {
 	})
 	leader := c.leader()
 	for _, id := range []string{"node-2", "node-3"} {
-		_, err := leader.Join(context.Background(), JoinRequest{ID: "join-" + id, Actor: "user", Member: Member{NodeID: id, Address: c.nodes[id].Status().Address, AutoEligible: true}})
+		_, err := leader.Join(context.Background(), JoinRequest{ID: "join-" + id, Actor: "user", Member: Member{NodeID: id, Address: c.nodes[id].Status().Address, AutoEligible: true, Voting: true}})
 		if err != nil {
 			t.Fatal(err)
 		}

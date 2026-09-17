@@ -79,82 +79,99 @@ func (h *rpcHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	r.Body = http.MaxBytesReader(w, r.Body, h.options.MaxBodyBytes)
 	defer r.Body.Close()
+	result, err, replied := h.serveCommand(w, r, action, actor, identity)
+	if replied {
+		return
+	}
+	h.reply(w, result, err)
+}
 
+// serveCommand decodes one command and runs it. The bool it returns says the
+// request was already answered, which is how a rejected body stops here.
+func (h *rpcHandler) serveCommand(w http.ResponseWriter, r *http.Request, action, actor string, identity Identity) (Result, error, bool) {
 	var result Result
+	var err error
 	switch action {
 	case "writer":
 		var request WriterRequest
 		if !h.decodeCommand(w, r, &request) {
-			return
+			return result, err, true
 		}
 		if request.CallerNodeID != identity.NodeID {
 			h.failure(w, http.StatusForbidden, ErrNotCoordinator)
-			return
+			return result, err, true
 		}
 		request.CallerNodeID = identity.NodeID
 		result, err = h.service.BeginWriter(r.Context(), request)
 	case "app":
 		var request AppCommand
 		if !h.decodeCommand(w, r, &request) {
-			return
+			return result, err, true
 		}
 		if request.CallerNodeID != identity.NodeID {
 			h.failure(w, http.StatusForbidden, ErrNotCoordinator)
-			return
+			return result, err, true
 		}
 		request.CallerNodeID = identity.NodeID
 		result, err = h.service.ApplyApp(r.Context(), request)
 	case "transfer":
 		var request TransferRequest
 		if !h.decodeCommand(w, r, &request) {
-			return
+			return result, err, true
 		}
 		request.Actor = actor
 		result, err = h.service.Transfer(r.Context(), request)
 	case "policy":
 		var request PolicyRequest
 		if !h.decodeCommand(w, r, &request) {
-			return
+			return result, err, true
 		}
 		request.Actor = actor
 		result, err = h.service.SetAutoFailover(r.Context(), request)
 	case "eligibility":
 		var request EligibilityRequest
 		if !h.decodeCommand(w, r, &request) {
-			return
+			return result, err, true
 		}
 		request.Actor = actor
 		result, err = h.service.SetEligibility(r.Context(), request)
 	case "rename":
 		var request RenameRequest
 		if !h.decodeCommand(w, r, &request) {
-			return
+			return result, err, true
 		}
 		request.Actor = actor
 		result, err = h.service.Rename(r.Context(), request)
+	case "voting":
+		var request VotingRequest
+		if !h.decodeCommand(w, r, &request) {
+			return result, err, true
+		}
+		request.Actor = actor
+		result, err = h.service.SetVoting(r.Context(), request)
 	case "join":
 		var request JoinRequest
 		if !h.decodeCommand(w, r, &request) {
-			return
+			return result, err, true
 		}
 		request.Actor = actor
 		result, err = h.service.Join(r.Context(), request)
 	case "remove":
 		var request RemoveRequest
 		if !h.decodeCommand(w, r, &request) {
-			return
+			return result, err, true
 		}
 		request.Actor = actor
 		result, err = h.service.Remove(r.Context(), request)
 	case "address":
 		var request MemberAddressRequest
 		if !h.decodeCommand(w, r, &request) {
-			return
+			return result, err, true
 		}
 		request.Actor = actor
 		result, err = h.service.UpdateMemberAddress(r.Context(), request)
 	}
-	h.reply(w, result, err)
+	return result, err, false
 }
 
 func (h *rpcHandler) serveRead(w http.ResponseWriter, r *http.Request, action string) {

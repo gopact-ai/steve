@@ -229,7 +229,7 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	if err != nil {
 		return nil, err
 	}
-	runtime, err := Open(Config{LedgerDir: filepath.Dir(application.Gateway.StatePath), Coordination: coordination.Config{ClusterID: p.Config.ClusterID, NodeID: p.Config.NodeID, Build: nodewire.Version(), FailureDomain: p.Config.FailureDomain, StorageLevel: p.Config.StorageLevel, DataDir: filepath.Join(p.Config.DataDir, "raft"), APIAddress: p.Config.PeerURL, Name: p.Config.Name, Bootstrap: p.Config.Bootstrap, StreamLayer: stream, Probe: p.client.Probe, ValidateJoin: p.validateJoiningNetwork, ValidateAddress: p.validateMemberAddress, AuthorizeReplica: p.authorizeLedgerReplica, RaftConfig: options.RaftConfig}, Client: p.client, Activate: p.activate, PollInterval: options.PollInterval})
+	runtime, err := Open(Config{LedgerDir: filepath.Dir(application.Gateway.StatePath), Coordination: coordination.Config{ClusterID: p.Config.ClusterID, NodeID: p.Config.NodeID, Build: nodewire.Version(), FailureDomain: p.Config.FailureDomain, StorageLevel: p.Config.StorageLevel, DataDir: filepath.Join(p.Config.DataDir, "raft"), APIAddress: p.Config.PeerURL, Name: p.Config.Name, Bootstrap: p.Config.Bootstrap, StreamLayer: stream, Probe: p.client.Probe, ValidateJoin: p.validateJoiningNetwork, ValidateAddress: p.validateMemberAddress, AuthorizeReplica: p.authorizeLedgerReplica, RaftConfig: options.RaftConfig, LogOutput: raftLogOutput(options)}, Client: p.client, Activate: p.activate, PollInterval: options.PollInterval})
 	if err != nil {
 		return nil, err
 	}
@@ -1200,6 +1200,21 @@ func (p *Peer) SetCoordinatorEligibility(ctx context.Context, request consoleapi
 	return p.Coordination(ctx)
 }
 
+// SetNodeVoting gives a machine a vote in the cluster, or takes it back.
+// Machines join without one, so this is what a machine needs before it can
+// be handed the coordinator role.
+func (p *Peer) SetNodeVoting(ctx context.Context, request consoleapi.CoordinatorVoting) (consoleapi.CoordinationView, error) {
+	runtime := p.Runtime.Load()
+	if runtime == nil {
+		return consoleapi.CoordinationView{}, coordination.ErrUnavailable
+	}
+	_, err := runtime.SetVoting(ctx, coordination.VotingRequest{ID: request.CommandID, Actor: "owner", ExpectedRevision: request.ExpectedRevision, NodeID: request.NodeID, Voting: request.Voting})
+	if err != nil {
+		return consoleapi.CoordinationView{}, err
+	}
+	return p.Coordination(ctx)
+}
+
 func (p *Peer) RenameNode(ctx context.Context, request consoleapi.CoordinatorRename) (consoleapi.CoordinationView, error) {
 	runtime := p.Runtime.Load()
 	if runtime == nil {
@@ -1256,6 +1271,12 @@ func (p *Peer) serveCoordination(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		view, err = p.SetCoordinatorEligibility(r.Context(), request)
+	case r.Method == http.MethodPut && r.URL.Path == "/console/coordination/voting":
+		var request consoleapi.CoordinatorVoting
+		if !decode(&request) {
+			return
+		}
+		view, err = p.SetNodeVoting(r.Context(), request)
 	case r.Method == http.MethodPut && r.URL.Path == "/console/coordination/name":
 		var request consoleapi.CoordinatorRename
 		if !decode(&request) {
@@ -1290,4 +1311,14 @@ func HTTPError(w http.ResponseWriter, err error) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+}
+
+// raftLogOutput sends Raft's own warnings and errors to the process log,
+// which is where a lost leader or a stalled replica has to be visible. Tests
+// pin their own Raft settings and keep the transcript quiet.
+func raftLogOutput(options PeerOptions) io.Writer {
+	if options.RaftConfig != nil {
+		return io.Discard
+	}
+	return os.Stderr
 }

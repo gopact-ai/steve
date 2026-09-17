@@ -74,7 +74,7 @@ func TestThreePeerCoordinatorTransferResumesOriginalNodeCommandAndExchange(t *te
 	thirdOptions, _ := testPeerOptions(t, filepath.Join(dir, "third"), first)
 	third := StartTestPeer(t, thirdOptions)
 	for _, peer := range []*cluster.Peer{second, third} {
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-recovery-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL}}); err != nil {
+		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-recovery-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL, Voting: true}}); err != nil {
 			t.Fatal(err)
 		}
 		if err := first.RegisterEnrolledWorker(t.Context(), peer.Config.NodeID, "restricted"); err != nil {
@@ -291,7 +291,7 @@ func TestSourceNodeLossUsesPlanScopedApprovalAndContinuesInIsolatedWorkspace(t *
 	installRecoveryWorker(t, thirdOptions, thirdInstall.Paths.Root, bin)
 	third := StartTestPeer(t, thirdOptions)
 	for _, peer := range []*cluster.Peer{second, third} {
-		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-loss-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL}}); err != nil {
+		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-loss-" + peer.Config.NodeID, Actor: "owner", Member: coordination.Member{NodeID: peer.Config.NodeID, Address: peer.Config.RaftAddress, APIAddress: peer.Config.PeerURL, Voting: true}}); err != nil {
 			t.Fatal(err)
 		}
 		if err := first.RegisterEnrolledWorker(t.Context(), peer.Config.NodeID, "restricted"); err != nil {

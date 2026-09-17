@@ -22,7 +22,7 @@ func TestClusterPeerRenameChangesDisplayNameNotIdentity(t *testing.T) {
 	WaitPeerReady(t, first)
 	secondOptions, _ := testPeerOptions(t, ClusterPeerTestDir(t), first)
 	second := StartTestPeer(t, secondOptions)
-	if _, err := first.Join(context.Background(), coordination.JoinRequest{ID: "rename-join", Actor: "owner", Member: coordination.Member{NodeID: second.Config.NodeID, Address: second.Config.RaftAddress, APIAddress: second.Config.PeerURL, Name: "second-host"}}); err != nil {
+	if _, err := first.Join(context.Background(), coordination.JoinRequest{ID: "rename-join", Actor: "owner", Member: coordination.Member{NodeID: second.Config.NodeID, Address: second.Config.RaftAddress, APIAddress: second.Config.PeerURL, Name: "second-host", Voting: true}}); err != nil {
 		t.Fatal(err)
 	}
 	status, body := PeerRequest(t, first, http.MethodGet, "/console/coordination", nil)

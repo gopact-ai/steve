@@ -93,7 +93,7 @@ func newTLSTestCluster(t *testing.T, count int) *tlsTestCluster {
 		}
 		raftListeners[id] = raftListener
 		apiListeners[id] = apiListener
-		member := Member{NodeID: id, Address: raftListener.Addr().String(), APIAddress: "https://" + apiListener.Addr().String()}
+		member := Member{NodeID: id, Address: raftListener.Addr().String(), APIAddress: "https://" + apiListener.Addr().String(), Voting: true}
 		c.members[id] = member
 		seeds = append(seeds, member)
 	}

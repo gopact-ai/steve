@@ -111,8 +111,11 @@ func TestEnrollmentOverSSHCarriesTheClusterProtocolThroughTheSession(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if state.Voters[node.Config.NodeID] == "" || result.NodeID != node.Config.NodeID {
-		t.Fatalf("the machine is not a voter after joining through the tunnel: %+v", state.Voters)
+	if state.Replicas[node.Config.NodeID] == "" || result.NodeID != node.Config.NodeID {
+		t.Fatalf("the machine does not replicate the ledger after joining through the tunnel: %+v", state.Replicas)
+	}
+	if state.Voters[node.Config.NodeID] != "" {
+		t.Fatalf("a machine joined over a tunnel must not hold a vote: %+v", state.Voters)
 	}
 	if _, ok := hub.LinkStatuses()[node.Config.NodeID]; !ok {
 		t.Fatal("the link to a joined machine was dropped")

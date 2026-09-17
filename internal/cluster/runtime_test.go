@@ -221,7 +221,7 @@ func TestLateProposalCannotCommitAfterBusinessCachesAreReconstructed(t *testing.
 	first := openNode(t, nodes[0])
 	ready(t, first)
 	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL}
+	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL, Voting: true}
 	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: member}); err != nil {
 		t.Fatal(err)
 	}
@@ -258,7 +258,7 @@ func TestUnknownProposalOutcomeRevokesCachedStoresBeforeAnotherWrite(t *testing.
 	first := openNode(t, nodes[0])
 	ready(t, first)
 	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL}
+	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL, Voting: true}
 	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: member}); err != nil {
 		t.Fatal(err)
 	}
@@ -473,7 +473,7 @@ func TestTransferCancelsAnActivationThatHasNotFinishedStarting(t *testing.T) {
 		t.Fatal("business activation did not start")
 	}
 	second := openNode(t, nodes[1])
-	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL}
+	member := coordination.Member{NodeID: "node-2", Address: second.Status().Address, APIAddress: nodes[1].server.URL, Voting: true}
 	if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-second", Actor: "owner", Member: member}); err != nil {
 		t.Fatal(err)
 	}
@@ -552,7 +552,7 @@ func TestThreeNodeLedgerTransfersPreserveFactsAndFenceEveryOldGeneration(t *test
 	}
 	for i := 1; i < len(nodes); i++ {
 		r := openNode(t, nodes[i])
-		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, AutoEligible: true}
+		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, AutoEligible: true, Voting: true}
 		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
 			t.Fatal(err)
 		}
@@ -622,7 +622,7 @@ func TestAutomaticCoordinatorFailureActivatesReconstructedLedgerOnSurvivor(t *te
 	initial := ready(t, first)
 	for i := 1; i < len(nodes); i++ {
 		r := openNode(t, nodes[i])
-		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, AutoEligible: true}
+		member := coordination.Member{NodeID: r.Status().NodeID, Address: r.Status().Address, APIAddress: nodes[i].server.URL, AutoEligible: true, Voting: true}
 		if _, err := first.Join(t.Context(), coordination.JoinRequest{ID: "join-" + member.NodeID, Actor: "owner", Member: member}); err != nil {
 			t.Fatal(err)
 		}

@@ -44,6 +44,7 @@ func (s *Service) run() {
 			continue
 		}
 		state := s.fsm.read()
+		s.demoteNonVoters(state)
 		if state.Coordinator.Epoch == 0 {
 			if s.config.Bootstrap {
 				s.initialize()
@@ -75,12 +76,40 @@ func (s *Service) run() {
 	}
 }
 
+// demoteNonVoters takes the Raft vote away from members that are recorded
+// as replicating only. Quorum then rests on the nodes that answer without a
+// tunnel, so a slow link costs replication lag instead of the leadership.
+// The coordinator never demotes itself, and members recorded before the flag
+// existed decode as non-voting, which is how an older cluster converges.
+func (s *Service) demoteNonVoters(state State) {
+	if !s.membershipMu.TryLock() {
+		return
+	}
+	defer s.membershipMu.Unlock()
+	ids := make([]string, 0, len(state.Voters))
+	for id := range state.Voters {
+		member, ok := state.Members[id]
+		if !ok || member.Voting || id == s.config.NodeID || id == state.Coordinator.NodeID {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		ctx, cancel := context.WithTimeout(s.ctx, s.config.ApplyTimeout)
+		// A failure here is not fatal: the member keeps its vote and the next
+		// pass tries again.
+		s.wait(ctx, s.raft.DemoteVoter(raft.ServerID(id), 0, s.config.ApplyTimeout))
+		cancel()
+	}
+}
+
 func (s *Service) initialize() {
 	s.opMu.Lock()
 	defer s.opMu.Unlock()
 	ctx, cancel := context.WithTimeout(s.ctx, s.config.ApplyTimeout)
 	defer cancel()
-	member := Member{NodeID: s.config.NodeID, Address: string(s.transport.LocalAddr()), APIAddress: s.config.APIAddress, Name: s.config.Name, AutoEligible: false, FailureDomain: s.config.FailureDomain, StorageLevel: s.config.StorageLevel}
+	member := Member{NodeID: s.config.NodeID, Address: string(s.transport.LocalAddr()), APIAddress: s.config.APIAddress, Name: s.config.Name, AutoEligible: false, FailureDomain: s.config.FailureDomain, StorageLevel: s.config.StorageLevel, Voting: true}
 	s.submit(ctx, command{Kind: "initialize", ID: "initialize/" + s.config.ClusterID, Actor: "system", Fingerprint: fingerprint("initialize", member), Member: member})
 }
 

@@ -187,6 +187,11 @@ func (c *Client) Rename(ctx context.Context, request RenameRequest) (Result, err
 	err := c.route(ctx, "rename", request, &result)
 	return result, err
 }
+func (c *Client) SetVoting(ctx context.Context, request VotingRequest) (Result, error) {
+	var result Result
+	err := c.route(ctx, "voting", request, &result)
+	return result, err
+}
 func (c *Client) Join(ctx context.Context, request JoinRequest) (Result, error) {
 	var result Result
 	err := c.route(ctx, "join", request, &result)

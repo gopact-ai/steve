@@ -133,6 +133,11 @@ func Open(config Config) (*Service, error) {
 	}
 	cfg.LocalID = raft.ServerID(config.NodeID)
 	cfg.LogOutput = config.LogOutput
+	if config.RaftConfig == nil {
+		// Raft defaults to debug, which would bury the process log. Warnings
+		// and errors are what make a lost leader or a stalled replica visible.
+		cfg.LogLevel = "WARN"
+	}
 	fsm := newMachine(config.ClusterID, config.Application)
 	node, err := raft.NewRaft(cfg, fsm, store, store, snapshots, addressTransport{NetworkTransport: transport, nodeID: cfg.LocalID})
 	if err != nil {
@@ -382,6 +387,59 @@ func (s *Service) SetEligibility(ctx context.Context, request EligibilityRequest
 	return s.submit(ctx, command{Kind: "eligibility", ID: request.ID, Actor: request.Actor, Fingerprint: fingerprint("eligibility", request), Eligibility: request})
 }
 
+// SetVoting grants or revokes a member's Raft vote. Granting one verifies
+// the candidate has caught up and can reach every other voter first, because
+// from then on it counts towards every commit.
+func (s *Service) SetVoting(ctx context.Context, request VotingRequest) (Result, error) {
+	s.membershipMu.Lock()
+	defer s.membershipMu.Unlock()
+	if request.ID == "" || request.Actor == "" || request.NodeID == "" {
+		return Result{}, ErrInvalid
+	}
+	fp := fingerprint("voting", request)
+	if old, ok := s.fsm.lookup(request.ID, fp); ok {
+		return old.Result, old.err()
+	}
+	state := s.fsm.read()
+	member, ok := state.Members[request.NodeID]
+	if !ok || state.Removing[request.NodeID] {
+		return Result{}, fmt.Errorf("%w: node is not an active member", ErrInvalid)
+	}
+	if !request.Voting && state.Coordinator.NodeID == request.NodeID {
+		return Result{}, fmt.Errorf("%w: the coordinator keeps its vote", ErrInvalid)
+	}
+	// The Raft configuration change below bumps the revision itself, so the
+	// caller's expectation is checked here rather than when the command applies.
+	if request.ExpectedRevision != state.Revision {
+		return Result{}, fmt.Errorf("%w: membership revision changed", ErrConflict)
+	}
+	if err := s.barrier(ctx); err != nil {
+		return Result{}, err
+	}
+	if request.Voting {
+		if err := s.waitForProgress(ctx, member, state); err != nil {
+			return Result{}, err
+		}
+		if s.config.ValidateJoin != nil {
+			if err := s.config.ValidateJoin(ctx, member); err != nil {
+				return Result{}, fmt.Errorf("%w: candidate network verification: %v", ErrNotReady, err)
+			}
+		}
+	}
+	configuration := s.raft.GetConfiguration()
+	if err := s.wait(ctx, configuration); err != nil {
+		return Result{}, err
+	}
+	change := s.raft.DemoteVoter(raft.ServerID(request.NodeID), configuration.Index(), s.config.ApplyTimeout)
+	if request.Voting {
+		change = s.raft.AddVoter(raft.ServerID(request.NodeID), raft.ServerAddress(member.Address), configuration.Index(), s.config.ApplyTimeout)
+	}
+	if err := s.wait(ctx, change); err != nil {
+		return Result{}, err
+	}
+	return s.submit(ctx, command{Kind: "voting", ID: request.ID, Actor: request.Actor, Fingerprint: fp, Voting: request})
+}
+
 // Rename records a member's display name. The command is validated again
 // when applied, so every replica rejects the same names.
 func (s *Service) Rename(ctx context.Context, request RenameRequest) (Result, error) {
@@ -554,7 +612,7 @@ func (s *Service) Join(ctx context.Context, request JoinRequest) (Result, error)
 	if err := s.waitForProgress(ctx, request.Member, s.fsm.read()); err != nil {
 		return Result{}, err
 	}
-	if !isVoter {
+	if request.Member.Voting && !isVoter {
 		if s.config.ValidateJoin != nil {
 			if err := s.config.ValidateJoin(ctx, request.Member); err != nil {
 				return Result{}, fmt.Errorf("%w: candidate network verification: %v", ErrNotReady, err)

@@ -5,7 +5,7 @@
       "command": {
         "kind": "initialize",
         "id": "init-before-voters",
-        "fingerprint": "19c77d64523340af7ee94ea74e8683a5c60d7960fb6791e146f1a81b16ca6ea9",
+        "fingerprint": "844259b0209917b0cf6061c334c9c44673e48b83bf3f618813519739e7d8b3e6",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -16,7 +16,8 @@
           "name": "one",
           "auto_eligible": false,
           "failure_domain": "rack-1",
-          "storage_level": "restricted"
+          "storage_level": "restricted",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -44,6 +45,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -74,7 +82,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "19c77d64523340af7ee94ea74e8683a5c60d7960fb6791e146f1a81b16ca6ea9",
+        "fingerprint": "844259b0209917b0cf6061c334c9c44673e48b83bf3f618813519739e7d8b3e6",
         "result": {
           "revision": 0,
           "index": 1,
@@ -94,7 +102,7 @@
       "command": {
         "kind": "initialize",
         "id": "init",
-        "fingerprint": "a0e3f8327b1aef816bb625720c387f9a544ca09cf5769420d89ec904deba2b9c",
+        "fingerprint": "bf4c2eca6c5c20ec21fd46d8ee069adae064617e48fcc1cab25e34acf9321750",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -105,7 +113,8 @@
           "name": "one",
           "auto_eligible": false,
           "failure_domain": "rack-1",
-          "storage_level": "restricted"
+          "storage_level": "restricted",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -133,6 +142,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -163,7 +179,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "a0e3f8327b1aef816bb625720c387f9a544ca09cf5769420d89ec904deba2b9c",
+        "fingerprint": "bf4c2eca6c5c20ec21fd46d8ee069adae064617e48fcc1cab25e34acf9321750",
         "result": {
           "revision": 2,
           "index": 3,
@@ -181,7 +197,7 @@
       "command": {
         "kind": "initialize",
         "id": "init-again",
-        "fingerprint": "6139e55bff621fbd0de39a6dac52a7a3701cbb831ff0941fab92245c203aba05",
+        "fingerprint": "80b88176270e6941d95eba5ba91728f2af2cbdfdaf77b24e8f110a0e1fc42154",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -192,7 +208,8 @@
           "name": "one",
           "auto_eligible": false,
           "failure_domain": "rack-1",
-          "storage_level": "restricted"
+          "storage_level": "restricted",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -220,6 +237,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -250,7 +274,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "6139e55bff621fbd0de39a6dac52a7a3701cbb831ff0941fab92245c203aba05",
+        "fingerprint": "80b88176270e6941d95eba5ba91728f2af2cbdfdaf77b24e8f110a0e1fc42154",
         "result": {
           "revision": 2,
           "index": 4,
@@ -270,7 +294,7 @@
       "command": {
         "kind": "join_prepare",
         "id": "prepare-n2-public",
-        "fingerprint": "1d763b5c946b0e98d58e0062ded581753625bb95169fde344e131a91aa3fe42d",
+        "fingerprint": "2ee3fdd2e200a143cb27675778f8e4d5cd453a4219f16bbcdadbca543901cda4",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -279,7 +303,8 @@
           "address": "10.0.0.2:1",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": "public"
+          "storage_level": "public",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -307,6 +332,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -337,7 +369,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "1d763b5c946b0e98d58e0062ded581753625bb95169fde344e131a91aa3fe42d",
+        "fingerprint": "2ee3fdd2e200a143cb27675778f8e4d5cd453a4219f16bbcdadbca543901cda4",
         "result": {
           "revision": 2,
           "index": 5,
@@ -357,7 +389,7 @@
       "command": {
         "kind": "join_prepare",
         "id": "prepare-n2",
-        "fingerprint": "6b6145ba925fbf36a2aba01c2e95b3d7922ddb15434951d98eea92061a332c35",
+        "fingerprint": "7dc652be9633a6d843ae01c12f7ee1d9a765464450218356e81dd782c0d19956",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -368,7 +400,8 @@
           "name": "two",
           "auto_eligible": false,
           "failure_domain": "rack-2",
-          "storage_level": "restricted"
+          "storage_level": "restricted",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -396,6 +429,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -426,7 +466,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "6b6145ba925fbf36a2aba01c2e95b3d7922ddb15434951d98eea92061a332c35",
+        "fingerprint": "7dc652be9633a6d843ae01c12f7ee1d9a765464450218356e81dd782c0d19956",
         "result": {
           "revision": 3,
           "index": 6,
@@ -444,7 +484,7 @@
       "command": {
         "kind": "join_prepare",
         "id": "prepare-n2-repeat",
-        "fingerprint": "288a28fc8104f7e9fadd9fa1c1a238174da967705ee3dee04ddbb107ff950604",
+        "fingerprint": "e2458e5df5a88f680a144297f0e91b3e08463828b416ae97bd1944a510047dd1",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -455,7 +495,8 @@
           "name": "two",
           "auto_eligible": false,
           "failure_domain": "rack-2",
-          "storage_level": "restricted"
+          "storage_level": "restricted",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -483,6 +524,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -513,7 +561,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "288a28fc8104f7e9fadd9fa1c1a238174da967705ee3dee04ddbb107ff950604",
+        "fingerprint": "e2458e5df5a88f680a144297f0e91b3e08463828b416ae97bd1944a510047dd1",
         "result": {
           "revision": 4,
           "index": 7,
@@ -531,7 +579,7 @@
       "command": {
         "kind": "join_prepare",
         "id": "prepare-n2-differs",
-        "fingerprint": "e905357b36140d2eaa51e6a0d0aa46bbe82b48095759d3d5cde1c22aa21ea933",
+        "fingerprint": "76ab3a6e1b62e850a841d7f7b691f2e1d4189bdfb90bbd29a8bc96a5f5f18c1e",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -540,7 +588,8 @@
           "address": "10.0.0.9:1",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": "restricted"
+          "storage_level": "restricted",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -568,6 +617,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -598,7 +654,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "e905357b36140d2eaa51e6a0d0aa46bbe82b48095759d3d5cde1c22aa21ea933",
+        "fingerprint": "76ab3a6e1b62e850a841d7f7b691f2e1d4189bdfb90bbd29a8bc96a5f5f18c1e",
         "result": {
           "revision": 4,
           "index": 8,
@@ -618,7 +674,7 @@
       "command": {
         "kind": "join_prepare",
         "id": "prepare-address-taken",
-        "fingerprint": "740a212f9348f9012a42b41b94760699037b470d7c59c06b0ca2798c662f3d79",
+        "fingerprint": "1a1fbe3e408ed9032e0da27fd09ae9e94e93bfe879f00011ce1e850c32b7d590",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -627,7 +683,8 @@
           "address": "10.0.0.2:1",
           "auto_eligible": false,
           "failure_domain": "rack-9",
-          "storage_level": "restricted"
+          "storage_level": "restricted",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -655,6 +712,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -685,7 +749,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "740a212f9348f9012a42b41b94760699037b470d7c59c06b0ca2798c662f3d79",
+        "fingerprint": "1a1fbe3e408ed9032e0da27fd09ae9e94e93bfe879f00011ce1e850c32b7d590",
         "result": {
           "revision": 4,
           "index": 9,
@@ -705,7 +769,7 @@
       "command": {
         "kind": "join_prepare",
         "id": "prepare-domain-taken",
-        "fingerprint": "b7e2798b8b7138294c261eee218b6eea9424ad08ce3370e09e0708c7aa4165c7",
+        "fingerprint": "443a99ce3248e967081febbb7f781e3e1a8331eb14eedc98c4df6ca23b9a2d81",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -714,7 +778,8 @@
           "address": "10.0.0.9:1",
           "auto_eligible": false,
           "failure_domain": "rack-2",
-          "storage_level": "restricted"
+          "storage_level": "restricted",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -742,6 +807,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -772,7 +844,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "b7e2798b8b7138294c261eee218b6eea9424ad08ce3370e09e0708c7aa4165c7",
+        "fingerprint": "443a99ce3248e967081febbb7f781e3e1a8331eb14eedc98c4df6ca23b9a2d81",
         "result": {
           "revision": 4,
           "index": 10,
@@ -792,7 +864,7 @@
       "command": {
         "kind": "join",
         "id": "join-n2-early",
-        "fingerprint": "c3d022ea130aecc8944c4e451d251359316352ef3c25d7dd7ed097fb9fc916a9",
+        "fingerprint": "f92887e89e7904ac13afb95d362d4412eef8331bc7450f9c831a00064e26cbf3",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -803,7 +875,8 @@
           "name": "two",
           "auto_eligible": false,
           "failure_domain": "rack-2",
-          "storage_level": "restricted"
+          "storage_level": "restricted",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -831,6 +904,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -861,7 +941,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "c3d022ea130aecc8944c4e451d251359316352ef3c25d7dd7ed097fb9fc916a9",
+        "fingerprint": "f92887e89e7904ac13afb95d362d4412eef8331bc7450f9c831a00064e26cbf3",
         "result": {
           "revision": 4,
           "index": 11,
@@ -873,7 +953,7 @@
           "writer_generation": 0
         },
         "code": "conflict",
-        "message": "member has not joined the voting configuration"
+        "message": "member has not joined the replication configuration"
       }
     },
     {
@@ -881,7 +961,7 @@
       "command": {
         "kind": "join",
         "id": "join-n2",
-        "fingerprint": "2dcf5a175f428d732dd5e0778b772e2a3af520498444126fe6264cfcfcee4fcd",
+        "fingerprint": "61da754df646ef51955768b2748a9df5398f1a8a912d7eeabb3c02c4f9604d3a",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -892,7 +972,8 @@
           "name": "two",
           "auto_eligible": false,
           "failure_domain": "rack-2",
-          "storage_level": "restricted"
+          "storage_level": "restricted",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -920,6 +1001,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -950,7 +1038,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "2dcf5a175f428d732dd5e0778b772e2a3af520498444126fe6264cfcfcee4fcd",
+        "fingerprint": "61da754df646ef51955768b2748a9df5398f1a8a912d7eeabb3c02c4f9604d3a",
         "result": {
           "revision": 6,
           "index": 13,
@@ -968,7 +1056,7 @@
       "command": {
         "kind": "join_prepare",
         "id": "prepare-n3",
-        "fingerprint": "61fba1dafa5c7343997c49069c4c024682a22c66e03f417689c073f517d72e38",
+        "fingerprint": "72dee85a280364f8eda452c352cce7557dcde42c1debb3f18cd3cb1383534fd2",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -979,7 +1067,8 @@
           "name": "three",
           "auto_eligible": false,
           "failure_domain": "rack-3",
-          "storage_level": "sealed"
+          "storage_level": "sealed",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -1007,6 +1096,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -1037,7 +1133,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "61fba1dafa5c7343997c49069c4c024682a22c66e03f417689c073f517d72e38",
+        "fingerprint": "72dee85a280364f8eda452c352cce7557dcde42c1debb3f18cd3cb1383534fd2",
         "result": {
           "revision": 7,
           "index": 14,
@@ -1055,7 +1151,7 @@
       "command": {
         "kind": "join",
         "id": "join-n3",
-        "fingerprint": "4b28af46bdc630facd73159f80411dc51a7898ff331b15424b31068657410e2a",
+        "fingerprint": "2df230aa5a258f22b9331579986d3ce2aa1779fab7787e7e4ca2d6e0c9c69b63",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -1066,7 +1162,8 @@
           "name": "three",
           "auto_eligible": false,
           "failure_domain": "rack-3",
-          "storage_level": "sealed"
+          "storage_level": "sealed",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -1094,6 +1191,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -1124,7 +1228,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "4b28af46bdc630facd73159f80411dc51a7898ff331b15424b31068657410e2a",
+        "fingerprint": "2df230aa5a258f22b9331579986d3ce2aa1779fab7787e7e4ca2d6e0c9c69b63",
         "result": {
           "revision": 9,
           "index": 16,
@@ -1142,7 +1246,7 @@
       "command": {
         "kind": "policy",
         "id": "policy-stale",
-        "fingerprint": "fe1742a227b43a3e468034c5843838c76c6d91ce6bd85dd5632bc8c5e4b22fa5",
+        "fingerprint": "f3d97f9b5ad64b07ab85afc92ee8cf7145874be0f0844a23639856ff91ab5ff1",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -1151,7 +1255,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -1180,6 +1285,13 @@
           "node_id": "",
           "name": ""
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -1209,7 +1321,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "fe1742a227b43a3e468034c5843838c76c6d91ce6bd85dd5632bc8c5e4b22fa5",
+        "fingerprint": "f3d97f9b5ad64b07ab85afc92ee8cf7145874be0f0844a23639856ff91ab5ff1",
         "result": {
           "revision": 9,
           "index": 17,
@@ -1229,7 +1341,7 @@
       "command": {
         "kind": "policy",
         "id": "policy-too-few",
-        "fingerprint": "4b1e03a40b7accd2e3d10a419c5e1b2b163f85349194745877b6bf70cbae0e20",
+        "fingerprint": "967f1cb0fbf2500a82dcb0e8eaba4c67fa54928b9935a666077dda4842b29a75",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -1238,7 +1350,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -1267,6 +1380,13 @@
           "node_id": "",
           "name": ""
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -1296,7 +1416,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "4b1e03a40b7accd2e3d10a419c5e1b2b163f85349194745877b6bf70cbae0e20",
+        "fingerprint": "967f1cb0fbf2500a82dcb0e8eaba4c67fa54928b9935a666077dda4842b29a75",
         "result": {
           "revision": 9,
           "index": 18,
@@ -1316,7 +1436,7 @@
       "command": {
         "kind": "eligibility",
         "id": "eligible-stale",
-        "fingerprint": "94f390ab2783b88585234e3259234c9470dd485b8358f16caffc471556bd9e5b",
+        "fingerprint": "b3f79a6d70a1839f3fc87e79c0864702f10389c7d7e1f81a8109f29fe09756a7",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -1325,7 +1445,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -1354,6 +1475,13 @@
           "node_id": "",
           "name": ""
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -1383,7 +1511,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "94f390ab2783b88585234e3259234c9470dd485b8358f16caffc471556bd9e5b",
+        "fingerprint": "b3f79a6d70a1839f3fc87e79c0864702f10389c7d7e1f81a8109f29fe09756a7",
         "result": {
           "revision": 9,
           "index": 19,
@@ -1403,7 +1531,7 @@
       "command": {
         "kind": "eligibility",
         "id": "eligible-stranger",
-        "fingerprint": "b05680a7a2b70d2508f30a372a111e0670a18ea89f3cb4e5b372c6fd01959599",
+        "fingerprint": "6d1617b76fa320d58e626efd0ddc56ca7c1d564d805e2f6965029d6523f2ede9",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -1412,7 +1540,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -1441,6 +1570,13 @@
           "node_id": "",
           "name": ""
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -1470,7 +1606,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "b05680a7a2b70d2508f30a372a111e0670a18ea89f3cb4e5b372c6fd01959599",
+        "fingerprint": "6d1617b76fa320d58e626efd0ddc56ca7c1d564d805e2f6965029d6523f2ede9",
         "result": {
           "revision": 9,
           "index": 20,
@@ -1490,7 +1626,7 @@
       "command": {
         "kind": "eligibility",
         "id": "eligible-n2",
-        "fingerprint": "19a0a9caf257061fe3d19e45a20af4bead3d66815b6ca53ff3e9cb67e3ead47d",
+        "fingerprint": "9fb1f1e6a077d277796d4b9244abc517467818896e2f871193f0cd6589e0100f",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -1499,7 +1635,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -1528,6 +1665,13 @@
           "node_id": "",
           "name": ""
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -1557,7 +1701,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "19a0a9caf257061fe3d19e45a20af4bead3d66815b6ca53ff3e9cb67e3ead47d",
+        "fingerprint": "9fb1f1e6a077d277796d4b9244abc517467818896e2f871193f0cd6589e0100f",
         "result": {
           "revision": 10,
           "index": 21,
@@ -1575,7 +1719,7 @@
       "command": {
         "kind": "eligibility",
         "id": "eligible-n3",
-        "fingerprint": "898b91557287ef69d9debf26f1705a9e456c0e5db3cb35146125037c1205b398",
+        "fingerprint": "25c5178c2fc2e18530380a429c3897658827e8da55a93a04b3039d994468ef12",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -1584,7 +1728,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -1613,6 +1758,13 @@
           "node_id": "",
           "name": ""
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -1642,7 +1794,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "898b91557287ef69d9debf26f1705a9e456c0e5db3cb35146125037c1205b398",
+        "fingerprint": "25c5178c2fc2e18530380a429c3897658827e8da55a93a04b3039d994468ef12",
         "result": {
           "revision": 11,
           "index": 22,
@@ -1660,7 +1812,7 @@
       "command": {
         "kind": "policy",
         "id": "policy-on",
-        "fingerprint": "f6f121b3677cd4dc7fc7a4c78848ed40f8ca81f3a9afbee1c9510b0f482176bf",
+        "fingerprint": "0d11e35a34f386de2951d45cb72785d05476210ac83d1772317f707afab7cec5",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -1669,7 +1821,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -1698,6 +1851,13 @@
           "node_id": "",
           "name": ""
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -1727,7 +1887,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "f6f121b3677cd4dc7fc7a4c78848ed40f8ca81f3a9afbee1c9510b0f482176bf",
+        "fingerprint": "0d11e35a34f386de2951d45cb72785d05476210ac83d1772317f707afab7cec5",
         "result": {
           "revision": 12,
           "index": 23,
@@ -1745,7 +1905,7 @@
       "command": {
         "kind": "eligibility",
         "id": "eligible-n3-off",
-        "fingerprint": "4681794615140bce6960db84f0adfb5ff4f5a12fc3a7894a4a9c25d8cb4959a7",
+        "fingerprint": "4c3f2d2e4c652a5c89a54a764ffd66cac706ac4d0840f7c9828bd53d4f1cf589",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -1754,7 +1914,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -1783,6 +1944,13 @@
           "node_id": "",
           "name": ""
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -1812,7 +1980,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "4681794615140bce6960db84f0adfb5ff4f5a12fc3a7894a4a9c25d8cb4959a7",
+        "fingerprint": "4c3f2d2e4c652a5c89a54a764ffd66cac706ac4d0840f7c9828bd53d4f1cf589",
         "result": {
           "revision": 13,
           "index": 24,
@@ -1830,7 +1998,7 @@
       "command": {
         "kind": "rename",
         "id": "rename-stale",
-        "fingerprint": "288e1e2f75b4892caa2089cc1aac562aca00cd770232a168db2f662837193c79",
+        "fingerprint": "08b58b4e450d5f6dc717009fbd02b084117de94ffe3a0edf36a81bfd2621f3ec",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -1839,7 +2007,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -1868,6 +2037,13 @@
           "node_id": "n2",
           "name": "stale"
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -1897,7 +2073,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "288e1e2f75b4892caa2089cc1aac562aca00cd770232a168db2f662837193c79",
+        "fingerprint": "08b58b4e450d5f6dc717009fbd02b084117de94ffe3a0edf36a81bfd2621f3ec",
         "result": {
           "revision": 13,
           "index": 25,
@@ -1917,7 +2093,7 @@
       "command": {
         "kind": "rename",
         "id": "rename-stranger",
-        "fingerprint": "ad8edb5b95d793cbd47bbb3a8599cbd926493920de42636683f2168924ac9b84",
+        "fingerprint": "9825752a738925017a8ceaf648870f38e3a57aa5741f030b321e403e8d6dab89",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -1926,7 +2102,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -1955,6 +2132,13 @@
           "node_id": "n9",
           "name": "stranger"
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -1984,7 +2168,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "ad8edb5b95d793cbd47bbb3a8599cbd926493920de42636683f2168924ac9b84",
+        "fingerprint": "9825752a738925017a8ceaf648870f38e3a57aa5741f030b321e403e8d6dab89",
         "result": {
           "revision": 13,
           "index": 26,
@@ -2004,7 +2188,7 @@
       "command": {
         "kind": "rename",
         "id": "rename-blank",
-        "fingerprint": "e1e90695976a3662964755458c9a5041f1e748804856f7500fbca73c3e583429",
+        "fingerprint": "477cd734568daa4c0db762305fb8cd6922aa2cfef3da544f604b873befad4ace",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -2013,7 +2197,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -2042,6 +2227,13 @@
           "node_id": "n2",
           "name": "   "
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -2071,7 +2263,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "e1e90695976a3662964755458c9a5041f1e748804856f7500fbca73c3e583429",
+        "fingerprint": "477cd734568daa4c0db762305fb8cd6922aa2cfef3da544f604b873befad4ace",
         "result": {
           "revision": 13,
           "index": 27,
@@ -2091,7 +2283,7 @@
       "command": {
         "kind": "rename",
         "id": "rename-n2",
-        "fingerprint": "416895412b72b035b49f476d8ac73da19220456d35cb3627003f157b1355347b",
+        "fingerprint": "5cd2a01bd3ade54330955ee42146a019129bb3ed174c3a6deaa599fcf99a05b2",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -2100,7 +2292,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -2129,6 +2322,13 @@
           "node_id": "n2",
           "name": "  Build box  "
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -2158,7 +2358,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "416895412b72b035b49f476d8ac73da19220456d35cb3627003f157b1355347b",
+        "fingerprint": "5cd2a01bd3ade54330955ee42146a019129bb3ed174c3a6deaa599fcf99a05b2",
         "result": {
           "revision": 14,
           "index": 28,
@@ -2176,7 +2376,7 @@
       "command": {
         "kind": "policy",
         "id": "policy-off",
-        "fingerprint": "7b06c6c30dc352b39e7cc9ef89a51779253b6b510de44c5b2438297a5c434622",
+        "fingerprint": "b2b870bb741a9c0165f95e5481d2236bf0458f41abc16c47bae041053e557821",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -2185,7 +2385,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -2214,6 +2415,13 @@
           "node_id": "",
           "name": ""
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -2243,7 +2451,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "7b06c6c30dc352b39e7cc9ef89a51779253b6b510de44c5b2438297a5c434622",
+        "fingerprint": "b2b870bb741a9c0165f95e5481d2236bf0458f41abc16c47bae041053e557821",
         "result": {
           "revision": 15,
           "index": 29,
@@ -2261,7 +2469,7 @@
       "command": {
         "kind": "writer",
         "id": "writer-epoch",
-        "fingerprint": "6ad209fbc2ddf6e658ed0d484c8063e53194430cd3f899a52b0b5c515a578149",
+        "fingerprint": "82ef741ac7b932a49b11bd7558f56cc0add6743f9e79eb930057b28d3bd4b608",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -2270,7 +2478,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -2298,6 +2507,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -2328,7 +2544,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "6ad209fbc2ddf6e658ed0d484c8063e53194430cd3f899a52b0b5c515a578149",
+        "fingerprint": "82ef741ac7b932a49b11bd7558f56cc0add6743f9e79eb930057b28d3bd4b608",
         "result": {
           "revision": 15,
           "index": 30,
@@ -2348,7 +2564,7 @@
       "command": {
         "kind": "writer",
         "id": "writer-caller",
-        "fingerprint": "0c4eb5b4a3dc058d533ce84c063364744432d22b14bbb4d333e4af69b0051b0e",
+        "fingerprint": "81448736f3b6e31755cbd1215c9eb7a3078b015538e6c424e874f3a06e6c6aac",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -2357,7 +2573,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -2385,6 +2602,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -2415,7 +2639,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "0c4eb5b4a3dc058d533ce84c063364744432d22b14bbb4d333e4af69b0051b0e",
+        "fingerprint": "81448736f3b6e31755cbd1215c9eb7a3078b015538e6c424e874f3a06e6c6aac",
         "result": {
           "revision": 15,
           "index": 31,
@@ -2435,7 +2659,7 @@
       "command": {
         "kind": "writer",
         "id": "writer-generation",
-        "fingerprint": "a38c53ca2db623f8ad54bebeb840312a111a11911240c7e5368a9b109ee7ce96",
+        "fingerprint": "6526c10dcbe94a082f2c3aa2e8f801fe097ba087e64b8cb39e9f3fe1126da1ef",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -2444,7 +2668,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -2472,6 +2697,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -2502,7 +2734,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "a38c53ca2db623f8ad54bebeb840312a111a11911240c7e5368a9b109ee7ce96",
+        "fingerprint": "6526c10dcbe94a082f2c3aa2e8f801fe097ba087e64b8cb39e9f3fe1126da1ef",
         "result": {
           "revision": 15,
           "index": 32,
@@ -2522,7 +2754,7 @@
       "command": {
         "kind": "writer",
         "id": "writer",
-        "fingerprint": "2a927dcb93489853d3d38869b66e5a8278f0b81684fae216ea6e7aeabecb6f1a",
+        "fingerprint": "b0f896db156f2e720c0f516b38368fd6259bfb9bf4cca506567e8daf2150df6f",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -2531,7 +2763,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -2559,6 +2792,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -2589,7 +2829,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "2a927dcb93489853d3d38869b66e5a8278f0b81684fae216ea6e7aeabecb6f1a",
+        "fingerprint": "b0f896db156f2e720c0f516b38368fd6259bfb9bf4cca506567e8daf2150df6f",
         "result": {
           "revision": 15,
           "index": 33,
@@ -2607,7 +2847,7 @@
       "command": {
         "kind": "app",
         "id": "app-epoch",
-        "fingerprint": "6a2008ce22c13e1aeb6d210f82c9db1c4a7fa9f20867b3ff3ed423242d31e1d6",
+        "fingerprint": "deffecfc2b0a1a80874f93d91af7f13719018125ce7fd7fc31af85cf500bc589",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -2616,7 +2856,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -2644,6 +2885,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -2674,7 +2922,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "6a2008ce22c13e1aeb6d210f82c9db1c4a7fa9f20867b3ff3ed423242d31e1d6",
+        "fingerprint": "deffecfc2b0a1a80874f93d91af7f13719018125ce7fd7fc31af85cf500bc589",
         "result": {
           "revision": 15,
           "index": 34,
@@ -2694,7 +2942,7 @@
       "command": {
         "kind": "app",
         "id": "app-caller",
-        "fingerprint": "ff74735af4b9eb5e1a8a8cd78ae74a39f935854d96a5d6e98af4c5ecf04f2ded",
+        "fingerprint": "f29925e61b429774dde8c585642a7d42c6a995dc51cdd474508e948438523065",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -2703,7 +2951,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -2731,6 +2980,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -2761,7 +3017,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "ff74735af4b9eb5e1a8a8cd78ae74a39f935854d96a5d6e98af4c5ecf04f2ded",
+        "fingerprint": "f29925e61b429774dde8c585642a7d42c6a995dc51cdd474508e948438523065",
         "result": {
           "revision": 15,
           "index": 35,
@@ -2781,7 +3037,7 @@
       "command": {
         "kind": "app",
         "id": "app-writer",
-        "fingerprint": "34cf0ad244d900156f2675a22571a2560c2a4fdd752cb9e370912134ba75e768",
+        "fingerprint": "0fcca61dd3c07fcf2dcd900df33e833b7541659f0a48b308f39e893bc68ea442",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -2790,7 +3046,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -2818,6 +3075,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -2848,7 +3112,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "34cf0ad244d900156f2675a22571a2560c2a4fdd752cb9e370912134ba75e768",
+        "fingerprint": "0fcca61dd3c07fcf2dcd900df33e833b7541659f0a48b308f39e893bc68ea442",
         "result": {
           "revision": 15,
           "index": 36,
@@ -2868,7 +3132,7 @@
       "command": {
         "kind": "app",
         "id": "app-version",
-        "fingerprint": "19653df0a996f9c010288265ce6b1eb89da363482732c8e65dcd2c0d6ba1b4a6",
+        "fingerprint": "8c77f00b7aa5f879b6d58a050313edec13a138528cb69406792da0d169e3dd7b",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -2877,7 +3141,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -2905,6 +3170,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -2935,7 +3207,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "19653df0a996f9c010288265ce6b1eb89da363482732c8e65dcd2c0d6ba1b4a6",
+        "fingerprint": "8c77f00b7aa5f879b6d58a050313edec13a138528cb69406792da0d169e3dd7b",
         "result": {
           "revision": 15,
           "index": 37,
@@ -2955,7 +3227,7 @@
       "command": {
         "kind": "app",
         "id": "app-1",
-        "fingerprint": "2796c2d21cd561968b29b4611fa9ab7662273646df96b9b896646c63a02c9d6c",
+        "fingerprint": "c13ac6198e2addd543828cb22c751caf81e597214c872c88b731678de070ecdb",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -2964,7 +3236,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -2992,6 +3265,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -3022,7 +3302,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "2796c2d21cd561968b29b4611fa9ab7662273646df96b9b896646c63a02c9d6c",
+        "fingerprint": "c13ac6198e2addd543828cb22c751caf81e597214c872c88b731678de070ecdb",
         "result": {
           "revision": 15,
           "index": 38,
@@ -3041,7 +3321,7 @@
       "command": {
         "kind": "app",
         "id": "app-2",
-        "fingerprint": "c3a4219e6e8de7d94bb2e2e1e34d6a6399866f21d614dea8322214d469b8ae8b",
+        "fingerprint": "946caa36405ac6b7ab5233c5a9eb849b5a2dbd7f19505cb840fb1ba703b4fd42",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -3050,7 +3330,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -3078,6 +3359,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -3108,7 +3396,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "c3a4219e6e8de7d94bb2e2e1e34d6a6399866f21d614dea8322214d469b8ae8b",
+        "fingerprint": "946caa36405ac6b7ab5233c5a9eb849b5a2dbd7f19505cb840fb1ba703b4fd42",
         "result": {
           "revision": 15,
           "index": 39,
@@ -3127,7 +3415,7 @@
       "command": {
         "kind": "app",
         "id": "app-1",
-        "fingerprint": "2796c2d21cd561968b29b4611fa9ab7662273646df96b9b896646c63a02c9d6c",
+        "fingerprint": "c13ac6198e2addd543828cb22c751caf81e597214c872c88b731678de070ecdb",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -3136,7 +3424,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -3164,6 +3453,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -3194,7 +3490,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "2796c2d21cd561968b29b4611fa9ab7662273646df96b9b896646c63a02c9d6c",
+        "fingerprint": "c13ac6198e2addd543828cb22c751caf81e597214c872c88b731678de070ecdb",
         "result": {
           "revision": 15,
           "index": 38,
@@ -3222,7 +3518,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -3250,6 +3547,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -3300,7 +3604,7 @@
       "command": {
         "kind": "address_prepare",
         "id": "addr-stale",
-        "fingerprint": "015d8a56b0fee495524f1e9837fcbb1eea24d13fcc36f1426593fc56f3fbcf40",
+        "fingerprint": "e98a08a34143c0adfd35dc63f95e0213f5dccacc96ed2122569e2b91e22cc3b9",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -3309,7 +3613,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -3337,6 +3642,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -3367,7 +3679,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "015d8a56b0fee495524f1e9837fcbb1eea24d13fcc36f1426593fc56f3fbcf40",
+        "fingerprint": "e98a08a34143c0adfd35dc63f95e0213f5dccacc96ed2122569e2b91e22cc3b9",
         "result": {
           "revision": 15,
           "index": 42,
@@ -3387,7 +3699,7 @@
       "command": {
         "kind": "address_prepare",
         "id": "addr-stranger",
-        "fingerprint": "5083b105841c743e7d7dff4f8302582542887585d68caffaa07148d4cc2c391c",
+        "fingerprint": "bf375c1b15d8b1b82e209403c213c54e3140f405edf1b72f997a72195828ecda",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -3396,7 +3708,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -3424,6 +3737,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -3454,7 +3774,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "5083b105841c743e7d7dff4f8302582542887585d68caffaa07148d4cc2c391c",
+        "fingerprint": "bf375c1b15d8b1b82e209403c213c54e3140f405edf1b72f997a72195828ecda",
         "result": {
           "revision": 15,
           "index": 43,
@@ -3466,7 +3786,7 @@
           "writer_generation": 1
         },
         "code": "invalid",
-        "message": "address changes require an active voting member"
+        "message": "address changes require an active member"
       }
     },
     {
@@ -3474,7 +3794,7 @@
       "command": {
         "kind": "address_prepare",
         "id": "addr-taken",
-        "fingerprint": "df8cc7e6659b55ae507af2f23b1d633092c041ee2a83ff7da14a9734518d4581",
+        "fingerprint": "db67f45a75151cd827f9d5573919dbd6577e8be0f29c091fce2834388a8f7d05",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -3483,7 +3803,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -3511,6 +3832,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -3541,7 +3869,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "df8cc7e6659b55ae507af2f23b1d633092c041ee2a83ff7da14a9734518d4581",
+        "fingerprint": "db67f45a75151cd827f9d5573919dbd6577e8be0f29c091fce2834388a8f7d05",
         "result": {
           "revision": 15,
           "index": 44,
@@ -3561,7 +3889,7 @@
       "command": {
         "kind": "address_prepare",
         "id": "addr-1",
-        "fingerprint": "038d1462851b732c54b62d8de18bf708ce98bee7a439ea51c073d020d83c9f19",
+        "fingerprint": "79c3e4c048d0cc8e9b10d41d6958eaa591859b64054f7b1964dfee91bbdaccb6",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -3570,7 +3898,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -3598,6 +3927,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -3628,7 +3964,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "038d1462851b732c54b62d8de18bf708ce98bee7a439ea51c073d020d83c9f19",
+        "fingerprint": "79c3e4c048d0cc8e9b10d41d6958eaa591859b64054f7b1964dfee91bbdaccb6",
         "result": {
           "revision": 16,
           "index": 45,
@@ -3646,7 +3982,7 @@
       "command": {
         "kind": "address_prepare",
         "id": "addr-2",
-        "fingerprint": "9d948e36ad7ec78ff88d0500fc3ae72b6fbde03d406587448847b83668fa6a81",
+        "fingerprint": "a093b0b79ce671f848a1f121bde1b33787c0a16861779127ea1c53b0e4808ab8",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -3655,7 +3991,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -3683,6 +4020,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -3713,7 +4057,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "9d948e36ad7ec78ff88d0500fc3ae72b6fbde03d406587448847b83668fa6a81",
+        "fingerprint": "a093b0b79ce671f848a1f121bde1b33787c0a16861779127ea1c53b0e4808ab8",
         "result": {
           "revision": 16,
           "index": 46,
@@ -3733,7 +4077,7 @@
       "command": {
         "kind": "address",
         "id": "addr-1-early",
-        "fingerprint": "a60f510958012c41d99779bcdb11ec4ab8b881bb6e8d19872449baa33fd668bd",
+        "fingerprint": "c2e188929639c3c46187de776bb24e266d3a74b453dd226d5e4510815819ac50",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -3742,7 +4086,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -3770,6 +4115,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -3800,7 +4152,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "a60f510958012c41d99779bcdb11ec4ab8b881bb6e8d19872449baa33fd668bd",
+        "fingerprint": "c2e188929639c3c46187de776bb24e266d3a74b453dd226d5e4510815819ac50",
         "result": {
           "revision": 16,
           "index": 47,
@@ -3812,7 +4164,7 @@
           "writer_generation": 1
         },
         "code": "conflict",
-        "message": "voting configuration has not adopted the new address"
+        "message": "replication configuration has not adopted the new address"
       }
     },
     {
@@ -3820,7 +4172,7 @@
       "command": {
         "kind": "address",
         "id": "addr-1-differs",
-        "fingerprint": "5f786c7116417e056975f02e5f0e09b69f9365b4892b2dd0e1a85a4bd88187d0",
+        "fingerprint": "f754e39e611303ac8966a6f2c29b50746961d62109a1ed6b67ce47258f119f9f",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -3829,7 +4181,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -3857,6 +4210,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -3887,7 +4247,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "5f786c7116417e056975f02e5f0e09b69f9365b4892b2dd0e1a85a4bd88187d0",
+        "fingerprint": "f754e39e611303ac8966a6f2c29b50746961d62109a1ed6b67ce47258f119f9f",
         "result": {
           "revision": 16,
           "index": 48,
@@ -3907,7 +4267,7 @@
       "command": {
         "kind": "address",
         "id": "addr-1-commit",
-        "fingerprint": "a5d23cab0f3e611797b5ee49cb08c011d23b100b45a2120cd75ef5754d1365bf",
+        "fingerprint": "8ad084fe98f7f84f5e7568acd68f8adc8003c88d952a1d4d670cf4cd2cb85816",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -3916,7 +4276,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -3944,6 +4305,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -3974,7 +4342,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "a5d23cab0f3e611797b5ee49cb08c011d23b100b45a2120cd75ef5754d1365bf",
+        "fingerprint": "8ad084fe98f7f84f5e7568acd68f8adc8003c88d952a1d4d670cf4cd2cb85816",
         "result": {
           "revision": 18,
           "index": 50,
@@ -3992,7 +4360,7 @@
       "command": {
         "kind": "transfer",
         "id": "transfer-epoch",
-        "fingerprint": "f7d206a96eab4308189820fe3e48f6232816966ef96eaacf8d4e6cf4b9928b92",
+        "fingerprint": "f2d7c7e06ef502f2386a573f27c56443a39dca9c091dce7ca84b039d1d5e080b",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -4001,7 +4369,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "transfer-epoch",
@@ -4029,6 +4398,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -4061,7 +4437,7 @@
         "expected_configuration_index": 49
       },
       "receipt": {
-        "fingerprint": "f7d206a96eab4308189820fe3e48f6232816966ef96eaacf8d4e6cf4b9928b92",
+        "fingerprint": "f2d7c7e06ef502f2386a573f27c56443a39dca9c091dce7ca84b039d1d5e080b",
         "result": {
           "revision": 18,
           "index": 51,
@@ -4081,7 +4457,7 @@
       "command": {
         "kind": "transfer",
         "id": "transfer-version",
-        "fingerprint": "d730869eb92242bf3eb742484ebefe6347217b9433e42c91208a32deaf19d990",
+        "fingerprint": "b52c5587bafcc3c76a09af51ad366cac4369e59651ab69e9a49c53f9066eab3a",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -4090,7 +4466,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "transfer-version",
@@ -4118,6 +4495,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -4150,7 +4534,7 @@
         "expected_configuration_index": 49
       },
       "receipt": {
-        "fingerprint": "d730869eb92242bf3eb742484ebefe6347217b9433e42c91208a32deaf19d990",
+        "fingerprint": "b52c5587bafcc3c76a09af51ad366cac4369e59651ab69e9a49c53f9066eab3a",
         "result": {
           "revision": 18,
           "index": 52,
@@ -4170,7 +4554,7 @@
       "command": {
         "kind": "transfer",
         "id": "transfer-stranger",
-        "fingerprint": "38d19eb8d04a642dd7f617b91bede9115214266ebded6a1c06aa0dfd2f0d9b68",
+        "fingerprint": "dabb144873dfa19bd1cd2dc041f8340f67ff74b15cf39d2dd3cf0f1283dd2128",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -4179,7 +4563,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "transfer-stranger",
@@ -4207,6 +4592,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -4239,7 +4631,7 @@
         "expected_configuration_index": 49
       },
       "receipt": {
-        "fingerprint": "38d19eb8d04a642dd7f617b91bede9115214266ebded6a1c06aa0dfd2f0d9b68",
+        "fingerprint": "dabb144873dfa19bd1cd2dc041f8340f67ff74b15cf39d2dd3cf0f1283dd2128",
         "result": {
           "revision": 18,
           "index": 53,
@@ -4259,7 +4651,7 @@
       "command": {
         "kind": "transfer",
         "id": "transfer-automatic",
-        "fingerprint": "c59a50414f3c234e6e6651578401145fa13d11dc936e763d8be9df503cc0574b",
+        "fingerprint": "20e1437908ea2c5632217bf7c242db07f66b304ed42a666ee8787da2da17ffc5",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -4268,7 +4660,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "transfer-automatic",
@@ -4296,6 +4689,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -4329,7 +4729,7 @@
         "expected_configuration_index": 49
       },
       "receipt": {
-        "fingerprint": "c59a50414f3c234e6e6651578401145fa13d11dc936e763d8be9df503cc0574b",
+        "fingerprint": "20e1437908ea2c5632217bf7c242db07f66b304ed42a666ee8787da2da17ffc5",
         "result": {
           "revision": 18,
           "index": 54,
@@ -4349,7 +4749,7 @@
       "command": {
         "kind": "transfer",
         "id": "transfer-self",
-        "fingerprint": "3e57487a55d940ff9d188be8e408b4c78e2b6f1ae817ebd14f8cd34434a56bd8",
+        "fingerprint": "486e78c87dafdf23aed2a9cc4ad1d8c0bbfb998f20511c56bc4defd70162390c",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -4358,7 +4758,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "transfer-self",
@@ -4387,6 +4788,13 @@
           "node_id": "",
           "name": ""
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -4418,7 +4826,7 @@
         "expected_configuration_index": 49
       },
       "receipt": {
-        "fingerprint": "3e57487a55d940ff9d188be8e408b4c78e2b6f1ae817ebd14f8cd34434a56bd8",
+        "fingerprint": "486e78c87dafdf23aed2a9cc4ad1d8c0bbfb998f20511c56bc4defd70162390c",
         "result": {
           "revision": 18,
           "index": 55,
@@ -4438,7 +4846,7 @@
       "command": {
         "kind": "transfer",
         "id": "transfer-n2",
-        "fingerprint": "d71cc51d92c7e4fc4ad58a3251b23ecc4185c15274d48745911b8773142f7dcb",
+        "fingerprint": "d0708736413ed82c7d951b5face0ed0cb2f36ce655f0154186bb6c3a5e5041db",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -4447,7 +4855,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "transfer-n2",
@@ -4476,6 +4885,13 @@
           "node_id": "",
           "name": ""
         },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
+        },
         "remove": {
           "id": "",
           "actor": "",
@@ -4507,7 +4923,7 @@
         "expected_configuration_index": 49
       },
       "receipt": {
-        "fingerprint": "d71cc51d92c7e4fc4ad58a3251b23ecc4185c15274d48745911b8773142f7dcb",
+        "fingerprint": "d0708736413ed82c7d951b5face0ed0cb2f36ce655f0154186bb6c3a5e5041db",
         "result": {
           "revision": 19,
           "index": 56,
@@ -4525,7 +4941,7 @@
       "command": {
         "kind": "writer",
         "id": "writer-old-coordinator",
-        "fingerprint": "079257c7acfeb40e3ef6965f2393bc42d0ce6be02e4d7066b78f84e91f3cd8be",
+        "fingerprint": "c653e144751bf4b79e8d182f111409943329dda04637c49306030a7bcb74f3b4",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -4534,7 +4950,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -4562,6 +4979,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -4592,7 +5016,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "079257c7acfeb40e3ef6965f2393bc42d0ce6be02e4d7066b78f84e91f3cd8be",
+        "fingerprint": "c653e144751bf4b79e8d182f111409943329dda04637c49306030a7bcb74f3b4",
         "result": {
           "revision": 19,
           "index": 57,
@@ -4612,7 +5036,7 @@
       "command": {
         "kind": "remove_prepare",
         "id": "remove-prepare-coordinator",
-        "fingerprint": "45b1e9c0a4b8726c42b8b8aff69c4c89d2aba8428f307ecc024dd72e5e87f7ca",
+        "fingerprint": "7b116d1727b01648de2ed4f5d61719e9e81dcd066eb445463a0d4054af57096d",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -4621,7 +5045,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -4649,6 +5074,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "remove-prepare-coordinator",
@@ -4679,7 +5111,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "45b1e9c0a4b8726c42b8b8aff69c4c89d2aba8428f307ecc024dd72e5e87f7ca",
+        "fingerprint": "7b116d1727b01648de2ed4f5d61719e9e81dcd066eb445463a0d4054af57096d",
         "result": {
           "revision": 19,
           "index": 58,
@@ -4699,7 +5131,7 @@
       "command": {
         "kind": "remove_prepare",
         "id": "remove-prepare-stranger",
-        "fingerprint": "a45c7ea14c183797e3016ffe14fb255c801b8b4318391c762a518a74468fa1d3",
+        "fingerprint": "1adb914f87de9a0a91d9e915915681c4d7d40e9562b0301e9f9359685d58cb81",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -4708,7 +5140,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -4736,6 +5169,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "remove-prepare-stranger",
@@ -4766,7 +5206,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "a45c7ea14c183797e3016ffe14fb255c801b8b4318391c762a518a74468fa1d3",
+        "fingerprint": "1adb914f87de9a0a91d9e915915681c4d7d40e9562b0301e9f9359685d58cb81",
         "result": {
           "revision": 19,
           "index": 59,
@@ -4786,7 +5226,7 @@
       "command": {
         "kind": "remove_prepare",
         "id": "remove-prepare-n3",
-        "fingerprint": "47108bb3ad0fd737d9ca2c6219f954bed5c158b56eb8538148a800046938d21d",
+        "fingerprint": "122fcf1d27a61be780acbec6c5993d085da31970a0a530c17a6dfedc1fad71d4",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -4795,7 +5235,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -4823,6 +5264,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "remove-prepare-n3",
@@ -4853,7 +5301,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "47108bb3ad0fd737d9ca2c6219f954bed5c158b56eb8538148a800046938d21d",
+        "fingerprint": "122fcf1d27a61be780acbec6c5993d085da31970a0a530c17a6dfedc1fad71d4",
         "result": {
           "revision": 20,
           "index": 60,
@@ -4871,7 +5319,7 @@
       "command": {
         "kind": "join_prepare",
         "id": "prepare-n3-removing",
-        "fingerprint": "98d9317cb74d5a54ce4552a1703ac1e028f0c11677794aa5d47c576ea5f242d6",
+        "fingerprint": "c2996a684b14d03092abecd9723d778c8e86d442228d310e3a67a29a33c8d412",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -4882,7 +5330,8 @@
           "name": "three",
           "auto_eligible": false,
           "failure_domain": "rack-3",
-          "storage_level": "sealed"
+          "storage_level": "sealed",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -4910,6 +5359,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -4940,7 +5396,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "98d9317cb74d5a54ce4552a1703ac1e028f0c11677794aa5d47c576ea5f242d6",
+        "fingerprint": "c2996a684b14d03092abecd9723d778c8e86d442228d310e3a67a29a33c8d412",
         "result": {
           "revision": 20,
           "index": 61,
@@ -4960,7 +5416,7 @@
       "command": {
         "kind": "remove",
         "id": "remove-n3-voter",
-        "fingerprint": "1727fec369ea61a964af29cd5fdfaa0a8b08752a4ecafacaa2082636c8ee0263",
+        "fingerprint": "e9e556e10dcacf30461e517e7f2793ead48e3be6a80ca9a724ab6b7e4f6628b5",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -4969,7 +5425,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -4997,6 +5454,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "remove-n3-voter",
@@ -5027,7 +5491,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "1727fec369ea61a964af29cd5fdfaa0a8b08752a4ecafacaa2082636c8ee0263",
+        "fingerprint": "e9e556e10dcacf30461e517e7f2793ead48e3be6a80ca9a724ab6b7e4f6628b5",
         "result": {
           "revision": 20,
           "index": 62,
@@ -5039,7 +5503,7 @@
           "writer_generation": 1
         },
         "code": "conflict",
-        "message": "member is still in the voting configuration"
+        "message": "member is still in the replication configuration"
       }
     },
     {
@@ -5047,7 +5511,7 @@
       "command": {
         "kind": "remove",
         "id": "remove-n3",
-        "fingerprint": "9f7c80c5e96e01a061ca5e6f425a6f68c3cf70e10fadc57a69760ae7e61622ff",
+        "fingerprint": "656912d328f02f8119805acb1a66e39251c044b9f3ea57292fac39bcb876110b",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -5056,7 +5520,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -5084,6 +5549,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "remove-n3",
@@ -5114,7 +5586,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "9f7c80c5e96e01a061ca5e6f425a6f68c3cf70e10fadc57a69760ae7e61622ff",
+        "fingerprint": "656912d328f02f8119805acb1a66e39251c044b9f3ea57292fac39bcb876110b",
         "result": {
           "revision": 22,
           "index": 64,
@@ -5132,7 +5604,7 @@
       "command": {
         "kind": "remove",
         "id": "remove-coordinator",
-        "fingerprint": "e710f56497c29e0a19dc5992a7e579b4ed14e92c768e4f606c7fe18c7e319dd0",
+        "fingerprint": "079234bd0c2bf5689a4efbd456ff7fde49224879c41007b89577720267ab266d",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -5141,7 +5613,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -5169,6 +5642,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "remove-coordinator",
@@ -5199,7 +5679,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "e710f56497c29e0a19dc5992a7e579b4ed14e92c768e4f606c7fe18c7e319dd0",
+        "fingerprint": "079234bd0c2bf5689a4efbd456ff7fde49224879c41007b89577720267ab266d",
         "result": {
           "revision": 22,
           "index": 65,
@@ -5211,7 +5691,7 @@
           "writer_generation": 1
         },
         "code": "conflict",
-        "message": "member is still in the voting configuration"
+        "message": "member is still in the replication configuration"
       }
     },
     {
@@ -5219,7 +5699,7 @@
       "command": {
         "kind": "surprise",
         "id": "unknown",
-        "fingerprint": "4e48f14910882c5e62c512358a05887dd3d9a9aa286ee72ffbf960d6c4bc4c4f",
+        "fingerprint": "00bee94e57decd5bbab1772b0de3d36c2f4cfba945b8eff566d7703f2e8bcd77",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -5228,7 +5708,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -5256,6 +5737,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -5286,7 +5774,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "4e48f14910882c5e62c512358a05887dd3d9a9aa286ee72ffbf960d6c4bc4c4f",
+        "fingerprint": "00bee94e57decd5bbab1772b0de3d36c2f4cfba945b8eff566d7703f2e8bcd77",
         "result": {
           "revision": 22,
           "index": 66,
@@ -5306,7 +5794,7 @@
       "command": {
         "kind": "app",
         "id": "app-3",
-        "fingerprint": "b1e47b641faa73202ef3a352d5505e682085ab381e9b9d8dd94df34d89acc642",
+        "fingerprint": "c75fa78ba52b294a93f55968dd7bd64d55c432a75c6e773d944c71d8311c1ea4",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -5315,7 +5803,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -5343,6 +5832,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -5373,7 +5869,7 @@
         }
       },
       "receipt": {
-        "fingerprint": "b1e47b641faa73202ef3a352d5505e682085ab381e9b9d8dd94df34d89acc642",
+        "fingerprint": "c75fa78ba52b294a93f55968dd7bd64d55c432a75c6e773d944c71d8311c1ea4",
         "result": {
           "revision": 22,
           "index": 67,
@@ -5393,7 +5889,7 @@
       "command": {
         "kind": "app",
         "id": "app-4",
-        "fingerprint": "f673474b54ac2548305f84505cd35067d3b2814ad60b58908f4de712f004ef50",
+        "fingerprint": "a88715e270addf1b6a83761d9c39f02382facca11440382b34e65709d1b05126",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -5402,7 +5898,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -5430,6 +5927,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -5480,7 +5984,7 @@
       "command": {
         "kind": "policy",
         "id": "policy-after-failure",
-        "fingerprint": "78b6559c5254cbb342738c7f168b6688459cd8ab80ed7b44732d626424756e17",
+        "fingerprint": "37a5282e149f128a563e345d9b662b49cdae55cded6ac60c27d5812fb20becbc",
         "actor": "test",
         "time": "2026-09-08T12:00:00Z",
         "cluster_id": "cluster",
@@ -5489,7 +5993,8 @@
           "address": "",
           "auto_eligible": false,
           "failure_domain": "",
-          "storage_level": ""
+          "storage_level": "",
+          "voting": false
         },
         "transfer": {
           "id": "",
@@ -5517,6 +6022,13 @@
           "expected_revision": 0,
           "node_id": "",
           "name": ""
+        },
+        "voting": {
+          "id": "",
+          "actor": "",
+          "expected_revision": 0,
+          "node_id": "",
+          "voting": false
         },
         "remove": {
           "id": "",
@@ -5576,7 +6088,8 @@
         "name": "one",
         "auto_eligible": false,
         "failure_domain": "rack-1",
-        "storage_level": "restricted"
+        "storage_level": "restricted",
+        "voting": false
       },
       "n2": {
         "node_id": "n2",
@@ -5585,8 +6098,13 @@
         "name": "Build box",
         "auto_eligible": true,
         "failure_domain": "rack-2",
-        "storage_level": "restricted"
+        "storage_level": "restricted",
+        "voting": false
       }
+    },
+    "replicas": {
+      "n1": "10.0.0.1:1",
+      "n2": "10.0.0.22:1"
     },
     "voters": {
       "n1": "10.0.0.1:1",
