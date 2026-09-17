@@ -217,7 +217,7 @@ const checks = {
         assert.equal(await f.box.inputValue(), "", "New conversation title must not populate the composer");
         assert.equal(f.calls.filter((c) => c.path === "/console/send").length, 0, "Automatic binding must not send a chat command");
         await f.box.fill("First work");
-        await f.box.press("Shift+Enter");
+        await f.box.press("Enter");
         await eventually(() => f.queued().length === 1, "First work must be accepted after binding");
         assert.equal(f.queued()[0].projectAtEnqueue, "scratch");
         const id = f.queued()[0].conversation;
@@ -247,12 +247,12 @@ const checks = {
         const release = f.hold("binding");
         await f.page.getByRole("button", { name: "在 scratch 下新会话", exact: true }).click();
         await eventually(() => f.calls.some((c) => c.path.endsWith("/initialize") && c.project === "scratch"), "Project binding must begin");
-        if (await f.box.isEnabled()) { await f.box.fill("First work during binding"); await f.box.press("Shift+Enter"); }
+        if (await f.box.isEnabled()) { await f.box.fill("First work during binding"); await f.box.press("Enter"); }
         await delay(150);
         assert.equal(f.queued().length, 0, "Work must not be submitted before project binding returns");
         release();
         await eventually(() => f.box.isEnabled(), "Composer must recover when binding completes");
-        if (!f.queued().length) { await f.box.fill("First work after binding"); await f.box.press("Shift+Enter"); }
+        if (!f.queued().length) { await f.box.fill("First work after binding"); await f.box.press("Enter"); }
         await eventually(() => f.queued().length === 1, "Work should be accepted after binding");
         assert.equal(f.queued()[0].projectAtEnqueue, "scratch");
     },
@@ -267,7 +267,7 @@ const checks = {
         await f.page.reload();
         await f.box.waitFor();
         await f.page.locator("main header").getByText("Conversation A", { exact: true }).waitFor();
-        await f.box.press("Shift+Enter");
+        await f.box.press("Enter");
         await eventually(() => f.queued().length === 1, "Original draft remains usable after failed creation and reload");
         assert.equal(f.queued()[0].conversation, A, "Reload must not activate an unbound new conversation");
         assert.equal(f.queued()[0].projectAtEnqueue, "scratch");
@@ -295,7 +295,7 @@ const checks = {
     async "send-continuation"(f) {
         const release = f.hold("enqueue");
         await f.box.fill("First instruction");
-        await f.box.press("Shift+Enter");
+        await f.box.press("Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.box.pressSequentially("Next draft");
         assert.equal(await f.box.inputValue(), "Next draft", "Typing during a slow enqueue must begin a fresh draft");
@@ -308,7 +308,7 @@ const checks = {
         const release = f.hold("enqueue");
         f.failEnqueue = true;
         await f.box.fill("Unsent first instruction");
-        await f.box.press("Shift+Enter");
+        await f.box.press("Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.box.pressSequentially("New draft typed during submission");
         release();
@@ -319,7 +319,7 @@ const checks = {
     async "send-switch"(f) {
         const release = f.hold("enqueue");
         await f.box.fill("A instruction");
-        await f.box.press("Shift+Enter");
+        await f.box.press("Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.pick("B");
         await f.box.fill("B unsent draft");
@@ -333,7 +333,7 @@ const checks = {
         const release = f.hold("enqueue");
         f.failEnqueue = true;
         await f.box.fill("Original instruction");
-        await f.box.press("Shift+Enter");
+        await f.box.press("Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.page.locator('a[href="#/projects"]').click();
         await f.page.getByRole("button", { name: "添加项目", exact: true }).waitFor();
@@ -351,7 +351,7 @@ const checks = {
     async "send-reload-pending"(f) {
         const release = f.hold("enqueue");
         await f.box.fill("Instruction before network delivery");
-        await f.box.press("Shift+Enter");
+        await f.box.press("Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.box.fill("Newer unsent draft");
         await f.page.reload();
@@ -360,7 +360,7 @@ const checks = {
         assert.equal(await f.page.getByText("Instruction before network delivery", { exact: true }).count(), 1, "Recovery must show the original unacknowledged instruction");
         assert.equal(await f.box.inputValue(), "Newer unsent draft", "Reload must keep new typing separate from an uncertain submission");
         assert.equal(f.queued().length, 1, "Reload must not resend an instruction that may already have been accepted");
-        await f.box.press("Shift+Enter");
+        await f.box.press("Enter");
         await delay(150);
         assert.equal(f.queued().length, 1, "Enter must not bypass unresolved submission recovery");
         assert.equal(await f.box.inputValue(), "Newer unsent draft");
@@ -375,7 +375,7 @@ const checks = {
     async "recovery-storage-failure"(f) {
         f.hold("enqueue");
         await f.box.fill("Original uncertain instruction");
-        await f.box.press("Shift+Enter");
+        await f.box.press("Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.box.fill("Newer persisted draft");
         await f.page.reload();
@@ -397,7 +397,7 @@ const checks = {
         f.failEnqueue = true;
         await f.page.getByRole("button", { name: "引用", exact: true }).click();
         await f.box.fill("Question about this quote");
-        await f.box.press("Shift+Enter");
+        await f.box.press("Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         assert.deepEqual(f.queued()[0].quotes, [{ conversation: A, reply_id: `${A}-0` }]);
         await f.page.locator('a[href="#/projects"]').click();
@@ -412,9 +412,9 @@ const checks = {
     async "repeat-enter"(f) {
         f.hold("enqueue");
         await f.box.fill("Only once");
-        await f.box.press("Shift+Enter");
-        await f.box.press("Shift+Enter");
-        await f.box.press("Shift+Enter");
+        await f.box.press("Enter");
+        await f.box.press("Enter");
+        await f.box.press("Enter");
         await delay(150);
         assert.equal(f.queued().length, 1, "Repeated Enter must enqueue the instruction only once");
     },
@@ -434,7 +434,7 @@ const checks = {
         await f.page.getByRole("button", { name: "停止", exact: true }).click();
         await f.box.fill("New instruction during cancellation");
         assert.equal(await f.page.locator('button[aria-label="排队"]').isDisabled(), true, "Send must be disabled while cancellation is pending");
-        await f.box.press("Shift+Enter");
+        await f.box.press("Enter");
         await delay(150);
         assert.equal(f.queued().length, 0, "Enter must obey the same pending-cancel guard as the send button");
         assert.equal(await f.box.inputValue(), "New instruction during cancellation", "A blocked Enter must preserve the draft");
@@ -1580,15 +1580,23 @@ checks["readmodel-unknown"] = async (f) => {
 };
 
 checks["composer-keys"] = async (f) => {
-    // Enter is the key an input method confirms a candidate with, and a
-    // newline; only Shift+Enter sends. What was typed renders as Markdown.
+    // Enter sends and Shift+Enter is a newline, the way every chat box
+    // people already use behaves. Enter is also the key an input method
+    // confirms a candidate with, and that keystroke must never send.
     await f.box.fill("first line");
-    await f.box.press("Enter");
-    assert.equal(f.queued().length, 0, "Enter must not send");
-    assert.equal(await f.box.inputValue(), "first line\n", "Enter inserts a newline");
-    await f.box.type("**second** line");
     await f.box.press("Shift+Enter");
-    await eventually(() => f.queued().length === 1, "Shift+Enter sends");
+    assert.equal(f.queued().length, 0, "Shift+Enter must not send");
+    assert.equal(await f.box.inputValue(), "first line\n", "Shift+Enter inserts a newline");
+    await f.box.type("**second** line");
+    await f.box.evaluate((box) => box.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
+    await f.box.press("Enter");
+    assert.equal(f.queued().length, 0, "Enter must not send while an input method is composing");
+    await f.box.evaluate((box) => box.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })));
+    await f.box.press("Enter");
+    assert.equal(f.queued().length, 0, "The Enter that lands with compositionend must not send either");
+    await f.page.clock.runFor(50);
+    await f.box.press("Enter");
+    await eventually(() => f.queued().length === 1, "Enter sends once the composition has settled");
     assert.equal(f.queued()[0].input, "first line\n**second** line", "The whole multi-line draft is sent");
     f.replies[A].push({ id: "sent-md", kind: "sent", conversation: A, at, input: "first line\n**second** line", text: "" });
     await f.emit({ kind: "console.sent", exchange_id: "md-turn", reply_id: "sent-md", text: "first line\n**second** line" });
