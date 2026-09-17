@@ -92,13 +92,8 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 		if next.EndedAt.IsZero() {
 			next.EndedAt = s.now().UTC()
 		}
-		u := st.Progress.Usage
-		if u.Reported || u.InputTokens != 0 || u.OutputTokens != 0 || u.CacheReadTokens != 0 || u.CacheWriteTokens != 0 {
-			model := st.Progress.Settings.Model
-			if model == "" {
-				model = st.Settings.Model
-			}
-			next.Usage = &Usage{Model: model, Input: stoppedTokenCount(u.InputTokens), Output: stoppedTokenCount(u.OutputTokens), CachedRead: stoppedTokenCount(u.CacheReadTokens), CachedWrite: stoppedTokenCount(u.CacheWriteTokens), Context: stoppedTokenCount(u.ContextTokens), Reported: u.Reported}
+		if spend := stoppedUsage(st); spend != nil {
+			next.Usage = spend
 		}
 		return tx.SetData(op, next)
 	})
@@ -110,11 +105,37 @@ func (s *Service) ConfirmTaskStopped(ctx context.Context, id, actor string, proo
 
 func stoppedTokenCount(value uint64) int64 { return int64(min(value, uint64(1<<63-1))) }
 
+// stoppedUsage is what the node reported the stopped execution had spent.
+func stoppedUsage(st nodewire.SessionState) *Usage {
+	u := st.Progress.Usage
+	if !u.Reported && u.InputTokens == 0 && u.OutputTokens == 0 && u.CacheReadTokens == 0 && u.CacheWriteTokens == 0 {
+		return nil
+	}
+	model := st.Progress.Settings.Model
+	if model == "" {
+		model = st.Settings.Model
+	}
+	return &Usage{Model: model, Input: stoppedTokenCount(u.InputTokens), Output: stoppedTokenCount(u.OutputTokens), CachedRead: stoppedTokenCount(u.CacheReadTokens), CachedWrite: stoppedTokenCount(u.CacheWriteTokens), Context: stoppedTokenCount(u.ContextTokens), Reported: u.Reported}
+}
+
 func taskStopAlreadySettled(r Record) bool {
 	return r.State.Terminal() && !r.Unsettled && r.SessionSettled != nil && *r.SessionSettled
 }
 
 func stoppedTaskTx(tx *ledger.Tx, r Record) (task.Task, error) {
+	tracked, err := nativeTaskTx(tx, r)
+	if err != nil {
+		return task.Task{}, err
+	}
+	err = task.CheckExecutionTx(tx, r.Execution)
+	if !errors.Is(err, task.ErrExecutionStopped) {
+		return task.Task{}, errors.Join(errors.New("original task execution has not been revoked"), err)
+	}
+	return tracked, nil
+}
+
+// nativeTaskTx is the task behind an original node-owned execution.
+func nativeTaskTx(tx *ledger.Tx, r Record) (task.Task, error) {
 	if r.State == Superseded || r.Execution == nil || r.Execution.TaskID != r.TaskID || (!strings.HasPrefix(r.Session, "ns_") && !PendingSessionOpen(r)) {
 		return task.Task{}, errors.New("task stop requires an original node-owned execution")
 	}
@@ -131,10 +152,6 @@ func stoppedTaskTx(tx *ledger.Tx, r Record) (task.Task, error) {
 	tracked, ok := data.Tasks[r.TaskID]
 	if !ok {
 		return task.Task{}, errors.New("task stop source is missing")
-	}
-	err = task.CheckExecutionTx(tx, r.Execution)
-	if !errors.Is(err, task.ErrExecutionStopped) {
-		return task.Task{}, errors.Join(errors.New("original task execution has not been revoked"), err)
 	}
 	return tracked, nil
 }

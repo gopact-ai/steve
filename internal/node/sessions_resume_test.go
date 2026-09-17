@@ -2,6 +2,7 @@ package node
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -127,7 +128,7 @@ func TestSettledNativeContextResumesOnceAndPreservesOriginalReceipts(t *testing.
 }
 
 func TestNativeResumeRejectsUncertainSourcesAndChangedAuthorityBeforeStart(t *testing.T) {
-	for _, mode := range []string{"process", "receipt", "cancelled-input", "question", "unknown-question", "missing-answer", "native-id", "project", "conversation", "workdir", "policy", "mcp-binding", "coordinator", "start", "cancelled-open"} {
+	for _, mode := range []string{"process", "receipt", "uncertain-input", "unknown-question", "missing-answer", "native-id", "project", "conversation", "workdir", "policy", "mcp-binding", "coordinator", "start", "cancelled-open"} {
 		t.Run(mode, func(t *testing.T) {
 			cfg, req, record := resumedFixture(t, "/must-not-start")
 			switch mode {
@@ -137,12 +138,10 @@ func TestNativeResumeRejectsUncertainSourcesAndChangedAuthorityBeforeStart(t *te
 				c := record.Commands["old-input"]
 				c.Settled = false
 				record.Commands["old-input"] = c
-			case "cancelled-input":
+			case "uncertain-input":
 				c := record.Commands["old-input"]
-				c.State = nodewire.SessionCommandCancelled
+				c.State = nodewire.SessionCommandUncertain
 				record.Commands["old-input"] = c
-			case "question":
-				record.State.Questions = []nodewire.SessionQuestion{{State: "interrupted"}}
 			case "unknown-question":
 				record.State.Questions = []nodewire.SessionQuestion{{State: "unknown"}}
 			case "missing-answer":
@@ -190,6 +189,58 @@ func TestNativeResumeRejectsUncertainSourcesAndChangedAuthorityBeforeStart(t *te
 				t.Fatal("refusal consumed original context")
 			}
 		})
+	}
+}
+
+// An interrupted turn is the ordinary case after a service restart: the
+// agent answered the prompt with a cancellation and its permission request
+// died with the process. Both are settled outcomes, so the conversation
+// must keep its native context instead of being stranded on this node.
+func TestCancelledTurnStillResumesItsNativeContext(t *testing.T) {
+	cfg, req, old := resumedFixture(t, buildMockAgent(t))
+	cancelled := old.Commands["old-input"]
+	cancelled.State, cancelled.Error = nodewire.SessionCommandCancelled, "agent canceled the turn: context canceled"
+	old.Commands["old-input"] = cancelled
+	old.State.Questions = []nodewire.SessionQuestion{{ID: "q1", CommandID: "old-input", State: nodewire.SessionQuestionInterrupted}}
+	saveResumeFixture(t, cfg, old)
+	s := NewServer(cfg)
+	if err := s.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.sessions.Close()
+	state, err := s.sessions.Do(t.Context(), "cluster-1", req)
+	if err != nil {
+		t.Fatalf("a settled cancellation blocked the resume: %v", err)
+	}
+	if state.ID == old.State.ID || state.Binding != req.Binding || state.InputAccepted != 0 {
+		t.Fatalf("resume did not reserve a fresh execution: %+v", state)
+	}
+	current, _, err := s.sessions.readRecord(state.ID)
+	if err != nil || current.UpstreamID != old.UpstreamID || current.ResumedFrom != old.State.ID {
+		t.Fatalf("resume started a different native conversation: %+v %v", current, err)
+	}
+}
+
+// A refusal the node decides before reserving anything says so, so the
+// coordinator can retry instead of quarantining a writer that never ran.
+func TestOpenRefusedBeforeReservingSaysNothingStarted(t *testing.T) {
+	cfg, req, record := resumedFixture(t, "/must-not-start")
+	c := record.Commands["old-input"]
+	c.State = nodewire.SessionCommandUncertain
+	record.Commands["old-input"] = c
+	saveResumeFixture(t, cfg, record)
+	s := NewServer(cfg)
+	if err := s.startSessions(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	defer s.sessions.Close()
+	_, err := s.sessions.Do(t.Context(), "cluster-1", req)
+	var refused *nodewire.SessionOpenNotStarted
+	if !errors.As(err, &refused) {
+		t.Fatalf("an unreserved refusal did not report that nothing started: %v", err)
+	}
+	if len(s.sessions.sessions) != 0 {
+		t.Fatal("refusal reserved a process")
 	}
 }
 

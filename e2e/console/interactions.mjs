@@ -1437,6 +1437,8 @@ checks["code-source-feedback"] = async (f) => {
     await workspace.getByRole("button", { name: "全部文件", exact: true }).click();
     const tree = workspace.getByRole("navigation", { name: "项目文件" });
     await tree.getByRole("button", { name: "README.md", exact: true }).click();
+    // Markdown opens rendered; this check is about reading it as source.
+    await workspace.getByRole("button", { name: "源码", exact: true }).click();
     await workspace.getByText("文件较大，仅取回部分内容。当前浏览与复制均不包含未取回的部分。", { exact: true }).waitFor();
     assert.equal(await workspace.locator(".source-text script,.source-text img").count(), 0, "Untrusted source must never become executable markup");
     assert.equal(await f.page.evaluate(() => window.untrusted), undefined);

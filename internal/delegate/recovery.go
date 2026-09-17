@@ -17,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/execution"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/lifecycle"
+	"github.com/gopact-ai/steve/internal/nodewire"
 	"github.com/gopact-ai/steve/internal/permission"
 	"github.com/gopact-ai/steve/internal/task"
 	"github.com/gopact-ai/steve/internal/text"
@@ -182,7 +183,7 @@ func (s *Service) recoverChild(ctx context.Context, parent, tracked task.Task, r
 	if s.deliverRecovered(ctx, parent, tracked, record, entry, pending) {
 		return
 	}
-	runner, ask, askUser, ok := s.attachChild(ctx, parent, tracked, &record, scope, binding, pending)
+	runner, ask, askUser, ok := s.attachChild(ctx, parent, tracked, &record, entry, scope, binding, pending)
 	if !ok {
 		return
 	}
@@ -251,7 +252,7 @@ func (s *Service) deliverRecovered(ctx context.Context, parent, tracked task.Tas
 // checked against the record in one ledger transaction, the child's tool
 // authorization is bound again, and its pending questions must have
 // someone to answer them before the observer takes over.
-func (s *Service) attachChild(ctx context.Context, parent, tracked task.Task, record *attempt.Record, scope *execution.Scope, binding QuestionBinding, pending recoveryPending) (harness.ResumableRunner, permission.AskFunc, acphost.AskUserFunc, bool) {
+func (s *Service) attachChild(ctx context.Context, parent, tracked task.Task, record *attempt.Record, entry *child, scope *execution.Scope, binding QuestionBinding, pending recoveryPending) (harness.ResumableRunner, permission.AskFunc, acphost.AskUserFunc, bool) {
 	manager, ok := s.sessions.(retainedRuntime)
 	if !ok {
 		pending("runtime", "检查保留会话的接续接口", "当前服务无法接回原执行。", "节点会话接续接口不可用。", "建议更新并恢复原节点连接后重试。", nil)
@@ -274,6 +275,9 @@ func (s *Service) attachChild(ctx context.Context, parent, tracked task.Task, re
 	}
 	recovered, err := s.attempts.RecoverRetained(ctx, record.ID, attempt.RetainedEvidence{ObservedAt: time.Now(), Session: state})
 	if err != nil {
+		if s.endStoppedChild(ctx, parent, tracked, *record, entry, state, pending) {
+			return nil, nil, nil, false
+		}
 		pending("reconcile", "核对原命令回执、任务授权和同一持有者的写入租约", "原子任务暂时不能安全接续。", "节点证据不匹配、原授权已改变，或原生执行状态仍不确定。", "建议核对原节点和执行记录，明确后再继续。", err)
 		return nil, nil, nil, false
 	}
@@ -291,6 +295,26 @@ func (s *Service) attachChild(ctx context.Context, parent, tracked task.Task, re
 		}
 	}
 	return runner, ask, askUser, true
+}
+
+// endStoppedChild closes a child whose node reports that the process behind
+// it is gone. Its command never said how it finished, so there is nothing
+// left to wait for and nothing to deliver as a result: a stop receipt settles
+// that physical fact, and the child ends like any other settled failure, which
+// is what lets its parent run the work again. A node that only lost its
+// connection says nothing about the process and is left alone.
+func (s *Service) endStoppedChild(ctx context.Context, parent, tracked task.Task, record attempt.Record, entry *child, state nodewire.SessionState, pending recoveryPending) bool {
+	command := state.Command
+	if !state.ProcessStopped || command == nil || command.ID != attempt.InputCommandID(record) || !command.ProcessStopped || command.Settled {
+		return false
+	}
+	stopped, err := s.attempts.ConfirmProcessStopped(ctx, record.ID, "delegate-recovery", attempt.RetainedEvidence{ObservedAt: time.Now(), Session: state})
+	if err != nil {
+		slog.Error(fmt.Sprintf("delegate: stopped child not settled task=%s attempt=%s error=%v", tracked.ID, record.ID, err), "parent", parent.ID, "node", record.Node)
+		return false
+	}
+	slog.Warn(fmt.Sprintf("delegate: child ended by a stopped node process task=%s attempt=%s", tracked.ID, record.ID), "parent", parent.ID, "conversation", parent.Channel, "node", record.Node)
+	return s.deliverRecovered(ctx, parent, tracked, stopped, entry, pending)
 }
 
 // settleRecovered reads how the reattached run ended for the child and its

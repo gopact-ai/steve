@@ -31,13 +31,19 @@ func (s *SessionService) resumeSourceLocked(req nodewire.SessionRequest, target 
 		if record.OpenCancelled || record.UpstreamID == "" || !record.State.ProcessStopped || (record.State.State != nodewire.SessionInterrupted && record.State.State != nodewire.SessionClosed) {
 			return nil, sessionError("uncertain", "original native process must be confirmed stopped before resuming context")
 		}
+		// An interrupted turn is not an unknown one. What the next
+		// execution may not build on is a command whose outcome the agent
+		// never reported, so the check is settlement, not success: a
+		// cancelled turn left the native context exactly as consistent as
+		// a completed one, and refusing it would strand the conversation
+		// on this node for good.
 		for _, command := range record.Commands {
-			if !command.Settled || command.State != nodewire.SessionCommandCompleted {
+			if !command.Settled || !command.State.Settled() {
 				return nil, sessionError("uncertain", "original native inputs must be settled before resuming context")
 			}
 		}
 		for _, question := range record.State.Questions {
-			if question.State != nodewire.SessionQuestionAnswered || question.Answer == nil {
+			if !question.State.Settled() || (question.State == nodewire.SessionQuestionAnswered && question.Answer == nil) {
 				return nil, sessionError("uncertain", "original native question requires reconciliation")
 			}
 		}

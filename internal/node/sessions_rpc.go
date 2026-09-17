@@ -116,6 +116,8 @@ func (s *Server) sessionStream(parent context.Context, principal string, stream 
 		if errors.As(err, &classified) {
 			reply.ErrorCode = classified.Code
 		}
+		var refused *nodewire.SessionOpenNotStarted
+		reply.NotStarted = errors.As(err, &refused)
 	}
 	if err := writeSessionMessage(stream, reply); err != nil {
 		slog.Error(fmt.Sprintf("steve-node: session reply: %v", err))
@@ -183,7 +185,11 @@ func (r *Registry) NodeSession(ctx context.Context, node string, request nodewir
 		}
 	}
 	if reply.ErrorCode != "" || reply.Error != "" {
-		return nodewire.SessionState{}, sessionError(reply.ErrorCode, reply.Error)
+		failure := sessionError(reply.ErrorCode, reply.Error)
+		if reply.NotStarted {
+			return nodewire.SessionState{}, &nodewire.SessionOpenNotStarted{Cause: failure}
+		}
+		return nodewire.SessionState{}, failure
 	}
 	if reply.State == nil {
 		return nodewire.SessionState{}, sessionError("uncertain", "node returned no session receipt")

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -18,13 +19,14 @@ type stoppingRecoveryDriver struct {
 	*recoveryDriver
 	stops    atomic.Int32
 	stopErr  error
+	once     sync.Once
 	stopHook func()
 }
 
 func (d *stoppingRecoveryDriver) StopRetainedTask(_ context.Context, id string, req turn.Request) (turn.Result, error) {
 	d.stops.Add(1)
 	if d.stopHook != nil {
-		d.stopHook()
+		d.once.Do(d.stopHook)
 	}
 	if id != "task-1" || req.ConversationID != "console:main" || req.MessageID != "web-e1" || req.SenderOpenID != "owner" {
 		return turn.Result{}, errors.New("stop targeted another execution")
@@ -94,12 +96,11 @@ func TestStopRecoveryTargetsOriginalTaskAndPersistsSettlement(t *testing.T) {
 				awaitExchange(t, s, "e2")
 			}
 			_, _ = s.SendCommand(t.Context(), "main", "/cancel", "stop-original")
-			expectedCalls := int32(1)
-			if uncertain {
-				expectedCalls = 2
+			if uncertain && driver.stops.Load() < 2 {
+				t.Fatal("unconfirmed stop was not checked again")
 			}
-			if driver.stops.Load() != expectedCalls {
-				t.Fatal("stop retry did not reconcile only the unconfirmed operation")
+			if !uncertain && driver.stops.Load() != 1 {
+				t.Fatal("confirmed stop contacted the original execution again")
 			}
 			cancel()
 			s.workers.Wait()
@@ -290,6 +291,59 @@ func TestUnconfirmedChildStopKeepsFinishedParentExchangeReserved(t *testing.T) {
 	if got := restored.Queue("main"); got[0].State != "awaiting-user" || got[1].State != "queued" {
 		t.Fatalf("restart lost child stop uncertainty: %+v", got)
 	}
+}
+
+// The stop a console reports as unconfirmed is often confirmed moments
+// later by the durable task-stop reconciliation running behind it. The
+// exchange must notice that on its own: parking on a card the owner can
+// only read leaves the conversation running forever with nothing to do.
+func TestUnconfirmedStopSettlesOnceARecheckConfirmsIt(t *testing.T) {
+	previous := recoveryStopInterval
+	recoveryStopInterval = 20 * time.Millisecond
+	defer func() { recoveryStopInterval = previous }()
+	doc := recoveryDocument()
+	s := New(&echo{}, "owner", nil)
+	s.EnableRetainedRecovery(t.Context())
+	if err := s.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	// The state a crash leaves behind: a stop was asked for and its
+	// confirmation never arrived before the process went away.
+	s.mu.Lock()
+	s.exchanges["console:main"][0].RecoveryStopPending = "attempt att-1 writer is quarantined until physically confirmed stopped"
+	err := s.save()
+	s.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+	restored := New(&echo{}, "owner", nil)
+	restored.EnableRetainedRecovery(t.Context())
+	if err := restored.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	driver := &stoppingRecoveryDriver{recoveryDriver: &recoveryDriver{resume: func(context.Context, string, turn.Request) (turn.Result, error) {
+		t.Error("a pending stop resumed the original observer")
+		return turn.Result{}, nil
+	}}, stopErr: harness.ErrStopUnconfirmed}
+	if err := restored.RecoverChats(t.Context(), driver); err != nil {
+		t.Fatal(err)
+	}
+	// While it stays unconfirmed the owner is told, and the queue behind it
+	// is still held for the original task.
+	waitRecoveryQuestion(t, restored)
+	if got := restored.Queue("main"); got[0].State != "awaiting-user" || got[1].State != "queued" {
+		t.Fatalf("pending stop released the queue: %+v", got)
+	}
+	driver.stopErr = nil
+	if got := awaitExchange(t, restored, "e1"); got.State != "cancelled" {
+		t.Fatalf("a confirmed recheck did not settle the exchange: %+v", got)
+	}
+	for _, q := range restored.Questions("main") {
+		if q.State == "pending" {
+			t.Fatal("settled stop left its question pending")
+		}
+	}
+	awaitExchange(t, restored, "e2")
 }
 
 func TestDetachedUnconfirmedRecoveryDoesNotReleaseQueuedInstructions(t *testing.T) {

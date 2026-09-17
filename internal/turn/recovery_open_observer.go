@@ -37,6 +37,12 @@ func (c *Coordinator) inspectPendingOpen(ctx context.Context, record attempt.Rec
 	}
 	ctx = execution.WithProbeKey(ctx, execution.Key{TaskID: record.TaskID, InstanceID: record.TurnID, AttemptID: record.ID})
 	state, err := recovery.ReconcileNodeOpen(ctx, harness.Placement{Node: record.Node, Harness: record.Harness}, record.Workspace.Path, false)
+	if errors.Is(err, harness.ErrNodeOpenAbsent) {
+		// The node replied. It writes its record before starting anything,
+		// so no Agent is running for this open and no task input was ever
+		// sent. Sealing it is the move that ends the turn cleanly.
+		return retainedBlocked("native-open-absent", "已联系上原节点并查询原创建指令", "原节点在线，它上面没有这条会话的创建记录。", "节点会先落盘创建记录再启动 Agent，所以这条创建从未生效，也没有向 Agent 发出任何任务输入。", "选择「停止并取消原执行」封存这条创建指令，结束这一回合；之后重新发送同样的任务是安全的。", err)
+	}
 	if err != nil {
 		return retainedBlocked("native-open", "按原执行和会话创建指令查询原节点", "暂时无法取得原会话的创建记录。", "节点可能离线，或创建请求尚未到达；记录缺失不能证明原请求已取消。", "建议恢复原节点后重新检查；若不再继续，可点击停止，系统会封存原创建指令并核实取消结果。", err)
 	}

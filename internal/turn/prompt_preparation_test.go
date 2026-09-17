@@ -20,7 +20,9 @@ func TestPromptPreparationRefusalPrecedence(t *testing.T) {
 		tainted, capability bool
 		want                i18n.Key
 	}{
-		{"tainted-before-capability-and-workspace", true, true, i18n.Tainted},
+		// A taint nothing is still writing to no longer masks the real
+		// reason a turn cannot reuse the session.
+		{"stale-taint-behind-capability-and-workspace", true, true, i18n.CapabilityDrift},
 		{"capability-before-workspace", false, true, i18n.CapabilityDrift},
 		{"workspace", false, false, i18n.WorkspaceDrift},
 	} {
