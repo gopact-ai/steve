@@ -137,6 +137,9 @@ try {
     }
     {
         const f = await fixture([reply({ attempt: "no-capture", files: 0, note: "Snapshot capture unavailable" }), reply({ attempt: "no-changes", files: 0 })]);
+        // Counting before the card mounts reads zero on a slow machine and
+        // says the card is missing; wait for it, then count what is there.
+        await f.card.first().waitFor();
         assert.equal(await f.card.count(), 1);
         await f.card.getByText("Snapshot capture unavailable", { exact: true }).waitFor();
         assert.equal(await f.card.getByRole("button", { name: "Review changes", exact: true }).count(), 0);
