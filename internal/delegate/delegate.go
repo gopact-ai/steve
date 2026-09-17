@@ -1262,7 +1262,7 @@ func (s *Service) worktreeID(child task.Task) string {
 	return filepath.Base(child.Workspace)
 }
 
-func nodeLabel(node string) string { return nodewire.Place(node) }
+func nodeLabel(node string) string { return nodewire.Name(node) }
 
 func orHub(node, hub string) string {
 	if node == "" {

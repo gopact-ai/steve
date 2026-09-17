@@ -1,8 +1,11 @@
 package app
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
+	"sync/atomic"
+	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/artifact"
@@ -22,6 +25,15 @@ func assembleFleet(life lifetime, input inputAssembly, boot runtimeAssembly) (fl
 	ctx := boot.Context()
 	manager := boot.Manager()
 	nodewire.SetSelf(adminsvc.NodeName())
+	// Machines are stored by identity and read by name. Everything said to
+	// a person resolves the one into the other from here on; a machine
+	// nobody has named still reads as its identity. The names are kept in
+	// a snapshot refreshed on its own: rendering a sentence must never
+	// reach into the consensus replica, which is applying the very write
+	// whose failure is being described.
+	if environment != nil && environment.Coordination != nil {
+		nodewire.SetNames(publishedNames(boot.Background(), environment.Coordination.MemberNames))
+	}
 	nodeConfigs := cfg.NodeConfigs()
 	if environment != nil && environment.ConfigureNodes != nil {
 		if err := environment.ConfigureNodes(nodeConfigs); err != nil {
@@ -81,3 +93,33 @@ func (v *fleetValues) Nodes() *node.Registry { return v.nodes }
 func (v *fleetValues) Observation() *adminsvc.LocalObservation { return v.observation }
 
 func (v *fleetValues) Projects() *project.Store { return v.projects }
+
+// publishedNames keeps the machine names people gave in a snapshot that
+// readers can take without waiting for anything. A rename shows up within
+// a few seconds, which is as fast as anyone reads a sentence about it.
+func publishedNames(background *applicationBackground, read func() map[string]string) func() map[string]string {
+	var published atomic.Pointer[map[string]string]
+	refresh := func() {
+		names := read()
+		published.Store(&names)
+	}
+	refresh()
+	background.Go(func(ctx context.Context) {
+		ticker := time.NewTicker(3 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				refresh()
+			}
+		}
+	})
+	return func() map[string]string {
+		if names := published.Load(); names != nil {
+			return *names
+		}
+		return nil
+	}
+}

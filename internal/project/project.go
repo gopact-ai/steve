@@ -408,7 +408,7 @@ func (e NotHomeError) Is(target error) bool {
 	return target == ErrNotHome
 }
 
-func nodeLabel(node string) string { return nodewire.Place(node) }
+func nodeLabel(node string) string { return nodewire.Name(node) }
 
 const (
 	kindProject     = "project"
