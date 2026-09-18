@@ -2,7 +2,7 @@ import { number } from "@/lib/format";
 import { useI18n } from "@/providers/locale-provider";
 import type { Translator, MessageKey, Locale } from "@/lib/i18n";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { BookOpen01, ChevronDown, Edit01, Folder, Grid01 } from "@untitledui/icons";
+import { BookOpen01, ChevronDown, Edit01, Folder, Grid01, MagicWand01 } from "@untitledui/icons";
 import { useNavigate, useSearchParams } from "react-router";
 import { Dialog, DialogTrigger, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Badge } from "@/components/base/badges/badges";
@@ -194,7 +194,10 @@ function ProfileWorkspace({ view, onSaved }: { view: HomeView; onSaved: (doc: Pr
                             {draft?.editing ? <>
                                 <Button size="sm" color="secondary" onClick={() => setDrafts((d) => ({ ...d, [doc.id]: { ...d[doc.id], editing: false } }))}>{tr("home.preview")}</Button>
                                 <Button size="sm" color="primary" isDisabled={!dirty || over || !!saving} isLoading={saving === doc.id} onClick={() => void save()}>{tr("common.save")}</Button>
-                            </> : <Button size="sm" color="secondary" iconLeading={Edit01} onClick={edit}>{tr("common.edit")}</Button>}
+                            </> : <>
+                                <Regenerate doc={doc} />
+                                <Button size="sm" color="secondary" iconLeading={Edit01} onClick={edit}>{tr("common.edit")}</Button>
+                            </>}
                         </div>
                     </header>
                     <div className="profile-document-body">
@@ -226,6 +229,35 @@ function ProfileWorkspace({ view, onSaved }: { view: HomeView; onSaved: (doc: Pr
                 </section>}
             </div>
         </div>
+    );
+}
+
+// Regenerate hands the document over to Steve instead of the reader: it
+// opens a fresh personal thread with the instructions already written, so
+// the reader confirms once here and then reads, edits, and sends the
+// prompt like any other message.
+function Regenerate({ doc }: { doc: ProfileDocument }) {
+    const { t: tr, locale } = useI18n();
+    const { snap } = useFleet();
+    const navigate = useNavigate();
+    const home = snap.projects.find((p) => p.home);
+    if (!home) return null;
+    const prompt = tr("home.generatePrompt", { title: doc.title, path: doc.path, what: doc.what, budget: kb(doc.budget, locale) });
+    const open = () => navigate(`/console?new=1&project=${encodeURIComponent(home.id)}&prompt=${encodeURIComponent(prompt)}`);
+    return (
+        <DialogTrigger>
+            <Button size="sm" color="secondary" iconLeading={MagicWand01}>{tr("home.generate")}</Button>
+            <ModalOverlay isDismissable><Modal className="max-w-md"><Dialog aria-label={tr("home.generateTitle", { title: doc.title })}>
+                {({ close }) => <div className="w-full rounded-xl bg-primary p-6 shadow-lg">
+                    <h3 className="text-md font-semibold text-primary">{tr("home.generateTitle", { title: doc.title })}</h3>
+                    <p className="mt-2 text-sm leading-6 text-secondary">{tr("home.generateHint")}</p>
+                    <div className="mt-5 flex justify-end gap-2">
+                        <Button size="sm" color="secondary" onClick={close}>{tr("common.cancel")}</Button>
+                        <Button size="sm" color="primary" onClick={() => { close(); open(); }}>{tr("home.confirmGenerate")}</Button>
+                    </div>
+                </div>}
+            </Dialog></Modal></ModalOverlay>
+        </DialogTrigger>
     );
 }
 

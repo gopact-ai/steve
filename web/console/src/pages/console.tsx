@@ -157,8 +157,9 @@ export function ConsolePage() {
 
     useEffect(() => { sessionStorage.setItem("steve.conversation", conversation); }, [conversation]);
 
-    // "/console?new=1&project=x" — from the projects page: a fresh thread
-    // bound to that project, then the address is cleaned up.
+    // "/console?new=1&project=x&prompt=y" — from the projects or profile
+    // page: a fresh thread bound to that project, carrying a draft the
+    // reader can still edit before sending. The address is cleaned up.
     const location = useLocation();
     const view = new URLSearchParams(location.search).get("view") === "board" ? "board" : "chat";
     const navigate = useNavigate();
@@ -168,8 +169,9 @@ export function ConsolePage() {
         if (!params.get("new") || opened.current) return;
         opened.current = true;
         const project = params.get("project") || undefined;
+        const prompt = params.get("prompt") || "";
         navigate("/console", { replace: true });
-        void newSession(project);
+        void newSession(project, prompt);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [location.search]);
 
@@ -361,7 +363,7 @@ export function ConsolePage() {
         return context?.project?.id || snap.projects.find((p) => p.default)?.id || snap.projects.find((p) => !p.home)?.id || snap.projects[0]?.id;
     }
 
-    async function newSession(project = startingProject()) {
+    async function newSession(project = startingProject(), prompt = "") {
         if (creatingRequest.current) return;
         setMobileSessions(false);
         creatingRequest.current = true;
@@ -375,7 +377,12 @@ export function ConsolePage() {
             const data = await fetchContext(id);
             if (data.context?.project?.id !== project || !data.context.project.bound) throw new Error(t("console.bindingFailed"));
             // Do not pull the reader out of a different thread chosen while binding.
-            if (activeConversation.current === from) selectConversation(id, data.context);
+            if (activeConversation.current === from) {
+                selectConversation(id, data.context);
+                // A prepared prompt is a draft, not a submission: the reader
+                // reads it, edits it, and decides when it is sent.
+                if (prompt) { writeDraft(id, prompt); window.setTimeout(() => box.current?.focus(), 0); }
+            }
             loadConversations();
         } catch (e) {
             if (activeConversation.current === from) setStatus(String(e).replace(/^Error: /, ""));
