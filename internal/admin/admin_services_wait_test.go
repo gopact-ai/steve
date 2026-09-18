@@ -140,3 +140,42 @@ func TestImmediateRestartSupersedesItsOwnWait(t *testing.T) {
 		t.Fatal("the superseded wait was left behind")
 	}
 }
+
+// Replacing the program again while the first upgrade is still waiting has
+// to take over the wait: refusing it would leave the service waiting to
+// restart onto a build that is no longer installed.
+func TestNewerWaitTakesOverAnOlderOne(t *testing.T) {
+	registry := execution.New(context.Background(), nil)
+	busy, err := registry.Begin(t.Context(), execution.Key{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stopped atomic.Int32
+	s, err := NewServices(&Service{}, registry, func() (func(), error) { return func() {}, nil },
+		func() { stopped.Add(1) }, &ledger.FileDocument{Path: filepath.Join(t.TempDir(), "restart.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Restart(t.Context(), "hub", consoleapi.RestartRequest{CommandID: "upgrade-one", Mode: consoleapi.RestartWhenIdle}); err != nil {
+		t.Fatal(err)
+	}
+	waitUntil(t, "the first upgrade to report what it is waiting for", func() bool {
+		current, err := s.RestartStatus(t.Context(), "hub", "upgrade-one")
+		return err == nil && current.WaitingOn == consoleapi.RestartWaitExecutions
+	})
+	second, err := s.Restart(t.Context(), "hub", consoleapi.RestartRequest{CommandID: "upgrade-two", Mode: consoleapi.RestartWhenIdle})
+	if err != nil || second.State != nodewire.RestartStateDraining {
+		t.Fatalf("second=%+v err=%v", second, err)
+	}
+	// The first command keeps an honest outcome instead of disappearing.
+	first, err := s.RestartStatus(t.Context(), "hub", "upgrade-one")
+	if err != nil || first.State != nodewire.RestartStateCancelled {
+		t.Fatalf("first=%+v err=%v", first, err)
+	}
+	busy.Finish(nil)
+	waitUntil(t, "the surviving upgrade to apply", func() bool { return stopped.Load() == 1 })
+	applied, err := s.RestartStatus(t.Context(), "hub", "upgrade-two")
+	if err != nil || applied.State != nodewire.RestartStateAccepted {
+		t.Fatalf("applied=%+v err=%v", applied, err)
+	}
+}

@@ -45,6 +45,15 @@ func (s *Services) recorded(id string) (consoleapi.RestartOperation, bool) {
 	return op, ok
 }
 
+// supersedes reports whether a different command is already waiting on the
+// same service. The newer request describes the same intent against a
+// newer program, so it takes the place rather than being turned away.
+func (s *Services) supersedes(name, id string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.pending == "" && s.wait != nil && s.wait.name == name && s.wait.op.CommandID != id
+}
+
 // restartWhenIdle keeps the request and starts watching for the moment the
 // service can restart without cutting anything short.
 func (s *Services) restartWhenIdle(name string, req consoleapi.RestartRequest) (consoleapi.RestartOperation, error) {
@@ -54,6 +63,9 @@ func (s *Services) restartWhenIdle(name string, req consoleapi.RestartRequest) (
 		}
 	} else if s.admin.Nodes == nil {
 		return consoleapi.RestartOperation{}, serviceFailure("not_found", "Node not found")
+	}
+	if s.supersedes(name, req.CommandID) {
+		s.withdraw(true)
 	}
 	s.mu.Lock()
 	if s.pending != "" || s.wait != nil {
