@@ -226,3 +226,47 @@ func TestPeerUpgradeScriptRefusesAMachineWithoutAPeer(t *testing.T) {
 		t.Fatalf("expected exit 30, got %v\n%s", err, out)
 	}
 }
+
+// A peer started from its own directory as ./bin/steve is the same peer.
+// Missing it leaves the old process holding the gateway lock, the new
+// program exits on it, and a working upgrade looks like a broken build.
+func TestPeerUpgradeScriptStopsAPeerStartedByARelativePath(t *testing.T) {
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("peer upgrade runs on linux and darwin")
+	}
+	home, program := layoutPeer(t)
+	state := filepath.Join(home, ".steve-peer")
+	start := exec.Command("bash", "-c", `cd "$HOME/.steve-peer"; nohup ./bin/steve peer --config ./config.json >> peer.log 2>&1 < /dev/null & echo $!`)
+	start.Env = append(os.Environ(), "HOME="+home, "STEVE_NODEBOOTSTRAP_STUB=1")
+	out, err := start.Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldPID := strings.TrimSpace(string(out))
+	t.Cleanup(func() { _ = exec.Command("kill", "-KILL", oldPID).Run() })
+	if err := os.MkdirAll(filepath.Join(state, "cluster", "peer-process"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(state, "cluster", "peer-process", "gateway.lock"), []byte(oldPID+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	spec := upgradeSpec()
+	spec.SHA256 = stageUpload(t, home, spec.UploadID, program)
+	report, err := runUpgrade(t, home, spec)
+	if err != nil {
+		t.Fatalf("upgrade failed: %v\n%s", err, report)
+	}
+	if !strings.Contains(report, "Stopping peer process "+oldPID) {
+		t.Fatalf("the relatively started peer was not stopped:\n%s", report)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		if exec.Command("kill", "-0", oldPID).Run() != nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("the old peer kept running through the upgrade:\n%s", report)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
