@@ -6,6 +6,7 @@ import { when } from "@/lib/format";
 import { useFleet, useIntent } from "@/lib/fleet";
 import { nodeLabelIn } from "@/lib/node-name";
 import { label, labelsFor } from "@/lib/labels";
+import { Md } from "@/components/steve/markdown";
 import { PageBody, PageHeader } from "@/components/steve/page";
 import { Nothing } from "@/components/steve/ui";
 import { unavailableSource } from "@/lib/source-health";
@@ -13,6 +14,9 @@ import { unavailableSource } from "@/lib/source-health";
 // InboxPage answers "what exactly do I have to decide right now". Only
 // requests with actions and quarantined writers appear. Writer confirmation
 // requires physical process evidence, so it intentionally has no action button.
+// What an agent asks is written the way it writes everywhere else, so the
+// command it wants to run arrives as a code block rather than as a line of
+// backticks the reader has to decode.
 export function InboxPage() {
     const { t: tr, locale } = useI18n();
     const { snap } = useFleet();
@@ -35,7 +39,7 @@ export function InboxPage() {
                         {g.items.map((r) => (
                             <li key={r.id} className="flex min-w-0 flex-col items-start gap-3 px-4 py-4 sm:flex-row">
                                 <div className="min-w-0 flex-1">
-                                    <div className="break-words text-sm font-medium text-primary">{r.summary}</div>
+                                    <Md text={r.summary} className="max-h-72 overflow-y-auto text-primary" />
                                     {r.type === "writer" && <div className="mt-2 flex flex-col gap-1 text-xs text-secondary">
                                         <p>{tr("inbox.machine")}<span className="font-mono">{r.node ? nodeLabelIn(snap.nodes, r.node) : "—"}</span></p>
                                         <p className="break-all">{tr("inbox.directory")}<span className="font-mono">{r.workspace || "—"}</span></p>

@@ -217,6 +217,21 @@ if (process.env.PURE_ONLY !== "1") {
         return f;
     }
     const cases = {
+        // What waits in the inbox is what an agent wrote, and agents write
+        // markdown. A command inside a fence has to arrive as a code block
+        // here too, or the reader is left decoding backticks to find out
+        // what they are being asked to approve.
+        async "inbox-question-markdown"(f) {
+            f.inbox = [{ id: "question:q1", type: "question", source: "q1", conversation: A, project_id: "scratch", task_id: "23", summary: "需要执行这条命令吗？\n\n```sh\npython3 -c 'print(1)'\n```\n\ncwd: `/work/env`", created_at: at, resolvable: true, choices: [] }];
+            await f.page.locator('a[href="#/inbox"]').click(); await f.page.reload();
+            const item = f.page.getByRole("listitem").filter({ hasText: "需要执行这条命令吗？" });
+            await item.waitFor();
+            const code = item.locator("pre code");
+            await code.waitFor();
+            assert.match(await code.innerText(), /print\(1\)/, "A fenced command must render as code, not as raw backticks");
+            assert.equal(await item.getByText("```sh", { exact: false }).count(), 0, "The fence markers must not survive into the page");
+            assert.equal(await item.locator("code", { hasText: "/work/env" }).count(), 1, "Inline code keeps its own styling");
+        },
         async "quarantined-writer-inbox"(f) {
             f.inbox = [{ id: "writer:attempt-isolated", type: "writer", source: "attempt-isolated", attempt_id: "attempt-isolated", node: "worker-quarantined", workspace: "/work/isolated-project", project_id: "scratch", task_id: "2", summary: "原执行进程是否退出尚未确认，目录与执行资源继续保留占用", created_at: at, resolvable: false, choices: [] }];
             await f.page.locator('a[href="#/inbox"]').click(); await f.page.reload();
