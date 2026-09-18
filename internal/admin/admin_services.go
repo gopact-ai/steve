@@ -267,7 +267,11 @@ func (s *Services) seal(ctx context.Context, name string) (func(), error) {
 		r, err := s.executions.SealIdle()
 		if err != nil {
 			release()
-			return nil, serviceBusy(consoleapi.RestartWaitExecutions, "Wait for active work and unresolved executions to finish")
+			message := "Wait for active work and unresolved executions to finish"
+			if active := s.executions.Active(); len(active) > 0 {
+				message += ": " + strings.Join(active, ", ")
+			}
+			return nil, serviceBusy(consoleapi.RestartWaitExecutions, message)
 		}
 		releases = append(releases, r)
 	}
