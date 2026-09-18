@@ -83,9 +83,39 @@ start_peer() {
   kill -0 "$peer_pid" 2>/dev/null
 }
 # Only this account's peer started from this installation is stopped; the
-# link session the coordinator holds open is replaced from its side.
+# link session the coordinator holds open is replaced from its side. The
+# peer may have been started from its own directory as ./bin/steve, so the
+# process is identified by what the installation itself records — the pid
+# in its gateway lock, confirmed to still be a peer — then by the program
+# path, and last by a relative launch whose working directory is this
+# installation. Another account's peer, and this account's peer under a
+# different state directory, are none of this upgrade's business. Missing
+# the process would leave it holding the gateway lock, and the new program
+# would exit on it and be taken for a broken build.
 pattern=$(printf '%s' "$state_dir/bin/steve peer " | sed 's#[][\.*^$+?(){}|]#\\&#g')
-running=$(pgrep -u "$(id -u)" -f "^$pattern" || true)
+state_real=$(cd "$state_dir" && pwd -P)
+process_dir() {
+  if [ -r "/proc/$1/cwd" ]; then
+    readlink "/proc/$1/cwd" 2>/dev/null
+  else
+    lsof -a -p "$1" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -n 1
+  fi
+}
+running=""
+locked=$(head -n 1 "$state_dir/cluster/peer-process/gateway.lock" 2>/dev/null | tr -dc '0-9')
+if [ -n "$locked" ] && kill -0 "$locked" 2>/dev/null && ps -o command= -p "$locked" 2>/dev/null | grep -q 'steve peer '; then
+  running="$locked"
+fi
+if [ -z "$running" ]; then
+  running=$(pgrep -u "$(id -u)" -f "^$pattern" || true)
+fi
+if [ -z "$running" ]; then
+  for candidate in $(pgrep -u "$(id -u)" -f '^\./bin/steve peer ' || true); do
+    case "$(process_dir "$candidate")" in
+      "$state_real"|"$state_dir") running="${running:+$running }$candidate" ;;
+    esac
+  done
+fi
 if [ -n "$running" ] || [ ! -f "$state_dir/bin/steve.previous" ]; then
   mv -f "$state_dir/bin/steve" "$state_dir/bin/steve.previous"
 else
