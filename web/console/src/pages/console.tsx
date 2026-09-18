@@ -269,7 +269,12 @@ export function ConsolePage() {
     // The transcript read is cursored on the last arrival number handled.
     useConsoleEvents((fresh) => {
         seen.current = fresh[fresh.length - 1].n ?? seen.current;
-        if (fresh.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.meta" || ev.kind === "console.queue")) loadConversations();
+        // A raised or answered question changes what the sessions list says
+        // about a conversation — whether it is running or waiting on the
+        // owner — so it belongs in the same refresh as the rest. Left out,
+        // the row keeps the previous state until the next poll, and the
+        // reader sees "running" next to a question they are being asked.
+        if (fresh.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.meta" || ev.kind === "console.queue" || ev.kind === "console.question")) loadConversations();
         const mine = fresh.filter((ev) => ev.conversation === conversation);
         if (!mine.length) return;
         if (mine.some((ev) => ev.kind === "console.sent" || ev.kind === "console.reply" || ev.kind === "console.queue")) queueRevision.current++;
