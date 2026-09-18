@@ -49,12 +49,16 @@ const (
 	RestartWaitRequests      = "requests"
 	RestartWaitConversations = "conversations"
 	RestartWaitChannel       = "channel"
-	RestartWaitExecutions    = "executions"
-	RestartWaitCopy          = "copy"
-	RestartWaitAttempts      = "attempts"
-	RestartWaitAgents        = "agents"
-	RestartWaitNode          = "node"
-	RestartWaitOffline       = "offline"
+	// RestartWaitQuestion is a turn parked on a question only the owner can
+	// answer. It is reported ahead of the channel it blocks, because the
+	// wait ends when they answer it and not on its own.
+	RestartWaitQuestion   = "question"
+	RestartWaitExecutions = "executions"
+	RestartWaitCopy       = "copy"
+	RestartWaitAttempts   = "attempts"
+	RestartWaitAgents     = "agents"
+	RestartWaitNode       = "node"
+	RestartWaitOffline    = "offline"
 )
 
 type RestartRequest struct {

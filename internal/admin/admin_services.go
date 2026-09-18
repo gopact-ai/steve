@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -213,6 +214,25 @@ func (s *Services) RestartStatus(ctx context.Context, name, id string) (consolea
 	return consoleapi.RestartOperation{State: nodewire.RestartStateIdle, Incarnation: s.history.Incarnation}, nil
 }
 
+// coordinatorBusy explains what a coordinator that would not seal is
+// holding. A turn parked on a question is named as such: it ends when the
+// owner answers and not on its own, so reporting the conversation as busy
+// would send them looking for work that has already stopped.
+func (s *Services) coordinatorBusy() error {
+	live := s.admin.Coordinator.InFlight()
+	if s.admin.Console != nil {
+		for _, conversation := range live {
+			if len(s.admin.Console.Questions(conversation)) > 0 {
+				return serviceBusy(consoleapi.RestartWaitQuestion, "A conversation is waiting for an answer before it can finish: "+strings.Join(live, ", "))
+			}
+		}
+	}
+	if len(live) > 0 {
+		return serviceBusy(consoleapi.RestartWaitChannel, "Wait for these conversations to finish: "+strings.Join(live, ", "))
+	}
+	return serviceBusy(consoleapi.RestartWaitChannel, "Wait for the current conversation or channel command to finish")
+}
+
 func (s *Services) seal(ctx context.Context, name string) (func(), error) {
 	var releases []func()
 	release := func() {
@@ -237,7 +257,7 @@ func (s *Services) seal(ctx context.Context, name string) (func(), error) {
 		r, err := s.admin.Coordinator.SealIdle()
 		if err != nil {
 			release()
-			return nil, serviceBusy(consoleapi.RestartWaitChannel, "Wait for the current conversation or channel command to finish")
+			return nil, s.coordinatorBusy()
 		}
 		releases = append(releases, r)
 	}

@@ -13,7 +13,8 @@ const settled = (value?: TrackedRestart) => value?.operation?.state === "restart
 // progress rather than as a word the reader has to decode.
 const waitReasons = {
     preparing: "settingsPage.waitingOn.preparing", requests: "settingsPage.waitingOn.requests", conversations: "settingsPage.waitingOn.conversations",
-    channel: "settingsPage.waitingOn.channel", executions: "settingsPage.waitingOn.executions", copy: "settingsPage.waitingOn.copy",
+    channel: "settingsPage.waitingOn.channel", question: "settingsPage.waitingOn.question",
+    executions: "settingsPage.waitingOn.executions", copy: "settingsPage.waitingOn.copy",
     attempts: "settingsPage.waitingOn.attempts", agents: "settingsPage.waitingOn.agents", node: "settingsPage.waitingOn.node", offline: "settingsPage.waitingOn.offline",
 } as const;
 function stored(): Record<string, TrackedRestart> {

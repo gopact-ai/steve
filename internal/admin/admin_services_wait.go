@@ -3,6 +3,8 @@ package admin
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -259,6 +261,11 @@ func (s *Services) note(w *waitingRestart, cause error) bool {
 		}
 		s.wait, s.pending = nil, ""
 		return false
+	}
+	if w.op.WaitingOn != reason {
+		// One line each time the answer changes, so an upgrade that never
+		// finds its moment can be read back afterwards.
+		slog.Info(fmt.Sprintf("steve: restart %s is waiting on %s: %v", w.op.CommandID, reason, cause))
 	}
 	w.op.WaitingOn = reason
 	return true
