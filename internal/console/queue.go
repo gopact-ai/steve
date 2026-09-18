@@ -619,6 +619,7 @@ func (s *Service) restoreQueueLocked() error {
 		}
 		s.trimExchangesLocked(conversation)
 	}
+	s.markRelayedLocked()
 	return s.save()
 }
 
