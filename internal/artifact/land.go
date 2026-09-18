@@ -153,6 +153,10 @@ func (s *Store) land(ctx context.Context, p project.Project, artifactID, by stri
 	}
 	repo, err := s.mergeLanding(ctx, p, &land)
 	if err != nil {
+		var conflict Conflict
+		if errors.As(err, &conflict) && conflict.State == LandMergeConflicted && !land.Recoverable {
+			s.queueConflicted(ctx, p, land, conflict, by, source)
+		}
 		return land, err
 	}
 	if err := s.move(ctx, &land, LandLocked, LandMerged, nil); err != nil {
@@ -262,6 +266,36 @@ func (s *Store) proposeLanding(ctx context.Context, p project.Project, artifactI
 		}
 	}
 	return land, nil
+}
+
+// queueConflicted keeps a result that could not be merged, along with what
+// resolving it needs. A conflict used to end the landing and, for a result
+// that was landing directly rather than from the queue, end the result:
+// nothing held it, so nothing ever retried or resolved it. Now both paths
+// leave the same record, and the queue is what carries it forward.
+func (s *Store) queueConflicted(ctx context.Context, p project.Project, land Landing, conflict Conflict, by string, source *Source) {
+	id := p.ID + "/" + land.Artifact
+	blocked := &Blocked{Landing: land.ID, Canonical: s.CanonicalOf(ctx, p.ID), Marked: conflict.Marked, Paths: conflict.Paths, At: s.now().UTC()}
+	err := s.ledger.Update(context.WithoutCancel(ctx), func(tx *ledger.Tx) error {
+		raw, err := tx.Bindings(pendingKind)
+		if err != nil {
+			return err
+		}
+		// An entry already queued keeps its own place in line and its own
+		// source authority; only why it is stuck is new.
+		item := Pending{Project: p.ID, Artifact: land.Artifact, By: by, At: s.now().UTC(), Source: source}
+		if existing, ok := raw[id]; ok {
+			var prior Pending
+			if err := json.Unmarshal(existing, &prior); err == nil && prior.Project == p.ID {
+				item = prior
+			}
+		}
+		item.Blocked = blocked
+		return tx.PutBinding(pendingKind, id, item)
+	})
+	if err != nil {
+		slog.Warn(fmt.Sprintf("artifact: queue conflicted result %s: %v", short(land.Artifact), err), "landing", land.ID, "artifact", land.Artifact, "project", land.Project)
+	}
 }
 
 // lockCanonical takes the project's canonical lock for the landing, or
