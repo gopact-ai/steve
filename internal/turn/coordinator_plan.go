@@ -129,6 +129,49 @@ func (c *Coordinator) openPlanTaskWithPrepared(req Request, goal, projectID stri
 	return created, nil
 }
 
+// cancelOrphanedPlans closes background plan tasks that a restart left
+// open. A plan started without a conversation — an automatic conflict
+// resolution, say — has no anchor to reply at, so plan recovery passes
+// over it, and `/tasks` scopes ids to the chat that owns them. With no
+// run left to resume, nothing would ever close it and the board would go
+// on counting it as work in flight. resuming holds the tasks whose run is
+// about to be picked back up, which are not orphans.
+func (c *Coordinator) cancelOrphanedPlans(resuming map[string]bool) {
+	if c.tasks == nil {
+		return
+	}
+	for _, tracked := range c.tasks.List("") {
+		if tracked.Origin != "plan" || tracked.Channel != "" || resuming[tracked.ID] {
+			continue
+		}
+		// A failure and a pause are both already settled states someone
+		// can act on; only work still claiming to run is stranded.
+		if tracked.State.Terminal() || tracked.State == task.StateFailed || tracked.State == task.StatePaused {
+			continue
+		}
+		if _, err := c.tasks.SetAside(tracked.ID, task.StateCancelled); err != nil {
+			slog.Error(fmt.Sprintf("turn: cancel stranded plan task #%s: %v", tracked.ID, err), "task", tracked.ID)
+			continue
+		}
+		slog.Warn(fmt.Sprintf("turn: cancelled plan task #%s left open with no run and no conversation: %s", tracked.ID, tracked.Goal), "task", tracked.ID)
+	}
+}
+
+// failPlanTask closes a plan task whose run ended badly. Without it the
+// task keeps its open state for good: a background plan is out of reach of
+// both recovery and the task commands, and a foreground one would still
+// read as running long after its card said it stopped.
+func (c *Coordinator) failPlanTask(id string, cause error) {
+	if c.tasks == nil || id == "" {
+		return
+	}
+	if _, err := c.tasks.Advance(id, task.StateFailed); err != nil {
+		slog.Error(fmt.Sprintf("turn: close failed plan task #%s: %v", id, err), "task", id)
+		return
+	}
+	slog.Warn(fmt.Sprintf("turn: plan task #%s failed: %v", id, cause), "task", id)
+}
+
 // planTree renders the plan as its steps, with where each ran. The tree is
 // the answer: a plan that only reports "done" cannot be checked.
 func (c *Coordinator) planTree(p plan.Plan, outcome exec.Outcome) string {
@@ -224,6 +267,11 @@ func (c *Coordinator) ResumePlans(ctx context.Context) {
 		slog.Error(fmt.Sprintf("turn: list open plan runs: %v", err))
 		return
 	}
+	resuming := make(map[string]bool, len(open))
+	for _, rec := range open {
+		resuming[rec.TaskID] = true
+	}
+	c.cancelOrphanedPlans(resuming)
 	for _, rec := range open {
 		tracked, ok := c.tasks.Get(rec.TaskID)
 		if ok && c.planRecoveryOwner != nil && c.planRecoveryOwner(tracked) {

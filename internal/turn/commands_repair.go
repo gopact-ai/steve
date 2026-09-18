@@ -94,6 +94,7 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 	if c.executions != nil {
 		scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "repair/" + tracked.ID})
 		if err != nil {
+			c.failPlanTask(tracked.ID, err)
 			return Result{Title: title, Text: err.Error()}
 		}
 		defer scope.Finish(nil)
@@ -111,17 +112,20 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 		}},
 	}
 	if base, err := c.planBase(ctx, tracked); err != nil {
+		c.failPlanTask(tracked.ID, err)
 		return Result{Title: title, Text: c.text.T(i18n.RepairStopped, agentID, err)}
 	} else {
 		proposed.Base = base
 	}
 	stored, err := c.plans.Create(proposed)
 	if err != nil {
+		c.failPlanTask(tracked.ID, err)
 		return Result{Title: title, Text: c.text.T(i18n.RepairStopped, agentID, err)}
 	}
 	outcome, runErr := c.supervisor.Execute(ctx, stored)
 	final, _ := c.plans.Latest(stored.ID)
 	if runErr != nil {
+		c.failPlanTask(tracked.ID, runErr)
 		return Result{Title: title, Text: c.text.T(i18n.RepairStopped, agentID, runErr) + "\n\n" + c.planTree(final, outcome)}
 	}
 	if _, err := c.advanceExecution(ctx, tracked.ID, task.StateDone); err != nil {
