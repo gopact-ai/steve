@@ -854,7 +854,7 @@ func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, 
 	head := s.CanonicalOf(ctx, p.ID)
 	var out []Landing
 	for _, item := range queue {
-		if item.Blocked != nil && item.Blocked.Canonical == head {
+		if item.Blocked != nil && item.Blocked.Canonical == head && s.markedStillThere(ctx, *item.Blocked) {
 			continue
 		}
 		var source []Source
@@ -904,6 +904,19 @@ type Stuck struct {
 // Resolvable says whether an agent can be handed a checkout of this
 // conflict: git has to have kept the marked tree.
 func (s Stuck) Resolvable() bool { return s.Marked != "" }
+
+// markedStillThere says the conflict this entry is blocked on can still be
+// worked: the half-merged snapshot has to be a recorded artifact for a
+// workspace to be made from it. A block whose snapshot is gone — an older
+// record, a repository rebuilt underneath — is not a block worth keeping,
+// and merging again is what writes a usable one.
+func (s *Store) markedStillThere(ctx context.Context, blocked Blocked) bool {
+	if blocked.Marked == "" {
+		return true
+	}
+	_, ok, err := s.Manifest(ctx, blocked.Marked)
+	return err != nil || ok
+}
 
 // Attempting records that a resolution has been started for a conflict,
 // against the canonical it is stuck on. It is what keeps an automatic
