@@ -289,6 +289,16 @@ try {
     assert.equal(f.answers.length, answersBeforeSwitch, "changing the approval mode never answers the request for the owner");
     console.log("PASS resolved requests name their machine, stay reachable in full, and offer the approval mode as a way out");
 
+    // Choices stand side by side, so they have to read as one row: a
+    // two-line description must not leave its neighbour's card short.
+    await show(makeQuestion("q-even", { title: "Pick where to continue", options: [{ id: "stop", label: "Stop and retry with this plan", description: "I have reviewed and accept the external retry risk listed in this plan; this plan only." }, { id: "wait", label: "Wait for the original node", description: "Keep the task as it is." }] }));
+    const cards = await panel.locator(".question-option").evaluateAll((nodes) => nodes.map((node) => { const box = node.getBoundingClientRect(); return { top: Math.round(box.top), bottom: Math.round(box.bottom) }; }));
+    assert.equal(cards.length, 2);
+    assert.equal(cards[0].top, cards[1].top, "choices start on the same line");
+    assert.equal(cards[0].bottom, cards[1].bottom, "choices end on the same line whatever their description runs to");
+    await screenshot("question-options-even");
+    console.log("PASS side-by-side choices keep one height whatever their descriptions run to");
+
     await show(makeQuestion("q-narrow", { title: "A decision with long context", message: explanation + "\n\n" + "Long-environment-hostname-".repeat(30) }));
     await page.getByRole("link", { name: "Coordinated by dev-box", exact: true }).first().waitFor();
     await page.setViewportSize({ width: 390, height: 844 });

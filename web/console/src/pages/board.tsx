@@ -14,6 +14,7 @@ import type { Plan, Task } from "@/lib/types";
 import { PageHeader } from "@/components/steve/page";
 import { TaskDrawer } from "@/components/steve/task-drawer";
 import { TaskMetaMenu, TaskTitleEditor, useTaskMeta } from "@/components/steve/task-meta-menu";
+import { TaskCloseDialog, useTaskClose } from "@/components/steve/task-close";
 import { Nothing, StateBadge, Where, taskState } from "@/components/steve/ui";
 
 import { unavailableSource } from "@/lib/source-health";
@@ -125,6 +126,7 @@ function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () 
     const { t: tr, locale } = useI18n();
     const { snap } = useFleet();
     const meta = useTaskMeta(t);
+    const closing = useTaskClose(t);
     const now = snap.agents.flatMap((a) => a.activities || []).find((a) => a.task_id === t.id);
     const steps = plan?.steps || [];
     const done = steps.filter((s) => s.state === "done").length;
@@ -141,7 +143,7 @@ function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () 
                         {t.attention ? <Badge type="pill-color" size="sm" color="warning">{tr("board.attentionCount", { count: t.attention })}</Badge> : null}
                         <span className="u-meta text-quaternary">{label(labelsFor(locale).origin, t.origin || "chat")}</span>
                     </div>
-                    <div className="pointer-events-auto shrink-0"><TaskMetaMenu t={t} pending={meta.pending || meta.renaming} onRename={meta.rename} onPatch={(patch) => void meta.save(patch)} /></div>
+                    <div className="pointer-events-auto shrink-0"><TaskMetaMenu t={t} pending={meta.pending || meta.renaming} onRename={meta.rename} onPatch={(patch) => void meta.save(patch)} onEnd={closing.closable ? closing.ask : undefined} /></div>
                 </div>
                 {meta.renaming ? <div className="pointer-events-auto"><TaskTitleEditor t={t} pending={meta.pending} onDone={meta.finishTitle} /></div> : <div className={`line-clamp-2 text-sm ${t.priority === "low" ? "text-tertiary" : "text-primary"}`}>{t.title || t.goal}</div>}
                 {meta.error && <div role="alert" className="text-xs text-error-primary">{meta.error}</div>}
@@ -163,6 +165,7 @@ function Card({ t, plan, onOpen, selected }: { t: Task; plan?: Plan; onOpen: () 
                     <span>{spend(t.tokens, locale)}</span>
                 </div>
             </div>
+            {closing.asking && <TaskCloseDialog t={t} onClose={closing.dismiss} />}
         </div>
     );
 }
