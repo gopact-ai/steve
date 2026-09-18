@@ -85,20 +85,30 @@ func (one *ownedSession) option(ctx context.Context, req nodewire.SessionRequest
 		return nodewire.SessionState{}, err
 	}
 	host, id, generation := one.host, one.record.UpstreamID, one.record.Generation
-	if host == nil || one.record.State.State != nodewire.SessionIdle || one.runningLocked() {
+	// A selector can be set while the agent is answering. Approval mode is
+	// why: an owner who stops approving each command means now, not after
+	// this turn. The agent takes it on the same connection the turn runs
+	// on, so only an idle session parks in configuring — a running one
+	// keeps its state and its receipt.
+	status := one.record.State.State
+	answering := status == nodewire.SessionRunning || one.runningLocked()
+	settled := status == nodewire.SessionIdle && !answering
+	if host == nil || status.Unavailable() || !(answering || settled) {
 		one.mu.Unlock()
-		return nodewire.SessionState{}, sessionError("busy", "settings require an idle live session")
+		return nodewire.SessionState{}, sessionError("busy", "settings require a live session")
 	}
-	next := one.copyLocked()
-	next.State.State = nodewire.SessionConfiguring
-	if err := one.commitLocked(next); err != nil {
-		one.mu.Unlock()
-		return nodewire.SessionState{}, err
+	if settled {
+		next := one.copyLocked()
+		next.State.State = nodewire.SessionConfiguring
+		if err := one.commitLocked(next); err != nil {
+			one.mu.Unlock()
+			return nodewire.SessionState{}, err
+		}
 	}
 	one.mu.Unlock()
 	optionErr := host.SetOption(ctx, acp.SessionID(id), generation, acp.SessionConfigID(req.OptionID), req.OptionValue)
 	one.mu.Lock()
-	next = one.copyLocked()
+	next := one.copyLocked()
 	next.State.Settings = host.Settings(acp.SessionID(id))
 	if next.State.State == nodewire.SessionConfiguring {
 		next.State.State = nodewire.SessionIdle

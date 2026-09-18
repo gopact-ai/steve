@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/view"
 )
@@ -67,5 +68,23 @@ func TestRecoveryPreferencesMustBeConfirmedBeforeTaskInput(t *testing.T) {
 				t.Fatal("preference check sent task input")
 			}
 		})
+	}
+}
+
+// The record of a turn says what the turn ran with. After the owner
+// changes approval mode, the agent's configured default is the wrong
+// answer: the session's own report is the right one, by its label.
+func TestTheTurnRecordReportsTheSessionsOwnSelectors(t *testing.T) {
+	configured := agent.Agent{ID: "dev", Model: "m1", Options: map[string]string{"mode": "Full access"}}
+	live := &recoveryConfigurable{fakeRunner: &fakeRunner{}, settings: view.Settings{Model: "Model 2", Options: []view.Option{
+		{ID: "mode", Category: "mode", Current: "read-only", Choices: []view.Choice{{Value: "read-only", Label: "Ask for approval"}, {Value: "agent-full-access", Label: "Full access"}}},
+	}}}
+	model, options := sessionSelectors(live, configured)
+	if model != "Model 2" || options["mode"] != "Ask for approval" {
+		t.Fatalf("turn record kept the agent's default: %q %v", model, options)
+	}
+	plain, fallback := sessionSelectors(&fakeRunner{}, configured)
+	if plain != "m1" || fallback["mode"] != "Full access" {
+		t.Fatalf("an agent without selectors lost its configuration: %q %v", plain, fallback)
 	}
 }

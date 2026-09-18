@@ -264,9 +264,10 @@ func (t *chatTurn) compose(e *lifecycle.Execution) error {
 			user = onboard.Continue(c.text.Locale(), c.homePath) + "\n\n" + user
 		}
 	}
+	model, options := sessionSelectors(e.Session, selected)
 	injected := &Injected{
 		Project: t.binding.ProjectID, Workspace: t.workspace.Path,
-		Agent: selected.ID, Node: selected.Node, Harness: selected.Harness, Model: selected.Model, Options: selected.Options,
+		Agent: selected.ID, Node: selected.Node, Harness: selected.Harness, Model: model, Options: options,
 		Session: e.Session.ID(), NewSession: t.saved.UpstreamID == "", Fingerprint: capabilities.Fingerprint,
 		InstructionsBytes: len(capabilities.Instructions), Prompt: user,
 	}
