@@ -154,7 +154,9 @@ const checks = {
         assert.equal(call.input, "改过的问题");
         assert.equal(call.rewind_to, sent.id, "The submission must name the line it replaces");
         await eventually(async () => await f.page.getByText("取消改写", { exact: true }).count() === 0, "A sent rewrite must clear the notice");
-        assert.equal(await f.page.getByText("原来的回答", { exact: true }).count(), 0, "The answer to the replaced line must leave the transcript");
+        // The removed lines come back from the hub's own reading of the
+        // thread, so this waits for that read rather than the click.
+        await eventually(async () => await f.page.getByText("原来的回答", { exact: true }).count() === 0, "The answer to the replaced line must leave the transcript");
     },
     async "channel-milestone-lifecycle"(f) {
         const milestone = { id: "progress-side", conversation: A, exchange_id: "exchange-side", kind: "milestone", at, text: "First channel milestone", format: "markdown", title: "builder · test" };
