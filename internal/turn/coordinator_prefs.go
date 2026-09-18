@@ -47,7 +47,12 @@ func (c *Coordinator) Preferences(conversationID, agentID string) map[string]str
 // SetPreferences records the owner's choices and rolls the agent's
 // session over — the current one is archived, the next turn opens a
 // fresh one with the choices applied. The task goes on; only the
-// upstream session changes. Refused while a turn runs.
+// upstream session changes.
+//
+// A turn in flight does not refuse the change. Its session cannot be
+// exchanged under it, so the choice is recorded and the agent is named
+// for renewal: the turn finishes on the session it started with, and the
+// next one begins on a session that has the new choices.
 func (c *Coordinator) SetPreferences(ctx context.Context, conversationID, agentID string, patch map[string]string) error {
 	if c.catalog == nil {
 		return errors.New("no agent catalog")
@@ -56,23 +61,39 @@ func (c *Coordinator) SetPreferences(ctx context.Context, conversationID, agentI
 	if !ok {
 		return errors.New("no agent " + agentID)
 	}
-	if c.isActive(conversationID, selected.ID) {
-		return UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
-	}
 	if err := c.store.SetPreferences(conversationID, selected.ID, patch); err != nil {
 		return err
 	}
-	if saved, ok := c.store.Conversation(conversationID).Sessions[selected.ID]; ok && saved.UpstreamID != "" {
-		// Same as a reset's session half, without its task half: the
-		// agent's upstream session ends, the work it was on does not.
+	if c.turnInFlight(conversationID, selected.ID) {
+		return c.store.SetRenew(conversationID, selected.ID, true)
+	}
+	return c.renewSession(ctx, conversationID, selected.ID)
+}
+
+// renewSession ends the agent's upstream session and archives the record,
+// so the next turn opens a fresh one with whatever is now preferred. Same
+// as a reset's session half, without its task half: the agent's upstream
+// session ends, the work it was on does not.
+func (c *Coordinator) renewSession(ctx context.Context, conversationID, agentID string) error {
+	if saved, ok := c.store.Conversation(conversationID).Sessions[agentID]; ok && saved.UpstreamID != "" {
 		if err := c.runtime.CloseSession(ctx, harness.Placement{Node: saved.NodeID, Harness: saved.HarnessID}, saved.UpstreamID); err != nil {
-			slog.Error(fmt.Sprintf("turn: close %s session for new preferences: %v", selected.ID, err), "conversation", conversationID, "agent", selected.ID, "node", saved.NodeID)
+			slog.Error(fmt.Sprintf("turn: close %s session for new preferences: %v", agentID, err), "conversation", conversationID, "agent", agentID, "node", saved.NodeID)
 		}
-		if err := c.store.ArchiveSession(conversationID, selected.ID, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		if err := c.store.ArchiveSession(conversationID, agentID, time.Now().UTC().Format(time.RFC3339)); err != nil {
 			return err
 		}
 	}
-	return nil
+	return c.store.SetRenew(conversationID, agentID, false)
+}
+
+// renewIfAsked opens the next session fresh when a selector was changed
+// while the agent was answering. It runs before a turn or a command takes
+// the agent's session, which is the first moment the exchange is safe.
+func (c *Coordinator) renewIfAsked(ctx context.Context, conversationID, agentID string) error {
+	if !c.store.Conversation(conversationID).Renew[agentID] {
+		return nil
+	}
+	return c.renewSession(ctx, conversationID, agentID)
 }
 
 // Selectors are what the agent's harness offers to choose from, read
@@ -92,13 +113,18 @@ func (c *Coordinator) Selectors(parent context.Context, conversationID, agentID 
 	if !ok {
 		return Selectors{}, errors.New("no agent " + agentID)
 	}
-	req := Request{ConversationID: conversationID, ChatType: protocol.ChatP2P, SenderOpenID: c.ownerOpenID}
-	ctx, cancel := context.WithTimeout(parent, c.timeout)
-	if !c.beginTurn(conversationID, selected.ID, cancel) {
-		cancel()
+	// Reading the choices is not a turn: it opens a session of its own,
+	// bound to no execution, sends it no work and closes it again. So it
+	// does not take the turn slot — the moment the owner most wants to see
+	// what else this agent could run is while it is running something. A
+	// skills change is different: it moves what every session would load,
+	// and the reply would describe an agent that no longer exists.
+	if c.skillsUpdating() {
 		return Selectors{}, UserError{Text: c.text.T(i18n.TurnBusy, protocol.CommandCancel)}
 	}
-	defer c.clearActive(conversationID, selected.ID)
+	req := Request{ConversationID: conversationID, ChatType: protocol.ChatP2P, SenderOpenID: c.ownerOpenID}
+	ctx, cancel := context.WithTimeout(parent, c.timeout)
+	defer cancel()
 	_, workspace, err := c.resolveWorkspace(ctx, req, selected)
 	if err != nil {
 		return Selectors{}, err
@@ -153,6 +179,9 @@ func (c *Coordinator) ProjectOf(ctx context.Context, conversationID string) stri
 // tainted, because a command that only reads or sets a selector is not a
 // turn.
 func (c *Coordinator) openForCommand(ctx context.Context, req Request, selected agent.Agent) (harness.Runner, error) {
+	if err := c.renewIfAsked(ctx, req.ConversationID, selected.ID); err != nil {
+		return nil, err
+	}
 	capabilities, err := c.assemble(selected, req, nil)
 	if err != nil {
 		return nil, err

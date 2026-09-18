@@ -143,6 +143,21 @@ func (c *Coordinator) beginTurn(conversationID, agentID string, cancel context.C
 	return true
 }
 
+// turnInFlight reports a turn holding this agent's session in this
+// conversation: from the moment the slot is taken, before the session is
+// even open, until the turn lets it go. isActive is narrower — it answers
+// whether the agent is working right now — and a session may not be
+// exchanged during the gap between the two.
+func (c *Coordinator) turnInFlight(conversationID, agentID string) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := sessionKey(conversationID, agentID)
+	if _, running := c.active[key]; running {
+		return true
+	}
+	return c.cancels[key] != nil
+}
+
 // pendingCancelWindow is how long an armed cancel stays effective when no
 // turn was running yet — long enough to cover the dequeue-to-beginTurn gap.
 const pendingCancelWindow = 5 * time.Second
