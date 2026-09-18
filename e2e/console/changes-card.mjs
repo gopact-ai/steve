@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "../../web/console/node_modules/vite/dist/node/index.js";
 import { chromium } from "../../web/console/node_modules/playwright/index.mjs";
+import { draftOf } from "./composer.mjs";
 
 const root = fileURLToPath(new URL("../../web/console", import.meta.url));
 const server = await createServer({ root, configFile: path.join(root, "vite.config.ts"), server: { host: "127.0.0.1", port: 0, hmr: false }, logLevel: "error" });
@@ -170,7 +171,7 @@ try {
         await f.card.getByRole("button",{name:"Review changes",exact:true}).click();
         await f.page.getByRole("alert").getByText(/artifact workspace could not load/).waitFor();
         await f.page.getByRole("heading",{name:"Changes conversation",exact:true}).waitFor();
-        assert.equal(await f.page.getByRole("textbox",{name:"Message",exact:true}).inputValue(),"Keep this draft");
+        assert.equal(await draftOf(f.page.getByRole("textbox",{name:"Message",exact:true})),"Keep this draft");
         await f.page.getByRole("alert").getByRole("button",{name:"Back",exact:true}).click();
         await f.close();console.log("PASS Review module failure preserves the conversation and draft");
     }

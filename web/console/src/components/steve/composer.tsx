@@ -1,12 +1,12 @@
 import { useI18n } from "@/providers/locale-provider";
 import { number } from "@/lib/format";
-import { memo, useLayoutEffect, useMemo, useRef, useState, type ClipboardEvent, type KeyboardEvent, type RefObject } from "react";
+import { memo, useState, type RefObject } from "react";
 import { ArrowUp, ChevronDown, CornerDownRight, DotsHorizontal, Edit05, Folder, MessageChatSquare, Plus, Square, Trash01 } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import type { ConversationContext, Exchange, Project, QuoteRef, Selectors, Suggestion, Verb } from "@/lib/types";
 import { plain } from "@/lib/plain";
-import { listContinuation, markdownSegments } from "@/lib/markdown-source";
+import { MarkdownInput, type DraftBox } from "@/components/steve/markdown-input";
 import { useNodeLabel } from "@/lib/node-name";
 
 // Composer is the console's input, in the proportions of a chat app's:
@@ -45,8 +45,8 @@ export interface ComposerProps {
     pending?: boolean;
     stopping?: boolean;
     disabled?: boolean;
-    boxRef: RefObject<HTMLTextAreaElement | null>;
-    onKey: (e: KeyboardEvent<HTMLTextAreaElement>) => void;
+    boxRef: RefObject<DraftBox | null>;
+    onKey: (e: KeyboardEvent) => void;
     suggestions: Suggestion[];
     pick: number;
     onApply: (s: Suggestion) => void;
@@ -62,49 +62,9 @@ export interface ComposerProps {
 
 const chip = "composer-chip";
 
-// How long after a composition settles the box stays deaf to Enter.
-const COMPOSITION_SETTLE_MS = 20;
-
-// Replace a stretch of the box through the browser's own editing command,
-// so the change lands on the undo stack with everything the person typed
-// by hand. Engines that refuse it get the same edit written directly.
-function rewrite(box: HTMLTextAreaElement, from: number, to: number, text: string, onChange: (s: string) => void) {
-    box.focus();
-    box.setSelectionRange(from, to);
-    const native = text ? "insertText" : "delete";
-    let done = false;
-    try {
-        done = document.execCommand(native, false, text || undefined);
-    } catch {
-        done = false;
-    }
-    if (done) return;
-    const next = box.value.slice(0, from) + text + box.value.slice(to);
-    onChange(next);
-    requestAnimationFrame(() => box.setSelectionRange(from + text.length, from + text.length));
-}
-
 export const Composer = memo(function Composer(p: ComposerProps) {
     const { t } = useI18n();
     const nodeLabelOf = useNodeLabel();
-    // Enter sends, so the box has to be certain the keystroke is the
-    // owner's and not an input method confirming a candidate. Engines
-    // disagree on whether that Enter arrives before or after
-    // compositionend, so the box also stays deaf to Enter for a moment
-    // after a composition settles — long enough to cover the confirming
-    // keystroke, far shorter than a person's next deliberate press.
-    const composing = useRef(false);
-    const settled = useRef(0);
-    // The painted layer scrolls with the box it sits under, both when the
-    // caret drags it and when the draft is replaced from elsewhere.
-    const paint = useRef<HTMLDivElement | null>(null);
-    const box = useRef<HTMLDivElement | null>(null);
-    const painted = useMemo(() => markdownSegments(p.value), [p.value]);
-    const follow = () => {
-        const written = p.boxRef.current, painted = paint.current;
-        if (written && painted) painted.scrollTop = written.scrollTop;
-    };
-    useLayoutEffect(follow, [p.value]);
     return (
         <div className="composer">
             {p.suggestions.length > 0 && (
@@ -143,62 +103,16 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                         ))}
                     </ul>
                 )}
-                <div className="composer-box" ref={box}>
-                    {/* The same characters as the box below, in the same
-                        metrics, painted with what they mean. It is decoration
-                        for text a screen reader already reads off the box. A
-                        draft ending in a newline gets one more, so the two
-                        still scroll to the same depth. */}
-                    <div className="composer-paint" ref={paint} aria-hidden="true">
-                        {painted.map((seg, i) => seg.kind
-                            ? <span key={i} className={seg.kind}>{seg.text}</span>
-                            : <span key={i}>{seg.text}</span>)}
-                        {p.value.endsWith("\n") && "\n"}
-                    </div>
-                    <textarea
-                        ref={p.boxRef}
-                        onScroll={follow}
-                        onCompositionStart={() => { composing.current = true; box.current?.classList.add("is-composing"); }}
-                        onCompositionEnd={() => { composing.current = false; settled.current = Date.now(); box.current?.classList.remove("is-composing"); }}
-                        aria-label={t("consoleChrome.message")}
-                        value={p.value}
-                        rows={1}
-                        disabled={p.disabled || (p.busy && p.queueing === false)}
-                        placeholder={p.disabled ? t("consoleChrome.preparing") : p.busy ? (p.queueing === false ? t("consoleChrome.processing") : t("consoleChrome.queuePlaceholder")) : t("consoleChrome.placeholder")}
-                        onChange={(e) => p.onChange(e.target.value)}
-                        onKeyDown={(e) => {
-                            // While an input method is composing the keystroke
-                            // belongs to it. Enter is still swallowed: confirming a
-                            // candidate happens below the DOM, so the only thing a
-                            // default action could add here is a stray newline.
-                            if (composing.current || e.nativeEvent.isComposing || e.nativeEvent.keyCode === 229) {
-                                if (e.key === "Enter") e.preventDefault();
-                                return;
-                            }
-                            // Just after one settles, an Enter is the tail of that
-                            // confirmation. It must neither send nor leave a stray
-                            // newline behind, so it is swallowed outright.
-                            if (e.key === "Enter" && Date.now() - settled.current < COMPOSITION_SETTLE_MS) { e.preventDefault(); return; }
-                            // A newline inside a list carries the list with it.
-                            if (e.key === "Enter" && e.shiftKey) {
-                                const written = e.currentTarget;
-                                const caret = written.selectionStart;
-                                if (caret === written.selectionEnd) {
-                                    const start = written.value.lastIndexOf("\n", caret - 1) + 1;
-                                    const carried = listContinuation(written.value.slice(start, caret));
-                                    if (carried) {
-                                        e.preventDefault();
-                                        rewrite(written, carried.insert ? caret : start, caret, carried.insert, p.onChange);
-                                        return;
-                                    }
-                                }
-                            }
-                            p.onKey(e);
-                        }}
-                        onPaste={(e: ClipboardEvent<HTMLTextAreaElement>) => { const files = Array.from(e.clipboardData?.files ?? []); if (files.length) p.onPasteFiles?.(files); }}
-                        className="composer-textarea"
-                    />
-                </div>
+                <MarkdownInput
+                    handle={p.boxRef}
+                    value={p.value}
+                    label={t("consoleChrome.message")}
+                    disabled={p.disabled || (p.busy && p.queueing === false)}
+                    placeholder={p.disabled ? t("consoleChrome.preparing") : p.busy ? (p.queueing === false ? t("consoleChrome.processing") : t("consoleChrome.queuePlaceholder")) : t("consoleChrome.placeholder")}
+                    onChange={p.onChange}
+                    onKey={p.onKey}
+                    onPasteFiles={p.onPasteFiles}
+                />
                 <div className="composer-controls"><div className="composer-options">
                     <Dropdown.Root>
                         <AriaButton aria-label={t("consoleChrome.verbs")} className="workbench-icon-button">

@@ -187,48 +187,43 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .composer { container: composer / inline-size; position: relative; width: 100%; min-width: 0; max-width: 820px; margin: 0 auto; }
 .composer-input { display: flex; flex-direction: column; border: 1px solid var(--color-border-primary); border-radius: 16px; background: var(--toolbar-surface); box-shadow: 0 2px 8px rgb(0 0 0 / .025); transition: border-color 120ms, box-shadow 120ms; }
 .composer-input:focus-within { border-color: var(--color-brand-400); box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-brand-500) 12%, transparent); }
-/* The draft is markdown, so the box shows it as markdown while it is
-   being typed. A painted layer holds the same characters in the same
-   metrics under a textarea whose own text is made transparent: the caret,
-   selection, undo and input methods all stay the browser's. Nothing in
-   the paint may move a glyph — colour, background, underline and a
-   stroked faux-bold are safe, a larger heading or a real italic face is
-   not — so marks are dimmed rather than hidden, and the box hides its
-   scrollbar so the two never wrap at different widths. */
-.composer-box { position: relative; }
-.composer-textarea, .composer-paint {
-    padding: 14px 16px 8px;
-    font: inherit;
-    font-size: 14px;
-    line-height: 22px;
-    letter-spacing: inherit;
-    white-space: pre-wrap;
-    overflow-wrap: anywhere;
-    tab-size: 4;
-}
-.composer-textarea { display: block; position: relative; z-index: 1; width: 100%; min-height: 50px; max-height: 200px; resize: none; background: transparent; outline: none; color: transparent; caret-color: var(--color-text-primary); scrollbar-width: none; }
-.composer-textarea::-webkit-scrollbar { width: 0; height: 0; }
-.composer-textarea::selection { background: color-mix(in srgb, var(--color-brand-500) 28%, transparent); }
-.composer-textarea::placeholder { color: var(--color-text-placeholder); }
-.composer-textarea:focus-visible { outline: none; }
-.composer-paint { position: absolute; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; color: var(--color-text-primary); }
-/* While an input method is composing, the candidate lives in the box and
-   nowhere else. The paint stands aside until the composition settles. */
-.composer-box.is-composing .composer-textarea { color: var(--color-text-primary); }
-.composer-box.is-composing .composer-paint { visibility: hidden; }
-.md-heading, .md-strong { -webkit-text-stroke: .4px currentColor; }
-.md-heading { color: var(--color-text-primary); }
-.md-quote, .md-strike { color: var(--color-text-tertiary); }
-.md-bullet, .md-ticked { color: var(--color-text-brand-secondary); }
-.md-link { color: var(--color-text-brand-secondary); text-decoration: underline; text-underline-offset: 2px; }
-.md-strike { text-decoration: line-through; }
-.md-code, .md-code-block { background: var(--color-bg-quaternary); border-radius: 3px; }
-/* Marks stay the quietest thing on the line, wherever they sit, and
-   emphasis stays the loudest — including inside a quoted line. */
-.md-box, .md-fence, .md-rule, .md-url { color: var(--color-text-quaternary); text-decoration: none; }
-.md-mark { color: var(--color-text-quaternary); }
-.md-em { color: var(--color-text-primary); }
-.composer-box:has(.composer-textarea:disabled) .composer-paint { opacity: .6; }
+/* The draft is markdown, and it is written the way it will read. The box
+   is an editor, not a textarea, because only the layer that owns the text
+   may give a heading its size or a word its weight — anything painted
+   behind a textarea would move the caret away from its letter. The line
+   the caret is on shows its source, so the marks can still be repaired. */
+.composer-box { display: block; min-width: 0; }
+.composer-box .cm-editor { max-height: 200px; background: transparent; color: var(--color-text-primary); }
+.composer-box .cm-editor.cm-focused { outline: none; }
+.composer-box .cm-scroller { font-family: inherit; font-size: 14px; line-height: 22px; overflow-y: auto; scrollbar-width: none; }
+.composer-box .cm-scroller::-webkit-scrollbar { width: 0; height: 0; }
+.composer-box .cm-content { padding: 14px 16px 8px; min-height: 50px; caret-color: var(--color-text-primary); }
+.composer-box .cm-line { padding: 0 2px 0 0; }
+.composer-box .cm-placeholder { color: var(--color-text-placeholder); }
+.composer-box[data-disabled] { opacity: .6; }
+.composer-box .cm-selectionBackground, .composer-box .cm-content ::selection { background: color-mix(in srgb, var(--color-brand-500) 28%, transparent) !important; }
+.composer-box .cm-cursor { border-left-color: var(--color-text-primary); }
+.composer-box .cm-md-h1 { font-size: 19px; line-height: 28px; font-weight: 600; }
+.composer-box .cm-md-h2 { font-size: 17px; line-height: 26px; font-weight: 600; }
+.composer-box .cm-md-h3 { font-size: 15px; line-height: 24px; font-weight: 600; }
+.composer-box .cm-md-h4, .composer-box .cm-md-h5, .composer-box .cm-md-h6 { font-weight: 600; }
+.composer-box .cm-md-h5, .composer-box .cm-md-h6 { color: var(--color-text-secondary); }
+.composer-box .cm-md-strong { font-weight: 640; }
+.composer-box .cm-md-em { font-style: italic; }
+.composer-box .cm-md-strike { color: var(--color-text-tertiary); text-decoration: line-through; }
+.composer-box .cm-md-link { color: var(--color-text-brand-secondary); text-decoration: underline; text-underline-offset: 2px; }
+.composer-box .cm-md-url { color: var(--color-text-quaternary); text-decoration: none; }
+.composer-box .cm-md-code { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; font-size: .92em; background: var(--color-bg-secondary); border-radius: 4px; padding: 0 .3em; }
+.composer-box .cm-md-code-line { font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace; font-size: 13px; background: var(--color-bg-secondary); }
+.composer-box .cm-md-quote { border-left: 2px solid var(--color-border-primary); padding-left: 10px; color: var(--color-text-tertiary); }
+/* A wrapped list item lines up under its own text, not under its bullet,
+   and the bullet itself stays inside the box rather than hanging off it. */
+.composer-box .cm-md-item { padding-left: 1.4em; text-indent: -1.4em; }
+.composer-box .cm-md-glyph { color: var(--color-text-brand-secondary); }
+.composer-box .cm-md-dot, .composer-box .cm-md-box { display: inline-block; width: 1.4em; text-indent: 0; }
+.composer-box .cm-md-box { color: var(--color-text-quaternary); }
+.composer-box .cm-md-box-on { color: var(--color-text-brand-secondary); }
+.composer-box .cm-md-hr { display: inline-block; width: 100%; vertical-align: middle; border-top: 1px solid var(--color-border-primary); }
 .composer-controls { display: flex; align-items: flex-end; gap: 8px; min-width: 0; padding: 4px 10px 10px; }
 .composer-options { display: flex; flex-wrap: wrap; align-items: center; gap: 2px; flex: 1 1 auto; min-width: 0; }
 /* Where the message goes reads from the left, how the turn will run
@@ -383,7 +378,7 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
     .app-main { width: 100%; }
     .console-heading { min-width: 80px; }
     .console-toolbar > .workbench-icon-button { width: 28px; }
-    .composer-textarea, .composer-paint { font-size: 16px; }
+    .composer-box .cm-scroller { font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
     .workbench-shell *, .workbench-overlay, .workbench-sheet { animation-duration: .01ms !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }

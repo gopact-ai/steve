@@ -8,7 +8,7 @@
         "build": "tsc -b && vite build",
         "preview": "vite preview",
         "test:boundaries": "node --test ../../e2e/console/architecture-boundaries.mjs",
-        "test:unit": "node --test ../../e2e/console/diff-parser.mjs ../../e2e/console/settings-draft.mjs ../../e2e/console/i18n.mjs ../../e2e/console/live.mjs ../../e2e/console/history-lines.mjs ../../e2e/console/plain-text.mjs ../../e2e/console/markdown-source.mjs && PURE_ONLY=1 node ../../e2e/console/settings-page.mjs && node ../../e2e/console/material-drafts.mjs",
+        "test:unit": "node --test ../../e2e/console/diff-parser.mjs ../../e2e/console/settings-draft.mjs ../../e2e/console/i18n.mjs ../../e2e/console/live.mjs ../../e2e/console/history-lines.mjs ../../e2e/console/plain-text.mjs && PURE_ONLY=1 node ../../e2e/console/settings-page.mjs && node ../../e2e/console/material-drafts.mjs",
         "test:ui": "node ../../e2e/console/interactions.mjs",
         "test:task-completion": "node ../../e2e/console/task-completion.mjs",
         "test:architecture": "node ../../e2e/console/architecture.mjs",
@@ -27,6 +27,11 @@
         "test:delete": "node ../../e2e/console/delete-ui.mjs"
     },
     "dependencies": {
+        "@codemirror/commands": "^6.11.1",
+        "@codemirror/lang-markdown": "^6.5.2",
+        "@codemirror/language": "^6.12.4",
+        "@codemirror/state": "^6.7.5",
+        "@codemirror/view": "^6.43.12",
         "@tailwindcss/typography": "^0.5.19",
         "@tailwindcss/vite": "^4.2.2",
         "@untitledui/file-icons": "^0.0.9",

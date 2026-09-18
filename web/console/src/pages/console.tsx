@@ -5,6 +5,7 @@ import { useLocation, useNavigate } from "react-router";
 import { LayoutLeft, LayoutRight, MessageChatSquare, X } from "@untitledui/icons";
 import { Badge } from "@/components/base/badges/badges";
 import { ThemeMenu } from "@/components/steve/theme-menu";
+import type { DraftBox } from "@/components/steve/markdown-input";
 import { Composer, type Queued } from "@/components/steve/composer";
 import { AssistantMessage, UserMessage } from "@/components/steve/message";
 import { Rail, type RailTab } from "@/components/steve/rail";
@@ -145,7 +146,7 @@ export function ConsolePage() {
     const setSessionsCollapsed = (v: boolean) => { setSessionsCollapsedState(v); try { localStorage.setItem("steve.sessions.collapsed", v ? "1" : "0"); } catch { /* ignore */ } };
     const [verbs, setVerbs] = useState<Verb[]>([]);
     useEffect(() => { void fetchVerbs().then((d) => setVerbs(d.verbs || [])).catch(() => undefined); }, []);
-    const box = useRef<HTMLTextAreaElement>(null);
+    const box = useRef<DraftBox | null>(null);
     const transcriptBox = useRef<HTMLDivElement>(null);
     const followTranscript = useRef(true);
     const seen = useRef(0);
@@ -310,14 +311,6 @@ export function ConsolePage() {
         else void submit(intent.text);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [intent, context, submission, creating, stopping, canSubmit, consume]);
-
-    // The composer grows with the text, up to a few lines, like a chat app's.
-    useEffect(() => {
-        const el = box.current;
-        if (!el) return;
-        el.style.height = "0px";
-        el.style.height = Math.min(el.scrollHeight, 200) + "px";
-    }, [text]);
 
     function selectConversation(id: string, nextContext: ConversationContext | null = null) {
         setMobileSessions(false);
@@ -487,8 +480,8 @@ export function ConsolePage() {
         setText(item.insert);
         box.current?.focus();
     }
-    function onKey(e: React.KeyboardEvent<HTMLTextAreaElement>) {
-        if (e.nativeEvent.isComposing) return;
+    function onKey(e: KeyboardEvent) {
+        if (e.isComposing) return;
         if (suggestions.length) {
             if (e.key === "ArrowDown") { e.preventDefault(); setPick((i) => (i + 1) % suggestions.length); return; }
             if (e.key === "ArrowUp") { e.preventDefault(); setPick((i) => (i - 1 + suggestions.length) % suggestions.length); return; }
@@ -536,7 +529,7 @@ export function ConsolePage() {
     const selectReply = useEventCallback((r: Reply) => { setSelectedReply(r); setTab("trace"); setInspectorOpen(true); });
     const placeDraft = (value: string) => {
         setText(value);
-        window.setTimeout(() => { const box_ = box.current; if (!box_) return; box_.focus(); box_.setSelectionRange(box_.value.length, box_.value.length); }, 0);
+        window.setTimeout(() => { box.current?.focus(); box.current?.caretToEnd(); }, 0);
     };
     const editSent = useEventCallback((r: Reply) => {
         const value = (r.input || "").trim();
@@ -567,7 +560,7 @@ export function ConsolePage() {
     const runVerb = useEventCallback((cmd: string) => { setText(cmd + " "); box.current?.focus(); });
     const chooseProject = useEventCallback((id: string) => void submit(`/project use ${id}`));
     const chooseAgent = useEventCallback((id: string) => void submit(`/use ${id}`));
-    const pressKey = useEventCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => onKey(e));
+    const pressKey = useEventCallback((e: KeyboardEvent) => onKey(e));
     const loadSelectors = useEventCallback(() => fetchSelectors(conversation, context!.agent!.id));
     const prefer = useEventCallback(async (patch: Record<string, string>) => { if (!context?.agent) return; const r = await setPreferences(conversation, context.agent.id, patch); if (activeConversation.current === conversation) { setStatus(r.note || t("console.preferenceSaved")); loadContext(); } });
 

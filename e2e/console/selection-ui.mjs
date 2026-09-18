@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createServer } from "../../web/console/node_modules/vite/dist/node/index.js";
 import { chromium } from "../../web/console/node_modules/playwright/index.mjs";
+import { draftOf } from "./composer.mjs";
 const web = fileURLToPath(new URL("../../web/console", import.meta.url));
 const server = await createServer({ configFile: path.join(web, "vite.config.ts"), root: web, server: { host: "127.0.0.1", port: 0 } });
 await server.listen();
@@ -144,7 +145,7 @@ try {
  f.project='q';await page.evaluate(event=>window.emit(event),{kind:'console.reply',conversation:A,reply_id:'binding-change',text:'Project changed',at});await page.getByText('q · test-hub',{exact:true}).waitFor();
  f.releaseCapture();f.captureGate=null;await bar.getByRole('alert').waitFor();
  assert.deepEqual(await page.evaluate(A=>JSON.parse(localStorage.getItem('steve.console.drafts')).materials[A],A),saved,'A delayed capture cannot add old-project material after the target is rebound');
- assert.equal(await draft.inputValue(),'Keep this draft while the project changes');assert.equal(f.posts.length,writes,'Rejecting a stale capture cannot submit a question');
+ assert.equal(await draftOf(draft),'Keep this draft while the project changes');assert.equal(f.posts.length,writes,'Rejecting a stale capture cannot submit a question');
  console.log('PASS delayed capture rechecks the target project without changing drafts or sending');
  assert.deepEqual(f.errors,[]);
 } catch(error) {console.log("DEBUG",f.errors,await page.locator("body").innerText());await page.screenshot({path:"/tmp/steve-selection-error.png"});throw error;} finally { f.releaseCapture?.();await context.close();await browser.close();await server.close(); }
