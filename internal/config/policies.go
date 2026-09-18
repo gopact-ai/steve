@@ -34,8 +34,25 @@ type ReviewPolicy struct {
 	MaxEntries   int      `json:"max_entries"`
 	Timeout      Duration `json:"timeout"`
 }
+
+// LandingPolicy is what happens when bringing a result into a project's
+// canonical workspace hits a merge conflict.
+type LandingPolicy struct {
+	// Conflicts is "agent" — hand the half-merged tree to an agent as soon
+	// as the conflict appears — or "manual", which leaves it queued until
+	// someone runs /resolve.
+	Conflicts string `json:"conflicts"`
+}
+
+// ConflictsByAgent and ConflictsManual are the two landing conflict policies.
+const (
+	ConflictsByAgent = "agent"
+	ConflictsManual  = "manual"
+)
+
 type Policies struct {
 	Execution ExecutionPolicy `json:"execution"`
+	Landing   LandingPolicy   `json:"landing"`
 	Planning  PlanningPolicy  `json:"planning"`
 	Snapshot  SnapshotPolicy  `json:"snapshot"`
 	Review    ReviewPolicy    `json:"review"`
@@ -79,6 +96,9 @@ func (p Policies) WithDefaults() Policies {
 	if p.Review.Timeout == 0 {
 		p.Review.Timeout = Duration(artifact.DefaultReviewTimeout)
 	}
+	if p.Landing.Conflicts == "" {
+		p.Landing.Conflicts = ConflictsByAgent
+	}
 	return p
 }
 
@@ -95,6 +115,11 @@ func (p Policies) Validate() error {
 	}
 	if p.Snapshot.MaxFileBytes > p.Snapshot.MaxBytes {
 		return fmt.Errorf("policies.snapshot.max_file_bytes must not exceed max_bytes")
+	}
+	switch p.Landing.Conflicts {
+	case "", ConflictsByAgent, ConflictsManual:
+	default:
+		return fmt.Errorf("policies.landing.conflicts must be %q or %q", ConflictsByAgent, ConflictsManual)
 	}
 	return nil
 }

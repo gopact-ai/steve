@@ -160,6 +160,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/attempts/{attempt}/diff", s.guard(s.consoleAttemptDiff))
 	mux.HandleFunc("POST /console/projects/{id}/workspaces", s.guard(s.consoleAddWorkspace))
 	mux.HandleFunc("DELETE /console/projects/{id}/workspaces/{node}", s.guard(s.consoleRemoveWorkspace))
+	mux.HandleFunc("POST /console/projects/{id}/conflicts", s.guard(s.consoleResolveConflicts))
 	mux.HandleFunc("GET /console/nodes/{name}/settings", s.guard(s.nodeSettings))
 	mux.HandleFunc("PUT /console/nodes/{name}/settings", s.guard(s.nodeSettings))
 	mux.HandleFunc("GET /bootstrap/{name}", s.bootstrap)
@@ -455,6 +456,18 @@ func (s *Server) consoleAddWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+func (s *Server) consoleResolveConflicts(w http.ResponseWriter, r *http.Request) {
+	if !s.adminOr(w) {
+		return
+	}
+	result, err := s.admin.ResolveConflicts(r.Context(), r.PathValue("id"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, result)
 }
 
 func (s *Server) consoleRemoveWorkspace(w http.ResponseWriter, r *http.Request) {

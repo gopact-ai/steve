@@ -187,6 +187,14 @@ type AddWorkspaceRequest struct {
 	Origin string `json:"origin,omitempty"`
 }
 
+// ResolveConflictsResult is what asking for a project's stuck landings to
+// be resolved started. The work runs as a plan and takes minutes, so the
+// page is told how many were picked up, not how they turned out.
+type ResolveConflictsResult struct {
+	Started int      `json:"started"`
+	Skipped []string `json:"skipped,omitempty"`
+}
+
 // ApprovalSync is what syncing the fleet to the default approval stance
 // did: which agents were let go of their own pinned mode, which already
 // followed the default, and which run an AI tool that offers no mode at
@@ -250,6 +258,9 @@ type Admin interface {
 	// is there, or one cloned into place; RemoveWorkspace forgets one.
 	AddWorkspace(ctx context.Context, projectID string, req AddWorkspaceRequest) error
 	RemoveWorkspace(ctx context.Context, projectID, node string) error
+	// ResolveConflicts hands the project's landings that stopped at a merge
+	// conflict to an agent, in the background.
+	ResolveConflicts(ctx context.Context, projectID string) (ResolveConflictsResult, error)
 	// NodeSettings reads what a machine offers; SetNodeSettings rewrites
 	// it and answers what is in force. The hub machine is one of them.
 	NodeSettings(ctx context.Context, name string) (nodewire.Settings, error)

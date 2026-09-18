@@ -73,6 +73,7 @@ type Failure struct {
 	Have     int64    `json:"have,omitempty"`
 	Limit    int64    `json:"limit,omitempty"`
 	Paths    []string `json:"paths,omitempty"`
+	Marked   string   `json:"marked,omitempty"`
 }
 
 func (e *Failure) Error() string { return e.Message }

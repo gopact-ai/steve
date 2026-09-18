@@ -766,6 +766,21 @@ type Pending struct {
 	Artifact string    `json:"artifact"`
 	By       string    `json:"by"`
 	At       time.Time `json:"at"`
+	// Blocked records the merge conflict this artifact last stopped at.
+	// Retrying against an unchanged canonical would reach the same
+	// conflict, so the queue waits for the canonical name to move —
+	// which is what resolving the conflict does.
+	Blocked *Blocked `json:"blocked,omitempty"`
+}
+
+// Blocked is why a queued artifact is not being retried, and what a
+// resolver needs to work from.
+type Blocked struct {
+	Landing   string    `json:"landing"`
+	Canonical string    `json:"canonical"`
+	Marked    string    `json:"marked,omitempty"`
+	Paths     []string  `json:"paths,omitempty"`
+	At        time.Time `json:"at"`
 }
 
 // Defer queues an artifact to land later.
@@ -782,8 +797,11 @@ func (s *Store) Defer(ctx context.Context, projectID, artifactID, by string, sou
 }
 
 // LandPending lands everything queued for the project, oldest first, and
-// returns each landing. A conflict stops that artifact but not the rest;
-// conflicted artifacts stay queued for a person to resolve.
+// returns each landing. A conflict stops that artifact but not the rest:
+// it stays queued, marked with the canonical snapshot it could not merge
+// onto, and is left alone until that canonical moves. Without that the
+// sweeper would recompute the same conflict every time it ran and write a
+// failed landing for each pass.
 func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, error) {
 	// Turns, delivery callbacks and the background sweep can all drain this
 	// queue. One renewed, fenced driver must own its read/land/delete cycle.
@@ -812,6 +830,15 @@ func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, 
 			return err
 		})
 	}
+	block := func(item Pending, land Landing, conflict Conflict) error {
+		item.Blocked = &Blocked{Landing: land.ID, Canonical: s.CanonicalOf(ctx, p.ID), Marked: conflict.Marked, Paths: conflict.Paths, At: s.now().UTC()}
+		return s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+			if err := tx.CheckLocalLease(drive); err != nil {
+				return err
+			}
+			return tx.PutBinding(pendingKind, item.Project+"/"+item.Artifact, item)
+		})
+	}
 	var queue []Pending
 	for _, data := range raw {
 		var item Pending
@@ -820,8 +847,12 @@ func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, 
 		}
 	}
 	sort.Slice(queue, func(i, j int) bool { return queue[i].At.Before(queue[j].At) })
+	head := s.CanonicalOf(ctx, p.ID)
 	var out []Landing
 	for _, item := range queue {
+		if item.Blocked != nil && item.Blocked.Canonical == head {
+			continue
+		}
 		var source []Source
 		if item.Source != nil {
 			source = []Source{*item.Source}
@@ -837,6 +868,9 @@ func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, 
 			var conflict Conflict
 			if errors.As(err, &conflict) {
 				out = append(out, land)
+				if err := block(item, land, conflict); err != nil {
+					return out, err
+				}
 				continue
 			}
 			return out, err
@@ -846,6 +880,46 @@ func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, 
 			return out, err
 		}
 	}
+	return out, nil
+}
+
+// Stuck is a queued result whose landing stopped at a merge conflict and
+// is waiting for the conflict to be resolved.
+type Stuck struct {
+	Project   string    `json:"project"`
+	Artifact  string    `json:"artifact"`
+	By        string    `json:"by"`
+	Landing   string    `json:"landing"`
+	Canonical string    `json:"canonical"`
+	Marked    string    `json:"marked,omitempty"`
+	Paths     []string  `json:"paths,omitempty"`
+	At        time.Time `json:"at"`
+}
+
+// Resolvable says whether an agent can be handed a checkout of this
+// conflict: git has to have kept the marked tree.
+func (s Stuck) Resolvable() bool { return s.Marked != "" }
+
+// Stuck lists the project's queued results that are held up by a merge
+// conflict, oldest first.
+func (s *Store) Stuck(ctx context.Context, projectID string) ([]Stuck, error) {
+	raw, err := s.ledger.Bindings(ctx, pendingKind)
+	if err != nil {
+		return nil, err
+	}
+	var out []Stuck
+	for _, data := range raw {
+		var item Pending
+		if err := json.Unmarshal(data, &item); err != nil || item.Project != projectID || item.Blocked == nil {
+			continue
+		}
+		out = append(out, Stuck{
+			Project: item.Project, Artifact: item.Artifact, By: item.By,
+			Landing: item.Blocked.Landing, Canonical: item.Blocked.Canonical,
+			Marked: item.Blocked.Marked, Paths: item.Blocked.Paths, At: item.Blocked.At,
+		})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
 	return out, nil
 }
 

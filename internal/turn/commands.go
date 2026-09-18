@@ -61,6 +61,8 @@ func (c commands) dispatch(ctx context.Context, req Request, selected agent.Agen
 		}
 	case protocol.CommandRepair:
 		result = c.repairCmd(ctx, req, rest)
+	case protocol.CommandResolve:
+		result, err = c.resolveCmd(ctx, req, rest)
 	case protocol.CommandProject:
 		result, err = c.projectCmd(ctx, req, rest)
 	case protocol.CommandGrant:

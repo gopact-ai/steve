@@ -13,7 +13,12 @@ import (
 
 // MergeConflict is the node operation's conflict result. Store translates it
 // into its existing landing state; Repo.Merge retains its public path result.
-type MergeConflict struct{ Paths []string }
+// Marked, when git could keep it, names the half-merged commit whose files
+// carry the conflict markers.
+type MergeConflict struct {
+	Paths  []string
+	Marked string
+}
 
 func (e MergeConflict) Error() string { return "merge conflicts: " + strings.Join(e.Paths, ", ") }
 
@@ -47,7 +52,7 @@ func EncodeFailure(err error) *ops.Failure {
 	case errors.As(err, &limit):
 		f.Code, f.Which, f.Have, f.Limit = "too_large", limit.Which, limit.Have, limit.Limit
 	case errors.As(err, &conflict):
-		f.Code, f.Paths = "merge_conflict", conflict.Paths
+		f.Code, f.Paths, f.Marked = "merge_conflict", conflict.Paths, conflict.Marked
 	case errors.Is(err, context.Canceled):
 		f.Code = "canceled"
 	case errors.Is(err, context.DeadlineExceeded):
@@ -74,7 +79,7 @@ func DecodeFailure(f *ops.Failure) error {
 	case "too_large":
 		return TooLarge{Which: f.Which, Have: f.Have, Limit: f.Limit}
 	case "merge_conflict":
-		return MergeConflict{Paths: f.Paths}
+		return MergeConflict{Paths: f.Paths, Marked: f.Marked}
 	case "git":
 		return &GitError{Command: f.Command, Code: f.ExitCode, Stderr: f.Stderr}
 	case "canceled":
@@ -130,13 +135,14 @@ func RunOperation(ctx context.Context, req ops.Request) (ops.Result, error) {
 		err = r.Unbundle(ctx, req.Path)
 	case ops.Merge:
 		var conflicts []string
+		var marked string
 		if req.LegacyMerge {
 			result.Commit, conflicts, err = r.mergeLegacy(ctx, req.Base, req.Ours, req.Theirs, req.Message)
 		} else {
-			result.Commit, conflicts, err = r.Merge(ctx, req.Base, req.Ours, req.Theirs, req.Message)
+			result.Commit, marked, conflicts, err = r.MergeMarking(ctx, req.Base, req.Ours, req.Theirs, req.Message)
 		}
 		if err == nil && len(conflicts) > 0 {
-			err = MergeConflict{Paths: conflicts}
+			err = MergeConflict{Paths: conflicts, Marked: marked}
 		}
 	case ops.Apply:
 		result.Paths, err = r.Apply(ctx, req.From, req.Commit, req.WorkTree)

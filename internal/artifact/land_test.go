@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -131,4 +132,67 @@ func TestDeferredLandingsRunInOrderAndKeepConflicts(t *testing.T) {
 		t.Fatalf("pending after landing = %d, want the conflicted one kept", len(raw))
 	}
 	_ = ledger.ErrConflict
+}
+
+// A conflict is only a dead end if the half-merged tree is thrown away.
+// Git computes it either way, so the landing keeps it: checking it out
+// gives both sides with markers between them, which is what an agent (or
+// a person) resolves. And because retrying against an unchanged canonical
+// would reach the identical conflict, the queue leaves it alone until the
+// canonical name moves — without that the sweeper wrote a fresh failed
+// landing every thirty seconds forever.
+func TestMergeConflictKeepsAMarkedSnapshotAndStopsRetrying(t *testing.T) {
+	ctx := context.Background()
+	canonical := t.TempDir()
+	write(t, canonical, "a", "a0")
+	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	ws, _ := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-1"})
+	base := store.canonicalRef(ctx, "p")
+	write(t, ws.Path, "a", "mine")
+	first, _, _ := store.Publish(ctx, ws, base, "att-1", "one")
+	ws2, _ := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Base: base, Owner: "att-2"})
+	write(t, ws2.Path, "a", "theirs")
+	second, _, _ := store.Publish(ctx, ws2, base, "att-2", "two")
+	_ = store.Defer(ctx, "p", first.ID, "att-1")
+	_ = store.Defer(ctx, "p", second.ID, "att-2")
+
+	landed, err := store.LandPending(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(landed) != 2 || landed[1].State != LandMergeConflicted {
+		t.Fatalf("landings = %+v", landed)
+	}
+	marked := landed[1].Conflict
+	if marked == "" {
+		t.Fatal("the conflicted landing kept no snapshot to resolve from")
+	}
+	conflicted, err := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Base: marked, Owner: "att-3"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if body := read(t, conflicted.Path, "a"); !strings.Contains(body, "<<<<<<<") || !strings.Contains(body, "mine") || !strings.Contains(body, "theirs") {
+		t.Fatalf("the marked snapshot is not the conflict: %q", body)
+	}
+
+	stuck, err := store.Stuck(ctx, "p")
+	if err != nil || len(stuck) != 1 || stuck[0].Artifact != second.ID || !stuck[0].Resolvable() {
+		t.Fatalf("stuck = %+v err=%v", stuck, err)
+	}
+	if len(stuck[0].Paths) != 1 || stuck[0].Paths[0] != "a" {
+		t.Fatalf("stuck paths = %v, want the file both sides changed", stuck[0].Paths)
+	}
+
+	before, _ := store.Landings(ctx, "p")
+	again, err := store.LandPending(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(again) != 0 {
+		t.Fatalf("second pass landed %d, want the conflict left alone", len(again))
+	}
+	after, _ := store.Landings(ctx, "p")
+	if len(after) != len(before) {
+		t.Fatalf("landings recorded = %d then %d, want the same conflict not written twice", len(before), len(after))
+	}
 }

@@ -336,11 +336,23 @@ func (r *Repo) Changed(ctx context.Context, from, to string) ([]string, error) {
 // Merge three-way merges ours and theirs against base without a work
 // tree and returns the merged commit, or the conflicting paths.
 func (r *Repo) Merge(ctx context.Context, base, ours, theirs, message string) (sha string, conflicts []string, err error) {
+	sha, _, conflicts, err = r.MergeMarking(ctx, base, ours, theirs, message)
+	return sha, conflicts, err
+}
+
+// MergeMarking merges like Merge and, when the sides disagree, also keeps
+// the half-merged tree git already built: the one whose conflicting files
+// carry <<<<<<< markers. Committing it costs nothing here — git wrote the
+// tree either way — and it is what lets an agent be handed a checkout of
+// the conflict instead of a list of file names. marked is empty when the
+// merge succeeded, and may be empty on conflict if the commit could not
+// be written, which never fails the merge itself.
+func (r *Repo) MergeMarking(ctx context.Context, base, ours, theirs, message string) (sha, marked string, conflicts []string, err error) {
 	if ours == base {
-		return theirs, nil, nil
+		return theirs, "", nil, nil
 	}
 	if theirs == base {
-		return ours, nil, nil
+		return ours, "", nil, nil
 	}
 	// Both sides descend from base — snapshots always name their parent —
 	// so git finds that base itself; naming it needs git 2.40, and the
@@ -359,18 +371,39 @@ func (r *Repo) Merge(ctx context.Context, base, ours, theirs, message string) (s
 				paths = append(paths, line)
 			}
 			if len(paths) > 0 {
-				return "", paths, nil
+				return "", r.markedCommit(ctx, strings.TrimSpace(lines[0]), ours, theirs, message), paths, nil
 			}
 		}
-		return "", nil, err
+		return "", "", nil, err
 	}
 	tree := strings.TrimSpace(lines[0])
 	commit, err := r.git(ctx, nil, "commit-tree", tree, "-m", message, "-p", ours, "-p", theirs)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	sha = strings.TrimSpace(commit)
-	return sha, nil, r.pin(ctx, sha)
+	return sha, "", nil, r.pin(ctx, sha)
+}
+
+// markedCommit pins the conflicted tree as a commit parented on both
+// sides, so checking it out gives the files with their markers in place.
+// A tree git did not hand back, or a commit that will not write, leaves
+// the conflict reported the way it always was: by path only.
+func (r *Repo) markedCommit(ctx context.Context, tree, ours, theirs, message string) string {
+	if tree == "" {
+		return ""
+	}
+	commit, err := r.git(ctx, nil, "commit-tree", tree, "-m", "conflict while "+message, "-p", ours, "-p", theirs)
+	if err != nil {
+		slog.Warn(fmt.Sprintf("artifact: keep conflicted tree %s: %v", short(tree), err), "tree", tree)
+		return ""
+	}
+	sha := strings.TrimSpace(commit)
+	if err := r.pin(ctx, sha); err != nil {
+		slog.Warn(fmt.Sprintf("artifact: pin conflicted commit %s: %v", short(sha), err), "commit", sha)
+		return ""
+	}
+	return sha
 }
 
 // Bundle writes a bundle carrying sha and its closure, minus what the
