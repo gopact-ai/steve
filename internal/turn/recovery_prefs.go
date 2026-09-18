@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/gopact-ai/steve/internal/agent"
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/view"
@@ -102,4 +103,35 @@ func applyRecoveryPreferences(ctx context.Context, runner harness.Runner, prefer
 		}
 	}
 	return nil
+}
+
+// sessionSelectors is what the session actually holds when the turn starts:
+// the conversation's choices as the agent reports them, by the label it
+// gave them, falling back to the agent's configuration when the harness
+// exposes no selectors. The record of a turn has to say what it ran with,
+// not what the agent would have run with by default.
+func sessionSelectors(runner harness.Runner, selected agent.Agent) (string, map[string]string) {
+	configurable, ok := runner.(harness.Configurable)
+	if !ok {
+		return selected.Model, selected.Options
+	}
+	settings := configurable.Settings()
+	model := settings.Model
+	if model == "" {
+		model = selected.Model
+	}
+	options := map[string]string{}
+	for _, option := range settings.Options {
+		if option.Category == "model" || option.Current == "" {
+			continue
+		}
+		options[option.ID] = option.Current
+		if choice, ok := harness.MatchChoice(option.Choices, option.Current); ok && choice.Label != "" {
+			options[option.ID] = choice.Label
+		}
+	}
+	if len(options) == 0 {
+		return model, selected.Options
+	}
+	return model, options
 }
