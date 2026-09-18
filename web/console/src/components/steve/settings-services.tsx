@@ -1,13 +1,21 @@
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Button } from "@/components/base/buttons/button";
-import { fetchRestart, fetchServices, fetchVersions, restartService, type ManagedService, type RestartOperation, type Versions } from "@/lib/api/settings";
+import { cancelRestart, fetchRestart, fetchServices, fetchVersions, restartService, type ManagedService, type RestartMode, type RestartOperation, type Versions } from "@/lib/api/settings";
 import { useI18n } from "@/providers/locale-provider";
 import { HTTPError } from "@/lib/http";
 
 interface TrackedRestart { id: string; operation?: RestartOperation; error?: string }
 const storageKey = "steve.settings.restarts";
-const settled = (value?: TrackedRestart) => value?.operation?.state === "restarted" || value?.operation?.state === "failed";
+const settled = (value?: TrackedRestart) => value?.operation?.state === "restarted" || value?.operation?.state === "failed" || value?.operation?.state === "cancelled";
+// waitReasons translate what the service says it is finishing before a
+// scheduled restart applies; anything else it reports reads as work in
+// progress rather than as a word the reader has to decode.
+const waitReasons = {
+    preparing: "settingsPage.waitingOn.preparing", requests: "settingsPage.waitingOn.requests", conversations: "settingsPage.waitingOn.conversations",
+    channel: "settingsPage.waitingOn.channel", executions: "settingsPage.waitingOn.executions", copy: "settingsPage.waitingOn.copy",
+    attempts: "settingsPage.waitingOn.attempts", agents: "settingsPage.waitingOn.agents", node: "settingsPage.waitingOn.node", offline: "settingsPage.waitingOn.offline",
+} as const;
 function stored(): Record<string, TrackedRestart> {
     try {
         const value = JSON.parse(sessionStorage.getItem(storageKey) || "{}");
@@ -55,11 +63,11 @@ export function SettingsServices({ onRestarted }: { onRestarted?: (service: stri
         for (const listener of restartListeners) listener();
         return true;
     }
-    async function run(name: string, id: string, retry = false) {
+    async function run(name: string, id: string, retry = false, mode: RestartMode = "now") {
         if (active.current.has(name)) return;
         active.current.add(name); setBusy((all) => ({ ...all, [name]: true }));
         try {
-            const operation = retry ? await restartService(name, id) : await fetchRestart(name, id);
+            const operation = retry ? await restartService(name, id, mode) : await fetchRestart(name, id);
             if (operation.command_id !== id) throw new Error("Restart acknowledgement identity mismatch");
             const previous = restartState[name];
             if (previous?.id !== id || settled(previous)) return;
@@ -81,11 +89,20 @@ export function SettingsServices({ onRestarted }: { onRestarted?: (service: stri
         const timer = window.setInterval(() => { for (const [name, value] of pending) void run(name, value.id); }, 1800);
         return () => window.clearInterval(timer);
     }, [tracked]);
-    function start(service: ManagedService) {
+    function start(service: ManagedService, mode: RestartMode) {
         const previous = restartState[service.name];
         const id = previous && !settled(previous) ? previous.id : globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random().toString(16).slice(2)}`;
         if (!remember(service.name, { id }, true)) return;
-        setStorageError(false); setConfirm(null); void run(service.name, id, true);
+        setStorageError(false); setConfirm(null); void run(service.name, id, true, mode);
+    }
+    // withdraw returns the service to where it was before the request: the
+    // scheduled restart is dropped and nothing is left waiting.
+    async function withdraw(name: string, id: string) {
+        if (active.current.has(name)) return;
+        active.current.add(name); setBusy((all) => ({ ...all, [name]: true }));
+        try { remember(name, { id, operation: await cancelRestart(name, id) }); }
+        catch (failure) { remember(name, { id, error: failure instanceof Error ? failure.message : String(failure) }); }
+        finally { active.current.delete(name); if (alive.current) { setBusy((all) => ({ ...all, [name]: false })); void load(); } }
     }
     const shown = services ?? Object.entries(tracked).filter(([, value]) => !settled(value)).map(([name]): ManagedService => ({ name, kind: name === "hub" ? "hub" : "node", label: name, online: false, version: "", supported: false }));
     return <section>
@@ -95,14 +112,20 @@ export function SettingsServices({ onRestarted }: { onRestarted?: (service: stri
         {!shown.length ? <p role="status" className="settings-note">{loading ? t("common.loading") : services ? t("settingsPage.noServices") : t("settingsPage.servicesUnavailable")}</p> : <ul className="settings-service-list">{shown.map((service) => {
             const mine = tracked[service.name], operation = mine?.operation ?? service.operation;
             const unresolved = !!mine && !settled(mine);
+            const waiting = operation?.state === "draining";
+            const scheduled = waiting || operation?.state === "accepted";
+            const reason = waiting ? waitReasons[(operation?.waiting_on ?? "") as keyof typeof waitReasons] ?? "settingsPage.waitingOn.unknown" : null;
+            const headline = operation?.state === "restarted" ? "settingsPage.restartConfirmed" : operation?.state === "failed" ? "settingsPage.restartFailed" : operation?.state === "cancelled" ? "settingsPage.restartCancelled" : waiting ? "settingsPage.restartWaiting" : operation?.state === "accepted" ? "settingsPage.restartAccepted" : "settingsPage.restartUnknown";
             return <li key={service.name}>
-                <div className="settings-service-heading"><div><h3>{service.label || service.name}</h3><p>{service.kind === "hub" ? "Hub" : t("settingsPage.node")} · {t(service.online ? "settingsPage.online" : "settingsPage.offline")} {service.version ? `· ${service.version}` : ""}</p></div><Button size="sm" color="secondary" isDisabled={!service.supported || !service.online || unresolved || service.operation?.state === "accepted" || !!busy[service.name]} onClick={() => setConfirm(service)}>{t("settingsPage.restartService")}</Button></div>
+                <div className="settings-service-heading"><div><h3>{service.label || service.name}</h3><p>{service.kind === "hub" ? "Hub" : t("settingsPage.node")} · {t(service.online ? "settingsPage.online" : "settingsPage.offline")} {service.version ? `· ${service.version}` : ""}</p></div><Button size="sm" color="secondary" isDisabled={!service.supported || !service.online || unresolved || scheduled || !!busy[service.name]} onClick={() => setConfirm(service)}>{t("settingsPage.restartService")}</Button></div>
                 {!service.supported && <p className="settings-note">{t("settingsPage.restartUnsupported")}</p>}
-                {(operation && operation.state !== "idle" || unresolved) && <div className="settings-operation" role="status"><strong>{t(operation?.state === "restarted" ? "settingsPage.restartConfirmed" : operation?.state === "failed" ? "settingsPage.restartFailed" : operation?.state === "accepted" ? "settingsPage.restartAccepted" : "settingsPage.restartUnknown")}</strong>{(mine?.error || operation?.error) && <p>{mine?.error || operation?.error}</p>}{operation?.state === "restarted" && <p>{t("settingsPage.newIncarnation")}: <code>{operation.incarnation}</code></p>}{unresolved && <><p>{t("settingsPage.restartPendingHint")}</p><div className="settings-actions"><Button size="sm" color="link-gray" isDisabled={!!busy[service.name]} onClick={() => void run(service.name, mine.id)}>{t("settingsPage.checkRestart")}</Button><Button size="sm" color="link-color" isDisabled={!!busy[service.name]} onClick={() => void run(service.name, mine.id, true)}>{t("settingsPage.retryRestart")}</Button></div></>}</div>}
+                {(operation && operation.state !== "idle" || unresolved) && <div className="settings-operation" role="status"><strong>{t(headline)}</strong>{reason && <p>{t(reason)}</p>}{(mine?.error || operation?.error) && <p>{mine?.error || operation?.error}</p>}{operation?.state === "restarted" && <p>{t("settingsPage.newIncarnation")}: <code>{operation.incarnation}</code></p>}{unresolved && (waiting
+                    ? <div className="settings-actions"><Button size="sm" color="link-gray" isDisabled={!!busy[service.name]} onClick={() => void withdraw(service.name, mine.id)}>{t("settingsPage.cancelRestart")}</Button><Button size="sm" color="link-color" isDisabled={!!busy[service.name]} onClick={() => void run(service.name, mine.id, true)}>{t("settingsPage.restartNowInstead")}</Button></div>
+                    : <><p>{t("settingsPage.restartPendingHint")}</p><div className="settings-actions"><Button size="sm" color="link-gray" isDisabled={!!busy[service.name]} onClick={() => void run(service.name, mine.id)}>{t("settingsPage.checkRestart")}</Button><Button size="sm" color="link-color" isDisabled={!!busy[service.name]} onClick={() => void run(service.name, mine.id, true)}>{t("settingsPage.retryRestart")}</Button></div></>)}</div>}
             </li>;
         })}</ul>}
         <details className="settings-advanced" onToggle={(event) => setAdvanced(event.currentTarget.open)}><summary>{t("settingsPage.identityDetails")} · {t("settingsPage.protocol")}</summary>{advanced && <ServiceDetails />}</details>
-        {confirm && <ModalOverlay isOpen isDismissable onOpenChange={(open) => { if (!open) setConfirm(null); }}><Modal className="max-w-md"><Dialog aria-label={t("settingsPage.restartTitle", { service: confirm.label || confirm.name })}><div className="settings-dialog"><h2>{t("settingsPage.restartTitle", { service: confirm.label || confirm.name })}</h2><p>{t("settingsPage.restartConfirmHint")}</p><code>{confirm.name}</code><div className="settings-actions"><Button size="sm" color="secondary" onClick={() => setConfirm(null)}>{t("common.cancel")}</Button><Button size="sm" color="primary" onClick={() => start(confirm)}>{t("settingsPage.confirmRestart")}</Button></div></div></Dialog></Modal></ModalOverlay>}
+        {confirm && <ModalOverlay isOpen isDismissable onOpenChange={(open) => { if (!open) setConfirm(null); }}><Modal className="max-w-md"><Dialog aria-label={t("settingsPage.restartTitle", { service: confirm.label || confirm.name })}><div className="settings-dialog"><h2>{t("settingsPage.restartTitle", { service: confirm.label || confirm.name })}</h2><p>{t("settingsPage.restartConfirmHint")}</p><code>{confirm.name}</code><div className="settings-actions"><Button size="sm" color="secondary" onClick={() => setConfirm(null)}>{t("common.cancel")}</Button><Button size="sm" color="tertiary" onClick={() => start(confirm, "now")}>{t("settingsPage.confirmRestart")}</Button><Button size="sm" color="primary" onClick={() => start(confirm, "when-idle")}>{t("settingsPage.restartWhenIdle")}</Button></div></div></Dialog></Modal></ModalOverlay>}
     </section>;
 }
 

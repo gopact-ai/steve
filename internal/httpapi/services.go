@@ -15,11 +15,11 @@ func (s *Server) SetServices(control consoleapi.ServiceControl) { s.services = c
 // subsequent ones while the service checks quiescence and schedules restart.
 func (s *Server) SealWrites() (func(), error) {
 	if !s.mutationMu.TryLock() {
-		return nil, &consoleapi.ServiceError{Code: "busy", Message: "Wait for the current configuration or submission to finish"}
+		return nil, &consoleapi.ServiceError{Code: "busy", Reason: consoleapi.RestartWaitRequests, Message: "Wait for the current configuration or submission to finish"}
 	}
 	if s.maintenance {
 		s.mutationMu.Unlock()
-		return nil, &consoleapi.ServiceError{Code: "busy", Message: "A service restart is already in progress"}
+		return nil, &consoleapi.ServiceError{Code: "busy", Reason: consoleapi.RestartWaitRequests, Message: "A service restart is already in progress"}
 	}
 	s.maintenance = true
 	s.mutationMu.Unlock()

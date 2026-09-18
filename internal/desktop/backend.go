@@ -29,6 +29,24 @@ type LaunchResult struct {
 	PID     int    `json:"pid"`
 	NodeID  string `json:"node_id"`
 	Started bool   `json:"started"`
+	// Version is the build the service answering at URL is running.
+	Version string `json:"version,omitempty"`
+	// Upgrade reports a restart onto this launcher's build, requested
+	// because the running service came from another one.
+	Upgrade *UpgradeStatus `json:"upgrade,omitempty"`
+}
+
+// UpgradeStatus is what became of the launcher's request to bring a
+// running service to the build the application now carries.
+type UpgradeStatus struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+	// Applied is set once the service answers on the new build.
+	Applied bool `json:"applied"`
+	// WaitingOn names the work the service is finishing first. The
+	// restart is kept and applies itself once that work is done.
+	WaitingOn string `json:"waiting_on,omitempty"`
+	Error     string `json:"error,omitempty"`
 }
 
 // PinAddress remembers the OS-selected port once so subsequent service
@@ -107,7 +125,11 @@ func EnsureRunning(ctx context.Context, installed *Installation, executablePath 
 			return LaunchResult{}, errors.New("desktop backend belongs to another node")
 		}
 		if processAlive(current.PID) {
-			return awaitBackend(ctx, installed, nil)
+			result, err := awaitBackend(ctx, installed, nil)
+			if err != nil {
+				return result, err
+			}
+			return applyReplacedProgram(ctx, installed, result), nil
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return LaunchResult{}, fmt.Errorf("read desktop backend endpoint: %w", err)
@@ -121,7 +143,11 @@ func EnsureRunning(ctx context.Context, installed *Installation, executablePath 
 			return LaunchResult{}, errors.New("desktop process belongs to another node")
 		}
 		if processAlive(pending.PID) {
-			return awaitBackend(ctx, installed, nil)
+			result, err := awaitBackend(ctx, installed, nil)
+			if err != nil {
+				return result, err
+			}
+			return applyReplacedProgram(ctx, installed, result), nil
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return LaunchResult{}, fmt.Errorf("read desktop process: %w", err)
@@ -175,10 +201,10 @@ func awaitBackend(ctx context.Context, installed *Installation, finished <-chan 
 		if err := readJSON(installed.Paths.Endpoint, &current); err == nil {
 			if current.NodeID != installed.NodeID || !processAlive(current.PID) {
 				last = errors.New("backend identity is stale")
-			} else if err := probeBackend(ctx, client, installed, current); err != nil {
+			} else if version, err := probeBackend(ctx, client, installed, current); err != nil {
 				last = err
 			} else {
-				return LaunchResult{URL: current.URL, PID: current.PID, NodeID: current.NodeID}, nil
+				return LaunchResult{URL: current.URL, PID: current.PID, NodeID: current.NodeID, Version: version}, nil
 			}
 		} else {
 			last = err
@@ -196,33 +222,36 @@ func awaitBackend(ctx context.Context, installed *Installation, finished <-chan 
 	}
 }
 
-func probeBackend(ctx context.Context, client *http.Client, installed *Installation, current endpoint) error {
+// probeBackend confirms the service answering is this installation's own
+// and reports the build it is running.
+func probeBackend(ctx context.Context, client *http.Client, installed *Installation, current endpoint) (string, error) {
 	if err := localURL(current.URL, false); err != nil {
-		return err
+		return "", err
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, current.URL+"/console/versions", nil)
 	if err != nil {
-		return err
+		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+installed.Token)
 	resp, err := client.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("backend identity probe returned HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("backend identity probe returned HTTP %d", resp.StatusCode)
 	}
 	var identity struct {
 		HubID string `json:"hub_id"`
+		Hub   string `json:"hub"`
 	}
 	if err := json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&identity); err != nil {
-		return fmt.Errorf("read backend identity: %w", err)
+		return "", fmt.Errorf("read backend identity: %w", err)
 	}
 	if identity.HubID != installed.NodeID {
-		return errors.New("the responding backend has a different node identity")
+		return "", errors.New("the responding backend has a different node identity")
 	}
-	return nil
+	return identity.Hub, nil
 }
 
 // AuthenticatedURL is for delivery directly to the local web view. It must not

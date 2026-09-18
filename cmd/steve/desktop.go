@@ -50,5 +50,15 @@ func desktopCmd(args []string) error {
 		}{LaunchResult: result, AuthenticatedURL: authenticated})
 	}
 	fmt.Fprintf(os.Stdout, "Steve is available at %s (pid %d). Open the Steve app to connect.\n", result.URL, result.PID)
+	if upgrade := result.Upgrade; upgrade != nil {
+		switch {
+		case upgrade.Error != "":
+			fmt.Fprintf(os.Stdout, "The service is running %s and could not be brought to %s: %s\n", upgrade.From, upgrade.To, upgrade.Error)
+		case upgrade.Applied:
+			fmt.Fprintf(os.Stdout, "The service restarted on %s.\n", upgrade.To)
+		default:
+			fmt.Fprintf(os.Stdout, "The service is still running %s; it restarts on %s once the work in progress has finished.\n", upgrade.From, upgrade.To)
+		}
+	}
 	return nil
 }

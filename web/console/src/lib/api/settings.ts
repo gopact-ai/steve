@@ -40,8 +40,11 @@ export interface ChannelPatch { default_channel?: "console" | "feishu"; feishu?:
 export const fetchChannels = (signal?: AbortSignal) => request<ChannelSettings>("/console/channels", { signal });
 export const saveChannels = (revision: string, channels: ChannelPatch) => request<ChannelSettings>("/console/channels", { method: "PUT", body: { base_revision: revision, channels } });
 
-export interface RestartOperation { command_id: string; state: "idle" | "accepted" | "restarted" | "failed"; incarnation: number; previous_incarnation?: number; requested_at?: string; completed_at?: string; error?: string }
+export type RestartState = "idle" | "draining" | "accepted" | "restarted" | "failed" | "cancelled";
+export type RestartMode = "now" | "when-idle";
+export interface RestartOperation { command_id: string; state: RestartState; incarnation: number; previous_incarnation?: number; requested_at?: string; completed_at?: string; error?: string; mode?: RestartMode; waiting_on?: string }
 export interface ManagedService { name: string; kind: "hub" | "node"; label: string; online: boolean; version: string; supported: boolean; operation?: RestartOperation }
 export const fetchServices = (signal?: AbortSignal) => request<{ services: ManagedService[] }>("/console/services", { signal });
-export const restartService = (name: string, commandID: string) => request<RestartOperation>(`/console/services/${encodeURIComponent(name)}/restart`, { method: "POST", body: { command_id: commandID } });
+export const restartService = (name: string, commandID: string, mode: RestartMode = "now") => request<RestartOperation>(`/console/services/${encodeURIComponent(name)}/restart`, { method: "POST", body: { command_id: commandID, mode } });
+export const cancelRestart = (name: string, commandID: string) => request<RestartOperation>(`/console/services/${encodeURIComponent(name)}/restart`, { method: "POST", body: { command_id: commandID, cancel: true } });
 export const fetchRestart = (name: string, commandID: string, signal?: AbortSignal) => request<RestartOperation>(`/console/services/${encodeURIComponent(name)}/restart?command_id=${encodeURIComponent(commandID)}`, { signal });

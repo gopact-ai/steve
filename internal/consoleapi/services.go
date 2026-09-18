@@ -15,6 +15,11 @@ type RestartOperation struct {
 	RequestedAt         time.Time             `json:"requested_at,omitempty"`
 	CompletedAt         time.Time             `json:"completed_at,omitempty"`
 	Error               string                `json:"error,omitempty"`
+	// Mode is how the request was made: RestartNow or RestartWhenIdle.
+	Mode string `json:"mode,omitempty"`
+	// WaitingOn names what still keeps a waiting restart from applying,
+	// as a stable reason a client can put in the reader's language.
+	WaitingOn string `json:"waiting_on,omitempty"`
 }
 type ManagedService struct {
 	Name      string            `json:"name"`
@@ -28,12 +33,43 @@ type ManagedService struct {
 type ServicesView struct {
 	Services []ManagedService `json:"services"`
 }
+
+// Restart modes. A service that restarts now ends whatever it is doing;
+// one that waits keeps the request until the work it would have cut short
+// has finished, and then restarts itself on the program now installed.
+const (
+	RestartNow      = "now"
+	RestartWhenIdle = "when-idle"
+)
+
+// Reasons a waiting restart reports while it has not applied yet. They
+// are stable words a console can put in the reader's language.
+const (
+	RestartWaitPreparing     = "preparing"
+	RestartWaitRequests      = "requests"
+	RestartWaitConversations = "conversations"
+	RestartWaitChannel       = "channel"
+	RestartWaitExecutions    = "executions"
+	RestartWaitCopy          = "copy"
+	RestartWaitAttempts      = "attempts"
+	RestartWaitAgents        = "agents"
+	RestartWaitNode          = "node"
+	RestartWaitOffline       = "offline"
+)
+
 type RestartRequest struct {
 	CommandID string `json:"command_id"`
+	// Mode defaults to RestartNow.
+	Mode string `json:"mode,omitempty"`
+	// Cancel withdraws a waiting restart that has not applied yet.
+	Cancel bool `json:"cancel,omitempty"`
 }
 type ServiceError struct {
 	Code    string
 	Message string
+	// Reason names what the service is busy with, so a waiting restart can
+	// report it as something a reader recognizes rather than as a failure.
+	Reason string
 }
 
 func (e *ServiceError) Error() string { return e.Message }

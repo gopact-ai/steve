@@ -353,12 +353,14 @@ Console 始终启用，owner 在该接口只读。首次保存将原有效 Conso
 
 ### 服务重启
 
-“节点与服务”列出 Hub 和 worker 的版本、可用性及重启结果。服务只能在工作台空闲、没有排队请求或待核实执行时重启。重启先关闭准入，释放缓存会话并等待进程退出；下一回合由新进程恢复会话。Hub 重启会短暂中断 Console。升级安装不在此入口提供。
+“节点与服务”列出 Hub 和 worker 的版本、可用性及重启结果。重启先关闭准入，释放缓存会话并等待进程退出；下一回合由新进程恢复会话。Hub 重启会短暂中断 Console。升级安装不在此入口提供。
+
+重启有两种模式。`now` 沿用原来的行为：工作台不空闲、仍有排队请求或待核实执行时直接失败，保留当前服务。`when-idle` 把请求登记下来，每两秒复核一次，等到服务真正空闲再执行，期间会话照常进行，不会被打断。等待中的请求可以撤销，也可以改为立即重启；同一个 `command_id` 重复提交返回同一次等待，不会排出第二次重启。已被隔离（quarantine）的未结执行不再阻挡等待，否则它会把服务永久钉在旧版本上。
 
 - `GET /console/services` 查询列表。
-- `POST /console/services/{name}/restart` 接收稳定 `command_id`；Hub 名称为 `hub`，worker 使用已登记节点名。
+- `POST /console/services/{name}/restart` 接收稳定 `command_id`，可选 `mode`（`now` 默认，或 `when-idle`）与 `cancel`（撤销等待中的请求）；Hub 名称为 `hub`，worker 使用已登记节点名。
 - `GET /console/services/{name}/restart?command_id=...` 查询回执；省略编号查询当前实例最近操作。
-- `accepted` 只表示请求已持久受理，`restarted` 要求新 incarnation 上线。断线和未知响应不等于成功；重试原编号，不另造一次重启。节点需协商 `service_restart.v1`。
+- `accepted` 只表示请求已持久受理，`restarted` 要求新 incarnation 上线。`draining` 表示请求在等待空闲，`waiting_on` 指出还差什么（`requests`、`conversations`、`executions`、`attempts`、`agents`、`channel`、`copy`、`node`、`offline`、`preparing`）。`cancelled` 表示等待期间被撤销，服务照常运行。断线和未知响应不等于成功；重试原编号，不另造一次重启。节点需协商 `service_restart.v1`。
 - 重启前验证配置。Console 外直接编辑了 Hub 配置时，UI 重启会拒绝，需通过部署校验并应用；服务地址、身份、认证和状态目录的变更也应走部署。自动端口 `:0` 不支持保持地址的 UI 重启。
 - Unix CLI 在清理完成后重新执行当前二进制，保留 PID、参数和环境；不依赖额外 supervisor，不下载或切换版本。配置无效、退出未确认或服务正在工作时返回明确错误并保留当前服务。
 
