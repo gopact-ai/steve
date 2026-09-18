@@ -214,7 +214,7 @@ func (a *auxiliary) options(ctx context.Context, id string, workspace project.Wo
 		Candidate: selected, Requires: selected.Agent.Requires, Uses: selected.Agent.MCPServers,
 		ArmActor: "agentexec-open",
 		At:       harness.Placement{Node: selected.Node, Harness: selected.Harness}, Workdir: workspace.Path,
-		Model: selected.Agent.Model, ModelOptions: selected.Agent.Options,
+		Model: selected.Agent.Model, ModelOptions: selected.Agent.Options, Approval: selected.Agent.Approval,
 		Prompt: a.input.Prompt, Ask: ask, AskUser: askUser,
 		Observe: func(p view.Progress) {
 			EmitProgress(ctx, p)

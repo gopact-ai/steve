@@ -104,3 +104,37 @@ func TestSettingsSaveFailuresRespectTheCommitBoundary(t *testing.T) {
 		t.Fatalf("committed warning rolled back desired: %+v %v", applied, err)
 	}
 }
+
+// The approval stance takes hold without a restart, so the console has to
+// read it back as what is running now; leaving it out of the effective
+// snapshot would show the owner a stance that has already been replaced.
+func TestDefaultApprovalAppliesWithoutARestart(t *testing.T) {
+	a := agentAdminFixture(t)
+	a.Cfg.Gateway.OwnerID = "owner"
+	if err := config.Save(a.Path, a.Cfg); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSettings(a, a.Cfg)
+	before, err := s.Settings(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	update := consoleapi.SettingsUpdate{BaseRevision: before.Revision, Settings: json.RawMessage(`{"gateway":{"default_approval":"full"}}`)}
+	after, err := s.UpdateSettings(t.Context(), update)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if after.PendingRestart {
+		t.Fatal("a live approval change asked for a restart")
+	}
+	var effective config.SettingsValues
+	if err := json.Unmarshal(after.Effective, &effective); err != nil {
+		t.Fatal(err)
+	}
+	if effective.Gateway.DefaultApproval != "full" {
+		t.Fatalf("effective stance reads back as %q", effective.Gateway.DefaultApproval)
+	}
+	if got := a.Catalog.Default().Approval; got != "full" {
+		t.Fatalf("the running catalog carries %q", got)
+	}
+}

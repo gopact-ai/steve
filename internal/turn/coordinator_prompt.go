@@ -234,9 +234,7 @@ func (c *Coordinator) open(ctx context.Context, saved state.Session, selected ag
 	if saved.UpstreamID != "" {
 		model = ""
 	}
-	if model != "" || len(options) > 0 {
-		harness.ApplyPreferences(ctx, runner, selected.ID, model, options)
-	}
+	harness.ApplyPreferences(ctx, runner, selected.ID, model, options, selected.Approval)
 	return runner, nil
 }
 

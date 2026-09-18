@@ -123,7 +123,7 @@ func (a *AgentRunner) RunStep(ctx context.Context, req StepRequest) (result plan
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return plan.StepResult{}, ctxErr
 	}
-	harness.ApplyPreferences(ctx, session, candidate.Agent.ID, candidate.Agent.Model, candidate.Agent.Options)
+	harness.ApplyPreferences(ctx, session, candidate.Agent.ID, candidate.Agent.Model, candidate.Agent.Options, candidate.Agent.Approval)
 	prompt := req.Context.Render()
 	if instructions != "" {
 		prompt = instructions + "\n\n" + prompt

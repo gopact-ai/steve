@@ -135,6 +135,12 @@ type Gateway struct {
 	// back to the state directory, which is where a fresh installation
 	// works until its owner picks somewhere.
 	WorkspaceRoot string `json:"workspace_root,omitempty"`
+	// DefaultApproval is the fleet-wide approval stance: "ask", "auto",
+	// "full", or empty for none. Every AI tool names its approval levels
+	// itself, so this is an intent resolved against whatever modes an
+	// agent turns out to offer, and an agent that pins its own mode keeps
+	// it. See internal/approval.
+	DefaultApproval string `json:"default_approval,omitempty"`
 	// TaskMaxTurns and TaskMaxElapsed raise the per-task budget for long
 	// running work; zero keeps the built-in defaults.
 	TaskMaxTurns   int      `json:"task_max_turns,omitempty"`
@@ -798,6 +804,7 @@ func (c *Config) AgentCatalog() (*agent.Catalog, error) {
 		}
 		configs[id] = agent.Config{
 			PluginOrigin: item.PluginOrigin.Clone(),
+			Approval:     c.Gateway.DefaultApproval,
 			Harness:      item.Harness, Node: item.Node, Model: item.Model, Options: item.Options, About: item.About, Requires: item.Requires,
 			Aliases:      item.Aliases,
 			SystemPrompt: item.SystemPrompt, Skills: item.Skills, MCPServers: item.MCPServers, Default: item.Default,

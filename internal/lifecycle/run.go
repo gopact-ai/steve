@@ -263,9 +263,11 @@ type Options struct {
 	Servers  []acp.MCPServer
 	// Open, when set, opens the session instead of Sessions.OpenSession.
 	Open func(ctx context.Context, e *Execution) (harness.Runner, error)
-	// Model and ModelOptions are pinned on a fresh session.
+	// Model and ModelOptions are pinned on a fresh session; Approval is
+	// the hub's default approval stance for agents that pin no mode.
 	Model        string
 	ModelOptions map[string]string
+	Approval     string
 
 	// Prompt and its companions are what Drive sends; TurnPrompt uses the
 	// turn entry on every session, not only node-owned ones. Resume, for
@@ -597,7 +599,7 @@ func (e *Execution) openSession(ctx context.Context) error {
 		return err
 	}
 	if e.Upstream == "" {
-		harness.ApplyPreferences(ctx, session, o.Spec.Agent, o.Model, o.ModelOptions)
+		harness.ApplyPreferences(ctx, session, o.Spec.Agent, o.Model, o.ModelOptions, o.Approval)
 	}
 	return nil
 }

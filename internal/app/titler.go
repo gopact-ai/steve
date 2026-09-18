@@ -56,7 +56,7 @@ func (t *conversationTitler) Title(ctx context.Context, prompt, reply string) (s
 	// nothing to add to either.
 	defer func() { _ = t.manager.CloseSession(context.Background(), at, runner.ID()) }()
 	if a.Model != "" || len(a.Options) > 0 {
-		harness.ApplyPreferences(ctx, runner, a.ID, a.Model, a.Options)
+		harness.ApplyPreferences(ctx, runner, a.ID, a.Model, a.Options, a.Approval)
 	}
 	answer, _, err := runner.Prompt(ctx, titlePrompt(prompt, reply), func(view.Progress) {})
 	if err != nil {

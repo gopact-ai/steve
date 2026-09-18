@@ -3,8 +3,10 @@ package platformconfig
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/ledger"
@@ -113,5 +115,32 @@ func TestServicePermissionsSurviveCoordinatorChangesAndAdministrativeEdits(t *te
 	candidate.Work.HarnessPermissions["codex"] = "invalid"
 	if err := validate(candidate); err == nil {
 		t.Fatal("invalid shared permission accepted")
+	}
+}
+
+// Settings travel between machines inside the shared declaration, and come
+// back out through a hand-written list of assignments. A field left off
+// that list is silently forgotten at the next start — the owner sets it,
+// sees it take hold, and finds it gone. So the whole settings block has to
+// survive the round trip, not just the fields someone remembered.
+func TestSharedSettingsSurviveTheRoundTripWhole(t *testing.T) {
+	cfg := initialConfig()
+	cfg.Gateway.Locale = "en"
+	cfg.Gateway.DefaultApproval = "full"
+	cfg.Gateway.TaskMaxTurns = 12
+	cfg.Gateway.TaskMaxElapsed = config.Duration(90 * time.Minute)
+	cfg.Gateway.PromptTimeout = config.Duration(7 * time.Minute)
+	cfg.Policies.Execution.StepTimeout = config.Duration(11 * time.Minute)
+	want := cfg.SettingsValues()
+	d, err := FromLocal(cfg, LocalNode{ID: "machine-a", Config: config.Node{Addr: "worker-a", Token: "node-access"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	restarted := initialConfig()
+	if err := d.Apply(restarted); err != nil {
+		t.Fatal(err)
+	}
+	if got := restarted.SettingsValues(); !reflect.DeepEqual(got, want) {
+		t.Fatalf("settings came back as %+v, saved as %+v", got, want)
 	}
 }

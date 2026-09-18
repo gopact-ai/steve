@@ -702,7 +702,7 @@ func (s *Service) run(ctx context.Context, conversationID, delegatedBy string, p
 		Candidate: candidate, Requires: req.Requires, Uses: candidate.Agent.MCPServers, AdmitUnsure: true,
 		ArmActor: "delegate-opening",
 		At:       at, Workdir: child.Workspace, Servers: caps.MCPServers,
-		Model: candidate.Agent.Model, ModelOptions: candidate.Agent.Options,
+		Model: candidate.Agent.Model, ModelOptions: candidate.Agent.Options, Approval: candidate.Agent.Approval,
 		Prompt: prompt, Ask: ask, AskUser: askUser,
 		Observe: func(p view.Progress) {
 			touch()

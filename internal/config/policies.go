@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/approval"
 	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/planner"
@@ -104,11 +105,14 @@ type SettingsValues struct {
 	Policies Policies      `json:"policies"`
 }
 type GatewayPolicy struct {
-	Locale         string   `json:"locale"`
-	OwnerID        string   `json:"owner_id"`
-	TaskMaxTurns   int      `json:"task_max_turns"`
-	TaskMaxElapsed Duration `json:"task_max_elapsed"`
-	PromptTimeout  Duration `json:"prompt_timeout"`
+	Locale  string `json:"locale"`
+	OwnerID string `json:"owner_id"`
+	// DefaultApproval is the approval stance every agent follows unless it
+	// pins a mode of its own: one of the intents in internal/approval.
+	DefaultApproval string   `json:"default_approval"`
+	TaskMaxTurns    int      `json:"task_max_turns"`
+	TaskMaxElapsed  Duration `json:"task_max_elapsed"`
+	PromptTimeout   Duration `json:"prompt_timeout"`
 }
 
 func (c *Config) SettingsValues() SettingsValues {
@@ -116,7 +120,7 @@ func (c *Config) SettingsValues() SettingsValues {
 	if idle <= 0 {
 		idle = Duration(10 * time.Minute)
 	}
-	return SettingsValues{Gateway: GatewayPolicy{Locale: c.Gateway.Locale, OwnerID: c.Gateway.OwnerID, TaskMaxTurns: c.Gateway.TaskMaxTurns, TaskMaxElapsed: c.Gateway.TaskMaxElapsed, PromptTimeout: idle}, Policies: c.Policies.WithDefaults()}
+	return SettingsValues{Gateway: GatewayPolicy{Locale: c.Gateway.Locale, OwnerID: c.Gateway.OwnerID, DefaultApproval: c.Gateway.DefaultApproval, TaskMaxTurns: c.Gateway.TaskMaxTurns, TaskMaxElapsed: c.Gateway.TaskMaxElapsed, PromptTimeout: idle}, Policies: c.Policies.WithDefaults()}
 }
 func (c *Config) EffectiveLocale() string {
 	if c.Gateway.Locale != "" {
@@ -137,6 +141,9 @@ func (c *Config) EffectiveOwnerID() string {
 func (v SettingsValues) Validate() error {
 	if v.Gateway.Locale != "" && v.Gateway.Locale != "zh" && v.Gateway.Locale != "en" {
 		return fmt.Errorf("gateway.locale must be zh or en")
+	}
+	if !approval.Valid(v.Gateway.DefaultApproval) {
+		return fmt.Errorf("gateway.default_approval must be one of %s", strings.Join(approval.Intents()[1:], ", ")+", or empty")
 	}
 	if v.Gateway.TaskMaxTurns < 0 {
 		return fmt.Errorf("gateway.task_max_turns must be zero (unlimited) or positive")
@@ -169,6 +176,7 @@ func (c *Config) PatchSettings(raw json.RawMessage) (*Config, error) {
 	}
 	next := *c
 	next.Gateway.Locale, next.Gateway.OwnerID = v.Gateway.Locale, strings.TrimSpace(v.Gateway.OwnerID)
+	next.Gateway.DefaultApproval = v.Gateway.DefaultApproval
 	next.Gateway.TaskMaxTurns, next.Gateway.TaskMaxElapsed, next.Gateway.PromptTimeout = v.Gateway.TaskMaxTurns, v.Gateway.TaskMaxElapsed, v.Gateway.PromptTimeout
 	next.Policies = v.Policies
 	return &next, nil
