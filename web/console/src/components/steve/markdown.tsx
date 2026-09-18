@@ -3,7 +3,7 @@ import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Element, Root, Text } from "hast";
 import type { Plugin } from "unified";
-import { useI18n } from "@/providers/locale-provider";
+import { useTranslator } from "@/providers/locale-provider";
 import { CodeBlock } from "./code-block";
 import { Mermaid } from "./mermaid";
 
@@ -55,7 +55,7 @@ const components: Components = {
 // the reader when one is listening, and anything else stays readable text
 // with its target in the tooltip rather than a navigation to nowhere.
 function MdLink({ href, children, node: _node, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown }) {
-    const { t } = useI18n();
+    const t = useTranslator();
     const reader = useContext(documentLinks);
     const target = (href ?? "").trim();
     if (/^(https?:|mailto:|tel:)/i.test(target)) return <a {...rest} href={target} target="_blank" rel="noreferrer noopener">{children}</a>;

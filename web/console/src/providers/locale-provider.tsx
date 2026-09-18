@@ -48,6 +48,15 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     return <LocaleContext.Provider value={value}><I18nProvider locale={intlLocale(locale)}>{children}</I18nProvider></LocaleContext.Provider>;
 }
 
+// Markdown also renders outside the app shell — a detached preview, a test
+// harness — where there is no provider to ask. Those readers still deserve
+// words in a language, so they fall back to the browser's.
+export function useTranslator(): Translator {
+    const value = useContext(LocaleContext);
+    const browser = useMemo(() => resolveLocale("system", navigator.languages), []);
+    return value ? value.t : (key, ...args) => translate(browser, key, ...args);
+}
+
 export function useI18n(): LocaleContextValue {
     const value = useContext(LocaleContext);
     if (!value) throw new Error("useI18n must be used within LocaleProvider");
