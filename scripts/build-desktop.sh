@@ -18,6 +18,28 @@ case "$task_arch" in
   *) echo "Unsupported desktop architecture: $task_arch" >&2; exit 1 ;;
 esac
 
+# Node packages travel to a machine over SSH byte for byte, and a slow home
+# link can spend minutes on one. Packing the Linux builds halves what goes
+# over the wire for a few hundred milliseconds of decompression on each
+# start. macOS builds are left alone: upx refuses Mach-O ("macOS is
+# currently not supported"), and packing one would break the ad-hoc
+# signature applied below.
+task_upx="$(command -v upx || true)"
+if [[ "${STEVE_DESKTOP_SKIP_UPX:-0}" == 1 ]]; then
+  task_upx=""
+elif [[ -z "$task_upx" ]]; then
+  echo "warning: upx was not found, so Linux node packages ship uncompressed and take about twice as long to upload. Install it with: brew install upx" >&2
+fi
+
+# pack compresses one Linux build in place and reads it back, so a package
+# that cannot be unpacked fails the build here rather than on a machine
+# halfway through an install.
+pack() {
+  [[ -n "$task_upx" ]] || return 0
+  "$task_upx" -q "$1" >/dev/null
+  "$task_upx" -qt "$1" >/dev/null
+}
+
 if [[ -e "$task_app" ]]; then
   echo "Output already exists: $task_app. Choose another output directory." >&2
   exit 1
@@ -50,6 +72,9 @@ for task_platform in linux/amd64 linux/arm64 darwin/amd64 darwin/arm64; do
   if [[ "$task_nodeos" == darwin ]]; then
     codesign --force --sign - "$task_nodepath"
     codesign --force --sign - "$task_peerpath"
+  else
+    pack "$task_nodepath"
+    pack "$task_peerpath"
   fi
 done
 xcrun clang -fobjc-arc -fmodules -Wall -Wextra -Wno-unused-parameter \

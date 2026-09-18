@@ -2,11 +2,13 @@
 
 ## 启动
 
-macOS 13 或更新版本可从源码构建桌面 App。构建机需要 Go 1.27+、Git、Node.js/npm 和 Xcode Command Line Tools：
+macOS 13 或更新版本可从源码构建桌面 App。构建机需要 Go 1.27+、Git、Node.js/npm 和 Xcode Command Line Tools；建议再装一个 upx（`brew install upx`），用于压缩随 App 分发的 Linux 节点程序：
 
 ```bash
 make desktop
 ```
+
+节点程序通过 SSH 原样上传到目标机器，慢链路上一个包要传几分钟。打包时 Linux 版本会用 upx 压缩，约 73 MiB 降到约 33 MiB，代价是每次启动多几百毫秒解压；macOS 版本保持原样，因为 upx 不支持 Mach-O，压过之后签名也会失效。没装 upx 时构建会提示并照常继续，`STEVE_DESKTOP_SKIP_UPX=1` 可以在本地反复构建时跳过压缩。
 
 构建脚本输出 `Steve.app` 的路径。也可指定新的输出目录：
 
