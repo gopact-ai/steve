@@ -187,6 +187,7 @@ try {
     assert.equal(await resume.page.evaluate(() => window.navigationSentinel), "same-document", "route links preserve the running document");
     await resumeDialog.getByRole("button", { name: "Finish later", exact: true }).click();
     await resume.page.getByRole("link", { name: "Resources", exact: true }).click();
+    await resume.page.getByRole("tab", { name: /^Machines/ }).click();
     await resume.page.getByRole("row", { name: /my-desktop/ }).click();
     const machineEnrollment = resume.page.getByRole("link", { name: "Register agents on this machine", exact: true });
     await machineEnrollment.focus();

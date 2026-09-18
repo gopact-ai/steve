@@ -6,6 +6,7 @@ import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/mod
 import { useI18n } from "@/providers/locale-provider";
 import { useCoordination } from "@/lib/coordination";
 import { dateTime } from "@/lib/format";
+import { LegendMark, Topology, type TopologyTone } from "@/components/steve/topology";
 import type { CoordinationNode, CoordinationEvent } from "@/lib/api/coordination";
 
 export function CoordinationPanel() {
@@ -20,6 +21,13 @@ export function CoordinationPanel() {
     const targets = view.nodes.filter((node) => node.id !== view.coordinator_id);
     const canTransfer = targets.some((node) => node.voter && node.online && node.ready);
     const showReadiness = view.auto_failover || !view.authoritative;
+    // The picture says the same thing the list below says, but at a glance:
+    // who coordinates, who stands around them, and whether that link is
+    // healthy. The spoke itself carries the state, so a fleet with nothing
+    // wrong is entirely grey and colour means "look here".
+    const coordinator = view.nodes.find((node) => node.id === view.coordinator_id);
+    const nodeTone = (node: CoordinationNode): TopologyTone => !node.online ? "down" : !node.voter ? "idle" : !node.ready ? "warn" : "ok";
+    const nodeRole = (node: CoordinationNode) => t(!node.online ? "coord.offline" : !node.voter ? "coord.nonVoter" : !node.ready ? "coord.nodeNotReady" : node.auto_eligible ? "coord.canTakeOver" : "coord.manualOnly");
     const sameCluster = !pending || pending.cluster_id === view.cluster_id;
     const eventLabel = (event: CoordinationEvent) => {
         const messages = { coordinator_initialized: "coord.initialized", coordinator_transferred: "coord.transferred", automatic_failover_enabled: "coord.policyEnabled", automatic_failover_disabled: "coord.policyDisabled", automatic_eligibility_granted: "coord.eligibilityGranted", automatic_eligibility_removed: "coord.eligibilityRemoved", member_joined: "coord.memberJoined", member_removed: "coord.memberRemoved" } as const;
@@ -27,6 +35,10 @@ export function CoordinationPanel() {
     };
     return <section aria-label={t("coord.title")} className="min-w-0 space-y-3 rounded-lg bg-primary p-4 ring-1 ring-secondary sm:p-5">
         <header className="flex flex-wrap items-start justify-between gap-3"><div className="min-w-0"><h2 className="text-base font-semibold text-primary">{t("coord.title")}</h2><p className="mt-1 break-all text-sm font-semibold text-primary">{t("connection.coordinatedBy", { node: name(view.coordinator_id) })}</p></div><Button size="md" color="secondary" isDisabled={disabled || !canTransfer} onClick={() => setTransferring(true)}>{t("coord.transfer")}</Button></header>
+        {coordinator && <Topology label={t("coord.topology")}
+            center={{ id: coordinator.id, label: coordinator.name || coordinator.id, sub: t("connection.coordinator"), tone: view.authoritative ? "ok" : "warn" }}
+            spokes={targets.map((node) => ({ id: node.id, label: node.name || node.id, sub: nodeRole(node), note: node.reason, tone: nodeTone(node) }))}
+            legend={<><LegendMark tone="ok">{t("coord.legendOk")}</LegendMark><LegendMark tone="warn">{t("coord.legendWarn")}</LegendMark><LegendMark tone="down">{t("coord.legendDown")}</LegendMark><LegendMark tone="idle">{t("coord.legendIdle")}</LegendMark></>} />}
         {view.nodes.length < 2 && <p className="text-xs text-tertiary">{t("coord.oneNode")}</p>}
         {!view.authoritative && <p role="status" className="text-sm text-error-primary">{t("coord.noAuthority")}</p>}
         <div className="space-y-1 text-xs">

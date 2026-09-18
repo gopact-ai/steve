@@ -3,6 +3,7 @@ import { CoordinationPanel } from "@/components/steve/coordination-panel";
 import { ExecutionDataLevel, SSHConnect } from "@/components/steve/ssh-connect";
 import { MachineUpgrade } from "@/components/steve/machine-upgrade";
 import { useLayoutEffect, useRef, useState } from "react";
+import { useSearchParams } from "react-router";
 import { useI18n } from "@/providers/locale-provider";
 import type { Translator } from "@/lib/i18n";
 import { levelName } from "@/lib/workspaces";
@@ -22,6 +23,7 @@ import { bytes, number, relative, when } from "@/lib/format";
 import { addAgent, addNode, fetchNodeSettings, removeAgent, saveNodeSettings, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
 import { conditionWords, missingTags, troubleWords } from "@/lib/agent-trouble";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
+import { useCoordination } from "@/lib/coordination";
 import { applyActivity, withLiveActivity, type LiveActivity } from "@/lib/live";
 import type { AbilitySnapshot, Agent, Capability, Condition, Node as NodeT, Selector, Snapshot } from "@/lib/types";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
@@ -482,6 +484,13 @@ function Abilities({ snapshot }: { snapshot?: AbilitySnapshot }) {
     );
 }
 
+// The resources page answers three separate questions — who is
+// coordinating, what machines exist, what agents exist — and stacking all
+// three made one long scroll where none of them was findable. They are
+// tabs now, and the tab lives in the URL so a link can point at one.
+type FleetTab = "coordination" | "machines" | "agents";
+const fleetTabs: FleetTab[] = ["coordination", "machines", "agents"];
+
 export function FleetPage() {
     const { t: tr, locale } = useI18n();
     const { snap, refresh } = useFleet();
@@ -491,6 +500,11 @@ export function FleetPage() {
     const [liveActivity, setLiveActivity] = useState<Record<string, LiveActivity>>({});
     useConsoleEvents((fresh) => setLiveActivity((current) => fresh.reduce(applyActivity, current)));
     const { act } = useIntent();
+    const { view: coordination } = useCoordination();
+    const [params, setParams] = useSearchParams();
+    const asked = params.get("tab");
+    const tab: FleetTab = fleetTabs.includes(asked as FleetTab) ? asked as FleetTab : "coordination";
+    const setTab = (value: FleetTab) => { const next = new URLSearchParams(params); next.set("tab", value); setParams(next, { replace: true }); };
     const up = snap.nodes.filter((n) => n.up).length;
     const versionDrift = snap.nodes.filter((n) => n.up && n.version && snap.hub.version && n.version !== snap.hub.version);
     const [adding, setAdding] = useState(false);
@@ -500,23 +514,30 @@ export function FleetPage() {
     const [focusMachines, setFocusMachines] = useState(false);
     const machineSection = useRef<HTMLDivElement>(null);
     useLayoutEffect(() => {
-        if (sshOpen || !focusMachines) return;
+        if (sshOpen || !focusMachines || tab !== "machines") return;
         const frame = requestAnimationFrame(() => { machineSection.current?.focus({ preventScroll: true }); machineSection.current?.scrollIntoView({ block: "start" }); setFocusMachines(false); });
         return () => cancelAnimationFrame(frame);
-    }, [sshOpen, focusMachines]);
+    }, [sshOpen, focusMachines, tab]);
     const [opened, setOpened] = useState<string | null>(null);
     const [openedAgent, setOpenedAgent] = useState<string | null>(null);
     const hubHarnesses = Array.from(new Set(snap.agents.map((a) => a.harness).filter(Boolean))) as string[];
     return (
         <div className="workbench-page flex min-w-0 flex-col">
             <PageHeader title={tr("fleet.title")} description={tr("fleet.description")}
-                actions={<><Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => { setExecutor(undefined); setAdding(true); }}>{tr("fleet.addResource")}</Button></>} />
+                actions={<><Button size="sm" color="secondary" href="/console?setup=agents">{tr("ssh.localAgents")}</Button><Button size="sm" color="secondary" onClick={() => setSSHOpen(true)}>{tr("ssh.connect")}</Button><Button size="sm" color="primary" iconLeading={Plus} onClick={() => { setExecutor(undefined); setAdding(true); }}>{tr("fleet.addResource")}</Button></>}>
+                <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as FleetTab)}>
+                    <TabList type="button-border" size="sm" items={[{ id: "coordination", label: tr("coord.title") }, { id: "machines", label: tr("fleet.tabMachines"), badge: snap.nodes.length || undefined }, { id: "agents", label: "Agent", badge: snap.agents.length || undefined }]}>
+                        {(item) => <Tab {...item} />}
+                    </TabList>
+                </Tabs>
+            </PageHeader>
             <PageBody>
-            <CoordinationPanel />
-            {versionDrift.length > 0 && <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-warning-primary px-3 py-2 text-sm text-warning-primary"><span className="min-w-0 flex-1">{tr("fleet.versionDriftHint", { count: versionDrift.length, version: snap.hub.version || "—" })}</span><Button size="sm" color="secondary" onClick={() => setUpgrading(versionDrift.filter((n) => n.role !== "hub"))}>{tr("fleet.upgradeAll")}</Button></div>}
             {upgrading && <MachineUpgrade nodes={upgrading} version={snap.hub.version || "—"} onClose={() => setUpgrading(null)} onChanged={refresh} />}
-            {sshOpen && <SSHConnect onClose={() => setSSHOpen(false)} onChanged={refresh} onViewMachines={() => { setSSHOpen(false); setFocusMachines(true); }} onAddExecutor={(request) => { setExecutor(request); setSSHOpen(false); setAdding(true); }} />}
+            {sshOpen && <SSHConnect onClose={() => setSSHOpen(false)} onChanged={refresh} onViewMachines={() => { setSSHOpen(false); setTab("machines"); setFocusMachines(true); }} onAddExecutor={(request) => { setExecutor(request); setSSHOpen(false); setAdding(true); }} />}
             {adding && <AddMachine executor={executor} machines={machineOptions(snap, tr)} harnesses={hubHarnesses.length ? hubHarnesses : ["codex", "claude-code", "grok", "kimi"]} onClose={() => setAdding(false)} onDone={() => refresh()} />}
+            {tab === "coordination" && <><CoordinationPanel />{!coordination?.enabled && <p className="text-sm text-tertiary">{tr("coord.unavailable")}</p>}</>}
+            {tab === "machines" && <>
+            {versionDrift.length > 0 && <div role="status" className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg bg-warning-primary px-3 py-2 text-sm text-warning-primary"><span className="min-w-0 flex-1">{tr("fleet.versionDriftHint", { count: versionDrift.length, version: snap.hub.version || "—" })}</span><Button size="sm" color="secondary" onClick={() => setUpgrading(versionDrift.filter((n) => n.role !== "hub"))}>{tr("fleet.upgradeAll")}</Button></div>}
             <div id="fleet-machines" ref={machineSection} tabIndex={-1} className="min-w-0 scroll-mt-4 rounded-xl focus-visible:outline-2 focus-visible:outline-focus-ring"><TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title={tr("fleet.machine")} badge={tr("fleet.online", { online: up, total: snap.nodes.length })} />
                 {snap.nodes.length === 0 ? <Nothing icon={Server01} title={tr("fleet.noMachines")}>{tr("fleet.noMachinesHint")}</Nothing> : (
@@ -562,7 +583,8 @@ export function FleetPage() {
                 )}
             </TableCard.Root></div>
             {opened && snap.nodes.find((n) => n.name === opened) && <MachineDrawer n={snap.nodes.find((n) => n.name === opened)!} hubVersion={snap.hub.version} onUpgrade={(n) => setUpgrading([n])} onClose={() => setOpened(null)} onChanged={() => refresh()} />}
-
+            </>}
+            {tab === "agents" && <>
             <TableCard.Root size="sm" className="workbench-table min-w-0">
                 <TableCard.Header title="Agent" badge={`${snap.agents.length}`} />
                 <Table aria-label="Agent" size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpenedAgent(id ? String(id) : null); }}>
@@ -604,6 +626,7 @@ export function FleetPage() {
                 {snap.agents.length === 0 && <Nothing icon={Users01} title={tr("fleet.noAgents")} />}
             </TableCard.Root>
             {openedAgent && snap.agents.find((a) => a.id === openedAgent) && <AgentDrawer a={snap.agents.find((a) => a.id === openedAgent)!} live={liveActivity[openedAgent]} onClose={() => setOpenedAgent(null)} onChanged={() => refresh()} />}
+            </>}
             </PageBody>
         </div>
     );

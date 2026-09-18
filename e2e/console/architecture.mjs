@@ -457,6 +457,7 @@ if (process.env.PURE_ONLY !== "1") {
         },
         async "configuration-input"(f) {
             await f.page.getByRole("link", { name: "资源", exact: true }).click();
+            await f.page.getByRole("tab", { name: /^机器/ }).click();
             await f.page.locator('[aria-label="机器"]').getByRole("row").filter({ hasText: "test-node" }).click();
             await f.page.getByRole("button", { name: "编辑配置", exact: true }).click();
             const env = f.page.getByRole("textbox", { name: "环境变量", exact: true });
