@@ -232,6 +232,31 @@ try {
     await screenshot("question-command-done");
     console.log("PASS untitled permission requests read as one heading and collapse once decided");
 
+    // A long command must not carry the frame away with it. The heading and
+    // the buttons hold their place while the wording scrolls inside the card,
+    // so the reader can always see what is being asked and answer it.
+    const longOptions = [{ id: "allow_once", label: "Yes, proceed" }, { id: "allow_always", label: "Yes, and stop asking", description: "Allow commands like this for the rest of the session." }, { id: "reject_once", label: "No", kind: "reject_once" }];
+    f.questions = [makeQuestion("q-long", { title: "Run command", kind: "permission", agent: "builder", node: "node-one", options: longOptions, message: "```sh\n" + Array.from({ length: 60 }, (_, line) => "echo \"migration step " + line + "\"").join("\n") + "\n```\n\ncwd: `/work/p`" })];
+    await page.evaluate((event) => window.emit(event), { kind: "console.question", conversation, text: "q-long", at });
+    await panel.getByRole("heading", { name: "Run command", exact: true }).waitFor();
+    const framing = async () => await panel.evaluate((element) => {
+        const card = element.querySelector(".question-card:not(.question-done)");
+        const message = card.querySelector(":scope > .question-message");
+        const frame = element.getBoundingClientRect(), heading = card.querySelector("h3").getBoundingClientRect();
+        const submit = card.querySelector(".question-actions button").getBoundingClientRect();
+        return { scrolls: message.scrollHeight > message.clientHeight + 1, at: message.scrollTop, card: card.getBoundingClientRect().height, frameHeight: element.clientHeight, message: message.clientHeight, fits: card.getBoundingClientRect().height <= element.clientHeight + 1, headingSeen: heading.top >= frame.top - 1 && heading.bottom <= frame.bottom + 1, submitSeen: submit.top >= frame.top - 1 && submit.bottom <= frame.bottom + 1 };
+    });
+    const framed = await framing();
+    assert.ok(framed.scrolls, "the command text is what scrolls, inside the card");
+    assert.ok(framed.fits, "one request fits the panel instead of overflowing it " + JSON.stringify(framed));
+    assert.ok(framed.headingSeen && framed.submitSeen, "the request opens with its heading and its buttons in view");
+    await panel.locator(".question-card:not(.question-done) > .question-message").evaluate((element) => { element.scrollTop = element.scrollHeight; });
+    const scrolled = await framing();
+    assert.ok(scrolled.at > 0, "reading further into the command scrolls the card body");
+    assert.ok(scrolled.headingSeen && scrolled.submitSeen, "reading further never scrolls the heading or the buttons out of the frame");
+    await screenshot("question-long-command-framed");
+    console.log("PASS a long request scrolls its wording inside the card and keeps its heading and buttons in place");
+
     const answersBeforeSwitch = f.answers.length;
     // Approvals pile up: a thread can answer dozens, and they read alike.
     // The record keeps all of them, every one says which agent on which
