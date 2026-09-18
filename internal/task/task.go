@@ -49,6 +49,29 @@ func (s State) CanMoveTo(next State) bool {
 	return false
 }
 
+// Settlement is what a person decided about a task that failed and will not
+// be retried: they either dealt with it themselves or decided it does not
+// matter. It is recorded beside the failure instead of replacing it, because
+// cancelling reads as work that was called off — the listing would stop
+// saying that this ran and failed, which is the part worth keeping.
+type Settlement string
+
+const (
+	// SettlementHandled is "I took care of this myself": the outcome is
+	// good enough, by whatever route, so nothing is owed here any more.
+	SettlementHandled Settlement = "handled"
+	// SettlementIgnored is "this does not matter": the failure stands, and
+	// it stops asking to be looked at.
+	SettlementIgnored Settlement = "ignored"
+)
+
+func (s Settlement) Valid() bool { return s == SettlementHandled || s == SettlementIgnored }
+
+// Settled reports that a person has closed the task by hand. A settled task
+// runs nothing further and no longer waits on its owner, while its state
+// still says how it actually ended.
+func (t Task) Settled() bool { return t.Settlement != "" }
+
 // Terminal reports that nothing more will be attempted against the task.
 // Cancelled counts: the user called it off, and reviving it after a restart
 // would be the gateway overruling them.
@@ -220,8 +243,12 @@ type Task struct {
 	Delivery        *Delivery `json:"delivery,omitempty"`
 	State           State     `json:"state"`
 	CompletedByUser bool      `json:"completed_by_user,omitempty"`
-	Budget          Budget    `json:"budget,omitzero"`
-	Attempts        []Attempt `json:"attempts,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	// Settlement and SettledAt are a person closing a failed task by hand:
+	// see Settlement. Clearing them puts the task back in front of them.
+	Settlement Settlement `json:"settlement,omitempty"`
+	SettledAt  time.Time  `json:"settled_at,omitzero"`
+	Budget     Budget     `json:"budget,omitzero"`
+	Attempts   []Attempt  `json:"attempts,omitempty"`
+	CreatedAt  time.Time  `json:"created_at"`
+	UpdatedAt  time.Time  `json:"updated_at"`
 }

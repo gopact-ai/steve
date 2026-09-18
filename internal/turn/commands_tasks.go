@@ -25,6 +25,9 @@ var taskVerbs = map[string]taskVerb{
 	"cancel": taskCancel, "取消": taskCancel, "结束": taskCancel,
 	"complete": taskComplete, "done": taskComplete, "完成": taskComplete,
 	"show": taskShow, "详情": taskShow,
+	"handled": taskHandled, "handle": taskHandled, "已处理": taskHandled, "人工处理": taskHandled, "手动处理": taskHandled,
+	"ignore": taskIgnored, "ignored": taskIgnored, "忽略": taskIgnored, "无需关注": taskIgnored,
+	"reopen": taskReopen, "重开": taskReopen, "重新打开": taskReopen,
 }
 
 // parseTaskArgs reads "pause 12", "12 pause", "12" or "pause", so nobody has
@@ -121,6 +124,12 @@ func (c commands) tasksCmd(ctx context.Context, req Request, rest string) (Resul
 		return c.taskPickUp(title, tracked), nil
 	case taskComplete:
 		return c.taskComplete(ctx, req, title, tracked)
+	case taskHandled:
+		return c.taskSettle(title, tracked, task.SettlementHandled), nil
+	case taskIgnored:
+		return c.taskSettle(title, tracked, task.SettlementIgnored), nil
+	case taskReopen:
+		return c.taskSettle(title, tracked, ""), nil
 	}
 	return Result{Title: title, Text: c.text.T(i18n.TasksUsage, protocol.CommandTasks)}, nil
 }
@@ -157,7 +166,21 @@ func (c commands) taskTarget(conversationID, id string, verb taskVerb) (task.Tas
 			}
 			continue
 		}
-		if !candidate.State.Terminal() {
+		if verb == taskHandled || verb == taskIgnored {
+			if candidate.State == task.StateFailed && !candidate.Settled() {
+				return candidate, true
+			}
+			continue
+		}
+		if verb == taskReopen {
+			if candidate.Settled() {
+				return candidate, true
+			}
+			continue
+		}
+		// A task its owner has closed by hand is no longer what a bare
+		// verb means, the same way a terminal one is not.
+		if !candidate.State.Terminal() && !candidate.Settled() {
 			return candidate, true
 		}
 	}
@@ -173,6 +196,24 @@ func (c commands) taskTarget(conversationID, id string, verb taskVerb) (task.Tas
 func (c commands) taskSetAside(ctx context.Context, title string, tracked task.Task, to task.State) Result {
 	result, _ := c.setTaskAside(ctx, title, tracked, to, false)
 	return result
+}
+
+// taskSettle records what the user decided about a failed task: they dealt
+// with it, or it does not matter, or they want it back in front of them. The
+// task keeps its state — the record has to keep saying the work failed — so
+// this writes the decision beside it rather than moving it somewhere tidier.
+func (c commands) taskSettle(title string, tracked task.Task, as task.Settlement) Result {
+	settled, err := c.tasks.Settle(tracked.ID, as)
+	if err != nil {
+		return Result{Title: title, Text: c.text.T(i18n.TaskSettleState, tracked.ID, statusMark(tracked.State))}
+	}
+	switch as {
+	case task.SettlementHandled:
+		return Result{Title: title, Text: c.text.T(i18n.TaskHandled, settled.ID, protocol.CommandTasks)}
+	case task.SettlementIgnored:
+		return Result{Title: title, Text: c.text.T(i18n.TaskIgnored, settled.ID, protocol.CommandTasks)}
+	}
+	return Result{Title: title, Text: c.text.T(i18n.TaskReopened, settled.ID)}
 }
 
 // taskPickUp puts a set-aside task back in play. The state moves before the

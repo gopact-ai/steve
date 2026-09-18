@@ -453,6 +453,10 @@ func (m *Model) markSource(snap *Snapshot, name string, err error) {
 // is called "queued" — there is no queue on record to count.
 func lane(t Task) string {
 	switch {
+	// A person closed this by hand; the failure stays on the record but
+	// stops asking for a decision that has already been made.
+	case t.Settlement != "":
+		return "ended"
 	case t.Attention > 0 || t.UncertainResults > 0:
 		return "needs_you"
 	case t.Execution == ExecutionRunning:
@@ -630,7 +634,7 @@ func tasks(list []task.Task, plans map[string]plan.Plan) []Task {
 	out := make([]Task, 0, len(list))
 	for _, t := range list {
 		item := Task{
-			ID: t.ID, Goal: t.Goal, State: t.State, Member: t.Member,
+			ID: t.ID, Goal: t.Goal, State: t.State, Settlement: t.Settlement, Member: t.Member,
 			NodeID: t.Node, Parent: t.Parent, Children: children[t.ID],
 			Channel: t.Channel, ProjectID: t.ProjectID, Origin: t.Origin, Requester: t.Requester,
 			Turns: t.Budget.Turns, MaxTurns: t.Budget.MaxTurns,

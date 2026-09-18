@@ -83,6 +83,11 @@ func completionBlocker(root Task, tree []Task) error {
 		if member.ID == root.ID {
 			continue
 		}
+		// A member its owner has closed by hand is as settled as a
+		// cancelled one: they looked at the failure and decided.
+		if member.Settled() {
+			continue
+		}
 		if !member.State.Terminal() {
 			return fmt.Errorf("%w: #%s", ErrCompleteChildren, member.ID)
 		}
