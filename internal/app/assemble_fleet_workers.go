@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/nodewire"
 )
 
@@ -18,6 +19,7 @@ func assembleFleetWorkers(boot runtimeAssembly, storage ledgerAssembly, machines
 	endpoints := modelInfo.Endpoints()
 	prober := modelInfo.Prober()
 	artifacts := work.Artifacts()
+	coordinator := work.Coordinator()
 	tasks := work.Tasks()
 	repos := projection.Repos()
 	view := projection.View()
@@ -30,7 +32,11 @@ func assembleFleetWorkers(boot runtimeAssembly, storage ledgerAssembly, machines
 	// What earlier processes and dropped connections left behind: the
 	// hub's own orphaned worktrees now, queued landings from here on.
 	background.Go(func(ctx context.Context) { sweepWorktrees(ctx, artifacts, attempts, tasks, view, "", "") })
-	background.Go(func(ctx context.Context) { sweepLandings(ctx, projects, artifacts, view) })
+	// A landing that stops at a merge conflict used to sit in the queue
+	// being recomputed every pass. Now the same sweep that retries it can
+	// hand it to an agent, in the half-merged tree git kept.
+	coordinator.SetAutoResolve(boot.Config().Policies.Landing.Conflicts != config.ConflictsManual)
+	background.Go(func(ctx context.Context) { sweepLandings(ctx, projects, artifacts, view, coordinator) })
 	background.Go(repos.Run)
 	background.Go(func(ctx context.Context) { sweepIdleTasks(ctx, tasks, attempts, view) })
 	// Discover models for whatever nobody has run yet. It is discovery,

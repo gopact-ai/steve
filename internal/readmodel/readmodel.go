@@ -167,6 +167,12 @@ type Landing struct {
 	Paths    int       `json:"paths"`
 	Error    string    `json:"error,omitempty"`
 	At       time.Time `json:"at"`
+	// Files are the paths a conflict is on, so a reader sees which files
+	// disagreed rather than only that something did.
+	Files []string `json:"files,omitempty"`
+	// Resolvable says an agent can be handed this conflict: git kept the
+	// half-merged tree for it.
+	Resolvable bool `json:"resolvable,omitempty"`
 }
 
 type Hub struct {

@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/gopact-ai/steve/internal/artifact"
 	"github.com/gopact-ai/steve/internal/exec"
 	"github.com/gopact-ai/steve/internal/i18n"
 	"github.com/gopact-ai/steve/internal/plan"
@@ -75,7 +76,7 @@ func (c *Coordinator) planExecutionResult(ctx context.Context, planID string, ou
 	if runErr != nil {
 		return Result{Title: title, Text: c.text.T(i18n.PlanStopped, planID, runErr) + "\n\n" + c.planTree(final, outcome)}, nil
 	}
-	return Result{Title: title, Text: c.text.T(i18n.PlanDone, planID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + landingSummary(outcome)}, nil
+	return Result{Title: title, Text: c.text.T(i18n.PlanDone, planID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + c.landingSummary(outcome)}, nil
 }
 
 // openPlanTask gives the plan a task so its budget, anchor and history are
@@ -186,12 +187,17 @@ func orDash(value string) string {
 // room, because the chat is waiting on it.
 const planTimeout = 30 * time.Minute
 
-func landingSummary(outcome exec.Outcome) string {
+func (c *Coordinator) landingSummary(outcome exec.Outcome) string {
 	var lines []string
 	for _, land := range outcome.Landings {
 		text := fmt.Sprintf("↳ %s → %s: %s (%d paths)", land.Artifact, land.Project, land.State, len(land.Paths))
 		if land.Error != "" {
 			text += ": " + land.Error
+		}
+		// A conflict that git kept a tree for is one command away from
+		// being fixed; saying so beats reporting a dead end.
+		if land.State == artifact.LandMergeConflicted && land.Conflict != "" {
+			text += "\n  " + resolveHint(c.text, land.Artifact)
 		}
 		lines = append(lines, text)
 	}
@@ -244,7 +250,7 @@ func (c *Coordinator) resumePlan(ctx context.Context, rec exec.RunRecord, tracke
 	if runErr != nil {
 		text = c.text.T(i18n.PlanStopped, rec.PlanID, runErr) + "\n\n" + c.planTree(final, outcome)
 	} else {
-		text = c.text.T(i18n.PlanDone, rec.PlanID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + landingSummary(outcome)
+		text = c.text.T(i18n.PlanDone, rec.PlanID, len(final.Steps)) + "\n\n" + c.planTree(final, outcome) + c.landingSummary(outcome)
 	}
 	if c.notifier != nil && tracked.AnchorMessage != "" {
 		c.notifier(TaskNotice{TaskID: tracked.ID, ChatID: tracked.ChatID, MessageID: tracked.AnchorMessage, Requester: tracked.Requester, Conversation: tracked.Channel, Text: text})

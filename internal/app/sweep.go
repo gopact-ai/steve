@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	adminsvc "github.com/gopact-ai/steve/internal/admin"
@@ -16,6 +17,7 @@ import (
 	"github.com/gopact-ai/steve/internal/project"
 	"github.com/gopact-ai/steve/internal/readmodel"
 	"github.com/gopact-ai/steve/internal/task"
+	"github.com/gopact-ai/steve/internal/turn"
 )
 
 // The two sweepers clean up what a dropped connection or a dead parent
@@ -30,9 +32,10 @@ const landEvery = 30 * time.Second
 // whenever the project's canonical lock is free. A turn in progress
 // holds that lock and lands the queue itself when it ends; this covers
 // the parent that died and the project nobody spoke to again.
-func sweepLandings(ctx context.Context, projects *project.Store, artifacts *artifact.Store, view *readmodel.Model) {
+func sweepLandings(ctx context.Context, projects *project.Store, artifacts *artifact.Store, view *readmodel.Model, mender conflictMender) {
 	ticker := time.NewTicker(landEvery)
 	defer ticker.Stop()
+	var mending atomic.Bool
 	for {
 		select {
 		case <-ctx.Done():
@@ -55,6 +58,46 @@ func sweepLandings(ctx context.Context, projects *project.Store, artifacts *arti
 				slog.Error(fmt.Sprintf("sweep: land pending for %s: %v", p.ID, err), "project", p.ID)
 			}
 		}
+		// Resolving a conflict is a plan: minutes of agent work. It runs
+		// beside the sweep rather than inside it, so a queue on one project
+		// is not held up by a conflict on another, and only one pass is in
+		// flight however long it takes.
+		if mender != nil && mending.CompareAndSwap(false, true) {
+			go func() {
+				defer mending.Store(false)
+				for _, p := range list {
+					resolveConflicts(ctx, mender, view, p)
+				}
+			}()
+		}
+	}
+}
+
+// conflictMender hands a landing stuck on a merge conflict to an agent.
+// The turn coordinator is the one that can: it owns the plan supervisor.
+type conflictMender interface {
+	AutoResolveConflicts(ctx context.Context, p project.Project) []turn.Resolution
+}
+
+// resolveConflicts asks for the project's stuck landings to be resolved.
+// It costs nothing when nothing is stuck, and the coordinator refuses a
+// conflict it is already working on, so a resolution that outlives the
+// sweep interval is not started twice.
+func resolveConflicts(ctx context.Context, mender conflictMender, view *readmodel.Model, p project.Project) {
+	if mender == nil {
+		return
+	}
+	for _, r := range mender.AutoResolveConflicts(ctx, p) {
+		if r.Err != nil {
+			// Keys: artifact, project, landing.
+			view.Observe("landing", p.ID, fmt.Sprintf("merge conflict on %s in %s was not resolved: %v", r.Artifact[:12], p.ID, r.Err),
+				map[string]string{"artifact": r.Artifact[:12], "project": p.ID, "landing": r.Landing})
+			slog.Warn(fmt.Sprintf("sweep: resolve conflict %s in %s: %v", r.Artifact[:12], p.ID, r.Err), "artifact", r.Artifact, "project", p.ID, "landing", r.Landing)
+			continue
+		}
+		view.Observe("landing", p.ID, fmt.Sprintf("merge conflict on %s in %s resolved by %s", r.Artifact[:12], p.ID, r.Agent),
+			map[string]string{"artifact": r.Artifact[:12], "project": p.ID, "landing": r.Landing})
+		slog.Info(fmt.Sprintf("sweep: %s resolved the merge conflict on %s in %s", r.Agent, r.Artifact[:12], p.ID), "artifact", r.Artifact, "project", p.ID, "agent", r.Agent)
 	}
 }
 

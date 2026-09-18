@@ -185,9 +185,15 @@ type coordinatorState struct {
 	projects   *project.Store
 	// attach gives a project a directory on the machine an agent runs on
 	// when it has none there; nil refuses the turn instead.
-	attach      func(ctx context.Context, projectID, node string) error
-	attempts    *attempt.Service
-	artifacts   *artifact.Store
+	attach    func(ctx context.Context, projectID, node string) error
+	attempts  *attempt.Service
+	artifacts *artifact.Store
+	// resolving guards a merge-conflict resolution in flight, which runs
+	// far longer than the sweep interval that may ask for it again.
+	resolving map[string]bool
+	// autoResolve lets the sweeper hand a merge conflict to an agent
+	// without anyone asking.
+	autoResolve bool
 	intents     *intent.Service
 	disclosures map[string]held
 	// defaultProject binds a fresh conversation; homeProject binds the
@@ -289,6 +295,10 @@ func (c *Coordinator) ReviveSession(conversationID, agentID string) error {
 // coordinator behaves exactly as before, which keeps the turn path testable
 // without a filesystem.
 func (c *Coordinator) SetExecution(r *execution.Registry) { c.executions = r }
+
+// SetAutoResolve decides whether a landing that stops at a merge conflict
+// is handed to an agent without anyone asking.
+func (c *Coordinator) SetAutoResolve(on bool) { c.autoResolve = on }
 
 func (c *Coordinator) SetTasks(store *task.Store, node string) {
 	c.tasks = store

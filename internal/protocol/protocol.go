@@ -49,6 +49,9 @@ const (
 	// CommandRepair has a healthy agent on the same machine fix a broken
 	// harness there; the fix counts only when a command proves it.
 	CommandRepair Command = "/repair"
+	// CommandResolve hands a landing that stopped at a merge conflict to an
+	// agent, which works in the half-merged tree git kept.
+	CommandResolve Command = "/resolve"
 	// CommandProject shows or switches the conversation's project: the
 	// directory work happens in is the project's, never the agent's.
 	CommandProject Command = "/project"
@@ -68,7 +71,7 @@ func ParseCommand(input string) (Command, string) {
 		return CommandUnknown, ""
 	}
 	switch Command(input) {
-	case CommandNew, CommandClear, CommandStatus, CommandCancel, CommandSkills, CommandTasks, CommandModel, CommandHistory, CommandSchedules, CommandPlans, CommandFleet, CommandProject, CommandGrant, CommandEffects, CommandRepair:
+	case CommandNew, CommandClear, CommandStatus, CommandCancel, CommandSkills, CommandTasks, CommandModel, CommandHistory, CommandSchedules, CommandPlans, CommandFleet, CommandProject, CommandGrant, CommandEffects, CommandRepair, CommandResolve:
 		return Command(input), ""
 	}
 	if rest, ok := prefixed(input, string(CommandPlans)); ok {
@@ -82,6 +85,9 @@ func ParseCommand(input string) (Command, string) {
 	}
 	if rest, ok := prefixed(input, string(CommandRepair)); ok {
 		return CommandRepair, rest
+	}
+	if rest, ok := prefixed(input, string(CommandResolve)); ok {
+		return CommandResolve, rest
 	}
 	if rest, ok := prefixed(input, string(CommandProject)); ok {
 		return CommandProject, rest

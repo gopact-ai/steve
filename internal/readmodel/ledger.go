@@ -177,7 +177,11 @@ func (l Ledger) RecentLandings(ctx context.Context) ([]Landing, error) {
 			if at.IsZero() {
 				at = land.StartedAt
 			}
-			out = append(out, Landing{ID: land.ID, Project: land.Project, Artifact: land.Artifact, State: land.State, Paths: len(land.Paths), Error: land.Error, At: at})
+			entry := Landing{ID: land.ID, Project: land.Project, Artifact: land.Artifact, State: land.State, Paths: len(land.Paths), Error: land.Error, At: at}
+			if land.State == artifact.LandMergeConflicted {
+				entry.Files, entry.Resolvable = land.Paths, land.Conflict != ""
+			}
+			out = append(out, entry)
 		}
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].At.After(out[j].At) })

@@ -55,22 +55,27 @@ type Landing struct {
 	Target         project.Home `json:"target"`
 	writer         project.Home
 	borrowedHolder string
-	Source         *Source       `json:"source,omitempty"`
-	ID             string        `json:"id"`
-	Project        string        `json:"project"`
-	Artifact       string        `json:"artifact"`
-	Base           string        `json:"base,omitempty"`
-	Now            string        `json:"now,omitempty"`
-	Merged         string        `json:"merged,omitempty"`
-	By             string        `json:"by,omitempty"`
-	State          string        `json:"state"`
-	Paths          []string      `json:"paths,omitempty"`
-	Round          int           `json:"round"`
-	Error          string        `json:"error,omitempty"`
-	Lease          *ledger.Lease `json:"lease,omitempty"`
-	StartedAt      time.Time     `json:"started_at"`
-	EndedAt        time.Time     `json:"ended_at,omitempty"`
-	Recoverable    bool          `json:"recoverable,omitempty"`
+	Source         *Source `json:"source,omitempty"`
+	ID             string  `json:"id"`
+	Project        string  `json:"project"`
+	Artifact       string  `json:"artifact"`
+	Base           string  `json:"base,omitempty"`
+	Now            string  `json:"now,omitempty"`
+	Merged         string  `json:"merged,omitempty"`
+	// Conflict names the half-merged snapshot kept when the two sides
+	// disagreed: the canonical side and the incoming side with conflict
+	// markers in the files they both touched. It is what a person or an
+	// agent works from to resolve the landing.
+	Conflict    string        `json:"conflict,omitempty"`
+	By          string        `json:"by,omitempty"`
+	State       string        `json:"state"`
+	Paths       []string      `json:"paths,omitempty"`
+	Round       int           `json:"round"`
+	Error       string        `json:"error,omitempty"`
+	Lease       *ledger.Lease `json:"lease,omitempty"`
+	StartedAt   time.Time     `json:"started_at"`
+	EndedAt     time.Time     `json:"ended_at,omitempty"`
+	Recoverable bool          `json:"recoverable,omitempty"`
 	// Unapplied is durably recorded only when closing a preapply state.
 	Unapplied bool `json:"unapplied,omitempty"`
 }
@@ -88,10 +93,12 @@ const (
 	landTTL             = 5 * time.Minute
 )
 
-// Conflict is a landing that stopped at a conflict, with the paths.
+// Conflict is a landing that stopped at a conflict, with the paths and,
+// for a merge conflict git could keep a tree for, the marked snapshot.
 type Conflict struct {
-	State string
-	Paths []string
+	State  string
+	Paths  []string
+	Marked string
 }
 
 func (c Conflict) Error() string {
@@ -300,12 +307,12 @@ func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landi
 	if err != nil {
 		return nil, err
 	}
-	var merged string
+	var merged, marked string
 	var conflicts []string
 	if metadataOnly(p) {
-		merged, conflicts, err = s.mergeOnNode(ctx, p, land.Base, now.ID, land.Artifact)
+		merged, marked, conflicts, err = s.mergeOnNode(ctx, p, land.Base, now.ID, land.Artifact)
 	} else {
-		merged, conflicts, err = repo.Merge(ctx, land.Base, now.ID, land.Artifact, "land "+short(land.Artifact)+" into "+p.ID)
+		merged, marked, conflicts, err = repo.MergeMarking(ctx, land.Base, now.ID, land.Artifact, "land "+short(land.Artifact)+" into "+p.ID)
 	}
 	if err != nil {
 		if !land.Recoverable {
@@ -314,8 +321,9 @@ func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landi
 		return nil, err
 	}
 	if len(conflicts) > 0 {
+		land.Conflict = marked
 		s.failed(ctx, land, LandLocked, LandMergeConflicted, "conflicts", conflicts)
-		return nil, Conflict{State: LandMergeConflicted, Paths: conflicts}
+		return nil, Conflict{State: LandMergeConflicted, Paths: conflicts, Marked: marked}
 	}
 	land.Merged = merged
 	var paths []string
@@ -397,16 +405,16 @@ func (s *Store) commitLanding(ctx context.Context, p project.Project, land *Land
 
 // mergeOnNode three-way merges at the home node of a sealed project, which
 // needs the node's git to know merge-tree --write-tree (2.38+).
-func (s *Store) mergeOnNode(ctx context.Context, p project.Project, base, ours, theirs string) (string, []string, error) {
+func (s *Store) mergeOnNode(ctx context.Context, p project.Project, base, ours, theirs string) (string, string, []string, error) {
 	version, _, state, err := s.nodes.Git(ctx, p.Home.Node)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 	if ours == base {
-		return theirs, nil, nil
+		return theirs, "", nil, nil
 	}
 	if theirs == base {
-		return ours, nil, nil
+		return ours, "", nil, nil
 	}
 	bare := nodeBare(state, p.ID)
 	result, err := s.nodes.Artifact(ctx, p.Home.Node, ops.Request{
@@ -417,11 +425,11 @@ func (s *Store) mergeOnNode(ctx context.Context, p project.Project, base, ours, 
 	if err != nil {
 		var conflict MergeConflict
 		if errors.As(err, &conflict) {
-			return "", conflict.Paths, nil
+			return "", conflict.Marked, conflict.Paths, nil
 		}
-		return "", nil, fmt.Errorf("merge on %s: %w", p.Home.Node, err)
+		return "", "", nil, fmt.Errorf("merge on %s: %w", p.Home.Node, err)
 	}
-	return result.Commit, nil, nil
+	return result.Commit, "", nil, nil
 }
 
 func (s *Store) changedOnNode(ctx context.Context, p project.Project, from, to string) ([]string, error) {

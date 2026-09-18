@@ -69,7 +69,7 @@ export interface Attempt {
     id: string; kind: string; state: string; task_id?: string; project: string; agent?: string; node?: string;
     scope?: string; workspace?: string; leases?: string[]; started_at: string; requires?: string[]; admission?: Admission; unsettled?: boolean; error?: string;
 }
-export interface Landing { id: string; project: string; state: string; artifact: string; paths?: string; error?: string; at: string }
+export interface Landing { id: string; project: string; state: string; artifact: string; paths?: string; error?: string; at: string; files?: string[]; resolvable?: boolean }
 export interface Reservation { id: string; key: string; node: string; harness: string; slots: number; for: string; by: string; expires_at: string }
 export interface Attestation { artifact: string; verdict: string; by: string; note?: string; at: string }
 export interface Replica { artifact: string; node: string; generation: number; state: string; note?: string; at: string }
