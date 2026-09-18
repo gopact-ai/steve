@@ -38,3 +38,11 @@ type localizedVerbLister interface {
 type inputParser interface {
 	ParseInput(string) (string, turn.ParsedInput)
 }
+
+// sessionResetter forgets the agent sessions a conversation holds, so its
+// next turn starts a fresh one. A thread rewound to an edited message
+// must not be answered by a session that still remembers the turns the
+// transcript no longer has.
+type sessionResetter interface {
+	ResetConversationSessions(ctx context.Context, conversationID string) error
+}

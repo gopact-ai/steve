@@ -24,7 +24,7 @@ func queueResponse(w http.ResponseWriter, value any, err error) {
 		switch {
 		case errors.Is(err, consoleapi.ErrConsoleClosing):
 			status = http.StatusServiceUnavailable
-		case errors.Is(err, consoleapi.ErrExchangeNotFound):
+		case errors.Is(err, consoleapi.ErrExchangeNotFound), errors.Is(err, consoleapi.ErrRewindTargetGone):
 			status = http.StatusNotFound
 		case errors.Is(err, consoleapi.ErrExchangeNotQueued), errors.Is(err, consoleapi.ErrCommandConflict):
 			status = http.StatusConflict
@@ -56,12 +56,15 @@ func (s *Server) consoleEnqueue(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if extended, ok := s.console.(consoleapi.Submissions); ok {
 		exchange, err = extended.Submit(r.Context(), req)
-	} else if len(req.Refs) > 0 {
+	} else if len(req.Refs) > 0 || req.RewindTo != "" {
 		http.Error(w, "material submission is not supported", http.StatusNotImplemented)
 		return
 	} else {
 		exchange, err = s.console.EnqueueCommand(r.Context(), req.Conversation, req.Input, req.CommandID, req.Quotes)
 	}
+	// The history a rewound submission carries is for the agent; the
+	// acknowledgement the page reads has no use for it.
+	exchange.History = ""
 	queueResponse(w, exchange, err)
 }
 

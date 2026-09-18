@@ -69,6 +69,11 @@ type Submission struct {
 	Quotes       []QuoteRef     `json:"quotes,omitempty"`
 	Refs         []material.Ref `json:"refs,omitempty"`
 	Locale       string         `json:"locale,omitempty"`
+	// RewindTo names a line already sent that this submission replaces.
+	// The thread goes back to the moment before it: that line and
+	// everything after it leaves the transcript, and this input is said
+	// in its place.
+	RewindTo string `json:"rewind_to,omitempty"`
 }
 
 type Submissions interface {

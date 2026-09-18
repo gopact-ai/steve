@@ -2,8 +2,13 @@ import { useSyncExternalStore, type SetStateAction } from "react";
 import { refKey, wireRef } from "./material-ref.ts";
 import type { Exchange, QuoteRef, DraftMaterial, MaterialRef } from "./types";
 
-export interface Submission { id?: string; input: string; quotes: QuoteRef[]; refs?: DraftMaterial[]; locale?: string; active: boolean; fromDraft: boolean; error?: string; rejected?: boolean; conflict?: boolean; uncertain?: boolean }
-interface DraftState { drafts: Record<string, string>; submissions: Record<string, Submission>; quotes: QuoteRef[]; materials: Record<string, DraftMaterial[]> }
+export interface Submission { id?: string; input: string; quotes: QuoteRef[]; refs?: DraftMaterial[]; locale?: string; active: boolean; fromDraft: boolean; error?: string; rejected?: boolean; conflict?: boolean; uncertain?: boolean; rewind?: string }
+// Rewind is the line a thread is being taken back to while its
+// replacement is typed. It is kept beside the draft, and for the same
+// reason: a reload in the middle of an edit must not quietly turn the
+// rewrite into a new message appended under the old one.
+export interface Rewind { reply: string; restore: string }
+interface DraftState { drafts: Record<string, string>; submissions: Record<string, Submission>; quotes: QuoteRef[]; materials: Record<string, DraftMaterial[]>; rewinds: Record<string, Rewind> }
 interface StopState { id: string; active: boolean; uncertain?: boolean; error?: string; message?: string }
 const storageKey = "steve.console.drafts";
 const listeners = new Set<() => void>();
@@ -25,12 +30,16 @@ function load(): DraftState {
         })),
         quotes: validQuotes(saved?.quotes),
         materials: Object.fromEntries(Object.entries(saved?.materials || {}).map(([id, refs]) => [id, validMaterials(refs)])),
+        rewinds: Object.fromEntries(Object.entries(saved?.rewinds || {}).flatMap(([id, value]) => {
+            const entry = value as Rewind | null;
+            return entry && typeof entry.reply === "string" && entry.reply ? [[id, { reply: entry.reply, restore: typeof entry.restore === "string" ? entry.restore : "" }]] : [];
+        })),
     };
 }
 
 // A submission and the consumed draft/quotes are saved in one write before I/O.
 let state: DraftState;
-try { state = load(); } catch { state = { drafts: {}, submissions: {}, quotes: [], materials: {} }; }
+try { state = load(); } catch { state = { drafts: {}, submissions: {}, quotes: [], materials: {}, rewinds: {} }; }
 interface EditingDraft { text: string; expected: string; version: number; issue?: "conflict" | "storage" }
 const editing = new Map<string, EditingDraft>();
 let writes = Promise.resolve();
@@ -100,10 +109,10 @@ export function useQuotes(): [QuoteRef[], (value: SetStateAction<QuoteRef[]>) =>
     return [useSyncExternalStore(subscribe, () => state.quotes), (value) => transaction(() => save({ ...state, quotes: typeof value === "function" ? value(state.quotes) : value })).catch(() => false)];
 }
 export function useSubmission(id: string): Submission | null { return useSyncExternalStore(subscribe, () => state.submissions[id] || null); }
-function beginSubmissionLocked(id: string, input: string, quotes: QuoteRef[], fromDraft = true, locale?: string): Submission | null {
+function beginSubmissionLocked(id: string, input: string, quotes: QuoteRef[], fromDraft = true, locale?: string, rewind?: string): Submission | null {
     if (state.submissions[id]) return null;
     if (editing.has(id)) throw new Error("Review the unsaved draft before sending");
-    const pending: Submission = { id: commandID(), input, quotes, refs: fromDraft ? state.materials[id] || [] : [], locale, fromDraft, active: true };
+    const pending: Submission = { id: commandID(), input, quotes, refs: fromDraft ? state.materials[id] || [] : [], locale, fromDraft, active: true, rewind: rewind || undefined };
     const materials = { ...state.materials }; if (fromDraft) delete materials[id];
     const drafts = { ...state.drafts };
     if (fromDraft) delete drafts[id];
@@ -194,7 +203,7 @@ function removeDraftMaterialLocked(conversation: string, ref: MaterialRef): bool
 }
 export const submissionRefs = (submission: Submission) => submission.refs?.map(wireRef);
 
-export function beginSubmission(id: string, input: string, quotes: QuoteRef[], fromDraft = true, locale?: string, includeDraftQuotes = false) {
+export function beginSubmission(id: string, input: string, quotes: QuoteRef[], fromDraft = true, locale?: string, includeDraftQuotes = false, rewind?: string) {
     const expectedRefs = (state.materials[id] || []).map(refKey);
     return transaction(() => {
         if (state.submissions[id]) return null;
@@ -202,7 +211,7 @@ export function beginSubmission(id: string, input: string, quotes: QuoteRef[], f
             if (!editing.has(id)) editing.set(id, { text: input, expected: state.drafts[id] || "", version: 0, issue: "conflict" });
             throw new Error("Review the unsaved draft before sending");
         }
-        return beginSubmissionLocked(id, input, includeDraftQuotes ? state.quotes : quotes, fromDraft, locale);
+        return beginSubmissionLocked(id, input, includeDraftQuotes ? state.quotes : quotes, fromDraft, locale, rewind);
     });
 }
 export const retrySubmission = (...args: Parameters<typeof retrySubmissionLocked>) => transaction(() => retrySubmissionLocked(...args));
@@ -220,3 +229,24 @@ export const reconcileSubmission = (...args: Parameters<typeof reconcileSubmissi
 export const restoreSubmission = (...args: Parameters<typeof restoreSubmissionLocked>) => transaction(() => restoreSubmissionLocked(...args)).catch(() => false);
 export const addDraftMaterial = (...args: Parameters<typeof addDraftMaterialLocked>) => transaction(() => addDraftMaterialLocked(...args)).catch(() => false);
 export const removeDraftMaterial = (...args: Parameters<typeof removeDraftMaterialLocked>) => transaction(() => removeDraftMaterialLocked(...args)).catch(() => false);
+
+// A thread is taken back to a line already sent by editing it: the line
+// goes back in the box, and what was being typed is kept so cancelling
+// gives it back. The target survives a reload, because the send that
+// follows means something different from an ordinary one.
+export function useRewind(id: string): Rewind | null { return useSyncExternalStore(subscribe, () => state.rewinds[id] || null); }
+export const rewindOf = (id: string) => state.rewinds[id] || null;
+// The draft itself is placed through updateDraft, like any other text put
+// in the box, so an edit already in flight is not written around.
+export function beginRewind(id: string, reply: string, restore: string) {
+    return transaction(() => save({ ...state, rewinds: { ...state.rewinds, [id]: { reply, restore: state.rewinds[id]?.restore ?? restore } } })).catch(() => false);
+}
+export function endRewind(id: string): Promise<Rewind | null> {
+    return transaction(() => {
+        const entry = state.rewinds[id];
+        if (!entry) return null;
+        const rewinds = { ...state.rewinds }; delete rewinds[id];
+        save({ ...state, rewinds });
+        return entry;
+    }).catch(() => null);
+}

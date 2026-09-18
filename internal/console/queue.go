@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"maps"
 	"strings"
 	"time"
@@ -111,6 +112,10 @@ func (s *Service) EnqueueCommand(ctx context.Context, conversation, input, comma
 type enqueueOptions struct {
 	Prompt, Key                                      string
 	Front                                            bool
+	// RewindTo names a line already sent that this one replaces: the
+	// thread goes back to just before it and carries what was said
+	// earlier into the prompt. See rewind.go.
+	RewindTo string
 	Origin, Requester, ExpectedProject, ExpectedTask string
 	Refs                                             []material.Ref
 	Locale                                           string
@@ -217,8 +222,23 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		}
 		return other, copyExchange(other.Exchange), nil
 	}
+	// The thread is rewound inside the same lock that accepts its
+	// replacement, so no reader ever sees a thread missing its tail with
+	// nothing said in its place.
+	var undoRewind func()
+	var plan rewindPlan
+	history := ""
+	if options.RewindTo != "" {
+		var planErr error
+		plan, planErr = s.planRewindLocked(conversation, options.RewindTo)
+		if planErr != nil {
+			return nil, Exchange{}, planErr
+		}
+		history = plan.history
+		undoRewind = s.applyRewindLocked(plan)
+	}
 	e := &queuedExchange{
-		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
+		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, History: history, Key: key,
 			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject, ExpectedTask: options.ExpectedTask,
 			Refs: copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
 			Quotes: append([]QuoteRef(nil), quotes...), State: consoleapi.ExchangeQueued, EnqueuedAt: time.Now().UTC()},
@@ -227,7 +247,18 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	if !strings.HasPrefix(key, "client:") {
 		e.PayloadHash = ""
 	}
-	return s.acceptExchangeLocked(e, options.Front)
+	accepted, exchange, err := s.acceptExchangeLocked(e, options.Front)
+	if undoRewind != nil {
+		if err != nil {
+			undoRewind()
+			if saveErr := s.save(); saveErr != nil {
+				slog.Error(fmt.Sprintf("console: restore rewound thread %s: %v", conversation, saveErr))
+			}
+			return nil, Exchange{}, err
+		}
+		s.publishRewoundLocked(plan)
+	}
+	return accepted, exchange, err
 }
 
 func (s *Service) acceptExchangeLocked(e *queuedExchange, front bool) (*queuedExchange, Exchange, error) {
@@ -283,7 +314,11 @@ func (s *Service) Queue(conversation string) []Exchange {
 			}
 			remaining--
 		}
-		out = append(out, copyExchange(e.Exchange))
+		// The carried history is for the agent, not the page: it can run
+		// to a hundred kilobytes and nothing in the queue view reads it.
+		listed := copyExchange(e.Exchange)
+		listed.History = ""
+		out = append(out, listed)
 	}
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]

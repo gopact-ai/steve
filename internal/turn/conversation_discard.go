@@ -60,6 +60,22 @@ func (c *Coordinator) DiscardConversation(ctx context.Context, conversationID st
 	return nil
 }
 
+// ResetConversationSessions ends the agent sessions a conversation holds
+// without touching the conversation itself, so its next turn opens a
+// fresh session. The console uses it when a thread is rewound to an
+// edited message: the lines after that message are gone from the
+// transcript, and an agent that still remembered them would answer
+// questions nobody can see.
+func (c *Coordinator) ResetConversationSessions(ctx context.Context, conversationID string) error {
+	if strings.TrimSpace(conversationID) == "" {
+		return errors.New("conversation is required")
+	}
+	if c.busyWith(conversationID) {
+		return fmt.Errorf("%w: %s", ErrConversationBusy, conversationID)
+	}
+	return c.closeConversationSessions(ctx, conversationID)
+}
+
 // busyWith reports a turn of the conversation running right now, whatever
 // agent it belongs to.
 func (c *Coordinator) busyWith(conversationID string) bool {

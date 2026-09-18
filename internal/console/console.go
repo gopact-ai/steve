@@ -566,7 +566,10 @@ func (s *Service) runExchange(ctx context.Context, exchange Exchange) (reply con
 	if exchange.Prompt != "" {
 		text = exchange.Prompt
 	}
-	block += mediaText
+	// A rewound thread carries its earlier record the way a quote is
+	// carried: in front of what was typed, and behind the address, so
+	// "@agent ..." still reaches that agent.
+	block = exchange.History + block + mediaText
 	prompt := block + text
 	address, parsed := s.parseInput(text)
 	if parsed.Control() {

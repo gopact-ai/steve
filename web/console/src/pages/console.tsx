@@ -29,7 +29,7 @@ import { useResourceRead } from "@/hooks/use-resource-read";
 import { placeLabel } from "@/lib/workspaces";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
 import { applyDelegation, restoreDelegations, withDelegations, type Delegations } from "@/lib/delegations";
-import { beginSubmission, retrySubmission, failSubmission, finishSubmission, reconcileSubmission, restoreSubmission, updateDraft, useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission, useMaterials, removeDraftMaterial, submissionRefs } from "@/lib/drafts";
+import { beginSubmission, retrySubmission, failSubmission, finishSubmission, reconcileSubmission, restoreSubmission, updateDraft, useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission, useMaterials, removeDraftMaterial, submissionRefs, useRewind, beginRewind, endRewind, rewindOf } from "@/lib/drafts";
 import { useI18n } from "@/providers/locale-provider";
 import { useMaterial } from "@/providers/material-provider";
 import { uploadMaterial, refKey } from "@/lib/api/material";
@@ -67,6 +67,7 @@ export function ConsolePage() {
     const [loadingReplies, setLoadingReplies] = useState(true);
     const [enabled, setEnabled] = useState(true);
     const text = useDraft(conversation);
+    const rewind = useRewind(conversation);
     const draftIssue = useDraftIssue(conversation);
     const savedDraft = useSavedDraft(conversation);
     const draftMaterials = useMaterials(conversation);
@@ -109,10 +110,12 @@ export function ConsolePage() {
     const [mobileSessions, setMobileSessions] = useState(false);
     const [inspectorOpen, setInspectorOpen] = useState(false);
     useEffect(() => { if (!reviewing && materials.sideRequest && context?.project && materials.sideRequest.project === context.project.id) { setInspectorOpen(true); setTab("materials"); } }, [materials.sideRequest, reviewing, context?.project?.id]);
-    // A line already sent cannot be taken back, but it can be said again:
-    // editing puts it back in the box. Text already typed there is not
-    // thrown away without asking.
-    const [replacingDraft, setReplacingDraft] = useState<string | null>(null);
+    // A line already sent cannot be unsaid, but the thread can go back to
+    // just before it: editing puts that line in the box, and sending it
+    // removes everything that followed. Text already typed there is not
+    // thrown away without asking, and is given back if the edit is
+    // cancelled.
+    const [replacingDraft, setReplacingDraft] = useState<{ reply: string; text: string } | null>(null);
     const [pickedTask, setPickedTask] = useState<Task | null>(null);
     // A delegated child picked from the tree takes the middle column:
     // its card, open, from the reply that carried it.
@@ -403,15 +406,22 @@ export function ConsolePage() {
 
     async function deliver(pending: Submission) {
         try {
-            await enqueue(conversation, pending.input, pending.quotes.length ? pending.quotes : undefined, pending.id, submissionRefs(pending), pending.locale);
+            await enqueue(conversation, pending.input, pending.quotes.length ? pending.quotes : undefined, pending.id, submissionRefs(pending), pending.locale, pending.rewind);
+            // The thread is back at the edited line and the lines after it
+            // are gone, so what is drawn is refetched rather than patched.
+            if (pending.rewind) { await endRewind(conversation); transcriptRevision.current++; void loadReplies(); }
             const recorded = await finishSubmission(conversation, pending.id);
             if (!recorded && activeConversation.current === conversation) setStatus(t("console.receiptStorage"));
             if (activeConversation.current === conversation) setSelectedReply(null);
         } catch (error) {
             const conflict = error instanceof HTTPError && error.status === 409;
             const message = error instanceof Error ? error.message : String(error);
+            // A rewind whose target the hub no longer has can never
+            // succeed; keeping it armed would fail every later send.
+            const gone = !!pending.rewind && error instanceof HTTPError && error.status === 404;
+            if (gone) await endRewind(conversation);
             const retained = await failSubmission(conversation, pending.id, message, conflict ? "conflict" : isRejectedRequest(error) ? "rejected" : "unknown");
-            if (activeConversation.current === conversation) setStatus(!retained ? t("console.receiptStorage") : isRejectedRequest(error) && !pending.uncertain ? message : "");
+            if (activeConversation.current === conversation) setStatus(gone ? t("console.rewindGone") : !retained ? t("console.receiptStorage") : isRejectedRequest(error) && !pending.uncertain ? message : "");
         } finally {
             await loadQueue();
             refresh(); loadContext(); loadConversations();
@@ -424,7 +434,10 @@ export function ConsolePage() {
         if ((!input && !draftMaterials.length) || uploading || !canSubmit || submission || isStopPending(conversation) || creatingRequest.current || !context) return;
         if (busy && !queueing) { setStatus(t("console.queueDisabled")); return; }
         let pending: Submission | null;
-        try { pending = await beginSubmission(conversation, input, quotes, line === undefined, locale, line === undefined); }
+        // A verb chip or a picker sends its own line; only what the person
+        // typed replaces the message they are editing.
+        const armed = line === undefined ? rewindOf(conversation)?.reply : undefined;
+        try { pending = await beginSubmission(conversation, input, quotes, line === undefined, locale, line === undefined, armed); }
         catch { if (activeConversation.current === conversation) setStatus(t("console.pendingStorage")); return; }
         if (!pending) return;
         clearStopNotice(conversation);
@@ -499,6 +512,14 @@ export function ConsolePage() {
     const shownProcess = (selectedReply ? transcript.find((r) => r.id === selectedReply.id) : undefined) ?? (lastWithProcess ? withDelegations(lastWithProcess, delegations) : null);
     const recordedSteps = new Set(entries.flatMap((r) => r.process?.steps?.map((s) => s.id) || []));
     const unrecordedChildren = Object.values(delegations).map(({ step }) => step).filter((s) => !recordedSteps.has(s.id));
+    // How much of the thread a send would take back, counted from what is
+    // drawn: the lines under the message being edited.
+    const rewindView = useMemo(() => {
+        if (!rewind) return undefined;
+        const at = transcript.findIndex((r) => r.id === rewind.reply);
+        return { following: at < 0 ? 0 : transcript.length - at - 1 };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [rewind, entries, delegations]);
     const current = conversations.find((c) => c.id === conversation);
     const title = current?.title || (entries.find((r) => r.kind === "sent" && r.input?.trim() && !r.input.trim().startsWith("/"))?.input?.split("\n")[0]) || t("console.newConversation");
     useEffect(() => { materials.setTarget(context?.project ? { conversation, project: context.project.id, title } : null); }, [conversation, context?.project?.id, title, materials.setTarget]);
@@ -531,11 +552,26 @@ export function ConsolePage() {
         setText(value);
         window.setTimeout(() => { box.current?.focus(); box.current?.caretToEnd(); }, 0);
     };
+    // Editing a line already sent arms a rewind: the thread will go back
+    // to that line when the replacement is sent. Arming is remembered
+    // outside React so a reload mid-edit cannot turn the rewrite into an
+    // ordinary message appended under the original.
+    async function armRewind(reply: string, value: string) {
+        await beginRewind(conversation, reply, text);
+        placeDraft(value);
+    }
     const editSent = useEventCallback((r: Reply) => {
         const value = (r.input || "").trim();
-        if (!value) return;
-        if (text.trim() && text.trim() !== value) { setReplacingDraft(value); return; }
-        placeDraft(value);
+        if (!value || !r.id) return;
+        if (busy || submission?.active || stopping || isStopPending(conversation)) { setStatus(t("console.editBusy")); return; }
+        setStatus("");
+        if (text.trim() && text.trim() !== value) { setReplacingDraft({ reply: r.id, text: value }); return; }
+        void armRewind(r.id, value);
+    });
+    const dropRewind = useEventCallback(async () => {
+        const armed = await endRewind(conversation);
+        setStatus("");
+        if (armed) placeDraft(armed.restore);
     });
     const quoteReply = useEventCallback((r: Reply) => { if (!r.id) return; void setQuotes((list) => list.some((x) => x.reply_id === r.id) ? list : [...list, { conversation, reply_id: r.id!, title: current?.title || conversation, excerpt: (r.text || "").replace(/\s+/g, " ").slice(0, 80) }]); });
     const changeText = useEventCallback((value: string) => setText(value));
@@ -573,7 +609,7 @@ export function ConsolePage() {
     return (
         <div className={`console-workbench ${side.session ? "has-side-chat" : ""}`}>
             {replacingDraft !== null && <ConfirmDialog title={t("console.replaceDraftTitle")} body={t("console.replaceDraftBody")} confirmLabel={t("console.replaceDraft")}
-                onConfirm={async () => placeDraft(replacingDraft)} onClose={() => setReplacingDraft(null)} />}
+                onConfirm={() => armRewind(replacingDraft.reply, replacingDraft.text)} onClose={() => setReplacingDraft(null)} />}
             {importing && <NativeSessionImport agents={snap.agents} nodes={snap.nodes} projects={snap.projects} onClose={() => setImporting(false)} onImported={(id) => { setImporting(false); refresh(); selectConversation(id); void loadConversations(); }} />}
             {view === "chat" && desktopSessions && !side.session && sessions()}
             {mobileSessions && !desktopSessions && <Sheet label={t("console.sessions")}  side="left" width={300} onClose={() => setMobileSessions(false)}><button type="button" className="sheet-close workbench-icon-button" aria-label={t("console.closeSessions")}  onClick={() => setMobileSessions(false)}><X aria-hidden="true" /></button>{sessions(false, false)}</Sheet>}
@@ -658,6 +694,7 @@ export function ConsolePage() {
                                 value={text} hasMaterials={draftMaterials.length > 0} onChange={changeText} onPasteFiles={pasteFiles} onSubmit={submitLine} onStop={stopLine}
                                 busy={busy} pending={!!submission} stopping={stopping} disabled={creating || !context || !canSubmit} boxRef={box} onKey={pressKey}
                                 quotes={quotes} onDropQuote={dropQuote}
+                                rewind={rewindView} onCancelRewind={dropRewind}
                                 queue={queue} queueing={queueing} onToggleQueueing={toggleQueueing}
                                 onSteer={steerLine} onDropQueued={dropQueued}
                                 onEditQueued={editQueuedLine}

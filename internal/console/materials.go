@@ -37,13 +37,38 @@ func (s *Service) SetMaterials(resolver MaterialResolver, authorize func(context
 	s.materials, s.authorizeMaterials = resolver, authorize
 }
 
+// submissionOptions turns one request into the terms the queue accepts.
+// A submission that replaces a line already sent first takes the thread
+// back to it, which is the one part that must happen before anything is
+// queued: the agent's session is closed out here, outside the lock.
+func (s *Service) submissionOptions(ctx context.Context, req consoleapi.Submission) (enqueueOptions, error) {
+	options := enqueueOptions{Key: clientKey(req.CommandID), Refs: req.Refs, Locale: req.Locale}
+	if req.RewindTo == "" {
+		return options, nil
+	}
+	target, err := s.beginRewind(ctx, req.Conversation, req.RewindTo, options.Key)
+	if err != nil {
+		return enqueueOptions{}, err
+	}
+	options.RewindTo = target
+	return options, nil
+}
+
 func (s *Service) Submit(ctx context.Context, req consoleapi.Submission) (Exchange, error) {
-	_, e, err := s.enqueue(ctx, req.Conversation, req.Input, req.Quotes, enqueueOptions{Key: clientKey(req.CommandID), Refs: req.Refs, Locale: req.Locale})
+	options, err := s.submissionOptions(ctx, req)
+	if err != nil {
+		return Exchange{}, err
+	}
+	_, e, err := s.enqueue(ctx, req.Conversation, req.Input, req.Quotes, options)
 	return e, err
 }
 
 func (s *Service) SendSubmission(ctx context.Context, req consoleapi.Submission) (consoleapi.Reply, error) {
-	e, _, err := s.enqueue(ctx, req.Conversation, req.Input, req.Quotes, enqueueOptions{Key: clientKey(req.CommandID), Refs: req.Refs, Locale: req.Locale})
+	options, err := s.submissionOptions(ctx, req)
+	if err != nil {
+		return consoleapi.Reply{}, err
+	}
+	e, _, err := s.enqueue(ctx, req.Conversation, req.Input, req.Quotes, options)
 	if err != nil {
 		return consoleapi.Reply{}, err
 	}
