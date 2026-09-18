@@ -16,6 +16,7 @@ const context=await browser.newContext({viewport:{width:1600,height:1000},servic
 const f={version:"test",supportsMaterials:true,captures:[],posts:[],queue:[],materials:new Map(),notes:[],answers:[],questions:[],hideQueue:false,reset:false,errors:[]};
 page.on("pageerror",e=>f.errors.push(String(e)));
 function material(id,title,source,kind="text",mime="text/plain",data=Buffer.from("first\nsecond\nthird\n")) {const value={id,project:"p",title,source,kind,mime,size:data.length,digest:"d".repeat(64),created_at:at,...(kind==="image"?{width:1,height:1}:{})};f.materials.set(id,{value,data});return value;}
+material("m-seed-1","Design note",{kind:'upload'});material("m-seed-2","Trace log",{kind:'upload'});
 await page.route("**/*",async route=>{
  const req=route.request(),u=new URL(req.url()),p=u.pathname;
  if(u.origin!==new URL(url).origin){f.errors.push("external "+u.origin);return route.abort();}
@@ -33,6 +34,7 @@ await page.route("**/*",async route=>{
   if(req.method()==="POST"){f.posts.push(input);let item=f.queue.find(e=>e.key==="client:"+input.command_id);if(!item){item={id:"e"+(f.queue.length+1),conversation:input.conversation,key:"client:"+input.command_id,input:input.input,refs:input.refs,locale:input.locale,quotes:input.quotes,state:"queued",enqueued_at:at};f.queue.push(item);}if(f.reset){f.reset=false;return route.abort('connectionreset');}return route.fulfill({json:item});}
   return route.fulfill({json:{queue:f.hideQueue?[]:f.queue,submission_keys:true,material_refs:f.supportsMaterials,interactive_requests:true}});
  }
+ if(p==="/console/materials")return route.fulfill({json:{materials:[...f.materials.values()].map(m=>m.value)}});
  if(p==="/console/materials/capture"){f.captures.push(input);assert.equal(input.project,"p");if(input.source.kind==="reply")assert.equal(input.source.revision,"reply-version-1");return route.fulfill({json:material("m-"+f.captures.length,input.title||input.source.path||"Reference reply",input.source)});}
  if(p==="/console/materials/upload"){const kind=req.headers()['content-type'].startsWith('image/')?'image':'binary';return route.fulfill({json:material("m-upload-"+f.materials.size,u.searchParams.get('name'),{kind:'upload'},kind,req.headers()['content-type'],req.postDataBuffer())});}
  if(p.match(/^\/console\/materials\/[^/]+\/content$/)){const m=f.materials.get(p.split('/')[3]);return route.fulfill({contentType:m.value.mime,body:m.data});}
@@ -53,7 +55,10 @@ async function waitFor(test,label){for(let i=0;i<100;i++){if(await test())return
 try{
  await page.goto(url+'#/console');await page.getByRole('heading',{name:'Material conversation',exact:true}).waitFor();await page.getByRole('button',{name:'Actions',exact:true}).waitFor();
  await page.getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('menuitem',{name:'Add to Material conversation',exact:true}).click();await page.getByRole('list',{name:'Attached materials'}).getByText('Reference reply').waitFor();assert.equal(f.posts.length,0);
- await page.getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('menuitem',{name:'Add to side',exact:true}).click();await page.getByRole('tab',{name:'Materials',exact:true}).waitFor();assert.equal(f.posts.length,0);
+ await page.getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('menuitem',{name:'Pin in materials',exact:true}).click();const shelfTab=page.getByRole('tab',{name:/^Materials/});await shelfTab.waitFor();assert.equal(f.posts.length,0);
+ // The shelf is the project's materials, not the local pin list: the two
+ // nobody pinned are listed, and the tab carries the count.
+ await shelfTab.click();const shelf=page.getByRole('complementary',{name:'Details'});await shelf.getByRole('button',{name:'Design note',exact:true}).waitFor();await shelf.getByRole('button',{name:'Trace log',exact:true}).waitFor();await shelf.getByRole('button',{name:'Reference reply',exact:true}).first().waitFor();await shelfTab.getByText('4',{exact:true}).waitFor();console.log('PASS materials shelf lists the project, not just local pins');
  await page.getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('menuitem',{name:'Annotate',exact:true}).click();const dialog=page.getByRole('dialog',{name:'Annotate material'});await dialog.getByRole('textbox',{name:'Annotation',exact:true}).fill('Verify the result');await dialog.getByRole('button',{name:'Save',exact:true}).click();await waitFor(()=>f.notes.length===1,'annotation persisted');await dialog.waitFor({state:'hidden'});await page.getByText('Verify the result',{exact:true}).waitFor();assert.equal(f.notes.length,1);assert.equal(f.posts.length,0);console.log('PASS reply capture, explicit draft target, local pin and durable annotation');
  // Source and deleted-side line ranges use different immutable commits.
  await page.getByRole('tab',{name:'Artifacts',exact:true}).click();await page.getByRole('button',{name:/^(浏览文件|Browse files)$/}).click();await page.getByRole('button',{name:'app.ts',exact:true}).first().click();

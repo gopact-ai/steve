@@ -12,6 +12,8 @@ import { CallGraph } from "./call-graph";
 import { TaskDrawer } from "./task-drawer";
 import { useI18n } from "@/providers/locale-provider";
 import { MaterialShelf } from "./material-shelf";
+import { useProjectMaterials } from "@/lib/materials";
+import { useMaterial } from "@/providers/material-provider";
 import { getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { ArtifactsTab } from "./work-tabs";
 import { SetupPanel } from "./setup-panel";
@@ -35,6 +37,10 @@ export const Rail = memo(function Rail({ context, live, plans, reply, tab, setTa
     const { t, locale } = useI18n();
     const nodeLabelOf = useNodeLabel();
     const support = useSyncExternalStore(subscribeSubmissionSupport, getSubmissionSupport);
+    // The count sits on the tab so a project with materials is visible
+    // without opening the shelf; the read is shared with the shelf.
+    const store = useMaterial();
+    const { materials } = useProjectMaterials(support.material_refs ? context?.project?.id : undefined, store.revision);
     // The trace tab takes over while something runs, and returns to
     // context when the user asks.
     useEffect(() => { if (live?.exchangeID) setTab("trace"); }, [live?.exchangeID, setTab]);
@@ -45,7 +51,7 @@ export const Rail = memo(function Rail({ context, live, plans, reply, tab, setTa
             <div className="inspector-heading"><strong>{t("console.details")}</strong><button type="button" className="workbench-icon-button" aria-label={t("console.closeDetails")}  onClick={onClose}><X aria-hidden="true" /></button></div>
             <div className="inspector-tabs">
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as RailTab)}>
-                    <TabList type="button-border" size="sm" items={[{ id: "context", label: t("console.conversation") }, { id: "trace", label: t("console.trace") }, { id: "graph", label: t("console.graph") }, { id: "artifacts", label: t("console.artifacts") }, ...(support.material_refs ? [{ id: "materials", label: t("materials.shelf") }] : [])]}>{(item) => <Tab {...item} />}</TabList>
+                    <TabList type="button-border" size="sm" items={[{ id: "context", label: t("console.conversation") }, { id: "trace", label: t("console.trace") }, { id: "graph", label: t("console.graph") }, { id: "artifacts", label: t("console.artifacts") }, ...(support.material_refs ? [{ id: "materials", label: t("materials.shelf"), badge: materials.length || undefined }] : [])]}>{(item) => <Tab {...item} />}</TabList>
                 </Tabs>
             </div>
             <div className="inspector-body">
