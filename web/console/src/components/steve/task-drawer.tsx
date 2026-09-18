@@ -13,6 +13,7 @@ import { TaskDeliveries } from "./task-deliveries";
 import { CallGraph } from "./call-graph";
 import { Drawer, DrawerSection } from "./drawer";
 import { TaskMetaMenu, TaskTitleEditor, useTaskMeta } from "./task-meta-menu";
+import { TaskCloseDialog, useTaskClose } from "./task-close";
 import { StateBadge, taskState } from "./ui";
 
 // TaskDrawer is one task's detail wherever a task is clicked — the
@@ -36,6 +37,7 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
     const acting = useRef(false);
     const t = snap.tasks.find((task) => task.id === selected.id) || selected;
     const meta = useTaskMeta(t);
+    const closing = useTaskClose(t);
     const children = tasks.filter((c) => c.parent === t.id);
     const landings = snap.landings.filter((l) => l.project === t.project_id).slice(0, 5);
     const holds = ["running", "blocked", "review", "paused", "draft", "failed"].includes(t.lifecycle);
@@ -69,7 +71,7 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                 {t.archived_at && <Badge type="pill-color" size="sm" color="gray">{tr("tasks.archived")}</Badge>}
                 {t.settlement && <Badge type="pill-color" size="sm" color="gray">{tr(t.settlement === "handled" ? "tasks.settledHandled" : "tasks.settledIgnored")}</Badge>}
             </>}
-            actions={<TaskMetaMenu t={t} pending={meta.pending || meta.renaming} onRename={meta.rename} onPatch={(patch) => void meta.save(patch)} />}
+            actions={<><TaskMetaMenu t={t} pending={meta.pending || meta.renaming} onRename={meta.rename} onPatch={(patch) => void meta.save(patch)} onEnd={closing.closable ? closing.ask : undefined} />{closing.asking && <TaskCloseDialog t={t} onClose={closing.dismiss} />}</>}
             subtitle={<>
                     {meta.error && <div role="alert" className="mt-1 text-xs text-error-primary">{meta.error}</div>}
                     {error && <div role="alert" className="mt-1 text-xs text-error-primary">{error}</div>}

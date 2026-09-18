@@ -142,6 +142,37 @@ try {
             await page.screenshot({ path: path.join(artifacts, `settled-${settlement}-${locale}.png`) });
             await page.keyboard.press("Escape");
         }
+        // A task opened by a conversation never ends on its own. The board
+        // card closes it by hand: completed when its results are ready to
+        // accept, called off when they are not, and the dialog says which.
+        const endName = locale === "en" ? "End task" : "结束任务";
+        const endTitle = locale === "en" ? "End task #148?" : "结束任务 #148？";
+        for (const [accepted, command] of [[true, "complete"], [false, "cancel"]]) {
+            fixture.task = { ...root(), can_complete: accepted };
+            fixture.mode = "success";
+            fixture.expect = `/tasks ${command} 148`;
+            await page.goto(`${url}console`);
+            await page.getByRole("button", { name: locale === "en" ? "Board" : "看板", exact: true }).click();
+            await page.getByRole("button", { name: locale === "en" ? "More actions for task #148" : "任务 #148 更多操作" }).first().click();
+            await page.getByRole("menuitem", { name: endName, exact: true }).click();
+            const asking = page.getByRole("dialog", { name: endTitle, exact: true });
+            await asking.getByRole("button", { name: endName, exact: true }).waitFor();
+            assert.match(await asking.innerText(), accepted ? /completed|已完成/ : /cancelled|已取消/, "the dialog says how the task will be recorded");
+            await page.screenshot({ path: path.join(artifacts, `ending-${command}-${locale}.png`) });
+            const ending = fixture.calls.length;
+            await asking.getByRole("button", { name: endName, exact: true }).click();
+            await eventually(() => fixture.calls.length === ending + 1, "Ending a task must reach the server");
+            await eventually(async () => await asking.count() === 0, "the dialog closes once the task is ended");
+            await page.screenshot({ path: path.join(artifacts, `ended-${command}-${locale}.png`) });
+        }
+        // A task that has already ended offers no second ending.
+        fixture.task = { ...root(), state: "cancelled", lifecycle: "cancelled", lane: "ended", can_complete: false };
+        await page.goto(`${url}console`);
+        await page.getByRole("button", { name: locale === "en" ? "Board" : "看板", exact: true }).click();
+        await page.getByRole("button", { name: locale === "en" ? "More actions for task #148" : "任务 #148 更多操作" }).first().click();
+        assert.equal(await page.getByRole("menuitem", { name: endName, exact: true }).count(), 0);
+        await page.keyboard.press("Escape");
+
         fixture.expect = "/tasks complete 148";
         for (const overrides of [{ can_complete: false }, { parent: "147" }, { execution: "running" }, { execution: "unknown" }, { attention: 1 }, { pending_results: 1 }, { uncertain_results: 1 }, { origin: "plan" }, { plan_id: "p1" }, { lifecycle: "paused" }, { lifecycle: "failed" }, { lifecycle: "cancelled" }]) {
             fixture.task = { ...root(), ...overrides };
@@ -151,7 +182,7 @@ try {
         await context.close();
     }
     assert.deepEqual(fixture.errors, []);
-    console.log("TASK COMPLETION UI PASS: en/zh, wide/narrow, keyboard, pending, retries, rejection, completion and settling a failure by hand");
+    console.log("TASK COMPLETION UI PASS: en/zh, wide/narrow, keyboard, pending, retries, rejection, completion, ending a task by hand and settling a failure");
 } finally {
     await browser.close();
     await server.close();

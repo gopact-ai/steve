@@ -23,7 +23,11 @@
 .question-message > :last-child { margin-bottom: 0; }
 .question-response { display: flex; min-width: 0; flex-direction: column; gap: 12px; margin-top: 16px; }
 .question-options { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 8px; }
-.question-option { min-width: 0; justify-content: flex-start; text-align: left; white-space: normal; }
+/* Choices sit side by side and must read as one row: the button's own
+   max-content height would let a two-line description stand taller than a
+   one-line neighbour, so the grid stretches them and the copy starts at
+   the top of each card. */
+.question-option { min-width: 0; height: auto; align-items: flex-start; justify-content: flex-start; text-align: left; white-space: normal; }
 .question-option > [data-text] { min-width: 0; width: 100%; }
 .question-option-copy { display: flex; min-width: 0; flex-direction: column; gap: 4px; white-space: normal; overflow-wrap: anywhere; }
 .question-option-label { color: var(--color-text-primary); font-weight: 500; }

@@ -1,6 +1,6 @@
 import { useI18n } from "@/providers/locale-provider";
 import { useEffect, useRef, useState } from "react";
-import { Archive, DotsHorizontal, Edit05 } from "@untitledui/icons";
+import { Archive, DotsHorizontal, Edit05, XCircle } from "@untitledui/icons";
 import { Button as AriaButton } from "react-aria-components";
 import { Dropdown } from "@/components/base/dropdown/dropdown";
 import { patchTaskMeta } from "@/lib/api/work";
@@ -40,7 +40,7 @@ export function useTaskMeta(t: Task) {
     return { renaming, pending, error, save, rename, finishTitle };
 }
 
-export function TaskMetaMenu({ t, pending, onRename, onPatch }: { t: Task; pending: boolean; onRename: () => void; onPatch: (patch: TaskMetaPatch) => void }) {
+export function TaskMetaMenu({ t, pending, onRename, onPatch, onEnd }: { t: Task; pending: boolean; onRename: () => void; onPatch: (patch: TaskMetaPatch) => void; onEnd?: () => void }) {
     const { t: tr } = useI18n();
     const priority = t.priority || "normal";
     return (
@@ -51,6 +51,7 @@ export function TaskMetaMenu({ t, pending, onRename, onPatch }: { t: Task; pendi
             <Dropdown.Popover placement="bottom end" className="w-44">
                 <Dropdown.Menu aria-label={tr("tasks.menu")} onAction={(key) => {
                     if (key === "rename") onRename();
+                    else if (key === "end") onEnd?.();
                     else if (key === "archive") onPatch({ archived: !t.archived_at });
                     else if (key === "high" || key === "normal" || key === "low") onPatch({ priority: key });
                 }}>
@@ -63,6 +64,7 @@ export function TaskMetaMenu({ t, pending, onRename, onPatch }: { t: Task; pendi
                     <Dropdown.Separator />
                     <Dropdown.Item id="rename" label={tr("tasks.editTitle")} icon={Edit05} />
                     <Dropdown.Item id="archive" label={t.archived_at ? tr("tasks.unarchive") : tr("tasks.archive")} icon={Archive} />
+                    {onEnd && <Dropdown.Item id="end" label={tr("tasks.end")} icon={XCircle} />}
                 </Dropdown.Menu>
             </Dropdown.Popover>
         </Dropdown.Root>
