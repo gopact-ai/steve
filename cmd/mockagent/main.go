@@ -41,6 +41,20 @@ type agent struct {
 	// mcp remembers each session's MCP server config, the way a real agent
 	// holds on to it to connect.
 	mcp sync.Map
+	// mode and model are what the selectors currently hold. A real agent
+	// answers with its revised list after a change, including one made
+	// while a turn is running, so this has to be remembered.
+	mode  atomic.Value
+	model atomic.Value
+}
+
+// chosen reads a selector's current value, falling back to what a fresh
+// session reports before anything was set.
+func chosen(held *atomic.Value, fallback string) string {
+	if value, ok := held.Load().(string); ok && value != "" {
+		return value
+	}
+	return fallback
 }
 
 func (a *agent) Initialize(_ context.Context, _ *acp.InitializeRequest) (*acp.InitializeResponse, error) {
@@ -421,18 +435,28 @@ func (a *agent) endTurn(ctx context.Context, sessionID acp.SessionID, input stri
 	return resp, nil
 }
 
-// SetSessionConfigOption accepts any listed model and answers with the
-// revised list, the way an agent that does not notify separately would.
+// SetSessionConfigOption accepts any listed model or mode and answers with
+// the revised list, the way an agent that does not notify separately would.
+// It is served on its own goroutine, so a turn in flight does not delay it:
+// that is how approval mode stops asking within the turn that asked.
 func (a *agent) SetSessionConfigOption(_ context.Context, req *acp.SetSessionConfigOptionRequest) (*acp.SetSessionConfigOptionResponse, error) {
-	value, _ := req.Value.(acp.SessionConfigValueID) // any other shape is "" and refused below as an unknown model
-	if req.ConfigID != "model" {
+	value, _ := req.Value.(acp.SessionConfigValueID) // any other shape is "" and refused below as an unknown value
+	switch req.ConfigID {
+	case "model":
+		if value != "mock-fast" && value != "mock-deep" {
+			return nil, fmt.Errorf("unknown model %q", value)
+		}
+		a.model.Store(string(value))
+	case "mode":
+		if value != "read-only" && value != "agent" {
+			return nil, fmt.Errorf("unknown mode %q", value)
+		}
+		a.mode.Store(string(value))
+	default:
 		return nil, fmt.Errorf("unknown config option %q", req.ConfigID)
 	}
-	if value != "mock-fast" && value != "mock-deep" {
-		return nil, fmt.Errorf("unknown model %q", value)
-	}
 	return &acp.SetSessionConfigOptionResponse{
-		ConfigOptions: []acp.SessionConfigOption{modeOption("agent"), modelOption(string(value))},
+		ConfigOptions: []acp.SessionConfigOption{modeOption(chosen(&a.mode, "agent")), modelOption(chosen(&a.model, "mock-fast"))},
 	}, nil
 }
 
