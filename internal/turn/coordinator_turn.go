@@ -283,6 +283,7 @@ func (t *chatTurn) compose(e *lifecycle.Execution) error {
 		injected.InstructionsSent = true
 		injected.Instructions = instructions
 		injected.InstructionsBytes = len(instructions)
+		injected.Sections = capabilities.Sections
 	}
 	t.injected = injected
 	e.Prompt = user

@@ -32,6 +32,9 @@ func (f *fakeConsole) Summaries(context.Context) []consoleapi.Conversation {
 func (f *fakeConsole) Context(context.Context, string) (consoleapi.Context, error) {
 	return consoleapi.Context{Conversation: "console:main"}, nil
 }
+func (f *fakeConsole) Setup(context.Context, string, string) (consoleapi.Setup, error) {
+	return consoleapi.Setup{Agent: "main", Harness: "codex", Instructions: "# 身份\n\n你是 Steve。", Sections: []consoleapi.Section{{Kind: "identity", Bytes: 18}}}, nil
+}
 func (f *fakeConsole) Verbs() []consoleapi.Verb {
 	return []consoleapi.Verb{{Command: "/plan", Summary: "split"}}
 }

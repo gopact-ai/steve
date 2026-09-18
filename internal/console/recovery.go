@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gopact-ai/acp"
+	"github.com/gopact-ai/steve/internal/capability"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/harness"
 	"github.com/gopact-ai/steve/internal/permission"
@@ -775,7 +776,7 @@ func (s *Service) resultReply(ctx context.Context, exchange Exchange, work *proc
 		}
 	}
 	if in := result.Injected; in != nil {
-		reply.Injected = &consoleapi.Injected{Project: in.Project, Workspace: in.Workspace, Agent: in.Agent, Node: in.Node, Harness: in.Harness, Model: in.Model, Options: in.Options, Session: in.Session, NewSession: in.NewSession, InstructionsSent: in.InstructionsSent, Instructions: in.Instructions, InstructionsBytes: in.InstructionsBytes, MCPServers: in.MCPServers, Fingerprint: in.Fingerprint, Prompt: in.Prompt}
+		reply.Injected = &consoleapi.Injected{Project: in.Project, Workspace: in.Workspace, Agent: in.Agent, Node: in.Node, Harness: in.Harness, Model: in.Model, Options: in.Options, Session: in.Session, NewSession: in.NewSession, InstructionsSent: in.InstructionsSent, Instructions: in.Instructions, InstructionsBytes: in.InstructionsBytes, MCPServers: in.MCPServers, Fingerprint: in.Fingerprint, Prompt: in.Prompt, Sections: sectionsOf(in.Sections)}
 	}
 	if err != nil {
 		reply.Error = err.Error()
@@ -784,4 +785,16 @@ func (s *Service) resultReply(ctx context.Context, exchange Exchange, work *proc
 		}
 	}
 	return reply
+}
+
+// sectionsOf carries the instruction breakdown to the page.
+func sectionsOf(in []capability.Section) []consoleapi.Section {
+	out := make([]consoleapi.Section, 0, len(in))
+	for _, s := range in {
+		out = append(out, consoleapi.Section{Kind: s.Kind, Name: s.Name, Path: s.Path, Bytes: s.Bytes})
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
