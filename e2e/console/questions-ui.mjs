@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { mkdir } from "node:fs/promises";
 import { createServer } from "../../web/console/node_modules/vite/dist/node/index.js";
 import { chromium } from "../../web/console/node_modules/playwright/index.mjs";
+import { draftOf } from "./composer.mjs";
 
 const web = fileURLToPath(new URL("../../web/console", import.meta.url));
 const server = await createServer({ configFile: path.join(web, "vite.config.ts"), root: web, server: { host: "127.0.0.1", port: 0 } });
@@ -94,7 +95,7 @@ try {
     await staleRead;
     await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
     assert.equal(await panel.getByRole("button", { name: "Use dev-box", exact: true }).count(), 0, "an acknowledged answer is not reopened by stale pending reads");
-    assert.equal(await composer.inputValue(), "A separate follow-up draft");
+    assert.equal(await draftOf(composer), "A separate follow-up draft");
     assert.deepEqual(f.queue, []);
     f.staleReads = false;
     console.log("PASS single choice replies directly, awaits acknowledgement and preserves history without creating work");
@@ -168,7 +169,7 @@ try {
     await page.reload();
     await answerInput.waitFor();
     assert.equal(await answerInput.inputValue(), custom);
-    assert.equal(await composer.inputValue(), "A separate follow-up draft");
+    assert.equal(await draftOf(composer), "A separate follow-up draft");
     f.reset = true;
     await panel.getByRole("button", { name: "Submit response", exact: true }).click();
     await panel.getByRole("button", { name: "Retry this response", exact: true }).waitFor();
@@ -180,7 +181,7 @@ try {
     await panel.getByText("1 recent resolved requests", { exact: true }).click();
     await panel.getByText(custom, { exact: true }).waitFor();
     assert.deepEqual(f.answers.at(-1), freeAnswer);
-    assert.equal(await composer.inputValue(), "A separate follow-up draft");
+    assert.equal(await draftOf(composer), "A separate follow-up draft");
     assert.deepEqual(f.queue, []);
     console.log("PASS schema-supported free answers keep their own drafts, content and retry identity");
 

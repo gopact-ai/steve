@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import ts from "../../web/console/node_modules/typescript/lib/typescript.js";
 import { createResourceRead } from "../../web/console/src/lib/resource-read.ts";
+import { draftOf } from "./composer.mjs";
 
 const gate = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 const tick = () => new Promise((resolve) => setTimeout(resolve, 0));
@@ -252,7 +253,7 @@ if (process.env.PURE_ONLY !== "1") {
             await retry.waitFor();
             const rejectedRetry = await f.page.evaluate(() => JSON.parse(localStorage.getItem("steve.console.drafts")));
             assert.equal(rejectedRetry.submissions[A].id, id, "A retry rejection cannot prove the original operation was never accepted");
-            assert.equal(await box.inputValue(), "Newer unsent work");
+            assert.equal(await draftOf(box), "Newer unsent work");
             f.reject = 0; await retry.click();
             await eventually(() => f.posts.length === 3, "A later retry still uses the original operation");
             assert.ok(f.posts.every((post) => post.command_id === id));
@@ -351,7 +352,7 @@ if (process.env.PURE_ONLY !== "1") {
             await eventually(() => f.posts.length === 2, "Explicit retry sends the original operation");
             assert.equal(f.posts[1].command_id, f.posts[0].command_id);
             assert.equal(f.queue.length, 1, "The server receives one logical operation despite a lost receipt");
-            assert.equal(await box.inputValue(), "Newer draft");
+            assert.equal(await draftOf(box), "Newer draft");
             await eventually(async () => await f.page.getByRole("button", { name: "重试这次发送", exact: true }).count() === 0, "Acknowledgement clears uncertainty");
         },
         async "read-errors-recover"(f) {
@@ -390,13 +391,13 @@ if (process.env.PURE_ONLY !== "1") {
             await box.waitFor();
             await eventually(async () => await f.page.getByRole("button", { name: "重试这次发送", exact: true }).count() === 0, "Reload reconciles the original operation against durable queue keys");
             assert.equal(f.posts.length, 1, "Reconciliation must not send again");
-            assert.equal(await box.inputValue(), "Draft survives reconciliation");
+            assert.equal(await draftOf(box), "Draft survives reconciliation");
         },
         async "submission-rejection-conflict"(f) {
             const box = f.page.getByRole("textbox", { name: "消息", exact: true });
             f.reject = 400;
             await box.fill("Rejected work"); await box.press("Enter");
-            await eventually(async () => f.posts.length === 1 && await box.inputValue() === "Rejected work" && await f.page.evaluate(() => !JSON.parse(localStorage.getItem("steve.console.drafts")).submissions["console:architecture-a"]), "Explicit rejection restores the draft after the response is persisted");
+            await eventually(async () => f.posts.length === 1 && await draftOf(box) === "Rejected work" && await f.page.evaluate(() => !JSON.parse(localStorage.getItem("steve.console.drafts")).submissions["console:architecture-a"]), "Explicit rejection restores the draft after the response is persisted");
             f.reject = 409; await box.press("Enter");
             await f.page.getByText("这次发送的标识与服务器记录冲突，请核对会话记录，不要直接重新发送。", { exact: true }).waitFor();
             assert.equal(await f.page.getByRole("button", { name: "重试这次发送", exact: true }).count(), 0);

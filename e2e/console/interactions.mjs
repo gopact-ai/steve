@@ -6,6 +6,7 @@ import { mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { draftOf } from "./composer.mjs";
 import { preview } from "../childcard/preview.mjs";
 import { usageDurationFixture, usageFixture, usageState } from "./usage-fixture.mjs";
 
@@ -214,7 +215,7 @@ const checks = {
         await f.page.getByRole("button", { name: "新会话", exact: true }).click();
         await eventually(() => f.calls.some((c) => c.path.endsWith("/initialize") && c.project === "scratch"), "Generic new conversation must bind the current project");
         await f.page.locator("main header").getByText("新会话", { exact: true }).waitFor();
-        assert.equal(await f.box.inputValue(), "", "New conversation title must not populate the composer");
+        assert.equal(await draftOf(f.box), "", "New conversation title must not populate the composer");
         assert.equal(f.calls.filter((c) => c.path === "/console/send").length, 0, "Automatic binding must not send a chat command");
         await f.box.fill("First work");
         await f.box.press("Enter");
@@ -230,7 +231,7 @@ const checks = {
         await eventually(() => f.conversations.length === 3, "Initialization must create an empty conversation");
         await f.page.locator("main header").getByText("新会话", { exact: true }).waitFor();
         const id = f.conversations.at(-1).id;
-        assert.equal(await f.box.inputValue(), "", "The title placeholder must not become a draft");
+        assert.equal(await draftOf(f.box), "", "The title placeholder must not become a draft");
         // Old explicit controls remain readable, but never become the title.
         f.replies[id] = [{ id: "old-control", kind: "sent", conversation: id, input: "/project use scratch", at }];
         await f.page.reload();
@@ -241,7 +242,7 @@ const checks = {
             window.dispatchEvent(new StorageEvent("storage", { key: "steve.ui.locale", newValue: "en", storageArea: localStorage }));
         });
         await f.page.locator("main header").getByText("New conversation", { exact: true }).waitFor();
-        assert.equal(await f.page.getByRole("textbox", { name: "Message", exact: true }).inputValue(), "");
+        assert.equal(await draftOf(f.page.getByRole("textbox", { name: "Message", exact: true })), "");
     },
     async "binding-pending"(f) {
         const release = f.hold("binding");
@@ -262,7 +263,7 @@ const checks = {
         await f.page.getByRole("button", { name: "在 scratch 下新会话", exact: true }).click();
         await eventually(() => f.calls.some((c) => c.path.endsWith("/initialize") && c.project === "scratch"), "Project binding must begin");
         await delay(150);
-        assert.equal(await f.box.inputValue(), "Keep this existing draft", "Binding failure must preserve the original draft");
+        assert.equal(await draftOf(f.box), "Keep this existing draft", "Binding failure must preserve the original draft");
         assert.equal(await f.page.locator("main header").getByText("Conversation A", { exact: true }).count(), 1, "Binding failure must retain the original conversation");
         await f.page.reload();
         await f.box.waitFor();
@@ -275,22 +276,22 @@ const checks = {
     async "draft-switch"(f) {
         await f.box.fill("Draft for A");
         await f.pick("B");
-        assert.equal(await f.box.inputValue(), "", "A draft must not leak into B");
+        assert.equal(await draftOf(f.box), "", "A draft must not leak into B");
         await f.box.fill("Draft for B");
         await f.pick("A");
-        assert.equal(await f.box.inputValue(), "Draft for A");
+        assert.equal(await draftOf(f.box), "Draft for A");
         await f.pick("B");
-        assert.equal(await f.box.inputValue(), "Draft for B");
+        assert.equal(await draftOf(f.box), "Draft for B");
     },
     async "draft-persistence"(f) {
         await f.box.fill("Unsent work survives navigation");
         await f.page.locator('a[href="#/projects"]').click();
         await f.page.getByRole("button", { name: "添加项目", exact: true }).waitFor();
         await f.page.locator('a[href="#/console"]').click();
-        assert.equal(await f.box.inputValue(), "Unsent work survives navigation", "Leaving the console must preserve its draft");
+        assert.equal(await draftOf(f.box), "Unsent work survives navigation", "Leaving the console must preserve its draft");
         await f.page.reload();
         await f.box.waitFor();
-        assert.equal(await f.box.inputValue(), "Unsent work survives navigation", "Reload must preserve the unsent draft");
+        assert.equal(await draftOf(f.box), "Unsent work survives navigation", "Reload must preserve the unsent draft");
     },
     async "send-continuation"(f) {
         const release = f.hold("enqueue");
@@ -298,10 +299,10 @@ const checks = {
         await f.box.press("Enter");
         await eventually(() => f.queued().length === 1, "Enqueue request must start");
         await f.box.pressSequentially("Next draft");
-        assert.equal(await f.box.inputValue(), "Next draft", "Typing during a slow enqueue must begin a fresh draft");
+        assert.equal(await draftOf(f.box), "Next draft", "Typing during a slow enqueue must begin a fresh draft");
         release();
         await delay(150);
-        assert.equal(await f.box.inputValue(), "Next draft", "The delayed receipt must not clear the new draft");
+        assert.equal(await draftOf(f.box), "Next draft", "The delayed receipt must not clear the new draft");
         assert.equal(f.queued()[0].input, "First instruction");
     },
     async "send-failure"(f) {
@@ -313,7 +314,7 @@ const checks = {
         await f.box.pressSequentially("New draft typed during submission");
         release();
         await f.page.getByText("Enqueue rejected", { exact: true }).waitFor();
-        assert.match(await f.box.inputValue(), /^Unsent first instruction\n+New draft typed during submission$/, "Failed submission must restore the first instruction without losing newer typing");
+        assert.match(await draftOf(f.box), /^Unsent first instruction\n+New draft typed during submission$/, "Failed submission must restore the first instruction without losing newer typing");
         assert.equal(f.queued().length, 1, "Failed submission must not retry automatically");
     },
     async "send-switch"(f) {
@@ -325,9 +326,9 @@ const checks = {
         await f.box.fill("B unsent draft");
         release();
         await delay(150);
-        assert.equal(await f.box.inputValue(), "B unsent draft", "A's receipt must not alter B's draft");
+        assert.equal(await draftOf(f.box), "B unsent draft", "A's receipt must not alter B's draft");
         await f.pick("A");
-        assert.equal(await f.box.inputValue(), "", "A's submitted instruction must not reappear as a draft");
+        assert.equal(await draftOf(f.box), "", "A's submitted instruction must not reappear as a draft");
     },
     async "send-unmount-failure"(f) {
         const release = f.hold("enqueue");
@@ -341,11 +342,11 @@ const checks = {
         await f.box.fill("New draft after remount");
         release();
         await delay(200);
-        assert.match(await f.box.inputValue(), /New draft after remount/, "An old failure must not overwrite the new mounted draft");
+        assert.match(await draftOf(f.box), /New draft after remount/, "An old failure must not overwrite the new mounted draft");
         await f.page.reload();
         await f.box.waitFor();
-        assert.match(await f.box.inputValue(), /New draft after remount/, "Newer typing must remain persisted after an unmounted request fails");
-        assert.match(await f.box.inputValue(), /Original instruction/, "The failed instruction must remain recoverable");
+        assert.match(await draftOf(f.box), /New draft after remount/, "Newer typing must remain persisted after an unmounted request fails");
+        assert.match(await draftOf(f.box), /Original instruction/, "The failed instruction must remain recoverable");
         assert.equal(f.queued().length, 1, "Remounting must not automatically resend the failed instruction");
     },
     async "send-reload-pending"(f) {
@@ -358,19 +359,19 @@ const checks = {
         await f.box.waitFor();
         await f.page.getByText("发送结果尚未确认，请先查看会话记录", { exact: false }).waitFor();
         assert.equal(await f.page.getByText("Instruction before network delivery", { exact: true }).count(), 1, "Recovery must show the original unacknowledged instruction");
-        assert.equal(await f.box.inputValue(), "Newer unsent draft", "Reload must keep new typing separate from an uncertain submission");
+        assert.equal(await draftOf(f.box), "Newer unsent draft", "Reload must keep new typing separate from an uncertain submission");
         assert.equal(f.queued().length, 1, "Reload must not resend an instruction that may already have been accepted");
         await f.box.press("Enter");
         await delay(150);
         assert.equal(f.queued().length, 1, "Enter must not bypass unresolved submission recovery");
-        assert.equal(await f.box.inputValue(), "Newer unsent draft");
+        assert.equal(await draftOf(f.box), "Newer unsent draft");
         assert.equal(await f.page.getByRole("button", { name: "恢复为草稿", exact: true }).count(), 0, "An unresolved keyed submission must retain idempotency protection");
         await f.page.getByRole("button", { name: "重试这次发送", exact: true }).click();
         await eventually(() => f.queued().length === 2, "Explicit retry must be submitted");
         assert.equal(f.queued()[0].command_id, f.queued()[1].command_id, "Retry must preserve the original identity");
         release();
         await eventually(async () => await f.page.getByRole("button", { name: "重试这次发送", exact: true }).count() === 0, "Receipt must settle the pending submission");
-        assert.equal(await f.box.inputValue(), "Newer unsent draft", "Retry must preserve newer typing");
+        assert.equal(await draftOf(f.box), "Newer unsent draft", "Retry must preserve newer typing");
     },
     async "recovery-storage-failure"(f) {
         f.hold("enqueue");
@@ -389,7 +390,7 @@ const checks = {
         await f.box.waitFor();
         await recover.waitFor();
         assert.equal(await f.page.getByText("Original uncertain instruction", { exact: true }).count(), 1, "Failed draft persistence must retain the original pending submission");
-        assert.equal(await f.box.inputValue(), "Newer persisted draft", "Failed recovery must preserve the previously saved draft");
+        assert.equal(await draftOf(f.box), "Newer persisted draft", "Failed recovery must preserve the previously saved draft");
         assert.equal(f.queued().length, 1, "Failed recovery must not submit work");
     },
     async "quotes-unmount-failure"(f) {
@@ -406,7 +407,7 @@ const checks = {
         await f.box.waitFor();
         release();
         await eventually(() => f.page.getByRole("button", { name: "去掉引用", exact: true }).count(), "An unmounted failed submission must restore its quote in the current composer");
-        assert.equal(await f.box.inputValue(), "Question about this quote");
+        assert.equal(await draftOf(f.box), "Question about this quote");
         assert.equal(f.queued().length, 1, "Restoring the quoted draft must not submit it automatically");
     },
     async "repeat-enter"(f) {
@@ -437,7 +438,7 @@ const checks = {
         await f.box.press("Enter");
         await delay(150);
         assert.equal(f.queued().length, 0, "Enter must obey the same pending-cancel guard as the send button");
-        assert.equal(await f.box.inputValue(), "New instruction during cancellation", "A blocked Enter must preserve the draft");
+        assert.equal(await draftOf(f.box), "New instruction during cancellation", "A blocked Enter must preserve the draft");
     },
     async "scroll-poll"(f) {
         const scroller = f.page.locator("main .overflow-y-auto.overflow-x-hidden");
@@ -484,12 +485,12 @@ const checks = {
     async "intent-remount-draft"(f) {
         await f.page.getByRole("button", { name: "看板", exact: true }).click();
         await f.page.getByRole("button", { name: /^(新计划|新建计划)$/ }).click();
-        await eventually(async () => (await f.box.inputValue()).startsWith("/plan"), "New plan must fill the composer");
+        await eventually(async () => (await draftOf(f.box)).startsWith("/plan"), "New plan must fill the composer");
         await f.box.fill("Plan carefully drafted after fill");
         await f.page.locator('a[href="#/projects"]').click();
         await f.page.getByRole("button", { name: "添加项目", exact: true }).waitFor();
         await f.page.locator('a[href="#/console"]').click();
-        assert.equal(await f.box.inputValue(), "Plan carefully drafted after fill", "An already-consumed fill intent must not overwrite the persisted draft");
+        assert.equal(await draftOf(f.box), "Plan carefully drafted after fill", "An already-consumed fill intent must not overwrite the persisted draft");
     },
     async "conversation-rename-once"(f) {
         const edit = async (title) => {
@@ -719,10 +720,10 @@ checks["design-mobile-sessions"] = async (f) => {
     await visibleControl(f.page.getByRole("button", { name: /^Conversation B/ }), "Conversation B");
     await f.pick("B");
     await visibleControl(f.box, "Message after selecting B");
-    assert.equal(await f.box.inputValue(), "", "Mobile selection must switch to B's own draft");
+    assert.equal(await draftOf(f.box), "", "Mobile selection must switch to B's own draft");
     await open.click();
     await f.pick("A");
-    assert.equal(await f.box.inputValue(), "Mobile draft A");
+    assert.equal(await draftOf(f.box), "Mobile draft A");
     await open.click();
     await f.page.getByRole("button", { name: /^(关闭会话列表|关闭会话导航)$/ }).click();
     await visibleControl(f.box, "Message after dismissing conversation navigation");
@@ -737,7 +738,7 @@ checks["design-mobile-current-session"] = async (f) => {
     await sheet.getByRole("button", { name: /^Conversation A/ }).click();
     await eventually(async () => await sheet.count() === 0, "Selecting the current conversation must dismiss the mobile navigation sheet");
     await visibleControl(f.box, "Message after reselecting the current conversation");
-    assert.equal(await f.box.inputValue(), "Current mobile conversation draft");
+    assert.equal(await draftOf(f.box), "Current mobile conversation draft");
 };
 
 checks["design-mobile-child"] = async (f) => {
@@ -756,7 +757,7 @@ checks["design-mobile-child"] = async (f) => {
     await f.page.getByText("Child answer", { exact: true }).waitFor();
     await f.page.getByRole("button", { name: /回到对话/ }).click();
     await visibleControl(f.box, "Message after returning from a child task");
-    assert.equal(await f.box.inputValue(), "Draft before viewing a child");
+    assert.equal(await draftOf(f.box), "Draft before viewing a child");
 };
 
 checks["design-connection-compact"] = async (f) => {
@@ -862,7 +863,7 @@ checks["design-mobile-new-failure"] = async (f) => {
     await eventually(() => f.calls.some((call) => call.path.endsWith("/initialize") && call.project === "scratch"), "Mobile project binding must begin");
     await f.page.getByRole("status").filter({ hasText: "Project binding unavailable" }).waitFor();
     await visibleControl(f.box, "Message after mobile creation failure");
-    assert.equal(await f.box.inputValue(), "Draft kept after mobile creation fails");
+    assert.equal(await draftOf(f.box), "Draft kept after mobile creation fails");
     await f.page.locator("main header").getByText("Conversation A", { exact: true }).waitFor();
 };
 
@@ -904,7 +905,7 @@ checks["design-inspector-toggle"] = async (f) => {
     await visibleControl(close.last(), "Close mobile inspector");
     await close.last().click();
     await visibleControl(f.box, "Mobile message after inspector closes");
-    assert.equal(await f.box.inputValue(), "Draft while inspecting");
+    assert.equal(await draftOf(f.box), "Draft while inspecting");
 };
 
 checks["mcp-tool-details"] = async (f) => {
@@ -1217,7 +1218,7 @@ checks["code-unified-entry"] = async (f) => {
     await workspace.getByRole("table").waitFor();
     await workspace.getByRole("button", { name: "返回", exact: true }).click();
     assert.equal(await browse.count(), 1);
-    assert.equal(await f.box.inputValue(), "Draft while browsing outputs");
+    assert.equal(await draftOf(f.box), "Draft while browsing outputs");
     assert.equal(f.calls.length, 0, "Browsing output and history must remain read-only");
     assert.ok(state.reads.some((r) => r.endpoint === "file"));
 };
@@ -1249,7 +1250,7 @@ checks["review-navigation"] = async (f) => {
     await noHorizontalOverflow(f.page);
     await review.getByRole("button", { name: "返回", exact: true }).click();
     await f.page.getByRole("button", { name: "关闭详情", exact: true }).click();
-    assert.equal(await f.box.inputValue(), "Draft retained while reviewing", "Review must preserve the conversation draft");
+    assert.equal(await draftOf(f.box), "Draft retained while reviewing", "Review must preserve the conversation draft");
     assert.equal(f.calls.length, 0, "Review must never write or submit work");
 };
 
@@ -1586,18 +1587,18 @@ checks["composer-keys"] = async (f) => {
     await f.box.fill("first line");
     await f.box.press("Shift+Enter");
     assert.equal(f.queued().length, 0, "Shift+Enter must not send");
-    assert.equal(await f.box.inputValue(), "first line\n", "Shift+Enter inserts a newline");
+    assert.equal(await draftOf(f.box), "first line\n", "Shift+Enter inserts a newline");
     await f.box.type("**second** line");
     await f.box.evaluate((box) => box.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
-    const composingDraft = await f.box.inputValue();
+    const composingDraft = await draftOf(f.box);
     await f.box.press("Enter");
     assert.equal(f.queued().length, 0, "Enter must not send while an input method is composing");
-    assert.equal(await f.box.inputValue(), composingDraft, "Nor may it leave a newline behind while composing");
+    assert.equal(await draftOf(f.box), composingDraft, "Nor may it leave a newline behind while composing");
     await f.box.evaluate((box) => box.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })));
-    const settledDraft = await f.box.inputValue();
+    const settledDraft = await draftOf(f.box);
     await f.box.press("Enter");
     assert.equal(f.queued().length, 0, "The Enter that lands with compositionend must not send either");
-    assert.equal(await f.box.inputValue(), settledDraft, "That same Enter must not leave a stray newline behind either");
+    assert.equal(await draftOf(f.box), settledDraft, "That same Enter must not leave a stray newline behind either");
     await f.page.clock.runFor(50);
     await f.box.press("Enter");
     await eventually(() => f.queued().length === 1, "Enter sends once the composition has settled");
@@ -1608,66 +1609,49 @@ checks["composer-keys"] = async (f) => {
 };
 
 checks["composer-markdown"] = async (f) => {
-    // The draft is markdown, and the box says so while it is typed. The
-    // paint is a second copy of the same characters under a transparent
-    // textarea, so the one thing that can never slip is that the two wrap
-    // at exactly the same places — otherwise the caret stops standing in
-    // the letter it is in.
-    const paint = f.page.locator(".composer-paint");
-    const draft = "## 发布 **v0.4**\n- 升级 `steve-node`，这一行要长到必须折行，长到在窄窗口里也必须折行，这样两层的换行才有得可比\n- [x] 备份已确认\n> *注意*：2 * 3 * 4 is 24，node_modules 不是强调\n```sh\nnpm run build\n```";
-    await f.box.fill(draft);
-    // Everything an inline layout is decided by has to agree, and the two
-    // have to end up the same height for the same draft. The first catches
-    // a typography or padding change, the second catches the rest.
-    const LAYOUT = ["fontFamily", "fontSize", "fontWeight", "fontStyle", "fontVariantLigatures", "fontKerning", "lineHeight",
-        "letterSpacing", "wordSpacing", "textIndent", "textTransform", "whiteSpace", "overflowWrap", "wordBreak", "tabSize", "direction",
-        "paddingTop", "paddingRight", "paddingBottom", "paddingLeft", "borderLeftWidth", "borderRightWidth"];
-    const wraps = async (where) => {
-        assert.equal(await paint.evaluate((el) => el.innerText), await f.box.inputValue(), `The paint is the draft itself (${where})`);
-        const [written, painted] = await f.page.evaluate((keys) => [document.querySelector(".composer-textarea"), document.querySelector(".composer-paint")]
-            .map((el) => [el.scrollHeight, el.clientWidth, ...keys.map((k) => getComputedStyle(el)[k])]), LAYOUT);
-        assert.deepEqual(painted, written, `The paint wraps where the box wraps (${where})`);
-    };
-    await wraps("wide");
-    await f.box.fill("把这段写得足够长，长到在任何宽度下都会折成好几行：" + "升级节点、校验产物、确认回滚脚本、再通知值班同学。".repeat(8) + " " + "steve-node".repeat(12));
-    await wraps("long");
-    await f.box.fill(draft);
-    await f.page.setViewportSize({ width: 760, height: 900 });
-    await wraps("narrow");
-    await f.page.setViewportSize({ width: 1280, height: 900 });
+    // The draft is markdown and the box draws it: a heading carries weight,
+    // a bullet is a bullet, bold is bold, and the marks that said so step
+    // aside. The line the caret is on is the exception — it shows its own
+    // source, so a mark can still be typed or repaired.
+    const box = f.box, lines = f.page.locator(".composer-box .cm-line");
+    const draft = "## 发布 **v0.4**\n- 升级 `steve-node`\n- [x] 备份已确认\n> *注意*：2 * 3 * 4 is 24\n普通一行";
+    await box.fill(draft);
+    assert.equal(await draftOf(box), draft, "Drawing a draft may not rewrite it");
+    assert.equal(await lines.nth(0).innerText(), "发布 v0.4", "A heading reads as a heading, without its hashes");
+    assert.match(await lines.nth(1).innerText(), /^•\s*升级 steve-node$/, "A list item gets a bullet, and a code span drops its backticks");
+    assert.match(await lines.nth(2).innerText(), /^☑\s*备份已确认$/, "A ticked task reads as a ticked box");
+    assert.equal(await lines.nth(3).innerText(), "注意：2 * 3 * 4 is 24", "A quote drops its angle bracket, and arithmetic is not emphasis");
+    const size = (n) => lines.nth(n).evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
+    assert.ok(await size(0) > await size(4), "A heading is drawn larger than body text");
+    const face = (sel) => f.page.locator(sel).first().evaluate((el) => getComputedStyle(el).fontFamily);
+    assert.notEqual(await face(".composer-box .cm-md-code"), await face(".composer-box .cm-line"), "A code span is set in a different face");
+    assert.equal(await f.page.locator(".composer-box .cm-md-strong").count(), 1, "Bold is marked up once, marks and all excluded");
 
-    assert.equal((await paint.locator(".md-heading").allInnerTexts()).join(""), "发布 **v0.4**", "A heading line reads as a heading, marks and all");
-    assert.equal(await paint.locator(".md-strong").first().innerText(), "v0.4", "Bold is bold, marks and all");
-    assert.equal(await paint.locator(".md-code").first().innerText(), "steve-node", "A code span is a code span");
-    assert.equal(await paint.locator(".md-code-block").first().innerText(), "npm run build", "A fence holds its lines");
-    assert.equal(await paint.locator(".md-ticked").first().innerText(), "[x] ", "A ticked box is ticked");
-    // Arithmetic and paths are not markdown, in the box as in a tooltip.
-    assert.equal(await paint.locator(".md-em").count(), 1, "Only the emphasis is emphasis");
-    const dimmed = await paint.locator(".md-mark").first().evaluate((el) => getComputedStyle(el).color);
-    const body = await paint.evaluate((el) => getComputedStyle(el).color);
-    assert.notEqual(dimmed, body, "Marks are dimmed rather than hidden, so nothing moves");
+    await lines.nth(0).click();
+    assert.equal(await lines.nth(0).innerText(), "## 发布 **v0.4**", "The line being edited shows its source");
+    assert.match(await lines.nth(1).innerText(), /^•\s*升级 steve-node$/, "while the lines around it stay drawn");
+    await lines.nth(1).click();
+    assert.match(await lines.nth(1).innerText(), /^•\s*升级 `steve-node`$/, "A bullet is what an item looks like even while it is written");
+    assert.equal(await draftOf(box), draft, "Moving the caret changes nothing that will be sent");
+
+    // The bullet appears as `- ` is typed, which is the whole point.
+    await box.fill("");
+    await box.pressSequentially("- 新一项");
+    assert.match(await lines.nth(0).innerText(), /^•\s*新一项$/, "Typing a list mark draws its bullet straight away");
+    assert.equal(await draftOf(box), "- 新一项", "What is drawn is still what will be sent");
 
     // A newline inside a list carries the list; an item left empty ends it.
-    await f.box.fill("- first");
-    await f.box.press("Shift+Enter");
-    assert.equal(await f.box.inputValue(), "- first\n- ", "Shift+Enter continues the list");
-    await f.box.type("second");
-    await f.box.press("Shift+Enter");
-    await f.box.press("Shift+Enter");
-    assert.equal(await f.box.inputValue(), "- first\n- second\n", "An empty item takes its marker back");
+    await box.fill("- first");
+    await box.press("Shift+Enter");
+    assert.equal(await draftOf(box), "- first\n- ", "Shift+Enter continues the list");
+    await box.pressSequentially("second");
+    await box.press("Shift+Enter");
+    await box.press("Shift+Enter");
+    assert.equal(await draftOf(box), "- first\n- second\n", "An empty item takes its marker back");
     assert.equal(f.queued().length, 0, "None of that sends");
-    await f.box.fill("1. one");
-    await f.box.press("Shift+Enter");
-    assert.equal(await f.box.inputValue(), "1. one\n2. ", "A numbered list counts on");
-
-    // While an input method is composing, the candidate lives in the box
-    // and the paint stands aside, or the person types into nothing.
-    await f.box.evaluate((box) => box.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true })));
-    assert.ok(await f.page.locator(".composer-box.is-composing").count(), "Composing is visible to the stylesheet");
-    assert.ok(await paint.evaluate((el) => getComputedStyle(el).visibility === "hidden"), "The paint stands aside while composing");
-    assert.ok(await f.box.evaluate((el) => getComputedStyle(el).color !== "rgba(0, 0, 0, 0)"), "And the box shows its own text meanwhile");
-    await f.box.evaluate((box) => box.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })));
-    assert.ok(await paint.evaluate((el) => getComputedStyle(el).visibility === "visible"), "Once it settles the paint comes back");
+    await box.fill("1. one");
+    await box.press("Shift+Enter");
+    assert.equal(await draftOf(box), "1. one\n2. ", "A numbered list counts on");
 };
 
 checks["theme-palettes"] = async (f) => {
@@ -2294,7 +2278,7 @@ checks["conversation-work-disclosure"] = async (f) => {
     assert.equal(await sidebar.getByText("1 个任务 · 1 次委派", { exact: true }).count(), 0);
     await f.pick("B"); await f.pick("A");
     assert.equal(await toggle.getAttribute("aria-expanded"), "false", "Picking a conversation must not expand its work");
-    assert.equal(await f.box.inputValue(), "Retain this draft while expanding work");
+    assert.equal(await draftOf(f.box), "Retain this draft while expanding work");
     await toggle.click();
     await f.page.reload();
     await toggle.waitFor();
@@ -2321,13 +2305,13 @@ checks["sent-line-actions"] = async (f) => {
     await sent.getByRole("button", { name: "复制", exact: true }).click();
     assert.equal(await f.page.evaluate(() => navigator.clipboard.readText()), "问题1：", "Copy puts the line on the clipboard");
     await sent.getByRole("button", { name: "编辑重发", exact: true }).click();
-    await eventually(async () => await f.box.inputValue() === "问题1：", "Editing a sent line puts it back in the box");
+    await eventually(async () => await draftOf(f.box) === "问题1：", "Editing a sent line puts it back in the box");
     await f.box.fill("A draft that must not vanish");
     await sent.getByRole("button", { name: "编辑重发", exact: true }).click();
     await f.page.getByText("替换正在输入的内容？", { exact: true }).waitFor();
-    assert.equal(await f.box.inputValue(), "A draft that must not vanish", "Nothing is replaced before the answer");
+    assert.equal(await draftOf(f.box), "A draft that must not vanish", "Nothing is replaced before the answer");
     await f.page.getByRole("button", { name: "替换", exact: true }).click();
-    await eventually(async () => await f.box.inputValue() === "问题1：", "Confirming replaces the draft with the edited line");
+    await eventually(async () => await draftOf(f.box) === "问题1：", "Confirming replaces the draft with the edited line");
     assert.equal(f.calls.length, 0, "Editing prepares a message; it does not send one");
 };
 
