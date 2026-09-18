@@ -90,6 +90,7 @@ async function fixture({ history = false, running = false } = {}) {
             if (changed) Object.assign(changed, input);
             return route.fulfill({ json: { ok: true } });
         }
+        if (pathname === "/console/setup") return route.fulfill({ json: { enabled: true, setup: f.setup ?? { agent: "test-agent", node: "test-node", harness: "test", applied: true, instructions: "", sections: [], mcp_servers: [] } } });
         if (pathname === "/console/verbs" || pathname === "/console/suggest") return route.fulfill({ json: { verbs: [], suggestions: [] } });
         f.errors.push(`Unhandled API: ${req.method()} ${pathname}`);
         return route.fulfill({ status: 500, json: { error: "Unmocked API" } });
@@ -951,6 +952,61 @@ checks["design-inspector-toggle"] = async (f) => {
     await close.last().click();
     await visibleControl(f.box, "Mobile message after inspector closes");
     assert.equal(await draftOf(f.box), "Draft while inspecting");
+};
+
+// The rail's conversation tab answers what the agent is working with:
+// the instructions read as markdown rather than printed as code, the
+// pieces they were assembled from, the MCP servers with their tools and
+// the commands the machine reported.
+checks["session-setup-view"] = async (f) => {
+    f.setup = {
+        agent: "test-agent", node: "test-node", harness: "test", model: "model-one", applied: false,
+        instructions: "# 身份\n\n**记住**：你是 Steve。\n\n- 第一条\n- 第二条",
+        sections: [
+            { kind: "identity", bytes: 320 },
+            { kind: "language", name: "zh", bytes: 96 },
+            { kind: "prompt", name: "test-agent", bytes: 1024 },
+            { kind: "skill", name: "review", path: "/skills/review", bytes: 8192 },
+            { kind: "memory", name: "home", bytes: 512 },
+        ],
+        mcp_servers: ["steve"],
+    };
+    await f.page.route("**/console/mcp", (route) => route.fulfill({ json: {
+        platform: [{ name: "steve", description: "Session tools", tools: [{ name: "steve_context", description: "Read the current workspace." }] }],
+        deployments: [], machines: [],
+    } }));
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" },
+        nodes: [{ name: "test-node", up: true, snapshot: { schema: "v1", node: "test-node", generation: 1, sequence: 1, generated_at: at, coverage: {}, offers: [{ kind: "tool", id: "ripgrep", availability: "available" }, { kind: "harness", id: "test", availability: "available" }] } }],
+        agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.route("**/console/context?*", (route) => route.fulfill({ json: { enabled: true, context: { conversation: A, agents: [], project: { ...project("scratch"), bound: true }, agent: { id: "test-agent", node: "test-node", harness: "test", model: "model-one", ready: true, usable: true } } } }));
+    await f.page.reload();
+    await f.box.waitFor();
+    await f.page.getByRole("button", { name: "显示详情", exact: true }).click();
+    const detail = inspector(f.page);
+    await detail.getByText("运行配置", { exact: true }).waitFor();
+    await detail.getByText("下一轮会重新发送", { exact: true }).waitFor();
+    // The pieces are named and weighed, so a skill folded in behind the
+    // agent's own prompt is visible rather than buried in one wall of text.
+    await detail.getByText("指令构成", { exact: true }).waitFor();
+    await detail.getByText("Agent 提示", { exact: true }).waitFor();
+    await detail.getByText("review", { exact: true }).waitFor();
+    // Markdown is rendered, not printed as source, and the source stays
+    // one click away for anyone checking what was actually sent.
+    await detail.getByText(/^指令 · /).click();
+    await detail.locator("h1").getByText("身份", { exact: true }).waitFor();
+    await detail.locator("strong").getByText("记住", { exact: true }).waitFor();
+    await detail.getByRole("button", { name: "原文", exact: true }).click();
+    await detail.getByText("# 身份").first().waitFor();
+    await detail.getByRole("button", { name: "渲染", exact: true }).click();
+    await detail.locator("h1").getByText("身份", { exact: true }).waitFor();
+    // MCP tools and the machine's commands are listed here too: a trace
+    // never says what the agent could have reached for.
+    await detail.getByText("steve", { exact: true }).click();
+    await detail.getByText("steve_context", { exact: true }).waitFor();
+    await detail.getByText("机器上的命令", { exact: true }).waitFor();
+    await detail.getByText("ripgrep", { exact: true }).waitFor();
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await noHorizontalOverflow(f.page);
 };
 
 checks["mcp-tool-details"] = async (f) => {

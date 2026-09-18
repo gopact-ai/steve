@@ -158,6 +158,17 @@ export interface Conversation { id: string; title: string; project?: string; age
 export interface Injected {
     project?: string; workspace?: string; agent: string; node?: string; harness: string; model?: string; options?: Record<string, string>;
     session?: string; new_session: boolean; instructions_sent: boolean; instructions?: string; instructions_bytes: number; mcp_servers?: string[]; fingerprint?: string; prompt?: string;
+    sections?: InstructionSection[];
+}
+// One piece of the assembled instructions, in the order it was written.
+export interface InstructionSection { kind: "identity" | "language" | "prompt" | "skill" | "extra" | "memory" | string; name?: string; path?: string; bytes: number }
+// SessionSetup is what an agent works with in a conversation: the
+// instructions a session opens with, what they are made of, and the MCP
+// servers joined to it. A trace says what happened in one turn; this
+// says what the agent had in hand.
+export interface SessionSetup {
+    agent: string; node?: string; harness: string; model?: string; mode?: string;
+    instructions?: string; sections?: InstructionSection[]; mcp_servers?: string[]; applied: boolean;
 }
 export interface Reply {
     id?: string; exchange_id?: string; at: string; conversation: string; input?: string; title?: string; text: string; format?: "markdown" | "text"; error?: string; kind: string; process?: Process; injected?: Injected;

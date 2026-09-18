@@ -27,11 +27,35 @@ type MCPServer struct {
 	Headers map[string]string
 }
 
+// Section is one piece of the assembled instructions, in the order it
+// was written: what it is, where it came from and how many bytes of the
+// text it accounts for. Without it the instructions are one wall of
+// text and nobody can tell the agent's own prompt from a skill folded
+// in behind it.
+type Section struct {
+	Kind  string `json:"kind"`
+	Name  string `json:"name,omitempty"`
+	Path  string `json:"path,omitempty"`
+	Bytes int    `json:"bytes"`
+}
+
+// Section kinds, in the order they are assembled.
+const (
+	SectionIdentity = "identity"
+	SectionLanguage = "language"
+	SectionPrompt   = "prompt"
+	SectionSkill    = "skill"
+	SectionExtra    = "extra"
+	SectionMemory   = "memory"
+)
+
 type Capabilities struct {
 	SkillsFingerprint string
 	Instructions      string
-	MCPServers        []acp.MCPServer
-	Fingerprint       string
+	// Sections is what Instructions is made of, in order.
+	Sections    []Section
+	MCPServers  []acp.MCPServer
+	Fingerprint string
 	// SessionFingerprint excludes editable home identity and platform guidance.
 	// MCP connections, agent configuration, skills and visibility remain fixed.
 	SessionFingerprint string
@@ -124,11 +148,15 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 		}
 	}
 	parts := []string{}
+	sections := []Section{}
 	if snap.Identity != "" {
 		parts = append(parts, snap.Identity)
+		sections = append(sections, Section{Kind: SectionIdentity, Bytes: len(snap.Identity)})
 	}
 	if a.locale != "" {
-		parts = append(parts, home.LanguageRule(a.locale))
+		rule := home.LanguageRule(a.locale)
+		parts = append(parts, rule)
+		sections = append(sections, Section{Kind: SectionLanguage, Name: string(a.locale), Bytes: len(rule)})
 	}
 	// Configured is what this agent itself was given: its own prompt and the
 	// skills mapped onto it. Platform guidance — the identity, the language
@@ -137,6 +165,7 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 	configured := []string{}
 	if selected.SystemPrompt != "" {
 		configured = append(configured, selected.SystemPrompt)
+		sections = append(sections, Section{Kind: SectionPrompt, Name: selected.ID, Bytes: len(selected.SystemPrompt)})
 	}
 	for _, root := range selected.Skills {
 		data, err := os.ReadFile(filepath.Join(root, "SKILL.md"))
@@ -144,12 +173,14 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 			return Capabilities{}, fmt.Errorf("read skill %q: %w", root, err)
 		}
 		configured = append(configured, string(data))
+		sections = append(sections, Section{Kind: SectionSkill, Name: filepath.Base(root), Path: root, Bytes: len(data)})
 	}
 	parts = append(parts, configured...)
 	sessionInstructions := strings.Join(configured, "\n\n")
 	for _, extra := range extras {
 		if strings.TrimSpace(extra.Instructions) != "" {
 			parts = append(parts, extra.Instructions)
+			sections = append(sections, Section{Kind: SectionExtra, Name: extra.Name, Bytes: len(extra.Instructions)})
 		}
 	}
 	identity := strings.Join(parts, "\n\n")
@@ -157,10 +188,12 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 	memories := []string{}
 	if snap.Memory != "" {
 		memories = append(memories, snap.Memory)
+		sections = append(sections, Section{Kind: SectionMemory, Name: "home", Bytes: len(snap.Memory)})
 	}
 	for _, extra := range extras {
 		if strings.TrimSpace(extra.Memory) != "" {
 			memories = append(memories, extra.Memory)
+			sections = append(sections, Section{Kind: SectionMemory, Name: extra.Name, Bytes: len(extra.Memory)})
 		}
 	}
 	for _, m := range memories {
@@ -219,7 +252,7 @@ func (a *Assembler) assembleExtra(selected agent.Agent, mode home.Mode, extras [
 	if err != nil {
 		return Capabilities{}, err
 	}
-	return Capabilities{SkillsFingerprint: skillsHash, Instructions: instructions, MCPServers: servers, Fingerprint: fp, SessionFingerprint: sessionFP}, nil
+	return Capabilities{SkillsFingerprint: skillsHash, Instructions: instructions, Sections: sections, MCPServers: servers, Fingerprint: fp, SessionFingerprint: sessionFP}, nil
 }
 
 func makeMCPServer(name string, cfg MCPServer) (acp.MCPServer, error) {

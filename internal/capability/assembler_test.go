@@ -331,3 +331,52 @@ func TestLanguageRuleTravelsWithEverySession(t *testing.T) {
 		t.Fatalf("language guidance displaced agent configuration: %q", chinese.Instructions)
 	}
 }
+
+// The page shows what the instructions are made of, so the breakdown has
+// to match the text: same order, and each piece's byte count has to be
+// the piece that actually went in.
+func TestAssembleSectionsMatchInstructions(t *testing.T) {
+	dir := t.TempDir()
+	if err := home.Bootstrap(dir, "ou"); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, home.FileMemory), []byte("remembered"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := home.Dir{Path: dir}.Load(home.ModeOwner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	skillDir := t.TempDir()
+	skill := "Review before merging."
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(skill), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	assembler := NewAssembler(nil).SetHome(home.Dir{Path: dir}).SetLocale("zh")
+	selected := agent.Agent{ID: "codex", Config: agent.Config{SystemPrompt: "You are Codex.", Skills: []string{skillDir}}}
+	got, err := assembler.AssembleExtra(selected, home.ModeOwner, []Extra{{Name: "memory:project:steve", Memory: "project notes"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []Section{
+		{Kind: SectionIdentity, Bytes: len(snap.Identity)},
+		{Kind: SectionLanguage, Name: "zh", Bytes: len(home.LanguageRule("zh"))},
+		{Kind: SectionPrompt, Name: "codex", Bytes: len("You are Codex.")},
+		{Kind: SectionSkill, Name: filepath.Base(skillDir), Path: skillDir, Bytes: len(skill)},
+		{Kind: SectionMemory, Name: "home", Bytes: len("remembered")},
+		{Kind: SectionMemory, Name: "memory:project:steve", Bytes: len("project notes")},
+	}
+	if len(got.Sections) != len(want) {
+		t.Fatalf("sections = %#v, want %d pieces", got.Sections, len(want))
+	}
+	for i, section := range got.Sections {
+		if section != want[i] {
+			t.Fatalf("section %d = %#v, want %#v", i, section, want[i])
+		}
+	}
+	for _, section := range got.Sections {
+		if section.Bytes == 0 {
+			t.Fatalf("section %#v claims no bytes", section)
+		}
+	}
+}

@@ -59,6 +59,9 @@ type Console interface {
 	Update(ctx context.Context, conversation string, patch ConversationPatch) error
 	// Context is where a conversation stands; Verbs is what it can be told.
 	Context(ctx context.Context, conversation string) (Context, error)
+	// Setup is what the conversation's agent works with: the assembled
+	// instructions and the pieces they are made of.
+	Setup(ctx context.Context, conversation, agent string) (Setup, error)
 	Verbs() []Verb
 	// Suggest completes a line the page is typing, by the coordinator's
 	// rules: verbs, agents, projects, this conversation's tasks.
@@ -693,6 +696,32 @@ type Reply struct {
 	Materials []material.Frozen `json:"materials,omitempty"`
 }
 
+// Setup is what an agent has in hand for a conversation: the assembled
+// instructions a session opens with, what they are made of, and the MCP
+// servers joined to it. It answers "what is this agent working with",
+// which the turn-by-turn trace does not.
+type Setup struct {
+	Agent        string    `json:"agent"`
+	Node         string    `json:"node,omitempty"`
+	Harness      string    `json:"harness"`
+	Model        string    `json:"model,omitempty"`
+	Mode         string    `json:"mode,omitempty"`
+	Instructions string    `json:"instructions,omitempty"`
+	Sections     []Section `json:"sections,omitempty"`
+	MCPServers   []string  `json:"mcp_servers,omitempty"`
+	Applied      bool      `json:"applied"`
+}
+
+// Section is one piece of the assembled instructions: identity,
+// language rule, the agent's own prompt, a skill, an extra or
+// remembered text.
+type Section struct {
+	Kind  string `json:"kind"`
+	Name  string `json:"name,omitempty"`
+	Path  string `json:"path,omitempty"`
+	Bytes int    `json:"bytes"`
+}
+
 // Injected is what a turn gave the agent, as the console keeps it.
 type Injected struct {
 	Project           string            `json:"project,omitempty"`
@@ -710,6 +739,9 @@ type Injected struct {
 	MCPServers        []string          `json:"mcp_servers,omitempty"`
 	Fingerprint       string            `json:"fingerprint,omitempty"`
 	Prompt            string            `json:"prompt,omitempty"`
+	// Sections is what the instructions were made of, when they were
+	// sent: the same breakdown the setup view shows.
+	Sections []Section `json:"sections,omitempty"`
 }
 
 // Exchange names one submission throughout its queue, sent line and answer.

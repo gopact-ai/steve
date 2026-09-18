@@ -1,4 +1,4 @@
-import type { Conversation, ConversationContext, Exchange, MaterialRef, QuoteRef, Reply, Selectors, Suggestion, Verb } from "../types";
+import type { Conversation, ConversationContext, Exchange, MaterialRef, QuoteRef, Reply, Selectors, SessionSetup, Suggestion, Verb } from "../types";
 import { request, UnsentRequestError } from "../http";
 
 async function write<T>(path: string, options: { method: string; body?: unknown }): Promise<T> {
@@ -10,6 +10,10 @@ const channelQuery = (conversation: string) => `conversation=${encodeURIComponen
 export const fetchReplies = (conversation: string, signal?: AbortSignal) => request<{ enabled: boolean; replies: Reply[]; conversations?: string[] }>(`/console/replies?${channelQuery(conversation)}`, { signal });
 export const fetchConversations = (signal?: AbortSignal) => request<{ enabled: boolean; conversations: Conversation[] }>("/console/conversations", { signal });
 export const fetchContext = (conversation: string, signal?: AbortSignal) => request<{ enabled: boolean; context?: ConversationContext }>(`/console/context?${channelQuery(conversation)}`, { signal });
+// The setup is assembled on demand — it reads skills and memory off disk —
+// so the page asks for it when someone opens the panel, not on a poll.
+export const fetchSetup = (conversation: string, agent?: string, signal?: AbortSignal) =>
+    request<{ enabled: boolean; setup?: SessionSetup }>(`/console/setup?${channelQuery(conversation)}${agent ? `&agent=${encodeURIComponent(agent)}` : ""}`, { signal });
 export const fetchSuggest = (conversation: string, line: string, signal?: AbortSignal) => request<{ suggestions: Suggestion[] }>(`/console/suggest?${channelQuery(conversation)}&q=${encodeURIComponent(line)}`, { signal });
 export const fetchVerbs = (signal?: AbortSignal) => request<{ verbs: Verb[] }>("/console/verbs", { signal });
 export interface SubmissionSupport { state: "unknown" | "supported" | "unsupported"; checking: boolean; error: string; material_refs?: boolean; interactive_requests?: boolean }

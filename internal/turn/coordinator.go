@@ -124,6 +124,8 @@ type Injected struct {
 	Fingerprint       string
 	// Prompt is the text of this turn as sent, without the instructions.
 	Prompt string
+	// Sections is what the instructions sent this turn were made of.
+	Sections []capability.Section
 }
 
 type Result struct {

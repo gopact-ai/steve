@@ -7,9 +7,9 @@ import { Loading01 } from "@untitledui/icons";
 import { when } from "@/lib/format";
 import type { Injected, Plan, Process, Step, StepProcess } from "@/lib/types";
 import type { Live } from "@/lib/live";
-import { CodeBlock } from "./code-block";
 import { Md } from "./markdown";
 import { Chips, KeyValue, Panel } from "./page";
+import { Composition, Fold, Prose } from "./setup-panel";
 import { Trace, hasTraceContent, finalTextIndex } from "./progress-view";
 import { ToolCalls, headingOf } from "./tool-calls";
 import { Mono, StateBadge, Where } from "./ui";
@@ -164,17 +164,16 @@ export function InjectedPanel({ at, in: x }: { at: string; in: Injected }) {
                 { k: t("console.conversation"), v: x.session ? <Mono className="text-tertiary">{x.session.slice(0, 24)}</Mono> : <span className="text-quaternary">—</span> },
                 ...(x.fingerprint ? [{ k: t("consoleChrome.fingerprint"), v: <Mono className="text-quaternary">{x.fingerprint.slice(0, 16)}</Mono>, hint: t("consoleChrome.fingerprintHint") }] : []),
             ]} />
+            {x.sections?.length ? <Composition sections={x.sections} /> : null}
             {x.prompt && (
-                <details className="mt-1 text-xs">
-                    <summary className="cursor-pointer text-tertiary hover:text-primary">{t("consoleChrome.sentPrompt", { count: number(x.prompt.length, locale) })}</summary>
-                    <CodeBlock code={x.prompt} label="prompt" maxHeight={256} />
-                </details>
+                <Fold summary={t("consoleChrome.sentPrompt", { count: number(x.prompt.length, locale) })}>
+                    <Prose text={x.prompt} label="prompt" lang="markdown" />
+                </Fold>
             )}
             {x.instructions && (
-                <details className="text-xs">
-                    <summary className="cursor-pointer text-tertiary hover:text-primary">{t("consoleChrome.fullInstructions", { size: kb })}</summary>
-                    <CodeBlock code={x.instructions} lang="markdown" label={t("consoleChrome.instructions")} maxHeight={384} />
-                </details>
+                <Fold summary={t("consoleChrome.fullInstructions", { size: kb })}>
+                    <Prose text={x.instructions} label={t("consoleChrome.instructions")} lang="markdown" />
+                </Fold>
             )}
         </Panel>
     );

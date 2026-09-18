@@ -18,6 +18,11 @@ type contextProvider interface {
 	Context(ctx context.Context, conversationID string) (turn.Context, error)
 }
 
+// setupProvider answers what an agent has in hand for a conversation.
+type setupProvider interface {
+	SessionSetup(ctx context.Context, conversationID, agentID string) (turn.Setup, error)
+}
+
 // suggester completes the line being typed.
 type suggester interface {
 	Suggest(ctx context.Context, conversationID, line string) []turn.Suggestion

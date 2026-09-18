@@ -14,6 +14,7 @@ import { useI18n } from "@/providers/locale-provider";
 import { MaterialShelf } from "./material-shelf";
 import { getSubmissionSupport, subscribeSubmissionSupport } from "@/lib/api/console";
 import { ArtifactsTab } from "./work-tabs";
+import { SetupPanel } from "./setup-panel";
 
 // RAIL_WIDTH is the console's right column; a drawer opened from it is
 // the same width, so the side of the page does not jump.
@@ -84,6 +85,7 @@ export const Rail = memo(function Rail({ context, live, plans, reply, tab, setTa
                                 )}
                             </div>
                         </Panel>
+                        <SetupPanel conversation={context.conversation} agent={context.agent?.id} node={context.agent?.node} />
                     </>
                 )}
                 {tab === "trace" && (

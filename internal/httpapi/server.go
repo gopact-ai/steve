@@ -165,6 +165,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /bootstrap/{name}", s.bootstrap)
 	mux.HandleFunc("GET /dist/steve-node", s.nodeBinary)
 	mux.HandleFunc("GET /console/context", s.guard(s.consoleContext))
+	mux.HandleFunc("GET /console/setup", s.guard(s.consoleSetup))
 	mux.HandleFunc("GET /console/verbs", s.guard(s.consoleVerbs))
 	mux.HandleFunc("GET /console/suggest", s.guard(s.consoleSuggest))
 	mux.HandleFunc("GET /history", s.guard(s.history))
@@ -1114,6 +1115,29 @@ func (s *Server) consoleContext(w http.ResponseWriter, r *http.Request) {
 		ctx.Agents = []consoleapi.AgentChoice{}
 	}
 	writeJSON(w, map[string]any{"enabled": true, "context": ctx})
+}
+
+// consoleSetup answers what the conversation's agent is working with:
+// the instructions its session opens with and what they are made of.
+// It is assembled on demand rather than polled, because reading skills
+// and memory costs more than the context bar should.
+func (s *Server) consoleSetup(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.console == nil {
+		writeJSON(w, map[string]any{"enabled": false})
+		return
+	}
+	conversation := r.URL.Query().Get("conversation")
+	if conversation == "" {
+		conversation = "console:main"
+	}
+	setup, err := s.console.Setup(r.Context(), conversation, r.URL.Query().Get("agent"))
+	if err != nil {
+		w.WriteHeader(http.StatusInternalServerError)
+		writeJSON(w, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, map[string]any{"enabled": true, "setup": setup})
 }
 
 // history pages what happened, newest first; before is the ledger

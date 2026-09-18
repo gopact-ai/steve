@@ -496,6 +496,30 @@ func (s *Service) Context(ctx context.Context, conversation string) (consoleapi.
 	return out, nil
 }
 
+// Setup is the current agent's standing contract for a conversation:
+// the instructions a session opens with and what they are made of.
+func (s *Service) Setup(ctx context.Context, conversation, agent string) (consoleapi.Setup, error) {
+	if !strings.HasPrefix(conversation, Prefix) {
+		conversation = Prefix + conversation
+	}
+	aware, ok := s.handler.(setupProvider)
+	if !ok {
+		return consoleapi.Setup{}, errors.New("this gateway cannot report an agent's setup")
+	}
+	got, err := aware.SessionSetup(ctx, conversation, agent)
+	if err != nil {
+		return consoleapi.Setup{}, err
+	}
+	out := consoleapi.Setup{
+		Agent: got.Agent, Node: got.Node, Harness: got.Harness, Model: got.Model, Mode: got.Mode,
+		Instructions: got.Instructions, MCPServers: got.MCPServers, Applied: got.Applied,
+	}
+	for _, s := range got.Sections {
+		out.Sections = append(out.Sections, consoleapi.Section{Kind: s.Kind, Name: s.Name, Path: s.Path, Bytes: s.Bytes})
+	}
+	return out, nil
+}
+
 // Suggest completes a line by the coordinator's rules.
 func (s *Service) Suggest(ctx context.Context, conversation, line string) []consoleapi.Suggestion {
 	if !strings.HasPrefix(conversation, Prefix) {
