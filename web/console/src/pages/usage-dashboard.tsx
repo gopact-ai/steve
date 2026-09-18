@@ -47,7 +47,7 @@ export default function UsageDashboard() {
     return <div className="usage-dashboard">
         <header className="usage-heading">
             <div><h2 className="text-xl font-semibold tracking-tight text-primary">{t("usage.title")}</h2><p className="mt-1 text-sm text-tertiary">{t(rangeKeys[range])} · {t(range === "1d" ? "usage.hourly" : "usage.daily")} · {zoneLabel}</p></div>
-            <div className="workbench-segmented usage-ranges" role="group" aria-label={t("usage.range")}>{ranges.map((value) => <button key={value} type="button" aria-pressed={range === value} title={t(rangeKeys[value])} onClick={() => { const next = new URLSearchParams(params); next.set("range", value); next.set("tab", "usage"); setParams(next, { replace: true }); }}>{value}</button>)}</div>
+            <div className="workbench-segmented usage-ranges" role="group" aria-label={t("usage.range")}>{ranges.map((value) => <button key={value} type="button" aria-pressed={range === value} title={t(rangeKeys[value])} onClick={() => { const next = new URLSearchParams(params); next.set("range", value); setParams(next, { replace: true }); }}>{value}</button>)}</div>
         </header>
         {source?.error ? <div role="alert" className="usage-data-state">{t("usage.unavailable", { error: source.error })}</div> : source?.wired === false ? <div role="status" className="usage-data-state">{t("usage.unwired")}</div> : !period ? <div role="status" className="usage-data-state">{t(snap.at ? "usage.upgrade" : "usage.loading")}</div> : <PeriodDashboard period={period} metric={metric} setMetric={setMetric} zone={zone} />}
     </div>;

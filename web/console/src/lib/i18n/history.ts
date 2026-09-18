@@ -1,5 +1,8 @@
 export const historyZh = {
-    "history.title": "历史",
+    "dashboard.title": "仪表盘",
+    "dashboard.description": "这台工作台此刻在跑什么、花了多少。",
+    "dashboard.overview": "总览",
+    "dashboard.loadingUsage": "载入用量概览…",
     "history.description": "查找任务变化、机器事件与审计记录。",
     "history.timeline": "时间线",
     "history.audit": "审计",
@@ -89,7 +92,10 @@ export const historyZh = {
 } as const;
 
 export const historyEn = {
-    "history.title": "History",
+    "dashboard.title": "Dashboard",
+    "dashboard.description": "What this workbench is running right now, and what it spent.",
+    "dashboard.overview": "Overview",
+    "dashboard.loadingUsage": "Loading usage overview…",
     "history.description": "Find task changes, machine events and audit records.",
     "history.timeline": "Timeline",
     "history.audit": "Audit",

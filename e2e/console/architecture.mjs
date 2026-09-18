@@ -474,7 +474,8 @@ if (process.env.PURE_ONLY !== "1") {
             assert.deepEqual(f.writes[0].mcp_servers.sample.env, { FOO: "bar" });
         },
         async "history-buffer"(f) {
-            await f.page.locator('a[href="#/history"]').click();
+            await f.page.locator('a[href="#/dashboard"]').click();
+            await f.page.getByRole("tab", { name: "时间线", exact: true }).click();
             await eventually(() => f.historyReads > 0, "Initial history read");
             await f.page.evaluate(() => { for (let i = 0; i < 300; i++) window.emit({ kind: "node.connected", at: "2026-09-06T10:00:00Z", detail: String(i) }); });
             await tick(); await tick();

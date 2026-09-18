@@ -212,7 +212,7 @@ export function SkillsPage() {
                         </ul>
                         <div className="skill-settings-footer flex flex-col gap-2">
                             {view?.fingerprint && <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-tertiary"><span>{tr("skills.syncVersion")}</span><Mono className="text-tertiary" >{view.fingerprint.slice(0, 12)}</Mono></div>}
-                            <p className="text-xs leading-relaxed text-tertiary">{tr("skills.syncTrouble")}<a href="#/history" className="underline underline-offset-2 hover:text-primary">{tr("skills.syncHistory")}</a>。</p>
+                            <p className="text-xs leading-relaxed text-tertiary">{tr("skills.syncTrouble")}<a href="#/dashboard?tab=timeline" className="underline underline-offset-2 hover:text-primary">{tr("skills.syncHistory")}</a>。</p>
                         </div>
                     </Panel>
                 </div>

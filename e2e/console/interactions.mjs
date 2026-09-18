@@ -1615,7 +1615,7 @@ checks["readmodel-unknown"] = async (f) => {
     await f.page.goto(`${app.url}/#/console?view=board`); await f.page.reload();
     await f.page.getByText("Task 11", { exact: true }).waitFor();
     await f.page.getByText("状态未知", { exact: true }).first().waitFor();
-    await f.page.getByRole("tab", { name: "用量", exact: true }).click();
+    await f.page.getByRole("link", { name: "仪表盘", exact: true }).click();
     await f.page.getByRole("heading", { name: "用量概览", exact: true }).waitFor();
     await f.page.getByRole("region", { name: "区间用量汇总", exact: true }).waitFor();
     await f.page.getByRole("link", { name: "待处理", exact: true }).click();
@@ -1873,7 +1873,7 @@ checks["fleet-display-name"] = async (f) => {
 checks["usage-dashboard-ranges"] = async (f) => {
     const usage = usageFixture();
     await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
-    await f.page.goto(`${app.url}/#/console?view=board&tab=usage`);
+    await f.page.goto(`${app.url}/#/dashboard?tab=overview`);
     await f.page.reload();
     await f.page.getByRole("heading", { name: "用量概览", exact: true }).waitFor();
     const cards = f.page.getByRole("region", { name: "区间用量汇总", exact: true });
@@ -1882,7 +1882,7 @@ checks["usage-dashboard-ranges"] = async (f) => {
         await eventually(async () => await f.page.getByRole("button", { name: range, exact: true }).getAttribute("aria-pressed") === "true", `Range ${range} should become active`);
         await f.page.getByRole("grid", { name: "按 Agent", exact: true }).getByText(`agent-${range}`, { exact: true }).waitFor();
         assert.ok((await cards.innerText()).includes(String(usage.periods[range].total.attempts)), "Range metrics must use that period's totals");
-        assert.equal(await f.page.locator('a[href="#/console?view=board"]').getAttribute("aria-current"), "page");
+        assert.equal(await f.page.locator('a[href="#/dashboard"]').getAttribute("aria-current"), "page");
         await f.page.locator(".recharts-line-curve").waitFor();
     }
     await f.page.getByRole("button", { name: "执行次数", exact: true }).click();
@@ -1905,7 +1905,7 @@ checks["usage-dashboard-unreported"] = async (f) => {
     period.series = [{ key: period.from, tokens: { context: 65000 }, seconds: 120, attempts: 2, unreported: 2 }];
     period.total = { ...period.series[0], key: "total" }; period.by_agent = []; period.by_model = [];
     await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
-    await f.page.goto(`${app.url}/#/console?view=board&tab=usage&range=1d`); await f.page.reload();
+    await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=1d`); await f.page.reload();
     await f.page.getByText("未上报 Token 按 0 绘制。", { exact: false }).waitFor();
     assert.equal(await f.page.getByRole("region", { name: "区间用量汇总", exact: true }).getByText("0", { exact: true }).count(), 1, "Unreported token usage is rendered as zero");
     await f.page.getByRole("button", { name: "执行次数", exact: true }).click();
@@ -1924,7 +1924,7 @@ checks["usage-dashboard-gaps"] = async (f) => {
     period.total = { key: "total", tokens: { input: 100, output: 20, total: 120 }, seconds: 360, attempts: 3, unreported: 2 };
     period.by_agent = []; period.by_model = [];
     await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
-    await f.page.goto(`${app.url}/#/console?view=board&tab=usage&range=1d`); await f.page.reload();
+    await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=1d`); await f.page.reload();
     await f.page.locator(".recharts-line-dot").first().waitFor();
     assert.equal(await f.page.locator(".recharts-line-dot").count(), 3, "Unreported buckets must be zero-valued points on the continuous line");
     await f.page.locator("summary").filter({ hasText: "查看分时数据" }).click();
@@ -1938,7 +1938,7 @@ checks["usage-dashboard-gaps"] = async (f) => {
 checks["usage-dashboard-dimensions"] = async (f) => {
     const usage = usageFixture();
     await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
-    await f.page.goto(`${app.url}/#/console?view=board&tab=usage&range=7d`); await f.page.reload();
+    await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=7d`); await f.page.reload();
     await f.page.getByRole("heading", { name: "任务平均耗时", exact: true }).waitFor();
     for (const [name, row] of [["按模型", "Demo Model"], ["按 Harness", "codex-acp"], ["按触发来源", "定时任务"], ["按项目", "scratch"]]) {
         await f.page.getByRole("button", { name, exact: true }).click();
@@ -1962,7 +1962,7 @@ checks["usage-dashboard-dimensions"] = async (f) => {
 checks["usage-dashboard-duration-coverage"] = async (f) => {
     let usage = usageDurationFixture("missing");
     await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
-    await f.page.goto(`${app.url}/#/console?view=board&tab=usage&range=1d`); await f.page.reload();
+    await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=1d`); await f.page.reload();
     const cardValue = (label) => f.page.locator(".usage-metric").filter({ has: f.page.getByRole("heading", { name: label, exact: true }) }).locator("strong");
     await f.page.getByRole("heading", { name: "任务平均耗时", exact: true }).waitFor();
     assert.equal(await cardValue("任务平均耗时").innerText(), "—", "Missing duration must not appear as a measured zero");
@@ -2026,7 +2026,7 @@ checks["usage-dashboard-task-details-lazy"] = async (f) => {
     period.by_task = Array.from({ length: 1000 }, (_, i) => ({ ...sample, key: String(i), task_id: String(i), title: `Task detail ${i}` }));
     period.tasks.count = period.by_task.length;
     await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));
-    await f.page.goto(`${app.url}/#/console?view=board&tab=usage&range=7d`); await f.page.reload();
+    await f.page.goto(`${app.url}/#/dashboard?tab=overview&range=7d`); await f.page.reload();
     await f.page.getByRole("heading", { name: "用量概览", exact: true }).waitFor();
     const taskRows = f.page.locator('table[aria-label="任务消耗明细"] tbody tr');
     assert.equal(await taskRows.count(), 0, "Collapsed task details must not build every task row");
