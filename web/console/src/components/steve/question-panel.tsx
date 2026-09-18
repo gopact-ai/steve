@@ -16,7 +16,7 @@ import { HTTPError } from "@/lib/http";
 import { dateTime } from "@/lib/format";
 import "@/styles/questions.css";
 
-export function QuestionPanel({ conversation }: { conversation: string }) {
+export function QuestionPanel({ conversation, turnStartedAt }: { conversation: string; turnStartedAt?: string }) {
     const { t } = useI18n();
     const { live } = useFleet();
     const [items, setItems] = useState<PendingQuestion[]>([]);
@@ -39,17 +39,23 @@ export function QuestionPanel({ conversation }: { conversation: string }) {
     // first of them, so the rest are a click away rather than cut off.
     const [depth, setDepth] = useState(5);
     useEffect(() => setDepth(5), [conversation]);
-    const history = resolved.slice(0, depth);
+    // A decision belongs to the turn it was made in. Once that turn is
+    // over the record lives in the transcript and the audit log, so
+    // holding it above the composer only carries the last turn's noise
+    // into the next one.
+    const since = turnStartedAt ? Date.parse(turnStartedAt) : Number.NaN;
+    const thisTurn = Number.isNaN(since) ? [] : resolved.filter((question) => Date.parse(question.updated_at || question.created_at) >= since);
+    const history = thisTurn.slice(0, depth);
     function acknowledge(question: PendingQuestion) {
         setItems((previous) => previous.map((item) => item.id === question.id ? { ...question, options: question.options || [] } : item));
         void load();
     }
-    if (pending.length === 0 && resolved.length === 0 && !error) return null;
+    if (pending.length === 0 && thisTurn.length === 0 && !error) return null;
     return <section className="question-panel" aria-label={t("materials.pendingQuestions")}>
         {pending.map((question) => <QuestionCard key={question.id} question={question} refresh={load} onResolved={acknowledge} />)}
-        {resolved.length > 0 && <details className="question-history"><summary>{t("materials.questionHistory", { count: resolved.length })}</summary><div className="question-history-items">
+        {thisTurn.length > 0 && <details className="question-history"><summary>{t("materials.questionHistory", { count: thisTurn.length })}</summary><div className="question-history-items">
             {history.map((question) => <QuestionCard key={question.id} question={question} refresh={load} onResolved={acknowledge} />)}
-            {resolved.length > history.length && <Button size="sm" color="link-gray" className="question-history-more" onClick={() => setDepth(depth + 20)}>{t("materials.questionHistoryMore", { count: resolved.length - history.length })}</Button>}
+            {thisTurn.length > history.length && <Button size="sm" color="link-gray" className="question-history-more" onClick={() => setDepth(depth + 20)}>{t("materials.questionHistoryMore", { count: thisTurn.length - history.length })}</Button>}
         </div></details>}
         {error && <div role="alert" className="question-error">{error}<Button size="sm" color="link-gray" onClick={() => void load()}>{t("materials.refresh")}</Button></div>}
     </section>;
