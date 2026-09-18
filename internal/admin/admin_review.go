@@ -101,6 +101,18 @@ func (a *Service) changeSnapshots(ctx context.Context, attemptID string) (attemp
 	return record, record.Base, after, nil
 }
 
+// Placement is the agent an attempt ran as and the machine it ran on.
+func (a *Service) Placement(ctx context.Context, attemptID string) (string, string, error) {
+	if a.Attempts == nil {
+		return "", "", errors.New("attempts are not wired")
+	}
+	record, err := a.Attempts.Get(ctx, attemptID)
+	if err != nil {
+		return "", "", err
+	}
+	return record.Agent, record.Node, nil
+}
+
 // Changes is what an attempt changed, as the reply keeps it.
 func (a *Service) Changes(ctx context.Context, attemptID string) (*consoleapi.ChangeSummary, error) {
 	record, base, after, err := a.changeSnapshots(ctx, attemptID)

@@ -67,7 +67,9 @@ export async function initializeConversation(id: string, project: string, locale
     if (result?.ok !== true) throw new Error("Invalid conversation initialization acknowledgement");
 }
 export const fetchSelectors = (conversation: string, agent: string, signal?: AbortSignal) => request<Selectors>(`/console/selectors?${channelQuery(conversation)}&agent=${encodeURIComponent(agent)}`, { signal });
-export const setPreferences = (conversation: string, agent: string, patch: Record<string, string>) => write<{ ok: boolean; note?: string }>("/console/preferences", { method: "PUT", body: { conversation, agent, patch } });
+// live is true when the session answering right now took the change, so
+// it applies to what the agent does next rather than to the next turn.
+export const setPreferences = (conversation: string, agent: string, patch: Record<string, string>) => write<{ ok: boolean; live?: boolean; note?: string }>("/console/preferences", { method: "PUT", body: { conversation, agent, patch } });
 
 function commandID(): string {
     try { return crypto.randomUUID(); } catch { return `${Date.now()}-${Math.random().toString(16).slice(2)}`; }

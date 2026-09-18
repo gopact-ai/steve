@@ -273,10 +273,11 @@ type Admin interface {
 	// TaskAttempts are a task's attempts from the ledger, newest first.
 	TaskAttempts(ctx context.Context, task string) ([]AttemptView, error)
 	// Selectors reads what an agent offers using a temporary discovery
-	// session; SetPreferences records choices and rolls the conversation's
-	// session over so the next turn honours them.
+	// session; SetPreferences records choices and applies them to the
+	// session answering right now, or rolls the session over so the next
+	// turn honours them. It reports true when the live session took them.
 	Selectors(ctx context.Context, conversation, agent string) (Selectors, error)
-	SetPreferences(ctx context.Context, conversation, agent string, patch map[string]string) error
+	SetPreferences(ctx context.Context, conversation, agent string, patch map[string]string) (bool, error)
 	SetTaskMeta(ctx context.Context, task string, patch TaskMetaPatch) error
 	// AttemptTree lists a directory of an attempt's snapshot; AttemptFile
 	// reads one file of it. Both bounded, both owner-only.

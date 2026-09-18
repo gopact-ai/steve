@@ -26,6 +26,9 @@ func (h *firingHandler) Handle(context.Context, turn.Request) (turn.Result, erro
 type firingInspector struct{}
 
 func (firingInspector) ProjectOf(context.Context, string) string { return "p" }
+func (firingInspector) Placement(context.Context, string) (string, string, error) {
+	return "", "", nil
+}
 func (firingInspector) Changes(context.Context, string) (*consoleapi.ChangeSummary, error) {
 	return nil, nil
 }

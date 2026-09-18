@@ -56,10 +56,11 @@ func (a *Service) Selectors(ctx context.Context, conversation, agent string) (co
 	return consoleapi.Selectors{Model: sel.Model, Models: sel.Models, Options: sel.Options, Preferred: a.Coordinator.Preferences(conversation, agent)}, nil
 }
 
-// SetPreferences records the owner's choices for an agent in a thread.
-func (a *Service) SetPreferences(ctx context.Context, conversation, agent string, patch map[string]string) error {
+// SetPreferences records the owner's choices for an agent in a thread
+// and reports whether the session answering right now took them.
+func (a *Service) SetPreferences(ctx context.Context, conversation, agent string, patch map[string]string) (bool, error) {
 	if a.Coordinator == nil {
-		return errors.New("coordinator is not wired")
+		return false, errors.New("coordinator is not wired")
 	}
 	return a.Coordinator.SetPreferences(ctx, conversation, agent, patch)
 }
