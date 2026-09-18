@@ -3,25 +3,64 @@ import { Dialog, Modal, ModalOverlay } from "react-aria-components";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { getMaterial, listAnnotations, materialBlob, refKey } from "@/lib/api/material";
+import { useProjectMaterials } from "@/lib/materials";
+import { bytes, relative } from "@/lib/format";
 import type { Material, MaterialRef, MaterialAnnotation, MaterialSelector } from "@/lib/types";
 import { useMaterial } from "@/providers/material-provider";
 import { useI18n } from "@/providers/locale-provider";
 import { MaterialActions } from "./material-actions";
 
 export function MaterialShelf({ project }: { project: string }) {
-    const store = useMaterial(); const { t } = useI18n(); const [annotations, setAnnotations] = useState<MaterialAnnotation[]>([]); const [opened, setOpened] = useState<MaterialRef | null>(null); const [error, setError] = useState("");
+    const store = useMaterial(); const { t, locale } = useI18n();
+    const [annotations, setAnnotations] = useState<MaterialAnnotation[]>([]); const [opened, setOpened] = useState<MaterialRef | null>(null); const [error, setError] = useState("");
+    const { materials, error: listError, loaded } = useProjectMaterials(project, store.revision);
     const pins = store.pins(project);
+    // Pinning is this browser's shortlist, so it orders the project's
+    // materials rather than being the list: what a project has frozen is
+    // the same from any machine, what someone pinned is not.
+    const pinned = new Set(pins.map((pin) => pin.id));
+    const ordered = [...materials].sort((a, b) => Number(pinned.has(b.id)) - Number(pinned.has(a.id)) || Date.parse(b.created_at) - Date.parse(a.created_at));
+    // A pin can point at part of a material — lines of a file, a region
+    // of an image. Those hang under the material they were cut from.
+    const partsOf = (id: string) => pins.filter((pin) => pin.id === id && pin.selector);
     useEffect(() => { const controller = new AbortController(); void listAnnotations(project, controller.signal).then((value) => { setAnnotations(value.annotations || []); setError(""); }).catch((error) => { if (!controller.signal.aborted) setError(String(error)); }); return () => controller.abort(); }, [project, store.revision]);
     async function edit(annotation: MaterialAnnotation) { try { const material = await getMaterial(project, annotation.ref.id); store.annotate({ material, ref: annotation.ref, annotation }); } catch (error) { setError(String(error)); } }
     return <section className="flex min-w-0 flex-col gap-4 py-4"><p className="text-xs text-tertiary">{t("materials.shelfHint")}</p>
-        {!pins.length && <p className="text-sm text-tertiary">{t("materials.empty")}</p>}
-        <ul className="flex flex-col gap-2">{pins.map((ref) => <li key={refKey(ref)} className="rounded-lg bg-primary p-3"><button type="button" className="w-full truncate text-left text-sm font-medium" onClick={() => setOpened(ref)}>{ref.title}</button><div className="mt-1 flex gap-3 text-xs text-tertiary"><span>{t(`materials.${ref.kind}`)}</span><button type="button" className="underline" onClick={() => { try { store.unpin(project, ref); } catch (error) { setError(String(error)); } }}>{t("materials.unpin")}</button></div></li>)}</ul>
+        {!ordered.length && <p className="text-sm text-tertiary">{loaded ? t("materials.empty") : t("materials.loading")}</p>}
+        {!ordered.length && loaded && <p className="text-xs text-quaternary">{t("materials.emptyHint")}</p>}
+        <ul className="flex flex-col gap-2">{ordered.map((material) => {
+            const isPinned = pinned.has(material.id); const parts = partsOf(material.id);
+            return <li key={material.id} className="rounded-lg bg-primary p-3">
+                <button type="button" className="w-full truncate text-left text-sm font-medium" onClick={() => setOpened({ id: material.id })}>{material.title}</button>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-tertiary">
+                    <span>{t(`materials.${material.kind}`)}</span>
+                    <span className="tabular-nums">{bytes(material.size, locale)}</span>
+                    <span className="tabular-nums">{relative(material.created_at, locale)}</span>
+                    {isPinned
+                        ? <button type="button" className="underline" onClick={() => { try { store.unpin(project, { id: material.id }); } catch (error) { setError(String(error)); } }}>{t("materials.unpin")}</button>
+                        : <button type="button" className="underline" onClick={() => { try { store.pin(material, { id: material.id }); } catch (error) { setError(String(error)); } }}>{t("materials.pin")}</button>}
+                </div>
+                {parts.length > 0 && <ul className="mt-2 flex flex-col gap-1 border-t border-secondary pt-2">{parts.map((part) => <li key={refKey(part)}>
+                    <button type="button" className="w-full truncate text-left text-xs text-secondary" onClick={() => setOpened(part)}>{partLabel(part, t)}</button>
+                </li>)}</ul>}
+            </li>;
+        })}</ul>
         <h3 className="text-sm font-semibold">{t("materials.annotations")}</h3>
         {!annotations.length && <p className="text-xs text-tertiary">{t("materials.noAnnotations")}</p>}
         <ul className="flex flex-col gap-3">{annotations.map((annotation) => <li key={annotation.id} className="border-b border-secondary pb-3"><button type="button" className="text-left text-sm whitespace-pre-wrap break-words" onClick={() => void edit(annotation)}>{annotation.body || t("materials.annotate")}</button><div className="mt-1 text-xs text-tertiary"><button type="button" className="underline" onClick={() => setOpened(annotation.ref)}>{t("materials.open")}</button> · {annotation.ref.id.slice(0, 14)} · v{annotation.revision}</div></li>)}</ul>
-        {error && <p role="alert" className="text-xs text-error-primary">{error}</p>}
+        {(error || listError) && <p role="alert" className="text-xs text-error-primary">{error || listError}</p>}
         {opened && <MaterialPreview key={refKey(opened)} project={project} anchor={opened} onClose={() => setOpened(null)} />}
     </section>;
+}
+
+// partLabel names the cut a pin kept, so two pins on one file do not
+// read as the same row twice.
+function partLabel(ref: MaterialRef, t: ReturnType<typeof useI18n>["t"]): string {
+    const selector = ref.selector;
+    if (selector?.kind === "lines") return t("materials.selection", { start: selector.start || 1, end: selector.end || 1 });
+    if (selector?.kind === "rect" && selector.rect) return t("materials.rect");
+    if (selector?.kind === "quote") return selector.quote || t("materials.whole");
+    return t("materials.whole");
 }
 
 export function MaterialPreview({ project, anchor, onClose }: { project: string; anchor: MaterialRef; onClose: () => void }) {
