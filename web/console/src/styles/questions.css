@@ -1,11 +1,24 @@
-.question-panel { width: 100%; max-width: 48rem; max-height: 40dvh; margin: 0 auto 8px; overflow-y: auto; overscroll-behavior: contain; }
-.question-panel > * + * { margin-top: 12px; }
-.question-card { min-width: 0; padding: 16px; border: 1px solid var(--color-border-secondary); border-radius: 12px; background: var(--color-bg-primary); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+/* The panel sits above the composer and must stay a frame, not a window
+   that slides off. A single request keeps its heading and its buttons in
+   place; what was said and the list of choices scroll inside the card, and
+   the panel itself only scrolls when several requests are waiting. */
+.question-panel { display: flex; width: 100%; max-width: 48rem; max-height: 40dvh; flex-direction: column; gap: 12px; margin: 0 auto 8px; overflow-y: auto; overscroll-behavior: contain; }
+.question-card { display: flex; min-width: 0; flex-direction: column; flex-shrink: 0; padding: 16px; border: 1px solid var(--color-border-secondary); border-radius: 12px; background: var(--color-bg-primary); font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
 .question-header { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .question-kind { color: var(--color-text-brand-secondary); font-size: 12px; font-weight: 500; }
 .question-header h3 { color: var(--color-text-primary); font-size: 14px; line-height: 1.5; font-weight: 600; text-wrap: balance; }
 .question-asker { color: var(--color-text-tertiary); font-size: 12px; }
 .question-message { color: var(--color-text-secondary); }
+.question-card:not(.question-done) { max-height: 38dvh; }
+/* A tall window can afford to show more of what is being approved without
+   crowding the transcript or the composer; a short one cannot. */
+@media (min-height: 900px) {
+    .question-panel { max-height: 48dvh; }
+    .question-card:not(.question-done) { max-height: 46dvh; }
+}
+.question-card > .question-header, .question-card > .question-response, .question-card > .question-deferred, .question-card > .question-deadline, .question-card > .question-context { flex-shrink: 0; }
+.question-card > .question-message { min-height: 0; flex: 1 1 auto; overflow-y: auto; overscroll-behavior: contain; }
+.question-context > .question-message { max-height: clamp(4.5rem, 20dvh, 18rem); overflow-y: auto; overscroll-behavior: contain; }
 .question-message > :first-child { margin-top: 0; }
 .question-message > :last-child { margin-bottom: 0; }
 .question-response { display: flex; min-width: 0; flex-direction: column; gap: 12px; margin-top: 16px; }
@@ -17,7 +30,7 @@
 .question-option-description { display: block; color: var(--color-text-tertiary); font-size: 12px; line-height: 1.5; font-weight: 400; }
 .question-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .question-actions button { white-space: normal; }
-.question-permission-options { display: flex; flex-direction: column; gap: 8px; }
+.question-permission-options { display: flex; max-height: clamp(6rem, 18dvh, 16rem); flex-direction: column; gap: 8px; padding: 2px; overflow-y: auto; overscroll-behavior: contain; }
 .question-radio { display: flex; min-width: 0; min-height: 36px; align-items: flex-start; gap: 8px; padding: 8px 10px; border: 1px solid var(--color-border-secondary); border-radius: 8px; cursor: pointer; }
 .question-radio:hover { background: var(--color-bg-primary_hover); }
 .question-radio[data-selected] { border-color: var(--color-bg-brand-solid); background: var(--color-bg-active); }
