@@ -16,3 +16,13 @@ export const relative = (t?: string, locale: Locale = "zh", now = Date.now()) =>
     const [amount, unit]: [number, Intl.RelativeTimeFormatUnit] = seconds < 60 ? [seconds, "second"] : seconds < 3600 ? [Math.round(seconds / 60), "minute"] : seconds < 86400 ? [Math.round(seconds / 3600), "hour"] : [Math.round(seconds / 86400), "day"];
     return new Intl.RelativeTimeFormat(intlLocale(locale), { numeric: "auto", style: "short" }).format(-amount, unit);
 };
+
+// bytes reads a size the way a person would say it: three significant
+// figures at most, and the unit that keeps the number small.
+export const bytes = (value: number, locale: Locale = "zh") => {
+    const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+    let size = Math.max(0, value), unit = 0;
+    while (size >= 1024 && unit < units.length - 1) { size /= 1024; unit++; }
+    const digits = unit === 0 || size >= 100 ? 0 : size >= 10 ? 1 : 2;
+    return `${number(size, locale, { maximumFractionDigits: digits })} ${units[unit]}`;
+};

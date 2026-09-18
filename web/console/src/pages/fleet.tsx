@@ -18,7 +18,7 @@ import { Button } from "@/components/base/buttons/button";
 import { removeNode } from "@/lib/api/fleet";
 import { renameMachine } from "@/lib/machines";
 import { nodeLabel, nodeLabelIn } from "@/lib/node-name";
-import { number, relative, when } from "@/lib/format";
+import { bytes, number, relative, when } from "@/lib/format";
 import { addAgent, addNode, fetchNodeSettings, removeAgent, saveNodeSettings, updateAgent, type AddNodeResult, type AgentSpec } from "@/lib/api/fleet";
 import { conditionWords, missingTags, troubleWords } from "@/lib/agent-trouble";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
@@ -414,6 +414,7 @@ function MachineDrawer({ n, hubVersion, onUpgrade, onClose, onChanged }: { n: No
                     { k: tr("fleet.classification"), v: `${levelName(n.level || "internal", locale)}（${n.level || "internal"}）`, hint: tr("fleet.levelHint") },
                     ...(n.region ? [{ k: tr("fleet.leaseRegion"), v: n.region, hint: tr("fleet.leaseRegionHint") }] : []),
                     { k: tr("fleet.health"), v: h && h.disk_total > 0 ? tr("fleet.healthSummary", { disk: number(h.disk_free / (1 << 30), locale, { maximumFractionDigits: 0 }), load: number(h.load1, locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }), worktrees: h.worktrees }) : tr("fleet.unreported") },
+                    { k: tr("fleet.spaceUsed"), v: !h ? tr("fleet.unreported") : !h.space_at ? tr("history.spaceMeasuring") : <span className="tabular-nums">{bytes(h.workspace_bytes || 0, locale)}{h.state_bytes ? ` + ${bytes(h.state_bytes, locale)}` : ""}{h.space_partial ? "+" : ""}</span>, hint: h?.root || tr("fleet.spaceUsedHint") },
                     { k: tr("fleet.connection"), v: n.since ? when(n.since, locale) : "—" },
                 ]} />
                 {enrolling && <NodeAgentEnrollment node={n.name} onClose={() => setEnrolling(false)} onRegistered={onChanged} />}

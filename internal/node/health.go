@@ -12,6 +12,12 @@ import (
 // disk where workspaces live, the one-minute load, and how many
 // worktrees it is holding. It is capacity, not capability — a separate
 // fact from the snapshot, refreshed with every advert.
+// ownSpace is this machine's measurement of Steve's own directories;
+// CheckHealth reads it and the walk behind it runs at most this often.
+var ownSpace Space
+
+const spaceFreshness = 10 * time.Minute
+
 func CheckHealth(workspaceRoot, stateDir string) *nodewire.Health {
 	where := workspaceRoot
 	if where == "" {
@@ -20,8 +26,12 @@ func CheckHealth(workspaceRoot, stateDir string) *nodewire.Health {
 	if where == "" {
 		where = "."
 	}
-	h := &nodewire.Health{At: time.Now().UTC(), Load1: loadOne()}
+	h := &nodewire.Health{At: time.Now().UTC(), Load1: loadOne(), Root: workspaceRoot}
 	h.DiskFree, h.DiskTotal = diskOf(where)
+	// What Steve holds here is measured in the background: this advert
+	// carries the most recent walk rather than waiting for a new one.
+	space := ownSpace.Get(workspaceRoot, stateDir, spaceFreshness)
+	h.WorkspaceBytes, h.StateBytes, h.SpaceAt, h.SpacePartial = space.workspace, space.state, space.at, space.partial
 	if workspaceRoot != "" {
 		if entries, err := os.ReadDir(workspaceRoot); err == nil {
 			for _, e := range entries {

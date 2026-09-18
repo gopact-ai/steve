@@ -54,7 +54,13 @@ export interface Step {
     started_at?: string; ended_at?: string;
 }
 export interface Plan { id: string; task_id: string; rev: number; goal: string; by: string; because: string; steps: Step[]; created_at?: string; base?: string; fixed?: boolean }
-export interface Health { disk_free: number; disk_total: number; load1: number; worktrees: number; at: string }
+export interface Health {
+    disk_free: number; disk_total: number; load1: number; worktrees: number; at: string;
+    // What Steve itself holds on that machine, walked in the background:
+    // root is the directory measured, space_at when, space_partial says
+    // the walk stopped at its budget and the bytes are a floor.
+    root?: string; workspace_bytes?: number; state_bytes?: number; space_at?: string; space_partial?: boolean;
+}
 export interface Admission {
     node?: string; source: "node" | "hub" | "cached" | "legacy"; verdict: number; code?: string;
     generation?: number; sequence?: number; digest?: string; atoms?: { atom: string; verdict: number; code?: string }[]; at: string;

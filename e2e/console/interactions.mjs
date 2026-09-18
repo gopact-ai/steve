@@ -1945,6 +1945,34 @@ checks["fleet-display-name"] = async (f) => {
     assert.equal(await drawer.getByLabel("显示名称").count(), 0, "The form closes once the rename lands");
 };
 
+checks["audit-space-by-machine"] = async (f) => {
+    // Steve's own footprint is part of the audit: a machine says how much
+    // its workspace holds, one that has not finished its first walk says
+    // so, and one that reported nothing is not passed off as zero.
+    const nodes = [
+        { name: "node-4bbf207fa8525645ba6935bd07d227a7", display_name: "Steve's MacBook", role: "hub", up: true, version: "test", harnesses: [], health: { disk_free: 42 * (1 << 30), disk_total: 500 * (1 << 30), load1: 1.2, worktrees: 2, at, root: "/Users/steve/steve", workspace_bytes: 3.5 * (1 << 30), state_bytes: 180 * (1 << 20), space_at: at } },
+        { name: "node-77aa11bb22cc33dd44ee55ff66aa77bb", role: "node", up: true, version: "test", harnesses: [], health: { disk_free: 9 * (1 << 30), disk_total: 100 * (1 << 30), load1: 0.4, worktrees: 0, at, root: "/srv/steve", workspace_bytes: 512 * (1 << 20), space_at: at, space_partial: true } },
+        { name: "node-99cc88dd77ee66ff55aa44bb33cc22dd", role: "node", up: true, version: "test", harnesses: [], health: { disk_free: 5 * (1 << 30), disk_total: 50 * (1 << 30), load1: 0, worktrees: 0, at, root: "/opt/steve" } },
+        { name: "node-11223344556677889900aabbccddeeff", role: "node", up: false, version: "test", harnesses: [] },
+    ];
+    await f.page.route("**/state", (route) => route.fulfill({ json: { ...usageState(usageFixture()), hub: { node: nodes[0].name, version: "test", started: at }, nodes } }));
+    await f.page.goto(`${app.url}/#/dashboard?tab=audit`);
+    await f.page.reload();
+    const table = f.page.getByRole("grid", { name: "各节点占用", exact: true });
+    await table.waitFor();
+    const row = (name) => table.getByRole("row").filter({ hasText: name });
+    await row("Steve's MacBook").getByText("3.5 GB", { exact: true }).waitFor();
+    await row("Steve's MacBook").getByText("180 MB", { exact: true }).waitFor();
+    await row("Steve's MacBook").getByText("42 GB / 共 500 GB", { exact: true }).waitFor();
+    await row("Steve's MacBook").getByText("/Users/steve/steve", { exact: true }).waitFor();
+    assert.equal(await row(nodes[1].name.slice(0, 12)).getByTitle("目录很大，测量到预算上限即停，实际占用不低于该值").count(), 1, "A walk that stopped at its budget is marked as a floor");
+    await row(nodes[2].name.slice(0, 12)).getByText("首次测量中…", { exact: true }).waitFor();
+    await row(nodes[3].name.slice(0, 12)).getByText("该机器未上报占用", { exact: true }).waitFor();
+    await f.page.setViewportSize({ width: 390, height: 844 });
+    await noHorizontalOverflow(f.page);
+    assert.equal(f.calls.length, 0);
+};
+
 checks["usage-dashboard-ranges"] = async (f) => {
     const usage = usageFixture();
     await f.page.route("**/state", (route) => route.fulfill({ json: usageState(usage) }));

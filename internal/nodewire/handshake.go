@@ -147,6 +147,18 @@ type Health struct {
 	Load1     float64   `json:"load1"`
 	Worktrees int       `json:"worktrees"`
 	At        time.Time `json:"at"`
+	// Root is the directory the space below was measured under, so a
+	// reader knows which tree the number belongs to.
+	Root string `json:"root,omitempty"`
+	// WorkspaceBytes and StateBytes are what Steve currently holds on
+	// this machine: its workspace, and its own state directory when that
+	// lives outside the workspace. SpaceAt is when the walk was taken —
+	// zero while the first one is still running — and SpacePartial says
+	// the walk stopped at its budget, so the number is a floor.
+	WorkspaceBytes uint64    `json:"workspace_bytes,omitempty"`
+	StateBytes     uint64    `json:"state_bytes,omitempty"`
+	SpaceAt        time.Time `json:"space_at,omitzero"`
+	SpacePartial   bool      `json:"space_partial,omitempty"`
 }
 
 // Dial performs the hub side of the handshake on an established connection.
