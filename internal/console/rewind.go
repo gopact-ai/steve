@@ -55,6 +55,30 @@ type rewindPlan struct {
 // happened, so the owner may quote it but not rewrite it.
 func relayed(e Exchange) bool { return e.Prompt != "" || e.Origin != "" }
 
+// markRelayedLocked puts the relayed mark back on lines recorded before
+// the console kept it, so a thread restored from disk offers the same
+// rewrites a fresh one would. Only the exchanges a conversation still
+// retains can say; lines older than those keep what they were saved with.
+func (s *Service) markRelayedLocked() {
+	for conversation, list := range s.exchanges {
+		relayedExchanges := map[string]bool{}
+		for _, e := range list {
+			if relayed(e.Exchange) {
+				relayedExchanges[e.ID] = true
+			}
+		}
+		if len(relayedExchanges) == 0 {
+			continue
+		}
+		replies := s.replies[conversation]
+		for i := range replies {
+			if replies[i].Kind == "sent" && relayedExchanges[replies[i].ExchangeID] {
+				replies[i].Relayed = true
+			}
+		}
+	}
+}
+
 // planRewind reads what a rewind would need without changing anything.
 func (s *Service) planRewind(conversation, replyID string) (rewindPlan, error) {
 	s.mu.Lock()

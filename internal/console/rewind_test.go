@@ -264,3 +264,45 @@ func TestRelayedLinesCannotBeRewritten(t *testing.T) {
 		t.Fatalf("the transcript changed: %d sent lines", got)
 	}
 }
+
+// Threads written before the console kept the relayed mark must not gain
+// a rewrite on a line Steve relayed just because they were saved without
+// it: the retained exchange still says what the line was.
+func TestRestoreMarksRelayedLinesSavedWithoutTheMark(t *testing.T) {
+	doc := &memDoc{}
+	h := &rewindable{}
+	first := New(h, "ou_owner", readmodel.New(readmodel.Sources{}))
+	if err := first.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if _, err := first.Send(ctx, "main", "去做这件事"); err != nil {
+		t.Fatal(err)
+	}
+	if err := first.Continue(ctx, "main", "k1", "claude", "⤵ 子任务 #12 完成", "子任务回来了，接着干"); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, first, "console:main")
+
+	raw, _, err := doc.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "\"relayed\":true") {
+		t.Fatal("the relayed mark was not saved with the transcript")
+	}
+	doc.raw = []byte(strings.ReplaceAll(string(raw), "\"relayed\":true", "\"relayed\":false"))
+
+	restored := New(h, "ou_owner", readmodel.New(readmodel.Sources{}))
+	if err := restored.Persist(doc); err != nil {
+		t.Fatal(err)
+	}
+	for _, reply := range restored.Replies("main") {
+		if reply.Kind != "sent" {
+			continue
+		}
+		if want := reply.Input == "⤵ 子任务 #12 完成"; reply.Relayed != want {
+			t.Fatalf("restored line %q relayed = %v", reply.Input, reply.Relayed)
+		}
+	}
+}
