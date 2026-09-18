@@ -1159,7 +1159,7 @@ async function reviewFixture(f, { open = true } = {}) {
         if (url.pathname.endsWith("/tree")) return route.fulfill({ json: { attempt: "review-attempt", commit: "after", which: "result", dir: file, entries: file === "src" ? [{ name: "main.ts", path: "src/main.ts", kind: "file", size: 48 }, { name: "helper.ts", path: "src/helper.ts", kind: "file", size: 22 }] : [{ name: "src", path: "src", kind: "dir" }, { name: "README.md", path: "README.md", kind: "file", size: 36 }, { name: "empty.txt", path: "empty.txt", kind: "file", size: 0 }, { name: "new.txt", path: "new.txt", kind: "file", size: 10 }, { name: "linked", path: "linked", kind: "link" }, { name: "vendor", path: "vendor", kind: "repo" }, { name: "large.txt", path: "large.txt", kind: "file", size: 40000 }] } });
         if (url.pathname.endsWith("/file")) {
             if (state.holdFile && file === "README.md") await state.holdFile;
-            const text = file === "README.md" ? "# Project\n\nUnchanged project guide." : file === "src/main.ts" ? "const shared = true;\nconst after = 2;\n" : file === "empty.txt" ? "" : file === "large.txt" ? Array.from({ length: 1501 }, (_, i) => `line ${i + 1}`).join("\n") : file === "linked" ? "README.md" : "export const helper = 1;";
+            const text = file === "README.md" ? "# Project\n\nUnchanged project guide.\n\nSee [the helper](./src/helper.ts), [outside](../outside.txt), [the site](https://example.com/docs) and [top](#project).\n" : file === "src/main.ts" ? "const shared = true;\nconst after = 2;\n" : file === "empty.txt" ? "" : file === "large.txt" ? Array.from({ length: 1501 }, (_, i) => `line ${i + 1}`).join("\n") : file === "linked" ? "README.md" : "export const helper = 1;";
             return route.fulfill({ json: { attempt: "review-attempt", path: file, commit: "after", text, size: text.length } });
         }
         if (state.hold && file === "src/main.ts") await state.hold;
@@ -1467,6 +1467,32 @@ checks["code-late-source"] = async (f) => {
     await workspace.getByText("空文件", { exact: true }).waitFor();
     pending.release(); await delay(100);
     assert.equal(await workspace.getByText("Unchanged project guide.", { exact: true }).count(), 0, "Late source must not replace the active file");
+    assert.equal(f.calls.length, 0);
+};
+
+checks["preview-document-links"] = async (f) => {
+    await reviewFixture(f);
+    const workspace = f.page.getByRole("dialog", { name: "产物工作区" });
+    const before = f.page.url();
+    await workspace.getByRole("button", { name: "全部文件", exact: true }).click();
+    const tree = workspace.getByRole("navigation", { name: "项目文件" });
+    await tree.getByRole("button", { name: "README.md", exact: true }).click();
+    await workspace.getByText("Unchanged project guide.", { exact: true }).waitFor();
+    const site = workspace.getByRole("link", { name: "the site", exact: true });
+    assert.equal(await site.getAttribute("target"), "_blank", "A link to the web opens beside the console, not over it");
+    assert.equal(await workspace.getByRole("link", { name: "the helper", exact: true }).count(), 0, "A path inside the snapshot must not be a browser navigation");
+    for (const [words, title] of [["outside", "链接指向 ../outside.txt，在这里无法打开"], ["top", "链接指向 #project，在这里无法打开"]]) {
+        const inert = workspace.locator(".md-link-inert").filter({ hasText: words });
+        assert.equal(await inert.getAttribute("title"), title, "A link that leads nowhere readable says so instead of navigating");
+    }
+    const linked = workspace.getByRole("button", { name: "the helper", exact: true });
+    assert.equal(await linked.getAttribute("title"), "在工作区打开 src/helper.ts");
+    await linked.click();
+    await workspace.getByRole("region", { name: "源码 src/helper.ts", exact: true }).waitFor();
+    await workspace.getByText("export const helper = 1;").waitFor();
+    assert.equal(f.page.url(), before, "Following a document link keeps the console on its own page");
+    await workspace.getByRole("button", { name: "阅读 README.md", exact: true }).click();
+    await workspace.getByText("Unchanged project guide.", { exact: true }).waitFor();
     assert.equal(f.calls.length, 0);
 };
 

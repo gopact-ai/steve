@@ -1,10 +1,29 @@
-import { memo, type ReactElement, type ReactNode } from "react";
+import { createContext, memo, useContext, useMemo, type AnchorHTMLAttributes, type ReactElement, type ReactNode } from "react";
 import Markdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Element, Root, Text } from "hast";
 import type { Plugin } from "unified";
+import { useI18n } from "@/providers/locale-provider";
 import { CodeBlock } from "./code-block";
 import { Mermaid } from "./mermaid";
+
+// A document links to its neighbours with paths that mean something to the
+// file it came from, not to this page's address. Following one in the
+// browser walks out of the console and lands on a blank page, so a reader
+// that knows where the text lives says so here and gets the links opened
+// in place instead.
+export interface DocumentLinks {
+    // base is the path of the document being read, links resolve against it.
+    base: string;
+    open: (path: string) => void;
+}
+
+const documentLinks = createContext<DocumentLinks | null>(null);
+
+export function MarkdownDocument({ base, open, children }: DocumentLinks & { children: ReactNode }) {
+    const value = useMemo(() => ({ base, open }), [base, open]);
+    return <documentLinks.Provider value={value}>{children}</documentLinks.Provider>;
+}
 
 // Md renders a piece of markdown the way the transcript wants it: the
 // prose rules from globals.css, and every fenced block as a CodeBlock
@@ -18,6 +37,7 @@ export const Md = memo(function Md({ text, size = "sm", className }: { text: str
 });
 
 const components: Components = {
+    a: MdLink,
     pre: ({ children }) => {
         const el = children as ReactElement<{ className?: string; children?: ReactNode; "data-md-start"?: number; "data-md-end"?: number }> | undefined;
         if (!el || typeof el !== "object" || !("props" in el)) return <pre>{children}</pre>;
@@ -29,6 +49,40 @@ const components: Components = {
         return <CodeBlock lang={lang} code={code} sourceStart={el.props["data-md-start"]} sourceEnd={el.props["data-md-end"]} />;
     },
 };
+
+// A link is followed where it leads somewhere this app can go: the web
+// opens in a new tab so the console stays put, a neighbouring file opens in
+// the reader when one is listening, and anything else stays readable text
+// with its target in the tooltip rather than a navigation to nowhere.
+function MdLink({ href, children, node: _node, ...rest }: AnchorHTMLAttributes<HTMLAnchorElement> & { node?: unknown }) {
+    const { t } = useI18n();
+    const reader = useContext(documentLinks);
+    const target = (href ?? "").trim();
+    if (/^(https?:|mailto:|tel:)/i.test(target)) return <a {...rest} href={target} target="_blank" rel="noreferrer noopener">{children}</a>;
+    const path = reader && !/^[a-z][a-z0-9+.-]*:/i.test(target) ? resolveDocumentPath(reader.base, target) : null;
+    if (!path) return <span className="md-link-inert" title={target ? t("console.linkNotOpenable", { href: target }) : undefined}>{children}</span>;
+    return <button type="button" className="md-link" title={t("console.openLinkedFile", { path })} onClick={() => reader!.open(path)}>{children}</button>;
+}
+
+// Resolve a link the way a file browser would: relative to the folder of
+// the document, absolute against the root of the snapshot, and refusing to
+// climb out of it. A pure anchor or query has no file to open.
+export function resolveDocumentPath(base: string, href: string): string {
+    const [address] = href.split(/[?#]/, 1);
+    if (!address) return "";
+    let raw = address;
+    try { raw = decodeURI(address); } catch { /* A malformed escape is taken literally. */ }
+    const rooted = raw.startsWith("/");
+    const from = rooted || !base.includes("/") ? [] : base.slice(0, base.lastIndexOf("/")).split("/");
+    const segments = rooted ? [] : from.filter((part) => part && part !== ".");
+    for (const part of raw.split("/")) {
+        if (!part || part === ".") continue;
+        if (part !== "..") { segments.push(part); continue; }
+        if (!segments.length) return "";
+        segments.pop();
+    }
+    return segments.join("/");
+}
 
 // Preserve parser source offsets before presenting hard line breaks. Running
 // remark-breaks first discards positions on the text fragments it creates.

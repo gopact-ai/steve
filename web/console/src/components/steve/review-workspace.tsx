@@ -134,6 +134,14 @@ function SnapshotWorkspace({ attempt, choice, request, fresh, reload }: { attemp
         setPath(next); setModes((all) => ({ ...all, ...(activePath ? { [activePath]: mode } : {}), [next]: nextMode })); if (kind) setKinds((all) => ({ ...all, [next]: kind }));
         setAutoSelect(false); setContentError(null); setShowFiles(false);
     }
+    // A document that points at a neighbouring file opens it here, in the
+    // same snapshot, rather than letting the browser follow a path that
+    // means nothing to this page's address.
+    function openLinked(next: string) {
+        if (!next || next === activePath) return;
+        if (index && !index.changes.some((item) => item.path === next)) setScope("files");
+        chooseFile(next, previewKind(next) ? "preview" : "source");
+    }
     function chooseScope(next: "files" | "changes") {
         if (activePath) { setPath(activePath); setModes((all) => ({ ...all, [activePath]: mode })); }
         setScope(next);
@@ -190,7 +198,7 @@ function SnapshotWorkspace({ attempt, choice, request, fresh, reload }: { attemp
                 <div ref={content} className="review-code-scroll" data-mode={mode} tabIndex={0} aria-label={mode === "diff" ? t("console.diffContent") : mode === "preview" ? t("console.previewLabel", { path: activePath }) : t("console.sourceContent")}>
                     {!activePath ? <div className="review-empty"><Code02 aria-hidden="true" className="size-8 text-fg-tertiary" /><h2 className="font-medium text-primary">{t("console.chooseFile")}</h2><p>{t("console.chooseFileHint")}</p></div>
                         : contentError?.key === contentKey ? <div role="alert" className="review-empty"><p>{contentError.text}</p>{retryButton}</div>
-                            : mode === "preview" ? repository ? <div className="review-empty">{t("console.nestedSourceUnavailable")}</div> : source ? <FilePreview file={source} kind={rendered ?? "markdown"} /> : <div role="status" className="review-empty">{t("console.readingSource")}</div>
+                            : mode === "preview" ? repository ? <div className="review-empty">{t("console.nestedSourceUnavailable")}</div> : source ? <FilePreview file={source} kind={rendered ?? "markdown"} onOpenPath={openLinked} /> : <div role="status" className="review-empty">{t("console.readingSource")}</div>
                             : mode === "source" ? repository ? <div className="review-empty">{t("console.nestedSourceUnavailable")}</div> : change?.status === "D" ? <div className="review-empty">{t("console.deletedReadDiff")}</div> : source ? <SourceView key={fileKey} file={source} capture={capture(source.commit)} readingState={readingStates.current[activePath]} onReadingStateChange={(value) => { readingStates.current[activePath] = value; }} /> : <div role="status" className="review-empty">{t("console.readingSource")}</div>
                                 : indexError ? <div role="alert" className="review-empty"><p>{indexError}</p>{retryButton}<Button size="sm" color="link-gray" onClick={() => { chooseScope("files"); setModes((all) => ({ ...all, [activePath]: "source" })); }}>{t("console.readSource")}</Button></div>
                                     : !index ? <div role="status" className="review-empty">{t("console.readingChanges")}</div>

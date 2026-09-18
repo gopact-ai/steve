@@ -1,6 +1,6 @@
 import { useI18n } from "@/providers/locale-provider";
 import type { FileView } from "@/lib/types";
-import { Md } from "./markdown";
+import { Md, MarkdownDocument } from "./markdown";
 import { Mermaid } from "./mermaid";
 import "@/styles/file-preview.css";
 
@@ -21,14 +21,16 @@ export function previewKind(path: string): PreviewKind | null {
     }
 }
 
-export function FilePreview({ file, kind }: { file: FileView; kind: PreviewKind }) {
+export function FilePreview({ file, kind, onOpenPath }: { file: FileView; kind: PreviewKind; onOpenPath?: (path: string) => void }) {
     const { t } = useI18n();
     if (file.binary) return <div className="file-preview-empty">{t("console.binaryFile")}</div>;
     if (!file.text.trim()) return <div className="file-preview-empty">{t("console.emptyFile")}</div>;
     return (
         <div className="file-preview" aria-label={t("console.previewLabel", { path: file.path })}>
             {file.truncated && <p role="status" className="file-preview-notice">{t("console.previewPartial")}</p>}
-            {kind === "markdown" && <div className="file-preview-prose"><Md text={file.text} /></div>}
+            {kind === "markdown" && <div className="file-preview-prose">{onOpenPath
+                ? <MarkdownDocument base={file.path} open={onOpenPath}><Md text={file.text} /></MarkdownDocument>
+                : <Md text={file.text} />}</div>}
             {kind === "mermaid" && <div className="file-preview-prose"><Mermaid code={file.text} /></div>}
             {(kind === "html" || kind === "svg") && <Sandboxed file={file} kind={kind} />}
         </div>
