@@ -86,29 +86,39 @@ export const AssistantMessage = memo(function AssistantMessage({ r, selected, on
 
 // InlineProcess is the doing, in the transcript: the thinking summary
 // folded, then for a planned turn one group per step, then the turn's
-// own calls.
+// own calls. Delegated children are not part of that fold. They are
+// lines of the thread in their own right — a card each, in the order
+// they were handed over — so the reader sees them without opening
+// anything, and sees when each one started.
 export function InlineProcess({ process }: { process: Process }) {
     const { t, locale } = useI18n();
     if (!hasProcessContent(process, true)) return null;
     const steps: StepProcess[] = process.steps || [];
+    const children = steps.filter((s) => s.kind === "delegate").sort((a, b) => (a.since || "").localeCompare(b.since || ""));
+    const cards = children.map((s) => <DelegationCard key={s.id} id={s.id} info={s} progress={s} />);
     if (process.timeline?.length || steps.some((s) => s.timeline?.length || s.plan?.length)) return (
-        <details className="group/process min-w-0">
-            <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-tertiary hover:text-primary">
-                {t("console.trace")} <ChevronDown aria-hidden="true" className="size-3.5 transition group-open/process:rotate-180" />
-            </summary>
-            <div className="mt-2"><ProcessBody process={process} omitFinalText /></div>
-        </details>
+        <div className="flex min-w-0 flex-col gap-1">
+            {hasProcessContent({ ...process, steps: steps.filter((s) => s.kind !== "delegate") }, true) && (
+                <details className="group/process min-w-0">
+                    <summary className="flex cursor-pointer list-none items-center gap-1.5 text-xs text-tertiary hover:text-primary">
+                        {t("console.trace")} <ChevronDown aria-hidden="true" className="size-3.5 transition group-open/process:rotate-180" />
+                    </summary>
+                    <div className="mt-2"><ProcessBody process={process} omitFinalText omitDelegations /></div>
+                </details>
+            )}
+            {cards}
+        </div>
     );
     return (
         <div className="flex min-w-0 flex-col gap-0.5">
             {process.reasoning?.trim() && <ThinkingFold text={process.reasoning} />}
-            {steps.map((s) => s.kind === "delegate"
-                ? <DelegationCard key={s.id} id={s.id} info={s} progress={s} />
+            {steps.map((s) => s.kind === "delegate" ? null
                 : (s.reasoning?.trim() || s.tools?.length ? <div key={s.id}>
                     {s.reasoning?.trim() && <ThinkingFold text={s.reasoning} />}
                     {s.tools?.length ? <ToolCalls tools={s.tools} title={`${s.id} · ${headingOf(s.tools, locale)}`} defaultOpen={false} /> : null}
                 </div> : null))}
             {process.tools?.length ? <ToolCalls tools={process.tools} defaultOpen={steps.length === 0} /> : null}
+            {cards}
         </div>
     );
 }

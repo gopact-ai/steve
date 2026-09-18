@@ -8,11 +8,15 @@ import { Trace } from "./progress-view";
 import { useFollowTail } from "@/hooks/use-follow-tail";
 import { plain } from "@/lib/plain";
 import { useNodeLabel, whoIs } from "@/lib/node-name";
+import { when } from "@/lib/format";
 
 // DelegationCard is one delegated child as the transcript shows it: a
-// folding line — who is on it and where, its state, how long — and
-// under it the same trace as any agent, what it said and what it left
-// behind. Folding a finished child never removes its reasoning.
+// folding line — who is on it and where, when it was handed over, its
+// state, how long — and under it the same trace as any agent, what it
+// said and what it left behind. Who is on it never gives up its room to
+// the goal: the goal can be read folded open, the target is the reason
+// the card is worth a glance. Folding a finished child never removes
+// its reasoning.
 
 const tones: Record<string, "brand" | "success" | "error" | "gray"> = { running: "brand", done: "success", failed: "error" };
 const labels = { running: "status.inProgress", done: "status.done", failed: "status.failed" } as const;
@@ -20,7 +24,7 @@ const labels = { running: "status.inProgress", done: "status.done", failed: "sta
 export function DelegationCard({ id, info, progress, live, open }: {
     id: string; info: StepInfo; progress?: Progress; live?: boolean; open?: boolean;
 }) {
-    const { t } = useI18n();
+    const { t, locale } = useI18n();
     const nodeLabelOf = useNodeLabel();
     const state = info.state || (live ? "running" : "done");
     const label = labels[state as keyof typeof labels];
@@ -40,10 +44,11 @@ export function DelegationCard({ id, info, progress, live, open }: {
             <summary className="flex min-w-0 cursor-pointer list-none items-center gap-2 px-3 py-2 text-xs hover:bg-secondary/60">
                 {running ? <Loading01 className="size-3.5 shrink-0 animate-spin text-fg-brand-primary" /> : null}
                 <span className="shrink-0 font-medium text-primary">{t("consoleChrome.delegation", { id })}</span>
-                {who && <span className="min-w-0 truncate font-mono text-secondary" title={who}>{who}</span>}
+                {who && <span className="max-w-[45%] shrink-0 truncate font-mono text-secondary" title={who}>{who}</span>}
                 <Badge type="pill-color" size="sm" color={tones[state] ?? "gray"}>{label ? t(label) : state}</Badge>
                 {goal && <span className="min-w-0 truncate text-tertiary group-open/child:hidden" title={info.goal ? plain(info.goal) : undefined}>{goal}</span>}
                 <span className="ml-auto flex shrink-0 items-center gap-2 text-quaternary">
+                    {info.since && <span className="tabular-nums" title={info.since}>{when(info.since, locale)}</span>}
                     {info.elapsed && <span>{info.elapsed}</span>}
                     <ChevronDown className="size-3.5 transition group-open/child:rotate-180" />
                 </span>
