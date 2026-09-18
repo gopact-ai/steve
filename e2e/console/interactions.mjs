@@ -1641,12 +1641,15 @@ checks["composer-keys"] = async (f) => {
     assert.equal(await draftOf(f.box), composingDraft, "Nor may it leave a newline behind while composing");
     await f.box.evaluate((box) => box.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true })));
     const settledDraft = await draftOf(f.box);
-    await f.box.press("Enter");
+    // Still the same keystroke: the key that confirmed the candidate has not
+    // been let go of, so the Enter that arrives with the composition's end is
+    // the method's, however long the machine took to deliver it.
+    await f.page.keyboard.down("Enter");
     assert.equal(f.queued().length, 0, "The Enter that lands with compositionend must not send either");
     assert.equal(await draftOf(f.box), settledDraft, "That same Enter must not leave a stray newline behind either");
-    await f.page.clock.runFor(50);
+    await f.page.keyboard.up("Enter");
     await f.box.press("Enter");
-    await eventually(() => f.queued().length === 1, "Enter sends once the composition has settled");
+    await eventually(() => f.queued().length === 1, "Enter sends once the confirming key has been released");
     assert.equal(f.queued()[0].input, "first line\n**second** line", "The whole multi-line draft is sent");
     f.replies[A].push({ id: "sent-md", kind: "sent", conversation: A, at, input: "first line\n**second** line", text: "" });
     await f.emit({ kind: "console.sent", exchange_id: "md-turn", reply_id: "sent-md", text: "first line\n**second** line" });

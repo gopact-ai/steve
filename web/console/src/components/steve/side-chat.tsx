@@ -63,7 +63,7 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
     const focused = useRef(false);
     // Enter sends here too, so the same guard against an input method's
     // confirming keystroke applies.
-    const composing = useRef(false), settled = useRef(0);
+    const composing = useRef(false), confirming = useRef(false);
     useEffect(() => { if (!blocked && !focused.current && input.current) { input.current.focus({ preventScroll: true }); focused.current = true; } }, [blocked]);
     async function deliver(submission: Submission) {
         try {
@@ -104,7 +104,8 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
             {refs.length > 0 && <ul className="mb-2 flex flex-wrap gap-1" aria-label={t("materials.draftRefs")}>{refs.map((ref) => <li key={refKey(ref)} className="flex max-w-full items-center gap-1 rounded bg-secondary px-2 py-1 text-xs"><span className="truncate">{ref.title}</span><button type="button" aria-label={t("sideChat.removeRef", { title: ref.title })} onClick={async () => { if (!await removeDraftMaterial(session.id, ref)) side.report(session.id, t("sideChat.storage")); }}>×</button></li>)}</ul>}
             {pending && !pending.active && <div role="alert" className="mb-2 rounded-lg bg-warning-primary p-3 text-xs"><p>{t(pending.conflict ? "sideChat.conflict" : pending.rejected ? "sideChat.rejected" : "sideChat.unknown")}</p><p className="my-1 whitespace-pre-wrap break-words">{pending.input}</p>{pending.error && <p className="mb-2 break-words">{pending.error}</p>}{pending.id && !pending.conflict && !pending.rejected && <button type="button" className="mr-3 underline" onClick={() => void submit(true)}>{t("sideChat.retrySend")}</button>}{(!pending.id || pending.rejected) && <button type="button" className="mr-3 underline" onClick={() => restoreSubmission(session.id)}>{t("sideChat.restore")}</button>}<button type="button" className="underline" onClick={() => finishSubmission(session.id, pending.id)}>{t("sideChat.confirmed")}</button></div>}
             <TextArea textAreaRef={input} aria-label={t("sideChat.message")} placeholder={t("sideChat.placeholder")} value={text} onChange={(value) => { void updateDraft(session.id, value); }} rows={3} isDisabled={blocked} onCompositionStart={() => { composing.current = true; }}
-                onCompositionEnd={() => { composing.current = false; settled.current = Date.now(); }}
+                onCompositionEnd={() => { composing.current = false; confirming.current = true; }}
+                onKeyUp={() => { confirming.current = false; }}
                 onKeyDown={(event) => {
                     if (composing.current || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) {
                         if (event.key === "Enter") event.preventDefault();
@@ -112,9 +113,10 @@ function SideConversation({ session, onOpenMain }: { session: SideSession; onOpe
                     }
                     if (event.key !== "Enter" || event.shiftKey) return;
                     event.preventDefault();
-                    // An Enter that lands right after a composition settles is
-                    // the tail of confirming a candidate, not an instruction.
-                    if (Date.now() - settled.current >= 20) void submit();
+                    // An Enter that follows a composition while the confirming
+                    // key is still down is the tail of picking a candidate,
+                    // not an instruction. Its release frees the next one.
+                    if (!confirming.current) void submit();
                 }} />
             <div className="mt-2 flex items-center gap-2"><span role="status" className="min-w-0 flex-1 text-xs text-tertiary">{blocked ? t("sideChat.unavailable") : session.binding ? t("sideChat.binding") : pending?.active ? t("sideChat.sending") : stop?.error || stop?.message || ""}</span>{(busy || stop?.uncertain) && <Button size="sm" color="secondary" isDisabled={stop?.active} onClick={() => void cancel()}>{t(stop?.active ? "sideChat.stopping" : "sideChat.stop")}</Button>}<Button size="sm" isDisabled={blocked || !!pending || isStopPending(session.id) || (!text.trim() && !refs.length)} onClick={() => void submit()}>{t(busy ? "sideChat.queue" : "sideChat.send")}</Button></div>
             {session.agentReviewRequired && <div className="mt-2 space-y-2 text-xs"><p>{t("sideChat.chooseAgent")}</p><Button size="sm" color="secondary" onClick={() => void side.acceptWorkbenchAgent(session).catch((error) => side.report(session.id, error instanceof Error ? error.message : String(error)))}>{t("sideChat.checkChosenAgent")}</Button></div>}
