@@ -1751,6 +1751,7 @@ checks["readmodel-unknown"] = async (f) => {
     await f.page.getByText(/待处理信息尚未完整读取/).waitFor();
     assert.equal(await f.page.getByText("暂无待处理请求", { exact: true }).count(), 0, "Unavailable attention cannot be presented as no requests");
     await f.page.getByRole("link", { name: "资源", exact: true }).click();
+    await f.page.getByRole("tab", { name: /^Agent/ }).click();
     await f.page.getByText("活动状态未知", { exact: true }).waitFor();
 };
 
@@ -1956,7 +1957,7 @@ checks["fleet-live-activity"] = async (f) => {
     const state = { ...usageState(usageFixture()), tasks: [task("11", A, "scratch")], agents: [{ id: "test-agent", harness: "mock", eligible: true, busy: 1, activities: [] }] };
     let stateReads = 0;
     await f.page.route("**/state", (route) => { stateReads++; return route.fulfill({ json: state }); });
-    await f.page.goto(`${app.url}/#/fleet`); await f.page.reload();
+    await f.page.goto(`${app.url}/#/fleet?tab=agents`); await f.page.reload();
     await f.page.getByText("test-agent", { exact: true }).first().waitFor();
     await f.page.getByText("空闲", { exact: true }).first().waitFor();
     const reads = stateReads;
@@ -1986,7 +1987,7 @@ checks["fleet-display-name"] = async (f) => {
         view.revision++; view.nodes[0].name = body.name; nodes[0].display_name = body.name;
         return route.fulfill({ json: view });
     });
-    await f.page.goto(`${app.url}/#/fleet`); await f.page.reload();
+    await f.page.goto(`${app.url}/#/fleet?tab=machines`); await f.page.reload();
     const machines = f.page.locator("#fleet-machines");
     await machines.getByText("Steve's MacBook", { exact: true }).waitFor();
     await machines.getByText(nodes[0].name, { exact: true }).waitFor();
@@ -2381,7 +2382,7 @@ checks["fleet-version-drift"] = async (f) => {
     ];
     const state = { ...usageState(usageFixture()), hub: { node: "hub", version: "abc1234", started: at }, nodes };
     await f.page.route("**/state", (route) => route.fulfill({ json: state }));
-    await f.page.goto(`${app.url}/#/fleet`); await f.page.reload();
+    await f.page.goto(`${app.url}/#/fleet?tab=machines`); await f.page.reload();
     await f.page.getByText(/1 台机器与协调节点版本不同/).waitFor();
     assert.equal(await f.page.getByText("版本不同", { exact: true }).count(), 1);
     await f.page.screenshot({ path: path.join(output, "fleet-version-drift.png"), fullPage: true });

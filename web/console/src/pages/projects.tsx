@@ -18,6 +18,7 @@ import { useFleet } from "@/lib/fleet";
 import { nodeLabelIn, useNodeLabel } from "@/lib/node-name";
 import type { Conversation, Landing, Project, Repo, Workspace } from "@/lib/types";
 import { kindWord, workspaceState as workspaceStateLabel, levelName } from "@/lib/workspaces";
+import { LegendMark, Topology, type TopologyTone } from "@/components/steve/topology";
 import { ConfirmDialog } from "@/components/steve/confirm";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
 import { projectDirName, WorkspaceDirectoryField, WorkspaceDirectoryPreview } from "@/components/steve/workspace-directory";
@@ -152,6 +153,21 @@ export function ProjectsPage() {
 
 // WorkspaceCard is one place a project is: the directory, what git says
 // about it, and who can work there.
+// ProjectTopology is the fleet's picture again, with the project's home
+// at the centre and its copies around it: the same shape means the same
+// thing in both places, and a copy that failed to clone is the one line
+// that carries colour.
+function ProjectTopology({ p }: { p: Project }) {
+    const { t: tr, locale } = useI18n();
+    const nodeLabelOf = useNodeLabel();
+    const home = p.workspaces.find((w) => w.kind === "canonical") ?? p.workspaces[0];
+    if (!home) return null;
+    const tone = (w: Workspace): TopologyTone => w.state === "failed" ? "down" : w.state && w.state !== "ready" ? "warn" : "ok";
+    const spoke = (w: Workspace) => ({ id: w.id, label: nodeLabelOf(w.node), sub: kindWord(w.kind, locale), note: w.error || w.path, tone: tone(w) });
+    return <Topology label={tr("projects.topology")} center={spoke(home)} spokes={p.workspaces.filter((w) => w.id !== home.id).map(spoke)}
+        legend={<><LegendMark tone="ok">{workspaceStateLabel("ready", locale)}</LegendMark><LegendMark tone="warn">{workspaceStateLabel("provisioning", locale)}</LegendMark><LegendMark tone="down">{workspaceStateLabel("failed", locale)}</LegendMark></>} />;
+}
+
 function WorkspaceCard({ w, project, onChanged }: { w: Workspace; project: string; onChanged: () => void }) {
     const { t: tr, locale } = useI18n();
     const nodeLabelOf = useNodeLabel();
@@ -240,6 +256,7 @@ function ProjectDrawer({ p, onClose, onNewSession, onRemove }: { p: Project; onC
         <Drawer width={600} label={p.id} title={<><span className="text-base font-semibold text-primary">{p.id}</span>{p.default && <Badge type="pill-color" size="sm" color="brand">{tr("projects.defaultProject")}</Badge>}<Badge type="modern" size="sm" color="gray">{levelName(p.level, locale)}</Badge></>} subtitle={<><div className="mt-0.5 text-xs text-tertiary">{p.workspaces.length === 1 ? <>{tr("projects.primaryOnly", { node: nodeLabelOf(p.node) })}</> : <>{tr("projects.workspaceSummary", { count: p.workspaces.length, node: nodeLabelOf(p.node), copies: p.workspaces.filter((w) => w.kind !== "canonical").map((w) => nodeLabelOf(w.node)).join(", ") })}</>}</div></>} actions={<><Button size="sm" color="primary" onClick={onNewSession}>{tr("projects.newConversation")}</Button></>} onClose={onClose}>
                 <DrawerSection title={tr("projects.workspaces")} aside={<Button size="sm" color="link-color" iconLeading={Plus} onClick={() => setAddingWorkspace(true)}>{tr("projects.addCopy")}</Button>}>
                     {addingWorkspace && <AddWorkspace p={p} onClose={() => setAddingWorkspace(false)} onDone={() => refresh()} />}
+                    <ProjectTopology p={p} />
                     <ul className="flex flex-col gap-3">
                         {p.workspaces.map((w) => <WorkspaceCard key={w.id} w={w} project={p.id} onChanged={refresh} />)}
                     </ul>

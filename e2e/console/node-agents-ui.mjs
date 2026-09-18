@@ -53,7 +53,7 @@ async function open() {
 }
 async function screenshot(name) { if (!process.env.NODE_AGENT_SCREENSHOTS) return; await mkdir(process.env.NODE_AGENT_SCREENSHOTS, { recursive: true }); await page.screenshot({ path: path.join(process.env.NODE_AGENT_SCREENSHOTS, name + ".png"), animations: "disabled" }); }
 try {
-    await page.goto(url + "#/fleet");
+    await page.goto(url + "#/fleet?tab=machines");
     let dialog = await open();
     await dialog.getByText("/remote/bin/codex", { exact: true }).waitFor();
     assert.equal(f.posts.length, 0);
