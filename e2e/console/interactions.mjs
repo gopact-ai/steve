@@ -1625,6 +1625,22 @@ checks["readmodel-unknown"] = async (f) => {
     await f.page.getByText("活动状态未知", { exact: true }).waitFor();
 };
 
+checks["profile-regenerate"] = async (f) => {
+    // Generating a profile is still the reader's message: the confirmation
+    // opens a personal thread with the instructions written out, and nothing
+    // is sent until they send it.
+    await f.page.route("**/console/home", (route) => route.fulfill({ json: { path: "/test/home/.steve", files: [{ name: "USER.md", text: "# 用户档案\n\n旧的内容", bytes: 32, budget: 8192 }], total_budget: 32768, owner_bytes: 32, guest_bytes: 0, warnings: [], projects: [] } }));
+    await f.page.goto(`${app.url}/#/home?doc=${encodeURIComponent("file:USER.md")}`);
+    await f.page.getByRole("button", { name: "自动生成", exact: true }).click();
+    await f.page.getByRole("button", { name: "去新会话", exact: true }).click();
+    await eventually(async () => (await draftOf(f.box)).includes("/test/home/.steve/USER.md"), "The prepared prompt must land in the new thread's box");
+    assert.ok((await draftOf(f.box)).includes("USER.md"), "The prompt must name the file being rewritten");
+    assert.equal(f.queued().length, 0, "Preparing a prompt must never send it");
+    const bound = f.calls.filter((c) => c.path.endsWith("/initialize"));
+    assert.equal(bound.length, 1, "Exactly one thread is created");
+    assert.equal(bound[0].project, "home", "The thread belongs to the personal project");
+};
+
 checks["composer-keys"] = async (f) => {
     // Enter sends and Shift+Enter is a newline, the way every chat box
     // people already use behaves. Enter is also the key an input method
