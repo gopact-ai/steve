@@ -155,10 +155,17 @@ func (s *Services) awaitIdle(ctx context.Context, w *waitingRestart) {
 	}
 }
 
-// apply makes one attempt to restart the service now.
+// apply makes one attempt to restart the service now. It looks for a
+// conversation first, without fencing anything: a wait can last hours,
+// and sealing writes every couple of seconds only to find the same
+// conversation still running would make an ordinary submission fail with
+// a restart the person cannot see and did not cause.
 func (s *Services) apply(ctx context.Context, w *waitingRestart) error {
 	if w.name != "hub" {
 		return s.applyNode(ctx, w)
+	}
+	if s.admin.Coordinator != nil && len(s.admin.Coordinator.InFlight()) > 0 {
+		return s.coordinatorBusy()
 	}
 	release, err := s.seal(ctx, "hub")
 	if err != nil {
