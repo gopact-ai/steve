@@ -149,19 +149,28 @@ export function SkillsPage() {
                 <Panel title={tr("skills.machineSkills")} description={tr("skills.machineHint")}
                     aside={<Button size="sm" color="link-gray" iconLeading={RefreshCw01} isLoading={rescanning} onClick={rescan}>{tr("skills.rescan")}</Button>}>
                     {!machines ? <div className="text-xs text-tertiary">{tr("skills.loading")}</div> : (
-                        <ul className="flex flex-col gap-3">
-                            {machines.map((m) => (
-                                <li key={m.name} className="flex flex-col gap-1">
-                                    <div className="flex min-w-0 flex-wrap items-center gap-2 text-sm">
-                                        <Server01 className="size-3.5 text-fg-quaternary" />
-                                        <span className="font-medium text-primary">{m.name}</span>
-                                        {m.hub && <Badge type="pill-color" size="sm" color="brand">hub</Badge>}
-                                        {!m.up && <Badge type="pill-color" size="sm" color="gray">{tr("skills.disconnected")}</Badge>}
-                                        {m.error && <span className="truncate text-xs text-error-primary" title={m.error}>{m.error}</span>}
-                                        {m.up && m.skills.length === 0 && <span className="text-xs text-quaternary">{tr("skills.none")}</span>}
-                                    </div>
-                                    {m.skills.length > 0 && (
-                                        <ul className="ml-5 flex flex-col divide-y divide-secondary">
+                        <ul className="skill-source-list">
+                            {machines.map((m) => {
+                                // A machine can carry dozens of skills, so it opens on
+                                // request. The closed row still says how many there are
+                                // and how many are not imported yet, which is the only
+                                // reason to open one.
+                                const importable = m.skills.filter((f) => !f.loaded).length;
+                                const head = <>
+                                    <Server01 aria-hidden="true" className="size-4 shrink-0 text-fg-tertiary" />
+                                    <span className="truncate font-medium text-primary" title={m.name}>{nodeLabelIn(snap.nodes, m.name)}</span>
+                                    {m.hub && <Badge type="pill-color" size="sm" color="brand">hub</Badge>}
+                                    {!m.up && <Badge type="pill-color" size="sm" color="gray">{tr("skills.disconnected")}</Badge>}
+                                    {m.error && <span className="truncate text-xs text-error-primary" title={m.error}>{m.error}</span>}
+                                    <span className="ml-auto shrink-0 text-xs font-normal text-tertiary">
+                                        {m.skills.length === 0 ? tr("skills.machineEmpty") : importable ? tr("skills.machineSummary", { total: m.skills.length, importable }) : tr("skills.machineImported", { total: m.skills.length })}
+                                    </span>
+                                </>;
+                                if (m.skills.length === 0) return <li key={m.name} className="skill-source-card"><div className="skill-machine-summary">{head}</div></li>;
+                                return <li key={m.name} className="skill-source-card">
+                                    <details className="group/machine">
+                                        <summary className="skill-machine-summary">{head}<ChevronDown aria-hidden="true" className="size-4 shrink-0 text-fg-tertiary group-open/machine:rotate-180" /></summary>
+                                        <ul className="skill-machine-list flex flex-col divide-y divide-secondary">
                                             {m.skills.map((f) => (
                                                 <li key={f.path} className="flex min-w-0 flex-wrap items-center gap-3 py-2">
                                                     <div className="min-w-0 flex-1">
@@ -173,9 +182,9 @@ export function SkillsPage() {
                                                 </li>
                                             ))}
                                         </ul>
-                                    )}
-                                </li>
-                            ))}
+                                    </details>
+                                </li>;
+                            })}
                         </ul>
                     )}
                 </Panel>
@@ -205,7 +214,7 @@ export function SkillsPage() {
                             {(view?.nodes ?? []).map((n) => (
                                 <li key={n.name} className="skill-settings-row">
                                     <Server01 aria-hidden="true" className="size-4 shrink-0 text-fg-tertiary" />
-                                    <span className="min-w-0 flex-1 break-words text-sm text-primary">{n.name}</span>
+                                    <span className="min-w-0 flex-1 break-words text-sm text-primary" title={n.name}>{nodeLabelIn(snap.nodes, n.name)}</span>
                                     {!n.up ? <Badge type="pill-color" size="sm" color="gray">{tr("skills.offline")}</Badge> : !n.takes ? <Badge type="pill-color" size="sm" color="warning">{tr("skills.syncUnsupported")}</Badge> : n.synced ? <Badge type="pill-color" size="sm" color="success">{tr("skills.synced")}</Badge> : <Badge type="pill-color" size="sm" color="warning">{tr("skills.notSynced")}</Badge>}
                                 </li>
                             ))}

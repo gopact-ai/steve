@@ -61,6 +61,9 @@ export const skillsZh = {
     "skills.removeDirectoryName": "移除目录 {path}",
     "skills.enabledRatio": "{enabled} / {total} 个已启用",
     "skills.count": "{count} 个",
+    "skills.machineSummary": "{total} 个 · {importable} 个可导入",
+    "skills.machineImported": "{total} 个 · 已全部导入",
+    "skills.machineEmpty": "未发现技能",
     "skills.directoryCount": "{count} 个目录"
 } as const;
 
@@ -127,5 +130,8 @@ export const skillsEn = {
     "skills.removeDirectoryName": "Remove directory {path}",
     "skills.enabledRatio": "{enabled} / {total} enabled",
     "skills.count": "Items: {count}",
+    "skills.machineSummary": "{total} found · {importable} to import",
+    "skills.machineImported": "{total} found · all imported",
+    "skills.machineEmpty": "No skills found",
     "skills.directoryCount": "Directories: {count}"
 } as const satisfies Record<keyof typeof skillsZh, string>;

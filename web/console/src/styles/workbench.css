@@ -308,6 +308,12 @@ body.is-resizing-pane, body.is-resizing-pane * { cursor: col-resize !important; 
 .skill-source-name:hover > span:first-child { text-decoration: underline; text-underline-offset: 3px; }
 .skill-source-info { padding: 0 16px; border-top: 1px solid var(--color-border-secondary); font-size: 12px; color: var(--color-text-tertiary); }
 .skill-source-info > summary { padding-block: 12px; }
+.skill-machine-summary { display: flex; align-items: center; gap: 8px; min-height: 48px; padding: 10px 16px; border-radius: 10px; font-size: 13px; font-weight: 500; color: var(--color-text-secondary); list-style: none; }
+.skill-machine-summary::-webkit-details-marker { display: none; }
+details > .skill-machine-summary { cursor: pointer; }
+details > .skill-machine-summary:hover { background: var(--color-bg-primary_hover); }
+details[open] > .skill-machine-summary { border-end-start-radius: 0; border-end-end-radius: 0; }
+.skill-machine-list { padding: 0 16px 8px; border-top: 1px solid var(--color-border-secondary); }
 .skill-settings-grid { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr); gap: 20px; }
 .skill-settings-panel { border: 1px solid var(--color-border-secondary); border-radius: 10px; }
 .skill-settings-panel > .workbench-panel-header { padding: 18px 20px; }
