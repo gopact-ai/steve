@@ -110,12 +110,12 @@ func (s *Service) EnqueueCommand(ctx context.Context, conversation, input, comma
 // instead of the input; front puts the line ahead of everything still
 // waiting, behind what already ran or runs.
 type enqueueOptions struct {
-	Prompt, Key                                      string
-	Front                                            bool
+	Prompt, Key string
+	Front       bool
 	// RewindTo names a line already sent that this one replaces: the
 	// thread goes back to just before it and carries what was said
 	// earlier into the prompt. See rewind.go.
-	RewindTo string
+	RewindTo                                         string
 	Origin, Requester, ExpectedProject, ExpectedTask string
 	Refs                                             []material.Ref
 	Locale                                           string

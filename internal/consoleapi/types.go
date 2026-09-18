@@ -694,7 +694,7 @@ type Exchange struct {
 	Input        string `json:"input"`
 	// Prompt is what the agent is given when it differs from Input: a
 	// continuation after a restart shows the notice and says "go on".
-	Prompt          string `json:"prompt,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
 	// History is what the thread said before this line, carried as text
 	// because the agent's own session no longer holds it: a thread rewound
 	// to an edited message answers from a session that never saw the turns
