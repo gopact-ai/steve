@@ -25,6 +25,10 @@ export interface ComposerProps {
     preferenceKey?: string;
     quotes?: QuoteRef[];
     onDropQuote?: (q: QuoteRef) => void;
+    // Rewriting a line already sent takes the thread back to it, so the
+    // box says what sending now will undo before it is sent.
+    rewind?: { following: number };
+    onCancelRewind?: () => void;
     queue?: Queued[];
     onSteer?: (q: Queued) => void;
     onEditQueued?: (q: Queued, input: string) => Promise<void>;
@@ -90,6 +94,13 @@ export const Composer = memo(function Composer(p: ComposerProps) {
                         <QueuedLine key={q.id} q={q} p={p} />
                     ))}
                 </ul>
+            )}
+            {p.rewind && (
+                <div role="status" className="mb-1 flex items-center gap-2 rounded-xl bg-secondary/70 px-3 py-1.5 text-xs ring-1 ring-secondary">
+                    <Edit05 className="size-3.5 shrink-0 text-fg-quaternary" aria-hidden="true" />
+                    <span className="min-w-0 flex-1 text-secondary">{p.rewind.following > 0 ? t("console.rewindNotice", { count: number(p.rewind.following) }) : t("console.rewindNoticeLast")}</span>
+                    <button type="button" onClick={p.onCancelRewind} className="shrink-0 rounded-md px-1.5 py-0.5 text-tertiary hover:bg-primary hover:text-primary">{t("console.rewindCancel")}</button>
+                </div>
             )}
             <div className="composer-input">
                 {p.quotes && p.quotes.length > 0 && (

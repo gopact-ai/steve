@@ -77,10 +77,10 @@ export async function send(conversation: string, input: string, quotes?: QuoteRe
     const data = await request<{ reply: Reply }>("/console/send", { method: "POST", body: { conversation, input, command_id: id, quotes: quotes?.map(({ conversation, reply_id }) => ({ conversation, reply_id })) } });
     return data.reply;
 }
-export async function enqueue(conversation: string, input: string, quotes?: QuoteRef[], id = commandID(), refs?: MaterialRef[], locale?: string): Promise<Exchange> {
+export async function enqueue(conversation: string, input: string, quotes?: QuoteRef[], id = commandID(), refs?: MaterialRef[], locale?: string, rewindTo?: string): Promise<Exchange> {
     const support = await requireSubmissionSupport();
     if (refs?.length && !support.material_refs) throw new UnsentRequestError("This Hub does not support material references; the instruction was not sent.");
-    const exchange = await request<Exchange>("/console/queue", { method: "POST", body: { conversation, input, command_id: id, refs, locale, quotes: quotes?.map(({ conversation, reply_id }) => ({ conversation, reply_id })) } });
+    const exchange = await request<Exchange>("/console/queue", { method: "POST", body: { conversation, input, command_id: id, refs, locale, rewind_to: rewindTo, quotes: quotes?.map(({ conversation, reply_id }) => ({ conversation, reply_id })) } });
     if (!exchange || typeof exchange.id !== "string" || exchange.conversation !== conversation || exchange.key !== `client:${id}`) throw new Error("Invalid queue acknowledgement");
     return exchange;
 }

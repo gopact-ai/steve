@@ -113,6 +113,51 @@ async function fixture({ history = false, running = false } = {}) {
 }
 
 const checks = {
+    // Editing a line already sent is not a second question: the send that
+    // follows takes the thread back to that line, so the box says what it
+    // will undo and the submission names it.
+    async "edit-rewinds-the-thread"(f) {
+        const sent = { id: "sent-1", conversation: A, exchange_id: "ex-1", kind: "sent", at, input: "原来的问题" };
+        const answer = { id: "answer-1", conversation: A, exchange_id: "ex-1", kind: "reply", at, text: "原来的回答" };
+        f.replies[A].push(sent, answer);
+        await f.page.reload();
+        await f.page.getByText("原来的问题", { exact: true }).waitFor();
+
+        await f.box.click();
+        await f.page.keyboard.type("没发出去的草稿");
+        await eventually(async () => await draftOf(f.box) === "没发出去的草稿", "The draft must reach the editor");
+
+        const edit = f.page.getByRole("button", { name: "改写这条消息，从这里重来" });
+        await edit.click();
+        // The box already holds text, so it is not thrown away silently.
+        await f.page.getByRole("button", { name: "改写", exact: true }).click();
+        await eventually(async () => await draftOf(f.box) === "原来的问题", "Editing must put the sent line back in the box");
+        await f.page.getByText("发送后会从这条消息重来，它之后的 1 条对话会被移除，agent 也会重开一轮。", { exact: true }).waitFor();
+
+        // Cancelling gives back what was being typed, so an edit costs nothing.
+        await f.page.getByRole("button", { name: "取消改写" }).click();
+        await eventually(async () => await draftOf(f.box) === "没发出去的草稿", "Cancelling must restore the earlier draft");
+        assert.equal(await f.page.getByText("取消改写", { exact: true }).count(), 0, "Cancelling must take the notice away");
+
+        await edit.click();
+        await f.page.getByRole("button", { name: "改写", exact: true }).click();
+        await eventually(async () => await draftOf(f.box) === "原来的问题", "Editing must put the sent line back in the box");
+        await f.box.click();
+        await f.page.keyboard.press("ControlOrMeta+a");
+        await f.page.keyboard.type("改过的问题");
+        await eventually(async () => await draftOf(f.box) === "改过的问题", "The rewritten line must reach the editor");
+        f.replies[A] = f.replies[A].filter((r) => r.id !== sent.id && r.id !== answer.id);
+        await f.page.keyboard.press("Enter");
+
+        await eventually(async () => f.queued().length === 1, "The rewritten line must be submitted");
+        const call = f.queued()[0];
+        assert.equal(call.input, "改过的问题");
+        assert.equal(call.rewind_to, sent.id, "The submission must name the line it replaces");
+        await eventually(async () => await f.page.getByText("取消改写", { exact: true }).count() === 0, "A sent rewrite must clear the notice");
+        // The removed lines come back from the hub's own reading of the
+        // thread, so this waits for that read rather than the click.
+        await eventually(async () => await f.page.getByText("原来的回答", { exact: true }).count() === 0, "The answer to the replaced line must leave the transcript");
+    },
     async "channel-milestone-lifecycle"(f) {
         const milestone = { id: "progress-side", conversation: A, exchange_id: "exchange-side", kind: "milestone", at, text: "First channel milestone", format: "markdown", title: "builder · test" };
         f.replies[A].push(milestone);
@@ -2304,13 +2349,14 @@ checks["sent-line-actions"] = async (f) => {
     assert.match(await sent.locator(".message-user-meta > span").first().innerText(), /\d{1,2}:\d{2}/, "A sent line says when it was sent");
     await sent.getByRole("button", { name: "复制", exact: true }).click();
     assert.equal(await f.page.evaluate(() => navigator.clipboard.readText()), "问题1：", "Copy puts the line on the clipboard");
-    await sent.getByRole("button", { name: "编辑重发", exact: true }).click();
+    const edit = sent.getByRole("button", { name: "改写这条消息，从这里重来", exact: true });
+    await edit.click();
     await eventually(async () => await draftOf(f.box) === "问题1：", "Editing a sent line puts it back in the box");
     await f.box.fill("A draft that must not vanish");
-    await sent.getByRole("button", { name: "编辑重发", exact: true }).click();
+    await edit.click();
     await f.page.getByText("替换正在输入的内容？", { exact: true }).waitFor();
     assert.equal(await draftOf(f.box), "A draft that must not vanish", "Nothing is replaced before the answer");
-    await f.page.getByRole("button", { name: "替换", exact: true }).click();
+    await f.page.getByRole("button", { name: "改写", exact: true }).click();
     await eventually(async () => await draftOf(f.box) === "问题1：", "Confirming replaces the draft with the edited line");
     assert.equal(f.calls.length, 0, "Editing prepares a message; it does not send one");
 };

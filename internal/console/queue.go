@@ -109,8 +109,12 @@ func (s *Service) EnqueueCommand(ctx context.Context, conversation, input, comma
 // instead of the input; front puts the line ahead of everything still
 // waiting, behind what already ran or runs.
 type enqueueOptions struct {
-	Prompt, Key                                      string
-	Front                                            bool
+	Prompt, Key string
+	Front       bool
+	// RewindTo names a line already sent that this one replaces: the
+	// thread goes back to just before it and carries what was said
+	// earlier into the prompt. See rewind.go.
+	RewindTo                                         string
 	Origin, Requester, ExpectedProject, ExpectedTask string
 	Refs                                             []material.Ref
 	Locale                                           string
@@ -176,12 +180,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		var retryErr error
-		existing, retryErr = s.retryRecoveryStopLocked(existing)
-		if retryErr != nil {
-			return nil, Exchange{}, retryErr
-		}
-		return existing, copyExchange(existing.Exchange), nil
+		return s.resumeLocked(existing)
 	}
 	if strings.TrimSpace(input) == "" && len(options.Refs) == 0 {
 		return nil, Exchange{}, errors.New("input is required")
@@ -210,12 +209,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		if err != nil {
 			return nil, Exchange{}, err
 		}
-		var retryErr error
-		other, retryErr = s.retryRecoveryStopLocked(other)
-		if retryErr != nil {
-			return nil, Exchange{}, retryErr
-		}
-		return other, copyExchange(other.Exchange), nil
+		return s.resumeLocked(other)
 	}
 	e := &queuedExchange{
 		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
@@ -227,7 +221,21 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	if !strings.HasPrefix(key, "client:") {
 		e.PayloadHash = ""
 	}
+	if options.RewindTo != "" {
+		return s.acceptRewoundLocked(e, options.RewindTo, options.Front)
+	}
 	return s.acceptExchangeLocked(e, options.Front)
+}
+
+// resumeLocked replays a submission this conversation has already
+// accepted: the exchange it made, and a retry of the stop a recovery is
+// still waiting on.
+func (s *Service) resumeLocked(existing *queuedExchange) (*queuedExchange, Exchange, error) {
+	existing, err := s.retryRecoveryStopLocked(existing)
+	if err != nil {
+		return nil, Exchange{}, err
+	}
+	return existing, copyExchange(existing.Exchange), nil
 }
 
 func (s *Service) acceptExchangeLocked(e *queuedExchange, front bool) (*queuedExchange, Exchange, error) {
@@ -283,7 +291,11 @@ func (s *Service) Queue(conversation string) []Exchange {
 			}
 			remaining--
 		}
-		out = append(out, copyExchange(e.Exchange))
+		// The carried history is for the agent, not the page: it can run
+		// to a hundred kilobytes and nothing in the queue view reads it.
+		listed := copyExchange(e.Exchange)
+		listed.History = ""
+		out = append(out, listed)
 	}
 	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
 		out[i], out[j] = out[j], out[i]

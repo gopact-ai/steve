@@ -694,7 +694,12 @@ type Exchange struct {
 	Input        string `json:"input"`
 	// Prompt is what the agent is given when it differs from Input: a
 	// continuation after a restart shows the notice and says "go on".
-	Prompt          string `json:"prompt,omitempty"`
+	Prompt string `json:"prompt,omitempty"`
+	// History is what the thread said before this line, carried as text
+	// because the agent's own session no longer holds it: a thread rewound
+	// to an edited message answers from a session that never saw the turns
+	// that were removed.
+	History         string `json:"history,omitempty"`
 	Origin          string `json:"origin,omitempty"`
 	Requester       string `json:"requester,omitempty"`
 	ExpectedProject string `json:"expected_project,omitempty"`
@@ -716,6 +721,10 @@ var (
 	ErrExchangeNotFound  = errors.New("exchange not found")
 	ErrExchangeNotQueued = errors.New("exchange is no longer queued")
 	ErrCommandConflict   = errors.New("command_id was already used with a different submission")
+	// ErrRewindTargetGone is a line a submission meant to replace that is
+	// no longer in the transcript: it was already rewound past, or the
+	// thread was trimmed beyond it.
+	ErrRewindTargetGone = errors.New("that message is no longer in this thread")
 )
 
 type TaskMetaPatch struct {
