@@ -349,6 +349,24 @@ function merge(items: Capability[]): { c: Capability; scopes: string[] }[] {
 // MachineRow is one line per machine: who it is, where, which build and
 // system, what it may handle, how much room it has, whether it is here.
 // What it offers is a click away, in the drawer, where there is room.
+// MachineLabels keeps a machine's own words about itself on one line: what it
+// is for matters more at a glance than where it answers, so the labels lead
+// and the extras collapse into a count you can hover.
+function MachineLabels({ items }: { items: string[] }) {
+    const { t: tr } = useI18n();
+    if (!items.length) return <span className="truncate text-xs text-quaternary">{tr("fleet.noLabels")}</span>;
+    const shown = items.slice(0, 2);
+    const rest = items.length - shown.length;
+    return (
+        <span className="flex min-w-0 items-center gap-1 overflow-hidden" title={items.join("\n")}>
+            {shown.map((id) => (
+                <span key={id} className="truncate rounded bg-secondary px-1.5 py-0.5 font-mono text-xs text-secondary">{id}</span>
+            ))}
+            {rest > 0 && <span className="shrink-0 text-xs text-tertiary">+{rest}</span>}
+        </span>
+    );
+}
+
 function MachineDrawer({ n, hubVersion, onUpgrade, onClose, onChanged }: { n: NodeT; hubVersion?: string; onUpgrade: (n: NodeT) => void; onClose: () => void; onChanged: () => void }) {
     const { t: tr, locale } = useI18n();
     const [enrolling, setEnrolling] = useState(false);
@@ -504,7 +522,7 @@ export function FleetPage() {
                     <Table aria-label={tr("fleet.machine")} size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpened(id ? String(id) : null); }}>
                         <Table.Header>
                             <Table.Head id="node" label={tr("fleet.name")} className="w-[19%]" isRowHeader />
-                            <Table.Head id="host" label={tr("fleet.hostIp")} className="w-[21%]" />
+                            <Table.Head id="host" label={tr("fleet.labelsHost")} className="w-[21%]" />
                             <Table.Head id="version" label={tr("fleet.version")} className="w-[12%]" />
                             <Table.Head id="os" label={tr("fleet.system")} className="w-[12%]" />
                             <Table.Head id="level" label={tr("fleet.classification")} className="w-[10%]" />
@@ -522,9 +540,9 @@ export function FleetPage() {
                                         </div>
                                     </Table.Cell>
                                     <Table.Cell>
-                                        <div className="flex flex-col">
-                                            <span className="truncate text-primary" title={[n.host, ...(n.ips || [])].filter(Boolean).join("\n")}>{n.host && n.host !== n.name ? n.host : (n.ips || [])[0] || "—"}</span>
-                                            {n.host && n.host !== n.name && (n.ips || []).length > 0 && <span className="font-mono text-xs text-tertiary" title={(n.ips || []).join("\n")}>{(n.ips || [])[0]}{(n.ips || []).length > 1 ? ` +${(n.ips || []).length - 1}` : ""}</span>}
+                                        <div className="flex min-w-0 flex-col gap-0.5">
+                                            <MachineLabels items={n.capabilities || []} />
+                                            <span className="truncate font-mono text-xs text-tertiary" title={[n.host, ...(n.ips || [])].filter(Boolean).join("\n")}>{n.host && n.host !== n.name ? n.host : (n.ips || [])[0] || "—"}</span>
                                         </div>
                                     </Table.Cell>
                                     <Table.Cell><span className="block truncate font-mono text-xs text-tertiary" title={n.version}>{n.version || "—"}</span>{n.up && n.version && snap.hub.version && n.version !== snap.hub.version && <span className="text-xs text-warning-primary">{tr("fleet.versionDrift")}</span>}</Table.Cell>
