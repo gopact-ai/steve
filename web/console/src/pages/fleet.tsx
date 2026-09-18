@@ -567,10 +567,10 @@ export function FleetPage() {
                 <Table aria-label="Agent" size="sm" className="min-w-176 table-fixed" selectionMode="single" selectionBehavior="replace" onSelectionChange={(k) => { const id = k === "all" ? null : [...k][0]; setOpenedAgent(id ? String(id) : null); }}>
                     <Table.Header>
                         <Table.Head id="agent" label="Agent" className="w-[20%]" isRowHeader />
-                        <Table.Head id="state" label={tr("fleet.status")} className="w-[16%]" />
-                        <Table.Head id="now" label={tr("fleet.activity")} className="w-[21%]" />
-                        <Table.Head id="where" label={tr("fleet.environment")} className="w-[20%]" />
-                        <Table.Head id="model" label={tr("fleet.model")} className="w-[23%]" />
+                        <Table.Head id="state" label={tr("fleet.status")} className="w-[18%]" />
+                        <Table.Head id="where" label={tr("fleet.environment")} className="w-[18%]" />
+                        <Table.Head id="model" label={tr("fleet.model")} className="w-[22%]" />
+                        <Table.Head id="now" label={tr("fleet.activity")} className="w-[22%]" />
                     </Table.Header>
                     <Table.Body items={snap.agents} dependencies={[liveActivity]}>
                         {(a) => (
@@ -584,10 +584,7 @@ export function FleetPage() {
                                         {a.about && <span className="line-clamp-1 max-w-64 text-xs text-tertiary" title={a.about}>{a.about}</span>}
                                     </div>
                                 </Table.Cell>
-                                <Table.Cell><div className="flex min-w-0 flex-col gap-1"><div><StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />{a.busy ? <span className="ml-1 text-xs text-tertiary">{a.busy}{a.slots ? `/${a.slots}` : ""}</span> : null}</div>{!a.eligible && <TroubleLine a={a} />}{a.repair && <Button size="sm" color="link-color" onClick={(e: React.MouseEvent) => { e.stopPropagation(); act(`/repair ${a.id}`); }}>{tr("fleet.repairAgent", { agent: a.repair })}</Button>}</div></Table.Cell>
-                                <Table.Cell>
-                                    {withLiveActivity(a.activities, liveActivity[a.id]).length ? withLiveActivity(a.activities, liveActivity[a.id]).map((x) => <div key={x.attempt_id} className="truncate text-xs text-secondary" title={x.detail}>#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since, locale)}</div>) : <span className="text-xs text-quaternary">{a.activity_known === false ? tr("fleet.activityUnknown") : tr("fleet.idle")}</span>}
-                                </Table.Cell>
+                                <Table.Cell><div className="flex min-w-0 flex-col gap-1"><div><StateBadge state={a.eligible ? "ready_agent" : "blocked_agent"} />{a.busy ? <span className="ml-1.5 text-xs text-tertiary" title={a.slots ? tr("fleet.runningSlotsHint", { count: a.busy, slots: a.slots }) : tr("fleet.runningHint", { count: a.busy })}>{a.slots ? tr("fleet.runningOfSlots", { count: a.busy, slots: a.slots }) : tr("fleet.running", { count: a.busy })}</span> : null}</div>{!a.eligible && <TroubleLine a={a} />}{a.repair && <Button size="sm" color="link-color" onClick={(e: React.MouseEvent) => { e.stopPropagation(); act(`/repair ${a.id}`); }}>{tr("fleet.repairAgent", { agent: a.repair })}</Button>}</div></Table.Cell>
                                 <Table.Cell><div className="flex min-w-0 flex-col gap-1"><span className="truncate text-xs text-secondary" title={a.node || snap.hub.node}>{nodeLabelIn(snap.nodes, a.node || snap.hub.node)}</span><span className="truncate text-xs text-tertiary">{a.harness}</span></div></Table.Cell>
                                 <Table.Cell>
                                     <div className="flex flex-col">
@@ -595,6 +592,9 @@ export function FleetPage() {
                                         {a.observed && <span className="truncate text-xs text-tertiary" title={tr("fleet.observedModel", { model: a.observed })}>{tr("fleet.last")}{a.observed}</span>}
                                         {a.options && Object.keys(a.options).length > 0 && <span className="truncate text-xs text-tertiary" title={Object.entries(a.options).map(([k, v]) => `${selectorName(a, k)} ${v}`).join(" · ")}>{Object.entries(a.options).map(([k, v]) => `${selectorName(a, k)} ${v}`).join(" · ")}</span>}
                                     </div>
+                                </Table.Cell>
+                                <Table.Cell>
+                                    {withLiveActivity(a.activities, liveActivity[a.id]).length ? withLiveActivity(a.activities, liveActivity[a.id]).map((x) => <div key={x.attempt_id} className="truncate text-xs text-secondary" title={x.detail}>#{x.task_id} {x.kind}{x.tool ? ` · ${x.tool}` : ""} · {relative(x.since, locale)}</div>) : <span className="text-xs text-quaternary">{a.activity_known === false ? tr("fleet.activityUnknown") : tr("fleet.idle")}</span>}
                                 </Table.Cell>
                             </Table.Row>
                         )}
