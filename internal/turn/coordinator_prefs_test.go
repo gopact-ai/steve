@@ -42,17 +42,20 @@ func TestOpenReappliesOptionPreferencesToResumedSession(t *testing.T) {
 	}
 }
 
-// Changing a selector while the agent is answering is not refused. The
-// running turn keeps the session it started on — taking it away mid-answer
-// is the one thing worth refusing for — and the choice is held for the
-// session the next turn opens.
+// A turn whose session cannot take the change — it has not opened one
+// yet, or the agent refuses mid-answer — keeps the session it started on,
+// and the choice is held for the session the next turn opens.
 func TestSelectorChosenDuringATurnLandsOnTheNextOne(t *testing.T) {
 	c, rt, _ := selectorCoordinator(t, true)
 	if !c.beginTurn("chat", "grok", func() {}) {
 		t.Fatal("the fixture already had a turn in flight")
 	}
-	if err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": "m3"}); err != nil {
+	live, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": "m3"})
+	if err != nil {
 		t.Fatalf("a choice made while the agent was answering was refused: %v", err)
+	}
+	if live {
+		t.Fatal("a turn with no session open yet cannot have taken the change live")
 	}
 	during := c.store.Conversation("chat")
 	if during.Preferences["grok"]["model"] != "m3" {
@@ -98,8 +101,12 @@ func TestSelectorChosenDuringATurnLandsOnTheNextOne(t *testing.T) {
 // Between turns the session is exchanged straight away, as it always was.
 func TestSelectorChosenBetweenTurnsRollsTheSessionAtOnce(t *testing.T) {
 	c, rt, _ := selectorCoordinator(t, true)
-	if err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": "m3"}); err != nil {
+	live, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"model": "m3"})
+	if err != nil {
 		t.Fatal(err)
+	}
+	if live {
+		t.Fatal("an idle conversation has no running session to change")
 	}
 	after := c.store.Conversation("chat")
 	if _, ok := after.Sessions["grok"]; ok || !reflect.DeepEqual(rt.closed, []string{"ns_retained"}) {
@@ -107,5 +114,62 @@ func TestSelectorChosenBetweenTurnsRollsTheSessionAtOnce(t *testing.T) {
 	}
 	if after.Renew["grok"] {
 		t.Fatal("a session already rolled over must not be renewed again")
+	}
+}
+
+// Approval mode is the selector someone changes because they are tired of
+// answering: the request they are looking at is one of many the running
+// turn will make. So a live session takes the change straight away, and
+// no renewal is needed — the turn goes on, asking less.
+func TestSelectorChosenDuringATurnLandsOnTheLiveSession(t *testing.T) {
+	for _, refused := range []bool{false, true} {
+		t.Run(map[bool]string{false: "taken", true: "refused"}[refused], func(t *testing.T) {
+			c, rt, _ := selectorCoordinator(t, true)
+			configurable := rt.runner.(*recoveryConfigurable)
+			configurable.refused = refused
+			configurable.settings.Options = append(configurable.settings.Options, view.Option{
+				ID: "mode", Category: "mode", Current: "read-only",
+				Choices: []view.Choice{{Value: "read-only"}, {Value: "agent-full-access"}},
+			})
+			if !c.beginTurn("chat", "grok", func() {}) {
+				t.Fatal("the fixture already had a turn in flight")
+			}
+			c.setRunner("chat", "grok", configurable)
+			live, err := c.SetPreferences(t.Context(), "chat", "grok", map[string]string{"mode": "agent-full-access"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if live == refused {
+				t.Fatalf("live = %v for a session that refused = %v", live, refused)
+			}
+			mode := ""
+			for _, option := range configurable.Settings().Options {
+				if option.ID == "mode" {
+					mode = option.Current
+				}
+			}
+			after := c.store.Conversation("chat")
+			if refused {
+				if mode != "read-only" {
+					t.Fatalf("a refused change still moved the session to %q", mode)
+				}
+				if !after.Renew["grok"] {
+					t.Fatal("a refused change left nothing for the next turn to renew")
+				}
+				return
+			}
+			if mode != "agent-full-access" {
+				t.Fatalf("the running session's mode = %q, want agent-full-access", mode)
+			}
+			if after.Renew["grok"] {
+				t.Fatal("a session that took the change does not need replacing")
+			}
+			if len(rt.closed) != 0 {
+				t.Fatalf("the running turn's session was closed under it: %v", rt.closed)
+			}
+			if after.Preferences["grok"]["mode"] != "agent-full-access" {
+				t.Fatalf("the choice was not recorded for later sessions: %+v", after.Preferences)
+			}
+		})
 	}
 }

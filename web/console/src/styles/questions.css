@@ -4,6 +4,7 @@
 .question-header { display: flex; flex-direction: column; gap: 4px; margin-bottom: 12px; }
 .question-kind { color: var(--color-text-brand-secondary); font-size: 12px; font-weight: 500; }
 .question-header h3 { color: var(--color-text-primary); font-size: 14px; line-height: 1.5; font-weight: 600; text-wrap: balance; }
+.question-asker { color: var(--color-text-tertiary); font-size: 12px; }
 .question-message { color: var(--color-text-secondary); }
 .question-message > :first-child { margin-top: 0; }
 .question-message > :last-child { margin-bottom: 0; }
@@ -40,6 +41,13 @@
 .question-history-items { gap: 4px; margin-top: 8px; }
 .question-done-row { display: flex; min-width: 0; flex-wrap: wrap; align-items: baseline; column-gap: 10px; row-gap: 2px; }
 .question-done-row h3 { min-width: 0; color: var(--color-text-primary); font-size: 14px; font-weight: 500; line-height: 1.5; }
+.question-done-who { min-width: 0; color: var(--color-text-tertiary); font-size: 12px; overflow-wrap: anywhere; }
+.question-mode-trigger { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; padding: 4px 6px; border-radius: 6px; color: var(--color-text-tertiary); font-size: 12px; cursor: pointer; }
+.question-mode-trigger:hover { background: var(--color-bg-primary_hover); color: var(--color-text-secondary); }
+.question-mode-trigger[data-focus-visible] { outline: 2px solid var(--color-focus-ring); outline-offset: 2px; }
+.question-mode-trigger[data-disabled] { cursor: default; opacity: .5; }
+.question-mode-note { flex-basis: 100%; color: var(--color-text-tertiary); font-size: 12px; }
+.question-history-more { align-self: flex-start; margin-top: 4px; }
 .question-done-outcome { display: inline-flex; min-width: 0; align-items: baseline; gap: 6px; color: var(--color-text-tertiary); font-size: 12px; }
 .question-done-answer { min-width: 0; color: var(--color-text-secondary); font-size: 13px; overflow-wrap: anywhere; }
 .question-done-time { margin-left: auto; color: var(--color-text-quaternary); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }

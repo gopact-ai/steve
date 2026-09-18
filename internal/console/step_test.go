@@ -135,6 +135,9 @@ func (h stepHandler) Handle(_ context.Context, req turn.Request) (turn.Result, e
 type finishingInspector struct{ entered, release chan struct{} }
 
 func (i finishingInspector) ProjectOf(context.Context, string) string { return "scratch" }
+func (i finishingInspector) Placement(context.Context, string) (string, string, error) {
+	return "", "", nil
+}
 func (i finishingInspector) Changes(context.Context, string) (*consoleapi.ChangeSummary, error) {
 	close(i.entered)
 	<-i.release

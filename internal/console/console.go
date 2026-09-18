@@ -134,6 +134,9 @@ func (s *Service) SetTitler(t Titler) { s.titler = t }
 type Inspector interface {
 	Changes(ctx context.Context, attempt string) (*consoleapi.ChangeSummary, error)
 	ProjectOf(ctx context.Context, conversation string) string
+	// Placement names the agent an attempt ran as and the machine it ran
+	// on, so a request for permission can say who is waiting.
+	Placement(ctx context.Context, attempt string) (agent string, node string, err error)
 }
 
 // QuoteRef points at one stored line of a thread to carry along with a

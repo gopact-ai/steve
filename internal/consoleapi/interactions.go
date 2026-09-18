@@ -32,16 +32,21 @@ type QuestionAnswer struct {
 }
 
 type PendingQuestion struct {
-	ID            string           `json:"id"`
-	Conversation  string           `json:"conversation"`
-	ExchangeID    string           `json:"exchange_id"`
-	Project       string           `json:"project,omitempty"`
-	TaskID        string           `json:"task_id,omitempty"`
-	AttemptID     string           `json:"attempt_id,omitempty"`
-	SessionID     string           `json:"session_id,omitempty"`
-	Generation    uint64           `json:"generation,omitempty"`
-	ToolCallID    string           `json:"tool_call_id,omitempty"`
-	RequestID     string           `json:"request_id,omitempty"`
+	ID           string `json:"id"`
+	Conversation string `json:"conversation"`
+	ExchangeID   string `json:"exchange_id"`
+	Project      string `json:"project,omitempty"`
+	TaskID       string `json:"task_id,omitempty"`
+	AttemptID    string `json:"attempt_id,omitempty"`
+	SessionID    string `json:"session_id,omitempty"`
+	Generation   uint64 `json:"generation,omitempty"`
+	ToolCallID   string `json:"tool_call_id,omitempty"`
+	RequestID    string `json:"request_id,omitempty"`
+	// Agent and Node name who is waiting for the answer: the agent that
+	// asked and the machine it ran on, resolved from the attempt on
+	// record so a request reads as "codex @ 我的mac" rather than an id.
+	Agent         string           `json:"agent,omitempty"`
+	Node          string           `json:"node,omitempty"`
 	Principal     string           `json:"principal"`
 	Kind          string           `json:"kind"` // permission | question
 	Title         string           `json:"title,omitempty"`

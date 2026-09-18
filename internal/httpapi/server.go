@@ -807,14 +807,15 @@ func (s *Server) consoleSetPreferences(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "bad request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if err := s.admin.SetPreferences(r.Context(), req.Conversation, req.Agent, req.Patch); err != nil {
+	live, err := s.admin.SetPreferences(r.Context(), req.Conversation, req.Agent, req.Patch)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	// What to say about it is the page's to say, in the page's language:
-	// a choice made mid-turn lands when the turn ends, one made between
-	// turns lands on the next.
-	writeJSON(w, map[string]any{"ok": true})
+	// What to say about it is the page's to say, in the page's language;
+	// live is the fact behind it: the running session took the change, so
+	// it applies to what the agent does next rather than to the next turn.
+	writeJSON(w, map[string]any{"ok": true, "live": live})
 }
 
 // consoleTask joins one task for the page: the read model's task, plan

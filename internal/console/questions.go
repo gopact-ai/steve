@@ -2,6 +2,8 @@ package console
 
 import (
 	"context"
+	"fmt"
+	"log/slog"
 	"slices"
 	"sort"
 	"strings"
@@ -156,6 +158,22 @@ func (s *Service) publishQuestion(q consoleapi.PendingQuestion) {
 	}
 }
 
+// nameAsker fills in who is waiting on the answer. The attempt on record
+// is the authority on which agent ran and where, and a question without
+// one — a recovery prompt raised before any attempt exists — simply goes
+// unattributed rather than guessing.
+func (s *Service) nameAsker(ctx context.Context, q *consoleapi.PendingQuestion) {
+	if s.inspector == nil || q.AttemptID == "" || q.Agent != "" || q.Node != "" {
+		return
+	}
+	agentID, node, err := s.inspector.Placement(ctx, q.AttemptID)
+	if err != nil {
+		slog.Warn(fmt.Sprintf("console: naming the agent behind attempt %s: %v", q.AttemptID, err), "attempt", q.AttemptID, "conversation", q.Conversation)
+		return
+	}
+	q.Agent, q.Node = agentID, node
+}
+
 func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestion) (consoleapi.PendingQuestion, error) {
 	if err := ctx.Err(); err != nil {
 		return q, err
@@ -178,6 +196,7 @@ func (s *Service) awaitQuestion(ctx context.Context, q consoleapi.PendingQuestio
 			q.Project = current.Project.ID
 		}
 	}
+	s.nameAsker(ctx, &q)
 	q.ID, q.State, q.Principal = "q"+strings.TrimPrefix(newReplyID(), "r"), "pending", s.owner
 	q.CreatedAt = time.Now().UTC()
 	q.UpdatedAt, q.Deadline = q.CreatedAt, q.CreatedAt.Add(s.questionTimeout)

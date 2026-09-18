@@ -598,7 +598,7 @@ export function ConsolePage() {
     const chooseAgent = useEventCallback((id: string) => void submit(`/use ${id}`));
     const pressKey = useEventCallback((e: KeyboardEvent) => onKey(e));
     const loadSelectors = useEventCallback(() => fetchSelectors(conversation, context!.agent!.id));
-    const prefer = useEventCallback(async (patch: Record<string, string>) => { if (!context?.agent) return; const running = !!live; await setPreferences(conversation, context.agent.id, patch); if (activeConversation.current === conversation) { setStatus(t(running ? "console.preferenceNextTurn" : "console.preferenceSaved")); loadContext(); } });
+    const prefer = useEventCallback(async (patch: Record<string, string>) => { if (!context?.agent) return; const running = !!live; const result = await setPreferences(conversation, context.agent.id, patch); if (activeConversation.current === conversation) { setStatus(t(result.live ? "console.preferenceLive" : running ? "console.preferenceNextTurn" : "console.preferenceSaved")); loadContext(); } });
 
     const sessions = (collapsed = sessionsCollapsed, resizable = true) => <SessionsTree resizable={resizable} list={listed} projects={snap.projects} current={conversation} onPick={pickConversation} onNew={openNewSession} creating={creating} onImport={openImport}
                 onUpdate={patchConversation}

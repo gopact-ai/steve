@@ -12,6 +12,9 @@ import (
 type scheduledInspector struct{ project string }
 
 func (i *scheduledInspector) ProjectOf(context.Context, string) string { return i.project }
+func (i *scheduledInspector) Placement(context.Context, string) (string, string, error) {
+	return "", "", nil
+}
 func (*scheduledInspector) Changes(context.Context, string) (*consoleapi.ChangeSummary, error) {
 	return nil, nil
 }

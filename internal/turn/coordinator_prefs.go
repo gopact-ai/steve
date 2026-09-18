@@ -44,30 +44,74 @@ func (c *Coordinator) Preferences(conversationID, agentID string) map[string]str
 	return c.store.Preferences(conversationID, agentID)
 }
 
-// SetPreferences records the owner's choices and rolls the agent's
-// session over — the current one is archived, the next turn opens a
-// fresh one with the choices applied. The task goes on; only the
-// upstream session changes.
+// SetPreferences records the owner's choices and applies them. Between
+// turns the agent's session is rolled over — the current one archived,
+// the next opened with the choices applied — so the task goes on and only
+// the upstream session changes.
 //
-// A turn in flight does not refuse the change. Its session cannot be
-// exchanged under it, so the choice is recorded and the agent is named
-// for renewal: the turn finishes on the session it started with, and the
-// next one begins on a session that has the new choices.
-func (c *Coordinator) SetPreferences(ctx context.Context, conversationID, agentID string, patch map[string]string) error {
+// A turn in flight does not refuse the change either. Every selector an
+// agent exposes can be set on a live session, and approval mode is the
+// one that has to be: someone tired of approving each command wants the
+// asking to stop now, not after this turn. So the running session is
+// asked first; live reports whether it took the change. An agent that
+// refuses mid-turn falls back to renewal, and the turn finishes on the
+// session it started with.
+func (c *Coordinator) SetPreferences(ctx context.Context, conversationID, agentID string, patch map[string]string) (bool, error) {
 	if c.catalog == nil {
-		return errors.New("no agent catalog")
+		return false, errors.New("no agent catalog")
 	}
 	selected, ok := c.catalog.Resolve(agentID)
 	if !ok {
-		return errors.New("no agent " + agentID)
+		return false, errors.New("no agent " + agentID)
 	}
 	if err := c.store.SetPreferences(conversationID, selected.ID, patch); err != nil {
-		return err
+		return false, err
 	}
-	if c.turnInFlight(conversationID, selected.ID) {
-		return c.store.SetRenew(conversationID, selected.ID, true)
+	if !c.turnInFlight(conversationID, selected.ID) {
+		return false, c.renewSession(ctx, conversationID, selected.ID)
 	}
-	return c.renewSession(ctx, conversationID, selected.ID)
+	if c.applyLive(ctx, conversationID, selected.ID, patch) {
+		return true, nil
+	}
+	return false, c.store.SetRenew(conversationID, selected.ID, true)
+}
+
+// applyLive sets the owner's choices on the session answering right now.
+// It reports true only when every one of them landed: a partial change
+// still needs the next session opened fresh, which renewal does.
+func (c *Coordinator) applyLive(ctx context.Context, conversationID, agentID string, patch map[string]string) bool {
+	c.mu.Lock()
+	runner := c.active[sessionKey(conversationID, agentID)]
+	c.mu.Unlock()
+	configurable, ok := runner.(harness.Configurable)
+	if !ok {
+		return false
+	}
+	// An agent that is busy answering may not take a selector change
+	// until its turn ends, and the owner is waiting on this request. Give
+	// it a short while and fall back to renewal rather than hanging.
+	ctx, done := context.WithTimeout(ctx, 10*time.Second)
+	defer done()
+	for id, value := range patch {
+		var err error
+		if id == "model" {
+			optionID, choices := configurable.ModelChoices()
+			if optionID == "" || len(choices) == 0 {
+				return false
+			}
+			err = configurable.SetModel(ctx, optionID, value)
+		} else {
+			err = configurable.SetOption(ctx, id, value)
+		}
+		if err != nil {
+			slog.Info(fmt.Sprintf("turn: %s did not take %s=%s mid-turn: %v", agentID, id, value, err), "conversation", conversationID, "agent", agentID, "option", id)
+			return false
+		}
+	}
+	if reobserver, ok := runner.(harness.Reobserver); ok {
+		reobserver.Reobserve()
+	}
+	return true
 }
 
 // renewSession ends the agent's upstream session and archives the record,

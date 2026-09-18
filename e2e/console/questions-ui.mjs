@@ -18,7 +18,7 @@ page.setDefaultTimeout(7000);
 const conversation = "console:question-ui", at = "2026-09-07T01:00:00Z";
 const explanation = "I tried the integration checks on build-node. Configuration checks and unit tests passed.\n\nThe integration environment cannot be reached from this machine. Its network access is restricted, so retrying here will not resolve the problem.\n\nI recommend running the remaining integration checks on dev-box. The completed checks do not need to run again. Should I use dev-box?";
 const makeQuestion = (id, extra = {}) => ({ id, conversation, exchange_id: "e1", task_id: "11", kind: "question", title: "Continue integration checks", message: explanation, options: [{ id: "dev-box", label: "Use dev-box", description: "Run the remaining integration checks." }, { id: "wait", label: "Wait for network access", description: "Continue once access is restored." }], required: true, created_at: at, deadline: "2030-01-01T00:00:00Z", updated_at: at, state: "pending", ...extra });
-const f = { questions: [makeQuestion("q-original")], answers: [], queue: [], errors: [], holdAnswer: false, releaseAnswer: null, reset: false, malformed: false, staleReads: false, questionReads: 0, activeState: "" };
+const f = { questions: [makeQuestion("q-original")], answers: [], preferences: [], queue: [], errors: [], holdAnswer: false, releaseAnswer: null, reset: false, malformed: false, staleReads: false, questionReads: 0, activeState: "" };
 page.on("pageerror", (error) => f.errors.push(String(error)));
 await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
@@ -27,7 +27,7 @@ await page.route("**/*", async (route) => {
     const input = req.method() === "GET" ? null : req.postDataJSON();
     if (p === "/console/coordination") return route.fulfill({ json: { enabled: false, nodes: [], events: [], epoch: 0, revision: 0, authoritative: false, observed_at: "", auto_failover: false, ready: false } });
     if (p === "/console/desktop") return route.fulfill({ json: { enabled: false, setup_required: false, agent_count: 0 } });
-    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "dev-box", version: "test" }, nodes: [], agents: [], projects: [{ id: "p", node: "dev-box", path: "/work/p", repo: "inplace", level: "public", agents: [], workspaces: [] }], tasks: [], plans: [], attempts: [], landings: [] } });
+    if (p === "/state") return route.fulfill({ json: { at, hub: { node: "dev-box", version: "test" }, nodes: [{ name: "node-one", display_name: "Build box", up: true }], agents: [], projects: [{ id: "p", node: "dev-box", path: "/work/p", repo: "inplace", level: "public", agents: [], workspaces: [] }], tasks: [], plans: [], attempts: [], landings: [] } });
     if (p === "/console/context") return route.fulfill({ json: { enabled: true, context: { conversation, project: { id: "p", node: "dev-box", path: "/work/p", repo: "inplace", level: "public", bound: true }, agents: [] } } });
     if (p === "/console/replies") return route.fulfill({ json: { enabled: true, replies: [{ id: "r1", conversation, kind: "reply", at, text: "Configuration checks and unit tests are complete.", project_id: "p", revision: "r1" }] } });
     if (p === "/console/conversations") return route.fulfill({ json: { conversations: [{ id: conversation, title: "Integration checks", project: "p", count: 1, last_at: at, running: false }] } });
@@ -38,6 +38,8 @@ await page.route("**/*", async (route) => {
         return route.fulfill({ json: { queue: f.activeState ? [{ id: "retained", conversation, input: "Continue the original task", state: f.activeState, enqueued_at: at, started_at: at }] : [], submission_keys: true, material_refs: true, interactive_requests: true } });
     }
     if (p === "/console/annotations") return route.fulfill({ json: { annotations: [] } });
+    if (p === "/console/selectors") return route.fulfill({ json: { model: "gpt-6", models: [{ Value: "gpt-6", Label: "gpt-6" }], preferred: {}, options: [{ ID: "mode", Name: "Mode", Category: "mode", Current: "read-only", Choices: [{ Value: "read-only", Label: "Ask for approval" }, { Value: "agent-full-access", Label: "Full access" }] }] } });
+    if (p === "/console/preferences") { f.preferences.push(input); return route.fulfill({ json: { ok: true, live: true } }); }
     if (p === "/console/questions") { f.questionReads++; return route.fulfill({ json: { questions: f.questions.map((q) => f.staleReads ? { ...q, state: "pending", answer: undefined } : q) } }); }
     if (/^\/console\/questions\/[^/]+\/answer$/.test(p)) {
         const id = decodeURIComponent(p.split("/")[3]);
@@ -86,8 +88,8 @@ try {
     assert.equal(f.answers[0].decision, "accept");
     f.staleReads = true;
     f.holdAnswer = false; f.releaseAnswer();
-    await panel.getByText("1 recent resolved requests", { exact: true }).waitFor();
-    await panel.getByText("1 recent resolved requests", { exact: true }).click();
+    await panel.getByText("Resolved requests (1)", { exact: true }).waitFor();
+    await panel.getByText("Resolved requests (1)", { exact: true }).click();
     await panel.getByText("Answered", { exact: true }).waitFor();
     await panel.getByText("Use dev-box", { exact: true }).waitFor();
     const staleRead = page.waitForResponse((response) => new URL(response.url()).pathname === "/console/questions");
@@ -108,7 +110,7 @@ try {
         const before = f.answers.length;
         f.questions = [{ ...recovered, state }];
         await page.evaluate((event) => window.emit(event), { kind: "console.question", conversation, at });
-        await panel.getByText("1 recent resolved requests", { exact: true }).click();
+        await panel.getByText("Resolved requests (1)", { exact: true }).click();
         await panel.getByText(label, { exact: true }).waitFor();
         assert.equal(await panel.getByRole("textbox", { name: "Answer", exact: true }).count(), 0);
         f.questions = [recovered];
@@ -116,7 +118,7 @@ try {
         const restoredInput = panel.getByRole("textbox", { name: "Answer", exact: true });
         await restoredInput.waitFor();
         assert.equal(await restoredInput.inputValue(), "Keep my recovery answer draft");
-        assert.equal(await panel.getByText("1 recent resolved requests", { exact: true }).count(), 0);
+        assert.equal(await panel.getByText("Resolved requests (1)", { exact: true }).count(), 0);
         assert.equal(f.answers.length, before, "recovery never synthesizes a user response");
     }
     console.log("PASS recovered unanswered requests reopen under the same ID and retain answer drafts");
@@ -130,7 +132,7 @@ try {
     await panel.getByRole("button", { name: "Reply now", exact: true }).waitFor();
     await panel.getByRole("button", { name: "Reply now", exact: true }).click();
     await panel.getByRole("button", { name: "Wait for network access", exact: true }).click();
-    await panel.getByText("1 recent resolved requests", { exact: true }).click();
+    await panel.getByText("Resolved requests (1)", { exact: true }).click();
     await panel.getByText("Wait for network access", { exact: true }).waitFor();
     assert.equal(f.answers.at(-1).choice, "wait");
     assert.deepEqual(f.queue, []);
@@ -143,7 +145,7 @@ try {
     const retry = f.answers.at(-1);
     await page.reload();
     await panel.getByRole("button", { name: "Retry this response", exact: true }).click();
-    await panel.getByText("1 recent resolved requests", { exact: true }).waitFor();
+    await panel.getByText("Resolved requests (1)", { exact: true }).waitFor();
     assert.deepEqual(f.answers.at(-1), retry);
     console.log("PASS uncertain response survives reload and reuses the exact command identity");
 
@@ -154,7 +156,7 @@ try {
     assert.equal(await panel.getByText("Answered", { exact: true }).count(), 0);
     const malformed = f.answers.at(-1);
     await panel.getByRole("button", { name: "Retry this response", exact: true }).click();
-    await panel.getByText("1 recent resolved requests", { exact: true }).waitFor();
+    await panel.getByText("Resolved requests (1)", { exact: true }).waitFor();
     assert.deepEqual(f.answers.at(-1), malformed);
     console.log("PASS malformed success responses never imply the user decision was saved");
 
@@ -178,7 +180,7 @@ try {
     assert.equal(Object.hasOwn(freeAnswer, "choice"), false);
     await page.reload();
     await panel.getByRole("button", { name: "Retry this response", exact: true }).click();
-    await panel.getByText("1 recent resolved requests", { exact: true }).click();
+    await panel.getByText("Resolved requests (1)", { exact: true }).click();
     await panel.getByText(custom, { exact: true }).waitFor();
     assert.deepEqual(f.answers.at(-1), freeAnswer);
     assert.equal(await draftOf(composer), "A separate follow-up draft");
@@ -191,7 +193,7 @@ try {
     assert.equal(await answerInput.evaluate((el) => document.activeElement === el), true);
     await answerInput.fill("dev-box");
     await panel.getByRole("button", { name: "Submit response", exact: true }).click();
-    await panel.getByText("1 recent resolved requests", { exact: true }).waitFor();
+    await panel.getByText("Resolved requests (1)", { exact: true }).waitFor();
     assert.equal(f.answers.at(-1).text, "dev-box");
     console.log("PASS a text-only question validates its own reply and focuses the missing answer");
 
@@ -199,7 +201,7 @@ try {
     assert.equal(await panel.getByRole("textbox").count(), 0);
     await panel.getByText("Allow once", { exact: true }).click();
     await panel.getByRole("button", { name: "Decline", exact: true }).click();
-    await panel.getByText("1 recent resolved requests", { exact: true }).waitFor();
+    await panel.getByText("Resolved requests (1)", { exact: true }).waitFor();
     assert.equal(f.answers.at(-1).decision, "decline");
     assert.equal(Object.hasOwn(f.answers.at(-1), "choice"), false);
     console.log("PASS permission choices cannot be replaced by unconstrained text");
@@ -214,8 +216,8 @@ try {
     await screenshot("question-command-pending");
     await panel.getByText("Yes, proceed", { exact: true }).click();
     await panel.getByRole("button", { name: "Submit response", exact: true }).click();
-    await panel.getByText("1 recent resolved requests", { exact: true }).waitFor();
-    await panel.getByText("1 recent resolved requests", { exact: true }).click();
+    await panel.getByText("Resolved requests (1)", { exact: true }).waitFor();
+    await panel.getByText("Resolved requests (1)", { exact: true }).click();
     const done = panel.locator(".question-done");
     await done.getByText("Answered", { exact: true }).waitFor();
     await done.getByText("Yes, proceed", { exact: true }).waitFor();
@@ -224,6 +226,38 @@ try {
     assert.ok((await done.boundingBox()).height < 80, "a resolved request is a single compact row");
     await screenshot("question-command-done");
     console.log("PASS untitled permission requests read as one heading and collapse once decided");
+
+    const answersBeforeSwitch = f.answers.length;
+    // Approvals pile up: a thread can answer dozens, and they read alike.
+    // The record keeps all of them, every one says which agent on which
+    // machine is waiting, and the pending one offers the way out of being
+    // asked again — the agent's own approval modes.
+    const permissionOptions = [{ id: "allow_once", label: "Yes, proceed" }, { id: "reject_once", label: "No", kind: "reject_once" }];
+    const answered = (index) => makeQuestion("q-history-" + index, { kind: "permission", title: "Run command", message: "```sh\necho " + index + "\n```", options: permissionOptions, agent: "builder", node: "node-one", state: "answered", updated_at: "2026-09-07T01:0" + index + ":00Z", answer: { command_id: "c" + index, decision: "accept", choice: "allow_once" } });
+    f.questions = [...Array.from({ length: 7 }, (_, index) => answered(index)), makeQuestion("q-approve", { kind: "permission", title: "Run command", message: "```sh\nrm -rf build\n```", options: permissionOptions, agent: "builder", node: "node-one" })];
+    await page.evaluate((event) => window.emit(event), { kind: "console.question", conversation, text: "q-approve", at });
+    const summary = panel.getByText("Resolved requests (7)", { exact: true });
+    await summary.waitFor();
+    // The disclosure may already be open from an earlier step; what is
+    // asserted here is what it holds, not which way the click toggles it.
+    await panel.locator("details.question-history").evaluate((element) => { element.open = true; });
+    await waitFor(async () => await panel.locator(".question-history .question-done").count() === 5, "the newest decisions open first");
+    await panel.getByRole("button", { name: "Show 2 earlier", exact: true }).click();
+    await waitFor(async () => await panel.locator(".question-history .question-done").count() === 7, "every earlier decision is reachable");
+    assert.equal(await panel.getByRole("button", { name: "Show 2 earlier", exact: true }).count(), 0);
+    await panel.getByText("From builder @ Build box", { exact: true }).waitFor();
+    assert.equal(await panel.locator(".question-done-who").first().innerText(), "builder @ Build box", "a resolved request names the machine, never its node id");
+    await screenshot("question-history-attribution");
+    await panel.getByRole("button", { name: "Stop asking each time" }).click();
+    await page.getByRole("menuitem", { name: "Ask for approval · current", exact: true }).waitFor();
+    await screenshot("question-approval-switch");
+    await page.getByRole("menuitem", { name: "Full access", exact: true }).click();
+    await panel.getByText("Switched to “Full access”. It applies from now on.", { exact: true }).waitFor();
+    assert.deepEqual(f.preferences.at(-1).patch, { mode: "agent-full-access" });
+    assert.equal(f.preferences.at(-1).agent, "builder");
+    assert.equal(f.preferences.at(-1).conversation, conversation);
+    assert.equal(f.answers.length, answersBeforeSwitch, "changing the approval mode never answers the request for the owner");
+    console.log("PASS resolved requests name their machine, stay reachable in full, and offer the approval mode as a way out");
 
     await show(makeQuestion("q-narrow", { title: "A decision with long context", message: explanation + "\n\n" + "Long-environment-hostname-".repeat(30) }));
     await page.getByRole("link", { name: "Coordinated by dev-box", exact: true }).first().waitFor();
