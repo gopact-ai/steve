@@ -11,10 +11,19 @@ import (
 
 func Supported() bool { return true }
 
-func ReexecCurrent() error {
-	executable, err := os.Executable()
-	if err != nil {
-		return err
+func ReexecCurrent() error { return Reexec("") }
+
+// Reexec continues this process as program, keeping its identity, arguments
+// and environment. An empty program means the executable this process was
+// started from, which is what a service that restarts for its own reasons
+// wants; a launcher that installed a new build names it instead.
+func Reexec(program string) error {
+	if program == "" {
+		executable, err := os.Executable()
+		if err != nil {
+			return err
+		}
+		program = executable
 	}
-	return syscall.Exec(executable, os.Args, os.Environ())
+	return syscall.Exec(program, os.Args, os.Environ())
 }

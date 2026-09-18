@@ -39,7 +39,7 @@ func Build(ctx context.Context, cfg Config) (_ *App, buildErr error) {
 	life.Defer(func() {
 		if services := life.services; services != nil && services.Requested() {
 			if life.err == nil {
-				life.err = &adminsvc.RestartExit{Service: services}
+				life.err = &adminsvc.RestartExit{Service: services, Program: services.PendingProgram()}
 			} else {
 				services.Failed(life.err)
 			}

@@ -129,7 +129,7 @@ func EnsureRunning(ctx context.Context, installed *Installation, executablePath 
 			if err != nil {
 				return result, err
 			}
-			return applyReplacedProgram(ctx, installed, result), nil
+			return applyReplacedProgram(ctx, installed, executablePath, result), nil
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return LaunchResult{}, fmt.Errorf("read desktop backend endpoint: %w", err)
@@ -147,7 +147,7 @@ func EnsureRunning(ctx context.Context, installed *Installation, executablePath 
 			if err != nil {
 				return result, err
 			}
-			return applyReplacedProgram(ctx, installed, result), nil
+			return applyReplacedProgram(ctx, installed, executablePath, result), nil
 		}
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return LaunchResult{}, fmt.Errorf("read desktop process: %w", err)

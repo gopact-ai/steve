@@ -71,6 +71,12 @@ type RestartRequest struct {
 	Mode string `json:"mode,omitempty"`
 	// Cancel withdraws a waiting restart that has not applied yet.
 	Cancel bool `json:"cancel,omitempty"`
+	// Program names the build the service must be running afterwards. A
+	// launcher that replaced the installed application sets it, because
+	// rebuilding the service in place would keep the old program running
+	// and report an upgrade that never happened. Left empty the service
+	// restarts on the program it already runs.
+	Program string `json:"program,omitempty"`
 }
 type ServiceError struct {
 	Code    string

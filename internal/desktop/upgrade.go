@@ -30,7 +30,7 @@ const upgradeSettle = 12 * time.Second
 //
 // Failing to schedule the upgrade is reported with the running service
 // rather than raised: an application that cannot upgrade still opens.
-func applyReplacedProgram(ctx context.Context, installed *Installation, result LaunchResult) LaunchResult {
+func applyReplacedProgram(ctx context.Context, installed *Installation, program string, result LaunchResult) LaunchResult {
 	target := nodewire.Version()
 	if result.Version == "" || target == "" || result.Version == target {
 		return result
@@ -44,7 +44,7 @@ func applyReplacedProgram(ctx context.Context, installed *Installation, result L
 		status.Error = err.Error()
 		return result
 	}
-	op, err := requestUpgrade(ctx, client, installed, result.URL, id)
+	op, err := requestUpgrade(ctx, client, installed, result.URL, id, program)
 	if err != nil {
 		status.Error = err.Error()
 		return result
@@ -68,8 +68,11 @@ func upgradeCommandID(installed *Installation, target string) (string, error) {
 	return "desktop-upgrade-" + hex.EncodeToString(sum[:10]), nil
 }
 
-func requestUpgrade(ctx context.Context, client *http.Client, installed *Installation, address, id string) (consoleapi.RestartOperation, error) {
-	body, err := json.Marshal(consoleapi.RestartRequest{CommandID: id, Mode: consoleapi.RestartWhenIdle})
+// requestUpgrade names the program this launcher was started from, so the
+// service continues as the build that is installed now rather than
+// rebuilding itself on the one it already runs.
+func requestUpgrade(ctx context.Context, client *http.Client, installed *Installation, address, id, program string) (consoleapi.RestartOperation, error) {
+	body, err := json.Marshal(consoleapi.RestartRequest{CommandID: id, Mode: consoleapi.RestartWhenIdle, Program: program})
 	if err != nil {
 		return consoleapi.RestartOperation{}, err
 	}

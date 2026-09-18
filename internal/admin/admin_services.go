@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -22,7 +24,14 @@ import (
 
 var ErrRestart = errors.New("hub restart requested")
 
-type RestartExit struct{ Service *Services }
+// RestartExit ends the service for a restart. Program, when set, is the
+// build the launcher installed and expects to be running afterwards: the
+// process image has to be replaced with it, because rebuilding the service
+// in place would keep answering from the program that is already loaded.
+type RestartExit struct {
+	Service *Services
+	Program string
+}
 
 func (e *RestartExit) Error() string { return ErrRestart.Error() }
 
@@ -51,6 +60,7 @@ type Services struct {
 	wait       *waitingRestart
 	dispatched bool
 	release    func()
+	program    string
 	boot       *config.Config
 }
 
@@ -102,6 +112,27 @@ func (s *Services) Ready() error {
 }
 
 func (s *Services) Requested() bool { s.mu.Lock(); defer s.mu.Unlock(); return s.dispatched }
+
+// PendingProgram is the program image the accepted restart asks the process
+// to continue as. Empty means the service restarts as it is.
+func (s *Services) PendingProgram() string { s.mu.Lock(); defer s.mu.Unlock(); return s.program }
+
+// checkProgram refuses a program the service could not become, so a request
+// fails while the caller is still listening rather than after the service
+// has already stopped.
+func checkProgram(path string) error {
+	if path == "" {
+		return nil
+	}
+	if !filepath.IsAbs(path) {
+		return serviceFailure("invalid", "The program to restart on must be an absolute path")
+	}
+	info, err := os.Stat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm()&0o111 == 0 {
+		return serviceFailure("invalid", "The program to restart on is not an executable file")
+	}
+	return nil
+}
 
 func (s *Services) Failed(cause error) {
 	s.mu.Lock()
@@ -327,6 +358,12 @@ func (s *Services) Restart(ctx context.Context, name string, req consoleapi.Rest
 	default:
 		return consoleapi.RestartOperation{}, serviceFailure("invalid", "Unknown restart mode")
 	}
+	if err := checkProgram(req.Program); err != nil {
+		return consoleapi.RestartOperation{}, err
+	}
+	if req.Program != "" && name != "hub" {
+		return consoleapi.RestartOperation{}, serviceFailure("invalid", "Only the hub restarts onto a program named by its launcher")
+	}
 	if !s.actionMu.TryLock() {
 		return consoleapi.RestartOperation{}, serviceFailure("busy", "Another restart request is being prepared")
 	}
@@ -419,6 +456,7 @@ func (s *Services) restartNow(ctx context.Context, name string, req consoleapi.R
 	}
 	s.pending = req.CommandID
 	s.release = release
+	s.program = req.Program
 	return op, nil
 }
 
