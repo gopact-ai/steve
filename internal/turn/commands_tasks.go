@@ -140,7 +140,11 @@ func (c commands) tasksCmd(ctx context.Context, req Request, rest string) (Resul
 func (c commands) taskTarget(conversationID, id string, verb taskVerb) (task.Task, bool) {
 	if id != "" {
 		tracked, ok := c.tasks.Get(id)
-		if !ok || tracked.Channel != conversationID {
+		// Work the fleet started for itself belongs to no chat. Scoping is
+		// there so one chat cannot reach into another's work, and there is
+		// no other chat to protect here; without this the record of an
+		// automatic repair or conflict resolution could never be settled.
+		if !ok || tracked.Channel != "" && tracked.Channel != conversationID {
 			return task.Task{}, false
 		}
 		return tracked, true

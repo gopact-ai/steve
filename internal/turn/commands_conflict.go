@@ -182,11 +182,23 @@ func (c *Coordinator) resolveConflict(ctx context.Context, p project.Project, st
 	if err := c.artifacts.Attempting(ctx, p.ID, stuck.Artifact, tracked.ID); err != nil {
 		slog.Warn(fmt.Sprintf("turn: record resolution attempt for %s: %v", shortID(stuck.Artifact), err), "artifact", stuck.Artifact, "project", p.ID)
 	}
+	out.Err = c.runResolution(ctx, p, stuck, tracked, agentID, goal)
+	if out.Err != nil {
+		// The run is over either way, and an automatic resolution has no
+		// conversation behind it: plan recovery skips a task with no
+		// anchor, so nothing else would ever close this one.
+		c.closePlanTask(tracked.ID, out.Err)
+	}
+	return out
+}
+
+// runResolution is the part that can fail after the task exists, kept
+// apart so every way out of it goes through one close.
+func (c *Coordinator) runResolution(ctx context.Context, p project.Project, stuck artifact.Stuck, tracked task.Task, agentID, goal string) error {
 	if c.executions != nil {
 		scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "resolve/" + tracked.ID})
 		if err != nil {
-			out.Err = err
-			return out
+			return err
 		}
 		defer scope.Finish(nil)
 		ctx = scope.Context()
@@ -203,17 +215,13 @@ func (c *Coordinator) resolveConflict(ctx context.Context, p project.Project, st
 		}},
 	})
 	if err != nil {
-		out.Err = err
-		return out
+		return err
 	}
 	if _, err := c.supervisor.Execute(ctx, stored); err != nil {
-		out.Err = err
-		return out
+		return err
 	}
-	if _, err := c.advanceExecution(ctx, tracked.ID, task.StateDone); err != nil {
-		slog.Error(fmt.Sprintf("turn: close resolve task %s: %v", tracked.ID, err), "task", tracked.ID)
-	}
-	return out
+	c.finishPlanTask(ctx, tracked.ID)
+	return nil
 }
 
 // conflictAgent picks who resolves: an eligible agent on the project's own

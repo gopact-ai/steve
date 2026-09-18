@@ -129,6 +129,76 @@ func (c *Coordinator) openPlanTaskWithPrepared(req Request, goal, projectID stri
 	return created, nil
 }
 
+// cancelOrphanedPlans closes background plan tasks that a restart left
+// open. A plan started without a conversation — an automatic conflict
+// resolution, say — has no anchor to reply at, so plan recovery passes
+// over it, and `/tasks` scopes ids to the chat that owns them. With no
+// run left to resume, nothing would ever close it and the board would go
+// on counting it as work in flight. resuming holds the tasks whose run is
+// about to be picked back up, which are not orphans.
+func (c *Coordinator) cancelOrphanedPlans(resuming map[string]bool) {
+	if c.tasks == nil {
+		return
+	}
+	for _, tracked := range c.tasks.List("") {
+		if tracked.Origin != "plan" || tracked.Channel != "" || resuming[tracked.ID] {
+			continue
+		}
+		// A failure and a pause are both already settled states someone
+		// can act on; only work still claiming to run is stranded.
+		if tracked.State.Terminal() || tracked.State == task.StateFailed || tracked.State == task.StatePaused {
+			continue
+		}
+		if _, err := c.tasks.SetAside(tracked.ID, task.StateCancelled); err != nil {
+			slog.Error(fmt.Sprintf("turn: cancel stranded plan task #%s: %v", tracked.ID, err), "task", tracked.ID)
+			continue
+		}
+		slog.Warn(fmt.Sprintf("turn: cancelled plan task #%s left open with no run and no conversation: %s", tracked.ID, tracked.Goal), "task", tracked.ID)
+	}
+}
+
+// closePlanTask ends the task a plan ran under, with the state the run
+// earned: done when it finished, failed when it stopped. Without it the
+// task keeps claiming to run for good — a background plan is out of reach
+// of both recovery and the task commands, and a foreground one would read
+// as running long after its card said it stopped. A task that is already
+// terminal is left alone: a step that closed it had the better answer.
+func (c *Coordinator) closePlanTask(id string, runErr error) {
+	if c.tasks == nil || id == "" {
+		return
+	}
+	if tracked, ok := c.tasks.Get(id); !ok || tracked.State.Terminal() || tracked.State == task.StateFailed {
+		return
+	}
+	to := task.StateDone
+	if runErr != nil {
+		to = task.StateFailed
+	}
+	if _, err := c.tasks.Advance(id, to); err != nil {
+		slog.Error(fmt.Sprintf("turn: close plan task #%s: %v", id, err), "task", id)
+		return
+	}
+	if runErr != nil {
+		slog.Warn(fmt.Sprintf("turn: plan task #%s failed: %v", id, runErr), "task", id)
+	}
+}
+
+// finishPlanTask closes a plan task that finished, under the execution
+// authority the run itself holds. The plan machinery closes the task
+// already when the last step lands, and advancing a second time would
+// only log an error about a move from done to done.
+func (c *Coordinator) finishPlanTask(ctx context.Context, id string) {
+	if c.tasks == nil || id == "" {
+		return
+	}
+	if tracked, ok := c.tasks.Get(id); !ok || tracked.State.Terminal() {
+		return
+	}
+	if _, err := c.advanceExecution(ctx, id, task.StateDone); err != nil {
+		slog.Error(fmt.Sprintf("turn: close plan task #%s: %v", id, err), "task", id)
+	}
+}
+
 // planTree renders the plan as its steps, with where each ran. The tree is
 // the answer: a plan that only reports "done" cannot be checked.
 func (c *Coordinator) planTree(p plan.Plan, outcome exec.Outcome) string {
@@ -224,6 +294,11 @@ func (c *Coordinator) ResumePlans(ctx context.Context) {
 		slog.Error(fmt.Sprintf("turn: list open plan runs: %v", err))
 		return
 	}
+	resuming := make(map[string]bool, len(open))
+	for _, rec := range open {
+		resuming[rec.TaskID] = true
+	}
+	c.cancelOrphanedPlans(resuming)
 	for _, rec := range open {
 		tracked, ok := c.tasks.Get(rec.TaskID)
 		if ok && c.planRecoveryOwner != nil && c.planRecoveryOwner(tracked) {
@@ -245,6 +320,11 @@ func (c *Coordinator) resumePlan(ctx context.Context, rec exec.RunRecord, tracke
 	if runErr == nil {
 		runErr = ctx.Err()
 	}
+	// A resumed run is the end of the plan either way. Nothing downstream
+	// closes the task here the way the original command would have, and a
+	// plan started in the background has no anchor to say so at, so it
+	// would sit in the listing as running until the ledger was edited.
+	c.closePlanTask(tracked.ID, runErr)
 	final, _ := c.plans.Latest(rec.PlanID)
 	var text string
 	if runErr != nil {

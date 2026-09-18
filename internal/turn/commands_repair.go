@@ -94,6 +94,7 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 	if c.executions != nil {
 		scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "repair/" + tracked.ID})
 		if err != nil {
+			c.closePlanTask(tracked.ID, err)
 			return Result{Title: title, Text: err.Error()}
 		}
 		defer scope.Finish(nil)
@@ -111,22 +112,23 @@ func (c commands) repairCmd(ctx context.Context, req Request, rest string) Resul
 		}},
 	}
 	if base, err := c.planBase(ctx, tracked); err != nil {
+		c.closePlanTask(tracked.ID, err)
 		return Result{Title: title, Text: c.text.T(i18n.RepairStopped, agentID, err)}
 	} else {
 		proposed.Base = base
 	}
 	stored, err := c.plans.Create(proposed)
 	if err != nil {
+		c.closePlanTask(tracked.ID, err)
 		return Result{Title: title, Text: c.text.T(i18n.RepairStopped, agentID, err)}
 	}
 	outcome, runErr := c.supervisor.Execute(ctx, stored)
 	final, _ := c.plans.Latest(stored.ID)
 	if runErr != nil {
+		c.closePlanTask(tracked.ID, runErr)
 		return Result{Title: title, Text: c.text.T(i18n.RepairStopped, agentID, runErr) + "\n\n" + c.planTree(final, outcome)}
 	}
-	if _, err := c.advanceExecution(ctx, tracked.ID, task.StateDone); err != nil {
-		slog.Error(fmt.Sprintf("turn: close repair task %s: %v", tracked.ID, err), "task", tracked.ID)
-	}
+	c.finishPlanTask(ctx, tracked.ID)
 	// The verify command passed on that machine; now let the machine say
 	// so itself, which is what every placement decision reads.
 	if fix.Broken.Node != "" && c.refresher != nil {
