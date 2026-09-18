@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log/slog"
 	"maps"
 	"strings"
 	"time"
@@ -181,12 +180,7 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		}
 		s.mu.Lock()
 		defer s.mu.Unlock()
-		var retryErr error
-		existing, retryErr = s.retryRecoveryStopLocked(existing)
-		if retryErr != nil {
-			return nil, Exchange{}, retryErr
-		}
-		return existing, copyExchange(existing.Exchange), nil
+		return s.resumeLocked(existing)
 	}
 	if strings.TrimSpace(input) == "" && len(options.Refs) == 0 {
 		return nil, Exchange{}, errors.New("input is required")
@@ -215,30 +209,10 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 		if err != nil {
 			return nil, Exchange{}, err
 		}
-		var retryErr error
-		other, retryErr = s.retryRecoveryStopLocked(other)
-		if retryErr != nil {
-			return nil, Exchange{}, retryErr
-		}
-		return other, copyExchange(other.Exchange), nil
-	}
-	// The thread is rewound inside the same lock that accepts its
-	// replacement, so no reader ever sees a thread missing its tail with
-	// nothing said in its place.
-	var undoRewind func()
-	var plan rewindPlan
-	history := ""
-	if options.RewindTo != "" {
-		var planErr error
-		plan, planErr = s.planRewindLocked(conversation, options.RewindTo)
-		if planErr != nil {
-			return nil, Exchange{}, planErr
-		}
-		history = plan.history
-		undoRewind = s.applyRewindLocked(plan)
+		return s.resumeLocked(other)
 	}
 	e := &queuedExchange{
-		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, History: history, Key: key,
+		Exchange: Exchange{ID: "e" + strings.TrimPrefix(newReplyID(), "r"), Conversation: conversation, Input: input, Prompt: prompt, Key: key,
 			Origin: options.Origin, Requester: options.Requester, ExpectedProject: options.ExpectedProject, ExpectedTask: options.ExpectedTask,
 			Refs: copyRefs(options.Refs), Materials: frozen, Locale: options.Locale,
 			Quotes: append([]QuoteRef(nil), quotes...), State: consoleapi.ExchangeQueued, EnqueuedAt: time.Now().UTC()},
@@ -247,18 +221,21 @@ func (s *Service) enqueue(ctx context.Context, conversation, input string, quote
 	if !strings.HasPrefix(key, "client:") {
 		e.PayloadHash = ""
 	}
-	accepted, exchange, err := s.acceptExchangeLocked(e, options.Front)
-	if undoRewind != nil {
-		if err != nil {
-			undoRewind()
-			if saveErr := s.save(); saveErr != nil {
-				slog.Error(fmt.Sprintf("console: restore rewound thread %s: %v", conversation, saveErr))
-			}
-			return nil, Exchange{}, err
-		}
-		s.publishRewoundLocked(plan)
+	if options.RewindTo != "" {
+		return s.acceptRewoundLocked(e, options.RewindTo, options.Front)
 	}
-	return accepted, exchange, err
+	return s.acceptExchangeLocked(e, options.Front)
+}
+
+// resumeLocked replays a submission this conversation has already
+// accepted: the exchange it made, and a retry of the stop a recovery is
+// still waiting on.
+func (s *Service) resumeLocked(existing *queuedExchange) (*queuedExchange, Exchange, error) {
+	existing, err := s.retryRecoveryStopLocked(existing)
+	if err != nil {
+		return nil, Exchange{}, err
+	}
+	return existing, copyExchange(existing.Exchange), nil
 }
 
 func (s *Service) acceptExchangeLocked(e *queuedExchange, front bool) (*queuedExchange, Exchange, error) {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -176,6 +177,29 @@ func (s *Service) applyRewindLocked(plan rewindPlan) func() {
 			s.questions[id] = q
 		}
 	}
+}
+
+// acceptRewoundLocked takes a line that replaces one already sent. The
+// thread goes back inside the same lock that accepts the replacement, so
+// no reader sees a thread missing its tail with nothing said in its
+// place, and a refusal to accept puts the thread back as it was.
+func (s *Service) acceptRewoundLocked(e *queuedExchange, target string, front bool) (*queuedExchange, Exchange, error) {
+	plan, err := s.planRewindLocked(e.Conversation, target)
+	if err != nil {
+		return nil, Exchange{}, err
+	}
+	e.History = plan.history
+	undo := s.applyRewindLocked(plan)
+	accepted, exchange, err := s.acceptExchangeLocked(e, front)
+	if err != nil {
+		undo()
+		if saveErr := s.save(); saveErr != nil {
+			slog.Error(fmt.Sprintf("console: restore rewound thread %s: %v", plan.conversation, saveErr))
+		}
+		return nil, Exchange{}, err
+	}
+	s.publishRewoundLocked(plan)
+	return accepted, exchange, nil
 }
 
 // publishRewoundLocked tells every open page which lines went, so a
