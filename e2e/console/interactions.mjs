@@ -2050,6 +2050,52 @@ checks["empty-process"] = async (f) => {
     assert.equal(f.calls.length, 0);
 };
 
+// A delegated child is a line of the thread, not a header above it: it
+// stays readable without opening the trace, it sits where it was handed
+// over, and the row says who took it — the target keeps its room even
+// when the goal is long, because the goal can be read in the open card.
+checks["design-delegation-stream"] = async (f) => {
+    const minute = (m, sec = 0) => `2026-09-06T09:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}Z`;
+    const goal = "在 BOE 机器上只读盘点该用户的开发工作痕迹，记录仓库名、路径与 remote，并按证据分类给出待确认项。";
+    const child = { id: "#41", kind: "delegate", goal, state: "done", since: minute(51), elapsed: "2m10s", agent: "builder", node: "node-7f3c9a", answer: "盘点完成。" };
+    f.replies[A] = [
+        { id: "sent-1", kind: "sent", conversation: A, at: minute(50), input: "先委派一次盘点。" },
+        { id: "reply-1", kind: "reply", conversation: A, at: minute(53), text: "第一轮结果已汇总。", process: { timeline: [{ kind: "thought", text: "先决定交给谁。", at: minute(50, 30) }, { kind: "text", text: "第一轮结果已汇总。", at: minute(53) }], steps: [child] } },
+        { id: "sent-2", kind: "sent", conversation: A, at: minute(54), input: "继续下一轮。" },
+        { id: "reply-2", kind: "reply", conversation: A, at: minute(58), text: "第二轮结果已汇总。" },
+    ];
+    await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" }, nodes: [{ name: "node-7f3c9a", display_name: "工作本", role: "hub", up: true, version: "test" }], agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
+    await f.page.reload();
+    const recorded = f.page.locator('[data-task-id="#41"]');
+    await recorded.waitFor();
+    assert.equal(await f.page.locator('details.group\\/process [data-task-id="#41"]').count(), 0, "A child must not be buried in the trace fold");
+    assert.equal(await recorded.locator(`span[title="${child.since}"]`).count(), 1, "The row says when the child was handed over");
+    const who = recorded.locator('span[title="builder @ 工作本"]');
+    assert.ok(await who.evaluate((el) => el.scrollWidth <= el.clientWidth + 1), "A long goal must not clip the target");
+    // A child no reply has recorded yet belongs to the turn that started
+    // it, between the line that asked and the line that answered.
+    await f.emit({ kind: "delegate.progress", task_id: "40", step_id: "#40", step: { kind: "delegate", state: "done", goal: "较早的一次委派。", since: minute(55) }, progress: { agent: "builder", node: "node-7f3c9a" } });
+    await f.page.locator('[data-task-id="#40"]').waitFor();
+    const placed = await f.page.evaluate(() => {
+        const kids = [...document.querySelector(".transcript-messages").children];
+        const find = (text) => kids.findIndex((el) => el.textContent.includes(text));
+        return { earlier: kids.findIndex((el) => el.dataset.taskId === "#40"), asked: find("继续下一轮。"), answered: find("第二轮结果已汇总。") };
+    });
+    assert.ok(placed.earlier > placed.asked && placed.earlier < placed.answered, `An unrecorded child belongs where it started, not at the top (${JSON.stringify(placed)})`);
+    await f.startRunning();
+    await f.page.getByRole("status").first().waitFor();
+    await f.emit({ kind: "delegate.progress", task_id: "42", step_id: "#42", step: { kind: "delegate", state: "running", goal: "跑一遍验证。", since: "2026-09-06T10:00:05Z" }, progress: { agent: "checker", node: "node-7f3c9a" } });
+    await f.page.locator('[data-task-id="#42"]').waitFor();
+    const running = await f.page.evaluate(() => {
+        const block = [...document.querySelector(".transcript-messages").children].find((el) => el.querySelector('[role="status"]'));
+        const card = block?.querySelector('[data-task-id="#42"]');
+        const status = block?.querySelector('[role="status"]');
+        return { inside: !!card, below: !!(card && status && (status.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING)) };
+    });
+    assert.ok(running.inside && running.below, "A child this turn started stays inside the running line, under it");
+    await f.page.screenshot({ path: path.join(output, "design-delegation-stream.png"), fullPage: true });
+};
+
 checks["process-content"] = async (f) => {
     const process = { agent: "test-agent", node: "node-7f3c9a", model: "GPT-5.6-Sol", tools: [{ id: "read", title: "Read file", status: "completed", output: "file content" }], timeline: [{ kind: "thought", text: "Checking the file", at }, { kind: "text", text: "Opening the file", at }, { kind: "tool", tool: "read", at }, { kind: "text", text: "Checked answer", at }], steps: [{ id: "empty-step", timeline: [{ kind: "thought", text: " ", at }] }] };
     f.replies[A] = [{ id: "trace", kind: "reply", conversation: A, at, text: "Checked answer", process }];

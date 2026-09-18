@@ -5,7 +5,7 @@ import { DelegationCard } from "./delegation";
 import { useEffect, useState } from "react";
 import { Loading01 } from "@untitledui/icons";
 import { when } from "@/lib/format";
-import type { Injected, Plan, Process, Step } from "@/lib/types";
+import type { Injected, Plan, Process, Step, StepProcess } from "@/lib/types";
 import type { Live } from "@/lib/live";
 import { CodeBlock } from "./code-block";
 import { Md } from "./markdown";
@@ -25,7 +25,7 @@ function useElapsed(since: string): number {
 // like a reply forming: who is on it, the latest thought, the tool
 // calls as they land, the answer as it streams. In the rail it is the
 // full trace, step by step.
-export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; compact?: boolean }) {
+export function Working({ live, plans, compact, delegated }: { live: Live; plans: Plan[]; compact?: boolean; delegated?: StepProcess[] }) {
     const { t, locale } = useI18n();
     const nodeLabelOf = useNodeLabel();
     const elapsed = useElapsed(live.since);
@@ -40,9 +40,15 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
     const answer = finalText === undefined ? live.turn?.answer : live.turn?.timeline?.[finalText].text;
     if (compact) {
         const extra = live.order.filter((id) => !steps.some((s) => s.id === id));
-        const group = (id: string) => {
+        // A child this turn started belongs to this turn's block, under
+        // the line that says the turn is running — not stacked above it.
+        const carded = new Set((delegated || []).map((child) => child.id));
+        const cards = (id: string) => {
             const info = live.info?.[id];
-            if (info?.kind === "delegate") return <DelegationCard key={id} id={id} info={info} progress={live.steps[id]} live />;
+            return info?.kind === "delegate" && !carded.has(id) ? <DelegationCard key={id} id={id} info={info} progress={live.steps[id]} live /> : null;
+        };
+        const group = (id: string) => {
+            if (live.info?.[id]?.kind === "delegate") return null;
             const tools = live.steps[id]?.tools;
             return tools?.length ? <ToolCalls key={id} tools={tools} title={`${id} · ${headingOf(tools, locale)}`} /> : null;
         };
@@ -65,6 +71,9 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
                     {latest?.reasoning?.trim() && <ThinkingTail text={latest.reasoning} />}
                     {live.turn?.tools?.length ? <ToolCalls tools={live.turn.tools} /> : null}
                 </>}
+                {steps.map((s) => cards(s.id))}
+                {extra.map(cards)}
+                {(delegated || []).map((child) => <DelegationCard key={child.id} id={child.id} info={child} progress={child} live={!child.state} />)}
                 {answer && <Md text={answer} />}
             </div>
         );
@@ -112,9 +121,12 @@ function ThinkingTail({ text }: { text: string }) {
 // ProcessBody is a reply's trace: each step's, then the turn's own.
 // omitFinalText leaves the turn's last narration out: in the transcript
 // it is the reply itself, printed right under the fold.
-export function ProcessBody({ process, omitFinalText }: { process: Process; omitFinalText?: boolean }) {
+// omitDelegations leaves the children out: in the transcript they are
+// lines of the thread, printed beside the reply rather than inside a
+// fold that has to be opened to find them.
+export function ProcessBody({ process, omitFinalText, omitDelegations }: { process: Process; omitFinalText?: boolean; omitDelegations?: boolean }) {
     const nodeLabelOf = useNodeLabel();
-    const steps = (process.steps || []).filter((step) => step.kind === "delegate" || hasTraceContent(step));
+    const steps = (process.steps || []).filter((step) => (step.kind === "delegate" ? !omitDelegations : hasTraceContent(step)));
     const finalText = omitFinalText ? finalTextIndex(process) : undefined;
     return (
         <div className="flex flex-col gap-3">

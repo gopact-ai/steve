@@ -28,7 +28,7 @@ import { useEventCallback } from "@/hooks/use-event-callback";
 import { useResourceRead } from "@/hooks/use-resource-read";
 import { placeLabel } from "@/lib/workspaces";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
-import { applyDelegation, restoreDelegations, withDelegations, type Delegations } from "@/lib/delegations";
+import { applyDelegation, childrenOfTurn, restoreDelegations, streamWithChildren, withDelegations, type Delegations } from "@/lib/delegations";
 import { beginSubmission, retrySubmission, failSubmission, finishSubmission, reconcileSubmission, restoreSubmission, updateDraft, useDraft, useDraftIssue, useSavedDraft, resolveDraftConflict, useQuotes, useSubmission, useStops, beginStop, finishStop, isStopPending, clearStopNotice, type Submission, useMaterials, removeDraftMaterial, submissionRefs, useRewind, beginRewind, endRewind, rewindOf } from "@/lib/drafts";
 import { useI18n } from "@/providers/locale-provider";
 import { useMaterial } from "@/providers/material-provider";
@@ -512,6 +512,10 @@ export function ConsolePage() {
     const shownProcess = (selectedReply ? transcript.find((r) => r.id === selectedReply.id) : undefined) ?? (lastWithProcess ? withDelegations(lastWithProcess, delegations) : null);
     const recordedSteps = new Set(entries.flatMap((r) => r.process?.steps?.map((s) => s.id) || []));
     const unrecordedChildren = Object.values(delegations).map(({ step }) => step).filter((s) => !recordedSteps.has(s.id));
+    // Children the replies have not recorded yet still belong where they
+    // started: this turn's inside the line in flight, older ones back
+    // among the replies they were handed over from.
+    const { current: turnChildren, earlier: earlierChildren } = childrenOfTurn(unrecordedChildren, live?.since);
     // How much of the thread a send would take back, counted from what is
     // drawn: the lines under the message being edited.
     const rewindView = useMemo(() => {
@@ -661,9 +665,10 @@ export function ConsolePage() {
                                 </div>
                             )}
                             <div className="transcript-messages">
-                                {transcript.map((r, i) => r.kind === "sent" ? <UserMessage key={r.id || i} r={r} onEdit={editSent} /> : <AssistantMessage key={r.id || i} r={r} selected={shownProcess?.id === r.id} onSelect={selectReply} onQuote={quoteReply} />)}
-                                {unrecordedChildren.map((s) => <DelegationCard key={s.id} id={s.id} info={s} progress={s} />)}
-                                {live && <Working live={live} plans={runningPlans} compact />}
+                                {streamWithChildren(transcript, earlierChildren).map(({ reply: r, child }, i) => child
+                                    ? <DelegationCard key={child.id} id={child.id} info={child} progress={child} />
+                                    : r!.kind === "sent" ? <UserMessage key={r!.id || i} r={r!} onEdit={editSent} /> : <AssistantMessage key={r!.id || i} r={r!} selected={shownProcess?.id === r!.id} onSelect={selectReply} onQuote={quoteReply} />)}
+                                {live && <Working live={live} plans={runningPlans} compact delegated={turnChildren} />}
                             </div>
                         </div>
                         <div className="composer-dock">
