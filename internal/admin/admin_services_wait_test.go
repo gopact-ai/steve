@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -177,5 +178,29 @@ func TestNewerWaitTakesOverAnOlderOne(t *testing.T) {
 	applied, err := s.RestartStatus(t.Context(), "hub", "upgrade-two")
 	if err != nil || applied.State != nodewire.RestartStateAccepted {
 		t.Fatalf("applied=%+v err=%v", applied, err)
+	}
+}
+
+// Being told only that something is active is what sends a person looking
+// through every conversation. The refusal names the work instead.
+func TestBusyRestartNamesTheExecutionHoldingIt(t *testing.T) {
+	registry := execution.New(context.Background(), nil)
+	running, err := registry.Begin(t.Context(), execution.Key{InstanceID: "turn-7"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer running.Finish(nil)
+	s, err := NewServices(&Service{}, registry, func() (func(), error) { return func() {}, nil },
+		func() {}, &ledger.FileDocument{Path: filepath.Join(t.TempDir(), "restart.json")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = s.Restart(t.Context(), "hub", consoleapi.RestartRequest{CommandID: "now"})
+	var failure *consoleapi.ServiceError
+	if !errors.As(err, &failure) || failure.Reason != consoleapi.RestartWaitExecutions {
+		t.Fatalf("refusal=%v", err)
+	}
+	if !strings.Contains(failure.Message, "turn-7") {
+		t.Fatalf("the refusal did not name the execution: %q", failure.Message)
 	}
 }
