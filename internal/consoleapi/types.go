@@ -657,6 +657,11 @@ type Reply struct {
 	// in the conversation, so "/cancel" and its receipt are recorded and
 	// auditable but never drawn as messages.
 	Silent bool `json:"silent,omitempty"`
+	// Relayed marks a sent line Steve put into the conversation on the
+	// owner's behalf rather than one the owner typed: a schedule firing,
+	// a delegated task reporting back. It reads like a message but it is
+	// a record of something that happened, so it cannot be rewritten.
+	Relayed bool `json:"relayed,omitempty"`
 	// Process is how the reply was made, for the page to unfold; Injected
 	// what the agent was given for the turn.
 	Process  *Process  `json:"process,omitempty"`

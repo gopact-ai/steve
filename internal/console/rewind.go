@@ -48,6 +48,13 @@ type rewindPlan struct {
 	removed  []string
 }
 
+// relayed reports a line Steve put into the conversation on the owner's
+// behalf: a schedule firing, a delegated task reporting back. Such a
+// line shows a notice while the agent was given something else, or it
+// names the schedule that opened it. It is a record of something that
+// happened, so the owner may quote it but not rewrite it.
+func relayed(e Exchange) bool { return e.Prompt != "" || e.Origin != "" }
+
 // planRewind reads what a rewind would need without changing anything.
 func (s *Service) planRewind(conversation, replyID string) (rewindPlan, error) {
 	s.mu.Lock()
@@ -77,6 +84,9 @@ func (s *Service) planRewindLocked(conversation, replyID string) (rewindPlan, er
 	}
 	if at < 0 {
 		return rewindPlan{}, ErrRewindTargetGone
+	}
+	if list[at].Relayed {
+		return rewindPlan{}, errors.New("这条消息是 Steve 代你发的，不能改写")
 	}
 	plan := rewindPlan{conversation: conversation, line: at, exchange: list[at].ExchangeID, history: rewindHistory(list[:at])}
 	for _, r := range list[at:] {

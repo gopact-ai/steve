@@ -36,7 +36,9 @@ function CopyLine({ text }: { text: string }) {
 
 // UserMessage is what the person typed: a bubble on the right, with the
 // time it was sent and the two things one wants from a line already gone —
-// a copy of it, and it back in the box to say again, differently.
+// a copy of it, and it back in the box to say again, differently. A line
+// Steve relayed for the owner has no rewrite: there is nothing of theirs
+// in it to say differently.
 export const UserMessage = memo(function UserMessage({ r, onEdit }: { r: Reply; onEdit?: (r: Reply) => void }) {
     const { t, locale } = useI18n();
     const text = r.input || "";
@@ -47,7 +49,7 @@ export const UserMessage = memo(function UserMessage({ r, onEdit }: { r: Reply; 
                 <div className="message-user-meta">
                     <span>{when(r.at, locale)}</span>
                     <CopyLine text={text} />
-                    {onEdit && text && <button type="button" onClick={() => onEdit(r)} className="message-line-action" aria-label={t("console.editResend")} title={t("console.editResend")}><Edit03 aria-hidden="true" className="size-3.5" /></button>}
+                    {onEdit && text && !r.relayed && <button type="button" onClick={() => onEdit(r)} className="message-line-action" aria-label={t("console.editResend")} title={t("console.editResend")}><Edit03 aria-hidden="true" className="size-3.5" /></button>}
                 </div>
             </div>
         </div>

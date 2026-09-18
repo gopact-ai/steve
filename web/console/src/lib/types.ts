@@ -156,6 +156,9 @@ export interface Reply {
     // A silent line is kept by the server but never drawn: stopping a turn
     // is an act on that turn, not a message in the conversation.
     silent?: boolean;
+    // A relayed line is one Steve sent for the owner — a schedule firing,
+    // a delegated task reporting back. It can be copied, not rewritten.
+    relayed?: boolean;
 }
 export interface Snapshot {
     at: string; hub: Hub; nodes: Node[]; agents: Agent[]; tasks: Task[]; plans: Plan[]; projects: Project[];
