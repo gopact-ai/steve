@@ -124,7 +124,7 @@ export function Prose({ text, label, lang }: { text: string; label: string; lang
                 </div>
             </div>
             {raw ? <CodeBlock code={text} lang={lang} label={label} maxHeight={384} />
-                : <div className="max-h-96 min-w-0 overflow-auto rounded-md px-2 py-1.5 ring-1 ring-secondary"><Md size="xs" text={text} /></div>}
+                : <div className="max-h-96 min-w-0 overflow-auto rounded-md px-2 py-1.5 ring-1 ring-secondary"><Md size="xs" text={text} className="md-compact" /></div>}
         </div>
     );
 }
@@ -172,7 +172,7 @@ function MCPBlock({ servers, agent, node }: { servers: string[]; agent: string; 
                                 <div className="min-w-0 px-2 pb-2">
                                     {!done ? <span className="text-xs text-tertiary">{t("setup.loading")}</span>
                                         : missing ? <span className="text-xs text-tertiary">{t("setup.mcpMissing", { node: node ? nodeLabelOf(node) : "—" })}</span>
-                                            : tools?.length ? <MCPToolList tools={tools} />
+                                            : tools?.length ? <MCPToolList tools={tools} dense />
                                                 : <span className="text-xs text-tertiary">{t("setup.mcpUnprobed")}</span>}
                                 </div>
                             </details>
