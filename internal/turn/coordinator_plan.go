@@ -157,19 +157,46 @@ func (c *Coordinator) cancelOrphanedPlans(resuming map[string]bool) {
 	}
 }
 
-// failPlanTask closes a plan task whose run ended badly. Without it the
-// task keeps its open state for good: a background plan is out of reach of
-// both recovery and the task commands, and a foreground one would still
-// read as running long after its card said it stopped.
-func (c *Coordinator) failPlanTask(id string, cause error) {
+// closePlanTask ends the task a plan ran under, with the state the run
+// earned: done when it finished, failed when it stopped. Without it the
+// task keeps claiming to run for good — a background plan is out of reach
+// of both recovery and the task commands, and a foreground one would read
+// as running long after its card said it stopped. A task that is already
+// terminal is left alone: a step that closed it had the better answer.
+func (c *Coordinator) closePlanTask(id string, runErr error) {
 	if c.tasks == nil || id == "" {
 		return
 	}
-	if _, err := c.tasks.Advance(id, task.StateFailed); err != nil {
-		slog.Error(fmt.Sprintf("turn: close failed plan task #%s: %v", id, err), "task", id)
+	if tracked, ok := c.tasks.Get(id); !ok || tracked.State.Terminal() || tracked.State == task.StateFailed {
 		return
 	}
-	slog.Warn(fmt.Sprintf("turn: plan task #%s failed: %v", id, cause), "task", id)
+	to := task.StateDone
+	if runErr != nil {
+		to = task.StateFailed
+	}
+	if _, err := c.tasks.Advance(id, to); err != nil {
+		slog.Error(fmt.Sprintf("turn: close plan task #%s: %v", id, err), "task", id)
+		return
+	}
+	if runErr != nil {
+		slog.Warn(fmt.Sprintf("turn: plan task #%s failed: %v", id, runErr), "task", id)
+	}
+}
+
+// finishPlanTask closes a plan task that finished, under the execution
+// authority the run itself holds. The plan machinery closes the task
+// already when the last step lands, and advancing a second time would
+// only log an error about a move from done to done.
+func (c *Coordinator) finishPlanTask(ctx context.Context, id string) {
+	if c.tasks == nil || id == "" {
+		return
+	}
+	if tracked, ok := c.tasks.Get(id); !ok || tracked.State.Terminal() {
+		return
+	}
+	if _, err := c.advanceExecution(ctx, id, task.StateDone); err != nil {
+		slog.Error(fmt.Sprintf("turn: close plan task #%s: %v", id, err), "task", id)
+	}
 }
 
 // planTree renders the plan as its steps, with where each ran. The tree is
@@ -293,6 +320,11 @@ func (c *Coordinator) resumePlan(ctx context.Context, rec exec.RunRecord, tracke
 	if runErr == nil {
 		runErr = ctx.Err()
 	}
+	// A resumed run is the end of the plan either way. Nothing downstream
+	// closes the task here the way the original command would have, and a
+	// plan started in the background has no anchor to say so at, so it
+	// would sit in the listing as running until the ledger was edited.
+	c.closePlanTask(tracked.ID, runErr)
 	final, _ := c.plans.Latest(rec.PlanID)
 	var text string
 	if runErr != nil {

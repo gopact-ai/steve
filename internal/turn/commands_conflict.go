@@ -187,7 +187,7 @@ func (c *Coordinator) resolveConflict(ctx context.Context, p project.Project, st
 		// The run is over either way, and an automatic resolution has no
 		// conversation behind it: plan recovery skips a task with no
 		// anchor, so nothing else would ever close this one.
-		c.failPlanTask(tracked.ID, out.Err)
+		c.closePlanTask(tracked.ID, out.Err)
 	}
 	return out
 }
@@ -220,9 +220,7 @@ func (c *Coordinator) runResolution(ctx context.Context, p project.Project, stuc
 	if _, err := c.supervisor.Execute(ctx, stored); err != nil {
 		return err
 	}
-	if _, err := c.advanceExecution(ctx, tracked.ID, task.StateDone); err != nil {
-		slog.Error(fmt.Sprintf("turn: close resolve task %s: %v", tracked.ID, err), "task", tracked.ID)
-	}
+	c.finishPlanTask(ctx, tracked.ID)
 	return nil
 }
 

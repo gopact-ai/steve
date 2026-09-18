@@ -71,7 +71,7 @@ func TestAFailedBackgroundPlanIsRecordedAndCanBeSettled(t *testing.T) {
 
 	c := New(nil, nil, nil, nil, 0)
 	c.SetTasks(store, "hub")
-	c.failPlanTask(tracked.ID, errors.New("no agent could take it"))
+	c.closePlanTask(tracked.ID, errors.New("no agent could take it"))
 
 	got, _ := store.Get(tracked.ID)
 	if got.State != task.StateFailed {
@@ -83,5 +83,38 @@ func TestAFailedBackgroundPlanIsRecordedAndCanBeSettled(t *testing.T) {
 	}
 	if _, err := store.Settle(tracked.ID, task.SettlementIgnored); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// A plan whose last step closed the task already has the better answer.
+// Closing it a second time used to log an error about moving from done to
+// done on every successful resolution.
+func TestClosingAPlanTaskLeavesAnAlreadyFinishedOneAlone(t *testing.T) {
+	store, err := task.Open(filepath.Join(t.TempDir(), "tasks.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	finished, err := store.Create(task.Task{Goal: "already closed by its last step", Origin: "plan"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Advance(finished.ID, task.StateDone); err != nil {
+		t.Fatal(err)
+	}
+	resumed, err := store.Create(task.Task{Goal: "resumed to the end", Origin: "plan"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	c := New(nil, nil, nil, nil, 0)
+	c.SetTasks(store, "hub")
+	c.closePlanTask(finished.ID, errors.New("late failure"))
+	c.closePlanTask(resumed.ID, nil)
+
+	if got, _ := store.Get(finished.ID); got.State != task.StateDone {
+		t.Fatalf("a finished plan task was reopened as %s", got.State)
+	}
+	if got, _ := store.Get(resumed.ID); got.State != task.StateDone {
+		t.Fatalf("a resumed plan task was left as %s", got.State)
 	}
 }
