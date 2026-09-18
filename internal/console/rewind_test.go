@@ -219,3 +219,48 @@ func TestRewindIsRefusedWhileATurnIsInFlight(t *testing.T) {
 		t.Fatalf("rewind once idle: %v", err)
 	}
 }
+
+// A line Steve relayed for the owner — a delegated task reporting back,
+// a schedule firing — reads like a message but records something that
+// happened. Rewriting it would edit the record, so it is marked as
+// relayed for the page and refused by the service.
+func TestRelayedLinesCannotBeRewritten(t *testing.T) {
+	h := &rewindable{}
+	s := New(h, "ou_owner", readmodel.New(readmodel.Sources{}))
+	ctx := context.Background()
+	if _, err := s.Send(ctx, "main", "去做这件事"); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.Continue(ctx, "main", "k1", "claude", "⤵ 子任务 #12 完成", "子任务回来了，接着干"); err != nil {
+		t.Fatal(err)
+	}
+	waitIdle(t, s, "console:main")
+
+	var typed, relayedLine consoleapi.Reply
+	for _, reply := range s.Replies("main") {
+		if reply.Kind != "sent" {
+			continue
+		}
+		if reply.Relayed {
+			relayedLine = reply
+		} else {
+			typed = reply
+		}
+	}
+	if relayedLine.ID == "" || relayedLine.Input != "⤵ 子任务 #12 完成" {
+		t.Fatalf("the relayed line was not marked: %+v", sentIDs(s.Replies("main")))
+	}
+	if typed.ID == "" || typed.Relayed {
+		t.Fatalf("the owner's own line was marked as relayed: %+v", typed)
+	}
+	_, err := s.Submit(ctx, consoleapi.Submission{Conversation: "main", Input: "改过的", CommandID: "c1", RewindTo: relayedLine.ID})
+	if err == nil || !strings.Contains(err.Error(), "代你发") {
+		t.Fatalf("err = %v", err)
+	}
+	if len(h.resets) != 0 {
+		t.Fatalf("a refused rewind still ended the agent session: %v", h.resets)
+	}
+	if got := len(sentIDs(s.Replies("main"))); got != 2 {
+		t.Fatalf("the transcript changed: %d sent lines", got)
+	}
+}

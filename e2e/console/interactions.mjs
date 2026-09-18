@@ -2339,6 +2339,7 @@ checks["sent-line-actions"] = async (f) => {
         { id: "asked", kind: "sent", conversation: A, at, input: "问题1：" },
         { id: "stop-control", kind: "sent", conversation: A, at, input: "/cancel", silent: true },
         { id: "stop-receipt", kind: "reply", conversation: A, at, text: "已请求取消 dev 当前任务", silent: true },
+        { id: "relayed", kind: "sent", conversation: A, at, input: "⤵ 子任务 #12 完成", relayed: true },
     ];
     await f.context.grantPermissions(["clipboard-read", "clipboard-write"]);
     await f.page.reload();
@@ -2359,6 +2360,12 @@ checks["sent-line-actions"] = async (f) => {
     await f.page.getByRole("button", { name: "改写", exact: true }).click();
     await eventually(async () => await draftOf(f.box) === "问题1：", "Confirming replaces the draft with the edited line");
     assert.equal(f.calls.length, 0, "Editing prepares a message; it does not send one");
+    // A line Steve relayed records something that happened; it can be
+    // copied, but there is nothing of the owner's in it to rewrite.
+    const relayed = f.page.locator(".message-user").filter({ hasText: "⤵ 子任务 #12 完成" });
+    await relayed.waitFor();
+    assert.equal(await relayed.getByRole("button", { name: "复制", exact: true }).count(), 1, "A relayed line can still be copied");
+    assert.equal(await relayed.getByRole("button", { name: "改写这条消息，从这里重来", exact: true }).count(), 0, "A relayed line offers no rewrite");
 };
 
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);

@@ -400,7 +400,7 @@ func (s *Service) startLocked(e *queuedExchange) error {
 	previous := s.replies[conversation]
 	e.State, e.StartedAt = consoleapi.ExchangeRunning, time.Now().UTC()
 	s.running[conversation]++
-	sent := s.recordLocked(consoleapi.Reply{At: e.StartedAt, Conversation: conversation, ProjectID: e.ExpectedProject, ExchangeID: e.ID, Input: e.Input, Kind: "sent", Silent: s.stopControl(e.Input), Refs: copyRefs(e.Refs), Materials: copyMaterials(e.Materials)})
+	sent := s.recordLocked(consoleapi.Reply{At: e.StartedAt, Conversation: conversation, ProjectID: e.ExpectedProject, ExchangeID: e.ID, Input: e.Input, Kind: "sent", Silent: s.stopControl(e.Input), Relayed: relayed(e.Exchange), Refs: copyRefs(e.Refs), Materials: copyMaterials(e.Materials)})
 	if err := s.save(); err != nil {
 		e.State, e.StartedAt = consoleapi.ExchangeQueued, time.Time{}
 		s.running[conversation]--
