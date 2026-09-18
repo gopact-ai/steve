@@ -811,7 +811,10 @@ func (s *Server) consoleSetPreferences(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	writeJSON(w, map[string]any{"ok": true, "note": "下一轮以新会话开始"})
+	// What to say about it is the page's to say, in the page's language:
+	// a choice made mid-turn lands when the turn ends, one made between
+	// turns lands on the next.
+	writeJSON(w, map[string]any{"ok": true})
 }
 
 // consoleTask joins one task for the page: the read model's task, plan

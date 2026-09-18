@@ -2368,12 +2368,36 @@ checks["sent-line-actions"] = async (f) => {
     assert.equal(await relayed.getByRole("button", { name: "改写这条消息，从这里重来", exact: true }).count(), 0, "A relayed line offers no rewrite");
 };
 
+checks["preferences-during-a-turn"] = async (f) => {
+    // A turn in flight used to refuse every selector, so the chips could not
+    // even be opened while the agent worked — the one moment the owner wants
+    // to line up a different model. The choice is taken now, and the page
+    // says when it lands.
+    await f.page.route("**/console/context?*", (route) => {
+        const conversation = new URL(route.request().url()).searchParams.get("conversation");
+        return route.fulfill({ json: { enabled: true, context: { conversation, project: { ...project("scratch"), bound: true }, agents: [], agent: { id: "test-agent", node: "test-node", harness: "codex", model: "gpt-6-astra", ready: true, usable: true } } } });
+    });
+    await f.page.route("**/console/selectors?*", (route) => route.fulfill({
+        json: { model: "gpt-6-astra", models: [{ Value: "gpt-6-astra", Label: "Astra" }], options: [{ ID: "reasoning_effort", Name: "Reasoning effort", Category: "thought_level", Current: "medium", Choices: [{ Value: "medium", Label: "Medium" }, { Value: "high", Label: "High" }] }] },
+    }));
+    await f.page.route("**/console/preferences", (route) => {
+        f.calls.push({ path: "/console/preferences", ...route.request().postDataJSON() });
+        return route.fulfill({ json: { ok: true } });
+    });
+    await f.page.reload();
+    const chip = f.page.getByRole("button", { name: "思考强度", exact: true });
+    await chip.click();
+    await f.page.getByRole("menuitem", { name: "High", exact: true }).click();
+    await f.page.getByText("偏好已保存，这一轮结束后生效", { exact: true }).waitFor();
+    assert.deepEqual(f.calls.find((c) => c.path === "/console/preferences").patch, { reasoning_effort: "high" }, "The choice made during a turn must reach the server");
+};
+
 const selected = process.env.CHECK ? process.env.CHECK.split(",") : Object.keys(checks);
 let failed = 0;
 try {
     for (const name of selected) {
         assert.ok(checks[name], `Unknown CHECK ${name}; choices: ${Object.keys(checks).join(",")}`);
-        const f = await fixture({ history: name.startsWith("scroll-"), running: name.startsWith("stop-") || name === "scroll-stream" });
+        const f = await fixture({ history: name.startsWith("scroll-"), running: name.startsWith("stop-") || name === "scroll-stream" || name === "preferences-during-a-turn" });
         try {
             await checks[name](f);
             assert.deepEqual(f.errors, [], "Browser and mocked API errors");

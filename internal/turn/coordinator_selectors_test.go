@@ -143,3 +143,27 @@ func TestSelectorsCloseDiscoveryAfterRequestCancellation(t *testing.T) {
 		t.Fatalf("canceled request leaked discovery session: closed=%v", rt.closed)
 	}
 }
+
+// Reading what an agent offers is not a turn: it opens a throwaway
+// session of its own. The moment the owner most wants to see the other
+// models is while this one is answering, so discovery runs alongside it.
+func TestSelectorsReadableWhileTheAgentIsAnswering(t *testing.T) {
+	c, rt, runner := selectorCoordinator(t, true)
+	if !c.beginTurn("chat", "grok", func() {}) {
+		t.Fatal("the fixture already had a turn in flight")
+	}
+	defer c.clearActive("chat", "grok")
+	got, err := c.Selectors(t.Context(), "chat", "grok")
+	if err != nil {
+		t.Fatalf("choices could not be read while a turn ran: %v", err)
+	}
+	if got.Model != "m2" || len(got.Models) != 2 {
+		t.Fatalf("discovery during a turn lost choices: %+v", got)
+	}
+	if !reflect.DeepEqual(rt.opened, []string{"grok:"}) || !reflect.DeepEqual(rt.closed, []string{runner.ID()}) {
+		t.Fatalf("discovery must still open and close only a fresh session: opened=%v closed=%v", rt.opened, rt.closed)
+	}
+	if len(runner.seen()) != 0 {
+		t.Fatal("discovery sent the running agent work")
+	}
+}

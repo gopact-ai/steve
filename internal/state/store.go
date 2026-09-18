@@ -60,6 +60,12 @@ type Conversation struct {
 	// harness exposes — by option id, "model" for the model. They outlive
 	// sessions: a fresh session is opened with them.
 	Preferences map[string]map[string]string `json:"preferences,omitempty"`
+	// Renew names agents whose next session must be opened fresh. A model
+	// is fixed when a session opens, so a model chosen while the agent was
+	// answering cannot reach the session then in use. The choice is kept in
+	// Preferences and the agent is named here; the next turn opens a new
+	// session and clears the name.
+	Renew map[string]bool `json:"renew,omitempty"`
 }
 
 type Archived struct {
@@ -195,6 +201,34 @@ func (s *Store) SetPreferences(conversationID, agentID string, patch map[string]
 		delete(conversation.Preferences, agentID)
 	} else {
 		conversation.Preferences[agentID] = prefs
+	}
+	next.Conversations[conversationID] = conversation
+	return s.replaceLocked(next)
+}
+
+// SetRenew names an agent whose next session must be opened fresh, or
+// takes the name off once one has been.
+func (s *Store) SetRenew(conversationID, agentID string, renew bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	next := cloneData(s.data)
+	conversation := next.Conversations[conversationID]
+	if conversation.Sessions == nil {
+		conversation.Sessions = map[string]Session{}
+	}
+	if !renew {
+		if _, ok := conversation.Renew[agentID]; !ok {
+			return nil
+		}
+		delete(conversation.Renew, agentID)
+	} else {
+		if conversation.Renew == nil {
+			conversation.Renew = map[string]bool{}
+		}
+		conversation.Renew[agentID] = true
+	}
+	if len(conversation.Renew) == 0 {
+		conversation.Renew = nil
 	}
 	next.Conversations[conversationID] = conversation
 	return s.replaceLocked(next)
@@ -562,6 +596,12 @@ func cloneConversation(conversation Conversation) Conversation {
 				copied[k] = v
 			}
 			clone.Preferences[agent] = copied
+		}
+	}
+	if conversation.Renew != nil {
+		clone.Renew = make(map[string]bool, len(conversation.Renew))
+		for agent, renew := range conversation.Renew {
+			clone.Renew[agent] = renew
 		}
 	}
 	clone.Sessions = make(map[string]Session, len(conversation.Sessions))
