@@ -1,5 +1,6 @@
 import { useI18n } from "@/providers/locale-provider";
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
+import { useSearchParams } from "react-router";
 import { BookOpen01, Database01, SearchSm, ShieldTick, Users01, Zap } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
@@ -15,17 +16,28 @@ import { describeHistory, familyOf, historyFamilies, type HistoryFamily, type Hi
 import type { HistoryEntry } from "@/lib/types";
 import type { Locale, MessageKey, Translator } from "@/lib/i18n";
 import { PageBody, PageHeader } from "@/components/steve/page";
+import { RunningExecutions } from "@/components/steve/running-executions";
 import { Mono, Nothing, StateBadge, Where, useStateWord } from "@/components/steve/ui";
 
-// HistoryPage answers "what happened, who did it, how did it end". The
-// timeline reads the ledger journal and the connectivity observations,
-// paged by the ledger's sequence; the audit tab holds the raw records.
-export function HistoryPage() {
+const UsageDashboard = lazy(() => import("./usage-dashboard"));
+
+type DashboardTab = "overview" | "timeline" | "audit";
+const tabs: DashboardTab[] = ["overview", "timeline", "audit"];
+
+// DashboardPage answers "what is happening, what did it cost, what
+// happened before". The overview holds the live and counted state, the
+// timeline reads the ledger journal and the connectivity observations
+// paged by the ledger's sequence, and the audit tab holds raw records.
+export function DashboardPage() {
     const { t: tr, locale } = useI18n();
     const { snap, events } = useFleet();
     const nodeLabelOf = useNodeLabel();
     const stateWord = useStateWord();
-    const [tab, setTab] = useState<"timeline" | "audit">("timeline");
+    const [params, setParams] = useSearchParams();
+    // "usage" was the board tab this page absorbed; its links still open here.
+    const asked = params.get("tab") === "usage" ? "overview" : params.get("tab");
+    const tab: DashboardTab = tabs.includes(asked as DashboardTab) ? asked as DashboardTab : "overview";
+    const setTab = (value: DashboardTab) => { const next = new URLSearchParams(params); next.set("tab", value); setParams(next, { replace: true }); };
     const [family, setFamily] = useState<HistoryFamily | "">("");
     const [entries, setEntries] = useState<HistoryEntry[]>([]);
     const [next, setNext] = useState(0);
@@ -41,7 +53,8 @@ export function HistoryPage() {
     };
     // Identity changes even after the bounded event buffer reaches 300 items.
     const latestEvent = events[0];
-    useEffect(() => { void load(0, true); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [latestEvent]);
+    const reads = tab === "timeline";
+    useEffect(() => { if (reads) void load(0, true); /* eslint-disable-next-line react-hooks/exhaustive-deps */ }, [latestEvent, reads]);
     // A row is searched by what it says, so a machine can be found by the
     // name its owner gave it and not only by its node ID.
     const query = filter.trim().toLowerCase();
@@ -54,12 +67,18 @@ export function HistoryPage() {
     const f = snap.facts;
     return (
         <div className="workbench-page flex min-w-0 flex-col">
-            <PageHeader title={tr("history.title")} description={tr("history.description")}>
-                <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as "timeline" | "audit")}>
-                    <TabList type="button-border" size="sm" items={[{ id: "timeline", label: tr("history.timeline") }, { id: "audit", label: tr("history.audit") }]}>{(item) => <Tab {...item} />}</TabList>
+            <PageHeader title={tr("dashboard.title")} description={tr(tab === "overview" ? "dashboard.description" : "history.description")}>
+                <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as DashboardTab)}>
+                    <TabList type="button-border" size="sm" items={[{ id: "overview", label: tr("dashboard.overview") }, { id: "timeline", label: tr("history.timeline") }, { id: "audit", label: tr("history.audit") }]}>{(item) => <Tab {...item} />}</TabList>
                 </Tabs>
             </PageHeader>
             <PageBody>
+            {tab === "overview" && (
+                <div className="flex min-w-0 flex-col gap-5">
+                    <RunningExecutions />
+                    <Suspense fallback={<p role="status" className="text-sm text-tertiary">{tr("dashboard.loadingUsage")}</p>}><UsageDashboard /></Suspense>
+                </div>
+            )}
             {tab === "timeline" && (
                 <div className="workbench-panel min-w-0 rounded-lg bg-primary ring-1 ring-secondary">
                     <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 border-b border-secondary px-4 py-3">

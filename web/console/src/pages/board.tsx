@@ -1,6 +1,6 @@
 import { useI18n } from "@/providers/locale-provider";
-import { lazy, Suspense, useMemo, useState } from "react";
-import { useSearchParams } from "react-router";
+import { useMemo, useState } from "react";
+import { Navigate, useSearchParams } from "react-router";
 import { ClipboardCheck, Clock } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
@@ -18,8 +18,7 @@ import { Nothing, StateBadge, Where, taskState } from "@/components/steve/ui";
 
 import { unavailableSource } from "@/lib/source-health";
 
-type TabKey = "active" | "all" | "scheduled" | "usage";
-const UsageDashboard = lazy(() => import("./usage-dashboard"));
+type TabKey = "active" | "all" | "scheduled";
 
 
 // BoardPage answers "what is happening now, where is it stuck, what did it
@@ -37,9 +36,10 @@ const lanes: { key: string; title: string; hint: string }[] = [
     const { fill } = useIntent();
     const [params, setParams] = useSearchParams();
     const selectedTab = params.get("tab");
-    const tab: TabKey = selectedTab === "all" || selectedTab === "scheduled" || selectedTab === "usage" ? selectedTab : "active";
+    const tab: TabKey = selectedTab === "all" || selectedTab === "scheduled" ? selectedTab : "active";
     const setTab = (value: TabKey) => { const next = new URLSearchParams(params); next.set("tab", value); setParams(next, { replace: true }); };
     const [selected, setSelected] = useState<string | null>(null);
+    const movedToDashboard = selectedTab === "usage";
     const [showArchived, setShowArchived] = useState(false);
     const byID = useMemo(() => new Map(snap.tasks.map((t) => [t.id, t])), [snap.tasks]);
     const visibleTasks = snap.tasks.filter((t) => showArchived || !t.archived_at);
@@ -56,21 +56,22 @@ const lanes: { key: string; title: string; hint: string }[] = [
     const setAside = roots.filter((t) => t.lane === "set_aside");
     const current = selected ? byID.get(selected) : undefined;
 
+    if (movedToDashboard) return <Navigate to={`/dashboard?tab=overview${params.get("range") ? `&range=${params.get("range")}` : ""}`} replace />;
     return (
         <div className="workbench-page flex h-full min-w-0 flex-col">
             <PageHeader title={tr("board.title")}
-                description={tab === "usage" ? tr("board.usageHint") : tr("board.description")}
-                actions={tab !== "usage" ? <>
+                description={tr("board.description")}
+                actions={<>
                     <Toggle size="sm" label={tr("board.showArchived")} isSelected={showArchived} onChange={setShowArchived} />
                     <Button size="sm" color="primary" onClick={() => fill("/plan")}>{tr("board.newPlan")}</Button>
-                </> : undefined}>
+                </>}>
                 <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
                 <Tabs selectedKey={tab} onSelectionChange={(k) => setTab(k as TabKey)}>
-                    <TabList type="button-border" size="sm" items={[{ id: "active", label: tr("board.active") }, { id: "all", label: tr("board.all") }, { id: "scheduled", label: tr("board.scheduled"), badge: snap.schedules.length || undefined }, { id: "usage", label: tr("board.usage") }]}>
+                    <TabList type="button-border" size="sm" items={[{ id: "active", label: tr("board.active") }, { id: "all", label: tr("board.all") }, { id: "scheduled", label: tr("board.scheduled"), badge: snap.schedules.length || undefined }]}>
                         {(item) => <Tab {...item} />}
                     </TabList>
                 </Tabs>
-                {tab !== "usage" && <div role="region" aria-label={tr("board.rootSummary")} className="flex flex-wrap items-center gap-x-4 gap-y-1">
+                <div role="region" aria-label={tr("board.rootSummary")} className="flex flex-wrap items-center gap-x-4 gap-y-1">
                     <Stat label={tr("board.totalRoots")} value={roots.length} tone="gray" />
                     <Stat label={tr("board.completed")} value={roots.filter((t) => t.lifecycle === "done").length} tone="gray" />
                     <Stat label={tr("board.cancelled")} value={roots.filter((t) => t.lifecycle === "cancelled").length} tone="gray" />
@@ -78,7 +79,7 @@ const lanes: { key: string; title: string; hint: string }[] = [
                     <Stat label={tr("status.running")} value={activityUnavailable ? (running ? `${running}+` : tr("common.unknown")) : running} tone={running ? "blue" : "gray"} />
                     <Stat label={tr("board.attention")} value={attentionUnavailable ? (needsYou ? `${needsYou}+` : tr("common.unknown")) : needsYou} tone={needsYou ? "warning" : "gray"} />
                     <Stat label={tr("board.today")} value={todayUsage && !usageUnavailable ? `${todayTokens} · ${fmtSeconds(todayUsage.seconds, locale)}` : "—"} tone="gray" />
-                </div>}
+                </div>
                 </div>
             </PageHeader>
             <div className="workbench-page-body min-h-0 min-w-0 flex-1 overflow-auto px-4 py-5 sm:px-6 lg:px-8">
@@ -105,7 +106,6 @@ const lanes: { key: string; title: string; hint: string }[] = [
                 )}
                 {tab === "all" && <AllTasks tasks={visibleTasks} onOpen={setSelected} />}
                 {tab === "scheduled" && <Scheduled />}
-                {tab === "usage" && <Suspense fallback={<p role="status" className="p-5 text-sm text-tertiary">{tr("board.loadingUsage")}</p>}><UsageDashboard /></Suspense>}
             </div>
             {current && <TaskDrawer t={current} tasks={snap.tasks} plan={snap.plans.find((p) => p.task_id === current.id)} onClose={() => setSelected(null)} />}
         </div>

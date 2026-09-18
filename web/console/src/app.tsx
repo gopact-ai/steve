@@ -4,7 +4,7 @@ import { SelectionProvider } from "@/providers/selection-provider";
 import { SideChatProvider } from "@/providers/side-chat-provider";
 import { lazy, Suspense, useState } from "react";
 import { HashRouter, Navigate, Route, Routes, useLocation, useNavigate } from "react-router";
-import { BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Zap, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
+import { BarChartSquare02, BookOpen01, ClipboardCheck, Folder, Inbox01, Dataflow03, PuzzlePiece01, Zap, Server01, Terminal, ChevronLeftDouble, Menu01, Settings01, X } from "@untitledui/icons";
 import appIcon from "../../../desktop/macos/Assets/AppIcon.png";
 import { Sheet } from "@/components/steve/drawer";
 import { PaneResizer } from "@/components/steve/pane-resizer";
@@ -16,7 +16,7 @@ import { number } from "@/lib/format";
 import { useBreakpoint } from "@/hooks/use-breakpoint";
 import { ConsolePage } from "@/pages/console";
 import { FleetPage } from "@/pages/fleet";
-import { HistoryPage } from "@/pages/history";
+import { DashboardPage } from "@/pages/dashboard";
 import { InboxPage } from "@/pages/inbox";
 import { ProjectsPage } from "@/pages/projects";
 import { SkillsPage } from "@/pages/skills";
@@ -91,7 +91,7 @@ function Shell() {
                 </a>)}
             </div>)}
             <div className="app-nav-bottom">
-                <a href="#/history" aria-label={small ? t("nav.history") : undefined} title={small ? t("nav.history") : undefined} aria-current={location.pathname === "/history" ? "page" : undefined} className="app-nav-item" onClick={() => setMobileNav(false)}><BookOpen01 aria-hidden="true" />{!small && <span>{t("nav.history")}</span>}</a>
+                <a href="#/dashboard" aria-label={small ? t("nav.dashboard") : undefined} title={small ? t("nav.dashboard") : undefined} aria-current={location.pathname === "/dashboard" ? "page" : undefined} className="app-nav-item" onClick={() => setMobileNav(false)}><BarChartSquare02 aria-hidden="true" />{!small && <span>{t("nav.dashboard")}</span>}</a>
             </div>
         </nav>
         <div className="app-sidebar-footer">
@@ -133,8 +133,9 @@ function Shell() {
                 <Route path="/settings" element={<SettingsPage />} />
                 <Route path="/inbox" element={<InboxPage />} />
                 <Route path="/ledger" element={<Navigate to="/inbox" replace />} />
-                <Route path="/history" element={<HistoryPage />} />
-                <Route path="/activity" element={<Navigate to="/history" replace />} />
+                <Route path="/dashboard" element={<DashboardPage />} />
+                <Route path="/history" element={<Navigate to="/dashboard?tab=timeline" replace />} />
+                <Route path="/activity" element={<Navigate to="/dashboard" replace />} />
             </Routes>
         </main>
     </div>;

@@ -6,7 +6,7 @@ import { useLayoutEffect, useRef, useState } from "react";
 import { useI18n } from "@/providers/locale-provider";
 import type { Translator } from "@/lib/i18n";
 import { levelName } from "@/lib/workspaces";
-import { CheckCircle, Edit05, Plus, Server01, Users01, X, XCircle, Zap } from "@untitledui/icons";
+import { CheckCircle, Edit05, Plus, Server01, Users01, X, XCircle } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
@@ -23,7 +23,7 @@ import { addAgent, addNode, fetchNodeSettings, removeAgent, saveNodeSettings, up
 import { conditionWords, missingTags, troubleWords } from "@/lib/agent-trouble";
 import { useConsoleEvents, useFleet, useIntent } from "@/lib/fleet";
 import { applyActivity, withLiveActivity, type LiveActivity } from "@/lib/live";
-import type { AbilitySnapshot, Agent, Attempt, Capability, Condition, Node as NodeT, Selector, Snapshot } from "@/lib/types";
+import type { AbilitySnapshot, Agent, Capability, Condition, Node as NodeT, Selector, Snapshot } from "@/lib/types";
 import { Drawer, DrawerSection } from "@/components/steve/drawer";
 import { Chips, KeyValue, PageBody, PageHeader } from "@/components/steve/page";
 import { ListEditor, SettingsEditor } from "@/components/steve/settings-editor";
@@ -603,62 +603,7 @@ export function FleetPage() {
                 {snap.agents.length === 0 && <Nothing icon={Users01} title={tr("fleet.noAgents")} />}
             </TableCard.Root>
             {openedAgent && snap.agents.find((a) => a.id === openedAgent) && <AgentDrawer a={snap.agents.find((a) => a.id === openedAgent)!} live={liveActivity[openedAgent]} onClose={() => setOpenedAgent(null)} onChanged={() => refresh()} />}
-
-            <TableCard.Root size="sm" className="workbench-table min-w-0">
-                <TableCard.Header title={tr("fleet.runningExecutions")} badge={`${snap.attempts.length}`} description={tr("fleet.leaseHint")} />
-                {snap.attempts.length === 0 ? <Nothing icon={Zap} title={tr("fleet.noExecutions")} /> : (
-                    <Table aria-label={tr("fleet.runningExecutions")} size="sm">
-                        <Table.Header>
-                            <Table.Head id="id" label={tr("fleet.executionId")} isRowHeader />
-                            <Table.Head id="kind" label={tr("fleet.type")} />
-                            <Table.Head id="state" label={tr("fleet.status")} />
-                            <Table.Head id="agent" label="Agent" />
-                            <Table.Head id="where" label={tr("fleet.machine")} />
-                            <Table.Head id="project" label={tr("nav.projects")} />
-                            <Table.Head id="scope" label={tr("fleet.scope")} />
-                            <Table.Head id="leases" label={tr("fleet.leases")} />
-                            <Table.Head id="admission" label={tr("fleet.admission")} />
-                            <Table.Head id="since" label={tr("fleet.started")} />
-                        </Table.Header>
-                        <Table.Body items={snap.attempts}>
-                            {(a) => (
-                                <Table.Row id={a.id}>
-                                    <Table.Cell><Mono>{a.id}</Mono></Table.Cell>
-                                    <Table.Cell>{a.kind}</Table.Cell>
-                                    <Table.Cell><div className="flex flex-col gap-1" title={a.error}><StateBadge state={a.unsettled ? "quarantined" : a.state} />{a.unsettled && <span className="text-xs text-warning-primary">{tr("fleet.exitUnconfirmed")}</span>}</div></Table.Cell>
-                                    <Table.Cell>{a.agent || "—"}</Table.Cell>
-                                    <Table.Cell><Where node={a.node} /></Table.Cell>
-                                    <Table.Cell>{a.project}</Table.Cell>
-                                    <Table.Cell><Badge type="modern" size="sm" color="gray">{a.scope}</Badge></Table.Cell>
-                                    <Table.Cell><div className="flex flex-wrap gap-1">{(a.leases || []).map((l) => <Mono key={l}>{l}</Mono>)}</div></Table.Cell>
-                                    <Table.Cell><AdmissionBadge a={a} /></Table.Cell>
-                                    <Table.Cell><span className="text-tertiary">{relative(a.started_at, locale)}</span></Table.Cell>
-                                </Table.Row>
-                            )}
-                        </Table.Body>
-                    </Table>
-                )}
-            </TableCard.Root>
             </PageBody>
-        </div>
-    );
-}
-
-// AdmissionBadge says who had the last word before the attempt ran and
-// on which revision: the node itself, the hub, the hub's cached snapshot,
-// or nobody (an older node).
-function AdmissionBadge({ a }: { a: Attempt }) {
-    const { t: tr } = useI18n();
-    const adm = a.admission;
-    const req = (a.requires || []).join(" ");
-    if (!adm) return <span className="text-tertiary">{req ? tr("fleet.unrecordedRequirements", { requirements: req }) : "—"}</span>;
-    const who = ({ node: tr("fleet.nodeDecision"), hub: tr("fleet.hubDecision"), cached: tr("fleet.cachedDecision"), legacy: tr("fleet.legacyDecision") } as Record<string, string>)[adm.source] || adm.source;
-    const color = adm.verdict === 1 ? "success" : adm.verdict === 0 ? "error" : "warning";
-    const rev = adm.generation ? ` @${adm.generation}/${adm.sequence}` : "";
-    return (
-        <div className="flex flex-col gap-0.5">
-            <Badge type="pill-color" size="sm" color={color}>{who}{rev}</Badge>
-            {req && <span className="text-xs text-tertiary">{req}</span>}
         </div>
     );
 }
