@@ -1496,6 +1496,39 @@ checks["preview-document-links"] = async (f) => {
     assert.equal(f.calls.length, 0);
 };
 
+checks["preview-width"] = async (f) => {
+    await f.page.setViewportSize({ width: 1280, height: 900 });
+    await reviewFixture(f);
+    const workspace = f.page.getByRole("dialog", { name: "产物工作区" });
+    await workspace.getByRole("button", { name: "全部文件", exact: true }).click();
+    await workspace.getByRole("navigation", { name: "项目文件" }).getByRole("button", { name: "README.md", exact: true }).click();
+    const prose = workspace.locator(".file-preview-prose");
+    await prose.waitFor();
+    const measure = async () => (await prose.boundingBox()).width;
+    const narrowWindow = await measure();
+    await f.page.setViewportSize({ width: 1800, height: 900 });
+    await f.page.clock.runFor(350);
+    const wideWindow = await measure();
+    assert.ok(wideWindow > narrowWindow + 40, `Reading width must follow the window: ${narrowWindow} then ${wideWindow}`);
+    const widths = workspace.getByRole("group", { name: "预览宽度", exact: true });
+    await widths.getByRole("button", { name: "窄", exact: true }).click();
+    const narrow = await measure();
+    assert.ok(narrow < wideWindow, "A tighter column is narrower than the comfortable measure");
+    await widths.getByRole("button", { name: "全宽", exact: true }).click();
+    const full = await measure();
+    assert.ok(full > wideWindow, "Full width uses the whole reading pane");
+    await noHorizontalOverflow(f.page);
+    await widths.getByRole("button", { name: "适中", exact: true }).click();
+    await f.page.screenshot({ path: path.join(output, "preview-width.png") });
+    await widths.getByRole("button", { name: "全宽", exact: true }).click();
+    await workspace.getByRole("button", { name: "返回", exact: true }).click();
+    await f.page.getByRole("button", { name: "浏览文件", exact: true }).first().click();
+    await workspace.getByRole("navigation", { name: "项目文件" }).getByRole("button", { name: "README.md", exact: true }).click();
+    await prose.waitFor();
+    assert.equal(await workspace.getByRole("button", { name: "全宽", exact: true }).getAttribute("aria-pressed"), "true", "The chosen width is remembered for the next file");
+    assert.equal(f.calls.length, 0);
+};
+
 checks["code-source-feedback"] = async (f) => {
     await reviewFixture(f);
     const workspace = f.page.getByRole("dialog", { name: "产物工作区" });
