@@ -195,4 +195,36 @@ func TestMergeConflictKeepsAMarkedSnapshotAndStopsRetrying(t *testing.T) {
 	if len(after) != len(before) {
 		t.Fatalf("landings recorded = %d then %d, want the same conflict not written twice", len(before), len(after))
 	}
+
+	// Resolving it is publishing from that workspace, which only works if
+	// the marked snapshot is a recorded artifact: a result whose parent is
+	// unknown cannot land. Landing the resolution moves canonical, which
+	// unblocks the original result — it is now an ancestor of canonical,
+	// so it merges to no change and leaves the queue.
+	write(t, conflicted.Path, "a", "mine and theirs")
+	fixed, _, err := store.Publish(ctx, conflicted, marked, "att-3", "resolve")
+	if err != nil {
+		t.Fatalf("publish the resolution: %v", err)
+	}
+	landed2, err := store.Land(ctx, p, fixed.ID, "test")
+	if err != nil || landed2.State != LandCommitted {
+		t.Fatalf("land the resolution = %+v err=%v", landed2, err)
+	}
+	if got := read(t, canonical, "a"); got != "mine and theirs" {
+		t.Fatalf("canonical after resolving = %q", got)
+	}
+	final, err := store.LandPending(ctx, p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(final) != 1 || final[0].State != LandCommitted {
+		t.Fatalf("the unblocked result = %+v", final)
+	}
+	rest, err := store.Stuck(ctx, "p")
+	if err != nil || len(rest) != 0 {
+		t.Fatalf("stuck after resolving = %+v err=%v", rest, err)
+	}
+	if got := read(t, canonical, "a"); got != "mine and theirs" {
+		t.Fatalf("the unblocked result overwrote the resolution: %q", got)
+	}
 }

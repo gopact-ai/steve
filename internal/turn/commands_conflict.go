@@ -72,7 +72,7 @@ func (c commands) resolveCmd(ctx context.Context, req Request, rest string) (Res
 		return Result{Title: title, Text: c.text.T(i18n.ResolveNothing, p.ID)}, nil
 	}
 	var b strings.Builder
-	for _, s := range c.resolveAll(ctx, p, stuck, req) {
+	for _, s := range c.resolveAll(ctx, p, stuck, req, false) {
 		if b.Len() > 0 {
 			b.WriteString("\n\n")
 		}
@@ -106,15 +106,20 @@ func (c *Coordinator) ResolveConflicts(ctx context.Context, p project.Project) [
 	if err != nil || len(stuck) == 0 {
 		return nil
 	}
-	return c.resolveAll(ctx, p, stuck, Request{Locale: string(c.text.Locale())})
+	return c.resolveAll(ctx, p, stuck, Request{Locale: string(c.text.Locale())}, true)
 }
 
 // resolveAll takes the conflicts one at a time. Each resolution moves the
 // canonical name, so a later one in the same pass merges onto what the
 // earlier one produced rather than onto a snapshot that is already stale.
-func (c *Coordinator) resolveAll(ctx context.Context, p project.Project, stuck []artifact.Stuck, req Request) []Resolution {
+// auto skips a conflict that has already had its automatic try: whatever
+// stopped it would stop it again, and each try costs an agent run.
+func (c *Coordinator) resolveAll(ctx context.Context, p project.Project, stuck []artifact.Stuck, req Request, auto bool) []Resolution {
 	var out []Resolution
 	for _, s := range stuck {
+		if auto && s.Attempt != "" {
+			continue
+		}
 		if !c.claimResolution(p.ID, s.Artifact) {
 			continue
 		}
@@ -172,6 +177,11 @@ func (c *Coordinator) resolveConflict(ctx context.Context, p project.Project, st
 		return out
 	}
 	out.TaskID = tracked.ID
+	// Written before the work starts, so a crash mid-resolution does not
+	// come back to a fresh attempt every thirty seconds.
+	if err := c.artifacts.Attempting(ctx, p.ID, stuck.Artifact, tracked.ID); err != nil {
+		slog.Warn(fmt.Sprintf("turn: record resolution attempt for %s: %v", shortID(stuck.Artifact), err), "artifact", stuck.Artifact, "project", p.ID)
+	}
 	if c.executions != nil {
 		scope, err := c.executions.Begin(ctx, execution.Key{TaskID: tracked.ID, InstanceID: "resolve/" + tracked.ID})
 		if err != nil {
