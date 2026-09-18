@@ -1003,6 +1003,12 @@ checks["session-setup-view"] = async (f) => {
     // never says what the agent could have reached for.
     await detail.getByText("steve", { exact: true }).click();
     await detail.getByText("steve_context", { exact: true }).waitFor();
+    // The rail is narrow while the viewport is wide, so a media query
+    // cannot tell: the page's two-column tool row would squeeze the
+    // description to nothing. It has to stay readable here.
+    const summary = detail.getByText("Read the current workspace.", { exact: true }).first();
+    await summary.waitFor();
+    assert.ok((await summary.boundingBox()).width > 120, "An MCP tool's description must stay readable in the rail");
     await detail.getByText("机器上的命令", { exact: true }).waitFor();
     await detail.getByText("ripgrep", { exact: true }).waitFor();
     // Skills the harness loads itself never reach the instructions, so

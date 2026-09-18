@@ -138,6 +138,28 @@ input[type="search"]::-webkit-search-cancel-button {
     --tw-prose-counters: var(--color-text-quaternary);
     --tw-prose-bullets: var(--color-fg-quaternary);
 }
+/* A document read inside the 360px rail is reference material, not the
+   page's own headline: a prose h1 there is wider than the column it sits
+   in. Every level shrinks toward the body size and keeps only its weight
+   to mark the structure. */
+.prose.md.md-compact :where(h1):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    font-size: 1.05em;
+    margin-top: 1em;
+    margin-bottom: 0.4em;
+}
+.prose.md.md-compact :where(h2):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    font-size: 1em;
+    margin-top: 0.9em;
+    margin-bottom: 0.35em;
+}
+.prose.md.md-compact :where(h3, h4, h5, h6):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    font-size: 1em;
+    margin-top: 0.8em;
+    margin-bottom: 0.3em;
+}
+.prose.md.md-compact :where(h1:first-child, h2:first-child, h3:first-child):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    margin-top: 0;
+}
 .prose.md :where(p, ul, ol, pre, blockquote, table):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
     margin-top: 0.5em;
     margin-bottom: 0.5em;
