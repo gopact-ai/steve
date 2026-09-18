@@ -976,7 +976,7 @@ checks["session-setup-view"] = async (f) => {
         deployments: [], machines: [],
     } }));
     await f.page.route("**/state", (route) => route.fulfill({ json: { at, hub: { node: "test-node", started: at, version: "test" },
-        nodes: [{ name: "test-node", up: true, snapshot: { schema: "v1", node: "test-node", generation: 1, sequence: 1, generated_at: at, coverage: {}, offers: [{ kind: "tool", id: "ripgrep", availability: "available" }, { kind: "harness", id: "test", availability: "available" }] } }],
+        nodes: [{ name: "test-node", up: true, snapshot: { schema: "v1", node: "test-node", generation: 1, sequence: 1, generated_at: at, coverage: {}, offers: [{ kind: "tool", id: "ripgrep", availability: "available" }, { kind: "harness", id: "test", availability: "available" }, { kind: "skill", id: "skill-creator", scope: "test", availability: "available" }, { kind: "skill", id: "other-harness-skill", scope: "elsewhere", availability: "available" }] } }],
         agents: [], tasks: [], plans: [], projects: [project("scratch"), project("home")], attempts: [], landings: [] } }));
     await f.page.route("**/console/context?*", (route) => route.fulfill({ json: { enabled: true, context: { conversation: A, agents: [], project: { ...project("scratch"), bound: true }, agent: { id: "test-agent", node: "test-node", harness: "test", model: "model-one", ready: true, usable: true } } } }));
     await f.page.reload();
@@ -1005,6 +1005,14 @@ checks["session-setup-view"] = async (f) => {
     await detail.getByText("steve_context", { exact: true }).waitFor();
     await detail.getByText("机器上的命令", { exact: true }).waitFor();
     await detail.getByText("ripgrep", { exact: true }).waitFor();
+    // Skills the harness loads itself never reach the instructions, so
+    // they are listed separately — and only the ones it can actually load.
+    await detail.getByText("机器上的技能", { exact: true }).waitFor();
+    await detail.getByText("skill-creator", { exact: true }).waitFor();
+    assert.equal(await detail.getByText("other-harness-skill", { exact: true }).count(), 0, "A skill scoped to another AI tool must not be listed as this agent's");
+    // Sections are counted in UTF-8 bytes; the fold has to agree with them
+    // rather than counting a Chinese character as one byte.
+    await detail.getByText(/^指令 · 6[0-9] B$/).waitFor();
     await f.page.setViewportSize({ width: 390, height: 844 });
     await noHorizontalOverflow(f.page);
 };

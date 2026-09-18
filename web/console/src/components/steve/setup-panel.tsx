@@ -55,6 +55,7 @@ export function SetupPanel({ conversation, agent, node }: { conversation: string
                     {error && <span className="text-xs text-error-primary">{t("setup.failed", { error })}</span>}
                     <Instructions text={setup.instructions || ""} sections={setup.sections || []} />
                     <MCPBlock servers={setup.mcp_servers || []} agent={setup.agent} node={node} />
+                    <MachineSkills node={node} harness={setup.harness} />
                     <Commands node={node} />
                 </div>
             )}
@@ -67,11 +68,15 @@ export function SetupPanel({ conversation, agent, node }: { conversation: string
 // away for anyone checking exactly what was sent.
 export function Instructions({ text, sections, title }: { text: string; sections: InstructionSection[]; title?: string }) {
     const { t, locale } = useI18n();
+    // Sections are counted in UTF-8 bytes, the way the file is written;
+    // a string's length in the browser counts code units, so Chinese
+    // text would otherwise read as a third of the sum of its pieces.
+    const size = useMemo(() => new TextEncoder().encode(text).length, [text]);
     if (!text) return <span className="text-xs text-tertiary">{t("setup.instructionsEmpty")}</span>;
     return (
         <div className="flex min-w-0 flex-col gap-2">
             {sections.length > 0 && <Composition sections={sections} />}
-            <Fold summary={`${title ?? t("setup.instructions")} · ${fmtBytes(text.length, locale)}`}>
+            <Fold summary={`${title ?? t("setup.instructions")} · ${fmtBytes(size, locale)}`}>
                 <Prose text={text} label={title ?? t("setup.instructions")} lang="markdown" />
             </Fold>
         </div>
@@ -175,6 +180,26 @@ function MCPBlock({ servers, agent, node }: { servers: string[]; agent: string; 
                     );
                 })}
             </ul>
+        </div>
+    );
+}
+
+// MachineSkills is what the harness can load on that machine by itself.
+// They never appear in the assembled instructions, so listing only the
+// folded-in ones would say an agent has no skills when it has several.
+function MachineSkills({ node, harness }: { node?: string; harness: string }) {
+    const { t } = useI18n();
+    const { snap } = useFleet();
+    const skills = useMemo(() => {
+        const machine = snap.nodes.find((n) => n.name === node);
+        const offers = (machine?.snapshot?.offers || []).filter((c) => c.kind === "skill" && (!c.scope || c.scope === harness));
+        return [...new Set(offers.map((c) => c.id))].sort();
+    }, [snap.nodes, node, harness]);
+    return (
+        <div className="flex min-w-0 flex-col gap-1">
+            <div className="u-label" title={t("setup.skillsHint")}>{t("setup.skills")}</div>
+            <Chips tone="muted" items={skills.map((id) => ({ id }))}
+                empty={<span className="text-xs text-tertiary">{t("setup.skillsEmpty", { harness })}</span>} />
         </div>
     );
 }
