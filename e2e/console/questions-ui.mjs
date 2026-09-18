@@ -18,7 +18,7 @@ page.setDefaultTimeout(7000);
 const conversation = "console:question-ui", at = "2026-09-07T01:00:00Z";
 const explanation = "I tried the integration checks on build-node. Configuration checks and unit tests passed.\n\nThe integration environment cannot be reached from this machine. Its network access is restricted, so retrying here will not resolve the problem.\n\nI recommend running the remaining integration checks on dev-box. The completed checks do not need to run again. Should I use dev-box?";
 const makeQuestion = (id, extra = {}) => ({ id, conversation, exchange_id: "e1", task_id: "11", kind: "question", title: "Continue integration checks", message: explanation, options: [{ id: "dev-box", label: "Use dev-box", description: "Run the remaining integration checks." }, { id: "wait", label: "Wait for network access", description: "Continue once access is restored." }], required: true, created_at: at, deadline: "2030-01-01T00:00:00Z", updated_at: at, state: "pending", ...extra });
-const f = { questions: [makeQuestion("q-original")], answers: [], preferences: [], queue: [], errors: [], holdAnswer: false, releaseAnswer: null, reset: false, malformed: false, staleReads: false, questionReads: 0, activeState: "" };
+const f = { questions: [makeQuestion("q-original")], answers: [], preferences: [], queue: [], errors: [], holdAnswer: false, releaseAnswer: null, reset: false, malformed: false, staleReads: false, questionReads: 0, activeState: "running", startedAt: "", exchange: "" };
 page.on("pageerror", (error) => f.errors.push(String(error)));
 await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
@@ -35,7 +35,8 @@ await page.route("**/*", async (route) => {
     if (p === "/console/suggest") return route.fulfill({ json: { suggestions: [] } });
     if (p === "/console/queue") {
         if (req.method() !== "GET") { f.queue.push(input); return route.fulfill({ status: 500, json: { error: "A question response must not create work" } }); }
-        return route.fulfill({ json: { queue: f.activeState ? [{ id: "retained", conversation, input: "Continue the original task", state: f.activeState, enqueued_at: at, started_at: at }] : [], submission_keys: true, material_refs: true, interactive_requests: true } });
+        const started = f.startedAt || at;
+        return route.fulfill({ json: { queue: f.activeState ? [{ id: f.exchange || "retained", conversation, input: "Continue the original task", state: f.activeState, enqueued_at: started, started_at: started }] : [], submission_keys: true, material_refs: true, interactive_requests: true } });
     }
     if (p === "/console/annotations") return route.fulfill({ json: { annotations: [] } });
     if (p === "/console/selectors") return route.fulfill({ json: { model: "gpt-6", models: [{ Value: "gpt-6", Label: "gpt-6" }], preferred: {}, options: [{ ID: "mode", Name: "Mode", Category: "mode", Current: "read-only", Choices: [{ Value: "read-only", Label: "Ask for approval" }, { Value: "agent-full-access", Label: "Full access" }] }] } });
@@ -282,8 +283,28 @@ try {
         await page.locator(".console-status").getByText(label, { exact: true }).waitFor();
         assert.equal(await page.getByRole("button", { name: "Send", exact: true }).count(), 0, "recovery remains an active original execution");
     }
-    f.activeState = "";
     console.log("PASS retained exchanges remain active and recovery questions have no automatic expiry");
+    // A decision belongs to the turn that raised it. When the turn ends the
+    // panel leaves with it, and the next turn opens clean instead of carrying
+    // the last one's approvals above the composer.
+    const region = page.getByRole("region", { name: "Your response is needed" });
+    const settled = Array.from({ length: 7 }, (_, index) => answered(index));
+    f.questions = settled;
+    await page.evaluate((event) => window.emit(event), { kind: "console.question", conversation, at });
+    await panel.getByText("Resolved requests (7)", { exact: true }).waitFor();
+    f.activeState = "";
+    await page.evaluate((event) => window.emit(event), { kind: "console.queue", conversation, at });
+    await waitFor(async () => await region.count() === 0, "a finished turn takes its resolved requests with it");
+    f.activeState = "running"; f.startedAt = "2026-09-07T02:00:00Z"; f.exchange = "e2";
+    const next = makeQuestion("q-next-turn", { title: "Approve the next step", created_at: "2026-09-07T02:00:01Z", updated_at: "2026-09-07T02:00:01Z" });
+    f.questions = [...settled, next];
+    await page.evaluate((event) => window.emit(event), { kind: "console.queue", conversation, at });
+    await page.evaluate((event) => window.emit(event), { kind: "console.question", conversation, text: next.id, at });
+    await panel.getByRole("heading", { name: next.title, exact: true }).waitFor();
+    assert.equal(await panel.getByText("Resolved requests (7)", { exact: true }).count(), 0, "the new turn's request stands on its own");
+    f.startedAt = ""; f.exchange = "";
+    console.log("PASS resolved requests leave with the turn that raised them");
+
     f.questions = [makeQuestion("q-zh", { title: "继续集成验证", message: "配置校验和单元测试已完成。我尝试在 build-node 运行集成验证，但无法访问项目内网；本机没有可用的网络凭据，重试仍无法解决。\n\n建议改到 dev-box 继续验证，保留已完成的结果。要这样继续吗？", allow_free_text: true, options: [{ id: "dev-box", label: "改到 dev-box 继续", description: "保留已完成的验证结果。" }, { id: "wait", label: "等待内网恢复" }] })];
     await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "zh"); localStorage.setItem("ui-theme", "dark"); });
     await page.reload();
