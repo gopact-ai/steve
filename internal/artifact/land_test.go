@@ -134,6 +134,37 @@ func TestDeferredLandingsRunInOrderAndKeepConflicts(t *testing.T) {
 	_ = ledger.ErrConflict
 }
 
+// A result landing directly — a plan step's own, not one a delegation
+// queued — used to be lost outright when it conflicted: the queue only
+// held what had been deferred, so nothing retried it and nothing could
+// resolve it. Both paths now leave the same record.
+func TestADirectLandingThatConflictsIsKeptForResolution(t *testing.T) {
+	ctx := context.Background()
+	canonical := t.TempDir()
+	write(t, canonical, "a", "a0")
+	store, p := newStore(t, &localNode{}, project.Home{Path: canonical})
+	ws, _ := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Owner: "att-1"})
+	base := store.canonicalRef(ctx, "p")
+	write(t, ws.Path, "a", "mine")
+	first, _, _ := store.Publish(ctx, ws, base, "att-1", "one")
+	ws2, _ := store.Materialize(ctx, project.Request{Project: "p", Isolated: true, Base: base, Owner: "att-2"})
+	write(t, ws2.Path, "a", "theirs")
+	second, _, _ := store.Publish(ctx, ws2, base, "att-2", "two")
+
+	if land, err := store.Land(ctx, p, first.ID, "test"); err != nil || land.State != LandCommitted {
+		t.Fatalf("first landing = %+v err=%v", land, err)
+	}
+	land, err := store.Land(ctx, p, second.ID, "test")
+	var conflict Conflict
+	if !errors.As(err, &conflict) || land.State != LandMergeConflicted {
+		t.Fatalf("second landing = %+v err=%v", land, err)
+	}
+	stuck, err := store.Stuck(ctx, "p")
+	if err != nil || len(stuck) != 1 || stuck[0].Artifact != second.ID || !stuck[0].Resolvable() {
+		t.Fatalf("stuck after a direct conflict = %+v err=%v", stuck, err)
+	}
+}
+
 // A conflict is only a dead end if the half-merged tree is thrown away.
 // Git computes it either way, so the landing keeps it: checking it out
 // gives both sides with markers between them, which is what an agent (or

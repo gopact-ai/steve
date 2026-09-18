@@ -834,15 +834,6 @@ func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, 
 			return err
 		})
 	}
-	block := func(item Pending, land Landing, conflict Conflict) error {
-		item.Blocked = &Blocked{Landing: land.ID, Canonical: s.CanonicalOf(ctx, p.ID), Marked: conflict.Marked, Paths: conflict.Paths, At: s.now().UTC()}
-		return s.ledger.Update(ctx, func(tx *ledger.Tx) error {
-			if err := tx.CheckLocalLease(drive); err != nil {
-				return err
-			}
-			return tx.PutBinding(pendingKind, item.Project+"/"+item.Artifact, item)
-		})
-	}
 	var queue []Pending
 	for _, data := range raw {
 		var item Pending
@@ -871,10 +862,10 @@ func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, 
 		if err != nil {
 			var conflict Conflict
 			if errors.As(err, &conflict) {
+				// The landing recorded why it is stuck on the queue entry
+				// itself, which is what keeps it from being retried against
+				// the same canonical every pass.
 				out = append(out, land)
-				if err := block(item, land, conflict); err != nil {
-					return out, err
-				}
 				continue
 			}
 			return out, err
