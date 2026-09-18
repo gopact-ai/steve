@@ -106,7 +106,7 @@ export function Working({ live, plans, compact }: { live: Live; plans: Plan[]; c
 function ThinkingTail({ text }: { text: string }) {
     const paras = text.trim().split(/\n\s*\n/);
     const last = paras[paras.length - 1] || "";
-    return <Md size="xs" text={last} className="line-clamp-3 text-tertiary" />;
+    return <Md size="xs" text={last} className="line-clamp-3 md-quiet" />;
 }
 
 // ProcessBody is a reply's trace: each step's, then the turn's own.

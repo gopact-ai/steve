@@ -15,7 +15,7 @@ export function ThinkingFold({ text, open, live }: { text: string; open?: boolea
                 <ChevronDown className="size-3.5 shrink-0 transition group-open/think:rotate-180" />
             </summary>
             <div {...scroll} tabIndex={0} className="ml-2 max-h-60 overflow-y-auto border-l border-secondary pl-3 [overflow-anchor:none]">
-                <Md size="xs" text={text} className="text-tertiary" />
+                <Md size="xs" text={text} className="md-quiet" />
             </div>
         </details>
     );
