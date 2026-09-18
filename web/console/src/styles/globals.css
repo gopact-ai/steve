@@ -126,6 +126,18 @@ input[type="search"]::-webkit-search-cancel-button {
     --tw-prose-bullets: var(--color-fg-quaternary);
     --tw-prose-counters: var(--color-text-tertiary);
 }
+/* Inside the process fold the words are working notes, not the reply.
+   Every level steps down one notch so the answer stays the loudest thing
+   in the transcript and the thinking reads as background. */
+.prose.md.md-quiet:not(:where([class~="not-prose"], [class~="not-prose"] *)) {
+    --tw-prose-body: var(--color-text-tertiary);
+    --tw-prose-headings: var(--color-text-secondary);
+    --tw-prose-bold: var(--color-text-secondary);
+    --tw-prose-quotes: var(--color-text-tertiary);
+    --tw-prose-code: var(--color-text-tertiary);
+    --tw-prose-counters: var(--color-text-quaternary);
+    --tw-prose-bullets: var(--color-fg-quaternary);
+}
 .prose.md :where(p, ul, ol, pre, blockquote, table):not(:where([class~="not-prose"], [class~="not-prose"] *)) {
     margin-top: 0.5em;
     margin-bottom: 0.5em;

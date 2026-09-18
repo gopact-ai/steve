@@ -68,7 +68,7 @@ function ThoughtSpan({ text, live }: { text: string; live?: boolean }) {
     const { followTail: _, ...scroll } = useFollowTail(shown, live);
     return <div {...(live ? scroll : {})} data-span-kind="thought" tabIndex={live ? 0 : undefined} aria-label={t("consoleChrome.thinking")} title={live ? plain(shown) : undefined}
         className={`break-words text-xs text-tertiary [&_p]:my-0 [&_p]:leading-5 ${live ? "max-h-30 overflow-y-auto [overflow-anchor:none]" : ""}`}>
-        <Md size="xs" text={shown} className="text-tertiary" />
+        <Md size="xs" text={shown} className="md-quiet" />
     </div>;
 }
 
@@ -98,7 +98,7 @@ function Timeline({ p, live, omitText }: { p: Progress; live?: boolean; omitText
         ? <Activity key={index} tools={tools} />
         : span.kind === "thought"
             ? <ThoughtSpan key={index} text={span.text || ""} live={live && index === (p.timeline?.length || 0) - 1} />
-            : <div key={index} data-span-kind="text"><Md text={span.text || ""} /></div>)}</div>;
+            : <div key={index} data-span-kind="text"><Md text={span.text || ""} className="md-quiet" /></div>)}</div>;
 }
 
 export function finalTextIndex(process: Process): number | undefined {
