@@ -31,7 +31,7 @@ func TestRestartConsumesOnlyExactPersistedRelocationApproval(t *testing.T) {
 			lifetime, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			doc := recoveryDocument()
-			s := New(&echo{}, "owner", nil)
+			s := impatient(New(&echo{}, "owner", nil))
 			s.EnableRetainedRecovery(lifetime)
 			if err := s.Persist(doc); err != nil {
 				t.Fatal(err)
@@ -61,7 +61,7 @@ func TestRestartConsumesOnlyExactPersistedRelocationApproval(t *testing.T) {
 			cancel()
 			lifetime, stop := context.WithCancel(t.Context())
 			defer stop()
-			restarted := New(&echo{}, "owner", nil)
+			restarted := impatient(New(&echo{}, "owner", nil))
 			restarted.EnableRetainedRecovery(lifetime)
 			if err := restarted.Persist(doc); err != nil {
 				t.Fatal(err)

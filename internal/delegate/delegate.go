@@ -80,8 +80,13 @@ type Service struct {
 	// not a cap: a child that builds and tests for twenty minutes while
 	// reporting is left alone, one that hung is not. The child's own
 	// budget (MaxElapsed) stays the hard limit.
-	MaxSilence   time.Duration
-	RegisterIdle idle.Registrar
+	MaxSilence time.Duration
+	// RecoveryQuiet is how long a child's recovery keeps rejoining its
+	// node on its own before the parent's owner is asked anything. A node
+	// restart or a dropped link lasts seconds while the child keeps
+	// running, and the next pass joins it again.
+	RecoveryQuiet time.Duration
+	RegisterIdle  idle.Registrar
 	// observe, when set, is told what each child is doing and how it
 	// ended; the console shows it under the parent's delegate call.
 	observe func(Child, view.Progress)
@@ -164,7 +169,7 @@ func (s *Service) SetLedger(attempts *attempt.Service, artifacts *artifact.Store
 func New(tasks *task.Store, r *roster.Roster, sessions Sessions, assembler *capability.Assembler, workspaces project.Workspaces, node string) *Service {
 	return &Service{
 		tasks: tasks, roster: r, sessions: sessions, assembler: assembler, workspaces: workspaces, node: node,
-		InlineWait: defaultInlineWait, pending: map[string]*child{},
+		InlineWait: defaultInlineWait, RecoveryQuiet: defaultRecoveryQuiet, pending: map[string]*child{},
 	}
 }
 

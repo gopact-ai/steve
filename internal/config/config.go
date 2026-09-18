@@ -126,6 +126,11 @@ type Gateway struct {
 	// text, no report — before it is cut. It is not a cap on the turn: a
 	// turn that awaits other agents runs as long as they keep answering.
 	PromptTimeout Duration `json:"prompt_timeout"`
+	// RecoveryQuiet is how long a recovery rejoins a node it lost on its
+	// own before the owner is asked what to do with the work. A node
+	// restart or a dropped link lasts seconds and the execution keeps
+	// running through it, so a card about it would be noise.
+	RecoveryQuiet Duration `json:"recovery_quiet,omitempty"`
 	StatePath     string   `json:"state_path"`
 	HomePath      string   `json:"home_path,omitempty"`
 	// WorkspaceRoot is the directory this machine keeps its work in: the
@@ -351,6 +356,11 @@ func (d Duration) MarshalJSON() ([]byte, error) {
 	return json.Marshal(time.Duration(d).String())
 }
 
+// DefaultRecoveryQuiet covers a node restart or a dropped link without
+// asking anyone, and still reports a node that is really gone while its
+// owner remembers asking for the work.
+const DefaultRecoveryQuiet = 90 * time.Second
+
 func Starter(appID, appSecret, allowedSender string) *Config {
 	feishu := Feishu{AppID: appID, AppSecret: appSecret}
 	if allowedSender != "" {
@@ -550,6 +560,9 @@ func (c *Config) applyDefaults() {
 	c.Feishu.OwnerOpenID = strings.TrimSpace(c.Feishu.OwnerOpenID)
 	if c.Gateway.PromptTimeout <= 0 {
 		c.Gateway.PromptTimeout = Duration(10 * time.Minute)
+	}
+	if c.Gateway.RecoveryQuiet <= 0 {
+		c.Gateway.RecoveryQuiet = Duration(DefaultRecoveryQuiet)
 	}
 	if c.Gateway.OfflineReminderAfter == 0 {
 		c.Gateway.OfflineReminderAfter = Duration(DefaultOfflineReminder)

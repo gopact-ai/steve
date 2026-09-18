@@ -203,6 +203,28 @@ func (s *Service) findRetained(ctx context.Context, driver RetainedChatDriver, e
 	return found, ok, nil
 }
 
+// recoveryQuiet is how long a recovery keeps rejoining the original
+// execution on its own before anything is put to the owner. A node
+// restart or a dropped link lasts seconds and the execution keeps
+// running through it; asking about that is noise, not news.
+const recoveryQuiet = 90 * time.Second
+
+// recoveryRetry is how often a quiet recovery looks again, and
+// recoveryProbe how often an open recovery question checks whether the
+// original execution can be reached once more.
+const (
+	recoveryRetry = 5 * time.Second
+	recoveryProbe = 10 * time.Second
+)
+
+// retainedProber reports whether a retained execution can be reached
+// again, reading only the node's view of its own session. Nothing is
+// adopted, settled or replayed, so a recovery that is waiting on an
+// answer can use it to notice the original coming back.
+type retainedProber interface {
+	ProbeRetained(context.Context, string) error
+}
+
 // exchangeRecovery is one worker reattaching a queued exchange to the
 // execution it was interrupted from. Each pass observes the retained work
 // afresh; quiet and waitingPlan carry the owner's last answer from one
@@ -230,6 +252,13 @@ type exchangeRecovery struct {
 	asked   string
 	repeats int
 	stopped chan string
+
+	// blockedSince is when this recovery first failed to rejoin the
+	// original without saying anything, and rejoin records that an open
+	// question was withdrawn because the original came back. Together
+	// they keep a brief outage between the recovery and the node.
+	blockedSince time.Time
+	rejoin       bool
 }
 
 func (s *Service) recoverExchange(ctx context.Context, e *queuedExchange, driver RetainedChatDriver) {
@@ -320,11 +349,20 @@ func (r *exchangeRecovery) observe() bool {
 		r.detach(r.ctx.Err())
 		return false
 	}
+	// A pass that got this far could not rejoin the original. For the
+	// first stretch that is a node coming back, not something the owner
+	// has to decide, so the recovery keeps trying by itself.
+	if !r.quiet && r.withinQuiet() {
+		return r.waitFor(min(recoveryRetry, r.s.recoveryQuiet))
+	}
 	if planner, ok := r.driver.(relocationDriver); ok && found && candidate.plan == nil && isRecoveryBlocked(err) {
 		var done bool
 		done, err = r.relocate(planner, candidate, request, identity, err)
 		if done {
 			return false
+		}
+		if r.rejoined() {
+			return true
 		}
 	}
 	return r.consult(blockedBy(err, lookupErr), identity)
@@ -440,10 +478,13 @@ func (r *exchangeRecovery) approvePlan(plan turn.RelocationPlan, signature strin
 		r.detach(err)
 		return true, ""
 	}
-	answer, err := r.s.RequestRecovery(r.ctx, identity.binding(), plan.Question)
+	answer, err := r.ask(identity, plan.Question, r.s.RequestRecovery)
 	if err != nil {
 		r.detach(err)
 		return true, ""
+	}
+	if r.rejoin {
+		return false, ""
 	}
 	if answer.Value != "confirm-stopped-and-retry:"+plan.ID {
 		r.quiet, r.waitingPlan = true, signature
@@ -476,13 +517,19 @@ func (r *exchangeRecovery) consult(blocked *turn.RecoveryBlocked, identity *ques
 	}
 	question.Message = r.explain(question.Message, blocked.Cause)
 	question.Choices = append(append([]view.Choice{}, question.Choices...), stopChoice(r.exchange.Locale))
-	answer, err := r.s.askUser(r.ctx, identity.binding(), question)
+	answer, err := r.ask(identity, question, r.s.askUser)
 	if err != nil {
 		if r.ctx.Err() != nil {
 			err = r.ctx.Err()
 		}
 		r.detach(err)
 		return false
+	}
+	// The original came back while the card was open: it was withdrawn
+	// and this pass rejoins the execution instead of waiting on an
+	// answer nobody needs to give any more.
+	if r.rejoined() {
+		return true
 	}
 	// Stopping is the one answer that can end a recovery nothing else can
 	// resolve. It runs beside this worker, because finishing a stop waits
@@ -567,10 +614,79 @@ func (r *exchangeRecovery) stopOriginal() {
 	}()
 }
 
+// withinQuiet reports whether this recovery is still inside the stretch
+// it works through on its own. The clock starts at the first pass that
+// could not rejoin the original and is cleared once one does.
+func (r *exchangeRecovery) withinQuiet() bool {
+	if r.blockedSince.IsZero() {
+		r.blockedSince = time.Now()
+	}
+	return time.Since(r.blockedSince) < r.s.recoveryQuiet
+}
+
+// rejoined consumes a withdrawal made because the original became
+// reachable again, and puts the recovery back where it was before
+// anything was asked.
+func (r *exchangeRecovery) rejoined() bool {
+	if !r.rejoin {
+		return false
+	}
+	r.rejoin, r.quiet, r.waitingPlan = false, false, ""
+	r.asked, r.repeats, r.blockedSince = "", 0, time.Time{}
+	return true
+}
+
+// ask puts a question to the owner while watching the original
+// execution. A node that comes back withdraws the question, because the
+// recovery can then continue without an answer; rejoin says so.
+func (r *exchangeRecovery) ask(identity *questionIdentity, question view.Question, put func(context.Context, consoleapi.PendingQuestion, view.Question) (view.Answer, error)) (view.Answer, error) {
+	binding := identity.binding()
+	prober, ok := r.driver.(retainedProber)
+	if !ok || binding.AttemptID == "" {
+		return put(r.ctx, binding, question)
+	}
+	ctx, cancel := context.WithCancel(r.ctx)
+	defer cancel()
+	back, reachable := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(back)
+		ticker := time.NewTicker(r.s.recoveryProbe)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+			if err := prober.ProbeRetained(ctx, binding.AttemptID); err == nil {
+				close(reachable)
+				cancel()
+				return
+			}
+		}
+	}()
+	answer, err := put(ctx, binding, question)
+	cancel()
+	<-back
+	// An answer given at the same moment is still the owner's decision;
+	// only a question nobody answered is withdrawn.
+	select {
+	case <-reachable:
+		if err == nil && r.ctx.Err() == nil && answer.Value == "" && answer.Text == "" && answer.Decision == "" {
+			r.rejoin = true
+			return view.Answer{}, nil
+		}
+	default:
+	}
+	return answer, err
+}
+
 // wait lets a quiet recovery observe the execution again every so often,
 // until the exchange's lifetime ends.
-func (r *exchangeRecovery) wait() bool {
-	timer := time.NewTimer(30 * time.Second)
+func (r *exchangeRecovery) wait() bool { return r.waitFor(30 * time.Second) }
+
+func (r *exchangeRecovery) waitFor(d time.Duration) bool {
+	timer := time.NewTimer(d)
 	select {
 	case <-timer.C:
 		return true
@@ -616,7 +732,7 @@ func blockedBy(err, lookupErr error) *turn.RecoveryBlocked {
 // blockedRecovery is a block whose question offers the owner a retry, by
 // the given label, or to wait.
 func blockedRecovery(cause error, title, message, retryLabel string) *turn.RecoveryBlocked {
-	return &turn.RecoveryBlocked{Cause: cause, Question: view.Question{Kind: "recovery", Title: title, Message: message, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: retryLabel}, {Value: "wait", Label: "暂时等待"}}}}
+	return &turn.RecoveryBlocked{Cause: cause, Question: view.Question{Kind: "recovery", Title: title, Message: message, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: retryLabel}, {Value: "wait", Label: "暂时等待", Detail: "保留任务和进度。Steve 会继续自己重连，原节点回来后自动接着跑。"}}}}
 }
 
 func isRecoveryBlocked(err error) bool {

@@ -680,7 +680,7 @@ export function ConsolePage() {
                                 {streamWithChildren(transcript, earlierChildren).map(({ reply: r, child }, i) => child
                                     ? <DelegationCard key={child.id} id={child.id} info={child} progress={child} />
                                     : r!.kind === "sent" ? <UserMessage key={r!.id || i} r={r!} onEdit={editSent} /> : <AssistantMessage key={r!.id || i} r={r!} selected={shownProcess?.id === r!.id} onSelect={selectReply} onQuote={quoteReply} />)}
-                                {live && <Working live={live} plans={runningPlans} compact delegated={turnChildren} />}
+                                {live && <Working live={live} plans={runningPlans} compact delegated={turnChildren} recovery={recoveryState} />}
                             </div>
                         </div>
                         <div className="composer-dock">

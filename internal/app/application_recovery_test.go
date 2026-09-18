@@ -14,6 +14,7 @@ import (
 
 	"github.com/gopact-ai/steve/internal/attempt"
 	"github.com/gopact-ai/steve/internal/cluster"
+	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/coordination"
 	"github.com/gopact-ai/steve/internal/node"
@@ -270,6 +271,21 @@ func installRecoveryWorker(t *testing.T, options cluster.PeerOptions, root, bin 
 	}
 	worker := node.ServerConfig{Name: cfg.NodeID, Listen: "127.0.0.1:0", Token: token, Hubs: map[string]string{cfg.ClusterID: token}, StateDir: filepath.Join(cfg.DataDir, "node"), WorkspaceRoot: root, Harnesses: map[string]node.HarnessSpec{"mock": {Command: bin}}}
 	if err := cluster.SaveClusterJSON(cfg.WorkerConfigFile, worker, true); err != nil {
+		t.Fatal(err)
+	}
+	shortenRecoveryQuiet(t, options.ConfigPath)
+}
+
+// shortenRecoveryQuiet keeps the silent rejoin window out of the way so a test
+// that kills a node on purpose reaches the recovery question quickly.
+func shortenRecoveryQuiet(t *testing.T, path string) {
+	t.Helper()
+	cfg, err := config.Load(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cfg.Gateway.RecoveryQuiet = config.Duration(2 * time.Second)
+	if err := config.Save(path, cfg); err != nil {
 		t.Fatal(err)
 	}
 }

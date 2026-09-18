@@ -35,8 +35,19 @@ type RecoveryQuestion struct {
 	Question view.Question
 }
 
+// defaultRecoveryQuiet is the stretch a child's recovery works through on
+// its own: long enough to cover a node restart or a dropped link, short
+// enough that a node which is really gone is reported while the owner
+// still remembers asking for the work.
+const defaultRecoveryQuiet = 90 * time.Second
+
+// recoveryNotice is what a child's recovery last reported: why it could
+// not be joined, since when it has been failing without interruption,
+// and whether that has already been put to the parent's owner.
 type recoveryNotice struct {
 	code   string
+	since  time.Time
+	asked  bool
 	cancel context.CancelFunc
 }
 
@@ -394,33 +405,42 @@ func (s *Service) reportRecovery(ctx context.Context, binding QuestionBinding, c
 	if s.recoveryQuestions == nil {
 		s.recoveryQuestions = map[string]*recoveryNotice{}
 	}
+	since := time.Now()
 	if old := s.recoveryQuestions[binding.Attempt]; old != nil {
-		if old.code == code {
+		if old.code == code && old.asked {
 			s.mu.Unlock()
 			return
 		}
+		// The child has been out of reach without a break since the
+		// first failure, whatever each pass ran into along the way.
+		since = old.since
 		if old.cancel != nil {
 			old.cancel()
 		}
 	}
+	// Inside the quiet stretch the pass is recorded and retried, and the
+	// owner hears nothing: joining the child again is this service's work.
+	if time.Since(since) < s.RecoveryQuiet {
+		s.recoveryQuestions[binding.Attempt] = &recoveryNotice{code: code, since: since}
+		s.mu.Unlock()
+		slog.Info(fmt.Sprintf("delegate: recovery retrying task=%s attempt=%s node=%s reason=%s", binding.Task, binding.Attempt, binding.Node, code),
+			"parent", binding.ParentTask, "conversation", binding.Conversation)
+		s.markRecoveryUnsettled(ctx, binding, code, diagnosticOf(attempted, problem, reason, recommendation))
+		return
+	}
 	questionCtx, cancel := context.WithCancel(s.executions.Detached(ctx))
-	notice := &recoveryNotice{code: code, cancel: cancel}
+	notice := &recoveryNotice{code: code, since: since, asked: true, cancel: cancel}
 	s.recoveryQuestions[binding.Attempt] = notice
 	handler := s.recoveryQuestion
 	s.mu.Unlock()
 	slog.Warn(fmt.Sprintf("delegate: recovery pending task=%s attempt=%s node=%s reason=%s", binding.Task, binding.Attempt, binding.Node, code),
 		"parent", binding.ParentTask, "conversation", binding.Conversation)
-	diagnostic := fmt.Sprintf("已尝试：%s。\n\n%s\n\n%s\n\n%s", attempted, problem, reason, recommendation)
-	if current, err := s.attempts.Get(ctx, binding.Attempt); err == nil && !current.State.Terminal() {
-		if err := s.attempts.MarkUnsettled(ctx, binding.Attempt, "delegate-recovery", errors.New(diagnostic), nil); err != nil {
-			slog.Error(fmt.Sprintf("delegate: recovery diagnostic not committed task=%s attempt=%s reason=%s", binding.Task, binding.Attempt, code),
-				"parent", binding.ParentTask, "conversation", binding.Conversation, "node", binding.Node, "error", err)
-		}
-	}
+	diagnostic := diagnosticOf(attempted, problem, reason, recommendation)
+	s.markRecoveryUnsettled(ctx, binding, code, diagnostic)
 	if handler == nil {
 		return
 	}
-	q := RecoveryQuestion{QuestionBinding: binding, Question: view.Question{RequestID: "delegate-recovery/" + binding.Attempt + "/" + code, Kind: "recovery", Title: "子任务继续执行需要你的处理", Message: diagnostic, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查原执行", Detail: "核对原节点和命令，不重新发送任务。"}, {Value: "wait", Label: "暂时等待", Detail: "保留子任务和进度，等待节点恢复。"}}}}
+	q := RecoveryQuestion{QuestionBinding: binding, Question: view.Question{RequestID: "delegate-recovery/" + binding.Attempt + "/" + code, Kind: "recovery", Title: "子任务继续执行需要你的处理", Message: diagnostic, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查原执行", Detail: "核对原节点和命令，不重新发送任务。"}, {Value: "wait", Label: "暂时等待", Detail: "保留子任务和进度。Steve 会继续自己重连，节点回来后自动接着跑。"}}}}
 	go func() {
 		answer, err := handler(questionCtx, q)
 		if err != nil {
@@ -446,6 +466,23 @@ func (s *Service) reportRecovery(ctx context.Context, binding QuestionBinding, c
 			}
 		}
 	}()
+}
+
+func diagnosticOf(attempted, problem, reason, recommendation string) string {
+	return fmt.Sprintf("已尝试：%s。\n\n%s\n\n%s\n\n%s", attempted, problem, reason, recommendation)
+}
+
+// markRecoveryUnsettled records on the attempt why it could not be
+// joined, so a child left detached keeps saying so in the ledger.
+func (s *Service) markRecoveryUnsettled(ctx context.Context, binding QuestionBinding, code, diagnostic string) {
+	current, err := s.attempts.Get(ctx, binding.Attempt)
+	if err != nil || current.State.Terminal() {
+		return
+	}
+	if err := s.attempts.MarkUnsettled(ctx, binding.Attempt, "delegate-recovery", errors.New(diagnostic), nil); err != nil {
+		slog.Error(fmt.Sprintf("delegate: recovery diagnostic not committed task=%s attempt=%s reason=%s", binding.Task, binding.Attempt, code),
+			"parent", binding.ParentTask, "conversation", binding.Conversation, "node", binding.Node, "error", err)
+	}
 }
 
 func (s *Service) detachChild(spawned task.Task, entry *child, detached *execution.RetainedObserverDetached) {
