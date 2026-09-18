@@ -85,7 +85,13 @@ func startPeerApplication(ctx context.Context, p cluster.ApplicationHost, activa
 		}
 		var restart *adminsvc.RestartExit
 		expectedRestart := errors.As(runErr, &restart)
-		if expectedRestart && ctx.Err() == nil {
+		replaceProgram := expectedRestart && restart.Program != ""
+		if replaceProgram && ctx.Err() == nil {
+			// Becoming another build is not something this activation can
+			// do to itself: the runtime stops with the restart as its
+			// cause, and the process continues as the named program.
+			activation.Runtime.FailGeneration(activation.Generation, runErr)
+		} else if expectedRestart && ctx.Err() == nil {
 			runErr = activation.Runtime.RestartGeneration(activation.Generation)
 		} else if expectedRestart {
 			runErr = nil

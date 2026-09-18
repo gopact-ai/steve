@@ -237,6 +237,7 @@ func OpenPeer(parent context.Context, options PeerOptions) (peer *Peer, runErr e
 	if err := p.startPeerServers(runtime, peerListener, uiListener); err != nil {
 		return nil, err
 	}
+	go p.watchRuntime(runtime)
 
 	p.unpublish, err = desktop.PublishEndpoint(options.ConfigPath, p.UiURL)
 	if err != nil {
@@ -296,6 +297,23 @@ func (p *Peer) startPeerServers(runtime *Runtime, peerListener, uiListener net.L
 	go p.serve(p.peerServer, tls.NewListener(peerListener, serverTLS))
 	go p.serve(p.uiServer, uiListener)
 	return nil
+}
+
+// watchRuntime reports a runtime that stopped on its own. Without it the
+// process that owns this peer would keep waiting on a service that is no
+// longer there — including the restart that asks to continue as a newly
+// installed program.
+func (p *Peer) watchRuntime(runtime *Runtime) {
+	select {
+	case <-p.ctx.Done():
+	case <-runtime.Done():
+		if err := runtime.Failure(); err != nil && p.ctx.Err() == nil {
+			select {
+			case p.Errors <- err:
+			default:
+			}
+		}
+	}
 }
 
 func (p *Peer) serve(server *http.Server, listener net.Listener) {

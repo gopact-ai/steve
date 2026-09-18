@@ -7,6 +7,7 @@ import (
 	"crypto/x509"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -16,6 +17,7 @@ import (
 	"testing"
 	"time"
 
+	adminsvc "github.com/gopact-ai/steve/internal/admin"
 	"github.com/gopact-ai/steve/internal/cluster"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/coordination"
@@ -155,7 +157,10 @@ func StartTestPeer(t *testing.T, options cluster.PeerOptions) *cluster.Peer {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := peer.Close(); err != nil {
+		// A peer that stopped to hand the process to a newly installed
+		// program reports that from Close, the same way the command that
+		// owns it learns to re-exec.
+		if err := peer.Close(); err != nil && !errors.Is(err, adminsvc.ErrRestart) {
 			t.Errorf("close peer: %v", err)
 		}
 	})

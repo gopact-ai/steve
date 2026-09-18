@@ -531,6 +531,16 @@ func (r *Runtime) FailGeneration(generation uint64, cause error) {
 	r.shutdown(nil)
 }
 
+// Done closes once this runtime has finished shutting down, for any
+// reason. Failure names the cause when it stopped on its own.
+func (r *Runtime) Done() <-chan struct{} { return r.closeDone }
+
+func (r *Runtime) Failure() error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.failure
+}
+
 func (r *Runtime) Close() error {
 	r.shutdown(nil)
 	timer := time.NewTimer(r.config.ShutdownTimeout)

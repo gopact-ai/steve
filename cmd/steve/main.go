@@ -24,7 +24,7 @@ func main() {
 	if err := run(os.Args[1:]); err != nil {
 		var restart *adminsvc.RestartExit
 		if errors.As(err, &restart) {
-			err = processrestart.ReexecCurrent()
+			err = processrestart.Reexec(restart.Program)
 			if err != nil {
 				restart.Service.Failed(err)
 			}

@@ -21,10 +21,11 @@ const restartWaitInterval = 2 * time.Second
 // coordinator but not yet applied: it holds the service's place until the
 // work that a restart would have interrupted has finished.
 type waitingRestart struct {
-	name string
-	op   consoleapi.RestartOperation
-	stop context.CancelFunc
-	done chan struct{}
+	name    string
+	op      consoleapi.RestartOperation
+	program string
+	stop    context.CancelFunc
+	done    chan struct{}
 }
 
 // waitingRequest answers for a restart that is still waiting. An empty id
@@ -77,7 +78,7 @@ func (s *Services) restartWhenIdle(name string, req consoleapi.RestartRequest) (
 	op := consoleapi.RestartOperation{CommandID: req.CommandID, State: nodewire.RestartStateDraining, Mode: consoleapi.RestartWhenIdle,
 		Incarnation: s.history.Incarnation, RequestedAt: time.Now().UTC(), WaitingOn: consoleapi.RestartWaitPreparing}
 	ctx, cancel := context.WithCancel(context.Background())
-	w := &waitingRestart{name: name, op: op, stop: cancel, done: make(chan struct{})}
+	w := &waitingRestart{name: name, op: op, program: req.Program, stop: cancel, done: make(chan struct{})}
 	s.wait = w
 	s.mu.Unlock()
 	go s.awaitIdle(ctx, w)
@@ -106,7 +107,7 @@ func (s *Services) withdraw(record bool) consoleapi.RestartOperation {
 	}
 	op.State, op.WaitingOn, op.CompletedAt = nodewire.RestartStateCancelled, "", time.Now().UTC()
 	op.WaitingConversations = nil
-	s.wait, s.pending = nil, ""
+	s.wait, s.pending, s.program = nil, "", ""
 	if record {
 		s.history.Operations[op.CommandID] = op
 		if err := s.persist(); err != nil {
@@ -167,6 +168,12 @@ func (s *Services) apply(ctx context.Context, w *waitingRestart) error {
 	if s.admin.Coordinator != nil && len(s.admin.Coordinator.InFlight()) > 0 {
 		return s.coordinatorBusy()
 	}
+	// A wait can outlive the installation it was made for. Checking the
+	// program again keeps a vanished build from stopping the service into
+	// nothing, and keeps waiting while an installer is mid-copy.
+	if err := checkProgram(w.program); err != nil {
+		return err
+	}
 	release, err := s.seal(ctx, "hub")
 	if err != nil {
 		return err
@@ -201,7 +208,7 @@ func (s *Services) accept(w *waitingRestart, release func()) error {
 		return err
 	}
 	w.op, s.wait, s.pending = op, nil, op.CommandID
-	s.release, s.dispatched = release, true
+	s.release, s.dispatched, s.program = release, true, w.program
 	stop := s.stop
 	s.mu.Unlock()
 	stop()
