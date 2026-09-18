@@ -18,7 +18,7 @@ page.setDefaultTimeout(7000);
 const conversation = "console:question-ui", at = "2026-09-07T01:00:00Z";
 const explanation = "I tried the integration checks on build-node. Configuration checks and unit tests passed.\n\nThe integration environment cannot be reached from this machine. Its network access is restricted, so retrying here will not resolve the problem.\n\nI recommend running the remaining integration checks on dev-box. The completed checks do not need to run again. Should I use dev-box?";
 const makeQuestion = (id, extra = {}) => ({ id, conversation, exchange_id: "e1", task_id: "11", kind: "question", title: "Continue integration checks", message: explanation, options: [{ id: "dev-box", label: "Use dev-box", description: "Run the remaining integration checks." }, { id: "wait", label: "Wait for network access", description: "Continue once access is restored." }], required: true, created_at: at, deadline: "2030-01-01T00:00:00Z", updated_at: at, state: "pending", ...extra });
-const f = { questions: [makeQuestion("q-original")], answers: [], preferences: [], queue: [], errors: [], holdAnswer: false, releaseAnswer: null, reset: false, malformed: false, staleReads: false, questionReads: 0, activeState: "running", startedAt: "", exchange: "" };
+const f = { questions: [makeQuestion("q-original")], answers: [], preferences: [], queue: [], errors: [], holdAnswer: false, releaseAnswer: null, conversationReads: 0, reset: false, malformed: false, staleReads: false, questionReads: 0, activeState: "running", startedAt: "", exchange: "" };
 page.on("pageerror", (error) => f.errors.push(String(error)));
 await page.route("**/*", async (route) => {
     const req = route.request(), u = new URL(req.url()), p = u.pathname;
@@ -30,7 +30,11 @@ await page.route("**/*", async (route) => {
     if (p === "/state") return route.fulfill({ json: { at, hub: { node: "dev-box", version: "test" }, nodes: [{ name: "node-one", display_name: "Build box", up: true }], agents: [], projects: [{ id: "p", node: "dev-box", path: "/work/p", repo: "inplace", level: "public", agents: [], workspaces: [] }], tasks: [], plans: [], attempts: [], landings: [] } });
     if (p === "/console/context") return route.fulfill({ json: { enabled: true, context: { conversation, project: { id: "p", node: "dev-box", path: "/work/p", repo: "inplace", level: "public", bound: true }, agents: [] } } });
     if (p === "/console/replies") return route.fulfill({ json: { enabled: true, replies: [{ id: "r1", conversation, kind: "reply", at, text: "Configuration checks and unit tests are complete.", project_id: "p", revision: "r1" }] } });
-    if (p === "/console/conversations") return route.fulfill({ json: { conversations: [{ id: conversation, title: "Integration checks", project: "p", count: 1, last_at: at, running: false }] } });
+    if (p === "/console/conversations") {
+        f.conversationReads++;
+        const waiting = f.questions.filter((q) => q.state === "pending").length;
+        return route.fulfill({ json: { conversations: [{ id: conversation, title: "Integration checks", project: "p", count: 1, last_at: at, running: f.activeState === "running", questions: waiting }] } });
+    }
     if (p === "/console/verbs") return route.fulfill({ json: { verbs: [] } });
     if (p === "/console/suggest") return route.fulfill({ json: { suggestions: [] } });
     if (p === "/console/queue") {
@@ -304,6 +308,21 @@ try {
     assert.equal(await panel.getByText("Resolved requests (7)", { exact: true }).count(), 0, "the new turn's request stands on its own");
     f.startedAt = ""; f.exchange = "";
     console.log("PASS resolved requests leave with the turn that raised them");
+
+    // The sessions list says what a conversation needs from its reader. A
+    // question raised or answered changes that answer, so the row has to
+    // move with the event rather than waiting for the next poll: a row
+    // reading "running" beside an open request, or "needs you" after the
+    // reply, is the list disagreeing with the page next to it.
+    const row = page.locator(".conversation-row").filter({ hasText: "Integration checks" });
+    for (const [pending, label] of [[false, "Running"], [true, "Needs you"], [false, "Running"]]) {
+        f.questions = pending ? [makeQuestion("q-row")] : [];
+        const read = page.waitForResponse((response) => new URL(response.url()).pathname === "/console/conversations", { timeout: 1200 });
+        await page.evaluate((event) => window.emit(event), { kind: "console.question", conversation, text: "q-row", at });
+        await read;
+        await row.getByText(label, { exact: true }).waitFor({ timeout: 1200 });
+    }
+    console.log("PASS the sessions list follows a request as it is raised and answered");
 
     f.questions = [makeQuestion("q-zh", { title: "继续集成验证", message: "配置校验和单元测试已完成。我尝试在 build-node 运行集成验证，但无法访问项目内网；本机没有可用的网络凭据，重试仍无法解决。\n\n建议改到 dev-box 继续验证，保留已完成的结果。要这样继续吗？", allow_free_text: true, options: [{ id: "dev-box", label: "改到 dev-box 继续", description: "保留已完成的验证结果。" }, { id: "wait", label: "等待内网恢复" }] })];
     await page.addInitScript(() => { localStorage.setItem("steve.ui.locale", "zh"); localStorage.setItem("ui-theme", "dark"); });
