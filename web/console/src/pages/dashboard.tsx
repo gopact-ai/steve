@@ -1,7 +1,7 @@
 import { useI18n } from "@/providers/locale-provider";
 import { lazy, Suspense, useEffect, useState } from "react";
 import { useSearchParams } from "react-router";
-import { BookOpen01, Database01, SearchSm, ShieldTick, Users01, Zap } from "@untitledui/icons";
+import { BookOpen01, Database01, HardDrive, SearchSm, ShieldTick, Users01, Zap } from "@untitledui/icons";
 import { Table, TableCard } from "@/components/application/table/table";
 import { Tab, TabList, Tabs } from "@/components/application/tabs/tabs";
 import { Badge } from "@/components/base/badges/badges";
@@ -9,7 +9,7 @@ import type { BadgeColors } from "@/components/base/badges/badge-types";
 import { Button } from "@/components/base/buttons/button";
 import { Input } from "@/components/base/input/input";
 import { fetchHistory } from "@/lib/api/work";
-import { dateTime, number, short, when } from "@/lib/format";
+import { bytes, dateTime, number, short, when } from "@/lib/format";
 import { useFleet } from "@/lib/fleet";
 import { useNodeLabel } from "@/lib/node-name";
 import { describeHistory, familyOf, historyFamilies, type HistoryFamily, type HistoryLine, type HistoryTone } from "@/lib/history-lines";
@@ -145,6 +145,23 @@ export function DashboardPage() {
                             <Table aria-label={tr("history.replicas")} size="sm">
                                 <Table.Header><Table.Head id="artifact" label={tr("history.artifact")} isRowHeader /><Table.Head id="node" label={tr("history.machine")} /><Table.Head id="gen" label={tr("history.generation")} /><Table.Head id="state" label={tr("history.state")} /><Table.Head id="at" label={tr("history.time")} /></Table.Header>
                                 <Table.Body items={f.replicas.map((r, i) => ({ ...r, id: `${r.artifact}-${r.node}-${i}` }))}>{(r) => <Table.Row id={r.id}><Table.Cell><Mono>{short(r.artifact)}</Mono></Table.Cell><Table.Cell><Where node={r.node} /></Table.Cell><Table.Cell>{r.generation}</Table.Cell><Table.Cell><StateBadge state={r.state} /></Table.Cell><Table.Cell><span className="text-tertiary">{when(r.at, locale)}</span></Table.Cell></Table.Row>}</Table.Body>
+                            </Table>
+                        )}
+                    </TableCard.Root>
+                    <TableCard.Root size="sm" className="workbench-table min-w-0 xl:col-span-2">
+                        <TableCard.Header title={tr("history.space")} badge={`${snap.nodes.length}`} description={tr("history.spaceHint")} />
+                        {snap.nodes.length === 0 ? <Nothing icon={HardDrive} title={tr("history.none")} /> : (
+                            <Table aria-label={tr("history.space")} size="sm">
+                                <Table.Header><Table.Head id="node" label={tr("history.machine")} isRowHeader /><Table.Head id="used" label={tr("history.spaceUsed")} /><Table.Head id="state" label={tr("history.spaceState")} /><Table.Head id="free" label={tr("history.spaceFree")} /><Table.Head id="at" label={tr("history.spaceMeasured")} /></Table.Header>
+                                <Table.Body items={snap.nodes.map((n) => ({ ...n, id: n.name }))}>{(n) => <Table.Row id={n.id}>
+                                    <Table.Cell><div className="min-w-0"><Where node={n.name} />{n.health?.root && <p className="truncate u-meta text-quaternary" title={n.health.root}>{n.health.root}</p>}</div></Table.Cell>
+                                    <Table.Cell>{!n.health ? <span className="text-quaternary">{tr("history.spaceUnreported")}</span>
+                                        : !n.health.space_at ? <span className="text-tertiary">{tr("history.spaceMeasuring")}</span>
+                                            : <span className="tabular-nums">{bytes(n.health.workspace_bytes || 0, locale)}{n.health.space_partial && <span className="ml-1 text-quaternary" title={tr("history.spacePartial")}>+</span>}</span>}</Table.Cell>
+                                    <Table.Cell><span className="tabular-nums text-tertiary">{n.health?.state_bytes ? bytes(n.health.state_bytes, locale) : "—"}</span></Table.Cell>
+                                    <Table.Cell><span className="tabular-nums text-tertiary">{n.health?.disk_total ? tr("history.spaceOf", { used: bytes(n.health.disk_free, locale), total: bytes(n.health.disk_total, locale) }) : "—"}</span></Table.Cell>
+                                    <Table.Cell><span className="text-tertiary">{n.health?.space_at ? when(n.health.space_at, locale) : "—"}</span></Table.Cell>
+                                </Table.Row>}</Table.Body>
                             </Table>
                         )}
                     </TableCard.Root>

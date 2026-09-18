@@ -92,7 +92,9 @@ func ObservedHubAdvert(cfg *config.Config, observation *LocalObservation) nodewi
 	adv.OwnSkills = node.OwnSkills(5 * time.Minute)
 	adv.StateDir = filepath.Dir(cfg.Gateway.StatePath)
 	adv.WorkspaceRoot = cfg.LocalWorkspaceRoot()
-	adv.Health = node.CheckHealth("", adv.StateDir)
+	// The hub is a machine like any other: it measures the workspace it
+	// was given, not only the directory it keeps its state in.
+	adv.Health = node.CheckHealth(adv.WorkspaceRoot, adv.StateDir)
 	return adv
 }
 
