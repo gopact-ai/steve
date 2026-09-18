@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gopact-ai/steve/internal/consoleapi"
@@ -275,7 +276,12 @@ func (s *Service) waitRecoveryStop(e *queuedExchange) {
 // without the owner asking. It is long enough not to hammer a node that is
 // away, short enough that a stop confirmed elsewhere settles the exchange
 // while they are still looking at it.
-var recoveryStopInterval = 30 * time.Second
+// It is a variable so a test can shorten it, and atomic because the
+// pollers a finished test leaves behind still read it while the next one
+// sets its own.
+var recoveryStopInterval atomic.Int64
+
+func init() { recoveryStopInterval.Store(int64(30 * time.Second)) }
 
 // recoveryStopWait drives an already requested stop to a confirmed end.
 type recoveryStopWait struct {
@@ -327,7 +333,7 @@ func (w *recoveryStopWait) poll() func() {
 	w.s.workers.Add(1)
 	go func() {
 		defer w.s.workers.Done()
-		ticker := time.NewTicker(recoveryStopInterval)
+		ticker := time.NewTicker(time.Duration(recoveryStopInterval.Load()))
 		defer ticker.Stop()
 		for {
 			select {
