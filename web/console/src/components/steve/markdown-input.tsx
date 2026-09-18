@@ -32,15 +32,16 @@ export interface MarkdownInputProps {
     handle: RefObject<DraftBox | null>;
 }
 
-// How long after a composition settles the box stays deaf to Enter.
-const COMPOSITION_SETTLE_MS = 20;
 
 export function MarkdownInput(p: MarkdownInputProps) {
     const host = useRef<HTMLDivElement | null>(null);
     const view = useRef<EditorView | null>(null);
     const live = useRef(p);
     live.current = p;
-    const settled = useRef(0);
+    // The Enter that confirms an input method's candidate belongs to the
+    // method, not to the page, and is still held down when the composition
+    // ends. Its release is what says the next Enter is the writer's own.
+    const confirming = useRef(false);
     const composing = useRef(false);
     const look = useRef({ text: new Compartment(), label: new Compartment(), editable: new Compartment() });
 
@@ -74,14 +75,18 @@ export function MarkdownInput(p: MarkdownInputProps) {
                     // happens below the DOM, so the only thing this could add
                     // is a stray newline. Engines disagree on whether that
                     // Enter arrives before or after compositionend, so the box
-                    // also stays deaf for a moment after one settles.
+                    // also swallows the one that follows a composition while
+                    // the key is still down. The clock cannot tell those two
+                    // Enters apart — a busy machine stretches the gap between
+                    // them, and a draft would be sent half-written — but the
+                    // keyboard can: a second Enter needs a release first.
                     Prec.highest(EditorView.domEventHandlers({
                         keydown: (event, editorView) => {
                             if (event.isComposing || composing.current || editorView.composing || event.keyCode === 229) {
                                 if (event.key === "Enter") event.preventDefault();
                                 return event.key === "Enter";
                             }
-                            if (event.key === "Enter" && Date.now() - settled.current < COMPOSITION_SETTLE_MS) {
+                            if (event.key === "Enter" && confirming.current) {
                                 event.preventDefault();
                                 return true;
                             }
@@ -95,6 +100,7 @@ export function MarkdownInput(p: MarkdownInputProps) {
                             }
                             return false;
                         },
+                        keyup: () => { confirming.current = false; return false; },
                         paste: (event) => {
                             const files = Array.from(event.clipboardData?.files ?? []);
                             if (files.length) live.current.onPasteFiles?.(files);
@@ -113,7 +119,7 @@ export function MarkdownInput(p: MarkdownInputProps) {
         // the editor's own dispatch, which drops key events mid-composition
         // and would leave this listener waiting for an end that never comes.
         const opened = () => { composing.current = true; };
-        const closed = () => { composing.current = false; settled.current = Date.now(); };
+        const closed = () => { composing.current = false; confirming.current = true; };
         editor.contentDOM.addEventListener("compositionstart", opened);
         editor.contentDOM.addEventListener("compositionend", closed);
         view.current = editor;
