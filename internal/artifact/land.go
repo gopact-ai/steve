@@ -321,6 +321,16 @@ func (s *Store) mergeLanding(ctx context.Context, p project.Project, land *Landi
 		return nil, err
 	}
 	if len(conflicts) > 0 {
+		// The half-merged snapshot is only useful if it can be worked in,
+		// and a workspace may only be materialized from an artifact whose
+		// lineage is known. Record it as one, parented on the canonical
+		// snapshot it was built against.
+		if marked != "" {
+			if _, err := s.receipt(ctx, p, Manifest{ID: marked, Project: p.ID, Parent: now.ID, Label: p.Level, By: land.ID, Message: "conflict landing " + short(land.Artifact)}); err != nil {
+				slog.Warn(fmt.Sprintf("artifact: record conflicted snapshot %s: %v", short(marked), err), "landing", land.ID, "artifact", land.Artifact, "project", land.Project)
+				marked = ""
+			}
+		}
 		land.Conflict = marked
 		s.failed(ctx, land, LandLocked, LandMergeConflicted, "conflicts", conflicts)
 		return nil, Conflict{State: LandMergeConflicted, Paths: conflicts, Marked: marked}

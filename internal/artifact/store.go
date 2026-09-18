@@ -781,6 +781,10 @@ type Blocked struct {
 	Marked    string    `json:"marked,omitempty"`
 	Paths     []string  `json:"paths,omitempty"`
 	At        time.Time `json:"at"`
+	// Attempt is the task of a resolution already tried against this
+	// canonical. One automatic try per conflict: a second would repeat
+	// whatever went wrong, at the cost of an agent run each time.
+	Attempt string `json:"attempt,omitempty"`
 }
 
 // Defer queues an artifact to land later.
@@ -850,7 +854,7 @@ func (s *Store) LandPending(ctx context.Context, p project.Project) ([]Landing, 
 	head := s.CanonicalOf(ctx, p.ID)
 	var out []Landing
 	for _, item := range queue {
-		if item.Blocked != nil && item.Blocked.Canonical == head {
+		if item.Blocked != nil && item.Blocked.Canonical == head && s.markedStillThere(ctx, *item.Blocked) {
 			continue
 		}
 		var source []Source
@@ -894,11 +898,48 @@ type Stuck struct {
 	Marked    string    `json:"marked,omitempty"`
 	Paths     []string  `json:"paths,omitempty"`
 	At        time.Time `json:"at"`
+	Attempt   string    `json:"attempt,omitempty"`
 }
 
 // Resolvable says whether an agent can be handed a checkout of this
 // conflict: git has to have kept the marked tree.
 func (s Stuck) Resolvable() bool { return s.Marked != "" }
+
+// markedStillThere says the conflict this entry is blocked on can still be
+// worked: the half-merged snapshot has to be a recorded artifact for a
+// workspace to be made from it. A block whose snapshot is gone — an older
+// record, a repository rebuilt underneath — is not a block worth keeping,
+// and merging again is what writes a usable one.
+func (s *Store) markedStillThere(ctx context.Context, blocked Blocked) bool {
+	if blocked.Marked == "" {
+		return true
+	}
+	_, ok, err := s.Manifest(ctx, blocked.Marked)
+	return err != nil || ok
+}
+
+// Attempting records that a resolution has been started for a conflict,
+// against the canonical it is stuck on. It is what keeps an automatic
+// resolution from being started again every sweep while the first one is
+// running, and from being retried forever when it did not work.
+func (s *Store) Attempting(ctx context.Context, projectID, artifactID, taskID string) error {
+	return s.ledger.Update(ctx, func(tx *ledger.Tx) error {
+		raw, err := tx.Bindings(pendingKind)
+		if err != nil {
+			return err
+		}
+		id := projectID + "/" + artifactID
+		var item Pending
+		if err := json.Unmarshal(raw[id], &item); err != nil {
+			return err
+		}
+		if item.Blocked == nil {
+			return fmt.Errorf("artifact %s is not blocked on a conflict", short(artifactID))
+		}
+		item.Blocked.Attempt = taskID
+		return tx.PutBinding(pendingKind, id, item)
+	})
+}
 
 // Stuck lists the project's queued results that are held up by a merge
 // conflict, oldest first.
@@ -916,7 +957,7 @@ func (s *Store) Stuck(ctx context.Context, projectID string) ([]Stuck, error) {
 		out = append(out, Stuck{
 			Project: item.Project, Artifact: item.Artifact, By: item.By,
 			Landing: item.Blocked.Landing, Canonical: item.Blocked.Canonical,
-			Marked: item.Blocked.Marked, Paths: item.Blocked.Paths, At: item.Blocked.At,
+			Marked: item.Blocked.Marked, Paths: item.Blocked.Paths, At: item.Blocked.At, Attempt: item.Blocked.Attempt,
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].At.Before(out[j].At) })
