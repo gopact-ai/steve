@@ -59,7 +59,7 @@ export interface Health {
     // What Steve itself holds on that machine, walked in the background:
     // root is the directory measured, space_at when, space_partial says
     // the walk stopped at its budget and the bytes are a floor.
-    root?: string; workspace_bytes?: number; state_bytes?: number; space_at?: string; space_partial?: boolean;
+    root?: string; state_root?: string; workspace_bytes?: number; state_bytes?: number; space_at?: string; space_partial?: boolean;
 }
 export interface Admission {
     node?: string; source: "node" | "hub" | "cached" | "legacy"; verdict: number; code?: string;

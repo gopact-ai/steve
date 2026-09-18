@@ -26,7 +26,7 @@ func CheckHealth(workspaceRoot, stateDir string) *nodewire.Health {
 	if where == "" {
 		where = "."
 	}
-	h := &nodewire.Health{At: time.Now().UTC(), Load1: loadOne(), Root: workspaceRoot}
+	h := &nodewire.Health{At: time.Now().UTC(), Load1: loadOne(), Root: workspaceRoot, StateRoot: stateDir}
 	h.DiskFree, h.DiskTotal = diskOf(where)
 	// What Steve holds here is measured in the background: this advert
 	// carries the most recent walk rather than waiting for a new one.

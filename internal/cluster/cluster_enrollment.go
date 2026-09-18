@@ -1017,7 +1017,7 @@ func ImportPeerPackage(data []byte, stateDir string) (PeerImportResult, error) {
 	}
 	disabled := false
 	app := config.Config{Agents: map[string]config.Agent{}, Harnesses: map[string]config.Harness{}, MCPServers: map[string]config.MCPServer{}, Projects: map[string]config.Project{"workspace": {Home: config.ProjectHome{Path: workspace}}}, Feishu: config.Feishu{Enabled: &disabled}, Gateway: config.Gateway{HubID: bundle.NodeID, OwnerID: "owner-" + bundle.NodeID, Locale: "zh", DefaultChannel: "console", StatePath: filepath.Join(root, "state.json"), HomePath: filepath.Join(root, "home"), ReadModelAddr: "127.0.0.1:0", ReadModelToken: UIToken, PromptTimeout: config.Duration(10 * time.Minute)}}
-	worker := node.ServerConfig{Name: bundle.NodeID, Listen: "127.0.0.1:0", Token: bundle.WorkerToken, Hubs: map[string]string{bundle.ClusterID: bundle.WorkerToken}, StateDir: filepath.Join(clusterDir, "node"), WorkspaceRoot: workspace, Harnesses: map[string]node.HarnessSpec{}}
+	worker := node.ServerConfig{Name: bundle.NodeID, Listen: "127.0.0.1:0", Token: bundle.WorkerToken, Hubs: map[string]string{bundle.ClusterID: bundle.WorkerToken}, StateDir: filepath.Join(clusterDir, "node"), StateRoot: root, WorkspaceRoot: workspace, Harnesses: map[string]node.HarnessSpec{}}
 	for _, dir := range []string{"cluster", "home"} {
 		if err := os.MkdirAll(filepath.Join(staging, dir), 0o700); err != nil {
 			return result, err

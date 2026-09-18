@@ -20,7 +20,7 @@ func serviceWorker(peer PeerConfig, cfg *config.Config) (node.ServerConfig, erro
 		return node.ServerConfig{}, err
 	}
 	worker := node.ServerConfig{Name: peer.NodeID, Listen: "127.0.0.1:0", Token: token,
-		Hubs: map[string]string{peer.ClusterID: token}, StateDir: filepath.Join(peer.DataDir, "node"),
+		Hubs: map[string]string{peer.ClusterID: token}, StateDir: filepath.Join(peer.DataDir, "node"), StateRoot: filepath.Dir(peer.DataDir),
 		Tools: slices.Clone(cfg.Gateway.Tools), Capabilities: slices.Clone(cfg.Gateway.Capabilities), Declares: slices.Clone(cfg.Gateway.Declares),
 		WorkspaceRoot: cfg.LocalWorkspaceRoot(), Harnesses: map[string]node.HarnessSpec{}, MCPServers: map[string]node.MCPSpec{}}
 	for id, spec := range cfg.Harnesses {

@@ -89,9 +89,16 @@ func (s *Space) measure(where, workspaceRoot, stateDir string) {
 		reading.workspace, reading.partial = bytes, reading.partial || partial
 	}
 	// A state directory kept inside the workspace is already counted
-	// there; reporting it twice would overstate what Steve holds.
+	// there; reporting it twice would overstate what Steve holds. The
+	// other nesting happens too — a workspace placed under the
+	// installation — and there the workspace is left out of the state
+	// walk so the two numbers can still be added up.
 	if stateDir != "" && !within(stateDir, workspaceRoot) {
-		bytes, partial := DirectorySize(stateDir, deadline)
+		skip := ""
+		if within(workspaceRoot, stateDir) {
+			skip = workspaceRoot
+		}
+		bytes, partial := directorySize(stateDir, skip, deadline)
 		reading.state, reading.partial = bytes, reading.partial || partial
 	}
 	s.mu.Lock()
@@ -113,10 +120,16 @@ func within(path, root string) bool {
 // DirectorySize adds up the files under dir without following symlinks,
 // stopping at the deadline or the entry cap and saying so when it does.
 func DirectorySize(dir string, deadline time.Time) (uint64, bool) {
+	return directorySize(dir, "", deadline)
+}
+
+// directorySize is DirectorySize with one subtree left out, for a tree
+// that is already counted under another name.
+func directorySize(dir, skip string, deadline time.Time) (uint64, bool) {
 	var total uint64
 	var seen int
 	partial := false
-	_ = filepath.WalkDir(dir, func(_ string, entry fs.DirEntry, err error) error {
+	_ = filepath.WalkDir(dir, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			// An unreadable corner is skipped, not fatal: the number is
 			// what this process can see of its own directories.
@@ -124,6 +137,9 @@ func DirectorySize(dir string, deadline time.Time) (uint64, bool) {
 				return fs.SkipDir
 			}
 			return nil
+		}
+		if skip != "" && entry != nil && entry.IsDir() && filepath.Clean(path) == filepath.Clean(skip) {
+			return fs.SkipDir
 		}
 		if seen++; seen > spaceEntries || (seen%2048 == 0 && time.Now().After(deadline)) {
 			partial = true

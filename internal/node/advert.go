@@ -44,7 +44,7 @@ func (s *Server) advert() nodewire.Advert {
 	adv.Skills = s.currentSkills()
 	adv.OwnSkills = OwnSkills(5 * time.Minute)
 	adv.OwnMCP = OwnMCP(5 * time.Minute)
-	adv.Health = CheckHealth(s.conf().WorkspaceRoot, s.conf().StateDir)
+	adv.Health = CheckHealth(s.conf().WorkspaceRoot, s.conf().MeasuredStateRoot())
 	// The reverse messaging port is part of every advert, not only the
 	// handshake's: a refresh that dropped it would leave the hub thinking
 	// this machine's agents cannot reach it.

@@ -155,6 +155,9 @@ type Health struct {
 	// lives outside the workspace. SpaceAt is when the walk was taken —
 	// zero while the first one is still running — and SpacePartial says
 	// the walk stopped at its budget, so the number is a floor.
+	// StateRoot is where the state bytes were counted, so a reader can
+	// see which directory a surprising number came from.
+	StateRoot      string    `json:"state_root,omitempty"`
 	WorkspaceBytes uint64    `json:"workspace_bytes,omitempty"`
 	StateBytes     uint64    `json:"state_bytes,omitempty"`
 	SpaceAt        time.Time `json:"space_at,omitzero"`

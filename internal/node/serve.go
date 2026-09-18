@@ -67,11 +67,27 @@ type ServerConfig struct {
 	// MCPBroker names a broker running as its own process; when set,
 	// MCPServers here must be empty — the servers, and their secrets,
 	// are the broker's.
-	MCPBroker      *BrokerRef    `json:"mcp_broker,omitempty"`
-	WorkspaceRoot  string        `json:"workspace_root,omitempty"`
-	StateDir       string        `json:"state_dir,omitempty"`
+	MCPBroker     *BrokerRef `json:"mcp_broker,omitempty"`
+	WorkspaceRoot string     `json:"workspace_root,omitempty"`
+	StateDir      string     `json:"state_dir,omitempty"`
+	// StateRoot is everything Steve keeps on this machine: the program,
+	// the cluster log and the node's own directory all sit under it. The
+	// node works out of StateDir, but what the machine is asked to
+	// report is the whole installation, so a reader sees the disk cost
+	// of running Steve here rather than one corner of it. Empty means
+	// there is nothing above StateDir worth counting.
+	StateRoot      string        `json:"state_root,omitempty"`
 	SessionGrace   time.Duration `json:"-"`
 	FaultDropAfter time.Duration `json:"-"`
+}
+
+// MeasuredStateRoot is the directory this machine reports its own disk
+// use under.
+func (c ServerConfig) MeasuredStateRoot() string {
+	if c.StateRoot != "" {
+		return c.StateRoot
+	}
+	return c.StateDir
 }
 
 // BrokerRef is how the node reaches an external broker.
