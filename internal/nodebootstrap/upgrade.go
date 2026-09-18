@@ -72,7 +72,15 @@ if [ "${actual%%%% *}" != '%s' ]; then
   exit 24
 fi
 `, spec.UploadID, unamePattern(spec.OS, spec.Arch), spec.SHA256)
-	b.WriteString(`chmod 700 "$binary_tmp"
+	b.WriteString(peerSwapSection)
+	return b.String(), nil
+}
+
+// peerSwapSection is the second half of the upgrade: the verified program
+// takes the installed program's place, the peer that was running is
+// stopped and started again on it, and the previous program comes back
+// when the new one does not stay up.
+const peerSwapSection = `chmod 700 "$binary_tmp"
 # Staged next to the installed program first: from here on every move is
 # a rename within one directory, so the installed path is never half a file.
 mv -f "$binary_tmp" "$state_dir/bin/steve.new"
@@ -153,6 +161,4 @@ if start_peer; then
 fi
 echo 'Neither program stayed running; the peer is down. Inspect ~/.steve-peer/peer.log.' >&2
 exit 28
-`)
-	return b.String(), nil
-}
+`
