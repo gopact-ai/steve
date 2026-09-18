@@ -125,6 +125,9 @@ func newWorld(t *testing.T) *world {
 	sessions := &fakeSessions{}
 	art, att, home := stores(t)
 	service := New(tasks, r, sessions, capability.NewAssembler(nil), art, "hub")
+	// What the owner is told once a child cannot be joined is the subject
+	// of these tests; the quiet stretch before that has its own test.
+	service.RecoveryQuiet = 0
 	service.SetLedger(att, art)
 	service.SetGate(gate)
 	service.SetEndpoints(fakeEndpoints{})

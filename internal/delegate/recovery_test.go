@@ -172,6 +172,9 @@ func TestManagedDelegateDetachKeepsOriginalTaskBudgetAndAttemptOpen(t *testing.T
 func recoveredDelegateService(t *testing.T, w *world, sessions Sessions) *Service {
 	t.Helper()
 	s := New(w.tasks, w.service.roster, sessions, w.service.assembler, w.service.workspaces, "hub-b")
+	// These tests are about what the owner is told once a child cannot be
+	// joined. The quiet stretch before that has its own test.
+	s.RecoveryQuiet = 0
 	s.SetLedger(w.attempts, w.service.artifacts)
 	registry := execution.New(t.Context(), w.tasks)
 	s.SetExecution(registry)
@@ -711,5 +714,47 @@ func TestRetainedDelegateStoppedNodeProcessEndsTheChildInsteadOfRetryingForever(
 	defer sessions.mu.Unlock()
 	if sessions.prompts != 1 || sessions.resumes != 0 {
 		t.Fatalf("stopped child was replayed: prompt=%d resume=%d", sessions.prompts, sessions.resumes)
+	}
+}
+
+func TestRetainedDelegateRejoinsShortOutageWithoutAskingTheParent(t *testing.T) {
+	w, sessions, _, child := detachedDelegateFixture(t)
+	sessions.inspectErr = errors.New("node unreachable")
+	service := recoveredDelegateService(t, w, sessions)
+	// A node that comes back inside this stretch is rejoined in silence.
+	service.RecoveryQuiet = 5 * time.Second
+	notices := make(chan RecoveryQuestion, 4)
+	service.SetRecoveryQuestion(func(_ context.Context, q RecoveryQuestion) (view.Answer, error) {
+		notices <- q
+		return view.Answer{Value: "wait"}, nil
+	})
+	for range 3 {
+		if err := service.RecoverRetained(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	select {
+	case q := <-notices:
+		t.Fatalf("a short outage was put to the parent: %+v", q)
+	case <-time.After(40 * time.Millisecond):
+	}
+	stored, _ := w.tasks.Get(child.TaskID)
+	if stored.Result != nil || stored.State != task.StateRunning || !stored.Attempts[0].Open() {
+		t.Fatalf("a short outage terminalized the child: %+v", stored)
+	}
+	sessions.mu.Lock()
+	sessions.inspectErr = nil
+	sessions.mu.Unlock()
+	if err := service.RecoverRetained(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if stored = awaitDelegateResult(t, w.tasks, child.TaskID); stored.Result.Answer != sessions.answer {
+		t.Fatalf("child did not finish after the node returned: %+v", stored)
+	}
+	select {
+	case q := <-notices:
+		t.Fatalf("a rejoined child still asked the parent: %+v", q)
+	default:
 	}
 }

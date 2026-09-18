@@ -205,7 +205,7 @@ func describeRelocation(intent attempt.RelocationIntent, checkpointAt time.Time,
 	}
 	return RelocationPlan{ID: intent.ID, AttemptID: intent.SourceID, TargetNodeID: intent.Target.Node, Checkpoint: base, CheckpointAt: checkpointAt, Automatic: automatic,
 		Question: view.Question{Kind: "recovery", RequestID: intent.ID, Title: "从完整快照继续任务", Message: message, Required: true, AllowFreeText: true,
-			Choices: []view.Choice{{Value: "confirm-stopped-and-retry:" + intent.ID, Label: "确认停止并按此方案重试", Detail: "我已核对并接受本方案列出的外部操作重试风险；只授权这份方案。"}, {Value: "wait", Label: "等待原节点", Detail: "保留当前任务，不创建新执行。"}}}}
+			Choices: []view.Choice{{Value: "confirm-stopped-and-retry:" + intent.ID, Label: "确认停止并按此方案重试", Detail: "我已核对并接受本方案列出的外部操作重试风险；只授权这份方案。执行前会再查一次原节点：原执行还活着就直接接回，不会去杀掉它。"}, {Value: "wait", Label: "等待原节点", Detail: "保留当前任务，不创建新执行。Steve 会继续自己重连；原节点回来后这张卡自动关闭并接着跑。"}}}}
 }
 
 // RelocateChat consumes one persisted plan and its exact choice. It sends a new

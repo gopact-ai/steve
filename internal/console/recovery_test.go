@@ -27,9 +27,17 @@ func (d *recoveryDriver) RetainedChats(context.Context) ([]turn.RetainedChat, er
 	return []turn.RetainedChat{{AttemptID: "attempt-1", TaskID: "task-1", Conversation: "console:main", MessageID: "web-e1", AgentID: "worker", NodeID: "node-a"}}, nil
 }
 
+// impatient is a console whose recovery puts a block to the owner as soon
+// as a pass hits one. The quiet stretch a real console works through by
+// itself is covered on its own, in TestRecoveryRejoinsShortOutage.
+func impatient(s *Service) *Service {
+	s.recoveryQuiet, s.recoveryProbe = 0, 5*time.Millisecond
+	return s
+}
+
 func TestManagedObserverDetachmentReconcilesSameExchangeWhileCoordinatorStaysOnline(t *testing.T) {
 	h := &queueHandler{started: make(chan *queueCall, 1)}
-	s := New(h, "owner", nil)
+	s := impatient(New(h, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
 	if err := s.Persist(&memDoc{}); err != nil {
 		t.Fatal(err)
@@ -54,7 +62,7 @@ func TestManagedObserverDetachmentReconcilesSameExchangeWhileCoordinatorStaysOnl
 }
 
 func TestPlatformRecoveryCannotForgeNativePermissionOrOwner(t *testing.T) {
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
 	if err := s.Persist(recoveryDocument()); err != nil {
 		t.Fatal(err)
@@ -94,7 +102,7 @@ func recoveryDocument() *memDoc {
 
 func TestRecoveryUsesOriginalExchangeAndDoesNotReplayItsPrompt(t *testing.T) {
 	h := &queueHandler{started: make(chan *queueCall, 3)}
-	s := New(h, "owner", nil)
+	s := impatient(New(h, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
 	if err := s.Persist(recoveryDocument()); err != nil {
 		t.Fatal(err)
@@ -155,7 +163,7 @@ func TestRecoveryUsesOriginalExchangeAndDoesNotReplayItsPrompt(t *testing.T) {
 
 func TestUnverifiedRecoveryPersistsAskUserThenRechecksWithoutNewPrompt(t *testing.T) {
 	h := &queueHandler{started: make(chan *queueCall, 3)}
-	s := New(h, "owner", nil)
+	s := impatient(New(h, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
 	doc := recoveryDocument()
 	if err := s.Persist(doc); err != nil {
@@ -205,7 +213,7 @@ func TestRetainedGenerationShutdownStopsFailedSaveRetriesWithoutTerminalizing(t 
 	h := &queueHandler{started: make(chan *queueCall, 1)}
 	lifetime, cancelLifetime := context.WithCancel(t.Context())
 	defer cancelLifetime()
-	s := New(h, "owner", nil)
+	s := impatient(New(h, "owner", nil))
 	s.EnableRetainedRecovery(lifetime)
 	doc := &brokenQueueDoc{}
 	if err := s.Persist(doc); err != nil {
@@ -231,7 +239,7 @@ func TestRetainedGenerationShutdownStopsFailedSaveRetriesWithoutTerminalizing(t 
 	doc.muErr.Lock()
 	doc.err = nil
 	doc.muErr.Unlock()
-	restarted := New(h, "owner", nil)
+	restarted := impatient(New(h, "owner", nil))
 	restarted.EnableRetainedRecovery(t.Context())
 	if err := restarted.Persist(&memDoc{saved: true, raw: raw}); err != nil {
 		t.Fatal(err)
@@ -264,7 +272,7 @@ func (d *unwritableRecoveringDoc) Save(raw []byte) error {
 func TestRecoveryAsksTheOwnerWhenRecordingRecoveringFails(t *testing.T) {
 	lifetime, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(lifetime)
 	doc := &unwritableRecoveringDoc{memDoc: recoveryDocument()}
 	if err := s.Persist(doc); err != nil {
@@ -301,4 +309,97 @@ func awaitRecoveryQuestion(t *testing.T, s *Service) consoleapi.PendingQuestion 
 	}
 	t.Fatal("recovery question not opened")
 	return consoleapi.PendingQuestion{}
+}
+
+// probingDriver answers whether the original execution is reachable, the
+// way the coordinator does for a console that is waiting on an answer.
+type probingDriver struct {
+	recoveryDriver
+	reachable atomic.Bool
+}
+
+func (d *probingDriver) ProbeRetained(context.Context, string) error {
+	if d.reachable.Load() {
+		return nil
+	}
+	return errors.New("node unreachable")
+}
+
+func TestRecoveryRejoinsShortOutageWithoutAskingTheOwner(t *testing.T) {
+	h := &queueHandler{started: make(chan *queueCall, 3)}
+	s := New(h, "owner", nil)
+	// A node that comes back inside this stretch is rejoined in silence.
+	s.recoveryQuiet = 150 * time.Millisecond
+	s.EnableRetainedRecovery(t.Context())
+	if err := s.Persist(recoveryDocument()); err != nil {
+		t.Fatal(err)
+	}
+	var back atomic.Bool
+	driver := &recoveryDriver{resume: func(_ context.Context, id string, _ turn.Request) (turn.Result, error) {
+		if !back.Load() {
+			back.Store(true)
+			return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "节点暂时无法连接。", Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
+		}
+		return turn.Result{Text: "retained result", Attempt: id}, nil
+	}}
+	if err := s.RecoverChats(t.Context(), driver); err != nil {
+		t.Fatal(err)
+	}
+	if got := awaitExchange(t, s, "e1"); got.State != "done" {
+		t.Fatalf("short outage was not rejoined: %+v", got)
+	}
+	if list := s.Questions("main"); len(list) != 0 {
+		t.Fatalf("a one-off outage was put to the owner: %+v", list)
+	}
+	if driver.calls.Load() != 2 {
+		t.Fatalf("recovery made %d passes, want a retry then a rejoin", driver.calls.Load())
+	}
+	follow := nextCall(t, h)
+	follow.finish <- nil
+	awaitExchange(t, s, "e2")
+}
+
+func TestOpenRecoveryQuestionIsWithdrawnWhenTheOriginalComesBack(t *testing.T) {
+	h := &queueHandler{started: make(chan *queueCall, 3)}
+	s := impatient(New(h, "owner", nil))
+	s.EnableRetainedRecovery(t.Context())
+	if err := s.Persist(recoveryDocument()); err != nil {
+		t.Fatal(err)
+	}
+	driver := &probingDriver{}
+	driver.resume = func(_ context.Context, id string, _ turn.Request) (turn.Result, error) {
+		if !driver.reachable.Load() {
+			return turn.Result{}, &turn.RecoveryBlocked{Question: view.Question{Kind: "recovery", Title: "需要处理", Message: "节点暂时无法连接。", Choices: []view.Choice{{Value: "retry", Label: "重新检查"}}}, Cause: errors.New("node disconnected")}
+		}
+		return turn.Result{Text: "retained result", Attempt: id}, nil
+	}
+	if err := s.RecoverChats(t.Context(), driver); err != nil {
+		t.Fatal(err)
+	}
+	var asked string
+	for deadline := time.Now().Add(2 * time.Second); time.Now().Before(deadline) && asked == ""; {
+		for _, q := range s.Questions("main") {
+			if q.State == "pending" {
+				asked = q.ID
+			}
+		}
+		time.Sleep(time.Millisecond)
+	}
+	if asked == "" {
+		t.Fatal("a lasting outage was never put to the owner")
+	}
+	// The original comes back while the card is still open: nobody has to
+	// answer a question the recovery can now settle by itself.
+	driver.reachable.Store(true)
+	if got := awaitExchange(t, s, "e1"); got.State != "done" {
+		t.Fatalf("returning node did not resume the exchange: %+v", got)
+	}
+	for _, q := range s.Questions("main") {
+		if q.ID == asked && (q.State != "cancelled" || q.Answer != nil) {
+			t.Fatalf("withdrawn question kept waiting on the owner: %+v", q)
+		}
+	}
+	follow := nextCall(t, h)
+	follow.finish <- nil
+	awaitExchange(t, s, "e2")
 }

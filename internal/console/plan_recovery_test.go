@@ -33,7 +33,7 @@ func (d *planRecoveryDriver) RelocateChat(context.Context, string, string, turn.
 func TestPlanRecoveryUsesOriginalExchangeAndNativeQuestionCallbacks(t *testing.T) {
 	lifetime, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(lifetime)
 	if err := s.Persist(recoveryDocument()); err != nil {
 		t.Fatal(err)
@@ -85,7 +85,7 @@ func TestPlanRecoveryUsesOriginalExchangeAndNativeQuestionCallbacks(t *testing.T
 
 func TestDetachedPlanSelectsPlanRecoveryInsteadOfRepeatingSubmission(t *testing.T) {
 	h := &queueHandler{started: make(chan *queueCall, 1)}
-	s := New(h, "owner", nil)
+	s := impatient(New(h, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
 	if err := s.Persist(&memDoc{}); err != nil {
 		t.Fatal(err)

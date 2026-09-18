@@ -51,7 +51,7 @@ func TestStopRecoveryTargetsOriginalTaskAndPersistsSettlement(t *testing.T) {
 			lifetime, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			doc := recoveryDocument()
-			s := New(&echo{}, "owner", nil)
+			s := impatient(New(&echo{}, "owner", nil))
 			s.EnableRetainedRecovery(lifetime)
 			if err := s.Persist(doc); err != nil {
 				t.Fatal(err)
@@ -104,7 +104,7 @@ func TestStopRecoveryTargetsOriginalTaskAndPersistsSettlement(t *testing.T) {
 			}
 			cancel()
 			s.workers.Wait()
-			restored := New(&echo{}, "owner", nil)
+			restored := impatient(New(&echo{}, "owner", nil))
 			restored.EnableRetainedRecovery(t.Context())
 			if err := restored.Persist(doc); err != nil {
 				t.Fatal(err)
@@ -122,7 +122,7 @@ func TestStopRecoveryTargetsOriginalTaskAndPersistsSettlement(t *testing.T) {
 
 func TestRestartAfterConfirmedRecoveryStopDoesNotContactExecutorAgain(t *testing.T) {
 	doc := recoveryDocument()
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
 	if err := s.Persist(doc); err != nil {
 		t.Fatal(err)
@@ -136,7 +136,7 @@ func TestRestartAfterConfirmedRecoveryStopDoesNotContactExecutorAgain(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored := New(&echo{}, "owner", nil)
+	restored := impatient(New(&echo{}, "owner", nil))
 	restored.EnableRetainedRecovery(t.Context())
 	if err := restored.Persist(doc); err != nil {
 		t.Fatal(err)
@@ -158,7 +158,7 @@ func TestRestartAfterConfirmedRecoveryStopDoesNotContactExecutorAgain(t *testing
 }
 
 func TestStopDetachedRecoverySettlesWithoutClosingWaiterTwice(t *testing.T) {
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
 	if err := s.Persist(recoveryDocument()); err != nil {
 		t.Fatal(err)
@@ -184,7 +184,7 @@ func TestStopDetachedRecoverySettlesWithoutClosingWaiterTwice(t *testing.T) {
 }
 
 func TestConfirmedRecoveryStopWinsObserverCancellationReply(t *testing.T) {
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
 	if err := s.Persist(recoveryDocument()); err != nil {
 		t.Fatal(err)
@@ -215,7 +215,7 @@ func TestConfirmedRecoveryStopWinsObserverCancellationReply(t *testing.T) {
 }
 
 func TestRecoveryStopWaitsForObserverBeforePublishingConfirmedReceipt(t *testing.T) {
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
 	if err := s.Persist(recoveryDocument()); err != nil {
 		t.Fatal(err)
@@ -250,7 +250,7 @@ func TestUnconfirmedChildStopKeepsFinishedParentExchangeReserved(t *testing.T) {
 	lifetime, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	doc := recoveryDocument()
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(lifetime)
 	if err := s.Persist(doc); err != nil {
 		t.Fatal(err)
@@ -275,7 +275,7 @@ func TestUnconfirmedChildStopKeepsFinishedParentExchangeReserved(t *testing.T) {
 	}
 	cancel()
 	s.workers.Wait()
-	restored := New(&echo{}, "owner", nil)
+	restored := impatient(New(&echo{}, "owner", nil))
 	restored.EnableRetainedRecovery(t.Context())
 	if err := restored.Persist(doc); err != nil {
 		t.Fatal(err)
@@ -302,7 +302,7 @@ func TestUnconfirmedStopSettlesOnceARecheckConfirmsIt(t *testing.T) {
 	recoveryStopInterval.Store(int64(20 * time.Millisecond))
 	defer recoveryStopInterval.Store(previous)
 	doc := recoveryDocument()
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
 	if err := s.Persist(doc); err != nil {
 		t.Fatal(err)
@@ -316,7 +316,7 @@ func TestUnconfirmedStopSettlesOnceARecheckConfirmsIt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored := New(&echo{}, "owner", nil)
+	restored := impatient(New(&echo{}, "owner", nil))
 	restored.EnableRetainedRecovery(t.Context())
 	if err := restored.Persist(doc); err != nil {
 		t.Fatal(err)
@@ -347,7 +347,7 @@ func TestUnconfirmedStopSettlesOnceARecheckConfirmsIt(t *testing.T) {
 }
 
 func TestDetachedUnconfirmedRecoveryDoesNotReleaseQueuedInstructions(t *testing.T) {
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
 	if err := s.Persist(recoveryDocument()); err != nil {
 		t.Fatal(err)
@@ -370,7 +370,7 @@ func TestRecoveryStopIntentIsDurableBeforeStoppingExecutions(t *testing.T) {
 	lifetime, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	doc := recoveryDocument()
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(lifetime)
 	if err := s.Persist(doc); err != nil {
 		t.Fatal(err)
@@ -392,7 +392,7 @@ func TestRecoveryStopIntentIsDurableBeforeStoppingExecutions(t *testing.T) {
 	_, _ = s.SendCommand(t.Context(), "main", "/cancel", "stop-crash-window")
 	cancel()
 	s.workers.Wait()
-	restored := New(&echo{}, "owner", nil)
+	restored := impatient(New(&echo{}, "owner", nil))
 	restored.EnableRetainedRecovery(t.Context())
 	if err := restored.Persist(snapshot); err != nil {
 		t.Fatal(err)
@@ -419,7 +419,7 @@ func TestRecoveryStopIntentIsDurableBeforeStoppingExecutions(t *testing.T) {
 
 func TestNewInputBehindDetachedRecoveryIsDurable(t *testing.T) {
 	doc := recoveryDocument()
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(t.Context())
 	if err := s.Persist(doc); err != nil {
 		t.Fatal(err)
@@ -431,7 +431,7 @@ func TestNewInputBehindDetachedRecoveryIsDurable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	restored := New(&echo{}, "owner", nil)
+	restored := impatient(New(&echo{}, "owner", nil))
 	restored.EnableRetainedRecovery(t.Context())
 	if err := restored.Persist(doc); err != nil {
 		t.Fatal(err)
@@ -452,7 +452,7 @@ func TestNewInputBehindDetachedRecoveryIsDurable(t *testing.T) {
 
 func TestRestartDoesNotTreatNewlyAcceptedStopAsNativeExecution(t *testing.T) {
 	doc := &memDoc{saved: true, raw: []byte(`{"replies":{"console:main":[]},"exchanges":{"console:main":[{"id":"e1","conversation":"console:main","input":"original","state":"running"},{"id":"stop","conversation":"console:main","input":"/cancel","state":"running"}]}}`)}
-	restored := New(&echo{}, "owner", nil)
+	restored := impatient(New(&echo{}, "owner", nil))
 	restored.EnableRetainedRecovery(t.Context())
 	if err := restored.Persist(doc); err != nil {
 		t.Fatal(err)
@@ -467,7 +467,7 @@ func TestSameStopCommandRechecksOriginalTaskAfterNodeReturns(t *testing.T) {
 	lifetime, cancel := context.WithCancel(t.Context())
 	defer cancel()
 	doc := recoveryDocument()
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(lifetime)
 	if err := s.Persist(doc); err != nil {
 		t.Fatal(err)
@@ -513,7 +513,7 @@ func TestRecoveryStopRetryKeepsItsTargetAcrossRestart(t *testing.T) {
 		t.Run(map[bool]string{false: "bound", true: "older-receipt"}[oldReceipt], func(t *testing.T) {
 			lifetime, cancel := context.WithCancel(t.Context())
 			doc := recoveryDocument()
-			s := New(&echo{}, "owner", nil)
+			s := impatient(New(&echo{}, "owner", nil))
 			s.EnableRetainedRecovery(lifetime)
 			if err := s.Persist(doc); err != nil {
 				t.Fatal(err)
@@ -544,7 +544,7 @@ func TestRecoveryStopRetryKeepsItsTargetAcrossRestart(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			restored := New(&echo{}, "owner", nil)
+			restored := impatient(New(&echo{}, "owner", nil))
 			restored.EnableRetainedRecovery(t.Context())
 			if err := restored.Persist(doc); err != nil {
 				t.Fatal(err)
@@ -571,7 +571,7 @@ func TestRecoveryStopRetryKeepsItsTargetAcrossRestart(t *testing.T) {
 func TestConcurrentRetrySharesOriginalStopCheck(t *testing.T) {
 	lifetime, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(lifetime)
 	if err := s.Persist(recoveryDocument()); err != nil {
 		t.Fatal(err)
@@ -618,7 +618,7 @@ func (d *lookupFailureStopDriver) RetainedChats(ctx context.Context) ([]turn.Ret
 func TestSameStopRetryRecoversAfterOriginalTaskLookupFails(t *testing.T) {
 	lifetime, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	s.EnableRetainedRecovery(lifetime)
 	if err := s.Persist(recoveryDocument()); err != nil {
 		t.Fatal(err)
@@ -647,7 +647,7 @@ func TestSameStopRetryRecoversAfterOriginalTaskLookupFails(t *testing.T) {
 func TestHistoricalStopDoesNotInferAnUnrelatedRecoveryTarget(t *testing.T) {
 	for _, mode := range []string{"missing-attempt", "different-error", "newer-task"} {
 		t.Run(mode, func(t *testing.T) {
-			s := New(&echo{}, "owner", nil)
+			s := impatient(New(&echo{}, "owner", nil))
 			s.EnableRetainedRecovery(t.Context())
 			if err := s.Persist(recoveryDocument()); err != nil {
 				t.Fatal(err)

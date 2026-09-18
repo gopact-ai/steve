@@ -25,14 +25,17 @@ function useElapsed(since: string): number {
 // like a reply forming: who is on it, the latest thought, the tool
 // calls as they land, the answer as it streams. In the rail it is the
 // full trace, step by step.
-export function Working({ live, plans, compact, delegated }: { live: Live; plans: Plan[]; compact?: boolean; delegated?: StepProcess[] }) {
+export function Working({ live, plans, compact, delegated, recovery }: { live: Live; plans: Plan[]; compact?: boolean; delegated?: StepProcess[]; recovery?: string }) {
     const { t, locale } = useI18n();
     const nodeLabelOf = useNodeLabel();
     const elapsed = useElapsed(live.since);
     const steps: Step[] = plans.flatMap((p) => p.steps || []);
     const latest = live.turn ?? (live.order.length ? live.steps[live.order[live.order.length - 1]] : undefined);
     const phase = latest?.phase;
-    const phaseLabel = t(phase === "waking" ? "consoleChrome.preparing" : phase === "finishing" ? "consoleChrome.finishing" : phase === "saving" ? "consoleChrome.saving" : latest ? "consoleChrome.processing" : "consoleChrome.placing");
+    // A turn that lost its node is rejoining it, not starting work: say
+    // so, because the elapsed clock next to this line is the original
+    // turn's and "preparing" for twenty minutes reads like a hang.
+    const phaseLabel = recovery === "recovering" ? t("console.recovering") : recovery ? t("status.awaitingHuman") : t(phase === "waking" ? "consoleChrome.preparing" : phase === "finishing" ? "consoleChrome.finishing" : phase === "saving" ? "consoleChrome.saving" : latest ? "consoleChrome.processing" : "consoleChrome.placing");
     const agentLabel = latest ? [latest.agent, latest.model].filter(Boolean).join(" · ") : "";
     // The answer snapshot concatenates every narration span. Keep earlier
     // narration in the process and render only its last span as the live reply.

@@ -13,7 +13,7 @@ func TestEnsureRecoveryConversationIsVisibleDurableAndDoesNotSubmitWork(t *testi
 		t.Fatal(err)
 	}
 	defer book.Close()
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	if err := s.Persist(book.Document("console")); err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestEnsureRecoveryConversationIsVisibleDurableAndDoesNotSubmitWork(t *testi
 	if len(s.exchanges) != 0 || len(s.questions) != 0 || len(s.running) != 0 {
 		t.Fatal("creating a visible recovery page started work")
 	}
-	restored := New(&echo{}, "owner", nil)
+	restored := impatient(New(&echo{}, "owner", nil))
 	if err := restored.Persist(book.Document("console")); err != nil {
 		t.Fatal(err)
 	}
@@ -58,7 +58,7 @@ func TestEnsureRecoveryConversationRetriesStorageFailureWithoutPhantomPage(t *te
 		t.Fatal(err)
 	}
 	defer book.Close()
-	s := New(&echo{}, "owner", nil)
+	s := impatient(New(&echo{}, "owner", nil))
 	if err := s.Persist(book.Document("console")); err != nil {
 		t.Fatal(err)
 	}

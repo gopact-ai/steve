@@ -107,10 +107,15 @@ type Service struct {
 	// doc keeps the transcript across restarts. A console whose history
 	// vanishes with the process would make every restart look like the
 	// owner had never said anything.
-	doc                ledger.Doc
-	questions          map[string]consoleapi.PendingQuestion
-	questionWaiters    map[string]chan struct{}
-	questionTimeout    time.Duration
+	doc             ledger.Doc
+	questions       map[string]consoleapi.PendingQuestion
+	questionWaiters map[string]chan struct{}
+	questionTimeout time.Duration
+	// recoveryQuiet is how long a recovery rejoins the original execution
+	// on its own before the owner is asked anything, and recoveryProbe how
+	// often an open recovery question looks for the original coming back.
+	recoveryQuiet      time.Duration
+	recoveryProbe      time.Duration
 	defaultLocale      string
 	closing            bool
 	recoveryLifetime   context.Context
@@ -122,7 +127,16 @@ type Service struct {
 }
 
 func New(handler Handler, owner string, model Events) *Service {
-	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute}
+	return &Service{handler: handler, owner: owner, model: model, replies: map[string][]consoleapi.Reply{}, meta: map[string]Meta{}, running: map[string]int{}, exchanges: map[string][]*queuedExchange{}, questions: map[string]consoleapi.PendingQuestion{}, questionWaiters: map[string]chan struct{}{}, questionTimeout: 3 * time.Minute, recoveryQuiet: recoveryQuiet, recoveryProbe: recoveryProbe}
+}
+
+// SetRecoveryQuiet is how long a recovery rejoins the original execution
+// on its own before the owner is asked anything. Zero asks as soon as a
+// pass is blocked.
+func (s *Service) SetRecoveryQuiet(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.recoveryQuiet = d
 }
 
 // SetTitler gives the service a way to name conversations. Without one,

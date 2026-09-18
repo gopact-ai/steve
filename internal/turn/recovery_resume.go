@@ -42,7 +42,7 @@ func (e *RecoveryBlocked) Error() string { return e.Question.Message }
 func (e *RecoveryBlocked) Unwrap() error { return e.Cause }
 
 func retainedBlocked(code, attempted, problem, reason, recommendation string, cause error) *RecoveryBlocked {
-	return &RecoveryBlocked{Cause: cause, Question: view.Question{RequestID: "recovery/" + code, Kind: "recovery", Title: "继续任务需要你的处理", Message: "已尝试：" + attempted + "\n\n" + problem + "\n\n" + reason + "\n\n" + recommendation, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查原执行", Detail: "仅核对节点上的原执行，不会重新发送任务。"}, {Value: "wait", Label: "暂时等待", Detail: "保留当前任务和进度，等机器恢复后再处理。"}}}}
+	return &RecoveryBlocked{Cause: cause, Question: view.Question{RequestID: "recovery/" + code, Kind: "recovery", Title: "继续任务需要你的处理", Message: "已尝试：" + attempted + "\n\n" + problem + "\n\n" + reason + "\n\n" + recommendation, Required: true, AllowFreeText: true, Choices: []view.Choice{{Value: "retry", Label: "重新检查原执行", Detail: "仅核对节点上的原执行，不会重新发送任务。"}, {Value: "wait", Label: "暂时等待", Detail: "保留当前任务和进度。Steve 会继续自己重连，机器回来后自动接着跑。"}}}}
 }
 
 // RetainedChats identifies accepted native commands and committed but not yet
@@ -78,6 +78,37 @@ func (c *Coordinator) RetainedChats(ctx context.Context) ([]RetainedChat, error)
 
 type retainedRuntime interface {
 	AttachRetainedSession(context.Context, harness.Placement, string, string) (harness.ResumableRunner, error)
+}
+
+// ProbeRetained reports whether the retained execution can be reached
+// again. It reads the node's own view of the session and nothing else:
+// no attempt is adopted, settled, relocated or prompted, so a recovery
+// that is waiting on the owner can use it to notice the original coming
+// back and carry on without an answer.
+func (c *Coordinator) ProbeRetained(ctx context.Context, id string) error {
+	c.requestMu.RLock()
+	defer c.requestMu.RUnlock()
+	if c.attempts == nil {
+		return errors.New("retained probe is not configured")
+	}
+	record, err := c.attempts.Get(ctx, id)
+	if err != nil {
+		return err
+	}
+	if record.State != attempt.Running || !strings.HasPrefix(record.Session, "ns_") || record.Node == "" {
+		return errors.New("retained execution has no node-owned session to rejoin")
+	}
+	evidence, err := c.inspectRelocation(ctx, record)
+	if err != nil {
+		return err
+	}
+	if evidence.Session.ID != record.Session || evidence.Session.Command == nil {
+		return errors.New("node does not hold the original command")
+	}
+	if evidence.Session.ProcessStopped || evidence.Session.Command.State == nodewire.SessionCommandUncertain {
+		return errors.New("node cannot vouch for the original command")
+	}
+	return nil
 }
 
 // ResumeRetainedChat observes the exact command admitted before coordinator
