@@ -40,6 +40,9 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
     const landings = snap.landings.filter((l) => l.project === t.project_id).slice(0, 5);
     const holds = ["running", "blocked", "review", "paused", "draft", "failed"].includes(t.lifecycle);
     const consoleTask = t.channel?.startsWith("console:");
+    // A failure nobody has decided about yet: the only state where retrying
+    // and settling are both on offer.
+    const failedOpen = t.lifecycle === "failed" && !t.settlement;
     const completionRoot = !t.parent && !t.origin && !t.plan_id && !plan && ["running", "review"].includes(t.lifecycle);
     const canComplete = completionRoot && t.can_complete === true && t.execution === "idle" && t.attention === 0 && !t.pending_results && !t.uncertain_results;
     async function act(command: string) {
@@ -64,6 +67,7 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                 <StateBadge state={taskState(t)} /><span className="text-xs text-tertiary">{label(labelsFor(locale).status, t.lane)}</span>
                 {t.priority === "high" && <Badge type="pill-color" size="sm" color="warning">{tr("tasks.high")}</Badge>}
                 {t.archived_at && <Badge type="pill-color" size="sm" color="gray">{tr("tasks.archived")}</Badge>}
+                {t.settlement && <Badge type="pill-color" size="sm" color="gray">{tr(t.settlement === "handled" ? "tasks.settledHandled" : "tasks.settledIgnored")}</Badge>}
             </>}
             actions={<TaskMetaMenu t={t} pending={meta.pending || meta.renaming} onRename={meta.rename} onPatch={(patch) => void meta.save(patch)} />}
             subtitle={<>
@@ -75,6 +79,7 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                     <div className="flex flex-col gap-1 text-sm">
                         <Row k={tr("tasks.execution")} v={t.execution === "running" ? tr("tasks.running") : t.execution === "unknown" ? tr("tasks.unknown") : tr("tasks.idle")} />
                         <Row k={tr("tasks.attention")} v={t.attention || t.uncertain_results ? tr("tasks.attentionCount", { count: t.attention + (t.uncertain_results || 0) }) : tr("tasks.none")} />
+                        {t.settlement && <Row k={tr("tasks.settled")} v={tr(t.settlement === "handled" ? "tasks.settledHandled" : "tasks.settledIgnored")} />}
                         <Row k={tr("tasks.budget")} v={tr("tasks.budgetSummary", { turns: t.max_turns ? `${t.turns}/${t.max_turns}` : t.turns, elapsed: t.elapsed || "0s", limit: t.max_elapsed && t.max_elapsed !== "0s" ? ` / ${t.max_elapsed}` : "" })} />
                         <Row k={tr("tasks.usage")} v={`${spend(t.tokens, locale)} · ${fmtSeconds(t.seconds, locale)}`} />
                         {landings.length > 0 && <Row k={tr("tasks.recentMerges")} v={landings.map((l) => `${label(labelsFor(locale).taskState, l.state) === l.state ? l.state : l.state} ${short(l.artifact)} ${when(l.at, locale)}`).join(" · ")} />}
@@ -83,10 +88,17 @@ function TaskDrawerContent({ t: selected, tasks, plan, onClose, width }: TaskDra
                         {canComplete && <Button size="sm" color="secondary" isLoading={pending} showTextWhileLoading isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks complete ${t.id}`)}>{tr("tasks.complete")}</Button>}
                         {holds && !["paused", "failed"].includes(t.lifecycle) && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks pause ${t.id}`)}>{tr("tasks.pause")}</Button>}
                         {t.lifecycle === "paused" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>{tr("tasks.resume")}</Button>}
-                        {t.lifecycle === "failed" && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>{tr("common.retry")}</Button>}
-                        {holds && <Button size="sm" color="secondary-destructive" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks cancel ${t.id}`)}>{tr("common.cancel")}</Button>}
+                        {failedOpen && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks resume ${t.id}`)}>{tr("common.retry")}</Button>}
+                        {/* A failed task is often already dealt with, by hand or by
+                            deciding it does not matter. Saying so leaves the failure
+                            on the record; cancelling would call the work off. */}
+                        {failedOpen && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks handled ${t.id}`)}>{tr("tasks.markHandled")}</Button>}
+                        {failedOpen && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks ignore ${t.id}`)}>{tr("tasks.markIgnored")}</Button>}
+                        {t.settlement && <Button size="sm" color="secondary" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks reopen ${t.id}`)}>{tr("tasks.reopen")}</Button>}
+                        {holds && !t.settlement && <Button size="sm" color="secondary-destructive" isDisabled={pending || !consoleTask} onClick={() => void act(`/tasks cancel ${t.id}`)}>{tr("common.cancel")}</Button>}
                         <Button size="sm" color="link-gray" isDisabled={!consoleTask} onClick={() => { onClose(); navigate(`/console?conversation=${encodeURIComponent(t.channel!)}`); }}>{tr("tasks.viewInWorkbench")}</Button>
                     </div>
+                    {failedOpen && <p className="mt-2 text-xs text-tertiary">{tr("tasks.settleHint")}</p>}
                     {completionRoot && <p className="mt-2 text-xs text-tertiary">{tr(canComplete ? "tasks.completeHint" : t.attention ? "tasks.completeAttention" : t.execution !== "idle" ? "tasks.completeBusy" : "tasks.completePending")}</p>}
                     {!consoleTask && <p className="mt-2 text-xs text-tertiary">{tr("tasks.channelHint")}</p>}
                 </DrawerSection>

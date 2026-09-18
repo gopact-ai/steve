@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/gopact-ai/steve/internal/ledger"
 )
@@ -17,6 +18,10 @@ type ExecutionToken struct {
 }
 
 var ErrExecutionStopped = errors.New("task execution was stopped")
+
+// ErrSettleState guards the one state a settlement means anything in: a task
+// that failed. Running work is stopped, not settled.
+var ErrSettleState = errors.New("only a failed task can be settled by hand")
 
 func (s *Store) ExecutionToken(id string) (ExecutionToken, error) {
 	s.mu.Lock()
@@ -45,7 +50,7 @@ func (s *Store) CheckExecution(token ExecutionToken) error {
 
 func checkExecution(tasks map[string]*Task, token ExecutionToken) error {
 	t, ok := tasks[token.TaskID]
-	if !ok || t.ExecutionEpoch != token.Epoch || t.State == StatePaused || t.State == StateCancelled || t.CompletedByUser {
+	if !ok || t.ExecutionEpoch != token.Epoch || t.State == StatePaused || t.State == StateCancelled || t.CompletedByUser || t.Settled() {
 		return fmt.Errorf("%w: task %s epoch %d", ErrExecutionStopped, token.TaskID, token.Epoch)
 	}
 	lineage, err := taskLineage(tasks, token.TaskID)
@@ -53,7 +58,7 @@ func checkExecution(tasks map[string]*Task, token ExecutionToken) error {
 		return err
 	}
 	for _, ancestor := range lineage {
-		if ancestor.State == StatePaused || ancestor.State == StateCancelled || ancestor.CompletedByUser {
+		if ancestor.State == StatePaused || ancestor.State == StateCancelled || ancestor.CompletedByUser || ancestor.Settled() {
 			return fmt.Errorf("%w: ancestor %s", ErrExecutionStopped, ancestor.ID)
 		}
 	}
@@ -118,6 +123,39 @@ func (s *Store) SetAside(id string, to State) ([]string, error) {
 	}
 	sort.Strings(ids)
 	return ids, nil
+}
+
+// Settle records a person closing a failed task by hand, or clearing that
+// decision with an empty settlement. The state is left alone: the record has
+// to keep saying the work failed. The execution epoch moves for the same
+// reason it moves on a stop — a late result must not revive a task its owner
+// has already closed.
+func (s *Store) Settle(id string, as Settlement) (Task, error) {
+	if as != "" && !as.Valid() {
+		return Task{}, fmt.Errorf("invalid settlement %s", as)
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	stored, ok := s.data.Tasks[id]
+	if !ok {
+		return Task{}, fmt.Errorf("task %s not found", id)
+	}
+	if stored.State != StateFailed {
+		return Task{}, fmt.Errorf("%w: task %s is %s", ErrSettleState, id, stored.State)
+	}
+	next := s.clone()
+	t := next.Tasks[id]
+	t.Settlement = as
+	t.SettledAt = time.Time{}
+	if as != "" {
+		t.SettledAt = s.now()
+		t.ExecutionEpoch++
+	}
+	t.UpdatedAt = s.now()
+	if err := s.replaceLocked(next); err != nil {
+		return Task{}, err
+	}
+	return *t.clone(), nil
 }
 
 // AdvanceExecution projects an outcome only if its original authorization

@@ -74,7 +74,10 @@ func (parsed ParsedInput) Control() bool {
 	}
 	if parsed.Command == protocol.CommandTasks {
 		verb, _, ok := parseTaskArgs(parsed.Rest)
-		return ok && (verb == taskPause || verb == taskCancel || verb == taskComplete)
+		// Settling a failed task is bookkeeping about work that already
+		// stopped, so it must not queue behind whatever is running now.
+		return ok && (verb == taskPause || verb == taskCancel || verb == taskComplete ||
+			verb == taskHandled || verb == taskIgnored || verb == taskReopen)
 	}
 	return false
 }

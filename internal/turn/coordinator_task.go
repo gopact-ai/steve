@@ -301,6 +301,12 @@ const (
 	taskResume
 	taskCancel
 	taskComplete
+	// taskHandled and taskIgnored are the two ways a person closes a
+	// failed task without pretending it was called off; taskReopen puts
+	// it back in front of them.
+	taskHandled
+	taskIgnored
+	taskReopen
 )
 
 func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked task.Task, to task.State, confirmSettlement bool) (Result, error) {

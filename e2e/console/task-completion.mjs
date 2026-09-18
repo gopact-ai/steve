@@ -13,9 +13,16 @@ await server.listen();
 const url = server.resolvedUrls.local[0];
 const browser = await chromium.launch({ headless: true, channel: process.env.BROWSER_CHANNEL });
 const at = "2026-09-13T01:00:00Z";
+const eventually = async (predicate, message) => {
+    for (let i = 0; i < 100; i++) {
+        if (await predicate()) return;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+    assert.fail(message);
+};
 const conversation = "console:completion-test";
 const root = () => ({ id: "148", goal: "Accepted root task with a long title 验收完成的主任务，保留会话与原生上下文 ".repeat(3), channel: conversation, member: "worker", state: "running", lifecycle: "running", execution: "idle", lane: "pending", attention: 0, pending_results: 0, uncertain_results: 0, can_complete: true, turns: 2, max_turns: 0, updated_at: at });
-const fixture = { task: root(), calls: [], errors: [], mode: "success", release: null, onHold: null };
+const fixture = { task: root(), calls: [], errors: [], mode: "success", release: null, onHold: null, expect: "/tasks complete 148" };
 
 try {
     await mkdir(artifacts, { recursive: true });
@@ -40,7 +47,7 @@ try {
                 const body = request.postDataJSON();
                 fixture.calls.push(body);
                 assert.equal(body.conversation, conversation);
-                assert.equal(body.input, "/tasks complete 148");
+                assert.equal(body.input, fixture.expect);
                 assert.ok(body.command_id);
                 if (fixture.mode === "hold") await new Promise((resolve) => { fixture.release = resolve; fixture.onHold?.(); });
                 if (fixture.mode === "http-error") return route.fulfill({ status: 409, json: { error: "Execution is reserved; wait for settlement." } });
@@ -101,6 +108,41 @@ try {
             const summary = page.getByRole("region", { name: locale === "en" ? "Root task summary" : "主任务统计" });
             assert.match(await summary.innerText(), locale === "en" ? /Completed\s*1/ : /已完成\s*1/);
         }
+        // A failed task is usually already dealt with by the time anyone
+        // looks at it. Saying so has to be possible without cancelling,
+        // which would take the failure off the record, and it has to be
+        // reversible.
+        const settleName = { handled: locale === "en" ? "I handled it" : "我已处理", ignored: locale === "en" ? "Not worth attention" : "无需关注", reopen: locale === "en" ? "Reopen" : "重新打开", retry: locale === "en" ? "Retry" : "重试", cancel: locale === "en" ? "Cancel" : "取消" };
+        for (const [command, settlement, shown] of [["handled", "handled", locale === "en" ? "Handled by hand" : "人工已处理"], ["ignore", "ignored", locale === "en" ? "Not worth attention" : "无需关注"]]) {
+            const failed = { ...root(), state: "failed", lifecycle: "failed", lane: "needs_you", can_complete: false };
+            fixture.task = failed;
+            fixture.mode = "success";
+            const dialog = await open();
+            for (const name of [settleName.retry, settleName.handled, settleName.ignored, settleName.cancel]) {
+                await dialog.getByRole("button", { name, exact: true }).waitFor();
+            }
+            assert.equal(await dialog.getByRole("button", { name: settleName.reopen, exact: true }).count(), 0);
+            fixture.expect = `/tasks ${command} 148`;
+            const settleCalls = fixture.calls.length;
+            await dialog.getByRole("button", { name: command === "handled" ? settleName.handled : settleName.ignored, exact: true }).click();
+            await eventually(() => fixture.calls.length === settleCalls + 1, "Settling must reach the server");
+            fixture.task = { ...failed, settlement, lane: "ended" };
+            // The record still says it failed; it just stops asking.
+            await dialog.getByText(shown, { exact: true }).first().waitFor();
+            await dialog.getByRole("button", { name: settleName.reopen, exact: true }).waitFor();
+            for (const name of [settleName.handled, settleName.ignored, settleName.cancel]) {
+                assert.equal(await dialog.getByRole("button", { name, exact: true }).count(), 0, `${name} must not be offered once settled`);
+            }
+            fixture.expect = "/tasks reopen 148";
+            const reopenCalls = fixture.calls.length;
+            await dialog.getByRole("button", { name: settleName.reopen, exact: true }).click();
+            await eventually(() => fixture.calls.length === reopenCalls + 1, "Reopening must reach the server");
+            fixture.task = failed;
+            await dialog.getByRole("button", { name: settleName.retry, exact: true }).waitFor();
+            await page.screenshot({ path: path.join(artifacts, `settled-${settlement}-${locale}.png`) });
+            await page.keyboard.press("Escape");
+        }
+        fixture.expect = "/tasks complete 148";
         for (const overrides of [{ can_complete: false }, { parent: "147" }, { execution: "running" }, { execution: "unknown" }, { attention: 1 }, { pending_results: 1 }, { uncertain_results: 1 }, { origin: "plan" }, { plan_id: "p1" }, { lifecycle: "paused" }, { lifecycle: "failed" }, { lifecycle: "cancelled" }]) {
             fixture.task = { ...root(), ...overrides };
             const dialog = await open();
@@ -109,7 +151,7 @@ try {
         await context.close();
     }
     assert.deepEqual(fixture.errors, []);
-    console.log("TASK COMPLETION UI PASS: en/zh, wide/narrow, keyboard, pending, retries, rejection and completion");
+    console.log("TASK COMPLETION UI PASS: en/zh, wide/narrow, keyboard, pending, retries, rejection, completion and settling a failure by hand");
 } finally {
     await browser.close();
     await server.close();

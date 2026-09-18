@@ -37,6 +37,9 @@ export interface Task {
     result_delivery?: ResultDelivery; pending_results?: number; uncertain_results?: number;
     can_complete?: boolean;
     id: string; goal: string; state: string; lifecycle: string; execution: string; attention: number; lane: string;
+    // A failed task its owner closed by hand: they dealt with it, or it does
+    // not matter. The task still reads as failed; this says nobody waits on it.
+    settlement?: "handled" | "ignored";
     title?: string; priority?: "high" | "normal" | "low" | ""; labels?: string[]; archived_at?: string;
     member?: string; node?: string; channel?: string; project_id?: string; origin?: string; requester?: string; parent?: string; children?: string[];
     turns: number; max_turns: number; elapsed?: string; max_elapsed?: string; updated_at?: string; plan_id?: string;
