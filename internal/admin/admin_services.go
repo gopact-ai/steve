@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"regexp"
+	"strings"
 	"sync"
 	"time"
 
@@ -47,6 +48,7 @@ type Services struct {
 	doc        ledger.Doc
 	history    hubRestartHistory
 	pending    string
+	wait       *waitingRestart
 	dispatched bool
 	release    func()
 	boot       *config.Config
@@ -121,6 +123,12 @@ func serviceFailure(code, message string) error {
 	return &consoleapi.ServiceError{Code: code, Message: message}
 }
 
+// serviceBusy is work in progress rather than a fault: the reason names
+// what is running, so a restart that waits can say what it is waiting for.
+func serviceBusy(reason, message string) error {
+	return &consoleapi.ServiceError{Code: "busy", Reason: reason, Message: message}
+}
+
 func nodeOperation(st nodewire.RestartStatus) consoleapi.RestartOperation {
 	return consoleapi.RestartOperation{CommandID: st.CommandID, State: st.State, Incarnation: st.Incarnation, PreviousIncarnation: st.PreviousIncarnation, RequestedAt: st.RequestedAt, CompletedAt: st.CompletedAt, Error: st.Error}
 }
@@ -156,7 +164,9 @@ func (s *Services) Services(ctx context.Context) (consoleapi.ServicesView, error
 				item.Supported = true
 			}
 		}
-		if n.Up && item.Supported {
+		if op, waiting := s.waitingRequest(n.Name, ""); waiting {
+			item.Operation, item.Supported = &op, true
+		} else if n.Up && item.Supported {
 			query, cancel := context.WithTimeout(ctx, 2*time.Second)
 			st, err := s.admin.Nodes.RestartStatus(query, n.Name, "")
 			cancel()
@@ -172,12 +182,20 @@ func (s *Services) Services(ctx context.Context) (consoleapi.ServicesView, error
 }
 
 func (s *Services) RestartStatus(ctx context.Context, name, id string) (consoleapi.RestartOperation, error) {
+	if op, waiting := s.waitingRequest(name, id); waiting {
+		return op, nil
+	}
 	if name != "hub" {
 		if s.admin.Nodes == nil {
 			return consoleapi.RestartOperation{}, serviceFailure("not_found", "Node not found")
 		}
 		st, err := s.admin.Nodes.RestartStatus(ctx, name, id)
 		if err != nil {
+			// A wait this coordinator ended still has to answer for its
+			// command; the node never heard of it.
+			if op, known := s.recorded(id); known {
+				return op, nil
+			}
 			return consoleapi.RestartOperation{}, nodeRestartError(err)
 		}
 		return nodeOperation(st), nil
@@ -196,6 +214,27 @@ func (s *Services) RestartStatus(ctx context.Context, name, id string) (consolea
 	return consoleapi.RestartOperation{State: nodewire.RestartStateIdle, Incarnation: s.history.Incarnation}, nil
 }
 
+// coordinatorBusy explains what a coordinator that would not seal is
+// holding. A turn parked on a question is named as such: it ends when the
+// owner answers and not on its own, so reporting the conversation as busy
+// would send them looking for work that has already stopped.
+func (s *Services) coordinatorBusy() error {
+	live := s.admin.Coordinator.InFlight()
+	if s.admin.Console != nil {
+		for _, conversation := range live {
+			if len(s.admin.Console.Questions(conversation)) > 0 {
+				return &consoleapi.ServiceError{Code: "busy", Reason: consoleapi.RestartWaitQuestion, Subjects: live,
+					Message: "A conversation is waiting for an answer before it can finish: " + strings.Join(live, ", ")}
+			}
+		}
+	}
+	if len(live) > 0 {
+		return &consoleapi.ServiceError{Code: "busy", Reason: consoleapi.RestartWaitChannel, Subjects: live,
+			Message: "Wait for these conversations to finish: " + strings.Join(live, ", ")}
+	}
+	return serviceBusy(consoleapi.RestartWaitChannel, "Wait for the current conversation or channel command to finish")
+}
+
 func (s *Services) seal(ctx context.Context, name string) (func(), error) {
 	var releases []func()
 	release := func() {
@@ -212,7 +251,7 @@ func (s *Services) seal(ctx context.Context, name string) (func(), error) {
 		r, err := s.admin.Console.SealIdle()
 		if err != nil {
 			release()
-			return nil, serviceFailure("busy", "Wait for queued messages and current conversations to finish")
+			return nil, serviceBusy(consoleapi.RestartWaitConversations, "Wait for queued messages and current conversations to finish")
 		}
 		releases = append(releases, r)
 	}
@@ -220,7 +259,7 @@ func (s *Services) seal(ctx context.Context, name string) (func(), error) {
 		r, err := s.admin.Coordinator.SealIdle()
 		if err != nil {
 			release()
-			return nil, serviceFailure("busy", "Wait for the current conversation or channel command to finish")
+			return nil, s.coordinatorBusy()
 		}
 		releases = append(releases, r)
 	}
@@ -228,7 +267,7 @@ func (s *Services) seal(ctx context.Context, name string) (func(), error) {
 		r, err := s.executions.SealIdle()
 		if err != nil {
 			release()
-			return nil, serviceFailure("busy", "Wait for active work and unresolved executions to finish")
+			return nil, serviceBusy(consoleapi.RestartWaitExecutions, "Wait for active work and unresolved executions to finish")
 		}
 		releases = append(releases, r)
 	}
@@ -237,7 +276,7 @@ func (s *Services) seal(ctx context.Context, name string) (func(), error) {
 	s.admin.Mu.Unlock()
 	if cloning {
 		release()
-		return nil, serviceFailure("busy", "A workspace copy is still running")
+		return nil, serviceBusy(consoleapi.RestartWaitCopy, "A workspace copy is still running")
 	}
 	if s.admin.Attempts != nil {
 		live, err := s.admin.Attempts.Live(ctx)
@@ -245,9 +284,17 @@ func (s *Services) seal(ctx context.Context, name string) (func(), error) {
 			release()
 			return nil, err
 		}
-		if len(live) > 0 {
+		for _, record := range live {
+			// An attempt already quarantined is stranded whether or not
+			// this service keeps running: restarting neither rescues nor
+			// endangers it, and holding every later restart hostage to one
+			// would leave the installation unable to upgrade at all. An
+			// attempt still accounted for is a different matter.
+			if record.Unsettled {
+				continue
+			}
 			release()
-			return nil, serviceFailure("busy", "An execution has not confirmed its exit")
+			return nil, serviceBusy(consoleapi.RestartWaitAttempts, "An execution has not confirmed its exit")
 		}
 	}
 	if s.admin.Manager != nil {
@@ -257,20 +304,49 @@ func (s *Services) seal(ctx context.Context, name string) (func(), error) {
 		releases = append(releases, r)
 		if err != nil {
 			release()
-			return nil, serviceFailure("busy", "Cached agent processes have not confirmed their exit; wait before restarting")
+			return nil, serviceBusy(consoleapi.RestartWaitAgents, "Cached agent processes have not confirmed their exit; wait before restarting")
 		}
 	}
 	return release, nil
 }
 
+// Restart prepares a service restart. A request that must not cut work
+// short asks for consoleapi.RestartWhenIdle: the service keeps the request
+// and restarts itself the first moment nothing is running, which is how a
+// replaced program is picked up without ending a turn mid-sentence.
 func (s *Services) Restart(ctx context.Context, name string, req consoleapi.RestartRequest) (consoleapi.RestartOperation, error) {
 	if !restartID.MatchString(req.CommandID) {
 		return consoleapi.RestartOperation{}, serviceFailure("invalid", "A stable command_id is required")
+	}
+	switch req.Mode {
+	case "", consoleapi.RestartNow, consoleapi.RestartWhenIdle:
+	default:
+		return consoleapi.RestartOperation{}, serviceFailure("invalid", "Unknown restart mode")
 	}
 	if !s.actionMu.TryLock() {
 		return consoleapi.RestartOperation{}, serviceFailure("busy", "Another restart request is being prepared")
 	}
 	defer s.actionMu.Unlock()
+	if op, waiting := s.waitingRequest(name, req.CommandID); waiting {
+		if req.Cancel {
+			return s.withdraw(true), nil
+		}
+		if req.Mode == consoleapi.RestartWhenIdle {
+			return op, nil
+		}
+		// Asking for the same restart now supersedes its own wait rather
+		// than colliding with it.
+		s.withdraw(false)
+	} else if req.Cancel {
+		return s.withdrawn(ctx, name, req.CommandID)
+	}
+	if req.Mode == consoleapi.RestartWhenIdle {
+		return s.restartWhenIdle(name, req)
+	}
+	return s.restartNow(ctx, name, req)
+}
+
+func (s *Services) restartNow(ctx context.Context, name string, req consoleapi.RestartRequest) (consoleapi.RestartOperation, error) {
 	if name == "hub" {
 		s.mu.Lock()
 		if op, ok := s.history.Operations[req.CommandID]; ok {
@@ -415,7 +491,7 @@ func (s *Services) waitNodeIdle(ctx context.Context, name string) error {
 		}
 		select {
 		case <-wait.Done():
-			return serviceFailure("busy", "The node is still waiting for process exit; retry after work has stopped")
+			return serviceBusy(consoleapi.RestartWaitNode, "The node is still waiting for process exit; retry after work has stopped")
 		case <-time.After(100 * time.Millisecond):
 		}
 	}
@@ -428,6 +504,11 @@ func (s *Services) RestartAccepted(name, id string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.pending != id || s.dispatched {
+		return
+	}
+	// A restart that is still waiting for an idle moment has not been
+	// accepted yet: answering its request must not end the service.
+	if op, ok := s.history.Operations[id]; !ok || op.State != nodewire.RestartStateAccepted {
 		return
 	}
 	s.dispatched = true

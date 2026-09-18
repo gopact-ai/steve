@@ -26,10 +26,14 @@ const (
 	RestartStateAccepted  RestartState = "accepted"
 	RestartStateRestarted RestartState = "restarted"
 	RestartStateFailed    RestartState = "failed"
+	// RestartStateCancelled ends a restart that was waiting for an idle
+	// moment and was withdrawn before it found one. Only a coordinator
+	// records it: a node accepts a restart or refuses it outright.
+	RestartStateCancelled RestartState = "cancelled"
 )
 
 func (s RestartState) Terminal() bool {
-	return s == RestartStateRestarted || s == RestartStateFailed
+	return s == RestartStateRestarted || s == RestartStateFailed || s == RestartStateCancelled
 }
 
 type RestartStatus struct {

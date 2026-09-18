@@ -102,8 +102,16 @@ if (process.env.PURE_ONLY !== "1") {
             if (service) {
                 const name = decodeURIComponent(service[1]);
                 if (request.method() === "POST") {
-                    const body = request.postDataJSON(); restartPosts.push({ name, id: body.command_id });
+                    const body = request.postDataJSON(); restartPosts.push({ name, id: body.command_id, mode: body.mode, cancel: body.cancel });
                     if (name === "node-a") return route.fulfill({ status: 409, json: { code: "service_busy", error: "service_busy: active execution" } });
+                    if (body.cancel) {
+                        operations.set(body.command_id, { command_id: body.command_id, state: "cancelled", incarnation: 100 });
+                        return route.fulfill({ json: operations.get(body.command_id) });
+                    }
+                    if (body.mode === "when-idle") {
+                        operations.set(body.command_id, { command_id: body.command_id, state: "draining", incarnation: 100, mode: "when-idle", waiting_on: "question", waiting_conversations: ["console:one"] });
+                        return route.fulfill({ json: operations.get(body.command_id) });
+                    }
                     operations.set(body.command_id, { command_id: body.command_id, state: "accepted", incarnation: 100 });
                     if (loseRestart) { loseRestart = false; return route.abort("connectionreset"); }
                     return route.fulfill({ json: operations.get(body.command_id) });
@@ -112,6 +120,7 @@ if (process.env.PURE_ONLY !== "1") {
                 if (restartUnknown || !operations.has(id)) return route.fulfill({ status: 503, json: { error: "temporarily disconnected" } });
                 return route.fulfill({ json: operations.get(id) });
             }
+            if (url.pathname === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations: [{ id: "console:one", title: "发布流程", last_at: "", count: 1, running: false }] } });
             if (url.pathname === "/console/versions") { versionsReads++; return route.fulfill({ json: { hub: "v1", hub_id: "hub-fixture", protocol_min: 1, protocol_max: 2, automatic: false, discovery_configured: false, nodes: [], projects: [], peers: [] } }); }
             if (url.pathname.startsWith("/console/")) { errors.push(`Unexpected API ${url.pathname}`); return route.fulfill({ status: 501, json: { error: "Unmocked API" } }); }
             return route.continue();
@@ -169,25 +178,38 @@ if (process.env.PURE_ONLY !== "1") {
         const hubRow = page.locator('.settings-service-list > li').filter({ hasText: "Coordinator" });
         await hubRow.getByRole("button", { name: "重启服务", exact: true }).click();
         await page.getByRole("dialog", { name: "重启「Coordinator」？", exact: true }).waitFor();
-        await page.getByRole("button", { name: "确认重启", exact: true }).click();
+        // A restart that waits never ends a turn: it reports what it is
+        // waiting for, names the conversation the way the reader does, and
+        // can be taken back.
+        await page.getByRole("button", { name: "空闲后重启", exact: true }).click();
+        await hubRow.getByText("已排队，空闲后自动重启", { exact: true }).waitFor();
+        await hubRow.getByText("有会话在等你答复，答复后会自动继续重启", { exact: true }).waitFor();
+        await hubRow.getByText("发布流程", { exact: true }).waitFor();
+        assert.equal(restartPosts[0].mode, "when-idle");
+        await hubRow.getByRole("button", { name: "撤销", exact: true }).click();
+        await hubRow.getByText("已撤销", { exact: true }).waitFor();
+        assert.equal(restartPosts[1].cancel, true);
+        await hubRow.getByRole("button", { name: "重启服务", exact: true }).click();
+        await page.getByRole("dialog", { name: "重启「Coordinator」？", exact: true }).waitFor();
+        await page.getByRole("button", { name: "立即重启", exact: true }).click();
         await hubRow.getByText("重启结果尚未确认", { exact: true }).waitFor();
-        const id = restartPosts[0].id;
+        const id = restartPosts[2].id;
         await nav.getByRole("link", { name: "通用", exact: true }).click();
         await nav.getByRole("link", { name: "节点与服务", exact: true }).click();
         await hubRow.getByText("重启结果尚未确认", { exact: true }).waitFor();
-        await page.waitForTimeout(2000); assert.equal(restartPosts.length, 1, "Polling must never resend a restart");
+        await page.waitForTimeout(2000); assert.equal(restartPosts.length, 3, "Polling must never resend a restart");
         assert.ok(queries.some((query) => query.id === id));
         await hubRow.getByRole("button", { name: "重试原请求", exact: true }).click();
         await hubRow.getByText("已接受，等待重启确认", { exact: true }).waitFor();
-        assert.equal(restartPosts[1].id, id);
+        assert.equal(restartPosts[3].id, id);
         operations.set(id, { command_id: id, state: "restarted", incarnation: 101, previous_incarnation: 100 }); restartUnknown = false;
         channels.runtime_error = "Application credentials rejected";
         await hubRow.getByRole("button", { name: "重新核对", exact: true }).click();
         await hubRow.getByText("已确认重启", { exact: true }).waitFor();
         const nodeRow = page.locator('.settings-service-list > li').filter({ hasText: "Node A" });
-        await nodeRow.getByRole("button", { name: "重启服务", exact: true }).click(); await page.getByRole("button", { name: "确认重启", exact: true }).click();
+        await nodeRow.getByRole("button", { name: "重启服务", exact: true }).click(); await page.getByRole("button", { name: "立即重启", exact: true }).click();
         await nodeRow.getByText("service_busy: active execution", { exact: true }).waitFor();
-        assert.equal(restartPosts.length, 3); await nodeRow.getByText("重启失败", { exact: true }).waitFor();
+        assert.equal(restartPosts.length, 5); await nodeRow.getByText("重启失败", { exact: true }).waitFor();
         assert.equal(versionsReads, 0, "Advanced identity/protocol reads are deferred");
         if (screenshots) await page.screenshot({ path: path.join(screenshots, "services-desktop.png") });
         await nav.getByRole("link", { name: "通用", exact: true }).click();
