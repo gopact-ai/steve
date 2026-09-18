@@ -42,7 +42,7 @@ export const saveChannels = (revision: string, channels: ChannelPatch) => reques
 
 export type RestartState = "idle" | "draining" | "accepted" | "restarted" | "failed" | "cancelled";
 export type RestartMode = "now" | "when-idle";
-export interface RestartOperation { command_id: string; state: RestartState; incarnation: number; previous_incarnation?: number; requested_at?: string; completed_at?: string; error?: string; mode?: RestartMode; waiting_on?: string }
+export interface RestartOperation { command_id: string; state: RestartState; incarnation: number; previous_incarnation?: number; requested_at?: string; completed_at?: string; error?: string; mode?: RestartMode; waiting_on?: string; waiting_conversations?: string[] }
 export interface ManagedService { name: string; kind: "hub" | "node"; label: string; online: boolean; version: string; supported: boolean; operation?: RestartOperation }
 export const fetchServices = (signal?: AbortSignal) => request<{ services: ManagedService[] }>("/console/services", { signal });
 export const restartService = (name: string, commandID: string, mode: RestartMode = "now") => request<RestartOperation>(`/console/services/${encodeURIComponent(name)}/restart`, { method: "POST", body: { command_id: commandID, mode } });

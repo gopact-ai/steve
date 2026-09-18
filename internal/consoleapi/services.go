@@ -20,6 +20,10 @@ type RestartOperation struct {
 	// WaitingOn names what still keeps a waiting restart from applying,
 	// as a stable reason a client can put in the reader's language.
 	WaitingOn string `json:"waiting_on,omitempty"`
+	// WaitingConversations are the conversations the reason belongs to, so
+	// a console can name them the way the reader knows them instead of
+	// saying that something is busy somewhere.
+	WaitingConversations []string `json:"waiting_conversations,omitempty"`
 }
 type ManagedService struct {
 	Name      string            `json:"name"`
@@ -74,6 +78,8 @@ type ServiceError struct {
 	// Reason names what the service is busy with, so a waiting restart can
 	// report it as something a reader recognizes rather than as a failure.
 	Reason string
+	// Subjects are the conversations the reason belongs to.
+	Subjects []string
 }
 
 func (e *ServiceError) Error() string { return e.Message }

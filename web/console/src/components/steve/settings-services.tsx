@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { Dialog, Modal, ModalOverlay } from "@/components/application/modals/modal";
 import { Button } from "@/components/base/buttons/button";
 import { cancelRestart, fetchRestart, fetchServices, fetchVersions, restartService, type ManagedService, type RestartMode, type RestartOperation, type Versions } from "@/lib/api/settings";
+import { fetchConversations } from "@/lib/api/console";
 import { useI18n } from "@/providers/locale-provider";
 import { HTTPError } from "@/lib/http";
 
@@ -17,6 +18,22 @@ const waitReasons = {
     executions: "settingsPage.waitingOn.executions", copy: "settingsPage.waitingOn.copy",
     attempts: "settingsPage.waitingOn.attempts", agents: "settingsPage.waitingOn.agents", node: "settingsPage.waitingOn.node", offline: "settingsPage.waitingOn.offline",
 } as const;
+// useConversationNames turns the conversation ids a wait reports into the
+// titles the reader gave them. An id is a last resort, not a label.
+function useConversationNames(ids: string[]) {
+    const [names, setNames] = useState<Record<string, string>>({});
+    const wanted = ids.join("\u0000");
+    useEffect(() => {
+        if (!wanted) return;
+        const controller = new AbortController();
+        void fetchConversations(controller.signal)
+            .then((view) => setNames(Object.fromEntries(view.conversations.map((c) => [c.id, c.title || c.id]))))
+            .catch(() => undefined);
+        return () => controller.abort();
+    }, [wanted]);
+    return (id: string) => names[id] || id;
+}
+
 function stored(): Record<string, TrackedRestart> {
     try {
         const value = JSON.parse(sessionStorage.getItem(storageKey) || "{}");
@@ -37,6 +54,8 @@ export function SettingsServices({ onRestarted }: { onRestarted?: (service: stri
     const [busy, setBusy] = useState<Record<string, boolean>>({});
     const [storageError, setStorageError] = useState(false);
     const [advanced, setAdvanced] = useState(false);
+    const waitingIds = [...new Set((services ?? []).flatMap((service) => (tracked[service.name]?.operation ?? service.operation)?.waiting_conversations ?? []))].sort();
+    const nameOf = useConversationNames(waitingIds);
     const active = useRef(new Set<string>()), alive = useRef(true), reads = useRef(0);
     const finished = useRef(onRestarted);
     finished.current = onRestarted;
@@ -120,7 +139,7 @@ export function SettingsServices({ onRestarted }: { onRestarted?: (service: stri
             return <li key={service.name}>
                 <div className="settings-service-heading"><div><h3>{service.label || service.name}</h3><p>{service.kind === "hub" ? "Hub" : t("settingsPage.node")} · {t(service.online ? "settingsPage.online" : "settingsPage.offline")} {service.version ? `· ${service.version}` : ""}</p></div><Button size="sm" color="secondary" isDisabled={!service.supported || !service.online || unresolved || scheduled || !!busy[service.name]} onClick={() => setConfirm(service)}>{t("settingsPage.restartService")}</Button></div>
                 {!service.supported && <p className="settings-note">{t("settingsPage.restartUnsupported")}</p>}
-                {(operation && operation.state !== "idle" || unresolved) && <div className="settings-operation" role="status"><strong>{t(headline)}</strong>{reason && <p>{t(reason)}</p>}{(mine?.error || operation?.error) && <p>{mine?.error || operation?.error}</p>}{operation?.state === "restarted" && <p>{t("settingsPage.newIncarnation")}: <code>{operation.incarnation}</code></p>}{unresolved && (waiting
+                {(operation && operation.state !== "idle" || unresolved) && <div className="settings-operation" role="status"><strong>{t(headline)}</strong>{reason && <p>{t(reason)}</p>}{waiting && !!operation?.waiting_conversations?.length && <p className="settings-note">{operation.waiting_conversations.map(nameOf).join(" · ")}</p>}{(mine?.error || operation?.error) && <p>{mine?.error || operation?.error}</p>}{operation?.state === "restarted" && <p>{t("settingsPage.newIncarnation")}: <code>{operation.incarnation}</code></p>}{unresolved && (waiting
                     ? <div className="settings-actions"><Button size="sm" color="link-gray" isDisabled={!!busy[service.name]} onClick={() => void withdraw(service.name, mine.id)}>{t("settingsPage.cancelRestart")}</Button><Button size="sm" color="link-color" isDisabled={!!busy[service.name]} onClick={() => void run(service.name, mine.id, true)}>{t("settingsPage.restartNowInstead")}</Button></div>
                     : <><p>{t("settingsPage.restartPendingHint")}</p><div className="settings-actions"><Button size="sm" color="link-gray" isDisabled={!!busy[service.name]} onClick={() => void run(service.name, mine.id)}>{t("settingsPage.checkRestart")}</Button><Button size="sm" color="link-color" isDisabled={!!busy[service.name]} onClick={() => void run(service.name, mine.id, true)}>{t("settingsPage.retryRestart")}</Button></div></>)}</div>}
             </li>;

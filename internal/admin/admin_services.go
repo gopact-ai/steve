@@ -223,12 +223,14 @@ func (s *Services) coordinatorBusy() error {
 	if s.admin.Console != nil {
 		for _, conversation := range live {
 			if len(s.admin.Console.Questions(conversation)) > 0 {
-				return serviceBusy(consoleapi.RestartWaitQuestion, "A conversation is waiting for an answer before it can finish: "+strings.Join(live, ", "))
+				return &consoleapi.ServiceError{Code: "busy", Reason: consoleapi.RestartWaitQuestion, Subjects: live,
+					Message: "A conversation is waiting for an answer before it can finish: " + strings.Join(live, ", ")}
 			}
 		}
 	}
 	if len(live) > 0 {
-		return serviceBusy(consoleapi.RestartWaitChannel, "Wait for these conversations to finish: "+strings.Join(live, ", "))
+		return &consoleapi.ServiceError{Code: "busy", Reason: consoleapi.RestartWaitChannel, Subjects: live,
+			Message: "Wait for these conversations to finish: " + strings.Join(live, ", ")}
 	}
 	return serviceBusy(consoleapi.RestartWaitChannel, "Wait for the current conversation or channel command to finish")
 }

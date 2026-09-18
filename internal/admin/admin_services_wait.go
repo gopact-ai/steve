@@ -105,6 +105,7 @@ func (s *Services) withdraw(record bool) consoleapi.RestartOperation {
 		return op
 	}
 	op.State, op.WaitingOn, op.CompletedAt = nodewire.RestartStateCancelled, "", time.Now().UTC()
+	op.WaitingConversations = nil
 	s.wait, s.pending = nil, ""
 	if record {
 		s.history.Operations[op.CommandID] = op
@@ -183,7 +184,7 @@ func (s *Services) accept(w *waitingRestart, release func()) error {
 		return errors.New("the waiting restart was withdrawn")
 	}
 	op := w.op
-	op.State, op.WaitingOn = nodewire.RestartStateAccepted, ""
+	op.State, op.WaitingOn, op.WaitingConversations = nodewire.RestartStateAccepted, "", nil
 	op.Incarnation, op.PreviousIncarnation = s.history.Incarnation, s.history.Incarnation
 	s.history.Operations[op.CommandID] = op
 	s.history.Latest = op.CommandID
@@ -243,9 +244,10 @@ func (s *Services) applyNode(ctx context.Context, w *waitingRestart) error {
 // away both pass; anything else is a failure waiting cannot fix.
 func (s *Services) note(w *waitingRestart, cause error) bool {
 	reason := ""
+	var subjects []string
 	var failure *consoleapi.ServiceError
 	if errors.As(cause, &failure) {
-		reason = failure.Reason
+		reason, subjects = failure.Reason, failure.Subjects
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -253,7 +255,7 @@ func (s *Services) note(w *waitingRestart, cause error) bool {
 		return false
 	}
 	if reason == "" {
-		w.op.State, w.op.WaitingOn = nodewire.RestartStateFailed, ""
+		w.op.State, w.op.WaitingOn, w.op.WaitingConversations = nodewire.RestartStateFailed, "", nil
 		w.op.Error, w.op.CompletedAt = cause.Error(), time.Now().UTC()
 		s.history.Operations[w.op.CommandID] = w.op
 		if err := s.persist(); err != nil {
@@ -267,6 +269,6 @@ func (s *Services) note(w *waitingRestart, cause error) bool {
 		// finds its moment can be read back afterwards.
 		slog.Info(fmt.Sprintf("steve: restart %s is waiting on %s: %v", w.op.CommandID, reason, cause))
 	}
-	w.op.WaitingOn = reason
+	w.op.WaitingOn, w.op.WaitingConversations = reason, subjects
 	return true
 }
