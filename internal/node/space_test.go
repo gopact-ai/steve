@@ -58,6 +58,21 @@ func TestSpaceReportsWhatSteveHoldsWithoutCountingNestedStateTwice(t *testing.T)
 	}
 }
 
+func TestSpaceLeavesTheWorkspaceOutOfAnInstallationThatContainsIt(t *testing.T) {
+	install := t.TempDir()
+	writeSized(t, filepath.Join(install, "bin", "steve"), 3072)
+	workspace := filepath.Join(install, "workspace")
+	writeSized(t, filepath.Join(workspace, "projects", "one", "file.bin"), 5120)
+	var space Space
+	reading := settled(t, &space, workspace, install)
+	if reading.workspace != 5120 {
+		t.Fatalf("workspace bytes = %d, want 5120", reading.workspace)
+	}
+	if reading.state != 3072 {
+		t.Fatalf("state bytes = %d, want 3072: the workspace inside the installation is already counted on its own", reading.state)
+	}
+}
+
 func TestSpaceKeepsOneReadingPerDirectoryPair(t *testing.T) {
 	// A hub and the node on the same machine both ask this process about
 	// their own directories. A single shared slot let each wipe the
@@ -107,6 +122,9 @@ func TestHealthCarriesTheMeasuredRootAndSpace(t *testing.T) {
 		health := CheckHealth(workspace, "")
 		if health.Root != workspace {
 			t.Fatalf("health root = %q, want %q", health.Root, workspace)
+		}
+		if health.StateRoot != "" {
+			t.Fatalf("state root = %q, want empty when no state directory was measured", health.StateRoot)
 		}
 		if health.Worktrees != 1 {
 			t.Fatalf("worktrees = %d, want 1", health.Worktrees)

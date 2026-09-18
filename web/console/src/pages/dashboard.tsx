@@ -158,7 +158,7 @@ export function DashboardPage() {
                                     <Table.Cell>{!n.health ? <span className="text-quaternary">{tr("history.spaceUnreported")}</span>
                                         : !n.health.space_at ? <span className="text-tertiary">{tr("history.spaceMeasuring")}</span>
                                             : <span className="tabular-nums">{bytes(n.health.workspace_bytes || 0, locale)}{n.health.space_partial && <span className="ml-1 text-quaternary" title={tr("history.spacePartial")}>+</span>}</span>}</Table.Cell>
-                                    <Table.Cell><span className="tabular-nums text-tertiary">{n.health?.state_bytes ? bytes(n.health.state_bytes, locale) : "—"}</span></Table.Cell>
+                                    <Table.Cell><span className="tabular-nums text-tertiary" title={n.health?.state_root || undefined}>{n.health?.state_bytes ? bytes(n.health.state_bytes, locale) : "—"}</span></Table.Cell>
                                     <Table.Cell><span className="tabular-nums text-tertiary">{n.health?.disk_total ? tr("history.spaceOf", { used: bytes(n.health.disk_free, locale), total: bytes(n.health.disk_total, locale) }) : "—"}</span></Table.Cell>
                                     <Table.Cell><span className="text-tertiary">{n.health?.space_at ? when(n.health.space_at, locale) : "—"}</span></Table.Cell>
                                 </Table.Row>}</Table.Body>

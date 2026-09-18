@@ -831,6 +831,10 @@ func (p *Peer) startWorker(workspaceRoot string) error {
 	if cfg.Name != p.Config.NodeID || len(cfg.Token) < 32 {
 		return errors.New("worker configuration does not match this physical node identity")
 	}
+	// Where this installation lives follows from the peer's own
+	// configuration, so a worker file written by an older build still
+	// reports the whole installation rather than its node directory.
+	cfg.StateRoot = filepath.Dir(p.Config.DataDir)
 	if err := requireClusterLoopback(cfg.Listen); err != nil {
 		return err
 	}
