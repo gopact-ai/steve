@@ -233,6 +233,7 @@ func (d Declaration) applySettings(cfg *config.Config) {
 	policy := d.Settings.Gateway
 	cfg.Gateway.OwnerID, cfg.Gateway.Locale = policy.OwnerID, policy.Locale
 	cfg.Gateway.TaskMaxTurns, cfg.Gateway.TaskMaxElapsed, cfg.Gateway.PromptTimeout = policy.TaskMaxTurns, policy.TaskMaxElapsed, policy.PromptTimeout
+	cfg.Gateway.DefaultApproval = policy.DefaultApproval
 	cfg.Policies = d.Settings.Policies
 	cfg.RuntimePermissions = maps.Clone(d.Work.HarnessPermissions)
 	cfg.Gateway.Planner, cfg.Gateway.OfflineReminderAfter, cfg.Gateway.DirectTransfer = d.Work.Planner, d.Work.OfflineReminderAfter, d.Work.DirectTransfer

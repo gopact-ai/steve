@@ -425,11 +425,12 @@ var (
 
 // ApplyPreferences sets what an agent's configuration pins on a session
 // that has just opened: the model, and any other selector the harness
-// exposes (reasoning effort, thinking, mode) by option id. The agent is
-// the authority on what it offers: a preference it cannot honour is
-// logged and skipped, never a failed session.
-func ApplyPreferences(ctx context.Context, r Runner, agentID, model string, options map[string]string) {
-	if model == "" && len(options) == 0 {
+// exposes (reasoning effort, thinking, mode) by option id. Approval is the
+// owner's fleet-wide stance, applied only where the agent pins no mode of
+// its own. The agent is the authority on what it offers: a preference it
+// cannot honour is logged and skipped, never a failed session.
+func ApplyPreferences(ctx context.Context, r Runner, agentID, model string, options map[string]string, approval string) {
+	if model == "" && len(options) == 0 && approval == "" {
 		return
 	}
 	configurable, ok := r.(Configurable)
@@ -455,6 +456,9 @@ func ApplyPreferences(ctx context.Context, r Runner, agentID, model string, opti
 		} else {
 			changed = true
 		}
+	}
+	if applyApproval(ctx, configurable, agentID, approval, options) {
+		changed = true
 	}
 	if len(options) == 0 {
 		return

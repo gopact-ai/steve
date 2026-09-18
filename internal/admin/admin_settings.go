@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"reflect"
 	"strings"
 
+	"github.com/gopact-ai/steve/internal/approval"
 	"github.com/gopact-ai/steve/internal/config"
 	"github.com/gopact-ai/steve/internal/consoleapi"
 	"github.com/gopact-ai/steve/internal/platformconfig"
@@ -63,6 +65,7 @@ func (s *hubSettingsService) UpdateSettings(ctx context.Context, req consoleapi.
 	if err := s.admin.Cfg.CheckFileRevision(s.admin.Path); err != nil {
 		return consoleapi.SettingsView{}, errors.Join(consoleapi.ErrSettingsConflict, err)
 	}
+	previous := s.admin.Cfg.Gateway.DefaultApproval
 	candidate, err := s.admin.Cfg.PatchSettings(req.Settings)
 	if err != nil {
 		return consoleapi.SettingsView{}, err
@@ -84,6 +87,11 @@ func (s *hubSettingsService) UpdateSettings(ctx context.Context, req consoleapi.
 		return consoleapi.SettingsView{}, saveErr
 	}
 	*s.admin.Cfg = *candidate
+	// The approval stance is the one setting here that does not wait for a
+	// restart: it is read at session open through the agent catalog, so
+	// republishing the catalog is all it takes, and the owner who just
+	// turned approvals off is not asked to restart before it counts.
+	s.applyApproval(previous)
 	view, err := s.viewLocked()
 	if err != nil {
 		return consoleapi.SettingsView{}, err
@@ -92,6 +100,26 @@ func (s *hubSettingsService) UpdateSettings(ctx context.Context, req consoleapi.
 		view.Warning = saveErr.Error()
 	}
 	return view, nil
+}
+
+// applyApproval publishes a catalog carrying the new approval stance, then
+// records it as both applied and effective so nothing asks for a restart it
+// does not need and the console reads back the stance now in force. A
+// catalog that will not build is left alone: the stance then waits for the
+// restart, which is the same place every other setting here waits.
+func (s *hubSettingsService) applyApproval(previous string) {
+	if s.admin.Cfg.Gateway.DefaultApproval == previous || s.admin.Catalog == nil {
+		return
+	}
+	prepared, err := s.admin.Cfg.AgentCatalog()
+	if err != nil {
+		slog.Error(fmt.Sprintf("steve: default approval waits for a restart: %v", err), "approval", s.admin.Cfg.Gateway.DefaultApproval)
+		return
+	}
+	s.admin.Catalog.Publish(prepared)
+	s.applied.Gateway.DefaultApproval = s.admin.Cfg.Gateway.DefaultApproval
+	s.effective.Gateway.DefaultApproval = s.admin.Cfg.Gateway.DefaultApproval
+	slog.Info(fmt.Sprintf("steve: default approval is now %q", s.admin.Cfg.Gateway.DefaultApproval), "approval", s.admin.Cfg.Gateway.DefaultApproval)
 }
 
 func (a *Service) settingsRevision() string {
@@ -103,7 +131,7 @@ func (a *Service) settingsRevision() string {
 
 func settingsFields() ([]consoleapi.SettingsField, error) {
 	zero, one, maxSafe := int64(0), int64(1), int64(9_007_199_254_740_991)
-	fields := []consoleapi.SettingsField{{Path: "gateway.locale", Type: "string", Enum: []string{"", "zh", "en"}, ApplyMode: "restart"}, {Path: "gateway.owner_id", Type: "string", ApplyMode: "restart"}, {Path: "gateway.task_max_turns", Type: "integer", Minimum: &zero, Maximum: &maxSafe, ApplyMode: "restart"}, {Path: "gateway.task_max_elapsed", Type: "duration", Unit: "duration", Minimum: &zero, ApplyMode: "restart"}}
+	fields := []consoleapi.SettingsField{{Path: "gateway.locale", Type: "string", Enum: []string{"", "zh", "en"}, ApplyMode: "restart"}, {Path: "gateway.default_approval", Type: "string", Enum: approval.Intents(), ApplyMode: "live"}, {Path: "gateway.owner_id", Type: "string", ApplyMode: "restart"}, {Path: "gateway.task_max_turns", Type: "integer", Minimum: &zero, Maximum: &maxSafe, ApplyMode: "restart"}, {Path: "gateway.task_max_elapsed", Type: "duration", Unit: "duration", Minimum: &zero, ApplyMode: "restart"}}
 	for _, path := range []string{"gateway.prompt_timeout", "policies.execution.step_timeout", "policies.execution.verify_timeout", "policies.planning.timeout", "policies.review.timeout"} {
 		fields = append(fields, consoleapi.SettingsField{Path: path, Type: "duration", Unit: "duration", Minimum: &one, ApplyMode: "restart"})
 	}

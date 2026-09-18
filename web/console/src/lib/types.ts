@@ -27,7 +27,7 @@ export interface Agent {
     reason?: string; reason_detail?: string;
     requires?: string[]; level?: string; slots?: number; region?: string; repair?: string; activities?: Activity[]; busy?: number; activity_known?: boolean; snapshot?: AbilitySnapshot;
     preferred?: string; observed?: string; conditions?: Condition[]; mcp_servers?: string[]; default?: boolean;
-    options?: Record<string, string>; selectors?: Selector[]; about?: string;
+    options?: Record<string, string>; approval?: string; selectors?: Selector[]; about?: string;
 }
 export interface Selector { id: string; name: string; category?: string; current?: string; choices?: string[]; values?: string[] }
 export interface Tokens { input?: number; output?: number; cached_read?: number; cached_write?: number; total?: number; context?: number }

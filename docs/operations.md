@@ -153,8 +153,15 @@ hub 本机的 MCP 描述交给本机 harness；远端 MCP 的定义与秘密留�
 | `issuer_token` | string | `""` | 本地租约签发服务认证 token | `"replace-me-with-an-issuer-token"` |
 | `direct_transfer` | boolean | `false` | 允许持有产物的 node 在 hub 授权下直传给另一 node；关闭时经过 hub | `true` |
 | `default_project` | string | 只有一个项目时自动选它，否则 `""` | 新会话未选择项目时的绑定；owner 飞书私聊默认使用保留项目 home | `"work"` |
+| `default_approval` | string | `""`（不设置） | 全局默认审批策略：`ask`、`auto`、`full`，见下文 | `"auto"` |
 
 任务预算的 **0 是不限**；设置正值才施加限制，子任务从父任务剩余预算分配。`prompt_timeout`、任务预算、node 续接宽限和 e2e 客户端截止时间是不同的时钟。
+
+### 默认审批策略
+
+依据：[internal/approval/approval.go](../internal/approval/approval.go)。`gateway.default_approval` 是一份意图，而不是某个 AI 工具的模式名：Codex 把审批档位叫 `read-only` / `agent` / `agent-full-access`，Claude Code 叫 `default` / `acceptEdits` / `auto` / `bypassPermissions`，同一个意图在会话打开时才被换算成该 agent 自己的说法。`ask` 是每步都要人确认，`auto` 是工作区内自行动手、越界再问，`full` 是不再打断。规划类模式（如 Claude Code 的 `plan`）不属于审批档位，任何意图都不会把 agent 放进去。
+
+生效顺序是：会话里临时选的审批模式 > agent 自己钉的 `options.mode` > 这里的默认。它对新会话与之后的每一轮生效，保存后不需要重启 Hub；某个 AI 工具没有对应档位时保持它原样，并在日志里说明。`POST /console/agents/approval`（设置页的「同步到默认」）清掉每个 agent 自己钉的审批模式，让它们跟随这份默认，并回报哪些 agent 被改、哪些本来就跟随、哪些的工具没有对应档位。
 
 ### policies
 

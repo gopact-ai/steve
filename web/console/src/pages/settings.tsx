@@ -9,7 +9,7 @@ import { Select } from "@/components/base/select/select";
 import { TextArea } from "@/components/base/textarea/textarea";
 import { Toggle } from "@/components/base/toggle/toggle";
 import { SettingsServices } from "@/components/steve/settings-services";
-import { fetchChannels, fetchHubSettings, saveChannels, saveHubSettings, type ChannelSettings, type HubSettings, type SettingsField } from "@/lib/api/settings";
+import { fetchChannels, fetchHubSettings, saveChannels, saveHubSettings, syncApproval, type ApprovalSync, type ChannelSettings, type HubSettings, type SettingsField } from "@/lib/api/settings";
 import { channelInputs, channelPatch, changedInputs, type ChannelDraft } from "@/lib/settings-channels";
 import { number } from "@/lib/format";
 import { HTTPError } from "@/lib/http";
@@ -147,7 +147,7 @@ export function SettingsPage() {
                 {saveBar}
             </>}
             {section === "channels" && <><div className="settings-section-heading"><div><h2>{t("settingsPage.section.channels")}</h2><p>{t("settingsPage.channelScopeHint")}</p></div></div>{channels && channelDraft ? <ChannelForm view={channels} draft={channelDraft} disabled={blocked} onChange={(next) => { setChannelDraft(next); setNotices((all) => ({ ...all, channels: undefined })); setErrors((all) => ({ ...all, channels: null })); }} /> : <p className="settings-note">{t(loading.channels ? "common.loading" : "settingsPage.channelsUnavailable")}</p>}{saveBar}</>}
-            {section === "policies" && <><div className="settings-section-heading"><div><h2>{t("settingsPage.section.policies")}</h2><p>{t("settingsPage.policyScopeHint")}</p></div></div><section><h3>{t("settingsPage.gateway")}</h3>{rows(settingGroups.gateway.filter((path) => path !== "gateway.locale"))}</section>{(["execution", "planning", "snapshot", "review"] as const).map((name) => <details key={name} className="settings-advanced"><summary>{t(`settingsPage.${name}`)}</summary>{rows(settingGroups[name])}</details>)}{saveBar}</>}
+            {section === "policies" && <><div className="settings-section-heading"><div><h2>{t("settingsPage.section.policies")}</h2><p>{t("settingsPage.policyScopeHint")}</p></div></div><section className="settings-subsection"><h3>{t("settingsPage.approval")}</h3><p className="settings-note">{t("settingsPage.approvalHint")}</p>{rows(settingGroups.approval)}<ApprovalSyncRow disabled={blocked} dirty={dirtyHub} intent={hub ? String(settingValue(hub.desired, "gateway.default_approval") ?? "") : ""} /></section><section><h3>{t("settingsPage.gateway")}</h3>{rows(settingGroups.gateway.filter((path) => path !== "gateway.locale"))}</section>{(["execution", "planning", "snapshot", "review"] as const).map((name) => <details key={name} className="settings-advanced"><summary>{t(`settingsPage.${name}`)}</summary>{rows(settingGroups[name])}</details>)}{saveBar}</>}
             {section === "services" && <SettingsServices onRestarted={(service) => { if (service === "hub") { if (!latest.current.dirtyHub) void read("hub"); if (!latest.current.dirtyChannels) void read("channels"); } }} />}
             {section !== "services" && !hub && <p role="status" className="settings-note">{t(loading.hub ? "common.loading" : "settingsPage.readFailed")}</p>}
         </main></div>
@@ -155,15 +155,42 @@ export function SettingsPage() {
     </div>;
 }
 
+// The approval stance reads as what it lets an agent do, not as the word
+// the settings file stores.
+const approvalKeys = { "": "settingsPage.approval.none", ask: "settingsPage.approval.ask", auto: "settingsPage.approval.auto", full: "settingsPage.approval.full" } as const;
+
 function SettingRow({ path, field, view, value, disabled, onChange }: { path: SettingPath; field: SettingsField; view: HubSettings; value: string; disabled: boolean; onChange: (value: string) => void }) {
     const { t, locale } = useI18n();
     const id = "setting-" + path.replaceAll(".", "-"), label = t(`settingsPage.${path}`);
     const saved = settingValue(view.desired, path), effective = settingValue(view.effective, path), edited = value !== String(saved ?? "");
-    const format = (item: string | number | undefined) => item === "" ? t("settingsPage.automaticLocale") : typeof item === "number" ? number(item, locale) : item ?? "—";
+    const choiceLabel = (option: string) => path === "gateway.default_approval" ? t(approvalKeys[option as keyof typeof approvalKeys] ?? "settingsPage.approval.none") : option === "" ? t("settingsPage.automaticLocale") : option === "zh" ? "简体中文" : option === "en" ? "English" : option;
+    const format = (item: string | number | undefined) => typeof item === "number" ? number(item, locale) : field.enum ? choiceLabel(String(item ?? "")) : item ?? "—";
     return <div className="settings-field" data-setting={path}>
         <div><label htmlFor={id}>{label}</label>{path.startsWith("gateway.") && <p>{t(`settingsPage.${path as Extract<SettingPath, `gateway.${string}`>}.hint`)}</p>}{(saved !== effective || edited) && <p className="settings-difference">{t("settingsPage.saved")}: <span data-desired>{format(saved)}</span>{saved !== effective && <> · {t("settingsPage.effective")}: <span data-effective>{format(effective)}</span></>}</p>}</div>
-        <div>{field.enum ? <Select size="sm" id={id} aria-label={label} selectedKey={value || "__default"} isDisabled={disabled} onSelectionChange={(key) => { if (key) onChange(key === "__default" ? "" : String(key)); }} items={field.enum.map((option) => ({ id: option || "__default", label: option === "" ? t("settingsPage.automaticLocale") : option === "zh" ? "简体中文" : option === "en" ? "English" : option }))}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select> : <Input size="sm" id={id} aria-label={label} type="text" inputMode={field.type === "integer" ? "numeric" : "text"} autoComplete="off" spellCheck="false" value={value} isDisabled={disabled} onChange={onChange} />}
+        <div>{field.enum ? <Select size="sm" id={id} aria-label={label} selectedKey={value || "__default"} isDisabled={disabled} onSelectionChange={(key) => { if (key) onChange(key === "__default" ? "" : String(key)); }} items={field.enum.map((option) => ({ id: option || "__default", label: choiceLabel(option) }))}>{(item) => <Select.Item id={item.id}>{item.label}</Select.Item>}</Select> : <Input size="sm" id={id} aria-label={label} type="text" inputMode={field.type === "integer" ? "numeric" : "text"} autoComplete="off" spellCheck="false" value={value} isDisabled={disabled} onChange={onChange} />}
         <details className="settings-field-help"><summary>{t("settingsPage.fieldHelp")}</summary><p>{field.type === "duration" ? t(field.minimum === 0 ? "settingsPage.nonnegativeDuration" : "settingsPage.positiveDuration") : field.type === "integer" ? t("settingsPage.range", { minimum: number(field.minimum ?? 0, locale), maximum: field.maximum === undefined ? "—" : number(field.maximum, locale) }) : ""}{field.unit === "bytes" ? " · " + t("settingsPage.bytes") : ""}</p>{field.default !== undefined && <p>{t("settingsPage.default", { value: format(field.default) })}</p>}</details></div>
+    </div>;
+}
+
+// ApprovalSyncRow hands the saved default to the whole fleet at once: the
+// agents that pinned an approval mode of their own let go of it, so the
+// setting above is the only place the stance is decided. It works from what
+// the hub has saved, so an edited draft has to be saved first.
+function ApprovalSyncRow({ disabled, dirty, intent }: { disabled: boolean; dirty: boolean; intent: string }) {
+    const { t, locale } = useI18n();
+    const [busy, setBusy] = useState(false);
+    const [result, setResult] = useState<ApprovalSync | null>(null);
+    const [error, setError] = useState<unknown>(null);
+    async function sync() {
+        setBusy(true); setError(null); setResult(null);
+        try { setResult(await syncApproval()); } catch (failure) { setError(failure); } finally { setBusy(false); }
+    }
+    const names = (items: string[]) => items.join("、");
+    return <div className="settings-field" data-setting="approval-sync">
+        <div><label>{t("settingsPage.approvalSync")}</label><p>{t(dirty ? "settingsPage.approvalSyncSave" : intent ? "settingsPage.approvalSyncHint" : "settingsPage.approvalSyncNone")}</p>
+            {result && <p role="status" className="settings-note">{result.cleared?.length ? t("settingsPage.approvalSynced", { count: result.cleared.length, agents: names(result.cleared.map((item) => item.agent)) }) : t("settingsPage.approvalAlready")}{result.unmapped?.length ? " · " + t("settingsPage.approvalUnmapped", { agents: names(result.unmapped) }) : ""}</p>}
+            {!!error && <p role="alert" className="settings-alert">{errorText(error, locale)}</p>}</div>
+        <div><Button size="sm" color="secondary" isLoading={busy} isDisabled={disabled || dirty || !intent} onClick={() => void sync()}>{t("settingsPage.approvalSyncAction")}</Button></div>
     </div>;
 }
 

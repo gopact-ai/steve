@@ -273,7 +273,10 @@ type Agent struct {
 	Observed  string `json:"observed,omitempty"`
 	// Options are the other selectors the agent pins; Selectors every
 	// selector its harness exposed last time; About what it is for.
-	Options    map[string]string `json:"options,omitempty"`
+	Options map[string]string `json:"options,omitempty"`
+	// Approval is the hub's default approval stance this agent follows
+	// where it pins no mode of its own.
+	Approval   string            `json:"approval,omitempty"`
 	Selectors  []models.Selector `json:"selectors,omitempty"`
 	About      string            `json:"about,omitempty"`
 	Conditions []Condition       `json:"conditions,omitempty"`

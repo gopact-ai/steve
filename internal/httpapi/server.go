@@ -123,6 +123,7 @@ func (s *Server) Serve() error {
 	mux.HandleFunc("GET /console/nodes/{name}/agents", s.guard(s.consoleNodeAgents))
 	mux.HandleFunc("POST /console/nodes/{name}/agents", s.guard(s.consoleNodeAgents))
 	mux.HandleFunc("POST /console/agents", s.guard(s.consoleAddAgent))
+	mux.HandleFunc("POST /console/agents/approval", s.guard(s.consoleSyncApproval))
 	mux.HandleFunc("PUT /console/agents/{id}", s.guard(s.consoleUpdateAgent))
 	mux.HandleFunc("DELETE /console/agents/{id}", s.guard(s.consoleRemoveAgent))
 	mux.HandleFunc("POST /console/projects", s.guard(s.consoleAddProject))
@@ -995,6 +996,22 @@ func (s *Server) consoleAddAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, map[string]any{"ok": true})
+}
+
+// consoleSyncApproval makes the whole fleet follow the hub's default
+// approval stance, so the owner sets it once instead of per agent.
+func (s *Server) consoleSyncApproval(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if s.admin == nil {
+		http.Error(w, "changing agents is not wired", http.StatusNotImplemented)
+		return
+	}
+	out, err := s.admin.SyncAgentApproval(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	writeJSON(w, out)
 }
 
 // bootstrap hands a machine its start script. The machine presents its

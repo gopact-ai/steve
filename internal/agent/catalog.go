@@ -29,6 +29,12 @@ type Config struct {
 	// Options pins other selectors the harness exposes, by option id:
 	// reasoning effort, thinking, mode. Applied at session open like Model.
 	Options map[string]string
+	// Approval is the owner's fleet-wide approval stance, handed down from
+	// the hub's settings rather than set per agent. It applies only when
+	// this agent pins no mode of its own, and is resolved at session open
+	// against the modes the harness turns out to offer — see
+	// internal/approval.
+	Approval string
 	// About says what this agent is for, in the operator's words; the
 	// planner and other agents read it when choosing who does what.
 	About string

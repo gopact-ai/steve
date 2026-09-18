@@ -28,6 +28,10 @@ export interface Versions { hub: string; hub_id: string; protocol_min: number; p
 
 export const fetchHubSettings = (signal?: AbortSignal) => request<HubSettings>("/console/settings", { signal });
 export const saveHubSettings = (revision: string, settings: SettingsObject) => request<HubSettings>("/console/settings", { method: "PATCH", body: { base_revision: revision, settings } });
+export interface ApprovalSync { intent: string; cleared?: { agent: string; was?: string }[]; following?: string[]; unmapped?: string[] }
+// syncApproval lets every agent go of the approval mode it pinned for
+// itself, so the whole fleet follows the saved default instead.
+export const syncApproval = () => request<ApprovalSync>("/console/agents/approval", { method: "POST" });
 export const fetchVersions = (signal?: AbortSignal) => request<Versions>("/console/versions", { signal });
 
 export interface ChannelValues {

@@ -184,6 +184,23 @@ type AddWorkspaceRequest struct {
 	Origin string `json:"origin,omitempty"`
 }
 
+// ApprovalSync is what syncing the fleet to the default approval stance
+// did: which agents were let go of their own pinned mode, which already
+// followed the default, and which run an AI tool that offers no mode at
+// that level — where the default cannot land and the owner should know.
+type ApprovalSync struct {
+	Intent    string              `json:"intent"`
+	Cleared   []ApprovalSyncAgent `json:"cleared,omitempty"`
+	Following []string            `json:"following,omitempty"`
+	Unmapped  []string            `json:"unmapped,omitempty"`
+}
+
+// ApprovalSyncAgent names one agent and the mode it used to pin.
+type ApprovalSyncAgent struct {
+	Agent string `json:"agent"`
+	Was   string `json:"was,omitempty"`
+}
+
 // AddAgentRequest is the page adding an agent: an id, the AI tool it
 // runs, the machine it runs on ("" is the hub), a preferred model.
 type AddAgentRequest struct {
@@ -214,6 +231,9 @@ type Admin interface {
 	// RemoveAgent forgets it. Both persist to the config file.
 	UpdateAgent(ctx context.Context, id string, spec AgentSpec) error
 	RemoveAgent(ctx context.Context, id string) error
+	// SyncAgentApproval drops every agent's own approval mode so the whole
+	// fleet follows the hub's default approval stance.
+	SyncAgentApproval(ctx context.Context) (ApprovalSync, error)
 	// AddProject declares a project and records it in the config file;
 	// RemoveProject retires one and drops it from the file.
 	AddProject(ctx context.Context, req AddProjectRequest) error

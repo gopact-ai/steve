@@ -105,7 +105,7 @@ func (b *snapshotBuilder) agents(ctx context.Context) {
 				Model: c.Model, Models: c.Models, Eligible: c.Eligible, Why: c.Why, Reason: c.Reason, ReasonDetail: c.ReasonDetail,
 				Requires: c.Agent.Requires, Level: string(c.Level.OrDefault()), Slots: c.Slots, Region: c.Region,
 				Preferred: c.Agent.Model, Observed: c.Observed, MCPServers: c.Agent.MCPServers, Default: c.Agent.Default,
-				Options: c.Agent.Options, Selectors: c.Selectors, About: c.Agent.About,
+				Options: c.Agent.Options, Approval: c.Agent.Approval, Selectors: c.Selectors, About: c.Agent.About,
 			}
 			if req, err := ability.Compile(c.Agent.Requires); err == nil && !req.Empty() {
 				for _, atom := range c.Match(req).Atoms {

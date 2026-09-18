@@ -4,14 +4,14 @@ import { fileURLToPath } from "node:url";
 import { channelInputs, channelPatch, changedInputs } from "../../web/console/src/lib/settings-channels.ts";
 import { settingsInputs, settingsPatch } from "../../web/console/src/lib/settings-values.ts";
 
-const values = () => ({ gateway: { locale: "", owner_id: "owner-fixture", task_max_turns: 0, task_max_elapsed: "0s", prompt_timeout: "10m" }, policies: { execution: { step_timeout: "15m", verify_timeout: "10m" }, planning: { timeout: "3m", attempts: 2 }, snapshot: { max_files: 20000, max_bytes: 1000, max_file_bytes: 100 }, review: { max_changes: 500, max_diff_bytes: 204800, max_file_bytes: 204800, max_entries: 2000, timeout: "30s" } } });
+const values = () => ({ gateway: { locale: "", owner_id: "owner-fixture", default_approval: "", task_max_turns: 0, task_max_elapsed: "0s", prompt_timeout: "10m" }, policies: { execution: { step_timeout: "15m", verify_timeout: "10m" }, planning: { timeout: "3m", attempts: 2 }, snapshot: { max_files: 20000, max_bytes: 1000, max_file_bytes: 100 }, review: { max_changes: 500, max_diff_bytes: 204800, max_file_bytes: 204800, max_entries: 2000, timeout: "30s" } } });
 function fixtureView() {
     const desired = values(), fields = [];
     function walk(object, prefix = "") {
         for (const [key, value] of Object.entries(object)) {
             const name = prefix ? `${prefix}.${key}` : key;
             if (typeof value === "object") walk(value, name);
-            else fields.push({ path: name, type: typeof value === "number" ? "integer" : name.endsWith("locale") || name.endsWith("owner_id") ? "string" : "duration", minimum: name === "gateway.task_max_turns" || name === "gateway.task_max_elapsed" ? 0 : 1, ...(typeof value === "number" ? { maximum: Number.MAX_SAFE_INTEGER, unit: name.endsWith("bytes") ? "bytes" : "count" } : {}), ...(name.endsWith("locale") ? { enum: ["", "zh", "en"] } : {}), default: value, apply_mode: "restart" });
+            else fields.push({ path: name, type: typeof value === "number" ? "integer" : name.endsWith("locale") || name.endsWith("owner_id") ? "string" : "duration", minimum: name === "gateway.task_max_turns" || name === "gateway.task_max_elapsed" ? 0 : 1, ...(typeof value === "number" ? { maximum: Number.MAX_SAFE_INTEGER, unit: name.endsWith("bytes") ? "bytes" : "count" } : {}), ...(name.endsWith("locale") ? { enum: ["", "zh", "en"] } : {}), ...(name.endsWith("default_approval") ? { type: "string", enum: ["", "ask", "auto", "full"] } : {}), default: value, apply_mode: "restart" });
         }
     }
     walk(desired);
@@ -34,6 +34,8 @@ for (const duration of ["1h30m", "0.5s", "1ns", "15ms"]) assert.equal(settingsPa
 for (const duration of ["1h3", "0s", "-1m", "NaN", "1d", "0.1ns"]) assert.throws(() => settingsPatch(view, { ...input, "gateway.prompt_timeout": duration }));
 assert.deepEqual(settingsPatch(view, { ...input, "gateway.task_max_elapsed": "0" }), { gateway: { task_max_elapsed: "0" } });
 assert.throws(() => settingsPatch(view, { ...input, "gateway.locale": "fr" }));
+assert.throws(() => settingsPatch(view, { ...input, "gateway.default_approval": "automode" }));
+assert.deepEqual(settingsPatch(view, { ...input, "gateway.default_approval": "full" }), { gateway: { default_approval: "full" } });
 assert.throws(() => settingsPatch(view, { ...input, "policies.snapshot.max_file_bytes": "1001" }), /快照/);
 console.log("PASS settings field ranges, durations, partial input, identity isolation and cross-field limits");
 
@@ -65,7 +67,7 @@ if (process.env.PURE_ONLY !== "1") {
         const context = await browser.newContext({ locale: "zh-CN", reducedMotion: "reduce", viewport: { width: 1280, height: 960 } });
         const page = await context.newPage(); page.setDefaultTimeout(7000);
         let state = fixtureView(), channels = channelView(), configRevision = "revision-a", conflict = false, loseRestart = true, restartUnknown = true;
-        const writes = [], errors = [], external = [], operations = new Map(), restartPosts = [], queries = [];
+        const writes = [], errors = [], external = [], operations = new Map(), restartPosts = [], queries = [], approvalSyncs = [];
         let settingsReads = 0, versionsReads = 0;
         await page.addInitScript(() => {
             localStorage.setItem("steve.ui.locale", "zh");
@@ -120,6 +122,7 @@ if (process.env.PURE_ONLY !== "1") {
                 if (restartUnknown || !operations.has(id)) return route.fulfill({ status: 503, json: { error: "temporarily disconnected" } });
                 return route.fulfill({ json: operations.get(id) });
             }
+            if (url.pathname === "/console/agents/approval") { approvalSyncs.push(request.method()); return route.fulfill({ json: { intent: "full", cleared: [{ agent: "dev", was: "read-only" }], following: ["planner"], unmapped: ["dev-claude"] } }); }
             if (url.pathname === "/console/conversations") return route.fulfill({ json: { enabled: true, conversations: [{ id: "console:one", title: "发布流程", last_at: "", count: 1, running: false }] } });
             if (url.pathname === "/console/versions") { versionsReads++; return route.fulfill({ json: { hub: "v1", hub_id: "hub-fixture", protocol_min: 1, protocol_max: 2, automatic: false, discovery_configured: false, nodes: [], projects: [], peers: [] } }); }
             if (url.pathname.startsWith("/console/")) { errors.push(`Unexpected API ${url.pathname}`); return route.fulfill({ status: 501, json: { error: "Unmocked API" } }); }
@@ -173,6 +176,22 @@ if (process.env.PURE_ONLY !== "1") {
         await page.getByRole("button", { name: "放弃草稿并重新读取", exact: true }).click();
         await page.getByRole("button", { name: "放弃草稿并读取", exact: true }).click();
         await page.waitForFunction(() => document.querySelector('[data-setting="gateway.task_max_turns"] input')?.value === "7");
+        // The approval stance is set once for the fleet: the agents that pinned
+        // a mode of their own are let go of it on request, and only from what
+        // the hub has already saved.
+        const approvalSelect = page.locator('[data-setting="gateway.default_approval"] button').first();
+        const syncButton = page.getByRole("button", { name: "同步到默认", exact: true });
+        assert.equal(await syncButton.isDisabled(), true, "Syncing an unset stance must be refused");
+        await approvalSelect.click();
+        await page.getByRole("option", { name: "完全放行", exact: true }).click();
+        assert.equal(await syncButton.isDisabled(), true, "An unsaved stance must be saved before it is handed to the fleet");
+        await page.getByRole("button", { name: "保存系统设置", exact: true }).click();
+        await page.locator('[data-setting="gateway.default_approval"] [data-desired]').filter({ hasText: "完全放行" }).waitFor();
+        assert.equal(writes.at(-1).settings.gateway.default_approval, "full");
+        await syncButton.click();
+        await page.getByRole("status").filter({ hasText: "1 个 Agent 已改为跟随默认：dev" }).waitFor();
+        await page.getByRole("status").filter({ hasText: "dev-claude" }).waitFor();
+        assert.deepEqual(approvalSyncs, ["POST"], "Syncing must be one deliberate write");
         if (screenshots) await page.screenshot({ path: path.join(screenshots, "policies-desktop.png") });
         await nav.getByRole("link", { name: "节点与服务", exact: true }).click();
         const hubRow = page.locator('.settings-service-list > li').filter({ hasText: "Coordinator" });

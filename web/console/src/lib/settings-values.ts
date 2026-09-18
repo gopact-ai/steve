@@ -2,6 +2,7 @@ import type { HubSettings, SettingsField, SettingsObject } from "./api/settings"
 import { LocalizedError, translate } from "./i18n.ts";
 
 export const settingGroups = {
+    approval: ["gateway.default_approval"],
     gateway: ["gateway.locale", "gateway.task_max_turns", "gateway.task_max_elapsed", "gateway.prompt_timeout"],
     execution: ["policies.execution.step_timeout", "policies.execution.verify_timeout"],
     planning: ["policies.planning.timeout", "policies.planning.attempts"],
