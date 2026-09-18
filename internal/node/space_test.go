@@ -58,6 +58,27 @@ func TestSpaceReportsWhatSteveHoldsWithoutCountingNestedStateTwice(t *testing.T)
 	}
 }
 
+func TestSpaceKeepsOneReadingPerDirectoryPair(t *testing.T) {
+	// A hub and the node on the same machine both ask this process about
+	// their own directories. A single shared slot let each wipe the
+	// other's answer, so neither ever reported anything.
+	first, second := t.TempDir(), t.TempDir()
+	writeSized(t, filepath.Join(first, "a.bin"), 1024)
+	writeSized(t, filepath.Join(second, "b.bin"), 2048)
+	var space Space
+	settled(t, &space, first, "")
+	settled(t, &space, second, "")
+	for _, want := range []struct {
+		dir   string
+		bytes uint64
+	}{{first, 1024}, {second, 2048}} {
+		reading := space.Get(want.dir, "", time.Minute)
+		if reading.workspace != want.bytes || reading.at.IsZero() {
+			t.Fatalf("%s reports %d at %v, want %d and a measurement time", want.dir, reading.workspace, reading.at, want.bytes)
+		}
+	}
+}
+
 func TestSpaceServesTheLastWalkAndRemeasuresWhenTheDirectoryChanges(t *testing.T) {
 	workspace := t.TempDir()
 	writeSized(t, filepath.Join(workspace, "file.bin"), 1024)

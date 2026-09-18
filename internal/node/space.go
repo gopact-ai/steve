@@ -15,11 +15,22 @@ import (
 // with the moment it was taken — a reader can then tell a fresh number
 // from an hour-old one, and a partial walk from a complete one.
 type Space struct {
-	mu      sync.Mutex
+	mu sync.Mutex
+	// trees is keyed by the pair of directories measured. One process can
+	// ask about more than one pair — the hub keeps its own state
+	// directory apart from the workspace its local node works in — and a
+	// single shared slot would let each caller wipe the other's answer.
+	trees map[string]*spaceTree
+}
+
+type spaceTree struct {
 	reading spaceReading
-	where   string
 	busy    bool
 }
+
+// spaceTrees bounds the cache: a machine reconfigured a few times should
+// not keep every directory it ever had.
+const spaceTrees = 8
 
 type spaceReading struct {
 	workspace, state uint64
@@ -41,17 +52,36 @@ func (s *Space) Get(workspaceRoot, stateDir string, maxAge time.Duration) spaceR
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	where := workspaceRoot + "\x00" + stateDir
-	if where != s.where {
-		s.reading, s.where = spaceReading{}, where
+	if s.trees == nil {
+		s.trees = map[string]*spaceTree{}
 	}
-	if !s.busy && time.Since(s.reading.at) > maxAge {
-		s.busy = true
-		go s.measure(workspaceRoot, stateDir)
+	tree := s.trees[where]
+	if tree == nil {
+		s.forget()
+		tree = &spaceTree{}
+		s.trees[where] = tree
 	}
-	return s.reading
+	if !tree.busy && time.Since(tree.reading.at) > maxAge {
+		tree.busy = true
+		go s.measure(where, workspaceRoot, stateDir)
+	}
+	return tree.reading
 }
 
-func (s *Space) measure(workspaceRoot, stateDir string) {
+// forget drops the least recently measured tree once the cache is full.
+func (s *Space) forget() {
+	for len(s.trees) >= spaceTrees {
+		oldest, at := "", time.Time{}
+		for key, tree := range s.trees {
+			if oldest == "" || tree.reading.at.Before(at) {
+				oldest, at = key, tree.reading.at
+			}
+		}
+		delete(s.trees, oldest)
+	}
+}
+
+func (s *Space) measure(where, workspaceRoot, stateDir string) {
 	reading := spaceReading{at: time.Now().UTC()}
 	deadline := time.Now().Add(spaceBudget)
 	if workspaceRoot != "" {
@@ -65,7 +95,9 @@ func (s *Space) measure(workspaceRoot, stateDir string) {
 		reading.state, reading.partial = bytes, reading.partial || partial
 	}
 	s.mu.Lock()
-	s.reading, s.busy = reading, false
+	if tree := s.trees[where]; tree != nil {
+		tree.reading, tree.busy = reading, false
+	}
 	s.mu.Unlock()
 }
 
