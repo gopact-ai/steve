@@ -361,14 +361,16 @@ func (c *Coordinator) setTaskAside(ctx context.Context, title string, tracked ta
 				if records, err := c.attempts.ForTask(ctx, id); err == nil {
 					for _, record := range records {
 						if !record.Unsettled && record.StopEvidence != "" {
-							c.executions.Resolve(record.ID)
+							stopErr = errors.Join(stopErr, c.resolveStoppedExecution(record))
 						}
 					}
+				} else {
+					stopErr = errors.Join(stopErr, err)
 				}
 			}
 		}
 		waitCtx, finishWait := context.WithTimeout(ctx, 20*time.Second)
-		stopErr = c.executions.Stop(ids, task.ErrExecutionStopped).Wait(waitCtx)
+		stopErr = errors.Join(stopErr, c.executions.Stop(ids, task.ErrExecutionStopped).Wait(waitCtx))
 		finishWait()
 		if c.attempts != nil {
 			for _, id := range ids {

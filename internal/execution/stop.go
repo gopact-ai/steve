@@ -81,19 +81,30 @@ func (h *stopHandler) run() {
 // have finished successfully. A timeout or driver completion supplies no
 // missing native evidence and never removes a failed stop.
 func (s *Scope) pruneFinishedLocked() {
+	if s.err != nil || !s.joinedLocked() {
+		return
+	}
+	for _, h := range s.stopHandlers {
+		if h.started && h.err != nil {
+			return
+		}
+	}
+	delete(s.registry.entries, s)
+}
+
+// Durable evidence can supersede a joined observer's errors, but cannot join
+// a driver or native stop handler that is still executing.
+func (s *Scope) joinedLocked() bool {
 	select {
 	case <-s.done:
 	default:
-		return
-	}
-	if s.err != nil {
-		return
+		return false
 	}
 	if s.stopComplete != nil {
 		select {
 		case <-s.stopComplete:
 		default:
-			return
+			return false
 		}
 	}
 	for _, h := range s.stopHandlers {
@@ -102,12 +113,9 @@ func (s *Scope) pruneFinishedLocked() {
 		}
 		select {
 		case <-h.done:
-			if h.err != nil {
-				return
-			}
 		default:
-			return
+			return false
 		}
 	}
-	delete(s.registry.entries, s)
+	return true
 }
