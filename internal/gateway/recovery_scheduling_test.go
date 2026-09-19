@@ -71,43 +71,77 @@ func TestGatewayIndependentManualResumeDoesNotWaitForOtherNativeTurn(t *testing.
 		}
 		admissions = append(admissions, a)
 	}
-	done := make(chan error, 2)
+	ctx, cancel := context.WithCancel(t.Context())
+	type completion struct {
+		task string
+		err  error
+	}
+	done := make(chan completion, 2)
 	wake := func(a task.ResumeAdmission) {
-		done <- g.DispatchResume(t.Context(), book, a, nil, func(string, string) error { return nil })
+		done <- completion{task: a.TaskID, err: g.DispatchResume(ctx, book, a, nil, func(string, string) error { return nil })}
 	}
+	completed := 0
+	started := 0
+	released := false
+	defer func() {
+		cancel()
+		if !released {
+			close(p.release)
+		}
+		for completed < started {
+			select {
+			case result := <-done:
+				completed++
+				if result.err != nil && !errors.Is(result.err, context.Canceled) {
+					t.Errorf("resume %s: %v", result.task, result.err)
+				}
+			case <-time.After(10 * time.Second):
+				t.Error("resume workers did not join after cancellation")
+				return
+			}
+		}
+	}()
+	awaitEntry := func(want string) {
+		t.Helper()
+		deadline := time.NewTimer(10 * time.Second)
+		defer deadline.Stop()
+		for {
+			select {
+			case got := <-p.entered:
+				if got != want {
+					t.Fatalf("wanted %s Handle, got %s", want, got)
+				}
+				return
+			case result := <-done:
+				completed++
+				if result.err != nil {
+					t.Fatalf("resume %s returned before %s Handle: %v", result.task, want, result.err)
+				}
+				// A fast independent Handle can finish after publishing entry
+				// but before this goroutine is scheduled to receive it.
+			case <-deadline.C:
+				g.mu.Lock()
+				claims, conversations, slots := len(g.durableRunning), len(g.serving), len(g.slots)
+				g.mu.Unlock()
+				t.Fatalf("%s Handle never entered while first release stayed closed: claims=%d conversations=%d slots=%d completed=%d/%d", want, claims, conversations, slots, completed, started)
+			}
+		}
+	}
+	started++
 	go wake(admissions[0])
-	select {
-	case got := <-p.entered:
-		if got != "slow" {
-			t.Fatal(got)
-		}
-	case <-time.After(time.Second):
-		t.Fatal("first never started")
-	}
+	awaitEntry("slow")
+	started++
 	go wake(admissions[1])
-	blocked := false
+	awaitEntry("independent")
+	// The assertion is causal, not a 200ms performance requirement: the
+	// independent Handle must enter BEFORE the first native turn is released.
 	select {
-	case got := <-p.entered:
-		if got != "independent" {
-			t.Fatal(got)
-		}
-	case <-time.After(200 * time.Millisecond):
-		blocked = true
+	case <-p.release:
+		t.Fatal("test released the slow native turn before independent admission")
+	default:
 	}
 	close(p.release)
-	for range 2 {
-		select {
-		case err := <-done:
-			if err != nil {
-				t.Error(err)
-			}
-		case <-time.After(2 * time.Second):
-			t.Fatal("cleanup blocked")
-		}
-	}
-	if blocked {
-		t.Fatal("unrelated accepted/granted resume cannot enter Handle until the first conversation's entire native turn returns (global recoveryMu)")
-	}
+	released = true
 }
 
 type blockedRecoveryProbe struct {
