@@ -886,21 +886,7 @@ func (s *Service) Get(ctx context.Context, id string) (Record, error) {
 
 // Live lists every attempt that is not over.
 func (s *Service) Live(ctx context.Context) ([]Record, error) {
-	ops, err := s.l.Operations(ctx, kind, "")
-	if err != nil {
-		return nil, err
-	}
-	var out []Record
-	for _, op := range ops {
-		r, err := decode(op)
-		if err != nil {
-			return nil, err
-		}
-		if !r.State.Terminal() || r.Unsettled {
-			out = append(out, r)
-		}
-	}
-	return out, nil
+	return s.liveRecords(ctx)
 }
 
 // Closed lists every attempt that reached a terminal state, oldest first:
