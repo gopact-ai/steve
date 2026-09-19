@@ -504,6 +504,10 @@ type Model struct {
 	throttle     map[string]throttled
 	activity     map[string]Activity
 	observations []Observation
+
+	// observeMu orders observation updates and document I/O. mu protects
+	// the in-memory list and event subscribers, never the slow I/O.
+	observeMu sync.Mutex
 }
 
 // Event is one change worth waking a renderer for.
@@ -1106,9 +1110,12 @@ func (m *Model) Publish(ev Event) {
 }
 
 // Observe records a connectivity fact and tells the page. The list is
-// kept in the ledger document so a restart does not forget it.
+// kept in the ledger document so a restart does not forget it. A failed
+// save leaves the fact live; the next Observe retries the retained list.
 func (m *Model) Observe(kind, subject, text string, data map[string]string) {
 	obs := Observation{At: time.Now().UTC(), Kind: kind, Subject: subject, Text: text, Data: data}
+	m.observeMu.Lock()
+	defer m.observeMu.Unlock()
 	m.mu.Lock()
 	m.observations = append(m.observations, obs)
 	if len(m.observations) > observationsKept {
@@ -1130,6 +1137,8 @@ const observationsKept = 1000
 
 // LoadObservations brings back what an earlier process observed.
 func (m *Model) LoadObservations() error {
+	m.observeMu.Lock()
+	defer m.observeMu.Unlock()
 	if m.src.Observations == nil {
 		return nil
 	}
